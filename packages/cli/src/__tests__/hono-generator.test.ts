@@ -451,6 +451,18 @@ describe('HonoGenerator', () => {
       }
     });
 
+    // RFC 9110 §9.1: HEAD MUST be supported wherever GET is. The guard must let
+    // HEAD through on any GET-allowing endpoint instead of rejecting it with 405.
+    it('should let HEAD pass the method guard on GET endpoints', () => {
+      for (const path of ['app.ts', 'apply.ts']) {
+        const content = files.find((f) => f.path === path)?.content ?? '';
+        expect(content).toContain(
+          "const isHeadOnGet = method === 'HEAD' && (allowed?.includes('GET') ?? false)",
+        );
+        expect(content).toContain('!allowed.includes(method) && !isHeadOnGet');
+      }
+    });
+
     it('should import all route handlers in apply.ts', () => {
       const file = files.find((f) => f.path === 'apply.ts');
       expect(file?.content).toContain('authorizeApp');

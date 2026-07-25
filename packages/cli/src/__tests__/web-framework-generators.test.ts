@@ -61,6 +61,19 @@ describe('ExpressGenerator', () => {
       );
     });
 
+    // RFC 9110 §9.1: HEAD MUST be supported wherever GET is. RFC 9110 §9.3.2: HEAD
+    // shares GET semantics but MUST NOT return a body. The router serves HEAD from
+    // the GET handler with the body stripped instead of rejecting it with 405.
+    it('should serve HEAD from the GET handler with the body stripped', () => {
+      const file = files.find((f) => f.path === 'web-router.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain("if (context.req.method === 'HEAD')");
+      expect(content).toContain(
+        "const getRoute = this.routes.find(\n        (candidate) => candidate.method === 'GET' && candidate.path === path,\n      )",
+      );
+      expect(content).toContain('return new Response(null, {');
+    });
+
     it('should validate every generated Web-standard signing key set', () => {
       const file = files.find((f) => f.path === 'app.ts');
       const content = file?.content ?? '';

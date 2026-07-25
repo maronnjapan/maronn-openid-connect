@@ -25,7 +25,12 @@ ${introspectionMethod}${revocationMethod}  '/.well-known/jwks.json': ['GET'],
 async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Promise<Response | void> {
   const pathname = new URL(c.req.url).pathname;
   const allowed = OIDC_ENDPOINT_METHODS[pathname];
-  if (allowed && !allowed.includes(c.req.method)) {
+  const method = c.req.method;
+  // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+  // supported. HEAD shares GET semantics (§9.3.2), so let it through on any
+  // GET-allowing endpoint; Hono runs the GET handler and strips the body.
+  const isHeadOnGet = method === 'HEAD' && (allowed?.includes('GET') ?? false);
+  if (allowed && !allowed.includes(method) && !isHeadOnGet) {
     c.header('Allow', allowed.join(', '));
     return c.body(null, 405);
   }
@@ -5167,6 +5172,34 @@ export function endpointBehaviorConformanceBlock(
       );
 
       expect(responses).toEqual(cases.map((testCase) => ({ status: 405, allow: testCase.allow })));
+    });
+
+    // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+    // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
+    // body. GET-serving endpoints therefore answer HEAD like GET with an empty body.
+    it('should answer HEAD on GET endpoints with 200 and an empty body (RFC 9110 §9.1, §9.3.2)', async () => {
+      const cases = ['/.well-known/openid-configuration', '/.well-known/jwks.json'];
+      const responses = await Promise.all(
+        cases.map(async (path) => {
+          const response = await app.request(path, { method: 'HEAD' });
+          return { status: response.status, body: await response.text() };
+        }),
+      );
+
+      expect(responses).toEqual([
+        { status: 200, body: '' },
+        { status: 200, body: '' },
+      ]);
+    });
+
+    // UserInfo GET requires a Bearer token, so an unauthenticated HEAD returns the
+    // 401 auth challenge (with an empty body), never 405 — HEAD is supported
+    // wherever GET is (RFC 9110 §9.1). The auth requirement is enforced separately.
+    it('should answer HEAD on the UserInfo GET endpoint with the auth challenge, not 405', async () => {
+      const response = await app.request('/userinfo', { method: 'HEAD' });
+
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe('');
     });
 
 ${corsPreflightTest}

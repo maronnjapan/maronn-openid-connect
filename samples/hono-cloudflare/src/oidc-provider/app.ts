@@ -114,7 +114,12 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
 async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Promise<Response | void> {
   const pathname = new URL(c.req.url).pathname;
   const allowed = OIDC_ENDPOINT_METHODS[pathname];
-  if (allowed && !allowed.includes(c.req.method)) {
+  const method = c.req.method;
+  // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+  // supported. HEAD shares GET semantics (§9.3.2), so let it through on any
+  // GET-allowing endpoint; Hono runs the GET handler and strips the body.
+  const isHeadOnGet = method === 'HEAD' && (allowed?.includes('GET') ?? false);
+  if (allowed && !allowed.includes(method) && !isHeadOnGet) {
     c.header('Allow', allowed.join(', '));
     return c.body(null, 405);
   }

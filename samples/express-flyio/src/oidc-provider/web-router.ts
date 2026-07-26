@@ -213,6 +213,25 @@ export class WebRouter {
       return Promise.resolve(route.handler(context));
     }
 
+    // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+    // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
+    // body. Serve HEAD from the GET handler with the body stripped.
+    if (context.req.method === 'HEAD') {
+      const getRoute = this.routes.find(
+        (candidate) => candidate.method === 'GET' && candidate.path === path,
+      );
+      if (getRoute) {
+        return Promise.resolve(getRoute.handler(context)).then(
+          (response) =>
+            new Response(null, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            }),
+        );
+      }
+    }
+
     const allowedMethods = this.routes
       .filter((candidate) => candidate.path === path)
       .map((candidate) => candidate.method);

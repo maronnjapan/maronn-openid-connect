@@ -72,7 +72,8 @@ route 登録（sample / CLI テンプレートとも同型）:
 - 🟡 **許可外メソッドが 404 になる（405 でない）可能性**: 例えば `GET /token` が経路不在の 404 になると、クライアント/プロキシ/モニタリングからは「Token Endpoint が存在しない」と区別がつかない。RFC 9110 §15.5.6 では 405 + `Allow` が正しい。
 - 🟡 **`Allow` ヘッダが付かない**: 405 を返す場合でも `Allow: POST` 等を提示しないと、RFC 9110 §10.2.1（405 応答は `Allow` を生成 MUST）に反する。
 - 🟢 **回帰固定の不在**: UserInfo の GET/POST 両対応（OIDC §5.3.1 の MUST）を保証するテストが薄い場合、将来のリファクタで片方が落ちても気付けない。
-- 🟢 **`HEAD` / `OPTIONS` の扱い**: GET エンドポイント（Discovery / JWKS）への `HEAD`、CORS プリフライトの `OPTIONS` は別途考慮が要る。`OPTIONS` は既存の CORS ミドルウェア（`apply.ts:133-138`、`study-material/cors-cross-origin-support.md`）が扱うため、本ファイルでは重複させない。
+- ✅ **`HEAD` の扱い（対応済み）**: GET エンドポイント（Discovery / JWKS / UserInfo-GET）への `HEAD` は、RFC 9110 §9.1（汎用サーバは GET と HEAD を MUST サポート）・§9.3.2（HEAD は GET と同一セマンティクスでボディを返さない）に従い、GET と同一処理をボディ空で返すよう対応済み。Hono はメソッドガードで HEAD を通過させれば GET ハンドラを実行しボディを自動で落とす。web-standard ルータは `dispatchRoute` で GET ルートを実行しボディを剥がす。詳細は `study-material/done/http-head-method-on-get-endpoints.md` / `tasks/done/p2-http-head-method-on-get-endpoints.md`。
+- 🟢 **`OPTIONS` の扱い**: CORS プリフライトの `OPTIONS` は既存の CORS ミドルウェア（`apply.ts:133-138`、`study-material/cors-cross-origin-support.md`）が扱うため、本ファイルでは重複させない。
 
 相互運用性の観点:
 

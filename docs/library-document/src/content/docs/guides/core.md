@@ -27,7 +27,8 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `validateAuthorizationRequest` | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `state` / `nonce` / `prompt` / `display` / `max_age` / `ui_locales` / `acr_values` / `login_hint` / `id_token_hint` / `claims` / `request` を処理 |
+| `validateAuthorizationRequest` | 認可リクエスト検証の合成関数。下記ステップを既定の安全な順序で呼ぶ |
+| 認可リクエスト検証のステップ関数 | `resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務） |
@@ -41,25 +42,31 @@ core の純関数            ← このパッケージ
 | `createAuthTransaction` / `getAuthTransaction` | トランザクションの作成・復元 |
 | `validateCsrfToken` | ログイン / 同意フォームの CSRF トークン検証 |
 | `handleLoginFailure` / `completeAuthTransaction` | ログイン失敗処理・認可レスポンス生成 |
-| `checkPromptNone` | `prompt=none` の検証（`login_required` / `consent_required` 等） |
+| `checkPromptNone` | `prompt=none` の検証（`login_required` / `consent_required` 等）。下記ステップ関数の合成 |
+| `prompt=none` のステップ関数 | `resolvePromptNoneSession` / `validatePromptNoneIdTokenHint` / `validatePromptNoneConsent` |
 | `requiresReauthentication` | `prompt=login` / `max_age` による再認証要否の判定 |
 
 ### Token Endpoint
 
 | API | 役割 |
 |---|---|
-| `authenticateClient` | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`） |
-| `validateTokenRequest` | grant_type 検証を含むフル検証 |
-| `validateAuthorizationCodeGrant` | 認可コード・redirect_uri・PKCE `code_verifier`（S256）の検証 |
-| `validateRefreshTokenGrant` | 再利用検知・クライアント一致・absolute lifetime・idle timeout・scope 縮小の検証 |
-| `generateTokenResponse` | アクセストークン・ID トークン・リフレッシュトークンの発行 |
+| `authenticateClient` | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`）。下記ステップ関数の合成 |
+| クライアント認証のステップ関数 | `extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret` |
+| `validateTokenRequest` | grant_type 検証を含む後方互換の合成関数 |
+| 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
+| authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
+| refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
+| `validateAuthorizationCodeGrant` / `validateRefreshTokenGrant` | grant 別ステップを安全な順序で呼ぶ後方互換の合成関数 |
+| `generateTokenResponse` | アクセストークン・ID トークン・リフレッシュトークンの発行。下記ステップ関数の合成 |
+| トークンレスポンス生成のステップ関数 | `buildAccessTokenPayload` / `computeAtHash` / `resolveAcrAmr` / `buildIdTokenPayload` / `generateIdToken` |
 | `createJwtAccessTokenIssuer` / `createOpaqueAccessTokenIssuer` | アクセストークン形式（JWT / Opaque）の切り替え |
 
 ### UserInfo Endpoint
 
 | API | 役割 |
 |---|---|
-| `handleUserInfoRequest` | アクセストークン検証とクレーム応答（OIDC Core 1.0 §5.3） |
+| `handleUserInfoRequest` | アクセストークン検証とクレーム応答（OIDC Core 1.0 §5.3）。下記ステップ関数の合成 |
+| UserInfo のステップ関数 | `resolveUserInfoAccessToken` / `validateUserInfoTokenExpiration` / `validateUserInfoScope` / `validateUserInfoAudience` / `resolveUserInfoClaims` / `filterClaimsByScope` / `applyRequestedClaims` |
 | `filterClaimsByScope` / `SCOPE_CLAIMS_MAP` | scope（`profile` / `email` / `address` / `phone`）別の標準クレームフィルタリング |
 | `generateUserInfoJwt` | 署名付き UserInfo レスポンス（JWT）の生成 |
 
@@ -77,8 +84,10 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `handleIntrospectionRequest` | RFC 7662 準拠のトークン照会（クライアント認証必須） |
-| `handleRevocationRequest` | RFC 7009 準拠のトークン失効（refresh 失効時は同一 grant のアクセストークンも cascade 失効） |
+| `handleIntrospectionRequest` | RFC 7662 準拠のトークン照会（クライアント認証必須）。下記ステップ関数の合成 |
+| Introspection のステップ関数 | `requireIntrospectionToken` / `requireIntrospectionClient` / `resolveIntrospectionToken` / `isIntrospectionTokenActive` / `buildIntrospectionResponse` |
+| `handleRevocationRequest` | RFC 7009 準拠のトークン失効（refresh 失効時は同一 grant のアクセストークンも cascade 失効）。下記ステップ関数の合成 |
+| Revocation のステップ関数 | `requireRevocationToken` / `requireRevocationClient` / `resolveRevocationTarget` / `validateRevocationTokenClient` / `revokeResolvedToken` / `revokeGrantAccessTokens` |
 
 ### Errors / Utilities
 
@@ -91,4 +100,4 @@ core の純関数            ← このパッケージ
 
 ## Wiring Example
 
-配線の実例としては CLI 生成コードそのものが最良のリファレンスです。`maronn-oidc generate hono` の出力（`routes/*.ts`）で、各エンドポイントにおける core API の呼び出し順序・resolver の注入方法・エラーハンドリングを確認できます。
+配線の実例としては CLI 生成コードそのものが最良のリファレンスです。`maronn-oidc generate hono` の出力（`routes/*.ts`）では、合成関数ではなく機能単位のステップ関数を順に呼び出しています。検証を削除したり独自ステップを挿入しやすい一方、生成される `conformance.test.ts` が失敗する変更は本リポジトリの担保する Basic OP 挙動から外れた可能性があります。

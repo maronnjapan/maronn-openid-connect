@@ -5,9 +5,34 @@ import { validateRefreshTokenGrant } from './refresh-token-grant';
 // 後方互換: TokenError / TokenErrorCode は歴史的にこのモジュールが公開してきたため、
 // token-error.ts へ分割した後も再exportして既存のimportを壊さない。
 export { TokenError, TokenErrorCode } from './token-error';
-// 機能単位のエントリポイント（grant別バリデーション）もここから利用できるようにする。
-export { validateAuthorizationCodeGrant } from './authorization-code-grant';
-export { validateRefreshTokenGrant } from './refresh-token-grant';
+// 機能単位のエントリポイントと各ステップもここから利用できるようにする。
+export {
+  buildValidatedAuthorizationCodeRequest,
+  consumeAuthorizationCode,
+  resolveAuthorizationCode,
+  validateAuthorizationCodeClient,
+  validateAuthorizationCodeExpiration,
+  validateAuthorizationCodeGrant,
+  validateAuthorizationCodeRedirectUri,
+  validateAuthorizationCodeUnused,
+  verifyAuthorizationCodePkce,
+} from './authorization-code-grant';
+export {
+  buildValidatedRefreshTokenRequest,
+  resolveRefreshToken,
+  validateRefreshTokenClient,
+  validateRefreshTokenExpiration,
+  validateRefreshTokenGrant,
+  validateRefreshTokenIdleTimeout,
+  validateRefreshTokenScope,
+  validateRefreshTokenUnused,
+} from './refresh-token-grant';
+export type {
+  ResolvedAuthorizationCode,
+} from './authorization-code-grant';
+export type {
+  ResolvedRefreshToken,
+} from './refresh-token-grant';
 
 /**
  * トークンエンドポイントへの生パラメータ（バリデーション前）
@@ -361,48 +386,51 @@ export interface ValidatedRefreshTokenRequest {
 export type ValidatedTokenRequest = ValidatedAuthorizationCodeRequest | ValidatedRefreshTokenRequest;
 
 /**
- * トークンリクエストをバリデーションする
+ * grant_type の存在と OP 全体でのサポート有無を検証する（機能単位のステップ関数）。
  *
- * バリデーション順序:
- * 1. grant_type の検証（OP が提供する grant_type かを supportedGrantTypes で判定）
- * 2. クライアント認証の検証とクライアント別 grant_type 認可
- * 3. grant_type に応じた処理（機能単位の関数へディスパッチ）
- *    - authorization_code: {@link validateAuthorizationCodeGrant}
- *    - refresh_token: {@link validateRefreshTokenGrant}
+ * - 欠落は invalid_request
+ * - 実装として扱える grant_type（authorization_code / refresh_token）であっても、
+ *   supportedGrantTypes から除外されていれば unsupported_grant_type として拒否する
+ *   （RFC 6749 §5.2。機能トグル）
  *
- * @param context トークンリクエストのコンテキスト
- * @returns バリデーション済みのトークンリクエスト
- * @throws {TokenError} バリデーションエラー
+ * クライアント単位の許可（{@link validateClientGrantType} → unauthorized_client）とは
+ * 別軸の「OP 全体でのサポート有無」を表す。
  */
-export async function validateTokenRequest(
-  context: TokenRequestContext
-): Promise<ValidatedTokenRequest> {
-  const { params, clientResolver, authenticatedClientId } = context;
-
-  // --- 1. grant_type の検証 ---
-  if (!params.grant_type) {
+export function validateGrantTypeSupported(
+  grantType: string | undefined,
+  supportedGrantTypes: string[] = [...DEFAULT_SUPPORTED_GRANT_TYPES],
+): 'authorization_code' | 'refresh_token' {
+  if (!grantType) {
     throw new TokenError(
       TokenErrorCode.InvalidRequest,
       'Missing required parameter: grant_type'
     );
   }
 
-  // OP 全体で提供する grant_type か（機能トグル）。実装として扱える grant_type
-  // （authorization_code / refresh_token）であっても、supportedGrantTypes から
-  // 除外されていれば unsupported_grant_type として拒否する（RFC 6749 §5.2）。
-  const supportedGrantTypes =
-    context.supportedGrantTypes ?? [...DEFAULT_SUPPORTED_GRANT_TYPES];
   if (
-    (params.grant_type !== 'authorization_code' && params.grant_type !== 'refresh_token') ||
-    !supportedGrantTypes.includes(params.grant_type)
+    (grantType !== 'authorization_code' && grantType !== 'refresh_token') ||
+    !supportedGrantTypes.includes(grantType)
   ) {
     throw new TokenError(
       TokenErrorCode.UnsupportedGrantType,
-      `Unsupported grant_type: ${params.grant_type}`
+      `Unsupported grant_type: ${grantType}`
     );
   }
 
-  // --- 2. クライアント認証の検証 ---
+  return grantType;
+}
+
+/**
+ * クライアント認証結果からクライアント情報を解決する（機能単位のステップ関数）。
+ *
+ * authenticateClient 等で認証済みの clientId を受け取り、TokenClientResolver から
+ * クライアント情報を取得する。認証されていない（空の）clientId、および解決できない
+ * クライアントは invalid_client として拒否する（RFC 6749 §5.2）。
+ */
+export async function resolveAuthenticatedTokenClient(
+  authenticatedClientId: string,
+  clientResolver: TokenClientResolver,
+): Promise<TokenClientInfo> {
   if (!authenticatedClientId) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,
@@ -418,20 +446,68 @@ export async function validateTokenRequest(
     );
   }
 
-  // クライアント単位の grant_type 認可
-  // RFC 6749 §5.2: "The authenticated client is not authorized to use this authorization
-  // grant type." → unauthorized_client。OP 全体での未サポート（unsupported_grant_type）とは区別する。
-  // 既定 ["authorization_code"]（OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+  return client;
+}
+
+/**
+ * クライアント単位の grant_type 認可を検証する（機能単位のステップ関数）。
+ *
+ * RFC 6749 §5.2: "The authenticated client is not authorized to use this authorization
+ * grant type." → unauthorized_client。OP 全体での未サポート（unsupported_grant_type →
+ * {@link validateGrantTypeSupported}）とは区別する。
+ * 既定 ["authorization_code"]（OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+ */
+export function validateClientGrantType(
+  client: TokenClientInfo,
+  grantType: string,
+): void {
   const allowedGrantTypes = client.grantTypes ?? ['authorization_code'];
-  if (!allowedGrantTypes.includes(params.grant_type)) {
+  if (!allowedGrantTypes.includes(grantType)) {
     throw new TokenError(
       TokenErrorCode.UnauthorizedClient,
-      `Client is not authorized to use grant_type: ${params.grant_type}`
+      `Client is not authorized to use grant_type: ${grantType}`
     );
   }
+}
+
+/**
+ * トークンリクエストをバリデーションする
+ *
+ * 機能単位のステップ関数を順に呼び出す合成関数。カスタマイズや検証のために
+ * ステップ単位で処理を消したり足したりしたい場合は、この関数と同じ順序で
+ * 各ステップ関数を直接呼び出すこと（CLI 生成コードはその形で出力される）。
+ *
+ * バリデーション順序:
+ * 1. {@link validateGrantTypeSupported}（OP が提供する grant_type かを判定）
+ * 2. {@link resolveAuthenticatedTokenClient} / {@link validateClientGrantType}
+ * 3. grant_type に応じた処理（機能単位の関数へディスパッチ）
+ *    - authorization_code: {@link validateAuthorizationCodeGrant}
+ *    - refresh_token: {@link validateRefreshTokenGrant}
+ *
+ * @param context トークンリクエストのコンテキスト
+ * @returns バリデーション済みのトークンリクエスト
+ * @throws {TokenError} バリデーションエラー
+ */
+export async function validateTokenRequest(
+  context: TokenRequestContext
+): Promise<ValidatedTokenRequest> {
+  const { params, clientResolver, authenticatedClientId } = context;
+
+  // --- 1. grant_type の検証（OP 全体でのサポート有無） ---
+  const grantType = validateGrantTypeSupported(
+    params.grant_type,
+    context.supportedGrantTypes,
+  );
+
+  // --- 2. クライアント認証の検証とクライアント別 grant_type 認可 ---
+  const client = await resolveAuthenticatedTokenClient(
+    authenticatedClientId,
+    clientResolver,
+  );
+  validateClientGrantType(client, grantType);
 
   // --- 3. grant_type に応じた処理（機能単位の関数へディスパッチ） ---
-  if (params.grant_type === 'refresh_token') {
+  if (grantType === 'refresh_token') {
     return validateRefreshTokenGrant(context);
   }
 

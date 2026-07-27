@@ -1,7 +1,15 @@
 import { WebRouter } from '../web-router.js';
 import {
-  authenticateClient,
-  handleRevocationRequest,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  validateClientAuthMethod,
+  verifyClientSecret,
+  requireRevocationToken,
+  requireRevocationClient,
+  resolveRevocationTarget,
+  validateRevocationTokenClient,
+  revokeResolvedToken,
+  revokeGrantAccessTokens,
   RevocationError,
   TokenError,
 } from '@maronn-oidc/core';
@@ -53,21 +61,57 @@ revocationApp.post('/', async (c) => {
     const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
     const resolvers = c.get('revocationResolvers') ?? defaultRevocationResolvers;
 
-    const authenticatedClientId = await authenticateClient({
+    // --- Client authentication pipeline -------------------------------------
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
+    // authenticateClient(). Public clients registered with
+    // token_endpoint_auth_method=none pass with client_id only (RFC 7009 §2.1).
+    const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
-      clientResolver: tokenClientResolver,
+    });
+    const revokingClient = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(revokingClient, presentedCredentials);
+    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+    const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- Revocation pipeline ------------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's handleRevocationRequest(). Delete a call to drop that step,
+    // or insert your own logic between steps.
+
+    // RFC 7009 §2.1: token is REQUIRED (invalid_request when absent).
+    const token = requireRevocationToken({
+      token: typeof params.token === 'string' ? params.token : undefined,
     });
 
-    await handleRevocationRequest({
-      params: {
-        token: typeof params.token === 'string' ? params.token : undefined,
-        token_type_hint:
-          typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
-      },
-      authenticatedClientId,
+    // RFC 7009 §2.1: the caller must be an identified client (invalid_client).
+    requireRevocationClient(authenticatedClientId);
+
+    // RFC 7009 §2.1: token_type_hint only reorders the lookup — the other token
+    // type is still searched when the hint misses.
+    const resolved = await resolveRevocationTarget({
+      token,
+      tokenTypeHint:
+        typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
       resolvers,
     });
+
+    // RFC 7009 §2.2: an unknown token is still a success, so the client cannot
+    // probe which token values exist.
+    if (resolved !== null) {
+      // RFC 7009 §2.1: a token issued to another client is refused (invalid_grant).
+      validateRevocationTokenClient(resolved, authenticatedClientId);
+
+      await revokeResolvedToken(token, resolved, resolvers);
+
+      // RFC 7009 §2.1 SHOULD: revoking a refresh token also revokes the access
+      // tokens of the same grant. Delete this call to revoke only the presented
+      // token.
+      await revokeGrantAccessTokens(resolved, resolvers);
+    }
 
     // RFC 7009 Section 2.2: empty body, 200 OK
     return c.body(null, 200);

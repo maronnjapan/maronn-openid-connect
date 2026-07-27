@@ -6,7 +6,23 @@ export const version = '0.0.1';
 
 export {
   validateAuthorizationRequest,
+  // 機能単位のステップ関数（validateAuthorizationRequest はこれらの合成）。
+  // CLI 生成コードはステップ単位で呼び出し、利用者が消したり足したりできるようにする。
+  resolveClientForAuthorization,
   validateRegisteredRedirectUris,
+  resolveRequestObjectParams,
+  resolveAuthorizationRedirectUri,
+  rejectUnsupportedRequestParams,
+  validateRequestObjectConsistency,
+  validateResponseType,
+  validateAuthorizationScope,
+  validateAuthorizationCodePkce,
+  validatePromptParameter,
+  applyOfflineAccessPolicy,
+  validateDisplayParameter,
+  resolveMaxAge,
+  parseAudienceParameter,
+  parseClaimsRequestParameter,
   defaultIsOfflineAccessGranted,
   AuthorizationError,
   AuthorizationErrorCode,
@@ -27,6 +43,7 @@ export type {
   AuthorizationRequestParams,
   ClientInfo,
   ClientResolver,
+  ResolvedRequestObjectParams,
   ValidatedAuthorizationRequest,
   ValidateAuthorizationRequestOptions,
   OfflineAccessGrantedCallback,
@@ -34,7 +51,26 @@ export type {
 
 export {
   validateTokenRequest,
+  // 機能単位のステップ関数（validateTokenRequest はこれらの合成）。
+  validateGrantTypeSupported,
+  resolveAuthenticatedTokenClient,
+  validateClientGrantType,
+  resolveAuthorizationCode,
+  validateAuthorizationCodeUnused,
+  validateAuthorizationCodeClient,
+  validateAuthorizationCodeExpiration,
+  validateAuthorizationCodeRedirectUri,
+  verifyAuthorizationCodePkce,
+  consumeAuthorizationCode,
+  buildValidatedAuthorizationCodeRequest,
   validateAuthorizationCodeGrant,
+  resolveRefreshToken,
+  validateRefreshTokenUnused,
+  validateRefreshTokenClient,
+  validateRefreshTokenExpiration,
+  validateRefreshTokenIdleTimeout,
+  validateRefreshTokenScope,
+  buildValidatedRefreshTokenRequest,
   validateRefreshTokenGrant,
   TokenError,
   TokenErrorCode,
@@ -52,12 +88,19 @@ export type {
   ValidatedTokenRequest,
   ValidatedAuthorizationCodeRequest,
   ValidatedRefreshTokenRequest,
+  ResolvedAuthorizationCode,
+  ResolvedRefreshToken,
 } from './token-request';
 
 export {
   generateTokenResponse,
   buildAccessTokenAudience,
   buildIdTokenAudience,
+  // トークンレスポンス生成のステップ関数（generateTokenResponse はこれらの合成）
+  buildAccessTokenPayload,
+  computeAtHash,
+  resolveAcrAmr,
+  buildIdTokenPayload,
 } from './token-response';
 
 export type {
@@ -68,6 +111,10 @@ export type {
   IdTokenAudienceInput,
   IdTokenAudienceResult,
   AcrResolver,
+  AccessTokenPayloadInput,
+  IdTokenPayloadInput,
+  ResolveAcrAmrInput,
+  ResolvedAcrAmr,
 } from './token-response';
 
 export {
@@ -77,6 +124,7 @@ export {
 } from './jwks';
 
 export {
+  generateIdToken,
   validateIdTokenHint,
   IdTokenHintError,
 } from './id-token';
@@ -112,6 +160,10 @@ export {
   requiresReauthentication,
   AuthTransactionError,
   AuthTransactionErrorCode,
+  // prompt=none のステップ関数（checkPromptNone はこれらの合成）
+  resolvePromptNoneSession,
+  validatePromptNoneIdTokenHint,
+  validatePromptNoneConsent,
 } from './auth-transaction';
 
 export type {
@@ -141,6 +193,13 @@ export {
   UserInfoError,
   UserInfoErrorCode,
   SCOPE_CLAIMS_MAP,
+  // UserInfo リクエスト処理のステップ関数（handleUserInfoRequest はこれらの合成）
+  resolveUserInfoAccessToken,
+  validateUserInfoTokenExpiration,
+  validateUserInfoScope,
+  validateUserInfoAudience,
+  resolveUserInfoClaims,
+  applyRequestedClaims,
 } from './userinfo';
 
 export type {
@@ -174,10 +233,15 @@ export type {
 
 export {
   authenticateClient,
+  // クライアント認証のステップ関数（authenticateClient はこれらの合成）
+  extractClientCredentials,
+  validateClientAuthMethod,
+  verifyClientSecret,
 } from './client-auth';
 
 export type {
   ClientAuthContext,
+  PresentedClientCredentials,
 } from './client-auth';
 
 export {
@@ -204,6 +268,13 @@ export {
   handleIntrospectionRequest,
   IntrospectionError,
   IntrospectionErrorCode,
+  // Introspection のステップ関数（handleIntrospectionRequest はこれらの合成）
+  requireIntrospectionToken,
+  requireIntrospectionClient,
+  resolveIntrospectionToken,
+  isIntrospectionTokenActive,
+  buildIntrospectionResponse,
+  INACTIVE_INTROSPECTION_RESPONSE,
 } from './introspection';
 
 export type {
@@ -211,15 +282,26 @@ export type {
   IntrospectionResponse,
   IntrospectionAccessTokenResolver,
   IntrospectionRefreshTokenResolver,
+  ResolvedIntrospectionToken,
+  ResolveIntrospectionTokenOptions,
 } from './introspection';
 
 export {
   handleRevocationRequest,
   RevocationError,
   RevocationErrorCode,
+  // Revocation のステップ関数（handleRevocationRequest はこれらの合成）
+  requireRevocationToken,
+  requireRevocationClient,
+  resolveRevocationTarget,
+  validateRevocationTokenClient,
+  revokeResolvedToken,
+  revokeGrantAccessTokens,
 } from './revocation';
 
 export type {
   RevocationRequestContext,
   RevocationTokenResolvers,
+  ResolvedRevocationToken,
+  ResolveRevocationTargetOptions,
 } from './revocation';

@@ -5,6 +5,45 @@ import { NextJsGenerator } from '../frameworks/nextjs/index.js';
 
 const CORE_PKG = '@maronn-oidc/core';
 
+describe('Web-standard generated validation pipelines', () => {
+  const generatedRoutes = [
+    {
+      framework: 'express',
+      tokenRoute: new ExpressGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'routes/token.ts')?.content ?? '',
+    },
+    {
+      framework: 'fastify',
+      tokenRoute: new FastifyGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'routes/token.ts')?.content ?? '',
+    },
+    {
+      framework: 'nextjs',
+      tokenRoute: new NextJsGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === '_oidc-provider/routes/token.ts')?.content ?? '',
+    },
+  ];
+
+  for (const { framework, tokenRoute } of generatedRoutes) {
+    it(`should call granular token validation steps for ${framework}`, () => {
+      expect(tokenRoute.includes('resolveAuthorizationCode')).toBe(true);
+      expect(tokenRoute.includes('validateAuthorizationCodeUnused')).toBe(true);
+      expect(tokenRoute.includes('verifyAuthorizationCodePkce')).toBe(true);
+      expect(tokenRoute.includes('consumeAuthorizationCode')).toBe(true);
+      expect(tokenRoute.includes('resolveRefreshToken')).toBe(true);
+      expect(tokenRoute.includes('validateRefreshTokenUnused')).toBe(true);
+      expect(tokenRoute.includes('validateRefreshTokenScope')).toBe(true);
+      expect(tokenRoute.includes('buildValidatedRefreshTokenRequest')).toBe(true);
+      expect(tokenRoute.includes('await validateTokenRequest(')).toBe(false);
+      expect(tokenRoute.includes('await validateAuthorizationCodeGrant(')).toBe(false);
+      expect(tokenRoute.includes('await validateRefreshTokenGrant(')).toBe(false);
+    });
+  }
+});
+
 describe('ExpressGenerator', () => {
   const generator = new ExpressGenerator();
   const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });

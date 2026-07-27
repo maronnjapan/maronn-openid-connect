@@ -52,7 +52,7 @@ authUrl.searchParams.set('code_challenge_method', 'S256');
 
 ## Server-Side Validation
 
-このライブラリはトークンエンドポイント（`validateAuthorizationCodeGrant`）で自動的に PKCE を検証します。保存された `code_challenge` に対して `BASE64URL(SHA256(code_verifier))` を再計算して比較し、不一致の場合は `invalid_grant` エラーを返します。
+このライブラリはトークンエンドポイントの `verifyAuthorizationCodePkce` ステップで PKCE を検証します（後方互換の `validateAuthorizationCodeGrant` も内部で同ステップを呼びます）。保存された `code_challenge` に対して `BASE64URL(SHA256(code_verifier))` を再計算して比較し、不一致の場合は `invalid_grant` エラーを返します。
 
 対応する `code_challenge_method` は `S256` のみです（`plain` は拒否）。
 

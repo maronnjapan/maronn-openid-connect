@@ -162,8 +162,16 @@ describe('generate with feature toggles', () => {
     it('should restrict the token endpoint to the authorization_code grant', () => {
       const result = generateWith('hono', ['refresh-token']);
       const token = fileContent(result, 'routes/token.ts');
-      expect(token.includes("supportedGrantTypes: ['authorization_code']")).toBe(true);
-      expect(token.includes('issueRefreshToken: false')).toBe(true);
+      expect(token.includes("validateGrantTypeSupported(params.grant_type, ['authorization_code'])")).toBe(true);
+      expect(token.includes('resolveRefreshToken')).toBe(false);
+      expect(token.includes('validateRefreshTokenUnused')).toBe(false);
+      expect(token.includes('buildValidatedRefreshTokenRequest')).toBe(false);
+      expect(
+        token.includes(
+          'refresh_token: undefined /* the refresh_token feature is disabled: never issue one */',
+        ),
+      ).toBe(true);
+      expect(token.includes('generateRandomString')).toBe(false);
       expect(token.includes('refreshTokenResolver')).toBe(false);
       expect(token.includes('refreshTokenStore')).toBe(false);
     });
@@ -171,7 +179,7 @@ describe('generate with feature toggles', () => {
     it('should never grant offline_access in the authorize route', () => {
       const result = generateWith('hono', ['refresh-token']);
       const authorize = fileContent(result, 'routes/authorize.ts');
-      expect(authorize.includes('isOfflineAccessGranted: () => false')).toBe(true);
+      expect(authorize.includes('applyOfflineAccessPolicy(scope, effectiveParams, prompt, () => false)')).toBe(true);
     });
 
     it('should advertise only the authorization_code grant in discovery', () => {
@@ -215,7 +223,9 @@ describe('generate with feature toggles', () => {
     it('should disable request object support in the authorize route', () => {
       const result = generateWith('hono', ['request-object']);
       const authorize = fileContent(result, 'routes/authorize.ts');
-      expect(authorize.includes('requestObject: { supported: false }')).toBe(true);
+      expect(authorize.includes('requestParameterSupported: false,')).toBe(true);
+      expect(authorize.includes('resolveRequestObjectParams')).toBe(false);
+      expect(authorize.includes('validateRequestObjectConsistency')).toBe(false);
       expect(authorize.includes('allowUnsignedRequestObject')).toBe(false);
     });
 

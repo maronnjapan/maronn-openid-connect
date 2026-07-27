@@ -1,12 +1,28 @@
 import { WebRouter } from '../web-router';
 import {
-  validateAuthorizationRequest,
+  resolveClientForAuthorization,
+  validateRegisteredRedirectUris,
+  resolveRequestObjectParams,
+  validateRequestObjectConsistency,
+  resolveAuthorizationRedirectUri,
+  rejectUnsupportedRequestParams,
+  validateResponseType,
+  validateAuthorizationScope,
+  validateAuthorizationCodePkce,
+  validatePromptParameter,
+  applyOfflineAccessPolicy,
+  validateDisplayParameter,
+  resolveMaxAge,
+  parseAudienceParameter,
+  parseClaimsRequestParameter,
   validateIdTokenHint,
   createAuthTransaction,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
-  checkPromptNone,
+  resolvePromptNoneSession,
+  validatePromptNoneIdTokenHint,
+  validatePromptNoneConsent,
   requiresReauthentication,
   sanitizeErrorDescription,
   AuthorizationError,
@@ -143,26 +159,105 @@ const handleAuthorizationRequest = async (c: any) => {
     const config = c.get('config');
     const issuer = config.issuer;
 
-    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another granting condition).
-    // Default behavior: validateAuthorizationRequest drops offline_access from scope unless
-    // prompt=consent is present. To inject your own grant policy (e.g. honor a previously
-    // recorded user consent), pass an options object with isOfflineAccessGranted:
-    //   await validateAuthorizationRequest(params, clientResolver, {
-    //     isOfflineAccessGranted: (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req),
-    //   });
-    const validatedRequest = await validateAuthorizationRequest(
+    // --- Authorization request validation pipeline ---------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's validateAuthorizationRequest(). Delete a call to drop that
+    // validation, or insert your own logic between steps. Steps that run before
+    // redirectUri is resolved throw non-redirectable errors (shown to the user
+    // agent); steps after it throw redirectable errors (sent to the client).
+
+    // OAuth 2.1 §4.1.2.1: resolve client_id into the registered client.
+    const client = await resolveClientForAuthorization(params, clientResolver);
+
+    // Fail fast on misconfigured registered redirect URIs (fragments, dangerous
+    // schemes, non-loopback http) — OIDC Core 1.0 §3.1.2.1 / RFC 8252 §8.
+    validateRegisteredRedirectUris(client.redirectUris);
+
+    // OIDC Core 1.0 §6.1: verify the signed Request Object (request parameter)
+    // against the client's registered JWKS and overlay its claims onto the query
+    // parameters. RS256 is required; alg=none is accepted only when
+    // allowUnsignedRequestObject is enabled (conformance compat).
+    // effectiveParams is what every later step validates.
+    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
       params,
-      clientResolver,
-      {
-        allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
-        // OIDC Core 1.0 §6.1: verify signed Request Objects (request parameter)
-        // against the client's registered JWKS. RS256 is required; alg=none is
-        // accepted only when allowUnsignedRequestObject is enabled (conformance compat).
-        requestObject: {
-          allowUnsigned: config.allowUnsignedRequestObject,
-        },
-      },
+      client,
+      { allowUnsigned: config.allowUnsignedRequestObject },
     );
+
+    // Resolve redirect_uri against the registered URIs (OIDC Core 1.0 §3.1.2.1).
+    const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, client);
+    // RFC 6749 §4.1.2.1: state is echoed only on redirectable errors from here on.
+    const state = effectiveParams.state;
+
+    // OIDC Core 1.0 §6.3: request_uri / registration are not supported here.
+    rejectUnsupportedRequestParams(params, redirectUri, state);
+
+    // OIDC Core 1.0 §6.1: response_type / client_id inside the Request Object
+    // must match the OAuth query parameters.
+    validateRequestObjectConsistency(params, requestObjectClaims, redirectUri, state);
+
+    // response_type=code and per-client response_type authorization.
+    const responseType = validateResponseType(params, client, redirectUri, state);
+
+    // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
+    let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
+
+    // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
+    // exists only for the OIDF Basic OP static-client compatibility target).
+    const pkce = validateAuthorizationCodePkce(effectiveParams, client, redirectUri, state, {
+      allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
+    });
+
+    // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
+    const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
+
+    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another
+    // granting condition). The default policy drops offline_access from scope
+    // unless prompt=consent is present. To inject your own grant policy (e.g.
+    // honor a previously recorded user consent), pass a callback:
+    //   scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt,
+    //     (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req));
+    scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt);
+
+    // OIDC Core 1.0 §3.1.2.1: display is page|popup|touch|wap.
+    const display = validateDisplayParameter(effectiveParams, redirectUri, state);
+
+    // OIDC Core 1.0 §3.1.2.1 / Dynamic Client Registration 1.0 §2: max_age from
+    // the request, falling back to the client's registered default_max_age.
+    const maxAge = resolveMaxAge(effectiveParams, client, redirectUri, state);
+
+    // Space-delimited audience for the access token.
+    const audience = parseAudienceParameter(effectiveParams);
+
+    // OIDC Core 1.0 §5.5: parse the claims request parameter (userinfo / id_token).
+    const claims = parseClaimsRequestParameter(effectiveParams, redirectUri, state);
+
+    // Assemble the validated request from each step's result. This shape matches
+    // core's validateAuthorizationRequest() so downstream code (transactions,
+    // authorization codes) is unaffected by adding or removing steps above.
+    const validatedRequest = {
+      responseType,
+      clientId: client.clientId,
+      redirectUri,
+      // OIDC Core 1.0 §3.1.3.2: when redirect_uri was sent explicitly, the token
+      // request must repeat it; remember which case produced this authorization.
+      redirectUriExplicit: effectiveParams.redirect_uri !== undefined,
+      scope,
+      codeChallenge: pkce.codeChallenge,
+      codeChallengeMethod: pkce.codeChallengeMethod,
+      state,
+      nonce: effectiveParams.nonce,
+      prompt,
+      display,
+      maxAge,
+      uiLocales: effectiveParams.ui_locales,
+      claimsLocales: effectiveParams.claims_locales,
+      acrValues: effectiveParams.acr_values,
+      loginHint: effectiveParams.login_hint,
+      idTokenHint: effectiveParams.id_token_hint,
+      audience,
+      claims,
+    };
 
     // Create authentication transaction
     const csrfToken = await generateRandomString(32);
@@ -206,7 +301,7 @@ const handleAuthorizationRequest = async (c: any) => {
 
       // OIDC Core 1.0 §3.1.2.1: when id_token_hint is provided, the OP MUST verify
       // its signature, iss, aud, and exp before trusting sub. The verified subject
-      // is then matched against the active session (handled by checkPromptNone).
+      // is then matched against the active session by validatePromptNoneIdTokenHint.
       // OP の JWKS を提供するための jwksProvider を context から取得する。
       let verifiedHintSubject: string | undefined;
       if (transaction.idTokenHint !== undefined) {
@@ -233,11 +328,23 @@ const handleAuthorizationRequest = async (c: any) => {
 
       let session;
       try {
-        // checkPromptNone validates session AND consent in one shot.
-        // Throws AuthorizationError(login_required | consent_required) on failure.
-        session = await checkPromptNone(transaction, sessionResolver, c.req.raw, consentResolver, {
-          verifiedHintSubject,
-        });
+        // --- prompt=none pipeline ---------------------------------------
+        // Each step below is an independent core function, called in the same
+        // order as core's checkPromptNone(). Delete a call to drop that check,
+        // or insert your own logic between steps. Every step throws
+        // AuthorizationError(login_required | consent_required) on failure.
+
+        // OIDC Core 1.0 §3.1.2.1: no active session → login_required (the OP
+        // must not show a login screen for prompt=none).
+        session = await resolvePromptNoneSession(transaction, sessionResolver, c.req.raw);
+
+        // The hint subject is verified before consent because the consent lookup
+        // keys on session.subject — a hint mismatch would check the wrong user.
+        validatePromptNoneIdTokenHint(transaction, session, verifiedHintSubject);
+
+        // OIDC Core 1.0 §3.1.2.1: not consented → consent_required (the OP must
+        // not show a consent screen for prompt=none).
+        await validatePromptNoneConsent(transaction, session, consentResolver);
       } catch (promptError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         if (promptError instanceof AuthorizationError) {

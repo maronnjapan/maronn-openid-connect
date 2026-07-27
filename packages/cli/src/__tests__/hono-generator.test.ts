@@ -129,6 +129,23 @@ describe('HonoGenerator', () => {
       );
     });
 
+    // OIDC Core 1.0 §3.1.2.1: the generated OP's behavior contract must pin that a
+    // hint is verified on every prompt path and never satisfied by another user's
+    // SSO session.
+    it('should generate the id_token_hint cross-prompt conformance contract', () => {
+      const content = file?.content ?? '';
+      expect(content).toContain("describe('id_token_hint across prompt paths'");
+      expect(content).toContain(
+        'should redirect to the login screen without a code when the hint names another End-User',
+      );
+      expect(content).toContain(
+        'should redirect with login_required when the hint signature is invalid without prompt',
+      );
+      expect(content).toContain(
+        'should redirect with login_required when the hint has expired without prompt',
+      );
+    });
+
     it('should verify that createApp wires the configured ACR resolver into ID Tokens', () => {
       const content = file?.content ?? '';
       expect(content).toContain("acrResolver: async () => ({ acr: 'urn:example:loa:2', amr: ['pwd', 'otp'] })");
@@ -1380,6 +1397,43 @@ describe('HonoGenerator', () => {
     it('should not call the composed checkPromptNone in authorize route', () => {
       const authorizeFile = files.find((f) => f.path === 'routes/authorize.ts');
       expect(authorizeFile?.content).not.toContain('await checkPromptNone(');
+    });
+
+    // OIDC Core 1.0 §3.1.2.1: the id_token_hint requirement is not conditioned on
+    // prompt. Verification (signature / iss / aud / exp / iat) must run once for
+    // every prompt path, before the prompt=none branch, so an interactive request
+    // cannot carry an unverified hint into the SSO decision.
+    it('should verify id_token_hint before the prompt=none branch in authorize route', () => {
+      const authorizeFile = files.find((f) => f.path === 'routes/authorize.ts');
+      const content = authorizeFile?.content ?? '';
+      const hintVerificationIndex = content.indexOf('await validateIdTokenHint(');
+      const promptNoneBranchIndex = content.indexOf("if (promptValues.includes('none')) {");
+
+      expect(content.split('await validateIdTokenHint(').length - 1).toBe(1);
+      expect(hintVerificationIndex < promptNoneBranchIndex).toBe(true);
+      expect(content).toContain('let verifiedHintSubject: string | undefined;');
+      expect(content).toContain(
+        "return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));",
+      );
+      expect(content).toContain(
+        "const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';",
+      );
+    });
+
+    // OIDC Core 1.0 §3.1.2.1 / §3.1.2.3: an id_token_hint that names another
+    // End-User must not be satisfied by reusing the current SSO session. The
+    // mismatch falls through to the login screen instead of issuing a code.
+    it('should skip SSO session reuse when the id_token_hint subject differs in authorize route', () => {
+      const authorizeFile = files.find((f) => f.path === 'routes/authorize.ts');
+      const content = authorizeFile?.content ?? '';
+
+      expect(content).toContain('const hintMatchesSession =');
+      expect(content).toContain(
+        'verifiedHintSubject === undefined ||\n          (existingSession !== null && verifiedHintSubject === existingSession.subject);',
+      );
+      expect(content).toContain(
+        'if (existingSession && sessionIsFresh && hintMatchesSession) {',
+      );
     });
 
     it('should call every client authentication step function in token route', () => {

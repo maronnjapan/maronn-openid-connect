@@ -129,7 +129,7 @@ OpenID Connect Core 1.0 §15.1 が全 OP に MUST として課す機能:
 | OP-Req-NotUnderstood | 未知パラメータ無視 | ✅ | 仕様通り無視 |
 | OP-Req-login_hint / ui_locales / claims_locales / acr_values | エラー無し | ✅ | 受理（未処理だがエラー無し＝§15.1 最低要件充足） |
 | `acr_values` の `AcrResolver` 伝播（§15.1 超過の拡張整合性） | `acr_values` を ID Token `acr` 発行に反映 | 🟡 | 📌 `tasks/p2-acr-values-request-propagation.md`（検討: `study-material/done/acr-values-request-propagation-to-id-token.md`）。`acr_values` がコード→Token 経路で脱落し `requestedAcrValues` が常に undefined。`claims.id_token.acr.values` 経由のみ機能 |
-| OP-Req-id_token_hint | SHOULD | ✅ | 📌 `done/T-017-id-token-hint-validation.md` |
+| OP-Req-id_token_hint | SHOULD | ✅ | 📌 `done/T-017-id-token-hint-validation.md` / `done/p1-id-token-hint-verification-all-prompt-paths.md`。適用範囲は**全 prompt 経路**（prompt 無し / login / consent / select_account / none）。署名・iss・aud・exp・iat の検証は prompt=none 分岐の外で行い、hint の subject と一致しないセッションは SSO 再利用しない（不一致はログイン画面へ誘導、`login_required` 即返しは方針判断として保留） |
 | Request Object（§6, request/request_uri） | 非対応なら拒否 + Discovery 明示 | 🔴 | 🆕 `study-material/request-object-rejection-and-discovery-honesty.md` |
 | `registration` パラメータ（§3.1.2.1/§7.2.1） | 非対応なら `registration_not_supported` で拒否 | 🔴 | 🆕 `tasks/p3-registration-param-explicit-rejection.md`（検討: `study-material/done/unsupported-request-parameter-registration.md`） |
 

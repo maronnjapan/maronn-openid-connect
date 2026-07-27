@@ -366,16 +366,113 @@ export interface PromptNoneOptions {
 }
 
 /**
+ * prompt=none ステップ 1: アクティブなセッションを解決する
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * prompt=none はユーザー操作を一切伴わないため、セッションが無い時点で
+ * login_required を返す（ログイン画面へ遷移してはならない）。
+ *
+ * @param transaction Auth Transaction（エラーのリダイレクト先 / state に使用）
+ * @param sessionResolver セッションを解決するリゾルバ
+ * @param request 元の HTTP リクエスト（cookie/JWT などからセッション解決に使用）
+ * @returns SessionInfo
+ * @throws {AuthorizationError} login_required
+ */
+export async function resolvePromptNoneSession(
+  transaction: AuthTransaction,
+  sessionResolver: SessionResolver,
+  request: Request,
+): Promise<SessionInfo> {
+  const session = await sessionResolver.resolve(request);
+  if (!session) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.LoginRequired,
+      'No active session found. Silent authentication failed.',
+      transaction.redirectUri,
+      transaction.state
+    );
+  }
+  return session;
+}
+
+/**
+ * prompt=none ステップ 2: id_token_hint の subject とセッションの一致を検証する
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * ID Token の署名・iss・aud・exp 検証は呼び出し側の責務（core を JWT 検証実装から
+ * 疎結合に保つため）。ここでは検証済みの subject だけを受け取り、アクティブな
+ * セッションの subject と一致するかを判定する。
+ *
+ * コンセント確認より前に実行すること: コンセント検索は session.subject をキーに
+ * するため、hint 不一致のまま進むと「別ユーザーのコンセント」を見てしまう。
+ *
+ * @param transaction Auth Transaction
+ * @param session 解決済みセッション
+ * @param verifiedHintSubject 呼び出し側で検証済みの id_token_hint の subject。未指定なら検証しない
+ * @throws {AuthorizationError} login_required
+ */
+export function validatePromptNoneIdTokenHint(
+  transaction: AuthTransaction,
+  session: SessionInfo,
+  verifiedHintSubject: string | undefined,
+): void {
+  if (verifiedHintSubject !== undefined && verifiedHintSubject !== session.subject) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.LoginRequired,
+      'id_token_hint subject does not match the active session.',
+      transaction.redirectUri,
+      transaction.state,
+    );
+  }
+}
+
+/**
+ * prompt=none ステップ 3: 要求スコープが同意済みであることを検証する
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * prompt=none では同意画面を表示できないため、未同意なら consent_required を返す。
+ * consentResolver 未指定時は検証しない（同意を永続化しない構成向け）。
+ *
+ * @param transaction Auth Transaction
+ * @param session 解決済みセッション
+ * @param consentResolver コンセント済みかを判定するリゾルバ（任意）
+ * @throws {AuthorizationError} consent_required
+ */
+export async function validatePromptNoneConsent(
+  transaction: AuthTransaction,
+  session: SessionInfo,
+  consentResolver?: ConsentResolver,
+): Promise<void> {
+  if (!consentResolver) return;
+
+  const scopes = transaction.scope.split(' ').filter(Boolean);
+  const hasConsent = await consentResolver.hasConsent(
+    session.subject,
+    transaction.clientId,
+    scopes,
+  );
+  if (!hasConsent) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.ConsentRequired,
+      'Consent has not been granted. Silent authentication cannot show consent UI.',
+      transaction.redirectUri,
+      transaction.state,
+    );
+  }
+}
+
+/**
  * prompt=none 時のサイレント認証チェック
  * OIDC Core 1.0 Section 3.1.2.1
  *
- * セッションなし → login_required をスロー
- * セッションあり + consentResolver 未提供 → セッション情報を返却（後続フローへ）
- * セッションあり + consentResolver 提供あり → コンセント確認まで実施し、
- *   コンセント無しなら consent_required をスロー、ありならセッション情報を返却。
+ * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
+ * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
+ * 削除したり独自処理を差し込んだりできる。
  *
- * options.verifiedHintSubject 指定時は、セッション・コンセント検証を経た後で
- * subject 一致をチェックし、不一致なら login_required をスロー。
+ * セッションなし → login_required をスロー（{@link resolvePromptNoneSession}）
+ * hint 不一致 → login_required をスロー（{@link validatePromptNoneIdTokenHint}）
+ * コンセント無し → consent_required をスロー（{@link validatePromptNoneConsent}）
+ * いずれも通過すればセッション情報を返却する。
  *
  * @param transaction Auth Transaction
  * @param sessionResolver セッションを解決するリゾルバ
@@ -392,47 +489,9 @@ export async function checkPromptNone(
   consentResolver?: ConsentResolver,
   options?: PromptNoneOptions,
 ): Promise<SessionInfo> {
-  const session = await sessionResolver.resolve(request);
-  if (!session) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.LoginRequired,
-      'No active session found. Silent authentication failed.',
-      transaction.redirectUri,
-      transaction.state
-    );
-  }
-
-  // Check hint subject before consent: the consent lookup keys on session.subject,
-  // and a hint mismatch means we'd be checking the wrong user's consent. Returning
-  // login_required first also matches the spec intent that hint validates "who is
-  // currently logged in" (OIDC Core 1.0 Section 3.1.2.1).
-  if (options?.verifiedHintSubject !== undefined &&
-      options.verifiedHintSubject !== session.subject) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.LoginRequired,
-      'id_token_hint subject does not match the active session.',
-      transaction.redirectUri,
-      transaction.state,
-    );
-  }
-
-  if (consentResolver) {
-    const scopes = transaction.scope.split(' ').filter(Boolean);
-    const hasConsent = await consentResolver.hasConsent(
-      session.subject,
-      transaction.clientId,
-      scopes,
-    );
-    if (!hasConsent) {
-      throw new AuthorizationError(
-        AuthorizationErrorCode.ConsentRequired,
-        'Consent has not been granted. Silent authentication cannot show consent UI.',
-        transaction.redirectUri,
-        transaction.state,
-      );
-    }
-  }
-
+  const session = await resolvePromptNoneSession(transaction, sessionResolver, request);
+  validatePromptNoneIdTokenHint(transaction, session, options?.verifiedHintSubject);
+  await validatePromptNoneConsent(transaction, session, consentResolver);
   return session;
 }
 

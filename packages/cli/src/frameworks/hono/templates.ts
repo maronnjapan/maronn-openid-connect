@@ -1525,44 +1525,79 @@ export function authorizeRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
-  const offlineAccessComment = features.refreshToken
-    ? `    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another granting condition).
-    // Default behavior: validateAuthorizationRequest drops offline_access from scope unless
-    // prompt=consent is present. To inject your own grant policy (e.g. honor a previously
-    // recorded user consent), pass an options object with isOfflineAccessGranted:
-    //   await validateAuthorizationRequest(params, clientResolver, {
-    //     isOfflineAccessGranted: (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req),
-    //   });
+  const requestObjectImports = features.requestObject
+    ? `
+  resolveRequestObjectParams,
+  validateRequestObjectConsistency,`
+    : '';
+  const requestObjectStep = features.requestObject
+    ? `    // OIDC Core 1.0 §6.1: verify the signed Request Object (request parameter)
+    // against the client's registered JWKS and overlay its claims onto the query
+    // parameters. RS256 is required; alg=none is accepted only when
+    // allowUnsignedRequestObject is enabled (conformance compat).
+    // effectiveParams is what every later step validates.
+    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
+      params,
+      client,
+      { allowUnsigned: config.allowUnsignedRequestObject },
+    );
+`
+    : `    // OIDC Core 1.0 §6.3: the request parameter (Request Object) is disabled in
+    // this generated provider; rejectUnsupportedRequestParams below rejects it
+    // with request_not_supported. The effective parameters are the query as-is.
+    const effectiveParams = params;
+`;
+  const rejectUnsupportedStep = features.requestObject
+    ? `    // OIDC Core 1.0 §6.3: request_uri / registration are not supported here.
+    rejectUnsupportedRequestParams(params, redirectUri, state);
+
+    // OIDC Core 1.0 §6.1: response_type / client_id inside the Request Object
+    // must match the OAuth query parameters.
+    validateRequestObjectConsistency(params, requestObjectClaims, redirectUri, state);
+`
+    : `    // OIDC Core 1.0 §6.3: request (disabled here) / request_uri / registration
+    // are not supported and rejected explicitly.
+    rejectUnsupportedRequestParams(params, redirectUri, state, {
+      requestParameterSupported: false,
+    });
+`;
+  const offlineAccessStep = features.refreshToken
+    ? `    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another
+    // granting condition). The default policy drops offline_access from scope
+    // unless prompt=consent is present. To inject your own grant policy (e.g.
+    // honor a previously recorded user consent), pass a callback:
+    //   scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt,
+    //     (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req));
+    scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt);
 `
     : `    // The refresh_token feature is disabled in this generated provider:
-    // isOfflineAccessGranted always returns false, so offline_access is never
-    // granted (OIDC Core 1.0 §11 requires ignoring the request in that case).
-`;
-  const offlineAccessOption = features.refreshToken
-    ? ''
-    : `        isOfflineAccessGranted: () => false,
-`;
-  const requestObjectOption = features.requestObject
-    ? `        // OIDC Core 1.0 §6.1: verify signed Request Objects (request parameter)
-        // against the client's registered JWKS. RS256 is required; alg=none is
-        // accepted only when allowUnsignedRequestObject is enabled (conformance compat).
-        requestObject: {
-          allowUnsigned: config.allowUnsignedRequestObject,
-        },
-`
-    : `        // OIDC Core 1.0 §6.3: the request parameter (Request Object) is disabled in
-        // this generated provider and rejected with request_not_supported.
-        requestObject: { supported: false },
+    // the callback always returns false, so offline_access is never granted
+    // (OIDC Core 1.0 §11 requires ignoring the request in that case).
+    scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt, () => false);
 `;
   return `import { Hono } from 'hono';
 import {
-  validateAuthorizationRequest,
+  resolveClientForAuthorization,
+  validateRegisteredRedirectUris,${requestObjectImports}
+  resolveAuthorizationRedirectUri,
+  rejectUnsupportedRequestParams,
+  validateResponseType,
+  validateAuthorizationScope,
+  validateAuthorizationCodePkce,
+  validatePromptParameter,
+  applyOfflineAccessPolicy,
+  validateDisplayParameter,
+  resolveMaxAge,
+  parseAudienceParameter,
+  parseClaimsRequestParameter,
   validateIdTokenHint,
   createAuthTransaction,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
-  checkPromptNone,
+  resolvePromptNoneSession,
+  validatePromptNoneIdTokenHint,
+  validatePromptNoneConsent,
   requiresReauthentication,
   sanitizeErrorDescription,
   AuthorizationError,
@@ -1699,13 +1734,82 @@ const handleAuthorizationRequest = async (c: any) => {
     const config = c.get('config');
     const issuer = config.issuer;
 
-${offlineAccessComment}    const validatedRequest = await validateAuthorizationRequest(
-      params,
-      clientResolver,
-      {
-        allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
-${offlineAccessOption}${requestObjectOption}      },
-    );
+    // --- Authorization request validation pipeline ---------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's validateAuthorizationRequest(). Delete a call to drop that
+    // validation, or insert your own logic between steps. Steps that run before
+    // redirectUri is resolved throw non-redirectable errors (shown to the user
+    // agent); steps after it throw redirectable errors (sent to the client).
+
+    // OAuth 2.1 §4.1.2.1: resolve client_id into the registered client.
+    const client = await resolveClientForAuthorization(params, clientResolver);
+
+    // Fail fast on misconfigured registered redirect URIs (fragments, dangerous
+    // schemes, non-loopback http) — OIDC Core 1.0 §3.1.2.1 / RFC 8252 §8.
+    validateRegisteredRedirectUris(client.redirectUris);
+
+${requestObjectStep}
+    // Resolve redirect_uri against the registered URIs (OIDC Core 1.0 §3.1.2.1).
+    const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, client);
+    // RFC 6749 §4.1.2.1: state is echoed only on redirectable errors from here on.
+    const state = effectiveParams.state;
+
+${rejectUnsupportedStep}
+    // response_type=code and per-client response_type authorization.
+    const responseType = validateResponseType(params, client, redirectUri, state);
+
+    // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
+    let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
+
+    // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
+    // exists only for the OIDF Basic OP static-client compatibility target).
+    const pkce = validateAuthorizationCodePkce(effectiveParams, client, redirectUri, state, {
+      allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
+    });
+
+    // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
+    const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
+
+${offlineAccessStep}
+    // OIDC Core 1.0 §3.1.2.1: display is page|popup|touch|wap.
+    const display = validateDisplayParameter(effectiveParams, redirectUri, state);
+
+    // OIDC Core 1.0 §3.1.2.1 / Dynamic Client Registration 1.0 §2: max_age from
+    // the request, falling back to the client's registered default_max_age.
+    const maxAge = resolveMaxAge(effectiveParams, client, redirectUri, state);
+
+    // Space-delimited audience for the access token.
+    const audience = parseAudienceParameter(effectiveParams);
+
+    // OIDC Core 1.0 §5.5: parse the claims request parameter (userinfo / id_token).
+    const claims = parseClaimsRequestParameter(effectiveParams, redirectUri, state);
+
+    // Assemble the validated request from each step's result. This shape matches
+    // core's validateAuthorizationRequest() so downstream code (transactions,
+    // authorization codes) is unaffected by adding or removing steps above.
+    const validatedRequest = {
+      responseType,
+      clientId: client.clientId,
+      redirectUri,
+      // OIDC Core 1.0 §3.1.3.2: when redirect_uri was sent explicitly, the token
+      // request must repeat it; remember which case produced this authorization.
+      redirectUriExplicit: effectiveParams.redirect_uri !== undefined,
+      scope,
+      codeChallenge: pkce.codeChallenge,
+      codeChallengeMethod: pkce.codeChallengeMethod,
+      state,
+      nonce: effectiveParams.nonce,
+      prompt,
+      display,
+      maxAge,
+      uiLocales: effectiveParams.ui_locales,
+      claimsLocales: effectiveParams.claims_locales,
+      acrValues: effectiveParams.acr_values,
+      loginHint: effectiveParams.login_hint,
+      idTokenHint: effectiveParams.id_token_hint,
+      audience,
+      claims,
+    };
 
     // Create authentication transaction
     const csrfToken = await generateRandomString(32);
@@ -1749,7 +1853,7 @@ ${offlineAccessOption}${requestObjectOption}      },
 
       // OIDC Core 1.0 §3.1.2.1: when id_token_hint is provided, the OP MUST verify
       // its signature, iss, aud, and exp before trusting sub. The verified subject
-      // is then matched against the active session (handled by checkPromptNone).
+      // is then matched against the active session by validatePromptNoneIdTokenHint.
       // OP の JWKS を提供するための jwksProvider を context から取得する。
       let verifiedHintSubject: string | undefined;
       if (transaction.idTokenHint !== undefined) {
@@ -1776,11 +1880,23 @@ ${offlineAccessOption}${requestObjectOption}      },
 
       let session;
       try {
-        // checkPromptNone validates session AND consent in one shot.
-        // Throws AuthorizationError(login_required | consent_required) on failure.
-        session = await checkPromptNone(transaction, sessionResolver, c.req.raw, consentResolver, {
-          verifiedHintSubject,
-        });
+        // --- prompt=none pipeline ---------------------------------------
+        // Each step below is an independent core function, called in the same
+        // order as core's checkPromptNone(). Delete a call to drop that check,
+        // or insert your own logic between steps. Every step throws
+        // AuthorizationError(login_required | consent_required) on failure.
+
+        // OIDC Core 1.0 §3.1.2.1: no active session → login_required (the OP
+        // must not show a login screen for prompt=none).
+        session = await resolvePromptNoneSession(transaction, sessionResolver, c.req.raw);
+
+        // The hint subject is verified before consent because the consent lookup
+        // keys on session.subject — a hint mismatch would check the wrong user.
+        validatePromptNoneIdTokenHint(transaction, session, verifiedHintSubject);
+
+        // OIDC Core 1.0 §3.1.2.1: not consented → consent_required (the OP must
+        // not show a consent screen for prompt=none).
+        await validatePromptNoneConsent(transaction, session, consentResolver);
       } catch (promptError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         if (promptError instanceof AuthorizationError) {
@@ -2003,14 +2119,129 @@ export function tokenRouteTemplate(
     ? `    const refreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
 `
     : '';
-  const validateTokenGrantOptions = features.refreshToken
-    ? `      refreshTokenResolver,
+  const grantTypeSupportedStep = features.refreshToken
+    ? `    // RFC 6749 §5.2: is the grant_type offered by this OP at all?
+    // (defaults to ['authorization_code', 'refresh_token'])
+    const grantType = validateGrantTypeSupported(params.grant_type);
 `
-    : `      // The refresh_token feature is disabled: the OP only offers the
-      // authorization_code grant, so refresh_token requests are rejected with
-      // unsupported_grant_type (RFC 6749 §5.2).
-      supportedGrantTypes: ['authorization_code'],
+    : `    // The refresh_token feature is disabled: the OP only offers the
+    // authorization_code grant, so refresh_token requests are rejected with
+    // unsupported_grant_type (RFC 6749 §5.2).
+    const grantType = validateGrantTypeSupported(params.grant_type, ['authorization_code']);
 `;
+  const grantValidationStep = features.refreshToken
+    ? `    // Grant-specific validation. Each security rule is a separate core call so
+    // it can be removed, replaced, or surrounded with experiment-specific logic.
+    let validatedRequest: ValidatedTokenRequest;
+    if (grantType === 'refresh_token') {
+      // Resolve the presented refresh token and retain its stored grant context.
+      const { refreshTokenInfo } = await resolveRefreshToken(
+        params,
+        refreshTokenResolver,
+      );
+
+      // OAuth 2.1 §4.3.1: reject rotation reuse and revoke the token family.
+      await validateRefreshTokenUnused(refreshTokenInfo, refreshTokenResolver);
+
+      // Bind the refresh token to the authenticated client.
+      validateRefreshTokenClient(refreshTokenInfo, authenticatedClientId);
+
+      // Absolute lifetime: expiresAt <= now is expired.
+      validateRefreshTokenExpiration(refreshTokenInfo);
+
+      // Optional inactivity policy. Replace undefined with your timeout in seconds
+      // to enable it, or remove this step if your experiment has no idle lifetime.
+      validateRefreshTokenIdleTimeout(refreshTokenInfo, undefined);
+
+      // RFC 6749 §6: requested scope may only narrow the original grant.
+      const effectiveScope = validateRefreshTokenScope(
+        params.scope,
+        refreshTokenInfo.scope,
+      );
+
+      validatedRequest = buildValidatedRefreshTokenRequest(
+        refreshTokenInfo,
+        authenticatedClientId,
+        effectiveScope,
+      );
+    } else {
+      // Resolve the presented authorization code and retain the non-optional code.
+      const { code, authorizationCode } = await resolveAuthorizationCode(
+        params,
+        authorizationCodeResolver,
+      );
+
+      // OAuth 2.1 §4.1.2: reject reuse and revoke tokens from the compromised grant.
+      await validateAuthorizationCodeUnused(
+        authorizationCode,
+        authorizationCodeResolver,
+      );
+
+      // Bind the authorization code to the authenticated client and its lifetime.
+      validateAuthorizationCodeClient(authorizationCode, authenticatedClientId);
+      validateAuthorizationCodeExpiration(authorizationCode);
+
+      // OIDC Core 1.0 §3.1.3.2: bind the token request redirect_uri.
+      validateAuthorizationCodeRedirectUri(
+        authorizationCode,
+        params.redirect_uri,
+      );
+
+      // RFC 7636: validate the S256 verifier when the code carries a PKCE binding.
+      const codeVerified = await verifyAuthorizationCodePkce(
+        authorizationCode,
+        params.code_verifier,
+      );
+
+      // Mark used (do not physically delete) so a later replay remains detectable.
+      await consumeAuthorizationCode(code, authorizationCodeResolver);
+
+      validatedRequest = buildValidatedAuthorizationCodeRequest(
+        code,
+        authorizationCode,
+        authenticatedClientId,
+        codeVerified,
+      );
+    }
+`
+    : `    // Grant-specific validation (authorization_code only in this configuration).
+    // Every security rule remains an independent customization point.
+    const { code, authorizationCode } = await resolveAuthorizationCode(
+      params,
+      authorizationCodeResolver,
+    );
+    await validateAuthorizationCodeUnused(
+      authorizationCode,
+      authorizationCodeResolver,
+    );
+    validateAuthorizationCodeClient(authorizationCode, authenticatedClientId);
+    validateAuthorizationCodeExpiration(authorizationCode);
+    validateAuthorizationCodeRedirectUri(authorizationCode, params.redirect_uri);
+    const codeVerified = await verifyAuthorizationCodePkce(
+      authorizationCode,
+      params.code_verifier,
+    );
+    await consumeAuthorizationCode(code, authorizationCodeResolver);
+    // The cast widens the result back to the ValidatedTokenRequest union: TypeScript
+    // narrows a const to its initializer type, which would make the shared downstream
+    // refresh_token branches unreachable (never) even though they are still compiled.
+    const validatedRequest = buildValidatedAuthorizationCodeRequest(
+      code,
+      authorizationCode,
+      authenticatedClientId,
+      codeVerified,
+    ) as ValidatedTokenRequest;
+`;
+  const refreshGrantImport = features.refreshToken
+    ? `
+  resolveRefreshToken,
+  validateRefreshTokenUnused,
+  validateRefreshTokenClient,
+  validateRefreshTokenExpiration,
+  validateRefreshTokenIdleTimeout,
+  validateRefreshTokenScope,
+  buildValidatedRefreshTokenRequest,`
+    : '';
   const grantHasOfflineAccessBlock = features.refreshToken
     ? `    // RFC 6749 §6 / OIDC Core 1.0 §11: refresh 時の scope 縮小は当該リクエストの access token /
     // ID Token の権限縮小として扱い、refresh token rotation の可否とは切り離す。rotation 可否は
@@ -2026,17 +2257,15 @@ export function tokenRouteTemplate(
 
 `
     : '';
-  const issueRefreshTokenOption = features.refreshToken
-    ? `      issueRefreshToken: grantHasOfflineAccess,
-`
-    : `      // The refresh_token feature is disabled: never issue a refresh token.
-      issueRefreshToken: false,
-`;
-  // resolvedAcr / resolvedAmr are only persisted into the refresh token record,
-  // so the destructuring must shrink with the feature to keep noUnusedLocals green.
-  const tokenResponseDestructure = features.refreshToken
-    ? `const { response: tokenResponse, resolvedAcr, resolvedAmr } = await generateTokenResponse({`
-    : `const { response: tokenResponse } = await generateTokenResponse({`;
+  const refreshTokenValueExpression = features.refreshToken
+    ? `grantHasOfflineAccess ? generateRandomString(32) : undefined`
+    : `undefined /* the refresh_token feature is disabled: never issue one */`;
+  // generateRandomString only mints refresh token values, so the import must shrink
+  // with the feature to keep noUnusedLocals green.
+  const randomStringImport = features.refreshToken
+    ? `
+  generateRandomString,`
+    : '';
   const refreshTokenPersistenceBlock = features.refreshToken
     ? `    // Store the new refresh token for rotation (OAuth 2.1 Section 4.3.1).
     // The same grantId / audience / authTime / nonce / acr / amr / azp is propagated through
@@ -2103,10 +2332,26 @@ export function tokenRouteTemplate(
     : '';
   return `import { Hono } from 'hono';
 import {
-  validateTokenRequest,
-  generateTokenResponse,
+  validateGrantTypeSupported,
+  resolveAuthenticatedTokenClient,
+  validateClientGrantType,
+  resolveAuthorizationCode,
+  validateAuthorizationCodeUnused,
+  validateAuthorizationCodeClient,
+  validateAuthorizationCodeExpiration,
+  validateAuthorizationCodeRedirectUri,
+  verifyAuthorizationCodePkce,
+  consumeAuthorizationCode,
+  buildValidatedAuthorizationCodeRequest,${refreshGrantImport}
+  buildAccessTokenPayload,
+  computeAtHash,
+  resolveAcrAmr,
+  buildIdTokenPayload,
+  generateIdToken,${randomStringImport}
   buildAccessTokenAudience,
-  authenticateClient,
+  extractClientCredentials,
+  validateClientAuthMethod,
+  verifyClientSecret,
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
   selectSigningKeyByAlg,
@@ -2116,6 +2361,7 @@ import {
   type AcrResolver,
   type SigningKey,
   type TokenRequestParams,
+  type ValidatedTokenRequest,
 } from '${corePkg}';
 import {
   tokenClientResolver as defaultTokenClientResolver,
@@ -2210,19 +2456,43 @@ tokenApp.post('/', async (c) => {
 ${refreshResolverConst}    const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
     const accessTokenStore = c.get('accessTokenStore') ?? defaultAccessTokenStore;
 ${refreshStoreConst}
-    // OAuth 2.1 Section 2.3 / OIDC Core 1.0 Section 9: client_secret_basic / client_secret_post
-    const authenticatedClientId = await authenticateClient({
+    // --- Client authentication pipeline -------------------------------------
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
+    // Each step below is an independent core function, called in the same order
+    // as core's authenticateClient(). Replace verifyClientSecret with your own
+    // assertion check (e.g. private_key_jwt) without touching the rest.
+
+    // Read the presented credentials and which method was actually used.
+    const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
-      clientResolver: tokenClientResolver,
     });
 
-    const validatedRequest = await validateTokenRequest({
-      params,
-      clientResolver: tokenClientResolver,
-      authCodeResolver: authorizationCodeResolver,
-      authenticatedClientId,
-${validateTokenGrantOptions}    });
+    // RFC 6749 §5.2: the presented client_id must resolve to a registered client.
+    const tokenClient = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+
+    // OIDC Core 1.0 §9: the method used must match the registered
+    // token_endpoint_auth_method (blocks auth method downgrade / public-client mixups).
+    validateClientAuthMethod(tokenClient, presentedCredentials);
+
+    // OAuth 2.1 §7.4.1: constant-time client_secret comparison.
+    await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
+
+    const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- Token request validation pipeline --------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's validateTokenRequest(). Delete a call to drop that validation,
+    // or insert your own logic between steps.
+
+${grantTypeSupportedStep}
+    // RFC 6749 §5.2: per-client grant_type authorization (unauthorized_client).
+    validateClientGrantType(tokenClient, grantType);
+
+${grantValidationStep}
 
     const config = c.get('config');
     const privateKey = c.get('privateKey');
@@ -2324,38 +2594,96 @@ ${validateTokenGrantOptions}    });
     const directAcr = validatedRequest.grantType === 'refresh_token' ? validatedRequest.acr : undefined;
     const directAmr = validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : undefined;
 
-${grantHasOfflineAccessBlock}    ${tokenResponseDestructure}
+${grantHasOfflineAccessBlock}    // --- Token response pipeline --------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's generateTokenResponse(). Add your own ID Token claims by editing
+    // idTokenPayload before it is signed, or swap in another issuer.
+
+    // One timestamp for the whole response so the issued tokens and the stored
+    // token metadata agree on iat / exp.
+    const issuedAt = Math.floor(Date.now() / 1000);
+
+    // RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id.
+    // Add access token claims here before the payload is signed.
+    const accessTokenPayload = buildAccessTokenPayload({
       issuer: config.issuer,
       subject,
       clientId: validatedRequest.clientId,
       scope: validatedRequest.scope,
-      privateKey,
-      keyId,
-      idTokenPrivateKey,
-      idTokenKeyId,
-      accessTokenExpiresIn: config.accessTokenExpiresIn,
-      idTokenExpiresIn: config.idTokenExpiresIn,
-      nonce,
-      authTime,
       audience: effectiveAudience,
-${issueRefreshTokenOption}      accessTokenIssuer,
-      // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
-      // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / nonce / acr / amr / azp で再発行する。
-      issueIdToken: validatedRequest.scope.includes('openid'),
-      acrResolver: validatedRequest.grantType === 'authorization_code' ? acrResolver : undefined,
-      acr: directAcr,
-      amr: directAmr,
-      // OIDC Core 1.0 §3.1.2.1: forward the requested acr_values so the AcrResolver can
-      // honor them. refresh_token grant preserves the stored acr / amr instead (§12.1),
-      // so requestedAcrValues is only passed on the authorization_code grant.
-      requestedAcrValues:
-        validatedRequest.grantType === 'authorization_code' ? validatedRequest.acrValues : undefined,
-      // OIDC Core 1.0 §5.5: forward the parsed claims request so the ID Token can
-      // satisfy id_token member requests (e.g. acr.values).
-      claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
+      expiresIn: config.accessTokenExpiresIn,
+      issuedAt,
     });
 
-    const issuedAt = Math.floor(Date.now() / 1000);
+    // JWT or opaque, chosen above from config.accessTokenFormat.
+    const accessToken = await accessTokenIssuer.issue({
+      payload: accessTokenPayload,
+      privateKey,
+      keyId,
+    });
+
+    // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
+    // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / acr / amr / azp で再発行する。
+    // （§12.2 は nonce を再発行 ID Token の保持クレームに挙げないため nonce は refresh では undefined）
+    let idToken: string | undefined;
+    let resolvedAcr: string | undefined = undefined;
+    let resolvedAmr: string[] | undefined = undefined;
+    if (validatedRequest.scope.includes('openid')) {
+      // OIDC Core 1.0 §3.1.3.6: at_hash binds the ID Token to this access token.
+      // The hash function follows the ID Token signing alg.
+      const atHash = await computeAtHash(accessToken, idTokenPrivateKey);
+
+      // T-015: acr / amr resolution.
+      // - authorization_code: ask the host app's AcrResolver (acr_values / claims
+      //   are forwarded so it can honor the request).
+      // - refresh_token: pass the stored acr / amr directly so OIDC Core 1.0 §12.1
+      //   "preserve initial auth context" holds; the resolver is bypassed.
+      ({ acr: resolvedAcr, amr: resolvedAmr } = await resolveAcrAmr({
+        subject,
+        clientId: validatedRequest.clientId,
+        acr: directAcr,
+        amr: directAmr,
+        acrResolver: validatedRequest.grantType === 'authorization_code' ? acrResolver : undefined,
+        requestedAcrValues:
+          validatedRequest.grantType === 'authorization_code' ? validatedRequest.acrValues : undefined,
+        // OIDC Core 1.0 §5.5: the parsed claims request lets the resolver satisfy
+        // id_token member requests (e.g. acr.values).
+        claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
+      }));
+
+      const idTokenPayload = buildIdTokenPayload({
+        issuer: config.issuer,
+        subject,
+        clientId: validatedRequest.clientId,
+        scope: validatedRequest.scope,
+        expiresIn: config.idTokenExpiresIn,
+        issuedAt,
+        atHash,
+        nonce,
+        authTime,
+        acr: resolvedAcr,
+        amr: resolvedAmr,
+      });
+
+      // Add your own ID Token claims here, e.g.:
+      //   idTokenPayload.tenant_id = await lookupTenant(subject);
+
+      idToken = await generateIdToken({
+        payload: idTokenPayload,
+        privateKey: idTokenPrivateKey,
+        keyId: idTokenKeyId,
+      });
+    }
+
+    // OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1: the token response body.
+    const tokenResponse = {
+      access_token: accessToken,
+      token_type: 'Bearer' as const,
+      expires_in: config.accessTokenExpiresIn,
+      id_token: idToken,
+      scope: validatedRequest.scope.join(' '),
+      refresh_token: ${refreshTokenValueExpression},
+    };
 
     // Store access token info for UserInfo / Introspection / Revocation endpoints.
     // iat / nbf / audience / issuer are kept so RFC 7662 introspection can echo them.
@@ -2410,7 +2738,13 @@ ${refreshTokenPersistenceBlock}    c.header('Cache-Control', 'no-store');
 export function userinfoRouteTemplate(corePkg: string): string {
   return `import { Hono } from 'hono';
 import {
-  handleUserInfoRequest,
+  resolveUserInfoAccessToken,
+  validateUserInfoTokenExpiration,
+  validateUserInfoScope,
+  validateUserInfoAudience,
+  resolveUserInfoClaims,
+  filterClaimsByScope,
+  applyRequestedClaims,
   generateUserInfoJwt,
   selectSigningKeyByAlg,
   UserInfoError,
@@ -2515,24 +2849,40 @@ const handler = async (c: any) => {
       c.get('userClaimsResolver') ?? defaultUserClaimsResolver;
     const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
-    // Resolve the token first so the stored claims parameter (OIDC Core 1.0 §5.5)
-    // can be forwarded to handleUserInfoRequest; reused below for the client lookup.
-    const tokenInfo = await accessTokenResolver.findAccessToken(accessToken);
+    // --- UserInfo request pipeline ------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's handleUserInfoRequest(). Delete a call to drop that validation,
+    // or insert your own logic between steps. Every step throws UserInfoError,
+    // which the catch block below renders as an RFC 6750 Bearer challenge.
 
-    const response = await handleUserInfoRequest({
-      accessToken,
-      accessTokenResolver,
-      userClaimsResolver,
-      claimsParameter: tokenInfo?.claims,
-      // RFC 9068 §4: validate that this UserInfo endpoint is in the access token's aud.
-      // The token endpoint always stores the UserInfo endpoint URL in aud (buildAccessTokenAudience),
-      // so passing it here turns audience validation on by default for both JWT and opaque tokens.
-      expectedAudience: \`\${c.get('config').issuer}/userinfo\`,
-    });
+    // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
+    const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
 
-    const client = tokenInfo
-      ? ((await clientResolver.findClient(tokenInfo.clientId)) as RegisteredClient | null)
-      : null;
+    // RFC 6750 §3.1: an expired access token is invalid_token.
+    validateUserInfoTokenExpiration(tokenInfo);
+
+    // OIDC Core 1.0 §5.3.1: the token must carry the openid scope (insufficient_scope).
+    validateUserInfoScope(tokenInfo);
+
+    // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
+    // The token endpoint always stores the UserInfo endpoint URL in aud
+    // (buildAccessTokenAudience), so audience validation is on by default for
+    // both JWT and opaque tokens. Pass undefined to turn it off.
+    validateUserInfoAudience(tokenInfo, \`\${c.get('config').issuer}/userinfo\`);
+
+    // Load every claim the OP knows about the token's subject.
+    const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
+
+    // OIDC Core 1.0 §5.4: keep only the claims the granted scopes allow.
+    const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
+
+    // OIDC Core 1.0 §5.5: overlay the individually requested claims that the
+    // token endpoint stored with this access token (claims.userinfo members).
+    const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
+
+    const client = (await clientResolver.findClient(
+      tokenInfo.clientId,
+    )) as RegisteredClient | null;
 
     const requestedUserinfoAlg = client?.userinfoSignedResponseAlg;
     if (requestedUserinfoAlg) {
@@ -3462,10 +3812,19 @@ async function resolveProviderStores(
 export function introspectionRouteTemplate(corePkg: string): string {
   return `import { Hono } from 'hono';
 import {
-  authenticateClient,
-  handleIntrospectionRequest,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  validateClientAuthMethod,
+  verifyClientSecret,
+  requireIntrospectionToken,
+  requireIntrospectionClient,
+  resolveIntrospectionToken,
+  isIntrospectionTokenActive,
+  buildIntrospectionResponse,
+  INACTIVE_INTROSPECTION_RESPONSE,
   IntrospectionError,
   TokenError,
+  type IntrospectionResponse,
 } from '${corePkg}';
 import {
   tokenClientResolver as defaultTokenClientResolver,
@@ -3513,22 +3872,51 @@ introspectionApp.post('/', async (c) => {
     const refreshTokenResolver =
       c.get('introspectionRefreshTokenResolver') ?? defaultRefreshResolver;
 
-    const authenticatedClientId = await authenticateClient({
+    // --- Client authentication pipeline -------------------------------------
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
+    // authenticateClient(). RFC 7662 §2.1 requires the caller to authenticate.
+    const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
-      clientResolver: tokenClientResolver,
+    });
+    const introspectingClient = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(introspectingClient, presentedCredentials);
+    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+    const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- Introspection pipeline ---------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's handleIntrospectionRequest(). Delete a call to drop that step,
+    // or insert your own logic between steps.
+
+    // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
+    const token = requireIntrospectionToken({
+      token: typeof params.token === 'string' ? params.token : undefined,
     });
 
-    const response = await handleIntrospectionRequest({
-      params: {
-        token: typeof params.token === 'string' ? params.token : undefined,
-        token_type_hint:
-          typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
-      },
-      authenticatedClientId,
+    // RFC 7662 §2.1: the caller must be an authenticated client (invalid_client).
+    requireIntrospectionClient(authenticatedClientId);
+
+    // RFC 7662 §2.1: token_type_hint only reorders the lookup — the other token
+    // type is still searched when the hint misses.
+    const resolved = await resolveIntrospectionToken({
+      token,
+      tokenTypeHint:
+        typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
       accessTokenResolver,
       refreshTokenResolver,
     });
+
+    // RFC 7662 §2.2: an unknown, expired, not-yet-valid or rotated token is
+    // reported as { active: false } with no other member, so the caller cannot
+    // distinguish "never existed" from "no longer valid".
+    let response: IntrospectionResponse = INACTIVE_INTROSPECTION_RESPONSE;
+    if (resolved !== null && isIntrospectionTokenActive(resolved)) {
+      response = buildIntrospectionResponse(resolved);
+    }
 
     return c.json(response);
   } catch (error) {
@@ -3557,8 +3945,16 @@ introspectionApp.post('/', async (c) => {
 export function revocationRouteTemplate(corePkg: string): string {
   return `import { Hono } from 'hono';
 import {
-  authenticateClient,
-  handleRevocationRequest,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  validateClientAuthMethod,
+  verifyClientSecret,
+  requireRevocationToken,
+  requireRevocationClient,
+  resolveRevocationTarget,
+  validateRevocationTokenClient,
+  revokeResolvedToken,
+  revokeGrantAccessTokens,
   RevocationError,
   TokenError,
 } from '${corePkg}';
@@ -3610,21 +4006,57 @@ revocationApp.post('/', async (c) => {
     const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
     const resolvers = c.get('revocationResolvers') ?? defaultRevocationResolvers;
 
-    const authenticatedClientId = await authenticateClient({
+    // --- Client authentication pipeline -------------------------------------
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
+    // authenticateClient(). Public clients registered with
+    // token_endpoint_auth_method=none pass with client_id only (RFC 7009 §2.1).
+    const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
-      clientResolver: tokenClientResolver,
+    });
+    const revokingClient = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(revokingClient, presentedCredentials);
+    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+    const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- Revocation pipeline ------------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's handleRevocationRequest(). Delete a call to drop that step,
+    // or insert your own logic between steps.
+
+    // RFC 7009 §2.1: token is REQUIRED (invalid_request when absent).
+    const token = requireRevocationToken({
+      token: typeof params.token === 'string' ? params.token : undefined,
     });
 
-    await handleRevocationRequest({
-      params: {
-        token: typeof params.token === 'string' ? params.token : undefined,
-        token_type_hint:
-          typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
-      },
-      authenticatedClientId,
+    // RFC 7009 §2.1: the caller must be an identified client (invalid_client).
+    requireRevocationClient(authenticatedClientId);
+
+    // RFC 7009 §2.1: token_type_hint only reorders the lookup — the other token
+    // type is still searched when the hint misses.
+    const resolved = await resolveRevocationTarget({
+      token,
+      tokenTypeHint:
+        typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
       resolvers,
     });
+
+    // RFC 7009 §2.2: an unknown token is still a success, so the client cannot
+    // probe which token values exist.
+    if (resolved !== null) {
+      // RFC 7009 §2.1: a token issued to another client is refused (invalid_grant).
+      validateRevocationTokenClient(resolved, authenticatedClientId);
+
+      await revokeResolvedToken(token, resolved, resolvers);
+
+      // RFC 7009 §2.1 SHOULD: revoking a refresh token also revokes the access
+      // tokens of the same grant. Delete this call to revoke only the presented
+      // token.
+      await revokeGrantAccessTokens(resolved, resolvers);
+    }
 
     // RFC 7009 Section 2.2: empty body, 200 OK
     return c.body(null, 200);
@@ -5794,8 +6226,8 @@ ${featureDisabledDiscoveryConformanceTests(features)}  });
       });
     });
 
-    // RFC 9068 §4: the generated OP passes expectedAudience (its UserInfo endpoint URL) to
-    // handleUserInfoRequest, so aud validation is on by default for both JWT and opaque
+    // RFC 9068 §4: the generated OP passes its UserInfo endpoint URL to
+    // validateUserInfoAudience, so aud validation is on by default for both JWT and opaque
     // tokens. Flow-issued tokens always carry the UserInfo endpoint in aud, so these inject
     // tokens with an explicit aud to exercise the accept/reject wiring end-to-end.
     describe('Access Token Audience Validation (RFC 9068 §4)', () => {

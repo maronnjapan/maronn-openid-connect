@@ -5,6 +5,8 @@ description: Generate OpenID Provider code with the maronn-oidc CLI.
 
 `@maronn-oidc/cli` は、Authorization Code Flow（OAuth 2.1 / OIDC Core 1.0 準拠）を実装した OP コード一式を生成する CLI ツールです。生成コードは `@maronn-oidc/core` のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら仕様を検証します。
 
+生成される各エンドポイント（`routes/authorize.ts` / `token.ts` / `userinfo.ts` / `introspection.ts` / `revocation.ts`）は、core の合成関数を1回呼ぶ形ではなく、クライアント認証・クライアント解決・期限・redirect URI・PKCE・scope・再利用検知・ID Token クレーム構築などの機能単位ステップを順に呼び出す形で生成されます。必要なステップを消す、独自検証を間に足す、ID Token に独自クレームを足す、といった PoC 向けの改修を生成コード上で直接行えます。
+
 ## Commands
 
 ```bash

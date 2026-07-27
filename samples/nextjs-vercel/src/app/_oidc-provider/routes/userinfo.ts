@@ -1,6 +1,12 @@
 import { WebRouter } from '../web-router';
 import {
-  handleUserInfoRequest,
+  resolveUserInfoAccessToken,
+  validateUserInfoTokenExpiration,
+  validateUserInfoScope,
+  validateUserInfoAudience,
+  resolveUserInfoClaims,
+  filterClaimsByScope,
+  applyRequestedClaims,
   generateUserInfoJwt,
   selectSigningKeyByAlg,
   UserInfoError,
@@ -105,24 +111,40 @@ const handler = async (c: any) => {
       c.get('userClaimsResolver') ?? defaultUserClaimsResolver;
     const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
-    // Resolve the token first so the stored claims parameter (OIDC Core 1.0 §5.5)
-    // can be forwarded to handleUserInfoRequest; reused below for the client lookup.
-    const tokenInfo = await accessTokenResolver.findAccessToken(accessToken);
+    // --- UserInfo request pipeline ------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's handleUserInfoRequest(). Delete a call to drop that validation,
+    // or insert your own logic between steps. Every step throws UserInfoError,
+    // which the catch block below renders as an RFC 6750 Bearer challenge.
 
-    const response = await handleUserInfoRequest({
-      accessToken,
-      accessTokenResolver,
-      userClaimsResolver,
-      claimsParameter: tokenInfo?.claims,
-      // RFC 9068 §4: validate that this UserInfo endpoint is in the access token's aud.
-      // The token endpoint always stores the UserInfo endpoint URL in aud (buildAccessTokenAudience),
-      // so passing it here turns audience validation on by default for both JWT and opaque tokens.
-      expectedAudience: `${c.get('config').issuer}/userinfo`,
-    });
+    // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
+    const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
 
-    const client = tokenInfo
-      ? ((await clientResolver.findClient(tokenInfo.clientId)) as RegisteredClient | null)
-      : null;
+    // RFC 6750 §3.1: an expired access token is invalid_token.
+    validateUserInfoTokenExpiration(tokenInfo);
+
+    // OIDC Core 1.0 §5.3.1: the token must carry the openid scope (insufficient_scope).
+    validateUserInfoScope(tokenInfo);
+
+    // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
+    // The token endpoint always stores the UserInfo endpoint URL in aud
+    // (buildAccessTokenAudience), so audience validation is on by default for
+    // both JWT and opaque tokens. Pass undefined to turn it off.
+    validateUserInfoAudience(tokenInfo, `${c.get('config').issuer}/userinfo`);
+
+    // Load every claim the OP knows about the token's subject.
+    const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
+
+    // OIDC Core 1.0 §5.4: keep only the claims the granted scopes allow.
+    const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
+
+    // OIDC Core 1.0 §5.5: overlay the individually requested claims that the
+    // token endpoint stored with this access token (claims.userinfo members).
+    const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
+
+    const client = (await clientResolver.findClient(
+      tokenInfo.clientId,
+    )) as RegisteredClient | null;
 
     const requestedUserinfoAlg = client?.userinfoSignedResponseAlg;
     if (requestedUserinfoAlg) {

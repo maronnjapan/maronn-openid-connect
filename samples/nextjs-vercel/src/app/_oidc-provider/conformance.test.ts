@@ -436,8 +436,8 @@ describe('generated provider HTTP conformance', () => {
       });
     });
 
-    // RFC 9068 §4: the generated OP passes expectedAudience (its UserInfo endpoint URL) to
-    // handleUserInfoRequest, so aud validation is on by default for both JWT and opaque
+    // RFC 9068 §4: the generated OP passes its UserInfo endpoint URL to
+    // validateUserInfoAudience, so aud validation is on by default for both JWT and opaque
     // tokens. Flow-issued tokens always carry the UserInfo endpoint in aud, so these inject
     // tokens with an explicit aud to exercise the accept/reject wiring end-to-end.
     describe('Access Token Audience Validation (RFC 9068 §4)', () => {

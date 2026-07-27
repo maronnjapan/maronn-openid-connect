@@ -801,6 +801,10 @@ class SqliteJsonStoreBackend implements JsonStoreBackend {
       mkdirSync(dirname(databasePath), { recursive: true });
     }
     this.database = new DatabaseSync(databasePath);
+    // Concurrent processes opening the same file (e.g. Next.js build workers
+    // collecting page data) race on the initial schema write; without a busy
+    // timeout SQLite fails fast with "database is locked" instead of waiting.
+    this.database.exec('PRAGMA busy_timeout = 5000');
     this.database.exec('PRAGMA journal_mode = WAL');
     this.database.exec(
       'CREATE TABLE IF NOT EXISTS oidc_store (' +

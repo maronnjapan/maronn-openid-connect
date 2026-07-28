@@ -25,7 +25,7 @@ PAR はこれを「認可リクエストの内容を先にバックチャネル�
 - **RFC 6749**: クライアント認証規則（PAR エンドポイントは token endpoint と同じ規則を使う）
 - **RFC 9101 (JAR)**: 認可リクエストを署名付き JWT にする仕様。PAR とは独立だが組み合わせ可能。本リポジトリの既存 `request-object` 機能は JAR の by value 版に相当する
 - **OIDC Core 1.0 §6.2**: `request_uri` パラメータの元々の定義（クライアントがホストする URL を OP がフェッチする方式）。PAR はこの「フェッチする」方式を「OP 自身が発行した URN を引く」方式に置き換えたもの
-- **FAPI 2.0 Security Profile / OAuth 2.0 Security BCP**: PAR を推奨・必須化している上位プロファイル。PAR の実用上の重要性はここから来ている
+- **FAPI 2.0 Security Profile**: PAR を必須化している上位プロファイル。PAR の実用上の重要性は主にここから来ている。なお OAuth 2.0 Security BCP（RFC 9700）は PAR を §4.1.3 で「クライアント認証と併用すれば認可リクエストの出所・完全性を検証できる手段」として挙げるのみで、一般的な使用推奨の規範文言はない（Review 2 で原文確認）
 
 ## 基礎概念
 
@@ -53,7 +53,7 @@ PAR はこれを「認可リクエストの内容を先にバックチャネル�
 ## 失敗フロー
 
 - **PAR 時点で不正**（redirect_uri 未登録、scope 不正など）: その場で 400 JSON。**ユーザーが画面を見る前に失敗が確定する**のが PAR の利点。リダイレクトは発生しない
-- **request_uri が期限切れ / 使用済み / 他クライアントの物**: 認可エンドポイントが `invalid_request_uri` を返す
+- **request_uri が期限切れ / 使用済み / 他クライアントの物 / 不存在**: 認可エンドポイントが `invalid_request_uri` を返す。この場合**リダイレクトは発生せず**、OP のエラーページ（または JSON）が表示される。信頼できる redirect_uri が確立していないためで、失敗種別も外部から区別できない固定応答にする（詳細は specification.md「エラー処理」）
 - **PAR を使わず直接 /authorize に来た**（PAR 強制モード時）: `invalid_request`
 
 ## セキュリティモデルと脅威対策
@@ -64,7 +64,7 @@ PAR の安全性は「参照値は推測不能・短命・単回使用・クラ�
 |---|---|
 | 参照値の推測 | 暗号論的乱数で生成（RFC 9126 §2.2 MUST）。core の `generateRandomString` を利用 |
 | 盗んだ request_uri のリプレイ | 単回使用（consume 時に削除）＋ 60 秒期限 |
-| 攻撃者クライアントが他人の request_uri を使う | authorize の client_id と pushed 時の client_id の一致検証 |
+| 攻撃者クライアントが他人の request_uri を使う | authorize の client_id と pushed 時の client_id の一致検証（RFC 9126 §2.2「request_uri MUST be bound to the client」の実現） |
 | 未認証者が偽リクエストを積む | PAR エンドポイントは token endpoint と同じクライアント認証を要求 |
 | SSRF | この実装は request_uri を**一切フェッチしない**（URN のみ）。OIDC Core §6.2 の URL 方式で問題になる SSRF が構造的に存在しない |
 
@@ -86,7 +86,7 @@ response_type=code&client_id=web-app&redirect_uri=https%3A%2F%2Fclient.example%2
 ```http
 HTTP/1.1 201 Created
 Content-Type: application/json
-Cache-Control: no-store
+Cache-Control: no-cache, no-store
 
 {
   "request_uri": "urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c",
@@ -137,7 +137,7 @@ GET /authorize?client_id=web-app&request_uri=urn%3Aietf%3Aparams%3Aoauth%3Areque
 
 1. **「PAR = リクエストの暗号化・署名」ではない**。内容保護はバックチャネル TLS によるもの。署名が欲しければ JAR（request-object）
 2. **PAR は認可レスポンスを保護しない**。code 横取り対策は引き続き PKCE
-3. **`request_uri` の単回使用は RFC 上は SHOULD** だが、本実装は MUST 運用（consume で強制）。ブラウザリロードで再送された場合は失敗するが、これは意図した挙動（RFC 9126 §2.2 が MAY で許す重複許容を採らない）
+3. **`request_uri` の単回使用は RFC 上は SHOULD** だが、本実装は MUST 運用（consume で強制）。ブラウザリロードで再送された場合は失敗するが、これは意図した挙動（RFC 9126 §4 が MAY で許す「UA リロード起因の重複許容」を採らない）
 4. **PAR エンドポイントのエラーはリダイレクトされない**。認可エンドポイントのエラー処理（redirect_uri へのエラーリダイレクト）とは別系統で、token endpoint 型の JSON エラー
 5. **public client も PAR を使える**。クライアント認証は token endpoint と同一規則なので、public client は client_id の提示のみ（RFC 9126 §2.1）。「PAR = confidential client 専用」ではない
 

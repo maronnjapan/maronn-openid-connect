@@ -43,7 +43,12 @@ OAuth/OIDC エンドポイントは、認証情報・トークン・コードを
 
 ## 4. 現在の実装確認
 
-- 失敗試行のカウント / レート制限 / アカウントロックは **実装されていない**（grep でレートリミッタ・カウンタの実装は見当たらない）。
+- 汎用のレート制限 / アカウントロックは **実装されていない**（grep でレートリミッタの実装は見当たらない）。
+  - ⚠️ **訂正**: ログイン失敗試行のカウント自体は `packages/core/src/auth-transaction.ts` の
+    `handleLoginFailure`（既定 5 回）として **実装されている**。ただしカウンタが認可トランザクション単位で、
+    攻撃者が認可エンドポイントを叩き直せばリセットできるため、総当たり対策として機能していない。
+    この個別欠陥は `study-material/done/login-attempt-throttling-scope-and-reset-bypass.md` と
+    `tasks/p2-login-attempt-throttling-subject-scope.md` で扱う。本ファイルは横断的な攻撃面の棚卸しに専念する。
 - client_secret の比較は `tasks/p0-client-secret-timing-safe-comparison.md` で改善予定（タイミング攻撃面）。
 - 認可コードのエントロピー: `packages/core/src/authorization-code.ts` で `generateRandomString` 経由。実装は十分なエントロピーを持つ（要確認: 32 文字以上）。
 - refresh_token のエントロピー: 同様に `generateRandomString` 経由。

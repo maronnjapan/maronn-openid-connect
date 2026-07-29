@@ -57,7 +57,7 @@ OAuth/OIDC エンドポイントは、認証情報・トークン・コードを
 ## 5. 現在の実装との差分
 
 - 🟡 **アプリ層レート制限が空白**: Cloudflare Workers のプラットフォーム機能（Rate Limiting / Turnstile）に委ねる方針自体は妥当だが、**ライブラリ側で「ここはレート制限すべき」推奨が明示されていない**。利用者が漏らすリスクがある。
-- 🟡 **エラー応答からの情報漏洩**: ログイン UI で「ユーザーが存在しない」と「パスワードが違う」の差異を返すと列挙攻撃を許す。CLI 生成テンプレ / sample がここを正しくマスクしているか未確認。
+- 🟢 **エラー応答からの情報漏洩（確認済み・問題なし）**: ログイン UI で「ユーザーが存在しない」と「パスワードが違う」の差異を返すと列挙攻撃を許す。生成コード `routes/login.ts` を確認したところ、いずれの場合も同一メッセージ（`Invalid credentials`）・同一 HTTP ステータスを返しており、メッセージ経由の列挙は成立しない。ただし将来パスワードをハッシュ検証に変更すると「未知ユーザーは速く失敗する」タイミング差が生まれるため、ダミー検証が必要になる。詳細は `study-material/end-user-authentication-contract-and-credential-handling.md` を参照。
 - 🟡 **`prompt=none` の悪用**: 攻撃者が複数 RP で `prompt=none` を試して「セッションが立っているか」を推測する。実装側で `prompt=none` 試行レートを抑える、もしくは `interaction_required` を一律で返すなどの推奨を出していない。
 - 🟢 **コード／トークンのエントロピー**: 主要 secret は CSPRNG 由来で十分（`crypto-utils.ts` の `generateRandomString`）。
 

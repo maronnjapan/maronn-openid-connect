@@ -6,6 +6,12 @@
 
 ## 1. このトピックで確認したいこと
 
+> **前提条件**: 本ファイルが扱うローテーション手順は「署名鍵が永続化されていること」を前提とする。
+> 現在のサンプル OP は起動ごとにエフェメラル鍵を生成しており、そもそもローテーションの対象になる
+> 安定した鍵が存在しない。この前段の論点は
+> `study-material/done/signing-key-persistence-and-instance-consistency.md`
+> （タスク: `tasks/p1-signing-key-persistence-in-samples.md`）で扱う。
+
 `SigningKeyProvider` / `createCachedSigningKeyProvider` / `assertHasRs256Key` / `selectSigningKeyByAlg` のコアは整っているが、
 **「実運用で署名鍵をどうローテーションするか」**の手順・タイミング・JWKS と Discovery の連動・古い `kid` のリタイア基準が、利用者に伝わる形で集約されていない。
 

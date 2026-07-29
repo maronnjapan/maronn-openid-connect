@@ -40,7 +40,7 @@ PAR はこれを「認可リクエストの内容を先にバックチャネル�
 | クライアント | tests/e2e/apps の E2E 専用クライアント（PAR 対応を追加する） |
 | 認可サーバー (OP) | `samples/*` の CLI 生成アプリ。PAR エンドポイントは `--enable par` 時のみ生成される |
 | PAR エンドポイント | 生成コード `oidc-provider/par.ts`（新規）。中身は `@maronn-oidc/experimental/par` のステップ関数 |
-| 認可エンドポイント | 既存の生成コード。先頭に「URN なら展開する」前段フックが 1 ブロック追加される |
+| 認可エンドポイント | 既存の生成コード。「URN なら展開する」前段フック（try 内先頭）と、解決失敗（`invalid_request_uri`）を非リダイレクトで描画する catch 分岐が追加される |
 | ストア | 利用者が差し替える `PushedAuthorizationRequestStore`。既存の認可コードストア等と同じ resolver/store 契約スタイル |
 
 ## 通常フロー

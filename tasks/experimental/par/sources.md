@@ -34,6 +34,11 @@
 | `tasks/T-019-dpop.md` | 既存タスクとの重複回避の確認（DPoP とは独立） | 2026-07-27 |
 | `packages/experimental/README.md` | experimental パッケージの現状（README のみ、package.json 未作成） | 2026-07-27 |
 | `CLAUDE.md` | テスト規約・conformance.test.ts の契約テスト方針・依存ポリシー | 2026-07-27 |
+| `packages/core/src/authorization-request.ts` (L21-42, L286-313) | `AuthorizationErrorCode` が closed な enum で `invalid_request_uri` を含まないこと（`PushedRequestUriError` を別クラスにし catch 分岐を追加する必要性の根拠）。`AuthorizationError` のコンストラクタが `sanitizeErrorDescription` を通すこと | 2026-07-29 |
+| `packages/cli/src/frameworks/hono/templates.ts` (L1725-1727, L2034-2092) | `const params = rawParams;` が `try` ブロックの**前**にあること（前段フックを try 内へ移す必要性の根拠）。catch 節が `AuthorizationError` のみ分岐し、他の例外は 500 `server_error` に落ちること。`const params = rawParams;` は L2450（token endpoint）にもあるが authorize ハンドラ内では一意であること | 2026-07-29 |
+| `packages/cli/src/frameworks/hono/templates.ts` (L1608-1613) | 生成コードのストアが `../store.js` からの import ＋ `c.get(...) ?? default` パターンで route 間共有されること（par.ts と authorize 間の parStore 共有パターンの実在確認） | 2026-07-29 |
+| `packages/cli/src/index.ts` (L8-12, L185) | `INSTALL_COMMANDS` の構造（フレームワーク別の install 案内に `@maronn-oidc/experimental` を追加する対象箇所） | 2026-07-29 |
+| `packages/cli/src/features.ts` (L63-105) | `resolveFeatures` が未知の機能名を throw すること（experimental カテゴリを追加しない限り `--enable par` はエラーになる = 現行 CLI との非互換が生じない前提の再確認） | 2026-07-29 |
 
 ## 二次資料
 
@@ -46,3 +51,5 @@
 - **認可エンドポイント側のエラーコード（設計判断）**: RFC 9126 §4 は期限切れ request_uri の拒否を MUST とするが、返すエラーコードを規定しない。本仕様は OIDC Core §3.1.2.6 の `invalid_request_uri` を採用する（設計判断）。
 - **解決失敗の非リダイレクト（設計判断）**: OIDC Core §3.1.2.6 は `invalid_request_uri` をリダイレクト返却可能なコードとして定義するが、本仕様は解決失敗を一律非リダイレクトとする。根拠は RFC 6749 §4.1.2.1 の「Redirection URI を検証できない場合 MUST NOT redirect」（不存在・不一致ケース）と、失敗種別によるオラクル化回避（期限切れケース）。意図的な逸脱として specification.md に明記した。
 - **Cache-Control（Review 2 修正）**: RFC 9126 §2.2 の応答例は `Cache-Control: no-cache, no-store`。仕様書初版の `no-store` のみは誤りだったため修正した。
+- **`invalid_request_uri` と core enum（Review 3 で確定）**: core の `AuthorizationErrorCode` は closed な enum で `invalid_request_uri` を含まない。core 無変更の制約下では `AuthorizationError` に相乗りできないため、`PushedRequestUriError` を専用クラスとし、生成コードの authorize catch 節に専用分岐を追加する（設計判断の帰結。2026-07-29 確認）。
+- **前段フックの位置（Review 3 修正）**: 挿入点 `const params = rawParams;` はハンドラの `try` ブロックより前にあるため、Review 2 時点のスケッチ（この位置で解決処理を実行）では `PushedRequestUriError` が catch に届かず未処理例外（500）になる欠陥があった。解決処理を try 内先頭へ移し、`params` を `let` 宣言＋再代入する形へ修正した（2026-07-29）。

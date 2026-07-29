@@ -62,11 +62,29 @@
 
 ## Review 3
 
-（未実施。実施条件: 2026-07-29 以降）
-
-Review 3（実装着手可否）で必ず確認する引き継ぎ事項:
-1. U5 の最終判断: `requirePushedAuthorizationRequests` を初期リリースに含めるか。含めない場合は `assertPushedRequestUsed` を公開 API から落とし、仕様書の該当箇所（CLI オプション案・バリデーション 2-5・結合テスト項目・discovery の `require_pushed_authorization_requests` マージ）を整理する
-2. U2 の受け入れ: `packages/experimental` のビルド・テスト基盤作成が実装 Routine の初手として仕様書に明記されているか（追加調査なしで着手できるかの観点で最終確認）
-3. 完了条件 1〜7 の客観性・検証手順の一貫性（API 案・CLI 案・テスト計画・Docs・Changeset の相互整合）
-4. 実装順序（experimental パッケージ → CLI テンプレート → conformance → E2E）の妥当性
-5. Experimental であることの利用者への明示（生成コード冒頭コメント・README・docs）が仕様に揃っているか
+- **日付**: 2026-07-29
+- **観点**: 実装着手可否（追加調査なしで着手できるか / 受け入れ条件の客観性 / 対象ファイルと変更範囲 / API・CLI・テスト・Docs・Changeset の一貫性 / 実装順序と検証方法 / Experimental であることの利用者への明示）。Review 2 の引き継ぎ 5 項目から開始
+- **確認資料**:
+  - `packages/cli/src/features.ts`（`resolveFeatures` 全体を再読。未知機能名 throw・デフォルト全有効の現状を確認）
+  - `packages/cli/src/frameworks/hono/templates.ts`（L1690-1735: authorize ハンドラの `const params = rawParams;` と `try {` の位置関係 / L2030-2095: catch 節の分岐構造 / L1608-1613: store の import 共有パターン / L2450 が token endpoint 側の別ハンドラであることの確認）
+  - `packages/core/src/authorization-request.ts`（L21-76: `AuthorizationErrorCode` enum の全メンバー / L286-313: `AuthorizationError` コンストラクタ）
+  - `packages/core/src/index.ts`（仕様書が依存する core API 9 件の公開の再確認。`sanitizeErrorDescription` 含む）
+  - `packages/cli/src/index.ts`（L8-12, L185: `INSTALL_COMMANDS`）
+  - `packages/experimental/README.md` / `.changeset/` / `docs/library-document/` の現状
+- **指摘**:
+  1. **[実装着手不可能・修正] 前段フックスケッチの位置欠陥**: 挿入点 `const params = rawParams;`（L1725）はハンドラの `try` ブロック（L1727）より**前**にある。Review 2 修正後のスケッチのままこの位置で `resolvePushedRequestUri` を実行すると、`PushedRequestUriError` が catch 節に届かずフレームワークの未処理例外（500）になり、仕様書自身のエラー処理要件（既存の非リダイレクト経路で描画）と矛盾する。解決処理を try 内先頭へ移し、`params` を par 有効時のみ `let` 宣言＋再代入する形にスケッチを修正した
+  2. **[実装着手不可能・修正] catch 節の `PushedRequestUriError` 分岐が未規定**: 既存 catch は `instanceof AuthorizationError` のみ分岐し、それ以外は 500 `server_error` に落ちる。さらに core の `AuthorizationErrorCode` は closed な enum で `invalid_request_uri` を含まないため、core 無変更の制約下では `AuthorizationError` への相乗りが型的に不可能（別クラス＋専用 catch 分岐が構造的に必須）。仕様書に必須要件 3 点（try 内実行 / catch 分岐追加 / 条件付き補間によるバイト同一維持）として明文化した
+  3. **[U5 解決] `requirePushedAuthorizationRequests` は初期リリースに含める**: ユースケース「PAR 必須時に既存クライアントがどう壊れるか確認」が検証価値の中核で、追加実装はガード 1 関数＋設定値＋discovery 1 フィールド＋結合テスト 1 件と小さい。`assertPushedRequestUsed` を公開 API に残し、認可エンドポイントのバリデーション順序をガード先頭（2-1）へ並べ替え、結合テストの条件付き文言を削除した
+  4. **[U2 解決] 実装順序セクションを新設**: 基盤作成（package.json / tsconfig / vitest）を実装 Routine の初手（ステップ 1）として明記し、全 7 ステップを完了条件の番号と対応付けた
+  5. **[一貫性・修正] PAR 設定値の置き場所が未規定だった**: `expiresInSeconds` / `requirePushedAuthorizationRequests` を生成コード `par.ts` の `parConfig` 定数として export し authorize 前段フックが import する、と確定
+  6. **[テスト計画・追加] catch 分岐の検証テスト**: 解決失敗が非リダイレクト（`Location` ヘッダなしの JSON 400）で返ることを固定検証する結合テスト項目を追加（指摘 1・2 の回帰防止）
+  7. **[確認のみ・問題なし]** 受け入れ条件の客観性（完了条件 3 のバイト同一 diff・完了条件 1〜7 とテスト計画・Changeset・Docs の対応）/ 依存 core API 9 件の公開状況（`sanitizeErrorDescription` を依存一覧に追記）/ store 共有パターン（`../store.js` import ＋ `c.get() ?? default` の既存慣行に parStore が適合）/ `INSTALL_COMMANDS` の変更対象箇所の特定 / Experimental の明示（生成コード冒頭コメント・README・docs ガイドの 3 点が仕様に揃っている）/ 実装順序の妥当性（experimental 基盤 → 単体 → CLI → テンプレート → バイト同一確認 → E2E → docs/changeset）
+- **修正**（同日反映）:
+  - specification.md: 前段フックスケッチを try 内実行＋`let params` 再代入形へ全面改訂し必須要件 3 点を明文化 / `PushedRequestUriError` 別クラスの根拠（enum closed）と catch 分岐要件を公開 API 案に追記 / `assertPushedRequestUsed` の挙動と呼び出し条件を明記 / バリデーション順序を並べ替え（require ガードを 2-1 へ）/ PAR 設定値の置き場所を CLI オプション案に追記 / 結合テスト 2 項目を更新・追加 / 「実装順序」セクション新設 / U2・U5 を解決済みへ移動（未解決事項なし）
+  - sources.md: リポジトリ内参照 5 件追加（enum・catch 節・store 共有・INSTALL_COMMANDS・resolveFeatures）、「記録」に enum 制約と前段フック位置修正の 2 項を追加
+  - understanding-guide.md: 登場人物表の認可エンドポイント行を catch 分岐込みの記述へ更新
+- **残リスク**:
+  - 生成コードの実挙動（条件付き補間後のテンプレート出力・バイト同一性）は実装時の完了条件 2・3 でのみ最終確認できる（仕様段階の限界として既知）
+  - `isAuthorizationRequestParams` 再ナローイングの型整合は実装時に TypeScript コンパイルで機械的に検証される
+- **判定**: **Pass with changes**（指摘 1〜6 を同日中に修正反映済み。指摘 1・2 は放置すれば実装初日に 500 エラーとして露見する着手阻害要因だったが、修正後は追加調査なしで着手可能。未解決事項ゼロ・セキュリティ未解決ゼロ・受け入れ条件は客観的に検証可能。Review 3 の全確認項目を満たしたため `status: Approved` / `implementation_ready: true` へ更新する）
+- **次回可能日**: —（3 回のレビューを完了。次は実装 Routine が「実装順序」ステップ 1 から着手する）

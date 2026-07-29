@@ -212,7 +212,11 @@ export class PushedRequestUriError extends Error {
 }
 ```
 
-依存する core API（すべて `packages/core/src/index.ts` で公開済みであることを確認済み）: `authenticateClient` / `extractClientCredentials` / `validateAuthorizationRequest` / `generateRandomString` / `ClientResolver` / `ValidateAuthorizationRequestOptions` / `AuthorizationError` / `AuthorizationErrorCode`。
+`PushedRequestUriError` を core の `AuthorizationError` と別クラスにするのは意図的な設計である。core の `AuthorizationErrorCode` は closed な enum（`packages/core/src/authorization-request.ts:21-42`）で `invalid_request_uri` を含まないため、core 無変更の制約下では `AuthorizationError` で `invalid_request_uri` を表現できない（Review 3 で確認）。この帰結として、生成コードの authorize catch 節には `PushedRequestUriError` 用の分岐が必要になる（「CLI生成コードからの利用方法」の必須要件 2 を参照）。`error_description` は core の `sanitizeErrorDescription` を通す（`AuthorizationError` と同じ扱い）。
+
+`assertPushedRequestUsed(params)` は、`params.request_uri` が URN 前置詞に一致しない場合（欠落・URL 形式を含む）に `PushedRequestUriError`（code: `invalid_request`、非リダイレクト）を投げるガードであり、`requirePushedAuthorizationRequests: true` のときのみ生成コードから呼ばれる（Review 3 で初期リリースに含めると決定。旧 U5）。
+
+依存する core API（すべて `packages/core/src/index.ts` で公開済みであることを確認済み）: `authenticateClient` / `extractClientCredentials` / `validateAuthorizationRequest` / `generateRandomString` / `sanitizeErrorDescription` / `ClientResolver` / `ValidateAuthorizationRequestOptions` / `AuthorizationError` / `AuthorizationErrorCode`。
 
 ## CLIオプション案
 
@@ -229,8 +233,8 @@ export const EXPERIMENTAL_FEATURES = ['par'] as const;
 - ヘルプ表示に `Experimental features (disabled by default): par` の行を追加
 - `OidcFeatureConfig` に `par: boolean`（デフォルト `false`）を追加
 - `par: true` のとき生成コードに以下を追加:
-  - `oidc-provider/par.ts`: PAR エンドポイントのルート（`/par`）
-  - authorize ルート先頭に `resolvePushedRequestUri` の前段フック
+  - `oidc-provider/par.ts`: PAR エンドポイントのルート（`/par`）。PAR 設定値（`expiresInSeconds` / `requirePushedAuthorizationRequests`）はここで定数（`parConfig`）として export し、authorize 前段フックが import して参照する
+  - authorize ルートに前段フック（`assertPushedRequestUsed` ＋ `resolvePushedRequestUri`。`try` ブロック内先頭）と、catch 節の `PushedRequestUriError` 分岐
   - discovery レスポンスへ `pushed_authorization_request_endpoint` と（強制時のみ）`require_pushed_authorization_requests` をマージ（core の `buildProviderMetadata` の戻り値へのスプレッド追加。core 変更なし）
   - ストア契約の in-memory 実装（他ストアと同様、利用者が差し替える前提のサンプル実装）
   - `INSTALL_COMMANDS` 相当の案内に `@maronn-oidc/experimental` を追加
@@ -242,7 +246,7 @@ export const EXPERIMENTAL_FEATURES = ['par'] as const;
 | 設定 | デフォルト | 説明 |
 |---|---|---|
 | `expiresInSeconds` | `60` | request_uri の有効期間。RFC 9126 §2.2 の推奨レンジ（5〜600秒）内に制限し、範囲外は起動時エラー |
-| `requirePushedAuthorizationRequests` | `false` | true のとき PAR を経由しない認可リクエストを `invalid_request` で拒否（RFC 9126 §5） |
+| `requirePushedAuthorizationRequests` | `false` | true のとき PAR を経由しない認可リクエストを `invalid_request` で拒否（RFC 9126 §5）。初期リリースに含める（Review 3 決定。旧 U5） |
 | URN 前置詞 | `urn:ietf:params:oauth:request_uri:` 固定 | 変更不可（RFC 9126 §2.2 推奨形式） |
 
 ## バリデーション
@@ -254,12 +258,12 @@ export const EXPERIMENTAL_FEATURES = ['par'] as const;
    4. `request` パラメータ存在 → 400 `invalid_request`（非目標の明示的拒否）
    5. `client_id` がボディに存在する場合、認証済みクライアントと一致しなければ 400 `invalid_request`
    6. core `validateAuthorizationRequest` による事前検証（redirect_uri 登録一致・response_type・scope・PKCE 等）→ 失敗はエラーコードをマップして 400 JSON（§2.1「validate as it would an authorization request」）
-2. **認可エンドポイント**
-   1. `request_uri` が URN 前置詞一致 → store から atomic consume。null（不存在・使用済み）→ `invalid_request_uri`（非リダイレクト）
-   2. `expiresAt` 超過 → `invalid_request_uri`（非リダイレクト。RFC 9126 §4 MUST）
-   3. クエリ `client_id` 欠落または pushed レコードと不一致 → `invalid_request_uri`（非リダイレクト。RFC 9126 §2.2 の client 紐付け MUST の実現）
-   4. 展開後パラメータで従来の core 検証を全実行（§4 MUST）。ここ以降のエラーのリダイレクト可否は既存パイプラインの判定（`AuthorizationError.redirectUri` の有無）にそのまま従う
-   5. `requirePushedAuthorizationRequests: true` かつ `request_uri` なし → `invalid_request`（RFC 9126 §5）
+2. **認可エンドポイント**（順序どおり）
+   1. `requirePushedAuthorizationRequests: true` かつ `request_uri` が URN 前置詞に一致しない（欠落・URL 形式を含む）→ `invalid_request`（非リダイレクト。RFC 9126 §5。`assertPushedRequestUsed`）
+   2. `request_uri` が URN 前置詞一致 → store から atomic consume。null（不存在・使用済み）→ `invalid_request_uri`（非リダイレクト）
+   3. `expiresAt` 超過 → `invalid_request_uri`（非リダイレクト。RFC 9126 §4 MUST）
+   4. クエリ `client_id` 欠落または pushed レコードと不一致 → `invalid_request_uri`（非リダイレクト。RFC 9126 §2.2 の client 紐付け MUST の実現）
+   5. 展開後パラメータで従来の core 検証を全実行（§4 MUST）。ここ以降のエラーのリダイレクト可否は既存パイプラインの判定（`AuthorizationError.redirectUri` の有無）にそのまま従う
 
 ## エラー処理
 
@@ -322,15 +326,37 @@ packages/cli  ─────> @maronn-oidc/experimental（許可・生成コー
 
 authorize テンプレートは 5 ターゲット全てが hono の `authorizeRouteTemplate` を共有している（`packages/cli/src/frameworks/web-standard/templates.ts` が `toWebRouteTemplate` の文字列変換で再利用し、express / fastify / nextjs の各 generator は web-standard へ委譲する）ため、**前段フックの挿入は単一テンプレートの変更で済む**（Review 2 で確認、旧 U3 解決）。
 
-挿入点は `const params = rawParams;`（`isAuthorizationRequestParams` ナローイング直後、`resolveClientForAuthorization` より前）であり、次の形で `params` 束縛そのものを展開後パラメータへ差し替える:
+挿入点は `const params = rawParams;`（`isAuthorizationRequestParams` ナローイング直後、`resolveClientForAuthorization` より前）であり、`params` 束縛そのものを展開後パラメータへ差し替える。ただし **この行はハンドラの `try` ブロックより前にある**（`packages/cli/src/frameworks/hono/templates.ts:1725` と `1727` の `try {` を Review 3 で確認）ため、解決処理をこの位置でそのまま実行すると `PushedRequestUriError` が catch 節に届かずフレームワークの未処理例外（500）になる。次の 3 点を必須要件として実装する:
+
+1. **解決処理は `try` ブロック内の先頭で実行する**。`params` の宣言は par 有効時のみ `const` から `let params = rawParams;` に変え、`try` 内で展開結果を再代入する
+2. **catch 節に `PushedRequestUriError` の分岐を追加する**。描画は既存の `AuthorizationError` 非リダイレクト経路（`Accept: application/json` なら JSON 400 / `authorizationErrorRedirectPath` 設定時は内部 303 / それ以外は HTML エラーページ）と同一ロジックを使う。`AuthorizationErrorCode` は closed な enum で `invalid_request_uri` を含まない（`packages/core/src/authorization-request.ts:21-42`。Review 3 で確認）ため、core 無変更の制約下では `AuthorizationError` に相乗りできず、専用クラス＋専用 catch 分岐が必要になる
+3. **挿入はすべて条件付き補間（`${...}` が par 無効時に空文字列/現行文字列へ展開される形）とし、par 無効時の生成物を現行とバイト同一に保つ**（完了条件 3 の前提）
 
 ```typescript
-// Experimental: PAR (RFC 9126). request_uri (urn:...) を pushed パラメータへ展開する。
-// 展開後パラメータを params として以降の全ステップに流す。URN 前置詞に一致しない場合は
-// null が返り、従来どおり rawParams のまま処理される（core が request_uri_not_supported で拒否）。
-const resolvedParams = await resolvePushedRequestUri({ params: rawParams, store: parStore });
-const params = resolvedParams ?? rawParams;
+// （par 有効時の展開イメージ。無効時は現行どおり `const params = rawParams;` のみ）
+let params = rawParams;
+
+try {
+  // Experimental: PAR (RFC 9126). requirePushedAuthorizationRequests が true の場合、
+  // URN 形式の request_uri を伴わないリクエストを invalid_request で拒否する（§5）。
+  if (parConfig.requirePushedAuthorizationRequests) {
+    assertPushedRequestUsed(rawParams);
+  }
+  // request_uri (urn:...) を pushed パラメータへ展開する。URN 前置詞に一致しない場合は
+  // null が返り、従来どおり rawParams のまま処理される（core が request_uri_not_supported で拒否）。
+  const parStore = c.get('parStore') ?? defaultParStore;
+  const resolvedParams = await resolvePushedRequestUri({ params: rawParams, store: parStore });
+  if (resolvedParams !== null) {
+    if (!isAuthorizationRequestParams(resolvedParams)) {
+      // PAR 時に client_id を検証済みのため通常到達しない防御的分岐
+      throw new PushedRequestUriError('invalid_request_uri', /* 固定文言 */);
+    }
+    params = resolvedParams;
+  }
+  // ...以降は既存ステップ（resolveClientForAuthorization など）が params を参照する
 ```
+
+展開結果は `Record<string, string>` のため、既存の `isAuthorizationRequestParams` ガードを再適用して `AuthorizationRequestParams` へ再ナローイングする（PAR 時に `client_id` は検証済みなので実行時には常に通過する。型整合のための再適用）。
 
 **注意（Review 2 指摘）**: 既存テンプレートの後続ステップ（`resolveClientForAuthorization` / `validateResponseType` / `validateAuthorizationScope` / `rejectUnsupportedRequestParams`）は `effectiveParams` ではなく `params` を参照する。展開結果を `effectiveParams` にだけ入れて `params` を元のまま残すと、`rejectUnsupportedRequestParams(params, ...)` が `request_uri` を検出して `request_uri_not_supported` を投げてしまうため、上記のように `params` 自体を差し替えること。
 
@@ -350,7 +376,8 @@ const params = resolvedParams ?? rawParams;
 - 期限切れ request_uri の拒否
 - 認証なし PAR の 401
 - `request_uri` を PAR ボディに含めた場合の 400
-- `requirePushedAuthorizationRequests` 有効時の非 PAR リクエスト拒否（設定オプションとしてテンプレートに含める場合のみ）
+- `requirePushedAuthorizationRequests` 有効時の非 PAR リクエスト拒否（`invalid_request`・非リダイレクト。Review 3 で初期スコープに確定）
+- 解決失敗（`invalid_request_uri`）が非リダイレクトで描画されること（`Accept: application/json` で JSON 400 が返り、`Location` ヘッダを持たないことを固定検証。catch 節の `PushedRequestUriError` 分岐の検証を兼ねる）
 
 ### E2Eテスト（tests/e2e）
 
@@ -373,27 +400,36 @@ const params = resolvedParams ?? rawParams;
 - `@maronn-oidc/cli`: minor（`--enable par` の追加。既存デフォルト挙動は不変のため breaking ではない）
 - core: 変更なし（changeset 不要）
 
+## 実装順序
+
+実装 Routine は次の順で進める。各ステップの検証方法は「完了条件」の対応番号を参照し、追加調査なしで着手できることを前提とする:
+
+1. **`packages/experimental` のビルド・テスト基盤作成**（旧 U2）: `package.json`（`exports["./par"]` を定義）・`tsconfig.json`・vitest 設定を core の構成を踏襲して作成する。実装 Routine の初手
+2. `src/par/` の実装と単体テスト（完了条件 1）
+3. `packages/cli` の experimental 機能カテゴリ追加: `EXPERIMENTAL_FEATURES` / `OidcFeatureConfig.par`（デフォルト `false`）/ `resolveFeatures` の experimental 分岐 / ヘルプ表示
+4. テンプレート変更: par ルート（各ターゲットへの配線含む）・authorize 前段フック＋catch 分岐（共有テンプレート 1 箇所）・discovery マージ・in-memory ストア・`INSTALL_COMMANDS`（`packages/cli/src/index.ts:8` の表と最終案内 `index.ts:185`）・conformance テンプレート（完了条件 2・4・6）
+5. `--enable par` なし生成のバイト同一確認（完了条件 3。変更前後の CLI で同一設定の生成物を diff する）
+6. E2E（tests/e2e。完了条件 5）
+7. ドキュメント・changeset（完了条件 7）
+
 ## 完了条件
 
 1. `pnpm --filter @maronn-oidc/experimental test` で本仕様のテスト計画（単体）が全て通る
 2. `maronn-oidc generate hono --enable par` の生成コードで conformance.test.ts（PAR ケース含む）が通る
 3. `--enable par` なしの生成コードが現行とバイト単位で同一（後方互換の客観的確認）
-4. 4フレームワーク（hono / express / fastify / nextjs）＋ web-standard で par テンプレートが生成される。authorize 前段フックは共有テンプレート（hono の `authorizeRouteTemplate`）1 箇所の変更で全ターゲットに反映されるため（Review 2 確認）、残る個別対応は PAR ルートの各ターゲットへの配線（web-standard のルート登録・nextjs の `route.ts` ラッパー等）のみ
+4. 4フレームワーク（hono / express / fastify / nextjs）＋ web-standard で par テンプレートが生成される。authorize 前段フックと catch 節の `PushedRequestUriError` 分岐は共有テンプレート（hono の `authorizeRouteTemplate`）1 箇所の変更で全ターゲットに反映されるため（Review 2 確認）、残る個別対応は PAR ルートの各ターゲットへの配線（web-standard のルート登録・nextjs の `route.ts` ラッパー等）のみ
 5. tests/e2e に PAR フローの Playwright テストが追加され通過する
 6. discovery / エラー応答が本仕様の表と一致する
 7. changeset・ドキュメントが追加されている
 
 ## 未解決事項
 
-| # | 事項 | 影響 | 解決方針 |
-|---|---|---|---|
-| U2 | `packages/experimental` のビルド・テスト基盤（package.json・tsconfig・vitest 設定）が未整備 | 実装初日の作業量 | 実装Routineが core の構成を踏襲して作成する（本仕様の前提として明記済み） |
-| U5 | `requirePushedAuthorizationRequests` を初期リリースに含めるか（テンプレート設定値として公開するか） | スコープ | Review 3 までに判断。含めない場合は公開 API から `assertPushedRequestUsed` を落とし将来拡張へ移す |
-
-セキュリティ上の未解決事項はなし（U2・U5 は実装詳細・スコープ判断であり、脅威対策の設計自体は確定している）。
+なし（セキュリティ上の未解決事項もなし）。
 
 解決済みの事項:
 
+- U2（2026-07-29 Review 3 解決）: `packages/experimental` のビルド・テスト基盤（package.json・tsconfig・vitest 設定）は未整備のままだが、仕様上の扱いは確定した。「実装順序」ステップ 1 として、実装 Routine が core の構成を踏襲して初手で作成する
+- U5（2026-07-29 Review 3 解決）: `requirePushedAuthorizationRequests` は初期リリースに**含める**。根拠: ユースケース「PAR 必須にしたとき既存クライアントがどう壊れるかを安全に確認する」が本機能の検証価値の中核であり、追加実装がガード関数 1 つ（`assertPushedRequestUsed`）＋設定値 1 つ＋discovery 1 フィールド＋結合テスト 1 件と小さく、外すことでスコープが有意に軽くならないため。`assertPushedRequestUsed` は公開 API に残す
 - U1（2026-07-27 Review 1 解決）: `generateRandomString` のシグネチャ確認。`generateRandomString(32)` で 256bit エントロピーを確保する
 - U3（2026-07-28 Review 2 解決）: hono 以外のテンプレート挿入点。5 ターゲット全てが hono の `authorizeRouteTemplate` を共有していることを確認（「CLI生成コードからの利用方法」参照）。テンプレート変更は単一ファイルで済む
 - U4（2026-07-28 Review 2 解決）: `invalid_request_uri` のリダイレクト可否。既存実装は `AuthorizationError.redirectUri` の有無で分岐しており、解決失敗は一律非リダイレクト（既存の非リダイレクト経路で描画）と決定（「認可エンドポイント側」「エラー処理」参照）

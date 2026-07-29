@@ -8,10 +8,10 @@
     "generate": "maronn-oidc generate hono --enable par --output ./src/oidc-provider",
     "check:generated": "pnpm run generate && node scripts/check-generated.mjs",
     "db:migrate:local": "wrangler d1 migrations apply maronn-oidc-sample --local --persist-to \"${OIDC_D1_PERSIST_PATH:-.wrangler/state}\"",
-    "build": "pnpm --filter @maronn-oidc/core build && tsc --noEmit && wrangler deploy --dry-run --outdir dist",
+    "build": "pnpm --filter @maronn-oidc/core --filter @maronn-oidc/experimental run build && tsc --noEmit && wrangler deploy --dry-run --outdir dist",
     "start": "pnpm run db:migrate:local && wrangler dev --persist-to \"${OIDC_D1_PERSIST_PATH:-.wrangler/state}\" --ip \"${HOST:-127.0.0.1}\" --port \"${PORT:-3010}\" --var \"ISSUER:${ISSUER:-http://127.0.0.1:3010}\" --var \"OIDC_CLIENTS_JSON:${OIDC_CLIENTS_JSON:-}\" --var \"OIDC_SIGNING_KEY_ID:${OIDC_SIGNING_KEY_ID:-hono-cloudflare-rs256-key}\" --var \"OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}\" --var \"OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-0}\"",
-    "launch": "pnpm --filter @maronn-oidc/core build && pnpm run start",
-    "test": "pnpm run typecheck && pnpm run test:conformance",
+    "launch": "pnpm --filter @maronn-oidc/core --filter @maronn-oidc/experimental run build && pnpm run start",
+    "test": "pnpm --filter @maronn-oidc/core --filter @maronn-oidc/experimental run build && pnpm run typecheck && pnpm run test:conformance",
     "test:conformance": "vitest run",
     "typecheck": "tsc --noEmit"
   },

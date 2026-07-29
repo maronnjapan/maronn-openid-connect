@@ -7,6 +7,9 @@
  *
  * Basic OP mandatory capabilities (authorize / token / userinfo / discovery /
  * jwks / login / consent) are not toggleable and are always generated.
+ *
+ * Experimental features are a separate category: they are never part of the
+ * default output and must be requested explicitly with `--enable`.
  */
 
 /** CLI-facing feature names (kebab-case, used with --enable / --disable). */
@@ -21,6 +24,20 @@ export const AVAILABLE_FEATURES = [
 export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
 
 /**
+ * Experimental feature names (kebab-case, used with --enable).
+ *
+ * Unlike AVAILABLE_FEATURES these are **disabled by default** and are only
+ * generated when named explicitly with `--enable`. They are implemented in the
+ * separate `@maronn-oidc/experimental` package, whose API is unstable and may
+ * change in a breaking way between releases.
+ *
+ * - par: Pushed Authorization Requests (RFC 9126).
+ */
+export const EXPERIMENTAL_FEATURES = ['par'] as const;
+
+export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
+
+/**
  * Resolved feature configuration passed through the generator pipeline.
  *
  * - pkce: when false, the generated config defaults to
@@ -33,6 +50,9 @@ export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
  * - revocation: when false, the RFC 7009 endpoint is not generated.
  * - requestObject: when false, the authorize endpoint rejects the `request`
  *   parameter with `request_not_supported` (OIDC Core 1.0 §6.3).
+ * - par: experimental, disabled by default. When true, the PAR endpoint
+ *   (RFC 9126) is generated and the authorize route resolves URN-form
+ *   `request_uri` values through `@maronn-oidc/experimental/par`.
  */
 export interface OidcFeatureConfig {
   pkce: boolean;
@@ -40,6 +60,7 @@ export interface OidcFeatureConfig {
   introspection: boolean;
   revocation: boolean;
   requestObject: boolean;
+  par: boolean;
 }
 
 /** Mapping from CLI feature names to OidcFeatureConfig keys. */
@@ -51,21 +72,42 @@ const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
   'request-object': 'requestObject',
 };
 
-/** Default: every feature enabled (matches the historical generation output). */
+/** Mapping from CLI experimental feature names to OidcFeatureConfig keys. */
+const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatureConfig> = {
+  par: 'par',
+};
+
+/**
+ * Default: every stable feature enabled (matches the historical generation
+ * output), every experimental feature disabled.
+ */
 export const DEFAULT_FEATURES: OidcFeatureConfig = {
   pkce: true,
   refreshToken: true,
   introspection: true,
   revocation: true,
   requestObject: true,
+  par: false,
 };
 
-function assertKnownFeature(name: string): asserts name is FeatureName {
-  if (!(AVAILABLE_FEATURES as readonly string[]).includes(name)) {
+function isExperimentalFeature(name: string): name is ExperimentalFeatureName {
+  return (EXPERIMENTAL_FEATURES as readonly string[]).includes(name);
+}
+
+function assertKnownFeature(name: string): asserts name is FeatureName | ExperimentalFeatureName {
+  if (
+    !(AVAILABLE_FEATURES as readonly string[]).includes(name) &&
+    !isExperimentalFeature(name)
+  ) {
     throw new Error(
-      `Unknown feature: "${name}". Available features: ${AVAILABLE_FEATURES.join(', ')}`,
+      `Unknown feature: "${name}". Available features: ${AVAILABLE_FEATURES.join(', ')}. ` +
+        `Experimental features (disabled by default): ${EXPERIMENTAL_FEATURES.join(', ')}`,
     );
   }
+}
+
+function featureKey(name: FeatureName | ExperimentalFeatureName): keyof OidcFeatureConfig {
+  return isExperimentalFeature(name) ? EXPERIMENTAL_FEATURE_KEYS[name] : FEATURE_KEYS[name];
 }
 
 /**
@@ -95,11 +137,13 @@ export function resolveFeatures(options: {
   const features: OidcFeatureConfig = { ...DEFAULT_FEATURES };
   for (const name of enable) {
     assertKnownFeature(name);
-    features[FEATURE_KEYS[name]] = true;
+    features[featureKey(name)] = true;
   }
+  // An experimental feature listed in --disable is already off by default, so
+  // this is a no-op rather than an error (same result as omitting it).
   for (const name of disable) {
     assertKnownFeature(name);
-    features[FEATURE_KEYS[name]] = false;
+    features[featureKey(name)] = false;
   }
   return features;
 }

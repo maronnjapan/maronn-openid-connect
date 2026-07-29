@@ -412,6 +412,19 @@ try {
 6. E2E（tests/e2e。完了条件 5）
 7. ドキュメント・changeset（完了条件 7）
 
+## 実装時に確定した事項（2026-07-29 実装 Routine）
+
+実装中に仕様が未規定だった点を確定した。いずれも仕様の方針を変えるものではなく、記録のために残す。
+
+1. **PAR ボディの `client_id` とクライアント認証の両立**: RFC 9126 §2.1 は「`client_id` は認可リクエストの必須パラメータなので pushed request にも必須」と規定しており、`client_secret_basic` を使う場合でもボディに `client_id` が入る（§2.1 の例も同様）。一方 core の `extractClientCredentials` はボディの `client_id` の存在自体を client_secret_post の使用と見なすため、Authorization ヘッダと併用すると「複数の認証方式」（OAuth 2.1 §2.3）として拒否される。core を変更しない制約下で両立させるため、`authenticateParClient` は次の順序で処理する:
+   - Authorization ヘッダがある場合、ボディの `client_secret` が存在すれば真に複数方式なので `invalid_request`
+   - 資格情報の抽出には、Authorization ヘッダ使用時はボディを渡さない（`client_id` を資格情報として解釈させない）
+   - 認証後に、ボディの `client_id` が認証済みクライアントと一致することを検証（バリデーション 1-5 の実現）
+2. **保存パラメータの正規化**: `createPushedAuthorizationRecord` は `client_id` を認証済みクライアントの値へ正規化して保存する（ボディ省略時にも展開後パラメータが `isAuthorizationRequestParams` を満たすため）。また `client_secret` / `client_assertion` / `client_assertion_type` は保存しない（シークレットがストアと展開後パラメータへ混入するのを防ぐ）。
+3. **生成ファイルの配置**: PAR ルートは `oidc-provider/par.ts` ではなく `oidc-provider/routes/par.ts` に生成する。既存の全エンドポイントが `routes/` 配下にある生成物の構成に合わせた（`parConfig` も同ファイルで export する点は仕様どおり）。
+4. **`assertParExpiresInSeconds` を公開 API に追加**: 「範囲外は起動時エラー」という設定値要件を生成コードから満たすため、範囲検証関数を公開 API に加えた（`parConfig` 定義直後にモジュールトップレベルで呼ぶ）。
+5. **`now` の注入**: `PushedAuthorizationRequestContext` と `createPushedAuthorizationRecord` に任意の `now?: Date` を追加した（期限計算を決定的にテストするため）。
+
 ## 完了条件
 
 1. `pnpm --filter @maronn-oidc/experimental test` で本仕様のテスト計画（単体）が全て通る

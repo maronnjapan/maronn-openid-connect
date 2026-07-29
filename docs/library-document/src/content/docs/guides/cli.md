@@ -67,6 +67,21 @@ maronn-oidc generate express --disable pkce
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
 
+### Experimental Features
+
+Experimental 機能は上記とは別カテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成され、実装は別 package の `@maronn-oidc/experimental` にあります。
+
+```bash
+maronn-oidc generate hono --enable par
+pnpm add @maronn-oidc/experimental
+```
+
+| 機能名 | 既定 | 内容 | 準拠仕様 |
+|---|---|---|---|
+| `par` | 無効 | Pushed Authorization Requests エンドポイント（`/par`）と認可エンドポイントの `request_uri` 解決 | RFC 9126 |
+
+API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
+
 ## Contract Test (conformance.test.ts)
 
 生成物には、選択した機能構成に合わせた契約テスト `conformance.test.ts` が含まれます。生成 OP がこのリポジトリの想定する Basic OP 挙動を満たすことを固定するテストで、無効化した機能については「無効であること」（404 応答、`unsupported_grant_type` / `request_not_supported` の拒否、discovery メタデータの不在など）を検証します。

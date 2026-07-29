@@ -5,23 +5,26 @@
   "description": "Hono Cloudflare Workers sample backed by D1",
   "type": "module",
   "scripts": {
-    "generate": "maronn-oidc generate hono --output ./src/oidc-provider",
+    "generate": "maronn-oidc generate hono --enable par --output ./src/oidc-provider",
     "check:generated": "pnpm run generate && node scripts/check-generated.mjs",
     "db:migrate:local": "wrangler d1 migrations apply maronn-oidc-sample --local --persist-to \"${OIDC_D1_PERSIST_PATH:-.wrangler/state}\"",
     "build": "pnpm --filter @maronn-oidc/core build && tsc --noEmit && wrangler deploy --dry-run --outdir dist",
     "start": "pnpm run db:migrate:local && wrangler dev --persist-to \"${OIDC_D1_PERSIST_PATH:-.wrangler/state}\" --ip \"${HOST:-127.0.0.1}\" --port \"${PORT:-3010}\" --var \"ISSUER:${ISSUER:-http://127.0.0.1:3010}\" --var \"OIDC_CLIENTS_JSON:${OIDC_CLIENTS_JSON:-}\" --var \"OIDC_SIGNING_KEY_ID:${OIDC_SIGNING_KEY_ID:-hono-cloudflare-rs256-key}\" --var \"OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}\" --var \"OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-0}\"",
     "launch": "pnpm --filter @maronn-oidc/core build && pnpm run start",
-    "test": "pnpm run typecheck",
+    "test": "pnpm run typecheck && pnpm run test:conformance",
+    "test:conformance": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@maronn-oidc/core": "workspace:*"
+    "@maronn-oidc/core": "workspace:*",
+    "@maronn-oidc/experimental": "workspace:*"
   },
   "devDependencies": {
     "@maronn-oidc/cli": "workspace:*",
     "@cloudflare/workers-types": "^5.20260723.1",
     "hono": "^4.12.25",
     "typescript": "^5.7.2",
+    "vitest": "^3.2.6",
     "wrangler": "^4.113.0"
   }
 }

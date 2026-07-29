@@ -26,6 +26,13 @@ const server = createServer(async (req, res) => {
       await startAuthorization(url, res);
       return;
     }
+    // EXPERIMENTAL (RFC 9126): push the authorization request over the back
+    // channel first, then send the browser to /authorize with only client_id and
+    // the returned request_uri.
+    if (req.method === 'GET' && url.pathname === '/start-par') {
+      await startPushedAuthorization(url, res);
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/callback') {
       await handleCallback(url, res);
       return;
@@ -67,6 +74,40 @@ async function startAuthorization(requestUrl, res) {
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'prompt');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'id_token_hint');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'acr_values');
+
+  redirect(res, authorizationUrl.toString());
+}
+
+async function startPushedAuthorization(requestUrl, res) {
+  const state = randomString(32);
+  const nonce = randomString(32);
+  const codeVerifier = randomString(64);
+  const codeChallenge = pkceChallenge(codeVerifier);
+  transactions.set(state, {
+    nonce,
+    codeVerifier,
+    createdAt: Date.now(),
+  });
+
+  // RFC 9126 §2.1: the pushed request carries exactly the parameters the
+  // authorization request would, plus client authentication.
+  const pushed = await formPost(new URL('/par', issuer), {
+    response_type: 'code',
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: redirectUri,
+    scope: requestUrl.searchParams.get('scope') ?? 'openid profile email',
+    state,
+    nonce,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    audience: resourceServerUrl,
+  });
+
+  // RFC 9126 §4: the front-channel request carries only client_id and request_uri.
+  const authorizationUrl = new URL('/authorize', issuer);
+  authorizationUrl.searchParams.set('client_id', clientId);
+  authorizationUrl.searchParams.set('request_uri', pushed.request_uri);
 
   redirect(res, authorizationUrl.toString());
 }

@@ -13,6 +13,7 @@ import {
   introspectionRouteTemplate,
   revocationRouteTemplate,
   jwksRouteTemplate,
+  parRouteTemplate,
   discoveryRouteTemplate,
   loginRouteTemplate,
   consentRouteTemplate,
@@ -31,7 +32,7 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'app.ts', content: appTemplate(pkg, features) },
       { path: 'apply.ts', content: applyTemplate(pkg, features) },
       { path: 'config.ts', content: configTemplate(pkg, features) },
-      { path: 'store.ts', content: storeTemplate(pkg) },
+      { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
       { path: 'views.ts', content: viewsTemplate() },
       { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features) },
@@ -42,6 +43,10 @@ export class HonoGenerator implements FrameworkGenerator {
         : []),
       ...(features.revocation
         ? [{ path: 'routes/revocation.ts', content: revocationRouteTemplate(pkg) }]
+        : []),
+      // Experimental (RFC 9126): only generated with --enable par.
+      ...(features.par
+        ? [{ path: 'routes/par.ts', content: parRouteTemplate(pkg) }]
         : []),
       { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg) },
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features) },

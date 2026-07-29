@@ -3,7 +3,8 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative, resolve } from 'node:path';
 import { generate, getAvailableFrameworks } from './generator.js';
-import { AVAILABLE_FEATURES, resolveFeatures } from './features.js';
+import { AVAILABLE_FEATURES, EXPERIMENTAL_FEATURES, resolveFeatures } from './features.js';
+import type { OidcFeatureConfig } from './features.js';
 
 const INSTALL_COMMANDS: Record<string, string> = {
   hono: 'pnpm add hono @maronn-oidc/core',
@@ -12,11 +13,24 @@ const INSTALL_COMMANDS: Record<string, string> = {
   nextjs: 'pnpm add @maronn-oidc/core && pnpm add -D next react react-dom',
 };
 
+const EXPERIMENTAL_PACKAGE = '@maronn-oidc/experimental';
+
+/**
+ * Insert @maronn-oidc/experimental into the install guidance, but only when an
+ * experimental feature was actually selected. Without a selection the command
+ * string is returned untouched so existing output never changes.
+ */
+function withExperimentalPackage(installCommand: string, features: OidcFeatureConfig): string {
+  if (!features.par) return installCommand;
+  return installCommand.replace('@maronn-oidc/core', `@maronn-oidc/core ${EXPERIMENTAL_PACKAGE}`);
+}
+
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
 
 function printUsage(): void {
   const frameworks = getAvailableFrameworks().join(', ');
   const features = AVAILABLE_FEATURES.join(', ');
+  const experimentalFeatures = EXPERIMENTAL_FEATURES.join(', ');
   console.log(`
 Usage: maronn-oidc <command> <framework> [options]
 
@@ -34,6 +48,10 @@ Options:
   --help, -h            Show this help message
 
 Features (all enabled by default): ${features}
+
+Experimental features (disabled by default): ${experimentalFeatures}
+  Provided by the separate ${EXPERIMENTAL_PACKAGE} package. APIs are unstable
+  and may change in a breaking way. Enable one with, e.g.: --enable par
 `);
 }
 
@@ -169,6 +187,15 @@ export function run(args: string[]): void {
     if (disabledFeatures.length > 0) {
       console.log(`Disabled features: ${disabledFeatures.join(', ')}\n`);
     }
+    const enabledExperimental = EXPERIMENTAL_FEATURES.filter((name) =>
+      parsed.enable.includes(name),
+    );
+    if (enabledExperimental.length > 0) {
+      console.log(`Experimental features enabled: ${enabledExperimental.join(', ')}`);
+      console.log(
+        `Warning: experimental features are provided by ${EXPERIMENTAL_PACKAGE} and their APIs may change in a breaking way.\n`,
+      );
+    }
     writeGeneratedFiles(parsed.outputDir, result.files);
     console.log(`\nDone! Generated ${result.files.length} files in ${parsed.outputDir}`);
 
@@ -179,10 +206,17 @@ export function run(args: string[]): void {
       console.log(`  1. Provide runtime config, signing keys, and client resolvers from env/DB/KV`);
       console.log(`  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract`);
       console.log(`  3. Use ${parsed.outputDir}/config.ts defaults only for quick local testing`);
-      console.log(`  4. Start the server\n`);
+      if (features.par) {
+        console.log(`  4. Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`);
+        console.log(`  5. Start the server\n`);
+      } else {
+        console.log(`  4. Start the server\n`);
+      }
     } else {
-      const installCommand =
-        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-oidc/core`;
+      const installCommand = withExperimentalPackage(
+        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-oidc/core`,
+        features,
+      );
       console.log(`\nNext steps:`);
       console.log(`  1. Provide runtime config, signing keys, and client resolvers from env/DB/KV`);
       console.log(`  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract`);

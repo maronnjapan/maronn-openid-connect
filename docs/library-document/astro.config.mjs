@@ -54,6 +54,14 @@ export default defineConfig({
           label: 'Reference',
           items: [{ label: 'Features', slug: 'reference/features' }],
         },
+        // Experimental 機能は安定機能と混在させず、独立セクションにまとめる。
+        {
+          label: 'Experimental',
+          items: [
+            { label: 'Experimental機能とは', slug: 'experimental' },
+            { label: 'PAR (RFC 9126)', slug: 'experimental/par' },
+          ],
+        },
       ],
     }),
   ],

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '@maronn-oidc/core';
 import { defaultProviderConfig } from '../config.js';
+import { parConfig } from './par.js';
 
 export const discoveryApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -144,5 +145,11 @@ discoveryApp.get('/', (c) => {
   return c.json({
     ...metadata,
     code_challenge_methods_supported: ['S256'],
+    // EXPERIMENTAL — RFC 9126 §5 metadata. require_pushed_authorization_requests
+    // is only advertised when PAR is actually enforced (its default is false).
+    pushed_authorization_request_endpoint: `${issuer}/par`,
+    ...(parConfig.requirePushedAuthorizationRequests
+      ? { require_pushed_authorization_requests: true }
+      : {}),
   });
 });

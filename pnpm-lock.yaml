@@ -61,6 +61,25 @@ importers:
         specifier: 3.2.6
         version: 3.2.6(@edge-runtime/vm@5.0.0)(@types/debug@4.1.13)(@types/node@25.2.2)
 
+  packages/experimental:
+    dependencies:
+      '@maronn-oidc/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@edge-runtime/vm':
+        specifier: ^5.0.0
+        version: 5.0.0
+      '@types/node':
+        specifier: ^25.2.2
+        version: 25.2.2
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@edge-runtime/vm@5.0.0)(@types/debug@4.1.13)(@types/node@25.2.2)
+
   samples/express-flyio:
     dependencies:
       '@maronn-oidc/core':
@@ -113,6 +132,9 @@ importers:
       '@maronn-oidc/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@maronn-oidc/experimental':
+        specifier: workspace:*
+        version: link:../../packages/experimental
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260723.1
@@ -126,6 +148,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@edge-runtime/vm@5.0.0)(@types/debug@4.1.13)(@types/node@25.2.2)
       wrangler:
         specifier: ^4.113.0
         version: 4.113.0(@cloudflare/workers-types@5.20260723.1)(@types/node@25.2.2)

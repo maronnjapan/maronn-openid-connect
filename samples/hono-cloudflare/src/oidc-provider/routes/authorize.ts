@@ -37,6 +37,13 @@ import {
   authSessionStore as defaultAuthSessionStore,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
+import {
+  PushedRequestUriError,
+  assertPushedRequestUsed,
+  resolvePushedRequestUri,
+} from '@maronn-oidc/experimental/par';
+import { parConfig } from './par.js';
+import { parStore as defaultParStore } from '../store.js';
 
 export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -147,9 +154,31 @@ const handleAuthorizationRequest = async (c: any) => {
     return c.json({ error: 'invalid_request', error_description: 'Missing required parameter: client_id' }, 400);
   }
 
-  const params = rawParams;
+  let params = rawParams;
 
   try {
+    // EXPERIMENTAL — Pushed Authorization Requests (RFC 9126 §4).
+    const parStore = c.get('parStore') ?? defaultParStore;
+    // RFC 9126 §5: when require_pushed_authorization_requests is on, an
+    // authorization request that did not go through /par is rejected outright.
+    if (parConfig.requirePushedAuthorizationRequests) {
+      assertPushedRequestUsed(rawParams);
+    }
+    // Expand a request_uri of the form urn:ietf:params:oauth:request_uri:<ref> into
+    // the parameters pushed to /par. The reference is single use and short lived,
+    // so a reload of this URL fails with invalid_request_uri by design.
+    // Anything that is not a URN (absent, or an OIDC Core §6.2 URL) returns null
+    // and is left to the normal pipeline, which rejects it with
+    // request_uri_not_supported.
+    const pushedParams = await resolvePushedRequestUri({ params: rawParams, store: parStore });
+    if (pushedParams !== null) {
+      if (!isAuthorizationRequestParams(pushedParams)) {
+        // Defensive: client_id was validated when the request was pushed.
+        throw new PushedRequestUriError('invalid_request_uri', 'The request_uri is invalid, expired, or has already been used');
+      }
+      params = pushedParams;
+    }
+
     const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
     const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
     const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
@@ -481,6 +510,35 @@ const handleAuthorizationRequest = async (c: any) => {
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
   } catch (error) {
+    if (error instanceof PushedRequestUriError) {
+      // RFC 9126 §4 / OIDC Core 1.0 §3.1.2.6: a request_uri that cannot be
+      // resolved leaves us without a verified redirect_uri, so this error is
+      // NEVER redirected (RFC 6749 §4.1.2.1). It is rendered through the same
+      // non-redirect path as AuthorizationError below. Every failure kind
+      // (unknown / used / expired / wrong client) returns the identical code and
+      // description so the response cannot be used as an existence oracle.
+      const acceptsJson = (c.req.header('Accept') ?? '').includes('application/json');
+      if (acceptsJson) {
+        return c.json({ error: error.code, error_description: error.errorDescription }, 400);
+      }
+      const parErrorPagePath = c.get('config').authorizationErrorRedirectPath;
+      if (parErrorPagePath && parErrorPagePath.startsWith('/') && !parErrorPagePath.startsWith('//')) {
+        const parErrorParams = new URLSearchParams({
+          error: error.code,
+          error_description: error.errorDescription,
+        });
+        return c.redirect(`${parErrorPagePath}?${parErrorParams.toString()}`, 303);
+      }
+      const parViews = c.get('views') ?? defaultViews;
+      return renderView(
+        parViews.errorPage({
+          error: error.code,
+          errorDescription: error.errorDescription,
+          statusCode: 400,
+        }),
+        { status: 400 },
+      );
+    }
     if (error instanceof AuthorizationError) {
       if (error.redirectUri) {
         const redirectUrl = new URL(error.redirectUri);

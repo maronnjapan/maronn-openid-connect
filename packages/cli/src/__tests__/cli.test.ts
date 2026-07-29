@@ -171,11 +171,44 @@ describe('CLI', () => {
         vi.spyOn(console, 'log').mockImplementation(() => {});
         run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
         expect(consoleSpy).toHaveBeenCalledWith(
-          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object',
+          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par',
         );
         expect(process.exitCode).toBe(1);
         vi.restoreAllMocks();
         process.exitCode = undefined;
+      });
+
+      it('should generate the PAR route only when par is explicitly enabled', () => {
+        const outputDir = join(testDir, 'par-enabled-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--enable', 'par']);
+        expect(existsSync(join(outputDir, 'routes/par.ts'))).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should not generate the PAR route by default', () => {
+        const outputDir = join(testDir, 'par-default-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        expect(existsSync(join(outputDir, 'routes/par.ts'))).toBe(false);
+        vi.restoreAllMocks();
+      });
+
+      it('should add the experimental package to the install guidance only when par is enabled', () => {
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', join(testDir, 'par-install-output'), '--enable', 'par']);
+        const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-oidc/core @maronn-oidc/experimental')).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should keep the install guidance unchanged when no experimental feature is enabled', () => {
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', join(testDir, 'default-install-output')]);
+        const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-oidc/core')).toBe(true);
+        expect(logged.some((line) => line.includes('@maronn-oidc/experimental'))).toBe(false);
+        vi.restoreAllMocks();
       });
 
       it('should error when a feature is both enabled and disabled', () => {

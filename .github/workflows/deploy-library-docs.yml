@@ -39,7 +39,7 @@ jobs:
             - name: Build docs
               run: pnpm --filter @maronn-oidc/docs build:doc
 
-            - uses: actions/upload-pages-artifact@v3
+            - uses: actions/upload-pages-artifact@v5
               with:
                   path: docs/library-document/dist
 

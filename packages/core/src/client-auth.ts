@@ -134,8 +134,12 @@ export function extractClientCredentials(
   const hasPostCredential =
     params.client_id !== undefined || params.client_secret !== undefined;
 
-  // OAuth 2.1 Section 2.3: 認証方式を同時に複数使ってはいけない
-  if (hasBasicHeader && hasPostCredential) {
+  // RFC 6749 §2.3 / OAuth 2.1 §2.3: 1リクエストで複数の「認証方式」を併用してはいけない。
+  // ただし §3.2.1 の client_id 単独送信は自身を識別するための「識別子」であって認証方式ではない。
+  // よって多重認証方式の判定はボディの client_secret（client_secret_post の資格情報）の有無のみで行い、
+  // Basic ヘッダ + ボディ client_id（secret なし）という多くのクライアントライブラリの実装を拒否しない。
+  const hasPostSecret = params.client_secret !== undefined;
+  if (hasBasicHeader && hasPostSecret) {
     throw new TokenError(
       TokenErrorCode.InvalidRequest,
       'Multiple client authentication methods provided. Use either Authorization header or request body, not both.',
@@ -151,6 +155,17 @@ export function extractClientCredentials(
       throw new TokenError(
         TokenErrorCode.InvalidClient,
         'Invalid Authorization header format',
+      );
+    }
+    // RFC 6749 §3.2.1: Basic と併送された client_id は識別子として許容するが、
+    // Basic 側の client_id と食い違う場合は矛盾（クライアント設定ミス／混同）として拒否する。
+    if (
+      params.client_id !== undefined &&
+      params.client_id !== basic.clientId
+    ) {
+      throw new TokenError(
+        TokenErrorCode.InvalidRequest,
+        'client_id in request body does not match the Authorization header',
       );
     }
     clientId = basic.clientId;

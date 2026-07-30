@@ -38,6 +38,18 @@ const testClients = new Map<string, RegisteredClient>([
     tokenEndpointAuthMethod: 'none',
     offlineAccessAllowed: true,
   }],
+  // A confidential client registered for client_secret_basic so the conformance
+  // suite can drive Authorization: Basic authentication (RFC 6749 §2.3.1).
+  ['c-conf-basic', {
+    clientId: 'c-conf-basic',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code', 'refresh_token'],
+    tokenEndpointAuthMethod: 'client_secret_basic',
+    offlineAccessAllowed: true,
+  }],
 ]);
 
 // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
@@ -1404,6 +1416,126 @@ describe('generated provider HTTP conformance', () => {
       expect(tokenBody.scope).toBe('openid');
       expect((tokenBody.access_token as string).split('.')).toHaveLength(3);
       expect((tokenBody.id_token as string).split('.')).toHaveLength(3);
+    });
+
+    // RFC 6749 §2.3 / §3.2.1: many OAuth client libraries always add client_id to
+    // the request body even when authenticating via Authorization: Basic. A bare
+    // client_id (no client_secret) is an identifier, not a second authentication
+    // method, so the token exchange MUST succeed rather than fail as multiple methods.
+    it('should authenticate a client_secret_basic request that also repeats client_id in the body', async () => {
+      const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf-basic' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=basic-redundant-id' +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
+      );
+      const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      const loginGet = await app.request(loginPath);
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = relativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath);
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          // client_secret_basic credentials (RFC 6749 §2.3.1: base64(client_id:client_secret)).
+          Authorization: 'Basic ' + btoa('c-conf-basic:s'),
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: callback.searchParams.get('code') ?? '',
+          redirect_uri: REDIRECT_URI,
+          code_verifier: verifier,
+          // Redundant identifier: present in the body without a client_secret.
+          client_id: 'c-conf-basic',
+        }).toString(),
+      });
+
+      expect(authorizeRes.status).toBe(302);
+      expect(consentRes.status).toBe(302);
+      expect(tokenRes.status).toBe(200);
+      const tokenBody = await tokenRes.json();
+      expect(tokenBody.token_type).toBe('Bearer');
+      expect(tokenBody.scope).toBe('openid');
+      expect((tokenBody.access_token as string).split('.')).toHaveLength(3);
+      expect((tokenBody.id_token as string).split('.')).toHaveLength(3);
+    });
+
+    it('should reject a client_secret_basic request whose body client_id contradicts the header', async () => {
+      const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf-basic' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=basic-mismatched-id' +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
+      );
+      const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      const loginGet = await app.request(loginPath);
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = relativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath);
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + btoa('c-conf-basic:s'),
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: callback.searchParams.get('code') ?? '',
+          redirect_uri: REDIRECT_URI,
+          code_verifier: verifier,
+          // Contradicts the Basic header subject: a client misconfiguration.
+          client_id: 'c-public',
+        }).toString(),
+      });
+
+      expect(tokenRes.status).toBe(400);
+      const tokenBody = await tokenRes.json();
+      expect(tokenBody.error).toBe('invalid_request');
     });
   });
 

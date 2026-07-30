@@ -194,11 +194,44 @@ describe('authenticateClient', () => {
       }
     });
 
-    it('should throw invalid_request when only client_id is in post but Authorization is also set', async () => {
+    // RFC 6749 §3.2.1: many OAuth client libraries always add client_id to the
+    // request body even when authenticating via the Authorization header. A bare
+    // client_id (no client_secret) is an identifier, not a second authentication
+    // method (§2.3), so it MUST NOT be rejected as multiple methods.
+    it('should authenticate when Basic header is accompanied by a matching body client_id', async () => {
+      const resolver = createResolver([validClient]);
+      const result = await authenticateClient({
+        params: { client_id: 'client-123' },
+        authorizationHeader: basicAuth('client-123', 'secret-xyz'),
+        clientResolver: resolver,
+      });
+      expect(result).toBe('client-123');
+    });
+
+    it('should throw invalid_request when Basic header client_id and body client_id disagree', async () => {
+      // A mismatch between the Basic credential subject and the body identifier is
+      // a client misconfiguration; reject it rather than silently trusting one side.
       const resolver = createResolver([validClient]);
       try {
         await authenticateClient({
-          params: { client_id: 'client-123' },
+          params: { client_id: 'other-client' },
+          authorizationHeader: basicAuth('client-123', 'secret-xyz'),
+          clientResolver: resolver,
+        });
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(TokenError);
+        expect((e as TokenError).error).toBe(TokenErrorCode.InvalidRequest);
+      }
+    });
+
+    it('should throw invalid_request when Basic header is accompanied by a body client_secret', async () => {
+      // OAuth 2.1 §2.3: a body client_secret is the client_secret_post method, so
+      // combining it with Basic is genuinely two authentication methods.
+      const resolver = createResolver([validClient]);
+      try {
+        await authenticateClient({
+          params: { client_secret: 'secret-xyz' },
           authorizationHeader: basicAuth('client-123', 'secret-xyz'),
           clientResolver: resolver,
         });

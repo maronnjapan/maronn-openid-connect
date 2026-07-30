@@ -5,6 +5,7 @@ import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
 import { introspectionApp } from './routes/introspection.js';
 import { revocationApp } from './routes/revocation.js';
+import { parApp } from './routes/par.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
@@ -19,6 +20,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
+  parStore,
   type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
@@ -136,6 +138,7 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/userinfo': ['GET', 'POST'],
   '/introspect': ['POST'],
   '/revoke': ['POST'],
+  '/par': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -145,7 +148,12 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
 async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Promise<Response | void> {
   const pathname = new URL(c.req.url).pathname;
   const allowed = OIDC_ENDPOINT_METHODS[pathname];
-  if (allowed && !allowed.includes(c.req.method)) {
+  const method = c.req.method;
+  // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+  // supported. HEAD shares GET semantics (§9.3.2), so let it through on any
+  // GET-allowing endpoint; Hono runs the GET handler and strips the body.
+  const isHeadOnGet = method === 'HEAD' && (allowed?.includes('GET') ?? false);
+  if (allowed && !allowed.includes(method) && !isHeadOnGet) {
     c.header('Allow', allowed.join(', '));
     return c.body(null, 405);
   }
@@ -186,6 +194,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.use('/userinfo', protectedCors);
   app.use('/introspect', protectedCors);
   app.use('/revoke', protectedCors);
+  app.use('/par', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
@@ -260,6 +269,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
     c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
     c.set('revocationResolvers', storeResolvers.revocationResolvers);
+    c.set('parStore', parStore);
 
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
@@ -283,6 +293,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.route('/userinfo', userinfoApp);
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
+  app.route('/par', parApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

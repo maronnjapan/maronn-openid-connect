@@ -89,7 +89,29 @@ export type IntrospectionResponse =
       jti?: string;
     };
 
-const INACTIVE: IntrospectionResponse = { active: false };
+/**
+ * RFC 7662 §2.2: inactive なトークンのレスポンスは `{ active: false }` のみ。
+ * トークンの存在有無を漏らさないため、他のクレームは一切含めない。
+ */
+export const INACTIVE_INTROSPECTION_RESPONSE: IntrospectionResponse = { active: false };
+
+const INACTIVE = INACTIVE_INTROSPECTION_RESPONSE;
+
+/**
+ * ストアから解決したイントロスペクション対象トークン。
+ * どちらの種別として解決されたかで、活性判定とレスポンスクレームが変わる。
+ */
+export type ResolvedIntrospectionToken =
+  | { tokenType: 'access_token'; accessToken: AccessTokenInfo }
+  | { tokenType: 'refresh_token'; refreshToken: RefreshTokenInfo };
+
+export interface ResolveIntrospectionTokenOptions {
+  token: string;
+  /** RFC 7662 §2.1: 検索順のヒント。'refresh_token' のときだけ refresh を先に引く */
+  tokenTypeHint?: string;
+  accessTokenResolver: IntrospectionAccessTokenResolver;
+  refreshTokenResolver?: IntrospectionRefreshTokenResolver;
+}
 
 function isAccessTokenActive(info: AccessTokenInfo, now: number): boolean {
   if (info.expiresAt <= now) return false;
@@ -141,65 +163,140 @@ function buildRefreshTokenResponse(info: RefreshTokenInfo): IntrospectionRespons
 }
 
 /**
- * Token Introspection 本体。
+ * ステップ 1: `token` パラメータの存在を検証する
+ * RFC 7662 §2.1: token は REQUIRED。
  *
- * 1. token / authenticatedClientId のバリデーション
- * 2. token_type_hint に応じて access → refresh または refresh → access の順で検索
- * 3. 見つかれば各種チェック (clientId 一致 / exp / used) をかけて active 判定
- * 4. active なら推奨クレームを最大限詰めて返す。inactive なら { active: false } のみ。
+ * @param params イントロスペクションリクエストのパラメータ
+ * @returns 検証済みの token 値
+ * @throws {IntrospectionError} invalid_request
  */
-export async function handleIntrospectionRequest(
-  ctx: IntrospectionRequestContext,
-): Promise<IntrospectionResponse> {
-  const { params, authenticatedClientId, accessTokenResolver, refreshTokenResolver } = ctx;
-
+export function requireIntrospectionToken(params: { token?: string }): string {
   if (!params.token) {
     throw new IntrospectionError(
       IntrospectionErrorCode.InvalidRequest,
       'Missing required parameter: token',
     );
   }
+  return params.token;
+}
+
+/**
+ * ステップ 2: 呼び出し元がクライアント認証済みであることを検証する
+ * RFC 7662 §2.1: イントロスペクションエンドポイントはクライアント認証を要求する。
+ *
+ * @param authenticatedClientId クライアント認証済みの clientId。空文字なら未認証
+ * @returns 認証済み clientId
+ * @throws {IntrospectionError} invalid_client
+ */
+export function requireIntrospectionClient(authenticatedClientId: string): string {
   if (!authenticatedClientId) {
     throw new IntrospectionError(
       IntrospectionErrorCode.InvalidClient,
       'Client authentication required',
     );
   }
+  return authenticatedClientId;
+}
 
-  const now = Math.floor(Date.now() / 1000);
-  const token = params.token;
-  const refreshFirst = params.token_type_hint === 'refresh_token';
+/**
+ * ステップ 3: 提示されたトークンをストアから解決する
+ *
+ * RFC 7662 §2.1: `token_type_hint` は検索順のヒントであり、外れても他方の種別を
+ * 検索しなければならない。hint=refresh_token のときだけ refresh → access の順、
+ * それ以外（access_token / 不明値 / 未指定）は access → refresh の順で検索する。
+ *
+ * @returns 解決したトークン。どちらのストアにも無ければ null
+ */
+export async function resolveIntrospectionToken(
+  options: ResolveIntrospectionTokenOptions,
+): Promise<ResolvedIntrospectionToken | null> {
+  const { token, tokenTypeHint, accessTokenResolver, refreshTokenResolver } = options;
+  const refreshFirst = tokenTypeHint === 'refresh_token';
 
   if (refreshFirst && refreshTokenResolver) {
     const rt = await refreshTokenResolver.resolve(token);
-    if (rt) {
-      return isRefreshTokenActive(rt, now)
-        ? buildRefreshTokenResponse(rt)
-        : INACTIVE;
-    }
+    if (rt) return { tokenType: 'refresh_token', refreshToken: rt };
     const at = await accessTokenResolver.findAccessToken(token);
-    if (at) {
-      return isAccessTokenActive(at, now)
-        ? buildAccessTokenResponse(at)
-        : INACTIVE;
-    }
+    if (at) return { tokenType: 'access_token', accessToken: at };
+    return null;
+  }
+
+  const at = await accessTokenResolver.findAccessToken(token);
+  if (at) return { tokenType: 'access_token', accessToken: at };
+  if (refreshTokenResolver) {
+    const rt = await refreshTokenResolver.resolve(token);
+    if (rt) return { tokenType: 'refresh_token', refreshToken: rt };
+  }
+  return null;
+}
+
+/**
+ * ステップ 4: 解決したトークンが active かどうかを判定する
+ *
+ * RFC 7662 §2.2 の "active" は「まだ有効期限内で、失効・回収されていない」こと。
+ * - アクセストークン: `exp` 超過、または `nbf` が未来なら inactive
+ * - リフレッシュトークン: rotation 済み（`used`）または `exp` 超過なら inactive
+ *
+ * @param resolved 解決済みトークン
+ * @param now 現在時刻（Unix epoch 秒）。省略時はシステム時刻
+ */
+export function isIntrospectionTokenActive(
+  resolved: ResolvedIntrospectionToken,
+  now: number = Math.floor(Date.now() / 1000),
+): boolean {
+  return resolved.tokenType === 'access_token'
+    ? isAccessTokenActive(resolved.accessToken, now)
+    : isRefreshTokenActive(resolved.refreshToken, now);
+}
+
+/**
+ * ステップ 5: active なトークンの RFC 7662 §2.2 レスポンスクレームを組み立てる
+ *
+ * 保存されていない optional クレーム（iat / nbf / aud / iss / jti）は省略する。
+ * inactive なトークンには使わず、`INACTIVE_INTROSPECTION_RESPONSE` を返すこと。
+ */
+export function buildIntrospectionResponse(
+  resolved: ResolvedIntrospectionToken,
+): IntrospectionResponse {
+  return resolved.tokenType === 'access_token'
+    ? buildAccessTokenResponse(resolved.accessToken)
+    : buildRefreshTokenResponse(resolved.refreshToken);
+}
+
+/**
+ * Token Introspection 本体。
+ *
+ * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
+ * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
+ * 削除したり独自処理を差し込んだりできる。
+ *
+ * 1. token / authenticatedClientId のバリデーション
+ *    （`requireIntrospectionToken` / `requireIntrospectionClient`）
+ * 2. token_type_hint に応じて access → refresh または refresh → access の順で検索
+ *    （`resolveIntrospectionToken`）
+ * 3. 見つかれば exp / nbf / used をチェックして active 判定
+ *    （`isIntrospectionTokenActive`）
+ * 4. active なら推奨クレームを最大限詰めて返す（`buildIntrospectionResponse`）。
+ *    inactive なら `{ active: false }` のみ。
+ */
+export async function handleIntrospectionRequest(
+  ctx: IntrospectionRequestContext,
+): Promise<IntrospectionResponse> {
+  const { params, authenticatedClientId, accessTokenResolver, refreshTokenResolver } = ctx;
+
+  const token = requireIntrospectionToken(params);
+  requireIntrospectionClient(authenticatedClientId);
+
+  const resolved = await resolveIntrospectionToken({
+    token,
+    tokenTypeHint: params.token_type_hint,
+    accessTokenResolver,
+    refreshTokenResolver,
+  });
+
+  if (resolved === null || !isIntrospectionTokenActive(resolved)) {
     return INACTIVE;
   }
 
-  // hint=access_token / 不明 / 未指定 → access first
-  const at = await accessTokenResolver.findAccessToken(token);
-  if (at) {
-    return isAccessTokenActive(at, now)
-      ? buildAccessTokenResponse(at)
-      : INACTIVE;
-  }
-  if (refreshTokenResolver) {
-    const rt = await refreshTokenResolver.resolve(token);
-    if (rt) {
-      return isRefreshTokenActive(rt, now)
-        ? buildRefreshTokenResponse(rt)
-        : INACTIVE;
-    }
-  }
-  return INACTIVE;
+  return buildIntrospectionResponse(resolved);
 }

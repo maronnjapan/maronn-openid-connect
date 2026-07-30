@@ -58,13 +58,13 @@ jobs:
             id-token: write # npm Trusted Publishing (OIDC) のトークン取得に必須
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@v7
 
             - name: Enable Corepack
               run: corepack enable
 
             - name: Setup Node.js
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v7
               with:
                   node-version: "22"
                   cache: "pnpm"

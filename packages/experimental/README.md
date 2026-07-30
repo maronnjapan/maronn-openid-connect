@@ -1,0 +1,48 @@
+# @maronn-oidc/experimental
+
+このディレクトリは試験的に実装したもので、まだ正式にライブラリの機能として提供できていない機能をまとめたものとなります。
+
+## 位置づけ
+
+- `@maronn-oidc/core` とは**別 package**です。core の通常動作にこのコードが読み込まれることはありません。
+- **API は安定していません。** マイナーリリースでも破壊的に変更されることがあります。本番利用する場合はバージョンを固定してください。
+- CLI で `--enable <feature-id>` を明示したときだけ、生成コードがこの package を利用します。デフォルトでは一切参照されません。
+
+## 提供機能
+
+| feature-id | 内容 | 準拠仕様 | import 元 |
+|---|---|---|---|
+| `par` | Pushed Authorization Requests | RFC 9126 | `@maronn-oidc/experimental/par` |
+
+機能ごとに subpath export で提供します。ルート (`.`) からの再エクスポートは提供しません。機能間でコードを共有しないことで、昇格・削除時に他機能へ影響しない構造を保っています。
+
+```bash
+maronn-oidc generate hono --enable par
+pnpm add @maronn-oidc/experimental
+```
+
+```typescript
+import { handlePushedAuthorizationRequest } from '@maronn-oidc/experimental/par';
+```
+
+## 依存方向
+
+```text
+packages/cli ────> @maronn-oidc/experimental（生成コードの依存として明示）
+@maronn-oidc/experimental ────> @maronn-oidc/core（許可）
+packages/core ──X──> packages/experimental（禁止）
+```
+
+## 昇格条件
+
+Experimental 機能が core へ昇格する目安は次のとおりです。
+
+1. 生成 OP の conformance テストが 2 サイクル以上安定していること
+2. resolver / store 契約への変更要望が収束していること
+3. その仕様がリポジトリのロードマップ（例: FAPI 2.0 対応）で必須になったこと
+
+昇格するとその機能は `@maronn-oidc/core` へ移り、この package からは削除されます。
+
+## 利用者ドキュメント
+
+`docs/library-document` の Experimental セクションを参照してください。

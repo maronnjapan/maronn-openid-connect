@@ -15,6 +15,8 @@ import {
   introspectionRouteTemplate,
   jwksRouteTemplate,
   loginRouteTemplate,
+  parRouteTemplate,
+  parConformanceBlock,
   pkceDisabledConformanceBlock,
   persistentStorageConformanceBlock,
   requestObjectConformanceBeforeAll,
@@ -253,6 +255,25 @@ export class WebRouter {
       return Promise.resolve(route.handler(context));
     }
 
+    // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+    // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
+    // body. Serve HEAD from the GET handler with the body stripped.
+    if (context.req.method === 'HEAD') {
+      const getRoute = this.routes.find(
+        (candidate) => candidate.method === 'GET' && candidate.path === path,
+      );
+      if (getRoute) {
+        return Promise.resolve(getRoute.handler(context)).then(
+          (response) =>
+            new Response(null, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            }),
+        );
+      }
+    }
+
     const allowedMethods = this.routes
       .filter((candidate) => candidate.path === path)
       .map((candidate) => candidate.method);
@@ -376,6 +397,23 @@ export function webAppTemplate(
   const revocationMount = features.revocation
     ? `  app.route('/revoke', revocationApp);\n`
     : '';
+  // EXPERIMENTAL (RFC 9126): back-channel, client-authenticated POST endpoint,
+  // so it gets the same CORS policy as /token.
+  const parImport = features.par
+    ? `import { parApp } from './routes/par.js';\n`
+    : '';
+  const parCors = features.par
+    ? `  app.use('/par', protectedCors);\n`
+    : '';
+  const parMount = features.par
+    ? `  app.route('/par', parApp);\n`
+    : '';
+  const parStorageContext = features.par
+    ? `    c.set('parStore', parStore);\n`
+    : '';
+  const parStoreImport = features.par
+    ? `  parStore,\n`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);\n`
     : '';
@@ -390,7 +428,7 @@ export function webAppTemplate(
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -404,7 +442,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-  type ProviderStores,
+${parStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
 import {
@@ -478,7 +516,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
@@ -536,7 +574,7 @@ ${introspectionCors}${revocationCors}  app.use('/.well-known/openid-configuratio
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }
@@ -554,7 +592,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -606,6 +644,10 @@ export function expressApplyTemplate(
   const revocationEndpoint = features.revocation
     ? `  '/revoke',\n`
     : '';
+  // EXPERIMENTAL (RFC 9126): the pushed authorization request endpoint.
+  const parEndpoint = features.par
+    ? `  '/par',\n`
+    : '';
   return `import type { Express } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -617,7 +659,7 @@ const OIDC_ENDPOINTS = [
   '/authorize',
   '/token',
   '/userinfo',
-${introspectionEndpoint}${revocationEndpoint}  '/.well-known/jwks.json',
+${introspectionEndpoint}${revocationEndpoint}${parEndpoint}  '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',
   '/consent',
@@ -649,6 +691,10 @@ export function fastifyApplyTemplate(
     : '';
   const revocationRoute = features.revocation
     ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/revoke', handler: handle });\n`
+    : '';
+  // EXPERIMENTAL (RFC 9126): the pushed authorization request endpoint.
+  const parRoute = features.par
+    ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/par', handler: handle });\n`
     : '';
   return `import type { FastifyInstance } from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -685,7 +731,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/authorize', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/token', handler: handle });
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
-${introspectionRoute}${revocationRoute}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
+${introspectionRoute}${revocationRoute}${parRoute}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
@@ -782,6 +828,10 @@ class SqliteJsonStoreBackend implements JsonStoreBackend {
       mkdirSync(dirname(databasePath), { recursive: true });
     }
     this.database = new DatabaseSync(databasePath);
+    // Concurrent processes opening the same file (e.g. Next.js build workers
+    // collecting page data) race on the initial schema write; without a busy
+    // timeout SQLite fails fast with "database is locked" instead of waiting.
+    this.database.exec('PRAGMA busy_timeout = 5000');
     this.database.exec('PRAGMA journal_mode = WAL');
     this.database.exec(
       'CREATE TABLE IF NOT EXISTS oidc_store (' +
@@ -1655,6 +1705,13 @@ export function webConformanceTestTemplate(
   });
 `
     : '';
+  // Experimental (RFC 9126): the PAR contract tests need the store and the
+  // generated PAR settings.
+  const parConformanceImports = features.par
+    ? `
+import { parStore } from './store.js';
+import { parConfig } from './routes/par.js';`
+    : '';
   return `import { describe, it, expect, beforeAll } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
@@ -1662,7 +1719,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';
+import { renderView } from './views.js';${parConformanceImports}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -1959,8 +2016,8 @@ ${featureDisabledDiscoveryConformanceTests(features)}  });
       });
     });
 
-    // RFC 9068 §4: the generated OP passes expectedAudience (its UserInfo endpoint URL) to
-    // handleUserInfoRequest, so aud validation is on by default for both JWT and opaque
+    // RFC 9068 §4: the generated OP passes its UserInfo endpoint URL to
+    // validateUserInfoAudience, so aud validation is on by default for both JWT and opaque
     // tokens. Flow-issued tokens always carry the UserInfo endpoint in aud, so these inject
     // tokens with an explicit aud to exercise the accept/reject wiring end-to-end.
     describe('Access Token Audience Validation (RFC 9068 §4)', () => {
@@ -2076,7 +2133,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}});
+${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}});
 `;
 }
 
@@ -2092,7 +2149,7 @@ function webCoreGeneratedFiles(
     { path: 'config.ts', content: configTemplate(corePkg, features) },
     {
       path: 'store.ts',
-      content: storeTemplate(corePkg),
+      content: storeTemplate(corePkg, features),
     },
     {
       path: 'resolvers.ts',
@@ -2110,6 +2167,10 @@ function webCoreGeneratedFiles(
       : []),
     ...(features.revocation
       ? [{ path: 'routes/revocation.ts', content: toWebRouteTemplate(revocationRouteTemplate(corePkg)) }]
+      : []),
+    // Experimental (RFC 9126): only generated with --enable par.
+    ...(features.par
+      ? [{ path: 'routes/par.ts', content: toWebRouteTemplate(parRouteTemplate(corePkg)) }]
       : []),
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
     { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },
@@ -2184,6 +2245,15 @@ export function nextJsGeneratedFiles(
       ? [
         {
           path: 'revoke/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['POST', 'OPTIONS']),
+        },
+      ]
+      : []),
+    // Experimental (RFC 9126): only generated with --enable par.
+    ...(features.par
+      ? [
+        {
+          path: 'par/route.ts',
           content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['POST', 'OPTIONS']),
         },
       ]

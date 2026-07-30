@@ -1,9 +1,33 @@
 import { WebRouter } from '../web-router.js';
 import {
-  validateTokenRequest,
-  generateTokenResponse,
+  validateGrantTypeSupported,
+  resolveAuthenticatedTokenClient,
+  validateClientGrantType,
+  resolveAuthorizationCode,
+  validateAuthorizationCodeUnused,
+  validateAuthorizationCodeClient,
+  validateAuthorizationCodeExpiration,
+  validateAuthorizationCodeRedirectUri,
+  verifyAuthorizationCodePkce,
+  consumeAuthorizationCode,
+  buildValidatedAuthorizationCodeRequest,
+  resolveRefreshToken,
+  validateRefreshTokenUnused,
+  validateRefreshTokenClient,
+  validateRefreshTokenExpiration,
+  validateRefreshTokenIdleTimeout,
+  validateRefreshTokenScope,
+  buildValidatedRefreshTokenRequest,
+  buildAccessTokenPayload,
+  computeAtHash,
+  resolveAcrAmr,
+  buildIdTokenPayload,
+  generateIdToken,
+  generateRandomString,
   buildAccessTokenAudience,
-  authenticateClient,
+  extractClientCredentials,
+  validateClientAuthMethod,
+  verifyClientSecret,
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
   selectSigningKeyByAlg,
@@ -13,6 +37,7 @@ import {
   type AcrResolver,
   type SigningKey,
   type TokenRequestParams,
+  type ValidatedTokenRequest,
 } from '@maronn-oidc/core';
 import {
   tokenClientResolver as defaultTokenClientResolver,
@@ -112,20 +137,119 @@ tokenApp.post('/', async (c) => {
     const accessTokenStore = c.get('accessTokenStore') ?? defaultAccessTokenStore;
     const refreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
 
-    // OAuth 2.1 Section 2.3 / OIDC Core 1.0 Section 9: client_secret_basic / client_secret_post
-    const authenticatedClientId = await authenticateClient({
+    // --- Client authentication pipeline -------------------------------------
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
+    // Each step below is an independent core function, called in the same order
+    // as core's authenticateClient(). Replace verifyClientSecret with your own
+    // assertion check (e.g. private_key_jwt) without touching the rest.
+
+    // Read the presented credentials and which method was actually used.
+    const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
-      clientResolver: tokenClientResolver,
     });
 
-    const validatedRequest = await validateTokenRequest({
-      params,
-      clientResolver: tokenClientResolver,
-      authCodeResolver: authorizationCodeResolver,
-      authenticatedClientId,
-      refreshTokenResolver,
-    });
+    // RFC 6749 §5.2: the presented client_id must resolve to a registered client.
+    const tokenClient = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+
+    // OIDC Core 1.0 §9: the method used must match the registered
+    // token_endpoint_auth_method (blocks auth method downgrade / public-client mixups).
+    validateClientAuthMethod(tokenClient, presentedCredentials);
+
+    // OAuth 2.1 §7.4.1: constant-time client_secret comparison.
+    await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
+
+    const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- Token request validation pipeline --------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's validateTokenRequest(). Delete a call to drop that validation,
+    // or insert your own logic between steps.
+
+    // RFC 6749 §5.2: is the grant_type offered by this OP at all?
+    // (defaults to ['authorization_code', 'refresh_token'])
+    const grantType = validateGrantTypeSupported(params.grant_type);
+
+    // RFC 6749 §5.2: per-client grant_type authorization (unauthorized_client).
+    validateClientGrantType(tokenClient, grantType);
+
+    // Grant-specific validation. Each security rule is a separate core call so
+    // it can be removed, replaced, or surrounded with experiment-specific logic.
+    let validatedRequest: ValidatedTokenRequest;
+    if (grantType === 'refresh_token') {
+      // Resolve the presented refresh token and retain its stored grant context.
+      const { refreshTokenInfo } = await resolveRefreshToken(
+        params,
+        refreshTokenResolver,
+      );
+
+      // OAuth 2.1 §4.3.1: reject rotation reuse and revoke the token family.
+      await validateRefreshTokenUnused(refreshTokenInfo, refreshTokenResolver);
+
+      // Bind the refresh token to the authenticated client.
+      validateRefreshTokenClient(refreshTokenInfo, authenticatedClientId);
+
+      // Absolute lifetime: expiresAt <= now is expired.
+      validateRefreshTokenExpiration(refreshTokenInfo);
+
+      // Optional inactivity policy. Replace undefined with your timeout in seconds
+      // to enable it, or remove this step if your experiment has no idle lifetime.
+      validateRefreshTokenIdleTimeout(refreshTokenInfo, undefined);
+
+      // RFC 6749 §6: requested scope may only narrow the original grant.
+      const effectiveScope = validateRefreshTokenScope(
+        params.scope,
+        refreshTokenInfo.scope,
+      );
+
+      validatedRequest = buildValidatedRefreshTokenRequest(
+        refreshTokenInfo,
+        authenticatedClientId,
+        effectiveScope,
+      );
+    } else {
+      // Resolve the presented authorization code and retain the non-optional code.
+      const { code, authorizationCode } = await resolveAuthorizationCode(
+        params,
+        authorizationCodeResolver,
+      );
+
+      // OAuth 2.1 §4.1.2: reject reuse and revoke tokens from the compromised grant.
+      await validateAuthorizationCodeUnused(
+        authorizationCode,
+        authorizationCodeResolver,
+      );
+
+      // Bind the authorization code to the authenticated client and its lifetime.
+      validateAuthorizationCodeClient(authorizationCode, authenticatedClientId);
+      validateAuthorizationCodeExpiration(authorizationCode);
+
+      // OIDC Core 1.0 §3.1.3.2: bind the token request redirect_uri.
+      validateAuthorizationCodeRedirectUri(
+        authorizationCode,
+        params.redirect_uri,
+      );
+
+      // RFC 7636: validate the S256 verifier when the code carries a PKCE binding.
+      const codeVerified = await verifyAuthorizationCodePkce(
+        authorizationCode,
+        params.code_verifier,
+      );
+
+      // Mark used (do not physically delete) so a later replay remains detectable.
+      await consumeAuthorizationCode(code, authorizationCodeResolver);
+
+      validatedRequest = buildValidatedAuthorizationCodeRequest(
+        code,
+        authorizationCode,
+        authenticatedClientId,
+        codeVerified,
+      );
+    }
+
 
     const config = c.get('config');
     const privateKey = c.get('privateKey');
@@ -239,39 +363,96 @@ tokenApp.post('/', async (c) => {
         ? validatedRequest.hadOfflineAccess
         : validatedRequest.scope.includes('offline_access');
 
-    const { response: tokenResponse, resolvedAcr, resolvedAmr } = await generateTokenResponse({
+    // --- Token response pipeline --------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's generateTokenResponse(). Add your own ID Token claims by editing
+    // idTokenPayload before it is signed, or swap in another issuer.
+
+    // One timestamp for the whole response so the issued tokens and the stored
+    // token metadata agree on iat / exp.
+    const issuedAt = Math.floor(Date.now() / 1000);
+
+    // RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id.
+    // Add access token claims here before the payload is signed.
+    const accessTokenPayload = buildAccessTokenPayload({
       issuer: config.issuer,
       subject,
       clientId: validatedRequest.clientId,
       scope: validatedRequest.scope,
-      privateKey,
-      keyId,
-      idTokenPrivateKey,
-      idTokenKeyId,
-      accessTokenExpiresIn: config.accessTokenExpiresIn,
-      idTokenExpiresIn: config.idTokenExpiresIn,
-      nonce,
-      authTime,
       audience: effectiveAudience,
-      issueRefreshToken: grantHasOfflineAccess,
-      accessTokenIssuer,
-      // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
-      // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / nonce / acr / amr / azp で再発行する。
-      issueIdToken: validatedRequest.scope.includes('openid'),
-      acrResolver: validatedRequest.grantType === 'authorization_code' ? acrResolver : undefined,
-      acr: directAcr,
-      amr: directAmr,
-      // OIDC Core 1.0 §3.1.2.1: forward the requested acr_values so the AcrResolver can
-      // honor them. refresh_token grant preserves the stored acr / amr instead (§12.1),
-      // so requestedAcrValues is only passed on the authorization_code grant.
-      requestedAcrValues:
-        validatedRequest.grantType === 'authorization_code' ? validatedRequest.acrValues : undefined,
-      // OIDC Core 1.0 §5.5: forward the parsed claims request so the ID Token can
-      // satisfy id_token member requests (e.g. acr.values).
-      claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
+      expiresIn: config.accessTokenExpiresIn,
+      issuedAt,
     });
 
-    const issuedAt = Math.floor(Date.now() / 1000);
+    // JWT or opaque, chosen above from config.accessTokenFormat.
+    const accessToken = await accessTokenIssuer.issue({
+      payload: accessTokenPayload,
+      privateKey,
+      keyId,
+    });
+
+    // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
+    // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / acr / amr / azp で再発行する。
+    // （§12.2 は nonce を再発行 ID Token の保持クレームに挙げないため nonce は refresh では undefined）
+    let idToken: string | undefined;
+    let resolvedAcr: string | undefined = undefined;
+    let resolvedAmr: string[] | undefined = undefined;
+    if (validatedRequest.scope.includes('openid')) {
+      // OIDC Core 1.0 §3.1.3.6: at_hash binds the ID Token to this access token.
+      // The hash function follows the ID Token signing alg.
+      const atHash = await computeAtHash(accessToken, idTokenPrivateKey);
+
+      // T-015: acr / amr resolution.
+      // - authorization_code: ask the host app's AcrResolver (acr_values / claims
+      //   are forwarded so it can honor the request).
+      // - refresh_token: pass the stored acr / amr directly so OIDC Core 1.0 §12.1
+      //   "preserve initial auth context" holds; the resolver is bypassed.
+      ({ acr: resolvedAcr, amr: resolvedAmr } = await resolveAcrAmr({
+        subject,
+        clientId: validatedRequest.clientId,
+        acr: directAcr,
+        amr: directAmr,
+        acrResolver: validatedRequest.grantType === 'authorization_code' ? acrResolver : undefined,
+        requestedAcrValues:
+          validatedRequest.grantType === 'authorization_code' ? validatedRequest.acrValues : undefined,
+        // OIDC Core 1.0 §5.5: the parsed claims request lets the resolver satisfy
+        // id_token member requests (e.g. acr.values).
+        claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
+      }));
+
+      const idTokenPayload = buildIdTokenPayload({
+        issuer: config.issuer,
+        subject,
+        clientId: validatedRequest.clientId,
+        scope: validatedRequest.scope,
+        expiresIn: config.idTokenExpiresIn,
+        issuedAt,
+        atHash,
+        nonce,
+        authTime,
+        acr: resolvedAcr,
+        amr: resolvedAmr,
+      });
+
+      // Add your own ID Token claims here, e.g.:
+      //   idTokenPayload.tenant_id = await lookupTenant(subject);
+
+      idToken = await generateIdToken({
+        payload: idTokenPayload,
+        privateKey: idTokenPrivateKey,
+        keyId: idTokenKeyId,
+      });
+    }
+
+    // OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1: the token response body.
+    const tokenResponse = {
+      access_token: accessToken,
+      token_type: 'Bearer' as const,
+      expires_in: config.accessTokenExpiresIn,
+      id_token: idToken,
+      scope: validatedRequest.scope.join(' '),
+      refresh_token: grantHasOfflineAccess ? generateRandomString(32) : undefined,
+    };
 
     // Store access token info for UserInfo / Introspection / Revocation endpoints.
     // iat / nbf / audience / issuer are kept so RFC 7662 introspection can echo them.

@@ -3,6 +3,7 @@ import type { IdTokenPayload } from './id-token';
 import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJwaAlgorithm, jwaToHashName } from './crypto-utils';
 import { createJwtAccessTokenIssuer } from './access-token-issuer';
 import type { AccessTokenIssuer } from './access-token-issuer';
+import type { AccessTokenPayload } from './access-token';
 import { filterClaimsByScope } from './userinfo';
 import type { UserClaims, ClaimsParameter } from './userinfo';
 
@@ -237,7 +238,51 @@ export function buildIdTokenAudience(input: IdTokenAudienceInput): IdTokenAudien
 }
 
 /**
- * at_hash を計算する
+ * アクセストークン payload 組み立てのオプション。
+ */
+export interface AccessTokenPayloadInput {
+  issuer: string;
+  subject: string;
+  clientId: string;
+  scope: string[];
+  /**
+   * アクセストークンの audience（resource indicator）。
+   * 空・未指定なら issuer をデフォルト audience にフォールバックする
+   * （RFC 9068 §3: aud は非空でなければならない）。
+   */
+  audience?: string[];
+  /** 有効期間（秒） */
+  expiresIn: number;
+  /** 発行時刻（Unix epoch 秒）。省略時はシステム時刻 */
+  issuedAt?: number;
+}
+
+/**
+ * ステップ: アクセストークンの payload を組み立てる
+ * RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id
+ *
+ * 実際の発行（JWT 署名 / Opaque 文字列）は {@link AccessTokenIssuer} の責務。
+ * 独自クレームを載せたい場合は戻り値へ追加してから issuer に渡す。
+ */
+export function buildAccessTokenPayload(
+  input: AccessTokenPayloadInput,
+): AccessTokenPayload {
+  const { issuer, subject, clientId, scope, audience, expiresIn } = input;
+  const issuedAt = input.issuedAt ?? Math.floor(Date.now() / 1000);
+
+  return {
+    iss: issuer,
+    sub: subject,
+    aud: buildAccessTokenAudience({ requested: audience, issuer }),
+    exp: issuedAt + expiresIn,
+    iat: issuedAt,
+    scope: scope.join(' '),
+    client_id: clientId,
+  };
+}
+
+/**
+ * ステップ: at_hash を計算する
  * OIDC Core 1.0 Section 3.1.3.6:
  * ID Token の JOSE Header `alg` で使われるハッシュ関数で access_token をハッシュし、
  * 左半分を取り出して base64url エンコードする。
@@ -247,12 +292,13 @@ export function buildIdTokenAudience(input: IdTokenAudienceInput): IdTokenAudien
  * （SHA-256→16B, SHA-384→24B, SHA-512→32B）。
  *
  * @param accessToken ハッシュ対象のアクセストークン
- * @param hashName ID Token 署名 alg に対応する Web Crypto ダイジェストアルゴリズム名
+ * @param idTokenPrivateKey ID Token の署名鍵。この鍵の alg からハッシュ関数を決める
  */
-async function computeAtHash(
+export async function computeAtHash(
   accessToken: string,
-  hashName: 'SHA-256' | 'SHA-384' | 'SHA-512',
+  idTokenPrivateKey: CryptoKey,
 ): Promise<string> {
+  const hashName = jwaToHashName(getJwaAlgorithm(idTokenPrivateKey));
   const tokenBytes = stringToArrayBuffer(accessToken);
   const hashBuffer = await crypto.subtle.digest(hashName, tokenBytes);
   const leftHalf = hashBuffer.slice(0, hashBuffer.byteLength / 2);
@@ -260,11 +306,173 @@ async function computeAtHash(
 }
 
 /**
+ * acr / amr 解決のオプション。
+ */
+export interface ResolveAcrAmrInput {
+  subject: string;
+  clientId: string;
+  /** 直接指定する acr（OIDC Core 1.0 §12.1: refresh 時の初回値保持用） */
+  acr?: string;
+  /** 直接指定する amr（同上） */
+  amr?: string[];
+  /** 認可リクエストの acr_values */
+  requestedAcrValues?: string;
+  /** OIDC Core 1.0 §5.5: claims パラメータ。acr_values 未指定時の種として使う */
+  claims?: ClaimsParameter;
+  /** acr / amr を解決する resolver */
+  acrResolver?: AcrResolver;
+}
+
+export interface ResolvedAcrAmr {
+  acr?: string;
+  amr?: string[];
+}
+
+/**
+ * ステップ: ID Token に載せる acr / amr を解決する
+ *
+ * 優先順位:
+ * 1. 呼び出し側が直接指定した acr / amr（refresh 時に §12.1 の初回値を保持するケース）
+ * 2. acrResolver（新規認証時）
+ * 3. どちらも無ければ省略（core は認証ポリシーを決め打ちしない）
+ *
+ * OIDC Core 1.0 §5.5.1.1: `claims.id_token.acr.values` は acr_values 要求と等価。
+ * `requestedAcrValues` が無い場合はこれを resolver への要求値として渡す。
+ */
+export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<ResolvedAcrAmr> {
+  const { subject, clientId, acr, amr, requestedAcrValues, claims, acrResolver } = input;
+
+  if (acr !== undefined || amr !== undefined) {
+    return { acr, amr };
+  }
+  if (!acrResolver) {
+    return { acr: undefined, amr: undefined };
+  }
+
+  // OIDC Core 1.0 §5.5.1.1: claims.id_token.acr.values is equivalent to
+  // requesting these acr values. Use it to seed acrResolver when the request
+  // did not provide a separate `acr_values` parameter.
+  let effectiveRequestedAcrValues = requestedAcrValues;
+  if (effectiveRequestedAcrValues === undefined && claims?.id_token) {
+    const acrEntry = claims.id_token['acr'];
+    if (acrEntry && Array.isArray(acrEntry.values)) {
+      const stringValues = acrEntry.values.filter((v): v is string => typeof v === 'string');
+      if (stringValues.length > 0) {
+        effectiveRequestedAcrValues = stringValues.join(' ');
+      }
+    }
+  }
+
+  const result = await acrResolver({
+    userId: subject,
+    clientId,
+    requestedAcrValues: effectiveRequestedAcrValues,
+  });
+
+  return { acr: result?.acr, amr: result?.amr };
+}
+
+/**
+ * ID Token payload 組み立てのオプション。
+ */
+export interface IdTokenPayloadInput {
+  issuer: string;
+  subject: string;
+  clientId: string;
+  scope: string[];
+  /** 有効期間（秒） */
+  expiresIn: number;
+  /** 発行時刻（Unix epoch 秒）。省略時はシステム時刻 */
+  issuedAt?: number;
+  /** OIDC Core 1.0 §3.1.3.6: アクセストークンとの結合を示す at_hash */
+  atHash?: string;
+  nonce?: string;
+  authTime?: number;
+  acr?: string;
+  amr?: string[];
+  /** クライアント自身以外に ID Token を受け取る audience */
+  idTokenAudiences?: string[];
+  /** scope に応じて含めるユーザクレーム */
+  userClaims?: UserClaims;
+}
+
+/**
+ * ステップ: ID Token の payload を組み立てる
+ * OIDC Core 1.0 Section 2 / 3.1.3.6 / 5.4
+ *
+ * 署名は {@link generateIdToken} の責務。独自クレームを載せたい場合は
+ * 戻り値へ追加してから署名すること（必須クレームは上書きされない）。
+ */
+export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload {
+  const {
+    issuer,
+    subject,
+    clientId,
+    scope,
+    expiresIn,
+    atHash,
+    nonce,
+    authTime,
+    acr,
+    amr,
+    idTokenAudiences,
+    userClaims,
+  } = input;
+  const issuedAt = input.issuedAt ?? Math.floor(Date.now() / 1000);
+
+  const payload: Record<string, unknown> = {};
+
+  // OIDC Core 1.0 §5.4 / §12: scope に応じてユーザクレームを含める。
+  // 必須クレーム (iss/sub/aud/exp/iat/at_hash etc.) は後続の代入で上書きされるため
+  // ここではユーザクレーム由来の sub などによる spoof を防げる。
+  if (userClaims) {
+    Object.assign(payload, filterClaimsByScope(userClaims, scope));
+  }
+
+  payload.iss = issuer;
+  payload.sub = subject;
+  // OIDC Core 1.0 §2 / §3.1.3.7 (4-5): build aud/azp via buildIdTokenAudience so the
+  // array case is handled correctly. Default (no idTokenAudiences) → aud = clientId
+  // (single string), azp omitted. When additional audiences are supplied → aud becomes
+  // an array and azp = clientId is emitted, so a multi-audience ID Token can never drop
+  // the required azp — see study-material/done/id-token-azp-claim-policy.md.
+  const { aud, azp } = buildIdTokenAudience({ clientId, additional: idTokenAudiences });
+  payload.aud = aud;
+  if (azp !== undefined) {
+    payload.azp = azp;
+  }
+  payload.exp = issuedAt + expiresIn;
+  payload.iat = issuedAt;
+  if (atHash !== undefined) {
+    payload.at_hash = atHash;
+  }
+  if (nonce !== undefined) {
+    payload.nonce = nonce;
+  }
+  if (authTime !== undefined) {
+    payload.auth_time = authTime;
+  }
+  if (acr !== undefined) {
+    payload.acr = acr;
+  }
+  if (amr !== undefined) {
+    payload.amr = amr;
+  }
+
+  return payload as IdTokenPayload;
+}
+
+/**
  * トークンレスポンスを生成する
  *
+ * 各ステップ関数を合成した後方互換 API。CLI が生成する Provider はこの合成関数
+ * ではなく個々のステップ関数を順に呼び出すため、利用者は ID Token へ独自クレームを
+ * 足したり、発行処理を差し替えたりできる。
+ *
  * アクセストークンとIDトークンを生成し、OIDC準拠のレスポンスを返す。
- * - アクセストークン: JWT形式（iss, sub, aud, exp, iat, scope, client_id）
- * - IDトークン: JWT形式（iss, sub, aud, exp, iat, nonce, at_hash, auth_time）
+ * - アクセストークン: {@link buildAccessTokenPayload} + {@link AccessTokenIssuer}
+ * - IDトークン: {@link computeAtHash} + {@link resolveAcrAmr} +
+ *   {@link buildIdTokenPayload} + {@link generateIdToken}
  *
  * @param options トークンレスポンスの生成オプション
  * @returns トークンレスポンス
@@ -296,20 +504,6 @@ export async function generateTokenResponse(options: TokenResponseOptions): Prom
     claims,
   } = options;
 
-  // OIDC Core 1.0 §5.5.1.1: claims.id_token.acr.values is equivalent to
-  // requesting these acr values. Use it to seed acrResolver when the request
-  // did not provide a separate `acr_values` parameter.
-  let effectiveRequestedAcrValues = requestedAcrValues;
-  if (effectiveRequestedAcrValues === undefined && claims?.id_token) {
-    const acrEntry = claims.id_token['acr'];
-    if (acrEntry && Array.isArray(acrEntry.values)) {
-      const stringValues = acrEntry.values.filter((v): v is string => typeof v === 'string');
-      if (stringValues.length > 0) {
-        effectiveRequestedAcrValues = stringValues.join(' ');
-      }
-    }
-  }
-
   // IDトークン専用鍵が指定されていなければアクセストークンと同じ鍵を使用
   const idtKey = idTokenPrivateKey ?? privateKey;
   const idtKid = idTokenKeyId ?? keyId;
@@ -321,20 +515,20 @@ export async function generateTokenResponse(options: TokenResponseOptions): Prom
   // それをそのまま使う。core 自身は UserInfo エンドポイントのパスを知り得ないため、ここでは
   // requested として渡された audience のみを合成し、空なら issuer をデフォルトにフォールバックする。
   // 合成・重複除去・非空フォールバックのポリシーは buildAccessTokenAudience に集約する。
-  const accessTokenAud = buildAccessTokenAudience({ requested: audience, issuer });
+  const accessTokenPayload = buildAccessTokenPayload({
+    issuer,
+    subject,
+    clientId,
+    scope,
+    audience,
+    expiresIn: accessTokenExpiresIn,
+    issuedAt: now,
+  });
 
   // アクセストークンの生成（issuer 抽象でJWT/Opaqueを切替）
   const issuerImpl = accessTokenIssuer ?? createJwtAccessTokenIssuer();
   const accessToken = await issuerImpl.issue({
-    payload: {
-      iss: issuer,
-      sub: subject,
-      aud: accessTokenAud,
-      exp: now + accessTokenExpiresIn,
-      iat: now,
-      scope: scope.join(' '),
-      client_id: clientId,
-    },
+    payload: accessTokenPayload,
     privateKey,
     keyId,
   });
@@ -348,71 +542,36 @@ export async function generateTokenResponse(options: TokenResponseOptions): Prom
   if (issueIdToken) {
     // at_hash の計算 (OIDC Core 1.0 Section 3.1.3.6)
     // ハッシュ関数は ID Token の署名 alg に追従させる（idtKey で署名するため idtKey の alg を参照）。
-    const atHash = await computeAtHash(accessToken, jwaToHashName(getJwaAlgorithm(idtKey)));
+    const atHash = await computeAtHash(accessToken, idtKey);
 
-    const idTokenPayload: Record<string, unknown> = {};
-
-    // OIDC Core 1.0 §5.4 / §12: scope に応じてユーザクレームを含める。
-    // 必須クレーム (iss/sub/aud/exp/iat/at_hash etc.) は後続の代入で上書きされるため
-    // ここではユーザクレーム由来の sub などによる spoof を防げる。
-    if (userClaims) {
-      const filtered = filterClaimsByScope(userClaims, scope);
-      Object.assign(idTokenPayload, filtered);
-    }
-
-    idTokenPayload.iss = issuer;
-    idTokenPayload.sub = subject;
-    // OIDC Core 1.0 §2 / §3.1.3.7 (4-5): build aud/azp via buildIdTokenAudience so the
-    // array case is handled correctly. Default (no idTokenAudiences) → aud = clientId
-    // (single string), azp omitted. When additional audiences are supplied → aud becomes
-    // an array and azp = clientId is emitted, so a multi-audience ID Token can never drop
-    // the required azp — see study-material/done/id-token-azp-claim-policy.md.
-    const { aud: idTokenAud, azp: idTokenAzp } = buildIdTokenAudience({
+    ({ acr: resolvedAcr, amr: resolvedAmr } = await resolveAcrAmr({
+      subject,
       clientId,
-      additional: idTokenAudiences,
+      acr: directAcr,
+      amr: directAmr,
+      requestedAcrValues,
+      claims,
+      acrResolver,
+    }));
+
+    const idTokenPayload = buildIdTokenPayload({
+      issuer,
+      subject,
+      clientId,
+      scope,
+      expiresIn: idTokenExpiresIn,
+      issuedAt: now,
+      atHash,
+      nonce,
+      authTime,
+      acr: resolvedAcr,
+      amr: resolvedAmr,
+      idTokenAudiences,
+      userClaims,
     });
-    idTokenPayload.aud = idTokenAud;
-    if (idTokenAzp !== undefined) {
-      idTokenPayload.azp = idTokenAzp;
-    }
-    idTokenPayload.exp = now + idTokenExpiresIn;
-    idTokenPayload.iat = now;
-    idTokenPayload.at_hash = atHash;
-
-    if (nonce !== undefined) {
-      idTokenPayload.nonce = nonce;
-    }
-
-    if (authTime !== undefined) {
-      idTokenPayload.auth_time = authTime;
-    }
-
-    // acr / amr resolution priority:
-    // 1. caller-supplied acr / amr (refresh case — preserve §12.1 initial values)
-    // 2. acrResolver (fresh authentication)
-    // 3. omit (T-009 hold — no policy decision baked into core)
-    resolvedAcr = directAcr;
-    resolvedAmr = directAmr;
-    if (resolvedAcr === undefined && resolvedAmr === undefined && acrResolver) {
-      const result = await acrResolver({
-        userId: subject,
-        clientId,
-        requestedAcrValues: effectiveRequestedAcrValues,
-      });
-      if (result) {
-        resolvedAcr = result.acr;
-        resolvedAmr = result.amr;
-      }
-    }
-    if (resolvedAcr !== undefined) {
-      idTokenPayload.acr = resolvedAcr;
-    }
-    if (resolvedAmr !== undefined) {
-      idTokenPayload.amr = resolvedAmr;
-    }
 
     idToken = await generateIdToken({
-      payload: idTokenPayload as IdTokenPayload,
+      payload: idTokenPayload,
       privateKey: idtKey,
       keyId: idtKid,
     });

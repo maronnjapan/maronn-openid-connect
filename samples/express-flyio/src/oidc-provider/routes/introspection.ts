@@ -1,9 +1,18 @@
 import { WebRouter } from '../web-router.js';
 import {
-  authenticateClient,
-  handleIntrospectionRequest,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  validateClientAuthMethod,
+  verifyClientSecret,
+  requireIntrospectionToken,
+  requireIntrospectionClient,
+  resolveIntrospectionToken,
+  isIntrospectionTokenActive,
+  buildIntrospectionResponse,
+  INACTIVE_INTROSPECTION_RESPONSE,
   IntrospectionError,
   TokenError,
+  type IntrospectionResponse,
 } from '@maronn-oidc/core';
 import {
   tokenClientResolver as defaultTokenClientResolver,
@@ -51,22 +60,51 @@ introspectionApp.post('/', async (c) => {
     const refreshTokenResolver =
       c.get('introspectionRefreshTokenResolver') ?? defaultRefreshResolver;
 
-    const authenticatedClientId = await authenticateClient({
+    // --- Client authentication pipeline -------------------------------------
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
+    // authenticateClient(). RFC 7662 §2.1 requires the caller to authenticate.
+    const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
-      clientResolver: tokenClientResolver,
+    });
+    const introspectingClient = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(introspectingClient, presentedCredentials);
+    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+    const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- Introspection pipeline ---------------------------------------------
+    // Each step below is an independent core function, called in the same order
+    // as core's handleIntrospectionRequest(). Delete a call to drop that step,
+    // or insert your own logic between steps.
+
+    // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
+    const token = requireIntrospectionToken({
+      token: typeof params.token === 'string' ? params.token : undefined,
     });
 
-    const response = await handleIntrospectionRequest({
-      params: {
-        token: typeof params.token === 'string' ? params.token : undefined,
-        token_type_hint:
-          typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
-      },
-      authenticatedClientId,
+    // RFC 7662 §2.1: the caller must be an authenticated client (invalid_client).
+    requireIntrospectionClient(authenticatedClientId);
+
+    // RFC 7662 §2.1: token_type_hint only reorders the lookup — the other token
+    // type is still searched when the hint misses.
+    const resolved = await resolveIntrospectionToken({
+      token,
+      tokenTypeHint:
+        typeof params.token_type_hint === 'string' ? params.token_type_hint : undefined,
       accessTokenResolver,
       refreshTokenResolver,
     });
+
+    // RFC 7662 §2.2: an unknown, expired, not-yet-valid or rotated token is
+    // reported as { active: false } with no other member, so the caller cannot
+    // distinguish "never existed" from "no longer valid".
+    let response: IntrospectionResponse = INACTIVE_INTROSPECTION_RESPONSE;
+    if (resolved !== null && isIntrospectionTokenActive(resolved)) {
+      response = buildIntrospectionResponse(resolved);
+    }
 
     return c.json(response);
   } catch (error) {

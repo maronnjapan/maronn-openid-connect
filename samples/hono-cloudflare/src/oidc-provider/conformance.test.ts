@@ -9,6 +9,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';
+import { parStore } from './store.js';
+import { parConfig } from './routes/par.js';
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -492,8 +494,8 @@ describe('generated provider HTTP conformance', () => {
       });
     });
 
-    // RFC 9068 §4: the generated OP passes expectedAudience (its UserInfo endpoint URL) to
-    // handleUserInfoRequest, so aud validation is on by default for both JWT and opaque
+    // RFC 9068 §4: the generated OP passes its UserInfo endpoint URL to
+    // validateUserInfoAudience, so aud validation is on by default for both JWT and opaque
     // tokens. Flow-issued tokens always carry the UserInfo endpoint in aud, so these inject
     // tokens with an explicit aud to exercise the accept/reject wiring end-to-end.
     describe('Access Token Audience Validation (RFC 9068 §4)', () => {
@@ -781,6 +783,34 @@ describe('generated provider HTTP conformance', () => {
       );
 
       expect(responses).toEqual(cases.map((testCase) => ({ status: 405, allow: testCase.allow })));
+    });
+
+    // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+    // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
+    // body. GET-serving endpoints therefore answer HEAD like GET with an empty body.
+    it('should answer HEAD on GET endpoints with 200 and an empty body (RFC 9110 §9.1, §9.3.2)', async () => {
+      const cases = ['/.well-known/openid-configuration', '/.well-known/jwks.json'];
+      const responses = await Promise.all(
+        cases.map(async (path) => {
+          const response = await app.request(path, { method: 'HEAD' });
+          return { status: response.status, body: await response.text() };
+        }),
+      );
+
+      expect(responses).toEqual([
+        { status: 200, body: '' },
+        { status: 200, body: '' },
+      ]);
+    });
+
+    // UserInfo GET requires a Bearer token, so an unauthenticated HEAD returns the
+    // 401 auth challenge (with an empty body), never 405 — HEAD is supported
+    // wherever GET is (RFC 9110 §9.1). The auth requirement is enforced separately.
+    it('should answer HEAD on the UserInfo GET endpoint with the auth challenge, not 405', async () => {
+      const response = await app.request('/userinfo', { method: 'HEAD' });
+
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe('');
     });
 
     it('should give createApp and applyOidc the same CORS preflight behavior', async () => {
@@ -1582,4 +1612,404 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
+
+  // EXPERIMENTAL — Pushed Authorization Requests (RFC 9126). Generated because
+  // this provider was created with --enable par. These tests pin the contract the
+  // repository guarantees for the generated PAR endpoint: change the behavior and
+  // they fail, which is how a customized OP learns it has drifted.
+  describe('Pushed Authorization Requests (RFC 9126)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const REQUEST_URI_PREFIX = 'urn:ietf:params:oauth:request_uri:';
+    const OPAQUE_FAILURE_DESCRIPTION =
+      'The request_uri is invalid, expired, or has already been used';
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function pushedRequestBody(overrides: Record<string, string> = {}): Record<string, string> {
+      return {
+        response_type: 'code',
+        client_id: 'c-conf',
+        client_secret: 's',
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid',
+        state: 'par-state',
+        nonce: 'par-nonce',
+        code_challenge: PKCE_CHALLENGE_S256,
+        code_challenge_method: 'S256',
+        ...overrides,
+      };
+    }
+
+    function pushRequest(body: Record<string, string>): Promise<Response> {
+      return app.request('/par', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    async function pushAndGetRequestUri(overrides: Record<string, string> = {}): Promise<string> {
+      const res = await pushRequest(pushedRequestBody(overrides));
+      const body = await res.json();
+      return body.request_uri as string;
+    }
+
+    function authorizeWithRequestUri(requestUri: string, clientId = 'c-conf'): Promise<Response> {
+      return app.request(
+        '/authorize?client_id=' + clientId + '&request_uri=' + encodeURIComponent(requestUri),
+        { headers: { Accept: 'application/json' } },
+      );
+    }
+
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    describe('Endpoint response', () => {
+      it('should return 201 with a URN request_uri and the configured lifetime', async () => {
+        // RFC 9126 §2.2: 201 Created, application/json, Cache-Control: no-cache, no-store.
+        const res = await pushRequest(pushedRequestBody());
+        const body = await res.json();
+
+        expect(res.status).toBe(201);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(res.headers.get('Cache-Control')).toBe('no-cache, no-store');
+        expect(Object.keys(body).sort()).toEqual(['expires_in', 'request_uri']);
+        expect(body.expires_in).toBe(60);
+        expect((body.request_uri as string).startsWith(REQUEST_URI_PREFIX)).toBe(true);
+        expect((body.request_uri as string).slice(REQUEST_URI_PREFIX.length)).toHaveLength(43);
+      });
+
+      it('should issue a different request_uri for every pushed request', async () => {
+        const first = await pushAndGetRequestUri();
+        const second = await pushAndGetRequestUri();
+
+        expect(first === second).toBe(false);
+      });
+
+      it('should reject a request that is not form-urlencoded', async () => {
+        const res = await app.request('/par', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(pushedRequestBody()),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Pushed authorization requests must use application/x-www-form-urlencoded',
+        });
+      });
+
+      it('should reject a GET on the PAR endpoint with 405', async () => {
+        // RFC 9126 §2.3 lists 405 among the responses the endpoint may return.
+        const res = await app.request('/par');
+
+        expect(res.status).toBe(405);
+        expect(res.headers.get('Allow')).toBe('POST');
+      });
+    });
+
+    describe('Client authentication', () => {
+      it('should reject an unauthenticated pushed request with 401 invalid_client', async () => {
+        const body = pushedRequestBody();
+        delete body.client_secret;
+        const res = await pushRequest(body);
+
+        expect(res.status).toBe(401);
+        expect(res.headers.get('WWW-Authenticate')).toBe('Basic realm="Client Authentication"');
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      it('should reject a wrong client_secret with 401 invalid_client', async () => {
+        const res = await pushRequest(pushedRequestBody({ client_secret: 'wrong' }));
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+    });
+
+    describe('Pushed parameter validation', () => {
+      it('should reject a request_uri inside the pushed body', async () => {
+        // RFC 9126 §2.1: request_uri MUST NOT be provided in a pushed request.
+        const res = await pushRequest(
+          pushedRequestBody({ request_uri: REQUEST_URI_PREFIX + 'anything' }),
+        );
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'request_uri MUST NOT be included in a pushed authorization request',
+        });
+      });
+
+      it('should reject a request parameter because PAR with a Request Object is unsupported', async () => {
+        const res = await pushRequest(pushedRequestBody({ request: 'eyJhbGciOiJSUzI1NiJ9.e30.s' }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'The request parameter (Request Object) is not supported by this pushed authorization request endpoint',
+        });
+      });
+
+      it('should reject an unregistered redirect_uri before the user sees anything', async () => {
+        // RFC 9126 §2.1: the pushed request is validated as an authorization request
+        // would be — so this fails on the back channel, with no redirect.
+        const res = await pushRequest(
+          pushedRequestBody({ redirect_uri: 'http://attacker.example/cb' }),
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Location')).toBe(null);
+        expect((await res.json()).error).toBe('invalid_request');
+      });
+
+      it('should reject a scope without openid as invalid_scope', async () => {
+        const res = await pushRequest(pushedRequestBody({ scope: 'profile' }));
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe('invalid_scope');
+      });
+    });
+
+    describe('Authorization endpoint resolution', () => {
+      it('should complete the full PAR to token flow', async () => {
+        const requestUri = await pushAndGetRequestUri();
+
+        const authorizeRes = await app.request(
+          '/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(requestUri),
+        );
+        const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+        const transactionId =
+          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+        const loginGet = await app.request(loginPath);
+        const loginRes = await app.request('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            transaction_id: transactionId,
+            csrf_token: csrfFrom(await loginGet.text()),
+            username: 'testuser',
+            password: 'password',
+          }).toString(),
+        });
+        const consentPath = relativeFrom(loginRes.headers.get('Location'));
+        const consentGet = await app.request(consentPath);
+        const consentRes = await app.request('/consent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            transaction_id: transactionId,
+            csrf_token: csrfFrom(await consentGet.text()),
+            action: 'approve',
+          }).toString(),
+        });
+        const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+
+        expect(authorizeRes.status).toBe(302);
+        expect(loginPath.startsWith('/login?')).toBe(true);
+        expect(consentPath.startsWith('/consent?')).toBe(true);
+        // The pushed state is what comes back, proving the stored parameters were used.
+        expect(callback.searchParams.get('state')).toBe('par-state');
+
+        const tokenRes = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            client_id: 'c-conf',
+            client_secret: 's',
+            code: callback.searchParams.get('code') ?? '',
+            redirect_uri: REDIRECT_URI,
+            code_verifier: PKCE_VERIFIER,
+          }).toString(),
+        });
+        const tokenBody = await tokenRes.json();
+
+        expect(tokenRes.status).toBe(200);
+        // The nonce pushed to /par is the one bound into the ID Token (OIDC Core §2).
+        expect(idTokenPayload(tokenBody.id_token as string).nonce).toBe('par-nonce');
+      });
+
+      it('should keep the pushed parameters authoritative over the query string', async () => {
+        // RFC 9126 §4: the client sends only client_id and request_uri; anything else
+        // in the query is ignored so it cannot tamper with the pushed request.
+        const requestUri = await pushAndGetRequestUri();
+
+        const authorizeRes = await app.request(
+          '/authorize?client_id=c-conf&scope=openid+admin&state=tampered&request_uri=' +
+            encodeURIComponent(requestUri),
+        );
+        const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+        const transactionId =
+          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+        const loginGet = await app.request(loginPath);
+        const loginRes = await app.request('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            transaction_id: transactionId,
+            csrf_token: csrfFrom(await loginGet.text()),
+            username: 'testuser',
+            password: 'password',
+          }).toString(),
+        });
+        const consentPath = relativeFrom(loginRes.headers.get('Location'));
+        const consentHtml = await (await app.request(consentPath)).text();
+
+        expect(authorizeRes.status).toBe(302);
+        // The consent screen lists the pushed scope, not the tampered one.
+        expect(consentHtml.includes('<li>admin</li>')).toBe(false);
+      });
+
+      it('should reject the second use of the same request_uri', async () => {
+        // RFC 9126 §7.3: single use. A browser reload of the authorize URL fails too;
+        // that is the intended trade-off of not allowing the §4 duplicate-use MAY.
+        const requestUri = await pushAndGetRequestUri();
+        const first = await app.request(
+          '/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(requestUri),
+        );
+        const second = await authorizeWithRequestUri(requestUri);
+
+        expect(first.status).toBe(302);
+        expect(second.status).toBe(400);
+        expect(await second.json()).toEqual({
+          error: 'invalid_request_uri',
+          error_description: OPAQUE_FAILURE_DESCRIPTION,
+        });
+      });
+
+      it('should reject an expired request_uri', async () => {
+        // RFC 9126 §4: "An expired request_uri MUST be rejected as invalid."
+        const requestUri = REQUEST_URI_PREFIX + 'expired-conformance-reference';
+        await parStore.save({
+          requestUri,
+          clientId: 'c-conf',
+          params: pushedRequestBody({ client_secret: '' }),
+          createdAt: new Date(Date.now() - 120_000),
+          expiresAt: new Date(Date.now() - 60_000),
+        });
+
+        const res = await authorizeWithRequestUri(requestUri);
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe('invalid_request_uri');
+      });
+
+      it('should reject a request_uri presented by a different client', async () => {
+        // RFC 9126 §2.2: the request_uri MUST be bound to the client that pushed it.
+        const requestUri = await pushAndGetRequestUri();
+
+        const res = await authorizeWithRequestUri(requestUri, 'c-public');
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe('invalid_request_uri');
+      });
+
+      it('should return the identical response for every resolution failure', async () => {
+        // The response must not reveal whether a given request_uri ever existed.
+        const consumed = await pushAndGetRequestUri();
+        await app.request('/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(consumed));
+        const reused = await authorizeWithRequestUri(consumed);
+        const unknown = await authorizeWithRequestUri(REQUEST_URI_PREFIX + 'never-issued');
+        const stolen = await pushAndGetRequestUri();
+        const mismatched = await authorizeWithRequestUri(stolen, 'c-public');
+
+        expect([reused.status, unknown.status, mismatched.status]).toEqual([400, 400, 400]);
+        expect([await reused.json(), await unknown.json(), await mismatched.json()]).toEqual([
+          { error: 'invalid_request_uri', error_description: OPAQUE_FAILURE_DESCRIPTION },
+          { error: 'invalid_request_uri', error_description: OPAQUE_FAILURE_DESCRIPTION },
+          { error: 'invalid_request_uri', error_description: OPAQUE_FAILURE_DESCRIPTION },
+        ]);
+      });
+
+      it('should never redirect a resolution failure to the client', async () => {
+        // RFC 6749 §4.1.2.1: without a verified redirect_uri the OP MUST NOT redirect.
+        const res = await authorizeWithRequestUri(REQUEST_URI_PREFIX + 'never-issued');
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Location')).toBe(null);
+      });
+
+      it('should leave a URL-form request_uri to the core request_uri_not_supported path', async () => {
+        // OIDC Core 1.0 §6.2 by-reference request objects stay unsupported.
+        const res = await app.request(
+          '/authorize?response_type=code&client_id=c-conf' +
+            '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+            '&scope=openid&state=url-form' +
+            '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256' +
+            '&request_uri=' + encodeURIComponent('https://client.example/request.jwt'),
+        );
+        const location = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+        expect(res.status).toBe(302);
+        expect(location.searchParams.get('error')).toBe('request_uri_not_supported');
+      });
+    });
+
+    describe('Provider metadata and PAR enforcement', () => {
+      it('should advertise the pushed_authorization_request_endpoint', async () => {
+        // RFC 9126 §5.
+        const res = await app.request('/.well-known/openid-configuration');
+        const metadata = await res.json();
+
+        expect(metadata.pushed_authorization_request_endpoint).toBe(
+          'http://localhost:3000/par',
+        );
+      });
+
+      it('should not advertise require_pushed_authorization_requests while PAR is optional', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.require_pushed_authorization_requests).toBe(undefined);
+      });
+
+      it('should advertise require_pushed_authorization_requests when PAR is enforced', async () => {
+        parConfig.requirePushedAuthorizationRequests = true;
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+        parConfig.requirePushedAuthorizationRequests = false;
+
+        expect(metadata.require_pushed_authorization_requests).toBe(true);
+      });
+
+      it('should reject a non-pushed authorization request when PAR is enforced', async () => {
+        // RFC 9126 §5. The rejection is non-redirect, like every other PAR failure.
+        parConfig.requirePushedAuthorizationRequests = true;
+        const res = await app.request(
+          '/authorize?response_type=code&client_id=c-conf' +
+            '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+            '&scope=openid&state=no-par' +
+            '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256',
+          { headers: { Accept: 'application/json' } },
+        );
+        const body = await res.json();
+        parConfig.requirePushedAuthorizationRequests = false;
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Location')).toBe(null);
+        expect(body).toEqual({
+          error: 'invalid_request',
+          error_description: 'Pushed authorization requests are required by this authorization server',
+        });
+      });
+
+      it('should still accept a pushed request while PAR is enforced', async () => {
+        parConfig.requirePushedAuthorizationRequests = true;
+        const requestUri = await pushAndGetRequestUri();
+        const res = await app.request(
+          '/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(requestUri),
+        );
+        parConfig.requirePushedAuthorizationRequests = false;
+
+        expect(res.status).toBe(302);
+      });
+    });
+  });
 });

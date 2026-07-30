@@ -20,7 +20,7 @@
         "conformance:basic-op": "pnpm --filter @maronn-oidc/conformance basic-op",
         "typecheck": "pnpm --filter \"./packages/*\" typecheck && pnpm --filter \"./samples/*\" typecheck && pnpm --filter \"./tests/*\" typecheck",
         "lint": "pnpm --filter \"./packages/*\" lint",
-        "build": "pnpm --filter @maronn-oidc/core --filter @maronn-oidc/cli run build",
+        "build": "pnpm --filter @maronn-oidc/core --filter @maronn-oidc/experimental --filter @maronn-oidc/cli run build",
         "build:cli": "pnpm --filter @maronn-oidc/cli build && pnpm install",
         "build:core": "pnpm --filter @maronn-oidc/core build && pnpm install",
         "build:docs": "pnpm --filter @maronn-oidc/docs build:doc",

@@ -10,8 +10,12 @@
  */
 
 import { timingSafeEqual } from './crypto-utils';
-import { TokenError, TokenErrorCode } from './token-request';
-import type { TokenClientResolver } from './token-request';
+import {
+  resolveAuthenticatedTokenClient,
+  TokenError,
+  TokenErrorCode,
+} from './token-request';
+import type { TokenClientInfo, TokenClientResolver } from './token-request';
 
 /**
  * クライアント認証コンテキスト
@@ -94,19 +98,37 @@ function parseBasicAuth(
 }
 
 /**
- * クライアント認証を行う
+ * リクエストが提示したクライアント資格情報。
  *
- * 認証成功時: 認証済みクライアントID（string）を返す
- * 認証失敗時: TokenError をスロー
- *
- * @param context クライアント認証コンテキスト
- * @returns 認証されたクライアントID
- * @throws {TokenError} 認証失敗時
+ * `method` は「実際に使われた認証方式」であり、クライアントに登録された
+ * `token_endpoint_auth_method` ではない。両者の一致は
+ * {@link validateClientAuthMethod} が検証する。
  */
-export async function authenticateClient(
-  context: ClientAuthContext,
-): Promise<string> {
-  const { params, authorizationHeader, clientResolver } = context;
+export interface PresentedClientCredentials {
+  clientId: string;
+  /** 提示された client_secret。public client（method='none'）では undefined */
+  clientSecret?: string;
+  /** 実際に使われた認証方式 */
+  method: 'client_secret_basic' | 'client_secret_post' | 'none';
+}
+
+/**
+ * ステップ 1: リクエストからクライアント資格情報を抽出する
+ * OAuth 2.1 Section 2.3 / OIDC Core 1.0 Section 9
+ *
+ * - `Authorization: Basic` → client_secret_basic
+ * - ボディの client_id + client_secret → client_secret_post
+ * - ボディの client_id のみ → none（public client の識別）
+ *
+ * OAuth 2.1 §2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
+ * RFC 6749 §4.1.3: 未認証クライアントも client_id を送らなければならない。
+ *
+ * @throws {TokenError} invalid_request（複数方式）/ invalid_client（形式不正・client_id 欠落）
+ */
+export function extractClientCredentials(
+  context: Pick<ClientAuthContext, 'params' | 'authorizationHeader'>,
+): PresentedClientCredentials {
+  const { params, authorizationHeader } = context;
 
   const hasBasicHeader = hasAuthScheme(authorizationHeader, 'Basic');
   const hasPostCredential =
@@ -162,14 +184,31 @@ export async function authenticateClient(
     );
   }
 
-  const client = await clientResolver.findClient(clientId);
-  if (!client) {
-    throw new TokenError(
-      TokenErrorCode.InvalidClient,
-      'Client authentication failed',
-    );
-  }
+  const method: PresentedClientCredentials['method'] = hasBasicHeader
+    ? 'client_secret_basic'
+    : clientSecret !== undefined
+      ? 'client_secret_post'
+      : 'none';
 
+  return { clientId, clientSecret, method };
+}
+
+/**
+ * ステップ 3: 使用された認証方式が登録方式と一致することを検証する
+ * OIDC Core 1.0 Section 9 / RFC 7591 Section 2
+ *
+ * 登録方式の既定は client_secret_basic。
+ * - 登録が `none`（public client）: 資格情報を一切提示していないことを要求する。
+ *   提示していれば confidential への昇格混同を防ぐため拒否する。
+ * - 登録が confidential 方式: client_secret 必須。実際に使われた方式が登録方式と
+ *   異なる場合は認証方式ダウングレードを防ぐため拒否する。
+ *
+ * @throws {TokenError} invalid_client
+ */
+export function validateClientAuthMethod(
+  client: TokenClientInfo,
+  presented: PresentedClientCredentials,
+): void {
   // OIDC Core 1.0 §9 / RFC 7591 §2: token_endpoint_auth_method の既定は client_secret_basic。
   const registeredMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
 
@@ -178,17 +217,17 @@ export async function authenticateClient(
   // ただし credentials を提示した場合は登録方式（none）と一致しないため拒否し、
   // confidential への昇格／ダウングレードの混同を防ぐ。
   if (registeredMethod === 'none') {
-    if (hasBasicHeader || clientSecret !== undefined) {
+    if (presented.method !== 'none') {
       throw new TokenError(
         TokenErrorCode.InvalidClient,
         'Client authentication method does not match the registered token_endpoint_auth_method',
       );
     }
-    return clientId;
+    return;
   }
 
   // confidential client は client_secret 必須。
-  if (!clientSecret) {
+  if (!presented.clientSecret) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,
       'Client authentication required',
@@ -196,24 +235,71 @@ export async function authenticateClient(
   }
 
   // 実際に使われた認証方式が登録方式と一致しなければ認証失敗とし、認証方式ダウングレードを防ぐ。
-  const usedMethod = hasBasicHeader
-    ? 'client_secret_basic'
-    : 'client_secret_post';
-  if (usedMethod !== registeredMethod) {
+  if (presented.method !== registeredMethod) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,
       'Client authentication method does not match the registered token_endpoint_auth_method',
     );
   }
+}
+
+/**
+ * ステップ 4: client_secret を定数時間比較で検証する
+ * OAuth 2.1 Section 7.4.1 / RFC 6749 Section 10.10
+ *
+ * public client（登録方式 = none）は検証対象が無いためスキップする。
+ *
+ * @throws {TokenError} invalid_client
+ */
+export async function verifyClientSecret(
+  client: TokenClientInfo,
+  clientSecret: string | undefined,
+): Promise<void> {
+  const registeredMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
+  if (registeredMethod === 'none') return;
 
   // OAuth 2.1 §7.4.1 / RFC 6749 §10.10: constant-time comparison to thwart timing attacks
-  const secretMatches = await timingSafeEqual(client.clientSecret ?? '', clientSecret);
+  const secretMatches = await timingSafeEqual(
+    client.clientSecret ?? '',
+    clientSecret ?? '',
+  );
   if (!secretMatches) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,
       'Client authentication failed',
     );
   }
+}
 
-  return clientId;
+/**
+ * クライアント認証を行う
+ *
+ * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
+ * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は認証方式を
+ * 差し替えたり検証を削除したりできる。
+ *
+ * 1. 資格情報の抽出（{@link extractClientCredentials}）
+ * 2. クライアントの解決（{@link resolveAuthenticatedTokenClient}）
+ * 3. 認証方式の一致検証（{@link validateClientAuthMethod}）
+ * 4. client_secret の検証（{@link verifyClientSecret}）
+ *
+ * 認証成功時: 認証済みクライアントID（string）を返す
+ * 認証失敗時: TokenError をスロー
+ *
+ * @param context クライアント認証コンテキスト
+ * @returns 認証されたクライアントID
+ * @throws {TokenError} 認証失敗時
+ */
+export async function authenticateClient(
+  context: ClientAuthContext,
+): Promise<string> {
+  const { params, authorizationHeader, clientResolver } = context;
+
+  const presented = extractClientCredentials({ params, authorizationHeader });
+  const client = await resolveAuthenticatedTokenClient(presented.clientId, clientResolver);
+
+  validateClientAuthMethod(client, presented);
+  await verifyClientSecret(client, presented.clientSecret);
+
+  return presented.clientId;
 }

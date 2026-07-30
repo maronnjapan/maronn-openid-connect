@@ -5,6 +5,45 @@ import { NextJsGenerator } from '../frameworks/nextjs/index.js';
 
 const CORE_PKG = '@maronn-oidc/core';
 
+describe('Web-standard generated validation pipelines', () => {
+  const generatedRoutes = [
+    {
+      framework: 'express',
+      tokenRoute: new ExpressGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'routes/token.ts')?.content ?? '',
+    },
+    {
+      framework: 'fastify',
+      tokenRoute: new FastifyGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'routes/token.ts')?.content ?? '',
+    },
+    {
+      framework: 'nextjs',
+      tokenRoute: new NextJsGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === '_oidc-provider/routes/token.ts')?.content ?? '',
+    },
+  ];
+
+  for (const { framework, tokenRoute } of generatedRoutes) {
+    it(`should call granular token validation steps for ${framework}`, () => {
+      expect(tokenRoute.includes('resolveAuthorizationCode')).toBe(true);
+      expect(tokenRoute.includes('validateAuthorizationCodeUnused')).toBe(true);
+      expect(tokenRoute.includes('verifyAuthorizationCodePkce')).toBe(true);
+      expect(tokenRoute.includes('consumeAuthorizationCode')).toBe(true);
+      expect(tokenRoute.includes('resolveRefreshToken')).toBe(true);
+      expect(tokenRoute.includes('validateRefreshTokenUnused')).toBe(true);
+      expect(tokenRoute.includes('validateRefreshTokenScope')).toBe(true);
+      expect(tokenRoute.includes('buildValidatedRefreshTokenRequest')).toBe(true);
+      expect(tokenRoute.includes('await validateTokenRequest(')).toBe(false);
+      expect(tokenRoute.includes('await validateAuthorizationCodeGrant(')).toBe(false);
+      expect(tokenRoute.includes('await validateRefreshTokenGrant(')).toBe(false);
+    });
+  }
+});
+
 describe('ExpressGenerator', () => {
   const generator = new ExpressGenerator();
   const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
@@ -59,6 +98,19 @@ describe('ExpressGenerator', () => {
       expect(content).toContain(
         "return Promise.resolve(new Response(null, { status: 405, headers: { Allow: allowedMethods.join(', ') } }))",
       );
+    });
+
+    // RFC 9110 §9.1: HEAD MUST be supported wherever GET is. RFC 9110 §9.3.2: HEAD
+    // shares GET semantics but MUST NOT return a body. The router serves HEAD from
+    // the GET handler with the body stripped instead of rejecting it with 405.
+    it('should serve HEAD from the GET handler with the body stripped', () => {
+      const file = files.find((f) => f.path === 'web-router.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain("if (context.req.method === 'HEAD')");
+      expect(content).toContain(
+        "const getRoute = this.routes.find(\n        (candidate) => candidate.method === 'GET' && candidate.path === path,\n      )",
+      );
+      expect(content).toContain('return new Response(null, {');
     });
 
     it('should validate every generated Web-standard signing key set', () => {

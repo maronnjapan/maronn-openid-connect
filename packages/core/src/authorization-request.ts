@@ -484,6 +484,45 @@ function resolveRedirectUri(
 }
 
 /**
+ * redirect_uri を解決する（機能単位のステップ関数）。
+ * - リクエストに redirect_uri がある場合: 登録済みURIと照合（RFC 3986 §6.2.1 の
+ *   Simple String Comparison。public client のみループバックのポート差異を許容）
+ * - リクエストに redirect_uri がない場合: 登録済みURIが1つならそれを使用、複数ならエラー
+ *
+ * このステップより前のエラーはリダイレクト先を信頼できないため非リダイレクトで投げる。
+ * このステップで確定した redirectUri を、以降のステップにエラーリダイレクト先として渡す。
+ */
+export function resolveAuthorizationRedirectUri(
+  effectiveParams: AuthorizationRequestParams,
+  client: ClientInfo,
+): string {
+  return resolveRedirectUri(
+    effectiveParams.redirect_uri,
+    client.redirectUris,
+    client.clientType,
+  );
+}
+
+/**
+ * prompt パラメータをバリデーションする（機能単位のステップ関数）
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * `prompt` が無い場合は undefined を返す。値がある場合は空白区切りで分割し、
+ * none/login/consent/select_account 以外の値、および none と他値の併用を
+ * リダイレクト可能な invalid_request として拒否する。
+ */
+export function validatePromptParameter(
+  effectiveParams: AuthorizationRequestParams,
+  redirectUri: string,
+  state?: string
+): string[] | undefined {
+  if (effectiveParams.prompt === undefined) {
+    return undefined;
+  }
+  return validatePrompt(effectiveParams.prompt, redirectUri, state);
+}
+
+/**
  * prompt パラメータをバリデーションする
  * OIDC Core 1.0 Section 3.1.2.1
  */
@@ -564,6 +603,29 @@ function validateDefaultMaxAge(defaultMaxAge: number): number {
 }
 
 /**
+ * max_age / default_max_age を解決する（機能単位のステップ関数）。
+ *
+ * - リクエストに `max_age` があれば検証して採用する（OIDC Core 1.0 §3.1.2.1）。
+ * - 無ければクライアント登録の `default_max_age` を検証して採用する
+ *   （OIDC Dynamic Client Registration 1.0 §2）。
+ * - どちらも無ければ undefined を返す（再認証鮮度の要求なし）。
+ */
+export function resolveMaxAge(
+  effectiveParams: AuthorizationRequestParams,
+  client: ClientInfo,
+  redirectUri: string,
+  state?: string
+): number | undefined {
+  if (effectiveParams.max_age !== undefined) {
+    return validateMaxAge(effectiveParams.max_age, redirectUri, state);
+  }
+  if (client.defaultMaxAge !== undefined) {
+    return validateDefaultMaxAge(client.defaultMaxAge);
+  }
+  return undefined;
+}
+
+/**
  * PKCE code_challenge / code_challenge_method をバリデーションする
  * OAuth 2.1 Section 4.1.1, 7.5
  */
@@ -628,14 +690,23 @@ function validateCodeChallenge(
   };
 }
 
-function validateAuthorizationCodePkce(
-  codeChallenge: string | undefined,
-  codeChallengeMethod: string | undefined,
+/**
+ * PKCE の code_challenge / code_challenge_method をバリデーションする
+ * （機能単位のステップ関数）。OAuth 2.1 Section 4.1.1, 7.5。
+ *
+ * OAuth 2.1 では PKCE（S256）は必須。`allowNonPkceAuthorizationCodeFlow` が
+ * true かつ confidential client が PKCE を完全に省略した場合のみ、
+ * OIDF Basic OP static-client conformance 互換として省略を許容し空を返す。
+ */
+export function validateAuthorizationCodePkce(
+  effectiveParams: AuthorizationRequestParams,
   client: ClientInfo,
   redirectUri: string,
-  state: string | undefined,
-  options: ValidateAuthorizationRequestOptions,
+  state?: string,
+  options: { allowNonPkceAuthorizationCodeFlow?: boolean } = {},
 ): { codeChallenge?: string; codeChallengeMethod?: 'S256' } {
+  const codeChallenge = effectiveParams.code_challenge;
+  const codeChallengeMethod = effectiveParams.code_challenge_method;
   const pkceOmitted =
     codeChallenge === undefined && codeChallengeMethod === undefined;
   if (
@@ -655,10 +726,11 @@ function validateAuthorizationCodePkce(
 }
 
 /**
- * client_id の存在検証・ClientResolver からの解決・clientId 整合性検証を行う。
+ * client_id の存在検証・ClientResolver からの解決・clientId 整合性検証を行う
+ * （機能単位のステップ関数）。
  * いずれもリダイレクト先が確定する前の検証であり、非リダイレクトエラーとして投げる。
  */
-async function resolveClientForAuthorization(
+export async function resolveClientForAuthorization(
   params: AuthorizationRequestParams,
   clientResolver: ClientResolver,
 ): Promise<ClientInfo> {
@@ -693,29 +765,64 @@ async function resolveClientForAuthorization(
 }
 
 /**
- * Request Object by value（OIDC Core 1.0 §6.1）の claim を取り出す。
- * 署名付き JWS Request Object の claim を検証・抽出して返す。検証失敗
+ * {@link resolveRequestObjectParams} の戻り値。
+ */
+export interface ResolvedRequestObjectParams {
+  /**
+   * クエリ値に Request Object の claim を上書きした有効パラメータ集合。
+   * `request` パラメータが無い場合はクエリパラメータのコピーそのもの。
+   * 以降の検証ステップはこの値を入力とする。
+   */
+  effectiveParams: AuthorizationRequestParams;
+  /**
+   * 検証済み Request Object の claim。`request` パラメータが無い場合は undefined。
+   * {@link validateRequestObjectConsistency} に渡して response_type / client_id の
+   * 一致検証に使う。
+   */
+  requestObjectClaims?: Record<string, unknown>;
+}
+
+/**
+ * Request Object by value（OIDC Core 1.0 §6.1）を解決する（機能単位のステップ関数）。
+ *
+ * `request` パラメータが無い場合はクエリパラメータのコピーをそのまま返す。
+ * ある場合は署名付き JWS Request Object をクライアント登録鍵（`ClientInfo.jwks`）で
+ * 検証し、claim をクエリ値に supersede した有効パラメータ集合を返す。検証失敗
  * （壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
  * 内部の redirect_uri も信用せず非リダイレクトの invalid_request とする。
- * `request` パラメータが無い場合は undefined を返す。
+ *
+ * `response_type` / `client_id` は OAuth 2.0 request syntax 側を正とするため
+ * 上書きしない（後段の {@link validateRequestObjectConsistency} で一致検証する）。
  */
-async function parseRequestObjectClaims(
+export async function resolveRequestObjectParams(
   params: AuthorizationRequestParams,
   client: ClientInfo,
-  options: ValidateAuthorizationRequestOptions,
-): Promise<Record<string, unknown> | undefined> {
+  options: {
+    /**
+     * 受理する JWS 署名アルゴリズム。
+     * 未指定なら {@link DEFAULT_REQUEST_OBJECT_SIGNING_ALGS}（`["RS256"]`）。
+     */
+    supportedSigningAlgs?: string[];
+    /**
+     * 署名無し（`alg: "none"`）Request Object を互換受理するか。既定 false（署名必須）。
+     * OIDF Conformance Suite 互換の場合のみ true にする。
+     */
+    allowUnsigned?: boolean;
+  } = {},
+): Promise<ResolvedRequestObjectParams> {
   if (params.request === undefined) {
-    return undefined;
+    return { effectiveParams: { ...params } };
   }
 
+  let requestObjectClaims: Record<string, unknown>;
   try {
-    return await parseRequestObject(params.request, {
+    requestObjectClaims = await parseRequestObject(params.request, {
       jwks: client.jwks,
       supportedSigningAlgs:
-        options.requestObject?.supportedSigningAlgs ?? [
+        options.supportedSigningAlgs ?? [
           ...DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
         ],
-      allowUnsigned: options.requestObject?.allowUnsigned ?? false,
+      allowUnsigned: options.allowUnsigned ?? false,
     });
   } catch (e) {
     if (e instanceof RequestObjectError) {
@@ -726,82 +833,33 @@ async function parseRequestObjectClaims(
     }
     throw e;
   }
+
+  return {
+    effectiveParams: mergeRequestObjectParams(params, requestObjectClaims),
+    requestObjectClaims,
+  };
 }
 
 /**
- * Authentication Request（認可リクエスト）のパラメータをバリデーションする
+ * 未サポートのリクエストパラメータを拒否する（機能単位のステップ関数）。
  *
- * バリデーション順序:
- * 1. client_id の検証（不正な場合はリダイレクト不可エラー）
- * 2. ClientResolver でクライアント情報を取得し、clientId の整合性を検証
- * 3. redirect_uri の検証（不正な場合はリダイレクト不可エラー）
- * 4. response_type, scope, PKCE 等の検証（不正な場合はリダイレクト可能エラー）
+ * - `request_uri`（OIDC Core 1.0 §6.2 / §6.3）: 未対応のため request_uri_not_supported
+ * - `registration`（§3.1.2.1 / §7.2.1）: 未対応のため registration_not_supported（§3.1.2.6）
+ * - `request`（§6.1 / §6.3）: `requestParameterSupported: false` の構成でのみ
+ *   request_not_supported で拒否する（既定はサポート扱いで拒否しない）
  *
- * @param params 認可リクエストのパラメータ
- * @param clientResolver クライアント情報を解決するインターフェース（外部から注入）
- * @returns バリデーション済みの認可リクエスト
- * @throws {AuthorizationError} バリデーションエラー
+ * いずれも redirect 先確定後のリダイレクト可能エラーとして投げる。
  */
-export async function validateAuthorizationRequest(
+export function rejectUnsupportedRequestParams(
   params: AuthorizationRequestParams,
-  clientResolver: ClientResolver,
-  options: ValidateAuthorizationRequestOptions = {}
-): Promise<ValidatedAuthorizationRequest> {
-  // --- Phase 1: client_id の検証（非リダイレクトエラー） ---
-  const client = await resolveClientForAuthorization(params, clientResolver);
-  const clientId = client.clientId;
-
-  // --- Phase 2: redirect_uri の検証（非リダイレクトエラー） ---
-  // 登録済み URIs にフラグメントが含まれていないことを検証（設定ミスの早期検知）
-  validateRegisteredRedirectUris(client.redirectUris);
-
-  // --- Request Object by value (OIDC Core 1.0 §6.1) ---
-  // 機能トグル（requestObject.supported = false）の場合はパースせず、redirect 先の
-  // 解決後に request_not_supported で拒否する（§6.3）。
-  const requestParameterSupported = options.requestObject?.supported ?? true;
-  const roClaims = requestParameterSupported
-    ? await parseRequestObjectClaims(params, client, options)
-    : undefined;
-
-  // OIDC Core 1.0 §6.1: Request Object 内の request parameter values は OAuth 2.0
-  // request syntax で渡された値を supersede する。response_type / client_id は
-  // OAuth 2.0 request syntax 側に必ず含める必要があるため override せず、後段で
-  // 一致検証だけ行う。それ以外（state / nonce / redirect_uri / scope / prompt ...）は
-  // mergeRequestObjectParams で「クエリ値に Request Object 値を上書きした新しい値」を
-  // 生成し、以降の検証・値の使用はクエリで渡された場合と同じ経路を通る。
-  const roResponseType =
-    roClaims && typeof roClaims['response_type'] === 'string'
-      ? (roClaims['response_type'] as string)
-      : undefined;
-  const roClientId =
-    roClaims && typeof roClaims['client_id'] === 'string'
-      ? (roClaims['client_id'] as string)
-      : undefined;
-  const effective: AuthorizationRequestParams = roClaims
-    ? mergeRequestObjectParams(params, roClaims)
-    : { ...params };
-
-  // 認可リクエストの redirect_uri 解決は Request Object 由来の値を優先する。
-  // これにより top-level の redirect_uri が無効でも Request Object 内の有効な
-  // redirect_uri を使って処理を継続できる（oidcc-ensure-request-object-with-redirect-uri）。
-  const redirectUri = resolveRedirectUri(
-    effective.redirect_uri,
-    client.redirectUris,
-    client.clientType,
-  );
-
-  // --- Phase 3 以降はリダイレクト可能エラー ---
-  // RFC 6749 §4.1.2.1 / OIDC Core §3.1.2.6: `state` は redirect 先が確定した後の
-  // リダイレクト可能エラー（invalid_scope / unsupported_response_type 等）でのみ
-  // クライアントへ echo する。client_id 欠落・不明・不一致 / redirect_uri 不正 /
-  // Request Object パース失敗のような非リダイレクトエラーは redirect 先を信頼できない
-  // ため、ここより前で `state` を渡さずに throw し、`state` を echo しない。
-  const state = effective.state;
-
-  // OIDC Core 1.0 §6.3: `request` パラメータ（Request Object by value）が機能トグルで
-  // 無効化されている構成では、Request Object をパースせず request_not_supported で拒否する。
-  // 有効時（既定）は上の parseRequestObjectClaims 経路で処理済みのためここには来ない。
-  if (params.request !== undefined && !requestParameterSupported) {
+  redirectUri: string,
+  state?: string,
+  options: { requestParameterSupported?: boolean } = {},
+): void {
+  if (
+    params.request !== undefined &&
+    options.requestParameterSupported === false
+  ) {
     throw new AuthorizationError(
       AuthorizationErrorCode.RequestNotSupported,
       'request parameter (Request Object) is not supported',
@@ -810,8 +868,6 @@ export async function validateAuthorizationRequest(
     );
   }
 
-  // OIDC Core 1.0 §6.2 / §6.3: Request Object by reference は未対応。
-  // request_uri_parameter_supported = false を広告しているため明示拒否する。
   if (params.request_uri !== undefined) {
     throw new AuthorizationError(
       AuthorizationErrorCode.RequestUriNotSupported,
@@ -821,9 +877,6 @@ export async function validateAuthorizationRequest(
     );
   }
 
-  // OIDC Core 1.0 §3.1.2.1 / §7.2.1: the `registration` parameter (Self-Issued OP RP
-  // metadata) is unsupported here, so reject it explicitly with registration_not_supported
-  // (§3.1.2.6) rather than silently ignoring it — same pattern as request / request_uri.
   if (params.registration !== undefined) {
     throw new AuthorizationError(
       AuthorizationErrorCode.RegistrationNotSupported,
@@ -832,11 +885,31 @@ export async function validateAuthorizationRequest(
       state,
     );
   }
+}
 
-  // OIDC Core 1.0 §6.1: "values for the response_type and client_id parameters MUST
-  // be included using the OAuth 2.0 request syntax". Request Object 内にも含まれる
-  // 場合は値が一致しなければ invalid_request で拒否する（その他のパラメータは
-  // supersede 規則に従い Request Object 側を有効値として採用する）。
+/**
+ * Request Object とクエリパラメータの整合性を検証する（機能単位のステップ関数）。
+ *
+ * OIDC Core 1.0 §6.1: "values for the response_type and client_id parameters MUST
+ * be included using the OAuth 2.0 request syntax"。Request Object 内にも含まれる
+ * 場合は値が一致しなければ invalid_request で拒否する（その他のパラメータは
+ * supersede 規則に従い Request Object 側を有効値として採用する）。
+ * requestObjectClaims が undefined（`request` パラメータ無し）の場合は何もしない。
+ */
+export function validateRequestObjectConsistency(
+  params: AuthorizationRequestParams,
+  requestObjectClaims: Record<string, unknown> | undefined,
+  redirectUri: string,
+  state?: string,
+): void {
+  if (requestObjectClaims === undefined) {
+    return;
+  }
+
+  const roResponseType =
+    typeof requestObjectClaims['response_type'] === 'string'
+      ? (requestObjectClaims['response_type'] as string)
+      : undefined;
   if (roResponseType !== undefined && roResponseType !== params.response_type) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -845,6 +918,11 @@ export async function validateAuthorizationRequest(
       state,
     );
   }
+
+  const roClientId =
+    typeof requestObjectClaims['client_id'] === 'string'
+      ? (requestObjectClaims['client_id'] as string)
+      : undefined;
   if (roClientId !== undefined && roClientId !== params.client_id) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -853,8 +931,25 @@ export async function validateAuthorizationRequest(
       state,
     );
   }
+}
 
-  // response_type の検証
+/**
+ * response_type を検証する（機能単位のステップ関数）。
+ *
+ * - 欠落は invalid_request（OAuth 2.1 §4.1.2.1）
+ * - `code` 以外は unsupported_response_type（OP 全体での未サポート）
+ * - クライアント登録外の response_type は unauthorized_client（クライアント単位の認可。
+ *   既定 `["code"]`: OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）
+ *
+ * OIDC Core 1.0 §6.1: response_type は OAuth 2.0 request syntax 側を正とするため、
+ * Request Object 適用前のクエリパラメータ（params）を渡すこと。
+ */
+export function validateResponseType(
+  params: AuthorizationRequestParams,
+  client: ClientInfo,
+  redirectUri: string,
+  state?: string,
+): 'code' {
   const responseType = params.response_type;
   if (!responseType) {
     throw new AuthorizationError(
@@ -878,7 +973,6 @@ export async function validateAuthorizationRequest(
   // RFC 6749 §4.1.2.1 / OAuth 2.1 §4.1.2.1: "The client is not authorized to request
   // an authorization code using this method." → unauthorized_client。
   // OP 全体での未サポート（unsupported_response_type）とは区別する。
-  // 既定 ["code"]（OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
   const allowedResponseTypes = client.responseTypes ?? ['code'];
   if (!allowedResponseTypes.includes(responseType)) {
     throw new AuthorizationError(
@@ -889,10 +983,24 @@ export async function validateAuthorizationRequest(
     );
   }
 
-  // scope の検証
-  // OIDC Core 1.0 §6.1: scope は OAuth 2.0 request syntax 側にも必ず含める。
-  // Request Object 内に scope がある場合はそちらを有効値として扱う（supersede）。
-  const queryScopeValue = params.scope;
+  return responseType;
+}
+
+/**
+ * scope を検証する（機能単位のステップ関数）。
+ *
+ * - OIDC Core 1.0 §6.1: scope は Request Object があっても OAuth 2.0 request syntax
+ *   （クエリ側 = queryParams）に必須。欠落は invalid_request。
+ * - 有効値（effectiveParams。Request Object 不使用ならクエリと同じものを渡す）を
+ *   空白区切りで分割・重複除去し、`openid` を含まなければ invalid_scope（§3.1.2.1）。
+ */
+export function validateAuthorizationScope(
+  queryParams: AuthorizationRequestParams,
+  effectiveParams: AuthorizationRequestParams,
+  redirectUri: string,
+  state?: string,
+): string[] {
+  const queryScopeValue = queryParams.scope;
   if (!queryScopeValue) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -902,7 +1010,7 @@ export async function validateAuthorizationRequest(
     );
   }
 
-  const scopeValue = effective.scope ?? queryScopeValue;
+  const scopeValue = effectiveParams.scope ?? queryScopeValue;
   // RFC 6749 §3.3: scope は空白区切りの集合。Token Endpoint（refresh_token grant）は
   // `[...new Set(...)]` で重複除去しているため、Authorization Endpoint でも揃える。
   // dedup は権限を変えない（同一権限の二重表現を畳むだけ）の非破壊変換で、挿入順は保持する。
@@ -916,41 +1024,50 @@ export async function validateAuthorizationRequest(
     );
   }
 
-  // PKCE の検証 (OAuth 2.1: REQUIRED by default).
-  // OIDC Basic OP static-client conformance still includes non-PKCE code flow;
-  // allow it only for explicit confidential clients when compatibility mode is enabled.
-  const pkce = validateAuthorizationCodePkce(
-    effective.code_challenge,
-    effective.code_challenge_method,
-    client,
-    redirectUri,
-    state,
-    options,
-  );
+  return scope;
+}
 
-  // prompt の検証
-  const promptValue = effective.prompt;
-  let prompt: string[] | undefined;
-  if (promptValue !== undefined) {
-    prompt = validatePrompt(promptValue, redirectUri, state);
+/**
+ * offline_access の許可ポリシーを適用する（機能単位のステップ関数）。
+ *
+ * OIDC Core 1.0 §11: 許可条件を満たさない `offline_access` 要求は MUST 無視する
+ * （scope から除外する）。既定条件は `prompt=consent`
+ * （{@link defaultIsOfflineAccessGranted}）。isOfflineAccessGranted を差し替える
+ * ことで独自の許可条件を差し込める。
+ * scope に `offline_access` が無い場合は何もせずそのまま返す。引数は変更しない。
+ */
+export async function applyOfflineAccessPolicy(
+  scope: string[],
+  effectiveParams: AuthorizationRequestParams,
+  promptValues: string[] | undefined,
+  isOfflineAccessGranted: OfflineAccessGrantedCallback = defaultIsOfflineAccessGranted,
+): Promise<string[]> {
+  if (!scope.includes('offline_access')) {
+    return scope;
   }
 
-  // OIDC Core 1.0 §11: `offline_access` の許可条件を満たさない場合は scope から除外する。
-  // 既定では `prompt=consent` が必須。利用者は isOfflineAccessGranted で代替条件を差し込める。
-  if (scope.includes('offline_access')) {
-    const isGranted =
-      options.isOfflineAccessGranted ?? defaultIsOfflineAccessGranted;
-    const granted = await isGranted(effective, { promptValues: prompt ?? [] });
-    if (!granted) {
-      const filtered = scope.filter((s) => s !== 'offline_access');
-      scope.length = 0;
-      scope.push(...filtered);
-    }
+  const granted = await isOfflineAccessGranted(effectiveParams, {
+    promptValues: promptValues ?? [],
+  });
+  if (granted) {
+    return scope;
   }
 
-  // OIDC Core 1.0 §3.1.2.1: `display` は OPTIONAL だが page/popup/touch/wap の
-  // いずれかでなければならない。未定義値は invalid_request（redirectable）とする。
-  const display = effective.display;
+  return scope.filter((s) => s !== 'offline_access');
+}
+
+/**
+ * display パラメータを検証する（機能単位のステップ関数）。
+ *
+ * OIDC Core 1.0 §3.1.2.1: `display` は OPTIONAL だが page/popup/touch/wap の
+ * いずれかでなければならない。未定義値は invalid_request（redirectable）とする。
+ */
+export function validateDisplayParameter(
+  effectiveParams: AuthorizationRequestParams,
+  redirectUri: string,
+  state?: string,
+): string | undefined {
+  const display = effectiveParams.display;
   if (
     display !== undefined &&
     !(VALID_DISPLAY_VALUES as readonly string[]).includes(display)
@@ -962,63 +1079,154 @@ export async function validateAuthorizationRequest(
       state
     );
   }
+  return display;
+}
 
-  // max_age の検証
-  const maxAgeValue = effective.max_age;
-  let maxAge: number | undefined;
-  if (maxAgeValue !== undefined) {
-    maxAge = validateMaxAge(maxAgeValue, redirectUri, state);
-  } else if (client.defaultMaxAge !== undefined) {
-    // OIDC DCR 1.0 §2 / Core §3.1.2.1: request の max_age が無い場合は
-    // クライアント登録の default_max_age を既定値として採用する。
-    // max_age が来た場合は上記分岐で優先される（上書き規則）ため、
-    // その場合 default_max_age は参照されない。
-    maxAge = validateDefaultMaxAge(client.defaultMaxAge);
+/**
+ * audience パラメータをパースする（機能単位のステップ関数）。
+ * スペース区切りの文字列を配列に変換する。無ければ undefined を返す。
+ */
+export function parseAudienceParameter(
+  effectiveParams: AuthorizationRequestParams,
+): string[] | undefined {
+  const audienceValue = effectiveParams.audience;
+  if (audienceValue === undefined) {
+    return undefined;
   }
+  return audienceValue.split(' ').filter((a) => a.length > 0);
+}
 
-  // オプションパラメータ（エラーにしない）
-  const nonce = effective.nonce;
-  const uiLocales = effective.ui_locales;
-  const claimsLocales = effective.claims_locales;
-  const acrValues = effective.acr_values;
-  const loginHint = effective.login_hint;
-  const idTokenHint = effective.id_token_hint;
+/**
+ * Authentication Request（認可リクエスト）のパラメータをバリデーションする
+ *
+ * 機能単位のステップ関数を順に呼び出す合成関数。カスタマイズや検証のために
+ * ステップ単位で処理を消したり足したりしたい場合は、この関数と同じ順序で
+ * 各ステップ関数を直接呼び出すこと（CLI 生成コードはその形で出力される）。
+ *
+ * バリデーション順序:
+ * 1. {@link resolveClientForAuthorization}（不正な場合はリダイレクト不可エラー）
+ * 2. {@link validateRegisteredRedirectUris}（設定ミスの早期検知）
+ * 3. {@link resolveRequestObjectParams}（OIDC Core 1.0 §6.1）
+ * 4. {@link resolveAuthorizationRedirectUri}（不正な場合はリダイレクト不可エラー）
+ * 5. {@link rejectUnsupportedRequestParams} / {@link validateRequestObjectConsistency}
+ * 6. {@link validateResponseType} / {@link validateAuthorizationScope} /
+ *    {@link validateAuthorizationCodePkce} / {@link validatePromptParameter} /
+ *    {@link applyOfflineAccessPolicy} / {@link validateDisplayParameter} /
+ *    {@link resolveMaxAge} / {@link parseAudienceParameter} /
+ *    {@link parseClaimsRequestParameter}（不正な場合はリダイレクト可能エラー）
+ *
+ * @param params 認可リクエストのパラメータ
+ * @param clientResolver クライアント情報を解決するインターフェース（外部から注入）
+ * @returns バリデーション済みの認可リクエスト
+ * @throws {AuthorizationError} バリデーションエラー
+ */
+export async function validateAuthorizationRequest(
+  params: AuthorizationRequestParams,
+  clientResolver: ClientResolver,
+  options: ValidateAuthorizationRequestOptions = {}
+): Promise<ValidatedAuthorizationRequest> {
+  // --- Phase 1: client_id の検証（非リダイレクトエラー） ---
+  const client = await resolveClientForAuthorization(params, clientResolver);
+
+  // --- Phase 2: redirect_uri の検証（非リダイレクトエラー） ---
+  // 登録済み URIs にフラグメントが含まれていないことを検証（設定ミスの早期検知）
+  validateRegisteredRedirectUris(client.redirectUris);
+
+  // --- Request Object by value (OIDC Core 1.0 §6.1) ---
+  // 機能トグル（requestObject.supported = false）の場合はパースせず、redirect 先の
+  // 解決後に rejectUnsupportedRequestParams が request_not_supported で拒否する（§6.3）。
+  const requestParameterSupported = options.requestObject?.supported ?? true;
+  const { effectiveParams: effective, requestObjectClaims } =
+    requestParameterSupported
+      ? await resolveRequestObjectParams(params, client, {
+          supportedSigningAlgs: options.requestObject?.supportedSigningAlgs,
+          allowUnsigned: options.requestObject?.allowUnsigned,
+        })
+      : { effectiveParams: { ...params }, requestObjectClaims: undefined };
+
+  // 認可リクエストの redirect_uri 解決は Request Object 由来の値を優先する。
+  // これにより top-level の redirect_uri が無効でも Request Object 内の有効な
+  // redirect_uri を使って処理を継続できる（oidcc-ensure-request-object-with-redirect-uri）。
+  const redirectUri = resolveAuthorizationRedirectUri(effective, client);
+
+  // --- Phase 3 以降はリダイレクト可能エラー ---
+  // RFC 6749 §4.1.2.1 / OIDC Core §3.1.2.6: `state` は redirect 先が確定した後の
+  // リダイレクト可能エラー（invalid_scope / unsupported_response_type 等）でのみ
+  // クライアントへ echo する。client_id 欠落・不明・不一致 / redirect_uri 不正 /
+  // Request Object パース失敗のような非リダイレクトエラーは redirect 先を信頼できない
+  // ため、ここより前で `state` を渡さずに throw し、`state` を echo しない。
+  const state = effective.state;
+
+  // OIDC Core 1.0 §6.3: 未サポートの request（機能トグル無効時）/ request_uri / registration
+  rejectUnsupportedRequestParams(params, redirectUri, state, {
+    requestParameterSupported,
+  });
+
+  // OIDC Core 1.0 §6.1: Request Object 内の response_type / client_id はクエリと一致必須
+  validateRequestObjectConsistency(params, requestObjectClaims, redirectUri, state);
+
+  // response_type の検証（OP 全体・クライアント単位）
+  const responseType = validateResponseType(params, client, redirectUri, state);
+
+  // scope の検証（§6.1: クエリ側に必須。Request Object 側の値が supersede する）
+  let scope = validateAuthorizationScope(params, effective, redirectUri, state);
+
+  // PKCE の検証 (OAuth 2.1: REQUIRED by default).
+  // OIDC Basic OP static-client conformance still includes non-PKCE code flow;
+  // allow it only for explicit confidential clients when compatibility mode is enabled.
+  const pkce = validateAuthorizationCodePkce(effective, client, redirectUri, state, {
+    allowNonPkceAuthorizationCodeFlow: options.allowNonPkceAuthorizationCodeFlow,
+  });
+
+  // prompt の検証
+  const prompt = validatePromptParameter(effective, redirectUri, state);
+
+  // OIDC Core 1.0 §11: `offline_access` の許可条件を満たさない場合は scope から除外する。
+  // 既定では `prompt=consent` が必須。利用者は isOfflineAccessGranted で代替条件を差し込める。
+  scope = await applyOfflineAccessPolicy(
+    scope,
+    effective,
+    prompt,
+    options.isOfflineAccessGranted,
+  );
+
+  // display の検証
+  const display = validateDisplayParameter(effective, redirectUri, state);
+
+  // max_age / default_max_age の解決
+  const maxAge = resolveMaxAge(effective, client, redirectUri, state);
 
   // audience パラメータ（スペース区切りの文字列を配列に変換）
-  const audienceValue = effective.audience;
-  let audience: string[] | undefined;
-  if (audienceValue !== undefined) {
-    audience = audienceValue.split(' ').filter((a) => a.length > 0);
-  }
+  const audience = parseAudienceParameter(effective);
 
   // OIDC Core 1.0 §5.5: parse the claims request parameter (JSON-encoded).
   // Only the `userinfo` and `id_token` top-level members are recognized;
   // unknown members are silently ignored per spec guidance.
-  const claims = parseClaimsRequest(
-    effective.claims,
+  const claims = parseClaimsRequestParameter(
+    effective,
     redirectUri,
     state,
-    options.maxClaimsParameterLength ?? DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
+    options.maxClaimsParameterLength,
   );
 
   return {
-    responseType: 'code',
-    clientId,
+    responseType,
+    clientId: client.clientId,
     redirectUri,
     redirectUriExplicit: effective.redirect_uri !== undefined,
     scope,
     codeChallenge: pkce.codeChallenge,
     codeChallengeMethod: pkce.codeChallengeMethod,
     state,
-    nonce,
+    nonce: effective.nonce,
     prompt,
     display,
     maxAge,
-    uiLocales,
-    claimsLocales,
-    acrValues,
-    loginHint,
-    idTokenHint,
+    uiLocales: effective.ui_locales,
+    claimsLocales: effective.claims_locales,
+    acrValues: effective.acr_values,
+    loginHint: effective.login_hint,
+    idTokenHint: effective.id_token_hint,
     audience,
     claims,
   };
@@ -1093,16 +1301,21 @@ function mergeRequestObjectParams(
 }
 
 /**
- * `claims` リクエストパラメータをパースする。
+ * `claims` リクエストパラメータをパースする（機能単位のステップ関数）。
  * OIDC Core 1.0 §5.5: JSON 文字列で渡される。`userinfo` / `id_token` のみ採用し、
  * 値が `null` または `{ essential?, value?, values? }` 形式以外のメンバーは無視する。
+ * `claims` が無ければ undefined を返す。
+ *
+ * maxLength は `JSON.parse` の前に課す最大長（未認証 DoS 対策）。
+ * 未指定なら {@link DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH}。
  */
-function parseClaimsRequest(
-  raw: string | undefined,
+export function parseClaimsRequestParameter(
+  effectiveParams: AuthorizationRequestParams,
   redirectUri: string,
-  state: string | undefined,
-  maxLength: number,
+  state?: string,
+  maxLength: number = DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
 ): ClaimsParameter | undefined {
+  const raw = effectiveParams.claims;
   if (raw === undefined) return undefined;
 
   // 信頼できない入力のサイズ上限を JSON.parse の「前」に課す。

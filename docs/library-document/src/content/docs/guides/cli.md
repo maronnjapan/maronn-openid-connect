@@ -5,6 +5,8 @@ description: Generate OpenID Provider code with the maronn-oidc CLI.
 
 `@maronn-oidc/cli` は、Authorization Code Flow（OAuth 2.1 / OIDC Core 1.0 準拠）を実装した OP コード一式を生成する CLI ツールです。生成コードは `@maronn-oidc/core` のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら仕様を検証します。
 
+生成される各エンドポイント（`routes/authorize.ts` / `token.ts` / `userinfo.ts` / `introspection.ts` / `revocation.ts`）は、core の合成関数を1回呼ぶ形ではなく、クライアント認証・クライアント解決・期限・redirect URI・PKCE・scope・再利用検知・ID Token クレーム構築などの機能単位ステップを順に呼び出す形で生成されます。必要なステップを消す、独自検証を間に足す、ID Token に独自クレームを足す、といった PoC 向けの改修を生成コード上で直接行えます。
+
 ## Commands
 
 ```bash
@@ -64,6 +66,21 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
+
+### Experimental Features
+
+Experimental 機能は上記とは別カテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成され、実装は別 package の `@maronn-oidc/experimental` にあります。
+
+```bash
+maronn-oidc generate hono --enable par
+pnpm add @maronn-oidc/experimental
+```
+
+| 機能名 | 既定 | 内容 | 準拠仕様 |
+|---|---|---|---|
+| `par` | 無効 | Pushed Authorization Requests エンドポイント（`/par`）と認可エンドポイントの `request_uri` 解決 | RFC 9126 |
+
+API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
 
 ## Contract Test (conformance.test.ts)
 

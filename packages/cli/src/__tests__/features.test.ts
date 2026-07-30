@@ -18,13 +18,14 @@ describe('AVAILABLE_FEATURES', () => {
 });
 
 describe('DEFAULT_FEATURES', () => {
-  it('should enable every feature by default', () => {
+  it('should enable every stable feature and disable every experimental feature by default', () => {
     expect(DEFAULT_FEATURES).toEqual({
       pkce: true,
       refreshToken: true,
       introspection: true,
       revocation: true,
       requestObject: true,
+      par: false,
     });
   });
 });
@@ -38,6 +39,7 @@ describe('resolveFeatures', () => {
         introspection: true,
         revocation: true,
         requestObject: true,
+        par: false,
       });
     });
   });
@@ -50,6 +52,7 @@ describe('resolveFeatures', () => {
         introspection: true,
         revocation: true,
         requestObject: true,
+        par: false,
       });
     });
 
@@ -62,6 +65,7 @@ describe('resolveFeatures', () => {
         introspection: false,
         revocation: false,
         requestObject: true,
+        par: false,
       });
     });
   });
@@ -74,6 +78,7 @@ describe('resolveFeatures', () => {
         introspection: true,
         revocation: true,
         requestObject: true,
+        par: false,
       });
     });
   });
@@ -81,13 +86,13 @@ describe('resolveFeatures', () => {
   describe('validation errors', () => {
     it('should reject an unknown feature name in disable', () => {
       expect(() => resolveFeatures({ disable: ['dpop'] })).toThrow(
-        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object',
+        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par',
       );
     });
 
     it('should reject an unknown feature name in enable', () => {
       expect(() => resolveFeatures({ enable: ['implicit'] })).toThrow(
-        'Unknown feature: "implicit". Available features: pkce, refresh-token, introspection, revocation, request-object',
+        'Unknown feature: "implicit". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par',
       );
     });
 

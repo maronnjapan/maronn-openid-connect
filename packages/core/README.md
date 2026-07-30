@@ -37,7 +37,8 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`]
 
 | API | 役割 |
 |---|---|
-| `validateAuthorizationRequest` | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `state` / `nonce` / `prompt` / `display` / `max_age` / `ui_locales` / `acr_values` / `login_hint` / `id_token_hint` / `claims` / `request` パラメータを処理する |
+| `validateAuthorizationRequest` | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `state` / `nonce` / `prompt` / `display` / `max_age` / `ui_locales` / `acr_values` / `login_hint` / `id_token_hint` / `claims` / `request` パラメータを処理する。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| 認可リクエスト検証のステップ関数 | `resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter`。機能単位に分割されており、CLI 生成コードはこれらを個別に呼び出す。検証ステップを消したり独自処理を足したりできる |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務。OAuth 2.1 §4.1.2） |
@@ -50,7 +51,8 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`]
 | `createAuthTransaction` / `getAuthTransaction` | 認可リクエスト受信〜認可コード発行までのコンテキストを KV ストアに保存・復元する（Auth Transaction ID 方式） |
 | `validateCsrfToken` | ログイン / 同意フォームの CSRF トークン検証 |
 | `handleLoginFailure` / `completeAuthTransaction` | ログイン失敗処理・トランザクション完了（認可レスポンス生成） |
-| `checkPromptNone` | `prompt=none` の検証（`login_required` / `consent_required` / `interaction_required`。OIDC Core 1.0 §3.1.2.1） |
+| `checkPromptNone` | `prompt=none` の検証（`login_required` / `consent_required` / `interaction_required`。OIDC Core 1.0 §3.1.2.1）。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| `prompt=none` のステップ関数 | `resolvePromptNoneSession`（アクティブセッションの解決） / `validatePromptNoneIdTokenHint`（`id_token_hint` の subject 一致） / `validatePromptNoneConsent`（同意済みスコープの確認）。CLI 生成コードはこれらを個別に呼び出す |
 | `requiresReauthentication` | `prompt=login` / `max_age` による再認証要否の判定（OIDC Core 1.0 §3.1.2.3） |
 
 `prompt` は `none` / `login` / `consent` / `select_account` を受理し、`none` と他値の併用は仕様通り拒否する。
@@ -59,11 +61,15 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`]
 
 | API | 役割 |
 |---|---|
-| `authenticateClient` | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`。OAuth 2.1 §2.3） |
-| `validateTokenRequest` | grant_type 検証を含むトークンリクエストのフル検証 |
-| `validateAuthorizationCodeGrant` | `authorization_code` グラントの検証（認可コード・redirect_uri・PKCE `code_verifier` の S256 検証） |
-| `validateRefreshTokenGrant` | `refresh_token` グラントの検証（再利用検知・クライアント一致・absolute lifetime・idle timeout・scope 縮小） |
-| `generateTokenResponse` | トークンレスポンス生成（アクセストークン・ID トークン・リフレッシュトークン） |
+| `authenticateClient` | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`。OAuth 2.1 §2.3）。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| クライアント認証のステップ関数 | `extractClientCredentials`（提示された資格情報と使用方式の抽出） / `resolveAuthenticatedTokenClient`（登録クライアントの解決） / `validateClientAuthMethod`（登録 `token_endpoint_auth_method` との一致検証） / `verifyClientSecret`（定数時間比較）。CLI 生成コードはこれらを個別に呼び出すため、`private_key_jwt` などの独自方式へ差し替えやすい |
+| `validateTokenRequest` | grant_type 検証を含むトークンリクエストのフル検証。下記ステップ関数と grant 別関数を同じ順序で呼び出す合成関数 |
+| トークンリクエスト検証のステップ関数 | `validateGrantTypeSupported`（OP 全体での grant_type サポート判定） / `resolveAuthenticatedTokenClient`（認証済みクライアントの解決） / `validateClientGrantType`（クライアント単位の grant_type 認可）。CLI 生成コードはこれらを個別に呼び出す |
+| authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
+| refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
+| `validateAuthorizationCodeGrant` / `validateRefreshTokenGrant` | 上記 grant 別ステップを安全な順序で呼ぶ後方互換の合成関数。CLI 生成コードは合成関数ではなく各ステップを明示的に呼び出す |
+| `generateTokenResponse` | トークンレスポンス生成（アクセストークン・ID トークン・リフレッシュトークン）。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| トークンレスポンス生成のステップ関数 | `buildAccessTokenPayload`（RFC 9068 の payload 構築） / `computeAtHash`（OIDC Core 1.0 §3.1.3.6） / `resolveAcrAmr`（`acr` / `amr` の解決） / `buildIdTokenPayload`（ID Token クレームの構築） / `generateIdToken`（署名）。CLI 生成コードはこれらを個別に呼び出すため、ID Token へ独自クレームを足す・発行処理を差し替えるといった改造がしやすい |
 | `buildAccessTokenAudience` / `buildIdTokenAudience` | audience の構築 |
 | `TokenError` / `TokenErrorCode` | トークンエンドポイントのエラー表現（OAuth 2.1 §3.2.3） |
 
@@ -75,7 +81,8 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`]
 
 | API | 役割 |
 |---|---|
-| `handleUserInfoRequest` | アクセストークン検証とクレーム応答（OIDC Core 1.0 §5.3） |
+| `handleUserInfoRequest` | アクセストークン検証とクレーム応答（OIDC Core 1.0 §5.3）。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| UserInfo のステップ関数 | `resolveUserInfoAccessToken` / `validateUserInfoTokenExpiration` / `validateUserInfoScope` / `validateUserInfoAudience` / `resolveUserInfoClaims` / `filterClaimsByScope` / `applyRequestedClaims`。CLI 生成コードはこれらを個別に呼び出す |
 | `filterClaimsByScope` / `SCOPE_CLAIMS_MAP` | scope（`profile` / `email` / `address` / `phone`）に応じた標準クレームのフィルタリング（OIDC Core 1.0 §5.4） |
 | `generateUserInfoJwt` | 署名付き UserInfo レスポンス（JWT）の生成 |
 | `UserInfoError` / `UserInfoErrorCode` | `invalid_token` / `insufficient_scope` エラー表現 |
@@ -103,8 +110,10 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`]
 
 | API | 役割 |
 |---|---|
-| `handleIntrospectionRequest` | RFC 7662 準拠のトークン照会（クライアント認証必須、`active: false` 応答は最小限） |
-| `handleRevocationRequest` | RFC 7009 準拠のトークン失効（他クライアントのトークン指定は `invalid_grant`、refresh 失効時は同一 grant のアクセストークンも cascade 失効） |
+| `handleIntrospectionRequest` | RFC 7662 準拠のトークン照会（クライアント認証必須、`active: false` 応答は最小限）。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| Introspection のステップ関数 | `requireIntrospectionToken` / `requireIntrospectionClient` / `resolveIntrospectionToken` / `isIntrospectionTokenActive` / `buildIntrospectionResponse` / `INACTIVE_INTROSPECTION_RESPONSE` |
+| `handleRevocationRequest` | RFC 7009 準拠のトークン失効（他クライアントのトークン指定は `invalid_grant`、refresh 失効時は同一 grant のアクセストークンも cascade 失効）。下記ステップ関数を同じ順序で呼び出す合成関数 |
+| Revocation のステップ関数 | `requireRevocationToken` / `requireRevocationClient` / `resolveRevocationTarget` / `validateRevocationTokenClient` / `revokeResolvedToken` / `revokeGrantAccessTokens` |
 
 ### ユーティリティ
 

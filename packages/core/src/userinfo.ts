@@ -335,14 +335,182 @@ function matchesRequestedValue(
 }
 
 /**
+ * ステップ 1: 提示されたアクセストークンをストアから解決する
+ *
+ * OIDC Core 1.0 Section 5.3.1: UserInfo リクエストは Bearer アクセストークンを伴う。
+ * トークン未提示・未知のトークンはいずれも invalid_token（401）で拒否する。
+ *
+ * @param accessToken リクエストから抽出したアクセストークン
+ * @param accessTokenResolver アクセストークンを解決するリゾルバ
+ * @returns 保存されているアクセストークン情報
+ * @throws {UserInfoError} invalid_token
+ */
+export async function resolveUserInfoAccessToken(
+  accessToken: string | undefined,
+  accessTokenResolver: AccessTokenResolver
+): Promise<AccessTokenInfo> {
+  if (!accessToken) {
+    throw new UserInfoError(
+      UserInfoErrorCode.InvalidToken,
+      'Access token is required'
+    );
+  }
+
+  const tokenInfo = await accessTokenResolver.findAccessToken(accessToken);
+  if (!tokenInfo) {
+    throw new UserInfoError(
+      UserInfoErrorCode.InvalidToken,
+      'Access token is invalid'
+    );
+  }
+
+  return tokenInfo;
+}
+
+/**
+ * ステップ 2: アクセストークンの有効期限を検証する
+ *
+ * RFC 6750 Section 3.1: 期限切れトークンは invalid_token（401）。
+ *
+ * @param tokenInfo アクセストークン情報
+ * @param now 現在時刻（Unix epoch 秒）。省略時はシステム時刻
+ * @throws {UserInfoError} invalid_token
+ */
+export function validateUserInfoTokenExpiration(
+  tokenInfo: AccessTokenInfo,
+  now: number = Math.floor(Date.now() / 1000)
+): void {
+  if (tokenInfo.expiresAt < now) {
+    throw new UserInfoError(
+      UserInfoErrorCode.InvalidToken,
+      'The access token expired'
+    );
+  }
+}
+
+/**
+ * ステップ 3: openid スコープの存在を検証する
+ *
+ * OIDC Core 1.0 Section 5.3.1: UserInfo エンドポイントは openid スコープを
+ * 持つアクセストークンでのみ利用できる。不足時は insufficient_scope（403）。
+ *
+ * @param tokenInfo アクセストークン情報
+ * @throws {UserInfoError} insufficient_scope
+ */
+export function validateUserInfoScope(tokenInfo: AccessTokenInfo): void {
+  if (!tokenInfo.scope.includes('openid')) {
+    throw new UserInfoError(
+      UserInfoErrorCode.InsufficientScope,
+      'The openid scope is required'
+    );
+  }
+}
+
+/**
+ * ステップ 4: アクセストークンの audience を検証する（RFC 9068 §4）
+ *
+ * expectedAudience が指定されていれば、UserInfo エンドポイント自身がトークンの aud に
+ * 含まれることを検証する。これにより resource indicator (RFC 8707) で別リソース向けに
+ * 発行されたトークンで UserInfo の PII を取得する confused deputy を防ぐ。生成された
+ * Provider は JWT / opaque を問わず全アクセストークンに UserInfo エンドポイントを含む aud を
+ * 保存するため、aud 未保存のトークンは当 OP が発行したものではない。よって opaque でも
+ * 後方互換の緩和はせず、aud 未設定・不一致のいずれも invalid_token で拒否する。
+ *
+ * @param tokenInfo アクセストークン情報
+ * @param expectedAudience UserInfo エンドポイント自身を指す audience 識別子。未指定なら検証しない
+ * @throws {UserInfoError} invalid_token
+ */
+export function validateUserInfoAudience(
+  tokenInfo: AccessTokenInfo,
+  expectedAudience: string | undefined
+): void {
+  if (
+    expectedAudience !== undefined &&
+    (tokenInfo.audience === undefined || !tokenInfo.audience.includes(expectedAudience))
+  ) {
+    throw new UserInfoError(
+      UserInfoErrorCode.InvalidToken,
+      'The access token is not intended for the UserInfo endpoint'
+    );
+  }
+}
+
+/**
+ * ステップ 5: アクセストークンの subject に対応するユーザークレームを解決する
+ *
+ * @param tokenInfo アクセストークン情報
+ * @param userClaimsResolver ユーザークレームを解決するリゾルバ
+ * @returns ユーザーの全クレーム（フィルタリング前）
+ * @throws {UserInfoError} invalid_token
+ */
+export async function resolveUserInfoClaims(
+  tokenInfo: AccessTokenInfo,
+  userClaimsResolver: UserClaimsResolver
+): Promise<UserClaims> {
+  const userClaims = await userClaimsResolver.findUserClaims(tokenInfo.sub);
+  if (!userClaims) {
+    throw new UserInfoError(
+      UserInfoErrorCode.InvalidToken,
+      'User not found for the given access token'
+    );
+  }
+
+  return userClaims;
+}
+
+/**
+ * ステップ 7: claims リクエストパラメータで要求されたクレームを追加する
+ * OIDC Core 1.0 Section 5.5 / 5.5.1
+ *
+ * スコープ由来のレスポンス（`filterClaimsByScope` の結果）へ、`claims.userinfo` で
+ * 個別要求されたクレームを重ねる。value / values が指定された場合は実値が一致する
+ * クレームだけを返し、一致しない場合は省略する（エラーにはしない）。
+ * `sub` はアクセストークンの subject で確定済みのため上書きしない。
+ *
+ * 入力のレスポンスは変更せず、新しいオブジェクトを返す。
+ *
+ * @param response スコープでフィルタ済みの UserInfo レスポンス
+ * @param userClaims ユーザーの全クレーム
+ * @param claimsParameter Authorization Request の claims パラメータ
+ * @returns 要求クレームを追加した UserInfo レスポンス
+ */
+export function applyRequestedClaims(
+  response: UserInfoResponse,
+  userClaims: UserClaims,
+  claimsParameter?: ClaimsParameter
+): UserInfoResponse {
+  const result: Record<string, unknown> = { ...response };
+
+  const requestedClaims = getRequestedClaimNames(claimsParameter);
+  for (const claimName of requestedClaims) {
+    if (claimName === 'sub') continue;
+    const value = userClaims[claimName];
+    if (value === undefined || value === null) continue;
+
+    const entry = claimsParameter?.userinfo?.[claimName] ?? null;
+    if (!matchesRequestedValue(value, entry)) continue;
+
+    result[claimName] = value;
+  }
+
+  return result as UserInfoResponse;
+}
+
+/**
  * UserInfoリクエストを処理する
  *
+ * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
+ * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
+ * 削除したり独自処理を差し込んだりできる。
+ *
  * 処理フロー:
- * 1. アクセストークンの検証（存在、有効期限）
- * 2. openidスコープの存在確認
- * 3. ユーザークレームの取得
- * 4. スコープとclaimsパラメータに基づくクレームフィルタリング
- * 5. レスポンス返却
+ * 1. アクセストークンの解決（`resolveUserInfoAccessToken`）
+ * 2. 有効期限の検証（`validateUserInfoTokenExpiration`）
+ * 3. openid スコープの確認（`validateUserInfoScope`）
+ * 4. audience の検証（`validateUserInfoAudience`）
+ * 5. ユーザークレームの取得（`resolveUserInfoClaims`）
+ * 6. スコープに基づくクレームフィルタリング（`filterClaimsByScope`）
+ * 7. claims パラメータによる追加クレーム（`applyRequestedClaims`）
  *
  * @param context UserInfoリクエストのコンテキスト
  * @returns UserInfoレスポンス
@@ -359,84 +527,15 @@ export async function handleUserInfoRequest(
     expectedAudience,
   } = context;
 
-  // --- 1. アクセストークンの検証 ---
-  if (!accessToken) {
-    throw new UserInfoError(
-      UserInfoErrorCode.InvalidToken,
-      'Access token is required'
-    );
-  }
+  const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
+  validateUserInfoTokenExpiration(tokenInfo);
+  validateUserInfoScope(tokenInfo);
+  validateUserInfoAudience(tokenInfo, expectedAudience);
 
-  const tokenInfo = await accessTokenResolver.findAccessToken(accessToken);
-  if (!tokenInfo) {
-    throw new UserInfoError(
-      UserInfoErrorCode.InvalidToken,
-      'Access token is invalid'
-    );
-  }
+  const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
+  const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
 
-  // 有効期限チェック
-  const now = Math.floor(Date.now() / 1000);
-  if (tokenInfo.expiresAt < now) {
-    throw new UserInfoError(
-      UserInfoErrorCode.InvalidToken,
-      'The access token expired'
-    );
-  }
-
-  // --- 2. openidスコープの確認 ---
-  if (!tokenInfo.scope.includes('openid')) {
-    throw new UserInfoError(
-      UserInfoErrorCode.InsufficientScope,
-      'The openid scope is required'
-    );
-  }
-
-  // --- 2.5 audience の検証（RFC 9068 §4） ---
-  // expectedAudience が指定されていれば、UserInfo エンドポイント自身がトークンの aud に
-  // 含まれることを検証する。これにより resource indicator (RFC 8707) で別リソース向けに
-  // 発行されたトークンで UserInfo の PII を取得する confused deputy を防ぐ。生成された
-  // Provider は JWT / opaque を問わず全アクセストークンに UserInfo エンドポイントを含む aud を
-  // 保存するため、aud 未保存のトークンは当 OP が発行したものではない。よって opaque でも
-  // 後方互換の緩和はせず、aud 未設定・不一致のいずれも invalid_token で拒否する。
-  if (
-    expectedAudience !== undefined &&
-    (tokenInfo.audience === undefined || !tokenInfo.audience.includes(expectedAudience))
-  ) {
-    throw new UserInfoError(
-      UserInfoErrorCode.InvalidToken,
-      'The access token is not intended for the UserInfo endpoint'
-    );
-  }
-
-  // --- 3. ユーザークレームの取得 ---
-  const userClaims = await userClaimsResolver.findUserClaims(tokenInfo.sub);
-  if (!userClaims) {
-    throw new UserInfoError(
-      UserInfoErrorCode.InvalidToken,
-      'User not found for the given access token'
-    );
-  }
-
-  // --- 4. スコープに基づくクレームフィルタリング ---
-  const response = filterClaimsByScope(userClaims, tokenInfo.scope);
-
-  // --- 5. claimsパラメータによる追加クレーム ---
-  // OIDC Core 1.0 Section 5.5.1: value / values が指定された場合は
-  // 実値が一致するクレームだけを返す。一致しない場合は省略し、エラーにしない。
-  const requestedClaims = getRequestedClaimNames(claimsParameter);
-  for (const claimName of requestedClaims) {
-    if (claimName === 'sub') continue;
-    const value = userClaims[claimName];
-    if (value === undefined || value === null) continue;
-
-    const entry = claimsParameter?.userinfo?.[claimName] ?? null;
-    if (!matchesRequestedValue(value, entry)) continue;
-
-    (response as Record<string, unknown>)[claimName] = value;
-  }
-
-  return response;
+  return applyRequestedClaims(scopedResponse, userClaims, claimsParameter);
 }
 
 /**

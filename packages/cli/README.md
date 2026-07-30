@@ -5,6 +5,18 @@ Hono / Express / Fastify / Next.js 向けに、Authorization Code Flow（OAuth 2
 
 生成コードは [`@maronn-oidc/core`](../core) のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら「自分の要件がこの仕様で実現できるか」を検証する。
 
+生成されるエンドポイントは、core の機能単位ステップ関数を 1 ステップ = 1 関数呼び出しの形で並べる。まとめ関数（`validateAuthorizationRequest` / `validateTokenRequest` / `authenticateClient` / `generateTokenResponse` / `handleUserInfoRequest` / `handleIntrospectionRequest` / `handleRevocationRequest` / `checkPromptNone`）を 1 回呼ぶのではなく各ステップを並べているため、不要な検証を消したり、ステップの間に独自処理を足したりして仕様の挙動を検証しやすい。
+
+| 生成ファイル | 並べているステップ |
+|---|---|
+| `routes/authorize.ts` | 認可リクエスト検証（`resolveClientForAuthorization` → `validateResponseType` → `validateAuthorizationCodePkce` ほか）と `prompt=none`（`resolvePromptNoneSession` → `validatePromptNoneIdTokenHint` → `validatePromptNoneConsent`） |
+| `routes/token.ts` | クライアント認証（`extractClientCredentials` → `validateClientAuthMethod` → `verifyClientSecret`）、grant 検証（`resolveAuthorizationCode` → `validateAuthorizationCodeExpiration` → `verifyAuthorizationCodePkce` ほか）、レスポンス生成（`buildAccessTokenPayload` → `computeAtHash` → `resolveAcrAmr` → `buildIdTokenPayload` → `generateIdToken`） |
+| `routes/userinfo.ts` | `resolveUserInfoAccessToken` → `validateUserInfoTokenExpiration` → `validateUserInfoScope` → `validateUserInfoAudience` → `resolveUserInfoClaims` → `filterClaimsByScope` → `applyRequestedClaims` |
+| `routes/introspection.ts` | `requireIntrospectionToken` → `requireIntrospectionClient` → `resolveIntrospectionToken` → `isIntrospectionTokenActive` → `buildIntrospectionResponse` |
+| `routes/revocation.ts` | `requireRevocationToken` → `requireRevocationClient` → `resolveRevocationTarget` → `validateRevocationTokenClient` → `revokeResolvedToken` → `revokeGrantAccessTokens` |
+
+ID Token へ独自クレームを足すなら `routes/token.ts` の `buildIdTokenPayload` の戻り値を署名前に書き換える、といった改修が生成コード上で完結する。ただし検証ステップを消した構成は `conformance.test.ts`（契約テスト）が失敗し、Basic OP の想定挙動から外れたことを検知できる。
+
 ## インストールと実行
 
 ```bash

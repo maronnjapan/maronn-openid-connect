@@ -448,8 +448,8 @@ describe('generated provider HTTP conformance', () => {
       });
     });
 
-    // RFC 9068 §4: the generated OP passes expectedAudience (its UserInfo endpoint URL) to
-    // handleUserInfoRequest, so aud validation is on by default for both JWT and opaque
+    // RFC 9068 §4: the generated OP passes its UserInfo endpoint URL to
+    // validateUserInfoAudience, so aud validation is on by default for both JWT and opaque
     // tokens. Flow-issued tokens always carry the UserInfo endpoint in aud, so these inject
     // tokens with an explicit aud to exercise the accept/reject wiring end-to-end.
     describe('Access Token Audience Validation (RFC 9068 §4)', () => {
@@ -728,6 +728,34 @@ describe('generated provider HTTP conformance', () => {
       );
 
       expect(responses).toEqual(cases.map((testCase) => ({ status: 405, allow: testCase.allow })));
+    });
+
+    // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
+    // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
+    // body. GET-serving endpoints therefore answer HEAD like GET with an empty body.
+    it('should answer HEAD on GET endpoints with 200 and an empty body (RFC 9110 §9.1, §9.3.2)', async () => {
+      const cases = ['/.well-known/openid-configuration', '/.well-known/jwks.json'];
+      const responses = await Promise.all(
+        cases.map(async (path) => {
+          const response = await app.request(path, { method: 'HEAD' });
+          return { status: response.status, body: await response.text() };
+        }),
+      );
+
+      expect(responses).toEqual([
+        { status: 200, body: '' },
+        { status: 200, body: '' },
+      ]);
+    });
+
+    // UserInfo GET requires a Bearer token, so an unauthenticated HEAD returns the
+    // 401 auth challenge (with an empty body), never 405 — HEAD is supported
+    // wherever GET is (RFC 9110 §9.1). The auth requirement is enforced separately.
+    it('should answer HEAD on the UserInfo GET endpoint with the auth challenge, not 405', async () => {
+      const response = await app.request('/userinfo', { method: 'HEAD' });
+
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe('');
     });
 
     it('should let CORS middleware answer an OPTIONS preflight before the method guard', async () => {

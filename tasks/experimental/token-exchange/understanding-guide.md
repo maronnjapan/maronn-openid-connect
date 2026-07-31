@@ -113,6 +113,7 @@ Pragma: no-cache
 | `audience` | 検証済みの要求対象（または subject からの継承）に、OP の UserInfo エンドポイントを恒久メンバとして加えた合成結果（既存トークンと同じ `buildAccessTokenAudience` の規則） |
 | `expiresAt` | `now + min(configured, subject 残存)` |
 | `grantId` | subject_token の値を継承（失効連動） |
+| `claims` | **継承しない**（未設定）。認可時の claims パラメータ（OIDC Core 1.0 §5.5）は交換後トークンへ伝播せず、UserInfo は scope ベースのクレームのみ返す |
 
 ## 用語集
 
@@ -142,6 +143,7 @@ Pragma: no-cache
 4. **`aud` を省略しても自由にはならない**: 省略時は subject_token の audience を**継承**する（無制限になるのではない）。また、どんな交換でも発行トークンの `aud` には OP の UserInfo エンドポイントが恒久メンバとして含まれる（既存トークンと同じ `buildAccessTokenAudience` の合成規則。これにより交換後トークンで UserInfo が使える）
 5. **交換後トークンの `client_id` は要求クライアント**: subject_token の発行先クライアントではない。introspection の `client_id` を検証するテストで混同しやすい
 6. **複数 audience/resource パラメータは使えない**: RFC 8693 自体は同名パラメータの複数出現を許すが、生成 OP はトークンエンドポイント全体で重複パラメータを拒否している（RFC 6749 §3.2 準拠）ため、本機能では単一値のみ。意図的な制限であり、生成コードコメントにも明示される
+7. **交換すると claims パラメータの効果は消える**: 認可時に `claims` パラメータで要求した個別クレームは subject_token のメタデータには保存されているが、交換後トークンには継承されない。交換後トークンで UserInfo を呼ぶと scope ベースのクレームだけが返る。認可時の同意対象を交換経由で広げないための意図的な設計であり、バグではない
 
 ## 実装後の利用方法
 

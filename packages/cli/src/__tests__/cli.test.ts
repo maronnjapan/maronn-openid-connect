@@ -249,32 +249,208 @@ describe('CLI', () => {
         vi.restoreAllMocks();
       });
 
-      it('should patch entry file import placeholder with applyOidc import', () => {
+      it('should patch entry file with both the applyOidc import and the applyOidc call', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          entryFile,
+          "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\nexport default app;\n",
+        );
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        const content = readFileSync(entryFile, 'utf-8');
+        expect(content).toBe(
+          "import { Hono } from 'hono';\nimport { applyOidc } from '../oidc-provider/apply.js';\nconst app = new Hono();\napplyOidc(app);\nexport default app;\n",
+        );
+        expect(process.exitCode).toBe(undefined);
+        vi.restoreAllMocks();
+      });
+
+      it('should exit with a non-zero code when the entry file has no OIDC placeholders', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(entryFile, "import { Hono } from 'hono';\nconst app = new Hono();\nexport default app;\n");
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(process.exitCode).toBe(1);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should leave the entry file unchanged when the entry file has no OIDC placeholders', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        const original = "import { Hono } from 'hono';\nconst app = new Hono();\nexport default app;\n";
+        writeFileSync(entryFile, original);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(readFileSync(entryFile, 'utf-8')).toBe(original);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should exit with a non-zero code when only the import placeholder is present', () => {
         const outputDir = join(testDir, 'oidc-provider');
         const srcDir = join(testDir, 'src');
         const entryFile = join(srcDir, 'index.ts');
         mkdirSync(srcDir, { recursive: true });
         writeFileSync(entryFile, "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n");
         vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
         run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
-        const content = readFileSync(entryFile, 'utf-8');
-        expect(content).toContain("import { applyOidc } from");
-        expect(content).toContain('apply.js');
-        expect(content).not.toContain('<!-- OIDC_IMPORT_PLACEHOLDER -->');
+        expect(process.exitCode).toBe(1);
         vi.restoreAllMocks();
+        process.exitCode = undefined;
       });
 
-      it('should patch entry file setup placeholder with applyOidc call', () => {
+      it('should leave the entry file unchanged when only the import placeholder is present', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        const original = "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n";
+        writeFileSync(entryFile, original);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(readFileSync(entryFile, 'utf-8')).toBe(original);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should exit with a non-zero code when only the setup placeholder is present', () => {
         const outputDir = join(testDir, 'oidc-provider');
         const srcDir = join(testDir, 'src');
         const entryFile = join(srcDir, 'index.ts');
         mkdirSync(srcDir, { recursive: true });
         writeFileSync(entryFile, "const app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\n");
         vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
         run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
-        const content = readFileSync(entryFile, 'utf-8');
-        expect(content).toContain('applyOidc(app)');
-        expect(content).not.toContain('<!-- OIDC_SETUP_PLACEHOLDER -->');
+        expect(process.exitCode).toBe(1);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      // Writing `applyOidc(app);` without its import used to leave the user's entry
+      // file in a state that does not type-check, while the CLI reported success.
+      it('should leave the entry file unchanged when only the setup placeholder is present', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        const original = "const app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\n";
+        writeFileSync(entryFile, original);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(readFileSync(entryFile, 'utf-8')).toBe(original);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should name the missing placeholder in the error message', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(entryFile, "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n");
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(errorSpy).toHaveBeenCalledWith(
+          `Error: Entry file is missing the required OIDC placeholders: ${entryFile}`,
+        );
+        expect(errorSpy).toHaveBeenCalledWith('  Missing: // <!-- OIDC_SETUP_PLACEHOLDER -->');
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should print both required placeholders and the generated output location in the error message', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(entryFile, "const app = new Hono();\n");
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        const output = errorSpy.mock.calls.map((c) => c[0]).join('\n');
+        expect(output).toBe(
+          [
+            `Error: Entry file is missing the required OIDC placeholders: ${entryFile}`,
+            '  Missing: // <!-- OIDC_IMPORT_PLACEHOLDER -->',
+            '  Missing: // <!-- OIDC_SETUP_PLACEHOLDER -->',
+            '',
+            'Add both placeholder comments to the entry file and re-run `setup`:',
+            '  // <!-- OIDC_IMPORT_PLACEHOLDER -->',
+            '  const app = new Hono();',
+            '  // <!-- OIDC_SETUP_PLACEHOLDER -->',
+            '',
+            `Generated files are in ${outputDir}, but the entry file was not patched.`,
+          ].join('\n'),
+        );
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should show the express app example in the error message for the express framework', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(entryFile, 'const app = express();\n');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'express', '-o', outputDir, '-e', entryFile]);
+        expect(errorSpy).toHaveBeenCalledWith('  const app = express();');
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should not print the start-the-server guidance when patching fails', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(entryFile, "const app = new Hono();\n");
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+        expect(output.includes('Start the server')).toBe(false);
+        expect(output.includes('Next steps:')).toBe(false);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should report already patched and leave the file unchanged on a second setup run', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          entryFile,
+          "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\n",
+        );
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        vi.restoreAllMocks();
+        const afterFirstRun = readFileSync(entryFile, 'utf-8');
+
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(logSpy).toHaveBeenCalledWith(`  Already patched (no changes): ${entryFile}`);
+        expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
+        expect(process.exitCode).toBe(undefined);
         vi.restoreAllMocks();
       });
 

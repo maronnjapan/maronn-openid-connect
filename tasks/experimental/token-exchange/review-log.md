@@ -33,3 +33,33 @@
   - 生成コードの実挙動（条件付き補間後の出力・バイト同一性）は実装時の完了条件 2・3 でのみ最終確認できる（仕様段階の限界として既知）
 - **判定**: **Pass with changes**（指摘 1〜5 を同日中に修正反映済み。指摘 1 は放置すれば実装時に conformance テストで必ず露見する整合性欠陥だが、仕様段階で潰せたため Blocked には該当しない。仕様の完全性の観点で残る事項はすべて未解決事項表に明示されており、Review 2 の観点（セキュリティ・適合性）に引き継ぐ）
 - **次回可能日**: 2026-07-31
+
+## Review 2
+
+- **日付**: 2026-07-31
+- **観点**: セキュリティと適合性（脅威モデルの網羅 / 鍵・トークン・シークレットの扱い / ログ禁止情報 / 有効期限 / エラー情報の露出 / package 境界との整合 / CLI 後方互換 / 明示的有効化 / 生成コードの安全性 / セキュリティ要件のテスト検証可能性）。Review 1 との差分を重視し、仕様完全性の再確認は行わない
+- **確認資料**:
+  - RFC 9700 原文（datatracker 全文。"token exchange" / "8693" の言及有無を検索 — U1 の解決）
+  - RFC 8693 原文（§2.1 の `resource` 定義の規範文言「MUST be an absolute URI ... MAY include a query component and MUST NOT include a fragment component」/ §2.2.2 の `invalid_request` MUST・`invalid_target` SHOULD の正確な文言 / RFC 8707 への参照が informative（draft 段階の OAUTH-RESOURCE）のみであること）
+  - `packages/cli/src/frameworks/hono/templates.ts:2740-2835`（Content-Type 検証 → 重複パラメータ拒否 → クライアント認証パイプライン → `authenticatedClientId` 束縛 → `${grantTypeSupportedStep}` の実順序。分岐挿入点が仕様どおり存在することの実地確認）
+  - `templates.ts:3048-3066`（catch 節が `TokenError` instanceof 分岐＋500 フォールバックのみで構成され、`TokenExchangeError` 専用分岐の追加が構造上必須であることの再確認）
+  - `templates.ts:3022-3045`（既存 `accessTokenStore.set` の保存フィールド。`claims` が保存されていることを発見 → 指摘 2）
+  - `templates.ts:3180-3181`（userinfo ルートの `c.get('accessTokenResolver') ?? defaultAccessTokenResolver` パターン。token ルート分岐内で同型取得が可能なことの確認）
+  - `templates.ts:6387-6500, 7297` / `web-standard/templates.ts:19-21, 2136`（`parConformanceBlock` の実装と両テンプレートへの補間位置 — Review 1 残リスク「conformance 挿入関数の特定」の解消）
+  - `packages/core/src/token-response.ts:169-206`（`buildAccessTokenAudience` の実シグネチャ `{userInfoEndpoint?, requested?, issuer}` がスケッチと一致）
+  - `packages/core/src/token-error.ts:19-49`（`TokenError` の sanitize・statusCode・`wwwAuthenticate` が `invalid_client` 限定であること — `TokenExchangeError` が 400 固定で WWW-Authenticate 不要である根拠）
+  - `packages/core/src/userinfo.ts:52-98, 415-436`（`AccessTokenInfo` の `nbf` / `claims` フィールド、`AccessTokenResolver.findAccessToken` 契約、`validateUserInfoAudience` の要求）
+  - `packages/core/src/token-request.ts:63-85, 389-417`（`TokenClientInfo.tokenEndpointAuthMethod: 'none'` の存在＝public client が認証パイプラインを通過して分岐へ到達し得ること、`grantTypes` 未指定の既定 `['authorization_code']`）
+- **指摘**:
+  1. **[適合性・修正] `resource` の fragment 禁止が仕様書から欠落**: RFC 8693 §2.1 は「MUST be an absolute URI ... **MUST NOT include a fragment component**（query は MAY）」と規定するが、仕様書は「絶対 URI であること」しか要求していなかった。入出力表・エラー表・バリデーション 5・単体テスト計画に fragment 拒否を追加。あわせて「malformed な resource を `invalid_request` とし `invalid_target` をポリシー拒否に限定する」判断の根拠（RFC 8707 §2 は malformed を `invalid_target` に含めるが、RFC 8693 からは informative 参照のみで規範根拠にならないことを原文確認）を仕様書と sources.md に明文化
+  2. **[プライバシー・修正] `claims` パラメータの継承有無が未定義**: 既存トークン発行は認可リクエストの `claims` パラメータ（OIDC Core 1.0 §5.5）を store メタデータへ保存し、UserInfo が個別クレーム返却に使う。交換後トークンでの扱いが仕様に書かれておらず、実装者が既存 `set` を流用すると意図せず継承（＝認可時の同意対象が交換先クライアントへ伝播）し得た。「継承しない」を設計判断として明文化（バリデーション 10・スケッチのコメント・プライバシー考慮・理解資料のデータ構造表と誤解しやすい点 7・conformance テスト計画に claims 非継承の契約固定を追加）
+  3. **[堅牢性・修正] 残存秒数の丸め規則が未規定**: `computeExchangedTokenLifetime` の残存秒数計算で丸め方向を規定していなかった。`subjectExpiresAt - Math.floor(now/1000)` と規定すれば、期限検証（`expiresAt > now`）通過時に残存が必ず 1 以上になり `expires_in: 0` のトークンが発行され得ないことを確認し、バリデーション 9 に保証条件込みで明記。単体テスト計画に残存 1 秒の境界ケースを追加
+  4. **[確認・軽微修正] `grantTypes` 未指定クライアントの扱い**: core の既定は `['authorization_code']`（`token-request.ts:71-77`）のため、`grantTypes` 未指定クライアントは追加実装なしで `unauthorized_client` に落ちる。安全側であることを確認し、バリデーション 4 と単体テスト計画に明記
+  5. **[確認のみ・指摘なし] セキュリティ設計の実地確認**: (a) 分岐挿入点・catch 構造・resolver 取得パターン・`buildAccessTokenAudience` シグネチャはすべて実コードと一致 (b) public client（`tokenEndpointAuthMethod: 'none'`）が認証パイプラインを通過して分岐へ到達し得るため、仕様の `'none'` 拒否は必須かつ正しい位置 (c) エラー応答は固定文言＋`sanitizeErrorDescription` 経由でオラクル化・インジェクションなし (d) CSRF（Cookie 不使用）・SSRF（外部フェッチなし）の構造的非該当を確認 (e) 交換の連鎖でも scope 部分集合・寿命 cap により権限が単調に狭まる設計に穴なし (f) 無効時バイト同一（完了条件 3）と明示的有効化（デフォルト無効・client `grantTypes` への URN 明示登録）で CLI 後方互換に問題なし (g) U1 は「RFC 9700 に Token Exchange への言及なし」で解決
+- **修正**（同日反映）: specification.md（指摘 1〜4 と U1 解決の記録、conformance ブロック挿入機構の具体化）/ understanding-guide.md（claims 非継承のデータ構造行・誤解しやすい点 7）/ sources.md（RFC 9700 確認済み化・リポジトリ参照 4 件追加・設計判断 2 件追記）
+- **残リスク**:
+  - `allowedTargets` がグローバル許可リストでありクライアント単位ではないため、交換を許可された任意のクライアントは、手にした任意の有効トークンを許可リスト内の任意の対象へ交換できる。これは RFC 8693 の impersonation モデルに内在する性質で、クライアント認証＋`grantTypes` 明示登録＋confidential 限定で緩和済み。クライアント単位の許可への発展は仕様の「Experimentalにする理由」「昇格判断の観点 2」に記録済み（PoC 用途の初期スコープとして受容）
+  - U3（E2E クライアント構造）は Review 3 の観点（実装着手可否）で確認する
+  - 生成コードの実挙動（バイト同一性・条件付き補間の展開結果）は実装時の完了条件でのみ最終確認できる（Review 1 から変わらず、仕様段階の既知の限界）
+- **判定**: **Pass with changes**（指摘 1〜4 を同日中に修正反映済み。いずれも仕様文書の欠落・未規定の明文化であり、設計自体の変更を要する重大なセキュリティ問題は発見されなかった。Blocked に該当する未解決のセキュリティ事項はなし）
+- **次回可能日**: 2026-08-01

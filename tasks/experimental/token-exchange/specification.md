@@ -97,7 +97,7 @@ Client (confidential)                     OP (生成コード + experimental/tok
 | `subject_token_type` | REQUIRED | 必須。`urn:ietf:params:oauth:token-type:access_token` のみ受理。欠落・他の値は `invalid_request` |
 | `scope` | OPTIONAL | 任意。指定時は subject_token の scope の部分集合であること（超過は `invalid_scope`）。省略時は subject_token の scope を継承 |
 | `audience` | OPTIONAL | 任意。単一値のみ（非目標参照）。`allowedTargets` に含まれない値は `invalid_target` |
-| `resource` | OPTIONAL | 任意。単一値のみ。絶対 URI であること（§2.1）。`allowedTargets` に含まれない値は `invalid_target` |
+| `resource` | OPTIONAL | 任意。単一値のみ。絶対 URI で fragment を含まないこと（§2.1: MUST be absolute URI / MUST NOT include fragment。query は許容）。`allowedTargets` に含まれない値は `invalid_target` |
 | `requested_token_type` | OPTIONAL | 省略または `urn:ietf:params:oauth:token-type:access_token` のみ受理。他の値は `invalid_request` |
 | `actor_token` / `actor_token_type` | OPTIONAL（actor_token 存在時 actor_token_type は REQUIRED） | 非目標。存在すれば `invalid_request`（delegation 未対応を error_description で明示） |
 
@@ -136,7 +136,7 @@ Client (confidential)                     OP (生成コード + experimental/tok
 | `subject_token` / `subject_token_type` 欠落 | 400 | `invalid_request` |
 | `subject_token_type` / `requested_token_type` が非対応値 | 400 | `invalid_request` |
 | `actor_token` / `actor_token_type` の存在 | 400 | `invalid_request`（delegation 未対応を明示） |
-| `resource` が絶対 URI でない | 400 | `invalid_request`（RFC 8693 §2.1） |
+| `resource` が絶対 URI でない・fragment を含む | 400 | `invalid_request`（RFC 8693 §2.1 の構文 MUST 違反。`invalid_target` は §2.2.2 の「対象への発行を拒否する」ポリシー判定に限定する。RFC 8707 §2 は malformed を `invalid_target` に含めるが、RFC 8693 は RFC 8707 を informative 参照（draft）しか持たず規範根拠にならないため、構文違反は RFC 6749 §5.2 の `invalid_request` とする設計判断） |
 | subject_token が無効（不存在・期限切れ・nbf 未来・失効済み） | 400 | `invalid_request`（RFC 8693 §2.2.2「If the request itself is not valid or if either the subject_token or actor_token are invalid for any reason, or are unacceptable based on policy」→ RFC 6749 §5.2 形式で返す。`invalid_grant` ではない点に注意）。error_description は失敗種別を区別しない固定文言（オラクル化防止。「セキュリティ要件」参照） |
 | 要求 scope が subject_token の scope を超過 | 400 | `invalid_scope` |
 | `audience` / `resource` が `allowedTargets` に含まれない | 400 | `invalid_target`（RFC 8693 §2.2.2 SHOULD）。error_description は固定文言（許可リスト内容を露出しない） |
@@ -282,7 +282,7 @@ export const EXPERIMENTAL_FEATURES = ['par', 'token-exchange'] as const;
   - discovery テンプレート: `grantTypesSupported` の配列（`templates.ts:3415-3418`）に URN を条件付きで追加（core の `buildProviderMetadata` は配列をそのまま出力するため core 変更なし）
   - 交換を許可するサンプルクライアント: 生成 `config.ts` の登録クライアント（confidential）の `grantTypes` に URN を追加（`templates.ts:369-375` の既存パターンに条件付き補間で追加）
   - `INSTALL_COMMANDS` 相当の案内に `@maronn-oidc/experimental` を追加（PAR 有効時と同じ案内。両方有効時に重複しないこと）
-  - `conformance.test.ts` テンプレートへ Token Exchange 契約テストを追加（`token-exchange` 有効時のみ生成）
+  - `conformance.test.ts` テンプレートへ Token Exchange 契約テストを追加（`token-exchange` 有効時のみ生成）。機構は PAR の `parConformanceBlock(features)`（`packages/cli/src/frameworks/hono/templates.ts:6387`。無効時は空文字列を返す）と同型の `tokenExchangeConformanceBlock(features)` を新設し、hono の `conformanceTestTemplate`（`templates.ts:7297` の連結補間列）と web-standard 側（`packages/cli/src/frameworks/web-standard/templates.ts:2136`）の**両方**に並置して補間する（Review 2 で挿入箇所を確認済み）
   - 生成コード冒頭コメントで **Experimental である旨**（API が破壊的に変わり得る旨）と複数 audience/resource 非対応の制限を明示
 
 ## 設定値とデフォルト
@@ -300,13 +300,13 @@ export const EXPERIMENTAL_FEATURES = ['par', 'token-exchange'] as const;
 1. Content-Type / 重複パラメータ / `grant_type` 欠落の検証（既存共通処理。変更なし）
 2. クライアント認証（既存共有パイプライン。失敗は 401 `invalid_client`）
 3. `params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE` のとき本機能へ分岐（不一致なら従来フローへ。ここより下は分岐内）
-4. `authorizeTokenExchangeClient`: クライアントの `grantTypes` に URN が未登録 → `unauthorized_client` / `tokenEndpointAuthMethod` が `'none'`（public client） → `unauthorized_client`
-5. `parseTokenExchangeParams`: `subject_token`・`subject_token_type` 欠落 → `invalid_request` / `subject_token_type` 非対応値 → `invalid_request` / `requested_token_type` 非対応値 → `invalid_request` / `actor_token`・`actor_token_type` 存在 → `invalid_request` / `resource` が絶対 URI でない → `invalid_request`
-6. `resolveSubjectToken`: resolver が null を返す（不存在・失効済み）・`expiresAt <= now`・`nbf > now` → `invalid_request`（固定文言。RFC 8693 §2.1 の「MUST perform the appropriate validation procedures for the indicated token type」を、store メタデータの有効性検証として満たす）
+4. `authorizeTokenExchangeClient`: クライアントの `grantTypes` に URN が未登録 → `unauthorized_client`（`grantTypes` 未指定クライアントは core の既定どおり `['authorization_code']` 扱いのため常に拒否。`packages/core/src/token-request.ts:71-77`）/ `tokenEndpointAuthMethod` が `'none'`（public client） → `unauthorized_client`
+5. `parseTokenExchangeParams`: `subject_token`・`subject_token_type` 欠落 → `invalid_request` / `subject_token_type` 非対応値 → `invalid_request` / `requested_token_type` 非対応値 → `invalid_request` / `actor_token`・`actor_token_type` 存在 → `invalid_request` / `resource` が絶対 URI でない・fragment を含む → `invalid_request`（§2.1。query は許容）
+6. `resolveSubjectToken`: resolver が null を返す（不存在・失効済み）・`expiresAt <= now`・`nbf > now` → `invalid_request`（固定文言。RFC 8693 §2.1 の「MUST perform the appropriate validation procedures for the indicated token type」を、store メタデータの有効性検証として満たす）。期限比較は `expiresAt <= now.getTime() / 1000`（実時刻）で行う
 7. `validateExchangeScope`: 要求 scope に subject scope 外の値 → `invalid_scope`。省略時は subject scope を継承
 8. `resolveExchangeTarget`: `audience` / `resource` が `allowedTargets` 外 → `invalid_target`。両方省略時は subject の `audience` を継承
-9. `computeExchangedTokenLifetime` で有効期間を算出（0 以下になる場合は 6 の期限検証で先に拒否されるため発生しない）
-10. 生成コード側: core `buildAccessTokenAudience`（UserInfo エンドポイント恒久メンバの合成）→ `buildAccessTokenPayload` → `accessTokenIssuer.issue` → `accessTokenStore.set`（`grantId` は subject の値を継承）→ `buildTokenExchangeResponse` を返す
+9. `computeExchangedTokenLifetime` で有効期間を算出。残存秒数は `subjectExpiresAt - Math.floor(now.getTime() / 1000)` で計算する（`expiresAt` は整数秒であり、6 の期限検証を通過した時点で `subjectExpiresAt > now` が保証されるため、この丸め規則では残存秒数は必ず 1 以上になり `expires_in: 0` のトークンは発行されない。丸め規則を変える場合はこの保証が崩れることに注意）
+10. 生成コード側: core `buildAccessTokenAudience`（UserInfo エンドポイント恒久メンバの合成）→ `buildAccessTokenPayload` → `accessTokenIssuer.issue` → `accessTokenStore.set`（`grantId` は subject の値を継承。**subject_token の `claims`（OIDC Core 1.0 §5.5 の claims パラメータ）は継承しない**。既存トークンルートは認可リクエスト由来の `claims` を store メタデータに保存するが、交換後トークンには伝播せず、UserInfo は scope ベースのクレームのみ返す。プライバシー保守側の設計判断）→ `buildTokenExchangeResponse` を返す
 
 ## エラー処理
 
@@ -335,6 +335,7 @@ export const EXPERIMENTAL_FEATURES = ['par', 'token-exchange'] as const;
 - 交換で発行されるトークンの `sub` は subject_token と同一であり、新たな属性情報の露出はない
 - `aud` の差し替えにより、下流サービスが受け取るトークンの scope・audience を最小化できるため、過剰な権限・情報の伝播をむしろ抑制する方向に働く
 - store に保存される発行トークンのメタデータは既存アクセストークンと同一項目であり、新たな保持情報はない
+- subject_token に保存されている `claims` パラメータ（OIDC Core 1.0 §5.5。認可リクエスト時にユーザーが同意した個別クレーム要求）は交換後トークンへ**継承しない**。交換後トークンで UserInfo にアクセスした場合は scope ベースのクレームのみ返る。認可時の同意対象を交換経由で下流クライアントへ広げないためのプライバシー保守側の設計判断（バリデーション 10 参照）
 
 ## パッケージ配置と境界
 
@@ -428,6 +429,9 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
     nbf: issuedAt,
     audience: effectiveAudience,
     issuer: config.issuer,
+    // The subject token's persisted `claims` parameter (OIDC Core 1.0 §5.5) is
+    // deliberately NOT inherited: the exchanged token yields scope-based claims
+    // only at the UserInfo endpoint.
   });
 
   c.header('Cache-Control', 'no-store');
@@ -448,8 +452,8 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 
 ### 単体テスト（packages/experimental/src/token-exchange/*.test.ts）
 
-- **正常系**: `parseTokenExchangeParams` の型付け結果（`toEqual` 固定）/ scope 省略時の継承・部分集合の実効 scope / audience・resource の許可判定と `aud` 導出（併用・省略・継承の各ケース）/ lifetime cap（configured < 残存、configured > 残存の両側を具体値で固定）/ `buildTokenExchangeResponse` の全フィールド固定（`issued_token_type`・`token_type: 'Bearer'` を含む）
-- **異常系**: 必須欠落 / 非対応 `subject_token_type`・`requested_token_type` / `actor_token` 存在 / 相対 URI の `resource` / resolver null・期限切れ・nbf 未来（エラーコードと固定 error_description を `toEqual` で検証し応答同一性を担保）/ scope 超過 → `invalid_scope` / リスト外 target → `invalid_target` / `grantTypes` 未登録・public client → `unauthorized_client`
+- **正常系**: `parseTokenExchangeParams` の型付け結果（`toEqual` 固定）/ scope 省略時の継承・部分集合の実効 scope / audience・resource の許可判定と `aud` 導出（併用・省略・継承の各ケース）/ lifetime cap（configured < 残存、configured > 残存の両側を具体値で固定。残存 1 秒の境界で `expires_in` が `1` になること＝丸め規則の固定検証）/ `buildTokenExchangeResponse` の全フィールド固定（`issued_token_type`・`token_type: 'Bearer'` を含む）
+- **異常系**: 必須欠落 / 非対応 `subject_token_type`・`requested_token_type` / `actor_token` 存在 / 相対 URI の `resource`・fragment 付き `resource` / resolver null・期限切れ・nbf 未来（エラーコードと固定 error_description を `toEqual` で検証し応答同一性を担保）/ scope 超過 → `invalid_scope` / リスト外 target → `invalid_target` / `grantTypes` 未登録・`grantTypes` 未指定（既定 `['authorization_code']`）・public client → `unauthorized_client`
 - CLAUDE.md の規約に従い、`should + 動詞` 命名・合格値一意固定・`it` 内条件分岐なしで記述する
 
 ### 結合テスト（conformance.test.ts テンプレート追加、`token-exchange` 有効時のみ生成）
@@ -462,6 +466,7 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 - public client の `unauthorized_client` / `grantTypes` 未登録クライアントの `unauthorized_client` / 認証なしの 401
 - `actor_token` 付きリクエストの `invalid_request`
 - 交換後トークンの `expires_in` が subject 残存期間を超えないこと
+- `claims` パラメータ付き認可で取得した subject_token を交換した場合、交換後トークンの UserInfo 応答に claims 由来の個別クレームが含まれない（claims 非継承の契約固定）
 - discovery の `grant_types_supported` に URN が含まれる（無効時は含まれず、URN の grant_type が `unsupported_grant_type` で拒否される）
 
 ### E2Eテスト（tests/e2e）
@@ -508,13 +513,13 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 
 ## 未解決事項
 
-- **U1（Review 2 で確認）**: RFC 9700（OAuth 2.0 Security BCP）に Token Exchange への言及・推奨事項があるかの原文確認が未実施。あればセキュリティ要件表へ根拠として追記し、なければ「言及なし」を sources.md に記録する（PAR の Review 2 と同じ手順）
 - **U3（Review 3 で確認）**: E2E 専用クライアントに交換実行用のバックチャネル呼び出しをどう組み込むか（既存 `tests/e2e/apps` のクライアント構造の確認と、confidential クライアント資格情報の配置）
 
 セキュリティ上の未解決事項はなし。
 
 解決済みの事項:
 
+- U1（2026-07-31 Review 2 解決）: RFC 9700（OAuth 2.0 Security BCP, 2025-01）の原文を確認し、**RFC 8693 / Token Exchange への言及は一切ない**ことを確認した。RFC 9700 §2.2〜§2.3 の sender-constrained token・audience 制限の一般推奨は本仕様の設計（audience 許可リスト・scope 縮小）と方向が一致するが、Token Exchange 固有のガイダンスではないためセキュリティ要件表の根拠には引用しない（sources.md に「言及なし」を記録済み）
 - U2（2026-07-30 Review 1 解決）: 現行 `tokenRouteTemplate` の `config` / `privateKey` / `keyId`（`templates.ts:2831-2833`）と `accessTokenIssuer`（`:2905-2908`）の束縛はいずれも分岐挿入点（`:2818` 直後）より後で宣言されることを確認した。既存宣言は移動せず、**分岐ブロック内で独自に取得する**（分岐は `return` で完結するため二重実行にならず、無効時のバイト同一が分岐ブロック単体の条件付き補間で成立する）。「CLI生成コードからの利用方法」のスケッチに反映済み
 
 ## 将来の昇格考慮

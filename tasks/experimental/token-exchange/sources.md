@@ -12,7 +12,7 @@
 
 | タイトル | 発行元 | URL | 種別 | 参照セクション | 使用内容 | 確認日 | 仕様バージョン |
 |---|---|---|---|---|---|---|---|
-| RFC 9700: Best Current Practice for OAuth 2.0 Security | IETF | https://datatracker.ietf.org/doc/html/rfc9700 | BCP | （未確認） | Token Exchange への言及有無を Review 2 で原文確認する（U1）。確認前に根拠として引用しない | 未確認（Review 2 予定） | RFC 9700 (2025-01) |
+| RFC 9700: Best Current Practice for OAuth 2.0 Security | IETF | https://datatracker.ietf.org/doc/html/rfc9700 | BCP | 全文検索（"token exchange" / "8693"）、§2.2〜§2.3 | **RFC 8693 / Token Exchange への言及なしを確認（U1 解決）**。sender-constrained token・audience 制限の一般推奨（§2.2〜§2.3）は本仕様の設計と方向が一致するが Token Exchange 固有のガイダンスではないため、セキュリティ要件表の規範根拠には引用しない | 2026-07-31（Review 2 で原文確認） | RFC 9700 (2025-01) |
 | RFC 7662: OAuth 2.0 Token Introspection | IETF | https://datatracker.ietf.org/doc/html/rfc7662 | RFC (Proposed Standard) | §2.2 | 交換後トークンが既存 introspection でそのまま検証できることの整合確認（`AccessTokenInfo` のフィールド対応） | 2026-07-30（リポジトリ実装経由の間接参照） | RFC 7662 (2015-10) |
 
 ## セキュリティガイダンス
@@ -42,6 +42,10 @@
 | `packages/cli/src/frameworks/hono/templates.ts:2435-3070` | `tokenRouteTemplate` の構造: 重複パラメータ拒否（:2752-2775）・クライアント認証パイプライン終端（:2818）・`${grantTypeSupportedStep}`（:2825）・発行パイプライン（:2938-3045）・catch 節の `TokenError` 分岐（:3049-3066）。分岐挿入点と catch 分岐追加の根拠 | 2026-07-30 |
 | `packages/cli/src/frameworks/hono/templates.ts:369-375, 429, 3415-3418, 7027-7028` | 登録クライアントの `grantTypes` 生成パターン / `accessTokenExpiresIn` デフォルト 3600 / discovery の `grantTypesSupported` 固定配列 / response_mode が query 固定であること（JARM 見送りの根拠） | 2026-07-30 |
 | `packages/cli/src/frameworks/web-standard/templates.ts:2163` | token ルートが `toWebRouteTemplate(tokenRouteTemplate(...))` で全ターゲット共有であること（単一テンプレート変更で済む根拠） | 2026-07-30 |
+| `packages/cli/src/frameworks/hono/templates.ts:6387-6500, 7297` | `parConformanceBlock(features)` が無効時に空文字列を返す conformance フラグメントとして実装され、`conformanceTestTemplate` の連結補間列（:7297）で挿入されていること。`tokenExchangeConformanceBlock` を同型・同位置に並置できる根拠（Review 1 残リスクの解消） | 2026-07-31 |
+| `packages/cli/src/frameworks/web-standard/templates.ts:19-21, 2136` | web-standard 側の conformance テンプレートも hono の conformance フラグメントを import して同じ補間列で使用していること（token-exchange の conformance ブロックは両テンプレートへの補間が必要） | 2026-07-31 |
+| `packages/cli/src/frameworks/hono/templates.ts:3022-3045` | 既存トークン発行の `accessTokenStore.set` が `claims`（OIDC Core 1.0 §5.5 の claims パラメータ）を保存していること。交換後トークンで `claims` を**継承しない**設計判断（Review 2 指摘 2）の比較対象 | 2026-07-31 |
+| `packages/core/src/token-request.ts:71-77` | `TokenClientInfo.grantTypes` 未指定時の既定が `['authorization_code']` であること（未指定クライアントが交換 URN で常に `unauthorized_client` になる根拠） | 2026-07-31 |
 | `tasks/experimental/done/par/` | 前サイクルの仕様・レビュー・実装記録。experimental 機構（features.ts / subpath export / バイト同一検証 / 専用エラークラス＋catch 分岐パターン）の先例 | 2026-07-30 |
 | `tasks/T-019-dpop.md` | DPoP タスクとの重複がないことの確認（sender-constrained token であり交換とは直交） | 2026-07-30 |
 
@@ -52,6 +56,7 @@
 ## 記録（規範根拠と設計判断の区別）
 
 - **規範（RFC 8693）**: subject_token / subject_token_type は REQUIRED（§2.1）/ actor_token 存在時の actor_token_type は REQUIRED（§2.1）/ subject_token の検証は MUST（§2.1）/ invalid なトークンへのエラーは `invalid_request`（§2.2.2）/ resource・audience 拒否は `invalid_target` SHOULD（§2.2.2）/ 応答の access_token・issued_token_type・token_type は REQUIRED、expires_in は RECOMMENDED、scope は「要求と異なれば REQUIRED」（§2.2.1）
-- **設計判断（本仕様）**: confidential client 限定（§2.1 の注記を根拠に RFC より強めた）/ scope 応答を常に含める / 交換後トークンの寿命を subject 残存期間で cap する / `grantId` 継承による失効連動 / subject_token を消費しない / audience・resource 省略時は subject の audience を継承 / 発行トークンの aud は既存トークンと同じ `buildAccessTokenAudience` で合成し UserInfo エンドポイントを恒久メンバとして含める / 解決失敗の固定 error_description（オラクル化防止）/ `allowedTargets` の空デフォルト
+- **設計判断（本仕様）**: confidential client 限定（§2.1 の注記を根拠に RFC より強めた）/ scope 応答を常に含める / 交換後トークンの寿命を subject 残存期間で cap する / `grantId` 継承による失効連動 / subject_token を消費しない / audience・resource 省略時は subject の audience を継承 / 発行トークンの aud は既存トークンと同じ `buildAccessTokenAudience` で合成し UserInfo エンドポイントを恒久メンバとして含める / 解決失敗の固定 error_description（オラクル化防止）/ `allowedTargets` の空デフォルト / subject_token の `claims` パラメータメタデータを交換後トークンへ継承しない（認可時の同意対象を交換経由で広げない。Review 2 で明文化）/ 残存秒数の丸めは `subjectExpiresAt - Math.floor(now/1000)`（期限検証通過時に必ず 1 以上になる規則。Review 2 で明文化）
+- **エラーコードの設計判断（Review 2 で明文化）**: 絶対 URI でない・fragment を含む `resource` は RFC 8693 §2.1 の構文 MUST 違反として `invalid_request` とし、`invalid_target` は §2.2.2 の「対象への発行を拒否する」ポリシー判定に限定する。RFC 8707 §2 は malformed な resource も `invalid_target` と定義するが、RFC 8693 は RFC 8707 を informative（draft 段階の OAUTH-RESOURCE）としてしか参照しておらず規範根拠にならないことを原文で確認した（2026-07-31）
 - **RFC からの意図的制限**: `resource` / `audience` の複数指定非対応（RFC 8693 §2.1 は複数出現を許容するが、生成コードの重複パラメータ拒否（RFC 6749 §3.2 準拠）と両立しないため単一値限定。非目標として明示）
 - **注意**: RFC 8693 §2.1 の複数出現許容と RFC 6749 §3.2 の重複禁止は、RFC 8693 が §2.1 で resource パラメータについて RFC 8707 (Resource Indicators) と同様の複数指定を想定していることに由来する。本リポジトリのトークンエンドポイントは全パラメータ一律で重複拒否しており、この一律拒否を token-exchange のためだけに緩めるのは既存エンドポイントの挙動変更（core 契約違反ではないが conformance 変更）になるため行わない

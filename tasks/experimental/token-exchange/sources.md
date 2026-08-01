@@ -47,6 +47,12 @@
 | `packages/cli/src/frameworks/hono/templates.ts:3022-3045` | 既存トークン発行の `accessTokenStore.set` が `claims`（OIDC Core 1.0 §5.5 の claims パラメータ）を保存していること。交換後トークンで `claims` を**継承しない**設計判断（Review 2 指摘 2）の比較対象 | 2026-07-31 |
 | `packages/core/src/token-request.ts:71-77` | `TokenClientInfo.grantTypes` 未指定時の既定が `['authorization_code']` であること（未指定クライアントが交換 URN で常に `unauthorized_client` になる根拠） | 2026-07-31 |
 | `tasks/experimental/done/par/` | 前サイクルの仕様・レビュー・実装記録。experimental 機構（features.ts / subpath export / バイト同一検証 / 専用エラークラス＋catch 分岐パターン）の先例 | 2026-07-30 |
+| `tests/e2e/playwright.config.ts` | `oidcClientsJson` による E2E クライアント登録（`e2e-client` は confidential / `client_secret_post` / `grantTypes` 配列を持つ）と `webServer` env（`OIDC_CLIENTS_JSON` / `CLIENT_ID` / `CLIENT_SECRET`）の注入構造。U3（資格情報配置・クライアント登録の場所）の根拠 | 2026-08-01 |
+| `tests/e2e/apps/client.mjs` | E2E 専用 confidential クライアントの構造（`/start-par` の追加パターン・`formPost` ヘルパ・`renderResult` の data-testid 描画・`/start` が `audience=resourceServerUrl` を送ること）。`/start-exchange` 追加方式の根拠 | 2026-08-01 |
+| `tests/e2e/apps/resource-server.mjs:45-47` | introspection の `aud` に resource server URL が含まれることを要求する検証。audience 省略交換（subject 継承）で E2E が成立する根拠 | 2026-08-01 |
+| `tests/e2e/specs/pushed-authorization-requests.spec.ts` | discovery 広告に基づく `test.skip` パターン（`--enable` なしサンプルでも共有 spec suite を green に保つ先例） | 2026-08-01 |
+| `samples/hono-cloudflare/src/app.ts:27` | サンプル OP の登録クライアントが `OIDC_CLIENTS_JSON` 環境変数由来であること（E2E のためにサンプル `config.ts` の編集が不要な根拠） | 2026-08-01 |
+| `samples/hono-cloudflare/src/oidc-provider/conformance.test.ts:1975-2009` | 生成 conformance テストが export された `parConfig` をテスト内で書き換えて復元するパターン（`tokenExchangeConfig.allowedTargets` の conformance 検証方式の先例） | 2026-08-01 |
 | `tasks/T-019-dpop.md` | DPoP タスクとの重複がないことの確認（sender-constrained token であり交換とは直交） | 2026-07-30 |
 
 ## 二次資料

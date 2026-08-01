@@ -26,6 +26,12 @@ const server = createServer(async (req, res) => {
       await startAuthorization(url, res);
       return;
     }
+    // EXPERIMENTAL (RFC 8693): run the ordinary code flow, then exchange the
+    // resulting access token for a narrowed one over the back channel.
+    if (req.method === 'GET' && url.pathname === '/start-exchange') {
+      await startAuthorization(url, res, { exchange: true });
+      return;
+    }
     // EXPERIMENTAL (RFC 9126): push the authorization request over the back
     // channel first, then send the browser to /authorize with only client_id and
     // the returned request_uri.
@@ -47,7 +53,7 @@ server.listen(port, host, () => {
   console.log(`E2E client listening on http://${host}:${port}`);
 });
 
-async function startAuthorization(requestUrl, res) {
+async function startAuthorization(requestUrl, res, options = {}) {
   const state = randomString(32);
   const nonce = randomString(32);
   const codeVerifier = randomString(64);
@@ -56,6 +62,7 @@ async function startAuthorization(requestUrl, res) {
     nonce,
     codeVerifier,
     createdAt: Date.now(),
+    exchange: options.exchange === true,
   });
 
   const authorizationUrl = new URL('/authorize', issuer);
@@ -156,12 +163,55 @@ async function handleCallback(url, res) {
     },
   });
 
+  if (transaction.exchange) {
+    await completeTokenExchange(res, tokens);
+    return;
+  }
+
   sendHtml(res, 200, renderResult({
     code,
     state,
     issuer: responseIssuer,
     nonce: transaction.nonce,
     tokens,
+    userInfo,
+    resourceProfile,
+  }));
+}
+
+/**
+ * EXPERIMENTAL — OAuth 2.0 Token Exchange (RFC 8693 §2.1).
+ *
+ * Trade the access token just obtained for one restricted to a narrower scope.
+ * `audience` / `resource` are omitted on purpose: the exchange then inherits the
+ * subject token's audience, which already names the resource server, so the
+ * exchanged token passes its aud check with the generated default
+ * `allowedTargets: []`.
+ */
+async function completeTokenExchange(res, tokens) {
+  const exchanged = await formPost(new URL('/token', issuer), {
+    grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+    subject_token: tokens.access_token,
+    subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+    scope: 'openid profile',
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+
+  const userInfo = await fetchJson(new URL('/userinfo', issuer), {
+    headers: {
+      Authorization: `Bearer ${exchanged.access_token}`,
+    },
+  });
+  const resourceProfile = await fetchJson(new URL('/profile', resourceServerUrl), {
+    headers: {
+      Authorization: `Bearer ${exchanged.access_token}`,
+    },
+  });
+
+  sendHtml(res, 200, renderExchangeResult({
+    subjectScope: tokens.scope,
+    exchanged,
     userInfo,
     resourceProfile,
   }));
@@ -210,6 +260,32 @@ function renderResult(result) {
         <dt>resource client</dt><dd data-testid="resource-client-id">${escapeHtml(result.resourceProfile.client_id)}</dd>
         <dt>resource scope</dt><dd data-testid="resource-scope">${escapeHtml(result.resourceProfile.scope)}</dd>
         <dt>resource audience</dt><dd data-testid="resource-audience">${escapeHtml(JSON.stringify(result.resourceProfile.audience))}</dd>
+      </dl>
+    </main>
+  </body>
+</html>`;
+}
+
+function renderExchangeResult(result) {
+  return `<!doctype html>
+<html>
+  <head><title>Token Exchange Complete</title></head>
+  <body>
+    <main>
+      <h1>Token Exchange Complete</h1>
+      <dl>
+        <dt>subject scope</dt><dd data-testid="exchange-subject-scope">${escapeHtml(result.subjectScope)}</dd>
+        <dt>issued token type</dt><dd data-testid="exchange-issued-token-type">${escapeHtml(result.exchanged.issued_token_type)}</dd>
+        <dt>token type</dt><dd data-testid="exchange-token-type">${escapeHtml(result.exchanged.token_type)}</dd>
+        <dt>scope</dt><dd data-testid="exchange-scope">${escapeHtml(result.exchanged.scope)}</dd>
+        <dt>expires in</dt><dd data-testid="exchange-expires-in">${escapeHtml(String(result.exchanged.expires_in))}</dd>
+        <dt>refresh token</dt><dd data-testid="exchange-refresh-token">${escapeHtml(result.exchanged.refresh_token ?? '')}</dd>
+        <dt>userinfo sub</dt><dd data-testid="exchange-userinfo-sub">${escapeHtml(result.userInfo.sub)}</dd>
+        <dt>userinfo email</dt><dd data-testid="exchange-userinfo-email">${escapeHtml(result.userInfo.email ?? '')}</dd>
+        <dt>resource subject</dt><dd data-testid="exchange-resource-subject">${escapeHtml(result.resourceProfile.subject)}</dd>
+        <dt>resource client</dt><dd data-testid="exchange-resource-client-id">${escapeHtml(result.resourceProfile.client_id)}</dd>
+        <dt>resource scope</dt><dd data-testid="exchange-resource-scope">${escapeHtml(result.resourceProfile.scope)}</dd>
+        <dt>resource audience</dt><dd data-testid="exchange-resource-audience">${escapeHtml(JSON.stringify(result.resourceProfile.audience))}</dd>
       </dl>
     </main>
   </body>

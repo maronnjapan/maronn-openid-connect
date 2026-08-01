@@ -21,7 +21,7 @@ const EXPERIMENTAL_PACKAGE = '@maronn-oidc/experimental';
  * string is returned untouched so existing output never changes.
  */
 function withExperimentalPackage(installCommand: string, features: OidcFeatureConfig): string {
-  if (!features.par) return installCommand;
+  if (!features.par && !features.tokenExchange) return installCommand;
   return installCommand.replace('@maronn-oidc/core', `@maronn-oidc/core ${EXPERIMENTAL_PACKAGE}`);
 }
 
@@ -285,7 +285,7 @@ export function run(args: string[]): void {
       console.log(`  1. Provide runtime config, signing keys, and client resolvers from env/DB/KV`);
       console.log(`  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract`);
       console.log(`  3. Use ${parsed.outputDir}/config.ts defaults only for quick local testing`);
-      if (features.par) {
+      if (features.par || features.tokenExchange) {
         console.log(`  4. Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`);
         console.log(`  5. Start the server\n`);
       } else {

@@ -38,8 +38,8 @@ function discoveryPath(framework: string): string {
 }
 
 describe('EXPERIMENTAL_FEATURES', () => {
-  it('should list par as the only experimental feature', () => {
-    expect(EXPERIMENTAL_FEATURES).toEqual(['par']);
+  it('should list par among the experimental features', () => {
+    expect(EXPERIMENTAL_FEATURES).toEqual(['par', 'token-exchange']);
   });
 });
 
@@ -56,6 +56,7 @@ describe('resolveFeatures with experimental features', () => {
       revocation: true,
       requestObject: true,
       par: false,
+      tokenExchange: false,
     });
   });
 
@@ -67,6 +68,7 @@ describe('resolveFeatures with experimental features', () => {
       revocation: true,
       requestObject: true,
       par: true,
+      tokenExchange: false,
     });
   });
 
@@ -88,12 +90,13 @@ describe('resolveFeatures with experimental features', () => {
       revocation: false,
       requestObject: true,
       par: true,
+      tokenExchange: false,
     });
   });
 
   it('should name the experimental features in the unknown-feature error', () => {
     expect(() => resolveFeatures({ enable: ['ciba'] })).toThrow(
-      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par',
+      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par, token-exchange',
     );
   });
 });

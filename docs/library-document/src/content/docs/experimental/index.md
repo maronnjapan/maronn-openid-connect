@@ -65,6 +65,7 @@ pnpm add @maronn-oidc/experimental
 | feature-id | 機能 | 準拠仕様 | ドキュメント |
 |---|---|---|---|
 | `par` | Pushed Authorization Requests | RFC 9126 | [PAR](/maronn-oidc/experimental/par/) |
+| `token-exchange` | OAuth 2.0 Token Exchange | RFC 8693 | [Token Exchange](/maronn-oidc/experimental/token-exchange/) |
 
 ## 問題の報告
 

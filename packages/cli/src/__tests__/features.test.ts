@@ -26,6 +26,7 @@ describe('DEFAULT_FEATURES', () => {
       revocation: true,
       requestObject: true,
       par: false,
+      tokenExchange: false,
     });
   });
 });
@@ -40,6 +41,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         par: false,
+        tokenExchange: false,
       });
     });
   });
@@ -53,6 +55,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         par: false,
+        tokenExchange: false,
       });
     });
 
@@ -66,6 +69,7 @@ describe('resolveFeatures', () => {
         revocation: false,
         requestObject: true,
         par: false,
+        tokenExchange: false,
       });
     });
   });
@@ -79,6 +83,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         par: false,
+        tokenExchange: false,
       });
     });
   });

@@ -43,6 +43,7 @@ import {
   tokenClientResolver as defaultTokenClientResolver,
   authorizationCodeResolver as defaultAuthorizationCodeResolver,
   refreshTokenResolver as defaultRefreshTokenResolver,
+  accessTokenResolver as defaultAccessTokenResolver,
 } from '../resolvers.js';
 import {
   accessTokenStore as defaultAccessTokenStore,
@@ -50,6 +51,25 @@ import {
   refreshTokenStore as defaultRefreshTokenStore,
 } from '../store.js';
 import type { RegisteredClient } from '../config.js';
+import {
+  TOKEN_EXCHANGE_GRANT_TYPE,
+  TokenExchangeError,
+  buildTokenExchangeResponse,
+  processTokenExchangeRequest,
+} from '@maronn-oidc/experimental/token-exchange';
+
+/**
+ * EXPERIMENTAL — OAuth 2.0 Token Exchange settings (RFC 8693).
+ *
+ * - allowedTargets: the audience / resource values a client may ask an
+ *   exchanged token to be issued for. Empty by default (fail safe): with an
+ *   empty list every exchange that names a target is rejected with
+ *   invalid_target, and only scope-narrowing / lifetime-shortening exchanges
+ *   succeed. Add the identifiers of your downstream services here.
+ */
+export const tokenExchangeConfig = {
+  allowedTargets: [] as string[],
+};
 
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -163,6 +183,96 @@ tokenApp.post('/', async (c) => {
     await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
     const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- EXPERIMENTAL: OAuth 2.0 Token Exchange (RFC 8693 §2.1) ------------
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject
+    // it with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by @maronn-oidc/experimental, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    //
+    // Known limitation: RFC 8693 §2.1 permits repeated `resource` / `audience`
+    // parameters, but this endpoint rejects any repeated parameter (RFC 6749
+    // §3.2), so only a single value of each is supported.
+    if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
+      const accessTokenResolver = c.get('accessTokenResolver') ?? defaultAccessTokenResolver;
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const exchangeConfig = c.get('config');
+      const exchangeIssuer: AccessTokenIssuer =
+        exchangeConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Validate the request and derive the issuing material. Each check inside
+      // is also exported as its own step function, so you can call them one by
+      // one instead and drop or replace individual rules.
+      const grant = await processTokenExchangeRequest({
+        params,
+        client: tokenClient,
+        accessTokenResolver,
+        allowedTargets: tokenExchangeConfig.allowedTargets,
+        configuredExpiresIn: exchangeConfig.accessTokenExpiresIn,
+      });
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3), so an exchanged token still passes the
+      // UserInfo endpoint's audience check.
+      const exchangeAudience = buildAccessTokenAudience({
+        userInfoEndpoint: `${exchangeConfig.issuer}/userinfo`,
+        requested: grant.requestedAudience,
+        issuer: exchangeConfig.issuer,
+      });
+
+      const exchangeIssuedAt = Math.floor(Date.now() / 1000);
+      const exchangedToken = await exchangeIssuer.issue({
+        payload: buildAccessTokenPayload({
+          issuer: exchangeConfig.issuer,
+          subject: grant.subject,
+          clientId: grant.clientId,
+          scope: grant.scope,
+          audience: exchangeAudience,
+          expiresIn: grant.expiresIn,
+          issuedAt: exchangeIssuedAt,
+        }),
+        privateKey: c.get('privateKey'),
+        keyId: c.get('keyId'),
+      });
+
+      await accessTokenStore.set(exchangedToken, {
+        // RFC 8693 §1.1: impersonation — the exchanged token acts as the same
+        // subject, but is bound to the client that requested the exchange.
+        sub: grant.subject,
+        clientId: grant.clientId,
+        scope: grant.scope,
+        expiresAt: exchangeIssuedAt + grant.expiresIn,
+        // Inherit the subject token's grant so revoking the grant (e.g. on code
+        // reuse detection) also kills every token exchanged from it.
+        grantId: grant.grantId,
+        iat: exchangeIssuedAt,
+        nbf: exchangeIssuedAt,
+        audience: exchangeAudience,
+        issuer: exchangeConfig.issuer,
+        // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
+        // deliberately NOT inherited: an exchanged token yields scope-based
+        // claims only at the UserInfo endpoint.
+      });
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      // RFC 8693 §2.2.1: access_token / issued_token_type / token_type are
+      // REQUIRED; expires_in and scope are always included here.
+      return c.json(buildTokenExchangeResponse({
+        accessToken: exchangedToken,
+        expiresIn: grant.expiresIn,
+        scope: grant.scope,
+      }));
+    }
 
     // --- Token request validation pipeline --------------------------------
     // Each step below is an independent core function, called in the same order
@@ -542,6 +652,17 @@ tokenApp.post('/', async (c) => {
     c.header('Pragma', 'no-cache');
     return c.json(tokenResponse);
   } catch (error) {
+    if (error instanceof TokenExchangeError) {
+      // RFC 8693 §2.2.2: the exchange errors use the RFC 6749 §5.2 shape. They
+      // are always 400 — a 401 can only come from client authentication, which
+      // runs before the branch and throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
     if (error instanceof TokenError) {
       const status = error.statusCode as 400 | 401;
       // RFC 6750 Section 3 / OAuth 2.1 Section 5.2: 401 responses include WWW-Authenticate

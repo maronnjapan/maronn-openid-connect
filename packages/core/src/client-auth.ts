@@ -189,17 +189,10 @@ export function extractClientCredentials(
     : clientSecret !== undefined
       ? 'client_secret_post'
       : 'none';
-<<<<<<< Updated upstream
 
   return { clientId, clientSecret, method };
 }
 
-=======
-
-  return { clientId, clientSecret, method };
-}
-
->>>>>>> Stashed changes
 /**
  * ステップ 3: 使用された認証方式が登録方式と一致することを検証する
  * OIDC Core 1.0 Section 9 / RFC 7591 Section 2

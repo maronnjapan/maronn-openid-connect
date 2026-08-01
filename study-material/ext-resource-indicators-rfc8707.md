@@ -15,6 +15,11 @@
 > 「標準 `resource` パラメータの受理と複数リソースの aud 制約」という固有差分のみを扱う。
 > 本タスクは p1-jwt-access-token-aud-default.md と前後どちらで実装してもよいが、
 > 同 aud 既定方針と整合させること。
+>
+> ⚠️ 「現在すでに出荷されている独自 `audience` パラメータが**無検証**でアクセストークンの `aud` に
+> 到達している」というセキュリティ差分は 📌 `study-material/authorization-audience-parameter-unvalidated-token-audience.md`
+> が扱う。**本ファイルの方針選択（A/B/C）は、そちらの併存ポリシーと同時に決めること。**
+> 片方だけを決めても `audience` と `resource` の関係が確定しないため。
 
 ## 2. 関連する仕様・基準
 

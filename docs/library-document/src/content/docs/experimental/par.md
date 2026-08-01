@@ -52,10 +52,12 @@ public client でも利用できます。クライアント認証規則は Token
 
 ```bash
 maronn-oidc generate hono --enable par
-pnpm add @maronn-oidc/experimental
+pnpm add @maronn-oidc/core @maronn-oidc/experimental
 ```
 
 `--enable par` を付けなかった場合、PAR に関するコードは一切生成されず、インストール案内にも `@maronn-oidc/experimental` は現れません。
+
+`@maronn-oidc/core` は `@maronn-oidc/experimental` の peerDependency です。experimental は core のエラークラスを `instanceof` で判定するため、アプリ内の core インスタンスが 1 つでないと判定が静かに失敗します。experimental は core より速く更新されるので、**バージョン番号が揃っていない状態は正常です**（`core 0.1.0` + `experimental 0.5.0` など）。インストール時に `unmet peer @maronn-oidc/core` が出たときだけ core を上げてください。
 
 ## 生成されるもの
 
@@ -232,7 +234,9 @@ PAR は state / nonce / PKCE を**置き換えません**。認可レスポン�
 | 症状 | 原因 / 対処 |
 |---|---|
 | `/par` が 404 | `--enable par` を付けずに生成しています。再生成してください |
-| `Cannot find module '@maronn-oidc/experimental/par'` | `pnpm add @maronn-oidc/experimental` を実行してください |
+| `Cannot find module '@maronn-oidc/experimental/par'` | `pnpm add @maronn-oidc/core @maronn-oidc/experimental` を実行してください |
+| インストール時に `unmet peer @maronn-oidc/core` の警告 | この experimental が要求する core の下限を満たしていません。`@maronn-oidc/core` を更新してください（バージョン番号を experimental と揃える必要はありません） |
+| PAR のエラーが期待どおりのレスポンスにならず 500 になる | core が二重にインストールされ、`instanceof` 判定が失敗している可能性があります。`pnpm why @maronn-oidc/core` で単一バージョンに解決されているか確認してください |
 | 認可エンドポイントが `request_uri_not_supported` を返す | `request_uri` が URN 形式（`urn:ietf:params:oauth:request_uri:`）になっていません。PAR が返した値をそのまま渡してください |
 | ブラウザバック / リロードで `invalid_request_uri` | 仕様どおりの挙動です（単回使用）。クライアント側で PAR からやり直してください |
 | 60 秒以上経つと `invalid_request_uri` | 有効期限切れです。`parConfig.expiresInSeconds` を延ばすか、PAR 直後に認可エンドポイントへ遷移してください |

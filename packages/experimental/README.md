@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 # @maronn-oidc/experimental
 
 このディレクトリは試験的に実装したもので、まだ正式にライブラリの機能として提供できていない機能をまとめたものとなります。
@@ -18,12 +19,22 @@
 
 ```bash
 maronn-oidc generate hono --enable par
-pnpm add @maronn-oidc/experimental
+pnpm add @maronn-oidc/core @maronn-oidc/experimental
 ```
 
 ```typescript
 import { handlePushedAuthorizationRequest } from '@maronn-oidc/experimental/par';
 ```
+
+## core とのバージョン関係
+
+`@maronn-oidc/core` はこの package の **peerDependency** です（`dependencies` ではありません）。
+
+experimental は core のエラークラス（`AuthorizationError` / `TokenError`）を `instanceof` で判定し、resolver / store を生成コードと受け渡しします。そのためアプリ全体で core のインスタンスが 1 つである必要があります。core を `dependencies` として同梱すると、生成コードが読み込む core と experimental が読み込む core が別インスタンスになり、`instanceof` 判定が静かに false になって、本来 `invalid_request` を返すべき場面が 500 になります。peerDependency にしておくと利用者のアプリが持つ core がそのまま使われるため、この事故が起きません。
+
+**バージョン番号は揃っている必要はありません。** experimental は core より速く publish されるため、`core 0.1.0` + `experimental 0.5.0` のような組み合わせが正常な状態です。互換性の条件は peer range（`>=0.0.1 <1.0.0`）の下限を満たしていることだけで、experimental が新しい core の API を必要とし始めたときにこの下限が上がります。下限を満たしていない場合は npm ならインストールが `ERESOLVE` で失敗し、pnpm なら `✕ unmet peer @maronn-oidc/core` が警告されます。
+
+> リポジトリ側では、core を minor / major で上げるときに experimental も同時にリリースすることを CI で強制しています（`.github/scripts/verify-release-contract.mjs`）。詳細は [RELEASE.md](../../RELEASE.md) の「バージョニング方針」を参照してください。
 
 ## 依存方向
 
@@ -46,3 +57,6 @@ Experimental 機能が core へ昇格する目安は次のとおりです。
 ## 利用者ドキュメント
 
 `docs/library-document` の Experimental セクションを参照してください。
+=======
+このディレクトリは試験的に実装したもので、まだ正式にライブラリの機能として提供できていない機能をまとめたものとなります。
+>>>>>>> Stashed changes

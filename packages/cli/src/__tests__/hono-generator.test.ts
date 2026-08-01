@@ -310,6 +310,7 @@ describe('HonoGenerator', () => {
       expect(file?.content).not.toContain('await validateTokenRequest(');
       expect(file?.content).not.toContain('await validateAuthorizationCodeGrant(');
       expect(file?.content).not.toContain('await validateRefreshTokenGrant(');
+<<<<<<< Updated upstream
     });
 
     it('should import every token response step function in token route', () => {
@@ -327,6 +328,25 @@ describe('HonoGenerator', () => {
 
     it('should not call the composed generateTokenResponse in token route', () => {
       const file = files.find((f) => f.path === 'routes/token.ts');
+=======
+    });
+
+    it('should import every token response step function in token route', () => {
+      // The generated route builds the response from each core step function so
+      // users can add ID Token claims or swap an issuer (project concept: customizable).
+      const file = files.find((f) => f.path === 'routes/token.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain('buildAccessTokenPayload');
+      expect(content).toContain('computeAtHash');
+      expect(content).toContain('resolveAcrAmr');
+      expect(content).toContain('buildIdTokenPayload');
+      expect(content).toContain('generateIdToken');
+      expect(content).toContain(`from '${CORE_PKG}'`);
+    });
+
+    it('should not call the composed generateTokenResponse in token route', () => {
+      const file = files.find((f) => f.path === 'routes/token.ts');
+>>>>>>> Stashed changes
       expect(file?.content).not.toContain('await generateTokenResponse(');
     });
 

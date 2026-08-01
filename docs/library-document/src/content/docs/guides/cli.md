@@ -87,8 +87,10 @@ Experimental 機能は上記とは別カテゴリで、**既定では無効**で
 
 ```bash
 maronn-oidc generate hono --enable par
-pnpm add @maronn-oidc/experimental
+pnpm add @maronn-oidc/core @maronn-oidc/experimental
 ```
+
+`@maronn-oidc/core` は `@maronn-oidc/experimental` の peerDependency なので、両方を入れてください（CLI のインストール案内も両方を出力します）。experimental のほうが速く更新されるため、バージョン番号が揃っていない状態は正常です。
 
 | 機能名 | 既定 | 内容 | 準拠仕様 |
 |---|---|---|---|

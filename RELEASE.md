@@ -7,9 +7,79 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 
 - `@maronn-oidc/core`
 - `@maronn-oidc/cli`
+- `@maronn-oidc/experimental`
 
 通常のリリース運用（changeset を貯めて Version Packages PR をマージすると publish される二段階フロー）は
 `release.yml` 冒頭のコメントを参照。本ドキュメントは **publish を成立させるための初期セットアップ**を扱う。
+
+---
+
+## バージョニング方針
+
+### 前提: experimental は core より速く publish する
+
+`@maronn-oidc/experimental` は新しい仕様を先行実装する場所なので、**core が同じバージョンに
+留まったまま experimental だけが何度も publish される**運用を想定する。バージョン番号を
+両者で揃える運用（Changesets の `fixed` グループ）は採用しない。採用すると experimental を
+1回 publish するたびに **コード変更のない core が別バージョンとして再 publish される**ため、
+安定性をシグナルとして売る core のバージョンが無意味に流れてしまう。
+
+したがって次の状態が正常である。
+
+```
+@maronn-oidc/core          0.1.0   （据え置き）
+@maronn-oidc/experimental  0.1.0 → 0.2.0 → 0.3.0 → …（先に進む）
+```
+
+### core のインスタンスを 1 つに保つのは peerDependencies の役割
+
+experimental は core の内部寄りの関数（`validateAuthorizationRequest`、
+`resolveAuthenticatedTokenClient` など）を直接使い、core の `AuthorizationError` / `TokenError` を
+`instanceof` で判定する。CLI 生成コードは同じ catch 節で core 由来と experimental 由来のエラーを
+両方扱うため、**アプリ内に core のインスタンスが 1 つしか存在しないこと**が動作の前提になっている。
+
+これは `packages/experimental/package.json` で core を `peerDependencies` にすることで担保する
+（`dependencies` にすると core が二重にインストールされ、`instanceof` が静かに false になって
+本来 `invalid_request` を返す場面が 500 になる）。バージョン番号の一致は必要ない。
+peer なので、利用者のアプリが持っている core が experimental からもそのまま使われる。
+
+### peer range は「下限」を宣言する
+
+range は `>=0.0.1 <1.0.0`。これは「experimental が実際に要求する最低の core」を表す下限であり、
+バージョン番号の一致を要求するものではない。したがって experimental が 0.5.0 まで進んでも、
+core 0.1.0 のままで問題なく動く。
+
+**experimental が新しく追加された core の API を使い始めたときは、同じ PR で下限を上げる**
+（例: `>=0.2.0 <1.0.0`）。これをやると、古い core を使っている利用者のインストール時に
+`unmet peer` が出て気づける。逆に下限を上げ忘れると、実行時に
+`does not provide an export named ...` まで気づけないので、core の新 API を使う変更では必ず見直す。
+
+caret（`^0.0.1` など）は使わない。semver では `0.0.x` の caret が完全一致扱いになるため、
+core を minor 上げするだけで Changesets の「peer dependent は major で上げる」ルールが発火し、
+**core も experimental も一気に 1.0.0 になってしまう**（実測で確認済み）。あわせて
+`.changeset/config.json` に
+`___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.onlyUpdatePeerDependentsWhenOutOfRange: true`
+を設定している。これがないと range が広くても major 昇格が起きる。
+**このオプションは名前のとおり Changesets の patch リリースで変わり得るため、Version Packages PR の
+diff で「意図しない 1.0.0 昇格が起きていないか」を必ず目視確認する。**
+
+### core の minor / major では experimental も一緒にリリースする
+
+range を広く取っている代償として、**core だけが先に進むと「公開済みの古い experimental が、
+まだ組み合わせて試していない新しい core を受け入れる」状態**になる。モノレポの CI は常に
+HEAD の core に対して experimental をビルド・テストするので開発時の破壊は検出できるが、
+公開済みの組み合わせは検証されない。
+
+そのため core を minor / major で上げる changeset があるときは experimental の changeset も
+必須とし、`pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`、
+`test:ci` に組み込み済み）で CI から強制している。同スクリプトは core が experimental の
+`dependencies` に戻っていないかも検査する。
+
+### core が 1.0.0 に到達したときの対応
+
+core を major バージョンアップすると、Changesets が peer range を自動的に `>=1.0.0` へ
+書き換える（実測で確認済み）。この時点で 0.x 系特有の caret 問題は解消するので、
+range を `^1.0.0` に切り替え、`onlyUpdatePeerDependentsWhenOutOfRange` を外すかどうかを判断する。
 
 ---
 
@@ -46,14 +116,17 @@ npm login
 # 2. 公開状態とバージョンを確認（private:true でないこと、access:public であること）
 cat packages/core/package.json   # publishConfig.access = "public" を確認
 cat packages/cli/package.json
+cat packages/experimental/package.json
 
 # 3. クリーンな状態でビルド
 pnpm install --frozen-lockfile
 pnpm run build
 
 # 4. 各パッケージを publish（スコープ付きなので public 指定が必須）
-pnpm --filter @maronn-oidc/core publish --access public --no-git-checks
-pnpm --filter @maronn-oidc/cli  publish --access public --no-git-checks
+#    experimental は core を peerDependencies で参照するので core を先に publish する
+pnpm --filter @maronn-oidc/core         publish --access public --no-git-checks
+pnpm --filter @maronn-oidc/experimental publish --access public --no-git-checks
+pnpm --filter @maronn-oidc/cli          publish --access public --no-git-checks
 ```
 
 > `--no-git-checks` は「コミットされていない変更があると pnpm publish が止まる」挙動を回避するためのもの。
@@ -63,6 +136,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 
 - https://www.npmjs.com/package/@maronn-oidc/core
 - https://www.npmjs.com/package/@maronn-oidc/cli
+- https://www.npmjs.com/package/@maronn-oidc/experimental
 
 > 初回手動 publish では provenance（来歴証明）は付かない。provenance は CI の OIDC publish で自動付与される。
 
@@ -78,6 +152,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 1. npmjs.com にログインし、対象パッケージページを開く
    - `@maronn-oidc/core`
    - `@maronn-oidc/cli`
+   - `@maronn-oidc/experimental`
 2. **Settings** タブ → **Trusted Publisher**（Publishing access）セクションへ
 3. **GitHub Actions** を選び、以下を登録する
 
@@ -89,7 +164,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
    | Workflow filename | `release.yml` |
    | Environment | （未使用なので空欄） |
 
-4. 保存する。両パッケージとも同じ内容で登録する。
+4. 保存する。3パッケージとも同じ内容で登録する。
 
 > Workflow filename は **パスではなくファイル名のみ**（`release.yml`）。
 > リポジトリ内の `.github/workflows/release.yml` と一致している必要がある。
@@ -141,8 +216,11 @@ provenance が付かず、Trusted Publisher を設定した次の CI publish か
 | CI publish が `404` / `403` で失敗 | パッケージ未作成、または Trusted Publisher 未設定。初回手動 publish と npm 側設定を確認 |
 | `Workflow does not match` 系エラー | npm の Trusted Publisher の Workflow filename が `release.yml` と一致しているか確認 |
 | publish 後の `Verify published package provenance` が失敗 | npm の version ページで provenance を確認し、Trusted Publisher の repository/workflow 設定、`id-token: write`、公開リポジトリであることを確認 |
-| `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli`） |
+| `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli` / `experimental`） |
 | スコープ付きで `402 Payment Required` | `--access public` 指定漏れ。`publishConfig.access: "public"` も併せて確認 |
+| Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |
+| CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では experimental も同時にリリースする（`pnpm changeset` で experimental の changeset を追加する） |
+| core と experimental のバージョン番号がずれている | 正常。番号の一致は要求していない（[バージョニング方針](#バージョニング方針)） |
 
 ---
 

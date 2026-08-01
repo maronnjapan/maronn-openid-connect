@@ -17,7 +17,15 @@ const oidcClientsJson = JSON.stringify([
     clientSecret: 'e2e-client-secret',
     redirectUris: [`${clientBaseURL}/callback`],
     clientType: 'confidential',
-    grantTypes: ['authorization_code', 'refresh_token'],
+    // The token-exchange URN is registered so the RFC 8693 spec can run against
+    // a sample OP generated with --enable token-exchange. Sample OPs generated
+    // without it reject the grant with unsupported_grant_type, and that spec
+    // skips itself on discovery.
+    grantTypes: [
+      'authorization_code',
+      'refresh_token',
+      'urn:ietf:params:oauth:grant-type:token-exchange',
+    ],
     tokenEndpointAuthMethod: 'client_secret_post',
     responseTypes: ['code'],
     offlineAccessAllowed: true,

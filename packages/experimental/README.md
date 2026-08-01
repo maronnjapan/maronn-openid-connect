@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 # @maronn-oidc/experimental
 
 このディレクトリは試験的に実装したもので、まだ正式にライブラリの機能として提供できていない機能をまとめたものとなります。
@@ -14,6 +13,7 @@
 | feature-id | 内容 | 準拠仕様 | import 元 |
 |---|---|---|---|
 | `par` | Pushed Authorization Requests | RFC 9126 | `@maronn-oidc/experimental/par` |
+| `token-exchange` | OAuth 2.0 Token Exchange (impersonation) | RFC 8693 | `@maronn-oidc/experimental/token-exchange` |
 
 機能ごとに subpath export で提供します。ルート (`.`) からの再エクスポートは提供しません。機能間でコードを共有しないことで、昇格・削除時に他機能へ影響しない構造を保っています。
 
@@ -57,6 +57,3 @@ Experimental 機能が core へ昇格する目安は次のとおりです。
 ## 利用者ドキュメント
 
 `docs/library-document` の Experimental セクションを参照してください。
-=======
-このディレクトリは試験的に実装したもので、まだ正式にライブラリの機能として提供できていない機能をまとめたものとなります。
->>>>>>> Stashed changes

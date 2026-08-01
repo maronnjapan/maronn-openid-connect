@@ -25,6 +25,17 @@ pnpm dlx @maronn-oidc/cli generate hono
 maronn-oidc setup hono --entry ./src/index.ts
 ```
 
+`setup` を使う前に、エントリファイルへ次の 2 種のコメントを**両方**書いておきます。
+
+```typescript
+import { Hono } from 'hono';
+// <!-- OIDC_IMPORT_PLACEHOLDER -->
+const app = new Hono();
+// <!-- OIDC_SETUP_PLACEHOLDER -->
+```
+
+片方でも欠けていると、`setup` はエントリファイルを書き換えずにエラーを表示して失敗します（終了コード 1）。エラーには欠けているプレースホルダー名が出るので、追記して再実行してください。既に `setup` 済みのファイルに再実行した場合は、書き換えずに `Already patched (no changes):` と表示して成功終了します。
+
 ## 2. 依存をインストールする
 
 ```bash

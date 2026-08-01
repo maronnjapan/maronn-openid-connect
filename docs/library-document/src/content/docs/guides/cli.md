@@ -21,6 +21,20 @@ maronn-oidc setup <framework> [options]
 
 `setup` は生成に加えて、エントリファイル内のプレースホルダーコメント（`// <!-- OIDC_IMPORT_PLACEHOLDER -->` と `// <!-- OIDC_SETUP_PLACEHOLDER -->`）を `applyOidc` の import と呼び出しに置換します。Next.js は App Router のファイル規約に従うため `setup` 非対応で、`maronn-oidc generate nextjs --output ./src/app` を使います。
 
+### setup に必要なプレースホルダー
+
+`setup` は、エントリファイルに次の 2 種のコメントが**両方**書かれていることを前提とします。
+
+```typescript
+import { Hono } from 'hono';
+// <!-- OIDC_IMPORT_PLACEHOLDER -->
+const app = new Hono();
+// <!-- OIDC_SETUP_PLACEHOLDER -->
+```
+
+- 2 種のうち片方でも欠けている場合、`setup` は**エントリファイルを一切書き換えずに**エラーを表示し、終了コード 1 で終わります。片方だけを置換すると、OP がマウントされないまま成功したように見えたり、import の無い `applyOidc(app);` が書き込まれてエントリファイルが型検査を通らなくなるためです。エラーには欠けているプレースホルダー名と記述例が表示されるので、追記して `setup` を再実行してください。なお、コード生成自体は配線判定より前に完了しているため、生成物は出力先に残ります。
+- 既に `applyOidc` の import と呼び出しが両方存在する場合（＝一度 `setup` 済み）は、`Already patched (no changes):` と表示してファイルを書き換えずに成功終了します。`setup` の再実行は安全です。
+
 ## Options
 
 | オプション | 説明 |

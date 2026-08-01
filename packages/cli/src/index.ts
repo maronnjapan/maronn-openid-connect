@@ -27,6 +27,22 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
 
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
 
+const IMPORT_PLACEHOLDER = '// <!-- OIDC_IMPORT_PLACEHOLDER -->';
+const SETUP_PLACEHOLDER = '// <!-- OIDC_SETUP_PLACEHOLDER -->';
+const APPLY_OIDC_CALL = 'applyOidc(app);';
+
+/**
+ * Framework-specific app construction line shown between the two placeholders in
+ * the missing-placeholder error, so the example the user copies matches the
+ * framework they ran `setup` for.
+ */
+const ENTRY_APP_EXAMPLES: Record<string, string> = {
+  hono: 'const app = new Hono();',
+  express: 'const app = express();',
+  fastify: 'const app = Fastify();',
+};
+const DEFAULT_ENTRY_APP_EXAMPLE = 'const app = /* your framework app instance */;';
+
 function printUsage(): void {
   const frameworks = getAvailableFrameworks().join(', ');
   const features = AVAILABLE_FEATURES.join(', ');
@@ -113,24 +129,72 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
   }
 }
 
-function patchEntryFile(entryFilePath: string, outputDir: string): void {
+type PatchEntryFileResult =
+  | { status: 'patched' }
+  | { status: 'already-patched' }
+  | { status: 'missing-placeholders'; missing: string[] };
+
+/**
+ * A previous `setup` run consumed both placeholders, so re-running it must be
+ * recognised by the wiring it produced rather than by the placeholders.
+ */
+function isAlreadyPatched(content: string): boolean {
+  const hasApplyOidcImport = /import\s*\{[^}]*\bapplyOidc\b[^}]*\}\s*from/.test(content);
+  return hasApplyOidcImport && content.includes(APPLY_OIDC_CALL);
+}
+
+/**
+ * Wire the generated OP into an existing entry file. The file is written only
+ * when both placeholders are present: a partial replacement would either leave
+ * the OP unmounted or write `applyOidc(app);` without its import, which breaks
+ * the user's entry file. Both cases are reported to the caller instead.
+ */
+function patchEntryFile(entryFilePath: string, outputDir: string): PatchEntryFileResult {
   const entryDir = dirname(resolve(entryFilePath));
   const resolvedOutput = resolve(outputDir);
   const relPath = relative(entryDir, resolvedOutput);
   const importPath = relPath.startsWith('.') ? relPath : `./${relPath}`;
   const applyImportPath = `${importPath}/apply.js`;
 
-  let content = readFileSync(entryFilePath, 'utf-8');
-  content = content.replace(
-    '// <!-- OIDC_IMPORT_PLACEHOLDER -->',
-    `import { applyOidc } from '${applyImportPath}';`,
-  );
-  content = content.replace(
-    '// <!-- OIDC_SETUP_PLACEHOLDER -->',
-    'applyOidc(app);',
-  );
-  writeFileSync(entryFilePath, content, 'utf-8');
-  console.log(`  Patched: ${entryFilePath}`);
+  const content = readFileSync(entryFilePath, 'utf-8');
+  const hasImportPlaceholder = content.includes(IMPORT_PLACEHOLDER);
+  const hasSetupPlaceholder = content.includes(SETUP_PLACEHOLDER);
+
+  if (!hasImportPlaceholder || !hasSetupPlaceholder) {
+    if (isAlreadyPatched(content)) {
+      return { status: 'already-patched' };
+    }
+    const missing: string[] = [];
+    if (!hasImportPlaceholder) missing.push(IMPORT_PLACEHOLDER);
+    if (!hasSetupPlaceholder) missing.push(SETUP_PLACEHOLDER);
+    return { status: 'missing-placeholders', missing };
+  }
+
+  // Replacer functions keep `$&` and friends in the resolved path literal.
+  const patched = content
+    .replace(IMPORT_PLACEHOLDER, () => `import { applyOidc } from '${applyImportPath}';`)
+    .replace(SETUP_PLACEHOLDER, () => APPLY_OIDC_CALL);
+  writeFileSync(entryFilePath, patched, 'utf-8');
+  return { status: 'patched' };
+}
+
+function printMissingPlaceholderError(
+  entryFilePath: string,
+  outputDir: string,
+  framework: string,
+  missing: string[],
+): void {
+  console.error(`Error: Entry file is missing the required OIDC placeholders: ${entryFilePath}`);
+  for (const placeholder of missing) {
+    console.error(`  Missing: ${placeholder}`);
+  }
+  console.error('');
+  console.error('Add both placeholder comments to the entry file and re-run `setup`:');
+  console.error(`  ${IMPORT_PLACEHOLDER}`);
+  console.error(`  ${ENTRY_APP_EXAMPLES[framework] ?? DEFAULT_ENTRY_APP_EXAMPLE}`);
+  console.error(`  ${SETUP_PLACEHOLDER}`);
+  console.error('');
+  console.error(`Generated files are in ${outputDir}, but the entry file was not patched.`);
 }
 
 export function run(args: string[]): void {
@@ -201,7 +265,22 @@ export function run(args: string[]): void {
 
     if (parsed.command === 'setup') {
       console.log(`\nPatching entry file...`);
-      patchEntryFile(parsed.entryFile, parsed.outputDir);
+      const patchResult = patchEntryFile(parsed.entryFile, parsed.outputDir);
+      if (patchResult.status === 'missing-placeholders') {
+        printMissingPlaceholderError(
+          parsed.entryFile,
+          parsed.outputDir,
+          parsed.framework,
+          patchResult.missing,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      console.log(
+        patchResult.status === 'already-patched'
+          ? `  Already patched (no changes): ${parsed.entryFile}`
+          : `  Patched: ${parsed.entryFile}`,
+      );
       console.log(`\nNext steps:`);
       console.log(`  1. Provide runtime config, signing keys, and client resolvers from env/DB/KV`);
       console.log(`  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract`);

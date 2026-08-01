@@ -63,3 +63,30 @@
   - 生成コードの実挙動（バイト同一性・条件付き補間の展開結果）は実装時の完了条件でのみ最終確認できる（Review 1 から変わらず、仕様段階の既知の限界）
 - **判定**: **Pass with changes**（指摘 1〜4 を同日中に修正反映済み。いずれも仕様文書の欠落・未規定の明文化であり、設計自体の変更を要する重大なセキュリティ問題は発見されなかった。Blocked に該当する未解決のセキュリティ事項はなし）
 - **次回可能日**: 2026-08-01
+
+## Review 3
+
+- **日付**: 2026-08-01
+- **観点**: 実装着手可否（追加調査なしで着手できるか / 受け入れ条件の客観性 / 対象ファイルと変更範囲 / API・CLI・テスト・Docs・Changeset の一貫性 / 実装順序と検証方法 / Experimental であることの利用者への明示）。Review 1・2 との差分として U3（E2E 組み込み）の解決と、Review 2 以降に main へ入った変更（`f2fc953` setup コマンド / `95c9efe` publish 設定）との整合確認を重視
+- **確認資料**:
+  - `tests/e2e/playwright.config.ts`（`oidcClientsJson` による E2E クライアント登録（`e2e-client` は confidential / `client_secret_post`）・`webServer` env での `OIDC_CLIENTS_JSON` / `CLIENT_ID` / `CLIENT_SECRET` 注入・OP 起動が `pnpm --filter <sample> start` であること — U3 の資格情報配置の解決）
+  - `tests/e2e/apps/client.mjs`（`/start-par` の追加パターン・`formPost` / `fetchJson` ヘルパ・`transactions` Map・`renderResult` の data-testid 描画。`/start` が認可リクエストに `audience=resourceServerUrl` を送ること — U3 の組み込み方の解決）
+  - `tests/e2e/apps/resource-server.mjs:45-47`（introspection の `aud` に自 URL を要求する検証 — audience 省略交換（subject 継承）で E2E が成立する根拠）
+  - `tests/e2e/specs/pushed-authorization-requests.spec.ts`（discovery 広告に基づく `test.skip` パターン — 共有 spec suite を全サンプルで green に保つ先例）
+  - `samples/hono-cloudflare/src/app.ts:27`（登録クライアントが `OIDC_CLIENTS_JSON` env 由来 — E2E のためにサンプル `config.ts` を編集不要である根拠）
+  - `samples/hono-cloudflare/src/oidc-provider/conformance.test.ts:1975-2009`（`parConfig.requirePushedAuthorizationRequests` をテスト内で書き換えて復元するパターン — `tokenExchangeConfig.allowedTargets` の conformance 検証手段の先例）
+  - `packages/cli/src/frameworks/hono/templates.ts`（`tokenClient`（`resolveAuthenticatedTokenClient` の戻り値。`grantTypes` / `tokenEndpointAuthMethod` を持つ）と `accessTokenStore` が分岐挿入点より前で束縛済みであること — スケッチの `client: tokenClient` が追加束縛なしで成立する確認 / 全アンカーの現存確認: `const authenticatedClientId` :2821・`${grantTypeSupportedStep}` :2828・`grantTypesSupported` :3438・`parConformanceBlock` :6410・conformance 補間列 :7320）
+  - `packages/cli/src/frameworks/web-standard/templates.ts:19-31, 2136, 2163`（conformance 補間列と token ルート共有が Review 2 時点から不変）
+  - `git log origin/main`（Review 2 以降の変更 `f2fc953`（`packages/cli/src/index.ts` の setup コマンドのみでテンプレート無関係）・`95c9efe` の diff 精査）
+- **指摘**:
+  1. **[U3 解決・修正] E2E 組み込みの具体化**: `client.mjs` への `/start-exchange` ルート追加（`/start-par` と同型）・資格情報は既存 env 注入をそのまま利用・`oidcClientsJson` の `e2e-client.grantTypes` へ URN 追加（サンプル側編集不要）・audience 省略交換で `allowedTargets: []` のまま E2E が成立・discovery ベースの skip パターン、を E2E テスト計画へ明記。U3 を解決済みへ移動
+  2. **[検証手段の具体化・修正] `allowedTargets` の conformance 検証方法**: 生成デフォルトが空配列のため `invalid_target` / 許可成功の両ケースをどう検証するかが未記載だった。PAR の `parConfig` テスト内書き換え・復元パターン（実在確認済み）と同型で `tokenExchangeConfig.allowedTargets` を書き換える方式を結合テスト計画に明記
+  3. **[外部ブロッカー検出・記録] main のコンフリクトマーカー混入**: 2026-08-01 の `95c9efe` で `packages/cli/src/frameworks/hono/templates.ts`・`packages/core/src/client-auth.ts`・`packages/cli/src/__tests__/hono-generator.test.ts` に未解決マーカーがコミットされており、リポジトリがコンパイル不能。**本仕様の欠陥ではない**（アンカー全数の現存と構造不変を確認済み。行番号は混入中 +3〜+23 ずれるが解消後に戻る）が、実装 Routine が着手時に必ず衝突するため、実装順序の冒頭に「着手前提」として解消確認（正しい解消側は `Updated upstream` = PAR を含む側）を明記した
+  4. **[確認のみ・指摘なし] 実装着手可否の残り観点**: (a) 完了条件 1〜7 はすべてコマンド実行・diff・応答表比較で客観判定できる (b) 変更対象ファイルは仕様内で列挙済みで、Review 3 で実在を確認した範囲と齟齬なし (c) 公開 API（ステップ関数）・CLI スケッチ・テスト計画・ドキュメント要件・changeset（experimental minor / cli minor / core なし）は相互参照が一貫 (d) Experimental 明示は生成コード冒頭コメント・docs ガイド・README 行の 3 箇所で計画済み (e) `f2fc953`（setup コマンド）はテンプレート・features 機構に触れておらず本仕様に影響なし
+- **修正**（同日反映）: specification.md（E2E テスト計画の組み込み方 / conformance の `allowedTargets` 書き換えパターン / 実装順序の着手前提 / U3 解決済み移動）/ sources.md（Review 3 のリポジトリ内参照 6 件追加）
+- **残リスク**:
+  - main のコンフリクトマーカー（指摘 3）が解消されるまで実装は物理的に開始できない。本 Routine はプロダクションコードを変更しない制約のため修復せず、着手前提として記録し所有者へ報告する
+  - 生成コードの実挙動（バイト同一性・条件付き補間の展開結果）は実装時の完了条件でのみ最終確認できる（Review 1 から変わらず、仕様段階の既知の限界）
+  - `allowedTargets` がグローバル許可リストである初期スコープの性質（Review 2 記録済み。昇格判断の観点 2 で追跡）
+- **判定**: **Pass with changes**（指摘 1・2 を同日中に反映。指摘 3 は仕様外の外部ブロッカーであり、仕様自体は 3 観点のレビューを完了し実装着手可能な水準に達したため Approved とする。実装 Routine は着手前提の確認を必須とする）
+- **次回可能日**: なし（3 回完了。次はレビューではなく実装 Routine の担当）

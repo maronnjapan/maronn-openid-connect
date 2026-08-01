@@ -461,7 +461,7 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 - Authorization Code Flow でトークン取得 → 交換 → 200 応答の全フィールド検証（`issued_token_type` / `token_type` / `expires_in` / `scope`）
 - 交換後トークンで UserInfo が成功する（`openid` を残した場合）/ introspection が active を返し `sub`・`client_id`・`aud` が交換内容と一致する
 - scope 縮小交換の実効 scope / 超過 scope の `invalid_scope`
-- `allowedTargets` 内の audience 指定成功 / リスト外の `invalid_target`
+- `allowedTargets` 内の audience 指定成功 / リスト外の `invalid_target`（生成デフォルトは空配列のため、conformance テストは PAR の `parConfig` 書き換えと同型のパターン（生成 `conformance.test.ts` の `parConfig.requirePushedAuthorizationRequests` 切り替え、`samples/hono-cloudflare/src/oidc-provider/conformance.test.ts:1975-2009`）で、export された `tokenExchangeConfig.allowedTargets` をテスト内で一時的に書き換え、テスト後に必ず復元して検証する）
 - 期限切れ subject_token の `invalid_request` / 存在しない subject_token との応答同一性
 - public client の `unauthorized_client` / `grantTypes` 未登録クライアントの `unauthorized_client` / 認証なしの 401
 - `actor_token` 付きリクエストの `invalid_request`
@@ -473,6 +473,12 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 
 - E2E 専用クライアント（`tests/e2e/apps`）にて、実ブラウザで Authorization Code Flow を完走して取得したアクセストークンをバックチャネルで交換し、交換後トークンで UserInfo へアクセスできることを検証
 - OP は `samples/*` の CLI 生成アプリ（`--enable token-exchange` で再生成）を使用
+- 組み込み方（U3 の解決内容。Review 3 で `tests/e2e` の実構造を確認済み）:
+  - **クライアント側**: `tests/e2e/apps/client.mjs` に `/start-exchange` ルートを追加する（PAR の `/start-par` と同型の追加パターン）。認可コードフロー完走後の callback で得た `access_token` を subject_token として、既存の `formPost` ヘルパで `/token` へ交換リクエストを送り、交換後トークンで `/userinfo`（および `aud` 検証確認のため resource server の `/profile`）へアクセスした結果を、既存 `renderResult` と同様に `data-testid` 付き HTML で描画する。Playwright spec はその testid を固定値で検証する
+  - **資格情報の配置**: confidential クライアントの資格情報は既存の `CLIENT_ID` / `CLIENT_SECRET` 環境変数（`tests/e2e/playwright.config.ts` の `webServer` env で注入済み）をそのまま使う。新たな配置は不要
+  - **クライアント登録**: `tests/e2e/playwright.config.ts` の `oidcClientsJson` にある `e2e-client` の `grantTypes` へ交換 URN を追加する。OP サンプルは登録クライアントを `OIDC_CLIENTS_JSON` 環境変数から読む（`samples/hono-cloudflare/src/app.ts:27`）ため、サンプル側の `config.ts` を E2E のために編集する必要はない
+  - **`allowedTargets` との関係**: E2E は audience / resource を省略した交換（subject の audience 継承）で検証する。`client.mjs` の `/start` は認可リクエストに `audience=resourceServerUrl` を送っており、resource server（`tests/e2e/apps/resource-server.mjs:45-47`）は introspection の `aud` に自 URL が含まれることを検証するため、継承交換された トークンがそのまま resource server の aud 検証を通過する。生成デフォルト `allowedTargets: []` のままで E2E が成立し、対象指定付き交換（`invalid_target` を含む）は conformance テストが担う
+  - **skip パターン**: PAR の E2E spec と同様、discovery の `grant_types_supported` に交換 URN が含まれない場合は `test.skip` する（`--enable token-exchange` なしのサンプル OP でも共有 spec suite が green を保つ）
 
 ### 相互運用性
 
@@ -491,6 +497,8 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 - core: 変更なし（changeset 不要）
 
 ## 実装順序
+
+**着手前提（Review 3, 2026-08-01 記録）**: main のコミット `95c9efe`（experimentalのpublish設定, 2026-08-01）に未解決の git コンフリクトマーカー（`<<<<<<< Updated upstream` / `>>>>>>> Stashed changes`）が混入しており、`packages/cli/src/frameworks/hono/templates.ts`（:1658-1735 の PAR authorize ブロック周辺・:3203-3239 の userinfo ブロック周辺）・`packages/core/src/client-auth.ts`（:192-202）・`packages/cli/src/__tests__/hono-generator.test.ts`（:313-349）の 3 ファイルがコンパイル不能である。実装 Routine は着手前にこの解消（いずれも `Updated upstream` 側＝PAR 機能を含む側が既存テスト・ドキュメントと整合する）を確認し、未解消なら本機能の実装より先にマーカー解消を行うこと。本仕様書のテンプレート行番号参照はマーカー混入前のものであり、混入中は +3（token ルート周辺）〜+23（discovery / conformance 周辺）ずれるが、Review 3 で全アンカー（`const authenticatedClientId` :2821 / `${grantTypeSupportedStep}` :2828 / `grantTypesSupported` :3438 / `parConformanceBlock` :6410 / 補間列 :7320）の存在と構造の不変を確認済みで、マーカー解消後は概ね元の行番号へ戻る。
 
 実装 Routine は次の順で進める（`packages/experimental` のビルド基盤は PAR 実装で整備済みのため、PAR のようなステップ 1 は不要）:
 
@@ -513,11 +521,11 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 
 ## 未解決事項
 
-- **U3（Review 3 で確認）**: E2E 専用クライアントに交換実行用のバックチャネル呼び出しをどう組み込むか（既存 `tests/e2e/apps` のクライアント構造の確認と、confidential クライアント資格情報の配置）
-
-セキュリティ上の未解決事項はなし。
+なし（セキュリティ上の未解決事項もなし）。
 
 解決済みの事項:
+
+- U3（2026-08-01 Review 3 解決）: `tests/e2e` の実構造（`apps/client.mjs` の `/start-par` 追加パターン・`formPost` ヘルパ・`renderResult` の testid 描画 / `playwright.config.ts` の `oidcClientsJson` と `webServer` env による資格情報注入 / `resource-server.mjs` の aud 検証 / サンプル OP の `OIDC_CLIENTS_JSON` 読み込み）を確認し、E2E テスト計画の「組み込み方」として具体化した。生成デフォルト `allowedTargets: []` のままで E2E が成立する（audience 省略交換が subject の audience を継承し resource server の aud 検証を通過する）ことも確認済み
 
 - U1（2026-07-31 Review 2 解決）: RFC 9700（OAuth 2.0 Security BCP, 2025-01）の原文を確認し、**RFC 8693 / Token Exchange への言及は一切ない**ことを確認した。RFC 9700 §2.2〜§2.3 の sender-constrained token・audience 制限の一般推奨は本仕様の設計（audience 許可リスト・scope 縮小）と方向が一致するが、Token Exchange 固有のガイダンスではないためセキュリティ要件表の根拠には引用しない（sources.md に「言及なし」を記録済み）
 - U2（2026-07-30 Review 1 解決）: 現行 `tokenRouteTemplate` の `config` / `privateKey` / `keyId`（`templates.ts:2831-2833`）と `accessTokenIssuer`（`:2905-2908`）の束縛はいずれも分岐挿入点（`:2818` 直後）より後で宣言されることを確認した。既存宣言は移動せず、**分岐ブロック内で独自に取得する**（分岐は `return` で完結するため二重実行にならず、無効時のバイト同一が分岐ブロック単体の条件付き補間で成立する）。「CLI生成コードからの利用方法」のスケッチに反映済み

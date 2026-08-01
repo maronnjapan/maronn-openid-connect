@@ -17,6 +17,7 @@ import {
   loginRouteTemplate,
   parRouteTemplate,
   parConformanceBlock,
+  tokenExchangeConformanceBlock,
   pkceDisabledConformanceBlock,
   persistentStorageConformanceBlock,
   requestObjectConformanceBeforeAll,
@@ -1712,6 +1713,12 @@ export function webConformanceTestTemplate(
 import { parStore } from './store.js';
 import { parConfig } from './routes/par.js';`
     : '';
+  // Experimental (RFC 8693): the Token Exchange contract tests flip the
+  // generated allowedTargets list to cover the target policy.
+  const tokenExchangeConformanceImports = features.tokenExchange
+    ? `
+import { tokenExchangeConfig } from './routes/token.js';`
+    : '';
   return `import { describe, it, expect, beforeAll } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
@@ -1719,7 +1726,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2133,7 +2140,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}});
+${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }
 

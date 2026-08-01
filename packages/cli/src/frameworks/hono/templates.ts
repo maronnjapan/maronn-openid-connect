@@ -364,15 +364,33 @@ export function configTemplate(
   allowUnsignedRequestObject: false,
 `
     : '';
+  // Same assembly rule as discovery: a disabled feature adds nothing, so the
+  // default generation is unchanged.
+  const exampleClientGrantTypes = [
+    `'authorization_code'`,
+    ...(features.refreshToken ? [`'refresh_token'`] : []),
+    ...(features.tokenExchange ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`] : []),
+  ].join(', ');
+  const exampleClientExchangeComment = features.tokenExchange
+    ? `      // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
+      // this confidential client exchange its access tokens. Remove it to forbid
+      // exchanges for this client; public clients are rejected either way.
+`
+    : '';
+  const noRefreshGrantComment = features.tokenExchange
+    ? `      // RFC 7591 §2: grant_types default is ["authorization_code"]. The refresh_token
+      // grant is disabled in this generated provider, so it is not registered.
+`
+    : `      // RFC 7591 §2: grant_types default is ["authorization_code"]. The refresh_token
+      // grant is disabled in this generated provider, so only authorization_code is registered.
+`;
   const exampleClientGrantFields = features.refreshToken
     ? `      offlineAccessAllowed: true,
       // RFC 7591 §2: grant_types default is ["authorization_code"]. This client uses
       // offline_access (refresh tokens), so it must explicitly register refresh_token.
-      grantTypes: ['authorization_code', 'refresh_token'],
+${exampleClientExchangeComment}      grantTypes: [${exampleClientGrantTypes}],
 `
-    : `      // RFC 7591 §2: grant_types default is ["authorization_code"]. The refresh_token
-      // grant is disabled in this generated provider, so only authorization_code is registered.
-      grantTypes: ['authorization_code'],
+    : `${noRefreshGrantComment}${exampleClientExchangeComment}      grantTypes: [${exampleClientGrantTypes}],
 `;
   return `import type {
   ClientInfo,
@@ -2664,6 +2682,147 @@ export function tokenRouteTemplate(
 
 `
     : '';
+
+  // EXPERIMENTAL (RFC 8693): dispatch the token-exchange grant before core's
+  // validateGrantTypeSupported rejects the URN. Every interpolation below
+  // collapses to the current output when the token-exchange feature is off, so
+  // the default generation is unchanged byte for byte.
+  const tokenExchangeResolverImport = features.tokenExchange
+    ? `
+  accessTokenResolver as defaultAccessTokenResolver,`
+    : '';
+  const tokenExchangeImports = features.tokenExchange
+    ? `
+import {
+  TOKEN_EXCHANGE_GRANT_TYPE,
+  TokenExchangeError,
+  buildTokenExchangeResponse,
+  processTokenExchangeRequest,
+} from '${EXPERIMENTAL_PACKAGE}/token-exchange';`
+    : '';
+  const tokenExchangeConfigBlock = features.tokenExchange
+    ? `
+/**
+ * EXPERIMENTAL — OAuth 2.0 Token Exchange settings (RFC 8693).
+ *
+ * - allowedTargets: the audience / resource values a client may ask an
+ *   exchanged token to be issued for. Empty by default (fail safe): with an
+ *   empty list every exchange that names a target is rejected with
+ *   invalid_target, and only scope-narrowing / lifetime-shortening exchanges
+ *   succeed. Add the identifiers of your downstream services here.
+ */
+export const tokenExchangeConfig = {
+  allowedTargets: [] as string[],
+};
+`
+    : '';
+  const tokenExchangeDispatchStep = features.tokenExchange
+    ? `
+    // --- EXPERIMENTAL: OAuth 2.0 Token Exchange (RFC 8693 §2.1) ------------
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject
+    // it with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    //
+    // Known limitation: RFC 8693 §2.1 permits repeated \`resource\` / \`audience\`
+    // parameters, but this endpoint rejects any repeated parameter (RFC 6749
+    // §3.2), so only a single value of each is supported.
+    if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
+      const accessTokenResolver = c.get('accessTokenResolver') ?? defaultAccessTokenResolver;
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const exchangeConfig = c.get('config');
+      const exchangeIssuer: AccessTokenIssuer =
+        exchangeConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Validate the request and derive the issuing material. Each check inside
+      // is also exported as its own step function, so you can call them one by
+      // one instead and drop or replace individual rules.
+      const grant = await processTokenExchangeRequest({
+        params,
+        client: tokenClient,
+        accessTokenResolver,
+        allowedTargets: tokenExchangeConfig.allowedTargets,
+        configuredExpiresIn: exchangeConfig.accessTokenExpiresIn,
+      });
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3), so an exchanged token still passes the
+      // UserInfo endpoint's audience check.
+      const exchangeAudience = buildAccessTokenAudience({
+        userInfoEndpoint: \`\${exchangeConfig.issuer}/userinfo\`,
+        requested: grant.requestedAudience,
+        issuer: exchangeConfig.issuer,
+      });
+
+      const exchangeIssuedAt = Math.floor(Date.now() / 1000);
+      const exchangedToken = await exchangeIssuer.issue({
+        payload: buildAccessTokenPayload({
+          issuer: exchangeConfig.issuer,
+          subject: grant.subject,
+          clientId: grant.clientId,
+          scope: grant.scope,
+          audience: exchangeAudience,
+          expiresIn: grant.expiresIn,
+          issuedAt: exchangeIssuedAt,
+        }),
+        privateKey: c.get('privateKey'),
+        keyId: c.get('keyId'),
+      });
+
+      await accessTokenStore.set(exchangedToken, {
+        // RFC 8693 §1.1: impersonation — the exchanged token acts as the same
+        // subject, but is bound to the client that requested the exchange.
+        sub: grant.subject,
+        clientId: grant.clientId,
+        scope: grant.scope,
+        expiresAt: exchangeIssuedAt + grant.expiresIn,
+        // Inherit the subject token's grant so revoking the grant (e.g. on code
+        // reuse detection) also kills every token exchanged from it.
+        grantId: grant.grantId,
+        iat: exchangeIssuedAt,
+        nbf: exchangeIssuedAt,
+        audience: exchangeAudience,
+        issuer: exchangeConfig.issuer,
+        // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
+        // deliberately NOT inherited: an exchanged token yields scope-based
+        // claims only at the UserInfo endpoint.
+      });
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      // RFC 8693 §2.2.1: access_token / issued_token_type / token_type are
+      // REQUIRED; expires_in and scope are always included here.
+      return c.json(buildTokenExchangeResponse({
+        accessToken: exchangedToken,
+        expiresIn: grant.expiresIn,
+        scope: grant.scope,
+      }));
+    }
+`
+    : '';
+  const tokenExchangeCatchBranch = features.tokenExchange
+    ? `    if (error instanceof TokenExchangeError) {
+      // RFC 8693 §2.2.2: the exchange errors use the RFC 6749 §5.2 shape. They
+      // are always 400 — a 401 can only come from client authentication, which
+      // runs before the branch and throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+`
+    : '';
   return `import { Hono } from 'hono';
 import {
   validateGrantTypeSupported,
@@ -2699,14 +2858,14 @@ import {
 } from '${corePkg}';
 import {
   tokenClientResolver as defaultTokenClientResolver,
-  authorizationCodeResolver as defaultAuthorizationCodeResolver,${refreshResolverImport}
+  authorizationCodeResolver as defaultAuthorizationCodeResolver,${refreshResolverImport}${tokenExchangeResolverImport}
 } from '../resolvers.js';
 import {
   accessTokenStore as defaultAccessTokenStore,
   authCodeStore as defaultAuthCodeStore,${refreshStoreImport}
 } from '../store.js';
-import type { RegisteredClient } from '../config.js';
-
+import type { RegisteredClient } from '../config.js';${tokenExchangeImports}
+${tokenExchangeConfigBlock}
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
@@ -2816,7 +2975,7 @@ ${refreshStoreConst}
     await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
     const authenticatedClientId = presentedCredentials.clientId;
-
+${tokenExchangeDispatchStep}
     // --- Token request validation pipeline --------------------------------
     // Each step below is an independent core function, called in the same order
     // as core's validateTokenRequest(). Delete a call to drop that validation,
@@ -3046,7 +3205,7 @@ ${refreshTokenPersistenceBlock}    c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(tokenResponse);
   } catch (error) {
-    if (error instanceof TokenError) {
+${tokenExchangeCatchBranch}    if (error instanceof TokenError) {
       const status = error.statusCode as 400 | 401;
       // RFC 6750 Section 3 / OAuth 2.1 Section 5.2: 401 responses include WWW-Authenticate
       if (error.wwwAuthenticate) {
@@ -3412,10 +3571,16 @@ export function discoveryRouteTemplate(
     // (OIDC Core 1.0 §11: it would never be granted by this provider).
     scopesSupported: ['openid', 'profile', 'email', 'address', 'phone'],
 `;
-  const grantTypesSupportedEntry = features.refreshToken
-    ? `    grantTypesSupported: ['authorization_code', 'refresh_token'],
-`
-    : `    grantTypesSupported: ['authorization_code'],
+  // The list is assembled so that a disabled feature contributes nothing: with
+  // every experimental feature off the entry is byte-identical to before.
+  // RFC 8693 §2.1: the exchange grant is advertised only when it is generated,
+  // so a client can detect support through discovery.
+  const supportedGrantTypes = [
+    `'authorization_code'`,
+    ...(features.refreshToken ? [`'refresh_token'`] : []),
+    ...(features.tokenExchange ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`] : []),
+  ];
+  const grantTypesSupportedEntry = `    grantTypesSupported: [${supportedGrantTypes.join(', ')}],
 `;
   const requestObjectMetadata = features.requestObject
     ? `    // OIDC Core 1.0 §6.1 / OIDC Discovery 1.0 §3: signed Request Object by value is
@@ -5366,6 +5531,38 @@ export function customViewConformanceTestBlock(): string {
  * in a block that pins the disabled behavior instead (404 / rejection / absent
  * metadata), so a user who re-enables the code path is caught by the contract.
  */
+/**
+ * Extra conformance-test clients for the experimental token-exchange feature.
+ * Empty when the feature is off, so the default client map is unchanged.
+ *
+ * `c-conf` deliberately does NOT register the exchange URN: it is the fixture
+ * for the unauthorized_client contract.
+ */
+function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
+  if (!features.tokenExchange) return '';
+  return `  // EXPERIMENTAL (RFC 8693): a confidential client registered for the exchange
+  // grant, and a public one registered for it as well — the latter pins that a
+  // public client is rejected even when the URN is registered.
+  ['c-exchange', {
+    clientId: 'c-exchange',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  ['c-public-exchange', {
+    clientId: 'c-public-exchange',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'public' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+    tokenEndpointAuthMethod: 'none',
+  }],
+`;
+}
+
 export function conformanceTestClientsBlock(features: OidcFeatureConfig): string {
   if (!features.refreshToken) {
     return `const testClients = new Map<string, RegisteredClient>([
@@ -5399,7 +5596,7 @@ export function conformanceTestClientsBlock(features: OidcFeatureConfig): string
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_basic',
   }],
-]);
+${tokenExchangeConformanceClients(features)}]);
 `;
   }
   return `const testClients = new Map<string, RegisteredClient>([
@@ -5436,7 +5633,7 @@ export function conformanceTestClientsBlock(features: OidcFeatureConfig): string
     tokenEndpointAuthMethod: 'client_secret_basic',
     offlineAccessAllowed: true,
   }],
-]);
+${tokenExchangeConformanceClients(features)}]);
 `;
 }
 
@@ -6380,6 +6577,533 @@ export function persistentStorageConformanceBlock(): string {
 }
 
 /**
+ * Contract tests for the experimental Token Exchange grant (RFC 8693).
+ * Emitted only when the token-exchange feature is enabled, so the default
+ * conformance output is unchanged.
+ */
+export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): string {
+  if (!features.tokenExchange) return '';
+  return `
+  // EXPERIMENTAL — OAuth 2.0 Token Exchange (RFC 8693). Generated because this
+  // provider was created with --enable token-exchange. These tests pin the
+  // contract the repository guarantees for the generated exchange grant: change
+  // the behavior and they fail, which is how a customized OP learns it drifted.
+  describe('Token Exchange (RFC 8693)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
+    const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
+    // The exchange rejects every kind of unusable subject_token with one
+    // description so the response cannot be used as an existence oracle.
+    const SUBJECT_INVALID_DESCRIPTION = 'The provided subject_token is not valid';
+    const TARGET_REJECTED_DESCRIPTION =
+      'The requested target is not allowed for token exchange';
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function postToken(fields: Record<string, string>): Promise<Response> {
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(fields).toString(),
+      });
+    }
+
+    function exchangeRequest(overrides: Record<string, string> = {}): Promise<Response> {
+      return postToken({
+        client_id: 'c-exchange',
+        client_secret: 's',
+        grant_type: EXCHANGE_GRANT_TYPE,
+        subject_token_type: ACCESS_TOKEN_TYPE,
+        ...overrides,
+      });
+    }
+
+    // Drive authorize -> login -> consent over HTTP and hand back the code. No
+    // assertions and no branching here: the flow contract lives in the it()s.
+    async function authorizeFlow(clientId: string, scope: string, claims?: string): Promise<string> {
+      const authorizeUrl =
+        '/authorize?response_type=code&client_id=' + clientId +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(scope) +
+        '&state=tx-state&nonce=tx-nonce' +
+        (claims === undefined ? '' : '&claims=' + encodeURIComponent(claims)) +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+
+      const authorizeRes = await app.request(authorizeUrl);
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath);
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+
+      const consentGet = await app.request(consentPath);
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      return callback.searchParams.get('code') ?? '';
+    }
+
+    // A subject_token obtained through the ordinary Authorization Code Flow.
+    async function subjectTokenFor(
+      scope: string,
+      clientId = 'c-exchange',
+      claims?: string,
+    ): Promise<string> {
+      const code = await authorizeFlow(clientId, scope, claims);
+      const res = await postToken({
+        client_id: clientId,
+        ...(clientId === 'c-public-exchange' ? {} : { client_secret: 's' }),
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: PKCE_VERIFIER,
+      });
+      return ((await res.json()) as Record<string, string>).access_token;
+    }
+
+    describe('Successful exchange', () => {
+      it('should return every RFC 8693 §2.2.1 response member for a scope-narrowing exchange', async () => {
+        const subjectToken = await subjectTokenFor('openid profile email');
+        const res = await exchangeRequest({ subject_token: subjectToken, scope: 'openid profile' });
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual([
+          'access_token',
+          'expires_in',
+          'issued_token_type',
+          'scope',
+          'token_type',
+        ]);
+        expect(body.issued_token_type).toBe(ACCESS_TOKEN_TYPE);
+        expect(body.token_type).toBe('Bearer');
+        expect(body.scope).toBe('openid profile');
+        expect(body.expires_in).toBe(3600);
+      });
+
+      it('should inherit the subject scope when scope is omitted', async () => {
+        const subjectToken = await subjectTokenFor('openid profile');
+        const res = await exchangeRequest({ subject_token: subjectToken });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).scope).toBe('openid profile');
+      });
+
+      // RFC 8693 §2.2.1: token exchange does not issue a refresh token here.
+      it('should not issue a refresh token from an exchange', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({ subject_token: subjectToken });
+
+        expect((await res.json()).refresh_token).toBe(undefined);
+      });
+
+      // The exchanged token is an ordinary access token in the store, so every
+      // existing endpoint keeps working with it.
+      it('should return a token that the UserInfo endpoint accepts', async () => {
+        const subjectToken = await subjectTokenFor('openid profile');
+        const exchanged = (await (await exchangeRequest({ subject_token: subjectToken })).json())
+          .access_token as string;
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + exchanged },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+
+      // RFC 8693 §1.1 impersonation: sub is inherited, client_id is the caller.
+      it('should bind the exchanged token to the requesting client and the original subject', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const exchanged = (await (await exchangeRequest({ subject_token: subjectToken })).json())
+          .access_token as string;
+        const res = await app.request('/introspect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-exchange',
+            client_secret: 's',
+            token: exchanged,
+          }).toString(),
+        });
+        const body = await res.json();
+
+        expect(body.active).toBe(true);
+        expect(body.sub).toBe('testuser');
+        expect(body.client_id).toBe('c-exchange');
+        expect(body.aud).toEqual(['http://localhost:3000/userinfo']);
+      });
+
+      // The subject token stays usable: RFC 8693 does not make it single use.
+      it('should leave the subject token valid after an exchange', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        await exchangeRequest({ subject_token: subjectToken });
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + subjectToken },
+        });
+
+        expect(res.status).toBe(200);
+      });
+
+      // The exchanged token never outlives the subject token, so a chain of
+      // exchanges cannot launder a token into a longer lifetime.
+      it('should not extend the lifetime beyond the subject token', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const first = (await (await exchangeRequest({ subject_token: subjectToken })).json()) as
+          Record<string, number | string>;
+        const second = (await (
+          await exchangeRequest({ subject_token: first.access_token as string })
+        ).json()) as Record<string, number | string>;
+
+        expect((second.expires_in as number) <= (first.expires_in as number)).toBe(true);
+      });
+
+      // OIDC Core 1.0 §5.5: the consented claims request is NOT carried over, so
+      // an exchanged token yields scope-based claims only.
+      it('should not inherit the claims parameter of the subject token', async () => {
+        const claims = JSON.stringify({ userinfo: { name: { essential: true } } });
+        const subjectToken = await subjectTokenFor('openid', 'c-exchange', claims);
+        const subjectUserInfo = await (
+          await app.request('/userinfo', { headers: { Authorization: 'Bearer ' + subjectToken } })
+        ).json();
+        const exchanged = (await (await exchangeRequest({ subject_token: subjectToken })).json())
+          .access_token as string;
+        const exchangedUserInfo = await (
+          await app.request('/userinfo', { headers: { Authorization: 'Bearer ' + exchanged } })
+        ).json();
+
+        expect(subjectUserInfo.name).toBe('Test User');
+        expect(exchangedUserInfo.name).toBe(undefined);
+      });
+    });
+
+    describe('Client authorization', () => {
+      it('should reject an unauthenticated exchange with 401 invalid_client', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await postToken({
+          client_id: 'c-exchange',
+          grant_type: EXCHANGE_GRANT_TYPE,
+          subject_token: subjectToken,
+          subject_token_type: ACCESS_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      // RFC 6749 §5.2: the exchange URN must be registered on the client.
+      it('should reject a client that has not registered the exchange grant', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await postToken({
+          client_id: 'c-conf',
+          client_secret: 's',
+          grant_type: EXCHANGE_GRANT_TYPE,
+          subject_token: subjectToken,
+          subject_token_type: ACCESS_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the token-exchange grant type',
+        });
+      });
+
+      // RFC 8693 §2.1 notes that skipping client authentication lets a stolen
+      // token be amplified through the STS, so public clients are refused.
+      it('should reject a public client even when it registered the exchange grant', async () => {
+        const subjectToken = await subjectTokenFor('openid', 'c-public-exchange');
+        const res = await postToken({
+          client_id: 'c-public-exchange',
+          grant_type: EXCHANGE_GRANT_TYPE,
+          subject_token: subjectToken,
+          subject_token_type: ACCESS_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'Public clients are not allowed to use the token-exchange grant type',
+        });
+      });
+    });
+
+    describe('Parameter validation', () => {
+      it('should reject a missing subject_token with invalid_request', async () => {
+        const res = await exchangeRequest({});
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'subject_token is required',
+        });
+      });
+
+      it('should reject an unsupported subject_token_type with invalid_request', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description:
+            'Unsupported subject_token_type. Only urn:ietf:params:oauth:token-type:access_token is supported.',
+        });
+      });
+
+      it('should reject an unsupported requested_token_type with invalid_request', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          requested_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description:
+            'Unsupported requested_token_type. Only urn:ietf:params:oauth:token-type:access_token is supported.',
+        });
+      });
+
+      // Delegation (RFC 8693 §1.1 / §4) is out of scope and refused explicitly.
+      it('should reject a delegation request carrying actor_token', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: subjectToken,
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description:
+            'Delegation is not supported: actor_token and actor_token_type must not be present.',
+        });
+      });
+
+      // RFC 8693 §2.1: resource MUST be an absolute URI without a fragment.
+      it('should reject a relative resource with invalid_request', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({ subject_token: subjectToken, resource: '/api' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'resource must be an absolute URI without a fragment component',
+        });
+      });
+
+      it('should reject a resource carrying a fragment with invalid_request', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          resource: 'https://api.example.com/x#frag',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'resource must be an absolute URI without a fragment component',
+        });
+      });
+
+      // RFC 6749 §3.2: repeated token endpoint parameters are refused, which is
+      // why this OP supports only a single audience / resource value.
+      it('should reject a repeated resource parameter', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body:
+            'client_id=c-exchange&client_secret=s&grant_type=' +
+            encodeURIComponent(EXCHANGE_GRANT_TYPE) +
+            '&subject_token=' + encodeURIComponent(subjectToken) +
+            '&subject_token_type=' + encodeURIComponent(ACCESS_TOKEN_TYPE) +
+            '&resource=https%3A%2F%2Fa.example.com&resource=https%3A%2F%2Fb.example.com',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Parameter "resource" must not be repeated',
+        });
+      });
+
+      // RFC 8693 §2.2.2 sends invalid subject tokens to invalid_request, NOT to
+      // invalid_grant as the authorization_code / refresh_token grants would.
+      it('should reject an unknown subject_token with invalid_request', async () => {
+        const res = await exchangeRequest({ subject_token: 'not-a-real-token' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: SUBJECT_INVALID_DESCRIPTION,
+        });
+      });
+
+      it('should report a revoked subject_token exactly like an unknown one', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        await app.request('/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-exchange',
+            client_secret: 's',
+            token: subjectToken,
+          }).toString(),
+        });
+        const revoked = await exchangeRequest({ subject_token: subjectToken });
+        const unknown = await exchangeRequest({ subject_token: 'not-a-real-token' });
+
+        expect(revoked.status).toBe(400);
+        expect(await revoked.json()).toEqual(await unknown.json());
+      });
+    });
+
+    describe('Scope narrowing', () => {
+      it('should reject a scope that exceeds the subject token scope', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({ subject_token: subjectToken, scope: 'openid profile' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_scope',
+          error_description: 'The requested scope exceeds the scope of the subject_token',
+        });
+      });
+
+      it('should grant exactly the requested subset', async () => {
+        const subjectToken = await subjectTokenFor('openid profile email');
+        const res = await exchangeRequest({ subject_token: subjectToken, scope: 'email' });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).scope).toBe('email');
+      });
+    });
+
+    describe('Target policy (allowedTargets)', () => {
+      // The generated default is an empty list, so any named target is refused
+      // until the operator opts in. The list is restored after each test.
+      it('should reject an audience that is not in allowedTargets', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          audience: 'https://internal.example.com',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_target',
+          error_description: TARGET_REJECTED_DESCRIPTION,
+        });
+      });
+
+      it('should reject a resource that is not in allowedTargets', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          resource: 'https://internal.example.com/api',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_target',
+          error_description: TARGET_REJECTED_DESCRIPTION,
+        });
+      });
+
+      it('should issue a token for an allowed audience', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        tokenExchangeConfig.allowedTargets = ['https://internal.example.com'];
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          audience: 'https://internal.example.com',
+        });
+        const body = await res.json();
+        tokenExchangeConfig.allowedTargets = [];
+
+        expect(res.status).toBe(200);
+        expect(body.token_type).toBe('Bearer');
+      });
+
+      // The UserInfo endpoint stays a permanent aud member (RFC 9068 §3), so an
+      // exchanged token keeps working against this OP as well as the new target.
+      it('should add the allowed audience alongside the UserInfo endpoint', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        tokenExchangeConfig.allowedTargets = ['https://internal.example.com'];
+        const exchanged = (await (
+          await exchangeRequest({
+            subject_token: subjectToken,
+            audience: 'https://internal.example.com',
+          })
+        ).json()).access_token as string;
+        tokenExchangeConfig.allowedTargets = [];
+        const introspection = await (
+          await app.request('/introspect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: 'c-exchange',
+              client_secret: 's',
+              token: exchanged,
+            }).toString(),
+          })
+        ).json();
+
+        expect(introspection.aud).toEqual([
+          'http://localhost:3000/userinfo',
+          'https://internal.example.com',
+        ]);
+      });
+    });
+
+    describe('Discovery', () => {
+      it('should advertise the exchange grant in grant_types_supported', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.grant_types_supported.includes(EXCHANGE_GRANT_TYPE)).toBe(true);
+      });
+    });
+  });
+
+`;
+}
+
+/**
  * Contract tests for the experimental PAR endpoint (RFC 9126).
  * Emitted only when the par feature is enabled, so the default conformance
  * output is unchanged.
@@ -6803,6 +7527,12 @@ export function conformanceTestTemplate(
 import { parStore } from './store.js';
 import { parConfig } from './routes/par.js';`
     : '';
+  // Experimental (RFC 8693): the Token Exchange contract tests flip the
+  // generated allowedTargets list to cover the target policy.
+  const tokenExchangeConformanceImports = features.tokenExchange
+    ? `
+import { tokenExchangeConfig } from './routes/token.js';`
+    : '';
   return `import { describe, it, expect, beforeAll } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 import { Hono } from 'hono';
@@ -6812,7 +7542,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -7294,6 +8024,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}});
+${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }

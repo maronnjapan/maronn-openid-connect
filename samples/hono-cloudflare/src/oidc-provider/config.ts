@@ -129,7 +129,10 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
       offlineAccessAllowed: true,
       // RFC 7591 §2: grant_types default is ["authorization_code"]. This client uses
       // offline_access (refresh tokens), so it must explicitly register refresh_token.
-      grantTypes: ['authorization_code', 'refresh_token'],
+      // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
+      // this confidential client exchange its access tokens. Remove it to forbid
+      // exchanges for this client; public clients are rejected either way.
+      grantTypes: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
       // RFC 7591 §2: token_endpoint_auth_method default is client_secret_basic.
       // The sample client authenticates with client_secret_post, so register it explicitly.
       tokenEndpointAuthMethod: 'client_secret_post',

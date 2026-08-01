@@ -32,8 +32,9 @@ export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
  * change in a breaking way between releases.
  *
  * - par: Pushed Authorization Requests (RFC 9126).
+ * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation only.
  */
-export const EXPERIMENTAL_FEATURES = ['par'] as const;
+export const EXPERIMENTAL_FEATURES = ['par', 'token-exchange'] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
 
@@ -53,6 +54,10 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  * - par: experimental, disabled by default. When true, the PAR endpoint
  *   (RFC 9126) is generated and the authorize route resolves URN-form
  *   `request_uri` values through `@maronn-oidc/experimental/par`.
+ * - tokenExchange: experimental, disabled by default. When true, the token
+ *   route dispatches the `urn:ietf:params:oauth:grant-type:token-exchange`
+ *   grant (RFC 8693) to `@maronn-oidc/experimental/token-exchange` before
+ *   core's grant_type validation would reject the URN.
  */
 export interface OidcFeatureConfig {
   pkce: boolean;
@@ -61,6 +66,7 @@ export interface OidcFeatureConfig {
   revocation: boolean;
   requestObject: boolean;
   par: boolean;
+  tokenExchange: boolean;
 }
 
 /** Mapping from CLI feature names to OidcFeatureConfig keys. */
@@ -75,6 +81,7 @@ const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
 /** Mapping from CLI experimental feature names to OidcFeatureConfig keys. */
 const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatureConfig> = {
   par: 'par',
+  'token-exchange': 'tokenExchange',
 };
 
 /**
@@ -88,6 +95,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   revocation: true,
   requestObject: true,
   par: false,
+  tokenExchange: false,
 };
 
 function isExperimentalFeature(name: string): name is ExperimentalFeatureName {

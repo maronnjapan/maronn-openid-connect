@@ -26,6 +26,22 @@
   Version Packages PR がマージされると壊れたまま publish を試みる経路が開いている
 - sample OP は CLI 生成物であるため、Basic OP 適合性を再確認する手段（conformance 実行）も止まっている
 
+### 実測（2026-08-01）
+
+docs のみの PR #39 の CI（`c05fea7`）で実際に確認済み。
+
+```
+packages/cli test: Error: Transform failed with 1 error:
+  .../packages/cli/src/__tests__/hono-generator.test.ts:313:0: ERROR: Unexpected "<<"
+ Test Files  6 failed | 1 passed (7)
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @maronn-oidc/cli@0.0.1 test: `vitest run`
+```
+
+- **現在の `main` を base にする PR は、内容にかかわらず CI が赤になる**
+- `packages/core` のテスト自体は個別には緑（`token-request.test.ts` 105 tests /
+  `authorization-request.test.ts` 158 tests は成功）。壊れているのは構文レベルのみであり、
+  仕様準拠ロジックには影響していない
+
 検討詳細は `study-material/done/released-source-unresolved-merge-conflict-markers.md` を参照。
 
 > 再発防止（CI トリガ拡張・typecheck / build ゲート）は

@@ -123,9 +123,37 @@ upstream 側の記述内容（`par` feature、peer range、`verify-release-contr
   `pnpm --filter "./packages/*" test` が失敗する（＝ **リポジトリ自身のテストが緑にならない**）。
 - `ci:publish` は `pnpm run build` を経由するため、**現状の `main` からは publish できない**。
 
-> 未確認事項: 依存関係を install できない環境で調査したため、`pnpm run build` / `pnpm run test:ci` を
-> 実際に走らせた結果は取得していない。上記は「commit されたファイルが TypeScript として構文的に不正であること」
-> から導いた帰結であり、実行ログによる裏取りは修正 PR の CI で行うこと。
+### 4.4 実測による裏取り（2026-08-01）
+
+当初は依存関係を install できない環境での調査だったため上記は静的な推論だったが、
+本 study-material を追加した **docs のみの PR #39** の CI（`c05fea7`）で実際に赤くなり、裏取りできた。
+
+```
+packages/cli test: Error: Transform failed with 1 error:
+  .../packages/cli/src/__tests__/hono-generator.test.ts:313:0: ERROR: Unexpected "<<"
+  Plugin: vite:esbuild
+  311|        expect(file?.content).not.toContain('await validateAuthorizationCodeGrant(');
+  312|        expect(file?.content).not.toContain('await validateRefreshTokenGrant(');
+  313|  <<<<<<< Updated upstream
+     |  ^
+ Test Files  6 failed | 1 passed (7)
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @maronn-oidc/cli@0.0.1 test: `vitest run`
+```
+
+確定した事実:
+
+- **`pnpm run test:ci` は現在の `main` を base にすると必ず失敗する。**
+  `packages/cli` の 7 テストファイル中 6 が transform 段階で落ちる。
+- 失敗はドキュメント変更とは無関係で、**base branch（`main`）に起因する**。
+  したがって現時点でこのリポジトリに出されるあらゆる PR の CI が赤になる。
+- `packages/core` のテスト自体は個別には緑（`token-request.test.ts` 105 tests /
+  `authorization-request.test.ts` 158 tests は成功）。
+  つまり **仕様準拠ロジックは壊れておらず、壊れているのは構文レベルのみ**である。
+  この点は修正が純粋にマーカー除去で足りることの傍証になる。
+
+> 残る未確認事項: `pnpm run build`（`tsc`）と `pnpm run typecheck` は
+> CI で実行されていない（📌 `study-material/done/ci-trigger-coverage-and-static-verification-gate.md`）ため、
+> ビルド失敗そのものの実行ログはまだ取得できていない。P0 タスクの修正 PR で確認すること。
 
 ## 5. 現在の実装との差分
 

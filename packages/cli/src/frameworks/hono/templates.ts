@@ -1655,7 +1655,6 @@ export function authorizeRouteTemplate(
       requestParameterSupported: false,
     });
 `;
-<<<<<<< Updated upstream
   // EXPERIMENTAL (RFC 9126): resolve a URN-form request_uri into the parameters
   // that were pushed to /par. Every interpolation below collapses to the current
   // output when the par feature is off, so the default generation is unchanged.
@@ -1731,8 +1730,6 @@ import { parStore as defaultParStore } from '../store.js';`
     }
 `
     : '';
-=======
->>>>>>> Stashed changes
   const offlineAccessStep = features.refreshToken
     ? `    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another
     // granting condition). The default policy drops offline_access from scope
@@ -3200,7 +3197,6 @@ const handler = async (c: any) => {
 
     // OIDC Core 1.0 §5.3.1: the token must carry the openid scope (insufficient_scope).
     validateUserInfoScope(tokenInfo);
-<<<<<<< Updated upstream
 
     // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
     // The token endpoint always stores the UserInfo endpoint URL in aud
@@ -3218,25 +3214,6 @@ const handler = async (c: any) => {
     // token endpoint stored with this access token (claims.userinfo members).
     const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
 
-=======
-
-    // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
-    // The token endpoint always stores the UserInfo endpoint URL in aud
-    // (buildAccessTokenAudience), so audience validation is on by default for
-    // both JWT and opaque tokens. Pass undefined to turn it off.
-    validateUserInfoAudience(tokenInfo, \`\${c.get('config').issuer}/userinfo\`);
-
-    // Load every claim the OP knows about the token's subject.
-    const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
-
-    // OIDC Core 1.0 §5.4: keep only the claims the granted scopes allow.
-    const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
-
-    // OIDC Core 1.0 §5.5: overlay the individually requested claims that the
-    // token endpoint stored with this access token (claims.userinfo members).
-    const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
-
->>>>>>> Stashed changes
     const client = (await clientResolver.findClient(
       tokenInfo.clientId,
     )) as RegisteredClient | null;

@@ -4,6 +4,13 @@
 
 🟡 Minor / 未着手
 
+> **統合先あり**: 本タスクの実装内容は
+> `tasks/p1-token-value-uniqueness-and-refresh-idtoken-iat.md` に包含される。
+> あちらは同じ `jti` 付与を「同一秒の再発行で JWT アクセストークンがバイト同一になり、
+> `accessTokenStore` のキー衝突で grant 単位失効が取りこぼす」というセキュリティ影響を
+> 動機として扱う（実測確認済み）。**2 度実装しないよう、P1 側に統合して実施すること。**
+> 本タスクは RFC 9068 §2.2 準拠という観点の記録として残す。
+
 ## 背景
 
 RFC 9068 の JWT access token profile では `jti` は required claim として定義されている。現状の JWT access token には `jti` が含まれておらず、Introspection 用の `AccessTokenInfo.jti` も活用されていない。

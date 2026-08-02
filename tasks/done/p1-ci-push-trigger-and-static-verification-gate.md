@@ -2,7 +2,47 @@
 
 ## ステータス
 
-🟠 High / 未着手
+🟢 High / 対応済み（段階 1・2 実装、段階 3 は見送り、段階 4 はリポジトリ設定側で要対応）
+
+## 対応結果
+
+### 実測（有効化コストの把握）
+
+| コマンド | 結果 |
+|---|---|
+| `pnpm run typecheck` | `pnpm run build` の**後**なら 0 エラー。build 前だと `packages/experimental` が `Cannot find module '@maronn-oidc/core'` 他 7 件で落ちる（`samples/*` も core を dist で解決する） |
+| `pnpm run build` | 0 エラー |
+| `pnpm run lint` | `None of the selected packages has a "lint" script` と表示して **exit 0**。lint ツール自体が未導入 |
+
+`packages/core` に `typecheck` スクリプトが無く、`pnpm --filter "./packages/*" typecheck` が
+core を黙って読み飛ばしていた（`build` の `tsc` で結果的に型検査されていただけ）。
+
+### 実装
+
+- `ci.yml` に `push: branches: [main]` を追加。`concurrency` を併用し、
+  `cancel-in-progress` は `pull_request` のときだけ true にした
+  （main push の実行を打ち切ると「main が緑である」記録が残らないため）
+- `Build packages` → `Type check` → `Unit & Integration tests` の順でステップを追加。
+  build を先に置く理由は上記の実測どおり
+- `packages/core` に `typecheck: tsc --noEmit` を追加
+- ゲート構成自体を `.github/scripts/verify-ci-gate.mjs` で検証し、`test:ci` に組み込んだ
+  （`pnpm run test:ci-gate`）。push トリガ・ステップの順序・`typecheck` の網羅・
+  実体のない Lint ステップを、いずれも壊したときにテストが赤くなる形で固定した
+
+### 人間判断が必要な論点への決定
+
+| 論点 | 決定 | 理由 |
+|---|---|---|
+| `typecheck` の対象 | リポジトリ全体（`packages/*` / `samples/*` / `tests/*`） | build 後は 0 エラーで、段階導入する必要がなかった |
+| `main` push の二重実行 | `concurrency` で間引く（main push はキャンセルしない） | main の検証結果は release の前提なので取り消さない |
+| conformance ワークフロー | 現状（`run-conformance` ラベル・手動）のまま | `timeout-minutes: 75` を毎 push で回すのは割に合わない。常時検証でない点は RELEASE.md に記録済み |
+| Lint | 有効化しない（段階 3 は見送り） | lint ツール未導入で `pnpm run lint` が対象 0 件のまま成功する。ステップを足すと常に緑で何も検証しない false green になる |
+| ブランチ保護 | **有効化を推奨（リポジトリ設定側で要対応）** | `push: [main]` は直接 push を検知できるが、壊れたコミットが main に入ること自体は止められない。決定内容は `RELEASE.md`「publish に流れ込む前の検証ゲート」に記録 |
+
+### 未了
+
+- `main` ブランチ保護の有効化はリポジトリ設定（コード管理外）であり、本変更には含まれない
+- 「`main` push で CI が起動する」実地確認は、本変更が main にマージされた後にしか観測できない
 
 ## 背景
 

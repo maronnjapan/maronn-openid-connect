@@ -1,8 +1,25 @@
+# CI ワークフロー
+#
+# pull_request だけでなく main への push でも起動する。
+# PR を経由しない直接 push（親 1 つの通常コミット）が無検査のまま
+# release.yml の version / publish 段階へ流れ込む経路を塞ぐため。
+#
+# ゲートの構成そのもの（push トリガ / build・typecheck の実行順 / typecheck の網羅）は
+# `pnpm run test:ci-gate`（.github/scripts/verify-ci-gate.mjs）で検証している。
 name: CI
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+
+# PR と main push で同一ジョブが二重に走るコストを抑える。
+# ただし main push の実行は打ち切らない。main が緑であることは
+# release の前提であり、後続 push で取り消すと検証結果が残らないため。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
 
@@ -45,12 +62,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # TODO: Lintと型チェックを適用後、有効化する。
-      # - name: Type check
-      #   run: pnpm run typecheck
+      # build は typecheck より前に置く。
+      # samples/* と packages/experimental は @maronn-oidc/core を workspace 経由の
+      # ビルド成果物（dist の .d.ts）として解決するため、未ビルドだと
+      # 「Cannot find module '@maronn-oidc/core'」で typecheck が落ちる。
+      - name: Build packages
+        run: pnpm run build
 
-      # - name: Lint
-      #   run: pnpm run lint
+      - name: Type check
+        run: pnpm run typecheck
+
+      # TODO: lint ツール自体が未導入のため Lint ステップは追加していない。
+      # packages/* のどれも lint スクリプトを持たない状態で `pnpm run lint` を
+      # 呼ぶと、対象 0 件のまま成功して「常に緑で何も検証しないステップ」になる。
+      # この false green は test:ci-gate が検知する。
 
       - name: Unit & Integration tests
         run: pnpm run test:ci

@@ -83,6 +83,52 @@ range を `^1.0.0` に切り替え、`onlyUpdatePeerDependentsWhenOutOfRange` �
 
 ---
 
+## publish に流れ込む前の検証ゲート
+
+`release.yml` は `main` への push を起点に version / publish 段階を進める。
+したがって **`main` が緑であること**が publish の前提になる。これを支えるのが `ci.yml` で、
+以下の構成をとる。
+
+| 検証 | 実行タイミング | 何を防ぐか |
+|---|---|---|
+| `pull_request: [main]` | main 向け PR | PR 経由の変更 |
+| `push: [main]` | main への push | **PR を経由しない直接 push** が無検査で publish 経路へ流れること |
+| `pnpm run build` | 上記の各実行 | ビルド破綻が `ci:publish`（publish 直前）まで露見しないこと |
+| `pnpm run typecheck` | 上記の各実行 | vitest が transform で通してしまう型エラーの素通り |
+| `pnpm run test:ci` | 上記の各実行 | 振る舞いの退行 |
+
+`build` は `typecheck` より **前** に置く。`samples/*` と `packages/experimental` は
+`@maronn-oidc/core` をビルド成果物（`dist` の `.d.ts`）として解決するため、
+未ビルドだと `Cannot find module '@maronn-oidc/core'` で `typecheck` が落ちる。
+
+このゲート構成自体（push トリガ / 実行順 / typecheck の網羅）は
+`pnpm run test:ci-gate`（`.github/scripts/verify-ci-gate.mjs`）が検証する。
+ゲートは「一度直せば終わり」ではなく、外されたときに気づけることが要件なので、
+ステップを消す・順序を入れ替える・`typecheck` スクリプトを持たないパッケージを増やす、
+のいずれもテストが赤になる。
+
+### Lint を有効化していない理由
+
+`packages/*` のどのパッケージにも `lint` スクリプトが無く、ルートの `pnpm run lint` は
+対象 0 件のまま成功する。この状態で CI に `Lint` ステップを足すと
+**常に緑で何も検証しないステップ**になり、かえって「lint 済み」という誤ったシグナルを出す。
+そのため lint ツール導入までステップは追加しない。
+将来 `pnpm run lint` を CI に足したときに実体が無ければ `test:ci-gate` が赤になる。
+
+### ブランチ保護（要対応・リポジトリ設定側）
+
+**結論: `main` のブランチ保護を有効化することを推奨する。** ワークフローの変更だけでは
+「CI をすり抜ける経路」は塞げない。`push: [main]` は直接 push を**検知**するが、
+壊れたコミットが `main` に入ること自体は止められず、`release.yml` は同じ push で動き出す。
+
+GitHub のリポジトリ設定（コード管理外）で以下を設定する。
+
+- `main` への直接 push を禁止する（Require a pull request before merging）
+- 必須ステータスチェックに CI の `test` ジョブを設定する
+- 有効化後は `main` へ直接 push できなくなる運用変更を伴う
+
+---
+
 ## 全体像
 
 npm の Trusted Publisher は「**そのパッケージが npm 上に既に存在していること**」を前提に設定する。

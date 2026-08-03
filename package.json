@@ -26,7 +26,8 @@
         "build:core": "pnpm --filter @maronn-oidc/core build && pnpm install",
         "build:docs": "pnpm --filter @maronn-oidc/docs build:doc",
         "changeset": "changeset",
-        "ci:version": "changeset version",
+        "ci:ensure-experimental-changeset": "node .github/scripts/ensure-experimental-changeset.mjs",
+        "ci:version": "pnpm run ci:ensure-experimental-changeset && changeset version",
         "ci:publish": "pnpm run build && changeset publish"
     },
     "keywords": [

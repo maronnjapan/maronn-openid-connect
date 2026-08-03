@@ -1,5 +1,5 @@
 ---
-"@maronn-oidc/experimental": minor
+"@maronn-oidc/experimental": patch
 "@maronn-oidc/cli": minor
 ---
 

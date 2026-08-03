@@ -6,6 +6,40 @@ on:
 
 jobs:
 
+  # publish 可能なパッケージの出荷物を変えた PR に changeset を必須にする。
+  # changeset が無いと Version Packages PR が立たず、変更が publish されないまま
+  # main に埋もれるため、PR 時点で止める（詳細は verify-changeset-coverage.mjs）。
+  changeset-coverage:
+    # Version Packages PR は changeset を消化する側なので対象外。
+    # ここを通すと「changeset を消す PR が changeset を要求される」デッドロックになる。
+    # Dependabot は packages/*/package.json の devDependencies を更新するだけで
+    # 出荷物は変わらない（本リポジトリの dependencies は workspace 内部のみ）。
+    if: >-
+      !startsWith(github.head_ref, 'changeset-release/')
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # base との差分を取るため全履歴が要る
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # 依存インストールは不要（Node 標準 API だけで動く）
+      - name: Verify changeset coverage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          CHANGED_FILES="$(git diff --name-only --diff-filter=d "$BASE_SHA"...HEAD)" \
+          ADDED_CHANGESETS="$(git diff --name-only --diff-filter=A "$BASE_SHA"...HEAD -- .changeset)" \
+          node .github/scripts/verify-changeset-coverage.mjs
+
   dependency-audit:
     runs-on: ubuntu-latest
     permissions:

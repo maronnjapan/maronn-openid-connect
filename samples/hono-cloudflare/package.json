@@ -1,6 +1,6 @@
 {
   "name": "@maronn-oidc/sample-hono-cloudflare",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Hono Cloudflare Workers sample backed by D1",
   "type": "module",

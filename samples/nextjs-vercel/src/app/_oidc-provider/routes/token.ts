@@ -471,6 +471,11 @@ tokenApp.post('/', async (c) => {
       nbf: issuedAt,
       audience: effectiveAudience,
       issuer: config.issuer,
+      // RFC 9068 §2.2 / RFC 7662 §2.2: persist the token identifier core minted
+      // for this issuance so introspection can echo jti. It is also what makes
+      // two same-second issuances distinct token strings (RS256 is deterministic),
+      // so this store key never collides across grants.
+      jti: accessTokenPayload.jti,
       // OIDC Core 1.0 §5.5: persist the authorization request's claims parameter
       // so the UserInfo endpoint can honor claims.userinfo members (e.g.
       // {"userinfo":{"name":{"essential":true}}}) independently of scope.

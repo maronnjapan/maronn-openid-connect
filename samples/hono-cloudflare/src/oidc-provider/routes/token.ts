@@ -229,16 +229,17 @@ tokenApp.post('/', async (c) => {
       });
 
       const exchangeIssuedAt = Math.floor(Date.now() / 1000);
+      const exchangePayload = buildAccessTokenPayload({
+        issuer: exchangeConfig.issuer,
+        subject: grant.subject,
+        clientId: grant.clientId,
+        scope: grant.scope,
+        audience: exchangeAudience,
+        expiresIn: grant.expiresIn,
+        issuedAt: exchangeIssuedAt,
+      });
       const exchangedToken = await exchangeIssuer.issue({
-        payload: buildAccessTokenPayload({
-          issuer: exchangeConfig.issuer,
-          subject: grant.subject,
-          clientId: grant.clientId,
-          scope: grant.scope,
-          audience: exchangeAudience,
-          expiresIn: grant.expiresIn,
-          issuedAt: exchangeIssuedAt,
-        }),
+        payload: exchangePayload,
         privateKey: c.get('privateKey'),
         keyId: c.get('keyId'),
       });
@@ -257,6 +258,10 @@ tokenApp.post('/', async (c) => {
         nbf: exchangeIssuedAt,
         audience: exchangeAudience,
         issuer: exchangeConfig.issuer,
+        // RFC 9068 §2.2 / RFC 7662 §2.2: the exchanged token gets its own jti,
+        // so it is a distinct store record even when it is exchanged twice from
+        // the same subject_token within one second.
+        jti: exchangePayload.jti,
         // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
         // deliberately NOT inherited: an exchanged token yields scope-based
         // claims only at the UserInfo endpoint.
@@ -581,6 +586,11 @@ tokenApp.post('/', async (c) => {
       nbf: issuedAt,
       audience: effectiveAudience,
       issuer: config.issuer,
+      // RFC 9068 §2.2 / RFC 7662 §2.2: persist the token identifier core minted
+      // for this issuance so introspection can echo jti. It is also what makes
+      // two same-second issuances distinct token strings (RS256 is deterministic),
+      // so this store key never collides across grants.
+      jti: accessTokenPayload.jti,
       // OIDC Core 1.0 §5.5: persist the authorization request's claims parameter
       // so the UserInfo endpoint can honor claims.userinfo members (e.g.
       // {"userinfo":{"name":{"essential":true}}}) independently of scope.

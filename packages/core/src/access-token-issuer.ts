@@ -31,6 +31,26 @@ export interface AccessTokenIssuanceContext {
 
 export interface AccessTokenIssuer {
   readonly format: AccessTokenFormat;
+  /**
+   * アクセストークン文字列を発行する。
+   *
+   * **契約: 戻り値は発行ごとに一意でなければならない。** 同じ `payload` を渡した
+   * 2 回の呼び出しが同じ文字列を返してはならない。
+   *
+   * 生成コードはアクセストークン文字列をキーにしてメタデータ（`grantId` / `scope` /
+   * `claims` など）をストアへ保存する。重複した文字列を返す issuer は、後の発行が
+   * 先の発行のレコードを黙って上書きし、`grantId` 単位の失効（認可コード再利用検知・
+   * 同意撤回・リフレッシュトークンファミリー失効, OAuth 2.1 §4.1.2 / RFC 9700 §4.13）が
+   * 対象トークンに届かなくなる。
+   *
+   * 同梱の issuer はこれを次のように満たす:
+   * - JWT: `payload.jti`（{@link buildAccessTokenPayload} が発行ごとに生成する
+   *   128bit の CSPRNG 値）。RS256 は決定的な署名方式（RFC 8017 §8.2）なので、
+   *   可変クレームが無いと同一秒の再発行がバイト同一になる
+   * - Opaque: トークン文字列そのものが 256bit の CSPRNG 値
+   *
+   * 独自 issuer を差し替える場合は、同等の一意性を自前で保証すること。
+   */
   issue(ctx: AccessTokenIssuanceContext): Promise<string>;
 }
 

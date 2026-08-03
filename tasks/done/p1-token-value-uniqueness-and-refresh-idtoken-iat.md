@@ -2,7 +2,10 @@
 
 ## ステータス
 
-🟠 High / 未着手
+🟢 完了（2026-08-03）
+
+`jti` 付与により、同一入力・同一秒の 2 回発行が別トークン文字列になることを固定した。
+`packages/core` / `packages/cli` テンプレート / 各 sample の `conformance.test.ts` に反映済み。
 
 ## 背景
 
@@ -104,16 +107,22 @@ export function buildAccessTokenPayload(input: AccessTokenPayloadInput): AccessT
 
 ## 修正方針
 
-- [ ] `AccessTokenPayload` に `jti?: string` を追加する（`packages/core/src/access-token.ts`）
-- [ ] `AccessTokenPayloadInput` に `jti?: string` を追加し、`buildAccessTokenPayload` で
+- [x] `AccessTokenPayload` に `jti?: string` を追加する（`packages/core/src/access-token.ts`）
+- [x] `AccessTokenPayloadInput` に `jti?: string` を追加し、`buildAccessTokenPayload` で
       未指定なら `generateRandomString(16)`（128bit）を既定生成する。
       呼び出し側は戻り値の `payload.jti` をそのままストアへ渡せる
-- [ ] `AccessTokenIssuer.issue()` の JSDoc に
+- [x] `AccessTokenIssuer.issue()` の JSDoc に
       「**発行ごとに一意な値を返さなければならない**（同じ payload でも異なる値になること）」を
       契約として明記する。独自 issuer を差し替える利用者向けの前提提示
-- [ ] 生成 OP テンプレートで `accessTokenStore.set` に `jti: accessTokenPayload.jti` を保存する
-- [ ] `introspection` が `jti` を返せるようにする
-- [ ] refresh で再発行する ID Token の `iat` が初回と必ず異なることを保証するかを判断する。
+- [x] 生成 OP テンプレートで `accessTokenStore.set` に `jti: accessTokenPayload.jti` を保存する
+      （token-exchange 経路は `jti: exchangePayload.jti`）
+- [x] `introspection` が `jti` を返せるようにする
+      （core は元から `AccessTokenInfo.jti` をエコーする実装だったため、欠けていたのは
+      生成 OP 側の保存のみ。合成 API 利用者向けに
+      `GenerateTokenResponseResult.accessTokenJti` も追加した）
+- [x] refresh で再発行する ID Token の `iat` が初回と必ず異なることを保証するかを判断する。
+      → **(a) 受容を選択した（2026-08-03）。** 判断根拠と、(b) を選ぶ場合に必要な作業は
+      下記「`iat` 単調性の判断記録」に残す。
       `jti` 導入で `at_hash` が変わるため **ID Token 自体はバイト単位で一意になる**が、
       `iat` は依然同値になりうる。以下のいずれかを選ぶ:
       - (a) 受容する（同一秒 refresh は実運用ではまれ、という判断。ただし conformance 再実行時のリスクは残る）
@@ -154,14 +163,18 @@ export function buildAccessTokenPayload(input: AccessTokenPayloadInput): AccessT
 - [ ] `generateRandomString(32)` を複数回呼んで値が重複しないこと
 - [ ] 生成 OP の `conformance.test.ts`（**生成元の `packages/cli` テンプレートを修正すること**）に、
       rotation 前後の不変条件を追加する:
-  - [ ] rotation 後の `access_token` が初回と**異なる**こと（現状 Red）
-  - [ ] rotation 後の `id_token` の `iat` が初回と**異なる**こと（現状 Red。上記 (a)/(b) の判断に依存）
-  - [ ] rotation 後の `id_token` の `iss` / `sub` / `aud` / `auth_time` が初回と**一致**すること
-  - [ ] 初回 ID Token に `azp` が無い場合、rotation 後にも `azp` が無いこと
+  - [x] rotation 後の `access_token` が初回と**異なる**こと（現状 Red）
+  - [ ] rotation 後の `id_token` の `iat` が初回と**異なる**こと
+        → **(a) 受容を選択したため追加していない。** (b) を採用する場合に追加する
+  - [x] rotation 後の `id_token` の `iss` / `sub` / `aud` / `auth_time` が初回と**一致**すること
+  - [x] 初回 ID Token に `azp` が無い場合、rotation 後にも `azp` が無いこと
         （OIDF `CompareIdTokenClaims` の要求）
-- [ ] 同一秒に 2 本の認可コードフローを完了させたとき、片方の grant に対する `revokeByGrantId` が
+- [x] 同一秒に 2 本の認可コードフローを完了させたとき、片方の grant に対する `revokeByGrantId` が
       もう片方のトークンを巻き込まない／取りこぼさないことを統合テストで固定する
-- [ ] introspection のレスポンスに `jti` が含まれること
+      （`conformance.test.ts`: "should keep grant-scoped revocation inside one grant when two
+      grants are issued in the same second"）
+- [x] introspection のレスポンスに `jti` が含まれること
+      （`conformance.test.ts`: "should echo the jti of an access token issued by the token endpoint"）
 
 ## 完了条件
 
@@ -178,3 +191,25 @@ pnpm --filter "./samples/*" typecheck
 - 生成 OP の `conformance.test.ts` に rotation 前後の不変条件アサーションが入り、パスする
 - `tasks/p2-jwt-access-token-jti.md` の修正方針・テスト要件がすべて本タスクで満たされている
   （満たしたら同タスクを `tasks/done/` へ移動する）
+
+## `iat` 単調性の判断記録（2026-08-03）
+
+タスク本文は「refresh 再発行 ID Token の `iat` を初回と必ず異ならせるか」を人間の判断事項として
+留保していた。本実装では **(a) 受容** を選び、`iat` の挙動は変更していない。
+
+理由:
+
+- 本タスクの実害（grant 単位失効の取りこぼし・`claims` の上書き・rotation で新しい秘密が
+  発行されない）は、すべてアクセストークン文字列の衝突に起因する。`jti` の導入でこれは解消し、
+  `at_hash` も変わるため **ID Token 自体もバイト単位で一意**になる。残るのは `iat` の同値のみで、
+  これ自体は失効にもストアにも影響しない
+- (b) の「refresh では直前の `iat` 以下にならないよう +1 する」は、OIDC Core 1.0 §12.2 の
+  「`iat` は新しい ID Token の発行時刻を表す MUST」に対して意図的に実時刻からずらす変更になる。
+  実時刻からの乖離を許容するかは仕様解釈を伴う方針判断であり、本修正（バグ修正）の範囲を超える
+
+残るリスク（引き継ぎ事項）:
+
+- OIDF Conformance Suite の `CompareIdTokenClaims` は「refresh 後 ID Token の `iat` が初回と
+  同値ならエラー」を実装している。OP 応答が同一秒に収まる高速な環境で `oidcc-refresh-token` を
+  実行すると FAILED になりうる。実際に踏んだ場合は (b) の採用を再検討すること
+  （判断材料: `study-material/done/token-value-uniqueness-same-second-jwt-reissuance-collision.md` §7 方針B / 方針D）

@@ -347,6 +347,15 @@ describe('HonoGenerator', () => {
       expect(file?.content).not.toContain('await generateTokenResponse(');
     });
 
+    // RFC 9068 §2.2 / RFC 7662 §2.2: the token identifier core mints for the
+    // issuance is persisted so introspection can echo jti. It is also the claim
+    // that keeps two same-second issuances distinct token strings, so the
+    // access token store key never collides across grants.
+    it('should persist the access token jti in token route', () => {
+      const file = files.find((f) => f.path === 'routes/token.ts');
+      expect(file?.content).toContain('jti: accessTokenPayload.jti,');
+    });
+
     // OIDC Core 1.0 §12.2 does not list nonce among the refresh re-issued ID Token
     // claims, so the refresh branch must omit it (nonce = undefined).
     it('should omit nonce on refresh-issued ID Tokens in token route', () => {

@@ -1,10 +1,10 @@
-import { TokenError, TokenErrorCode } from './token-error';
-import { validateAuthorizationCodeGrant } from './authorization-code-grant';
-import { validateRefreshTokenGrant } from './refresh-token-grant';
+import { TokenError, TokenErrorCode } from './token-error.js';
+import { validateAuthorizationCodeGrant } from './authorization-code-grant.js';
+import { validateRefreshTokenGrant } from './refresh-token-grant.js';
 
 // 後方互換: TokenError / TokenErrorCode は歴史的にこのモジュールが公開してきたため、
 // token-error.ts へ分割した後も再exportして既存のimportを壊さない。
-export { TokenError, TokenErrorCode } from './token-error';
+export { TokenError, TokenErrorCode } from './token-error.js';
 // 機能単位のエントリポイントと各ステップもここから利用できるようにする。
 export {
   buildValidatedAuthorizationCodeRequest,
@@ -16,7 +16,7 @@ export {
   validateAuthorizationCodeRedirectUri,
   validateAuthorizationCodeUnused,
   verifyAuthorizationCodePkce,
-} from './authorization-code-grant';
+} from './authorization-code-grant.js';
 export {
   buildValidatedRefreshTokenRequest,
   resolveRefreshToken,
@@ -26,13 +26,13 @@ export {
   validateRefreshTokenIdleTimeout,
   validateRefreshTokenScope,
   validateRefreshTokenUnused,
-} from './refresh-token-grant';
+} from './refresh-token-grant.js';
 export type {
   ResolvedAuthorizationCode,
-} from './authorization-code-grant';
+} from './authorization-code-grant.js';
 export type {
   ResolvedRefreshToken,
-} from './refresh-token-grant';
+} from './refresh-token-grant.js';
 
 /**
  * トークンエンドポイントへの生パラメータ（バリデーション前）
@@ -122,7 +122,7 @@ export interface AuthorizationCodeInfo {
    */
   acrValues?: string;
   /** OIDC Core 1.0 §5.5: claims request preserved from authorization for ID Token issuance. */
-  claims?: import('./userinfo').ClaimsParameter;
+  claims?: import('./userinfo.js').ClaimsParameter;
 }
 
 /**
@@ -330,7 +330,7 @@ export interface ValidatedAuthorizationCodeRequest {
    */
   acrValues?: string;
   /** OIDC Core 1.0 §5.5: claims request from the authorization step. */
-  claims?: import('./userinfo').ClaimsParameter;
+  claims?: import('./userinfo.js').ClaimsParameter;
   codeVerified: boolean;
 }
 

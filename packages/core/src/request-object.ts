@@ -7,8 +7,8 @@
  * the signature against the client's registered keys, and returns the decoded
  * claim set so the caller can merge it into the Authorization Request.
  */
-import { verify, base64UrlToArrayBuffer, extractAlgorithmParamsFromJwk } from './crypto-utils';
-import type { Jwk, JwkSet } from './jwks';
+import { verify, base64UrlToArrayBuffer, extractAlgorithmParamsFromJwk } from './crypto-utils.js';
+import type { Jwk, JwkSet } from './jwks.js';
 
 /**
  * Request Object のパース・署名検証に失敗したことを表すエラー。

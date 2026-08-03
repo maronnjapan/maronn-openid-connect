@@ -6,7 +6,7 @@ import {
   UserInfoErrorCode,
   filterClaimsByScope,
   SCOPE_CLAIMS_MAP,
-} from './userinfo';
+} from './userinfo.js';
 import type {
   AccessTokenInfo,
   AccessTokenResolver,
@@ -14,8 +14,8 @@ import type {
   UserClaimsResolver,
   UserInfoRequestContext,
   UserInfoResponse,
-} from './userinfo';
-import { base64UrlToArrayBuffer, stringToArrayBuffer } from './crypto-utils';
+} from './userinfo.js';
+import { base64UrlToArrayBuffer, stringToArrayBuffer } from './crypto-utils.js';
 
 // --- Helper: テスト用のAccessTokenResolver ---
 function createAccessTokenResolver(

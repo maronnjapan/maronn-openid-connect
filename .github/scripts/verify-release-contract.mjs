@@ -93,6 +93,83 @@ export function assertExperimentalCorePeerDependencyShape(packageJson) {
   }
 }
 
+/**
+ * peer range `>=X.Y.Z <A.B.C` の下限 `X.Y.Z` を読み出す。
+ * caret やワイルドカードなど下限を一意に決められない書き方は null を返し、
+ * 呼び出し側で「読み取れない range」として弾く。
+ */
+export function parseMinimumCoreVersion(range) {
+  const match = range.match(/(?:^|\s)>=\s*(\d+\.\d+\.\d+)(?:\s|$)/);
+  return match?.[1] ?? null;
+}
+
+/** semver の bump を 1 つ適用する。bump が未指定ならバージョンは据え置く。 */
+export function computeNextVersion(version, bump) {
+  const [major, minor, patch] = version.split('.').map(Number);
+
+  if (bump === 'major') return `${major + 1}.0.0`;
+  if (bump === 'minor') return `${major}.${minor + 1}.0`;
+  if (bump === 'patch') return `${major}.${minor}.${patch + 1}`;
+  return version;
+}
+
+/**
+ * 未消化の changeset を適用したあとの core のバージョン（= 次に publish される core）を求める。
+ * 同じ package を上げる changeset が複数あるとき、Changesets は最も大きい bump を採用する。
+ */
+export function resolveNextCoreVersion(currentCoreVersion, changesets) {
+  const bumps = changesets.map(({ bumps: b }) => b[CORE]).filter((bump) => bump !== undefined);
+
+  const largest = ['major', 'minor', 'patch'].find((bump) => bumps.includes(bump));
+  return computeNextVersion(currentCoreVersion, largest);
+}
+
+/** 版を数値として比較する（"0.9.0" < "0.10.0" を文字列比較で誤らないため）。 */
+function compareVersions(left, right) {
+  const l = left.split('.').map(Number);
+  const r = right.split('.').map(Number);
+
+  for (let i = 0; i < 3; i += 1) {
+    if (l[i] !== r[i]) return l[i] - r[i];
+  }
+  return 0;
+}
+
+/**
+ * experimental の peer range の下限が「次に publish される core」以上であることを強制する。
+ *
+ * experimental はモノレポ内の core（= 次に publish される core）だけを相手にビルド・テスト
+ * されるので、それより古い core を下限に据えるのは「試していない組み合わせ」を許可宣言する
+ * ことに等しい。実際 experimental 0.0.1 は、core の step 関数
+ * （extractClientCredentials / resolveAuthenticatedTokenClient / validateClientAuthMethod /
+ * verifyClientSecret）を import しながら下限を `>=0.0.1` のままにして publish され、
+ * それらを export していない core 0.0.1 と組み合わさって
+ * esbuild の "No matching export" で落ちる状態になった。
+ *
+ * RELEASE.md「peer range は『下限』を宣言する」の手運用をここで機械化する。
+ */
+export function assertExperimentalCorePeerRangeCoversNextCore(packageJson, nextCoreVersion) {
+  const range = packageJson.peerDependencies?.[CORE];
+  const minimum = parseMinimumCoreVersion(range);
+
+  if (minimum === null) {
+    throw new Error(
+      `${EXPERIMENTAL} の ${CORE} peer range "${range}" から下限を読み取れません。` +
+        '`>=X.Y.Z <A.B.C` の形式で宣言してください（caret は Changesets の major 昇格を誘発するため使わない）。',
+    );
+  }
+
+  if (compareVersions(minimum, nextCoreVersion) < 0) {
+    throw new Error(
+      `${EXPERIMENTAL} の ${CORE} peer range "${range}" は core ${nextCoreVersion} より古い ` +
+        `${minimum} を下限にしています。experimental はモノレポ内の core だけを相手に` +
+        'ビルド・テストされるため、それより古い core を許可すると、experimental が使う API を' +
+        'まだ export していない core と組み合わさって "No matching export" で落ちます。' +
+        `下限を ">=${nextCoreVersion}" へ上げてください（RELEASE.md「peer range は『下限』を宣言する」）。`,
+    );
+  }
+}
+
 export function readChangesets(changesetDirectory) {
   return readdirSync(changesetDirectory)
     .filter((file) => file.endsWith('.md') && file !== 'README.md')
@@ -106,15 +183,23 @@ function verifyReleaseContract() {
   const repositoryRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
   const changesets = readChangesets(join(repositoryRoot, '.changeset'));
+  const experimentalPackageJson = JSON.parse(
+    readFileSync(join(repositoryRoot, 'packages/experimental/package.json'), 'utf8'),
+  );
+  const corePackageJson = JSON.parse(
+    readFileSync(join(repositoryRoot, 'packages/core/package.json'), 'utf8'),
+  );
 
   assertCoreBreakingChangeReleasesExperimental(changesets);
   assertExperimentalReleasesAreAlwaysPatch(changesets);
-  assertExperimentalCorePeerDependencyShape(
-    JSON.parse(readFileSync(join(repositoryRoot, 'packages/experimental/package.json'), 'utf8')),
+  assertExperimentalCorePeerDependencyShape(experimentalPackageJson);
+  assertExperimentalCorePeerRangeCoversNextCore(
+    experimentalPackageJson,
+    resolveNextCoreVersion(corePackageJson.version, changesets),
   );
 
   console.log(
-    'Release contract verified: core / experimental peer dependency, release pairing and experimental patch-only bumps',
+    'Release contract verified: core / experimental peer dependency, peer range lower bound, release pairing and experimental patch-only bumps',
   );
 }
 

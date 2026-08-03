@@ -5,7 +5,7 @@ import {
   validateRefreshTokenGrant,
   TokenError,
   TokenErrorCode,
-} from './token-request';
+} from './token-request.js';
 import type {
   TokenRequestParams,
   TokenClientInfo,
@@ -15,7 +15,7 @@ import type {
   TokenRequestContext,
   RefreshTokenInfo,
   RefreshTokenResolver,
-} from './token-request';
+} from './token-request.js';
 
 // --- Helper: RSA鍵ペアの生成 ---
 let rsaKeyPair: CryptoKeyPair;

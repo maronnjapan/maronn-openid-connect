@@ -1,12 +1,12 @@
-import { sha256 } from './crypto-utils';
-import { TokenError, TokenErrorCode } from './token-error';
+import { sha256 } from './crypto-utils.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
 import type {
   AuthorizationCodeInfo,
   AuthorizationCodeResolver,
   TokenRequestContext,
   TokenRequestParams,
   ValidatedAuthorizationCodeRequest,
-} from './token-request';
+} from './token-request.js';
 
 /**
  * {@link resolveAuthorizationCode} の戻り値。

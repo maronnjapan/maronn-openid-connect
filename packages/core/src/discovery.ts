@@ -3,9 +3,9 @@
  * https://openid.net/specs/openid-connect-discovery-1_0.html
  */
 
-import { getJwaAlgorithm } from './crypto-utils';
-import { isLoopbackHostname } from './loopback';
-import { assertHasRs256Key } from './signing-key';
+import { getJwaAlgorithm } from './crypto-utils.js';
+import { isLoopbackHostname } from './loopback.js';
+import { assertHasRs256Key } from './signing-key.js';
 
 /**
  * Provider Metadata configuration (camelCase input)

@@ -30,7 +30,7 @@ import {
   verifyAuthorizationCodePkce,
   TokenError,
   TokenErrorCode,
-} from './token-request';
+} from './token-request.js';
 import type {
   AuthorizationCodeInfo,
   AuthorizationCodeResolver,
@@ -38,7 +38,7 @@ import type {
   RefreshTokenResolver,
   TokenClientInfo,
   TokenClientResolver,
-} from './token-request';
+} from './token-request.js';
 
 function createClientResolver(clients: TokenClientInfo[]): TokenClientResolver {
   return {

@@ -12,8 +12,8 @@ import {
   buildIdTokenPayload,
   computeAtHash,
   resolveAcrAmr,
-} from './token-response';
-import type { AcrResolver } from './token-response';
+} from './token-response.js';
+import type { AcrResolver } from './token-response.js';
 
 const NOW = 1_700_000_000;
 

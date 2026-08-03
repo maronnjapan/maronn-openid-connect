@@ -1,11 +1,11 @@
-import { generateIdToken } from './id-token';
-import type { IdTokenPayload } from './id-token';
-import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJwaAlgorithm, jwaToHashName } from './crypto-utils';
-import { createJwtAccessTokenIssuer } from './access-token-issuer';
-import type { AccessTokenIssuer } from './access-token-issuer';
-import type { AccessTokenPayload } from './access-token';
-import { filterClaimsByScope } from './userinfo';
-import type { UserClaims, ClaimsParameter } from './userinfo';
+import { generateIdToken } from './id-token.js';
+import type { IdTokenPayload } from './id-token.js';
+import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJwaAlgorithm, jwaToHashName } from './crypto-utils.js';
+import { createJwtAccessTokenIssuer } from './access-token-issuer.js';
+import type { AccessTokenIssuer } from './access-token-issuer.js';
+import type { AccessTokenPayload } from './access-token.js';
+import { filterClaimsByScope } from './userinfo.js';
+import type { UserClaims, ClaimsParameter } from './userinfo.js';
 
 /**
  * acr / amr resolver

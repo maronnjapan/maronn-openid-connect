@@ -5,8 +5,13 @@
     "lib": [
       "ES2022"
     ],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    // NodeNext は相対 import に拡張子を必須にする。
+    // "type": "module" の package なので、拡張子なしで emit すると Node の ESM ローダが
+    // 解決できず `import '@maronn-oidc/core'` が ERR_MODULE_NOT_FOUND で落ちる
+    // （bundler 解決だと拡張子を省けてしまい、samples が esbuild でバンドルしているために
+    // リポジトリ内では発覚しなかった）。ここを bundler に戻すとその状態に戻る。
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     // Emit
     "declaration": true,
     "declarationMap": true,

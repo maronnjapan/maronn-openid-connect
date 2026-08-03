@@ -6,9 +6,9 @@ import {
   stringToArrayBuffer,
   getJwaAlgorithm,
   extractAlgorithmParamsFromJwk,
-} from './crypto-utils';
-import type { JwkSet } from './jwks';
-import { isLoopbackHostname } from './loopback';
+} from './crypto-utils.js';
+import type { JwkSet } from './jwks.js';
+import { isLoopbackHostname } from './loopback.js';
 
 /**
  * ID Tokenのペイロード

@@ -9,13 +9,13 @@
  * OAuth 2.1 Section 2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
  */
 
-import { timingSafeEqual } from './crypto-utils';
+import { timingSafeEqual } from './crypto-utils.js';
 import {
   resolveAuthenticatedTokenClient,
   TokenError,
   TokenErrorCode,
-} from './token-request';
-import type { TokenClientInfo, TokenClientResolver } from './token-request';
+} from './token-request.js';
+import type { TokenClientInfo, TokenClientResolver } from './token-request.js';
 
 /**
  * クライアント認証コンテキスト

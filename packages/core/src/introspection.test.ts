@@ -6,9 +6,9 @@ import {
   type IntrospectionAccessTokenResolver,
   type IntrospectionRefreshTokenResolver,
   type IntrospectionRequestContext,
-} from './introspection';
-import type { AccessTokenInfo } from './userinfo';
-import type { RefreshTokenInfo } from './token-request';
+} from './introspection.js';
+import type { AccessTokenInfo } from './userinfo.js';
+import type { RefreshTokenInfo } from './token-request.js';
 
 const ISSUER = 'https://op.example.com';
 const CLIENT_ID = 'client-1';

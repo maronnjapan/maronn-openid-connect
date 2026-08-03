@@ -6,8 +6,8 @@ import {
   createCachedSigningKeyProvider,
   getRegisteredSigningKeys,
   selectSigningKeyByAlg,
-} from './signing-key';
-import type { SigningKeyProvider, SigningKey } from './signing-key';
+} from './signing-key.js';
+import type { SigningKeyProvider, SigningKey } from './signing-key.js';
 
 async function generateRsaKeyPair(hash: 'SHA-256' | 'SHA-384' | 'SHA-512' = 'SHA-256') {
   return crypto.subtle.generateKey(

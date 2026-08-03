@@ -5,15 +5,15 @@ import {
   AuthorizationError,
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
-} from './authorization-request';
+} from './authorization-request.js';
 import type {
   AuthorizationRequestParams,
   ClientInfo,
   ClientResolver,
-} from './authorization-request';
-import { exportPublicJwk } from './jwks';
-import type { JwkSet } from './jwks';
-import { sign, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils';
+} from './authorization-request.js';
+import { exportPublicJwk } from './jwks.js';
+import type { JwkSet } from './jwks.js';
+import { sign, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
 
 // Helpers for building compact-JWS Request Objects (OIDC Core 1.0 §6.1).
 function encodeSegment(value: unknown): string {

@@ -16,9 +16,9 @@
  * - active=false のレスポンスは最小限（{ active: false } のみ）
  */
 
-import type { AccessTokenInfo } from './userinfo';
-import type { RefreshTokenInfo } from './token-request';
-import { sanitizeErrorDescription } from './error-utils';
+import type { AccessTokenInfo } from './userinfo.js';
+import type { RefreshTokenInfo } from './token-request.js';
+import { sanitizeErrorDescription } from './error-utils.js';
 
 /**
  * RFC 7662 で示唆されるエラー。実体は OAuth 2.0 Section 5.2 のエラー。

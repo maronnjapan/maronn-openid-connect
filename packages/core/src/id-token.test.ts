@@ -6,10 +6,10 @@ import {
   IdTokenHintError,
   IdTokenPayload,
   GenerateIdTokenOptions,
-} from './id-token';
-import { exportPublicJwk } from './jwks';
-import type { JwkSet } from './jwks';
-import { verify } from './crypto-utils';
+} from './id-token.js';
+import { exportPublicJwk } from './jwks.js';
+import type { JwkSet } from './jwks.js';
+import { verify } from './crypto-utils.js';
 
 // Helper functions to generate test keys
 async function generateRsaKeyPair(hash: 'SHA-256' | 'SHA-384' | 'SHA-512' = 'SHA-256') {

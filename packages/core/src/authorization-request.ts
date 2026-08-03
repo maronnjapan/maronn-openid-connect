@@ -2,11 +2,11 @@
  * Authentication Request（認可リクエスト）のバリデーション
  * OIDC Core 1.0 Section 3.1.2 / OAuth 2.1 に準拠
  */
-import { sanitizeErrorDescription } from './error-utils';
-import { isLoopbackHostname } from './loopback';
-import { parseRequestObject, RequestObjectError } from './request-object';
-import type { JwkSet } from './jwks';
-import type { ClaimsParameter, ClaimRequestValue } from './userinfo';
+import { sanitizeErrorDescription } from './error-utils.js';
+import { isLoopbackHostname } from './loopback.js';
+import { parseRequestObject, RequestObjectError } from './request-object.js';
+import type { JwkSet } from './jwks.js';
+import type { ClaimsParameter, ClaimRequestValue } from './userinfo.js';
 
 /**
  * OIDC Core 1.0 §6.1 / OIDC Basic OP の既定 Request Object 署名アルゴリズム。

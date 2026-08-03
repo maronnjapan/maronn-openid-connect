@@ -16,13 +16,13 @@ import {
   INACTIVE_INTROSPECTION_RESPONSE,
   IntrospectionError,
   IntrospectionErrorCode,
-} from './introspection';
+} from './introspection.js';
 import type {
   IntrospectionAccessTokenResolver,
   IntrospectionRefreshTokenResolver,
-} from './introspection';
-import type { AccessTokenInfo } from './userinfo';
-import type { RefreshTokenInfo } from './token-request';
+} from './introspection.js';
+import type { AccessTokenInfo } from './userinfo.js';
+import type { RefreshTokenInfo } from './token-request.js';
 
 const NOW = 1_700_000_000;
 

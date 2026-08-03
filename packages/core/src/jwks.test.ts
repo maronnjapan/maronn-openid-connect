@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { exportJwks, exportPublicJwk, signingKeysToJwkSet } from './jwks';
-import type { SigningKey } from './signing-key';
+import { exportJwks, exportPublicJwk, signingKeysToJwkSet } from './jwks.js';
+import type { SigningKey } from './signing-key.js';
 
 /**
  * RSA鍵ペアを生成するヘルパー

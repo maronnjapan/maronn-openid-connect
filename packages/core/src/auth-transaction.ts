@@ -7,9 +7,9 @@
  * ランダム生成されたIDをURLパスに埋め込むことで認証フロー全体を通じてコンテキストを維持する。
  */
 
-import { AuthorizationError, AuthorizationErrorCode } from './authorization-request';
-import type { ValidatedAuthorizationRequest } from './authorization-request';
-import type { ClaimsParameter } from './userinfo';
+import { AuthorizationError, AuthorizationErrorCode } from './authorization-request.js';
+import type { ValidatedAuthorizationRequest } from './authorization-request.js';
+import type { ClaimsParameter } from './userinfo.js';
 
 // --- Session Types ---
 

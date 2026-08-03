@@ -1,4 +1,4 @@
-import { sign, arrayBufferToBase64Url, stringToArrayBuffer, getJwaAlgorithm } from './crypto-utils';
+import { sign, arrayBufferToBase64Url, stringToArrayBuffer, getJwaAlgorithm } from './crypto-utils.js';
 
 /**
  * Access Tokenのペイロード

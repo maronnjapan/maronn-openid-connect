@@ -13,15 +13,15 @@ import {
   resolvePromptNoneSession,
   validatePromptNoneConsent,
   validatePromptNoneIdTokenHint,
-} from './auth-transaction';
+} from './auth-transaction.js';
 import type {
   AuthTransaction,
   ConsentResolver,
   SessionInfo,
   SessionResolver,
-} from './auth-transaction';
-import { AuthorizationError, AuthorizationErrorCode } from './authorization-request';
-import type { ValidatedAuthorizationRequest } from './authorization-request';
+} from './auth-transaction.js';
+import { AuthorizationError, AuthorizationErrorCode } from './authorization-request.js';
+import type { ValidatedAuthorizationRequest } from './authorization-request.js';
 
 const REQUEST = new Request('https://op.example.com/authorize');
 

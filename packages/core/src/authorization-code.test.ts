@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createAuthorizationCode } from './authorization-code';
-import type { CreateAuthorizationCodeOptions } from './authorization-code';
-import type { AuthorizationResponseParams } from './auth-transaction';
+import { createAuthorizationCode } from './authorization-code.js';
+import type { CreateAuthorizationCodeOptions } from './authorization-code.js';
+import type { AuthorizationResponseParams } from './auth-transaction.js';
 
 function createValidResponse(overrides?: Partial<AuthorizationResponseParams>): AuthorizationResponseParams {
   return {

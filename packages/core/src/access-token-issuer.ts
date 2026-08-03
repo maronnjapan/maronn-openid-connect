@@ -12,9 +12,9 @@
  * との相性が良く、自己検証 only なリソースサーバ用途では JWT より即時失効に強い。
  */
 
-import { generateAccessToken } from './access-token';
-import type { AccessTokenPayload } from './access-token';
-import { generateRandomString } from './crypto-utils';
+import { generateAccessToken } from './access-token.js';
+import type { AccessTokenPayload } from './access-token.js';
+import { generateRandomString } from './crypto-utils.js';
 
 export type AccessTokenFormat = 'jwt' | 'opaque';
 

@@ -9,9 +9,9 @@
  * - OIDC Core 1.0 Section 3.1.3.1: 認可コードはワンタイムで、有効期限は短くすること
  */
 
-import { generateRandomString } from './crypto-utils';
-import type { AuthorizationResponseParams } from './auth-transaction';
-import type { ClaimsParameter } from './userinfo';
+import { generateRandomString } from './crypto-utils.js';
+import type { AuthorizationResponseParams } from './auth-transaction.js';
+import type { ClaimsParameter } from './userinfo.js';
 
 /**
  * 認可コードに紐づくデータ

@@ -1,5 +1,5 @@
-import { getJwaAlgorithm, extractAlgorithmParamsFromJwk } from './crypto-utils';
-import type { SigningKey } from './signing-key';
+import { getJwaAlgorithm, extractAlgorithmParamsFromJwk } from './crypto-utils.js';
+import type { SigningKey } from './signing-key.js';
 
 /**
  * JWK（JSON Web Key）の型定義

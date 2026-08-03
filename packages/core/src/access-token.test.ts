@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { generateAccessToken, AccessTokenPayload, GenerateAccessTokenOptions } from './access-token';
-import { verify } from './crypto-utils';
+import { generateAccessToken, AccessTokenPayload, GenerateAccessTokenOptions } from './access-token.js';
+import { verify } from './crypto-utils.js';
 
 // Helper functions to generate test keys
 async function generateRsaKeyPair(hash: 'SHA-256' | 'SHA-384' | 'SHA-512' = 'SHA-256') {

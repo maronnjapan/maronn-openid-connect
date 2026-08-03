@@ -11,6 +11,7 @@ import {
   discoveryRouteTemplate,
   endpointBehaviorConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
+  idTokenHintConformanceBlock,
   introspectionConformanceBlock,
   introspectionRouteTemplate,
   jwksRouteTemplate,
@@ -2140,7 +2141,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }
 

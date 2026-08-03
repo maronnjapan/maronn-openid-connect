@@ -139,6 +139,39 @@ test.describe('Authorization endpoint browser branches', () => {
     await noSessionContext.close();
     await otherContext.close();
   });
+
+  // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule is not conditioned on prompt.
+  // With an active session for User B and a hint naming User A, the OP must not
+  // silently reuse B's session (account mix-up); it falls back to the login screen.
+  test('should not reuse the session of another user when id_token_hint names a different user', async ({
+    page,
+    browser,
+  }) => {
+    const hintContext = await browser.newContext();
+    const hintPage = await hintContext.newPage();
+    await hintPage.goto(`${clientBaseURL}/start`);
+    await loginAndApprove(hintPage, 'testuser');
+    const testUserIdToken = await requiredText(hintPage, 'token-id-token');
+
+    // Session belongs to otheruser; SSO alone would issue a code for otheruser.
+    await page.goto(`${clientBaseURL}/start`);
+    await loginAndApprove(page, 'otheruser');
+
+    await page.goto(`${clientBaseURL}/start?id_token_hint=${encodeURIComponent(testUserIdToken)}`);
+
+    await expect(page).toHaveURL(/\/login\?transaction_id=/);
+    const stopped = new URL(page.url());
+    expect(stopped.pathname).toBe('/login');
+    expect(stopped.searchParams.get('code')).toBe(null);
+    expect(stopped.searchParams.get('error')).toBe(null);
+
+    // Without the hint the same session still goes straight through (no regression).
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page.getByRole('heading', { name: 'Authorization Complete' })).toBeVisible();
+    expect((await requiredText(page, 'authorization-code')).length).toBe(43);
+
+    await hintContext.close();
+  });
 });
 
 async function login(page: Page, username: string): Promise<void> {

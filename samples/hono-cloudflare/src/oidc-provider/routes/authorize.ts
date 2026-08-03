@@ -309,6 +309,36 @@ const handleAuthorizationRequest = async (c: any) => {
       return c.redirect(buildErrorRedirect(transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
     }
 
+    // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
+    // by the ID Token is logged in ... otherwise it SHOULD return an error") is NOT
+    // conditioned on prompt, so the hint is verified here — outside the prompt=none
+    // branch — and therefore on every prompt path (no prompt / login / consent /
+    // select_account / none). Verification covers signature, iss, aud, exp and iat;
+    // the verified subject is shared by the prompt=none check below and by the SSO
+    // fast path, so an unverified hint never reaches a session decision.
+    let verifiedHintSubject: string | undefined;
+    if (transaction.idTokenHint !== undefined) {
+      const jwksProvider = c.get('jwksProvider') as undefined | (() => Promise<JwkSet> | JwkSet);
+      if (!jwksProvider) {
+        // jwksProvider 未提供では hint を検証できない → login_required で拒否
+        await transactionStore.delete('auth_txn:' + transactionId);
+        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
+      }
+      try {
+        const jwks = await jwksProvider();
+        const verified = await validateIdTokenHint(transaction.idTokenHint, {
+          expectedIss: issuer,
+          expectedAud: transaction.clientId,
+          jwks,
+        });
+        verifiedHintSubject = verified.sub;
+      } catch (hintError) {
+        await transactionStore.delete('auth_txn:' + transactionId);
+        const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
+        return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
+      }
+    }
+
     // prompt=none: silent authentication without any user interaction
     // OIDC Core 1.0 Section 3.1.2.1
     if (promptValues.includes('none')) {
@@ -328,33 +358,6 @@ const handleAuthorizationRequest = async (c: any) => {
         return c.redirect(buildErrorRedirect(transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
       }
 
-      // OIDC Core 1.0 §3.1.2.1: when id_token_hint is provided, the OP MUST verify
-      // its signature, iss, aud, and exp before trusting sub. The verified subject
-      // is then matched against the active session by validatePromptNoneIdTokenHint.
-      // OP の JWKS を提供するための jwksProvider を context から取得する。
-      let verifiedHintSubject: string | undefined;
-      if (transaction.idTokenHint !== undefined) {
-        const jwksProvider = c.get('jwksProvider') as undefined | (() => Promise<JwkSet> | JwkSet);
-        if (!jwksProvider) {
-          // jwksProvider 未提供では hint を検証できない → login_required で拒否
-          await transactionStore.delete('auth_txn:' + transactionId);
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
-        }
-        try {
-          const jwks = await jwksProvider();
-          const verified = await validateIdTokenHint(transaction.idTokenHint, {
-            expectedIss: issuer,
-            expectedAud: transaction.clientId,
-            jwks,
-          });
-          verifiedHintSubject = verified.sub;
-        } catch (hintError) {
-          await transactionStore.delete('auth_txn:' + transactionId);
-          const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
-        }
-      }
-
       let session;
       try {
         // --- prompt=none pipeline ---------------------------------------
@@ -367,8 +370,10 @@ const handleAuthorizationRequest = async (c: any) => {
         // must not show a login screen for prompt=none).
         session = await resolvePromptNoneSession(transaction, sessionResolver, c.req.raw);
 
-        // The hint subject is verified before consent because the consent lookup
-        // keys on session.subject — a hint mismatch would check the wrong user.
+        // verifiedHintSubject は上流（prompt 非依存の検証ブロック）で確定済み。
+        // ここでは prompt=none 固有の「不一致なら login_required」判定だけを行う。
+        // コンセント確認より前に置くのは、コンセント検索が session.subject をキーに
+        // するため — 不一致のまま進むと別ユーザーのコンセントを見てしまう。
         validatePromptNoneIdTokenHint(transaction, session, verifiedHintSubject);
 
         // OIDC Core 1.0 §3.1.2.1: not consented → consent_required (the OP must
@@ -442,7 +447,15 @@ const handleAuthorizationRequest = async (c: any) => {
           existingSession !== null &&
           (transaction.maxAge === undefined ||
             !requiresReauthentication(transaction.maxAge, existingSession.authTime));
-        if (existingSession && sessionIsFresh) {
+        // OIDC Core 1.0 §3.1.2.1: id_token_hint が指す End-User でなければ既存
+        // セッションを再利用しない。これが無いと「セッションは User B / hint は
+        // User A」の要求に対し B の認可コードを黙って発行してしまう。
+        // 不一致はエラーにせずログイン画面へ落とし、正しい End-User として認証さ
+        // せる（login_required を即返すかは方針判断に委ねる）。
+        const hintMatchesSession =
+          verifiedHintSubject === undefined ||
+          (existingSession !== null && verifiedHintSubject === existingSession.subject);
+        if (existingSession && sessionIsFresh && hintMatchesSession) {
           // OIDC Core 1.0 §3.1.2.1: prompt=consent MUST re-display the consent UI.
           // Otherwise, if the user already granted (a superset of) the requested
           // scopes to this client, skip the consent screen and issue the code

@@ -243,3 +243,13 @@ if (!promptValues.includes('login') && !promptValues.includes('select_account'))
 - [ ] `tests/e2e` に実ブラウザでの「セッション User B + hint User A」シナリオを追加する
 - [ ] `study-material/basic-op-requirement-traceability.md` の `OP-Req-id_token_hint` に適用範囲の注記を入れる
 - [ ] `tasks/p3-prompt-select-account-phase2.md` との実施順序を決める
+
+## 9. 実装状況（2026-07-27 時点）
+
+`tasks/done/p1-id-token-hint-verification-all-prompt-paths.md` として、**方針A と方針B の共通部分**のみを実装済み。
+
+- `id_token_hint` の検証（署名・`iss`・`aud`・`exp`・`iat`）を `prompt=none` 分岐の外へ引き上げ、全 prompt 経路で実行する
+- SSO 高速経路のセッション採用条件に hint subject の一致を追加し、不一致なら既存セッションを再利用しない
+- 不一致時は `login_required` を即返さず**ログイン画面へ落とす**
+
+未着手のまま残っているのは方針A固有の部分（ログイン画面への hint 伝播・対象ユーザーの提示／固定、ログイン結果が hint と異なる場合の挙動）と、方針B（不一致を常に `login_required` で返す）への切り替え判断。`tasks/p3-prompt-select-account-phase2.md` との実施順序も未決のまま。

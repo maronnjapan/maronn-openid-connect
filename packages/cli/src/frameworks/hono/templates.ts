@@ -2019,6 +2019,36 @@ ${offlineAccessStep}
       return c.redirect(buildErrorRedirect(transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
     }
 
+    // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
+    // by the ID Token is logged in ... otherwise it SHOULD return an error") is NOT
+    // conditioned on prompt, so the hint is verified here — outside the prompt=none
+    // branch — and therefore on every prompt path (no prompt / login / consent /
+    // select_account / none). Verification covers signature, iss, aud, exp and iat;
+    // the verified subject is shared by the prompt=none check below and by the SSO
+    // fast path, so an unverified hint never reaches a session decision.
+    let verifiedHintSubject: string | undefined;
+    if (transaction.idTokenHint !== undefined) {
+      const jwksProvider = c.get('jwksProvider') as undefined | (() => Promise<JwkSet> | JwkSet);
+      if (!jwksProvider) {
+        // jwksProvider 未提供では hint を検証できない → login_required で拒否
+        await transactionStore.delete('auth_txn:' + transactionId);
+        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
+      }
+      try {
+        const jwks = await jwksProvider();
+        const verified = await validateIdTokenHint(transaction.idTokenHint, {
+          expectedIss: issuer,
+          expectedAud: transaction.clientId,
+          jwks,
+        });
+        verifiedHintSubject = verified.sub;
+      } catch (hintError) {
+        await transactionStore.delete('auth_txn:' + transactionId);
+        const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
+        return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
+      }
+    }
+
     // prompt=none: silent authentication without any user interaction
     // OIDC Core 1.0 Section 3.1.2.1
     if (promptValues.includes('none')) {
@@ -2038,33 +2068,6 @@ ${offlineAccessStep}
         return c.redirect(buildErrorRedirect(transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
       }
 
-      // OIDC Core 1.0 §3.1.2.1: when id_token_hint is provided, the OP MUST verify
-      // its signature, iss, aud, and exp before trusting sub. The verified subject
-      // is then matched against the active session by validatePromptNoneIdTokenHint.
-      // OP の JWKS を提供するための jwksProvider を context から取得する。
-      let verifiedHintSubject: string | undefined;
-      if (transaction.idTokenHint !== undefined) {
-        const jwksProvider = c.get('jwksProvider') as undefined | (() => Promise<JwkSet> | JwkSet);
-        if (!jwksProvider) {
-          // jwksProvider 未提供では hint を検証できない → login_required で拒否
-          await transactionStore.delete('auth_txn:' + transactionId);
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
-        }
-        try {
-          const jwks = await jwksProvider();
-          const verified = await validateIdTokenHint(transaction.idTokenHint, {
-            expectedIss: issuer,
-            expectedAud: transaction.clientId,
-            jwks,
-          });
-          verifiedHintSubject = verified.sub;
-        } catch (hintError) {
-          await transactionStore.delete('auth_txn:' + transactionId);
-          const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
-        }
-      }
-
       let session;
       try {
         // --- prompt=none pipeline ---------------------------------------
@@ -2077,8 +2080,10 @@ ${offlineAccessStep}
         // must not show a login screen for prompt=none).
         session = await resolvePromptNoneSession(transaction, sessionResolver, c.req.raw);
 
-        // The hint subject is verified before consent because the consent lookup
-        // keys on session.subject — a hint mismatch would check the wrong user.
+        // verifiedHintSubject は上流（prompt 非依存の検証ブロック）で確定済み。
+        // ここでは prompt=none 固有の「不一致なら login_required」判定だけを行う。
+        // コンセント確認より前に置くのは、コンセント検索が session.subject をキーに
+        // するため — 不一致のまま進むと別ユーザーのコンセントを見てしまう。
         validatePromptNoneIdTokenHint(transaction, session, verifiedHintSubject);
 
         // OIDC Core 1.0 §3.1.2.1: not consented → consent_required (the OP must
@@ -2152,7 +2157,15 @@ ${offlineAccessStep}
           existingSession !== null &&
           (transaction.maxAge === undefined ||
             !requiresReauthentication(transaction.maxAge, existingSession.authTime));
-        if (existingSession && sessionIsFresh) {
+        // OIDC Core 1.0 §3.1.2.1: id_token_hint が指す End-User でなければ既存
+        // セッションを再利用しない。これが無いと「セッションは User B / hint は
+        // User A」の要求に対し B の認可コードを黙って発行してしまう。
+        // 不一致はエラーにせずログイン画面へ落とし、正しい End-User として認証さ
+        // せる（login_required を即返すかは方針判断に委ねる）。
+        const hintMatchesSession =
+          verifiedHintSubject === undefined ||
+          (existingSession !== null && verifiedHintSubject === existingSession.subject);
+        if (existingSession && sessionIsFresh && hintMatchesSession) {
           // OIDC Core 1.0 §3.1.2.1: prompt=consent MUST re-display the consent UI.
           // Otherwise, if the user already granted (a superset of) the requested
           // scopes to this client, skip the consent screen and issue the code
@@ -6398,6 +6411,269 @@ ${corsPreflightTest}
 `;
 }
 
+/**
+ * Shared, framework-neutral conformance block for `id_token_hint`.
+ *
+ * OIDC Core 1.0 §3.1.2.1 states the hint rule ("If the End-User identified by the
+ * ID Token is logged in ... otherwise, it SHOULD return an error, such as
+ * login_required") without conditioning it on `prompt`. The generated OP therefore
+ * verifies the hint on every prompt path and refuses to answer a hint with another
+ * End-User's SSO session. This block pins that contract: if a user edits the
+ * generated authorize route so the hint is only honored under prompt=none again,
+ * these tests fail.
+ */
+export function idTokenHintConformanceBlock(): string {
+  return `
+  describe('id_token_hint across prompt paths', () => {
+    const HINT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const HINT_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    let hintSessionCookie = '';
+
+    function hintCsrfToken(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function hintRelativeLocation(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function hintB64Url(bytes: Uint8Array): string {
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+    }
+
+    function hintB64UrlJson(value: unknown): string {
+      return hintB64Url(new TextEncoder().encode(JSON.stringify(value)));
+    }
+
+    // Builds a hint the OP itself could have issued: signed with the ID Token
+    // signing key, so the default jwksProvider (the OP's own key set) accepts it.
+    // Overrides let a single case break exactly one claim (sub / aud / exp).
+    async function buildIdTokenHint(overrides: Record<string, unknown> = {}): Promise<string> {
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const signingKey = await signingKeyProvider.getSigningKey();
+      const signingInput =
+        hintB64UrlJson({ alg: 'RS256', kid: signingKey.keyId, typ: 'JWT' }) +
+        '.' +
+        hintB64UrlJson({
+          iss: 'http://localhost:3000',
+          aud: 'c-conf',
+          sub: 'testuser',
+          iat: issuedAt,
+          exp: issuedAt + 300,
+          ...overrides,
+        });
+      const signature = await crypto.subtle.sign(
+        { name: 'RSASSA-PKCS1-v1_5' },
+        signingKey.privateKey,
+        new TextEncoder().encode(signingInput),
+      );
+      return signingInput + '.' + hintB64Url(new Uint8Array(signature));
+    }
+
+    function authorizeWithHint(state: string, hint?: string, prompt?: string): Promise<Response> {
+      return app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state +
+        (prompt === undefined ? '' : '&prompt=' + prompt) +
+        (hint === undefined ? '' : '&id_token_hint=' + encodeURIComponent(hint)) +
+        '&code_challenge=' + HINT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+        { headers: { Cookie: hintSessionCookie } },
+      );
+    }
+
+    // Establish an OP session for testuser and a recorded consent for c-conf so
+    // the SSO fast path (and prompt=none) is armed for every case below.
+    beforeAll(async () => {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=hint-setup&prompt=consent' +
+        '&code_challenge=' + HINT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = hintRelativeLocation(authorizeRes.headers.get('Location'));
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      const loginGet = await app.request(loginPath);
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: hintCsrfToken(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      hintSessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
+      const consentPath = hintRelativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath);
+      await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: hintCsrfToken(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+    });
+
+    // Regression guard: adding hint verification must not change the plain SSO path.
+    it('should issue an authorization code for the SSO session when no hint is sent', async () => {
+      const res = await authorizeWithHint('hint-absent');
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('state')).toBe('hint-absent');
+      expect(callback.searchParams.get('error')).toBe(null);
+      expect((callback.searchParams.get('code') ?? '').length).toBe(43);
+    });
+
+    it('should issue an authorization code whose ID Token sub matches a hint naming the session user', async () => {
+      const res = await authorizeWithHint('hint-match', await buildIdTokenHint());
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('state')).toBe('hint-match');
+      expect(callback.searchParams.get('error')).toBe(null);
+
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-conf',
+          client_secret: 's',
+          grant_type: 'authorization_code',
+          code: callback.searchParams.get('code') ?? '',
+          redirect_uri: REDIRECT_URI,
+          code_verifier: HINT_PKCE_VERIFIER,
+        }).toString(),
+      });
+
+      expect(tokenRes.status).toBe(200);
+      expect(idTokenPayload((await tokenRes.json()).id_token as string).sub).toBe('testuser');
+    });
+
+    // The account mix-up this contract exists to prevent: session = testuser,
+    // hint = another End-User. No code may be issued off the existing session.
+    it('should redirect to the login screen without a code when the hint names another End-User', async () => {
+      const res = await authorizeWithHint(
+        'hint-mismatch',
+        await buildIdTokenHint({ sub: 'otheruser' }),
+      );
+      const location = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(location.pathname).toBe('/login');
+      expect((location.searchParams.get('transaction_id') ?? '').length).toBe(43);
+      expect(location.searchParams.get('code')).toBe(null);
+      expect(location.searchParams.get('error')).toBe(null);
+    });
+
+    it('should redirect to the login screen when prompt=login is sent with a mismatched hint', async () => {
+      const res = await authorizeWithHint(
+        'hint-prompt-login',
+        await buildIdTokenHint({ sub: 'otheruser' }),
+        'login',
+      );
+      const location = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(location.pathname).toBe('/login');
+      expect(location.searchParams.get('code')).toBe(null);
+      expect(location.searchParams.get('error')).toBe(null);
+    });
+
+    it('should redirect with login_required when the hint signature is invalid without prompt', async () => {
+      const hint = await buildIdTokenHint();
+      const tampered =
+        hint.slice(0, hint.lastIndexOf('.') + 1) + hintB64Url(new Uint8Array(256));
+      const res = await authorizeWithHint('hint-badsig', tampered);
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('error')).toBe('login_required');
+      expect(callback.searchParams.get('error_description')).toBe(
+        'id_token_hint signature verification failed',
+      );
+      expect(callback.searchParams.get('state')).toBe('hint-badsig');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+
+    it('should redirect with login_required when the hint has expired without prompt', async () => {
+      const expiredAt = Math.floor(Date.now() / 1000) - 3600;
+      const res = await authorizeWithHint(
+        'hint-expired',
+        await buildIdTokenHint({ iat: expiredAt - 300, exp: expiredAt }),
+      );
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('error')).toBe('login_required');
+      expect(callback.searchParams.get('error_description')).toBe('id_token_hint has expired');
+      expect(callback.searchParams.get('state')).toBe('hint-expired');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+
+    it('should redirect with login_required when the hint aud names another client', async () => {
+      const res = await authorizeWithHint(
+        'hint-aud',
+        await buildIdTokenHint({ aud: 'c-public' }),
+      );
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('error')).toBe('login_required');
+      expect(callback.searchParams.get('error_description')).toBe(
+        'id_token_hint aud does not match expected audience',
+      );
+      expect(callback.searchParams.get('state')).toBe('hint-aud');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+
+    // prompt=none behavior is unchanged by the hoisted verification: the matching
+    // hint still authenticates silently, the mismatching one still fails.
+    it('should keep issuing a code for prompt=none with a hint naming the session user', async () => {
+      const res = await authorizeWithHint('hint-none-match', await buildIdTokenHint(), 'none');
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('state')).toBe('hint-none-match');
+      expect(callback.searchParams.get('error')).toBe(null);
+      expect((callback.searchParams.get('code') ?? '').length).toBe(43);
+    });
+
+    it('should keep rejecting prompt=none with login_required when the hint names another End-User', async () => {
+      const res = await authorizeWithHint(
+        'hint-none-mismatch',
+        await buildIdTokenHint({ sub: 'otheruser' }),
+        'none',
+      );
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.pathname).toBe('/callback');
+      expect(callback.searchParams.get('error')).toBe('login_required');
+      expect(callback.searchParams.get('error_description')).toBe(
+        'id_token_hint subject does not match the active session.',
+      );
+      expect(callback.searchParams.get('state')).toBe('hint-none-mismatch');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+  });
+`;
+}
+
 export function consentWithdrawalConformanceBlock(features: OidcFeatureConfig): string {
   if (!features.refreshToken || !features.introspection) return '';
   return `
@@ -8024,6 +8300,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }

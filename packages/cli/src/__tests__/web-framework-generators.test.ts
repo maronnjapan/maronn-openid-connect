@@ -44,6 +44,58 @@ describe('Web-standard generated validation pipelines', () => {
   }
 });
 
+describe('Web-standard generated id_token_hint handling', () => {
+  const generatedAuthorizeRoutes = [
+    {
+      framework: 'express',
+      authorizeRoute: new ExpressGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'routes/authorize.ts')?.content ?? '',
+    },
+    {
+      framework: 'fastify',
+      authorizeRoute: new FastifyGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'routes/authorize.ts')?.content ?? '',
+    },
+    {
+      framework: 'nextjs',
+      authorizeRoute: new NextJsGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === '_oidc-provider/routes/authorize.ts')?.content ?? '',
+    },
+  ];
+
+  for (const { framework, authorizeRoute } of generatedAuthorizeRoutes) {
+    // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule is not conditioned on prompt,
+    // so every Web-standard framework must verify the hint outside (before) the
+    // prompt=none branch.
+    it(`should verify id_token_hint before the prompt=none branch for ${framework}`, () => {
+      const hintVerificationIndex = authorizeRoute.indexOf('await validateIdTokenHint(');
+      const promptNoneBranchIndex = authorizeRoute.indexOf(
+        "if (promptValues.includes('none')) {",
+      );
+
+      expect(authorizeRoute.split('await validateIdTokenHint(').length - 1).toBe(1);
+      expect(hintVerificationIndex < promptNoneBranchIndex).toBe(true);
+      expect(authorizeRoute.includes('let verifiedHintSubject: string | undefined;')).toBe(
+        true,
+      );
+    });
+
+    // OIDC Core 1.0 §3.1.2.1 / §3.1.2.3: a hint naming another End-User must not be
+    // answered by reusing the current SSO session.
+    it(`should gate SSO session reuse on the id_token_hint subject for ${framework}`, () => {
+      expect(authorizeRoute.includes('const hintMatchesSession =')).toBe(true);
+      expect(
+        authorizeRoute.includes(
+          'if (existingSession && sessionIsFresh && hintMatchesSession) {',
+        ),
+      ).toBe(true);
+    });
+  }
+});
+
 describe('ExpressGenerator', () => {
   const generator = new ExpressGenerator();
   const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
@@ -157,6 +209,24 @@ describe('ExpressGenerator', () => {
       );
       expect(file?.content).toContain(
         'should reject weak signing keys through the generated Web app',
+      );
+    });
+
+    // OIDC Core 1.0 §3.1.2.1: the generated OP's behavior contract must pin that a
+    // hint is verified on every prompt path and never satisfied by another user's
+    // SSO session.
+    it('should generate the id_token_hint cross-prompt conformance contract', () => {
+      const file = files.find((f) => f.path === 'conformance.test.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain("describe('id_token_hint across prompt paths'");
+      expect(content).toContain(
+        'should redirect to the login screen without a code when the hint names another End-User',
+      );
+      expect(content).toContain(
+        'should redirect with login_required when the hint signature is invalid without prompt',
+      );
+      expect(content).toContain(
+        'should redirect with login_required when the hint has expired without prompt',
       );
     });
 

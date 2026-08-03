@@ -27,6 +27,7 @@ import { readChangesets } from './verify-release-contract.mjs';
 
 const EXPERIMENTAL = '@maronn-oidc/experimental';
 const SOURCE_PREFIX = 'packages/experimental/src/';
+const MANIFEST_PATH = 'packages/experimental/package.json';
 const TEST_FILE_PATTERN = /\.(test|spec)\.[cm]?tsx?$/;
 
 /** 自動生成する changeset のファイル名。毎回同じ名前にして、実行を繰り返しても 1 本に保つ。 */
@@ -107,36 +108,89 @@ function git(args, repositoryRoot, { quiet = false } = {}) {
   });
 }
 
-/**
- * 直近の experimental リリース地点を返す。
- *
- * changeset publish は publish 時に `@maronn-oidc/experimental@<version>` タグを打つので、
- * HEAD から辿れる最新のそのタグが「前回リリースした commit」になる。
- * タグが 1 つも無い（= まだ publish していない）場合は null を返す。
- */
-export function findLastExperimentalReleaseTag(repositoryRoot) {
+/** package.json の中身から version を読む。読めない・持っていない場合は null。 */
+export function readVersionFromManifest(content) {
   try {
-    // タグが 1 つも無いときは git が非 0 で終わるのが正常系なので、エラー出力は捨てる
-    return git(['describe', '--tags', '--match', `${EXPERIMENTAL}@*`, '--abbrev=0', 'HEAD'], repositoryRoot, {
-      quiet: true,
-    }).trim();
+    const version = JSON.parse(content).version;
+    return typeof version === 'string' ? version : null;
   } catch {
     return null;
   }
 }
 
 /**
- * 前回リリース以降に変更された experimental のパスを集める。
- * 未リリースなら、追跡されている src 配下すべてを「未リリースの変更」として扱う。
+ * 「experimental の version を確定したコミット」を、新しい順の候補から 1 つ選ぶ。
+ *
+ * version が親のどれとも違うコミットだけを bump と見なす。Version Packages PR の
+ * マージコミットはリリースブランチ側の親から version を引き継ぐだけなので除外され、
+ * `changeset version` が実際に version を書き換えたコミットが選ばれる。
+ */
+export function selectLastVersionBump(candidates) {
+  const bump = candidates.find(
+    ({ version, parentVersions }) =>
+      version !== null && parentVersions.every((parentVersion) => parentVersion !== version),
+  );
+
+  return bump ? { commit: bump.commit, version: bump.version } : null;
+}
+
+function readManifestVersionAt(repositoryRoot, commit) {
+  try {
+    // そのコミットに package.json が無いのは正常系（package 追加前・削除後）なのでエラー出力は捨てる
+    return readVersionFromManifest(git(['show', `${commit}:${MANIFEST_PATH}`], repositoryRoot, { quiet: true }));
+  } catch {
+    return null;
+  }
+}
+
+function listParents(repositoryRoot, commit) {
+  return git(['rev-list', '--parents', '-n', '1', commit], repositoryRoot).trim().split(/\s+/).slice(1);
+}
+
+/**
+ * 直近の experimental リリース基準点を返す。
+ *
+ * 基準は「`packages/experimental/package.json` の version を最後に確定したコミット」。
+ * publish 時のタグを基準にしていた頃は、タグが publish でしか生まれないのに
+ * publish はこの判定の結果でしか起きない、という循環で publish に到達できなかった
+ * （詳細は RELEASE.md「なぜ version 確定コミットを基準にするのか」）。
+ * version は Version Packages PR がマージされた時点で確定するので、
+ * マージ直後の main では「未リリースの変更ゼロ」と判定できる。
+ */
+export function findLastExperimentalVersionBump(repositoryRoot) {
+  const commits = git(['log', '--format=%H', 'HEAD', '--', MANIFEST_PATH], repositoryRoot)
+    .split('\n')
+    .map((commit) => commit.trim())
+    .filter((commit) => commit.length > 0);
+
+  return selectLastVersionBump(
+    commits.map((commit) => ({
+      commit,
+      version: readManifestVersionAt(repositoryRoot, commit),
+      parentVersions: listParents(repositoryRoot, commit).map((parent) =>
+        readManifestVersionAt(repositoryRoot, parent),
+      ),
+    })),
+  );
+}
+
+/**
+ * 現在の version に載っていない experimental のパスを集める。
+ * version を確定したコミットが履歴に無いなら、追跡されている src 配下すべてを未リリース扱いにする。
  */
 export function collectChangedPathsSinceLastRelease(repositoryRoot) {
-  const tag = findLastExperimentalReleaseTag(repositoryRoot);
+  const bump = findLastExperimentalVersionBump(repositoryRoot);
 
-  const output = tag
-    ? git(['diff', '--name-only', tag, 'HEAD', '--', SOURCE_PREFIX], repositoryRoot)
+  const output = bump
+    ? git(['diff', '--name-only', bump.commit, 'HEAD', '--', SOURCE_PREFIX], repositoryRoot)
     : git(['ls-files', '--', SOURCE_PREFIX], repositoryRoot);
 
-  return { base: tag ?? '（experimental のリリースタグなし: 全ソースを未リリース扱い）', paths: output.split('\n') };
+  return {
+    base: bump
+      ? `${bump.commit} (version ${bump.version})`
+      : '（experimental の version を確定したコミットなし: 全ソースを未リリース扱い）',
+    paths: output.split('\n'),
+  };
 }
 
 function ensureExperimentalChangeset() {

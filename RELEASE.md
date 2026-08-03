@@ -140,10 +140,37 @@ core / cli の changeset を手で書く従来の運用はそのまま並存し�
 | `packages/experimental/src/**` のテスト（`*.test.ts` / `*.spec.ts`） | しない（`dist` に出ず利用者への成果物が変わらないため） |
 | `packages/experimental/package.json`・README・LICENSE | しない（必要なら `pnpm changeset` で patch の changeset を手で足す） |
 
-比較の基準は `git describe` で取れる直近の `@maronn-oidc/experimental@<version>` タグ、
-つまり **Changesets が前回 publish 時に打ったタグ**。タグが 1 つも無い（まだ publish していない）
-場合は、追跡されている `src` 配下すべてを未リリース扱いにする。
-このタグ判定のために `release.yml` の checkout は `fetch-depth: 0` にしてある。
+比較の基準は **`packages/experimental/package.json` の `version` を最後に確定したコミット**。
+`changeset version` が version を書き換えたコミット（= Version Packages PR の中身）がそれにあたる。
+version を確定したコミットが履歴に無い場合は、追跡されている `src` 配下すべてを未リリース扱いにする。
+この履歴判定のために `release.yml` の checkout は `fetch-depth: 0` にしてある。
+
+### なぜ version 確定コミットを基準にするのか
+
+以前はこの基準を **publish 時に打たれる `@maronn-oidc/experimental@<version>` タグ**に置いていた。
+これは循環していて、publish に一生到達しない。
+
+```
+タグが無い → 全 src が未リリース扱い → changeset が生成される
+          → changesets/action は「未消化の changeset がある」と判断して version 段階へ
+          → publish されない → タグが打たれない → 最初に戻る
+```
+
+Version Packages PR をマージしても、そのマージによる push で同じ判定が走り、
+また changeset が生成されて次の Version Packages PR が立つだけになる。
+`release.yml` は成功で終わり、PR もマージ済みなので、**npm だけが古いまま誰も気づけない**。
+実際にこの状態で main は core 0.1.0 / cli 0.1.0 / experimental 0.0.3 まで進み、
+npm は 3 つとも 0.0.1 で止まっていた。
+
+タグが仮にあったとしても同じことが起きる。タグは前回 publish したコミットを指すので、
+Version Packages PR のマージ直後でも「タグ以降に `src` が変わっている」状態は解消しない。
+**publish の結果として生まれるものを、publish の前提条件にしてはいけない**。
+
+version 確定コミットならこの循環が無い。version は Version Packages PR のマージ時点で確定し、
+publish の成否に依存しないので、マージ直後の main では差分ゼロ = changeset を作らない
+= publish 段階へ進む、と判定できる。publish が npm 側の理由で失敗した場合も、
+version は確定したままなので次の push で publish が再試行される
+（タグ基準では再試行されず、バージョンだけが空振りで上がり続けていた）。
 
 ### マージを忘れて変更がたまったとき
 
@@ -379,6 +406,29 @@ SLSA provenance v1 attestation が存在することを明示的に検査する�
 version の provenance はまだ確認できない。初回 publish は手動ブートストラップのため
 provenance が付かず、Trusted Publisher を設定した次の CI publish から上記の自動検証を必須とする。
 
+### publish に到達したことを検証する
+
+`release.yml` の最後に `.github/scripts/verify-release-published.mjs` を実行し、
+**main の `packages/*/package.json` のバージョンが npm registry に存在すること**を確認する。
+存在しなければ release job を赤くする。
+
+これは「publish が失敗した」ではなく「**publish が起きなかった**」を検出するためのゲートである。
+version 段階と publish 段階の分岐が壊れると、Version Packages PR をマージしてバージョンが
+確定しても publish されず、それでいて run は成功で終わる。この状態は
+provenance 検証（publish が起きたときだけ走る）でも changeset-coverage（PR 時点の検査）でも
+検出できず、npm を直接見に行くまで気づけない。実際に
+[なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)の循環で
+33 run にわたって気づけなかったので、分岐の実装ではなく **結果**を検査する形にしてある。
+
+判定の細かい約束は 3 つ。
+
+- 比較対象は main の commit に入っている `package.json`（`git show <sha>:...`）。
+  `changesets/action` は version 段階でリリースブランチへ checkout するため、
+  ワークツリーを読むとバンプ後のバージョンを読んでしまう
+- registry のほうが新しいのは publish 漏れではないので通す
+- publish 実績がまったく無いパッケージは対象外。初回 publish は Trusted Publishing の
+  chicken-and-egg で手動になるため（[初回 publish（手動ブートストラップ）](#初回-publish手動ブートストラップ)）
+
 ---
 
 ## トラブルシューティング
@@ -396,8 +446,10 @@ provenance が付かず、Trusted Publisher を設定した次の CI publish か
 | CI の `changeset-coverage` が `対応する changeset がありません` で落ちる | 意図した挙動。`pnpm changeset`（リリースする場合）または `pnpm changeset --empty`（リリース不要の場合）を実行してコミットする（[changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)） |
 | packages を変更していないのに `changeset-coverage` が落ちる | 出荷物判定が想定と違う可能性。`.github/scripts/verify-changeset-coverage.mjs` の `NON_SHIPPED_FILE_PATTERNS` を確認する |
 | CI で `@maronn-oidc/experimental を patch 以外で上げる changeset がありますが…` で落ちる | 意図した挙動。experimental の bump は patch 固定なので、該当 changeset の bump 種別を `patch` に直す（[experimental の bump は常に patch に固定する](#experimental-の-bump-は常に-patch-に固定する)） |
-| experimental の実装を変更したのに Version Packages PR が立たない | 変更が `packages/experimental/src` の実装ファイル以外（テスト・README・package.json）ではないか確認する。それ以外なら release job の `Ensure experimental release changeset` ステップのログで比較基準タグと判定理由を確認する（[experimental の自動 publish](#experimental-の自動-publish)） |
+| experimental の実装を変更したのに Version Packages PR が立たない | 変更が `packages/experimental/src` の実装ファイル以外（テスト・README・package.json）ではないか確認する。それ以外なら release job の `Ensure experimental release changeset` ステップのログで比較基準コミットと判定理由を確認する（[experimental の自動 publish](#experimental-の自動-publish)） |
 | Version Packages PR に experimental の変更が 1 つしか載っていない | `auto-experimental-patch.md` は毎回上書きされるので通常は起きない。手書きの experimental changeset が残っていると自動生成がスキップされるため、`.changeset/` に手書きのものが無いか確認する |
+| Version Packages PR をマージしたのに publish されず、また Version Packages PR が立つ | release job の `Ensure experimental release changeset` のログを見る。「未リリースの変更が N 件あるため」と出ているなら比較基準の判定が壊れている（[なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)）。マージ直後の main では「変更がないため changeset を作成しない」になるのが正しい |
+| CI で `main のバージョンが npm に出ていません` で落ちる | publish 段階へ到達しないまま run が終わっている。上の行と同じ調査をする（[publish に到達したことを検証する](#publish-に到達したことを検証する)） |
 
 
 ---

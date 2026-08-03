@@ -4,8 +4,25 @@ import { describe, it } from 'node:test';
 import {
   assertMainVersionsArePublished,
   parsePublishedVersions,
+  selectPendingChangesets,
   selectUnpublishedPackages,
 } from './verify-release-published.mjs';
+
+describe('selectPendingChangesets', () => {
+  it('should select changeset markdown files', () => {
+    assert.deepEqual(selectPendingChangesets(['.changeset/README.md', '.changeset/brave-pans-shave.md']), [
+      '.changeset/brave-pans-shave.md',
+    ]);
+  });
+
+  it('should select nothing when only the changeset scaffolding is committed', () => {
+    assert.deepEqual(selectPendingChangesets(['.changeset/README.md', '.changeset/config.json']), []);
+  });
+
+  it('should select nothing when the directory is absent', () => {
+    assert.deepEqual(selectPendingChangesets([]), []);
+  });
+});
 
 describe('parsePublishedVersions', () => {
   it('should list every version key of the registry document', () => {
@@ -71,8 +88,10 @@ describe('selectUnpublishedPackages', () => {
 describe('assertMainVersionsArePublished', () => {
   it('should pass when every publishable package version exists on the registry', () => {
     assert.doesNotThrow(() =>
-      assertMainVersionsArePublished([{ name: '@maronn-oidc/core', version: '0.1.0' }], {
-        '@maronn-oidc/core': ['0.1.0'],
+      assertMainVersionsArePublished({
+        packages: [{ name: '@maronn-oidc/core', version: '0.1.0' }],
+        publishedVersionsByName: { '@maronn-oidc/core': ['0.1.0'] },
+        pendingChangesets: [],
       }),
     );
   });
@@ -80,15 +99,18 @@ describe('assertMainVersionsArePublished', () => {
   it('should throw naming the package and both versions when a release never reached npm', () => {
     assert.throws(
       () =>
-        assertMainVersionsArePublished([{ name: '@maronn-oidc/core', version: '0.1.0' }], {
-          '@maronn-oidc/core': ['0.0.1'],
+        assertMainVersionsArePublished({
+          packages: [{ name: '@maronn-oidc/core', version: '0.1.0' }],
+          publishedVersionsByName: { '@maronn-oidc/core': ['0.0.1'] },
+          pendingChangesets: [],
         }),
       {
         message:
           'main のバージョンが npm に出ていません: @maronn-oidc/core@0.1.0 (npm の最新は 0.0.1)\n' +
-          'Version Packages PR がマージされてバージョンが確定したのに publish 段階へ到達していません。\n' +
-          '未消化の changeset が残り続けて changesets/action が version 段階に入り直していないかを' +
-          '確認してください（RELEASE.md「publish に到達したことを検証する」）。',
+          'main に未消化の changeset は無いので、この push は publish 段階に入るはずでした。\n' +
+          'release job の "Ensure experimental release changeset" が changeset を作り直して' +
+          ' version 段階へ入り直していないかを確認してください' +
+          '（RELEASE.md「publish に到達したことを検証する」）。',
       },
     );
   });
@@ -96,14 +118,28 @@ describe('assertMainVersionsArePublished', () => {
   it('should list every unpublished package at once', () => {
     assert.throws(
       () =>
-        assertMainVersionsArePublished(
-          [
+        assertMainVersionsArePublished({
+          packages: [
             { name: '@maronn-oidc/core', version: '0.1.0' },
             { name: '@maronn-oidc/cli', version: '0.1.0' },
           ],
-          { '@maronn-oidc/core': ['0.0.1'], '@maronn-oidc/cli': ['0.0.1'] },
-        ),
+          publishedVersionsByName: { '@maronn-oidc/core': ['0.0.1'], '@maronn-oidc/cli': ['0.0.1'] },
+          pendingChangesets: [],
+        }),
       /@maronn-oidc\/core@0\.1\.0 \(npm の最新は 0\.0\.1\), @maronn-oidc\/cli@0\.1\.0 \(npm の最新は 0\.0\.1\)/,
+    );
+  });
+
+  // main に changeset が残っている間は version 段階が正しい挙動で、publish は次の
+  // Version Packages PR のマージまで起きない。Version Packages PR のマージと changeset の
+  // 追加が競合すると、バージョンだけ先に進んだ状態が一時的に生まれるため、ここで弾かない。
+  it('should pass while main still carries an unconsumed changeset', () => {
+    assert.doesNotThrow(() =>
+      assertMainVersionsArePublished({
+        packages: [{ name: '@maronn-oidc/core', version: '0.1.0' }],
+        publishedVersionsByName: { '@maronn-oidc/core': ['0.0.1'] },
+        pendingChangesets: ['.changeset/brave-pans-shave.md'],
+      }),
     );
   });
 });

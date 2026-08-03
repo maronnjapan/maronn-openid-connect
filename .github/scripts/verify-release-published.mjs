@@ -18,6 +18,10 @@
  * - 比較対象は main の commit に入っている package.json（`git show <sha>:...`）。
  *   changesets/action は version 段階で release ブランチへ checkout するため、
  *   ワークツリーを読むとバンプ後のバージョンを読んでしまう。
+ * - main の commit に未消化の changeset が残っているときは検査しない。version 段階が
+ *   正しい状態であり、publish は次の Version Packages PR のマージまで起きない。
+ *   changeset も commit から読む。ワークツリーには `Ensure experimental release changeset`
+ *   が書き出した changeset が居るので、それを数えると検出したい状態を見逃す。
  * - registry のほうが新しいのは publish 漏れではないので通す。
  * - publish 実績がまったく無い package は対象外。初回 publish は Trusted Publishing の
  *   chicken-and-egg で手動になる（RELEASE.md「初回 publish の注意」）。
@@ -49,7 +53,16 @@ export function selectUnpublishedPackages(packages, publishedVersionsByName) {
     }));
 }
 
-export function assertMainVersionsArePublished(packages, publishedVersionsByName) {
+/** main の commit に入っている未消化の changeset を取り出す。README・config は changeset ではない。 */
+export function selectPendingChangesets(changesetDirectoryEntries) {
+  return changesetDirectoryEntries.filter((path) => path.endsWith('.md') && !path.endsWith('/README.md'));
+}
+
+export function assertMainVersionsArePublished({ packages, publishedVersionsByName, pendingChangesets }) {
+  // changeset が残っているうちは version 段階が正しい。publish は次の Version Packages PR の
+  // マージまで起きないので、この時点でバージョンが npm より先に進んでいても異常ではない。
+  if (pendingChangesets.length > 0) return;
+
   const unpublished = selectUnpublishedPackages(packages, publishedVersionsByName);
   if (unpublished.length === 0) return;
 
@@ -59,9 +72,10 @@ export function assertMainVersionsArePublished(packages, publishedVersionsByName
 
   throw new Error(
     `main のバージョンが npm に出ていません: ${detail}\n` +
-      'Version Packages PR がマージされてバージョンが確定したのに publish 段階へ到達していません。\n' +
-      '未消化の changeset が残り続けて changesets/action が version 段階に入り直していないかを' +
-      '確認してください（RELEASE.md「publish に到達したことを検証する」）。',
+      'main に未消化の changeset は無いので、この push は publish 段階に入るはずでした。\n' +
+      'release job の "Ensure experimental release changeset" が changeset を作り直して' +
+      ' version 段階へ入り直していないかを確認してください' +
+      '（RELEASE.md「publish に到達したことを検証する」）。',
   );
 }
 
@@ -77,6 +91,28 @@ function readManifestAt(repositoryRoot, commit, path) {
     );
   } catch {
     return null;
+  }
+}
+
+/**
+ * commit に入っている `.changeset/` のエントリを列挙する。
+ *
+ * ワークツリーではなく commit を見るのが要点。`Ensure experimental release changeset` は
+ * ワークツリーに changeset を書き出すので、ワークツリーを見ると「未消化の changeset がある」と
+ * 誤判定し、検出したい状態そのものを見逃す。
+ */
+export function listChangesetEntriesAt(repositoryRoot, commit) {
+  try {
+    return execFileSync('git', ['ls-tree', '--name-only', '-r', commit, '.changeset/'], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split('\n')
+      .map((path) => path.trim())
+      .filter((path) => path.length > 0);
+  } catch {
+    return [];
   }
 }
 
@@ -102,11 +138,17 @@ async function verifyReleasePublished() {
   const commit = process.env.GITHUB_SHA ?? 'HEAD';
 
   const packages = readPublishablePackagesAt(repositoryRoot, commit);
+  const pendingChangesets = selectPendingChangesets(listChangesetEntriesAt(repositoryRoot, commit));
   const publishedVersionsByName = Object.fromEntries(
     await Promise.all(packages.map(async ({ name }) => [name, await fetchPublishedVersions(name)])),
   );
 
-  assertMainVersionsArePublished(packages, publishedVersionsByName);
+  assertMainVersionsArePublished({ packages, publishedVersionsByName, pendingChangesets });
+
+  if (pendingChangesets.length > 0) {
+    console.log('Release published check skipped: 未消化の changeset があるため version 段階が正しい状態です');
+    return;
+  }
 
   console.log(
     `Release published verified: ${packages.map(({ name, version }) => `${name}@${version}`).join(', ')}`,

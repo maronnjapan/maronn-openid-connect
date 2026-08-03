@@ -420,11 +420,17 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 [なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)の循環で
 33 run にわたって気づけなかったので、分岐の実装ではなく **結果**を検査する形にしてある。
 
-判定の細かい約束は 3 つ。
+判定の細かい約束は 4 つ。
 
 - 比較対象は main の commit に入っている `package.json`（`git show <sha>:...`）。
   `changesets/action` は version 段階でリリースブランチへ checkout するため、
   ワークツリーを読むとバンプ後のバージョンを読んでしまう
+- **main の commit に未消化の changeset が残っているときは検査しない**。version 段階が
+  正しい状態であり、publish は次の Version Packages PR のマージまで起きない。
+  Version Packages PR のマージと changeset 追加が競合すると、バージョンだけ先に進んだ
+  状態が一時的に生まれるため、ここを弾かないようにしてある。
+  changeset も commit から読む（ワークツリーには `Ensure experimental release changeset` が
+  書き出した changeset が居るので、それを数えると検出したい状態を見逃す）
 - registry のほうが新しいのは publish 漏れではないので通す
 - publish 実績がまったく無いパッケージは対象外。初回 publish は Trusted Publishing の
   chicken-and-egg で手動になるため（[初回 publish（手動ブートストラップ）](#初回-publish手動ブートストラップ)）

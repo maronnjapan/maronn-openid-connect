@@ -28,8 +28,24 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 
 ```
 @maronn-oidc/core          0.1.0   （据え置き）
-@maronn-oidc/experimental  0.1.0 → 0.2.0 → 0.3.0 → …（先に進む）
+@maronn-oidc/experimental  0.0.1 → 0.0.2 → 0.0.3 → …（先に進む）
 ```
+
+### experimental の bump は常に patch に固定する
+
+`@maronn-oidc/experimental` は**変更内容に関わらず patch を 1 つ上げるだけ**とする。
+API の追加でも破壊的変更でも minor / major は使わない。これは experimental のリリースを
+「`packages/experimental/src` が変わったら publish する」という機械的な運用
+（→ [experimental の自動 publish](#experimental-の自動-publish)）に寄せるためで、bump 種別を
+判断する余地をなくすことで、Version Packages PR のマージを忘れて複数の変更がたまっても
+**まとめて patch 1 回に吸収される**状態を保つ。
+
+そもそも experimental は package 名のとおり API の安定性を約束しない場所なので、
+バージョン番号で互換性を表現しない。利用者に伝えるべき互換性の情報は CHANGELOG と
+README に書く。安定性のシグナルは core が担う。
+
+手書きの changeset が experimental を minor / major で上げていないかは
+`pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`）が CI で検査する。
 
 ### core のインスタンスを 1 つに保つのは peerDependencies の役割
 
@@ -74,6 +90,59 @@ HEAD の core に対して experimental をビルド・テストするので開�
 必須とし、`pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`、
 `test:ci` に組み込み済み）で CI から強制している。同スクリプトは core が experimental の
 `dependencies` に戻っていないかも検査する。
+
+---
+
+## experimental の自動 publish
+
+`@maronn-oidc/experimental` だけは **changeset を手で書かなくてよい**。
+`packages/experimental/src` に機能追加や実装修正が入った時点で publish できる状態になる。
+
+### フロー
+
+1. experimental の実装を変更した PR を main にマージする（`pnpm changeset` は不要）
+2. main への push で `release.yml` が `.github/scripts/ensure-experimental-changeset.mjs` を実行し、
+   前回リリース以降に `packages/experimental/src` が変わっていれば
+   `.changeset/auto-experimental-patch.md`（`@maronn-oidc/experimental: patch`）を生成する
+3. Changesets が「Version Packages」PR を作成・更新する（= publish 用の PR）
+4. **その PR をマージすると publish される**
+
+つまり publish するかどうかは「Version Packages PR をいつマージするか」だけで決まる。
+core / cli の changeset を手で書く従来の運用はそのまま並存し、同じ Version Packages PR に集約される。
+
+### 何を「変更」と見なすか
+
+| 対象 | 自動 publish |
+|---|---|
+| `packages/experimental/src/**` の実装（`.ts`） | する |
+| `packages/experimental/src/**` のテスト（`*.test.ts` / `*.spec.ts`） | しない（`dist` に出ず利用者への成果物が変わらないため） |
+| `packages/experimental/package.json`・README・LICENSE | しない（必要なら `pnpm changeset` で patch の changeset を手で足す） |
+
+比較の基準は `git describe` で取れる直近の `@maronn-oidc/experimental@<version>` タグ、
+つまり **Changesets が前回 publish 時に打ったタグ**。タグが 1 つも無い（まだ publish していない）
+場合は、追跡されている `src` 配下すべてを未リリース扱いにする。
+このタグ判定のために `release.yml` の checkout は `fetch-depth: 0` にしてある。
+
+### マージを忘れて変更がたまったとき
+
+生成する changeset は常に `auto-experimental-patch.md` の 1 本だけで、実行のたびに
+「未リリースの変更一覧」で上書きされる。したがって Version Packages PR をマージしないまま
+機能を 3 つ積んでも、**bump は patch 1 回のまま**で、CHANGELOG には 3 つ分の変更が並ぶ。
+
+手書きの experimental changeset が未リリースで残っているときは、自動生成はスキップする
+（人が書いたリリースノートを上書きしないため）。この場合も changeset は 1 本なので patch 1 回に収まる。
+
+### スクリプトを 2 か所で実行している理由
+
+`release.yml` では自動 changeset の生成を 2 回実行している。
+
+- **`Ensure experimental release changeset` ステップ**: `changesets/action` は起動時に
+  「未消化の changeset があるか」を見て version 段階と publish 段階を切り替える。
+  この判定より前に changeset を置かないと、version 段階に入らず publish 段階へ抜けてしまう。
+- **`ci:version` の中**: `changesets/action` は release ブランチを作り直してから version コマンドを
+  実行するため、その過程で生成物が失われても changeset が残ることを保証する。
+
+スクリプトは冪等（同じ状態なら同じ内容を書くだけ）なので、2 回実行しても changeset は 1 本のままになる。
 
 ### core が 1.0.0 に到達したときの対応
 
@@ -182,6 +251,8 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 ここまで設定すれば、以降は手動 publish は不要。
 
 1. 機能 PR で `pnpm changeset` を実行し `.changeset/*.md` をコミットして main にマージ
+   （`packages/experimental/src` の変更は changeset 不要。CI が patch の changeset を自動生成する
+   → [experimental の自動 publish](#experimental-の自動-publish)）
 2. Changesets が「Version Packages」PR を自動作成・更新（バージョンと CHANGELOG を集約）
 3. リリースしたいタイミングでその PR をマージ → main への push で CI が npm へ publish
 
@@ -221,6 +292,9 @@ provenance が付かず、Trusted Publisher を設定した次の CI publish か
 | Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |
 | CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では experimental も同時にリリースする（`pnpm changeset` で experimental の changeset を追加する） |
 | core と experimental のバージョン番号がずれている | 正常。番号の一致は要求していない（[バージョニング方針](#バージョニング方針)） |
+| CI で `@maronn-oidc/experimental を patch 以外で上げる changeset がありますが…` で落ちる | 意図した挙動。experimental の bump は patch 固定なので、該当 changeset の bump 種別を `patch` に直す（[experimental の bump は常に patch に固定する](#experimental-の-bump-は常に-patch-に固定する)） |
+| experimental の実装を変更したのに Version Packages PR が立たない | 変更が `packages/experimental/src` の実装ファイル以外（テスト・README・package.json）ではないか確認する。それ以外なら release job の `Ensure experimental release changeset` ステップのログで比較基準タグと判定理由を確認する（[experimental の自動 publish](#experimental-の自動-publish)） |
+| Version Packages PR に experimental の変更が 1 つしか載っていない | `auto-experimental-patch.md` は毎回上書きされるので通常は起きない。手書きの experimental changeset が残っていると自動生成がスキップされるため、`.changeset/` に手書きのものが無いか確認する |
 
 ---
 

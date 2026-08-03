@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  AUTO_CHANGESET_FILENAME,
   buildExperimentalPatchChangeset,
   decideExperimentalChangeset,
-  hasPendingExperimentalChangeset,
+  hasManualExperimentalChangeset,
   selectExperimentalSourceChanges,
 } from './ensure-experimental-changeset.mjs';
 
@@ -53,20 +54,30 @@ describe('selectExperimentalSourceChanges', () => {
   });
 });
 
-describe('hasPendingExperimentalChangeset', () => {
-  it('should return true when a changeset bumps @maronn-oidc/experimental', () => {
+describe('hasManualExperimentalChangeset', () => {
+  it('should return true when a hand-written changeset bumps @maronn-oidc/experimental', () => {
     assert.equal(
-      hasPendingExperimentalChangeset([
+      hasManualExperimentalChangeset([
         { file: 'a.md', bumps: { '@maronn-oidc/cli': 'patch' } },
-        { file: 'b.md', bumps: { '@maronn-oidc/experimental': 'patch' } },
+        { file: 'experimental-par.md', bumps: { '@maronn-oidc/experimental': 'patch' } },
       ]),
       true,
     );
   });
 
+  // 自動生成した changeset は書き直す対象なので「手書きがある」とは扱わない
+  it('should return false when only the auto-generated changeset bumps experimental', () => {
+    assert.equal(
+      hasManualExperimentalChangeset([
+        { file: AUTO_CHANGESET_FILENAME, bumps: { '@maronn-oidc/experimental': 'patch' } },
+      ]),
+      false,
+    );
+  });
+
   it('should return false when only other packages are bumped', () => {
     assert.equal(
-      hasPendingExperimentalChangeset([
+      hasManualExperimentalChangeset([
         { file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } },
         { file: 'b.md', bumps: { '@maronn-oidc/core': 'patch' } },
       ]),
@@ -75,7 +86,7 @@ describe('hasPendingExperimentalChangeset', () => {
   });
 
   it('should return false when there are no changesets', () => {
-    assert.equal(hasPendingExperimentalChangeset([]), false);
+    assert.equal(hasManualExperimentalChangeset([]), false);
   });
 });
 
@@ -115,7 +126,7 @@ describe('decideExperimentalChangeset', () => {
     assert.deepEqual(decision, {
       shouldCreate: true,
       reason:
-        '未リリースの packages/experimental/src の変更が 1 件あり、experimental を上げる changeset がないため patch の changeset を作成する',
+        '未リリースの packages/experimental/src の変更が 1 件あるため、patch の changeset を .changeset/auto-experimental-patch.md に書き出す',
       content: buildExperimentalPatchChangeset(['packages/experimental/src/par/par-request.ts']),
     });
   });
@@ -144,19 +155,36 @@ describe('decideExperimentalChangeset', () => {
     });
   });
 
-  // Version Packages PR のマージ忘れで複数機能がたまっても、changeset は 1 本のまま patch 1 回に収める
-  it('should not create a second changeset when a pending changeset already releases experimental', () => {
+  // Version Packages PR のマージ忘れで複数機能がたまっても、changeset は 1 本のまま patch 1 回に収める。
+  // 生成済みの changeset は毎回上書きし、たまった変更をすべて載せた状態に保つ。
+  it('should rewrite its own changeset so that every accumulated change is listed in one patch release', () => {
+    const changedPaths = [
+      'packages/experimental/src/par/par-request.ts',
+      'packages/experimental/src/token-exchange/token-exchange-request.ts',
+    ];
+
     const decision = decideExperimentalChangeset({
-      changedPaths: [
-        'packages/experimental/src/par/par-request.ts',
-        'packages/experimental/src/token-exchange/token-exchange-request.ts',
-      ],
-      changesets: [{ file: 'auto-experimental-patch.md', bumps: { '@maronn-oidc/experimental': 'patch' } }],
+      changedPaths,
+      changesets: [{ file: AUTO_CHANGESET_FILENAME, bumps: { '@maronn-oidc/experimental': 'patch' } }],
+    });
+
+    assert.deepEqual(decision, {
+      shouldCreate: true,
+      reason:
+        '未リリースの packages/experimental/src の変更が 2 件あるため、patch の changeset を .changeset/auto-experimental-patch.md に書き出す',
+      content: buildExperimentalPatchChangeset(changedPaths),
+    });
+  });
+
+  it('should not create a changeset when a hand-written changeset already releases experimental', () => {
+    const decision = decideExperimentalChangeset({
+      changedPaths: ['packages/experimental/src/par/par-request.ts'],
+      changesets: [{ file: 'experimental-par.md', bumps: { '@maronn-oidc/experimental': 'patch' } }],
     });
 
     assert.deepEqual(decision, {
       shouldCreate: false,
-      reason: '未リリースの experimental を上げる changeset が既にあるため changeset を作成しない',
+      reason: '手書きの experimental changeset が未リリースで残っているため changeset を作成しない',
     });
   });
 });

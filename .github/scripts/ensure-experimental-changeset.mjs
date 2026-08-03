@@ -11,9 +11,10 @@
  * 設計上の約束:
  *   - bump は常に patch 固定。experimental のバージョンは 0.0.x を 1 つずつ進めるだけにする
  *     （手書きの changeset が minor / major を指定していないかは verify-release-contract.mjs が検査する）。
- *   - 未リリースの experimental changeset が既にあるなら何もしない。
- *     Version Packages PR のマージを忘れて複数機能がたまっても、changeset は 1 本のままなので
- *     まとめて patch 1 回に吸収される。
+ *   - 生成する changeset は常に 1 本（`auto-experimental-patch.md`）で、実行のたびに
+ *     未リリースの変更一覧で上書きする。Version Packages PR のマージを忘れて複数機能が
+ *     たまっても、changeset は 1 本のままなのでまとめて patch 1 回に吸収される。
+ *     手書きの experimental changeset が残っているときは、そちらを尊重して何もしない。
  *   - テストコード（*.test.ts / *.spec.ts）の変更は publish 対象にしない。
  *     tsconfig の exclude と同じで dist に出ないため、利用者に届く成果物が変わらない。
  */
@@ -41,8 +42,15 @@ export function selectExperimentalSourceChanges(changedPaths) {
     .filter((path) => !TEST_FILE_PATTERN.test(path));
 }
 
-export function hasPendingExperimentalChangeset(changesets) {
-  return changesets.some(({ bumps }) => bumps[EXPERIMENTAL] !== undefined);
+/**
+ * 自動生成ではない（人が書いた）experimental の changeset があるかを返す。
+ *
+ * 自動生成した changeset は毎回書き直して変更一覧を最新にするが、手書きの changeset は
+ * リリースノートとして人の意図が入っているので上書きも二重追加もしない。
+ * どちらの場合も changeset は 1 本にとどまるので bump は patch 1 回のままになる。
+ */
+export function hasManualExperimentalChangeset(changesets) {
+  return changesets.some(({ file, bumps }) => bumps[EXPERIMENTAL] !== undefined && file !== AUTO_CHANGESET_FILENAME);
 }
 
 export function buildExperimentalPatchChangeset(sourcePaths) {
@@ -75,18 +83,18 @@ export function decideExperimentalChangeset({ changedPaths, changesets }) {
     };
   }
 
-  if (hasPendingExperimentalChangeset(changesets)) {
+  if (hasManualExperimentalChangeset(changesets)) {
     return {
       shouldCreate: false,
-      reason: '未リリースの experimental を上げる changeset が既にあるため changeset を作成しない',
+      reason: '手書きの experimental changeset が未リリースで残っているため changeset を作成しない',
     };
   }
 
   return {
     shouldCreate: true,
     reason:
-      `未リリースの packages/experimental/src の変更が ${sourceChanges.length} 件あり、` +
-      'experimental を上げる changeset がないため patch の changeset を作成する',
+      `未リリースの packages/experimental/src の変更が ${sourceChanges.length} 件あるため、` +
+      `patch の changeset を .changeset/${AUTO_CHANGESET_FILENAME} に書き出す`,
     content: buildExperimentalPatchChangeset(sourceChanges),
   };
 }

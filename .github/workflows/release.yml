@@ -22,9 +22,10 @@
 #   実装が変わっていれば patch の changeset を自動生成する。
 #   → 実装が入った時点で Version Packages PR が立ち、それをマージすれば publish される。
 #
-#   bump は常に patch 固定で、未リリースの experimental changeset が既にあるときは
-#   何も追加しない。そのため Version Packages PR のマージを忘れて複数の機能がたまっても、
-#   まとめて patch 1 回に吸収される（手書きの changeset が minor / major を指定していないかは
+#   bump は常に patch 固定。生成する changeset は `auto-experimental-patch.md` の 1 本だけで、
+#   実行のたびに未リリースの変更一覧で上書きする。そのため Version Packages PR のマージを
+#   忘れて複数の機能がたまっても、CHANGELOG には全部載ったうえで patch 1 回に吸収される
+#   （手書きの changeset が minor / major を指定していないかは
 #   `pnpm run test:release-contract` が CI で弾く）。
 #
 #   同スクリプトは changesets/action が「未消化の changeset があるか」を判定する前

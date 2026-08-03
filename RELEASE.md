@@ -304,6 +304,39 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 
 詳細は `.github/workflows/release.yml` の冒頭コメントを参照。
 
+### changeset の書き忘れは CI が止める
+
+上のフローは 1 の changeset が起点になっている。逆に言うと **changeset を書き忘れた変更は
+Version Packages PR に現れず、publish されないまま main に埋もれる**。CI は緑、PR もマージ済みで、
+気づく手がかりがどこにもないのが厄介な点。
+
+そこで CI（`.github/workflows/ci.yml` の `changeset-coverage` job、実体は
+`.github/scripts/verify-changeset-coverage.mjs`）が、**publish 可能なパッケージの出荷物を
+変更した PR には対応する changeset があること**を必須にしている。
+`packages/cli` にオプションを 1 つ追加した時点で、リリース導線が必ず立ち上がる状態になる。
+
+| 変更内容 | changeset |
+|---|---|
+| `packages/*` の実装・`package.json`・README（= npm に出るファイル） | **必須** |
+| `packages/*` のテスト・`CHANGELOG.md`・`vitest.config.ts` | 不要 |
+| `samples/*`・`tests/*`・`docs/*`・リポジトリ直下の文書 | 不要 |
+
+リリース不要と判断した変更は `pnpm changeset --empty` で空の changeset をコミットして通す。
+空 changeset は `changeset version` がバージョンを上げずに消化するため、
+「リリース不要と判断した」ことが diff に残りレビューに載る。この判断を明示的にしたいので、
+ラベルや環境変数でチェックを飛ばす手段はあえて用意していない。
+
+判定は「**その PR で追加された** changeset」だけを見る。main に溜まっている既存 changeset を
+数えてしまうと、前の PR の changeset が今回の変更の CHANGELOG 記載を肩代わりして履歴が欠ける。
+
+この job は次の 2 つの自動 PR では実行しない。
+
+- **Version Packages PR**（head branch が `changeset-release/` 始まり）: changeset を消化する側なので、
+  要求すると「changeset を消す PR が changeset を要求される」デッドロックになる
+- **Dependabot PR**: 更新対象は `packages/*` の devDependencies で出荷物は変わらない
+  （本リポジトリの `dependencies` は workspace 内部のみ、という CLAUDE.md の規約が前提）。
+  publish が必要な bump だと判断したときは、担当者が手動で changeset を足す
+
 ### provenance の自動検証と手動確認
 
 `release.yml` は publish が発生したとき、Changesets の `publishedPackages` に含まれる
@@ -338,9 +371,12 @@ provenance が付かず、Trusted Publisher を設定した次の CI publish か
 | Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |
 | CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では experimental も同時にリリースする（`pnpm changeset` で experimental の changeset を追加する） |
 | core と experimental のバージョン番号がずれている | 正常。番号の一致は要求していない（[バージョニング方針](#バージョニング方針)） |
+| CI の `changeset-coverage` が `対応する changeset がありません` で落ちる | 意図した挙動。`pnpm changeset`（リリースする場合）または `pnpm changeset --empty`（リリース不要の場合）を実行してコミットする（[changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)） |
+| packages を変更していないのに `changeset-coverage` が落ちる | 出荷物判定が想定と違う可能性。`.github/scripts/verify-changeset-coverage.mjs` の `NON_SHIPPED_FILE_PATTERNS` を確認する |
 | CI で `@maronn-oidc/experimental を patch 以外で上げる changeset がありますが…` で落ちる | 意図した挙動。experimental の bump は patch 固定なので、該当 changeset の bump 種別を `patch` に直す（[experimental の bump は常に patch に固定する](#experimental-の-bump-は常に-patch-に固定する)） |
 | experimental の実装を変更したのに Version Packages PR が立たない | 変更が `packages/experimental/src` の実装ファイル以外（テスト・README・package.json）ではないか確認する。それ以外なら release job の `Ensure experimental release changeset` ステップのログで比較基準タグと判定理由を確認する（[experimental の自動 publish](#experimental-の自動-publish)） |
 | Version Packages PR に experimental の変更が 1 つしか載っていない | `auto-experimental-patch.md` は毎回上書きされるので通常は起きない。手書きの experimental changeset が残っていると自動生成がスキップされるため、`.changeset/` に手書きのものが無いか確認する |
+
 
 ---
 

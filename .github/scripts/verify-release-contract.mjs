@@ -49,6 +49,30 @@ export function assertCoreBreakingChangeReleasesExperimental(changesets) {
   );
 }
 
+/**
+ * experimental の bump は常に patch であることを強制する。
+ *
+ * experimental のリリースは `packages/experimental/src` の変更を検出して changeset を
+ * 自動生成する運用（`.github/scripts/ensure-experimental-changeset.mjs`）にしており、
+ * 「どんな変更でも patch を 1 つ上げるだけ」に固定することで、Version Packages PR の
+ * マージ忘れで複数の変更がたまっても 1 回の patch に吸収されるようにしている。
+ * 手書きの changeset が minor / major を指定するとこの前提が崩れるため CI で弾く。
+ */
+export function assertExperimentalReleasesAreAlwaysPatch(changesets) {
+  const nonPatch = changesets.filter(
+    ({ bumps }) => bumps[EXPERIMENTAL] !== undefined && bumps[EXPERIMENTAL] !== 'patch',
+  );
+  if (nonPatch.length === 0) return;
+
+  const files = nonPatch.map(({ file, bumps }) => `${file} (${bumps[EXPERIMENTAL]})`).join(', ');
+  throw new Error(
+    `${EXPERIMENTAL} を patch 以外で上げる changeset (${files}) があります。` +
+      'experimental のバージョンは変更内容に関わらず patch 固定です。' +
+      'リリースは src の変更から changeset を自動生成する運用のため、' +
+      'bump 種別を patch に直してください（RELEASE.md「experimental の自動 publish」）。',
+  );
+}
+
 export function assertExperimentalCorePeerDependencyShape(packageJson) {
   if (packageJson.dependencies?.[CORE] !== undefined) {
     throw new Error(
@@ -69,7 +93,7 @@ export function assertExperimentalCorePeerDependencyShape(packageJson) {
   }
 }
 
-function readChangesets(changesetDirectory) {
+export function readChangesets(changesetDirectory) {
   return readdirSync(changesetDirectory)
     .filter((file) => file.endsWith('.md') && file !== 'README.md')
     .map((file) => ({
@@ -81,12 +105,17 @@ function readChangesets(changesetDirectory) {
 function verifyReleaseContract() {
   const repositoryRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
-  assertCoreBreakingChangeReleasesExperimental(readChangesets(join(repositoryRoot, '.changeset')));
+  const changesets = readChangesets(join(repositoryRoot, '.changeset'));
+
+  assertCoreBreakingChangeReleasesExperimental(changesets);
+  assertExperimentalReleasesAreAlwaysPatch(changesets);
   assertExperimentalCorePeerDependencyShape(
     JSON.parse(readFileSync(join(repositoryRoot, 'packages/experimental/package.json'), 'utf8')),
   );
 
-  console.log('Release contract verified: core / experimental peer dependency and release pairing');
+  console.log(
+    'Release contract verified: core / experimental peer dependency, release pairing and experimental patch-only bumps',
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

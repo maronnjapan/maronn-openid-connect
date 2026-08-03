@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   assertCoreBreakingChangeReleasesExperimental,
   assertExperimentalCorePeerDependencyShape,
+  assertExperimentalReleasesAreAlwaysPatch,
   parseChangesetBumps,
 } from './verify-release-contract.mjs';
 
@@ -179,6 +180,51 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
           devDependencies: { '@maronn-oidc/core': '^0.0.1' },
         }),
       /workspace:\*/,
+    );
+  });
+});
+
+describe('assertExperimentalReleasesAreAlwaysPatch', () => {
+  it('should accept a patch bump for experimental', () => {
+    assert.doesNotThrow(() => {
+      assertExperimentalReleasesAreAlwaysPatch([
+        { file: 'a.md', bumps: { '@maronn-oidc/experimental': 'patch' } },
+      ]);
+    });
+  });
+
+  it('should accept changesets that do not release experimental', () => {
+    assert.doesNotThrow(() => {
+      assertExperimentalReleasesAreAlwaysPatch([
+        { file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } },
+        { file: 'b.md', bumps: { '@maronn-oidc/core': 'major' } },
+      ]);
+    });
+  });
+
+  it('should accept an empty changeset list', () => {
+    assert.doesNotThrow(() => {
+      assertExperimentalReleasesAreAlwaysPatch([]);
+    });
+  });
+
+  it('should reject a minor bump for experimental', () => {
+    assert.throws(
+      () =>
+        assertExperimentalReleasesAreAlwaysPatch([
+          { file: 'experimental-par.md', bumps: { '@maronn-oidc/experimental': 'minor' } },
+        ]),
+      /experimental-par\.md \(minor\)/,
+    );
+  });
+
+  it('should reject a major bump for experimental', () => {
+    assert.throws(
+      () =>
+        assertExperimentalReleasesAreAlwaysPatch([
+          { file: 'breaking.md', bumps: { '@maronn-oidc/experimental': 'major' } },
+        ]),
+      /breaking\.md \(major\)/,
     );
   });
 });

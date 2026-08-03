@@ -284,7 +284,9 @@ core は低レベル署名ヘルパー（`sign` / `arrayBufferToBase64Url`）を
 | ブラウザ履歴・Referer 経由の code 漏えい（JARM §5.4） | **残余リスクとして明示**: 署名のみでは防げず、JWE 暗号化は非目標。PKCE 必須（core 既定）により漏えいコード単独での交換は不可。理解資料・生成コードコメントに明記 | ドキュメントレビュー |
 | 署名鍵の取り扱い | 新規鍵を導入せず既存 `signingKeyProvider` を再利用。秘密鍵はログ・エラーメッセージに出さない（既存規約のまま） | コードレビュー |
 | エラー情報の露出 | `error_description` は `sanitizeErrorDescription` 経由のみ。JWT 化により露出面は増えない | 単体テスト: sanitize 済み文字列の固定検証 |
-| store 実装によるフィールド欠落 | `jarmResponseMode` が store の round-trip で失われると**平文応答に静かにフォールバック**してしまう（クライアントは JARM 応答を期待して平文を受ける）。契約として「store は未知フィールドを保存する」を明記し、conformance テストで round-trip を固定する | 結合テスト: JARM リクエスト→ログイン→同意の全フロー後の応答が JWT であること |
+| store 実装によるフィールド欠落 | `jarmResponseMode` が store の round-trip で失われると**平文応答に静かにフォールバック**してしまう（クライアントは JARM 応答を期待して平文を受ける）。契約として「store は未知フィールドを保存する」を明記し、conformance テストで round-trip を固定する。影響範囲は consent ルートの 2 サイト（棚卸し #5・#6）のみ — authorize ルートの応答（棚卸し #1〜#4）はローカル変数を参照するため store 実装に依存しない（Review 2 で確定） | 結合テスト: JARM リクエスト→ログイン→同意の全フロー後の応答が JWT であること |
+| 未認証リクエストによる署名コスト消費（OP 側 DoS。JARM 仕様外の観点として Review 2 で評価） | 応答 JWT の署名（RSA 1 回）が発生するのは client_id 解決＋登録 redirect_uri 検証を通過したリクエストのみ（それ以前のエラーは非リダイレクトで署名しない）。署名対象は登録クライアント宛の応答に限定され、コストは既存の ID Token 署名・コード発行と同等。追加のレート制限は導入しない（既存タスク `tasks/p2-login-attempt-throttling-subject-scope.md` の系統に委ねる） | コードレビュー: 署名呼び出しが redirect_uri 確定後のサイトにのみ存在すること |
+| クライアント側の鍵解決 DoS（JARM §5.1） | §5.1 の DoS は「JWT の `iss` から鍵取得先を解決するクライアント」への脅威（細工された `iss` が巨大/低速な JWKS URL を指す）であり、OP 側の実装には該当しない。クライアント（E2E クライアント・利用者ドキュメント）には「`iss` が期待する OP であることを確認してから鍵取得に進む」順序を明記する（§5.1 の MUST） | ドキュメントレビュー: understanding-guide / docs の検証手順が iss 確認→鍵取得の順であること |
 
 **ログ禁止情報**: 応答 JWT（`code` を含む）・認可コード・署名鍵。生成コードのログには transaction id / client_id / 応答モード種別のみを出力してよい。
 
@@ -320,23 +322,26 @@ packages/cli  ─────> @maronn-oidc/experimental（許可・生成コー
 
 ### CLI生成コードからの利用方法
 
-生成テンプレートの変更はすべて共有ファイル `packages/cli/src/frameworks/hono/templates.ts`（＋conformance テンプレートを持つ `web-standard/templates.ts`）に閉じる。本仕様策定時（2026-08-02, main 相当）の実地調査による**応答構築サイトの棚卸し**:
+生成テンプレートの変更はすべて共有ファイル `packages/cli/src/frameworks/hono/templates.ts`（＋conformance テンプレートを持つ `web-standard/templates.ts`）に閉じる。Review 2（2026-08-03, main 45997d8）で再確認した**応答構築サイトの棚卸し**:
 
-| # | サイト | 位置（templates.ts） | 種別 | JARM 対応 |
-|---|---|---|---|---|
-| 1 | `buildErrorRedirect` ヘルパー | 1829-1844 | エラー（prompt=none 系の全エラーが経由: 2019-2103 で 8 回呼び出し） | ヘルパー自体をモード対応にする（トランザクションを引数に追加） |
-| 2 | authorize ルート: 即時発行（prompt=none 成功） | 2133-2138 | 成功 | `buildSuccessRedirect` 化 |
-| 3 | authorize ルート: SSO 再利用パス | 2198-2203 | 成功 | `buildSuccessRedirect` 化 |
-| 4 | authorize ルート: catch 節の `AuthorizationError` リダイレクト | 2225-2238 | エラー | JARM モードのローカル解決結果で分岐（トランザクション保存前のエラーがあるため） |
-| 5 | consent ルート: 拒否（access_denied） | 3953-3961 | エラー | トランザクションの `jarmResponseMode` で分岐 |
-| 6 | consent ルート: 承認（code 発行） | 4012-4018 | 成功 | `buildSuccessRedirect` 化 |
+| # | サイト | 位置（templates.ts） | 種別 | JARM モードの取得元 | JARM 対応 |
+|---|---|---|---|---|---|
+| 1 | `buildErrorRedirect` ヘルパー | 1829-1844 | エラー（prompt=none 系の全エラーが経由: 2019〜2108 で 8 回呼び出し） | 呼び出し元のローカル変数 `transaction` | ヘルパー自体をモード対応にする（トランザクションを引数に追加） |
+| 2 | authorize ルート: 即時発行（prompt=none 成功） | 2138-2143 | 成功 | ローカル変数 `transaction` | `buildSuccessRedirect` 化 |
+| 3 | authorize ルート: SSO 再利用パス | 2211-2216 | 成功 | ローカル変数 `transaction` | `buildSuccessRedirect` 化 |
+| 4 | authorize ルート: catch 節の `AuthorizationError` リダイレクト | 2236-2251 | エラー | try 前に宣言する JARM モードのローカル変数 | ローカル解決結果で分岐（トランザクション保存前のエラーがあるため） |
+| 5 | consent ルート: 拒否（access_denied） | 3965-3974 | エラー | store から再読した `transaction`（`getAuthTransaction` :3957） | トランザクションの `jarmResponseMode` で分岐 |
+| 6 | consent ルート: 承認（code 発行） | 4024-4031 | 成功 | store から再読した `transaction` | `buildSuccessRedirect` 化 |
+
+サイト 1〜4（authorize ルート）はすべて `createAuthTransaction` 直後のローカル変数 `transaction`（または try 前のローカル変数）を参照するため store round-trip に依存しない。**store の未知フィールド保存契約に依存するのはサイト 5・6（consent ルート）のみ**である（Review 2 で確定。セキュリティ要件の該当行も参照）。
 
 実装上の必須要件:
 
 1. **挿入はすべて条件付き補間**（`${...}` が jarm 無効時に空文字列/現行文字列へ展開される形）とし、jarm 無効時の生成物を現行とバイト同一に保つ
 2. **auth transaction の保存**: `createAuthTransaction`（core）が返すトランザクションに `{ ...transaction, jarmResponseMode: 'query.jwt' }` を合成してから store へ put する。読み出し側は `JarmAuthTransactionFields` 交差型で参照する。core の `AuthTransaction` インターフェースは変更しない（構造的型付けにより余剰プロパティの保存・参照は型安全に可能）
-3. **サイト 4（catch 節）の注意**: `AuthorizationError` はトランザクション保存前にも投げられる。catch 節では「リクエスト処理中に解決した JARM モードのローカル変数」を参照し、モード解決前のエラー（client_id 不明等）は必ず非リダイレクトなので JARM 分岐に到達しない
-4. **応答 JWT 生成に使う鍵**: 各サイトのスコープに既にある `signingKeyProvider` 由来の鍵束縛を再利用する（新規の鍵取得経路を作らない）。サイトのスコープに鍵束縛が無い場合は当該サイト内で `getSigningKey()` を呼ぶ（Token Exchange Review 1 で確立した「分岐内で独自に取得」方式）
+3. **サイト 4（catch 節）の注意**: `AuthorizationError` はトランザクション保存前にも投げられる。catch 節は try ブロック内のローカル変数を参照できないため、**JARM モードの変数は PAR の `parParamsBinding`（`let params = rawParams;` を try 前に置く :1691-1693）と同じく try の前で `let` 宣言し、try 内の解釈ステップで代入する**。モード解決前のエラー（client_id 不明等）は必ず非リダイレクトなので JARM 分岐に到達しない
+4. **応答 JWT 生成に使う鍵**: 全ルート共通の context ミドルウェア（`app.use('*')` :227）が `options.signingKeyProvider` 由来の鍵を `c.set('privateKey' / 'publicJwk' / 'keyId')`（:257-259）で公開しており、authorize / consent ルートでも `c.get(...)` で取得できる。生成コードはこれを `SigningKey { privateKey, publicJwk, keyId }` に組み立てて `createJarmResponseJwt` に渡す（`getSigningKey()` の再呼び出しはしない）。この鍵の公開鍵は jwks ルート（:3493-3511）が**最優先で** `/.well-known/jwks.json` に載せるため、クライアントは `kid` で検証鍵を解決できる（Review 2 で確認）
+5. **`buildErrorRedirect` の async 化戦略（旧 U2 の解決）**: ヘルパー定義は条件付き補間で丸ごと切り替える（jarm 無効時は現行の同期版そのまま、有効時は `transaction` 引数を先頭に追加した async 版）。8 箇所の呼び出しサイトは、`${jarmAwait}`（有効時 `'await '` / 無効時 `''`）と `${jarmTxnArg}`（有効時 `'transaction, '` / 無効時 `''`）の 2 つの補間変数で `return c.redirect(${jarmAwait}buildErrorRedirect(${jarmTxnArg}transaction.redirectUri, ...))` の形に書き換える。無効時の展開結果は現行文字列と一致するためバイト同一が保たれる（PAR の `let`/`const` 切り替えと同じ技法）
 
 ## テスト計画
 
@@ -408,11 +413,16 @@ packages/cli  ─────> @maronn-oidc/experimental（許可・生成コー
 
 | ID | 内容 | 解決予定 |
 |---|---|---|
-| U1 | `buildErrorRedirect` の 8 呼び出しサイト（`templates.ts:2019-2103`）すべてで `transaction`（JARM モードを持つ）がスコープにあることの網羅確認。1 箇所でもトランザクション不在のサイトがあれば、そのサイトの扱い（平文フォールバック）を仕様に追記する | Review 2（テンプレート実地確認） |
-| U2 | 応答 JWT 生成が async になることで、現在同期関数である `buildErrorRedirect` の呼び出しサイトに `await` 追加が必要になる。条件付き補間でバイト同一を保ちながら同期/非同期を切り替える具体的なテンプレート戦略（ヘルパーを常に async にすると無効時もバイト差分が出るため、呼び出し式ごと補間する等）の確定 | Review 2 |
 | U3 | E2E 専用クライアント（`tests/e2e/apps`）への JARM 検証組み込み方（既存クライアントの構造確認） | Review 3 |
 
-セキュリティ上の未解決事項: なし（U1・U2 はテンプレート実装戦略の確認事項であり、未確認のまま承認はしない）。
+セキュリティ上の未解決事項: なし。
+
+### 解決済み
+
+| ID | 内容 | 解決内容 | 解決日 |
+|---|---|---|---|
+| U1 | `buildErrorRedirect` の 8 呼び出しサイトすべてで `transaction` がスコープにあるかの網羅確認 | 8 サイト（`templates.ts:2019, 2035, 2048, 2061, 2068, 2095, 2101, 2108`）すべてが `createAuthTransaction`（:2003）直後のローカル変数 `transaction` を参照することをテンプレート通読で確認。トランザクション不在のサイトは無い。put（:2007）は全サイトより前に完了しており、参照はローカル変数のため store round-trip にも依存しない | Review 2（2026-08-03） |
+| U2 | 応答 JWT 生成の async 化と jarm 無効時バイト同一の両立戦略 | ヘルパー定義の丸ごと条件付き補間＋呼び出しサイトの `${jarmAwait}` / `${jarmTxnArg}` 補間で解決（「CLI生成コードからの利用方法」実装上の必須要件 5 に確定内容を記載） | Review 2（2026-08-03） |
 
 ## 将来の昇格考慮
 

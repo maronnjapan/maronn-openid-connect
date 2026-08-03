@@ -34,7 +34,11 @@
 | `packages/core/src/index.ts:27,150,170,229-230` | `AuthorizationError` / `sanitizeErrorDescription` / `AuthTransaction` / `SigningKey(Provider)` が公開済み。低レベル署名ヘルパー（`sign` / `arrayBufferToBase64Url`）は非公開（JWS 自前実装の根拠） | 2026-08-02 |
 | `packages/cli/src/features.ts:37` | `EXPERIMENTAL_FEATURES = ['par', 'token-exchange']`（jarm 追加先の機構） | 2026-08-02 |
 | `packages/cli/src/frameworks/hono/templates.ts:1650-1660` | `effectiveParams` の束縛位置（request object マージ後。response_mode の読み出し元） | 2026-08-02 |
-| `packages/cli/src/frameworks/hono/templates.ts:1829-1844, 2019-2103` | `buildErrorRedirect` ヘルパーと 8 呼び出しサイト（応答構築サイト棚卸し #1） | 2026-08-02 |
+| `packages/cli/src/frameworks/hono/templates.ts:1829-1844, 2019-2108` | `buildErrorRedirect` ヘルパーと 8 呼び出しサイト（応答構築サイト棚卸し #1）。Review 2 で 8 サイト全件がローカル変数 `transaction`（`createAuthTransaction` :2003 直後）を参照することを通読確認（U1 解決） | 2026-08-03 |
+| `packages/cli/src/frameworks/hono/templates.ts:227, 257-259` | 全ルート共通 context ミドルウェア（`app.use('*')`）が `signingKeyProvider` 由来の `privateKey` / `publicJwk` / `keyId` を全ルートへ公開（authorize / consent ルートでの応答 JWT 署名鍵の取得元） | 2026-08-03 |
+| `packages/cli/src/frameworks/hono/templates.ts:3490-3567` | jwks ルートが `signingKeys`（無ければ `publicJwk` / `keyId` フォールバック）を最優先で `/.well-known/jwks.json` に公開 → JARM 応答 JWT の `kid` が jwks_uri で解決可能 | 2026-08-03 |
+| `packages/core/src/authorization-request.ts:286-313` | `AuthorizationError` コンストラクタが `errorDescription` を `sanitizeErrorDescription` で必ずサニタイズ → 攻撃者制御の `response_mode` 値を invalid_request の文言にエコーしてもリダイレクト URL への注入は成立しない（Review 2 のインジェクション確認） | 2026-08-03 |
+| `packages/cli/src/frameworks/hono/templates.ts:1691-1693` | PAR の `parParamsBinding`（try 前の `let` 宣言）— catch 節から参照する JARM モード変数の宣言位置の先例 | 2026-08-03 |
 | `packages/cli/src/frameworks/hono/templates.ts:1940-1942` | `redirectUri` / `state` の確定位置（response_mode 検証の挿入点） | 2026-08-02 |
 | `packages/cli/src/frameworks/hono/templates.ts:2133-2138, 2198-2203, 2225-2238, 3953-3961, 4012-4018` | 成功・エラーのインライン応答構築サイト（棚卸し #2〜#6） | 2026-08-02 |
 | `packages/cli/src/frameworks/hono/templates.ts:3628-3641` | PAR の discovery スプレッドマージ実装（jarm のメタデータ追加が踏襲するパターン） | 2026-08-02 |
@@ -57,3 +61,5 @@
 3. **`unsupported-jwt-mode` のエラーは平文クエリで返す**: JARM は「AS が対応しない response_mode を要求された場合」の応答形式を規定していない（2026-08-02 原文確認: 該当する規範文言なし）。対応できないモードでは応答を組めないため平文とする設計判断
 4. **`.jwt` 系以外の response_mode 値は従来どおり無視する**: response_mode の一般的な拒否規則は JARM のスコープ外。挙動変更を JARM 系列に限定する隔離原則による設計判断
 5. **署名 alg は RS256 固定**: `ClientInfo` closed interface（core 無変更制約）＋ JARM §3 の未登録時デフォルトが RS256 であることの両立点
+6. **JARM §5.1 の DoS はクライアント側の脅威**: §5.1 は「細工された JWT の `iss` が巨大・低速な JWKS URL を指し、鍵取得でクライアントの帯域・計算資源を消費させる」攻撃であり、「クライアントは鍵取得にこの JWT の情報を使う前に issuer が既知かつ期待どおりであることを確認 MUST」と規定する（2026-08-03 原文確認）。OP 実装には該当せず、クライアント向けドキュメント（understanding-guide の検証手順）に iss 確認→鍵取得の順序として反映。OP 側の署名コスト DoS は JARM 仕様外の観点として Review 2 で別途評価し、セキュリティ要件表に記録
+7. **`typ` ヘッダー非定義・最大寿命 10 分 RECOMMENDED の再確認**: 2026-08-03 に原文へ再アクセスし、応答 JWT の `typ` を定義する規定が無いこと・§2.1 の「A maximum JWT lifetime of 10 minutes is RECOMMENDED」を再確認（Review 1 の読解に読み違いなし）

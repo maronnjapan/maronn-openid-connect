@@ -34,3 +34,31 @@
   - 生成コードの実挙動（条件付き補間後の出力・バイト同一性）は実装時の完了条件 2・3 でのみ最終確認できる（仕様段階の限界として既知。PAR / Token Exchange と同じ扱い）
 - **判定**: **Pass with changes**（指摘 1 を同日中に修正反映済み。仕様の完全性の観点で残る事項はすべて未解決事項表（U1〜U3）に明示されており、いずれもセキュリティ上の未解決事項ではない。Review 2 の観点（セキュリティ・適合性）へ引き継ぐ）
 - **次回可能日**: 2026-08-03
+
+## Review 2
+
+- **日付**: 2026-08-03（Review 1 と異なる暦日 / `next_review_on` 到達を確認して実施）
+- **観点**: セキュリティと適合性（認証認可上の脅威: リプレイ・CSRF・SSRF・インジェクション / 鍵・トークン・シークレットの扱い / ログ禁止情報 / 有効期限 / エラー情報の露出 / package 境界との整合 / CLI 後方互換・明示的有効化 / 生成コードの安全性 / 切り出し可能な構造 / セキュリティ要件のテスト検証可能性）。Review 1 との差分として、前回残した U1・U2（テンプレート実地確認）の解決を含む
+- **確認資料**:
+  - JARM Final 原文（2026-08-03 再アクセス。§5.1〜5.4 の各内容を精読: §5.1 は**クライアント側**の鍵解決 DoS（細工された `iss` → 巨大/低速 JWKS URL。iss 確認を鍵取得より先に行う MUST）、§5.2 は単一メッセージの完全性保護＋PKCE 併用推奨、§5.3 は `iss`/`aud` による mix-up 防御、§5.4 は JWE のみが code 漏えいを解決。`typ` 非定義・最大寿命 10 分 RECOMMENDED も再確認 → Review 1 の読解に読み違いなし）
+  - `packages/cli/src/frameworks/hono/templates.ts`（main 45997d8 で通読）: `buildErrorRedirect` 定義 :1829-1844 と 8 呼び出しサイト :2019, 2035, 2048, 2061, 2068, 2095, 2101, 2108 / `createAuthTransaction`〜put :2003-2011 / 成功インライン :2138-2143, 2211-2216 / catch 節 :2236-2251 / consent ルート :3957（`getAuthTransaction`）, 3965-3974, 4024-4031 / context ミドルウェア :227, 257-259 / jwks ルート :3490-3567 / PAR の try 前 `let` 宣言 :1691-1693
+  - `packages/core/src/authorization-request.ts:286-313`（`AuthorizationError` コンストラクタのサニタイズ）/ `packages/core/src/error-utils.ts:14-26`（`sanitizeErrorDescription` が RFC 6749 §5.2 文字集合へ強制）
+- **指摘と確認結果**:
+  1. **[U1 解決] `buildErrorRedirect` 8 サイトの網羅確認**: 8 サイト全件が `createAuthTransaction`（:2003）直後の**ローカル変数** `transaction` を参照しており、トランザクション不在のサイトは無い。put（:2007）は全サイトより前に完了。ローカル変数参照のため authorize ルートの応答（棚卸し #1〜#4）は store round-trip に依存せず、store の未知フィールド保存契約に依存するのは consent ルートの 2 サイト（#5・#6、`getAuthTransaction` :3957 で再読）のみと確定 → 棚卸し表とセキュリティ要件表を更新
+  2. **[U2 解決] async 化とバイト同一の両立戦略**: ヘルパー定義の丸ごと条件付き補間＋呼び出しサイトの `${jarmAwait}` / `${jarmTxnArg}` 補間（PAR の `let`/`const` 切り替え :1691-1693 と同じ技法）で確定 → 実装上の必須要件 5 として仕様に追記
+  3. **[新規指摘・修正] catch 節から参照する JARM モード変数のスコープ**: サイト 4 の分岐が参照する「ローカル解決結果」は try 内で宣言すると catch から見えない。PAR の `parParamsBinding` と同じく **try 前の `let` 宣言**を必須要件 3 に明記
+  4. **[新規指摘・修正] 署名鍵の取得経路の具体化**: authorize / consent ルートには既存の鍵束縛が無いが、全ルート共通 context ミドルウェア（:227, 257-259）が `signingKeyProvider` 由来の `privateKey` / `publicJwk` / `keyId` を公開しており `c.get(...)` で取得できる。この鍵の公開鍵は jwks ルート（:3493-3511）が最優先で公開するため `kid` が jwks_uri で解決可能（クライアント検証可能性の確認）。Review 1 の「サイト内で `getSigningKey()` を呼ぶ」記述を context 取得方式へ差し替え（provider の再呼び出し不要・既存ルートの流儀と一致）
+  5. **[インジェクション確認・指摘なし] 攻撃者制御値のエコー**: `unsupported-jwt-mode` エラーは攻撃者制御の `response_mode` 値を error_description にエコーするが、`AuthorizationError` コンストラクタ（:301）と `buildErrorRedirect`（:1839）の双方が `sanitizeErrorDescription`（RFC 6749 §5.2 文字集合強制）を通すため、リダイレクト URL・JWT クレームいずれの経路でも注入は成立しない。JARM クレーム経路のサニタイズは仕様のバリデーション 2 で既に固定済み
+  6. **[脅威モデル確認・仕様に追記] DoS の整理**: JARM §5.1 の DoS はクライアント側の脅威で OP 実装には該当しない（一次資料で確定。sources.md 記録 6）。OP 側の署名コスト DoS（未認証リクエストに RSA 署名させる）は JARM 仕様外の観点として評価: 署名は client_id 解決＋登録 redirect_uri 検証通過後のみ発生し、コストは既存の ID Token 署名と同等 → セキュリティ要件表に 2 行追加し、understanding-guide のクライアント検証手順を「iss 確認 → 鍵取得」の順序（§5.1 MUST）へ修正
+  7. **[確認・指摘なし] CSRF / SSRF / リプレイ / 鍵・ログ・有効期限**: (a) CSRF: consent の `validateCsrfToken` 経路は不変で新規フォーム・状態変更エンドポイントを追加しない (b) SSRF: OP 側に新規の外部フェッチなし（JWKS 取得はクライアント側の話） (c) リプレイ: `exp`（60 秒デフォルト・上限 600 秒 = §2.1 の 10 分内）＋ code 単回使用・PKCE（core 既存）で仕様の表どおり (d) 鍵: 新規鍵素材なし・秘密鍵ログ禁止は明記済み (e) エラー露出: JWT 化で露出面は増えない（クレームは平文クエリと同一集合）
+  8. **[適合性確認・指摘なし] package 境界・後方互換**: core 無変更（response_mode は core が解釈しない）・subpath export・experimental→core の依存方向・デフォルト無効（`EXPERIMENTAL_FEATURES` は resolve 規則でデフォルト false）・jarm 無効時バイト同一（完了条件 3）は Review 1 から変更なく整合。セキュリティ要件は全行に検証方法（単体/結合/コードレビュー/ドキュメントレビュー）が紐づいており検証可能
+- **修正**（同日反映）:
+  - specification.md: 棚卸し表の行番号更新と「JARM モードの取得元」列の追加（指摘 1）/ 必須要件 3 の try 前 `let` 宣言（指摘 3）/ 必須要件 4 の context 取得方式への差し替え（指摘 4）/ 必須要件 5 の新設（指摘 2）/ セキュリティ要件表へ store round-trip 影響範囲の限定・OP 側署名コスト DoS・§5.1 クライアント側 DoS の行を追加（指摘 6）/ 未解決事項から U1・U2 を解決済み表へ移動
+  - understanding-guide.md: クライアント検証手順を iss 確認先行の 6 ステップへ修正（指摘 6）/ store 契約の影響範囲を consent 経路のみに限定（指摘 1）
+  - sources.md: リポジトリ内参照 5 件追加（U1 通読・ミドルウェア・jwks ルート・AuthorizationError サニタイズ・PAR let 宣言）/ 記録 6・7 を追加（§5.1 の位置付け・原文再確認）
+- **残リスク**:
+  - U3（E2E クライアントへの JARM 検証組み込み方）が未解決のまま Review 3 へ持ち越し（セキュリティ上の未解決事項ではない）
+  - store 実装が未知フィールドを落とす場合の平文フォールバックは、契約明記＋conformance テストで検出可能だが、実装前の仕様段階では実挙動を確認できない（既知の仕様段階の限界）
+  - 生成コードのバイト同一性・条件付き補間の実挙動は実装時の完了条件 2・3 でのみ最終確認できる（Review 1 から継続の既知事項）
+- **判定**: **Pass with changes**（指摘 3・4・6 を同日中に修正反映済み。セキュリティ上の未解決事項・Blocked 相当の重大問題はなし。U1・U2 は根拠付きで解決。Review 3 の観点（実装着手可否・U3）へ引き継ぐ）
+- **次回可能日**: 2026-08-04

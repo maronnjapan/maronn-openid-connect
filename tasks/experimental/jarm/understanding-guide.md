@@ -125,7 +125,7 @@ JWT ペイロード（デコード後。JARM §2.1 の実例と同構造）:
 | 応答 JWT | その場で生成（保存しない） | `iss` / `aud` / `exp` ＋応答パラメータ。署名は既存 OP 鍵 |
 | discovery 追加フィールド | `/.well-known/openid-configuration` | `response_modes_supported: ['query', 'query.jwt', 'jwt']` / `authorization_signing_alg_values_supported: ['RS256']`（JARM §4） |
 
-新しいストア契約は**追加しない**。ただし auth transaction store（利用者が実装を差し替え可能）が「未知のフィールドを透過的に保存する」ことが前提になる。JSON シリアライズでオブジェクトを丸ごと保存する通常の実装なら自然に満たされるが、フィールドを列挙してコピーする実装だと `jarmResponseMode` が落ち、**平文応答へ静かにフォールバック**する。conformance テストの全フローテストがこの round-trip を検出する。
+新しいストア契約は**追加しない**。ただし auth transaction store（利用者が実装を差し替え可能）が「未知のフィールドを透過的に保存する」ことが前提になる。JSON シリアライズでオブジェクトを丸ごと保存する通常の実装なら自然に満たされるが、フィールドを列挙してコピーする実装だと `jarmResponseMode` が落ち、**平文応答へ静かにフォールバック**する。この前提に依存するのはログイン・同意画面を挟む経路（consent ルートの応答）のみで、prompt=none や SSO 再利用のように authorize ルート内で完結する応答はローカル変数を参照するため影響を受けない。conformance テストの全フローテストがこの round-trip を検出する。
 
 ## 用語集
 
@@ -176,9 +176,10 @@ npx maronn-oidc generate hono --enable jarm
 
 1. 認可リクエストに `response_mode=query.jwt` を付ける
 2. コールバックで `response` クエリパラメータを取り出す
-3. OP の `jwks_uri` から公開鍵を取得し、JWS（RS256）を検証する。`alg: none` は拒否する（JARM §2.4）
-4. `iss` が期待する OP の issuer と一致・`aud` が自分の client_id と一致・`exp` が未来であることを確認する
-5. クレームから `code` / `state` を取り出し、以降は通常の code フローと同じ
+3. **先に** JWT の `iss` クレームが期待する OP の issuer と一致することを確認する。JARM §5.1 は「鍵の取得にこの JWT の情報を使う前に、issuer が既知かつ期待どおりであることを確認しなければならない（MUST）」と規定している（細工された `iss` が巨大・低速な JWKS URL を指す DoS への対策。jwks_uri を自分の設定から固定で引く実装でも、この順序にしておくと安全）
+4. 期待した OP の `jwks_uri` から公開鍵を取得し、JWS（RS256）を検証する。`alg: none` は拒否する（JARM §2.4）
+5. `aud` が自分の client_id と一致・`exp` が未来であることを確認する
+6. クレームから `code` / `state` を取り出し、以降は通常の code フローと同じ
 
 ## 一次資料の読み方ガイド
 

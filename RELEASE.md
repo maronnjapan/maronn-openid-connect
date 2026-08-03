@@ -61,14 +61,36 @@ peer なので、利用者のアプリが持っている core が experimental �
 
 ### peer range は「下限」を宣言する
 
-range は `>=0.0.1 <1.0.0`。これは「experimental が実際に要求する最低の core」を表す下限であり、
+range は `>=0.1.0 <1.0.0`。これは「experimental が実際に要求する最低の core」を表す下限であり、
 バージョン番号の一致を要求するものではない。したがって experimental が 0.5.0 まで進んでも、
 core 0.1.0 のままで問題なく動く。
 
-**experimental が新しく追加された core の API を使い始めたときは、同じ PR で下限を上げる**
-（例: `>=0.2.0 <1.0.0`）。これをやると、古い core を使っている利用者のインストール時に
-`unmet peer` が出て気づける。逆に下限を上げ忘れると、実行時に
-`does not provide an export named ...` まで気づけないので、core の新 API を使う変更では必ず見直す。
+**下限は「次に publish される core のバージョン」以上でなければならない。**
+experimental はモノレポ内の core（= 次に publish される core）だけを相手にビルド・テストされる。
+それより古い core を下限に据えることは、**一度も試していない組み合わせを「動く」と宣言する**
+ことに等しい。下限を上げておけば、古い core を使っている利用者のインストール時に
+`unmet peer` が出て気づける。
+
+この規則は `pnpm run test:release-contract`
+（`.github/scripts/verify-release-contract.mjs` の `assertExperimentalCorePeerRangeCoversNextCore`）が
+CI で強制する。未消化の changeset から次の core バージョンを計算し、下限がそれを下回っていれば
+上げるべき値を添えて落ちる。
+
+#### 上げ忘れると何が起きたか（実際の事故）
+
+`@maronn-oidc/experimental@0.0.1` は core のステップ関数
+（`extractClientCredentials` / `resolveAuthenticatedTokenClient` /
+`validateClientAuthMethod` / `verifyClientSecret`）を import した状態で、下限を `>=0.0.1` の
+まま publish された。これらを export する core は当時まだ publish されておらず、
+`@maronn-oidc/core@0.0.1` との組み合わせがインストールできてしまい、利用者のバンドル時に
+
+```
+✘ [ERROR] No matching export in "node_modules/@maronn-oidc/core/dist/index.js"
+  for import "extractClientCredentials"
+```
+
+で落ちた。モノレポの CI は常に HEAD の core に対して experimental をビルド・テストするため、
+**この組み合わせはどのテストにも現れない**。下限だけが唯一の防波堤なので、CI で機械的に検査する。
 
 caret（`^0.0.1` など）は使わない。semver では `0.0.x` の caret が完全一致扱いになるため、
 core を minor 上げするだけで Changesets の「peer dependent は major で上げる」ルールが発火し、

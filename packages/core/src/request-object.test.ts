@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { parseRequestObject, RequestObjectError } from './request-object';
-import { exportPublicJwk } from './jwks';
-import type { JwkSet } from './jwks';
-import { sign, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils';
+import { parseRequestObject, RequestObjectError } from './request-object.js';
+import { exportPublicJwk } from './jwks.js';
+import type { JwkSet } from './jwks.js';
+import { sign, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
 
 function encodeSegment(value: unknown): string {
   return arrayBufferToBase64Url(stringToArrayBuffer(JSON.stringify(value)));

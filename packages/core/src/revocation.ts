@@ -17,9 +17,9 @@
  *   access  を revoke → 関連 refresh は revoke しない (MAY、本実装では採用しない)
  */
 
-import type { AccessTokenInfo } from './userinfo';
-import type { RefreshTokenInfo } from './token-request';
-import { sanitizeErrorDescription } from './error-utils';
+import type { AccessTokenInfo } from './userinfo.js';
+import type { RefreshTokenInfo } from './token-request.js';
+import { sanitizeErrorDescription } from './error-utils.js';
 
 export enum RevocationErrorCode {
   InvalidRequest = 'invalid_request',

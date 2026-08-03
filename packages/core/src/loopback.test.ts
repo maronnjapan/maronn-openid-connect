@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLoopbackHostname } from './loopback';
+import { isLoopbackHostname } from './loopback.js';
 
 describe('isLoopbackHostname', () => {
   it('should accept localhost, IPv4 127/8, and IPv6 loopback hosts', () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { authenticateClient } from './client-auth';
-import { TokenError, TokenErrorCode } from './token-request';
-import type { TokenClientInfo, TokenClientResolver } from './token-request';
+import { authenticateClient } from './client-auth.js';
+import { TokenError, TokenErrorCode } from './token-request.js';
+import type { TokenClientInfo, TokenClientResolver } from './token-request.js';
 
 function createResolver(clients: TokenClientInfo[]): TokenClientResolver {
   return {

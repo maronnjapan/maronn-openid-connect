@@ -1,5 +1,5 @@
 import type { webcrypto } from 'node:crypto';
-import { getJwaAlgorithm, rsaModulusBitLength } from './crypto-utils';
+import { getJwaAlgorithm, rsaModulusBitLength } from './crypto-utils.js';
 
 export interface SigningKey {
   privateKey: CryptoKey;

@@ -5,8 +5,10 @@
     "lib": [
       "ES2022"
     ],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    // core と同じ理由で NodeNext を使う（相対 import の拡張子を必須にして、
+    // "type": "module" の package が Node の ESM ローダで解決できる形で emit されるようにする）。
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     // Emit
     "declaration": true,
     "declarationMap": true,

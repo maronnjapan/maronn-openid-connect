@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import {
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
-} from './access-token-issuer';
-import type { AccessTokenPayload } from './access-token';
+} from './access-token-issuer.js';
+import type { AccessTokenPayload } from './access-token.js';
 
 async function generateRsaKeyPair() {
   return crypto.subtle.generateKey(

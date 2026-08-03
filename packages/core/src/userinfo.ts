@@ -3,8 +3,8 @@
  * OIDC Core 1.0 Section 5.3
  */
 
-import { sign, arrayBufferToBase64Url, stringToArrayBuffer, getJwaAlgorithm } from './crypto-utils';
-import { sanitizeErrorDescription } from './error-utils';
+import { sign, arrayBufferToBase64Url, stringToArrayBuffer, getJwaAlgorithm } from './crypto-utils.js';
+import { sanitizeErrorDescription } from './error-utils.js';
 
 /**
  * UserInfoエンドポイントのエラーコード

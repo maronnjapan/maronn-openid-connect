@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { buildProviderMetadata, ProviderMetadataConfig } from './discovery';
+import { buildProviderMetadata, ProviderMetadataConfig } from './discovery.js';
 
 let rsa256Key: CryptoKey;
 let rsa384Key: CryptoKey;

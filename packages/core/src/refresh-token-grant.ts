@@ -1,11 +1,11 @@
-import { TokenError, TokenErrorCode } from './token-error';
+import { TokenError, TokenErrorCode } from './token-error.js';
 import type {
   RefreshTokenInfo,
   RefreshTokenResolver,
   TokenRequestContext,
   TokenRequestParams,
   ValidatedRefreshTokenRequest,
-} from './token-request';
+} from './token-request.js';
 
 /**
  * {@link resolveRefreshToken} の戻り値。

@@ -9,16 +9,16 @@ import {
   handleLoginFailure,
   completeAuthTransaction,
   requiresReauthentication,
-} from './auth-transaction';
+} from './auth-transaction.js';
 import type {
   AuthTransaction,
   AuthTransactionStore,
   ConsentResolver,
   SessionInfo,
   SessionResolver,
-} from './auth-transaction';
-import { AuthorizationError, AuthorizationErrorCode } from './authorization-request';
-import type { ValidatedAuthorizationRequest } from './authorization-request';
+} from './auth-transaction.js';
+import { AuthorizationError, AuthorizationErrorCode } from './authorization-request.js';
+import type { ValidatedAuthorizationRequest } from './authorization-request.js';
 
 function createValidatedRequest(
   overrides?: Partial<ValidatedAuthorizationRequest>,

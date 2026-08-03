@@ -16,13 +16,13 @@ import {
   validateUserInfoTokenExpiration,
   UserInfoError,
   UserInfoErrorCode,
-} from './userinfo';
+} from './userinfo.js';
 import type {
   AccessTokenInfo,
   AccessTokenResolver,
   UserClaims,
   UserClaimsResolver,
-} from './userinfo';
+} from './userinfo.js';
 
 const NOW = 1_700_000_000;
 

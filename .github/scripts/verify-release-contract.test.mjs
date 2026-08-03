@@ -4,8 +4,12 @@ import { describe, it } from 'node:test';
 import {
   assertCoreBreakingChangeReleasesExperimental,
   assertExperimentalCorePeerDependencyShape,
+  assertExperimentalCorePeerRangeCoversNextCore,
   assertExperimentalReleasesAreAlwaysPatch,
+  computeNextVersion,
   parseChangesetBumps,
+  parseMinimumCoreVersion,
+  resolveNextCoreVersion,
 } from './verify-release-contract.mjs';
 
 describe('parseChangesetBumps', () => {
@@ -225,6 +229,126 @@ describe('assertExperimentalReleasesAreAlwaysPatch', () => {
           { file: 'breaking.md', bumps: { '@maronn-oidc/experimental': 'major' } },
         ]),
       /breaking\.md \(major\)/,
+    );
+  });
+});
+
+describe('parseMinimumCoreVersion', () => {
+  it('should read the lower bound from a range with an upper bound', () => {
+    assert.equal(parseMinimumCoreVersion('>=0.1.0 <1.0.0'), '0.1.0');
+  });
+
+  it('should read the lower bound from a range without an upper bound', () => {
+    assert.equal(parseMinimumCoreVersion('>=0.2.3'), '0.2.3');
+  });
+
+  it('should tolerate extra whitespace around the comparator', () => {
+    assert.equal(parseMinimumCoreVersion('  >= 1.2.3   <2.0.0 '), '1.2.3');
+  });
+
+  it('should return null for a caret range', () => {
+    assert.equal(parseMinimumCoreVersion('^0.1.0'), null);
+  });
+
+  it('should return null for a wildcard range', () => {
+    assert.equal(parseMinimumCoreVersion('*'), null);
+  });
+});
+
+describe('computeNextVersion', () => {
+  it('should raise the patch segment for a patch bump', () => {
+    assert.equal(computeNextVersion('0.1.0', 'patch'), '0.1.1');
+  });
+
+  it('should raise the minor segment and reset patch for a minor bump', () => {
+    assert.equal(computeNextVersion('0.0.1', 'minor'), '0.1.0');
+  });
+
+  it('should raise the major segment and reset minor and patch for a major bump', () => {
+    assert.equal(computeNextVersion('0.1.2', 'major'), '1.0.0');
+  });
+
+  it('should keep the version unchanged when there is no bump', () => {
+    assert.equal(computeNextVersion('0.1.0', undefined), '0.1.0');
+  });
+});
+
+describe('resolveNextCoreVersion', () => {
+  it('should return the current version when no changeset releases core', () => {
+    assert.equal(
+      resolveNextCoreVersion('0.1.0', [{ file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } }]),
+      '0.1.0',
+    );
+  });
+
+  it('should apply the pending core bump', () => {
+    assert.equal(
+      resolveNextCoreVersion('0.0.1', [{ file: 'a.md', bumps: { '@maronn-oidc/core': 'minor' } }]),
+      '0.1.0',
+    );
+  });
+
+  it('should apply the largest pending core bump when several changesets release core', () => {
+    assert.equal(
+      resolveNextCoreVersion('0.0.1', [
+        { file: 'a.md', bumps: { '@maronn-oidc/core': 'patch' } },
+        { file: 'b.md', bumps: { '@maronn-oidc/core': 'minor' } },
+        { file: 'c.md', bumps: { '@maronn-oidc/core': 'patch' } },
+      ]),
+      '0.1.0',
+    );
+  });
+});
+
+describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
+  it('should accept a lower bound equal to the next core version', () => {
+    assert.doesNotThrow(() => {
+      assertExperimentalCorePeerRangeCoversNextCore(
+        { peerDependencies: { '@maronn-oidc/core': '>=0.1.0 <1.0.0' } },
+        '0.1.0',
+      );
+    });
+  });
+
+  it('should accept a lower bound above the next core version', () => {
+    assert.doesNotThrow(() => {
+      assertExperimentalCorePeerRangeCoversNextCore(
+        { peerDependencies: { '@maronn-oidc/core': '>=0.2.0 <1.0.0' } },
+        '0.1.0',
+      );
+    });
+  });
+
+  it('should reject a lower bound below the next core version', () => {
+    assert.throws(
+      () =>
+        assertExperimentalCorePeerRangeCoversNextCore(
+          { peerDependencies: { '@maronn-oidc/core': '>=0.0.1 <1.0.0' } },
+          '0.1.0',
+        ),
+      /">=0\.0\.1 <1\.0\.0" は core 0\.1\.0 より古い 0\.0\.1 を下限にしています/,
+    );
+  });
+
+  it('should compare each version segment numerically rather than as text', () => {
+    assert.throws(
+      () =>
+        assertExperimentalCorePeerRangeCoversNextCore(
+          { peerDependencies: { '@maronn-oidc/core': '>=0.9.0 <1.0.0' } },
+          '0.10.0',
+        ),
+      /core 0\.10\.0 より古い 0\.9\.0 を下限にしています/,
+    );
+  });
+
+  it('should reject a range whose lower bound cannot be read', () => {
+    assert.throws(
+      () =>
+        assertExperimentalCorePeerRangeCoversNextCore(
+          { peerDependencies: { '@maronn-oidc/core': '^0.1.0' } },
+          '0.1.0',
+        ),
+      /"\^0\.1\.0" から下限を読み取れません/,
     );
   });
 });

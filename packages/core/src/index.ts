@@ -28,16 +28,16 @@ export {
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
   DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
-} from './authorization-request';
+} from './authorization-request.js';
 
 export {
   parseRequestObject,
   RequestObjectError,
-} from './request-object';
+} from './request-object.js';
 
 export type {
   ParseRequestObjectOptions,
-} from './request-object';
+} from './request-object.js';
 
 export type {
   AuthorizationRequestParams,
@@ -47,7 +47,7 @@ export type {
   ValidatedAuthorizationRequest,
   ValidateAuthorizationRequestOptions,
   OfflineAccessGrantedCallback,
-} from './authorization-request';
+} from './authorization-request.js';
 
 export {
   validateTokenRequest,
@@ -74,7 +74,7 @@ export {
   validateRefreshTokenGrant,
   TokenError,
   TokenErrorCode,
-} from './token-request';
+} from './token-request.js';
 
 export type {
   TokenRequestParams,
@@ -90,7 +90,7 @@ export type {
   ValidatedRefreshTokenRequest,
   ResolvedAuthorizationCode,
   ResolvedRefreshToken,
-} from './token-request';
+} from './token-request.js';
 
 export {
   generateTokenResponse,
@@ -101,7 +101,7 @@ export {
   computeAtHash,
   resolveAcrAmr,
   buildIdTokenPayload,
-} from './token-response';
+} from './token-response.js';
 
 export type {
   TokenResponseOptions,
@@ -115,40 +115,40 @@ export type {
   IdTokenPayloadInput,
   ResolveAcrAmrInput,
   ResolvedAcrAmr,
-} from './token-response';
+} from './token-response.js';
 
 export {
   exportPublicJwk,
   exportJwks,
   signingKeysToJwkSet,
-} from './jwks';
+} from './jwks.js';
 
 export {
   generateIdToken,
   validateIdTokenHint,
   IdTokenHintError,
-} from './id-token';
+} from './id-token.js';
 
 export type {
   IdTokenPayload,
   GenerateIdTokenOptions,
-} from './id-token';
+} from './id-token.js';
 
 export type {
   Jwk,
   JwkSet,
   JwksKeyEntry,
-} from './jwks';
+} from './jwks.js';
 
 export {
   generateRandomString,
   extractAlgorithmParamsFromJwk,
   getJwaAlgorithm,
-} from './crypto-utils';
+} from './crypto-utils.js';
 
 export {
   sanitizeErrorDescription,
-} from './error-utils';
+} from './error-utils.js';
 
 export {
   createAuthTransaction,
@@ -164,7 +164,7 @@ export {
   resolvePromptNoneSession,
   validatePromptNoneIdTokenHint,
   validatePromptNoneConsent,
-} from './auth-transaction';
+} from './auth-transaction.js';
 
 export type {
   AuthTransaction,
@@ -175,16 +175,16 @@ export type {
   PromptNoneOptions,
   SessionInfo,
   SessionResolver,
-} from './auth-transaction';
+} from './auth-transaction.js';
 
 export {
   buildProviderMetadata,
-} from './discovery';
+} from './discovery.js';
 
 export type {
   ProviderMetadataConfig,
   ProviderMetadata,
-} from './discovery';
+} from './discovery.js';
 
 export {
   handleUserInfoRequest,
@@ -200,7 +200,7 @@ export {
   validateUserInfoAudience,
   resolveUserInfoClaims,
   applyRequestedClaims,
-} from './userinfo';
+} from './userinfo.js';
 
 export type {
   AccessTokenInfo,
@@ -214,7 +214,7 @@ export type {
   UserInfoRequestContext,
   UserInfoResponse,
   UserInfoJwtOptions,
-} from './userinfo';
+} from './userinfo.js';
 
 export {
   assertHasRs256Key,
@@ -223,13 +223,13 @@ export {
   createCachedSigningKeyProvider,
   getRegisteredSigningKeys,
   selectSigningKeyByAlg,
-} from './signing-key';
+} from './signing-key.js';
 
 export type {
   SigningKey,
   SigningKeyProvider,
   KeyStrengthPolicy,
-} from './signing-key';
+} from './signing-key.js';
 
 export {
   authenticateClient,
@@ -237,32 +237,32 @@ export {
   extractClientCredentials,
   validateClientAuthMethod,
   verifyClientSecret,
-} from './client-auth';
+} from './client-auth.js';
 
 export type {
   ClientAuthContext,
   PresentedClientCredentials,
-} from './client-auth';
+} from './client-auth.js';
 
 export {
   createAuthorizationCode,
-} from './authorization-code';
+} from './authorization-code.js';
 
 export type {
   AuthorizationCodeData,
   CreateAuthorizationCodeOptions,
-} from './authorization-code';
+} from './authorization-code.js';
 
 export {
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
-} from './access-token-issuer';
+} from './access-token-issuer.js';
 
 export type {
   AccessTokenFormat,
   AccessTokenIssuer,
   AccessTokenIssuanceContext,
-} from './access-token-issuer';
+} from './access-token-issuer.js';
 
 export {
   handleIntrospectionRequest,
@@ -275,7 +275,7 @@ export {
   isIntrospectionTokenActive,
   buildIntrospectionResponse,
   INACTIVE_INTROSPECTION_RESPONSE,
-} from './introspection';
+} from './introspection.js';
 
 export type {
   IntrospectionRequestContext,
@@ -284,7 +284,7 @@ export type {
   IntrospectionRefreshTokenResolver,
   ResolvedIntrospectionToken,
   ResolveIntrospectionTokenOptions,
-} from './introspection';
+} from './introspection.js';
 
 export {
   handleRevocationRequest,
@@ -297,11 +297,11 @@ export {
   validateRevocationTokenClient,
   revokeResolvedToken,
   revokeGrantAccessTokens,
-} from './revocation';
+} from './revocation.js';
 
 export type {
   RevocationRequestContext,
   RevocationTokenResolvers,
   ResolvedRevocationToken,
   ResolveRevocationTargetOptions,
-} from './revocation';
+} from './revocation.js';

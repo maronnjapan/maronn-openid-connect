@@ -16,10 +16,10 @@ import {
   validateRevocationTokenClient,
   RevocationError,
   RevocationErrorCode,
-} from './revocation';
-import type { RevocationTokenResolvers } from './revocation';
-import type { AccessTokenInfo } from './userinfo';
-import type { RefreshTokenInfo } from './token-request';
+} from './revocation.js';
+import type { RevocationTokenResolvers } from './revocation.js';
+import type { AccessTokenInfo } from './userinfo.js';
+import type { RefreshTokenInfo } from './token-request.js';
 
 const NOW = 1_700_000_000;
 

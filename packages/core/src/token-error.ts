@@ -1,4 +1,4 @@
-import { sanitizeErrorDescription } from './error-utils';
+import { sanitizeErrorDescription } from './error-utils.js';
 
 /**
  * Token Endpointのエラーコード

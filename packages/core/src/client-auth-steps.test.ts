@@ -12,9 +12,9 @@ import {
   extractClientCredentials,
   validateClientAuthMethod,
   verifyClientSecret,
-} from './client-auth';
-import { TokenError, TokenErrorCode } from './token-request';
-import type { TokenClientInfo } from './token-request';
+} from './client-auth.js';
+import { TokenError, TokenErrorCode } from './token-request.js';
+import type { TokenClientInfo } from './token-request.js';
 
 const confidentialClient: TokenClientInfo = {
   clientId: 'client123',

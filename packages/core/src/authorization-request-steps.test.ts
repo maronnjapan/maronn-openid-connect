@@ -25,13 +25,13 @@ import {
   parseClaimsRequestParameter,
   AuthorizationError,
   AuthorizationErrorCode,
-} from './authorization-request';
+} from './authorization-request.js';
 import type {
   AuthorizationRequestParams,
   ClientInfo,
   ClientResolver,
-} from './authorization-request';
-import { arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils';
+} from './authorization-request.js';
+import { arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
 
 // Helpers for building compact-JWS Request Objects (OIDC Core 1.0 §6.1).
 function encodeSegment(value: unknown): string {

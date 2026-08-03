@@ -15,7 +15,7 @@ import {
   timingSafeEqual,
   jwaToHashName,
   rsaModulusBitLength,
-} from './crypto-utils';
+} from './crypto-utils.js';
 import { webcrypto } from 'node:crypto';
 
 describe('stringToArrayBuffer', () => {

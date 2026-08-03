@@ -5,9 +5,9 @@ import {
   RevocationErrorCode,
   type RevocationTokenResolvers,
   type RevocationRequestContext,
-} from './revocation';
-import type { AccessTokenInfo } from './userinfo';
-import type { RefreshTokenInfo } from './token-request';
+} from './revocation.js';
+import type { AccessTokenInfo } from './userinfo.js';
+import type { RefreshTokenInfo } from './token-request.js';
 
 const CLIENT_ID = 'client-1';
 const NOW = () => Math.floor(Date.now() / 1000);

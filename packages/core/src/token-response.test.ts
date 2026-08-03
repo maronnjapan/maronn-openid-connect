@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { generateTokenResponse, buildAccessTokenAudience, buildIdTokenAudience } from './token-response';
-import type { TokenResponseOptions, TokenResponse } from './token-response';
-import { base64UrlToArrayBuffer, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils';
+import { generateTokenResponse, buildAccessTokenAudience, buildIdTokenAudience } from './token-response.js';
+import type { TokenResponseOptions, TokenResponse } from './token-response.js';
+import { base64UrlToArrayBuffer, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
 
 // --- Helper: RSA鍵ペアの生成 ---
 let rsaKeyPair: CryptoKeyPair;

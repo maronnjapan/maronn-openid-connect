@@ -47,6 +47,7 @@ CLIコマンドでフロー実装コードを生成し、利用者はそのコ�
 - 機能追加・修正時に、既存の単体テストや統合テスト以外でも実ブラウザ・実HTTPフローで検証できる場合は、原則として`tests/e2e`にPlaywright E2Eテストも追加すること
 - E2Eで使うOpenID Providerは`samples/*`配下のCLI生成アプリを対象にし、E2E専用のクライアントやリソースサーバーは`tests/e2e`配下に置くこと。`samples/*`にはOP以外の役割を混在させないこと
 - `samples/*` の `conformance.test.ts` は、CLI生成OPが本リポジトリの想定する挙動を満たすことを利用者に示す契約テストとして扱うこと。生成OPの挙動やresolver/store契約を変更する場合は、`packages/cli`のテンプレートと各sampleの`conformance.test.ts`を更新し、利用者が生成コードを改変して想定挙動から外れた場合にテスト失敗で認識できるようにすること
+- `packages/experimental/src` の変更に対して changeset を手で書かないこと。main への push で CI が patch の changeset を自動生成する（`.github/scripts/ensure-experimental-changeset.mjs`）。experimental の bump はどんな変更でも patch 固定で、minor / major を指定すると `pnpm run test:release-contract` が落ちる。詳細は `RELEASE.md` の「experimental の自動 publish」を参照
 - 利用者は生成コードをカスタマイズしてよいが、`conformance.test.ts` が通らない状態は本リポジトリが担保するBasic OP挙動から外れている可能性がある。その前提が必要な変更では、README・コメント・タスク文書のいずれかに明示すること
 
 ## テストコードの書き方

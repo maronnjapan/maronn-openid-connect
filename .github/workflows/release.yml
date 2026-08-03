@@ -15,6 +15,24 @@
 #
 #   つまりリリースのタイミングは「Version Packages PR をいつマージするか」で人間が制御する。
 #
+# 【@maronn-oidc/experimental の自動 publish】
+#   experimental だけは changeset を手で書かなくてよい。main への push ごとに
+#   `.github/scripts/ensure-experimental-changeset.mjs` を実行し、前回リリース
+#   （`@maronn-oidc/experimental@<version>` タグ）以降に `packages/experimental/src` の
+#   実装が変わっていれば patch の changeset を自動生成する。
+#   → 実装が入った時点で Version Packages PR が立ち、それをマージすれば publish される。
+#
+#   bump は常に patch 固定。生成する changeset は `auto-experimental-patch.md` の 1 本だけで、
+#   実行のたびに未リリースの変更一覧で上書きする。そのため Version Packages PR のマージを
+#   忘れて複数の機能がたまっても、CHANGELOG には全部載ったうえで patch 1 回に吸収される
+#   （手書きの changeset が minor / major を指定していないかは
+#   `pnpm run test:release-contract` が CI で弾く）。
+#
+#   同スクリプトは changesets/action が「未消化の changeset があるか」を判定する前
+#   （下の Ensure ステップ）と、`ci:version` の中の 2 か所で実行する。前者は version 段階へ
+#   入るために必要で、後者は action が release ブランチを作り直したあとでも changeset が
+#   残ることを保証する。スクリプトは冪等なので 2 回実行しても changeset は 1 本のまま。
+#
 
 # publish は npm Trusted Publishing (OIDC) を利用する前提で構成している。
 #   - 長期トークン（NPM_TOKEN）は不要。OIDC で短命トークンを都度取得する。
@@ -59,6 +77,11 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@v7
+              with:
+                  # experimental の自動 changeset は、前回リリースのタグ
+                  # (`@maronn-oidc/experimental@<version>`) と HEAD の差分で変更を判定する。
+                  # shallow clone だとタグも履歴も取れず判定できないため全履歴を取得する。
+                  fetch-depth: 0
 
             - name: Enable Corepack
               run: corepack enable
@@ -74,6 +97,11 @@ jobs:
               run: npm install -g npm@11.17.0
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
+
+            # changesets/action は「未消化の changeset があるか」で version 段階か publish 段階かを
+            # 決める。experimental の自動 changeset は action より前に置く必要がある。
+            - name: Ensure experimental release changeset
+              run: pnpm run ci:ensure-experimental-changeset
 
             - name: Create Release PR or Publish to npm
               id: changesets

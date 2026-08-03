@@ -141,9 +141,12 @@ core / cli の changeset を手で書く従来の運用はそのまま並存し�
 | `packages/experimental/package.json`・README・LICENSE | しない（必要なら `pnpm changeset` で patch の changeset を手で足す） |
 
 比較の基準は **`packages/experimental/package.json` の `version` を最後に確定したコミット**。
-`changeset version` が version を書き換えたコミット（= Version Packages PR の中身）がそれにあたる。
-version を確定したコミットが履歴に無い場合は、追跡されている `src` 配下すべてを未リリース扱いにする。
+`main` の**第一親**をたどった履歴で version が変わったコミット、つまり実際には
+Version Packages PR のマージコミットがそれにあたる。version を確定したコミットが履歴に無い場合は、
+追跡されている `src` 配下すべてを未リリース扱いにする。
 この履歴判定のために `release.yml` の checkout は `fetch-depth: 0` にしてある。
+shallow clone で基準点を辿れないときは、フォールバックに落ちずにスクリプトが失敗する
+（後述の循環へ静かに戻るのを防ぐため）。
 
 ### なぜ version 確定コミットを基準にするのか
 
@@ -171,6 +174,27 @@ publish の成否に依存しないので、マージ直後の main では差分
 = publish 段階へ進む、と判定できる。publish が npm 側の理由で失敗した場合も、
 version は確定したままなので次の push で publish が再試行される
 （タグ基準では再試行されず、バージョンだけが空振りで上がり続けていた）。
+
+#### 第一親でたどる理由
+
+履歴は `git log --first-parent` でたどり、version は**第一親とだけ**比較する。
+リリースブランチ側の "Version Packages" コミットを基準に選んではいけない。
+
+```
+*   Merge pull request #1        ← publish されるのはこのツリー。基準点はここ
+|\
+| * Version Packages             ← ここを基準にすると…
+* | feat: b                      ← リリースブランチを切ったあとに main へ入った src が
+|/                                  「未リリース」に見え、changeset が作り直される
+* feat: a
+```
+
+`Version Packages` コミットのツリーはリリースブランチを切った時点のものなので、
+切ってからマージするまでに main へ入った変更が差分に残る。実際には
+マージコミットのツリーが publish されるので、その変更は確定したバージョンに載っている。
+ここを未リリース扱いにすると version 段階へ戻され、**publish が 1 サイクル空振りする**
+（デッドロックではなく次のサイクルで収束するが、症状は「マージしたのに publish されない」で
+本来のバグと見分けがつかない）。
 
 ### マージを忘れて変更がたまったとき
 

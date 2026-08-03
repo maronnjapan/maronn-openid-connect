@@ -49,10 +49,12 @@
 # 【publish 前に npmjs.com 側で必要な設定】
 #   publish 対象の各パッケージ（@maronn-oidc/core, @maronn-oidc/cli, @maronn-oidc/experimental）の
 #   npm ページ → Settings → Trusted Publisher で、以下を登録する。
-#   1 つでも未登録だと `changeset publish` はそのパッケージで 403 になり、release job ごと失敗する:
+#   1 つでも未登録だと OIDC でトークンを取れず、そのパッケージの publish が認証エラーで落ちる:
 #     - Provider: GitHub Actions
 #     - Repository: maronnjapan/maronn-oidc
 #     - Workflow filename: release.yml
+#     - Environment: 空欄（このワークフローは environment: を使っていないため、
+#       Environment 付きで登録すると OIDC の claim が一致せず publish できない）
 #
 # 【初回 publish の注意（chicken-and-egg）】
 #   パッケージ単位の Trusted Publisher 設定は「パッケージが既に存在すること」が前提。

@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test';
 
 import {
   AUTO_CHANGESET_FILENAME,
+  assertBaseIsResolvable,
   buildExperimentalPatchChangeset,
   collectChangedPathsSinceLastRelease,
   decideExperimentalChangeset,
@@ -211,50 +212,51 @@ describe('readVersionFromManifest', () => {
 });
 
 describe('selectLastVersionBump', () => {
-  it('should select the newest commit whose version differs from every parent', () => {
+  it('should select the newest commit whose version differs from its first parent', () => {
     assert.deepEqual(
       selectLastVersionBump([
-        { commit: 'c3', version: '0.0.3', parentVersions: ['0.0.2'] },
-        { commit: 'c2', version: '0.0.2', parentVersions: ['0.0.1'] },
+        { commit: 'c3', version: '0.0.3', firstParentVersion: '0.0.2' },
+        { commit: 'c2', version: '0.0.2', firstParentVersion: '0.0.1' },
       ]),
       { commit: 'c3', version: '0.0.3' },
     );
   });
 
-  // Version Packages PR のマージコミットは、リリースブランチ側の親から version を引き継ぐだけで
-  // 自分では version を上げていない。基準点は version を確定したコミットそのものにする。
-  it('should skip a merge commit that inherits its version from one of its parents', () => {
+  // publish されるのはマージコミットのツリーなので、リリース基準点もマージコミットにする。
+  // リリースブランチ側の "Version Packages" コミットを選ぶと、リリースブランチを切ったあとに
+  // main へ入った src が「未リリース」に見えて、publish が 1 サイクル空振りする。
+  it('should select the merge commit that brought the version bump into main', () => {
     assert.deepEqual(
       selectLastVersionBump([
-        { commit: 'merge', version: '0.0.3', parentVersions: ['0.0.2', '0.0.3'] },
-        { commit: 'version-packages', version: '0.0.3', parentVersions: ['0.0.2'] },
+        { commit: 'merge', version: '0.0.3', firstParentVersion: '0.0.2' },
+        { commit: 'feature', version: '0.0.2', firstParentVersion: '0.0.2' },
       ]),
-      { commit: 'version-packages', version: '0.0.3' },
+      { commit: 'merge', version: '0.0.3' },
     );
   });
 
   it('should skip commits that only touched the manifest without changing its version', () => {
     assert.deepEqual(
       selectLastVersionBump([
-        { commit: 'add-keyword', version: '0.0.2', parentVersions: ['0.0.2'] },
-        { commit: 'version-packages', version: '0.0.2', parentVersions: ['0.0.1'] },
+        { commit: 'add-keyword', version: '0.0.2', firstParentVersion: '0.0.2' },
+        { commit: 'version-packages', version: '0.0.2', firstParentVersion: '0.0.1' },
       ]),
       { commit: 'version-packages', version: '0.0.2' },
     );
   });
 
   it('should treat the commit that introduced the manifest as a version bump', () => {
-    assert.deepEqual(
-      selectLastVersionBump([{ commit: 'initial', version: '0.0.1', parentVersions: [null] }]),
-      { commit: 'initial', version: '0.0.1' },
-    );
+    assert.deepEqual(selectLastVersionBump([{ commit: 'initial', version: '0.0.1', firstParentVersion: null }]), {
+      commit: 'initial',
+      version: '0.0.1',
+    });
   });
 
   it('should skip commits whose manifest version cannot be read', () => {
     assert.deepEqual(
       selectLastVersionBump([
-        { commit: 'deleted', version: null, parentVersions: ['0.0.2'] },
-        { commit: 'version-packages', version: '0.0.2', parentVersions: ['0.0.1'] },
+        { commit: 'deleted', version: null, firstParentVersion: '0.0.2' },
+        { commit: 'version-packages', version: '0.0.2', firstParentVersion: '0.0.1' },
       ]),
       { commit: 'version-packages', version: '0.0.2' },
     );
@@ -262,6 +264,29 @@ describe('selectLastVersionBump', () => {
 
   it('should return null when there is no candidate', () => {
     assert.equal(selectLastVersionBump([]), null);
+  });
+});
+
+describe('assertBaseIsResolvable', () => {
+  it('should pass when the version bump commit was found', () => {
+    assert.doesNotThrow(() =>
+      assertBaseIsResolvable({ bump: { commit: 'c1', version: '0.0.2' }, isShallowRepository: true }),
+    );
+  });
+
+  it('should pass when no version bump exists in a full clone', () => {
+    assert.doesNotThrow(() => assertBaseIsResolvable({ bump: null, isShallowRepository: false }));
+  });
+
+  // shallow clone で基準点を見失うと、全ソースを未リリース扱いにするフォールバックが働き、
+  // 「毎 run で changeset が再生成されて publish に到達しない」状態へ静かに戻ってしまう。
+  it('should throw when the version bump commit is unreachable because the clone is shallow', () => {
+    assert.throws(() => assertBaseIsResolvable({ bump: null, isShallowRepository: true }), {
+      message:
+        'shallow clone のため packages/experimental/package.json の version 確定コミットを辿れません。\n' +
+        '全ソースを未リリース扱いにすると changeset が毎 run 再生成され、publish 段階に到達できなくなります。\n' +
+        'release.yml の checkout を fetch-depth: 0 のままにしてください。',
+    });
   });
 });
 
@@ -334,13 +359,42 @@ describe('collectChangedPathsSinceLastRelease', () => {
     assert.deepEqual(selectExperimentalSourceChanges(collectChangedPathsSinceLastRelease(repository).paths), []);
   });
 
-  it('should use the commit that fixed the version as the comparison base', () => {
+  // publish されるのはマージコミットのツリーなので、基準点もマージコミットにする。
+  it('should use the merge commit that brought the version bump into main as the comparison base', () => {
     const repository = createReleasedRepository();
 
     assert.equal(
       collectChangedPathsSinceLastRelease(repository).base,
-      `${git(repository, ['rev-parse', 'HEAD^2']).trim()} (version 0.0.2)`,
+      `${git(repository, ['rev-parse', 'HEAD']).trim()} (version 0.0.2)`,
     );
+  });
+
+  // Version Packages PR がリリースブランチを切ったあとに main へ入った src は、
+  // マージコミットのツリーに含まれる = 確定したバージョンで publish される。
+  // ここを未リリース扱いにすると changeset が作り直され、publish が 1 サイクル空振りする。
+  it('should report no unreleased source change when a source commit landed after the release branch was cut', () => {
+    const repository = mkdtempSync(join(tmpdir(), 'maronn-ensure-changeset-'));
+    repositories.push(repository);
+
+    git(repository, ['init', '--initial-branch=main']);
+    git(repository, ['config', 'user.email', 'test@example.com']);
+    git(repository, ['config', 'user.name', 'test']);
+
+    writeManifest(repository, '0.0.1');
+    write(repository, 'packages/experimental/src/par/index.ts', 'export const par = 1;\n');
+    commit(repository, 'feat(experimental): PAR を追加する');
+
+    git(repository, ['checkout', '-b', 'changeset-release/main']);
+    writeManifest(repository, '0.0.2');
+    commit(repository, 'Version Packages');
+
+    git(repository, ['checkout', 'main']);
+    write(repository, 'packages/experimental/src/token-exchange/index.ts', 'export const exchange = 1;\n');
+    commit(repository, 'feat(experimental): Token Exchange を追加する');
+
+    git(repository, ['merge', '--no-ff', 'changeset-release/main', '-m', 'Merge pull request #1']);
+
+    assert.deepEqual(selectExperimentalSourceChanges(collectChangedPathsSinceLastRelease(repository).paths), []);
   });
 
   it('should report source changes pushed after the Version Packages PR was merged', () => {

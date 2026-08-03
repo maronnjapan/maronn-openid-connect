@@ -121,17 +121,34 @@ export function readVersionFromManifest(content) {
 /**
  * 「experimental の version を確定したコミット」を、新しい順の候補から 1 つ選ぶ。
  *
- * version が親のどれとも違うコミットだけを bump と見なす。Version Packages PR の
- * マージコミットはリリースブランチ側の親から version を引き継ぐだけなので除外され、
- * `changeset version` が実際に version を書き換えたコミットが選ばれる。
+ * 比較するのは第一親だけ。main の第一親をたどった履歴では、Version Packages PR の
+ * マージコミットが version を上げたコミットになる。リリースブランチ側の
+ * "Version Packages" コミットを選んではいけない。そのコミットのツリーは
+ * リリースブランチを切った時点のものなので、切ってからマージするまでに main へ入った src が
+ * 「未リリース」に見えてしまい、実際には publish される中身なのに changeset が作り直されて
+ * publish が 1 サイクル空振りする。publish されるのはマージコミットのツリーである。
  */
 export function selectLastVersionBump(candidates) {
-  const bump = candidates.find(
-    ({ version, parentVersions }) =>
-      version !== null && parentVersions.every((parentVersion) => parentVersion !== version),
-  );
+  const bump = candidates.find(({ version, firstParentVersion }) => version !== null && version !== firstParentVersion);
 
   return bump ? { commit: bump.commit, version: bump.version } : null;
+}
+
+/**
+ * 基準点が見つからないのが「まだ version を確定していない」なのか
+ * 「履歴が浅くて辿れない」なのかを切り分ける。
+ *
+ * 後者を全ソース未リリース扱いのフォールバックに流すと、changeset が毎 run 再生成されて
+ * publish 段階に到達しない状態へ静かに戻る。静かに戻らないよう、ここで落とす。
+ */
+export function assertBaseIsResolvable({ bump, isShallowRepository }) {
+  if (bump !== null || !isShallowRepository) return;
+
+  throw new Error(
+    `shallow clone のため ${MANIFEST_PATH} の version 確定コミットを辿れません。\n` +
+      '全ソースを未リリース扱いにすると changeset が毎 run 再生成され、publish 段階に到達できなくなります。\n' +
+      'release.yml の checkout を fetch-depth: 0 のままにしてください。',
+  );
 }
 
 function readManifestVersionAt(repositoryRoot, commit) {
@@ -143,8 +160,12 @@ function readManifestVersionAt(repositoryRoot, commit) {
   }
 }
 
-function listParents(repositoryRoot, commit) {
-  return git(['rev-list', '--parents', '-n', '1', commit], repositoryRoot).trim().split(/\s+/).slice(1);
+function findFirstParent(repositoryRoot, commit) {
+  return git(['rev-list', '--parents', '-n', '1', commit], repositoryRoot).trim().split(/\s+/)[1] ?? null;
+}
+
+function isShallowRepository(repositoryRoot) {
+  return git(['rev-parse', '--is-shallow-repository'], repositoryRoot).trim() === 'true';
 }
 
 /**
@@ -156,22 +177,30 @@ function listParents(repositoryRoot, commit) {
  * （詳細は RELEASE.md「なぜ version 確定コミットを基準にするのか」）。
  * version は Version Packages PR がマージされた時点で確定するので、
  * マージ直後の main では「未リリースの変更ゼロ」と判定できる。
+ *
+ * 履歴は `--first-parent` でたどる。main の第一親の履歴が「publish される版の並び」であり、
+ * リリースブランチ側のコミットを基準にすると publish されるツリーとずれる。
  */
 export function findLastExperimentalVersionBump(repositoryRoot) {
-  const commits = git(['log', '--format=%H', 'HEAD', '--', MANIFEST_PATH], repositoryRoot)
+  const commits = git(['log', '--first-parent', '--format=%H', 'HEAD', '--', MANIFEST_PATH], repositoryRoot)
     .split('\n')
     .map((commit) => commit.trim())
     .filter((commit) => commit.length > 0);
 
-  return selectLastVersionBump(
-    commits.map((commit) => ({
-      commit,
-      version: readManifestVersionAt(repositoryRoot, commit),
-      parentVersions: listParents(repositoryRoot, commit).map((parent) =>
-        readManifestVersionAt(repositoryRoot, parent),
-      ),
-    })),
+  const bump = selectLastVersionBump(
+    commits.map((commit) => {
+      const firstParent = findFirstParent(repositoryRoot, commit);
+      return {
+        commit,
+        version: readManifestVersionAt(repositoryRoot, commit),
+        firstParentVersion: firstParent === null ? null : readManifestVersionAt(repositoryRoot, firstParent),
+      };
+    }),
   );
+
+  assertBaseIsResolvable({ bump, isShallowRepository: isShallowRepository(repositoryRoot) });
+
+  return bump;
 }
 
 /**

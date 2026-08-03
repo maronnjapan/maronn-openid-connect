@@ -25,6 +25,7 @@
  * - registry のほうが新しいのは publish 漏れではないので通す。
  * - publish 実績がまったく無い package は対象外。初回 publish は Trusted Publishing の
  *   chicken-and-egg で手動になる（RELEASE.md「初回 publish の注意」）。
+ * - publish 直後は packument への反映に遅れがあるため、見つからないうちは間隔を空けて引き直す。
  */
 import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
@@ -33,6 +34,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REGISTRY_ORIGIN = 'https://registry.npmjs.org';
 const PACKAGE_GLOB_ROOT = 'packages';
+/** publish 直後の packument 反映待ち。合計 35 秒まで引き直す。 */
+const REGISTRY_RETRY_DELAYS_MS = [5000, 10000, 20000];
 
 /** registry のパッケージドキュメントから publish 済みバージョンを取り出す。未公開なら空配列。 */
 export function parsePublishedVersions(registryDocument) {
@@ -133,15 +136,37 @@ async function fetchPublishedVersions(name) {
   return parsePublishedVersions(await response.json());
 }
 
+/**
+ * publish 直後は packument への反映に少し遅れがある。1 回の照会で「無い」と断じると
+ * publish が成功した run を落としてしまうので、見つからないうちは間隔を空けて引き直す。
+ */
+async function fetchPublishedVersionsUntilSettled(packages) {
+  let publishedVersionsByName = {};
+
+  for (const [attempt, delay] of [0, ...REGISTRY_RETRY_DELAYS_MS].entries()) {
+    if (attempt > 0) {
+      console.log(`npm registry に未反映のバージョンがあるため ${delay / 1000} 秒待って引き直します`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    publishedVersionsByName = Object.fromEntries(
+      await Promise.all(packages.map(async ({ name }) => [name, await fetchPublishedVersions(name)])),
+    );
+
+    if (selectUnpublishedPackages(packages, publishedVersionsByName).length === 0) break;
+  }
+
+  return publishedVersionsByName;
+}
+
 async function verifyReleasePublished() {
   const repositoryRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
   const commit = process.env.GITHUB_SHA ?? 'HEAD';
 
   const packages = readPublishablePackagesAt(repositoryRoot, commit);
   const pendingChangesets = selectPendingChangesets(listChangesetEntriesAt(repositoryRoot, commit));
-  const publishedVersionsByName = Object.fromEntries(
-    await Promise.all(packages.map(async ({ name }) => [name, await fetchPublishedVersions(name)])),
-  );
+  const publishedVersionsByName =
+    pendingChangesets.length > 0 ? {} : await fetchPublishedVersionsUntilSettled(packages);
 
   assertMainVersionsArePublished({ packages, publishedVersionsByName, pendingChangesets });
 

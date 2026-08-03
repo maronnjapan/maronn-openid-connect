@@ -2776,16 +2776,17 @@ export const tokenExchangeConfig = {
       });
 
       const exchangeIssuedAt = Math.floor(Date.now() / 1000);
+      const exchangePayload = buildAccessTokenPayload({
+        issuer: exchangeConfig.issuer,
+        subject: grant.subject,
+        clientId: grant.clientId,
+        scope: grant.scope,
+        audience: exchangeAudience,
+        expiresIn: grant.expiresIn,
+        issuedAt: exchangeIssuedAt,
+      });
       const exchangedToken = await exchangeIssuer.issue({
-        payload: buildAccessTokenPayload({
-          issuer: exchangeConfig.issuer,
-          subject: grant.subject,
-          clientId: grant.clientId,
-          scope: grant.scope,
-          audience: exchangeAudience,
-          expiresIn: grant.expiresIn,
-          issuedAt: exchangeIssuedAt,
-        }),
+        payload: exchangePayload,
         privateKey: c.get('privateKey'),
         keyId: c.get('keyId'),
       });
@@ -2804,6 +2805,10 @@ export const tokenExchangeConfig = {
         nbf: exchangeIssuedAt,
         audience: exchangeAudience,
         issuer: exchangeConfig.issuer,
+        // RFC 9068 §2.2 / RFC 7662 §2.2: the exchanged token gets its own jti,
+        // so it is a distinct store record even when it is exchanged twice from
+        // the same subject_token within one second.
+        jti: exchangePayload.jti,
         // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
         // deliberately NOT inherited: an exchanged token yields scope-based
         // claims only at the UserInfo endpoint.
@@ -3208,6 +3213,11 @@ ${grantHasOfflineAccessBlock}    // --- Token response pipeline ----------------
       nbf: issuedAt,
       audience: effectiveAudience,
       issuer: config.issuer,
+      // RFC 9068 §2.2 / RFC 7662 §2.2: persist the token identifier core minted
+      // for this issuance so introspection can echo jti. It is also what makes
+      // two same-second issuances distinct token strings (RS256 is deterministic),
+      // so this store key never collides across grants.
+      jti: accessTokenPayload.jti,
       // OIDC Core 1.0 §5.5: persist the authorization request's claims parameter
       // so the UserInfo endpoint can honor claims.userinfo members (e.g.
       // {"userinfo":{"name":{"essential":true}}}) independently of scope.
@@ -5332,6 +5342,98 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
       expect(rotatedRefreshAfter.status).toBe(400);
       expect((await rotatedRefreshAfter.json()).error).toBe('invalid_grant');
     });
+
+    // RFC 9068 §2.2 / RFC 7519 §4.1.7: every issued access token carries its own
+    // jti, so no two issuances collide. RS256 (RFC 8017 §8.2) is deterministic:
+    // without jti these in-process issuances land in the same wall-clock second
+    // with identical claims and produce byte-identical token strings, which
+    // silently overwrite each other in the token-keyed access token store.
+    it('should issue a distinct access token on rotation while keeping the ID Token identity claims', async () => {
+      const flow = await authorizeFlow('openid offline_access');
+      expect(flow.consentStatus).toBe(302);
+
+      const first = await tokenRequest({
+        grant_type: 'authorization_code',
+        code: flow.code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: PKCE_VERIFIER,
+      });
+      expect(first.status).toBe(200);
+      const firstBody = await first.json();
+
+      const rotated = await tokenRequest({
+        grant_type: 'refresh_token',
+        refresh_token: firstBody.refresh_token as string,
+      });
+      expect(rotated.status).toBe(200);
+      const rotatedBody = await rotated.json();
+
+      // The rotated access token must be a new secret: reusing the same string
+      // would mean a leaked first token survives the refresh.
+      expect(rotatedBody.access_token === firstBody.access_token).toBe(false);
+
+      // OIDC Core 1.0 §12.2: the re-issued ID Token keeps the authentication
+      // identity (iss / sub / aud / auth_time) of the original authentication.
+      // The OIDF Conformance Suite CompareIdTokenClaims module pins these.
+      const firstIdToken = idTokenPayload(firstBody.id_token as string);
+      const rotatedIdToken = idTokenPayload(rotatedBody.id_token as string);
+      expect(rotatedIdToken.iss).toBe(firstIdToken.iss);
+      expect(rotatedIdToken.sub).toBe(firstIdToken.sub);
+      expect(rotatedIdToken.aud).toEqual(firstIdToken.aud);
+      expect(rotatedIdToken.auth_time).toBe(firstIdToken.auth_time);
+      // Single-audience ID Tokens carry no azp (OIDC Core 1.0 §2), and rotation
+      // must not start adding one.
+      expect(firstIdToken.azp).toBe(undefined);
+      expect(rotatedIdToken.azp).toBe(undefined);
+    });
+
+    it('should keep grant-scoped revocation inside one grant when two grants are issued in the same second', async () => {
+      // Two complete authorization code flows for the same client, subject, scope
+      // and audience. In-process they land in the same wall-clock second, which is
+      // exactly the case that collided before access tokens carried a jti.
+      const firstFlow = await authorizeFlow('openid offline_access');
+      expect(firstFlow.consentStatus).toBe(302);
+      const secondFlow = await authorizeFlow('openid offline_access');
+      expect(secondFlow.consentStatus).toBe(302);
+
+      const firstGrant = await tokenRequest({
+        grant_type: 'authorization_code',
+        code: firstFlow.code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: PKCE_VERIFIER,
+      });
+      expect(firstGrant.status).toBe(200);
+      const firstAccess = (await firstGrant.json()).access_token as string;
+
+      const secondGrant = await tokenRequest({
+        grant_type: 'authorization_code',
+        code: secondFlow.code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: PKCE_VERIFIER,
+      });
+      expect(secondGrant.status).toBe(200);
+      const secondAccess = (await secondGrant.json()).access_token as string;
+
+      expect(firstAccess === secondAccess).toBe(false);
+      expect(await userinfoStatus(firstAccess)).toBe(200);
+      expect(await userinfoStatus(secondAccess)).toBe(200);
+
+      // OAuth 2.1 §4.1.2 / RFC 9700 §4.13: reusing the first code revokes the
+      // first grant's tokens. The second grant must be untouched — with colliding
+      // token strings the store held a single record and this cascade either
+      // missed the first token or killed the second one too.
+      const reuse = await tokenRequest({
+        grant_type: 'authorization_code',
+        code: firstFlow.code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: PKCE_VERIFIER,
+      });
+      expect(reuse.status).toBe(400);
+      expect((await reuse.json()).error).toBe('invalid_grant');
+
+      expect(await userinfoStatus(firstAccess)).toBe(401);
+      expect(await userinfoStatus(secondAccess)).toBe(200);
+    });
   });
 `;
 }
@@ -5576,6 +5678,75 @@ function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
 `;
 }
 
+/**
+ * Top-level helper that drives authorize -> login -> consent and returns the
+ * issued authorization code, for contract tests that need a real token rather
+ * than an injected store record.
+ *
+ * Emitted only when the introspection endpoint is generated: it is the only
+ * caller, and the generated sample tsconfig sets noUnusedLocals.
+ */
+function authorizationCodeConformanceHelper(features: OidcFeatureConfig): string {
+  if (!features.introspection) return '';
+  return `
+// RFC 7636 Appendix B example PKCE pair: verifier
+// 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk' -> this S256 challenge.
+const CONFORMANCE_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+/**
+ * Drives authorize -> login -> consent for client 'c-conf' and returns the
+ * authorization code. Pure data collection: it neither asserts nor branches, so
+ * every contract check stays in the it() blocks. A step that fails to redirect
+ * yields an empty code, which the caller's expect() on the token response catches.
+ */
+async function conformanceAuthorizationCode(scope: string): Promise<string> {
+  const relativeFrom = (location: string | null): string => {
+    const url = new URL(location ?? '', 'http://localhost');
+    return url.pathname + url.search;
+  };
+  const csrfFrom = (html: string): string =>
+    html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+
+  const authorizeRes = await app.request(
+    '/authorize?response_type=code&client_id=c-conf' +
+      '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+      '&scope=' + encodeURIComponent(scope) +
+      '&state=introspect-jti&prompt=consent' +
+      '&code_challenge=' + CONFORMANCE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+  );
+  const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+  const transactionId =
+    new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+  const loginGet = await app.request(loginPath);
+  const loginRes = await app.request('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      transaction_id: transactionId,
+      csrf_token: csrfFrom(await loginGet.text()),
+      username: 'testuser',
+      password: 'password',
+    }).toString(),
+  });
+
+  const consentPath = relativeFrom(loginRes.headers.get('Location'));
+  const consentGet = await app.request(consentPath);
+  const consentRes = await app.request('/consent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      transaction_id: transactionId,
+      csrf_token: csrfFrom(await consentGet.text()),
+      action: 'approve',
+    }).toString(),
+  });
+
+  return new URL(consentRes.headers.get('Location') ?? '', 'http://localhost').searchParams.get('code') ?? '';
+}
+`;
+}
+
 export function conformanceTestClientsBlock(features: OidcFeatureConfig): string {
   if (!features.refreshToken) {
     return `const testClients = new Map<string, RegisteredClient>([
@@ -5816,6 +5987,38 @@ export function introspectionConformanceBlock(features: OidcFeatureConfig): stri
       const res = await introspect('conf-nbf-future');
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ active: false });
+    });
+
+    // RFC 9068 §2.2: jti is REQUIRED for JWT access tokens; RFC 7662 §2.2 lists it
+    // as a response claim. The token endpoint persists the identifier core minted
+    // for the issuance, so introspection of a real token echoes it.
+    it('should echo the jti of an access token issued by the token endpoint', async () => {
+      const code = await conformanceAuthorizationCode('openid');
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-conf',
+          client_secret: 's',
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+        }).toString(),
+      });
+      expect(tokenRes.status).toBe(200);
+      const accessToken = (await tokenRes.json()).access_token as string;
+
+      const res = await introspect(accessToken);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      // idTokenPayload decodes any compact JWS body; the default access token
+      // format is JWT, so the stored jti must be the claim inside the token.
+      const accessTokenJti = idTokenPayload(accessToken).jti;
+      expect(typeof accessTokenJti).toBe('string');
+      expect(body.active).toBe(true);
+      expect(body.jti).toBe(accessTokenJti);
     });
   });
 `;
@@ -7080,6 +7283,26 @@ export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): stri
         expect(subjectUserInfo.name).toBe('Test User');
         expect(exchangedUserInfo.name).toBe(undefined);
       });
+
+      // RFC 9068 §2.2 / RFC 7519 §4.1.7: each exchanged token gets its own jti.
+      // Two exchanges of the same subject_token land in the same wall-clock second
+      // with identical claims; without jti the deterministic RS256 signature
+      // (RFC 8017 §8.2) would make them one string and one store record, so
+      // revoking one would revoke the other.
+      it('should issue a distinct token for each exchange of the same subject token', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const first = (await (await exchangeRequest({ subject_token: subjectToken })).json())
+          .access_token as string;
+        const second = (await (await exchangeRequest({ subject_token: subjectToken })).json())
+          .access_token as string;
+
+        const firstUserInfo = await app.request('/userinfo', { headers: { Authorization: 'Bearer ' + first } });
+        const secondUserInfo = await app.request('/userinfo', { headers: { Authorization: 'Bearer ' + second } });
+
+        expect(first === second).toBe(false);
+        expect(firstUserInfo.status).toBe(200);
+        expect(secondUserInfo.status).toBe(200);
+      });
     });
 
     describe('Client authorization', () => {
@@ -7841,7 +8064,7 @@ function idTokenPayload(idToken: string): Record<string, unknown> {
   const payload = idToken.split('.')[1] ?? '';
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payload.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0))));
 }
-
+${authorizationCodeConformanceHelper(features)}
 ${conformanceTestClientsBlock(features)}${requestObjectConformanceModuleSetup(features)}
 let app: ReturnType<typeof createApp>;
 let appliedApp: Hono;

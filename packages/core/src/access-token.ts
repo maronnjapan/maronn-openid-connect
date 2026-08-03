@@ -14,6 +14,21 @@ export interface AccessTokenPayload {
    * tokens; emitted by the JWT issuer (set to iat) for clock-skew tolerance.
    */
   nbf?: number;
+  /**
+   * RFC 9068 §2.2: `jti` is REQUIRED for JWT access tokens.
+   * RFC 7519 §4.1.7: the value MUST be assigned so that the probability of the
+   * same value being assigned to a different token is negligible.
+   *
+   * It is also what keeps two issuances distinct: RS256 (RFC 8017 §8.2) is a
+   * deterministic signature scheme, so a payload rebuilt from identical input
+   * within the same wall-clock second would otherwise sign to a byte-identical
+   * token and silently overwrite the earlier record in a token-keyed store.
+   *
+   * Optional in the type so callers can build a payload for an Opaque issuer,
+   * which carries no claims in the token string. {@link buildAccessTokenPayload}
+   * always populates it.
+   */
+  jti?: string;
   scope?: string;
   client_id?: string;
   [key: string]: unknown;

@@ -13,6 +13,7 @@ import {
   computeAtHash,
   resolveAcrAmr,
 } from './token-response.js';
+import { createJwtAccessTokenIssuer } from './access-token-issuer.js';
 import type { AcrResolver } from './token-response.js';
 
 const NOW = 1_700_000_000;
@@ -42,6 +43,7 @@ describe('buildAccessTokenPayload', () => {
       audience: ['https://op.example.com/userinfo'],
       expiresIn: 3600,
       issuedAt: NOW,
+      jti: 'fixed-jti-for-assertion',
     });
 
     expect(result).toEqual({
@@ -50,6 +52,7 @@ describe('buildAccessTokenPayload', () => {
       aud: ['https://op.example.com/userinfo'],
       exp: NOW + 3600,
       iat: NOW,
+      jti: 'fixed-jti-for-assertion',
       scope: 'openid profile',
       client_id: 'client-1',
     });
@@ -66,6 +69,65 @@ describe('buildAccessTokenPayload', () => {
     });
 
     expect(result.aud).toEqual(['https://op.example.com']);
+  });
+
+  // RFC 9068 §2.2: jti is REQUIRED for JWT access tokens.
+  // RFC 7519 §4.1.7: the value MUST be assigned so that the probability of the
+  // same value being assigned to a different token is negligible.
+  // RFC 8017 §8.2: RSASSA-PKCS1-v1_5 (RS256) is deterministic, so without jti a
+  // payload rebuilt from identical input in the same wall-clock second signs to
+  // a byte-identical token, which silently collides in a token-keyed store.
+  describe('jti claim (RFC 9068 §2.2 / RFC 7519 §4.1.7)', () => {
+    function buildFixedInput() {
+      return {
+        issuer: 'https://op.example.com',
+        subject: 'user-1',
+        clientId: 'client-1',
+        scope: ['openid'],
+        audience: ['https://op.example.com/userinfo'],
+        expiresIn: 3600,
+        issuedAt: NOW,
+      };
+    }
+
+    it('should generate a 128-bit base64url jti by default', () => {
+      const result = buildAccessTokenPayload(buildFixedInput());
+
+      // 16 bytes of CSPRNG output, base64url encoded without padding.
+      expect(typeof result.jti).toBe('string');
+      expect(result.jti).toHaveLength(22);
+      expect(result.jti).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+
+    it('should generate a different jti on every call for identical input', () => {
+      const first = buildAccessTokenPayload(buildFixedInput());
+      const second = buildAccessTokenPayload(buildFixedInput());
+
+      expect(first.jti === second.jti).toBe(false);
+    });
+
+    it('should use the caller-supplied jti instead of generating one', () => {
+      const result = buildAccessTokenPayload({ ...buildFixedInput(), jti: 'caller-jti' });
+
+      expect(result.jti).toBe('caller-jti');
+    });
+
+    it('should produce different JWT access token strings for identical input issued in the same second', async () => {
+      // generateAccessToken rejects an exp that is already in the past, so this
+      // case pins issuedAt to the current second rather than the fixture NOW.
+      const input = { ...buildFixedInput(), issuedAt: Math.floor(Date.now() / 1000) };
+      const issuer = createJwtAccessTokenIssuer();
+      const first = await issuer.issue({
+        payload: buildAccessTokenPayload(input),
+        privateKey: rsaKeyPair.privateKey,
+      });
+      const second = await issuer.issue({
+        payload: buildAccessTokenPayload(input),
+        privateKey: rsaKeyPair.privateKey,
+      });
+
+      expect(first === second).toBe(false);
+    });
   });
 });
 

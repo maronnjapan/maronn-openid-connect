@@ -116,6 +116,32 @@ describe('generateTokenResponse', () => {
       expect(payload.sub).toBe('user-abc');
     });
 
+    // RFC 9068 §2.2: jti is REQUIRED. RFC 7519 §4.1.7 requires a negligible
+    // collision probability, which also keeps two same-second issuances distinct
+    // (RS256 is a deterministic signature scheme, RFC 8017 §8.2).
+    it('should have a 128-bit base64url jti claim', async () => {
+      const options = createValidOptions();
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.access_token);
+      expect(typeof payload.jti).toBe('string');
+      expect(String(payload.jti)).toHaveLength(22);
+      expect(String(payload.jti)).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+
+    it('should return the access token jti so the caller can persist it', async () => {
+      const options = createValidOptions();
+      const result = await generateTokenResponse(options);
+      const { payload } = decodeJwt(result.response.access_token);
+      expect(result.accessTokenJti).toBe(payload.jti);
+    });
+
+    it('should issue a different access token for two identical requests', async () => {
+      const options = createValidOptions();
+      const first = await generateTokenResponse(options);
+      const second = await generateTokenResponse(options);
+      expect(first.response.access_token === second.response.access_token).toBe(false);
+    });
+
     it('should have client_id claim', async () => {
       const options = createValidOptions({ clientId: 'client-xyz' });
       const { response } = await generateTokenResponse(options);

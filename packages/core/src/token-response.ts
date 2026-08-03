@@ -153,8 +153,8 @@ export interface TokenResponse {
  * generateTokenResponse の戻り値。
  *
  * `response` は OIDC/OAuth 仕様に沿ってクライアントへ JSON 返却する body。
- * `resolvedAcr` / `resolvedAmr` は ID Token に格納された acr / amr の値で、
- * 呼び出し側が refresh token store などへ永続化する用途のため公開する。
+ * `resolvedAcr` / `resolvedAmr` / `accessTokenJti` は発行時に確定したメタデータで、
+ * 呼び出し側が refresh token store / access token store などへ永続化する用途のため公開する。
  * `response` には含めず（仕様外フィールドのため）、JSON 返却時に混入しない。
  */
 export interface GenerateTokenResponseResult {
@@ -163,6 +163,14 @@ export interface GenerateTokenResponseResult {
   resolvedAcr?: string;
   /** authorization_code 経由で resolver / 直接指定により確定した amr。未確定なら undefined */
   resolvedAmr?: string[];
+  /**
+   * 発行したアクセストークンの `jti`（RFC 9068 §2.2）。
+   *
+   * アクセストークン文字列自体からは opaque 形式のとき読み取れないため、ここで返す。
+   * ストアの metadata として保存しておくと、イントロスペクション（RFC 7662 §2.2）が
+   * `jti` を返せる。
+   */
+  accessTokenJti?: string;
 }
 
 /**
@@ -255,14 +263,22 @@ export interface AccessTokenPayloadInput {
   expiresIn: number;
   /** 発行時刻（Unix epoch 秒）。省略時はシステム時刻 */
   issuedAt?: number;
+  /**
+   * トークンの一意識別子（RFC 9068 §2.2 の `jti`）。
+   * 省略時は 128bit の CSPRNG 値を生成する。既存の識別子を再利用したい場合のみ渡す。
+   */
+  jti?: string;
 }
 
 /**
  * ステップ: アクセストークンの payload を組み立てる
- * RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id
+ * RFC 9068 §2.2: iss / sub / aud / exp / iat / jti / scope / client_id
  *
  * 実際の発行（JWT 署名 / Opaque 文字列）は {@link AccessTokenIssuer} の責務。
  * 独自クレームを載せたい場合は戻り値へ追加してから issuer に渡す。
+ *
+ * 戻り値の `jti` は発行ごとに異なる。呼び出し側はこの値をトークンのメタデータとして
+ * ストアへ保存しておくと、イントロスペクション（RFC 7662 §2.2）が `jti` を返せる。
  */
 export function buildAccessTokenPayload(
   input: AccessTokenPayloadInput,
@@ -276,6 +292,15 @@ export function buildAccessTokenPayload(
     aud: buildAccessTokenAudience({ requested: audience, issuer }),
     exp: issuedAt + expiresIn,
     iat: issuedAt,
+    // RFC 9068 §2.2: jti は REQUIRED。RFC 7519 §4.1.7 は「別のトークンに同じ値が
+    // 割り当てられる確率が無視できる」ことを要求する。128bit の CSPRNG 値で満たす。
+    //
+    // 併せて、これが「同一秒・同一入力の 2 回発行」を別トークンにする唯一の可変要素
+    // でもある。RS256（RFC 8017 §8.2 の RSASSA-PKCS1-v1_5）は決定的な署名方式なので、
+    // jti が無いと 2 本の grant のアクセストークンがバイト単位で同一になり、トークン
+    // 文字列をキーにするストアで後勝ちの上書きが起きる（＝先の grant に対する
+    // grantId 単位の失効が黙って効かなくなる）。
+    jti: input.jti ?? generateRandomString(16),
     scope: scope.join(' '),
     client_id: clientId,
   };
@@ -588,5 +613,6 @@ export async function generateTokenResponse(options: TokenResponseOptions): Prom
     },
     resolvedAcr,
     resolvedAmr,
+    accessTokenJti: accessTokenPayload.jti,
   };
 }

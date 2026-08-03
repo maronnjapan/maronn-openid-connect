@@ -235,6 +235,19 @@ describe('generate with --enable token-exchange', () => {
         expect(content.includes('grantId: grant.grantId,')).toBe(true);
       });
 
+      // RFC 9068 §2.2 / RFC 7519 §4.1.7: the exchanged token carries its own jti,
+      // so exchanging the same subject_token twice within one wall-clock second
+      // produces two distinct tokens instead of one overwritten store record.
+      it('should persist the exchanged token with its own jti', () => {
+        const content = fileContent(
+          generateFiles(framework, ['token-exchange']),
+          tokenRoutePath(framework),
+        );
+
+        expect(content.includes('const exchangePayload = buildAccessTokenPayload({')).toBe(true);
+        expect(content.includes('jti: exchangePayload.jti,')).toBe(true);
+      });
+
       it('should not persist a claims parameter on the exchanged token', () => {
         const content = fileContent(
           generateFiles(framework, ['token-exchange']),

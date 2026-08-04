@@ -1,5 +1,12 @@
 # @maronn-oidc/sample-nextjs-vercel
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [14ac754]
+  - @maronn-oidc/core@0.2.0
+
 ## 0.0.2
 
 ### Patch Changes

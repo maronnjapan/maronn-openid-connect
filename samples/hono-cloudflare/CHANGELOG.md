@@ -1,5 +1,14 @@
 # @maronn-oidc/sample-hono-cloudflare
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [14ac754]
+- Updated dependencies [14ac754]
+  - @maronn-oidc/core@0.2.0
+  - @maronn-oidc/experimental@0.0.4
+
 ## 0.0.3
 
 ### Patch Changes

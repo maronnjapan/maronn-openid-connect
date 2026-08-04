@@ -9,6 +9,7 @@
 
 import { AuthorizationError, AuthorizationErrorCode } from './authorization-request.js';
 import type { ValidatedAuthorizationRequest } from './authorization-request.js';
+import { sha256, timingSafeEqual } from './crypto-utils.js';
 import type { ClaimsParameter } from './userinfo.js';
 
 // --- Session Types ---
@@ -56,6 +57,11 @@ export enum AuthTransactionErrorCode {
   TransactionExpired = 'transaction_expired',
   InvalidCsrfToken = 'invalid_csrf_token',
   MaxAttemptsExceeded = 'max_attempts_exceeded',
+  /**
+   * トランザクションが、それを開始した User-Agent 以外から提示された。
+   * 詳細は {@link validateTransactionBinding}。
+   */
+  InvalidTransactionBinding = 'invalid_transaction_binding',
 }
 
 /**
@@ -83,6 +89,10 @@ export class AuthTransactionError extends Error {
         return 403;
       case AuthTransactionErrorCode.MaxAttemptsExceeded:
         return 429;
+      // 束縛不一致は「このトランザクションの持ち主か確認できていない」状態であり、
+      // 認証情報の誤りではないため 403 ではなく 400 で止める。
+      case AuthTransactionErrorCode.InvalidTransactionBinding:
+        return 400;
     }
   }
 }
@@ -128,6 +138,14 @@ export interface AuthTransaction {
   createdAt: number;   // Unix timestamp (ms)
   expiresAt: number;   // Unix timestamp (ms)
   failedAttempts: number;
+  /**
+   * トランザクションを開始した User-Agent に配る秘密値のハッシュ（SHA-256, base64url）。
+   * Cookie 値そのものを保存しないことで、store 漏洩だけでは横取りできないようにする。
+   * 未設定のトランザクションは束縛検証をスキップする（後方互換）。
+   *
+   * 詳細は {@link validateTransactionBinding}。
+   */
+  bindingHash?: string;
 }
 
 /**
@@ -187,18 +205,35 @@ const STORE_KEY_PREFIX = 'auth_txn:';
 // --- Functions ---
 
 /**
+ * createAuthTransaction のオプション
+ */
+export interface CreateAuthTransactionOptions {
+  /** TTL（ミリ秒）。デフォルト: 600,000（10分） */
+  ttlMs?: number;
+  /**
+   * User-Agent に配る秘密値のハッシュ。{@link computeTransactionBindingHash} で
+   * 生成した値を渡す。省略時は束縛検証を行わないトランザクションになる。
+   */
+  bindingHash?: string;
+}
+
+/**
  * ValidatedAuthorizationRequestからAuthTransactionを作成する
  *
  * @param validatedRequest バリデーション済みの認可リクエスト
  * @param csrfToken CSRFトークン
- * @param ttlMs TTL（ミリ秒）。デフォルト: 600,000（10分）
+ * @param ttlMsOrOptions TTL（ミリ秒）またはオプション。デフォルト TTL: 600,000（10分）
+ *                       数値を渡す旧シグネチャは後方互換のため維持している。
  * @returns AuthTransaction
  */
 export function createAuthTransaction(
   validatedRequest: ValidatedAuthorizationRequest,
   csrfToken: string,
-  ttlMs: number = DEFAULT_TTL_MS
+  ttlMsOrOptions: number | CreateAuthTransactionOptions = DEFAULT_TTL_MS
 ): AuthTransaction {
+  const options: CreateAuthTransactionOptions =
+    typeof ttlMsOrOptions === 'number' ? { ttlMs: ttlMsOrOptions } : ttlMsOrOptions;
+  const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const now = Date.now();
 
   const transaction: AuthTransaction = {
@@ -255,6 +290,10 @@ export function createAuthTransaction(
   if (validatedRequest.claims !== undefined) {
     transaction.claims = validatedRequest.claims;
   }
+  // 生の秘密値は保存しない（ハッシュのみ）。store 漏洩で束縛を偽装できないようにするため。
+  if (options.bindingHash !== undefined) {
+    transaction.bindingHash = options.bindingHash;
+  }
 
   return transaction;
 }
@@ -307,6 +346,67 @@ export function validateCsrfToken(
     throw new AuthTransactionError(
       AuthTransactionErrorCode.InvalidCsrfToken,
       'Invalid CSRF token.'
+    );
+  }
+}
+
+/**
+ * User-Agent へ配る秘密値から、トランザクションに保存する束縛ハッシュを求める。
+ *
+ * SHA-256 / base64url。秘密値そのものではなくハッシュを保存することで、
+ * トランザクションストアが漏洩しても、そこから有効な Cookie 値を復元できない。
+ *
+ * @param bindingSecret User-Agent に Cookie で配る秘密値（CSPRNG 由来を想定）
+ * @returns 束縛ハッシュ（base64url）
+ */
+export async function computeTransactionBindingHash(bindingSecret: string): Promise<string> {
+  return sha256(bindingSecret);
+}
+
+/**
+ * トランザクションが、それを開始した User-Agent から提示されたものかを検証する。
+ *
+ * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送ってきた User-Agent の
+ * End-User」を認証し、その End-User から authorization decision を得ることを前提と
+ * するが、同一性の保証手段は規定していない（実装責務）。ここでは認可エンドポイントで
+ * Cookie として配った秘密値のハッシュ一致で担保する。
+ *
+ * これが無いと、`transaction_id` が漏れた場合（ブラウザ履歴・アクセスログ・画面共有
+ * など）に第三者が同意画面から CSRF トークンを取得してフローを完了させられる。また、
+ * 攻撃者が自分のクライアントで開始したトランザクションへ被害者を誘導し、被害者の
+ * identity に対する認可コードを攻撃者のクライアントへ届かせることもできてしまう。
+ * RP 側の `state` 検証では防げない類型であり、OP 側の束縛が唯一の防御になる。
+ *
+ * 比較は {@link timingSafeEqual} を使い、ハッシュの先頭一致長が応答時間に漏れない
+ * ようにする。
+ *
+ * 後方互換: `bindingHash` を持たないトランザクション（束縛導入前に発行されたもの、
+ * または生成コードから束縛を外した構成）は検証をスキップする。
+ *
+ * @param transaction Auth Transaction
+ * @param presentedBindingSecret Cookie から取り出した秘密値。未提示なら undefined
+ * @throws {AuthTransactionError} 束縛が一致しない、または未提示の場合
+ */
+export async function validateTransactionBinding(
+  transaction: AuthTransaction,
+  presentedBindingSecret: string | undefined,
+): Promise<void> {
+  if (transaction.bindingHash === undefined) {
+    return;
+  }
+
+  if (!presentedBindingSecret) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.InvalidTransactionBinding,
+      'This authorization transaction was not started by this browser.',
+    );
+  }
+
+  const presentedHash = await computeTransactionBindingHash(presentedBindingSecret);
+  if (!(await timingSafeEqual(presentedHash, transaction.bindingHash))) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.InvalidTransactionBinding,
+      'This authorization transaction was not started by this browser.',
     );
   }
 }

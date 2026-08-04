@@ -1,6 +1,10 @@
-import { getAuthTransaction } from '@maronn-openid-connect/core';
+import { cookies } from 'next/headers';
+import { getAuthTransaction, validateTransactionBinding } from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import { defaultProviderStores } from '../_oidc-provider/store';
+import {
+  defaultProviderStores,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';
 import { consentAction } from './actions';
 
 const transactionStore =
@@ -10,6 +14,26 @@ export const dynamic = 'force-dynamic';
 
 interface ConsentPageProps {
   searchParams: Promise<{ transaction_id?: string }>;
+}
+
+/**
+ * Is this request coming from the User-Agent that started the transaction?
+ * The authorization endpoint handed that browser a secret in an HttpOnly cookie
+ * named per transaction; only its hash is stored (OIDC Core 1.0 Section 3.1.2.3
+ * / 3.1.2.4). See buildTransactionBindingCookie() in _oidc-provider/store.ts.
+ */
+async function isBoundToThisBrowser(
+  transaction: Awaited<ReturnType<typeof getAuthTransaction>>,
+  transactionId: string,
+): Promise<boolean> {
+  const cookieStore = await cookies();
+  const bindingSecret = cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value;
+  try {
+    await validateTransactionBinding(transaction, bindingSecret);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -31,6 +55,19 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token and its
+  // submission mints the authorization code, so only the User-Agent that started
+  // the transaction may render it. See _oidc-provider/store.ts.
+  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
+    return (
+      <main>
+        <h1>Authorize Application</h1>
+        <p role="alert">This authorization transaction was not started by this browser.</p>
+      </main>
+    );
+  }
+
   const scopes = transaction.scope.split(' ').filter(Boolean);
 
   return (

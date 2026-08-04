@@ -83,7 +83,28 @@ Basic OP として確認すべきこと:
 - [ ] `validateCsrfToken` の比較を定数時間化する（早期 return によるタイミング漏れを作らない）
 - [ ] `pnpm --filter @maronn-openid-connect/core test` と sample のテストがパスすること
 
+## 10. 追記: CSRF トークンの束縛先（2026-08-04）
+
+本ファイルは CSRF トークンの**比較方法**（定数時間か）だけを扱っており、CSRF トークンが
+**何に束縛されているか**は扱っていなかった。OWASP CSRF Prevention Cheat Sheet が求めるのは
+「CSRF トークンをユーザーセッションに束縛し、リクエストパラメータのみから再取得できる状態に
+しないこと」であり、比較方法とは独立した論点である。
+
+`tasks/done/p1-auth-transaction-user-agent-binding.md` で、この束縛側を実装した。
+
+- 束縛先は「認可トランザクションを開始した User-Agent」。認可エンドポイントが CSPRNG 由来の
+  秘密値を HttpOnly Cookie（`oidc_txn_<transaction_id>`）で配り、トランザクションには
+  SHA-256 ハッシュ（`AuthTransaction.bindingHash`）だけを保存する。
+- `validateTransactionBinding()` を `validateCsrfToken()` の**直前**、および CSRF トークンを
+  HTML に埋めて返す GET `/login`・GET `/consent` の**描画前**に呼ぶ。
+- 比較には本ファイルと同じ `timingSafeEqual` を使う。すなわち「秘密値の比較は定数時間」という
+  方針は、CSRF トークン本体だけでなく束縛値にも適用済みである。
+
+この追記により、CSRF トークンの安全性が `transaction_id`（URL を流れる値）の秘匿性だけに
+依存する状態は解消されている。本ファイルの方針 A/B/C の議論そのものは変わらない。
+
 ## 関連トピック
 
+- `study-material/done/auth-transaction-user-agent-binding.md` / `tasks/done/p1-auth-transaction-user-agent-binding.md` — CSRF トークンの束縛先（User-Agent への束縛）を扱う。本ファイルは比較方法、あちらは束縛先という分担。
 - `study-material/security-client-secret-handling.md` / `tasks/done/p0-client-secret-timing-safe-comparison.md` — 秘密値比較を定数時間化する方針の一次記録。本ファイルはその方針を CSRF トークンへ拡張する差分のみを扱う。
 - `study-material/rate-limiting-and-brute-force.md` — タイミング系の議論を `client_secret` に限定している（本ファイルはその限定を CSRF に広げる補完）。

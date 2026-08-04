@@ -263,6 +263,80 @@ export function buildSessionCookie(sessionId: string): string {
 }
 
 /**
+ * Auth transaction binding cookie - OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4.
+ *
+ * Why this exists: transaction_id travels in the URL, so it can leak through
+ * browser history, access logs or a shared screen. Without a second factor the
+ * OP cannot tell the browser that started the authorization request from anyone
+ * who merely knows that id, and that lets a third party read csrf_token off the
+ * consent page and finish the flow. Worse, an attacker can start a flow with
+ * their OWN client, lure the victim to /login?transaction_id=<attacker's> and
+ * have the victim's authorization code delivered to the attacker's client - a
+ * case the RP's state check cannot catch. Binding the transaction to a secret
+ * this browser holds in an HttpOnly cookie is the OP-side defense.
+ *
+ * The cookie name embeds the transaction id so two tabs can run two
+ * authorization flows at once without overwriting each other's secret. The
+ * cookie carries the raw secret; only its SHA-256 hash is stored on the
+ * transaction, so leaking the transaction store does not yield a usable cookie.
+ */
+export const TRANSACTION_BINDING_COOKIE_PREFIX = 'oidc_txn_';
+
+/**
+ * Build the Set-Cookie value binding a transaction to this browser.
+ * Same attributes as the session cookie: HttpOnly (no JS access), Secure
+ * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
+ * SameSite=Lax, because SameSite=Strict would drop the cookie on the cross-site
+ * navigation that starts the flow. Max-Age matches the transaction TTL so
+ * abandoned flows do not leave cookies behind. When the OP is always served
+ * over HTTPS, prefixing the name with '__Host-' is recommended.
+ */
+export function buildTransactionBindingCookie(
+  transactionId: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    TRANSACTION_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears a transaction binding cookie once the
+ * transaction is finished (code issued or access denied), so the browser does
+ * not accumulate one cookie per completed flow.
+ */
+export function buildClearedTransactionBindingCookie(transactionId: string): string {
+  return (
+    TRANSACTION_BINDING_COOKIE_PREFIX + transactionId +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one transaction from a Cookie request header.
+ * Returns undefined when the header is missing or this transaction's cookie is
+ * absent, which validateTransactionBinding() rejects.
+ */
+export function parseTransactionBindingSecret(
+  cookieHeader: string | null,
+  transactionId: string,
+): string | undefined {
+  if (!cookieHeader) return undefined;
+  const name = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
  * In-memory consent store. Records that a user granted a set of scopes to a
  * client so prompt=none can confirm consent without showing UI
  * (OIDC Core 1.0 Section 3.1.2.1).

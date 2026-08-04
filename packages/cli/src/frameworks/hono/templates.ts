@@ -854,6 +854,80 @@ export function buildSessionCookie(sessionId: string): string {
 }
 
 /**
+ * Auth transaction binding cookie - OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4.
+ *
+ * Why this exists: transaction_id travels in the URL, so it can leak through
+ * browser history, access logs or a shared screen. Without a second factor the
+ * OP cannot tell the browser that started the authorization request from anyone
+ * who merely knows that id, and that lets a third party read csrf_token off the
+ * consent page and finish the flow. Worse, an attacker can start a flow with
+ * their OWN client, lure the victim to /login?transaction_id=<attacker's> and
+ * have the victim's authorization code delivered to the attacker's client - a
+ * case the RP's state check cannot catch. Binding the transaction to a secret
+ * this browser holds in an HttpOnly cookie is the OP-side defense.
+ *
+ * The cookie name embeds the transaction id so two tabs can run two
+ * authorization flows at once without overwriting each other's secret. The
+ * cookie carries the raw secret; only its SHA-256 hash is stored on the
+ * transaction, so leaking the transaction store does not yield a usable cookie.
+ */
+export const TRANSACTION_BINDING_COOKIE_PREFIX = 'oidc_txn_';
+
+/**
+ * Build the Set-Cookie value binding a transaction to this browser.
+ * Same attributes as the session cookie: HttpOnly (no JS access), Secure
+ * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
+ * SameSite=Lax, because SameSite=Strict would drop the cookie on the cross-site
+ * navigation that starts the flow. Max-Age matches the transaction TTL so
+ * abandoned flows do not leave cookies behind. When the OP is always served
+ * over HTTPS, prefixing the name with '__Host-' is recommended.
+ */
+export function buildTransactionBindingCookie(
+  transactionId: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    TRANSACTION_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears a transaction binding cookie once the
+ * transaction is finished (code issued or access denied), so the browser does
+ * not accumulate one cookie per completed flow.
+ */
+export function buildClearedTransactionBindingCookie(transactionId: string): string {
+  return (
+    TRANSACTION_BINDING_COOKIE_PREFIX + transactionId +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one transaction from a Cookie request header.
+ * Returns undefined when the header is missing or this transaction's cookie is
+ * absent, which validateTransactionBinding() rejects.
+ */
+export function parseTransactionBindingSecret(
+  cookieHeader: string | null,
+  transactionId: string,
+): string | undefined {
+  if (!cookieHeader) return undefined;
+  const name = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
  * In-memory consent store. Records that a user granted a set of scopes to a
  * client so prompt=none can confirm consent without showing UI
  * (OIDC Core 1.0 Section 3.1.2.1).
@@ -1779,6 +1853,7 @@ import {
   parseClaimsRequestParameter,
   validateIdTokenHint,
   createAuthTransaction,
+  computeTransactionBindingHash,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
@@ -1797,6 +1872,7 @@ import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
+  buildTransactionBindingCookie,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';${parImports}
 
@@ -2000,14 +2076,23 @@ ${offlineAccessStep}
 
     // Create authentication transaction
     const csrfToken = await generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken);
+    // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: the End-User who authenticates and
+    // consents must be the one behind THIS User-Agent. transaction_id alone cannot
+    // prove that (it rides in the URL and can leak), so a secret is handed to this
+    // browser in an HttpOnly cookie and only its hash is kept on the transaction.
+    // See buildTransactionBindingCookie() in store.ts for the threat this closes.
+    const bindingSecret = await generateRandomString(32);
+    const transaction = createAuthTransaction(validatedRequest, csrfToken, {
+      bindingHash: await computeTransactionBindingHash(bindingSecret),
+    });
     const transactionId = await generateRandomString(32);
 
     // Store transaction
+    const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
     await transactionStore.put(
       'auth_txn:' + transactionId,
       transaction,
-      10 * 60, // 10 minutes TTL
+      transactionTtlSeconds,
     );
 
     // OIDC Core 1.0 Section 3.1.2.1: prompt is a space-delimited list
@@ -2221,6 +2306,13 @@ ${offlineAccessStep}
             subject: existingSession.subject,
             authTime: existingSession.authTime,
           });
+          // Hand the binding secret to this browser before the interactive steps.
+          // Only paths that continue in the browser get the cookie; paths that
+          // redirect straight back to the client never needed one.
+          c.header(
+            'Set-Cookie',
+            buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
+          );
           const consentUrl = new URL('/consent', c.req.url);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
@@ -2229,6 +2321,10 @@ ${offlineAccessStep}
     }
 
     // Redirect to login page (prompt=login forces re-authentication; handled in login route)
+    c.header(
+      'Set-Cookie',
+      buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
+    );
     const loginUrl = new URL('/login', c.req.url);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
@@ -3790,8 +3886,11 @@ export function loginRouteTemplate(corePkg: string): string {
 import {
   getAuthTransaction,
   validateCsrfToken,
+  validateTransactionBinding,
   handleLoginFailure,
   generateRandomString,
+  AuthTransactionError,
+  type AuthTransaction,
 } from '${corePkg}';
 import {
   transactionStore as defaultTransactionStore,
@@ -3799,11 +3898,44 @@ import {
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
   parseSessionId,
+  parseTransactionBindingSecret,
   userStore,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const loginApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * Enforce that this step comes from the User-Agent that started the transaction
+ * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
+ * back, or undefined when the binding holds.
+ *
+ * The failure is rendered by the OP itself and never redirected to the client's
+ * redirect_uri: at this point we cannot tell whose transaction this is, so
+ * answering the client would leak that a transaction exists — and, in the
+ * lured-victim case, would hand the attacker's client a code for the victim.
+ * See buildTransactionBindingCookie() in store.ts for the full threat model.
+ */
+async function rejectUnboundTransaction(
+  transaction: AuthTransaction,
+  transactionId: string,
+  cookieHeader: string | null,
+  views: typeof defaultViews,
+): Promise<Response | undefined> {
+  try {
+    await validateTransactionBinding(
+      transaction,
+      parseTransactionBindingSecret(cookieHeader, transactionId),
+    );
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof AuthTransactionError)) throw error;
+    return renderView(views.errorPage({
+      error: error.message,
+      statusCode: error.httpStatusCode,
+    }), { status: error.httpStatusCode });
+  }
+}
 
 /**
  * Login Page - GET
@@ -3818,6 +3950,17 @@ loginApp.get('/', async (c) => {
   const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // Checked BEFORE rendering: the login page embeds csrf_token, so anyone who
+  // could load this page with a leaked transaction_id would obtain the token
+  // that the POST handlers validate.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
 
   return renderView(views.loginPage({
     transactionId,
@@ -3847,6 +3990,16 @@ loginApp.post('/', async (c) => {
     ((u: string, p: string) => userStore.authenticate(u, p));
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+  // Checked before validateCsrfToken: the CSRF token only proves the request
+  // carries a value from the form, and that form is reachable by anyone holding
+  // transaction_id. The binding proves it is the same browser.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
   validateCsrfToken(transaction, csrfToken);
 
   // Authenticate user
@@ -3910,8 +4063,11 @@ export function consentRouteTemplate(corePkg: string): string {
 import {
   getAuthTransaction,
   validateCsrfToken,
+  validateTransactionBinding,
   completeAuthTransaction,
   createAuthorizationCode,
+  AuthTransactionError,
+  type AuthTransaction,
 } from '${corePkg}';
 import {
   clientResolver as defaultClientResolver,
@@ -3921,10 +4077,43 @@ import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
+  buildClearedTransactionBindingCookie,
+  parseTransactionBindingSecret,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * Enforce that this step comes from the User-Agent that started the transaction
+ * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
+ * back, or undefined when the binding holds.
+ *
+ * The failure is rendered by the OP itself and never redirected to the client's
+ * redirect_uri: without a verified owner, answering the client would let an
+ * attacker who lured a victim into their own transaction collect a code for the
+ * victim's identity. See buildTransactionBindingCookie() in store.ts.
+ */
+async function rejectUnboundTransaction(
+  transaction: AuthTransaction,
+  transactionId: string,
+  cookieHeader: string | null,
+  views: typeof defaultViews,
+): Promise<Response | undefined> {
+  try {
+    await validateTransactionBinding(
+      transaction,
+      parseTransactionBindingSecret(cookieHeader, transactionId),
+    );
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof AuthTransactionError)) throw error;
+    return renderView(views.errorPage({
+      error: error.message,
+      statusCode: error.httpStatusCode,
+    }), { status: error.httpStatusCode });
+  }
+}
 
 /**
  * Consent Page - GET
@@ -3939,6 +4128,17 @@ consentApp.get('/', async (c) => {
   const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // Checked BEFORE rendering: the consent page embeds csrf_token, so a third
+  // party holding a leaked transaction_id must not be able to read it here and
+  // then complete POST /consent on the End-User's behalf.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
 
   return renderView(views.consentPage({
     transactionId,
@@ -3965,6 +4165,16 @@ consentApp.post('/', async (c) => {
   const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+  // Checked before validateCsrfToken and before any decision is acted on: this
+  // is the step that mints the authorization code, so an unbound caller must not
+  // reach it — neither to approve nor to deny on the End-User's behalf.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
   validateCsrfToken(transaction, csrfToken);
 
   // RFC 9207 §2: include the issuer identifier on every authorization response
@@ -3981,6 +4191,9 @@ consentApp.post('/', async (c) => {
     redirectUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
+    // The transaction is over; drop its binding cookie so the browser does not
+    // keep one cookie per finished flow.
+    c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
     return c.redirect(redirectUrl.toString());
   }
 
@@ -4030,6 +4243,10 @@ consentApp.post('/', async (c) => {
   );
 
   await authSessionStore.delete(transactionId);
+
+  // The transaction is over; drop its binding cookie so the browser does not
+  // keep one cookie per finished flow.
+  c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
 
   // Redirect back to client with authorization code
   const redirectUrl = new URL(responseParams.redirectUri);
@@ -4990,10 +5207,11 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
     const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-    // The login -> consent handoff is keyed by transaction_id (not a cookie), so the
-    // flow needs no cookie jar. These helpers only fetch and parse: they make no
-    // assertions and contain no branching, so every check stays in the it() blocks as
-    // an expect(). Test code carries no logic that could drift from the OP's behavior.
+    // /authorize binds the transaction to the requesting User-Agent, so the flow
+    // carries that one binding cookie forward (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4).
+    // These helpers only fetch and parse: they make no assertions and contain no
+    // branching, so every check stays in the it() blocks as an expect(). Test code
+    // carries no logic that could drift from the OP's behavior.
     function relativeFrom(location: string | null): string {
       const url = new URL(location ?? '', 'http://localhost');
       return url.pathname + url.search;
@@ -5045,13 +5263,16 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
@@ -5061,10 +5282,10 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
@@ -5152,10 +5373,11 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
     const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-    // The login -> consent handoff is keyed by transaction_id (not a cookie), so the
-    // flow needs no cookie jar. These helpers only fetch and parse: they make no
-    // assertions and contain no branching, so every check stays in the it() blocks as
-    // an expect(). Test code carries no logic that could drift from the OP's behavior.
+    // /authorize binds the transaction to the requesting User-Agent, so the flow
+    // carries that one binding cookie forward (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4).
+    // These helpers only fetch and parse: they make no assertions and contain no
+    // branching, so every check stays in the it() blocks as an expect(). Test code
+    // carries no logic that could drift from the OP's behavior.
     function relativeFrom(location: string | null): string {
       const url = new URL(location ?? '', 'http://localhost');
       return url.pathname + url.search;
@@ -5207,13 +5429,16 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
@@ -5223,10 +5448,10 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
@@ -5577,6 +5802,275 @@ function requestObjectValueConformanceBlock(features: OidcFeatureConfig): string
  * Uses only string concatenation (no nested template literals) so it injects
  * cleanly into the outer generated-file template literal.
  */
+/**
+ * Auth transaction / User-Agent binding contract.
+ *
+ * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 assume the End-User who authenticates and
+ * consents is the one behind the User-Agent that sent the authorization request,
+ * but leave the mechanism to the implementation. The generated OP hands that
+ * browser a secret in an HttpOnly cookie and stores only its hash, so holding
+ * `transaction_id` alone drives no step of the flow. This block pins that
+ * contract: if a user edits the generated routes and drops the check, these
+ * tests fail.
+ */
+export function transactionBindingConformanceBlock(): string {
+  return `
+  describe('Auth transaction User-Agent binding', () => {
+    const BINDING_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the contract
+    // stays visible in the it() blocks.
+    function bindingRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function bindingCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Start one authorization request and return everything a browser would hold
+    // after it: where the OP sent us, the transaction id, and the binding cookie.
+    async function startFlow(state: string): Promise<{
+      loginPath: string;
+      transactionId: string;
+      cookie: string;
+    }> {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + BINDING_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = bindingRelativeFrom(res.headers.get('Location'));
+      return {
+        loginPath,
+        transactionId:
+          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '',
+        cookie: (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '',
+      };
+    }
+
+    // Log in and reach the consent page as the browser that owns the transaction.
+    async function loginAndReachConsent(flow: {
+      loginPath: string;
+      transactionId: string;
+      cookie: string;
+    }): Promise<{ consentPath: string; consentCsrf: string }> {
+      const loginGet = await app.request(flow.loginPath, {
+        headers: { Cookie: flow.cookie },
+      });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: flow.cookie },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: bindingCsrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = bindingRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: flow.cookie } });
+      return { consentPath, consentCsrf: bindingCsrfFrom(await consentGet.text()) };
+    }
+
+    // The authorization endpoint issues the binding secret; without it there is
+    // nothing to check the later steps against.
+    it('should set a transaction binding cookie on the redirect to the login page', async () => {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=binding-set&prompt=consent' +
+        '&code_challenge=' + BINDING_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const transactionId =
+        new URL(bindingRelativeFrom(res.headers.get('Location')), 'http://localhost')
+          .searchParams.get('transaction_id') ?? '';
+      const setCookie = res.headers.get('Set-Cookie') ?? '';
+
+      expect(res.status).toBe(302);
+      // Named per transaction so two tabs can run two flows at once, and marked
+      // HttpOnly/Secure/SameSite=Lax like the session cookie.
+      expect(setCookie.startsWith('oidc_txn_' + transactionId + '=')).toBe(true);
+      expect(setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+    });
+
+    // The csrf_token lives in this HTML. If a leaked transaction_id were enough to
+    // fetch it, the CSRF defense would reduce to the secrecy of a URL parameter.
+    it('should not expose the csrf token for GET /login without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-login-get');
+
+      const res = await app.request(flow.loginPath);
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('csrf_token')).toBe(false);
+    });
+
+    it('should return 400 for GET /consent without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-consent-get');
+      await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent?transaction_id=' + flow.transactionId);
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('csrf_token')).toBe(false);
+    });
+
+    it('should reject POST /login without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-login-post');
+      const loginGet = await app.request(flow.loginPath, { headers: { Cookie: flow.cookie } });
+      const csrf = bindingCsrfFrom(await loginGet.text());
+
+      const res = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: csrf,
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      // Stopped by the OP itself (400), never redirected onward to the client.
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The core threat: someone holding transaction_id and a valid csrf_token
+    // (both readable from a shared screen or a browser history entry) must still
+    // not be able to complete the grant.
+    it('should not issue an authorization code for POST /consent without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-consent-post');
+      const consent = await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The lured-victim case: the attacker starts their own transaction, so their
+    // cookie is a perfectly valid binding cookie — just not for THIS transaction.
+    it('should not issue an authorization code for POST /consent with another transactions binding cookie', async () => {
+      const victim = await startFlow('binding-victim');
+      const consent = await loginAndReachConsent(victim);
+      const attacker = await startFlow('binding-attacker');
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: attacker.cookie,
+        },
+        body: new URLSearchParams({
+          transaction_id: victim.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    it('should reject POST /consent action=deny without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-deny');
+      const consent = await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'deny',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // Regression guard: the binding must not break the flow it protects.
+    it('should issue an authorization code for the normal flow with a valid binding cookie', async () => {
+      const flow = await startFlow('binding-happy');
+      const consent = await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: flow.cookie,
+        },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.searchParams.get('state')).toBe('binding-happy');
+      expect((callback.searchParams.get('code') ?? '').length).toBe(43);
+      // The finished transaction's cookie is cleared so it cannot pile up.
+      expect(res.headers.get('Set-Cookie')).toBe(
+        'oidc_txn_' + flow.transactionId + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+      );
+    });
+
+    // Two tabs, two clients, at the same time: the cookie is named per
+    // transaction, so neither flow overwrites the other's secret.
+    it('should complete two concurrent authorization flows in the same browser', async () => {
+      const first = await startFlow('binding-tab-one');
+      const second = await startFlow('binding-tab-two');
+      const bothCookies = first.cookie + '; ' + second.cookie;
+
+      const firstConsent = await loginAndReachConsent({ ...first, cookie: bothCookies });
+      const secondConsent = await loginAndReachConsent({ ...second, cookie: bothCookies });
+
+      const firstRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bothCookies },
+        body: new URLSearchParams({
+          transaction_id: first.transactionId,
+          csrf_token: firstConsent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+      const secondRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bothCookies },
+        body: new URLSearchParams({
+          transaction_id: second.transactionId,
+          csrf_token: secondConsent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+      const firstCallback = new URL(firstRes.headers.get('Location') ?? '', 'http://localhost');
+      const secondCallback = new URL(secondRes.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(firstCallback.searchParams.get('state')).toBe('binding-tab-one');
+      expect(secondCallback.searchParams.get('state')).toBe('binding-tab-two');
+      expect((firstCallback.searchParams.get('code') ?? '').length).toBe(43);
+      expect((secondCallback.searchParams.get('code') ?? '').length).toBe(43);
+    });
+  });
+`;
+}
+
 export function customViewConformanceTestBlock(): string {
   return `
   describe('custom view rendering (ViewResult / renderView)', () => {
@@ -5627,8 +6121,11 @@ export function customViewConformanceTestBlock(): string {
         '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
       const authorizeRes = await app.request(authorizeUrl);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-      const res = await app.request(loginUrl.pathname + loginUrl.search);
+      const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
 
       // The login body carries a dynamic transaction_id / csrf_token, so the
       // status + content type pin that renderView delivered a text/html Response
@@ -5715,13 +6212,16 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
       '&code_challenge=' + CONFORMANCE_PKCE_CHALLENGE + '&code_challenge_method=S256',
   );
   const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+  // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+  // User-Agent that started it, so every later step must present that cookie.
+  const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
   const transactionId =
     new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-  const loginGet = await app.request(loginPath);
+  const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
   const loginRes = await app.request('/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
     body: new URLSearchParams({
       transaction_id: transactionId,
       csrf_token: csrfFrom(await loginGet.text()),
@@ -5731,10 +6231,10 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
   });
 
   const consentPath = relativeFrom(loginRes.headers.get('Location'));
-  const consentGet = await app.request(consentPath);
+  const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
   const consentRes = await app.request('/consent', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
     body: new URLSearchParams({
       transaction_id: transactionId,
       csrf_token: csrfFrom(await consentGet.text()),
@@ -6201,14 +6701,17 @@ export function pkceDisabledConformanceBlock(features: OidcFeatureConfig): strin
       );
       expect(authorizeRes.status).toBe(302);
       const loginPath = relativePathFrom(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       expect(loginPath.startsWith('/login?')).toBe(true);
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6220,10 +6723,10 @@ export function pkceDisabledConformanceBlock(features: OidcFeatureConfig): strin
       const consentPath = relativePathFrom(loginRes.headers.get('Location'));
       expect(consentPath.startsWith('/consent?')).toBe(true);
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6278,12 +6781,15 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6292,10 +6798,10 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6341,12 +6847,15 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6355,10 +6864,10 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6402,12 +6911,15 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6416,10 +6928,10 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6574,11 +7086,14 @@ ${corsPreflightTest}
       );
       expect(authorizeRes.status).toBe(302);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginUrl.pathname + loginUrl.search);
+      const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6588,10 +7103,12 @@ ${corsPreflightTest}
       });
       expect(loginRes.status).toBe(302);
       const consentUrl = new URL(loginRes.headers.get('Location') ?? '', 'http://localhost');
-      const consentGet = await app.request(consentUrl.pathname + consentUrl.search);
+      const consentGet = await app.request(consentUrl.pathname + consentUrl.search, {
+        headers: { Cookie: bindingCookie },
+      });
       const denyRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6698,12 +7215,15 @@ export function idTokenHintConformanceBlock(): string {
         '&code_challenge=' + HINT_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
       const loginPath = hintRelativeLocation(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: hintCsrfToken(await loginGet.text()),
@@ -6713,10 +7233,10 @@ export function idTokenHintConformanceBlock(): string {
       });
       hintSessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
       const consentPath = hintRelativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: hintCsrfToken(await consentGet.text()),
@@ -6915,13 +7435,16 @@ export function consentWithdrawalConformanceBlock(features: OidcFeatureConfig): 
       );
       expect(authorizeRes.status).toBe(302);
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6932,10 +7455,10 @@ export function consentWithdrawalConformanceBlock(features: OidcFeatureConfig): 
       expect(loginRes.status).toBe(302);
       const sessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -7120,13 +7643,16 @@ export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): stri
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+      // User-Agent that started it, so every later step must present that cookie.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
@@ -7136,10 +7662,10 @@ export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): stri
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
@@ -7784,12 +8310,15 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
           '/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(requestUri),
         );
         const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+        // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+        // User-Agent that started it, so every later step must present that cookie.
+        const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
         const transactionId =
           new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-        const loginGet = await app.request(loginPath);
+        const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
         const loginRes = await app.request('/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
           body: new URLSearchParams({
             transaction_id: transactionId,
             csrf_token: csrfFrom(await loginGet.text()),
@@ -7798,10 +8327,10 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
           }).toString(),
         });
         const consentPath = relativeFrom(loginRes.headers.get('Location'));
-        const consentGet = await app.request(consentPath);
+        const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
         const consentRes = await app.request('/consent', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
           body: new URLSearchParams({
             transaction_id: transactionId,
             csrf_token: csrfFrom(await consentGet.text()),
@@ -7845,12 +8374,15 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
             encodeURIComponent(requestUri),
         );
         const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+        // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
+        // User-Agent that started it, so every later step must present that cookie.
+        const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
         const transactionId =
           new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-        const loginGet = await app.request(loginPath);
+        const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
         const loginRes = await app.request('/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
           body: new URLSearchParams({
             transaction_id: transactionId,
             csrf_token: csrfFrom(await loginGet.text()),
@@ -7859,7 +8391,7 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
           }).toString(),
         });
         const consentPath = relativeFrom(loginRes.headers.get('Location'));
-        const consentHtml = await (await app.request(consentPath)).text();
+        const consentHtml = await (await app.request(consentPath, { headers: { Cookie: bindingCookie } })).text();
 
         expect(authorizeRes.status).toBe(302);
         // The consent screen lists the pushed scope, not the tampered one.
@@ -8523,6 +9055,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${transactionBindingConformanceBlock()}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }

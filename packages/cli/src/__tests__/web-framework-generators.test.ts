@@ -608,6 +608,56 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(actions?.content).toContain("successUrl.searchParams.set('iss', issuer)");
       expect(actions?.content).toContain("denyUrl.searchParams.set('iss', issuer)");
     });
+
+    // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the Server Action path must enforce the
+    // same User-Agent binding as the framework-neutral routes, otherwise the
+    // Next.js provider would be the one OP where a leaked transaction_id is
+    // enough to drive login and consent.
+    it('should validate the transaction binding before rendering the login page', () => {
+      const page = files.find((f) => f.path === 'login/page.tsx');
+      const content = page?.content ?? '';
+      expect(content).toContain("import { cookies } from 'next/headers'");
+      expect(content).toContain('TRANSACTION_BINDING_COOKIE_PREFIX');
+      expect(content).toContain('await validateTransactionBinding(transaction, bindingSecret)');
+      expect(content).toContain('if (!(await isBoundToThisBrowser(transaction, transactionId)))');
+    });
+
+    it('should validate the transaction binding before rendering the consent page', () => {
+      const page = files.find((f) => f.path === 'consent/page.tsx');
+      const content = page?.content ?? '';
+      expect(content).toContain("import { cookies } from 'next/headers'");
+      expect(content).toContain('TRANSACTION_BINDING_COOKIE_PREFIX');
+      expect(content).toContain('await validateTransactionBinding(transaction, bindingSecret)');
+      expect(content).toContain('if (!(await isBoundToThisBrowser(transaction, transactionId)))');
+    });
+
+    it('should validate the transaction binding before the CSRF check in the login Server Action', () => {
+      const actions = files.find((f) => f.path === 'login/actions.ts');
+      const content = actions?.content ?? '';
+      expect(content).toContain('await validateTransactionBinding(');
+      expect(content).toContain(
+        'cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,',
+      );
+      expect(content.indexOf('await validateTransactionBinding(')).toBeLessThan(
+        content.indexOf('validateCsrfToken(transaction, csrfToken);'),
+      );
+    });
+
+    it('should validate the transaction binding before the CSRF check in the consent Server Action', () => {
+      const actions = files.find((f) => f.path === 'consent/actions.ts');
+      const content = actions?.content ?? '';
+      expect(content).toContain('await validateTransactionBinding(');
+      expect(content).toContain('cookieStore.get(bindingCookieName)?.value,');
+      expect(content.indexOf('await validateTransactionBinding(')).toBeLessThan(
+        content.indexOf('validateCsrfToken(transaction, csrfToken);'),
+      );
+    });
+
+    it('should clear the transaction binding cookie once the consent Server Action finishes', () => {
+      const actions = files.find((f) => f.path === 'consent/actions.ts');
+      const content = actions?.content ?? '';
+      expect(content.split('cookieStore.delete(bindingCookieName);').length - 1).toBe(2);
+    });
   });
 });
 

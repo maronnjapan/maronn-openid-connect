@@ -1907,6 +1907,64 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain('access_denied');
     });
 
+    // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the End-User who authenticates and
+    // consents must be the one behind the User-Agent that sent the authorization
+    // request. transaction_id travels in the URL, so the generated OP also hands
+    // that browser a secret in an HttpOnly cookie and stores only its hash.
+    it('should generate the transaction binding cookie helpers in store', () => {
+      const file = files.find((f) => f.path === 'store.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain("export const TRANSACTION_BINDING_COOKIE_PREFIX = 'oidc_txn_';");
+      expect(content).toContain('export function buildTransactionBindingCookie(');
+      expect(content).toContain('export function buildClearedTransactionBindingCookie(');
+      expect(content).toContain('export function parseTransactionBindingSecret(');
+    });
+
+    it('should name the binding cookie per transaction so concurrent tabs do not collide', () => {
+      const file = files.find((f) => f.path === 'store.ts');
+      expect(file?.content).toContain(
+        "TRANSACTION_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +\n    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)",
+      );
+    });
+
+    it('should issue the transaction binding cookie on the authorize redirect to login', () => {
+      const file = files.find((f) => f.path === 'routes/authorize.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain('const bindingSecret = await generateRandomString(32);');
+      expect(content).toContain('bindingHash: await computeTransactionBindingHash(bindingSecret),');
+      expect(content).toContain(
+        'buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),',
+      );
+    });
+
+    it('should validate the transaction binding before rendering the login page', () => {
+      const file = files.find((f) => f.path === 'routes/login.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain('validateTransactionBinding');
+      expect(content).toContain('parseTransactionBindingSecret');
+      // The binding guard must precede the CSRF check: the CSRF token is only as
+      // secret as the page that carries it.
+      expect(content.indexOf('rejectUnboundTransaction(')).toBeLessThan(
+        content.indexOf('validateCsrfToken(transaction, csrfToken);'),
+      );
+    });
+
+    it('should validate the transaction binding before acting on the consent decision', () => {
+      const file = files.find((f) => f.path === 'routes/consent.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain('validateTransactionBinding');
+      expect(content).toContain('parseTransactionBindingSecret');
+      expect(content.indexOf('rejectUnboundTransaction(')).toBeLessThan(
+        content.indexOf('validateCsrfToken(transaction, csrfToken);'),
+      );
+    });
+
+    it('should clear the transaction binding cookie once the transaction is finished', () => {
+      const file = files.find((f) => f.path === 'routes/consent.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain('buildClearedTransactionBindingCookie(transactionId)');
+    });
+
     it('should escape dynamic values in consent page', () => {
       const file = files.find((f) => f.path === 'views.ts');
       expect(file?.content).toContain('function escapeHtml(value: string): string');

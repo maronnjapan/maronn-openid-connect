@@ -31,6 +31,7 @@ import {
   storeTemplate,
   tokenEndpointAuthMethodsConformanceBlock,
   tokenRouteTemplate,
+  transactionBindingConformanceBlock,
   userinfoRouteTemplate,
   viewsTemplate,
 } from '../hono/templates.js';
@@ -1192,9 +1193,13 @@ ${exports}
 }
 
 export function nextJsLoginPageTemplate(corePkg: string): string {
-  return `import { getAuthTransaction } from '${corePkg}';
+  return `import { cookies } from 'next/headers';
+import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import { defaultProviderStores } from '../_oidc-provider/store';
+import {
+  defaultProviderStores,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';
 import { loginAction } from './actions';
 
 const transactionStore =
@@ -1210,6 +1215,26 @@ interface LoginPageProps {
     error?: string;
     remaining?: string;
   }>;
+}
+
+/**
+ * Is this request coming from the User-Agent that started the transaction?
+ * The authorization endpoint handed that browser a secret in an HttpOnly cookie
+ * named per transaction; only its hash is stored (OIDC Core 1.0 Section 3.1.2.3
+ * / 3.1.2.4). See buildTransactionBindingCookie() in _oidc-provider/store.ts.
+ */
+async function isBoundToThisBrowser(
+  transaction: Awaited<ReturnType<typeof getAuthTransaction>>,
+  transactionId: string,
+): Promise<boolean> {
+  const cookieStore = await cookies();
+  const bindingSecret = cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value;
+  try {
+    await validateTransactionBinding(transaction, bindingSecret);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1243,6 +1268,18 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token, so only
+  // the User-Agent that started the transaction may render it. transaction_id
+  // alone is not proof — it rides in the URL and can leak. See store.ts.
+  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
+    return (
+      <main>
+        <h1>Login</h1>
+        <p role="alert">This authorization transaction was not started by this browser.</p>
+      </main>
+    );
+  }
 
   const errorMessage =
     error === 'invalid_credentials'
@@ -1343,11 +1380,16 @@ import { cookies } from 'next/headers';
 import {
   getAuthTransaction,
   validateCsrfToken,
+  validateTransactionBinding,
   handleLoginFailure,
   generateRandomString,
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import { defaultProviderStores, SESSION_COOKIE_NAME } from '../_oidc-provider/store';
+import {
+  defaultProviderStores,
+  SESSION_COOKIE_NAME,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';
 
 const {
   transactionStore,
@@ -1370,6 +1412,16 @@ export async function loginAction(formData: FormData): Promise<void> {
   const password = String(formData.get('password') ?? '');
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken —
+  // the CSRF token only proves the value came from the form, and that form is
+  // reachable by anyone holding transaction_id. This proves it is the same
+  // browser. Throws AuthTransactionError, surfaced by the App Router error
+  // boundary rather than redirected to the client. See _oidc-provider/store.ts.
+  const cookieStore = await cookies();
+  await validateTransactionBinding(
+    transaction,
+    cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
+  );
   validateCsrfToken(transaction, csrfToken);
 
   const user = await userStore.authenticate(username, password);
@@ -1389,8 +1441,6 @@ export async function loginAction(formData: FormData): Promise<void> {
       \`/login?transaction_id=\${encodeURIComponent(transactionId)}&error=invalid_credentials&remaining=\${remaining}\`,
     );
   }
-
-  const cookieStore = await cookies();
 
   // prompt=login / select_account requires fresh authentication: discard any
   // existing transaction handoff AND browser session.
@@ -1429,9 +1479,13 @@ export async function loginAction(formData: FormData): Promise<void> {
 }
 
 export function nextJsConsentPageTemplate(corePkg: string): string {
-  return `import { getAuthTransaction } from '${corePkg}';
+  return `import { cookies } from 'next/headers';
+import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import { defaultProviderStores } from '../_oidc-provider/store';
+import {
+  defaultProviderStores,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';
 import { consentAction } from './actions';
 
 const transactionStore =
@@ -1441,6 +1495,26 @@ export const dynamic = 'force-dynamic';
 
 interface ConsentPageProps {
   searchParams: Promise<{ transaction_id?: string }>;
+}
+
+/**
+ * Is this request coming from the User-Agent that started the transaction?
+ * The authorization endpoint handed that browser a secret in an HttpOnly cookie
+ * named per transaction; only its hash is stored (OIDC Core 1.0 Section 3.1.2.3
+ * / 3.1.2.4). See buildTransactionBindingCookie() in _oidc-provider/store.ts.
+ */
+async function isBoundToThisBrowser(
+  transaction: Awaited<ReturnType<typeof getAuthTransaction>>,
+  transactionId: string,
+): Promise<boolean> {
+  const cookieStore = await cookies();
+  const bindingSecret = cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value;
+  try {
+    await validateTransactionBinding(transaction, bindingSecret);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1462,6 +1536,19 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token and its
+  // submission mints the authorization code, so only the User-Agent that started
+  // the transaction may render it. See _oidc-provider/store.ts.
+  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
+    return (
+      <main>
+        <h1>Authorize Application</h1>
+        <p role="alert">This authorization transaction was not started by this browser.</p>
+      </main>
+    );
+  }
+
   const scopes = transaction.scope.split(' ').filter(Boolean);
 
   return (
@@ -1496,16 +1583,21 @@ export function nextJsConsentActionTemplate(corePkg: string): string {
   return `'use server';
 
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import {
   getAuthTransaction,
   validateCsrfToken,
+  validateTransactionBinding,
   completeAuthTransaction,
   createAuthorizationCode,
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
 import type { RegisteredClient } from '../_oidc-provider/config';
-import { defaultProviderStores } from '../_oidc-provider/store';
+import {
+  defaultProviderStores,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
 const { transactionStore, authCodeStore, authSessionStore } = providerStores;
@@ -1524,6 +1616,17 @@ export async function consentAction(formData: FormData): Promise<void> {
   const action = String(formData.get('action') ?? '');
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken and
+  // before any decision is acted on — this step mints the authorization code, so
+  // an unbound caller must reach it neither to approve nor to deny. Throws
+  // AuthTransactionError, surfaced by the App Router error boundary rather than
+  // redirected to the client. See _oidc-provider/store.ts.
+  const cookieStore = await cookies();
+  const bindingCookieName = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
+  await validateTransactionBinding(
+    transaction,
+    cookieStore.get(bindingCookieName)?.value,
+  );
   validateCsrfToken(transaction, csrfToken);
 
   // RFC 9207 §2: include the issuer identifier on every authorization response.
@@ -1538,6 +1641,9 @@ export async function consentAction(formData: FormData): Promise<void> {
     denyUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
+    // The transaction is over; drop its binding cookie so the browser does not
+    // keep one cookie per finished flow.
+    cookieStore.delete(bindingCookieName);
     redirect(denyUrl.toString());
   }
 
@@ -1581,6 +1687,10 @@ export async function consentAction(formData: FormData): Promise<void> {
   );
 
   await authSessionStore.delete(transactionId);
+
+  // The transaction is over; drop its binding cookie so the browser does not
+  // keep one cookie per finished flow.
+  cookieStore.delete(bindingCookieName);
 
   const successUrl = new URL(responseParams.redirectUri);
   successUrl.searchParams.set('code', authCodeData.code);
@@ -2141,7 +2251,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${transactionBindingConformanceBlock()}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }
 

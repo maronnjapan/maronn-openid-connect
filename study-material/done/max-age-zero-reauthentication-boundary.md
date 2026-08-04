@@ -105,4 +105,4 @@ OIDC Core §3.1.2.1 の `max_age` は「最後の認証からの許容経過秒�
 - [ ] 方針A で `requiresReauthentication` を修正（Green）
 - [ ] ドキュメントコメントと実装の整合を取る（「0 は常に再認証」を実際に満たす）
 - [ ] 可能なら `tests/e2e` に「`max_age=0` で必ず再認証画面へ遷移する」E2E を追加（CLI 生成 OP を対象）
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

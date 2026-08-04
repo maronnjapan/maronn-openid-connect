@@ -7,7 +7,7 @@ import {
   validateCsrfToken,
   handleLoginFailure,
   generateRandomString,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { defaultProviderStores, SESSION_COOKIE_NAME } from '../_oidc-provider/store';
 

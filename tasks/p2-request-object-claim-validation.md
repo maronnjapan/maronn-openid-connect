@@ -142,7 +142,7 @@ if (payload['request'] !== undefined || payload['request_uri'] !== undefined) {
 - [ ] 既存の署名検証・`response_type`/`client_id` 一致検証にリグレッションが無い
 - [ ] Basic OP unsigned 互換（`allowUnsigned`）経路と `oidcc-*` module 相当のフローが壊れない
 - [ ] CLI generator / sample `conformance.test.ts`: 生成 OP がリプレイ／オーディエンス混同を拒否する契約が固定される
-- [ ] `pnpm --filter @maronn-oidc/core test` と `pnpm --filter @maronn-oidc/cli test` がパスする
+- [ ] `pnpm --filter @maronn-openid-connect/core test` と `pnpm --filter @maronn-openid-connect/cli test` がパスする
 
 ## 完了条件
 

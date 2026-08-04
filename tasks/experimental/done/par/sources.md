@@ -37,7 +37,7 @@
 | `packages/core/src/authorization-request.ts` (L21-42, L286-313) | `AuthorizationErrorCode` が closed な enum で `invalid_request_uri` を含まないこと（`PushedRequestUriError` を別クラスにし catch 分岐を追加する必要性の根拠）。`AuthorizationError` のコンストラクタが `sanitizeErrorDescription` を通すこと | 2026-07-29 |
 | `packages/cli/src/frameworks/hono/templates.ts` (L1725-1727, L2034-2092) | `const params = rawParams;` が `try` ブロックの**前**にあること（前段フックを try 内へ移す必要性の根拠）。catch 節が `AuthorizationError` のみ分岐し、他の例外は 500 `server_error` に落ちること。`const params = rawParams;` は L2450（token endpoint）にもあるが authorize ハンドラ内では一意であること | 2026-07-29 |
 | `packages/cli/src/frameworks/hono/templates.ts` (L1608-1613) | 生成コードのストアが `../store.js` からの import ＋ `c.get(...) ?? default` パターンで route 間共有されること（par.ts と authorize 間の parStore 共有パターンの実在確認） | 2026-07-29 |
-| `packages/cli/src/index.ts` (L8-12, L185) | `INSTALL_COMMANDS` の構造（フレームワーク別の install 案内に `@maronn-oidc/experimental` を追加する対象箇所） | 2026-07-29 |
+| `packages/cli/src/index.ts` (L8-12, L185) | `INSTALL_COMMANDS` の構造（フレームワーク別の install 案内に `@maronn-openid-connect/experimental` を追加する対象箇所） | 2026-07-29 |
 | `packages/cli/src/features.ts` (L63-105) | `resolveFeatures` が未知の機能名を throw すること（experimental カテゴリを追加しない限り `--enable par` はエラーになる = 現行 CLI との非互換が生じない前提の再確認） | 2026-07-29 |
 
 ## 二次資料

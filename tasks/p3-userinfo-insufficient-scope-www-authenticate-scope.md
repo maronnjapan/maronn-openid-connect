@@ -84,6 +84,6 @@ c.header('WWW-Authenticate', challenge);
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 生成 OP のチャレンジ挙動を変えるため、`packages/cli` テンプレートと各 sample の
   `conformance.test.ts` を更新し、`pnpm test` がパスすること

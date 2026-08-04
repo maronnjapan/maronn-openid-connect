@@ -57,5 +57,5 @@ export function validateCsrfToken(transaction: AuthTransaction, csrfToken: strin
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` と sample のテストがパスすること
+- `pnpm --filter @maronn-openid-connect/core test` と sample のテストがパスすること
 - CSRF トークン比較が定数時間で行われ、`client_secret` と同じ秘密値比較方針に統一されていること

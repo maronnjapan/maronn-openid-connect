@@ -44,4 +44,4 @@ OIDC Core 1.0 は Authorization Endpoint で HTTP `GET` と `POST` の両方を�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

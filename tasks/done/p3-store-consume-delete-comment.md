@@ -31,7 +31,7 @@
 ## テスト要件
 
 - [ ] 必要なら generator test でコメントまたは `consume()` 利用がテンプレートに残ることを固定する。
-- [ ] `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 
 ## 完了条件
 

@@ -65,5 +65,5 @@ export interface LoginPageParams {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 生成物のログイン画面で `login_hint` が安全にプレフィルされること

@@ -83,6 +83,6 @@ function defaultConsentPage(params: ConsentPageParams): string {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 各 sample の `conformance.test.ts` がパスすること
 - 再生成した `samples/*/views.ts` の差分がエスケープ適用のみであること

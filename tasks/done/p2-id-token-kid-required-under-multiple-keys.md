@@ -107,6 +107,6 @@ export function assertKidStrategyConsistent(keys: readonly SigningKey[]): void {
 ## 完了条件
 
 - 上記テストがすべて通る
-- `pnpm --filter @maronn-oidc/core test` がパスする
-- `pnpm --filter @maronn-oidc/cli test` がパスする
+- `pnpm --filter @maronn-openid-connect/core test` がパスする
+- `pnpm --filter @maronn-openid-connect/cli test` がパスする
 - 単一鍵の既定運用にリグレッションが無い（既存テストがパス）

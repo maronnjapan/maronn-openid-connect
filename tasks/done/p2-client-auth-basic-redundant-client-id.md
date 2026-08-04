@@ -83,7 +83,7 @@ if (hasBasicHeader && params.client_id !== undefined && params.client_id !== bas
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 上記テストがすべて追加され通過すること
 - 生成 OP の Token Endpoint 挙動が変わる場合は `packages/cli` テンプレートと各 sample の
   `conformance.test.ts` を更新し、`pnpm test` がパスすること

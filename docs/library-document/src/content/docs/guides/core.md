@@ -1,9 +1,9 @@
 ---
 title: Using core
-description: How to use @maronn-oidc/core directly.
+description: How to use @maronn-openid-connect/core directly.
 ---
 
-`@maronn-oidc/core` は OP のコアロジックを純関数として提供するパッケージです。CLI 生成コードで表現できない高度な組み込みユースケースで直接使用します。
+`@maronn-openid-connect/core` は OP のコアロジックを純関数として提供するパッケージです。CLI 生成コードで表現できない高度な組み込みユースケースで直接使用します。
 
 ## Design
 

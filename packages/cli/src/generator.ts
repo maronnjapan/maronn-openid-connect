@@ -8,7 +8,7 @@ export interface GenerateOptions {
   framework: string;
   /** Output directory path */
   outputDir: string;
-  /** Core package name (default: @maronn-oidc/core) */
+  /** Core package name (default: @maronn-openid-connect/core) */
   corePackageName?: string;
   /** Feature toggles for the generated provider (default: every feature enabled) */
   features?: OidcFeatureConfig;
@@ -19,7 +19,7 @@ export interface GenerateResult {
   framework: string;
 }
 
-const DEFAULT_CORE_PACKAGE = '@maronn-oidc/core';
+const DEFAULT_CORE_PACKAGE = '@maronn-openid-connect/core';
 
 /**
  * Generate OIDC provider code for the specified framework.

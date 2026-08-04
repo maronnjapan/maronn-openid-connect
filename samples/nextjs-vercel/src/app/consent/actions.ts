@@ -6,7 +6,7 @@ import {
   validateCsrfToken,
   completeAuthTransaction,
   createAuthorizationCode,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
 import type { RegisteredClient } from '../_oidc-provider/config';

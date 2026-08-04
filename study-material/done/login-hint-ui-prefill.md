@@ -97,4 +97,4 @@ OIDC Core §3.1.2.1 が「ログインフォームに `login_hint` の値を投�
 - [ ]（方針A）`defaultLoginPage` の username 欄へ **HTML エスケープした上で** `value` 反映
 - [ ] XSS 回帰テスト: `login_hint=<script>` 等が属性値として安全にエスケープされること
 - [ ] 4 フレームワーク（express/hono/fastify/nextjs）で挙動を統一
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/cli test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/cli test` がパス

@@ -63,4 +63,4 @@ return c.json({ error: 'server_error' }, 500);
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

@@ -4,7 +4,7 @@ import {
   validateCsrfToken,
   handleLoginFailure,
   generateRandomString,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   transactionStore as defaultTransactionStore,
   authSessionStore as defaultAuthSessionStore,

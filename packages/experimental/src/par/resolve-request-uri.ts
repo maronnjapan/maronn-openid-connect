@@ -5,7 +5,7 @@
  *
  * 認可エンドポイントの前段で `request_uri` を pushed パラメータへ展開する処理。
  */
-import { sanitizeErrorDescription } from '@maronn-oidc/core';
+import { sanitizeErrorDescription } from '@maronn-openid-connect/core';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
 import type { PushedAuthorizationRequestStore } from './store.js';
 

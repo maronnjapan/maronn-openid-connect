@@ -64,4 +64,4 @@ if (algorithm.name === 'RSA-PSS' && 'hash' in algorithm) {
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスし、上記テストが追加されていること。
+`pnpm --filter @maronn-openid-connect/core test` がパスし、上記テストが追加されていること。

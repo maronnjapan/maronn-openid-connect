@@ -53,4 +53,4 @@ OIDC Core 1.0 §15.1 は「RS256 を**サポートしなければならない（
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスすること
+`pnpm --filter @maronn-openid-connect/core test` がパスすること

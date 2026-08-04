@@ -21,7 +21,7 @@
 set -euo pipefail
 
 : "${SAMPLE_DIR:?SAMPLE_DIR must be set by the caller (e.g. samples/express-flyio)}"
-: "${SAMPLE_PACKAGE:?SAMPLE_PACKAGE must be set by the caller (e.g. @maronn-oidc/sample-express-flyio)}"
+: "${SAMPLE_PACKAGE:?SAMPLE_PACKAGE must be set by the caller (e.g. @maronn-openid-connect/sample-express-flyio)}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"

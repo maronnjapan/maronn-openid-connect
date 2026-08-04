@@ -57,4 +57,4 @@
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` が全件パス
+- `pnpm --filter @maronn-openid-connect/core test` が全件パス

@@ -109,4 +109,4 @@
 - [ ] `validateTokenRequest` の認可コード／リフレッシュの失効境界を統一（演算子 + コメント整合）するテストを先行作成 → 実装
 - [ ] `generateTokenResponse` の結果に算出済み `exp`（絶対時刻）を含め、生成テンプレートが `expiresAt` を再計算せず保存する配線を検討
 - [ ] Opaque トークンで「`expires_in` と store `expiresAt` が一致する」ことの回帰テスト
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` と `pnpm --filter @maronn-oidc/cli test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` と `pnpm --filter @maronn-openid-connect/cli test` がパス

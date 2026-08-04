@@ -99,7 +99,7 @@ if (Array.isArray(payload.aud)) {                     // L117-123 : 配列のと
   - [ ] 既存の正常系（文字列 `sub`/`aud`/`nonce`）がリグレッションしない
 - [ ] `validatePayload` にスカラー経路の `typeof === 'string'` ガードを追加（方針A）
 - [ ] 生成 OP の発行挙動は変えない（不正型は元々発行されない想定）が、`packages/cli` 側で型を渡す経路があるか確認し、必要なら `samples/*/conformance.test.ts`（生成元 `packages/cli`）に契約テストを追加
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス
 
 ## 関連トピック
 

@@ -68,7 +68,7 @@ Basic OP として確認すべきこと:
 - [ ] `AuthTransaction` 型に `display?: string` を追加し、`createAuthTransaction` で `login_hint` と同じパターンで転記（Green）
 - [ ] （方針B採用時）`AuthorizationResponseParams` にも `display` を追加し、同意画面経路での参照を可能にする。sample/`packages/cli` テンプレートの UI 出し分け範囲を決める
 - [ ] core はパススルーのみとし、値の変形・再検証は行わない（検証は `validateAuthorizationRequest` 側で完了済み）
-- [ ] `pnpm --filter @maronn-oidc/core test` がパスすること
+- [ ] `pnpm --filter @maronn-openid-connect/core test` がパスすること
 
 ## 関連トピック
 

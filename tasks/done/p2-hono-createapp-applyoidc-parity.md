@@ -68,5 +68,5 @@ const acrResolver = c.get('acrResolver'); // undefined
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 再生成した `samples/hono` の `conformance.test.ts` がパスすること

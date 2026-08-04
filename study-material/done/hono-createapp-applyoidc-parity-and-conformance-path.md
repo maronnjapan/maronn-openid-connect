@@ -109,4 +109,4 @@ CORS/OPTIONS も無いためブラウザ／SPA クライアントから token/us
 - [ ] conformance.test が実デプロイ経路（`applyOidc` 相当）を検証するよう生成コードを是正
 - [ ] `samples/hono` を再生成し、`createApp`／`applyOidc` の機能差が無いことを確認
 - [ ] 他フレームワーク（express / fastify / nextjs）でも createApp 相当が acr/CORS を wiring しているか横断確認
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/cli test` と `samples/hono` の conformance テストがパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/cli test` と `samples/hono` の conformance テストがパス

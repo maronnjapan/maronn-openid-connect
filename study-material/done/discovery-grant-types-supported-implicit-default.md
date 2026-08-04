@@ -72,7 +72,7 @@ if (config.grantTypesSupported && config.grantTypesSupported.length > 0) {   // 
 - [ ] 方針（A / B / C）を決定
 - [ ] `buildProviderMetadata`（方針 A/B）または `packages/cli` テンプレート（方針 C）を修正
 - [ ] 生成 OP の Discovery 出力が変わるため、`samples/*/conformance.test.ts`（生成元 `packages/cli`）の Discovery 検証を更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` と各 sample の `conformance.test.ts` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` と各 sample の `conformance.test.ts` がパス
 
 ## 関連トピック
 

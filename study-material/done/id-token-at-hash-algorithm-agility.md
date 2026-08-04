@@ -126,4 +126,4 @@ Basic OP として提供する上で確認すべきこと:
 - [ ] `token-response.test.ts` に RS256/ES256（SHA-256）に加えて **RS384/RS512/ES384/ES512** で署名した ID Token の at_hash 長と値を検証するテストを追加（OIDC Core §16.11 のテストベクトル、または自前で SHA-384/512 → 左半分 → base64url を計算して期待値化）。
 - [ ] at_hash の left-most half バイト長が 16 / 24 / 32 になることのアサーション。
 - [ ] （任意）Hybrid Flow を見据え `computeLeftHalfHash` を `index.ts` から export するか検討（c_hash 共用）。
-- [ ] 完了確認コマンド: `pnpm --filter @maronn-oidc/core test`
+- [ ] 完了確認コマンド: `pnpm --filter @maronn-openid-connect/core test`

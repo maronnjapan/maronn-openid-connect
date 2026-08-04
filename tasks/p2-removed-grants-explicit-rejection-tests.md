@@ -105,7 +105,7 @@ describe('validateTokenRequest', () => {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 追加したテーブル駆動テストがすべて pass
 - `study-material/oauth21-removed-grants-explicit-rejection.md` の §8 タスク案にあるテスト追加項目にチェックを入れる
 - `basic-op-requirement-traceability.md` の OAuth Behaviors 行に「§1.5 削除グラント・レガシー response_type 拒否のテスト証跡」状態を追加

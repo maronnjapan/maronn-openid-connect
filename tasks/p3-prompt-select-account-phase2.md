@@ -63,4 +63,4 @@ Phase 2 では `sessionResolver` が複数セッションを返せるように�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

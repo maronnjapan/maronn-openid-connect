@@ -5,7 +5,7 @@ description: 手元のアクセストークンを、権限を絞った別のア�
 
 :::caution[Experimental]
 この機能は**試験実装**です。API・設定・生成コードの構造は予告なく変更されることがあります。
-`@maronn-oidc/experimental` のバージョンを固定して使ってください。詳細は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
+`@maronn-openid-connect/experimental` のバージョンを固定して使ってください。詳細は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
 :::
 
 ## 概要
@@ -52,12 +52,12 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 ```bash
 maronn-oidc generate hono --enable token-exchange
-pnpm add @maronn-oidc/core @maronn-oidc/experimental
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 ```
 
-`--enable token-exchange` を付けなかった場合、Token Exchange に関するコードは一切生成されず、インストール案内にも `@maronn-oidc/experimental` は現れません。付けずに生成した出力は、この機能が存在しなかった頃と**バイト単位で同一**です。
+`--enable token-exchange` を付けなかった場合、Token Exchange に関するコードは一切生成されず、インストール案内にも `@maronn-openid-connect/experimental` は現れません。付けずに生成した出力は、この機能が存在しなかった頃と**バイト単位で同一**です。
 
-`@maronn-oidc/core` は `@maronn-oidc/experimental` の peerDependency です。experimental は core のエラークラスを `instanceof` で判定するため、アプリ内の core インスタンスが 1 つでないと判定が静かに失敗します。experimental は core より速く更新されるので、**バージョン番号が揃っていない状態は正常です**。インストール時に `unmet peer @maronn-oidc/core` が出たときだけ core を上げてください。
+`@maronn-openid-connect/core` は `@maronn-openid-connect/experimental` の peerDependency です。experimental は core のエラークラスを `instanceof` で判定するため、アプリ内の core インスタンスが 1 つでないと判定が静かに失敗します。experimental は core より速く更新されるので、**バージョン番号が揃っていない状態は正常です**。インストール時に `unmet peer @maronn-openid-connect/core` が出たときだけ core を上げてください。
 
 ## 生成されるもの
 
@@ -167,8 +167,8 @@ import {
   TOKEN_EXCHANGE_GRANT_TYPE,
   processTokenExchangeRequest,
   buildTokenExchangeResponse,
-} from '@maronn-oidc/experimental/token-exchange';
-import { buildAccessTokenAudience, buildAccessTokenPayload } from '@maronn-oidc/core';
+} from '@maronn-openid-connect/experimental/token-exchange';
+import { buildAccessTokenAudience, buildAccessTokenPayload } from '@maronn-openid-connect/core';
 
 // 1. 検証と発行素材の導出
 const grant = await processTokenExchangeRequest({
@@ -264,7 +264,7 @@ return buildTokenExchangeResponse({
 | 症状 | 原因 / 対処 |
 |---|---|
 | `unsupported_grant_type` が返る | `--enable token-exchange` を付けずに生成しています。再生成してください（discovery の `grant_types_supported` で確認できます） |
-| `Cannot find module '@maronn-oidc/experimental/token-exchange'` | `pnpm add @maronn-oidc/core @maronn-oidc/experimental` を実行してください |
+| `Cannot find module '@maronn-openid-connect/experimental/token-exchange'` | `pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental` を実行してください |
 | `unauthorized_client: The client is not authorized to use the token-exchange grant type` | クライアントの `grantTypes` に交換 URN が入っていません。`config.ts`（または実際のクライアント登録元）に追加してください |
 | `unauthorized_client: Public clients are not allowed...` | public client からの交換は仕様上の設計判断で拒否しています。confidential client を使ってください |
 | `invalid_target` が返る | `tokenExchangeConfig.allowedTargets` に対象が入っていません。既定は空です |
@@ -273,7 +273,7 @@ return buildTokenExchangeResponse({
 | 交換後トークンの UserInfo に個別クレームが出ない | 仕様どおりです。`claims` パラメータは継承されません（既知の制約を参照） |
 | `expires_in` が設定値より小さい | 仕様どおりです。`subject_token` の残存期間で cap されています |
 | `invalid_request: Parameter "resource" must not be repeated` | `resource` / `audience` は単一値のみ対応です（既知の制約を参照） |
-| 交換のエラーが 500 になる | core が二重にインストールされ、`instanceof` 判定が失敗している可能性があります。`pnpm why @maronn-oidc/core` で単一バージョンに解決されているか確認してください |
+| 交換のエラーが 500 になる | core が二重にインストールされ、`instanceof` 判定が失敗している可能性があります。`pnpm why @maronn-openid-connect/core` で単一バージョンに解決されているか確認してください |
 
 ## 参考資料
 

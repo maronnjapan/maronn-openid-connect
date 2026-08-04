@@ -9,7 +9,7 @@
 # Zero-argument usage is the intended path. The script automates everything the
 # Vercel CLI allows: project link, env pull, local monorepo build
 # (`vercel build`), and prebuilt deploy. Building locally matters because the
-# sample depends on `@maronn-oidc/core: workspace:*`, which only resolves
+# sample depends on `@maronn-openid-connect/core: workspace:*`, which only resolves
 # inside this pnpm workspace — `vercel deploy --prebuilt` then uploads the
 # finished build output, so Vercel never has to install workspace deps itself.
 #
@@ -50,13 +50,13 @@ while [ $# -gt 0 ]; do
 Usage: deploy-vercel.sh [--issuer <https://...>] [--dry-run]
 
 引数なしで実行するとガイド付きでデプロイします:
-  1. pnpm / 依存関係 / @maronn-oidc/core のビルドを準備
+  1. pnpm / 依存関係 / @maronn-openid-connect/core のビルドを準備
   2. Vercel 未ログインなら 'vercel login' を起動
   3. プロジェクト（${PROJECT_NAME}）を作成またはリンク
   4. Upstash Redis の環境変数（UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN）が
      未設定なら、作成手順を案内して貼り付け入力で設定
   5. ローカルで 'vercel build' を実行し、--prebuilt で本番デプロイ
-     （workspace 依存の @maronn-oidc/core を含めてローカルで解決）
+     （workspace 依存の @maronn-openid-connect/core を含めてローカルで解決）
   6. 公開URLを OIDC_ISSUER として固定（初回のみ2回デプロイ）し、Discovery で検証
 
 ISSUER は .deploy/issuer に保存され、次回以降は1回のデプロイで完了します。
@@ -91,9 +91,9 @@ guide_step "Vercel へのデプロイを開始します（サンプル: nextjs-v
 guide_require_node_version 22 13
 guide_require_pnpm
 guide_ensure_workspace_deps "${ROOT_DIR}"
-guide_info "@maronn-oidc/core をビルドします。"
+guide_info "@maronn-openid-connect/core をビルドします。"
 if [ "${DRY_RUN}" != "1" ]; then
-  (cd "${ROOT_DIR}" && pnpm --filter @maronn-oidc/core build >/dev/null)
+  (cd "${ROOT_DIR}" && pnpm --filter @maronn-openid-connect/core build >/dev/null)
 fi
 guide_ok "ツールチェーンの準備ができました（Vercel CLI は pnpm dlx 経由で使用、グローバルインストール不要）。"
 

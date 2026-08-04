@@ -1,7 +1,7 @@
 /**
  * リリース時の「core と experimental の組み合わせ」契約を検証する。
  *
- * @maronn-oidc/experimental は core を peerDependencies で参照し、range は 0.x 系の間
+ * @maronn-openid-connect/experimental は core を peerDependencies で参照し、range は 0.x 系の間
  * 広く取っている（理由は RELEASE.md「バージョニング方針」）。range が広いぶん、
  * core だけが先に進むと「公開済みの古い experimental が、まだ組み合わせて試していない
  * 新しい core をそのまま受け入れる」状態になる。そこで core の minor / major リリース時は
@@ -11,8 +11,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const CORE = '@maronn-oidc/core';
-const EXPERIMENTAL = '@maronn-oidc/experimental';
+const CORE = '@maronn-openid-connect/core';
+const EXPERIMENTAL = '@maronn-openid-connect/experimental';
 const BREAKING_BUMPS = new Set(['minor', 'major']);
 
 /**

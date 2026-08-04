@@ -245,7 +245,7 @@ describe('resolveSampleApp', () => {
       assert.deepEqual(resolveSampleApp('fastify-flyio'), {
         name: 'fastify-flyio',
         displayName: 'Fastify',
-        packageName: '@maronn-oidc/sample-fastify-flyio',
+        packageName: '@maronn-openid-connect/sample-fastify-flyio',
         defaultStartCommand: 'node samples/fastify-flyio/dist/server.js',
       });
     });

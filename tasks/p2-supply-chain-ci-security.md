@@ -13,7 +13,7 @@
 
 - GitHub のリモート `main` には本変更の `.github/dependabot.yml` がまだ存在せず、リポジトリの vulnerability alerts も無効だったため、Dependabot の認識・稼働は未確認。
 - リモート `main` の現行 HEAD には、本変更を含む PR CI 実行履歴がないため、追加した dependency-review / audit ジョブの GitHub Actions 上の正負確認は未実施。
-- npm registry では `@maronn-oidc/core` / `@maronn-oidc/cli` が E404 のため、対象パッケージ自身の publish 後 provenance は確認不能。
+- npm registry では `@maronn-openid-connect/core` / `@maronn-openid-connect/cli` が E404 のため、対象パッケージ自身の publish 後 provenance は確認不能。
 - 以上はローカルコードでは解消できない merge・リポジトリ設定・初回 publish 後の確認事項であり、完了条件を満たすまでは `tasks/done` へ移動しない。
 
 > Basic OP 認定要件ではなく、OSS 配布物の完全性・依存健全性を担保する運用タスク。
@@ -22,7 +22,7 @@
 
 ## 背景
 
-`@maronn-oidc/core` / `cli` は認証・認可の中核ライブラリであり、配布物が侵害されると下流の全システムのアイデンティティ基盤が一括で危殆化する。プロトコル準拠（Basic OP）とは別軸で、配布物の完全性と依存の健全性を継続検査する必要がある。
+`@maronn-openid-connect/core` / `cli` は認証・認可の中核ライブラリであり、配布物が侵害されると下流の全システムのアイデンティティ基盤が一括で危殆化する。プロトコル準拠（Basic OP）とは別軸で、配布物の完全性と依存の健全性を継続検査する必要がある。
 
 現状:
 

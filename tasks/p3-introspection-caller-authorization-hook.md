@@ -76,4 +76,4 @@ Basic OP 必須要件ではない（OAuth 拡張のセキュリティ・ハー�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスし、既存の introspection テストが回帰しないこと。
+`pnpm --filter @maronn-openid-connect/core test` がパスし、既存の introspection テストが回帰しないこと。

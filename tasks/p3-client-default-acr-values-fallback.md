@@ -64,4 +64,4 @@ if (acrValues === undefined && client.defaultAcrValues && client.defaultAcrValue
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスし、上記テストが追加されていること。`conformance.test.ts` 生成元を更新した場合は、生成 OP の該当テストも整合していること。
+`pnpm --filter @maronn-openid-connect/core test` がパスし、上記テストが追加されていること。`conformance.test.ts` 生成元を更新した場合は、生成 OP の該当テストも整合していること。

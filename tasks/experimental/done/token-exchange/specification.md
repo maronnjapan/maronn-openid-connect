@@ -141,7 +141,7 @@ Client (confidential)                     OP (生成コード + experimental/tok
 | 要求 scope が subject_token の scope を超過 | 400 | `invalid_scope` |
 | `audience` / `resource` が `allowedTargets` に含まれない | 400 | `invalid_target`（RFC 8693 §2.2.2 SHOULD）。error_description は固定文言（許可リスト内容を露出しない） |
 
-## 公開API案（`@maronn-oidc/experimental/token-exchange`）
+## 公開API案（`@maronn-openid-connect/experimental/token-exchange`）
 
 subpath export（`packages/experimental/package.json` の `exports["./token-exchange"]` → `src/token-exchange/index.ts`）で提供する。core・PAR と同様「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードはステップ単位で呼び出す。トークンの**発行と保存は experimental 内で行わず**、core の既存部品（`buildAccessTokenPayload` / `AccessTokenIssuer` / `accessTokenStore`）を生成コード側で組み合わせる（既存トークンルートの発行パイプラインと同じ流儀を保ち、experimental は RFC 8693 固有の検証・導出ロジックに限定する）。
 
@@ -281,7 +281,7 @@ export const EXPERIMENTAL_FEATURES = ['par', 'token-exchange'] as const;
   - `routes/token.ts`（共有 `tokenRouteTemplate`）: ファイル冒頭に `tokenExchangeConfig` 定数（`allowedTargets`）を export し、ハンドラ内の**クライアント認証完了直後・`validateGrantTypeSupported` より前**（`packages/cli/src/frameworks/hono/templates.ts:2818` の `const authenticatedClientId = ...` の直後、`:2825` の `${grantTypeSupportedStep}` より前）に grant_type URN の分岐を挿入。catch 節に `TokenExchangeError` 分岐を追加
   - discovery テンプレート: `grantTypesSupported` の配列（`templates.ts:3415-3418`）に URN を条件付きで追加（core の `buildProviderMetadata` は配列をそのまま出力するため core 変更なし）
   - 交換を許可するサンプルクライアント: 生成 `config.ts` の登録クライアント（confidential）の `grantTypes` に URN を追加（`templates.ts:369-375` の既存パターンに条件付き補間で追加）
-  - `INSTALL_COMMANDS` 相当の案内に `@maronn-oidc/experimental` を追加（PAR 有効時と同じ案内。両方有効時に重複しないこと）
+  - `INSTALL_COMMANDS` 相当の案内に `@maronn-openid-connect/experimental` を追加（PAR 有効時と同じ案内。両方有効時に重複しないこと）
   - `conformance.test.ts` テンプレートへ Token Exchange 契約テストを追加（`token-exchange` 有効時のみ生成）。機構は PAR の `parConformanceBlock(features)`（`packages/cli/src/frameworks/hono/templates.ts:6387`。無効時は空文字列を返す）と同型の `tokenExchangeConformanceBlock(features)` を新設し、hono の `conformanceTestTemplate`（`templates.ts:7297` の連結補間列）と web-standard 側（`packages/cli/src/frameworks/web-standard/templates.ts:2136`）の**両方**に並置して補間する（Review 2 で挿入箇所を確認済み）
   - 生成コード冒頭コメントで **Experimental である旨**（API が破壊的に変わり得る旨）と複数 audience/resource 非対応の制限を明示
 
@@ -352,12 +352,12 @@ packages/experimental/
 
 ```text
 packages/core ──X──> packages/experimental（import禁止・coreの必須機能にしない）
-packages/cli  ─────> @maronn-oidc/experimental（許可・生成コードの依存として明示）
-@maronn-oidc/experimental ─────> @maronn-oidc/core（許可）
+packages/cli  ─────> @maronn-openid-connect/experimental（許可・生成コードの依存として明示）
+@maronn-openid-connect/experimental ─────> @maronn-openid-connect/core（許可）
 ```
 
 - core には一切手を入れない。`token-exchange` 無効時の生成コード・既存利用者の挙動は完全に不変
-- 機能ごとの subpath export（`@maronn-oidc/experimental/token-exchange`）で提供し、ルートからの再エクスポートは作らない
+- 機能ごとの subpath export（`@maronn-openid-connect/experimental/token-exchange`）で提供し、ルートからの再エクスポートは作らない
 - **PAR（`src/par/`）とコードを共有しない**（重複許容・独立性優先。両機能同時有効の生成も互いに干渉しない）
 
 ### CLI生成コードからの利用方法
@@ -492,8 +492,8 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 
 ## Changeset要件
 
-- `@maronn-oidc/experimental`: minor（新規機能追加）
-- `@maronn-oidc/cli`: minor（`--enable token-exchange` の追加。既存デフォルト挙動は不変のため breaking ではない）
+- `@maronn-openid-connect/experimental`: minor（新規機能追加）
+- `@maronn-openid-connect/cli`: minor（`--enable token-exchange` の追加。既存デフォルト挙動は不変のため breaking ではない）
 - core: 変更なし（changeset 不要）
 
 ## 実装順序
@@ -511,7 +511,7 @@ if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
 
 ## 完了条件
 
-1. `pnpm --filter @maronn-oidc/experimental test` で本仕様のテスト計画（単体）が全て通る
+1. `pnpm --filter @maronn-openid-connect/experimental test` で本仕様のテスト計画（単体）が全て通る
 2. `maronn-oidc generate hono --enable token-exchange` の生成コードで conformance.test.ts（Token Exchange ケース含む）が通る
 3. `--enable token-exchange` なしの生成コードが現行とバイト単位で同一（後方互換の客観的確認）。`--enable par` のみ・`--enable par --enable token-exchange` の組み合わせでも par 部分の生成物が単独時と一致する
 4. 4フレームワーク（hono / express / fastify / nextjs）＋ web-standard で分岐入りの token ルートが生成される（共有テンプレート 1 箇所の変更で全ターゲットに反映される）

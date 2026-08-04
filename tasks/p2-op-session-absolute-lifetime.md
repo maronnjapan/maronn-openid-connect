@@ -145,7 +145,7 @@ class JsonBrowserSessionStore implements BrowserSessionStorage {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` と `pnpm run test:conformance` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` と `pnpm run test:conformance` がパスすること
 - `pnpm --filter "./packages/*" test` / `pnpm run test:e2e` / `pnpm typecheck` がパスすること
 - 生成物を再生成し、`samples/*/src/oidc-provider/store.ts` / `config.ts` / `routes/login.ts` /
   `conformance.test.ts` の差分がテンプレート修正に由来するものだけであること

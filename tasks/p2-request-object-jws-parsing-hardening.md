@@ -73,5 +73,5 @@ export async function verify(...) {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - `request_parameter_supported` を有効化する sample がある場合は該当 conformance テストもパスすること

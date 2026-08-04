@@ -93,7 +93,7 @@ describe('generate with --enable token-exchange', () => {
     describe('Default generation (feature off)', () => {
       it('should not reference the experimental package by default', () => {
         const referencing = generateFiles(framework)
-          .filter((file) => file.content.includes('@maronn-oidc/experimental'))
+          .filter((file) => file.content.includes('@maronn-openid-connect/experimental'))
           .map((file) => file.path);
 
         expect(referencing).toEqual([]);
@@ -139,7 +139,7 @@ describe('generate with --enable token-exchange', () => {
           tokenRoutePath(framework),
         );
 
-        expect(content.includes("from '@maronn-oidc/experimental/token-exchange'")).toBe(true);
+        expect(content.includes("from '@maronn-openid-connect/experimental/token-exchange'")).toBe(true);
       });
 
       it('should warn in the generated token route that the API is experimental', () => {
@@ -312,8 +312,8 @@ describe('generate with --enable token-exchange', () => {
         const parRoutePath = framework === 'nextjs' ? '_oidc-provider/routes/par.ts' : 'routes/par.ts';
         const parRoute = fileContent(files, parRoutePath);
 
-        expect(tokenRoute.includes("from '@maronn-oidc/experimental/token-exchange'")).toBe(true);
-        expect(parRoute.includes("from '@maronn-oidc/experimental/par'")).toBe(true);
+        expect(tokenRoute.includes("from '@maronn-openid-connect/experimental/token-exchange'")).toBe(true);
+        expect(parRoute.includes("from '@maronn-openid-connect/experimental/par'")).toBe(true);
       });
 
       it('should keep the par route free of token-exchange code', () => {

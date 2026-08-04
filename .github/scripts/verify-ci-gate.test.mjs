@@ -249,8 +249,8 @@ describe('assertEveryPackageIsTypechecked', () => {
   it('should accept packages that all define a typecheck script', () => {
     assert.doesNotThrow(() => {
       assertEveryPackageIsTypechecked([
-        { name: '@maronn-oidc/core', scripts: { typecheck: 'tsc --noEmit' } },
-        { name: '@maronn-oidc/cli', scripts: { typecheck: 'tsc --noEmit' } },
+        { name: '@maronn-openid-connect/core', scripts: { typecheck: 'tsc --noEmit' } },
+        { name: '@maronn-openid-connect/cli', scripts: { typecheck: 'tsc --noEmit' } },
       ]);
     });
   });
@@ -259,11 +259,11 @@ describe('assertEveryPackageIsTypechecked', () => {
     assert.throws(
       () =>
         assertEveryPackageIsTypechecked([
-          { name: '@maronn-oidc/core', scripts: { build: 'tsc' } },
-          { name: '@maronn-oidc/cli', scripts: { typecheck: 'tsc --noEmit' } },
+          { name: '@maronn-openid-connect/core', scripts: { build: 'tsc' } },
+          { name: '@maronn-openid-connect/cli', scripts: { typecheck: 'tsc --noEmit' } },
         ]),
       new Error(
-        'typecheck スクリプトを持たないパッケージがあります: @maronn-oidc/core。' +
+        'typecheck スクリプトを持たないパッケージがあります: @maronn-openid-connect/core。' +
           'pnpm --filter は該当スクリプトを持たないパッケージを黙って読み飛ばすため、' +
           'そのパッケージの型エラーが CI をすり抜けます。',
       ),
@@ -274,17 +274,17 @@ describe('assertEveryPackageIsTypechecked', () => {
     assert.throws(
       () =>
         assertEveryPackageIsTypechecked([
-          { name: '@maronn-oidc/core', scripts: {} },
-          { name: '@maronn-oidc/cli', scripts: {} },
+          { name: '@maronn-openid-connect/core', scripts: {} },
+          { name: '@maronn-openid-connect/cli', scripts: {} },
         ]),
-      /@maronn-oidc\/core, @maronn-oidc\/cli/,
+      /@maronn-openid-connect\/core, @maronn-openid-connect\/cli/,
     );
   });
 
   it('should reject a package without a scripts field', () => {
     assert.throws(
-      () => assertEveryPackageIsTypechecked([{ name: '@maronn-oidc/core' }]),
-      /@maronn-oidc\/core/,
+      () => assertEveryPackageIsTypechecked([{ name: '@maronn-openid-connect/core' }]),
+      /@maronn-openid-connect\/core/,
     );
   });
 });
@@ -292,7 +292,7 @@ describe('assertEveryPackageIsTypechecked', () => {
 describe('assertLintGateIsBacked', () => {
   it('should accept a workflow that does not run lint at all', () => {
     assert.doesNotThrow(() => {
-      assertLintGateIsBacked(workflowWith(CI_WORKFLOW), [{ name: '@maronn-oidc/core', scripts: {} }]);
+      assertLintGateIsBacked(workflowWith(CI_WORKFLOW), [{ name: '@maronn-openid-connect/core', scripts: {} }]);
     });
   });
 
@@ -309,7 +309,7 @@ describe('assertLintGateIsBacked', () => {
     );
 
     assert.doesNotThrow(() => {
-      assertLintGateIsBacked(workflow, [{ name: '@maronn-oidc/core', scripts: { lint: 'eslint .' } }]);
+      assertLintGateIsBacked(workflow, [{ name: '@maronn-openid-connect/core', scripts: { lint: 'eslint .' } }]);
     });
   });
 
@@ -326,7 +326,7 @@ describe('assertLintGateIsBacked', () => {
     );
 
     assert.throws(
-      () => assertLintGateIsBacked(workflow, [{ name: '@maronn-oidc/core', scripts: {} }]),
+      () => assertLintGateIsBacked(workflow, [{ name: '@maronn-openid-connect/core', scripts: {} }]),
       new Error(
         'CI が `pnpm run lint` を実行していますが、packages/* のどのパッケージにも ' +
           'lint スクリプトがありません。pnpm --filter は対象が 0 件でも成功するため、' +

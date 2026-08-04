@@ -42,4 +42,4 @@ OAuth の Token Request は `application/x-www-form-urlencoded` の entity-body 
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

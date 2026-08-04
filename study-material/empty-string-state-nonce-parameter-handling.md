@@ -89,4 +89,4 @@
   - [ ] `nonce=`（空）送信時、ID Token に `nonce` が載らない（方針A）または空で載る（方針B）
 - [ ] 方針A の場合、`state`/`nonce` の取得箇所で空文字列を `undefined` に正規化
 - [ ] 生成 OP の挙動が変わる場合は `packages/cli` テンプレートと sample の `conformance.test.ts` を更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

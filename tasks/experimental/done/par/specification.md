@@ -125,7 +125,7 @@ token endpoint と同一形式の JSON エラー（`{"error": "...", "error_desc
 - クエリに `client_id`・`request_uri` 以外のパラメータがある場合は無視し、pushed パラメータを正とする（本仕様の設計判断。RFC 9126 §4 はクライアントが送るのは `client_id` と `request_uri` のみと規定しており、それ以外の混在時の挙動は未規定のため、改竄面を最小化する方針を採る）
 - `requirePushedAuthorizationRequests: true` 設定時、`request_uri` を伴わない認可リクエストは `invalid_request` で拒否（RFC 9126 §5）
 
-## 公開API案（`@maronn-oidc/experimental/par`）
+## 公開API案（`@maronn-openid-connect/experimental/par`）
 
 subpath export（`packages/experimental/package.json` の `exports["./par"]` → `src/par/index.ts`）で提供する。core と同様「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードはステップ単位で呼び出す。
 
@@ -237,7 +237,7 @@ export const EXPERIMENTAL_FEATURES = ['par'] as const;
   - authorize ルートに前段フック（`assertPushedRequestUsed` ＋ `resolvePushedRequestUri`。`try` ブロック内先頭）と、catch 節の `PushedRequestUriError` 分岐
   - discovery レスポンスへ `pushed_authorization_request_endpoint` と（強制時のみ）`require_pushed_authorization_requests` をマージ（core の `buildProviderMetadata` の戻り値へのスプレッド追加。core 変更なし）
   - ストア契約の in-memory 実装（他ストアと同様、利用者が差し替える前提のサンプル実装）
-  - `INSTALL_COMMANDS` 相当の案内に `@maronn-oidc/experimental` を追加
+  - `INSTALL_COMMANDS` 相当の案内に `@maronn-openid-connect/experimental` を追加
   - `conformance.test.ts` テンプレートへ PAR 契約テストを追加（`par` 有効時のみ生成）
   - 生成コード冒頭コメントで **Experimental である旨**（API が破壊的に変わり得る旨）を明示
 
@@ -312,17 +312,17 @@ packages/experimental/
 
 ```text
 packages/core ──X──> packages/experimental（import禁止・coreの必須機能にしない）
-packages/cli  ─────> @maronn-oidc/experimental（許可・生成コードの依存として明示）
-@maronn-oidc/experimental ─────> @maronn-oidc/core（許可）
+packages/cli  ─────> @maronn-openid-connect/experimental（許可・生成コードの依存として明示）
+@maronn-openid-connect/experimental ─────> @maronn-openid-connect/core（許可）
 ```
 
 - core には一切手を入れない。PAR 無効時の生成コード・既存利用者の挙動は完全に不変
-- 機能ごとの subpath export（`@maronn-oidc/experimental/par`）で提供し、ルートからの再エクスポートは作らない
+- 機能ごとの subpath export（`@maronn-openid-connect/experimental/par`）で提供し、ルートからの再エクスポートは作らない
 - 他の experimental 機能とのコード共有は行わない（重複許容・独立性優先）
 
 ### CLI生成コードからの利用方法
 
-生成される `par.ts` は `@maronn-oidc/experimental/par` からステップ関数を import し、既存の生成コードと同じ「利用者が読める・改造できる」粒度で処理を並べる。
+生成される `par.ts` は `@maronn-openid-connect/experimental/par` からステップ関数を import し、既存の生成コードと同じ「利用者が読める・改造できる」粒度で処理を並べる。
 
 authorize テンプレートは 5 ターゲット全てが hono の `authorizeRouteTemplate` を共有している（`packages/cli/src/frameworks/web-standard/templates.ts` が `toWebRouteTemplate` の文字列変換で再利用し、express / fastify / nextjs の各 generator は web-standard へ委譲する）ため、**前段フックの挿入は単一テンプレートの変更で済む**（Review 2 で確認、旧 U3 解決）。
 
@@ -396,8 +396,8 @@ try {
 
 ## Changeset要件
 
-- `@maronn-oidc/experimental`: minor（新規機能追加。0.x 運用の場合は初回リリースバージョンに従う）
-- `@maronn-oidc/cli`: minor（`--enable par` の追加。既存デフォルト挙動は不変のため breaking ではない）
+- `@maronn-openid-connect/experimental`: minor（新規機能追加。0.x 運用の場合は初回リリースバージョンに従う）
+- `@maronn-openid-connect/cli`: minor（`--enable par` の追加。既存デフォルト挙動は不変のため breaking ではない）
 - core: 変更なし（changeset 不要）
 
 ## 実装順序
@@ -427,7 +427,7 @@ try {
 
 ## 完了条件
 
-1. `pnpm --filter @maronn-oidc/experimental test` で本仕様のテスト計画（単体）が全て通る
+1. `pnpm --filter @maronn-openid-connect/experimental test` で本仕様のテスト計画（単体）が全て通る
 2. `maronn-oidc generate hono --enable par` の生成コードで conformance.test.ts（PAR ケース含む）が通る
 3. `--enable par` なしの生成コードが現行とバイト単位で同一（後方互換の客観的確認）
 4. 4フレームワーク（hono / express / fastify / nextjs）＋ web-standard で par テンプレートが生成される。authorize 前段フックと catch 節の `PushedRequestUriError` 分岐は共有テンプレート（hono の `authorizeRouteTemplate`）1 箇所の変更で全ターゲットに反映されるため（Review 2 確認）、残る個別対応は PAR ルートの各ターゲットへの配線（web-standard のルート登録・nextjs の `route.ts` ラッパー等）のみ

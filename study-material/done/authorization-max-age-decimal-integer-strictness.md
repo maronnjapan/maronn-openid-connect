@@ -87,7 +87,7 @@ function validateMaxAge(maxAgeValue: string, redirectUri: string, state?: string
 - [ ] `validateMaxAge` に 10進非負整数の正規表現ガードを追加（方針A）
 - [ ] 上限を設けるか（方針C）を判断
 - [ ] 生成 OP の挙動が変わるため、必要なら `samples/*/conformance.test.ts`（生成元 `packages/cli`）に固定テストを追加
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス
 
 ## 関連トピック
 

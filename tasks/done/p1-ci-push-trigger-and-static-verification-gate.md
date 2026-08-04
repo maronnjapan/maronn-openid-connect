@@ -10,7 +10,7 @@
 
 | コマンド | 結果 |
 |---|---|
-| `pnpm run typecheck` | `pnpm run build` の**後**なら 0 エラー。build 前だと `packages/experimental` が `Cannot find module '@maronn-oidc/core'` 他 7 件で落ちる（`samples/*` も core を dist で解決する） |
+| `pnpm run typecheck` | `pnpm run build` の**後**なら 0 エラー。build 前だと `packages/experimental` が `Cannot find module '@maronn-openid-connect/core'` 他 7 件で落ちる（`samples/*` も core を dist で解決する） |
 | `pnpm run build` | 0 エラー |
 | `pnpm run lint` | `None of the selected packages has a "lint" script` と表示して **exit 0**。lint ツール自体が未導入 |
 
@@ -47,7 +47,7 @@ core を黙って読み飛ばしていた（`build` の `tsc` で結果的に型
 ## 背景
 
 構文的に壊れたコード（未解決コンフリクトマーカー）が `main` に入り、
-`@maronn-oidc/core` と `@maronn-oidc/cli` がビルド不能な状態のまま残った
+`@maronn-openid-connect/core` と `@maronn-openid-connect/cli` がビルド不能な状態のまま残った
 （現物の解消は `tasks/p0-resolve-committed-merge-conflict-markers.md`）。
 
 原因は単一の作業ミスではなく、CI ゲートの構成にある。
@@ -118,7 +118,7 @@ on:
 ```jsonc
 "typecheck": "pnpm --filter \"./packages/*\" typecheck && pnpm --filter \"./samples/*\" typecheck && pnpm --filter \"./tests/*\" typecheck",
 "lint": "pnpm --filter \"./packages/*\" lint",
-"build": "pnpm --filter @maronn-oidc/core --filter @maronn-oidc/experimental --filter @maronn-oidc/cli run build",
+"build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/cli run build",
 "test:ci": "pnpm run test:supply-chain && pnpm run test:release-contract && pnpm --filter \"./packages/*\" test && pnpm run test:conformance",
 ```
 

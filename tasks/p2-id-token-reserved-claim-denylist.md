@@ -166,8 +166,8 @@ TDD で先に Red を作る。テストケース名は「should + 動詞」形�
 - [ ] 既存の ID Token 発行挙動（予約名を含まないユーザークレーム）が一切変わっていない
 - [ ] 実行コマンド:
   ```bash
-  pnpm --filter @maronn-oidc/core test
-  pnpm --filter @maronn-oidc/cli test
+  pnpm --filter @maronn-openid-connect/core test
+  pnpm --filter @maronn-openid-connect/cli test
   ```
 - [ ] `packages/core` の出荷物が変わるため changeset を追加する
 

@@ -78,5 +78,5 @@ async function computeAtHash(accessToken: string, hashName: 'SHA-256'|'SHA-384'|
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること。
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること。
 - 非 SHA-256 alg で署名した ID Token の at_hash が仕様（左半分のバイト長・値）どおりであることがテストで担保されること。

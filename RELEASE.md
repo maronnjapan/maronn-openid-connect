@@ -5,9 +5,9 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 
 対象パッケージ:
 
-- `@maronn-oidc/core`
-- `@maronn-oidc/cli`
-- `@maronn-oidc/experimental`
+- `@maronn-openid-connect/core`
+- `@maronn-openid-connect/cli`
+- `@maronn-openid-connect/experimental`
 
 通常のリリース運用（changeset を貯めて Version Packages PR をマージすると publish される二段階フロー）は
 `release.yml` 冒頭のコメントを参照。本ドキュメントは **publish を成立させるための初期セットアップ**を扱う。
@@ -18,7 +18,7 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 
 ### 前提: experimental は core より速く publish する
 
-`@maronn-oidc/experimental` は新しい仕様を先行実装する場所なので、**core が同じバージョンに
+`@maronn-openid-connect/experimental` は新しい仕様を先行実装する場所なので、**core が同じバージョンに
 留まったまま experimental だけが何度も publish される**運用を想定する。バージョン番号を
 両者で揃える運用（Changesets の `fixed` グループ）は採用しない。採用すると experimental を
 1回 publish するたびに **コード変更のない core が別バージョンとして再 publish される**ため、
@@ -27,13 +27,13 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 したがって次の状態が正常である。
 
 ```
-@maronn-oidc/core          0.1.0   （据え置き）
-@maronn-oidc/experimental  0.0.1 → 0.0.2 → 0.0.3 → …（先に進む）
+@maronn-openid-connect/core          0.1.0   （据え置き）
+@maronn-openid-connect/experimental  0.0.1 → 0.0.2 → 0.0.3 → …（先に進む）
 ```
 
 ### experimental の bump は常に patch に固定する
 
-`@maronn-oidc/experimental` は**変更内容に関わらず patch を 1 つ上げるだけ**とする。
+`@maronn-openid-connect/experimental` は**変更内容に関わらず patch を 1 つ上げるだけ**とする。
 API の追加でも破壊的変更でも minor / major は使わない。これは experimental のリリースを
 「`packages/experimental/src` が変わったら publish する」という機械的な運用
 （→ [experimental の自動 publish](#experimental-の自動-publish)）に寄せるためで、bump 種別を
@@ -78,14 +78,14 @@ CI で強制する。未消化の changeset から次の core バージョンを
 
 #### 上げ忘れると何が起きたか（実際の事故）
 
-`@maronn-oidc/experimental@0.0.1` は core のステップ関数
+`@maronn-openid-connect/experimental@0.0.1` は core のステップ関数
 （`extractClientCredentials` / `resolveAuthenticatedTokenClient` /
 `validateClientAuthMethod` / `verifyClientSecret`）を import した状態で、下限を `>=0.0.1` の
 まま publish された。これらを export する core は当時まだ publish されておらず、
-`@maronn-oidc/core@0.0.1` との組み合わせがインストールできてしまい、利用者のバンドル時に
+`@maronn-openid-connect/core@0.0.1` との組み合わせがインストールできてしまい、利用者のバンドル時に
 
 ```
-✘ [ERROR] No matching export in "node_modules/@maronn-oidc/core/dist/index.js"
+✘ [ERROR] No matching export in "node_modules/@maronn-openid-connect/core/dist/index.js"
   for import "extractClientCredentials"
 ```
 
@@ -117,9 +117,9 @@ HEAD の core に対して experimental をビルド・テストするので開�
 
 | リリース対象 | 単独で出せるか |
 |---|---|
-| `@maronn-oidc/cli` のみ | **出せる**。cli は core に依存していない（`dependencies` / `peerDependencies` とも空） |
-| `@maronn-oidc/experimental` のみ | **出せる**。自動 changeset の想定運用そのもの |
-| `@maronn-oidc/core` のみ | **出せない**。bump 種別によらず experimental が同時リリースになる |
+| `@maronn-openid-connect/cli` のみ | **出せる**。cli は core に依存していない（`dependencies` / `peerDependencies` とも空） |
+| `@maronn-openid-connect/experimental` のみ | **出せる**。自動 changeset の想定運用そのもの |
+| `@maronn-openid-connect/core` のみ | **出せない**。bump 種別によらず experimental が同時リリースになる |
 
 core が単独で出せないのは、[peer range は「下限」を宣言する](#peer-range-は下限を宣言する)の規則が
 **patch にも効く**ため。core を 0.1.0 → 0.1.1 に上げるだけでも下限を `>=0.1.1` へ上げる必要があり、
@@ -139,7 +139,7 @@ patch を例外にすると「試していない組み合わせを許可宣言�
 
 ## experimental の自動 publish
 
-`@maronn-oidc/experimental` だけは **changeset を手で書かなくてよい**。
+`@maronn-openid-connect/experimental` だけは **changeset を手で書かなくてよい**。
 `packages/experimental/src` に機能追加や実装修正が入った時点で publish できる状態になる。
 
 ### フロー
@@ -147,7 +147,7 @@ patch を例外にすると「試していない組み合わせを許可宣言�
 1. experimental の実装を変更した PR を main にマージする（`pnpm changeset` は不要）
 2. main への push で `release.yml` が `.github/scripts/ensure-experimental-changeset.mjs` を実行し、
    前回リリース以降に `packages/experimental/src` が変わっていれば
-   `.changeset/auto-experimental-patch.md`（`@maronn-oidc/experimental: patch`）を生成する
+   `.changeset/auto-experimental-patch.md`（`@maronn-openid-connect/experimental: patch`）を生成する
 3. Changesets が「Version Packages」PR を作成・更新する（= publish 用の PR）
 4. **その PR をマージすると publish される**
 
@@ -172,7 +172,7 @@ shallow clone で基準点を辿れないときは、フォールバックに落
 
 ### なぜ version 確定コミットを基準にするのか
 
-以前はこの基準を **publish 時に打たれる `@maronn-oidc/experimental@<version>` タグ**に置いていた。
+以前はこの基準を **publish 時に打たれる `@maronn-openid-connect/experimental@<version>` タグ**に置いていた。
 これは循環していて、publish に一生到達しない。
 
 ```
@@ -262,8 +262,8 @@ range を `^1.0.0` に切り替え、`onlyUpdatePeerDependentsWhenOutOfRange` �
 | `pnpm run test:ci` | 上記の各実行 | 振る舞いの退行 |
 
 `build` は `typecheck` より **前** に置く。`samples/*` と `packages/experimental` は
-`@maronn-oidc/core` をビルド成果物（`dist` の `.d.ts`）として解決するため、
-未ビルドだと `Cannot find module '@maronn-oidc/core'` で `typecheck` が落ちる。
+`@maronn-openid-connect/core` をビルド成果物（`dist` の `.d.ts`）として解決するため、
+未ビルドだと `Cannot find module '@maronn-openid-connect/core'` で `typecheck` が落ちる。
 
 このゲート構成自体（push トリガ / 実行順 / typecheck の網羅）は
 `pnpm run test:ci-gate`（`.github/scripts/verify-ci-gate.mjs`）が検証する。
@@ -313,7 +313,7 @@ npm の Trusted Publisher は「**そのパッケージが npm 上に既に存�
 
 ### 前提
 
-- npm アカウントが `@maronn-oidc` スコープ（organization）に publish 権限を持っていること
+- npm アカウントが `@maronn-openid-connect` スコープ（organization）に publish 権限を持っていること
 - 2FA を有効にしている場合は publish 時に OTP を求められる
 - ローカルの Node / pnpm がリポジトリ指定バージョンであること（`pnpm@10.17.0`）
 
@@ -334,9 +334,9 @@ pnpm run build
 
 # 4. 各パッケージを publish（スコープ付きなので public 指定が必須）
 #    experimental は core を peerDependencies で参照するので core を先に publish する
-pnpm --filter @maronn-oidc/core         publish --access public --no-git-checks
-pnpm --filter @maronn-oidc/experimental publish --access public --no-git-checks
-pnpm --filter @maronn-oidc/cli          publish --access public --no-git-checks
+pnpm --filter @maronn-openid-connect/core         publish --access public --no-git-checks
+pnpm --filter @maronn-openid-connect/experimental publish --access public --no-git-checks
+pnpm --filter @maronn-openid-connect/cli          publish --access public --no-git-checks
 ```
 
 > `--no-git-checks` は「コミットされていない変更があると pnpm publish が止まる」挙動を回避するためのもの。
@@ -344,9 +344,9 @@ pnpm --filter @maronn-oidc/cli          publish --access public --no-git-checks
 
 publish 後、npmjs.com に各パッケージのページが作成されていることを確認する。
 
-- https://www.npmjs.com/package/@maronn-oidc/core
-- https://www.npmjs.com/package/@maronn-oidc/cli
-- https://www.npmjs.com/package/@maronn-oidc/experimental
+- https://www.npmjs.com/package/@maronn-openid-connect/core
+- https://www.npmjs.com/package/@maronn-openid-connect/cli
+- https://www.npmjs.com/package/@maronn-openid-connect/experimental
 
 > 初回手動 publish では provenance（来歴証明）は付かない。provenance は CI の OIDC publish で自動付与される。
 
@@ -360,9 +360,9 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 ### 手順（パッケージごとに実施）
 
 1. npmjs.com にログインし、対象パッケージページを開く
-   - `@maronn-oidc/core`
-   - `@maronn-oidc/cli`
-   - `@maronn-oidc/experimental`
+   - `@maronn-openid-connect/core`
+   - `@maronn-openid-connect/cli`
+   - `@maronn-openid-connect/experimental`
 2. **Settings** タブ → **Trusted Publisher**（Publishing access）セクションへ
 3. **GitHub Actions** を選び、以下を登録する
 
@@ -498,7 +498,7 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 | core と experimental のバージョン番号がずれている | 正常。番号の一致は要求していない（[バージョニング方針](#バージョニング方針)） |
 | CI の `changeset-coverage` が `対応する changeset がありません` で落ちる | 意図した挙動。`pnpm changeset`（リリースする場合）または `pnpm changeset --empty`（リリース不要の場合）を実行してコミットする（[changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)） |
 | packages を変更していないのに `changeset-coverage` が落ちる | 出荷物判定が想定と違う可能性。`.github/scripts/verify-changeset-coverage.mjs` の `NON_SHIPPED_FILE_PATTERNS` を確認する |
-| CI で `@maronn-oidc/experimental を patch 以外で上げる changeset がありますが…` で落ちる | 意図した挙動。experimental の bump は patch 固定なので、該当 changeset の bump 種別を `patch` に直す（[experimental の bump は常に patch に固定する](#experimental-の-bump-は常に-patch-に固定する)） |
+| CI で `@maronn-openid-connect/experimental を patch 以外で上げる changeset がありますが…` で落ちる | 意図した挙動。experimental の bump は patch 固定なので、該当 changeset の bump 種別を `patch` に直す（[experimental の bump は常に patch に固定する](#experimental-の-bump-は常に-patch-に固定する)） |
 | experimental の実装を変更したのに Version Packages PR が立たない | 変更が `packages/experimental/src` の実装ファイル以外（テスト・README・package.json）ではないか確認する。それ以外なら release job の `Ensure experimental release changeset` ステップのログで比較基準コミットと判定理由を確認する（[experimental の自動 publish](#experimental-の自動-publish)） |
 | Version Packages PR に experimental の変更が 1 つしか載っていない | `auto-experimental-patch.md` は毎回上書きされるので通常は起きない。手書きの experimental changeset が残っていると自動生成がスキップされるため、`.changeset/` に手書きのものが無いか確認する |
 | Version Packages PR をマージしたのに publish されず、また Version Packages PR が立つ | release job の `Ensure experimental release changeset` のログを見る。「未リリースの変更が N 件あるため」と出ているなら比較基準の判定が壊れている（[なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)）。マージ直後の main では「変更がないため changeset を作成しない」になるのが正しい |
@@ -594,7 +594,7 @@ pnpm 11 で publish コマンドが npm CLI 委譲からネイティブ実装に
 ### 5. Cannot find module 'sigstore'
 
 ```
-error an error occurred while publishing @maronn-oidc/cli:
+error an error occurred while publishing @maronn-openid-connect/cli:
 MODULE_NOT_FOUND Cannot find module 'sigstore'
 ```
 

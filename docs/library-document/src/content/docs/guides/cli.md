@@ -3,7 +3,7 @@ title: CLI Guide
 description: Generate OpenID Provider code with the maronn-oidc CLI.
 ---
 
-`@maronn-oidc/cli` は、Authorization Code Flow（OAuth 2.1 / OIDC Core 1.0 準拠）を実装した OP コード一式を生成する CLI ツールです。生成コードは `@maronn-oidc/core` のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら仕様を検証します。
+`@maronn-openid-connect/cli` は、Authorization Code Flow（OAuth 2.1 / OIDC Core 1.0 準拠）を実装した OP コード一式を生成する CLI ツールです。生成コードは `@maronn-openid-connect/core` のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら仕様を検証します。
 
 生成される各エンドポイント（`routes/authorize.ts` / `token.ts` / `userinfo.ts` / `introspection.ts` / `revocation.ts`）は、core の合成関数を1回呼ぶ形ではなく、クライアント認証・クライアント解決・期限・redirect URI・PKCE・scope・再利用検知・ID Token クレーム構築などの機能単位ステップを順に呼び出す形で生成されます。必要なステップを消す、独自検証を間に足す、ID Token に独自クレームを足す、といった PoC 向けの改修を生成コード上で直接行えます。
 
@@ -83,14 +83,14 @@ Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / 
 
 ### Experimental Features
 
-Experimental 機能は上記とは別カテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成され、実装は別 package の `@maronn-oidc/experimental` にあります。
+Experimental 機能は上記とは別カテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成され、実装は別 package の `@maronn-openid-connect/experimental` にあります。
 
 ```bash
 maronn-oidc generate hono --enable par
-pnpm add @maronn-oidc/core @maronn-oidc/experimental
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 ```
 
-`@maronn-oidc/core` は `@maronn-oidc/experimental` の peerDependency なので、両方を入れてください（CLI のインストール案内も両方を出力します）。experimental のほうが速く更新されるため、バージョン番号が揃っていない状態は正常です。
+`@maronn-openid-connect/core` は `@maronn-openid-connect/experimental` の peerDependency なので、両方を入れてください（CLI のインストール案内も両方を出力します）。experimental のほうが速く更新されるため、バージョン番号が揃っていない状態は正常です。
 
 | 機能名 | 既定 | 内容 | 準拠仕様 |
 |---|---|---|---|
@@ -108,6 +108,6 @@ API は安定しておらず、破壊的に変更されることがあります�
 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. `config.ts` のデフォルト値はローカル検証専用として扱う
-3. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-oidc/core`）
+3. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
 
 具体的な組み込み手順は [Quick Start](../../quick-start/) を参照してください。

@@ -79,4 +79,4 @@ export function rsaModulusBitLength(jwkN: string): number {
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスし、上記テストが追加されていること。弱鍵が起動時に fail-closed で拒否されること。
+`pnpm --filter @maronn-openid-connect/core test` がパスし、上記テストが追加されていること。弱鍵が起動時に fail-closed で拒否されること。

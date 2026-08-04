@@ -483,7 +483,7 @@ Refresh Token は発行されたが**一度も使えない**。ステップ 3 �
   - [ ] `should return the granted scope without offline_access when the client is not authorized`
         （RFC 6749 §3.3 の付与 scope 通知）
   - [ ] 各 sample の `conformance.test.ts` に「不整合設定時に使えない RT を発行しない」ケースを追加する
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test`、`pnpm --filter @maronn-oidc/cli test`、
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test`、`pnpm --filter @maronn-openid-connect/cli test`、
       および全 sample の `conformance.test.ts` がパスすること
 
 ## 関連トピック

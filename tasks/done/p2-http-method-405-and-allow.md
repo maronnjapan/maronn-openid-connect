@@ -60,4 +60,4 @@
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test`（および sample のテスト）がパスし、上記テストが追加されていること。許可外メソッドが 405 + `Allow` を返し、UserInfo の GET/POST 両対応が回帰テストで固定されていること。
+`pnpm --filter @maronn-openid-connect/cli test`（および sample のテスト）がパスし、上記テストが追加されていること。許可外メソッドが 405 + `Allow` を返し、UserInfo の GET/POST 両対応が回帰テストで固定されていること。

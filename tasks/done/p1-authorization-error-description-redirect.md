@@ -42,4 +42,4 @@ Conformance や実運用のデバッグでは、redirect ベースのエラー�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

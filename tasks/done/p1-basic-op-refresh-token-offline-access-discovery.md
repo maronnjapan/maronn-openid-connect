@@ -61,7 +61,7 @@ Conformance Suite は Discovery に `offline_access` が広告されている場
 - [ ] `tests/e2e`: `offline_access` を要求しない通常 authorization code flow では token response に `refresh_token` が含まれないこと。
 - [ ] refresh token grant が成功し、新しい access token と必要に応じた ID Token を返すこと。
 - [ ] 他 client の refresh token を使った場合に `invalid_grant` になること。
-- [ ] `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 - [ ] `pnpm run conformance:basic-op` の ZIP で `oidcc-refresh-token` が skipped ではなく pass すること。
 
 ## 完了条件

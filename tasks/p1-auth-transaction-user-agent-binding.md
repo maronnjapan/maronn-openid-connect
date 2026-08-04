@@ -182,7 +182,7 @@ core（`packages/core/src/auth-transaction.test.ts`）:
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` と `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` と `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 4 sample を再生成し `pnpm test` と `tests/e2e` がパスすること
 - `transaction_id` のみでは login / consent のどのステップも進行できないこと
 - `study-material/done/csrf-token-constant-time-comparison.md` に、CSRF トークンの束縛先に関する

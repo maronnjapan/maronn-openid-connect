@@ -70,7 +70,7 @@ redirect URI が無効な場合に redirect しない挙動は正しい。一方
 - [ ] custom `authorizationErrorPage` が HTML string を返した場合に各 framework でその本文が返ること。
 - [ ] custom renderer を使うケースをテンプレートテストで固定し、view の戻り値が string 固定へ戻らないことを検出できること。
 - [ ] Next.js 生成物では `login/page.tsx` / `consent/page.tsx` の React Server Component 方針を崩さず、`/authorize` Route Handler の非リダイレクトエラーだけが error response を返すこと。
-- [ ] `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 - [ ] `pnpm run conformance:basic-op` で `oidcc-ensure-registered-redirect-uri` が HTTP 400 JSON 由来の timeout ではなく、manual review 可能な error page として扱われること。
 
 ## 完了条件

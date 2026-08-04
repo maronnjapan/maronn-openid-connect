@@ -31,7 +31,7 @@ Token Exchange は、認可サーバー（本リポジトリの生成 OP）に�
 
 | 登場人物 | RFC 8693 上の役割 | このリポジトリでの実体 |
 |---|---|---|
-| 認可サーバー（STS） | 交換要求を検証し新トークンを発行 | CLI 生成 OP のトークンエンドポイント（`routes/token.ts`）＋ `@maronn-oidc/experimental/token-exchange` のステップ関数 |
+| 認可サーバー（STS） | 交換要求を検証し新トークンを発行 | CLI 生成 OP のトークンエンドポイント（`routes/token.ts`）＋ `@maronn-openid-connect/experimental/token-exchange` のステップ関数 |
 | クライアント | subject_token を提示して交換を要求 | confidential client として登録され、`grantTypes` に交換 URN を明示登録したもの（`config.ts`） |
 | subject | トークンが代理する本人 | Authorization Code Flow でログインしたユーザー（`sub`） |
 | 下流サービス | 交換後トークンを受け取る | 生成 OP の UserInfo / introspection、または利用者の resource server（E2E では `tests/e2e/apps`） |
@@ -149,7 +149,7 @@ Pragma: no-cache
 
 ```bash
 maronn-oidc generate hono --enable token-exchange
-pnpm add @maronn-oidc/experimental
+pnpm add @maronn-openid-connect/experimental
 ```
 
 生成後、利用者がやることは 2 つ:

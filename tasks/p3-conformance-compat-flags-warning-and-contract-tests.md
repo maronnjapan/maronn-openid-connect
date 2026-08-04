@@ -145,7 +145,7 @@ return validateCodeChallenge(codeChallenge, codeChallengeMethod, redirectUri, st
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` / `pnpm run test:conformance` /
+- `pnpm --filter @maronn-openid-connect/cli test` / `pnpm run test:conformance` /
   `pnpm --filter "./packages/*" test` / `pnpm typecheck` がパスすること
 - 生成物を再生成し、`samples/*/src/oidc-provider/conformance.test.ts` の差分が
   テンプレート修正に由来するものだけであること

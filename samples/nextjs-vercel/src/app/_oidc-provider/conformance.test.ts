@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import type { SigningKeyProvider, SigningKey } from '@maronn-oidc/core';
-import { exportPublicJwk } from '@maronn-oidc/core';
+import type { SigningKeyProvider, SigningKey } from '@maronn-openid-connect/core';
+import { exportPublicJwk } from '@maronn-openid-connect/core';
 import { createApp, validateSigningKeySet } from './app';
 import { createInMemoryClientResolver, type RegisteredClient } from './config';
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store';

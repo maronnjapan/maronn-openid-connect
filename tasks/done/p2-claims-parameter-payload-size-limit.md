@@ -49,4 +49,4 @@
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスし、上記テストが追加されていること。`parseClaimsRequest` が `JSON.parse` 前にサイズ上限を課し、超過時に `invalid_request` を返すこと。上限値が定数 or オプションとして明示され、レビューで確定されていること。
+`pnpm --filter @maronn-openid-connect/core test` がパスし、上記テストが追加されていること。`parseClaimsRequest` が `JSON.parse` 前にサイズ上限を課し、超過時に `invalid_request` を返すこと。上限値が定数 or オプションとして明示され、レビューで確定されていること。

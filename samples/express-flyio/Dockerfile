@@ -1,6 +1,6 @@
 # Build context MUST be the monorepo root (not samples/express-flyio), because the
 # build needs the pnpm workspace (lockfile + packages/core) to resolve
-# `@maronn-oidc/core: workspace:*`. Build with:
+# `@maronn-openid-connect/core: workspace:*`. Build with:
 #
 #   docker build -f samples/express-flyio/Dockerfile .
 #
@@ -13,7 +13,7 @@ RUN corepack enable
 WORKDIR /repo
 COPY . .
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @maronn-oidc/sample-express-flyio build
+RUN pnpm --filter @maronn-openid-connect/sample-express-flyio build
 
 # express is a devDependency of the sample (esbuild externalizes it rather
 # than bundling it), so the runtime stage installs it fresh from a minimal

@@ -60,7 +60,7 @@ const SAMPLE_APPS = new Map([
     {
       name: 'hono-cloudflare',
       displayName: 'Hono Cloudflare',
-      packageName: '@maronn-oidc/sample-hono-cloudflare',
+      packageName: '@maronn-openid-connect/sample-hono-cloudflare',
       defaultStartCommand: 'corepack enable && pnpm --dir samples/hono-cloudflare start',
     },
   ],
@@ -69,7 +69,7 @@ const SAMPLE_APPS = new Map([
     {
       name: 'express-flyio',
       displayName: 'Express',
-      packageName: '@maronn-oidc/sample-express-flyio',
+      packageName: '@maronn-openid-connect/sample-express-flyio',
       defaultStartCommand: 'node samples/express-flyio/dist/server.js',
     },
   ],
@@ -78,7 +78,7 @@ const SAMPLE_APPS = new Map([
     {
       name: 'fastify-flyio',
       displayName: 'Fastify',
-      packageName: '@maronn-oidc/sample-fastify-flyio',
+      packageName: '@maronn-openid-connect/sample-fastify-flyio',
       defaultStartCommand: 'node samples/fastify-flyio/dist/server.js',
     },
   ],
@@ -87,7 +87,7 @@ const SAMPLE_APPS = new Map([
     {
       name: 'nextjs-vercel',
       displayName: 'Next.js',
-      packageName: '@maronn-oidc/sample-nextjs-vercel',
+      packageName: '@maronn-openid-connect/sample-nextjs-vercel',
       defaultStartCommand: 'corepack enable && pnpm --dir samples/nextjs-vercel start',
     },
   ],

@@ -64,5 +64,5 @@ if (params.registration !== undefined) {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - `study-material/basic-op-requirement-traceability.md` §6.5 に `registration` 行が追加され状態が更新されていること

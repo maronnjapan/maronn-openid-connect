@@ -41,10 +41,10 @@ PoC開発者が「自分の要件がこの仕様で実現できるか？」を�
 
 このライブラリはモノレポ構成で、コアパッケージ、CLI、CLI生成コードを検証するサンプルで構成されています。
 
-### `@maronn-oidc/core`
+### `@maronn-openid-connect/core`
 
 OpenID Connect Providerのコアロジックを実装するパッケージです。認可リクエスト検証、トークン発行、UserInfo、Discovery などの純関数を提供し、HTTP 配線とストレージは resolver / store として利用者が注入します。高度な組み込みユースケース向けのロジック層として使用できます。
 
-### `@maronn-oidc/cli`
+### `@maronn-openid-connect/cli`
 
 対象プロジェクトに Authorization Code Flow を実装した OP コード一式を生成する CLI ツールです。Hono / Express / Fastify / Next.js に対応し、`--enable` / `--disable` で機能構成を選択できます。

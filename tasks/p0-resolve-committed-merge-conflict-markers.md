@@ -17,7 +17,7 @@
 
 影響:
 
-- `packages/core/src/client-auth.ts` が構文エラー → `@maronn-oidc/core` の `tsc` ビルドが失敗する
+- `packages/core/src/client-auth.ts` が構文エラー → `@maronn-openid-connect/core` の `tsc` ビルドが失敗する
 - `packages/cli/src/frameworks/hono/templates.ts` が構文エラー → **CLI がビルドできない**。
   CLAUDE.md が定義する利用者の入口（`maronn-oidc generate hono`）が機能しない
 - `vitest` がソースを transform できず、`pnpm run test:ci` が失敗する
@@ -34,7 +34,7 @@ docs のみの PR #39 の CI（`c05fea7`）で実際に確認済み。
 packages/cli test: Error: Transform failed with 1 error:
   .../packages/cli/src/__tests__/hono-generator.test.ts:313:0: ERROR: Unexpected "<<"
  Test Files  6 failed | 1 passed (7)
- ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @maronn-oidc/cli@0.0.1 test: `vitest run`
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @maronn-openid-connect/cli@0.0.1 test: `vitest run`
 ```
 
 - **現在の `main` を base にする PR は、内容にかかわらず CI が赤になる**

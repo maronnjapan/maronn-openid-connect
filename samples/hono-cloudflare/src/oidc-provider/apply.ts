@@ -31,7 +31,7 @@ import {
   assertKidStrategyConsistent,
   getRegisteredSigningKeys,
   signingKeysToJwkSet,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import type {
   SigningKey,
   SigningKeyProvider,
@@ -41,7 +41,7 @@ import type {
   JwkSet,
   SessionResolver,
   ConsentResolver,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 
 /**
  * CORS の許可 origin。

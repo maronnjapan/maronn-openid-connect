@@ -4,8 +4,8 @@ import { describe, it } from 'node:test';
 import { assertPublishedPackageProvenance } from './verify-npm-provenance.mjs';
 
 const publishedPackages = [
-  { name: '@maronn-oidc/core', version: '1.2.3' },
-  { name: '@maronn-oidc/cli', version: '1.2.3' },
+  { name: '@maronn-openid-connect/core', version: '1.2.3' },
+  { name: '@maronn-openid-connect/cli', version: '1.2.3' },
 ];
 
 const provenanceFor = (name, version) => ({
@@ -42,7 +42,7 @@ describe('assertPublishedPackageProvenance', () => {
       () => assertPublishedPackageProvenance(publishedPackages, auditResult),
       new Error(
         'Missing verified SLSA provenance attestation for: ' +
-          '@maronn-oidc/core@1.2.3, @maronn-oidc/cli@1.2.3',
+          '@maronn-openid-connect/core@1.2.3, @maronn-openid-connect/cli@1.2.3',
       ),
     );
   });
@@ -52,8 +52,8 @@ describe('assertPublishedPackageProvenance', () => {
       invalid: [],
       missing: [],
       verified: [
-        provenanceFor('@maronn-oidc/core', '1.2.2'),
-        provenanceFor('@maronn-oidc/cli', '1.2.3'),
+        provenanceFor('@maronn-openid-connect/core', '1.2.2'),
+        provenanceFor('@maronn-openid-connect/cli', '1.2.3'),
       ],
     };
 
@@ -61,7 +61,7 @@ describe('assertPublishedPackageProvenance', () => {
       () => assertPublishedPackageProvenance(publishedPackages, auditResult),
       new Error(
         'Missing verified SLSA provenance attestation for: ' +
-          '@maronn-oidc/core@1.2.3',
+          '@maronn-openid-connect/core@1.2.3',
       ),
     );
   });
@@ -72,7 +72,7 @@ describe('assertPublishedPackageProvenance', () => {
       missing: [],
       verified: [
         {
-          name: '@maronn-oidc/core',
+          name: '@maronn-openid-connect/core',
           version: '1.2.3',
           attestations: {
             provenance: {
@@ -80,7 +80,7 @@ describe('assertPublishedPackageProvenance', () => {
             },
           },
         },
-        provenanceFor('@maronn-oidc/cli', '1.2.3'),
+        provenanceFor('@maronn-openid-connect/cli', '1.2.3'),
       ],
     };
 
@@ -88,7 +88,7 @@ describe('assertPublishedPackageProvenance', () => {
       () => assertPublishedPackageProvenance(publishedPackages, auditResult),
       new Error(
         'Missing verified SLSA provenance attestation for: ' +
-          '@maronn-oidc/core@1.2.3',
+          '@maronn-openid-connect/core@1.2.3',
       ),
     );
   });

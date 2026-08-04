@@ -15,7 +15,7 @@
 #
 #   つまりリリースのタイミングは「Version Packages PR をいつマージするか」で人間が制御する。
 #
-# 【@maronn-oidc/experimental の自動 publish】
+# 【@maronn-openid-connect/experimental の自動 publish】
 #   experimental だけは changeset を手で書かなくてよい。main への push ごとに
 #   `.github/scripts/ensure-experimental-changeset.mjs` を実行し、
 #   `packages/experimental/package.json` の version を最後に確定したコミット以降に
@@ -47,7 +47,7 @@
 #     （本リポジトリは packageManager で pnpm@10.17.0 を固定）。
 #
 # 【publish 前に npmjs.com 側で必要な設定】
-#   publish 対象の各パッケージ（@maronn-oidc/core, @maronn-oidc/cli, @maronn-oidc/experimental）の
+#   publish 対象の各パッケージ（@maronn-openid-connect/core, @maronn-openid-connect/cli, @maronn-openid-connect/experimental）の
 #   npm ページ → Settings → Trusted Publisher で、以下を登録する。
 #   1 つでも未登録だと OIDC でトークンを取れず、そのパッケージの publish が認証エラーで落ちる:
 #     - Provider: GitHub Actions

@@ -9,16 +9,16 @@ import {
 } from './verify-changeset-coverage.mjs';
 
 const PACKAGES = [
-  { name: '@maronn-oidc/cli', directory: 'packages/cli' },
-  { name: '@maronn-oidc/core', directory: 'packages/core' },
+  { name: '@maronn-openid-connect/cli', directory: 'packages/cli' },
+  { name: '@maronn-openid-connect/core', directory: 'packages/core' },
 ];
 
 describe('selectPublishablePackages', () => {
   it('should keep packages that are not private', () => {
     assert.deepEqual(
       selectPublishablePackages([
-        { directory: 'packages/cli', manifest: { name: '@maronn-oidc/cli' } },
-        { directory: 'packages/core', manifest: { name: '@maronn-oidc/core' } },
+        { directory: 'packages/cli', manifest: { name: '@maronn-openid-connect/cli' } },
+        { directory: 'packages/core', manifest: { name: '@maronn-openid-connect/core' } },
       ]),
       PACKAGES,
     );
@@ -27,10 +27,10 @@ describe('selectPublishablePackages', () => {
   it('should drop packages marked private', () => {
     assert.deepEqual(
       selectPublishablePackages([
-        { directory: 'packages/cli', manifest: { name: '@maronn-oidc/cli' } },
-        { directory: 'docs/library-document', manifest: { name: '@maronn-oidc/docs', private: true } },
+        { directory: 'packages/cli', manifest: { name: '@maronn-openid-connect/cli' } },
+        { directory: 'docs/library-document', manifest: { name: '@maronn-openid-connect/docs', private: true } },
       ]),
-      [{ name: '@maronn-oidc/cli', directory: 'packages/cli' }],
+      [{ name: '@maronn-openid-connect/cli', directory: 'packages/cli' }],
     );
   });
 
@@ -76,7 +76,7 @@ describe('findChangedPublishablePackages', () => {
   it('should return the package that owns the changed file', () => {
     assert.deepEqual(
       findChangedPublishablePackages(['packages/cli/src/features.ts'], PACKAGES),
-      ['@maronn-oidc/cli'],
+      ['@maronn-openid-connect/cli'],
     );
   });
 
@@ -86,7 +86,7 @@ describe('findChangedPublishablePackages', () => {
         ['packages/core/src/index.ts', 'packages/cli/src/features.ts'],
         PACKAGES,
       ),
-      ['@maronn-oidc/cli', '@maronn-oidc/core'],
+      ['@maronn-openid-connect/cli', '@maronn-openid-connect/core'],
     );
   });
 
@@ -96,7 +96,7 @@ describe('findChangedPublishablePackages', () => {
         ['packages/cli/src/features.ts', 'packages/cli/src/index.ts'],
         PACKAGES,
       ),
-      ['@maronn-oidc/cli'],
+      ['@maronn-openid-connect/cli'],
     );
   });
 
@@ -133,8 +133,8 @@ describe('assertChangesetCoversChangedPackages', () => {
   it('should accept a changed package covered by an added changeset', () => {
     assert.doesNotThrow(() => {
       assertChangesetCoversChangedPackages({
-        changedPackages: ['@maronn-oidc/cli'],
-        addedChangesets: [{ file: 'brave-pugs-smile.md', bumps: { '@maronn-oidc/cli': 'minor' } }],
+        changedPackages: ['@maronn-openid-connect/cli'],
+        addedChangesets: [{ file: 'brave-pugs-smile.md', bumps: { '@maronn-openid-connect/cli': 'minor' } }],
       });
     });
   });
@@ -142,10 +142,10 @@ describe('assertChangesetCoversChangedPackages', () => {
   it('should accept every changed package covered across several added changesets', () => {
     assert.doesNotThrow(() => {
       assertChangesetCoversChangedPackages({
-        changedPackages: ['@maronn-oidc/cli', '@maronn-oidc/core'],
+        changedPackages: ['@maronn-openid-connect/cli', '@maronn-openid-connect/core'],
         addedChangesets: [
-          { file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } },
-          { file: 'b.md', bumps: { '@maronn-oidc/core': 'patch' } },
+          { file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } },
+          { file: 'b.md', bumps: { '@maronn-openid-connect/core': 'patch' } },
         ],
       });
     });
@@ -155,7 +155,7 @@ describe('assertChangesetCoversChangedPackages', () => {
   it('should accept an empty changeset as an explicit opt-out', () => {
     assert.doesNotThrow(() => {
       assertChangesetCoversChangedPackages({
-        changedPackages: ['@maronn-oidc/cli'],
+        changedPackages: ['@maronn-openid-connect/cli'],
         addedChangesets: [{ file: 'empty.md', bumps: {} }],
       });
     });
@@ -165,11 +165,11 @@ describe('assertChangesetCoversChangedPackages', () => {
     assert.throws(
       () => {
         assertChangesetCoversChangedPackages({
-          changedPackages: ['@maronn-oidc/cli'],
+          changedPackages: ['@maronn-openid-connect/cli'],
           addedChangesets: [],
         });
       },
-      { message: /@maronn-oidc\/cli/ },
+      { message: /@maronn-openid-connect\/cli/ },
     );
   });
 
@@ -177,11 +177,11 @@ describe('assertChangesetCoversChangedPackages', () => {
     assert.throws(
       () => {
         assertChangesetCoversChangedPackages({
-          changedPackages: ['@maronn-oidc/cli', '@maronn-oidc/core'],
-          addedChangesets: [{ file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } }],
+          changedPackages: ['@maronn-openid-connect/cli', '@maronn-openid-connect/core'],
+          addedChangesets: [{ file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } }],
         });
       },
-      { message: /@maronn-oidc\/core/ },
+      { message: /@maronn-openid-connect\/core/ },
     );
   });
 
@@ -190,11 +190,11 @@ describe('assertChangesetCoversChangedPackages', () => {
     assert.throws(
       () => {
         assertChangesetCoversChangedPackages({
-          changedPackages: ['@maronn-oidc/cli'],
-          addedChangesets: [{ file: 'a.md', bumps: { '@maronn-oidc/core': 'patch' } }],
+          changedPackages: ['@maronn-openid-connect/cli'],
+          addedChangesets: [{ file: 'a.md', bumps: { '@maronn-openid-connect/core': 'patch' } }],
         });
       },
-      { message: /@maronn-oidc\/cli/ },
+      { message: /@maronn-openid-connect\/cli/ },
     );
   });
 
@@ -202,7 +202,7 @@ describe('assertChangesetCoversChangedPackages', () => {
     assert.throws(
       () => {
         assertChangesetCoversChangedPackages({
-          changedPackages: ['@maronn-oidc/cli'],
+          changedPackages: ['@maronn-openid-connect/cli'],
           addedChangesets: [],
         });
       },

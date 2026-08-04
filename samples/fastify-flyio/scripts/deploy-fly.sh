@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 export SAMPLE_DIR="samples/fastify-flyio"
-export SAMPLE_PACKAGE="@maronn-oidc/sample-fastify-flyio"
+export SAMPLE_PACKAGE="@maronn-openid-connect/sample-fastify-flyio"
 
 cd "${ROOT_DIR}"
 exec "${ROOT_DIR}/scripts/lib/deploy-fly-node-sample.sh" "$@"

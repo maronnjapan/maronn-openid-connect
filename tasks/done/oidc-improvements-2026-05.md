@@ -479,6 +479,6 @@
 
 ## 完了条件
 
-- 各タスクごとに `pnpm --filter @maronn-oidc/core test` および `pnpm --filter @maronn-oidc/cli test` がパスすること
+- 各タスクごとに `pnpm --filter @maronn-openid-connect/core test` および `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - T-001 / T-005 は実装前にユーザーと方針確認を行うこと
 - T-009 / T-011 は今回は修正禁止 (Hold)

@@ -1,5 +1,5 @@
 {
-  "name": "@maronn-oidc/conformance",
+  "name": "@maronn-openid-connect/conformance",
   "version": "0.0.1",
   "private": true,
   "description": "OpenID Foundation conformance suite runner for sample OpenID Providers",

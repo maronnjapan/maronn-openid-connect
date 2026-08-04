@@ -104,5 +104,5 @@ Basic OP / OIDC Core の Discovery 一般背景は `tasks/basic-op-requirements-
       不正確なコメント（RFC 8414 §2 を反映）も修正
 - [ ] sample `routes/discovery.ts` も同期（CLI 生成方針に従う）
 - [ ] 完了条件:
-      `pnpm --filter @maronn-oidc/core test` および
-      `pnpm --filter @maronn-oidc/cli test` がパス
+      `pnpm --filter @maronn-openid-connect/core test` および
+      `pnpm --filter @maronn-openid-connect/cli test` がパス

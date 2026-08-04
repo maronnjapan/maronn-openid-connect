@@ -37,7 +37,7 @@ Authorization Endpoint の非リダイレクトエラーは、既存 `Views.erro
 - [ ] custom `errorPage` が HTML string を返した場合に各 framework でその本文が返ること。
 - [ ] custom renderer / `Response` 返却を使うケースをテンプレートテストで固定し、view の戻り値が string 固定へ戻らないことを検出できること。
 - [ ] Next.js 生成物では `login/page.tsx` / `consent/page.tsx` の React Server Component 方針を崩さないこと。
-- [ ] `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 
 ## 完了条件
 

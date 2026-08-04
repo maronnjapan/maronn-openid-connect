@@ -65,4 +65,4 @@ OAuth 2.1 §4.1.2 / §4.3.1 は「認可コード・リフレッシュトーク�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test`（および sample の `conformance.test.ts`）がパスし、上記テストが追加されていること。`revokeAuthorizationCode` / `revokeRefreshToken` の JSDoc に「物理削除ではなく used 更新として扱うこと」と最低保持期間が明記され、`resolver-and-store-contract.md` の契約表に反映されていること。生成 OP をカスタマイズして `conformance.test.ts` が落ちる場合は、その状態が本リポジトリの想定挙動から外れていることを README またはコメントで明示できていること。
+`pnpm --filter @maronn-openid-connect/core test`（および sample の `conformance.test.ts`）がパスし、上記テストが追加されていること。`revokeAuthorizationCode` / `revokeRefreshToken` の JSDoc に「物理削除ではなく used 更新として扱うこと」と最低保持期間が明記され、`resolver-and-store-contract.md` の契約表に反映されていること。生成 OP をカスタマイズして `conformance.test.ts` が落ちる場合は、その状態が本リポジトリの想定挙動から外れていることを README またはコメントで明示できていること。

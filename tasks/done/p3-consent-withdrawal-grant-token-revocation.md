@@ -62,6 +62,6 @@ offline_access（refresh token）を発行できる OP において、取り消�
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 - 採用した索引方針で、同意取り消し→当該 grant の RT/AT 失効が成立し、他 grant に波及しないことがテストで固定されていること。
 - 生成 store の参照実装に「アクセス解除」動線が含まれること。

@@ -7,7 +7,7 @@ export default defineConfig({
       // core のソースを直接解決する。workspace リンクは package.json の
       // main（./dist/index.js）を指すため、そのままだと core を先にビルドしないと
       // テストが起動しない（ルートの test:ci はビルドを挟まない）。
-      '@maronn-oidc/core': fileURLToPath(new URL('../core/src/index.ts', import.meta.url)),
+      '@maronn-openid-connect/core': fileURLToPath(new URL('../core/src/index.ts', import.meta.url)),
     },
   },
   test: {

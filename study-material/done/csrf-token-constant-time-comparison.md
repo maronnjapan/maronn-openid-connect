@@ -81,7 +81,7 @@ Basic OP として確認すべきこと:
 - [ ] 方針（A/B/C）を決定する
 - [ ] （A/B 採用時・TDD）`auth-transaction.test.ts` に「正しい CSRF トークンで通過」「不一致で `InvalidCsrfToken`」「空値で拒否」のテストが定数時間比較でも維持されることを確認するテストを追加
 - [ ] `validateCsrfToken` の比較を定数時間化する（早期 return によるタイミング漏れを作らない）
-- [ ] `pnpm --filter @maronn-oidc/core test` と sample のテストがパスすること
+- [ ] `pnpm --filter @maronn-openid-connect/core test` と sample のテストがパスすること
 
 ## 関連トピック
 

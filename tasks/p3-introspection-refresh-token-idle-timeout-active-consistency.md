@@ -71,6 +71,6 @@ Token Endpoint 側（`refresh-token-grant.ts:86-97`）はアイドル超過を `
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 挙動変更が生成 OP の introspection に及ぶ場合、`packages/cli` テンプレートと各 sample の
   `conformance.test.ts` を更新し、`pnpm test` がパスすること

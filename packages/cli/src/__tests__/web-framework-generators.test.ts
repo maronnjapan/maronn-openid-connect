@@ -3,7 +3,7 @@ import { ExpressGenerator } from '../frameworks/express/index.js';
 import { FastifyGenerator } from '../frameworks/fastify/index.js';
 import { NextJsGenerator } from '../frameworks/nextjs/index.js';
 
-const CORE_PKG = '@maronn-oidc/core';
+const CORE_PKG = '@maronn-openid-connect/core';
 
 describe('Web-standard generated validation pipelines', () => {
   const generatedRoutes = [

@@ -30,7 +30,7 @@ Fidelity 軸（Conformance 準拠を信頼性のシグナルとして維持す�
 
 ## 修正方針
 
-- [ ]（A 案）`generate()` の出力を一時ディレクトリへ書き出し、`@maronn-oidc/core` を解決できる状態で `tsc --noEmit` を実行し、型エラーがあればテスト失敗とする
+- [ ]（A 案）`generate()` の出力を一時ディレクトリへ書き出し、`@maronn-openid-connect/core` を解決できる状態で `tsc --noEmit` を実行し、型エラーがあればテスト失敗とする
 - [ ]（B 案）`packages/sample/src/oidc-provider/`（生成物の同型ミラー）に対し Hono の `app.fetch(new Request(...))` ベースの最小挙動テストを追加する:
   - Discovery が必須メタデータフィールドを返す
   - Token エンドポイントのエラー応答が `Cache-Control: no-store` と OAuth エラー JSON 形（`error` フィールド）を持つ
@@ -46,4 +46,4 @@ Fidelity 軸（Conformance 準拠を信頼性のシグナルとして維持す�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test`（および B 案を採る場合は対象パッケージの test）がパスし、生成コードの型検査・主要挙動が CI で自動検証されること。
+`pnpm --filter @maronn-openid-connect/cli test`（および B 案を採る場合は対象パッケージの test）がパスし、生成コードの型検査・主要挙動が CI で自動検証されること。

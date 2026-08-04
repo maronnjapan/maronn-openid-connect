@@ -94,4 +94,4 @@ Token Introspection（RFC 7662）のレスポンスに含める `token_type` メ
 - [ ] `IntrospectionResponse` の `token_type` を `'Bearer'` のみに狭め、`buildRefreshTokenResponse` から `token_type` を削除（Green）
 - [ ] `packages/cli` の conformance.test.ts 生成コードを更新し、リフレッシュトークンレスポンス期待値から `token_type` を除去
 - [ ] 各 sample の `conformance.test.ts` を再生成し、契約テストが通ることを確認
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` および各 sample の conformance テストがパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` および各 sample の conformance テストがパス

@@ -130,4 +130,4 @@ Token Introspection エンドポイント（RFC 7662）が、**「認証済み�
       - resource server（`aud` に含まれる caller）は active=true でメタデータを取得できる
 - [ ] `introspection.ts` の `IntrospectionRequestContext` に `canIntrospect?` を追加し、active 判定の直前に評価
 - [ ] sample/CLI テンプレートに「resource server 限定ポリシー」の有効化例をコメントで提示（既定は無効＝後方互換）
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパスし、既存 introspection テストが回帰しないこと
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパスし、既存 introspection テストが回帰しないこと

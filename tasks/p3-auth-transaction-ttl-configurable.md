@@ -156,6 +156,6 @@ core（`packages/core/src/auth-transaction.test.ts`）:
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` と `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` と `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 4 sample を再生成し `pnpm test` がパスすること
 - 認可トランザクションの寿命が 1 箇所の設定値から決まり、`expiresAt` とストア TTL が常に一致すること

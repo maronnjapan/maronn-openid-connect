@@ -175,8 +175,8 @@ export interface RevocationTokenResolvers {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - `pnpm test` 全体がパスすること
 - `samples/*/src/oidc-provider/conformance.test.ts` 4 本が `packages/cli` の再生成結果と一致し、
   すべてパスすること

@@ -7,22 +7,22 @@ import { AVAILABLE_FEATURES, EXPERIMENTAL_FEATURES, resolveFeatures } from './fe
 import type { OidcFeatureConfig } from './features.js';
 
 const INSTALL_COMMANDS: Record<string, string> = {
-  hono: 'pnpm add hono @maronn-oidc/core',
-  express: 'pnpm add express @maronn-oidc/core && pnpm add -D @types/express',
-  fastify: 'pnpm add fastify @maronn-oidc/core',
-  nextjs: 'pnpm add @maronn-oidc/core && pnpm add -D next react react-dom',
+  hono: 'pnpm add hono @maronn-openid-connect/core',
+  express: 'pnpm add express @maronn-openid-connect/core && pnpm add -D @types/express',
+  fastify: 'pnpm add fastify @maronn-openid-connect/core',
+  nextjs: 'pnpm add @maronn-openid-connect/core && pnpm add -D next react react-dom',
 };
 
-const EXPERIMENTAL_PACKAGE = '@maronn-oidc/experimental';
+const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 
 /**
- * Insert @maronn-oidc/experimental into the install guidance, but only when an
+ * Insert @maronn-openid-connect/experimental into the install guidance, but only when an
  * experimental feature was actually selected. Without a selection the command
  * string is returned untouched so existing output never changes.
  */
 function withExperimentalPackage(installCommand: string, features: OidcFeatureConfig): string {
   if (!features.par && !features.tokenExchange) return installCommand;
-  return installCommand.replace('@maronn-oidc/core', `@maronn-oidc/core ${EXPERIMENTAL_PACKAGE}`);
+  return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${EXPERIMENTAL_PACKAGE}`);
 }
 
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
@@ -293,7 +293,7 @@ export function run(args: string[]): void {
       }
     } else {
       const installCommand = withExperimentalPackage(
-        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-oidc/core`,
+        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
         features,
       );
       console.log(`\nNext steps:`);

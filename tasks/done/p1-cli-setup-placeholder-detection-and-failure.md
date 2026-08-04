@@ -133,7 +133,7 @@ function patchEntryFile(entryFilePath: string, outputDir: string): void {
 - [ ] 上記テストがすべてパスすること
 
   ```bash
-  pnpm --filter @maronn-oidc/cli test
+  pnpm --filter @maronn-openid-connect/cli test
   pnpm typecheck
   pnpm lint
   ```

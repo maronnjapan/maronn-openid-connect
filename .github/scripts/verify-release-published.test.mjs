@@ -43,19 +43,19 @@ describe('selectUnpublishedPackages', () => {
     assert.deepEqual(
       selectUnpublishedPackages(
         [
-          { name: '@maronn-oidc/core', version: '0.1.0' },
-          { name: '@maronn-oidc/cli', version: '0.1.0' },
+          { name: '@maronn-openid-connect/core', version: '0.1.0' },
+          { name: '@maronn-openid-connect/cli', version: '0.1.0' },
         ],
-        { '@maronn-oidc/core': ['0.0.1'], '@maronn-oidc/cli': ['0.0.1', '0.1.0'] },
+        { '@maronn-openid-connect/core': ['0.0.1'], '@maronn-openid-connect/cli': ['0.0.1', '0.1.0'] },
       ),
-      [{ name: '@maronn-oidc/core', version: '0.1.0', latestPublishedVersion: '0.0.1' }],
+      [{ name: '@maronn-openid-connect/core', version: '0.1.0', latestPublishedVersion: '0.0.1' }],
     );
   });
 
   it('should select nothing when every main version is on the registry', () => {
     assert.deepEqual(
-      selectUnpublishedPackages([{ name: '@maronn-oidc/core', version: '0.1.0' }], {
-        '@maronn-oidc/core': ['0.0.1', '0.1.0'],
+      selectUnpublishedPackages([{ name: '@maronn-openid-connect/core', version: '0.1.0' }], {
+        '@maronn-openid-connect/core': ['0.0.1', '0.1.0'],
       }),
       [],
     );
@@ -64,8 +64,8 @@ describe('selectUnpublishedPackages', () => {
   // 手動 publish などで registry のほうが先に進んでいる状態は、publish 漏れではないので通す。
   it('should select nothing when the registry has newer versions than main', () => {
     assert.deepEqual(
-      selectUnpublishedPackages([{ name: '@maronn-oidc/core', version: '0.1.0' }], {
-        '@maronn-oidc/core': ['0.1.0', '0.2.0'],
+      selectUnpublishedPackages([{ name: '@maronn-openid-connect/core', version: '0.1.0' }], {
+        '@maronn-openid-connect/core': ['0.1.0', '0.2.0'],
       }),
       [],
     );
@@ -75,13 +75,13 @@ describe('selectUnpublishedPackages', () => {
   // publish 実績が無い package を未 publish 扱いにすると、追加した時点で Release が赤くなってしまう。
   it('should skip packages that have never been published', () => {
     assert.deepEqual(
-      selectUnpublishedPackages([{ name: '@maronn-oidc/new', version: '0.0.1' }], { '@maronn-oidc/new': [] }),
+      selectUnpublishedPackages([{ name: '@maronn-openid-connect/new', version: '0.0.1' }], { '@maronn-openid-connect/new': [] }),
       [],
     );
   });
 
   it('should skip packages that are missing from the registry lookup', () => {
-    assert.deepEqual(selectUnpublishedPackages([{ name: '@maronn-oidc/new', version: '0.0.1' }], {}), []);
+    assert.deepEqual(selectUnpublishedPackages([{ name: '@maronn-openid-connect/new', version: '0.0.1' }], {}), []);
   });
 });
 
@@ -89,8 +89,8 @@ describe('assertMainVersionsArePublished', () => {
   it('should pass when every publishable package version exists on the registry', () => {
     assert.doesNotThrow(() =>
       assertMainVersionsArePublished({
-        packages: [{ name: '@maronn-oidc/core', version: '0.1.0' }],
-        publishedVersionsByName: { '@maronn-oidc/core': ['0.1.0'] },
+        packages: [{ name: '@maronn-openid-connect/core', version: '0.1.0' }],
+        publishedVersionsByName: { '@maronn-openid-connect/core': ['0.1.0'] },
         pendingChangesets: [],
       }),
     );
@@ -100,13 +100,13 @@ describe('assertMainVersionsArePublished', () => {
     assert.throws(
       () =>
         assertMainVersionsArePublished({
-          packages: [{ name: '@maronn-oidc/core', version: '0.1.0' }],
-          publishedVersionsByName: { '@maronn-oidc/core': ['0.0.1'] },
+          packages: [{ name: '@maronn-openid-connect/core', version: '0.1.0' }],
+          publishedVersionsByName: { '@maronn-openid-connect/core': ['0.0.1'] },
           pendingChangesets: [],
         }),
       {
         message:
-          'main のバージョンが npm に出ていません: @maronn-oidc/core@0.1.0 (npm の最新は 0.0.1)\n' +
+          'main のバージョンが npm に出ていません: @maronn-openid-connect/core@0.1.0 (npm の最新は 0.0.1)\n' +
           'main に未消化の changeset は無いので、この push は publish 段階に入るはずでした。\n' +
           'release job の "Ensure experimental release changeset" が changeset を作り直して' +
           ' version 段階へ入り直していないかを確認してください' +
@@ -120,13 +120,13 @@ describe('assertMainVersionsArePublished', () => {
       () =>
         assertMainVersionsArePublished({
           packages: [
-            { name: '@maronn-oidc/core', version: '0.1.0' },
-            { name: '@maronn-oidc/cli', version: '0.1.0' },
+            { name: '@maronn-openid-connect/core', version: '0.1.0' },
+            { name: '@maronn-openid-connect/cli', version: '0.1.0' },
           ],
-          publishedVersionsByName: { '@maronn-oidc/core': ['0.0.1'], '@maronn-oidc/cli': ['0.0.1'] },
+          publishedVersionsByName: { '@maronn-openid-connect/core': ['0.0.1'], '@maronn-openid-connect/cli': ['0.0.1'] },
           pendingChangesets: [],
         }),
-      /@maronn-oidc\/core@0\.1\.0 \(npm の最新は 0\.0\.1\), @maronn-oidc\/cli@0\.1\.0 \(npm の最新は 0\.0\.1\)/,
+      /@maronn-openid-connect\/core@0\.1\.0 \(npm の最新は 0\.0\.1\), @maronn-openid-connect\/cli@0\.1\.0 \(npm の最新は 0\.0\.1\)/,
     );
   });
 
@@ -136,8 +136,8 @@ describe('assertMainVersionsArePublished', () => {
   it('should pass while main still carries an unconsumed changeset', () => {
     assert.doesNotThrow(() =>
       assertMainVersionsArePublished({
-        packages: [{ name: '@maronn-oidc/core', version: '0.1.0' }],
-        publishedVersionsByName: { '@maronn-oidc/core': ['0.0.1'] },
+        packages: [{ name: '@maronn-openid-connect/core', version: '0.1.0' }],
+        publishedVersionsByName: { '@maronn-openid-connect/core': ['0.0.1'] },
         pendingChangesets: ['.changeset/brave-pans-shave.md'],
       }),
     );

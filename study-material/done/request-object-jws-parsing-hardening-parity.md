@@ -113,4 +113,4 @@ JOSE ヘッダ堅牢化が計画されている。しかし後者（Request Obje
 - [ ] strict デコード／`assertJwsHeaderAcceptable` を共通ヘルパ化し、`parseRequestObject` と `verify()` へ適用（Green）
 - [ ] 正常系の署名検証・Request Object 検証が引き続き通る回帰テストを確認
 - [ ] `request_parameter_supported` を有効化する CLI テンプレート／sample がある場合は conformance テストも更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

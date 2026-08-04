@@ -475,7 +475,7 @@ PoC で最も頻出する検証シナリオのひとつが、
       `tasks/T-021-discovery-metadata.md` と整合させる
 - [ ] README またはテンプレートのコメントに、追加クレーム名は Collision-Resistant Name
       （§5.1.2）が推奨であることを案内する
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` および `pnpm --filter @maronn-oidc/cli test` がパスすること
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` および `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 
 ## 関連トピック
 

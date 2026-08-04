@@ -125,4 +125,4 @@
 - [ ] Metadata Document の自己参照 `client_id` 一致・対称鍵不在・`jwks`/`jwks_uri` 検証
 - [ ] CIMD で解決した `ClientInfo` を既存 redirect_uri 完全一致・PKCE 経路に流す結合テスト
 - [ ] Basic OP conformance に影響しないこと（既存 `conformance.test.ts` が緑のまま）を確認
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパスし、SSRF ガードの単体テスト（special-use IP 拒否・サイズ上限）が緑
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパスし、SSRF ガードの単体テスト（special-use IP 拒否・サイズ上限）が緑

@@ -124,4 +124,4 @@ CLI 生成 Provider の Discovery ドキュメント（`/.well-known/openid-conf
 - [ ] `claims_parameter_supported: true` を `discoveryRouteTemplate` に追加
 - [ ] conformance テスト生成元に Discovery のアサーション（両フィールド）を追加し、4 フレームワークで固定
 - [ ] `tasks/T-021-discovery-metadata.md` のステータスを実態に合わせて整理（残課題が本 2 件であることを明記）
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/cli test` と各 sample の conformance テストがパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/cli test` と各 sample の conformance テストがパス

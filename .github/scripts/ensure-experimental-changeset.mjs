@@ -1,5 +1,5 @@
 /**
- * `@maronn-oidc/experimental` の publish 用 changeset を自動生成する。
+ * `@maronn-openid-connect/experimental` の publish 用 changeset を自動生成する。
  *
  * experimental は新しい仕様を先行実装する場所なので、`packages/experimental/src` に
  * 機能追加や実装修正が入ったら「そのまま publish できる状態」にしておきたい。
@@ -25,7 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { readChangesets } from './verify-release-contract.mjs';
 
-const EXPERIMENTAL = '@maronn-oidc/experimental';
+const EXPERIMENTAL = '@maronn-openid-connect/experimental';
 const SOURCE_PREFIX = 'packages/experimental/src/';
 const MANIFEST_PATH = 'packages/experimental/package.json';
 const TEST_FILE_PATTERN = /\.(test|spec)\.[cm]?tsx?$/;

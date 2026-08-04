@@ -90,4 +90,4 @@ function validateEndpointUrl(
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスすること
+`pnpm --filter @maronn-openid-connect/core test` がパスすること

@@ -85,5 +85,5 @@ nonce?: string;
 
 - 上記テストが全て通過する。
 - 誤った仕様コメントが除去され、§12.2 に基づく正しい説明へ更新されている。
-- `pnpm --filter @maronn-oidc/core test` および
-  `pnpm --filter @maronn-oidc/cli test` がパスする。
+- `pnpm --filter @maronn-openid-connect/core test` および
+  `pnpm --filter @maronn-openid-connect/cli test` がパスする。

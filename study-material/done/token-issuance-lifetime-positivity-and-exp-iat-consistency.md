@@ -100,4 +100,4 @@
 - [ ] `id-token.test.ts` / `access-token.test.ts` に「`exp <= iat` の payload を `validatePayload` が拒否する」テストを追加
 - [ ] `generateTokenResponse` 入口に正整数ガードを追加、`validatePayload` に `exp > iat` チェックを追加（Green）
 - [ ] 既存の正常系テストが引き続き通ることを確認
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

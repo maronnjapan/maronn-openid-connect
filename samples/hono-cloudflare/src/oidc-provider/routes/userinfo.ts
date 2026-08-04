@@ -11,7 +11,7 @@ import {
   selectSigningKeyByAlg,
   UserInfoError,
   type SigningKey,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   accessTokenResolver as defaultAccessTokenResolver,
   userClaimsResolver as defaultUserClaimsResolver,

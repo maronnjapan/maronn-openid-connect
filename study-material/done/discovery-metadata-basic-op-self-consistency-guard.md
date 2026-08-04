@@ -159,4 +159,4 @@
 - [ ] `packages/core/src/discovery.ts` の `buildProviderMetadata` にガードを追加（方針に応じて）
 - [ ] 生成 OP の Discovery 出力が変わらないこと（テンプレートは既に `code` / `openid` を渡す）を確認し、
       必要なら各 sample の `conformance.test.ts`（Discovery 検査）と `packages/cli` のテンプレート生成側テストを更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

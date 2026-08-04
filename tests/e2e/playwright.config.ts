@@ -10,7 +10,7 @@ const clientBaseURL =
 const resourceServerURL =
   process.env.E2E_RESOURCE_SERVER_URL ?? `http://${host}:${resourceServerPort}`;
 const opPackage =
-  process.env.E2E_OP_PACKAGE ?? '@maronn-oidc/sample-hono-cloudflare';
+  process.env.E2E_OP_PACKAGE ?? '@maronn-openid-connect/sample-hono-cloudflare';
 const oidcClientsJson = JSON.stringify([
   {
     clientId: 'e2e-client',

@@ -31,8 +31,8 @@ fi
 SAMPLE_DIR="${ROOT_DIR}/samples/${SAMPLE}"
 SAMPLE_PACKAGE="$(node -p "require('${SAMPLE_DIR}/package.json').name" 2>/dev/null || true)"
 if [ -z "${SAMPLE_PACKAGE}" ]; then
-  # node がまだ無い場合でも package 名は決め打ちできる（@maronn-oidc/sample-<dir>）。
-  SAMPLE_PACKAGE="@maronn-oidc/sample-${SAMPLE}"
+  # node がまだ無い場合でも package 名は決め打ちできる（@maronn-openid-connect/sample-<dir>）。
+  SAMPLE_PACKAGE="@maronn-openid-connect/sample-${SAMPLE}"
 fi
 
 guide_step "ツールチェーンを確認します"

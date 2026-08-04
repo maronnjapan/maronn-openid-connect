@@ -68,5 +68,5 @@ if (payload.sub.length > 255) {           // ← UTF-16 length のみ。ASCII �
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 是正後の study-material 2 件が実装実態と一致していること

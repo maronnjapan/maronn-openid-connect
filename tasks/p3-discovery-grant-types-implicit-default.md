@@ -55,5 +55,5 @@ if (config.grantTypesSupported && config.grantTypesSupported.length > 0) {   // 
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 各 sample の `conformance.test.ts` がパスすること

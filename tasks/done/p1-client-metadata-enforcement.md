@@ -83,6 +83,6 @@ if (!allowedGrantTypes.includes(params.grant_type)) {
 
 ## 完了条件
 
-- 上記テストが TDD（Red → Green）で追加され、`pnpm --filter @maronn-oidc/core test` がパスすること
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- 上記テストが TDD（Red → Green）で追加され、`pnpm --filter @maronn-openid-connect/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 既存テストが後方互換で全てパスすること

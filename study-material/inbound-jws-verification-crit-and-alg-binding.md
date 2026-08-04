@@ -73,7 +73,7 @@ OP が**受信した JWS を検証する** 2 経路（`id_token_hint` の署名�
 - [ ] use フィルタ・alg 束縛まで踏み込むか（方針 A / B）を判断
 - [ ] `id-token.test.ts` / `request-object.test.ts` に `crit` 付き JWS 拒否・use/alg 束縛のテストを先行追加
 - [ ] 両経路に共通ヘルパを配線
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス
 
 ## 関連トピック
 

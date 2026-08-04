@@ -102,6 +102,6 @@ if (Array.isArray(payload.aud) && payload.aud.length > 1) {
 ## 完了条件
 
 - 上記テストがすべて通る
-- `pnpm --filter @maronn-oidc/core test` がパスする
+- `pnpm --filter @maronn-openid-connect/core test` がパスする
 - `token-response.ts` および `id-token.ts` の設計コメントが OIDC Core §2 / §3.1.3.7 引用付きで明記されている
 - `study-material/done/id-token-azp-claim-policy.md` から本タスクへの参照が辿れる

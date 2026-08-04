@@ -28,7 +28,7 @@ export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
  *
  * Unlike AVAILABLE_FEATURES these are **disabled by default** and are only
  * generated when named explicitly with `--enable`. They are implemented in the
- * separate `@maronn-oidc/experimental` package, whose API is unstable and may
+ * separate `@maronn-openid-connect/experimental` package, whose API is unstable and may
  * change in a breaking way between releases.
  *
  * - par: Pushed Authorization Requests (RFC 9126).
@@ -53,10 +53,10 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   parameter with `request_not_supported` (OIDC Core 1.0 §6.3).
  * - par: experimental, disabled by default. When true, the PAR endpoint
  *   (RFC 9126) is generated and the authorize route resolves URN-form
- *   `request_uri` values through `@maronn-oidc/experimental/par`.
+ *   `request_uri` values through `@maronn-openid-connect/experimental/par`.
  * - tokenExchange: experimental, disabled by default. When true, the token
  *   route dispatches the `urn:ietf:params:oauth:grant-type:token-exchange`
- *   grant (RFC 8693) to `@maronn-oidc/experimental/token-exchange` before
+ *   grant (RFC 8693) to `@maronn-openid-connect/experimental/token-exchange` before
  *   core's grant_type validation would reject the URN.
  */
 export interface OidcFeatureConfig {

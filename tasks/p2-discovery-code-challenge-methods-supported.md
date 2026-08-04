@@ -141,8 +141,8 @@ TDD で、実装より先に `packages/core/src/discovery.test.ts` へ追加す�
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - `pnpm test` 全体がパスすること
 - `samples/*/src/oidc-provider/routes/discovery.ts` 4 本から後付けコードが消え、
   `packages/cli` の再生成結果と一致していること

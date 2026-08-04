@@ -232,4 +232,4 @@ Basic OP として提供する上で確認すべきこと:
   - [ ] 未知 scope はマージ対象から除外される
   - [ ] 方針 C を選ぶ場合は「`include_granted_scopes` が無視され scope が合算されない」ことをテストで固定し、
         ドキュメントに非対応を明記する
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` および cli テストがパスすること
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` および cli テストがパスすること

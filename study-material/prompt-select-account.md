@@ -127,5 +127,5 @@ OIDC Core §15.1 が全 OP に `select_account` サポートを課している�
 - [ ] テスト: `prompt=select_account` 受理 / 対話不能時 `account_selection_required` /
       `prompt=login select_account` 併用が壊れないこと
 - [ ] 完了条件:
-      `pnpm --filter @maronn-oidc/core test` /
-      `pnpm --filter @maronn-oidc/cli test` がパス
+      `pnpm --filter @maronn-openid-connect/core test` /
+      `pnpm --filter @maronn-openid-connect/cli test` がパス

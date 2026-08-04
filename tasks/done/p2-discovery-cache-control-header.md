@@ -66,8 +66,8 @@ return c.json({
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/sample test` がパスする（sample テストがある場合）。
-- `pnpm --filter @maronn-oidc/cli test` がパスする。
+- `pnpm --filter @maronn-openid-connect/sample test` がパスする（sample テストがある場合）。
+- `pnpm --filter @maronn-openid-connect/cli test` がパスする。
 - `curl -i http://localhost:<port>/.well-known/openid-configuration` のレスポンスヘッダに `Cache-Control: public, max-age=3600` が含まれることを目視確認する。
 
 ## 補足

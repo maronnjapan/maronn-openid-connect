@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '@maronn-oidc/core';
+import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '@maronn-openid-connect/core';
 import { defaultProviderConfig } from '../config.js';
 import { parConfig } from './par.js';
 

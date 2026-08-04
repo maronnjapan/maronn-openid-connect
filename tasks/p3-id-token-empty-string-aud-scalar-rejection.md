@@ -65,5 +65,5 @@ if (Array.isArray(payload.aud)) {                                 // L117: 配�
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - スカラー/配列の両パスで空・不正 `aud` が対称に拒否されること

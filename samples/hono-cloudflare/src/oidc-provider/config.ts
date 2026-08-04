@@ -3,7 +3,7 @@ import type {
   ClientResolver,
   TokenClientInfo,
   TokenClientResolver,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 
 export interface ProviderConfig {
   issuer: string;

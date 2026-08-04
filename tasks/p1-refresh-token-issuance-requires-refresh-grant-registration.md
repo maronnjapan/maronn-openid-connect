@@ -208,8 +208,8 @@ TDD で先に Red を作る。テストケース名は「should + 動詞」形�
 - [ ] `samples/*` は CLI 再生成の結果として更新されている（手編集していない）
 - [ ] 実行コマンド:
   ```bash
-  pnpm --filter @maronn-oidc/cli test
-  pnpm --filter @maronn-oidc/core test
+  pnpm --filter @maronn-openid-connect/cli test
+  pnpm --filter @maronn-openid-connect/core test
   pnpm -r --filter './samples/*' test
   ```
 - [ ] `packages/cli` の出荷物が変わるため changeset を追加する

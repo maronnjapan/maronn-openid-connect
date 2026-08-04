@@ -97,9 +97,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # build は typecheck より前に置く。
-      # samples/* と packages/experimental は @maronn-oidc/core を workspace 経由の
+      # samples/* と packages/experimental は @maronn-openid-connect/core を workspace 経由の
       # ビルド成果物（dist の .d.ts）として解決するため、未ビルドだと
-      # 「Cannot find module '@maronn-oidc/core'」で typecheck が落ちる。
+      # 「Cannot find module '@maronn-openid-connect/core'」で typecheck が落ちる。
       - name: Build packages
         run: pnpm run build
 
@@ -115,7 +115,7 @@ jobs:
         run: pnpm run test:ci
 
       - name: Install Playwright browsers
-        run: pnpm --filter @maronn-oidc/e2e exec playwright install --with-deps chromium
+        run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
 
       - name: E2E tests
         run: pnpm run test:e2e

@@ -137,8 +137,8 @@ await refreshTokenStore.set(tokenResponse.refresh_token, {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 各 sample の `conformance.test.ts` がパスすること
 - `pnpm test` がパスすること
 - `packages/cli` / `samples/*` に `lastUsedAt` が存在し、`refreshTokenIdleTimeoutSeconds` を設定すればアイドル失効が実際に発火すること

@@ -13,7 +13,7 @@ import {
   IntrospectionError,
   TokenError,
   type IntrospectionResponse,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   tokenClientResolver as defaultTokenClientResolver,
   introspectionAccessTokenResolver as defaultAccessResolver,

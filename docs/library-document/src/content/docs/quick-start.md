@@ -13,7 +13,7 @@ description: Get up and running with Maronn OIDC in minutes.
 CLI で、選択したフレームワーク向けの OpenID Provider 実装コード一式を生成します。
 
 ```bash
-pnpm dlx @maronn-oidc/cli generate hono
+pnpm dlx @maronn-openid-connect/cli generate hono
 ```
 
 対応フレームワークは `hono` / `express` / `fastify` / `nextjs` です。
@@ -39,7 +39,7 @@ const app = new Hono();
 ## 2. 依存をインストールする
 
 ```bash
-pnpm add hono @maronn-oidc/core
+pnpm add hono @maronn-openid-connect/core
 ```
 
 （Express の場合は `express` と `@types/express`、Fastify の場合は `fastify` を追加します。）

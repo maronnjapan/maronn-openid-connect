@@ -5,7 +5,7 @@
  * 破壊的に変更されることがある。本番運用の前に
  * `docs/library-document` の Experimental セクションを確認すること。
  *
- * `@maronn-oidc/core` とは別 package であり、CLI で `--enable token-exchange` を
+ * `@maronn-openid-connect/core` とは別 package であり、CLI で `--enable token-exchange` を
  * 明示したときのみ生成コードから利用される。
  *
  * 初期スコープは impersonation 型の交換（`actor_token` なし）に限定する。

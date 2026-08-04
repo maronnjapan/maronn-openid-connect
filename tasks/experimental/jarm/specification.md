@@ -160,7 +160,7 @@ Location: https://client.example.com/cb?response=<JWS compact serialization>
 
 - クエリに付くのは `response` パラメータ**のみ**。`code` / `state` / `iss` の素のパラメータは付けない
 
-## 公開API案（`@maronn-oidc/experimental/jarm`）
+## 公開API案（`@maronn-openid-connect/experimental/jarm`）
 
 subpath export（`packages/experimental/package.json` の `exports["./jarm"]` → `src/jarm/index.ts`）で提供する。PAR / Token Exchange と同様、CLI 生成コードが読める粒度のステップ関数で構成する。
 
@@ -233,7 +233,7 @@ core は低レベル署名ヘルパー（`sign` / `arrayBufferToBase64Url`）を
   - 応答構築の共通化: 成功リダイレクト構築ヘルパー（仮称 `buildSuccessRedirect`）を導入し、既存のインライン構築（後述の 4 箇所）を置き換える。`buildErrorRedirect`（`templates.ts:1829-1844`）とともに「トランザクションの `jarmResponseMode` があれば `createJarmResponseJwt` + `buildJarmRedirectUrl`、なければ従来の平文クエリ」で分岐する
   - discovery: `response_modes_supported` は core の既存設定フィールド `responseModesSupported`（`packages/core/src/discovery.ts:56, 242-243` で確認）に `['query', 'query.jwt', 'jwt']` を渡す形で拡張する（テンプレートの `responseModesSupported: ['query']` 固定値（`templates.ts:3687`）を jarm 有効時のみ差し替え。core 無変更）。`authorization_signing_alg_values_supported: ['RS256']` は core の `DiscoveryConfig` に存在しないため、PAR の `pushed_authorization_request_endpoint` と同じスプレッドマージ方式（`templates.ts:3628-3641` のパターン）で追加する（JARM §4）
   - `jarmConfig`（`jarmResponseLifetimeSeconds`）の定数 export と `assertJarmLifetimeSeconds` によるモジュールトップレベル検証（PAR の `parConfig` / `assertParExpiresInSeconds` と同型）
-  - `INSTALL_COMMANDS` 相当の案内に `@maronn-oidc/experimental` を追加（PAR / Token Exchange で導入済みのため、jarm 有効時にも同パッケージが案内されることの確認のみ）
+  - `INSTALL_COMMANDS` 相当の案内に `@maronn-openid-connect/experimental` を追加（PAR / Token Exchange で導入済みのため、jarm 有効時にも同パッケージが案内されることの確認のみ）
   - `conformance.test.ts` テンプレートへ JARM 契約テストを追加（`jarm` 有効時のみ生成）
   - 生成コード冒頭コメントで **Experimental である旨**（API が破壊的に変わり得る旨）と JARM のセクション番号を明示
 - **`jarm` 無効時の生成物は現行とバイト同一**（条件付き補間。PAR / Token Exchange と同じ完了条件）
@@ -312,12 +312,12 @@ packages/experimental/
 
 ```text
 packages/core ──X──> packages/experimental（import禁止・coreの必須機能にしない）
-packages/cli  ─────> @maronn-oidc/experimental（許可・生成コードの依存として明示）
-@maronn-oidc/experimental ─────> @maronn-oidc/core（許可）
+packages/cli  ─────> @maronn-openid-connect/experimental（許可・生成コードの依存として明示）
+@maronn-openid-connect/experimental ─────> @maronn-openid-connect/core（許可）
 ```
 
 - core には一切手を入れない。jarm 無効時の生成コード・既存利用者の挙動は完全に不変
-- 機能ごとの subpath export（`@maronn-oidc/experimental/jarm`）で提供し、ルートからの再エクスポートは作らない
+- 機能ごとの subpath export（`@maronn-openid-connect/experimental/jarm`）で提供し、ルートからの再エクスポートは作らない
 - 他の experimental 機能（par / token-exchange）とのコード共有は行わない（重複許容・独立性優先）
 
 ### CLI生成コードからの利用方法
@@ -383,8 +383,8 @@ packages/cli  ─────> @maronn-oidc/experimental（許可・生成コー
 
 ## Changeset要件
 
-- `@maronn-oidc/experimental`: minor（新規機能追加）
-- `@maronn-oidc/cli`: minor（`--enable jarm` の追加。既存デフォルト挙動は不変のため breaking ではない）
+- `@maronn-openid-connect/experimental`: minor（新規機能追加）
+- `@maronn-openid-connect/cli`: minor（`--enable jarm` の追加。既存デフォルト挙動は不変のため breaking ではない）
 - core: 変更なし（changeset 不要）
 
 ## 実装順序
@@ -401,7 +401,7 @@ packages/cli  ─────> @maronn-oidc/experimental（許可・生成コー
 
 ## 完了条件
 
-1. `pnpm --filter @maronn-oidc/experimental test` で本仕様のテスト計画（単体）が全て通る
+1. `pnpm --filter @maronn-openid-connect/experimental test` で本仕様のテスト計画（単体）が全て通る
 2. `maronn-oidc generate hono --enable jarm` の生成コードで conformance.test.ts（JARM ケース含む）が通る
 3. `--enable jarm` なしの生成コードが現行とバイト単位で同一（後方互換の客観的確認）
 4. 4 フレームワーク（hono / express / fastify / nextjs）＋ web-standard で JARM 対応が生成される（共有テンプレート変更のみで反映されること。PAR で実証済みの構造）

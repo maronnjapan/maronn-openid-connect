@@ -12,7 +12,7 @@
 
 ### 1.1 Why(背景・課題)
 
-自作の OpenID Provider(OP)ライブラリ(`@maronn-oidc/core` / `@maronn-oidc/cli`)を開発しているが、現状このライブラリの動作を第三者が試すには、CLI(`maronn-oidc`)でアプリケーションコードを生成し、依存関係のインストール・ビルドを行ったうえで自分の実行環境(Node.js サーバー等)にデプロイする必要がある。つまり「動くところを見る」までの初期コストが高く、以下の問題がある。
+自作の OpenID Provider(OP)ライブラリ(`@maronn-openid-connect/core` / `@maronn-openid-connect/cli`)を開発しているが、現状このライブラリの動作を第三者が試すには、CLI(`maronn-oidc`)でアプリケーションコードを生成し、依存関係のインストール・ビルドを行ったうえで自分の実行環境(Node.js サーバー等)にデプロイする必要がある。つまり「動くところを見る」までの初期コストが高く、以下の問題がある。
 
 - ライブラリの利用検討者・記事読者が、コードを書かずに挙動を確認する手段がない
 - 作者自身も、構成違い(クライアント設定・フロー差分)の OP を並べて検証するたびにセットアップ作業が発生する
@@ -53,9 +53,9 @@
 | OP | OpenID Provider。本アプリが生成する検証用 IdP インスタンス |
 | OP インスタンス | 1 回の作成操作で発行される、サブドメイン単位の独立した OP |
 | Dispatcher | ワイルドカードサブドメイン宛の全リクエストを受け、対象 OP インスタンスへ振り分ける受付レイヤ |
-| コアライブラリ | `@maronn-oidc/core`(0.x 系)。**フレームワーク非依存のロジック層**で、production dependencies ゼロ・Web 標準 API(Fetch API / Web Crypto API 等)のみで動作する。Hono に依存しているのはコアではなく CLI の hono ターゲット生成コード |
-| CLI | `@maronn-oidc/cli`(コマンド名 `maronn-oidc`)。hono / express / fastify / nextjs の 4 フレームワーク向けに、ルーティング・ストア・画面込みの動作可能な OP コードを生成する。現行(v0.0.1)の生成内容はフレームワークごとに固定だが、**将来的にはオプションで生成パターン(機能構成)を変えられるようにする構想**であり、Playground はその受け皿となる。Playground は **hono ターゲット**を使用する(Workers 上で動作させる自然な選択肢のため) |
-| 生成コード | CLI が出力する TypeScript ソース一式(`app.ts` / `apply.ts` / `config.ts` / `store.ts` / `resolvers.ts` / `views.ts` / `routes/*` / `conformance.test.ts`)。`hono` と `@maronn-oidc/core` を import するため、実行にはインストールとビルド(esbuild / tsc)が必要 |
+| コアライブラリ | `@maronn-openid-connect/core`(0.x 系)。**フレームワーク非依存のロジック層**で、production dependencies ゼロ・Web 標準 API(Fetch API / Web Crypto API 等)のみで動作する。Hono に依存しているのはコアではなく CLI の hono ターゲット生成コード |
+| CLI | `@maronn-openid-connect/cli`(コマンド名 `maronn-oidc`)。hono / express / fastify / nextjs の 4 フレームワーク向けに、ルーティング・ストア・画面込みの動作可能な OP コードを生成する。現行(v0.0.1)の生成内容はフレームワークごとに固定だが、**将来的にはオプションで生成パターン(機能構成)を変えられるようにする構想**であり、Playground はその受け皿となる。Playground は **hono ターゲット**を使用する(Workers 上で動作させる自然な選択肢のため) |
+| 生成コード | CLI が出力する TypeScript ソース一式(`app.ts` / `apply.ts` / `config.ts` / `store.ts` / `resolvers.ts` / `views.ts` / `routes/*` / `conformance.test.ts`)。`hono` と `@maronn-openid-connect/core` を import するため、実行にはインストールとビルド(esbuild / tsc)が必要 |
 | テストユーザー | OP インスタンス内にのみ存在するダミーユーザー(最大 5 名) |
 
 ---
@@ -198,7 +198,7 @@ Cloudflare Workers 上に構築する。OP 作成のたびに生成コードベ�
 
 制約: 無料の範囲、または Workers Paid 契約に含まれる機能のみで構成する。
 
-**調査結果(2026-07-05、実装事実)**: 旧案 A の前提「生成が『事前バンドル済みのライブラリコード+設定モジュールの合成』で表現できること」は、**現行 CLI の出力そのものでは満たされない**。CLI は TypeScript ソースを出力し、生成コードは npm パッケージとして `hono` と `@maronn-oidc/core` を import するため、実行可能にするには依存インストールとバンドル(samples では esbuild)が必要であり、この工程は Worker 内で実行できない。一方で「v1 の可変部が設定データ(テストユーザー・クライアント・redirect_uri・鍵)のみ」という見立ては生成コードの注入ポイント設計(6.2)と整合しており正しい。これを踏まえ案を再定義する。
+**調査結果(2026-07-05、実装事実)**: 旧案 A の前提「生成が『事前バンドル済みのライブラリコード+設定モジュールの合成』で表現できること」は、**現行 CLI の出力そのものでは満たされない**。CLI は TypeScript ソースを出力し、生成コードは npm パッケージとして `hono` と `@maronn-openid-connect/core` を import するため、実行可能にするには依存インストールとバンドル(samples では esbuild)が必要であり、この工程は Worker 内で実行できない。一方で「v1 の可変部が設定データ(テストユーザー・クライアント・redirect_uri・鍵)のみ」という見立ては生成コードの注入ポイント設計(6.2)と整合しており正しい。これを踏まえ案を再定義する。
 
 **案 A'(目標形): 事前バンドル+設定合成(作成 API Worker 内で完結)**
 

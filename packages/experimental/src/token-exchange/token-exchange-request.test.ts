@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccessTokenInfo, AccessTokenResolver, TokenClientInfo } from '@maronn-oidc/core';
+import type { AccessTokenInfo, AccessTokenResolver, TokenClientInfo } from '@maronn-openid-connect/core';
 import {
   SUBJECT_TOKEN_INVALID_DESCRIPTION,
   TOKEN_EXCHANGE_GRANT_TYPE,

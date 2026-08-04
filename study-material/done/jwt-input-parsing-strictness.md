@@ -118,4 +118,4 @@ ID Token / JWT 周りで、**検証経路（`validateIdTokenHint`）は厳格な
 - [ ] `validateIssuer` の `new URL` を try-catch し明確なエラーメッセージに正規化（テスト含む）
 - [ ] `validatePayload` に `exp`/`iat` の number 型検査・`aud` 空文字/非文字列要素の拒否を追加（テスト含む）
 - [ ] 発行側と検証側の時刻クレーム型チェックが一致していることを回帰で固定
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

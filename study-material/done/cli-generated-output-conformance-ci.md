@@ -60,7 +60,7 @@ Fidelity 観点での確認事項:
 最終判断は人間が行う前提で、判断材料を整理する。
 
 - **A 案（最小・推奨度: 判断材料）: 生成出力の型検査を CI 化**
-  - テストで `generate()` の出力を一時ディレクトリへ書き、`@maronn-oidc/core` を解決できる状態で `tsc --noEmit` を実行。型エラーがあれば失敗。
+  - テストで `generate()` の出力を一時ディレクトリへ書き、`@maronn-openid-connect/core` を解決できる状態で `tsc --noEmit` を実行。型エラーがあれば失敗。
 - **B 案: 既存サンプルを「生成物の代理」として挙動テスト**
   - `packages/sample/src/oidc-provider/` は生成物の同型ミラー。Hono の `app.fetch(new Request(...))` で、代表ケース（Discovery が必須フィールドを返す／Token エラーが `Cache-Control: no-store` + JSON エラー形／UserInfo 401 が `WWW-Authenticate` を返す 等）をアサート。生成物そのものではないが、テンプレ ↔ サンプルの乖離を別途検知する前提で実用的。
 - **C 案: 生成出力をそのままビルド/起動して挙動テスト**

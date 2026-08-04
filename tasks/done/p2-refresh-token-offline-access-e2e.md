@@ -32,7 +32,7 @@ E2E で使う OpenID Provider は `samples/*` 配下の CLI 生成アプリを�
 - [ ] refresh token grant で新しい access token が返ること。
 - [ ] `offline_access` なしでは refresh token が返らないこと。
 - [ ] refresh token の client binding が破られないこと。
-- [ ] `pnpm --filter @maronn-oidc/e2e test` または既存の E2E 実行コマンドがパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/e2e test` または既存の E2E 実行コマンドがパスすること。
 
 ## 完了条件
 

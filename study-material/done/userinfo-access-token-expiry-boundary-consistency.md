@@ -150,4 +150,4 @@
 - [ ] 生成 OP の挙動は変わらない想定（UserInfo route は core に委譲）だが、
       念のため各 sample の `conformance.test.ts` で UserInfo 失効ケースが固定されているか確認し、
       必要なら `packages/cli` のテンプレート生成側テストを更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

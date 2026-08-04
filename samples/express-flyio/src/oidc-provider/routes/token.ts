@@ -38,7 +38,7 @@ import {
   type SigningKey,
   type TokenRequestParams,
   type ValidatedTokenRequest,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   tokenClientResolver as defaultTokenClientResolver,
   authorizationCodeResolver as defaultAuthorizationCodeResolver,

@@ -96,7 +96,7 @@ Conformance Suite の `VerifyScopesReturnedInUserInfoClaims` は、要求され�
 - [ ] `claims={"userinfo":{"name":{"essential":true}}}` で UserInfo に `name` が含まれること。
 - [ ] `claims.userinfo.name` を含む Authorization Request で発行した Access Token から、`openid` scope だけでも UserInfo に `name` が含まれること。
 - [ ] `claims.userinfo.name.value` が実際の `name` と一致しない場合は、UserInfo に `name` を含めないこと。
-- [ ] `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 - [ ] `pnpm run conformance:basic-op` の ZIP で上記 scope / claims-essential warning が消えること。
 
 ## 完了条件

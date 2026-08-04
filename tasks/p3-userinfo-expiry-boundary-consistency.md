@@ -72,4 +72,4 @@ if (info.expiresAt <= now) return false;
 ## 完了条件
 
 - [ ] 上記テストが追加され通過する
-- [ ] `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] `pnpm --filter @maronn-openid-connect/core test` がパス

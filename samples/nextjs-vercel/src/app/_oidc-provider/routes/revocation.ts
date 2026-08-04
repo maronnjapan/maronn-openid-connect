@@ -12,7 +12,7 @@ import {
   revokeGrantAccessTokens,
   RevocationError,
   TokenError,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   tokenClientResolver as defaultTokenClientResolver,
   revocationResolvers as defaultRevocationResolvers,

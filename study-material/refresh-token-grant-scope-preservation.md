@@ -197,4 +197,4 @@ RFC 6749 §6 は「要求 scope は**元々付与された（originally granted�
   - [ ] 元 grant を超える scope は依然 `invalid_scope` で拒否される
   - [ ] `scope` 省略時は元 grant scope と等価（§6）になる
   - [ ] 方針 B を選ぶ場合は逆に「再拡大が拒否される」ことをテストで固定し、ドキュメントに恒久縮小と明記
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` および cli テストがパスすること
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` および cli テストがパスすること

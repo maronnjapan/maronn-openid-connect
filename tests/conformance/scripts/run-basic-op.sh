@@ -16,19 +16,19 @@ CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL%/}"
 
 case "${SAMPLE_APP}" in
   hono-cloudflare)
-    SAMPLE_PACKAGE="@maronn-oidc/sample-hono-cloudflare"
+    SAMPLE_PACKAGE="@maronn-openid-connect/sample-hono-cloudflare"
     DEFAULT_START_COMMAND="corepack enable && pnpm --dir samples/hono-cloudflare start"
     ;;
   express-flyio)
-    SAMPLE_PACKAGE="@maronn-oidc/sample-express-flyio"
+    SAMPLE_PACKAGE="@maronn-openid-connect/sample-express-flyio"
     DEFAULT_START_COMMAND="node samples/express-flyio/dist/server.js"
     ;;
   fastify-flyio)
-    SAMPLE_PACKAGE="@maronn-oidc/sample-fastify-flyio"
+    SAMPLE_PACKAGE="@maronn-openid-connect/sample-fastify-flyio"
     DEFAULT_START_COMMAND="node samples/fastify-flyio/dist/server.js"
     ;;
   nextjs-vercel)
-    SAMPLE_PACKAGE="@maronn-oidc/sample-nextjs-vercel"
+    SAMPLE_PACKAGE="@maronn-openid-connect/sample-nextjs-vercel"
     DEFAULT_START_COMMAND="corepack enable && pnpm --dir samples/nextjs-vercel start"
     ;;
   *)
@@ -51,7 +51,7 @@ mkdir -p "${GENERATED_DIR}/nginx" "${RESULTS_DIR}"
 
 cd "${ROOT_DIR}"
 
-pnpm --filter @maronn-oidc/cli build
+pnpm --filter @maronn-openid-connect/cli build
 pnpm --filter "${SAMPLE_PACKAGE}" build
 
 CONFORMANCE_ALIAS="${CONFORMANCE_ALIAS:-maronn-basic-op}" \
@@ -59,7 +59,7 @@ CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER}" \
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL}" \
 CONFORMANCE_SAMPLE_APP="${SAMPLE_APP}" \
 CONFORMANCE_OUT_DIR="${GENERATED_DIR}" \
-pnpm --filter @maronn-oidc/conformance generate
+pnpm --filter @maronn-openid-connect/conformance generate
 
 "${SCRIPT_DIR}/ensure-op-tls-cert.sh"
 cp "${CONFORMANCE_DIR}/nginx/op-tls.conf" "${GENERATED_DIR}/nginx/op-tls.conf"

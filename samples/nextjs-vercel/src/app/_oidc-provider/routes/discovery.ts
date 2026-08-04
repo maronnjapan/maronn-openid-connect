@@ -1,5 +1,5 @@
 import { WebRouter } from '../web-router';
-import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '@maronn-oidc/core';
+import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '@maronn-openid-connect/core';
 import { defaultProviderConfig } from '../config';
 
 export const discoveryApp = new WebRouter();

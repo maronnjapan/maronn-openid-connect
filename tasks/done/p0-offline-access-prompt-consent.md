@@ -53,4 +53,4 @@ OIDC Core 1.0 §11 では、`offline_access` を要求する場合は `prompt` �
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

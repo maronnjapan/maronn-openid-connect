@@ -1,4 +1,4 @@
-import { getAuthTransaction } from '@maronn-oidc/core';
+import { getAuthTransaction } from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { defaultProviderStores } from '../_oidc-provider/store';
 import { loginAction } from './actions';

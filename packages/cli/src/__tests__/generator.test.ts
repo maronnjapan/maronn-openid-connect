@@ -115,7 +115,7 @@ describe('generate', () => {
     it('should use default core package name', () => {
       const result = generate({ framework: 'hono', outputDir: './out' });
       const resolversFile = result.files.find((f) => f.path === 'resolvers.ts');
-      expect(resolversFile?.content).toContain('@maronn-oidc/core');
+      expect(resolversFile?.content).toContain('@maronn-openid-connect/core');
     });
 
     it('should use custom core package name when provided', () => {
@@ -126,7 +126,7 @@ describe('generate', () => {
       });
       const resolversFile = result.files.find((f) => f.path === 'resolvers.ts');
       expect(resolversFile?.content).toContain('my-custom-core');
-      expect(resolversFile?.content).not.toContain('@maronn-oidc/core');
+      expect(resolversFile?.content).not.toContain('@maronn-openid-connect/core');
     });
   });
 });

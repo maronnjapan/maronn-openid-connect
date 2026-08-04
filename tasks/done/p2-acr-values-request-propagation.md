@@ -106,4 +106,4 @@ requestedAcrValues:
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` と生成 Provider（sample）のテストがパスし、上記テストが追加されていること。`acr_values=<値>` を送った認可フローで、`AcrResolver` の `requestedAcrValues` にその値が届くことが統合テストで確認できること。
+`pnpm --filter @maronn-openid-connect/core test` と生成 Provider（sample）のテストがパスし、上記テストが追加されていること。`acr_values=<値>` を送った認可フローで、`AcrResolver` の `requestedAcrValues` にその値が届くことが統合テストで確認できること。

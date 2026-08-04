@@ -15,7 +15,7 @@ import type {
   SessionResolver,
   SessionInfo,
   ConsentResolver,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { createInMemoryClientResolver } from './config';
 import {
   defaultProviderStores,

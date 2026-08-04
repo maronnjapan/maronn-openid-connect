@@ -5,11 +5,11 @@ import type {
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import type {
   PushedAuthorizationRecord,
   PushedAuthorizationRequestStore,
-} from '@maronn-oidc/experimental/par';
+} from '@maronn-openid-connect/experimental/par';
 
 /**
  * In-memory Authorization Transaction Store.

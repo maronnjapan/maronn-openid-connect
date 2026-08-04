@@ -114,6 +114,6 @@ export async function verifyIdTokenHint(
 ## 完了条件
 
 - 上記テストがすべて通る
-- `pnpm --filter @maronn-oidc/core test` がパスする
+- `pnpm --filter @maronn-openid-connect/core test` がパスする
 - 既存の `id-token.test.ts` テストにリグレッションが無い
 - `verifyIdTokenHint` を呼び出している全箇所が新シグネチャでビルド可能（optional 引数のため呼び出し側修正不要を確認）

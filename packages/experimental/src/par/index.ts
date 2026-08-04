@@ -5,7 +5,7 @@
  * 破壊的に変更されることがある。本番運用の前に
  * `docs/library-document` の Experimental セクションを確認すること。
  *
- * `@maronn-oidc/core` とは別 package であり、CLI で `--enable par` を明示した
+ * `@maronn-openid-connect/core` とは別 package であり、CLI で `--enable par` を明示した
  * ときのみ生成コードから利用される。
  */
 export {

@@ -1,5 +1,5 @@
 import { WebRouter } from '../web-router';
-import { exportJwks, extractAlgorithmParamsFromJwk, type SigningKey } from '@maronn-oidc/core';
+import { exportJwks, extractAlgorithmParamsFromJwk, type SigningKey } from '@maronn-openid-connect/core';
 
 export const jwksApp = new WebRouter();
 

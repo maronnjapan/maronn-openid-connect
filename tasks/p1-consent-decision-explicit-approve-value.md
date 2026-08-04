@@ -150,7 +150,7 @@ if (action !== 'approve') {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 4 sample を再生成し、`pnpm test` がパスすること
 - 生成された 4 sample すべてで `action` の欠落・空文字・未知値が認可コードを発行しないこと
 - `study-material/done/consent-grant-persistence-and-management.md` の記述が実装と一致していること

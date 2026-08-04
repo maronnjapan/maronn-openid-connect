@@ -6,7 +6,7 @@
 
 ## 1. このトピックで確認したいこと
 
-本リポジトリは **OpenID Provider を構築するための OSS ライブラリ**であり、`@maronn-oidc/core` / `@maronn-oidc/cli` として npm に publish される。
+本リポジトリは **OpenID Provider を構築するための OSS ライブラリ**であり、`@maronn-openid-connect/core` / `@maronn-openid-connect/cli` として npm に publish される。
 認証・認可の中核を担うライブラリが侵害されると、それを利用する全 PoC / 本番システムのアイデンティティ基盤が一括で危殆化する。したがって、**プロトコル層の正しさ（Basic OP 準拠）とは別軸で、「配布物そのものの完全性」と「依存・CI の健全性」を担保できているか**を確認したい。
 
 具体的には:

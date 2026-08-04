@@ -23,7 +23,7 @@ CLI 自身も生成後の Next steps で「`config.ts` のデフォルトはロ�
 つまり **上書きされると必ず困るファイルが、無警告上書きの対象**になっている。
 `-o` の指定ミスや、feature フラグを変えた再実行だけで改造が失われる。
 
-加えて、生成物には **どの `@maronn-oidc/cli` バージョン・どの feature 構成で生成されたか**を示す情報が一切無い。
+加えて、生成物には **どの `@maronn-openid-connect/cli` バージョン・どの feature 構成で生成されたか**を示す情報が一切無い。
 本リポジトリは `packages/cli` のテンプレートに仕様修正（多くはセキュリティ修正）を継続的に入れているが、
 既存利用者がそれを取り込む際、「自分のコードがどの版から生成されたか」が分からないため差分の起点を特定できない。
 
@@ -155,7 +155,7 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
 - [ ] 下記がすべてパスすること
 
   ```bash
-  pnpm --filter @maronn-oidc/cli test
+  pnpm --filter @maronn-openid-connect/cli test
   pnpm typecheck
   pnpm lint
   pnpm test:conformance

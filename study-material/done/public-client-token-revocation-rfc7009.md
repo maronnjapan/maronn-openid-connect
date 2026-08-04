@@ -115,4 +115,4 @@ OAuth 2.1 では public client が認可コードフロー（PKCE 必須）の�
       - confidential client の既存挙動は回帰しない
 - [ ] public 認証経路を revocation ルートで再利用（core は変更しない方針を維持）
 - [ ] sample/CLI テンプレートの「Confidential client only」コメントと配線を更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` および `pnpm --filter @maronn-oidc/cli test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` および `pnpm --filter @maronn-openid-connect/cli test` がパス

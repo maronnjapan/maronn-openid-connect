@@ -90,7 +90,7 @@ OpenID Federation 1.0（旧 OpenID Connect Federation 1.0）は、**事前の信
 
 ### 方針D（コア機能化を見送り、別パッケージ）
 
-- `@maronn-oidc/federation` のような追加パッケージとして切り出し、コアパッケージのサイズ・複雑度を上げない。
+- `@maronn-openid-connect/federation` のような追加パッケージとして切り出し、コアパッケージのサイズ・複雑度を上げない。
 - 利用者は明示的に依存追加した場合のみ Federation が有効になる。
 
 判断材料:
@@ -108,7 +108,7 @@ OpenID Federation 1.0（旧 OpenID Connect Federation 1.0）は、**事前の信
   - [ ] `/.well-known/openid-federation` ルート追加（self-issued、署名は既存 RS256 鍵を流用）
   - [ ] テスト: 発行された Entity Statement が `iss === sub`、JWS 検証可能、必須クレームを含むこと
 - [ ] 方針 C 採用時:
-  - [ ] Trust Chain 検証ロジック（`@maronn-oidc/federation` 新パッケージ）
+  - [ ] Trust Chain 検証ロジック（`@maronn-openid-connect/federation` 新パッケージ）
   - [ ] Subordinate Statement のフェッチ / キャッシュ
   - [ ] Metadata Policy マージ
   - [ ] Automatic Client Registration ルート

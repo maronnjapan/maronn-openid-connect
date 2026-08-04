@@ -117,6 +117,6 @@ for (const claimName of requestedClaims) {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 各 sample の `conformance.test.ts` がパスすること
 - （余力があれば）`tests/e2e` に該当 E2E を追加し `pnpm test:e2e` がパスすること

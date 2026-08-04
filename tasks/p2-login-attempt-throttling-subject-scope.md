@@ -192,7 +192,7 @@ core（`packages/core/src/auth-transaction.test.ts`）:
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` と `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` と `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 4 sample を再生成し `pnpm test` と `tests/e2e` がパスすること
 - 生成 OP で、認可トランザクションを作り直しても同一アカウントの失敗回数が引き継がれること
 - `study-material/rate-limiting-and-brute-force.md` §4 の記述が実装と一致していること

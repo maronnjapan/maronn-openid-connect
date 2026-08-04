@@ -119,7 +119,7 @@ describe('CLI', () => {
       vi.spyOn(console, 'log').mockImplementation(() => {});
       run(['generate', 'hono', '-o', outputDir]);
       const resolversContent = readFileSync(join(outputDir, 'resolvers.ts'), 'utf-8');
-      expect(resolversContent).toContain('@maronn-oidc/core');
+      expect(resolversContent).toContain('@maronn-openid-connect/core');
       vi.restoreAllMocks();
     });
 
@@ -198,7 +198,7 @@ describe('CLI', () => {
         const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         run(['generate', 'hono', '-o', join(testDir, 'par-install-output'), '--enable', 'par']);
         const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
-        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-oidc/core @maronn-oidc/experimental')).toBe(true);
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
         vi.restoreAllMocks();
       });
 
@@ -206,8 +206,8 @@ describe('CLI', () => {
         const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         run(['generate', 'hono', '-o', join(testDir, 'default-install-output')]);
         const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
-        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-oidc/core')).toBe(true);
-        expect(logged.some((line) => line.includes('@maronn-oidc/experimental'))).toBe(false);
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core')).toBe(true);
+        expect(logged.some((line) => line.includes('@maronn-openid-connect/experimental'))).toBe(false);
         vi.restoreAllMocks();
       });
 

@@ -65,4 +65,4 @@ CLI 生成プロバイダ（`samples/hono/src/oidc-provider/store.ts`）のイ�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスし、生成プロバイダ（`samples/hono`）のテスト・ビルドが通ること。回収追加後も既存の再利用カスケード／トークン失効テストが回帰しないこと。
+`pnpm --filter @maronn-openid-connect/cli test` がパスし、生成プロバイダ（`samples/hono`）のテスト・ビルドが通ること。回収追加後も既存の再利用カスケード／トークン失効テストが回帰しないこと。

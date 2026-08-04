@@ -57,5 +57,5 @@ OAuth の `state` はクライアントの CSRF 防御として、認可レス�
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 上記マトリクスが回帰テストとして固定されること

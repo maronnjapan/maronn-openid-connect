@@ -1,9 +1,9 @@
-# @maronn-oidc/cli
+# @maronn-openid-connect/cli
 
 OpenID Connect Provider のコードを生成する CLI ツール。
 Hono / Express / Fastify / Next.js 向けに、Authorization Code Flow（OAuth 2.1 / OIDC Core 1.0 準拠）を実装した OP コード一式を生成する。
 
-生成コードは [`@maronn-oidc/core`](../core) のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら「自分の要件がこの仕様で実現できるか」を検証する。
+生成コードは [`@maronn-openid-connect/core`](../core) のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら「自分の要件がこの仕様で実現できるか」を検証する。
 
 生成されるエンドポイントは、core の機能単位ステップ関数を 1 ステップ = 1 関数呼び出しの形で並べる。まとめ関数（`validateAuthorizationRequest` / `validateTokenRequest` / `authenticateClient` / `generateTokenResponse` / `handleUserInfoRequest` / `handleIntrospectionRequest` / `handleRevocationRequest` / `checkPromptNone`）を 1 回呼ぶのではなく各ステップを並べているため、不要な検証を消したり、ステップの間に独自処理を足したりして仕様の挙動を検証しやすい。
 
@@ -21,10 +21,10 @@ ID Token へ独自クレームを足すなら `routes/token.ts` の `buildIdToke
 
 ```bash
 # インストールせずに実行
-pnpm dlx @maronn-oidc/cli generate hono
+pnpm dlx @maronn-openid-connect/cli generate hono
 
 # またはプロジェクトに追加してから実行
-pnpm add -D @maronn-oidc/cli
+pnpm add -D @maronn-openid-connect/cli
 pnpm maronn-oidc generate hono
 ```
 
@@ -112,7 +112,7 @@ Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. 生成される `JsonStoreBackend` を実装し、`createJsonProviderStores()` の結果を `storage` に渡す
 3. `config.ts` と未指定時のインメモリストアはローカル検証・契約テスト専用として扱う
-4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-oidc/core`）
+4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
 
 署名鍵は `SigningKeyProvider` として注入する。`createCachedSigningKeyProvider()`（core 提供）でラップすると、TTL 付きキャッシュで鍵ローテーションに追随できる。
 

@@ -88,7 +88,7 @@ Basic OP として確認すべきこと:
 - [ ] `validatePayload` のスカラーパスに非空文字列チェックを追加（Green）。配列パスのメッセージと平仄を合わせる
 - [ ] `access-token.ts` / 署名付き UserInfo の `aud` 発行経路と共通化するか（方針B）を判断し、必要なら共通バリデータへ寄せる
 - [ ] リグレッション確認: 正常なスカラー `aud`（通常の `client_id`）と正常な配列 `aud` が従来どおり発行できること
-- [ ] `pnpm --filter @maronn-oidc/core test` がパスすること
+- [ ] `pnpm --filter @maronn-openid-connect/core test` がパスすること
 
 ## 関連トピック
 

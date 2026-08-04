@@ -5,7 +5,7 @@ import {
   type AcrResolver,
   type SigningKey,
   type SigningKeyProvider,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import {
   createInMemoryClientResolver,

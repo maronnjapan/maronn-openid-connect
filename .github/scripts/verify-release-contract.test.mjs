@@ -16,8 +16,8 @@ describe('parseChangesetBumps', () => {
   it('should read every package bump from the frontmatter', () => {
     const content = [
       '---',
-      '"@maronn-oidc/core": minor',
-      '"@maronn-oidc/experimental": patch',
+      '"@maronn-openid-connect/core": minor',
+      '"@maronn-openid-connect/experimental": patch',
       '---',
       '',
       'some description',
@@ -25,15 +25,15 @@ describe('parseChangesetBumps', () => {
     ].join('\n');
 
     assert.deepEqual(parseChangesetBumps(content), {
-      '@maronn-oidc/core': 'minor',
-      '@maronn-oidc/experimental': 'patch',
+      '@maronn-openid-connect/core': 'minor',
+      '@maronn-openid-connect/experimental': 'patch',
     });
   });
 
   it('should accept single quotes around the package name', () => {
-    const content = ['---', "'@maronn-oidc/core': patch", '---', '', 'body', ''].join('\n');
+    const content = ['---', "'@maronn-openid-connect/core': patch", '---', '', 'body', ''].join('\n');
 
-    assert.deepEqual(parseChangesetBumps(content), { '@maronn-oidc/core': 'patch' });
+    assert.deepEqual(parseChangesetBumps(content), { '@maronn-openid-connect/core': 'patch' });
   });
 
   it('should return an empty object for a file without frontmatter', () => {
@@ -43,14 +43,14 @@ describe('parseChangesetBumps', () => {
   it('should ignore bump-like lines that appear after the frontmatter', () => {
     const content = [
       '---',
-      '"@maronn-oidc/core": patch',
+      '"@maronn-openid-connect/core": patch',
       '---',
       '',
-      '"@maronn-oidc/experimental": major は本文中の例示なので無視する',
+      '"@maronn-openid-connect/experimental": major は本文中の例示なので無視する',
       '',
     ].join('\n');
 
-    assert.deepEqual(parseChangesetBumps(content), { '@maronn-oidc/core': 'patch' });
+    assert.deepEqual(parseChangesetBumps(content), { '@maronn-openid-connect/core': 'patch' });
   });
 });
 
@@ -58,7 +58,7 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
   it('should accept a core patch release without an experimental release', () => {
     assert.doesNotThrow(() => {
       assertCoreBreakingChangeReleasesExperimental([
-        { file: 'a.md', bumps: { '@maronn-oidc/core': 'patch' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'patch' } },
       ]);
     });
   });
@@ -66,7 +66,7 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
   it('should accept an experimental only release', () => {
     assert.doesNotThrow(() => {
       assertCoreBreakingChangeReleasesExperimental([
-        { file: 'a.md', bumps: { '@maronn-oidc/experimental': 'minor' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/experimental': 'minor' } },
       ]);
     });
   });
@@ -74,8 +74,8 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
   it('should accept a core minor release that also releases experimental', () => {
     assert.doesNotThrow(() => {
       assertCoreBreakingChangeReleasesExperimental([
-        { file: 'a.md', bumps: { '@maronn-oidc/core': 'minor' } },
-        { file: 'b.md', bumps: { '@maronn-oidc/experimental': 'patch' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+        { file: 'b.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
       ]);
     });
   });
@@ -84,11 +84,11 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
     assert.throws(
       () =>
         assertCoreBreakingChangeReleasesExperimental([
-          { file: 'a.md', bumps: { '@maronn-oidc/core': 'minor' } },
+          { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
         ]),
       new Error(
-        '@maronn-oidc/core を minor 以上で上げる changeset (a.md) がありますが、' +
-          '@maronn-oidc/experimental の changeset がありません。' +
+        '@maronn-openid-connect/core を minor 以上で上げる changeset (a.md) がありますが、' +
+          '@maronn-openid-connect/experimental の changeset がありません。' +
           'experimental は core を広い peer range で参照しており、公開済みの古い experimental が' +
           '新しい core をそのまま受け入れてしまうため、core の minor / major では' +
           'experimental も同時にリリースして最新 core との組み合わせを保証してください。',
@@ -100,7 +100,7 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
     assert.throws(
       () =>
         assertCoreBreakingChangeReleasesExperimental([
-          { file: 'core-major.md', bumps: { '@maronn-oidc/core': 'major' } },
+          { file: 'core-major.md', bumps: { '@maronn-openid-connect/core': 'major' } },
         ]),
       /core-major\.md/,
     );
@@ -110,8 +110,8 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
     assert.throws(
       () =>
         assertCoreBreakingChangeReleasesExperimental([
-          { file: 'a.md', bumps: { '@maronn-oidc/core': 'minor' } },
-          { file: 'b.md', bumps: { '@maronn-oidc/core': 'major' } },
+          { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+          { file: 'b.md', bumps: { '@maronn-openid-connect/core': 'major' } },
         ]),
       /\(a\.md, b\.md\)/,
     );
@@ -120,7 +120,7 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
   it('should accept a release that touches neither package', () => {
     assert.doesNotThrow(() => {
       assertCoreBreakingChangeReleasesExperimental([
-        { file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } },
       ]);
     });
   });
@@ -130,8 +130,8 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
   it('should accept core declared as a peer dependency and linked for local development', () => {
     assert.doesNotThrow(() => {
       assertExperimentalCorePeerDependencyShape({
-        peerDependencies: { '@maronn-oidc/core': '>=0.0.1 <1.0.0' },
-        devDependencies: { '@maronn-oidc/core': 'workspace:*' },
+        peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
+        devDependencies: { '@maronn-openid-connect/core': 'workspace:*' },
       });
     });
   });
@@ -140,12 +140,12 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerDependencyShape({
-          dependencies: { '@maronn-oidc/core': '0.0.1' },
-          peerDependencies: { '@maronn-oidc/core': '>=0.0.1 <1.0.0' },
-          devDependencies: { '@maronn-oidc/core': 'workspace:*' },
+          dependencies: { '@maronn-openid-connect/core': '0.0.1' },
+          peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
+          devDependencies: { '@maronn-openid-connect/core': 'workspace:*' },
         }),
       new Error(
-        '@maronn-oidc/experimental は @maronn-oidc/core を dependencies に持ってはいけません。' +
+        '@maronn-openid-connect/experimental は @maronn-openid-connect/core を dependencies に持ってはいけません。' +
           'core が二重にインストールされると instanceof 判定が静かに false になります。',
       ),
     );
@@ -155,10 +155,10 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerDependencyShape({
-          devDependencies: { '@maronn-oidc/core': 'workspace:*' },
+          devDependencies: { '@maronn-openid-connect/core': 'workspace:*' },
         }),
       new Error(
-        '@maronn-oidc/experimental は @maronn-oidc/core を peerDependencies に宣言してください。',
+        '@maronn-openid-connect/experimental は @maronn-openid-connect/core を peerDependencies に宣言してください。',
       ),
     );
   });
@@ -167,10 +167,10 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerDependencyShape({
-          peerDependencies: { '@maronn-oidc/core': '>=0.0.1 <1.0.0' },
+          peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
         }),
       new Error(
-        '@maronn-oidc/experimental は @maronn-oidc/core を devDependencies の workspace:* で' +
+        '@maronn-openid-connect/experimental は @maronn-openid-connect/core を devDependencies の workspace:* で' +
           '参照してください。ローカル開発とテストが registry の core を引いてしまいます。',
       ),
     );
@@ -180,8 +180,8 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerDependencyShape({
-          peerDependencies: { '@maronn-oidc/core': '>=0.0.1 <1.0.0' },
-          devDependencies: { '@maronn-oidc/core': '^0.0.1' },
+          peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
+          devDependencies: { '@maronn-openid-connect/core': '^0.0.1' },
         }),
       /workspace:\*/,
     );
@@ -192,7 +192,7 @@ describe('assertExperimentalReleasesAreAlwaysPatch', () => {
   it('should accept a patch bump for experimental', () => {
     assert.doesNotThrow(() => {
       assertExperimentalReleasesAreAlwaysPatch([
-        { file: 'a.md', bumps: { '@maronn-oidc/experimental': 'patch' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
       ]);
     });
   });
@@ -200,8 +200,8 @@ describe('assertExperimentalReleasesAreAlwaysPatch', () => {
   it('should accept changesets that do not release experimental', () => {
     assert.doesNotThrow(() => {
       assertExperimentalReleasesAreAlwaysPatch([
-        { file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } },
-        { file: 'b.md', bumps: { '@maronn-oidc/core': 'major' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } },
+        { file: 'b.md', bumps: { '@maronn-openid-connect/core': 'major' } },
       ]);
     });
   });
@@ -216,7 +216,7 @@ describe('assertExperimentalReleasesAreAlwaysPatch', () => {
     assert.throws(
       () =>
         assertExperimentalReleasesAreAlwaysPatch([
-          { file: 'experimental-par.md', bumps: { '@maronn-oidc/experimental': 'minor' } },
+          { file: 'experimental-par.md', bumps: { '@maronn-openid-connect/experimental': 'minor' } },
         ]),
       /experimental-par\.md \(minor\)/,
     );
@@ -226,7 +226,7 @@ describe('assertExperimentalReleasesAreAlwaysPatch', () => {
     assert.throws(
       () =>
         assertExperimentalReleasesAreAlwaysPatch([
-          { file: 'breaking.md', bumps: { '@maronn-oidc/experimental': 'major' } },
+          { file: 'breaking.md', bumps: { '@maronn-openid-connect/experimental': 'major' } },
         ]),
       /breaking\.md \(major\)/,
     );
@@ -276,14 +276,14 @@ describe('computeNextVersion', () => {
 describe('resolveNextCoreVersion', () => {
   it('should return the current version when no changeset releases core', () => {
     assert.equal(
-      resolveNextCoreVersion('0.1.0', [{ file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } }]),
+      resolveNextCoreVersion('0.1.0', [{ file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } }]),
       '0.1.0',
     );
   });
 
   it('should apply the pending core bump', () => {
     assert.equal(
-      resolveNextCoreVersion('0.0.1', [{ file: 'a.md', bumps: { '@maronn-oidc/core': 'minor' } }]),
+      resolveNextCoreVersion('0.0.1', [{ file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } }]),
       '0.1.0',
     );
   });
@@ -291,9 +291,9 @@ describe('resolveNextCoreVersion', () => {
   it('should apply the largest pending core bump when several changesets release core', () => {
     assert.equal(
       resolveNextCoreVersion('0.0.1', [
-        { file: 'a.md', bumps: { '@maronn-oidc/core': 'patch' } },
-        { file: 'b.md', bumps: { '@maronn-oidc/core': 'minor' } },
-        { file: 'c.md', bumps: { '@maronn-oidc/core': 'patch' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'patch' } },
+        { file: 'b.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+        { file: 'c.md', bumps: { '@maronn-openid-connect/core': 'patch' } },
       ]),
       '0.1.0',
     );
@@ -304,7 +304,7 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
   it('should accept a lower bound equal to the next core version', () => {
     assert.doesNotThrow(() => {
       assertExperimentalCorePeerRangeCoversNextCore(
-        { peerDependencies: { '@maronn-oidc/core': '>=0.1.0 <1.0.0' } },
+        { peerDependencies: { '@maronn-openid-connect/core': '>=0.1.0 <1.0.0' } },
         '0.1.0',
       );
     });
@@ -313,7 +313,7 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
   it('should accept a lower bound above the next core version', () => {
     assert.doesNotThrow(() => {
       assertExperimentalCorePeerRangeCoversNextCore(
-        { peerDependencies: { '@maronn-oidc/core': '>=0.2.0 <1.0.0' } },
+        { peerDependencies: { '@maronn-openid-connect/core': '>=0.2.0 <1.0.0' } },
         '0.1.0',
       );
     });
@@ -323,7 +323,7 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerRangeCoversNextCore(
-          { peerDependencies: { '@maronn-oidc/core': '>=0.0.1 <1.0.0' } },
+          { peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' } },
           '0.1.0',
         ),
       /">=0\.0\.1 <1\.0\.0" は core 0\.1\.0 より古い 0\.0\.1 を下限にしています/,
@@ -334,7 +334,7 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerRangeCoversNextCore(
-          { peerDependencies: { '@maronn-oidc/core': '>=0.9.0 <1.0.0' } },
+          { peerDependencies: { '@maronn-openid-connect/core': '>=0.9.0 <1.0.0' } },
           '0.10.0',
         ),
       /core 0\.10\.0 より古い 0\.9\.0 を下限にしています/,
@@ -345,7 +345,7 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
     assert.throws(
       () =>
         assertExperimentalCorePeerRangeCoversNextCore(
-          { peerDependencies: { '@maronn-oidc/core': '^0.1.0' } },
+          { peerDependencies: { '@maronn-openid-connect/core': '^0.1.0' } },
           '0.1.0',
         ),
       /"\^0\.1\.0" から下限を読み取れません/,

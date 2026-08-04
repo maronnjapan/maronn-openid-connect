@@ -4,7 +4,7 @@ import {
   validateCsrfToken,
   completeAuthTransaction,
   createAuthorizationCode,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   clientResolver as defaultClientResolver,
   consentResolver as defaultConsentResolver,

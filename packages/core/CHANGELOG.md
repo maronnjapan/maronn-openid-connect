@@ -1,4 +1,4 @@
-# @maronn-oidc/core
+# @maronn-openid-connect/core
 
 ## 0.2.0
 
@@ -21,7 +21,7 @@
 
   Opaque 形式（`accessTokenFormat: 'opaque'`）は元から 256bit の乱数なので影響を受けない。
 
-  ### @maronn-oidc/core
+  ### @maronn-openid-connect/core
 
   - `AccessTokenPayload` に `jti?: string` を追加した（RFC 9068 §2.2 の REQUIRED クレーム）
   - `AccessTokenPayloadInput` に `jti?: string` を追加し、`buildAccessTokenPayload` は未指定なら
@@ -29,7 +29,7 @@
   - `AccessTokenIssuer.issue()` の JSDoc に「戻り値は発行ごとに一意でなければならない」という
     契約を明記した。独自 issuer に差し替える利用者向けの前提提示
 
-  ### @maronn-oidc/cli
+  ### @maronn-openid-connect/cli
 
   - 生成される token route が、core が発行した `jti` をアクセストークンのメタデータとして
     保存するようにした。イントロスペクション（RFC 7662 §2.2）が `jti` を返せるようになる。
@@ -69,12 +69,12 @@
 
 - c89b96d: 公開済みパッケージが利用者の環境で読み込めなかった 2 件を修正した。
 
-  ### `@maronn-oidc/core`: Node の ESM ローダで解決できる形で publish する
+  ### `@maronn-openid-connect/core`: Node の ESM ローダで解決できる形で publish する
 
   `packages/core` は `"type": "module"` だが、`src` の相対 import に拡張子が無く、
   `tsconfig.json` の `moduleResolution` が `bundler` だったため、`dist` にも拡張子なしの
   specifier がそのまま emit されていた。Node の ESM ローダは拡張子の補完を行わないので、
-  公開済みの `@maronn-oidc/core@0.0.1` は `import '@maronn-oidc/core'` した時点で
+  公開済みの `@maronn-openid-connect/core@0.0.1` は `import '@maronn-openid-connect/core'` した時点で
   `ERR_MODULE_NOT_FOUND: Cannot find module '.../dist/authorization-request'` になり、
   **バンドラを通さない Node 環境では一切読み込めない状態だった**。
 
@@ -89,17 +89,17 @@
 
   実行時の挙動と公開 API に変更はない。
 
-  ### `@maronn-oidc/experimental`: core の peer range の下限を `>=0.1.0` へ上げる
+  ### `@maronn-openid-connect/experimental`: core の peer range の下限を `>=0.1.0` へ上げる
 
-  `@maronn-oidc/experimental` は core のステップ関数
+  `@maronn-openid-connect/experimental` は core のステップ関数
   （`extractClientCredentials` / `resolveAuthenticatedTokenClient` /
   `validateClientAuthMethod` / `verifyClientSecret`）を import しているが、これらを export する
   core はまだ publish されていなかった。それにもかかわらず peer range の下限が `>=0.0.1` の
-  ままだったため、`@maronn-oidc/experimental@0.0.1` と `@maronn-oidc/core@0.0.1` の組み合わせが
+  ままだったため、`@maronn-openid-connect/experimental@0.0.1` と `@maronn-openid-connect/core@0.0.1` の組み合わせが
   インストールできてしまい、バンドル時に esbuild が次のエラーで落ちていた。
 
   ```
-  ✘ [ERROR] No matching export in "node_modules/@maronn-oidc/core/dist/index.js"
+  ✘ [ERROR] No matching export in "node_modules/@maronn-openid-connect/core/dist/index.js"
     for import "extractClientCredentials"
   ```
 
@@ -116,10 +116,10 @@
 
   ### 利用者への影響
 
-  `@maronn-oidc/core@0.0.1` および `@maronn-oidc/experimental@0.0.1` は上記のとおり
+  `@maronn-openid-connect/core@0.0.1` および `@maronn-openid-connect/experimental@0.0.1` は上記のとおり
   組み合わせて利用できない。本リリース以降のバージョンへ更新すること。
 
-- 95c9efe: `@maronn-oidc/experimental` の `@maronn-oidc/core` 参照を `dependencies` から `peerDependencies`（`>=0.1.0 <1.0.0`）へ移した。experimental は core の `AuthorizationError` / `TokenError` を `instanceof` で判定し、resolver / store を CLI 生成コードと受け渡しするため、アプリ内の core インスタンスが 1 つである必要がある。`dependencies` のままだと利用者の core とバージョンがずれたときに core が二重インストールされ、`instanceof` 判定が静かに false になって、本来 `invalid_request` を返す場面が 500 になり得た。バージョン番号の一致は要求しない（experimental は core より速く publish される想定）。
+- 95c9efe: `@maronn-openid-connect/experimental` の `@maronn-openid-connect/core` 参照を `dependencies` から `peerDependencies`（`>=0.1.0 <1.0.0`）へ移した。experimental は core の `AuthorizationError` / `TokenError` を `instanceof` で判定し、resolver / store を CLI 生成コードと受け渡しするため、アプリ内の core インスタンスが 1 つである必要がある。`dependencies` のままだと利用者の core とバージョンがずれたときに core が二重インストールされ、`instanceof` 判定が静かに false になって、本来 `invalid_request` を返す場面が 500 になり得た。バージョン番号の一致は要求しない（experimental は core より速く publish される想定）。
 
   あわせて次を修正した。
 

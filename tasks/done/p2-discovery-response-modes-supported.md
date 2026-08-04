@@ -36,4 +36,4 @@ core の Discovery builder は `response_modes_supported` を出力できるが�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/cli test` がパスすること

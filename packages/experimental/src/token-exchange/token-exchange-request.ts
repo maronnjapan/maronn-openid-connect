@@ -21,7 +21,7 @@ import {
   type AccessTokenInfo,
   type AccessTokenResolver,
   type TokenClientInfo,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 
 /** RFC 8693 §2.1: token exchange の grant type 識別子。 */
 export const TOKEN_EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';

@@ -92,5 +92,5 @@ function matchesRequestedValue(actual: unknown, entry: ClaimRequestValue): boole
 ## 完了条件
 
 - 上記テストがすべて通る
-- `pnpm --filter @maronn-oidc/core test` がパスする
+- `pnpm --filter @maronn-openid-connect/core test` がパスする
 - `userinfo.ts` の既存テストが引き続きパスする（リグレッションなし）

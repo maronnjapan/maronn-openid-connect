@@ -96,4 +96,4 @@ OAuth の `state` パラメータは、クライアントの CSRF 防御とし�
 - [ ] テスト結果に基づき、不変条件が崩れている分岐があれば最小修正
 - [ ] `validateAuthorizationRequest` のコメントに「state は redirect 解決後に付与、非リダイレクトエラーでは付与しない」を明文化
 - [ ] Basic OP conformance 観点でエラー時 `state` echo が検証されるか一次資料で確認（`basic-op-conformance-verification-plan.md` 参照）
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

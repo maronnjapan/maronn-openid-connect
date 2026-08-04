@@ -91,4 +91,4 @@ grant 種別に属さないパラメータを無視するのは即座の脆弱�
   - [ ] `grant_type=authorization_code` + `refresh_token` 混入時の挙動
 - [ ] 方針に応じて `validateTokenRequest` を修正（拒否の場合）または挙動を固定（無視の場合）
 - [ ] 生成 OP の挙動が変わる場合は `packages/cli` テンプレートと各 sample の `conformance.test.ts` を更新
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

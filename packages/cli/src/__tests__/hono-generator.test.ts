@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { HonoGenerator } from '../frameworks/hono/index.js';
 
-const CORE_PKG = '@maronn-oidc/core';
+const CORE_PKG = '@maronn-openid-connect/core';
 
 describe('HonoGenerator', () => {
   const generator = new HonoGenerator();

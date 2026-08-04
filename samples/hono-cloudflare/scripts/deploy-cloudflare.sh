@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
 Usage: deploy-cloudflare.sh [--issuer <https://...>] [--dry-run]
 
 引数なしで実行するとガイド付きでデプロイします:
-  1. pnpm / 依存関係 / @maronn-oidc/core のビルドを準備
+  1. pnpm / 依存関係 / @maronn-openid-connect/core のビルドを準備
   2. Cloudflare 未ログインなら 'wrangler login' を起動
   3. D1 データベース（${D1_NAME}）を作成または再利用し、database_id を自動解決
   4. wrangler.deploy.jsonc（gitignore 済み）を生成してリモートへマイグレーション適用
@@ -78,9 +78,9 @@ guide_step "Cloudflare Workers へのデプロイを開始します（サンプ�
 guide_require_node_version 22 13
 guide_require_pnpm
 guide_ensure_workspace_deps "${ROOT_DIR}"
-guide_info "@maronn-oidc/core をビルドします。"
+guide_info "@maronn-openid-connect/core をビルドします。"
 if [ "${DRY_RUN}" != "1" ]; then
-  (cd "${ROOT_DIR}" && pnpm --filter @maronn-oidc/core build >/dev/null)
+  (cd "${ROOT_DIR}" && pnpm --filter @maronn-openid-connect/core build >/dev/null)
 fi
 guide_ok "ツールチェーンの準備ができました（wrangler はサンプルの devDependencies を使用）。"
 
@@ -113,7 +113,7 @@ if [ "${DRY_RUN}" != "1" ]; then
     run d1 create "${D1_NAME}"
     DATABASE_ID="$(lookup_database_id)"
     if [ -z "${DATABASE_ID}" ]; then
-      guide_err "D1 データベースの作成後に database_id を解決できませんでした。'pnpm --filter @maronn-oidc/sample-hono-cloudflare exec wrangler d1 list' で状態を確認してください。"
+      guide_err "D1 データベースの作成後に database_id を解決できませんでした。'pnpm --filter @maronn-openid-connect/sample-hono-cloudflare exec wrangler d1 list' で状態を確認してください。"
       exit 1
     fi
     guide_ok "D1 データベースを作成しました（database_id: ${DATABASE_ID}）。"

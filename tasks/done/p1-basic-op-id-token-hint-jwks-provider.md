@@ -61,7 +61,7 @@ Conformance Suite の `oidcc-id-token-hint` では、1回目の認証で作ら�
 - [ ] sample の HTTP conformance test または E2E で、1回目に発行した ID Token を `prompt=none` の `id_token_hint` に指定して成功すること。
 - [ ] browser session が無い状態では、有効な `id_token_hint` があっても `prompt=none` は `login_required` になること。
 - [ ] browser session subject と `id_token_hint` subject が一致しない場合は、`prompt=none` が成功しないこと。
-- [ ] `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 - [ ] `pnpm run conformance:basic-op` の ZIP で `oidcc-id-token-hint` が pass すること。
 
 ## 完了条件

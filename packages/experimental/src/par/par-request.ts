@@ -22,7 +22,7 @@ import {
   type ClientResolver,
   type TokenClientResolver,
   type ValidateAuthorizationRequestOptions,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
 import type {
   PushedAuthorizationRecord,

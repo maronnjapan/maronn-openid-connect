@@ -26,7 +26,7 @@
 `packages/docs/src/content/docs/quick-start.md` は次のように書いている。
 
 ```bash
-pnpm dlx @maronn-oidc/cli init
+pnpm dlx @maronn-openid-connect/cli init
 ```
 
 実装されている CLI コマンドは `init` ではなく、以下。
@@ -45,7 +45,7 @@ maronn-oidc setup hono --output ./src/oidc-provider --entry ./src/index.ts
 
 ### Quick Start の manual setup が存在しない API を参照している
 
-`quick-start.md` は `createOidcProvider` を `@maronn-oidc/core` から import する例を載せている。
+`quick-start.md` は `createOidcProvider` を `@maronn-openid-connect/core` から import する例を載せている。
 現在 `packages/core/src/index.ts` に `createOidcProvider` は export されていない。
 
 手動セットアップの説明は、現実の API に合わせて以下の方向に直す必要がある。
@@ -1029,7 +1029,7 @@ Issuer は原則 https。
 
 ### Production dependency policy
 
-`@maronn-oidc/core` と `@maronn-oidc/cli` は production dependencies なし。
+`@maronn-openid-connect/core` と `@maronn-openid-connect/cli` は production dependencies なし。
 sample は Hono / Cloudflare Workers を使う実装例。
 
 ### External libraries policy

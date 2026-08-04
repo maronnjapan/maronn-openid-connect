@@ -2,7 +2,7 @@
  * EXPERIMENTAL — Pushed Authorization Requests (RFC 9126).
  *
  * This route was generated because the OP was created with `--enable par`.
- * It is backed by @maronn-oidc/experimental, whose API is NOT stable: it may
+ * It is backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may
  * change in a breaking way between releases. Do not build production code on it
  * without pinning the version.
  *
@@ -19,8 +19,8 @@ import {
   createPushedAuthorizationRecord,
   rejectForbiddenParParams,
   validatePushedAuthorizationParams,
-} from '@maronn-oidc/experimental/par';
-import { sanitizeErrorDescription } from '@maronn-oidc/core';
+} from '@maronn-openid-connect/experimental/par';
+import { sanitizeErrorDescription } from '@maronn-openid-connect/core';
 import { clientResolver as defaultClientResolver } from '../resolvers.js';
 import { parStore as defaultParStore } from '../store.js';
 
@@ -98,7 +98,7 @@ parApp.post('/', async (c) => {
     const config = c.get('config');
 
     // --- Pushed authorization request pipeline ------------------------------
-    // Each step below is an independent function from @maronn-oidc/experimental/par,
+    // Each step below is an independent function from @maronn-openid-connect/experimental/par,
     // called in RFC 9126 §2.1 order. Delete a call to drop that validation, or
     // insert your own logic between steps.
 

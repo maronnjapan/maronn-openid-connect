@@ -10,7 +10,7 @@ import type { OidcFeatureConfig } from '../../features.js';
  * imports from it when the matching experimental feature was enabled with
  * `--enable`, so the default output never references it.
  */
-export const EXPERIMENTAL_PACKAGE = '@maronn-oidc/experimental';
+export const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 
 function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   const introspectionMethod = features.introspection

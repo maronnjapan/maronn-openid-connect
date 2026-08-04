@@ -79,5 +79,5 @@ function assertNoExternalKeyHeaders(header: Record<string, unknown>): void {
 ## 完了条件
 
 - 上記テストがすべて通る
-- `pnpm --filter @maronn-oidc/core test` がパスする
+- `pnpm --filter @maronn-openid-connect/core test` がパスする
 - `validateIdTokenHint` の既存テストが引き続きパスする（リグレッションなし）

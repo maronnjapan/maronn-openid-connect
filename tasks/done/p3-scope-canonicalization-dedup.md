@@ -61,6 +61,6 @@
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - Authorization Endpoint と Token Endpoint の scope 正規化（重複除去）が一致し、発行物の `scope` が入力の重複に依存しない決定的な値で固定されること
 - 生成 OP の `conformance.test.ts` で発行物 scope を固定しているテストがあれば、`packages/cli` テンプレート経由で整合するよう更新されていること

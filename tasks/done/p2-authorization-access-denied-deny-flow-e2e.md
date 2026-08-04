@@ -83,5 +83,5 @@ expect(url.hash).toBe('');
 ## 完了条件
 
 - `pnpm test:e2e` がパスし、拒否経路 spec が緑であること。
-- （契約テスト追加時）`pnpm --filter @maronn-oidc/cli test` および対象 sample の conformance テストがパスすること。
+- （契約テスト追加時）`pnpm --filter @maronn-openid-connect/cli test` および対象 sample の conformance テストがパスすること。
 - 拒否時の `error` / `state` / `iss` / 返却方式（クエリ）が一意の期待値で固定されていること。

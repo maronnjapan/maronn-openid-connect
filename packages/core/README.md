@@ -1,4 +1,4 @@
-# @maronn-oidc/core
+# @maronn-openid-connect/core
 
 OpenID Connect Core 1.0 / OAuth 2.1 に準拠した OpenID Provider のコアロジックを提供するパッケージ。
 
@@ -14,10 +14,10 @@ OpenID Connect Core 1.0 / OAuth 2.1 に準拠した OpenID Provider のコアロ
 ## インストール
 
 ```bash
-pnpm add @maronn-oidc/core
+pnpm add @maronn-openid-connect/core
 ```
 
-HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`](../cli) で Hono / Express / Fastify / Next.js 向けの実装コードを生成できる。core を直接使うのは、生成コードでは表現できない高度な組み込みユースケース向け。
+HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-connect/cli`](../cli) で Hono / Express / Fastify / Next.js 向けの実装コードを生成できる。core を直接使うのは、生成コードでは表現できない高度な組み込みユースケース向け。
 
 ## 準拠仕様
 
@@ -31,7 +31,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-oidc/cli`]
 
 ## 提供機能（API 概要）
 
-すべて `@maronn-oidc/core` からエクスポートされる。
+すべて `@maronn-openid-connect/core` からエクスポートされる。
 
 ### 認可エンドポイント
 
@@ -138,7 +138,7 @@ core の純関数            ← このパッケージ
 
 注入インターフェースの例: `ClientResolver`（クライアント情報）、`AuthorizationCodeResolver` / `RefreshTokenResolver` / `AccessTokenResolver`（トークン引き当て）、`SessionResolver` / `ConsentResolver`（セッション・同意状態）、`AuthTransactionStore`（認証トランザクション）、`SigningKeyProvider`（署名鍵）。
 
-実際の配線例は [`@maronn-oidc/cli`](../cli) が生成するコード、および本リポジトリの `samples/*` を参照。
+実際の配線例は [`@maronn-openid-connect/cli`](../cli) が生成するコード、および本リポジトリの `samples/*` を参照。
 
 ## ライセンス
 

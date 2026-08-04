@@ -3,7 +3,7 @@ import {
   type AcrResolver,
   type SigningKey,
   type SigningKeyProvider,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { createInMemoryClientResolver, type RegisteredClient } from './config';
 import { createOidcRouteHandlers } from './next';
 import { createNextJsProviderStores } from './storage-backend';

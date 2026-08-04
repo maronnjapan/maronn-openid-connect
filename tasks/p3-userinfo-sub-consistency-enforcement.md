@@ -62,5 +62,5 @@ const result: Record<string, unknown> = { sub: userClaims.sub };           // �
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 各 sample の `conformance.test.ts` がパスすること

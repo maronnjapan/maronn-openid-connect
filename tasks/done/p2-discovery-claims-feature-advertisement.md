@@ -61,5 +61,5 @@ CLI 生成 Provider の Discovery（`/.well-known/openid-configuration`）が、
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 各 sample の `conformance.test.ts`（生成物）がパスすること

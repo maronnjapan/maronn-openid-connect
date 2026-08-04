@@ -64,4 +64,4 @@ OIDF Conformance Suite および利用者が実際に動かすのは CLI が生�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/cli test` および `pnpm --filter @maronn-oidc/sample test`（存在する場合）がパスし、上記テスト要件を満たすこと。`pnpm typecheck` が通ること。
+`pnpm --filter @maronn-openid-connect/cli test` および `pnpm --filter @maronn-openid-connect/sample test`（存在する場合）がパスし、上記テスト要件を満たすこと。`pnpm typecheck` が通ること。

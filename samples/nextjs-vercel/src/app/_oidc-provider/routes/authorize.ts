@@ -29,7 +29,7 @@ import {
   IdTokenHintError,
   type AuthorizationRequestParams,
   type JwkSet,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import { clientResolver as defaultClientResolver } from '../resolvers';
 import {
   transactionStore as defaultTransactionStore,

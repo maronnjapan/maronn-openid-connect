@@ -138,8 +138,8 @@ core 側の `validateIdTokenHint`（`packages/core/src/id-token.ts:276-391`）�
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 各 sample の `conformance.test.ts` がパスすること
 - `pnpm test` および `tests/e2e` の Playwright テストがパスすること
 - 全フレームワークの生成 OP で、対話フローの `id_token_hint` subject 不一致時に SSO 再利用が起きないこと

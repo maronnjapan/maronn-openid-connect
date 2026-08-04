@@ -63,11 +63,11 @@ describe('selectExperimentalSourceChanges', () => {
 });
 
 describe('hasManualExperimentalChangeset', () => {
-  it('should return true when a hand-written changeset bumps @maronn-oidc/experimental', () => {
+  it('should return true when a hand-written changeset bumps @maronn-openid-connect/experimental', () => {
     assert.equal(
       hasManualExperimentalChangeset([
-        { file: 'a.md', bumps: { '@maronn-oidc/cli': 'patch' } },
-        { file: 'experimental-par.md', bumps: { '@maronn-oidc/experimental': 'patch' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'patch' } },
+        { file: 'experimental-par.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
       ]),
       true,
     );
@@ -77,7 +77,7 @@ describe('hasManualExperimentalChangeset', () => {
   it('should return false when only the auto-generated changeset bumps experimental', () => {
     assert.equal(
       hasManualExperimentalChangeset([
-        { file: AUTO_CHANGESET_FILENAME, bumps: { '@maronn-oidc/experimental': 'patch' } },
+        { file: AUTO_CHANGESET_FILENAME, bumps: { '@maronn-openid-connect/experimental': 'patch' } },
       ]),
       false,
     );
@@ -86,8 +86,8 @@ describe('hasManualExperimentalChangeset', () => {
   it('should return false when only other packages are bumped', () => {
     assert.equal(
       hasManualExperimentalChangeset([
-        { file: 'a.md', bumps: { '@maronn-oidc/cli': 'minor' } },
-        { file: 'b.md', bumps: { '@maronn-oidc/core': 'patch' } },
+        { file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } },
+        { file: 'b.md', bumps: { '@maronn-openid-connect/core': 'patch' } },
       ]),
       false,
     );
@@ -99,7 +99,7 @@ describe('hasManualExperimentalChangeset', () => {
 });
 
 describe('buildExperimentalPatchChangeset', () => {
-  it('should declare a patch bump for @maronn-oidc/experimental and list the changed sources in sorted order', () => {
+  it('should declare a patch bump for @maronn-openid-connect/experimental and list the changed sources in sorted order', () => {
     const content = buildExperimentalPatchChangeset([
       'packages/experimental/src/token-exchange/token-exchange-request.ts',
       'packages/experimental/src/par/par-request.ts',
@@ -109,7 +109,7 @@ describe('buildExperimentalPatchChangeset', () => {
       content,
       [
         '---',
-        '"@maronn-oidc/experimental": patch',
+        '"@maronn-openid-connect/experimental": patch',
         '---',
         '',
         '`packages/experimental/src` の変更をリリースする。experimental のバージョンは変更内容に関わらず patch を 1 つ上げるだけに固定しており、未リリースの変更が複数たまっている場合も 1 回の patch に吸収する。',
@@ -128,7 +128,7 @@ describe('decideExperimentalChangeset', () => {
   it('should create a patch changeset when experimental sources changed since the last release', () => {
     const decision = decideExperimentalChangeset({
       changedPaths: ['packages/experimental/src/par/par-request.ts'],
-      changesets: [{ file: 'a.md', bumps: { '@maronn-oidc/cli': 'patch' } }],
+      changesets: [{ file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'patch' } }],
     });
 
     assert.deepEqual(decision, {
@@ -173,7 +173,7 @@ describe('decideExperimentalChangeset', () => {
 
     const decision = decideExperimentalChangeset({
       changedPaths,
-      changesets: [{ file: AUTO_CHANGESET_FILENAME, bumps: { '@maronn-oidc/experimental': 'patch' } }],
+      changesets: [{ file: AUTO_CHANGESET_FILENAME, bumps: { '@maronn-openid-connect/experimental': 'patch' } }],
     });
 
     assert.deepEqual(decision, {
@@ -187,7 +187,7 @@ describe('decideExperimentalChangeset', () => {
   it('should not create a changeset when a hand-written changeset already releases experimental', () => {
     const decision = decideExperimentalChangeset({
       changedPaths: ['packages/experimental/src/par/par-request.ts'],
-      changesets: [{ file: 'experimental-par.md', bumps: { '@maronn-oidc/experimental': 'patch' } }],
+      changesets: [{ file: 'experimental-par.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } }],
     });
 
     assert.deepEqual(decision, {
@@ -199,7 +199,7 @@ describe('decideExperimentalChangeset', () => {
 
 describe('readVersionFromManifest', () => {
   it('should read the version field from a package.json content', () => {
-    assert.equal(readVersionFromManifest('{"name":"@maronn-oidc/experimental","version":"0.0.3"}'), '0.0.3');
+    assert.equal(readVersionFromManifest('{"name":"@maronn-openid-connect/experimental","version":"0.0.3"}'), '0.0.3');
   });
 
   it('should return null when the content is not valid JSON', () => {
@@ -207,7 +207,7 @@ describe('readVersionFromManifest', () => {
   });
 
   it('should return null when the manifest has no version field', () => {
-    assert.equal(readVersionFromManifest('{"name":"@maronn-oidc/experimental"}'), null);
+    assert.equal(readVersionFromManifest('{"name":"@maronn-openid-connect/experimental"}'), null);
   });
 });
 
@@ -315,7 +315,7 @@ describe('collectChangedPathsSinceLastRelease', () => {
     write(
       repository,
       'packages/experimental/package.json',
-      `${JSON.stringify({ name: '@maronn-oidc/experimental', version }, null, 2)}\n`,
+      `${JSON.stringify({ name: '@maronn-openid-connect/experimental', version }, null, 2)}\n`,
     );
   }
 

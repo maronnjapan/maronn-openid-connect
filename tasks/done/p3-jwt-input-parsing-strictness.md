@@ -58,4 +58,4 @@ ID Token / JWT 周りで、検証経路（`validateIdTokenHint`）は厳格な�
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること

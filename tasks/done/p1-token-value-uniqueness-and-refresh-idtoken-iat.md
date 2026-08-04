@@ -179,8 +179,8 @@ export function buildAccessTokenPayload(input: AccessTokenPayloadInput): AccessT
 ## 完了条件
 
 ```bash
-pnpm --filter @maronn-oidc/core test
-pnpm --filter @maronn-oidc/cli test
+pnpm --filter @maronn-openid-connect/core test
+pnpm --filter @maronn-openid-connect/cli test
 pnpm --filter "./samples/*" test
 pnpm --filter "./samples/*" typecheck
 ```

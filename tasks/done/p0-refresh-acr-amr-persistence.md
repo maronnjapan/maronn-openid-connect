@@ -45,4 +45,4 @@
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` および `pnpm --filter @maronn-oidc/cli test` がパスすること
+`pnpm --filter @maronn-openid-connect/core test` および `pnpm --filter @maronn-openid-connect/cli test` がパスすること

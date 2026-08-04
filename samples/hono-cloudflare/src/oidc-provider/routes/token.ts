@@ -38,7 +38,7 @@ import {
   type SigningKey,
   type TokenRequestParams,
   type ValidatedTokenRequest,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 import {
   tokenClientResolver as defaultTokenClientResolver,
   authorizationCodeResolver as defaultAuthorizationCodeResolver,
@@ -56,7 +56,7 @@ import {
   TokenExchangeError,
   buildTokenExchangeResponse,
   processTokenExchangeRequest,
-} from '@maronn-oidc/experimental/token-exchange';
+} from '@maronn-openid-connect/experimental/token-exchange';
 
 /**
  * EXPERIMENTAL — OAuth 2.0 Token Exchange settings (RFC 8693).
@@ -190,7 +190,7 @@ tokenApp.post('/', async (c) => {
     // it with unsupported_grant_type. The branch answers the request itself and
     // never falls through to the standard grants.
     //
-    // Backed by @maronn-oidc/experimental, whose API is NOT stable: it may change
+    // Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
     // in a breaking way between releases. Do not build production code on it
     // without pinning the version.
     //

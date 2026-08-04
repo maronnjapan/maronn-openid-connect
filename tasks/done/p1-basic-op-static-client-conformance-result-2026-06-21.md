@@ -110,8 +110,8 @@ OP 実装ロジック由来の FAILURE は **0 件**。FAILED 2 件はいずれ�
 
 ## テスト
 
-- `pnpm --filter @maronn-oidc/core test`: 817 passed（新規 4 件含む）。
-- `pnpm --filter @maronn-oidc/cli test`: 259 passed。
+- `pnpm --filter @maronn-openid-connect/core test`: 817 passed（新規 4 件含む）。
+- `pnpm --filter @maronn-openid-connect/cli test`: 259 passed。
 - `pnpm --filter "./samples/*" typecheck`: 全 sample 成功。
 - Conformance Suite 再実行で当該 module が FAILED → SKIPPED（permitted）へ変化したことを確認。
 

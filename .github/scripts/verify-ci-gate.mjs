@@ -2,7 +2,7 @@
  * CI の「静的検証ゲート」が成立していることを検証する。
  *
  * 構文的に壊れたコード（未解決コンフリクトマーカー）が main に入り、
- * @maronn-oidc/core と @maronn-oidc/cli がビルド不能なまま残ったことがある。
+ * @maronn-openid-connect/core と @maronn-openid-connect/cli がビルド不能なまま残ったことがある。
  * 原因は単一の作業ミスではなく、CI の構成そのものにあった。
  *
  *   1. ci.yml のトリガが pull_request だけで、main への直接 push が一度も検査されない

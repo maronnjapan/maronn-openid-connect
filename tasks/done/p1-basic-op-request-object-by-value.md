@@ -121,7 +121,7 @@ Basic OP static-client conformance を満たしつつ仕様忠実性を優先す
 - [ ] CLI generator test: 生成 Discovery / Authorize route に request object 対応が含まれること。
 - [ ] sample conformance test: RS256 signed request object by value の authorization code flow が成功すること。
 - [ ] `create-basic-op-config.test.mjs`: static client に Request Object 署名検証用の client JWKS / JWK を登録できること。
-- [ ] `pnpm --filter @maronn-oidc/core test` と `pnpm --filter @maronn-oidc/cli test` がパスすること。
+- [ ] `pnpm --filter @maronn-openid-connect/core test` と `pnpm --filter @maronn-openid-connect/cli test` がパスすること。
 - [ ] `pnpm run conformance:basic-op` の ZIP で request object 系 module が pass すること。
 
 ## 完了条件

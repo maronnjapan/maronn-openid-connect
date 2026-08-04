@@ -5,7 +5,7 @@ import type {
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '@maronn-oidc/core';
+} from '@maronn-openid-connect/core';
 
 /**
  * In-memory Authorization Transaction Store.

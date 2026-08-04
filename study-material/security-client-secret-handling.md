@@ -115,4 +115,4 @@ Basic OP 認定の合否には直接現れない論点だが、本リポジト�
 - [ ] `client-auth.test.ts` の既存テストが全てパスすることを確認（挙動不変）
 - [ ] （方針B採用時）resolver 契約拡張の設計を `/design-discussion` で協議し、確定設計を記録
 - [ ] （方針C採用時）型 doc / README に「平文比較・保存は PoC 前提」である旨を明記
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test` がパス
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test` がパス

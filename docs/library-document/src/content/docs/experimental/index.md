@@ -4,7 +4,7 @@ description: 安定性保証のない試験的機能の位置づけと使い方�
 ---
 
 Experimental 機能は、**新しい OAuth / OIDC 仕様をいち早く試せるようにするための試験実装**です。
-`@maronn-oidc/core` の安定機能とは別の扱いになります。このページを読んでから個別の機能ページへ進んでください。
+`@maronn-openid-connect/core` の安定機能とは別の扱いになります。このページを読んでから個別の機能ページへ進んでください。
 
 ## 安定性保証はありません
 
@@ -15,7 +15,7 @@ Experimental 機能には**互換性の保証がありません**。
 - 生成コードの構造（ファイル配置・分割単位）が変わることがあります
 - 機能そのものが削除されることがあります（仕様が失効した場合など）
 
-利用する場合は `@maronn-oidc/experimental` のバージョンを固定し、アップグレード時は必ず変更履歴（Changeset）を確認してください。
+利用する場合は `@maronn-openid-connect/experimental` のバージョンを固定し、アップグレード時は必ず変更履歴（Changeset）を確認してください。
 
 ## 本番利用について
 
@@ -26,22 +26,22 @@ Experimental 機能は「自分の要件がこの仕様で実現できるか」�
 - アップグレード時に破壊的変更を受け止められる運用になっていること
 - 対象仕様の Security Considerations を一次資料で読んでいること
 
-## `@maronn-oidc/core` とは別 package です
+## `@maronn-openid-connect/core` とは別 package です
 
-Experimental 機能は `@maronn-oidc/experimental` という**別の package** で提供されます。
+Experimental 機能は `@maronn-openid-connect/experimental` という**別の package** で提供されます。
 
 ```text
-packages/cli ────> @maronn-oidc/experimental（生成コードの依存）
-@maronn-oidc/experimental ────> @maronn-oidc/core
-@maronn-oidc/core ──X──> @maronn-oidc/experimental（依存しない）
+packages/cli ────> @maronn-openid-connect/experimental（生成コードの依存）
+@maronn-openid-connect/experimental ────> @maronn-openid-connect/core
+@maronn-openid-connect/core ──X──> @maronn-openid-connect/experimental（依存しない）
 ```
 
 core が experimental に依存することはありません。したがって Experimental 機能を有効にしていない OP の挙動は、この package の存在によって一切変わりません。
 
-機能ごとに subpath export で提供されます。ルート（`@maronn-oidc/experimental`）からの再エクスポートはありません。
+機能ごとに subpath export で提供されます。ルート（`@maronn-openid-connect/experimental`）からの再エクスポートはありません。
 
 ```typescript
-import { handlePushedAuthorizationRequest } from '@maronn-oidc/experimental/par';
+import { handlePushedAuthorizationRequest } from '@maronn-openid-connect/experimental/par';
 ```
 
 ## 明示的に有効化する必要があります
@@ -53,7 +53,7 @@ Experimental 機能は**デフォルトで無効**です。CLI の `--enable` �
 maronn-oidc generate hono --enable par
 
 # 生成コードが必要とする package を追加する
-pnpm add @maronn-oidc/experimental
+pnpm add @maronn-openid-connect/experimental
 ```
 
 `--enable` を付けずに生成した場合の出力は、Experimental 機能が存在しなかった頃と**バイト単位で同一**です。既存の OP を再生成しても差分は出ません。
@@ -75,7 +75,7 @@ Experimental 機能の不具合・仕様解釈の誤り・API への要望は、
 
 報告時に次を含めてもらえると調査が早くなります。
 
-- 使用した feature-id と `@maronn-oidc/experimental` のバージョン
+- 使用した feature-id と `@maronn-openid-connect/experimental` のバージョン
 - 生成に使ったコマンド（`--enable` / `--disable` の指定を含む）
 - 期待した挙動と実際の挙動（可能なら HTTP のリクエスト / レスポンス）
 - 根拠にした一次資料のセクション番号

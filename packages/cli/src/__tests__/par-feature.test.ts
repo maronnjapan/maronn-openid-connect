@@ -111,7 +111,7 @@ describe('generate with --enable par', () => {
 
     it('should not reference the experimental package by default', () => {
       const referencing = generateFiles(framework)
-        .filter((file) => file.content.includes('@maronn-oidc/experimental'))
+        .filter((file) => file.content.includes('@maronn-openid-connect/experimental'))
         .map((file) => file.path);
 
       expect(referencing).toEqual([]);
@@ -126,7 +126,7 @@ describe('generate with --enable par', () => {
     it('should import the PAR step functions from the experimental subpath', () => {
       const content = fileContent(generateFiles(framework, ['par']), parRoutePath(framework));
 
-      expect(content.includes("from '@maronn-oidc/experimental/par'")).toBe(true);
+      expect(content.includes("from '@maronn-openid-connect/experimental/par'")).toBe(true);
     });
 
     it('should warn in the generated PAR route that the API is experimental', () => {

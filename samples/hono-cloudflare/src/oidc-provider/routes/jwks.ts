@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { exportJwks, extractAlgorithmParamsFromJwk, type SigningKey } from '@maronn-oidc/core';
+import { exportJwks, extractAlgorithmParamsFromJwk, type SigningKey } from '@maronn-openid-connect/core';
 
 export const jwksApp = new Hono<{ Variables: Record<string, any> }>();
 

@@ -57,4 +57,4 @@ RFC 9068 の JWT access token profile では `jti` は required claim として�
 
 ## 完了条件
 
-`pnpm --filter @maronn-oidc/core test` がパスすること
+`pnpm --filter @maronn-openid-connect/core test` がパスすること

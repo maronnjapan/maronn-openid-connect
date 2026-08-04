@@ -76,5 +76,5 @@ if (e < 65537n || (e & 1n) === 0n /* 偶数 */ || e >= (1n << 256n)) {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 新規負テストが追加され、既存の鍵強度テストが回帰しないこと

@@ -434,8 +434,8 @@ Request Object 内の `redirect_uri` が優先される仕様（§6.1 supersede�
   - [ ] 生成コードの authorize ルートからエラー型分岐を 1 つ削減する（CLI テンプレートを修正）
   - [ ] `RELEASE.md` の experimental 自動 changeset 運用（patch 固定）に沿って変更を通す
 - [ ] `packages/cli` のテンプレートに影響が出る場合は各 sample の `conformance.test.ts` を再生成する
-- [ ] 完了条件: `pnpm --filter @maronn-oidc/core test`、
-      `pnpm --filter @maronn-oidc/experimental test`、`pnpm --filter @maronn-oidc/cli test` がパスすること
+- [ ] 完了条件: `pnpm --filter @maronn-openid-connect/core test`、
+      `pnpm --filter @maronn-openid-connect/experimental test`、`pnpm --filter @maronn-openid-connect/cli test` がパスすること
 
 ## 関連トピック
 

@@ -21,7 +21,7 @@ pnpm changeset
 publish は npm Trusted Publishing (OIDC) を利用するため、`NPM_TOKEN` などの長期トークンは不要。
 詳細は `.github/workflows/release.yml` 冒頭のコメントを参照。
 
-## `@maronn-oidc/experimental` は changeset を書かなくてよい
+## `@maronn-openid-connect/experimental` は changeset を書かなくてよい
 
 `packages/experimental/src` の実装を変更した場合、changeset を手で書く必要はない。
 main への push で CI が `auto-experimental-patch.md`（bump は常に `patch`）を自動生成する。

@@ -79,5 +79,5 @@ if (!isFormUrlEncoded(contentType)) {
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/cli test` がパスすること
+- `pnpm --filter @maronn-openid-connect/cli test` がパスすること
 - 生成された `samples/*` の `conformance.test.ts` が更新後の挙動でパスすること

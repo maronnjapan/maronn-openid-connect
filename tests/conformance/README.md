@@ -55,7 +55,7 @@ CONFORMANCE_SAMPLE_APP=nextjs-vercel pnpm run conformance:basic-op
 
 `pnpm run conformance:basic-op` は以下を順に実行します。
 
-1. `@maronn-oidc/cli` をビルドする。
+1. `@maronn-openid-connect/cli` をビルドする。
 2. 選択したサンプルpackageをビルドする。
 3. OIDF static-client設定を `tests/conformance/.generated/` に生成する。
 4. OP TLSリバースプロキシ用のローカル自己署名証明書を生成する。

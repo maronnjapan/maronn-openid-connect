@@ -63,5 +63,5 @@ Authorization Request の `display` は `validateAuthorizationRequest` で値検
 
 ## 完了条件
 
-- `pnpm --filter @maronn-oidc/core test` がパスすること
+- `pnpm --filter @maronn-openid-connect/core test` がパスすること
 - 検証済み `display` が AuthTransaction 経由で UI 層から参照可能になっていること

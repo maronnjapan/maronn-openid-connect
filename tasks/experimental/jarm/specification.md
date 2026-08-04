@@ -385,7 +385,7 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 ## Changeset要件
 
-- `@maronn-openid-connect/experimental`: **手書きの changeset を作らない**（Review 3 で修正）。`packages/experimental/src` の変更は main への push で CI が patch の changeset を自動生成する（`.github/scripts/ensure-experimental-changeset.mjs`）。experimental の bump はどんな変更でも patch 固定で、minor / major を指定すると `pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`）が失敗する（RELEASE.md「experimental の bump は常に patch に固定する」・CLAUDE.md の同旨規約）
+- `@maronn-openid-connect/experimental`: **patch の手書き changeset を追加する**（実装時に修正。下記「実装時の小修正」#8）。Review 3 は「手書きしない」と結論したが、PR の必須チェック `changeset-coverage`（`.github/scripts/verify-changeset-coverage.mjs`）が「出荷物を変えた publish 可能パッケージには**この PR 自身の** changeset が必要」と要求するため、手書きしないと PR がマージできない。`ensure-experimental-changeset.mjs` は手書きの changeset を検出すると自動生成をスキップする設計（`hasManualExperimentalChangeset`）なので二重にはならない。**bump は必ず patch**にすること。minor / major を指定すると `pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`）が失敗する（RELEASE.md「experimental の bump は常に patch に固定する」・CLAUDE.md の同旨規約）
 - `@maronn-openid-connect/cli`: minor の手書き changeset（`--enable jarm` の追加。既存デフォルト挙動は不変のため breaking ではない）
 - core: 変更なし（changeset 不要）
 
@@ -436,6 +436,7 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 | 5 | `jarmConfig` の置き場所を、jarm 有効時のみ生成する新規ファイル `routes/jarm.ts` に確定 | PAR は `routes/par.ts`（エンドポイント本体）に同居させたが、JARM は新規エンドポイントを持たないため設定専用モジュールとして独立させた。authorize / consent の両ルートが参照する |
 | 6 | 応答構築サイトの棚卸しに **Next.js の consent Server Action（`consent/actions.ts`）** を追加（7 サイト目） | Next.js サンプルの実際の同意フローは共有の `routes/consent.ts` ではなく Server Action を通る（`routes/consent.ts` は生成 conformance テストが叩くのみ）。ここを対応しないと Next.js だけ同意経由の応答が平文へ落ちる。CLI テストで固定した |
 | 7 | consent ルートの `type AuthTransaction` import を transaction-binding 無効時のみ追加 | transaction-binding が既に同じ型を import しており、両方有効だと named import が重複してコンパイルできないため |
+| 8 | `@maronn-openid-connect/experimental` にも **patch の手書き changeset** を追加（Review 3 の「手書きしない」を修正） | 必須チェック `changeset-coverage` が PR 自身の changeset を要求するため、手書きなしではマージできない。`ensure-experimental-changeset.mjs` は手書きがあれば自動生成をスキップするので二重にならない。patch 固定の規約は維持している |
 
 ## 将来の昇格考慮
 

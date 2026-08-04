@@ -99,7 +99,7 @@ informative な例として「ユーザーが事前に当該クライアント�
 
 - `packages/sample/src/oidc-provider/routes/consent.ts`:
   - GET で **無条件に同意 UI を表示**（既存同意の参照なし）。
-  - POST `action=allow` で `completeAuthTransaction` → `createAuthorizationCode` → コード発行するが、
+  - POST `action=approve` で `completeAuthTransaction` → `createAuthorizationCode` → コード発行するが、
     **同意を記録するストア書き込みが一切ない**。承認の事実はトランザクション破棄とともに消える。
 - `packages/sample/src/oidc-provider/routes/authorize.ts`:
   - `prompt=none` 経路で `c.get('consentResolver')` を取得するが、**未設定なら即 `consent_required`**（194-197 行）。
@@ -159,7 +159,7 @@ informative な例として「ユーザーが事前に当該クライアント�
 
 - **方針C（authorize 通常経路で `hasConsent` を参照）**: `prompt` に `consent` が無く、`hasConsent(subject, clientId, requestedScopes)` が true なら **consent UI をスキップ**して直接コード発行へ。
   `prompt=consent` のときは必ず UI 表示（§3.1.2.1 MUST）。`max_age` / `prompt=login` の既存分岐と順序整合を取る。
-- **方針D（consent POST で記録）**: `action=allow` 時に `recordConsent(subject, clientId, grantedScope)` を呼ぶ。
+- **方針D（consent POST で記録）**: `action=approve` 時に `recordConsent(subject, clientId, grantedScope)` を呼ぶ。
   これにより以降の `prompt=none` / 通常再訪で `hasConsent` が true を返すようになる。
 
 ### incremental consent
@@ -184,7 +184,7 @@ informative な例として「ユーザーが事前に当該クライアント�
 - [x]（TDD）core: `hasConsent` を「要求スコープ ⊆ 付与済みスコープ」で判定する契約をテストで固定（部分集合判定。scope 昇格を false にする）— `packages/sample/src/oidc-provider/store.test.ts` の `ConsentStore` テストで固定、core 側はインターフェース doc で契約明文化
 - [x]（TDD）core: consent 記録メソッド（`recordConsent` 等）の型と、`prompt=consent` のときは既存同意があってもスキップしない分岐ロジックのテスト — `consent-persistence.test.ts` の prompt=consent 再表示テストで固定
 - [x] sample: consent 記録用ストア（`consentStore`）と `consentResolver` の登録を追加し、`resolvers.ts` / `store.ts` に配線
-- [x] sample `routes/consent.ts`: `action=allow` 時に付与スコープを記録（incremental は最小実装: 要求⊄付与なら全再同意）
+- [x] sample `routes/consent.ts`: `action=approve` 時に付与スコープを記録（incremental は最小実装: 要求⊄付与なら全再同意）
 - [x] sample `routes/authorize.ts`: 通常経路で `hasConsent` を参照し、`prompt!=consent` かつ既存同意ありなら consent UI をスキップ
 - [ ] `isOfflineAccessGranted` に「記録済み同意があれば許可」を接続できることを example として `offline-access-scope-grant-policy.md` から相互参照
 - [x]（e2e）`prompt=none` が session + consent 双方を満たすとき silent にコード発行されることを検証（`cli-generated-provider-browser-session-and-sso.md` のセッション実装に依存）

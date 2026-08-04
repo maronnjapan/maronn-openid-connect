@@ -113,6 +113,28 @@ HEAD の core に対して experimental をビルド・テストするので開�
 `test:ci` に組み込み済み）で CI から強制している。同スクリプトは core が experimental の
 `dependencies` に戻っていないかも検査する。
 
+### どのパッケージを単独でリリースできるか
+
+| リリース対象 | 単独で出せるか |
+|---|---|
+| `@maronn-oidc/cli` のみ | **出せる**。cli は core に依存していない（`dependencies` / `peerDependencies` とも空） |
+| `@maronn-oidc/experimental` のみ | **出せる**。自動 changeset の想定運用そのもの |
+| `@maronn-oidc/core` のみ | **出せない**。bump 種別によらず experimental が同時リリースになる |
+
+core が単独で出せないのは、[peer range は「下限」を宣言する](#peer-range-は下限を宣言する)の規則が
+**patch にも効く**ため。core を 0.1.0 → 0.1.1 に上げるだけでも下限を `>=0.1.1` へ上げる必要があり、
+その編集は `packages/experimental/package.json`（= experimental の出荷物）の変更なので、
+[changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)が experimental の
+changeset を要求する。結果として core と experimental が必ず同じ Version Packages PR に乗る。
+
+これは規則の帰結であって回避すべき不具合ではない。下限チェックの根拠
+（experimental は HEAD の core としかビルド・テストされていない）は patch でも変わらないので、
+patch を例外にすると「試していない組み合わせを許可宣言する」状態が patch 経由で復活する。
+
+なお publish 側は常に単独で動く。`changeset publish` はローカルのバージョンを registry と
+突き合わせ、既に公開済みのものは `is not being published because version X is already published on npm`
+としてスキップするので、バージョンが上がったパッケージだけが publish される。
+
 ---
 
 ## experimental の自動 publish
@@ -472,6 +494,7 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 | スコープ付きで `402 Payment Required` | `--access public` 指定漏れ。`publishConfig.access: "public"` も併せて確認 |
 | Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |
 | CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では experimental も同時にリリースする（`pnpm changeset` で experimental の changeset を追加する） |
+| core だけ直したのに CI で `peer range … は core X.Y.Z より古い … を下限にしています` で落ちる | 意図した挙動。core は patch でも単独リリースできない。`packages/experimental/package.json` の peer range 下限を指示された値へ上げ、experimental の changeset も追加する（[どのパッケージを単独でリリースできるか](#どのパッケージを単独でリリースできるか)） |
 | core と experimental のバージョン番号がずれている | 正常。番号の一致は要求していない（[バージョニング方針](#バージョニング方針)） |
 | CI の `changeset-coverage` が `対応する changeset がありません` で落ちる | 意図した挙動。`pnpm changeset`（リリースする場合）または `pnpm changeset --empty`（リリース不要の場合）を実行してコミットする（[changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)） |
 | packages を変更していないのに `changeset-coverage` が落ちる | 出荷物判定が想定と違う可能性。`.github/scripts/verify-changeset-coverage.mjs` の `NON_SHIPPED_FILE_PATTERNS` を確認する |

@@ -1,6 +1,6 @@
 {
   "name": "@maronn-openid-connect/experimental",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {

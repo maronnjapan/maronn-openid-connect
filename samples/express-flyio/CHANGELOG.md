@@ -1,5 +1,12 @@
 # @maronn-openid-connect/sample-express-flyio
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [b5ef236]
+  - @maronn-openid-connect/core@0.1.1
+
 ## 0.0.4
 
 ### Patch Changes

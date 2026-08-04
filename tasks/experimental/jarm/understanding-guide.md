@@ -40,7 +40,7 @@ JARM は認可レスポンス全体を **OP が署名した JWT** に変える�
 |---|---|
 | 認可サーバー（応答 JWT の発行者） | CLI 生成 OP（`samples/*`）＋ `@maronn-openid-connect/experimental/jarm` ＋ core |
 | クライアント（応答 JWT の検証者） | 利用者のアプリ。E2E では `tests/e2e/apps` の専用クライアント |
-| 署名鍵 | 生成 OP の既存 `signingKeyProvider`（ID Token と同じ RS256 鍵。`jwks_uri` で公開） |
+| 署名鍵 | 生成 OP の既存 `signingKeyProvider` の active key（既定では ID Token と同じ RS256 鍵。T-022 の per-purpose 鍵設定で ID Token 用鍵を分けている場合も、JARM は汎用 `signingKeyProvider` の鍵で署名する。`jwks_uri` で公開） |
 
 ## 通常フロー
 

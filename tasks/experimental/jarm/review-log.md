@@ -62,3 +62,30 @@
   - 生成コードのバイト同一性・条件付き補間の実挙動は実装時の完了条件 2・3 でのみ最終確認できる（Review 1 から継続の既知事項）
 - **判定**: **Pass with changes**（指摘 3・4・6 を同日中に修正反映済み。セキュリティ上の未解決事項・Blocked 相当の重大問題はなし。U1・U2 は根拠付きで解決。Review 3 の観点（実装着手可否・U3）へ引き継ぐ）
 - **次回可能日**: 2026-08-04
+
+## Review 3
+
+- **日付**: 2026-08-04（Review 2 と異なる暦日 / `next_review_on` 到達を確認して実施）
+- **観点**: 実装着手可否（追加調査なしで着手できるか / 受け入れ条件の客観性 / 対象ファイルと変更範囲 / API・CLI・テスト・Docs・Changeset の一貫性 / 実装順序と検証方法 / Experimental であることの利用者への明示）。Review 2 からの差分として、main の移動（45997d8 → e3bf2d5）に伴う前提の再検証と、持ち越しの U3 解決を含む
+- **確認資料**:
+  - `packages/cli/src/frameworks/hono/templates.ts`（main e3bf2d5 で再検証）: transaction-binding の条件付き補間 `bindingSecretStep` :1725-1743 / put サイト :2122-2131 / `buildErrorRedirect` 定義 :1949-1964 と 8 呼び出しサイト :2139, 2155, 2168, 2181, 2188, 2215, 2221, 2228 / 成功インライン :2258-2263, 2331-2336 / catch 節 :2356-2373 / consent 拒否 :4259-4267・承認 :4317-4324（`completeAuthTransaction` :4278 の `responseParams` 使用）/ context ミドルウェア :227, 257-259 と T-022 per-purpose 鍵 / jwks ルート :3609-3660 / discovery :3771-3781, 3828-3830 / conformance 期待値 :8984-8985
+  - `packages/core/src/auth-transaction.ts`（transaction-binding 差分: optional `bindingHash?` 追加・`createAuthTransaction` の後方互換 options シグネチャ）/ `packages/cli/src/features.ts`（`OPTIONAL_FEATURES = ['transaction-binding']` :44 / `EXPERIMENTAL_FEATURES` :59）
+  - `RELEASE.md`「experimental の bump は常に patch に固定する」/ `.github/scripts/ensure-experimental-changeset.mjs` / `.github/scripts/verify-release-contract.mjs` / CLAUDE.md の同旨規約
+  - `tests/e2e/playwright.config.ts`（webServer による sample-hono-cloudflare 起動・e2e-client 定義）/ `tests/e2e/apps/client.mjs` 全文（`/start-par` / `/start-exchange` の機能別ルートパターン・Node 組み込みのみの構成）/ `tests/e2e/specs/pushed-authorization-requests.spec.ts:26`（discovery 自己スキップ）/ `samples/hono-cloudflare/package.json:8`（generate スクリプト）
+  - JARM Final §2.2（2026-08-04 再アクセス: 鍵の用途分離を要求する規定が無いことを確認 → 記録 8）
+- **指摘**:
+  1. **[着手阻害・修正] Changeset 要件が release contract と矛盾**: 仕様書は「experimental: minor」としていたが、現行 main は experimental の手書き changeset を禁止し、CI が patch の changeset を自動生成する（`ensure-experimental-changeset.mjs`）。minor を書くと `pnpm run test:release-contract` が失敗し、実装 Routine が最終ステップで詰まる。Changeset 要件を「experimental は手書きしない・CLI のみ minor 手書き」へ修正し、実装順序 7 にも明記
+  2. **[着手阻害・修正] main 移動による棚卸し表・行番号の陳腐化と transaction-binding との合成未規定**: Review 2 以降に transaction-binding（`OPTIONAL_FEATURES`・サンプルでは有効）がマージされ、テンプレートが約 1,100 行増加。`const transaction` の作成文が binding の条件付き補間 `bindingSecretStep` 内へ移動したため、旧必須要件 2（「transaction に合成してから put」）のままでは JARM が binding の補間に変種を追加することになり、binding × jarm の 4 通り分岐が生じる。**put 呼び出しの第 2 引数でのマージへ改訂**し（2 機能の補間が直交。無効時バイト同一維持）、authorize ルートの応答サイト 1〜4 の JARM モード取得元を「try 前の `let` 変数」へ統一（棚卸し表・必須要件 2・3 を更新）。8 呼び出しサイト・6 応答サイトの数と構造は現行 main でも不変であることを通読で再確認し、全行番号を e3bf2d5 基準に更新
+  3. **[設計判断・追記] T-022 per-purpose 鍵との整合**: ミドルウェアが `idToken*` / `userinfo*` 鍵も公開するようになったため、応答 JWT の鍵選択が多義的になった。JARM §2.2 は鍵の用途分離を要求しない（原文再確認）ため**汎用 `signingKeyProvider` の active key を使う**と確定（必須要件 4・記録 8）。jwks ルートは T-022 後も汎用 `signingKeys` 配列を公開しており kid 解決可能
+  4. **[U3 解決] E2E 組み込み方の確定**: `client.mjs` は Node 組み込みのみの HTTP サーバーで、experimental 機能ごとに `/start-*` ルートを足す既存パターンを持つ。`/start-jarm` ルート＋`/callback` の JARM 分岐（iss 先行確認（§5.1 の MUST 順序）→ jwks 取得 → `node:crypto` の `createPublicKey`/`verify` で RS256 検証 → aud/exp 確認 → state 照合・code 抽出 → 既存トークン交換へ合流）で組み込める。spec は discovery 自己スキップパターンを踏襲した `jarm.spec.ts` を新設。サンプル再生成（`generate` スクリプトへ `--enable jarm` 追加）を実装順序 6 に明記。テスト計画 E2E 節を確定内容へ全面更新
+  5. **[確認・問題なし] 受け入れ条件の客観性と一貫性**: 完了条件 1〜7 はすべて機械的に検証可能（テスト通過・バイト diff・discovery 応答の固定値）。完了条件 3 のバイト同一確認に transaction-binding 有効・無効の両組み合わせを追記。公開 API 案 / CLI オプション案 / テスト計画 / ドキュメント要件 / 修正後 Changeset 要件の間に矛盾がないことを通し読みで確認。依存する core 公開 API（`SigningKey` / `AuthorizationError` / `sanitizeErrorDescription` / `AuthTransaction` 等）は e3bf2d5 でも全件公開済み（`core/src/index.ts` は 4 行の追加のみで該当 export に変更なし）
+  6. **[確認・問題なし] Experimental の明示**: 生成コード冒頭コメント・`docs/library-document` の experimental 配下ページ・`packages/experimental/README.md` の 3 点が仕様に揃っている（PAR / Token Exchange と同構成）。デフォルト無効・`--enable jarm` の明示的有効化・jarm 無効時バイト同一も維持
+- **修正**（同日反映）:
+  - specification.md: Changeset 要件の全面修正（指摘 1）/ 棚卸し表・必須要件 2〜5 の改訂と全行番号の e3bf2d5 更新（指摘 2・3）/ テスト計画 E2E 節の確定内容への更新と実装順序 5〜7 の補強（指摘 4・5）/ U3 を解決済み表へ移動（未解決事項ゼロ）
+  - understanding-guide.md: 登場人物表の署名鍵行に per-purpose 鍵設定時も汎用鍵で署名する旨を追記（指摘 3）。その他の記述は現行 main でも正確なため変更なし
+  - sources.md: リポジトリ内参照の行番号を e3bf2d5 基準へ全面更新、新規参照 8 件（bindingSecretStep / put サイト / auth-transaction 差分 / RELEASE.md / release contract スクリプト / playwright.config / client.mjs / PAR spec 自己スキップ / サンプル generate スクリプト）を追加、記録 8・9 を追加
+- **残リスク**:
+  - 生成コードの実挙動（条件付き補間後の出力・バイト同一性・transaction-binding との組み合わせ）は実装時の完了条件 2・3 でのみ最終確認できる（Review 1 から継続の既知事項。PAR / Token Exchange と同じ扱い）
+  - store 実装が未知フィールドを落とす場合の平文フォールバックは契約明記＋conformance テストで検出可能（Review 2 から継続の既知事項）
+- **判定**: **Pass with changes**（指摘 1〜4 を同日中に修正反映済み。指摘 1・2 は放置すれば実装時に release contract 違反・補間分岐の設計迷いとして露見する着手阻害要因だったが、修正後は追加調査なしで着手可能。未解決事項ゼロ・セキュリティ未解決ゼロ・受け入れ条件は客観的に検証可能。Review 3 の全確認項目を満たしたため `status: Approved` / `implementation_ready: true` へ更新する）
+- **次回可能日**: —（3 回のレビューを完了。次は実装 Routine が「実装順序」ステップ 1 から着手する）

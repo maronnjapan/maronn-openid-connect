@@ -1,21 +1,16 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
 import {
   getAuthTransaction,
   validateCsrfToken,
-  validateTransactionBinding,
   completeAuthTransaction,
   createAuthorizationCode,
 } from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
 import type { RegisteredClient } from '../_oidc-provider/config';
-import {
-  defaultProviderStores,
-  TRANSACTION_BINDING_COOKIE_PREFIX,
-} from '../_oidc-provider/store';
+import { defaultProviderStores } from '../_oidc-provider/store';
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
 const { transactionStore, authCodeStore, authSessionStore } = providerStores;
@@ -34,17 +29,6 @@ export async function consentAction(formData: FormData): Promise<void> {
   const action = String(formData.get('action') ?? '');
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken and
-  // before any decision is acted on — this step mints the authorization code, so
-  // an unbound caller must reach it neither to approve nor to deny. Throws
-  // AuthTransactionError, surfaced by the App Router error boundary rather than
-  // redirected to the client. See _oidc-provider/store.ts.
-  const cookieStore = await cookies();
-  const bindingCookieName = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
-  await validateTransactionBinding(
-    transaction,
-    cookieStore.get(bindingCookieName)?.value,
-  );
   validateCsrfToken(transaction, csrfToken);
 
   // RFC 9207 §2: include the issuer identifier on every authorization response.
@@ -59,9 +43,6 @@ export async function consentAction(formData: FormData): Promise<void> {
     denyUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
-    // The transaction is over; drop its binding cookie so the browser does not
-    // keep one cookie per finished flow.
-    cookieStore.delete(bindingCookieName);
     redirect(denyUrl.toString());
   }
 
@@ -105,10 +86,6 @@ export async function consentAction(formData: FormData): Promise<void> {
   );
 
   await authSessionStore.delete(transactionId);
-
-  // The transaction is over; drop its binding cookie so the browser does not
-  // keep one cookie per finished flow.
-  cookieStore.delete(bindingCookieName);
 
   const successUrl = new URL(responseParams.redirectUri);
   successUrl.searchParams.set('code', authCodeData.code);

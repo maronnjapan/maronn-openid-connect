@@ -2,11 +2,8 @@ import { WebRouter } from '../web-router.js';
 import {
   getAuthTransaction,
   validateCsrfToken,
-  validateTransactionBinding,
   completeAuthTransaction,
   createAuthorizationCode,
-  AuthTransactionError,
-  type AuthTransaction,
 } from '@maronn-openid-connect/core';
 import {
   clientResolver as defaultClientResolver,
@@ -16,43 +13,10 @@ import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
-  buildClearedTransactionBindingCookie,
-  parseTransactionBindingSecret,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const consentApp = new WebRouter();
-
-/**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
- * back, or undefined when the binding holds.
- *
- * The failure is rendered by the OP itself and never redirected to the client's
- * redirect_uri: without a verified owner, answering the client would let an
- * attacker who lured a victim into their own transaction collect a code for the
- * victim's identity. See buildTransactionBindingCookie() in store.ts.
- */
-async function rejectUnboundTransaction(
-  transaction: AuthTransaction,
-  transactionId: string,
-  cookieHeader: string | null,
-  views: typeof defaultViews,
-): Promise<Response | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(cookieHeader, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return renderView(views.errorPage({
-      error: error.message,
-      statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
-  }
-}
 
 /**
  * Consent Page - GET
@@ -67,17 +31,6 @@ consentApp.get('/', async (c) => {
   const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // Checked BEFORE rendering: the consent page embeds csrf_token, so a third
-  // party holding a leaked transaction_id must not be able to read it here and
-  // then complete POST /consent on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
-  if (bindingError) return bindingError;
 
   return renderView(views.consentPage({
     transactionId,
@@ -104,16 +57,6 @@ consentApp.post('/', async (c) => {
   const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  // Checked before validateCsrfToken and before any decision is acted on: this
-  // is the step that mints the authorization code, so an unbound caller must not
-  // reach it — neither to approve nor to deny on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
-  if (bindingError) return bindingError;
   validateCsrfToken(transaction, csrfToken);
 
   // RFC 9207 §2: include the issuer identifier on every authorization response
@@ -130,9 +73,6 @@ consentApp.post('/', async (c) => {
     redirectUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
-    // The transaction is over; drop its binding cookie so the browser does not
-    // keep one cookie per finished flow.
-    c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
     return c.redirect(redirectUrl.toString());
   }
 
@@ -182,10 +122,6 @@ consentApp.post('/', async (c) => {
   );
 
   await authSessionStore.delete(transactionId);
-
-  // The transaction is over; drop its binding cookie so the browser does not
-  // keep one cookie per finished flow.
-  c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
 
   // Redirect back to client with authorization code
   const redirectUrl = new URL(responseParams.redirectUri);

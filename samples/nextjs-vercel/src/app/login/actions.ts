@@ -5,16 +5,11 @@ import { cookies } from 'next/headers';
 import {
   getAuthTransaction,
   validateCsrfToken,
-  validateTransactionBinding,
   handleLoginFailure,
   generateRandomString,
 } from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import {
-  defaultProviderStores,
-  SESSION_COOKIE_NAME,
-  TRANSACTION_BINDING_COOKIE_PREFIX,
-} from '../_oidc-provider/store';
+import { defaultProviderStores, SESSION_COOKIE_NAME } from '../_oidc-provider/store';
 
 const {
   transactionStore,
@@ -37,16 +32,6 @@ export async function loginAction(formData: FormData): Promise<void> {
   const password = String(formData.get('password') ?? '');
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken —
-  // the CSRF token only proves the value came from the form, and that form is
-  // reachable by anyone holding transaction_id. This proves it is the same
-  // browser. Throws AuthTransactionError, surfaced by the App Router error
-  // boundary rather than redirected to the client. See _oidc-provider/store.ts.
-  const cookieStore = await cookies();
-  await validateTransactionBinding(
-    transaction,
-    cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
-  );
   validateCsrfToken(transaction, csrfToken);
 
   const user = await userStore.authenticate(username, password);
@@ -66,6 +51,8 @@ export async function loginAction(formData: FormData): Promise<void> {
       `/login?transaction_id=${encodeURIComponent(transactionId)}&error=invalid_credentials&remaining=${remaining}`,
     );
   }
+
+  const cookieStore = await cookies();
 
   // prompt=login / select_account requires fresh authentication: discard any
   // existing transaction handoff AND browser session.

@@ -1,9 +1,10 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
 const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
+const clientId = 'e2e-client';
 
 /**
  * Auth transaction / User-Agent binding (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4).
@@ -18,16 +19,47 @@ const clientBaseURL =
  * These run in a real browser, which is the only place the cookie attributes
  * (HttpOnly / Secure / SameSite=Lax / per-transaction name) are actually
  * exercised: the conformance tests set the Cookie header by hand.
+ *
+ * This is an OPT-IN feature (`--enable transaction-binding`): no spec clause
+ * requires it, and making it mandatory would force a cookie jar on anyone
+ * driving the OP by hand, which is the primary way this library gets used. So
+ * every test here skips when the sample OP was generated without it — the same
+ * shape as the PAR / token-exchange specs. The cookie-free default is pinned as
+ * a contract by the generated conformance.test.ts instead.
  */
 test.describe('Auth transaction User-Agent binding', () => {
   const UNBOUND_MESSAGE = 'This authorization transaction was not started by this browser.';
 
+  /**
+   * Probe the OP itself rather than discovery: transaction binding is not an
+   * advertised metadata capability (no spec defines one), so the observable
+   * signal is whether /authorize hands the browser a per-transaction cookie.
+   */
+  async function supportsTransactionBinding(
+    request: APIRequestContext,
+    issuer: string,
+  ): Promise<boolean> {
+    const res = await request.get(
+      `${issuer}/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(`${clientBaseURL}/callback`)}` +
+        '&scope=openid&state=binding-probe' +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
+      { maxRedirects: 0 },
+    );
+    return (res.headers()['set-cookie'] ?? '').includes('oidc_txn_');
+  }
+
   test('should refuse to show the consent form to a different browser holding the same transaction_id', async ({
     page,
     browser,
+    request,
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
+    test.skip(
+      !(await supportsTransactionBinding(request, issuer)),
+      'This sample OP was generated without --enable transaction-binding',
+    );
 
     // Victim's browser drives the flow up to the consent screen.
     await page.goto(`${clientBaseURL}/start`);
@@ -57,9 +89,14 @@ test.describe('Auth transaction User-Agent binding', () => {
   test('should refuse to show the login form to a different browser holding the same transaction_id', async ({
     page,
     browser,
+    request,
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
+    test.skip(
+      !(await supportsTransactionBinding(request, issuer)),
+      'This sample OP was generated without --enable transaction-binding',
+    );
 
     await page.goto(`${clientBaseURL}/start`);
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=`));
@@ -80,9 +117,14 @@ test.describe('Auth transaction User-Agent binding', () => {
 
   test('should keep the binding cookie HttpOnly and scoped to its own transaction', async ({
     page,
+    request,
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
+    test.skip(
+      !(await supportsTransactionBinding(request, issuer)),
+      'This sample OP was generated without --enable transaction-binding',
+    );
 
     await page.goto(`${clientBaseURL}/start`);
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=`));
@@ -107,9 +149,14 @@ test.describe('Auth transaction User-Agent binding', () => {
   test('should complete two concurrent authorization flows in the same browser', async ({
     page,
     context,
+    request,
     baseURL,
   }) => {
     const issuer = requireBaseUrl(baseURL);
+    test.skip(
+      !(await supportsTransactionBinding(request, issuer)),
+      'This sample OP was generated without --enable transaction-binding',
+    );
 
     // Two tabs, one cookie jar. A single shared binding cookie would make the
     // second /authorize overwrite the first tab's secret and break it.

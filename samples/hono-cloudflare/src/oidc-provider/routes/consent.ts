@@ -3,10 +3,10 @@ import {
   getAuthTransaction,
   validateCsrfToken,
   validateTransactionBinding,
-  completeAuthTransaction,
-  createAuthorizationCode,
   AuthTransactionError,
   type AuthTransaction,
+  completeAuthTransaction,
+  createAuthorizationCode,
 } from '@maronn-openid-connect/core';
 import {
   clientResolver as defaultClientResolver,

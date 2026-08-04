@@ -1192,31 +1192,22 @@ ${exports}
 `;
 }
 
-export function nextJsLoginPageTemplate(corePkg: string): string {
-  return `import { cookies } from 'next/headers';
-import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';
-import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import {
+export function nextJsLoginPageTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const bindingImports = features.transactionBinding
+    ? `import { cookies } from 'next/headers';
+import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';`
+    : `import { getAuthTransaction } from '${corePkg}';`;
+  const bindingStoreImport = features.transactionBinding
+    ? `import {
   defaultProviderStores,
   TRANSACTION_BINDING_COOKIE_PREFIX,
-} from '../_oidc-provider/store';
-import { loginAction } from './actions';
-
-const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
-
-// Authorization redirects here with a per-request transaction_id, so the page
-// must always render dynamically (never statically cached).
-export const dynamic = 'force-dynamic';
-
-interface LoginPageProps {
-  searchParams: Promise<{
-    transaction_id?: string;
-    error?: string;
-    remaining?: string;
-  }>;
-}
-
+} from '../_oidc-provider/store';`
+    : `import { defaultProviderStores } from '../_oidc-provider/store';`;
+  const bindingHelper = features.transactionBinding
+    ? `
 /**
  * Is this request coming from the User-Agent that started the transaction?
  * The authorization endpoint handed that browser a secret in an HttpOnly cookie
@@ -1236,7 +1227,43 @@ async function isBoundToThisBrowser(
     return false;
   }
 }
+`
+    : '';
+  const bindingCheck = features.transactionBinding
+    ? `
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token, so only
+  // the User-Agent that started the transaction may render it. transaction_id
+  // alone is not proof — it rides in the URL and can leak. See store.ts.
+  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
+    return (
+      <main>
+        <h1>Login</h1>
+        <p role="alert">This authorization transaction was not started by this browser.</p>
+      </main>
+    );
+  }
+`
+    : '';
+  return `${bindingImports}
+import { oidcProviderOptions } from '../_oidc-provider/runtime';
+${bindingStoreImport}
+import { loginAction } from './actions';
 
+const transactionStore =
+  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
+
+// Authorization redirects here with a per-request transaction_id, so the page
+// must always render dynamically (never statically cached).
+export const dynamic = 'force-dynamic';
+
+interface LoginPageProps {
+  searchParams: Promise<{
+    transaction_id?: string;
+    error?: string;
+    remaining?: string;
+  }>;
+}
+${bindingHelper}
 /**
  * Login page (React Server Component).
  *
@@ -1268,19 +1295,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token, so only
-  // the User-Agent that started the transaction may render it. transaction_id
-  // alone is not proof — it rides in the URL and can leak. See store.ts.
-  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
-    return (
-      <main>
-        <h1>Login</h1>
-        <p role="alert">This authorization transaction was not started by this browser.</p>
-      </main>
-    );
-  }
-
+${bindingCheck}
   const errorMessage =
     error === 'invalid_credentials'
       ? \`Invalid credentials\${remaining ? \`. Attempts remaining: \${remaining}\` : ''}\`
@@ -1372,24 +1387,46 @@ export default function OidcAuthorizationError() {
 `;
 }
 
-export function nextJsLoginActionTemplate(corePkg: string): string {
+export function nextJsLoginActionTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const bindingCoreImport = features.transactionBinding
+    ? `
+  validateTransactionBinding,`
+    : '';
+  const bindingStoreImport = features.transactionBinding
+    ? `import {
+  defaultProviderStores,
+  SESSION_COOKIE_NAME,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';`
+    : `import { defaultProviderStores, SESSION_COOKIE_NAME } from '../_oidc-provider/store';`;
+  const bindingCheck = features.transactionBinding
+    ? `  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken —
+  // the CSRF token only proves the value came from the form, and that form is
+  // reachable by anyone holding transaction_id. This proves it is the same
+  // browser. Throws AuthTransactionError, surfaced by the App Router error
+  // boundary rather than redirected to the client. See _oidc-provider/store.ts.
+  const bindingCookieStore = await cookies();
+  await validateTransactionBinding(
+    transaction,
+    bindingCookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
+  );
+`
+    : '';
   return `'use server';
 
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import {
   getAuthTransaction,
-  validateCsrfToken,
-  validateTransactionBinding,
+  validateCsrfToken,${bindingCoreImport}
   handleLoginFailure,
   generateRandomString,
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import {
-  defaultProviderStores,
-  SESSION_COOKIE_NAME,
-  TRANSACTION_BINDING_COOKIE_PREFIX,
-} from '../_oidc-provider/store';
+${bindingStoreImport}
 
 const {
   transactionStore,
@@ -1412,17 +1449,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   const password = String(formData.get('password') ?? '');
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken —
-  // the CSRF token only proves the value came from the form, and that form is
-  // reachable by anyone holding transaction_id. This proves it is the same
-  // browser. Throws AuthTransactionError, surfaced by the App Router error
-  // boundary rather than redirected to the client. See _oidc-provider/store.ts.
-  const cookieStore = await cookies();
-  await validateTransactionBinding(
-    transaction,
-    cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
-  );
-  validateCsrfToken(transaction, csrfToken);
+${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 
   const user = await userStore.authenticate(username, password);
   if (!user) {
@@ -1441,6 +1468,8 @@ export async function loginAction(formData: FormData): Promise<void> {
       \`/login?transaction_id=\${encodeURIComponent(transactionId)}&error=invalid_credentials&remaining=\${remaining}\`,
     );
   }
+
+  const cookieStore = await cookies();
 
   // prompt=login / select_account requires fresh authentication: discard any
   // existing transaction handoff AND browser session.
@@ -1478,25 +1507,22 @@ export async function loginAction(formData: FormData): Promise<void> {
 `;
 }
 
-export function nextJsConsentPageTemplate(corePkg: string): string {
-  return `import { cookies } from 'next/headers';
-import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';
-import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import {
+export function nextJsConsentPageTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const bindingImports = features.transactionBinding
+    ? `import { cookies } from 'next/headers';
+import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';`
+    : `import { getAuthTransaction } from '${corePkg}';`;
+  const bindingStoreImport = features.transactionBinding
+    ? `import {
   defaultProviderStores,
   TRANSACTION_BINDING_COOKIE_PREFIX,
-} from '../_oidc-provider/store';
-import { consentAction } from './actions';
-
-const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
-
-export const dynamic = 'force-dynamic';
-
-interface ConsentPageProps {
-  searchParams: Promise<{ transaction_id?: string }>;
-}
-
+} from '../_oidc-provider/store';`
+    : `import { defaultProviderStores } from '../_oidc-provider/store';`;
+  const bindingHelper = features.transactionBinding
+    ? `
 /**
  * Is this request coming from the User-Agent that started the transaction?
  * The authorization endpoint handed that browser a secret in an HttpOnly cookie
@@ -1516,7 +1542,38 @@ async function isBoundToThisBrowser(
     return false;
   }
 }
+`
+    : '';
+  const bindingCheck = features.transactionBinding
+    ? `
+  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token and its
+  // submission mints the authorization code, so only the User-Agent that started
+  // the transaction may render it. See _oidc-provider/store.ts.
+  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
+    return (
+      <main>
+        <h1>Authorize Application</h1>
+        <p role="alert">This authorization transaction was not started by this browser.</p>
+      </main>
+    );
+  }
 
+`
+    : '';
+  return `${bindingImports}
+import { oidcProviderOptions } from '../_oidc-provider/runtime';
+${bindingStoreImport}
+import { consentAction } from './actions';
+
+const transactionStore =
+  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
+
+export const dynamic = 'force-dynamic';
+
+interface ConsentPageProps {
+  searchParams: Promise<{ transaction_id?: string }>;
+}
+${bindingHelper}
 /**
  * Consent page (React Server Component).
  *
@@ -1536,20 +1593,7 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: this form embeds csrf_token and its
-  // submission mints the authorization code, so only the User-Agent that started
-  // the transaction may render it. See _oidc-provider/store.ts.
-  if (!(await isBoundToThisBrowser(transaction, transactionId))) {
-    return (
-      <main>
-        <h1>Authorize Application</h1>
-        <p role="alert">This authorization transaction was not started by this browser.</p>
-      </main>
-    );
-  }
-
-  const scopes = transaction.scope.split(' ').filter(Boolean);
+${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
 
   return (
     <main>
@@ -1579,25 +1623,64 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
 `;
 }
 
-export function nextJsConsentActionTemplate(corePkg: string): string {
+export function nextJsConsentActionTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const bindingCookiesImport = features.transactionBinding
+    ? `
+import { cookies } from 'next/headers';`
+    : '';
+  const bindingCoreImport = features.transactionBinding
+    ? `
+  validateTransactionBinding,`
+    : '';
+  const bindingStoreImport = features.transactionBinding
+    ? `import {
+  defaultProviderStores,
+  TRANSACTION_BINDING_COOKIE_PREFIX,
+} from '../_oidc-provider/store';`
+    : `import { defaultProviderStores } from '../_oidc-provider/store';`;
+  const bindingCheck = features.transactionBinding
+    ? `  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken and
+  // before any decision is acted on — this step mints the authorization code, so
+  // an unbound caller must reach it neither to approve nor to deny. Throws
+  // AuthTransactionError, surfaced by the App Router error boundary rather than
+  // redirected to the client. See _oidc-provider/store.ts.
+  const cookieStore = await cookies();
+  const bindingCookieName = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
+  await validateTransactionBinding(
+    transaction,
+    cookieStore.get(bindingCookieName)?.value,
+  );
+`
+    : '';
+  const clearBindingCookie = features.transactionBinding
+    ? `    // The transaction is over; drop its binding cookie so the browser does not
+    // keep one cookie per finished flow.
+    cookieStore.delete(bindingCookieName);
+`
+    : '';
+  const clearBindingCookieOnSuccess = features.transactionBinding
+    ? `  // The transaction is over; drop its binding cookie so the browser does not
+  // keep one cookie per finished flow.
+  cookieStore.delete(bindingCookieName);
+
+`
+    : '';
   return `'use server';
 
-import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';${bindingCookiesImport}
 import {
   getAuthTransaction,
-  validateCsrfToken,
-  validateTransactionBinding,
+  validateCsrfToken,${bindingCoreImport}
   completeAuthTransaction,
   createAuthorizationCode,
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
 import type { RegisteredClient } from '../_oidc-provider/config';
-import {
-  defaultProviderStores,
-  TRANSACTION_BINDING_COOKIE_PREFIX,
-} from '../_oidc-provider/store';
+${bindingStoreImport}
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
 const { transactionStore, authCodeStore, authSessionStore } = providerStores;
@@ -1616,18 +1699,7 @@ export async function consentAction(formData: FormData): Promise<void> {
   const action = String(formData.get('action') ?? '');
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: checked before validateCsrfToken and
-  // before any decision is acted on — this step mints the authorization code, so
-  // an unbound caller must reach it neither to approve nor to deny. Throws
-  // AuthTransactionError, surfaced by the App Router error boundary rather than
-  // redirected to the client. See _oidc-provider/store.ts.
-  const cookieStore = await cookies();
-  const bindingCookieName = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
-  await validateTransactionBinding(
-    transaction,
-    cookieStore.get(bindingCookieName)?.value,
-  );
-  validateCsrfToken(transaction, csrfToken);
+${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 
   // RFC 9207 §2: include the issuer identifier on every authorization response.
   const issuer = oidcProviderOptions.config?.issuer ?? '';
@@ -1641,10 +1713,7 @@ export async function consentAction(formData: FormData): Promise<void> {
     denyUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
-    // The transaction is over; drop its binding cookie so the browser does not
-    // keep one cookie per finished flow.
-    cookieStore.delete(bindingCookieName);
-    redirect(denyUrl.toString());
+${clearBindingCookie}    redirect(denyUrl.toString());
   }
 
   const session = await authSessionStore.get(transactionId);
@@ -1688,11 +1757,7 @@ export async function consentAction(formData: FormData): Promise<void> {
 
   await authSessionStore.delete(transactionId);
 
-  // The transaction is over; drop its binding cookie so the browser does not
-  // keep one cookie per finished flow.
-  cookieStore.delete(bindingCookieName);
-
-  const successUrl = new URL(responseParams.redirectUri);
+${clearBindingCookieOnSuccess}  const successUrl = new URL(responseParams.redirectUri);
   successUrl.searchParams.set('code', authCodeData.code);
   if (responseParams.state) {
     successUrl.searchParams.set('state', responseParams.state);
@@ -2251,7 +2316,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock()}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
 `;
 }
 
@@ -2292,8 +2357,8 @@ function webCoreGeneratedFiles(
       : []),
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
     { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },
-    { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg)) },
-    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg)) },
+    { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg, features)) },
+    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, features)) },
     {
       path: 'conformance.test.ts',
       content: webConformanceTestTemplate(corePkg, errorPageMode, features, includeNodeAdapterContract),
@@ -2392,10 +2457,10 @@ export function nextJsGeneratedFiles(
     },
     // Login / consent are real Next.js pages + Server Actions (not Route
     // Handlers) so the UI can be customized with JSX and the React ecosystem.
-    { path: 'login/page.tsx', content: nextJsLoginPageTemplate(corePkg) },
-    { path: 'login/actions.ts', content: nextJsLoginActionTemplate(corePkg) },
-    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg) },
-    { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg) },
+    { path: 'login/page.tsx', content: nextJsLoginPageTemplate(corePkg, features) },
+    { path: 'login/actions.ts', content: nextJsLoginActionTemplate(corePkg, features) },
+    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg, features) },
+    { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg, features) },
     // Non-redirect authorization errors (OIDC Core 1.0 §3.1.2.2) land on this
     // page, which throws so the App Router error boundary (error.tsx) renders the
     // OAuth error — keeping error UI framework-native like login / consent.

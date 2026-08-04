@@ -57,6 +57,7 @@ describe('resolveFeatures with experimental features', () => {
       requestObject: true,
       par: false,
       tokenExchange: false,
+      transactionBinding: false,
     });
   });
 
@@ -69,6 +70,7 @@ describe('resolveFeatures with experimental features', () => {
       requestObject: true,
       par: true,
       tokenExchange: false,
+      transactionBinding: false,
     });
   });
 
@@ -91,12 +93,13 @@ describe('resolveFeatures with experimental features', () => {
       requestObject: true,
       par: true,
       tokenExchange: false,
+      transactionBinding: false,
     });
   });
 
   it('should name the experimental features in the unknown-feature error', () => {
     expect(() => resolveFeatures({ enable: ['ciba'] })).toThrow(
-      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par, token-exchange',
+      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange',
     );
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { HonoGenerator } from '../frameworks/hono/index.js';
+import { DEFAULT_FEATURES } from '../features.js';
 
 const CORE_PKG = '@maronn-openid-connect/core';
 
@@ -1907,12 +1908,32 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain('access_denied');
     });
 
-    // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the End-User who authenticates and
-    // consents must be the one behind the User-Agent that sent the authorization
-    // request. transaction_id travels in the URL, so the generated OP also hands
-    // that browser a secret in an HttpOnly cookie and stores only its hash.
+    it('should escape dynamic values in consent page', () => {
+      const file = files.find((f) => f.path === 'views.ts');
+      expect(file?.content).toContain('function escapeHtml(value: string): string');
+      expect(file?.content).toContain('.replace(/&/g, \'&amp;\')');
+      expect(file?.content).toContain('.replace(/</g, \'&lt;\')');
+      expect(file?.content).toContain('.replace(/>/g, \'&gt;\')');
+      expect(file?.content).toContain(".replace(/\"/g, '&quot;')");
+      expect(file?.content).toContain(".replace(/'/g, '&#39;')");
+      expect(file?.content).toContain('<li>${escapeHtml(s)}</li>');
+      expect(file?.content).toContain('const escapedClientId = escapeHtml(params.clientId);');
+    });
+  });
+
+  // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the End-User who authenticates and consents
+  // must be the one behind the User-Agent that sent the authorization request, but
+  // the spec leaves the mechanism to the implementation. This library therefore
+  // ships it as an OPT-IN feature: no spec clause requires it, and making it
+  // mandatory would force a cookie jar on anyone driving the OP by hand.
+  describe('transaction binding (--enable transaction-binding)', () => {
+    const boundFiles = generator.generate({
+      ...options,
+      features: { ...DEFAULT_FEATURES, transactionBinding: true },
+    });
+
     it('should generate the transaction binding cookie helpers in store', () => {
-      const file = files.find((f) => f.path === 'store.ts');
+      const file = boundFiles.find((f) => f.path === 'store.ts');
       const content = file?.content ?? '';
       expect(content).toContain("export const TRANSACTION_BINDING_COOKIE_PREFIX = 'oidc_txn_';");
       expect(content).toContain('export function buildTransactionBindingCookie(');
@@ -1921,14 +1942,14 @@ describe('HonoGenerator', () => {
     });
 
     it('should name the binding cookie per transaction so concurrent tabs do not collide', () => {
-      const file = files.find((f) => f.path === 'store.ts');
+      const file = boundFiles.find((f) => f.path === 'store.ts');
       expect(file?.content).toContain(
         "TRANSACTION_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +\n    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)",
       );
     });
 
     it('should issue the transaction binding cookie on the authorize redirect to login', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
+      const file = boundFiles.find((f) => f.path === 'routes/authorize.ts');
       const content = file?.content ?? '';
       expect(content).toContain('const bindingSecret = await generateRandomString(32);');
       expect(content).toContain('bindingHash: await computeTransactionBindingHash(bindingSecret),');
@@ -1938,7 +1959,7 @@ describe('HonoGenerator', () => {
     });
 
     it('should validate the transaction binding before rendering the login page', () => {
-      const file = files.find((f) => f.path === 'routes/login.ts');
+      const file = boundFiles.find((f) => f.path === 'routes/login.ts');
       const content = file?.content ?? '';
       expect(content).toContain('validateTransactionBinding');
       expect(content).toContain('parseTransactionBindingSecret');
@@ -1950,7 +1971,7 @@ describe('HonoGenerator', () => {
     });
 
     it('should validate the transaction binding before acting on the consent decision', () => {
-      const file = files.find((f) => f.path === 'routes/consent.ts');
+      const file = boundFiles.find((f) => f.path === 'routes/consent.ts');
       const content = file?.content ?? '';
       expect(content).toContain('validateTransactionBinding');
       expect(content).toContain('parseTransactionBindingSecret');
@@ -1960,21 +1981,58 @@ describe('HonoGenerator', () => {
     });
 
     it('should clear the transaction binding cookie once the transaction is finished', () => {
-      const file = files.find((f) => f.path === 'routes/consent.ts');
-      const content = file?.content ?? '';
-      expect(content).toContain('buildClearedTransactionBindingCookie(transactionId)');
+      const file = boundFiles.find((f) => f.path === 'routes/consent.ts');
+      expect(file?.content).toContain('buildClearedTransactionBindingCookie(transactionId)');
     });
 
-    it('should escape dynamic values in consent page', () => {
-      const file = files.find((f) => f.path === 'views.ts');
-      expect(file?.content).toContain('function escapeHtml(value: string): string');
-      expect(file?.content).toContain('.replace(/&/g, \'&amp;\')');
-      expect(file?.content).toContain('.replace(/</g, \'&lt;\')');
-      expect(file?.content).toContain('.replace(/>/g, \'&gt;\')');
-      expect(file?.content).toContain(".replace(/\"/g, '&quot;')");
-      expect(file?.content).toContain(".replace(/'/g, '&#39;')");
-      expect(file?.content).toContain('<li>${escapeHtml(s)}</li>');
-      expect(file?.content).toContain('const escapedClientId = escapeHtml(params.clientId);');
+    it('should generate the binding contract tests in the conformance test', () => {
+      const file = boundFiles.find((f) => f.path === 'conformance.test.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain("describe('Auth transaction User-Agent binding'");
+      expect(content).toContain(
+        "should not issue an authorization code for POST /consent with another transactions binding cookie",
+      );
+    });
+  });
+
+  // The DEFAULT build must stay drivable with curl and no cookie jar — that is
+  // the "気軽に試せる" property the project concept rests on, so it is pinned as a
+  // contract rather than left as an accident of the feature being off.
+  describe('transaction binding disabled (default)', () => {
+    const files = generator.generate(options);
+
+    it('should not generate any transaction binding cookie helper in store', () => {
+      const content = files.find((f) => f.path === 'store.ts')?.content ?? '';
+      expect(content.includes('TRANSACTION_BINDING_COOKIE_PREFIX')).toBe(false);
+      expect(content.includes('buildTransactionBindingCookie')).toBe(false);
+    });
+
+    it('should create the auth transaction without a binding hash', () => {
+      const content = files.find((f) => f.path === 'routes/authorize.ts')?.content ?? '';
+      expect(content).toContain('const transaction = createAuthTransaction(validatedRequest, csrfToken);');
+      expect(content.includes('computeTransactionBindingHash')).toBe(false);
+      expect(content.includes('buildTransactionBindingCookie')).toBe(false);
+    });
+
+    it('should not check any binding in the login route', () => {
+      const content = files.find((f) => f.path === 'routes/login.ts')?.content ?? '';
+      expect(content.includes('validateTransactionBinding')).toBe(false);
+      expect(content.includes('rejectUnboundTransaction')).toBe(false);
+      expect(content).toContain('validateCsrfToken(transaction, csrfToken);');
+    });
+
+    it('should not check any binding in the consent route', () => {
+      const content = files.find((f) => f.path === 'routes/consent.ts')?.content ?? '';
+      expect(content.includes('validateTransactionBinding')).toBe(false);
+      expect(content.includes('rejectUnboundTransaction')).toBe(false);
+      expect(content).toContain('validateCsrfToken(transaction, csrfToken);');
+    });
+
+    it('should pin the cookie-free flow as a conformance contract', () => {
+      const content = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
+      expect(content).toContain("describe('Auth transaction User-Agent binding (disabled by default)'");
+      expect(content).toContain('should complete the whole flow without sending a single cookie');
+      expect(content).toContain('should not set any binding cookie on the redirect to the login page');
     });
   });
 

@@ -61,8 +61,10 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
       '&code_challenge=' + CONFORMANCE_PKCE_CHALLENGE + '&code_challenge_method=S256',
   );
   const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-  // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-  // User-Agent that started it, so every later step must present that cookie.
+  // Carry forward whatever cookie /authorize set, exactly as a browser would.
+  // With --enable transaction-binding this is the per-transaction binding
+  // secret the later steps require; without it this is '' and the OP ignores
+  // it, so the same flow works in both builds.
   const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
   const transactionId =
     new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -1120,8 +1122,10 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
       const authorizeRes = await app.request(authorizeUrl);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
       const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
@@ -1230,8 +1234,10 @@ describe('generated provider HTTP conformance', () => {
       );
       expect(authorizeRes.status).toBe(302);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
       const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
@@ -1344,8 +1350,10 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + HINT_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
       const loginPath = hintRelativeLocation(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -1559,8 +1567,10 @@ describe('generated provider HTTP conformance', () => {
       );
       expect(authorizeRes.status).toBe(302);
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -1671,9 +1681,9 @@ describe('generated provider HTTP conformance', () => {
     const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-    // /authorize binds the transaction to the requesting User-Agent, so the flow
-    // carries that one binding cookie forward (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4).
-    // These helpers only fetch and parse: they make no assertions and contain no
+    // The flow carries forward whatever cookie /authorize set, like a browser
+    // would, so it passes with or without --enable transaction-binding. These
+    // helpers only fetch and parse: they make no assertions and contain no
     // branching, so every check stays in the it() blocks as an expect(). Test code
     // carries no logic that could drift from the OP's behavior.
     function relativeFrom(location: string | null): string {
@@ -1727,8 +1737,10 @@ describe('generated provider HTTP conformance', () => {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -2165,8 +2177,10 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -2231,8 +2245,10 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -2295,8 +2311,10 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -2520,8 +2538,10 @@ describe('generated provider HTTP conformance', () => {
           '/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(requestUri),
         );
         const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-        // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-        // User-Agent that started it, so every later step must present that cookie.
+        // Carry forward whatever cookie /authorize set, exactly as a browser would.
+        // With --enable transaction-binding this is the per-transaction binding
+        // secret the later steps require; without it this is '' and the OP ignores
+        // it, so the same flow works in both builds.
         const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
         const transactionId =
           new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -2584,8 +2604,10 @@ describe('generated provider HTTP conformance', () => {
             encodeURIComponent(requestUri),
         );
         const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-        // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-        // User-Agent that started it, so every later step must present that cookie.
+        // Carry forward whatever cookie /authorize set, exactly as a browser would.
+        // With --enable transaction-binding this is the per-transaction binding
+        // secret the later steps require; without it this is '' and the OP ignores
+        // it, so the same flow works in both builds.
         const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
         const transactionId =
           new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
@@ -2809,8 +2831,10 @@ describe('generated provider HTTP conformance', () => {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-      // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: /authorize binds the transaction to the
-      // User-Agent that started it, so every later step must present that cookie.
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
       const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';

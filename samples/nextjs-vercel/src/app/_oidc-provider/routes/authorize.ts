@@ -17,7 +17,6 @@ import {
   parseClaimsRequestParameter,
   validateIdTokenHint,
   createAuthTransaction,
-  computeTransactionBindingHash,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
@@ -36,7 +35,6 @@ import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
-  buildTransactionBindingCookie,
 } from '../store';
 import { defaultViews, renderView } from '../views';
 
@@ -263,15 +261,7 @@ const handleAuthorizationRequest = async (c: any) => {
 
     // Create authentication transaction
     const csrfToken = await generateRandomString(32);
-    // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: the End-User who authenticates and
-    // consents must be the one behind THIS User-Agent. transaction_id alone cannot
-    // prove that (it rides in the URL and can leak), so a secret is handed to this
-    // browser in an HttpOnly cookie and only its hash is kept on the transaction.
-    // See buildTransactionBindingCookie() in store.ts for the threat this closes.
-    const bindingSecret = await generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken, {
-      bindingHash: await computeTransactionBindingHash(bindingSecret),
-    });
+    const transaction = createAuthTransaction(validatedRequest, csrfToken);
     const transactionId = await generateRandomString(32);
 
     // Store transaction
@@ -493,13 +483,6 @@ const handleAuthorizationRequest = async (c: any) => {
             subject: existingSession.subject,
             authTime: existingSession.authTime,
           });
-          // Hand the binding secret to this browser before the interactive steps.
-          // Only paths that continue in the browser get the cookie; paths that
-          // redirect straight back to the client never needed one.
-          c.header(
-            'Set-Cookie',
-            buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
-          );
           const consentUrl = new URL('/consent', c.req.url);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
@@ -508,10 +491,6 @@ const handleAuthorizationRequest = async (c: any) => {
     }
 
     // Redirect to login page (prompt=login forces re-authentication; handled in login route)
-    c.header(
-      'Set-Cookie',
-      buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
-    );
     const loginUrl = new URL('/login', c.req.url);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());

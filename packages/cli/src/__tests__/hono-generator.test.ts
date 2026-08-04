@@ -240,6 +240,40 @@ describe('HonoGenerator', () => {
       expect(content).toContain("expect(callback.searchParams.get('iss')).toBe('http://localhost:3000')");
       expect(content).toContain('should allow a public client to revoke its own token with client_id only');
     });
+
+    // OIDC Core 1.0 §3.1.2.4: the OP must obtain an authorization decision before
+    // releasing information to the RP. The contract test pins that a missing /
+    // empty / unknown `action` never mints a code, so a user who edits the consent
+    // view's button value (or posts the form from a script) fails the test instead
+    // of silently getting a fail-open approval.
+    it('should pin the consent decision allowlist in the generated contract', () => {
+      const content = file?.content ?? '';
+      expect(content).toContain("describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)'");
+      expect(content).toContain(
+        'should not issue an authorization code when the consent POST omits the action parameter',
+      );
+      expect(content).toContain(
+        'should not issue an authorization code when the consent POST sends an empty action value',
+      );
+      expect(content).toContain(
+        'should not issue an authorization code when the consent POST sends an unknown action value',
+      );
+      expect(content).toContain(
+        'should return 400 for a consent POST with an unrecognized action value',
+      );
+      expect(content).toContain(
+        'should issue an authorization code when the consent POST sends action=approve',
+      );
+      expect(content).toContain(
+        'should redirect with error=access_denied when the consent POST sends action=deny',
+      );
+      expect(content).toContain(
+        'should not record consent via recordConsent when the action value is unrecognized',
+      );
+      expect(content).toContain(
+        "expect(consentStore.hasConsent('testuser', 'c-conf', ['openid'])).toBe(false)",
+      );
+    });
   });
 
   describe('core imports', () => {
@@ -2331,6 +2365,39 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
       );
       // Only the per-transaction handoff is cleared; the OP session persists.
       expect(consentFile?.content).not.toContain('browserSessionStore.delete');
+    });
+
+    // OIDC Core 1.0 Section 3.1.2.4: the authorization decision MUST be obtained
+    // before information is released to the RP. Detecting only the negative value
+    // (`deny`) would make every other value — missing, empty, unknown — approve.
+    it('should approve only the allowlisted action value', () => {
+      expect(consentFile?.content).toContain(`  if (action !== 'approve') {
+    return renderView(views.errorPage({
+      error: 'Invalid consent decision. Please use the Approve or Deny button.',
+      statusCode: 400,
+    }), { status: 400 });
+  }`);
+    });
+
+    // OIDC Core 1.0 Section 3.1.2.6: access_denied means the resource owner denied
+    // the request, which is not the same as no decision having been obtained. An
+    // unrecognized value therefore stops at the OP instead of returning to the RP.
+    it('should stop an unrecognized action at the OP instead of redirecting access_denied', () => {
+      const content = consentFile?.content ?? '';
+      const unknownActionIndex = content.indexOf("if (action !== 'approve') {");
+      const denyRedirectIndex = content.indexOf("redirectUrl.searchParams.set('error', 'access_denied')");
+
+      expect(denyRedirectIndex < unknownActionIndex).toBe(true);
+      expect(content.split("searchParams.set('error', 'access_denied')").length - 1).toBe(1);
+    });
+
+    it('should submit the same decision value from the consent view that the handler accepts', () => {
+      const views = files.find((f) => f.path === 'views.ts')?.content ?? '';
+
+      expect(views).toContain('<button type="submit" name="action" value="approve">Approve</button>');
+      expect(views).toContain('<button type="submit" name="action" value="deny">Deny</button>');
+      expect(consentFile?.content).toContain("if (action === 'deny') {");
+      expect(consentFile?.content).toContain("if (action !== 'approve') {");
     });
   });
 

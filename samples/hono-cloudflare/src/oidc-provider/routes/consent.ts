@@ -136,6 +136,27 @@ consentApp.post('/', async (c) => {
     return c.redirect(redirectUrl.toString());
   }
 
+  // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
+  // authorization decision before releasing information to the Relying Party."
+  // The affirmative decision is therefore detected on an allowlist: a missing,
+  // empty or unknown 'action' means no decision was obtained, so it must not
+  // approve. Deciding by "not deny" would approve every unexpected value instead.
+  //
+  // 'approve' is the decision value this provider accepts, and it MUST stay in
+  // sync with the Approve button in views.ts consentPage(). Changing it here
+  // without changing the button (or the other way round) makes every approval
+  // fail with the 400 below.
+  //
+  // Section 3.1.2.6: access_denied means the End-User denied the request, which
+  // is not the same as no decision at all — an unrecognized value stops here on
+  // the OP's own error page instead of being redirected back to the client.
+  if (action !== 'approve') {
+    return renderView(views.errorPage({
+      error: 'Invalid consent decision. Please use the Approve or Deny button.',
+      statusCode: 400,
+    }), { status: 400 });
+  }
+
   const session = await authSessionStore.get(transactionId);
   if (!session) {
     return renderView(views.errorPage({

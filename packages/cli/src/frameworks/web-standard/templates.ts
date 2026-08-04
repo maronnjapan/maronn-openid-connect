@@ -5,6 +5,7 @@ import {
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
+  consentDecisionConformanceBlock,
   consentWithdrawalConformanceBlock,
   consentRouteTemplate,
   customViewConformanceTestBlock,
@@ -1607,6 +1608,13 @@ ${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
           <li key={scope}>{scope}</li>
         ))}
       </ul>
+      {/*
+        The submit buttons carry the authorization decision (OIDC Core 1.0
+        Section 3.1.2.4). consentAction accepts exactly two values — 'approve'
+        and 'deny' — and rejects everything else, so customizing this markup must
+        keep both button values as they are: renaming 'approve' makes every
+        approval fail with an error page. See ./actions.ts.
+      */}
       <form action={consentAction}>
         <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
@@ -1714,6 +1722,25 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
 ${clearBindingCookie}    redirect(denyUrl.toString());
+  }
+
+  // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
+  // authorization decision before releasing information to the Relying Party."
+  // This action mints the authorization code, so it detects the affirmative
+  // decision on an allowlist just like the route handlers: a missing, empty or
+  // unknown 'action' means no decision was obtained and must not approve.
+  //
+  // 'approve' is the decision value this provider accepts, and it MUST stay in
+  // sync with the Approve button in consent/page.tsx.
+  //
+  // Section 3.1.2.6: access_denied means the End-User denied the request, which
+  // is not the same as no decision at all — an unrecognized value therefore goes
+  // to the OP's own error page instead of back to the client.
+  if (action !== 'approve') {
+    redirect(
+      '/oidc-error?error=invalid_request&error_description=' +
+        encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.'),
+    );
   }
 
   const session = await authSessionStore.get(transactionId);
@@ -2316,7 +2343,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${consentDecisionConformanceBlock()}});
 `;
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@maronn-oidc/experimental",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Experimental OAuth/OIDC extensions for maronn-oidc (unstable APIs)",
   "type": "module",
   "exports": {

@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@maronn-openid-connect/cli": "workspace:*",
-    "@cloudflare/workers-types": "^5.20260723.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
     "hono": "^4.12.34",
     "typescript": "^5.7.2",
     "vitest": "^3.2.6",

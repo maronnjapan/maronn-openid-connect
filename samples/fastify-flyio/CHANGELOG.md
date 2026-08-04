@@ -1,5 +1,12 @@
 # @maronn-openid-connect/sample-fastify-flyio
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [ddd8a34]
+  - @maronn-openid-connect/core@0.1.0
+
 ## 0.0.3
 
 ### Patch Changes

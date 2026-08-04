@@ -37,6 +37,7 @@ describe('DEFAULT_FEATURES', () => {
       requestObject: true,
       par: false,
       tokenExchange: false,
+      jarm: false,
       transactionBinding: false,
     });
   });
@@ -53,6 +54,7 @@ describe('resolveFeatures', () => {
         requestObject: true,
         par: false,
         tokenExchange: false,
+        jarm: false,
         transactionBinding: false,
       });
     });
@@ -68,6 +70,7 @@ describe('resolveFeatures', () => {
         requestObject: true,
         par: false,
         tokenExchange: false,
+        jarm: false,
         transactionBinding: false,
       });
     });
@@ -83,6 +86,7 @@ describe('resolveFeatures', () => {
         requestObject: true,
         par: false,
         tokenExchange: false,
+        jarm: false,
         transactionBinding: false,
       });
     });
@@ -98,6 +102,7 @@ describe('resolveFeatures', () => {
         requestObject: true,
         par: false,
         tokenExchange: false,
+        jarm: false,
         transactionBinding: false,
       });
     });
@@ -137,6 +142,7 @@ describe('resolveFeatures', () => {
         requestObject: true,
         par: false,
         tokenExchange: false,
+        jarm: false,
         transactionBinding: true,
       });
     });

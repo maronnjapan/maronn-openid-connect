@@ -18,6 +18,8 @@ import {
   loginRouteTemplate,
   parRouteTemplate,
   parConformanceBlock,
+  jarmConformanceBlock,
+  jarmConfigTemplate,
   tokenExchangeConformanceBlock,
   pkceDisabledConformanceBlock,
   persistentStorageConformanceBlock,
@@ -1668,6 +1670,15 @@ import { cookies } from 'next/headers';`
 
 `
     : '';
+  // EXPERIMENTAL (JARM): this Server Action deliberately does NOT produce the
+  // JWT-secured response, even when the OP was generated with --enable jarm.
+  // Next.js bundles Server Actions separately from Route Handlers, so this module
+  // holds its own instance of the signing key provider: a response signed here
+  // would carry the same kid as /.well-known/jwks.json but different key
+  // material, and every client would fail signature verification. The
+  // framework-neutral routes/consent.ts (which the generated conformance test
+  // drives) does answer in the recorded mode. See the JARM page in
+  // docs/library-document for the limitation this leaves on the Next.js target.
   return `'use server';
 
 import { redirect } from 'next/navigation';${bindingCookiesImport}
@@ -1884,6 +1895,16 @@ export function webConformanceTestTemplate(
     : '';
   // Experimental (RFC 9126): the PAR contract tests need the store and the
   // generated PAR settings.
+  const responseModesSupportedExpectation = features.jarm
+    ? `        // OAuth 2.0 Multiple Response Type Encoding Practices §2 + JARM §4: the
+        // code flow returns the authorization response via query, and this OP was
+        // generated with --enable jarm, so the JWT-secured query modes are
+        // advertised alongside it.
+        response_modes_supported: ['query', 'query.jwt', 'jwt'],`
+    : `        // OAuth 2.0 Multiple Response Type Encoding Practices §2: the code flow
+        // returns the authorization response via query, so the OP advertises
+        // response_modes_supported as exactly ['query'].
+        response_modes_supported: ['query'],`;
   const parConformanceImports = features.par
     ? `
 import { parStore } from './store.js';
@@ -2074,10 +2095,7 @@ ${nodeAdapterContract}
         jwks_uri: 'http://localhost:3000/.well-known/jwks.json',
         userinfo_endpoint: 'http://localhost:3000/userinfo',
         response_types_supported: ['code'],
-        // OAuth 2.0 Multiple Response Type Encoding Practices §2: the code flow
-        // returns the authorization response via query, so the OP advertises
-        // response_modes_supported as exactly ['query'].
-        response_modes_supported: ['query'],
+${responseModesSupportedExpectation}
       });
     });
 
@@ -2316,7 +2334,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${jarmConformanceBlock(features)}});
 `;
 }
 
@@ -2354,6 +2372,11 @@ function webCoreGeneratedFiles(
     // Experimental (RFC 9126): only generated with --enable par.
     ...(features.par
       ? [{ path: 'routes/par.ts', content: toWebRouteTemplate(parRouteTemplate(corePkg)) }]
+      : []),
+    // Experimental (JARM): settings module, only generated with --enable jarm.
+    // Framework-neutral already (no Hono types), so it is emitted as-is.
+    ...(features.jarm
+      ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
       : []),
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
     { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },

@@ -14,6 +14,7 @@ import {
   revocationRouteTemplate,
   jwksRouteTemplate,
   parRouteTemplate,
+  jarmConfigTemplate,
   discoveryRouteTemplate,
   loginRouteTemplate,
   consentRouteTemplate,
@@ -47,6 +48,10 @@ export class HonoGenerator implements FrameworkGenerator {
       // Experimental (RFC 9126): only generated with --enable par.
       ...(features.par
         ? [{ path: 'routes/par.ts', content: parRouteTemplate(pkg) }]
+        : []),
+      // Experimental (JARM): settings module, only generated with --enable jarm.
+      ...(features.jarm
+        ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
         : []),
       { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg) },
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features) },

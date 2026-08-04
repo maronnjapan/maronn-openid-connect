@@ -41,9 +41,10 @@ discoveryApp.get('/', (c) => {
     responseTypesSupported: ['code'],
     // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0 §3:
     // the OP only implements the authorization code flow, whose authorization
-    // response is returned via query, so response_modes_supported is pinned to
-    // ['query']. Extend this list when form_post (or other modes) are added.
-    responseModesSupported: ['query'],
+    // response is returned via query. EXPERIMENTAL (JARM §4): this provider was
+    // generated with --enable jarm, so the JWT-secured query modes are advertised
+    // alongside it. Extend this list when form_post (or other modes) are added.
+    responseModesSupported: ['query', 'query.jwt', 'jwt'],
     subjectTypesSupported: ['public'],
     idTokenSigningKeys,
     userinfoEndpoint: `${issuer}/userinfo`,
@@ -151,5 +152,9 @@ discoveryApp.get('/', (c) => {
     ...(parConfig.requirePushedAuthorizationRequests
       ? { require_pushed_authorization_requests: true }
       : {}),
+    // EXPERIMENTAL — JARM §4 metadata. The response JWT is always signed with
+    // RS256 (JARM §3: the default for a client that registered no
+    // authorization_signed_response_alg), so exactly one alg is advertised.
+    authorization_signing_alg_values_supported: ['RS256'],
   });
 });

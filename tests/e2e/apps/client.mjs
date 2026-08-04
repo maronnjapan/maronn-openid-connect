@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, verify } from 'node:crypto';
 import { createServer } from 'node:http';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -37,6 +37,12 @@ const server = createServer(async (req, res) => {
     // the returned request_uri.
     if (req.method === 'GET' && url.pathname === '/start-par') {
       await startPushedAuthorization(url, res);
+      return;
+    }
+    // EXPERIMENTAL (JARM §2.3.1): ask the OP to return the authorization
+    // response as one signed JWT in the `response` query parameter.
+    if (req.method === 'GET' && url.pathname === '/start-jarm') {
+      await startAuthorization(url, res, { responseMode: 'query.jwt' });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/callback') {
@@ -81,6 +87,10 @@ async function startAuthorization(requestUrl, res, options = {}) {
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'prompt');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'id_token_hint');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'acr_values');
+  // EXPERIMENTAL (JARM §2.3): query.jwt / jwt select the JWT-secured response.
+  // The request itself is otherwise identical to the plain code flow.
+  const responseMode = requestUrl.searchParams.get('response_mode') ?? options.responseMode;
+  if (responseMode) authorizationUrl.searchParams.set('response_mode', responseMode);
 
   redirect(res, authorizationUrl.toString());
 }
@@ -120,6 +130,13 @@ async function startPushedAuthorization(requestUrl, res) {
 }
 
 async function handleCallback(url, res) {
+  // EXPERIMENTAL (JARM §2.3.1): a JARM response carries no plain parameters at
+  // all — everything is inside the signed JWT of the `response` parameter.
+  if (url.searchParams.has('response')) {
+    await handleJarmCallback(url, res);
+    return;
+  }
+
   const state = requireSearchParam(url, 'state');
   const responseIssuer = requireSearchParam(url, 'iss');
   const transaction = transactions.get(state);
@@ -217,6 +234,136 @@ async function completeTokenExchange(res, tokens) {
   }));
 }
 
+/**
+ * EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM), client side.
+ *
+ * Implements the client processing rules of JARM §2.4 in the order §5.1 requires:
+ * the issuer is confirmed BEFORE anything from the JWT is used to fetch keys, so
+ * a forged `iss` can never point the client at an attacker-chosen JWKS URL.
+ */
+async function handleJarmCallback(url, res) {
+  const responseJwt = requireSearchParam(url, 'response');
+
+  // JARM §2.3.1: `response` is the only parameter of a JARM authorization
+  // response. A plain code / state / iss alongside it means the OP did not
+  // actually switch response modes.
+  const plainParams = [...url.searchParams.keys()].filter((name) => name !== 'response');
+  if (plainParams.length > 0) {
+    throw new Error(`JARM response carried plain parameters: ${plainParams.join(', ')}`);
+  }
+
+  const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = responseJwt.split('.');
+  const header = decodeJwtSegment(encodedHeader);
+  const claims = decodeJwtSegment(encodedPayload);
+
+  // JARM §5.1 (MUST): the issuer must be known and expected before its metadata
+  // (here: the JWKS URI) is used.
+  if (claims.iss !== issuer) {
+    throw new Error(`Unexpected JARM issuer: ${claims.iss}`);
+  }
+
+  // JARM §2.4: the client MUST reject alg=none, and this OP only signs RS256.
+  if (header.alg !== 'RS256') {
+    throw new Error(`Unexpected JARM signing algorithm: ${header.alg}`);
+  }
+
+  const jwks = await fetchJson(new URL('/.well-known/jwks.json', issuer));
+  const jwk = (jwks.keys ?? []).find((candidate) => candidate.kid === header.kid);
+  if (jwk === undefined) {
+    throw new Error(`No JWKS key matches kid ${header.kid}`);
+  }
+  const signatureValid = verify(
+    'RSA-SHA256',
+    Buffer.from(`${encodedHeader}.${encodedPayload}`),
+    createPublicKey({ key: jwk, format: 'jwk' }),
+    Buffer.from(encodedSignature, 'base64url'),
+  );
+  if (!signatureValid) {
+    throw new Error('JARM response signature verification failed');
+  }
+
+  // JARM §2.1: aud identifies this client, exp bounds the response's lifetime.
+  if (claims.aud !== clientId) {
+    throw new Error(`Unexpected JARM audience: ${claims.aud}`);
+  }
+  if (typeof claims.exp !== 'number' || claims.exp * 1000 <= Date.now()) {
+    throw new Error(`JARM response is expired: exp=${claims.exp}`);
+  }
+
+  const state = claims.state;
+  const transaction = transactions.get(state);
+  if (transaction === undefined) {
+    throw new Error(`Unknown authorization state: ${state}`);
+  }
+  transactions.delete(state);
+
+  const jarm = {
+    alg: header.alg,
+    kid: header.kid,
+    iss: claims.iss,
+    aud: claims.aud,
+    signatureValid,
+    claimNames: Object.keys(claims).sort().join(' '),
+  };
+
+  if (claims.error !== undefined) {
+    sendHtml(res, 200, renderAuthorizationError({
+      error: claims.error,
+      errorDescription: claims.error_description ?? '',
+      state,
+      issuer: claims.iss,
+      jarm,
+    }));
+    return;
+  }
+
+  const code = claims.code;
+  const tokens = await formPost(new URL('/token', issuer), {
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+    client_id: clientId,
+    client_secret: clientSecret,
+    code_verifier: transaction.codeVerifier,
+  });
+  const userInfo = await fetchJson(new URL('/userinfo', issuer), {
+    headers: {
+      Authorization: `Bearer ${tokens.access_token}`,
+    },
+  });
+  const resourceProfile = await fetchJson(new URL('/profile', resourceServerUrl), {
+    headers: {
+      Authorization: `Bearer ${tokens.access_token}`,
+    },
+  });
+
+  sendHtml(res, 200, renderResult({
+    code,
+    state,
+    issuer: claims.iss,
+    nonce: transaction.nonce,
+    tokens,
+    userInfo,
+    resourceProfile,
+    jarm,
+  }));
+}
+
+function decodeJwtSegment(segment) {
+  return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+}
+
+function renderJarmDetails(jarm) {
+  if (jarm === undefined) return '';
+  return `
+        <dt>jarm alg</dt><dd data-testid="jarm-alg">${escapeHtml(jarm.alg)}</dd>
+        <dt>jarm kid</dt><dd data-testid="jarm-kid">${escapeHtml(jarm.kid)}</dd>
+        <dt>jarm iss</dt><dd data-testid="jarm-iss">${escapeHtml(jarm.iss)}</dd>
+        <dt>jarm aud</dt><dd data-testid="jarm-aud">${escapeHtml(jarm.aud)}</dd>
+        <dt>jarm signature</dt><dd data-testid="jarm-signature-valid">${escapeHtml(String(jarm.signatureValid))}</dd>
+        <dt>jarm claims</dt><dd data-testid="jarm-claim-names">${escapeHtml(jarm.claimNames)}</dd>`;
+}
+
 async function formPost(url, fields) {
   return fetchJson(url, {
     method: 'POST',
@@ -259,7 +406,7 @@ function renderResult(result) {
         <dt>resource subject</dt><dd data-testid="resource-subject">${escapeHtml(result.resourceProfile.subject)}</dd>
         <dt>resource client</dt><dd data-testid="resource-client-id">${escapeHtml(result.resourceProfile.client_id)}</dd>
         <dt>resource scope</dt><dd data-testid="resource-scope">${escapeHtml(result.resourceProfile.scope)}</dd>
-        <dt>resource audience</dt><dd data-testid="resource-audience">${escapeHtml(JSON.stringify(result.resourceProfile.audience))}</dd>
+        <dt>resource audience</dt><dd data-testid="resource-audience">${escapeHtml(JSON.stringify(result.resourceProfile.audience))}</dd>${renderJarmDetails(result.jarm)}
       </dl>
     </main>
   </body>
@@ -303,7 +450,7 @@ function renderAuthorizationError(result) {
         <dt>error</dt><dd data-testid="authorization-error">${escapeHtml(result.error)}</dd>
         <dt>error description</dt><dd data-testid="authorization-error-description">${escapeHtml(result.errorDescription)}</dd>
         <dt>state</dt><dd data-testid="authorization-state">${escapeHtml(result.state)}</dd>
-        <dt>iss</dt><dd data-testid="authorization-issuer">${escapeHtml(result.issuer)}</dd>
+        <dt>iss</dt><dd data-testid="authorization-issuer">${escapeHtml(result.issuer)}</dd>${renderJarmDetails(result.jarm)}
       </dl>
     </main>
   </body>

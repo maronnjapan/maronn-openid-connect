@@ -250,18 +250,22 @@ describe('generate with --enable jarm', () => {
     });
   });
 
-  // Next.js drives consent through a Server Action rather than the shared route,
-  // so that file is the real authorization-response site for this framework.
-  it('should answer the Next.js consent Server Action in the recorded response mode', () => {
+  // Next.js bundles Server Actions separately from Route Handlers, so a response
+  // signed inside consent/actions.ts would carry the same kid as
+  // /.well-known/jwks.json but different key material — every client would fail
+  // signature verification. The Server Action therefore keeps the plain query
+  // response, and this test pins that so the hazard is not reintroduced.
+  it('should keep the Next.js consent Server Action on the plain query response', () => {
     const content = fileContent(generateFiles('nextjs', ['jarm']), 'consent/actions.ts');
 
-    expect(content.includes("from '@maronn-openid-connect/experimental/jarm'")).toBe(true);
-    expect(content.includes("transaction.jarmResponseMode === 'query.jwt'")).toBe(true);
+    expect(content.includes('@maronn-openid-connect/experimental/jarm')).toBe(false);
+    expect(content.includes('createJarmResponseJwt')).toBe(false);
+    expect(content.includes("successUrl.searchParams.set('code', authCodeData.code);")).toBe(true);
   });
 
-  it('should leave the Next.js consent Server Action untouched by default', () => {
-    const content = fileContent(generateFiles('nextjs'), 'consent/actions.ts');
-
-    expect(content.includes('jarm')).toBe(false);
+  it('should generate an identical Next.js consent Server Action with and without jarm', () => {
+    expect(fileContent(generateFiles('nextjs', ['jarm']), 'consent/actions.ts')).toBe(
+      fileContent(generateFiles('nextjs'), 'consent/actions.ts'),
+    );
   });
 });

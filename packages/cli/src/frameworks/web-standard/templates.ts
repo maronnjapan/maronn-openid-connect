@@ -2,7 +2,6 @@ import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
 import {
-  EXPERIMENTAL_PACKAGE,
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
@@ -1671,105 +1670,15 @@ import { cookies } from 'next/headers';`
 
 `
     : '';
-  // EXPERIMENTAL (JARM): the Next.js consent Server Action is this framework's
-  // real authorization-response site (routes/consent.ts is only exercised by the
-  // generated conformance test), so it answers in the recorded response mode too.
-  const jarmConsentCoreImports = features.jarm
-    ? `
-  type AuthTransaction,`
-    : '';
-  const jarmConsentImports = features.jarm
-    ? `
-import {
-  buildJarmRedirectUrl,
-  createJarmResponseJwt,
-  type JarmAuthTransactionFields,
-} from '${EXPERIMENTAL_PACKAGE}/jarm';
-import { jarmConfig } from '../_oidc-provider/routes/jarm';`
-    : '';
-  const jarmConsentHelper = features.jarm
-    ? `
-/**
- * EXPERIMENTAL — JARM Section 2.3.1: deliver the authorization response as the
- * single \`response\` query parameter holding a signed JWT, when the authorize
- * route recorded response_mode=query.jwt on this transaction.
- *
- * The transaction is read back from the store here, so the auth transaction
- * store MUST persist fields it does not know about — otherwise a client that
- * asked for a JWT response silently receives a plain query response.
- *
- * Without a JARM transaction this is the plain query response the OP has always
- * produced (RFC 9207 Section 2 appends iss; in JARM mode the JWT's iss claim
- * carries the same statement).
- */
-async function buildConsentRedirect(
-  transaction: AuthTransaction & JarmAuthTransactionFields,
-  redirectUri: string,
-  parameters: Record<string, string | undefined>,
-  issuer: string,
-): Promise<string> {
-  if (transaction.jarmResponseMode === 'query.jwt') {
-    // JARM Section 2.2: signed with the OP's general-purpose active signing key,
-    // whose public half is published at /.well-known/jwks.json under the same kid.
-    const signingKey = await oidcProviderOptions.signingKeyProvider.getSigningKey();
-    return buildJarmRedirectUrl(
-      redirectUri,
-      await createJarmResponseJwt({
-        issuer,
-        clientId: transaction.clientId,
-        parameters,
-        signingKey,
-        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
-      }),
-    );
-  }
-  const url = new URL(redirectUri);
-  for (const [name, value] of Object.entries(parameters)) {
-    if (value !== undefined) url.searchParams.set(name, value);
-  }
-  url.searchParams.set('iss', issuer);
-  return url.toString();
-}
-`
-    : '';
-  const jarmConsentDeny = features.jarm
-    ? `  if (action === 'deny') {
-    await transactionStore.delete('auth_txn:' + transactionId);
-    await authSessionStore.delete(transactionId);
-${clearBindingCookie}    // EXPERIMENTAL (JARM Section 2.1): a request that asked for
-    // response_mode=query.jwt gets its error as a signed JWT too.
-    redirect(
-      await buildConsentRedirect(transaction, transaction.redirectUri, {
-        error: 'access_denied',
-        state: transaction.state,
-      }, issuer),
-    );
-  }`
-    : `  if (action === 'deny') {
-    const denyUrl = new URL(transaction.redirectUri);
-    denyUrl.searchParams.set('error', 'access_denied');
-    if (transaction.state) {
-      denyUrl.searchParams.set('state', transaction.state);
-    }
-    denyUrl.searchParams.set('iss', issuer);
-    await transactionStore.delete('auth_txn:' + transactionId);
-    await authSessionStore.delete(transactionId);
-${clearBindingCookie}    redirect(denyUrl.toString());
-  }`;
-  const jarmConsentSuccess = features.jarm
-    ? `${clearBindingCookieOnSuccess}  redirect(
-    await buildConsentRedirect(transaction, responseParams.redirectUri, {
-      code: authCodeData.code,
-      state: responseParams.state,
-    }, issuer),
-  );`
-    : `${clearBindingCookieOnSuccess}  const successUrl = new URL(responseParams.redirectUri);
-  successUrl.searchParams.set('code', authCodeData.code);
-  if (responseParams.state) {
-    successUrl.searchParams.set('state', responseParams.state);
-  }
-  successUrl.searchParams.set('iss', issuer);
-  redirect(successUrl.toString());`;
+  // EXPERIMENTAL (JARM): this Server Action deliberately does NOT produce the
+  // JWT-secured response, even when the OP was generated with --enable jarm.
+  // Next.js bundles Server Actions separately from Route Handlers, so this module
+  // holds its own instance of the signing key provider: a response signed here
+  // would carry the same kid as /.well-known/jwks.json but different key
+  // material, and every client would fail signature verification. The
+  // framework-neutral routes/consent.ts (which the generated conformance test
+  // drives) does answer in the recorded mode. See the JARM page in
+  // docs/library-document for the limitation this leaves on the Next.js target.
   return `'use server';
 
 import { redirect } from 'next/navigation';${bindingCookiesImport}
@@ -1777,17 +1686,17 @@ import {
   getAuthTransaction,
   validateCsrfToken,${bindingCoreImport}
   completeAuthTransaction,
-  createAuthorizationCode,${jarmConsentCoreImports}
+  createAuthorizationCode,
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
-import type { RegisteredClient } from '../_oidc-provider/config';${jarmConsentImports}
+import type { RegisteredClient } from '../_oidc-provider/config';
 ${bindingStoreImport}
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
 const { transactionStore, authCodeStore, authSessionStore } = providerStores;
 const { consentResolver } = createStoreResolvers(providerStores);
-${jarmConsentHelper}
+
 /**
  * Consent Server Action.
  *
@@ -1806,7 +1715,17 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
   // RFC 9207 §2: include the issuer identifier on every authorization response.
   const issuer = oidcProviderOptions.config?.issuer ?? '';
 
-${jarmConsentDeny}
+  if (action === 'deny') {
+    const denyUrl = new URL(transaction.redirectUri);
+    denyUrl.searchParams.set('error', 'access_denied');
+    if (transaction.state) {
+      denyUrl.searchParams.set('state', transaction.state);
+    }
+    denyUrl.searchParams.set('iss', issuer);
+    await transactionStore.delete('auth_txn:' + transactionId);
+    await authSessionStore.delete(transactionId);
+${clearBindingCookie}    redirect(denyUrl.toString());
+  }
 
   const session = await authSessionStore.get(transactionId);
   if (!session) {
@@ -1849,7 +1768,13 @@ ${jarmConsentDeny}
 
   await authSessionStore.delete(transactionId);
 
-${jarmConsentSuccess}
+${clearBindingCookieOnSuccess}  const successUrl = new URL(responseParams.redirectUri);
+  successUrl.searchParams.set('code', authCodeData.code);
+  if (responseParams.state) {
+    successUrl.searchParams.set('state', responseParams.state);
+  }
+  successUrl.searchParams.set('iss', issuer);
+  redirect(successUrl.toString());
 }
 `;
 }

@@ -413,7 +413,11 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 ## 未解決事項
 
-なし。セキュリティ上の未解決事項: なし。
+| ID | 内容 | 状況 |
+|---|---|---|
+| U4 | **Next.js ターゲットの consent Server Action で JARM 応答を返せない**（実装時に判明。「実装時の小修正」#6 参照）。Next.js は Server Action を Route Handler と別バンドルに分けるため、Server Action 側の署名鍵プロバイダのインスタンスが `jwks_uri` を公開する側と異なり、署名検証が必ず失敗する。現状は平文クエリで据え置き、制限として明示している | **要再レビュー**。恒久対応（署名鍵を両バンドルで共有する仕組み、または応答構築を Route Handler 側へ寄せる設計）は本仕様のスコープ外であり、推測で補完せず次サイクルの仕様検討に回す。セキュリティ上の欠陥ではない（検証不能な JWT を返すより安全側へ倒している）が、Next.js 利用者には JARM の主目的が同意経由の経路で得られない |
+
+セキュリティ上の未解決事項: なし。
 
 ### 解決済み
 
@@ -434,7 +438,7 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 | 3 | `resolveJarmResponseMode` の引数型を `Record<string, string \| undefined>` → `object` へ。値が文字列でなければ `plain` を返す | core の `AuthorizationRequestParams` は index signature を持たない interface で `Record` に代入できないため。`effectiveParams` をそのまま渡せる形にした（仕様の呼び出し方は不変） |
 | 4 | 生成コードの `AuthorizationError` 第 1 引数を文字列リテラルではなく `AuthorizationErrorCode.InvalidRequest` へ | core の `AuthorizationErrorCode` は TS の `enum` であり文字列リテラルを受け付けないため |
 | 5 | `jarmConfig` の置き場所を、jarm 有効時のみ生成する新規ファイル `routes/jarm.ts` に確定 | PAR は `routes/par.ts`（エンドポイント本体）に同居させたが、JARM は新規エンドポイントを持たないため設定専用モジュールとして独立させた。authorize / consent の両ルートが参照する |
-| 6 | 応答構築サイトの棚卸しに **Next.js の consent Server Action（`consent/actions.ts`）** を追加（7 サイト目） | Next.js サンプルの実際の同意フローは共有の `routes/consent.ts` ではなく Server Action を通る（`routes/consent.ts` は生成 conformance テストが叩くのみ）。ここを対応しないと Next.js だけ同意経由の応答が平文へ落ちる。CLI テストで固定した |
+| 6 | Next.js の consent Server Action（`consent/actions.ts`）は **JARM 非対応のまま据え置き**（実装 → E2E で不可と判明 → 撤回） | Next.js サンプルの実際の同意フローは共有の `routes/consent.ts` ではなく Server Action を通るため、一度は 7 サイト目として実装した。しかし E2E（nextjs サンプル）で署名検証が必ず失敗することが判明。Next.js は Server Action を Route Handler と別バンドルへ分けるため、Server Action 側は署名鍵プロバイダの**別インスタンス**を持つ。実測では応答 JWT の `kid` は `/.well-known/jwks.json` と一致するのに鍵素材が異なり（`verify` が false）、クライアントは必ず検証に失敗する。検証できない JWT を返すより平文で返すほうが安全と判断し、Server Action は平文クエリのまま据え置いた。CLI テストで「Server Action の生成物が jarm 有無で同一」であることを固定し、docs の「既知の制約」・changeset・生成コードのコメントに制限を明記した。**恒久対応は再レビュー扱い**（下記「未解決事項」参照） |
 | 7 | consent ルートの `type AuthTransaction` import を transaction-binding 無効時のみ追加 | transaction-binding が既に同じ型を import しており、両方有効だと named import が重複してコンパイルできないため |
 | 8 | `@maronn-openid-connect/experimental` にも **patch の手書き changeset** を追加（Review 3 の「手書きしない」を修正） | 必須チェック `changeset-coverage` が PR 自身の changeset を要求するため、手書きなしではマージできない。`ensure-experimental-changeset.mjs` は手書きがあれば自動生成をスキップするので二重にならない。patch 固定の規約は維持している |
 

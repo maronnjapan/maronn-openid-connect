@@ -78,7 +78,11 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/discovery.ts` | `response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
 | `conformance.test.ts` | JARM の契約テストの追加 |
 
-Next.js では、consent が Server Action（`consent/actions.ts`）としても生成されるため、そちらにも同じ分岐が入ります。
+:::caution[Next.js の制限]
+Next.js ターゲットでは、ログイン・同意画面を経由する応答は **JARM になりません**（平文クエリのままです）。Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` は署名鍵プロバイダの別インスタンスを持ちます。ここで署名すると `/.well-known/jwks.json` と同じ `kid` を名乗りながら鍵素材が異なる JWT ができ、クライアント側の署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全なため、Server Action は JARM 分岐を持ちません。
+
+Next.js で JARM 応答が得られるのは、`prompt=none` と SSO 再利用のように authorize ルート内で完結する経路だけです。詳細は [既知の制約](#既知の制約) を参照してください。
+:::
 
 ## 設定
 
@@ -269,6 +273,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 - 署名アルゴリズムは RS256 固定です。クライアント別 `authorization_signed_response_alg`（§3）や PS256 / ES256 は非対応です
 - `.jwt` 系以外の `response_mode`（`form_post` / `fragment` など）は従来どおり**無視**します。JARM は `.jwt` 系にだけ意味を足す拡張であり、有効化によって他の値の扱いは変わりません
 - Dynamic Client Registration がないため、クライアントメタデータによる JARM 設定はできません
+- **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全と判断しています。`prompt=none` と SSO 再利用（authorize ルート内で完結する経路）は Next.js でも JARM 応答になります。hono / express / fastify / web-standard には、この制限はありません
 
 ## core 機能との違い
 
@@ -286,7 +291,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 | 症状 | 原因 / 対処 |
 |---|---|
 | `response_mode=query.jwt` を付けても平文クエリで返る | `--enable jarm` を付けずに生成しています。discovery の `response_modes_supported` に `query.jwt` があるか確認してください |
-| ログイン・同意を挟むと平文クエリに戻る（`prompt=none` では JWT になる） | auth transaction store が未知フィールドを落としています。オブジェクトを丸ごと保存する実装へ直してください |
+| ログイン・同意を挟むと平文クエリに戻る（`prompt=none` では JWT になる） | auth transaction store が未知フィールドを落としています。オブジェクトを丸ごと保存する実装へ直してください。**Next.js ではこれが仕様どおりの挙動です**（上記「既知の制約」参照） |
 | `Cannot find module '@maronn-openid-connect/experimental/jarm'` | `pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental` を実行してください |
 | 起動時に `jarmConfig.jarmResponseLifetimeSeconds must be an integer between 5 and 600 seconds` | 設定値が JARM §2.1 の推奨レンジ外です |
 | クライアントで `code` が見つからない | JARM モードでは `code` はクエリではなく JWT のクレームです。`response` をデコードしてください |

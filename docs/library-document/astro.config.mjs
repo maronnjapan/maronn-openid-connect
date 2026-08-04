@@ -61,6 +61,7 @@ export default defineConfig({
             { label: 'Experimental機能とは', slug: 'experimental' },
             { label: 'PAR (RFC 9126)', slug: 'experimental/par' },
             { label: 'Token Exchange (RFC 8693)', slug: 'experimental/token-exchange' },
+            { label: 'JARM', slug: 'experimental/jarm' },
           ],
         },
       ],

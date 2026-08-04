@@ -4,6 +4,10 @@
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {
+    "./jarm": {
+      "types": "./dist/jarm/index.d.ts",
+      "import": "./dist/jarm/index.js"
+    },
     "./par": {
       "types": "./dist/par/index.d.ts",
       "import": "./dist/par/index.js"

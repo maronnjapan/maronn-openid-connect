@@ -172,9 +172,7 @@ subpath export（`packages/experimental/package.json` の `exports["./jarm"]` �
  *  - { kind: 'plain' }: 未指定 / 'query' / .jwt 系以外の値（従来挙動を維持）
  *  - { kind: 'unsupported-jwt-mode', requested: string }: fragment.jwt / form_post.jwt /
  *    その他 '.jwt' で終わる未知値。呼び出し側が invalid_request のリダイレクト可能エラーにする */
-export function resolveJarmResponseMode(
-  params: Record<string, string | undefined>,
-): JarmResponseModeResolution;
+export function resolveJarmResponseMode(params: object): JarmResponseModeResolution;
 
 export type JarmResponseModeResolution =
   | { kind: 'jarm'; mode: 'query.jwt' }
@@ -187,12 +185,12 @@ export type JarmResponseModeResolution =
  *  header: { alg: 'RS256', kid: signingKey.keyId }（typ なし）
  *  payload: { iss, aud, exp, ...parameters } */
 export async function createJarmResponseJwt(options: {
-  issuer: string;                        // iss クレーム
-  clientId: string;                      // aud クレーム
-  parameters: Record<string, string>;    // code/state または error/error_description/state
-  signingKey: SigningKey;                // core の型を再利用
-  lifetimeSeconds?: number;              // デフォルト 60
-  now?: Date;                            // テスト用の時刻注入
+  issuer: string;                                   // iss クレーム
+  clientId: string;                                 // aud クレーム
+  parameters: Record<string, string | undefined>;   // code/state または error/error_description/state
+  signingKey: SigningKey;                           // core の型を再利用
+  lifetimeSeconds?: number;                         // デフォルト 60
+  now?: Date;                                       // テスト用の時刻注入
 }): Promise<string>;
 
 /** redirect_uri に response パラメータのみを付けた URL を返す（JARM §2.3.1） */
@@ -424,6 +422,20 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 | U3 | E2E 専用クライアント（`tests/e2e/apps`）への JARM 検証組み込み方（既存クライアントの構造確認） | `tests/e2e/apps/client.mjs` は Node 組み込みのみの HTTP サーバーで、experimental 機能ごとに `/start-*` ルートを足す既存パターン（`/start-par` / `/start-exchange`）を持つ。`/start-jarm` ルート＋`/callback` の JARM 分岐（iss 先行確認 → jwks 取得 → `node:crypto` で RS256 検証 → aud/exp 確認 → code 抽出）で組み込める。spec は discovery 自己スキップパターン（`pushed-authorization-requests.spec.ts:26`）を踏襲。確定内容はテスト計画の E2E 節に記載 | Review 3（2026-08-04） |
 | U1 | `buildErrorRedirect` の 8 呼び出しサイトすべてで `transaction` がスコープにあるかの網羅確認 | 8 サイト（`templates.ts:2019, 2035, 2048, 2061, 2068, 2095, 2101, 2108`）すべてが `createAuthTransaction`（:2003）直後のローカル変数 `transaction` を参照することをテンプレート通読で確認。トランザクション不在のサイトは無い。put（:2007）は全サイトより前に完了しており、参照はローカル変数のため store round-trip にも依存しない（行番号は当時の main 45997d8 時点。現在位置と構造不変の再確認は棚卸し表を参照） | Review 2（2026-08-03） |
 | U2 | 応答 JWT 生成の async 化と jarm 無効時バイト同一の両立戦略 | ヘルパー定義の丸ごと条件付き補間＋呼び出しサイトの `${jarmAwait}` / `${jarmTxnArg}` 補間で解決（「CLI生成コードからの利用方法」実装上の必須要件 5 に確定内容を記載） | Review 2（2026-08-03） |
+
+## 実装時の小修正（2026-08-04）
+
+実装 Routine で仕様と実装の双方を更新した差分。いずれも仕様の意図を変えず、型安全性・実挙動との整合のための修正である。
+
+| # | 内容 | 理由 |
+|---|---|---|
+| 1 | `createJarmResponseJwt` の `parameters` を `Record<string, string>` → `Record<string, string \| undefined>` へ | バリデーション 3（「値が `undefined` のパラメータはクレームに含めない」）を型として表現するため。生成コードは `{ code, state: transaction.state }` の形で `string \| undefined` を渡す |
+| 2 | 応答 JWT のクレーム構築を `{ iss, aud, exp, ...parameters }` → 「`parameters` を先に展開し `iss` / `aud` / `exp` を後から設定」へ | `parameters` に同名キーがあっても OP 自身の表明を上書きできないようにするハードニング。クレーム集合は仕様どおりで JSON のキー順のみが変わる（単体テストで固定） |
+| 3 | `resolveJarmResponseMode` の引数型を `Record<string, string \| undefined>` → `object` へ。値が文字列でなければ `plain` を返す | core の `AuthorizationRequestParams` は index signature を持たない interface で `Record` に代入できないため。`effectiveParams` をそのまま渡せる形にした（仕様の呼び出し方は不変） |
+| 4 | 生成コードの `AuthorizationError` 第 1 引数を文字列リテラルではなく `AuthorizationErrorCode.InvalidRequest` へ | core の `AuthorizationErrorCode` は TS の `enum` であり文字列リテラルを受け付けないため |
+| 5 | `jarmConfig` の置き場所を、jarm 有効時のみ生成する新規ファイル `routes/jarm.ts` に確定 | PAR は `routes/par.ts`（エンドポイント本体）に同居させたが、JARM は新規エンドポイントを持たないため設定専用モジュールとして独立させた。authorize / consent の両ルートが参照する |
+| 6 | 応答構築サイトの棚卸しに **Next.js の consent Server Action（`consent/actions.ts`）** を追加（7 サイト目） | Next.js サンプルの実際の同意フローは共有の `routes/consent.ts` ではなく Server Action を通る（`routes/consent.ts` は生成 conformance テストが叩くのみ）。ここを対応しないと Next.js だけ同意経由の応答が平文へ落ちる。CLI テストで固定した |
+| 7 | consent ルートの `type AuthTransaction` import を transaction-binding 無効時のみ追加 | transaction-binding が既に同じ型を import しており、両方有効だと named import が重複してコンパイルできないため |
 
 ## 将来の昇格考慮
 

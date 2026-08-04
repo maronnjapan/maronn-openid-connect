@@ -1,6 +1,6 @@
 # 理解資料: OAuth 2.0 Token Exchange (RFC 8693)
 
-この資料は、プロジェクト所有者が Token Exchange 機能を正確に理解し、仕様書（specification.md）のレビューと昇格判断を行えるようにするためのものです。RFC の要約ではなく、**このリポジトリ（maronn-oidc）への対応付け**を中心に説明します。
+この資料は、プロジェクト所有者が Token Exchange 機能を正確に理解し、仕様書（specification.md）のレビューと昇格判断を行えるようにするためのものです。RFC の要約ではなく、**このリポジトリ（maronn-openid-connect）への対応付け**を中心に説明します。
 
 ## 解決する問題
 

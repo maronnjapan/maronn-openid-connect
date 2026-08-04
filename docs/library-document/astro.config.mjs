@@ -14,7 +14,7 @@ export default defineConfig({
   base,
   integrations: [
     starlight({
-      title: 'Maronn OIDC',
+      title: 'Maronn OpenID Connect',
       description:
         'Lightweight OpenID Connect / OAuth 2.1 provider library for rapidly verifying specs in PoC.',
       social: [

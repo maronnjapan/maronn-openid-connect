@@ -502,6 +502,7 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(content).toContain('UPSTASH_REDIS_REST_TOKEN');
       expect(content).toContain("readEnv('VERCEL')");
       expect(content).toContain("readEnv('OIDC_SQLITE_PATH') ?? '.data/oidc.sqlite'");
+      expect(content).toContain("private readonly namespace = 'maronn-openid-connect:'");
     });
 
     // OAuth 2.1 §4.1.2 / §4.3.1: Next.js also uses the Web-standard generated OP,

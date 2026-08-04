@@ -370,7 +370,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
    |---|---|
    | Provider | GitHub Actions |
    | Organization / user | `maronnjapan` |
-   | Repository | `maronn-oidc` |
+   | Repository | `maronn-openid-connect` |
    | Workflow filename | `release.yml` |
    | Environment | （未使用なので空欄） |
 

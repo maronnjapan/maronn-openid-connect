@@ -36,13 +36,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maronnjapan/maronn-oidc.git",
+    "url": "git+https://github.com/maronnjapan/maronn-openid-connect.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/maronnjapan/maronn-oidc/issues"
+    "url": "https://github.com/maronnjapan/maronn-openid-connect/issues"
   },
-  "homepage": "https://github.com/maronnjapan/maronn-oidc/tree/main/packages/core#readme",
+  "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/core#readme",
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@types/node": "^26.1.2",

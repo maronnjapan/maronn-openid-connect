@@ -88,7 +88,7 @@ class UpstashRedisJsonStoreBackend implements JsonStoreBackend {
   constructor(
     private readonly url: string,
     private readonly token: string,
-    private readonly namespace = 'maronn-oidc:',
+    private readonly namespace = 'maronn-openid-connect:',
   ) {}
 
   async get<T>(key: string): Promise<T | null> {

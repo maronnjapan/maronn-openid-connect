@@ -20,7 +20,7 @@ pnpm deploy:hono-cloudflare
 
 `wrangler login`（未ログイン時のみ）と、アカウント初回デプロイ時のworkers.devサブドメイン登録以外はすべて自動化されている:
 
-- D1データベース（`maronn-oidc-sample`）の作成または再利用と `database_id` の自動解決
+- D1データベース（`maronn-openid-connect-sample`）の作成または再利用と `database_id` の自動解決
 - デプロイ専用設定 `wrangler.deploy.jsonc`（gitignore済み）の生成。チェックイン済みの `wrangler.jsonc` はローカル開発用にプレースホルダのまま保たれる
 - リモートD1へのマイグレーション適用
 - 公開URL（workers.dev）の `ISSUER` への固定（初回のみ2回デプロイ）とDiscoveryでのissuer検証

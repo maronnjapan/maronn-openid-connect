@@ -1,5 +1,5 @@
 {
-    "name": "maronn-oidc",
+    "name": "maronn-openid-connect",
     "version": "1.0.0",
     "private": true,
     "description": "Lightweight OpenID Connect / OAuth 2.1 provider library for rapidly verifying OAuth/OIDC specs in PoC — no Keycloak overhead, no IdaaS lock-in",

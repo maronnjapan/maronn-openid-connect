@@ -1,6 +1,6 @@
 ---
 title: Authorization Code Flow
-description: How the OAuth 2.1 Authorization Code Flow works in Maronn OIDC.
+description: How the OAuth 2.1 Authorization Code Flow works in Maronn OpenID Connect.
 ---
 
 Authorization Code Flow は OAuth 2.1 と OpenID Connect の中心となるフローです。このライブラリは PKCE 必須の Authorization Code Flow を実装しています。

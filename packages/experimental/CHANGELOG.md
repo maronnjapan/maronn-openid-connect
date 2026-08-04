@@ -1,5 +1,11 @@
 # @maronn-openid-connect/experimental
 
+## 0.0.3
+
+### Patch Changes
+
+- b5ef236: Update project branding, repository metadata, and generated storage namespaces to maronn-openid-connect while preserving the maronn-oidc CLI command.
+
 ## 0.0.2
 
 ### Patch Changes

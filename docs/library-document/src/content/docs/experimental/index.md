@@ -64,14 +64,14 @@ pnpm add @maronn-openid-connect/experimental
 
 | feature-id | 機能 | 準拠仕様 | ドキュメント |
 |---|---|---|---|
-| `par` | Pushed Authorization Requests | RFC 9126 | [PAR](/maronn-oidc/experimental/par/) |
-| `token-exchange` | OAuth 2.0 Token Exchange | RFC 8693 | [Token Exchange](/maronn-oidc/experimental/token-exchange/) |
+| `par` | Pushed Authorization Requests | RFC 9126 | [PAR](./par/) |
+| `token-exchange` | OAuth 2.0 Token Exchange | RFC 8693 | [Token Exchange](./token-exchange/) |
 
 ## 問題の報告
 
 Experimental 機能の不具合・仕様解釈の誤り・API への要望は、GitHub Issue で報告してください。
 
-- <https://github.com/maronnjapan/maronn-oidc/issues>
+- <https://github.com/maronnjapan/maronn-openid-connect/issues>
 
 報告時に次を含めてもらえると調査が早くなります。
 

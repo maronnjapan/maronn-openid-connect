@@ -6,7 +6,7 @@ import starlight from '@astrojs/starlight';
 const base =
   process.env.BASE_PATH !== undefined
     ? process.env.BASE_PATH
-    : '/maronn-oidc';
+    : '/maronn-openid-connect';
 
 /** @type {import('astro').AstroUserConfig} */
 export default defineConfig({
@@ -21,7 +21,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/maronnjapan/maronn-oidc',
+          href: 'https://github.com/maronnjapan/maronn-openid-connect',
         },
       ],
       sidebar: [

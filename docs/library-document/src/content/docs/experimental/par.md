@@ -5,7 +5,7 @@ description: 認可リクエストをバックチャネルで事前に預ける 
 
 :::caution[Experimental]
 この機能は**試験実装**です。API・設定・生成コードの構造は予告なく変更されることがあります。
-`@maronn-openid-connect/experimental` のバージョンを固定して使ってください。詳細は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
+`@maronn-openid-connect/experimental` のバージョンを固定して使ってください。詳細は [Experimental機能とは](../) を参照してください。
 :::
 
 ## 概要

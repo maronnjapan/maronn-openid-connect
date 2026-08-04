@@ -96,7 +96,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 |---|---|---|---|
 | `par` | 無効 | Pushed Authorization Requests エンドポイント（`/par`）と認可エンドポイントの `request_uri` 解決 | RFC 9126 |
 
-API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
+API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](../../experimental/) を参照してください。
 
 ## Contract Test (conformance.test.ts)
 

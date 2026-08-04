@@ -50,8 +50,8 @@ export class HonoGenerator implements FrameworkGenerator {
         : []),
       { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg) },
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features) },
-      { path: 'routes/login.ts', content: loginRouteTemplate(pkg) },
-      { path: 'routes/consent.ts', content: consentRouteTemplate(pkg) },
+      { path: 'routes/login.ts', content: loginRouteTemplate(pkg, features) },
+      { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features) },
       { path: 'conformance.test.ts', content: conformanceTestTemplate(pkg, features) },
     ];
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ExpressGenerator } from '../frameworks/express/index.js';
 import { FastifyGenerator } from '../frameworks/fastify/index.js';
 import { NextJsGenerator } from '../frameworks/nextjs/index.js';
+import { DEFAULT_FEATURES } from '../features.js';
 
 const CORE_PKG = '@maronn-openid-connect/core';
 
@@ -608,6 +609,7 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(actions?.content).toContain("successUrl.searchParams.set('iss', issuer)");
       expect(actions?.content).toContain("denyUrl.searchParams.set('iss', issuer)");
     });
+
   });
 });
 

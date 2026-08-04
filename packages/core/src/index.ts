@@ -154,6 +154,9 @@ export {
   createAuthTransaction,
   getAuthTransaction,
   validateCsrfToken,
+  // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: トランザクションを開始した User-Agent への束縛
+  computeTransactionBindingHash,
+  validateTransactionBinding,
   handleLoginFailure,
   completeAuthTransaction,
   checkPromptNone,
@@ -171,6 +174,7 @@ export type {
   AuthTransactionStore,
   AuthorizationResponseParams,
   ConsentResolver,
+  CreateAuthTransactionOptions,
   LoginFailureResult,
   PromptNoneOptions,
   SessionInfo,

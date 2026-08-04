@@ -50,6 +50,7 @@ describe('resolveFeatures with token-exchange', () => {
       requestObject: true,
       par: false,
       tokenExchange: true,
+      transactionBinding: false,
     });
   });
 
@@ -62,6 +63,7 @@ describe('resolveFeatures with token-exchange', () => {
       requestObject: true,
       par: true,
       tokenExchange: true,
+      transactionBinding: false,
     });
   });
 
@@ -84,6 +86,7 @@ describe('resolveFeatures with token-exchange', () => {
       requestObject: true,
       par: false,
       tokenExchange: true,
+      transactionBinding: false,
     });
   });
 });

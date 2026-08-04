@@ -3,7 +3,12 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative, resolve } from 'node:path';
 import { generate, getAvailableFrameworks } from './generator.js';
-import { AVAILABLE_FEATURES, EXPERIMENTAL_FEATURES, resolveFeatures } from './features.js';
+import {
+  AVAILABLE_FEATURES,
+  EXPERIMENTAL_FEATURES,
+  OPTIONAL_FEATURES,
+  resolveFeatures,
+} from './features.js';
 import type { OidcFeatureConfig } from './features.js';
 
 const INSTALL_COMMANDS: Record<string, string> = {
@@ -46,6 +51,7 @@ const DEFAULT_ENTRY_APP_EXAMPLE = 'const app = /* your framework app instance */
 function printUsage(): void {
   const frameworks = getAvailableFrameworks().join(', ');
   const features = AVAILABLE_FEATURES.join(', ');
+  const optionalFeatures = OPTIONAL_FEATURES.join(', ');
   const experimentalFeatures = EXPERIMENTAL_FEATURES.join(', ');
   console.log(`
 Usage: maronn-oidc <command> <framework> [options]
@@ -64,6 +70,11 @@ Options:
   --help, -h            Show this help message
 
 Features (all enabled by default): ${features}
+
+Optional features (disabled by default): ${optionalFeatures}
+  Stable hardening that no OIDC Core / OAuth 2.1 clause requires, so the default
+  output stays the specification and nothing more. Enable one with, e.g.:
+  --enable transaction-binding
 
 Experimental features (disabled by default): ${experimentalFeatures}
   Provided by the separate ${EXPERIMENTAL_PACKAGE} package. APIs are unstable
@@ -250,6 +261,10 @@ export function run(args: string[]): void {
     );
     if (disabledFeatures.length > 0) {
       console.log(`Disabled features: ${disabledFeatures.join(', ')}\n`);
+    }
+    const enabledOptional = OPTIONAL_FEATURES.filter((name) => parsed.enable.includes(name));
+    if (enabledOptional.length > 0) {
+      console.log(`Optional features enabled: ${enabledOptional.join(', ')}\n`);
     }
     const enabledExperimental = EXPERIMENTAL_FEATURES.filter((name) =>
       parsed.enable.includes(name),

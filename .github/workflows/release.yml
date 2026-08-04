@@ -17,10 +17,15 @@
 #
 # 【@maronn-oidc/experimental の自動 publish】
 #   experimental だけは changeset を手で書かなくてよい。main への push ごとに
-#   `.github/scripts/ensure-experimental-changeset.mjs` を実行し、前回リリース
-#   （`@maronn-oidc/experimental@<version>` タグ）以降に `packages/experimental/src` の
-#   実装が変わっていれば patch の changeset を自動生成する。
+#   `.github/scripts/ensure-experimental-changeset.mjs` を実行し、
+#   `packages/experimental/package.json` の version を最後に確定したコミット以降に
+#   `packages/experimental/src` の実装が変わっていれば patch の changeset を自動生成する。
 #   → 実装が入った時点で Version Packages PR が立ち、それをマージすれば publish される。
+#
+#   基準を publish 時のタグではなく version 確定コミットに置いているのが要点。タグは publish
+#   でしか生まれないのに、publish はこの判定の結果でしか起きないため、タグを基準にすると
+#   「毎 push で changeset が再生成され → 常に version 段階 → publish に一生到達しない」
+#   という循環に落ちる（詳細は RELEASE.md「なぜ version 確定コミットを基準にするのか」）。
 #
 #   bump は常に patch 固定。生成する changeset は `auto-experimental-patch.md` の 1 本だけで、
 #   実行のたびに未リリースの変更一覧で上書きする。そのため Version Packages PR のマージを
@@ -42,11 +47,14 @@
 #     （本リポジトリは packageManager で pnpm@10.17.0 を固定）。
 #
 # 【publish 前に npmjs.com 側で必要な設定】
-#   各パッケージ（@maronn-oidc/core, @maronn-oidc/cli）の
-#   npm ページ → Settings → Trusted Publisher で、以下を登録する:
+#   publish 対象の各パッケージ（@maronn-oidc/core, @maronn-oidc/cli, @maronn-oidc/experimental）の
+#   npm ページ → Settings → Trusted Publisher で、以下を登録する。
+#   1 つでも未登録だと OIDC でトークンを取れず、そのパッケージの publish が認証エラーで落ちる:
 #     - Provider: GitHub Actions
 #     - Repository: maronnjapan/maronn-oidc
 #     - Workflow filename: release.yml
+#     - Environment: 空欄（このワークフローは environment: を使っていないため、
+#       Environment 付きで登録すると OIDC の claim が一致せず publish できない）
 #
 # 【初回 publish の注意（chicken-and-egg）】
 #   パッケージ単位の Trusted Publisher 設定は「パッケージが既に存在すること」が前提。
@@ -78,9 +86,9 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v7
               with:
-                  # experimental の自動 changeset は、前回リリースのタグ
-                  # (`@maronn-oidc/experimental@<version>`) と HEAD の差分で変更を判定する。
-                  # shallow clone だとタグも履歴も取れず判定できないため全履歴を取得する。
+                  # experimental の自動 changeset は、packages/experimental/package.json の
+                  # version を最後に確定したコミットと HEAD の差分で変更を判定する。
+                  # shallow clone だとその履歴を辿れないため全履歴を取得する。
                   fetch-depth: 0
 
             - name: Enable Corepack
@@ -123,3 +131,9 @@ jobs:
               env:
                   PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
               run: node .github/scripts/verify-npm-provenance.mjs
+
+            # version 段階と publish 段階の分岐が壊れると、Version Packages PR をマージしても
+            # publish されないまま run は成功で終わり、npm だけが古いまま誰も気づけない。
+            # main のバージョンが registry に出ているかを突き合わせて、その状態を赤くする。
+            - name: Verify npm reflects the versions on main
+              run: node .github/scripts/verify-release-published.mjs

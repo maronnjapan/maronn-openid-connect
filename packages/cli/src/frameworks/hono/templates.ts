@@ -6748,7 +6748,7 @@ function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
  * Emitted only when the introspection endpoint is generated: it is the only
  * caller, and the generated sample tsconfig sets noUnusedLocals.
  */
-function authorizationCodeConformanceHelper(features: OidcFeatureConfig): string {
+export function authorizationCodeConformanceHelper(features: OidcFeatureConfig): string {
   if (!features.introspection) return '';
   return `
 // RFC 7636 Appendix B example PKCE pair: verifier
@@ -9131,8 +9131,228 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
 `;
 }
 
-export function jarmConformanceBlock(features: OidcFeatureConfig): string {
+/**
+ * How the target framework answers the interactive (login -> consent) flow when
+ * JARM is enabled.
+ *
+ * - 'jwt': the consent route signs the response, so the contract test asserts the
+ *   JARM JWT. This is the normal case (hono / express / fastify / web-standard).
+ * - 'plain': the consent step cannot produce a verifiable response JWT and stays
+ *   on the plain query response. Next.js is the only such target — see
+ *   {@link jarmInteractiveConsentPlainBlock} for why — and the contract test must
+ *   assert the plain response, or it would be green while the generated provider
+ *   does the opposite.
+ */
+export type JarmConsentResponseMode = 'jwt' | 'plain';
+
+/**
+ * Contract tests for a target whose consent route answers in the recorded JARM
+ * mode: the login -> consent flow delivers one signed JWT in `response`.
+ */
+function jarmInteractiveConsentJwtBlock(): string {
+  return `    describe('Success response (JARM Section 2.3.1)', () => {
+      it('should deliver the authorization response as the only response query parameter', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+
+        // JARM Section 2.3.1: the response is carried by a single \`response\`
+        // parameter. The plain code / state / iss parameters MUST NOT be added —
+        // the JWT's iss claim replaces RFC 9207's iss parameter.
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+      });
+
+      it('should sign the response JWT with RS256 under a kid published in JWKS', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const inspected = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+
+        // JARM Section 3: RS256 is the default (and here the only) algorithm.
+        // No typ header: JARM does not define one and its Section 2.3.1 example
+        // header carries only kid and alg.
+        expect(inspected.header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(inspected.signatureValid).toBe(true);
+      });
+
+      it('should carry exactly iss, aud, exp, code and state as claims', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+
+        // JARM Section 2.1: iss / aud / exp are REQUIRED and the authorization
+        // response parameters travel as claims of the same JWT. The claim set is
+        // pinned whole so an added claim (a PII leak, for instance) fails here.
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+        expect(payload.iss).toBe('http://localhost:3000');
+        expect(payload.aud).toBe('c-conf');
+        expect(payload.state).toBe('jarm-state');
+      });
+
+      it('should exchange the code carried by the response JWT for tokens', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: String(payload.code ?? ''),
+            redirect_uri: REDIRECT_URI,
+            client_id: 'c-conf',
+            client_secret: 's',
+            code_verifier: PKCE_VERIFIER,
+          }).toString(),
+        });
+
+        // JARM changes only how the response is delivered; the code itself is an
+        // ordinary authorization code and the token endpoint is untouched.
+        expect(res.status).toBe(200);
+        expect((await res.json()).token_type).toBe('Bearer');
+      });
+
+      it('should treat the jwt shorthand as query.jwt', async () => {
+        // JARM Section 2.3.4: for response_type=code the default JWT delivery
+        // mode is query.jwt, so the \`jwt\` shorthand means exactly that.
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'jwt' }));
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(location).get('response') ?? '',
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+    });
+
+    describe('Error response (JARM Section 2.1)', () => {
+      it('should return a signed error JWT when the End-User denies consent', async () => {
+        const { location } = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt' }),
+          'deny',
+        );
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(location).get('response') ?? '',
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'error', 'exp', 'iss', 'state']);
+        expect(payload.error).toBe('access_denied');
+        expect(payload.state).toBe('jarm-state');
+      });
+
+${jarmPromptNoneErrorTest()}    });
+`;
+}
+
+/**
+ * Contract tests for a target whose consent step cannot answer in JARM mode.
+ *
+ * Next.js drives consent through a Server Action (app/consent/actions.ts), which
+ * is bundled separately from the Route Handlers and therefore holds its own
+ * instance of the signing key provider. A response signed there would carry the
+ * same `kid` as /.well-known/jwks.json but different key material, so every
+ * client would fail signature verification — returning a plain query response is
+ * the safer answer. These tests pin that limitation instead of asserting a JARM
+ * response the generated provider never produces.
+ */
+function jarmInteractiveConsentPlainBlock(): string {
+  return `    describe('Interactive flow response (Next.js Server Action limitation)', () => {
+      // On this target the consent step runs as a Next.js Server Action, which is
+      // bundled apart from the Route Handlers and holds its own signing key
+      // provider instance. A response JWT signed there would carry the same kid as
+      // /.well-known/jwks.json but different key material, so every client would
+      // fail signature verification. The Server Action therefore keeps the plain
+      // query response, and these tests pin that so the limitation stays visible.
+      it('should return the plain query response after login and consent', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+
+        // RFC 9207 Section 2: the plain response carries iss, because no JWT iss
+        // claim is available to identify the issuer here.
+        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
+        expect(queryOf(location).get('state')).toBe('jarm-state');
+        expect(queryOf(location).get('iss')).toBe('http://localhost:3000');
+      });
+
+      it('should return the plain query error when the End-User denies consent', async () => {
+        const { location } = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt' }),
+          'deny',
+        );
+
+        expect([...queryOf(location).keys()].sort()).toEqual(['error', 'iss', 'state']);
+        expect(queryOf(location).get('error')).toBe('access_denied');
+        expect(queryOf(location).get('state')).toBe('jarm-state');
+      });
+
+      it('should exchange the plainly delivered code for tokens', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: queryOf(location).get('code') ?? '',
+            redirect_uri: REDIRECT_URI,
+            client_id: 'c-conf',
+            client_secret: 's',
+            code_verifier: PKCE_VERIFIER,
+          }).toString(),
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).token_type).toBe('Bearer');
+      });
+    });
+
+    describe('Error response (JARM Section 2.1)', () => {
+${jarmPromptNoneErrorTest()}    });
+`;
+}
+
+/**
+ * prompt=none without a session is answered inside the authorize route, which is
+ * an ordinary Route Handler on every target, so this test is shared by both
+ * consent-response modes.
+ */
+function jarmPromptNoneErrorTest(): string {
+  return `      it('should return a signed error JWT for a prompt=none request with no session', async () => {
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none without a session is
+        // login_required. It is a redirectable error, so JARM applies to it.
+        const res = await app.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(payload.error).toBe('login_required');
+        expect(payload.state).toBe('jarm-state');
+      });
+`;
+}
+
+export function jarmConformanceBlock(
+  features: OidcFeatureConfig,
+  consentResponseMode: JarmConsentResponseMode = 'jwt',
+): string {
   if (!features.jarm) return '';
+  const interactiveResponseTests =
+    consentResponseMode === 'plain'
+      ? jarmInteractiveConsentPlainBlock()
+      : jarmInteractiveConsentJwtBlock();
+  // The two paths below answer inside the authorize route, so they are genuine
+  // JARM responses on every target. Why that is worth stating differs per mode.
+  const jarmAuthorizeRouteResponsesComment =
+    consentResponseMode === 'plain'
+      ? `      // These paths answer inside the authorize route — a Route Handler, which
+      // shares the signing key provider with /.well-known/jwks.json — so they do
+      // produce a verifiable JARM response even though the consent step above
+      // cannot.
+`
+      : `      // The authorize route records the mode on the transaction and the consent
+      // route reads it back, so a store that drops unknown fields would answer in
+      // plain query. These paths, by contrast, answer inside the authorize route
+      // itself and never touch the store round trip.
+`;
   return `
   // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
   // because this provider was created with --enable jarm. These tests pin the
@@ -9264,110 +9484,7 @@ export function jarmConformanceBlock(features: OidcFeatureConfig): string {
       return { header, payload: decodeSegment(encodedPayload), signatureValid };
     }
 
-    describe('Success response (JARM Section 2.3.1)', () => {
-      it('should deliver the authorization response as the only response query parameter', async () => {
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
-
-        // JARM Section 2.3.1: the response is carried by a single \`response\`
-        // parameter. The plain code / state / iss parameters MUST NOT be added —
-        // the JWT's iss claim replaces RFC 9207's iss parameter.
-        expect([...queryOf(location).keys()]).toEqual(['response']);
-      });
-
-      it('should sign the response JWT with RS256 under a kid published in JWKS', async () => {
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
-        const inspected = await inspectJarmJwt(queryOf(location).get('response') ?? '');
-
-        // JARM Section 3: RS256 is the default (and here the only) algorithm.
-        // No typ header: JARM does not define one and its Section 2.3.1 example
-        // header carries only kid and alg.
-        expect(inspected.header).toEqual({ alg: 'RS256', kid: 'test-key' });
-        expect(inspected.signatureValid).toBe(true);
-      });
-
-      it('should carry exactly iss, aud, exp, code and state as claims', async () => {
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
-        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
-
-        // JARM Section 2.1: iss / aud / exp are REQUIRED and the authorization
-        // response parameters travel as claims of the same JWT. The claim set is
-        // pinned whole so an added claim (a PII leak, for instance) fails here.
-        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
-        expect(payload.iss).toBe('http://localhost:3000');
-        expect(payload.aud).toBe('c-conf');
-        expect(payload.state).toBe('jarm-state');
-      });
-
-      it('should exchange the code carried by the response JWT for tokens', async () => {
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
-        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
-        const res = await app.request('/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'authorization_code',
-            code: String(payload.code ?? ''),
-            redirect_uri: REDIRECT_URI,
-            client_id: 'c-conf',
-            client_secret: 's',
-            code_verifier: PKCE_VERIFIER,
-          }).toString(),
-        });
-
-        // JARM changes only how the response is delivered; the code itself is an
-        // ordinary authorization code and the token endpoint is untouched.
-        expect(res.status).toBe(200);
-        expect((await res.json()).token_type).toBe('Bearer');
-      });
-
-      it('should treat the jwt shorthand as query.jwt', async () => {
-        // JARM Section 2.3.4: for response_type=code the default JWT delivery
-        // mode is query.jwt, so the \`jwt\` shorthand means exactly that.
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'jwt' }));
-        const { payload, signatureValid } = await inspectJarmJwt(
-          queryOf(location).get('response') ?? '',
-        );
-
-        expect([...queryOf(location).keys()]).toEqual(['response']);
-        expect(signatureValid).toBe(true);
-        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
-      });
-    });
-
-    describe('Error response (JARM Section 2.1)', () => {
-      it('should return a signed error JWT when the End-User denies consent', async () => {
-        const { location } = await interactiveFlow(
-          authorizeUrl({ response_mode: 'query.jwt' }),
-          'deny',
-        );
-        const { payload, signatureValid } = await inspectJarmJwt(
-          queryOf(location).get('response') ?? '',
-        );
-
-        expect([...queryOf(location).keys()]).toEqual(['response']);
-        expect(signatureValid).toBe(true);
-        expect(Object.keys(payload).sort()).toEqual(['aud', 'error', 'exp', 'iss', 'state']);
-        expect(payload.error).toBe('access_denied');
-        expect(payload.state).toBe('jarm-state');
-      });
-
-      it('should return a signed error JWT for a prompt=none request with no session', async () => {
-        // OIDC Core 1.0 Section 3.1.2.1: prompt=none without a session is
-        // login_required. It is a redirectable error, so JARM applies to it.
-        const res = await app.request(
-          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
-        );
-        const { payload, signatureValid } = await inspectJarmJwt(
-          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
-        );
-
-        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
-        expect(signatureValid).toBe(true);
-        expect(payload.error).toBe('login_required');
-        expect(payload.state).toBe('jarm-state');
-      });
-    });
-
+${interactiveResponseTests}
     describe('Unsupported JWT response modes', () => {
       // JARM Section 2.3.2 / Section 2.3.3 exist in the specification but are not
       // implemented by this OP (response_type=code only, no auto-submitting form).
@@ -9413,11 +9530,7 @@ export function jarmConformanceBlock(features: OidcFeatureConfig): string {
     });
 
     describe('Transaction store round trip', () => {
-      // The authorize route records the mode on the transaction and the consent
-      // route reads it back, so a store that drops unknown fields would answer in
-      // plain query. These paths, by contrast, answer inside the authorize route
-      // itself and never touch the store round trip.
-      it('should answer the SSO fast path with a signed JWT', async () => {
+${jarmAuthorizeRouteResponsesComment}      it('should answer the SSO fast path with a signed JWT', async () => {
         const first = await interactiveFlow(
           authorizeUrl({ response_mode: 'query.jwt', prompt: 'consent' }),
         );

@@ -1,7 +1,9 @@
 import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
+import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
+  authorizationCodeConformanceHelper,
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
@@ -1784,6 +1786,7 @@ export function webConformanceTestTemplate(
   errorPageMode: 'html' | 'redirect' = 'html',
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
+  jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
 ): string {
   const usesRedirect = errorPageMode === 'redirect';
   // Next.js delegates the non-redirect authorization error to a framework-native
@@ -1932,7 +1935,7 @@ function idTokenPayload(idToken: string): Record<string, unknown> {
   const payload = idToken.split('.')[1] ?? '';
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payload.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0))));
 }
-
+${authorizationCodeConformanceHelper(features)}
 ${conformanceTestClientsBlock(features)}${requestObjectConformanceModuleSetup(features)}
 let app: ReturnType<typeof createApp>;
 let signingKeyProvider: SigningKeyProvider;
@@ -2334,7 +2337,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${jarmConformanceBlock(features)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}});
 `;
 }
 
@@ -2343,7 +2346,15 @@ function webCoreGeneratedFiles(
   errorPageMode: 'html' | 'redirect' = 'html',
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
+  jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
 ): GeneratedFile[] {
+  // EXPERIMENTAL (JARM): on a target whose consent step cannot sign a verifiable
+  // response JWT (Next.js Server Actions — see nextJsConsentActionTemplate), the
+  // framework-neutral consent route must stay on the plain query response as
+  // well. Otherwise the generated conformance test, which drives this route,
+  // would pin a JARM response the deployed provider never produces.
+  const consentFeatures: OidcFeatureConfig =
+    jarmConsentResponseMode === 'plain' ? { ...features, jarm: false } : features;
   return [
     { path: 'app.ts', content: webAppTemplate(corePkg, features) },
     { path: 'web-router.ts', content: webRouterTemplate() },
@@ -2381,10 +2392,16 @@ function webCoreGeneratedFiles(
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
     { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },
     { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg, features)) },
-    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, features)) },
+    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, consentFeatures)) },
     {
       path: 'conformance.test.ts',
-      content: webConformanceTestTemplate(corePkg, errorPageMode, features, includeNodeAdapterContract),
+      content: webConformanceTestTemplate(
+        corePkg,
+        errorPageMode,
+        features,
+        includeNodeAdapterContract,
+        jarmConsentResponseMode,
+      ),
     },
   ];
 }
@@ -2409,10 +2426,16 @@ export function nextJsGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): GeneratedFile[] {
-  const internalFiles = webCoreGeneratedFiles(corePkg, 'redirect', features).map((file) => ({
-    path: `_oidc-provider/${file.path}`,
-    content: toNextJsModuleImports(file.content),
-  }));
+  // Next.js drives login / consent through Server Actions, which are bundled
+  // apart from the Route Handlers and hold their own signing key provider
+  // instance. A JARM response signed there would fail every client's signature
+  // check, so this target answers the interactive flow in plain query.
+  const internalFiles = webCoreGeneratedFiles(corePkg, 'redirect', features, false, 'plain').map(
+    (file) => ({
+      path: `_oidc-provider/${file.path}`,
+      content: toNextJsModuleImports(file.content),
+    }),
+  );
 
   return [
     ...internalFiles,

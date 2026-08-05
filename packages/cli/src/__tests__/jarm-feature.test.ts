@@ -104,11 +104,9 @@ describe('generate with --enable jarm', () => {
     it('should import the JARM step functions from the experimental subpath', () => {
       const files = generateFiles(framework, ['jarm']);
       const authorize = fileContent(files, providerPath(framework, 'routes/authorize.ts'));
-      const consent = fileContent(files, providerPath(framework, 'routes/consent.ts'));
       const settings = fileContent(files, providerPath(framework, 'routes/jarm.ts'));
 
       expect(authorize.includes("from '@maronn-openid-connect/experimental/jarm'")).toBe(true);
-      expect(consent.includes("from '@maronn-openid-connect/experimental/jarm'")).toBe(true);
       expect(settings.includes("from '@maronn-openid-connect/experimental/jarm'")).toBe(true);
     });
 
@@ -179,13 +177,23 @@ describe('generate with --enable jarm', () => {
       ).toBe(true);
     });
 
+    // Next.js is the exception: its consent step runs as a Server Action, which
+    // cannot sign a verifiable response JWT (see the dedicated describe below), so
+    // its framework-neutral consent route stays on the plain query response too.
+    const consentAnswersInJarmMode = framework !== 'nextjs';
+
     it('should read the recorded JARM mode back in the consent route', () => {
       const content = fileContent(
         generateFiles(framework, ['jarm']),
         providerPath(framework, 'routes/consent.ts'),
       );
 
-      expect(content.includes("transaction.jarmResponseMode !== 'query.jwt'")).toBe(true);
+      expect(content.includes("transaction.jarmResponseMode !== 'query.jwt'")).toBe(
+        consentAnswersInJarmMode,
+      );
+      expect(content.includes("from '@maronn-openid-connect/experimental/jarm'")).toBe(
+        consentAnswersInJarmMode,
+      );
     });
 
     // JARM Section 4: both metadata members are advertised, one through core's
@@ -247,6 +255,81 @@ describe('generate with --enable jarm', () => {
       expect(authorize.includes('resolvePushedRequestUri')).toBe(true);
       expect(authorize.includes('resolveJarmResponseMode')).toBe(true);
       expect(authorize.includes('computeTransactionBindingHash')).toBe(true);
+    });
+  });
+
+  // The generated conformance.test.ts is the contract this repository shows to
+  // users: it MUST assert what the generated OP actually does. Next.js answers
+  // the interactive login -> consent flow in plain query (its consent step is a
+  // Server Action), so a conformance test asserting a response JWT there would be
+  // green while the real provider does the opposite.
+  describe('JARM conformance contract', () => {
+    const JWT_ONLY_RESPONSE_ASSERTION =
+      "expect([...queryOf(location).keys()]).toEqual(['response']);";
+    const PLAIN_INTERACTIVE_ASSERTION =
+      "expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);";
+
+    describe.each(['hono', 'express', 'fastify'] as const)('%s', (framework) => {
+      it('should assert a signed response JWT for the interactive flow', () => {
+        const content = fileContent(
+          generateFiles(framework, ['jarm']),
+          providerPath(framework, 'conformance.test.ts'),
+        );
+
+        expect(content.includes(JWT_ONLY_RESPONSE_ASSERTION)).toBe(true);
+        expect(
+          content.includes("it('should return a signed error JWT when the End-User denies consent'"),
+        ).toBe(true);
+      });
+    });
+
+    describe('nextjs', () => {
+      it('should assert the plain query response for the interactive flow', () => {
+        const content = fileContent(
+          generateFiles('nextjs', ['jarm']),
+          '_oidc-provider/conformance.test.ts',
+        );
+
+        expect(content.includes(PLAIN_INTERACTIVE_ASSERTION)).toBe(true);
+        expect(
+          content.includes(
+            "it('should return the plain query response after login and consent'",
+          ),
+        ).toBe(true);
+      });
+
+      it('should not claim the interactive flow answers with a response JWT', () => {
+        const content = fileContent(
+          generateFiles('nextjs', ['jarm']),
+          '_oidc-provider/conformance.test.ts',
+        );
+
+        expect(
+          content.includes("it('should return a signed error JWT when the End-User denies consent'"),
+        ).toBe(false);
+        expect(content.includes('should carry exactly iss, aud, exp, code and state as claims')).toBe(
+          false,
+        );
+      });
+
+      // prompt=none and the SSO fast path answer inside the authorize route, which
+      // IS a Next.js Route Handler, so those responses are genuine JARM JWTs.
+      it('should keep asserting a signed JWT for the authorize-route responses', () => {
+        const content = fileContent(
+          generateFiles('nextjs', ['jarm']),
+          '_oidc-provider/conformance.test.ts',
+        );
+
+        expect(content.includes("it('should answer the SSO fast path with a signed JWT'")).toBe(true);
+        expect(
+          content.includes("it('should answer a prompt=none success with a signed JWT'"),
+        ).toBe(true);
+        expect(
+          content.includes(
+            "it('should return a signed error JWT for a prompt=none request with no session'",
+          ),
+        ).toBe(true);
+      });
     });
   });
 

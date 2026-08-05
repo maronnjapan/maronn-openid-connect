@@ -56,6 +56,41 @@ describe('generate with feature toggles', () => {
     });
   });
 
+  // The introspection contract test calls conformanceAuthorizationCode() to mint a
+  // real token instead of injecting a store record. The helper is emitted only
+  // alongside the introspection endpoint, and every framework that emits the call
+  // must emit the definition too, or the generated test throws a ReferenceError.
+  describe('conformance helper emission', () => {
+    const PROVIDER_ROOT: Record<string, string> = { nextjs: '_oidc-provider/' };
+
+    describe.each(['hono', 'express', 'fastify', 'nextjs'])('%s', (framework) => {
+      it('should define conformanceAuthorizationCode when the call is generated', () => {
+        const result = generate({ framework, outputDir: OUT });
+        const conformance = fileContent(
+          result,
+          `${PROVIDER_ROOT[framework] ?? ''}conformance.test.ts`,
+        );
+
+        expect(conformance.includes('await conformanceAuthorizationCode(')).toBe(true);
+        expect(
+          conformance.includes(
+            'async function conformanceAuthorizationCode(scope: string): Promise<string> {',
+          ),
+        ).toBe(true);
+      });
+
+      it('should omit both the helper and its call when introspection is disabled', () => {
+        const result = generateWith(framework, ['introspection']);
+        const conformance = fileContent(
+          result,
+          `${PROVIDER_ROOT[framework] ?? ''}conformance.test.ts`,
+        );
+
+        expect(conformance.includes('conformanceAuthorizationCode')).toBe(false);
+      });
+    });
+  });
+
   describe('introspection disabled', () => {
     it('should not generate routes/introspection.ts for hono', () => {
       const result = generateWith('hono', ['introspection']);

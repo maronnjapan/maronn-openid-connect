@@ -20,4 +20,4 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 - `fragment.jwt` / `form_post.jwt` は非対応で、指定されると平文クエリの `invalid_request` を返します
 - 応答 JWT の暗号化（JWE）とクライアント別 `authorization_signed_response_alg` は非対応です。署名は RS256 固定です
 - JARM モードは auth transaction に記録され、ログイン・同意を挟んで store を往復します。auth transaction store の実装を差し替えている場合は、**未知のフィールドを透過的に保存する**必要があります。落とすと JARM を要求したクライアントへ静かに平文クエリで応答します
-- **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。`prompt=none` と SSO 再利用は Next.js でも JARM 応答になります。hono / express / fastify / web-standard には、この制限はありません
+- **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。`prompt=none` と SSO 再利用は Next.js でも JARM 応答になります。Next.js 向けに生成される `routes/consent.ts` と `conformance.test.ts` もこの挙動に揃えてあります。hono / express / fastify / web-standard には、この制限はありません

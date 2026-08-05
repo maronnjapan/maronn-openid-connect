@@ -103,6 +103,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@edge-runtime/vm@5.0.0)(@types/debug@4.1.13)(@types/node@26.1.2)
 
   samples/fastify-flyio:
     dependencies:
@@ -125,6 +128,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@edge-runtime/vm@5.0.0)(@types/debug@4.1.13)(@types/node@26.1.2)
 
   samples/hono-cloudflare:
     dependencies:
@@ -184,6 +190,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@edge-runtime/vm@5.0.0)(@types/debug@4.1.13)(@types/node@26.1.2)
 
   tests/conformance: {}
 

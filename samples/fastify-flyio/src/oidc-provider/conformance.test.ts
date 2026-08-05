@@ -17,6 +17,67 @@ function idTokenPayload(idToken: string): Record<string, unknown> {
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payload.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0))));
 }
 
+// RFC 7636 Appendix B example PKCE pair: verifier
+// 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk' -> this S256 challenge.
+const CONFORMANCE_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+/**
+ * Drives authorize -> login -> consent for client 'c-conf' and returns the
+ * authorization code. Pure data collection: it neither asserts nor branches, so
+ * every contract check stays in the it() blocks. A step that fails to redirect
+ * yields an empty code, which the caller's expect() on the token response catches.
+ */
+async function conformanceAuthorizationCode(scope: string): Promise<string> {
+  const relativeFrom = (location: string | null): string => {
+    const url = new URL(location ?? '', 'http://localhost');
+    return url.pathname + url.search;
+  };
+  const csrfFrom = (html: string): string =>
+    html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+
+  const authorizeRes = await app.request(
+    '/authorize?response_type=code&client_id=c-conf' +
+      '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+      '&scope=' + encodeURIComponent(scope) +
+      '&state=introspect-jti&prompt=consent' +
+      '&code_challenge=' + CONFORMANCE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+  );
+  const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+  // Carry forward whatever cookie /authorize set, exactly as a browser would.
+  // With --enable transaction-binding this is the per-transaction binding
+  // secret the later steps require; without it this is '' and the OP ignores
+  // it, so the same flow works in both builds.
+  const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+  const transactionId =
+    new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+  const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+  const loginRes = await app.request('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+    body: new URLSearchParams({
+      transaction_id: transactionId,
+      csrf_token: csrfFrom(await loginGet.text()),
+      username: 'testuser',
+      password: 'password',
+    }).toString(),
+  });
+
+  const consentPath = relativeFrom(loginRes.headers.get('Location'));
+  const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+  const consentRes = await app.request('/consent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+    body: new URLSearchParams({
+      transaction_id: transactionId,
+      csrf_token: csrfFrom(await consentGet.text()),
+      action: 'approve',
+    }).toString(),
+  });
+
+  return new URL(consentRes.headers.get('Location') ?? '', 'http://localhost').searchParams.get('code') ?? '';
+}
+
 const testClients = new Map<string, RegisteredClient>([
   // offlineAccessAllowed + refresh_token grant so the reuse-cascade tests can drive
   // the full code/refresh flow and observe revocation across the grant.

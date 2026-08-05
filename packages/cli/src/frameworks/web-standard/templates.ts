@@ -2,6 +2,7 @@ import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
 import {
+  authorizationCodeConformanceHelper,
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
@@ -1932,7 +1933,7 @@ function idTokenPayload(idToken: string): Record<string, unknown> {
   const payload = idToken.split('.')[1] ?? '';
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payload.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0))));
 }
-
+${authorizationCodeConformanceHelper(features)}
 ${conformanceTestClientsBlock(features)}${requestObjectConformanceModuleSetup(features)}
 let app: ReturnType<typeof createApp>;
 let signingKeyProvider: SigningKeyProvider;

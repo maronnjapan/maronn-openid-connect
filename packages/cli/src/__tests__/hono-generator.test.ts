@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { HonoGenerator } from '../frameworks/hono/index.js';
-import { DEFAULT_FEATURES } from '../features.js';
+import { DEFAULT_FEATURES, resolveFeatures } from '../features.js';
+import type { OidcFeatureConfig } from '../features.js';
+import { generate } from '../generator.js';
 
 const CORE_PKG = '@maronn-openid-connect/core';
 
@@ -2446,5 +2448,39 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
         'applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims)',
       );
     });
+  });
+});
+
+/**
+ * Counterpart of the web-standard generator check: the introspection contract tests
+ * call `conformanceAuthorizationCode()`, and the generated sample tsconfig sets
+ * `noUnusedLocals`. The helper must appear exactly when it is referenced.
+ */
+describe('HonoGenerator authorization code conformance helper', () => {
+  const HELPER_CALL = 'conformanceAuthorizationCode(';
+  const HELPER_DEFINITION =
+    'async function conformanceAuthorizationCode(scope: string): Promise<string> {';
+
+  function conformanceTest(features: OidcFeatureConfig): string {
+    const files = generate({ framework: 'hono', outputDir: './out', features }).files;
+    const file = files.find((f) => f.path === 'conformance.test.ts');
+    if (!file) {
+      throw new Error('Generated file not found: conformance.test.ts');
+    }
+    return file.content;
+  }
+
+  it('should define conformanceAuthorizationCode when the generated conformance test references it for hono', () => {
+    const content = conformanceTest({ ...DEFAULT_FEATURES });
+
+    expect(content.includes(HELPER_CALL)).toBe(true);
+    expect(content.includes(HELPER_DEFINITION)).toBe(true);
+  });
+
+  it('should not emit the authorization code helper when introspection is disabled for hono', () => {
+    const content = conformanceTest(resolveFeatures({ disable: ['introspection'] }));
+
+    expect(content.includes(HELPER_CALL)).toBe(false);
+    expect(content.includes(HELPER_DEFINITION)).toBe(false);
   });
 });

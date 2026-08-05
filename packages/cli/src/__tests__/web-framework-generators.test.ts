@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { ExpressGenerator } from '../frameworks/express/index.js';
 import { FastifyGenerator } from '../frameworks/fastify/index.js';
 import { NextJsGenerator } from '../frameworks/nextjs/index.js';
-import { DEFAULT_FEATURES } from '../features.js';
+import { DEFAULT_FEATURES, resolveFeatures } from '../features.js';
+import type { OidcFeatureConfig } from '../features.js';
+import { generate } from '../generator.js';
 
 const CORE_PKG = '@maronn-openid-connect/core';
 
@@ -664,6 +666,47 @@ describe('ViewResult / renderView across Web-standard generators', () => {
         expect(content.match(/custom view rendering \(ViewResult \/ renderView\)/g)?.length).toBe(1);
         expect(content.match(/Authorization Code & Refresh Token reuse \(revoke-cascade contract\)/g)?.length).toBe(1);
       });
+    });
+  }
+});
+
+/**
+ * The introspection contract tests call `conformanceAuthorizationCode()` to obtain a
+ * real authorization code. The helper that defines it is emitted by a separate
+ * template block, so "referenced but never defined" is a shape the generator can
+ * produce silently. The generated sample tsconfig also sets `noUnusedLocals`, so
+ * emitting the helper without a caller breaks `tsc` instead. Both directions are
+ * pinned here.
+ */
+describe('Web-standard generated authorization code conformance helper', () => {
+  const HELPER_CALL = 'conformanceAuthorizationCode(';
+  const HELPER_DEFINITION =
+    'async function conformanceAuthorizationCode(scope: string): Promise<string> {';
+
+  function conformanceTest(framework: string, features: OidcFeatureConfig): string {
+    const files = generate({ framework, outputDir: './out', features }).files;
+    const path =
+      framework === 'nextjs' ? '_oidc-provider/conformance.test.ts' : 'conformance.test.ts';
+    const file = files.find((f) => f.path === path);
+    if (!file) {
+      throw new Error(`Generated file not found: ${path}`);
+    }
+    return file.content;
+  }
+
+  for (const framework of ['express', 'fastify', 'nextjs']) {
+    it(`should define conformanceAuthorizationCode when the generated conformance test references it for ${framework}`, () => {
+      const content = conformanceTest(framework, { ...DEFAULT_FEATURES });
+
+      expect(content.includes(HELPER_CALL)).toBe(true);
+      expect(content.includes(HELPER_DEFINITION)).toBe(true);
+    });
+
+    it(`should not emit the authorization code helper when introspection is disabled for ${framework}`, () => {
+      const content = conformanceTest(framework, resolveFeatures({ disable: ['introspection'] }));
+
+      expect(content.includes(HELPER_CALL)).toBe(false);
+      expect(content.includes(HELPER_DEFINITION)).toBe(false);
     });
   }
 });

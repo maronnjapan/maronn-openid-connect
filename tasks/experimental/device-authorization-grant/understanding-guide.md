@@ -62,6 +62,9 @@ Device Authorization Grant は、**認可の意思決定だけを「ユーザー
 **3. public client の client_id なりすまし（§5.6）**
 デバイスクライアントは大抵 public client なので、`client_id` は自己申告である。攻撃者が他人の client_id でデバイス認可を開始できるが、得られるのは「本物のクライアント名が承認画面に出る」ことだけで、トークンはユーザーが user_code を入力して明示承認しない限り出ない。つまり脅威 2 と同じ土俵に還元される。
 
+**4. フォージされた承認・ログイン（CSRF）**
+脅威 2 が「被害者を騙して承認**させる**」なのに対し、こちらは「被害者のブラウザに承認 POST を**勝手に送らせる**」。攻撃者は自分のデバイス認可を開始して user_code を知っているので、罠ページから被害者のブラウザに `POST /device/approve`（攻撃者の user_code + approve）を送らせられれば、被害者のログイン済みセッションで承認が成立し、トークンが攻撃者のデバイスに流れる。ここで重要なのは、**user_code から辿れるレコードに紐づけただけの CSRF トークンはこの攻撃を防げない**ことだ。攻撃者は自分でも `POST /device` を叩けるので、有効なトークンを自力で入手して罠フォームに埋め込める。だから本実装の防御は「トークンの秘匿」ではなく「**ブラウザの同一性**」に置く: user_code を照合したブラウザにだけ HttpOnly Cookie（bindingSecret）を渡し、レコードにはそのハッシュだけを保存して、`/device/login` と `/device/approve` は Cookie を提示できたブラウザからしか受け付けない。罠ページ経由のクロスサイト POST は被害者ブラウザの Cookie を運べない（SameSite=Lax）し、そもそも被害者ブラウザは攻撃者のレコードの Cookie を持っていないので、二重に遮断される。これは既存の `transaction-binding`（optional feature）と同じ仕組みだが、device フローでは **user_code が攻撃者に既知であることが前提**（authorize フローの transaction_id と違い、識別子の秘匿に頼れない）なので、opt-in ではなく常時有効にしている。
+
 ### device_code 側の防御
 
 device_code は認可コードと同等の機密として扱う: ログ出力禁止、256bit エントロピー、**atomic な単回使用**（トークン発行時にストアの `consume` で取得と削除を同時に行う）。これは PAR の request_uri で確立したパターンの再利用で、並行リデンプション（同じ device_code で 2 本トークンを取る）を防ぐ。また device_code は発行時のクライアントに紐づき、別のクライアントが使うと `invalid_grant` になる。
@@ -84,7 +87,9 @@ curl -s -X POST http://localhost:3000/token \
 # => 400 {"error":"authorization_pending", ...}
 
 # 3. ユーザー役: ブラウザで verification_uri_complete を開き、
-#    ログイン → 承認（curl なら GET /device → POST /device → POST /device/login → POST /device/approve）
+#    ログイン → 承認（curl なら GET /device → POST /device → POST /device/login → POST /device/approve。
+#    POST /device の応答がバインディング Cookie を返すので、以降は cookie jar が必須:
+#    curl -c jar.txt -b jar.txt ... を各ステップに付ける）
 
 # 4. デバイス役: ポーリング（承認後）
 # => 200 {"access_token":"...", "id_token":"...", "token_type":"Bearer",
@@ -124,7 +129,7 @@ subject（誰が承認したか）は approved になって初めてレコード
 - **ロジック**: `packages/experimental/src/device-authorization-grant/`（subpath export `@maronn-openid-connect/experimental/device-authorization-grant`）。core は無変更
 - **生成コード**: `packages/cli/src/frameworks/hono/templates.ts` に (a) `/device_authorization` ルート、(b) `/device` 系 UI ルート、(c) token ルートの grant 分岐、(d) discovery 追記、(e) `deviceAuthorizationStore`、(f) views 4 ページが feature 有効時のみ生成される。express / fastify / nextjs は web-standard 変換で同じテンプレートを共有する
 - **有効化**: `--enable device-authorization-grant`。既定オフなので、有効化しない限り生成物は現状と 1 バイトも変わらないことがテストで保証される
-- **分岐の型**: token ルートの分岐は Token Exchange が、バックチャネルエンドポイント追加は PAR が、UI ページは login / consent がそれぞれ確立したパターンの再利用であり、本機能で初めて出る構造は「UI ルートが auth transaction ではなくデバイス認可レコードに紐づく」ことだけ
+- **分岐の型**: token ルートの分岐は Token Exchange が、バックチャネルエンドポイント追加は PAR が、UI ページは login / consent が、ブラウザバインディングは transaction-binding がそれぞれ確立したパターンの再利用であり、本機能で初めて出る構造は「UI ルートが auth transaction ではなくデバイス認可レコードに紐づく」ことと「バインディングが opt-in でなく常時有効」の 2 点だけ
 
 ## Experimental にする理由（この機能固有の事情)
 
@@ -137,6 +142,8 @@ subject（誰が承認したか）は approved になって初めてレコード
 - **「ID トークンに nonce が無いのはバグでは」**: nonce は認可リクエストに含めた場合に ID トークンへの反映が必須になるクレームで、デバイス認可リクエストには nonce パラメータ自体が存在しない。省略が仕様準拠である
 - **「デバイスは confidential client にできないのか」**: できる（client_secret を持つ CLI サーバー等）。本実装は既存のクライアント認証パイプラインをそのまま通すため、public / confidential 両方が動く
 - **「approve 後にもう一度 /device でコードを入れたら」**: 非 pending のレコードは「無効なコード」と同じ扱いになる。承認済みセッションを後から拒否に変える操作は存在しない（取り消したい場合はトークン失効 = revocation の領分）
+- **「hidden の CSRF トークンがあるのに、なぜ Cookie バインディングまで要るのか」**: このフローの CSRF トークンは user_code から辿れるレコードに保存されており、user_code は攻撃者（フロー開始者）に既知なので、攻撃者はトークンを自力で取得できる。トークンが防御になるのは「攻撃者がトークンを知らない」ときだけで、その前提がこのフローでは崩れている。ブラウザだけが持つ HttpOnly Cookie は罠ページから読むことも送らせることもできないため、こちらが実効的な防御になる（トークンは多層防御として残している）
+- **「curl でフローを一周できなくなったのでは」**: できる。cookie jar（`-c` / `-b`）を付ければよい。authorize フローの `transaction-binding` が「curl の手軽さ」を優先して opt-in なのに対し、device フローは識別子（user_code）の秘匿に頼れないためバインディングを常時有効にしている — このトレードオフの違いは意図的である
 
 ## 実装後の利用方法（利用者視点）
 

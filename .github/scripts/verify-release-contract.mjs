@@ -73,6 +73,36 @@ export function assertExperimentalReleasesAreAlwaysPatch(changesets) {
   );
 }
 
+/**
+ * private パッケージを Changesets のバージョニング対象から外していることを強制する。
+ *
+ * `samples/*`・`tests/*`・`docs/*` は npm へ publish しない検証用のワークスペースだが、
+ * Changesets は既定（`privatePackages.version: true`）だと private パッケージも
+ * バージョニングの対象にする。samples は core / experimental を `workspace:*` で参照して
+ * いるため、`updateInternalDependencies` の連鎖で毎回 patch が積まれ、
+ * 「Version Packages」PR の Releases 一覧に
+ * `@maronn-openid-connect/sample-hono-cloudflare@0.0.7` のような、**利用者が npm から
+ * 取得できないパッケージのバージョンアップ**が並ぶ。リリース PR は「今回 npm に出るもの」を
+ * 読む場所なので、出ないものが混ざると publish 対象の判別ができなくなる。
+ *
+ * publish 対象かどうかは `package.json` の `private` が唯一の情報源なので、
+ * samples を名前で列挙する（`ignore`）のではなく private 全体を対象外にする。
+ * 新しい sample やテスト用ワークスペースを足しても設定を触らなくて済む。
+ */
+export function assertPrivatePackagesAreNotVersioned(changesetConfig) {
+  // `privatePackages: false` は `{ version: false, tag: false }` の省略形（@changesets/config）
+  if (changesetConfig.privatePackages === false) return;
+  if (changesetConfig.privatePackages?.version === false) return;
+
+  throw new Error(
+    '.changeset/config.json で private パッケージがバージョニング対象のままです。' +
+      '`privatePackages.version` を false にしてください。' +
+      'true（既定値）のままだと samples / tests / docs も Changesets のバージョン上げ対象になり、' +
+      'npm へ publish しないパッケージのバージョンアップが「Version Packages」PR に並んで、' +
+      '今回 publish されるパッケージを読み取れなくなります。',
+  );
+}
+
 export function assertExperimentalCorePeerDependencyShape(packageJson) {
   if (packageJson.dependencies?.[CORE] !== undefined) {
     throw new Error(
@@ -183,6 +213,9 @@ function verifyReleaseContract() {
   const repositoryRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
   const changesets = readChangesets(join(repositoryRoot, '.changeset'));
+  const changesetConfig = JSON.parse(
+    readFileSync(join(repositoryRoot, '.changeset/config.json'), 'utf8'),
+  );
   const experimentalPackageJson = JSON.parse(
     readFileSync(join(repositoryRoot, 'packages/experimental/package.json'), 'utf8'),
   );
@@ -192,6 +225,7 @@ function verifyReleaseContract() {
 
   assertCoreBreakingChangeReleasesExperimental(changesets);
   assertExperimentalReleasesAreAlwaysPatch(changesets);
+  assertPrivatePackagesAreNotVersioned(changesetConfig);
   assertExperimentalCorePeerDependencyShape(experimentalPackageJson);
   assertExperimentalCorePeerRangeCoversNextCore(
     experimentalPackageJson,
@@ -199,7 +233,7 @@ function verifyReleaseContract() {
   );
 
   console.log(
-    'Release contract verified: core / experimental peer dependency, peer range lower bound, release pairing and experimental patch-only bumps',
+    'Release contract verified: core / experimental peer dependency, peer range lower bound, release pairing, experimental patch-only bumps and private packages excluded from versioning',
   );
 }
 

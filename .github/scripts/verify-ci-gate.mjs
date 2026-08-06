@@ -24,6 +24,10 @@ const BUILD_COMMAND = 'pnpm run build';
 const TYPECHECK_COMMAND = 'pnpm run typecheck';
 const TEST_COMMAND = 'pnpm run test:ci';
 const LINT_COMMAND = 'pnpm run lint';
+/** root の test:ci から sample の契約テストを起動するスクリプト名。 */
+const SAMPLE_TEST_SCRIPT = 'test:samples';
+/** 各 sample が持たなければならない、契約テストを実行するスクリプト名。 */
+const SAMPLE_CONTRACT_TEST_SCRIPT = 'test:conformance';
 
 /** build -> typecheck -> test:ci の順で並んでいることを要求する。 */
 const REQUIRED_STEP_ORDER = [BUILD_COMMAND, TYPECHECK_COMMAND, TEST_COMMAND];
@@ -273,6 +277,43 @@ export function assertLintGateIsBacked(workflow, packageJsons) {
   );
 }
 
+/**
+ * samples/* の conformance.test.ts が実際に実行されることを要求する。
+ *
+ * CLAUDE.md は生成 OP の conformance.test.ts を「利用者に示す契約テスト」と位置づけ、
+ * 想定挙動から外れたらテスト失敗で気づけることを前提にしている。だがテストは
+ * 「書かれていること」と「常に実行され緑であること」が別であり、実際に 3 sample は
+ * どのランナーにも接続されないまま壊れた生成物を抱えていた（tasks/done/p1-exec-conformance-test.md）。
+ *
+ * 落とし穴は 2 つあり、どちらも「黙って成功する」形で現れる。
+ *   1. root の test:ci が sample を呼ばなくなる（呼び出し行を消しても誰も気づかない）
+ *   2. sample が test:conformance スクリプトを失う（pnpm --filter は該当スクリプトを
+ *      持たないパッケージを読み飛ばし、0 件のまま成功する）
+ */
+export function assertSampleContractTestsAreExecuted(rootPackageJson, samplePackageJsons) {
+  const ciScript = rootPackageJson?.scripts?.[TEST_COMMAND.replace('pnpm run ', '')];
+  if (typeof ciScript !== 'string' || !ciScript.includes(`pnpm run ${SAMPLE_TEST_SCRIPT}`)) {
+    throw new Error(
+      `root の ${TEST_COMMAND.replace('pnpm run ', '')} スクリプトが ` +
+        `\`pnpm run ${SAMPLE_TEST_SCRIPT}\` を実行していません。` +
+        'samples/* の conformance.test.ts はどのランナーにも接続されず、' +
+        '契約テストが 1 件も走らないまま CI が緑になります。',
+    );
+  }
+
+  const missing = samplePackageJsons
+    .filter((packageJson) => packageJson?.scripts?.[SAMPLE_CONTRACT_TEST_SCRIPT] === undefined)
+    .map((packageJson) => packageJson.name);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `${SAMPLE_CONTRACT_TEST_SCRIPT} スクリプトを持たない sample があります: ${missing.join(', ')}。` +
+        'pnpm --filter は該当スクリプトを持たないパッケージを黙って読み飛ばすため、' +
+        'その sample の契約テストが CI をすり抜けます。',
+    );
+  }
+}
+
 function readPackageJsons(packagesDirectory) {
   return readdirSync(packagesDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -286,13 +327,18 @@ function verifyCiGate() {
     readFileSync(join(repositoryRoot, '.github/workflows/ci.yml'), 'utf8'),
   );
   const packageJsons = readPackageJsons(join(repositoryRoot, 'packages'));
+  const rootPackageJson = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'));
+  const samplePackageJsons = readPackageJsons(join(repositoryRoot, 'samples'));
 
   assertWorkflowVerifiesMainPush(workflow);
   assertStaticVerificationGate(workflow);
   assertEveryPackageIsTypechecked(packageJsons);
   assertLintGateIsBacked(workflow, packageJsons);
+  assertSampleContractTestsAreExecuted(rootPackageJson, samplePackageJsons);
 
-  console.log('CI gate verified: main push trigger, build / typecheck / test order, typecheck coverage');
+  console.log(
+    'CI gate verified: main push trigger, build / typecheck / test order, typecheck coverage, sample contract tests',
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

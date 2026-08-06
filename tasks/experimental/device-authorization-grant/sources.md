@@ -37,6 +37,10 @@
 | `packages/cli/src/features.ts` | EXPERIMENTAL_FEATURES / OidcFeatureConfig — feature フラグの追加箇所 |
 | `tasks/experimental/done/{par,token-exchange,jarm}/` | 過去サイクルの仕様書式・候補評価の経緯（JARM サイクルで本機能が次サイクル有力候補と明記） |
 | `tasks/T-019-dpop.md` | DPoP は core 側タスクとして進行中 → experimental 候補から除外する根拠 |
+| `packages/cli/src/frameworks/hono/templates.ts:527-600` | transaction-binding Cookie ヘルパー群と設計コメント — 「識別子を知るだけの第三者が csrf_token を読める」問題の既存分析と、生値 Cookie + ハッシュ保存・SameSite=Lax・Max-Age=TTL のパターン（device 検証 UI のバインディングが踏襲。Review 2 で参照） |
+| `packages/core/src/auth-transaction.ts` | `computeTransactionBindingHash` / `validateTransactionBinding` — バインディングのハッシュ照合が core 公開 API として確立していることの確認（Review 2 で参照） |
+| `tasks/p2-login-attempt-throttling-subject-scope.md` | subject 単位ログイン試行スロットリングの既存タスク — `/device/login` 経由の資格情報総当たりの残存面を既存 `/login` と同一水準として扱い、同タスクの対象に含める根拠（Review 2 で参照） |
+| `tasks/p3-csrf-token-constant-time-comparison.md` | CSRF トークン定数時間比較の既存タスク — csrf_token 直接比較の水準を既存 login / consent と揃え、同タスクの適用範囲に本機能を含める根拠（Review 2 で参照） |
 
 ## 二次資料
 

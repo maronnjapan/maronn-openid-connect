@@ -81,7 +81,7 @@ Device (client)               OP (生成コード + experimental/device-authoriz
   |     oauth:grant-type:          |<---------------- POST /device/login (credentials) -----------------|
   |     device_code                |  (7) 認証成功でOPセッション確立、承認画面表示                         |
   |   device_code=...              |     （client名・scope・user_code 再表示 = §5.4 対策）                |
-  |   client_id=...                |<---------------- POST /device/approve (approve/deny + CSRF) -------|
+  |   client_id=...                |<------ POST /device/approve (approve/deny + CSRF + binding cookie)|
   |<- 400 {error:                  |  (8) レコードを approved/denied に更新、consent 記録                  |
   |   authorization_pending} ------|                                                                    |
   |-- POST /token (再ポーリング) -->|  (9) approved を検出、レコードを atomic に consume                    |
@@ -135,12 +135,14 @@ Device (client)               OP (生成コード + experimental/device-authoriz
 | ルート | メソッド | 役割 |
 |---|---|---|
 | `/device` | GET | user_code 入力フォームを表示。クエリ `user_code` があれば入力欄へ事前入力（§3.3.1 `verification_uri_complete` 対応。値は views の既存エスケープ規則に従い HTML エスケープして埋め込む）。このページは認証不要・状態変更なし |
-| `/device` | POST | `user_code` を正規化（大文字化・ハイフンと空白除去）して照合。不一致・期限切れ・非 pending は**同一文言のエラー**（区別不能）でフォーム再表示。一致時: レコードに CSRF トークンを発行・保存し（`issueVerificationCsrfToken`）、OP セッション（`parseSessionId` + `browserSessionStore`）があれば承認画面、無ければデバイス用ログインフォームを表示（どちらのフォームにも CSRF トークンを埋め込む） |
-| `/device/login` | POST | `username` / `password` + hidden の `user_code` / `csrf_token` を受ける。CSRF トークンをレコード保存値と照合してから `authenticateUser`（既存の swap point）で認証（ログイン CSRF 対策: フォージされた POST で被害者ブラウザに攻撃者セッションを確立させない）。成功時は login ルートと同じ手順で OP セッションを確立（`browserSessionStore.set` + `buildSessionCookie`）し承認画面を表示。失敗はレコード単位で計数し、`maxLoginAttempts`（既定 5）超過でレコードを `denied` に遷移させる |
-| `/device/approve` | POST | `user_code` + `csrf_token` + `decision`（`approve` / `deny`）を受ける。OP セッション必須・CSRF トークンはレコードに保存した値と照合。`approve` でレコードを `approved`（subject / authTime / approvedScope / grantId を記録）、`deny` で `denied` に更新し、完了画面（「デバイスに戻ってください」）を表示 |
+| `/device` | POST | `user_code` を正規化（大文字化・ハイフンと空白除去）して照合。不一致・期限切れ・非 pending は**同一文言のエラー**（区別不能）でフォーム再表示。一致時: **ブラウザバインディングと CSRF トークンをまとめて発行・回転する**（`issueVerificationBinding`。bindingSecret を生成し SHA-256 ハッシュのみレコードへ保存、生値は `HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<レコード残TTL>` の Cookie `oidc_device_<正規化user_code>` として応答に付与。csrf_token も同時に再生成しレコードへ保存）。その上で OP セッション（`parseSessionId` + `browserSessionStore`）があれば承認画面、無ければデバイス用ログインフォームを表示（どちらのフォームにも csrf_token を埋め込む。csrf_token を埋め込んだ HTML はバインディング Cookie を発行したこの応答と、Cookie 照合を通過した後続応答にしか現れない） |
+| `/device/login` | POST | `username` / `password` + hidden の `user_code` / `csrf_token` を受ける。**バインディング Cookie 照合（`validateVerificationBinding`）→ CSRF 照合 → `authenticateUser`（既存の swap point）** の順で検証する。Cookie 不在・ハッシュ不一致は 403（クロスサイトからフォージされた POST は SameSite=Lax の Cookie を運べず、そもそも被害者ブラウザは Cookie を保持していない — ログイン CSRF 対策）。成功時は login ルートと同じ手順で OP セッションを確立（`browserSessionStore.set` + `buildSessionCookie`）し承認画面を表示。失敗はレコード単位で計数し、`maxLoginAttempts`（既定 5）超過でレコードを `denied` に遷移させる |
+| `/device/approve` | POST | `user_code` + `csrf_token` + `decision`（`approve` / `deny`）を受ける。OP セッション必須・バインディング Cookie 照合・CSRF 照合の全てを要求する。`approve` でレコードを `approved`（subject / authTime / approvedScope / grantId を記録）、`deny` で `denied` に更新し、完了画面（「デバイスに戻ってください」）を表示。完了応答でバインディング Cookie を削除する（`Max-Age=0`） |
 
 - 承認画面には **client 名（client_id）・要求 scope・入力された user_code** を再表示する（RFC 8628 §5.4 リモートフィッシング対策: ユーザーがデバイス画面のコードと突き合わせて確認できるようにする）
-- CSRF トークンは `POST /device` で user_code が pending レコードに一致した時点で `generateRandomString(32)` により生成しレコードに保存する（既に発行済みなら再利用）。`/device/login` と `/device/approve` の POST はレコード保存値との一致を要求する
+- **ブラウザバインディングが CSRF 防御の主役である**。user_code はフロー開始者（= 攻撃者になり得る主体）が設計上必ず知っている識別子なので、user_code から辿れるレコードに紐づけただけの CSRF トークンは、攻撃者自身が `POST /device` で取得できてしまい防御にならない（既存 transaction-binding の設計コメントが指摘する「識別子を知るだけの第三者が csrf_token を読める」問題そのもの）。そこで `POST /device` の照合成功時に bindingSecret（`generateRandomString(32)`）を発行し、生値をブラウザだけが持つ HttpOnly Cookie に、SHA-256 ハッシュのみをレコードに保存する（ストア漏洩で Cookie を再構成できない — transaction-binding と同じ性質）。`/device/login` と `/device/approve` は Cookie の生値がレコードのハッシュと一致しない限り実行されない。フォージされたクロスサイト POST は被害者ブラウザの Cookie を運べない（SameSite=Lax）うえ、そもそも被害者ブラウザは当該レコードの Cookie を保持していないため、トークン秘匿に依存せず遮断できる
+- **バインディングは feature フラグに依存せず常時有効とする**（optional の `transaction-binding` とは独立）。authorize フローの transaction_id は通常秘匿されるためバインディングは追加ハードニング（opt-in）でよいが、device フローの user_code は開始者に既知であることが前提のため、ブラウザバインディングが唯一実効的な CSRF 防御でありベースライン要件となる。代償として curl での手動フロー実行には UI 3 ステップ（`POST /device` 以降）で cookie jar（`-c` / `-b`）が必要になる。この判断と手順は理解資料・docs に明記する
+- bindingSecret と csrf_token は `POST /device` の照合成功ごとにペアで回転する（last-writer-wins）。別ブラウザが同じ user_code で `POST /device` すると先のブラウザのバインディングは無効になるが、user_code を知る者はレコードの承認 / 拒否を左右できるという RFC 8628 のモデルを変えるものではない（機能ではなく制約として理解資料に記載）
 - 承認 / 拒否は一方向遷移とする。`approved` / `denied` になったレコードは検証 UI から再度操作できない（user_code 照合の時点で非 pending は「無効なコード」扱い）
 - 承認時、既存 consent ルートと同様に `consentStore` へ同意を記録する（subject × clientId × approvedScope）。以後の Authorization Code Flow で同意画面がスキップされる挙動が既存機構のまま成立する
 - views 契約に `deviceVerificationPage`（user_code 入力）/ `deviceLoginPage`（デバイス用ログイン）/ `deviceApprovalPage`（承認）/ `deviceCompletedPage`（完了）を追加する。既存の `loginPage` / `consentPage` と同じく `views.ts` テンプレートの差し替え可能な関数として feature 有効時のみ生成する
@@ -229,7 +231,12 @@ export interface DeviceAuthorizationResponse {
 // verification.ts（検証 UI ルートが呼ぶステップ関数群）
 export function findPendingRecordByUserCode(userCode: string, store: DeviceAuthorizationStore):
   Promise<DeviceAuthorizationRecord | null>;   // 正規化・期限・pending 判定込み。失敗理由は区別しない
-export function issueVerificationCsrfToken(record, store): Promise<string>;
+export function issueVerificationBinding(record, store):
+  Promise<{ bindingSecret: string; csrfToken: string }>;
+  // POST /device の照合成功時に呼ぶ。bindingSecret の SHA-256 ハッシュと csrfToken を
+  // レコードへ保存（既存値があれば回転）。bindingSecret の生値は Cookie にのみ載せる
+export function validateVerificationBinding(record, bindingSecret: string | null): Promise<void>;
+  // Cookie の生値をハッシュ化しレコードの bindingHash と照合。不在・不一致は throw
 export function validateVerificationCsrfToken(record, csrfToken: string): void; // 不一致は throw
 export function recordDeviceLoginFailure(record, store, maxLoginAttempts): Promise<{ canRetry: boolean }>;
 export function approveDeviceAuthorization(input: {
@@ -270,7 +277,8 @@ export interface DeviceAuthorizationRecord {
   expiresAt: Date;
   interval: number;              // 現在の要求ポーリング間隔（slow_down で +5 される）
   lastPolledAt: Date | null;
-  csrfToken: string | null;      // user_code 照合成功時に発行（login / approve の両 POST が要求）
+  csrfToken: string | null;      // user_code 照合成功時に発行・回転（login / approve の両 POST が要求）
+  bindingHash: string | null;    // bindingSecret の SHA-256 ハッシュ。生値はブラウザの HttpOnly Cookie にのみ存在する
   loginAttempts: number;         // デバイス用ログインの失敗回数
   subject?: string;              // approved 時のみ
   authTime?: number;             // approved 時のみ
@@ -295,6 +303,7 @@ export interface DeviceAuthorizationStore {
 
 - キー（deviceCode / userCode）は外部入力由来の不透明値として扱い、永続ストア実装ではクエリへ文字列連結せず必ずパラメータ化すること（PAR store と同じ注意書きをコメントで残す）
 - `lastPolledAt` / `interval` の read-modify-write が atomic でない場合、並行ポーリングでポーリング間隔の強制が甘くなり得るが、認可状態の遷移（pending → approved / denied）と単回使用（consume）が守られていればセキュリティ特性は保たれる。この性質差はコメントに明記する
+- **期限切れレコードの掃除**: 期限切れは原則トークンエンドポイントのポーリング時に `expired_token` 応答とともに削除されるが、ポーリングを止めたデバイスのレコードは残る。ストア実装は `expiresAt` から十分な猶予（目安: TTL と同程度）を置いた後に期限切れレコードを自主的に破棄してよい。破棄後のポーリングは `invalid_grant` になるが、クライアントはどちらのエラーでもフローを終了するため相互運用上の問題はない（この猶予の意図はコメントに明記する）
 
 ## CLIオプション案
 
@@ -325,9 +334,11 @@ export const deviceAuthorizationConfig = {
 | `/device_authorization` grantTypes | URN 登録済みか | 400 `unauthorized_client` |
 | `/device_authorization` scope | 必須・openid 必須 | 400 `invalid_request` / `invalid_scope` |
 | `/device` POST user_code | 正規化後、pending かつ未期限のレコードに一致 | 同一文言でフォーム再表示（理由を区別しない） |
+| `/device/login` バインディング | Cookie の bindingSecret がレコードの bindingHash と一致 | 403 エラー画面 |
 | `/device/login` CSRF | レコード保存値と一致 | 403 エラー画面 |
 | `/device/login` 資格情報 | `authenticateUser` | 失敗計数、上限超過でレコード denied + エラー画面 |
 | `/device/approve` セッション | OP セッション必須 | 401 エラー画面 |
+| `/device/approve` バインディング | Cookie の bindingSecret がレコードの bindingHash と一致 | 403 エラー画面 |
 | `/device/approve` CSRF | レコード保存値と一致 | 403 エラー画面 |
 | `/token` device_code | 必須・実在・クライアント一致 | 400 `invalid_request` / `invalid_grant` |
 | `/token` 状態 | §3.5 状態機械 | 400 `authorization_pending` / `slow_down` / `access_denied` / `expired_token` |
@@ -338,10 +349,12 @@ export const deviceAuthorizationConfig = {
 - **device_code の機密性（§5.2）**: 256bit ランダム。認可コードと同等の機密として扱い、ログへ出力しない。トークン発行時の `consume` は atomic な単回使用とし、並行リデンプションを防ぐ
 - **リモートフィッシング（§5.4）**: 承認画面に user_code を再表示し、デバイス画面のコードとの一致確認をユーザーに促す文言を必ず表示する。TTL を短く保つ（既定 10 分）
 - **セッション盗み見（§5.5）**: user_code はワンタイムであり、承認完了後は同じコードで再操作できない
-- **CSRF**: `/device/login` と `/device/approve` はレコード紐付きのランダム CSRF トークン必須（承認強要の防止に加え、フォージされたログイン POST で被害者ブラウザに攻撃者の OP セッションを確立させるログイン CSRF の防止。既存 login ルートがトランザクション CSRF トークンで守っているのと同じ水準を、デバイス認可レコード紐付きトークンで実現する）
+- **CSRF（承認強要・ログイン CSRF）**: 防御の主役は**ブラウザバインディング Cookie**（検証 UI の節参照）。device フローの脅威モデルでは攻撃者が user_code を知っている（自分で発行できる）ため、レコード紐付き CSRF トークンだけでは攻撃者自身が `POST /device` で有効なトークンを取得でき、(a) 被害者ブラウザに `POST /device/approve` をフォージして自デバイスへトークンを流出させる承認強要も、(b) `POST /device/login` をフォージして被害者ブラウザに攻撃者セッションを確立するログイン CSRF も防げない。バインディング Cookie（HttpOnly / Secure / SameSite=Lax・生値はブラウザのみ・レコードにはハッシュのみ）を `/device/login` と `/device/approve` の前提条件にすることで、トークンや識別子の秘匿に依存せずフォージ POST を遮断する。hidden の csrf_token は多層防御として維持する。バインディングは `transaction-binding` feature と独立に常時有効（理由は検証 UI の節に記載）
+- **バインディング・CSRF 照合の比較方法**: レコード側はハッシュのみを保持するため、照合は「入力の SHA-256 ハッシュ vs 保存ハッシュ」の比較になり、比較のタイミング差から保存値の前方一致を積み上げる攻撃は原像計算が必要となり成立しない。csrf_token の直接比較は既存 login / consent の `validateCsrfToken` と同じ水準とし、定数時間比較への統一は既存タスク `tasks/p3-csrf-token-constant-time-comparison.md` の適用範囲に本機能の照合も含める（実装時に同タスクが未着手なら現行水準で実装し、タスク側の対象一覧に本機能を追記する）
+- **`/device/login` を経由した資格情報総当たり**: レコード単位の `maxLoginAttempts`（既定 5）はあるが、device グラントを許可されたクライアントを持つ攻撃者はレコードを無制限に発行でき、集計上のパスワード試行回数は無制限になる。これは既存 `/login` ルート（auth transaction を無制限に開始できる）と同一の残存面であり、subject 単位のログイン試行スロットリングは既存タスク `tasks/p2-login-attempt-throttling-subject-scope.md` の責務とする。同タスク実装時に `/device/login` も対象に含めることを本仕様の要件とする（`authenticateUser` swap point を共有するため自然に載る想定）
 - **クライアント紐付け**: device_code はデバイス認可時のクライアントに紐づき、トークンリクエストのクライアントと不一致なら `invalid_grant`（文言は不存在時と同一にし、実在性を漏らさない）
 - **public client**: RFC 8628 §5.6 の通り、認証しないクライアントの `client_id` は自己申告にすぎない。理解資料で「client_id なりすましは検証 UI にクライアント名として現れるだけで、トークンは user_code を承認したユーザーの明示操作なしに出ない」というモデルを説明する
-- **ログ禁止情報**: device_code / user_code（有効期間中）/ CSRF トークン / 資格情報。エラーメッセージ・error_description にもこれらの値を含めない
+- **ログ禁止情報**: device_code / user_code（有効期間中）/ CSRF トークン / bindingSecret（Cookie 値）/ 資格情報。エラーメッセージ・error_description にもこれらの値を含めない
 - **検証 UI の応答一様性**: user_code 不一致・期限切れ・使用済みは全て同一文言。タイミング差の最小化は必須要件にしない（user_code 照合はストア検索であり、実在コードの推測に使える差は残り得るが、エントロピーと TTL が主防御 — 理解資料に明記）
 - **エラー露出**: トークンエンドポイントのエラーは RFC 8628 §3.5 の登録値のみ。内部状態（承認者・subject 等）を error_description に含めない
 
@@ -356,7 +369,7 @@ export const deviceAuthorizationConfig = {
 - 生成コード（CLI テンプレート）の変更点:
   - `packages/cli/src/frameworks/hono/templates.ts`:
     - 許可メソッドマップに `/device_authorization: ['POST']`、`/device: ['GET','POST']`、`/device/login: ['POST']`、`/device/approve: ['POST']` を追加
-    - `deviceAuthorizationRouteTemplate`（バックチャネル）と `deviceVerificationRouteTemplate`（UI）を新設し、app テンプレートで feature 有効時のみ import / mount
+    - `deviceAuthorizationRouteTemplate`（バックチャネル）と `deviceVerificationRouteTemplate`（UI）を新設し、app テンプレートで feature 有効時のみ import / mount。UI テンプレートにはバインディング Cookie の組み立て・削除・抽出ヘルパー（`buildTransactionBindingCookie` 群と同形式。名前は `oidc_device_` プレフィックス）を含める
     - `store.ts` テンプレートに `deviceAuthorizationStore`（in-memory 既定実装 + globalThis レジストリ。`parStore` と同じパターン）を追加
     - token ルートに `deviceCodeDispatchStep` / catch 節（`DeviceAuthorizationError` → RFC 6749 §5.2 形式）を追加（`tokenExchangeDispatchStep` と同型）
     - discovery テンプレートに `device_authorization_endpoint` を追加し、`grant_types_supported` に URN を追加（RFC 8628 §4）
@@ -381,14 +394,15 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 - `user-code`: 文字種が `BCDFGHJKLMNPQRSTVWXZ` のみで 8 文字であること / 表示形式が `XXXX-XXXX` であること / `normalizeUserCode` が小文字・空白・ハイフンを吸収すること
 - `device-authorization-request`: scope 欠落 `invalid_request` / openid 欠落 `invalid_scope` / grantTypes 未登録 `unauthorized_client` / refresh 無効時に offline_access が除去されること / 応答 6 フィールドの値（verification_uri 組み立て含む）
-- `verification`: 未知・期限切れ・非 pending の user_code が null になること / CSRF 発行と照合 / ログイン失敗計数と上限超過での denied 遷移 / 承認で subject・authTime・approvedScope・grantId が確定すること / 拒否遷移
+- `verification`: 未知・期限切れ・非 pending の user_code が null になること / `issueVerificationBinding` が bindingHash と csrfToken をペアで保存し、再発行で両方回転すること / `validateVerificationBinding` が正しい bindingSecret を受理し、不在・不一致・回転前の旧値を拒否すること / CSRF 照合 / ログイン失敗計数と上限超過での denied 遷移 / 承認で subject・authTime・approvedScope・grantId が確定すること / 拒否遷移
 - `device-code-grant`: §3.5 状態機械の全分岐（expired_token → 削除 / slow_down → interval+5 / authorization_pending / access_denied → 削除 / approved → 結果返却）/ device_code 欠落・未知・クライアント不一致 / consume 後の再リクエストが invalid_grant / `now` 注入による境界（expiresAt ちょうど・interval ちょうど）
 
 ### 結合テスト（conformance.test.ts — packages/cli の生成コードを更新）
 
 - feature 有効時: discovery に `device_authorization_endpoint` と grant URN が現れること（値は具体値で固定）
 - `POST /device_authorization` の成功応答（フィールド・Cache-Control）と各エラー
-- ハッピーパス通し: device_authorization → `GET /device` → `POST /device` → `POST /device/login` → `POST /device/approve` → `POST /token` 成功（access_token / id_token / scope を検証。id_token の auth_time・aud・nonce 不在を検証）→ そのトークンで UserInfo 成功
+- ハッピーパス通し: device_authorization → `GET /device` → `POST /device` → `POST /device/login` → `POST /device/approve` → `POST /token` 成功（access_token / id_token / scope を検証。id_token の auth_time・aud・nonce 不在を検証）→ そのトークンで UserInfo 成功（UI ステップはバインディング Cookie を持ち回す）
+- バインディング: `POST /device` 照合成功応答の Set-Cookie 属性（`HttpOnly; Secure; SameSite=Lax; Path=/` と Max-Age）を固定値で検証 / バインディング Cookie 無しの `POST /device/login`・`POST /device/approve` が 403 になり状態が変化しないこと（有効な csrf_token を添えても通らないこと = トークン単独では防御にならない設計の検証）/ `POST /device` 再実行で旧 bindingSecret・旧 csrf_token が無効化されること / 完了応答で Cookie が `Max-Age=0` で削除されること
 - ポーリング系: 承認前 `authorization_pending` / interval 内連打で `slow_down`（以後 interval が +5 されること） / 拒否後 `access_denied` / 期限後 `expired_token` / 発行後の再利用 `invalid_grant`
 - 別クライアントの device_code 使用が `invalid_grant`
 - feature 無効時: `/device_authorization` が存在しない（404 系）こと・token の URN が `unsupported_grant_type` のままであること・discovery にメタデータが出ないこと（既存挙動の不変確認）
@@ -401,7 +415,7 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 ### 相互運用性
 
-- 応答フィールド名・エラーコードは RFC 8628 の登録値のみを使い、curl での手動フロー実行手順を docs に記載する（外部クライアントライブラリとの接続検証は実装フェーズの任意項目とし、完了条件にしない）
+- 応答フィールド名・エラーコードは RFC 8628 の登録値のみを使い、curl での手動フロー実行手順を docs に記載する（検証 UI の 3 ステップは cookie jar `-c` / `-b` を使う手順として記載する。外部クライアントライブラリとの接続検証は実装フェーズの任意項目とし、完了条件にしない）
 
 ## ドキュメント要件
 
@@ -424,7 +438,8 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 4. `packages/core` に差分がない
 5. discovery・エラーコード・応答フィールドが RFC 8628 の登録値と一致する
 6. ドキュメント要件・Changeset要件を満たす
-7. ログに device_code / user_code / CSRF トークンが出力されない
+7. ログに device_code / user_code / CSRF トークン / bindingSecret が出力されない
+8. バインディング Cookie 無しでは `/device/login` `/device/approve` のいかなる状態変更も起きないことがテストで保証される
 
 ## 未解決事項
 

@@ -42,6 +42,92 @@ describe('Web-standard generated validation pipelines', () => {
       expect(tokenRoute.includes('await validateAuthorizationCodeGrant(')).toBe(false);
       expect(tokenRoute.includes('await validateRefreshTokenGrant(')).toBe(false);
     });
+
+    // P1 / RFC 7591 §2 + OIDC Dynamic Client Registration 1.0 §2: grant_types の既定は
+    // ["authorization_code"]。refresh_token grant 未登録のクライアントへ渡した Refresh Token は
+    // validateClientGrantType に unauthorized_client で弾かれ一度も使えないため発行しない。
+    // RFC 6749 §3.3 に従い、見送ったときは付与 scope からも offline_access を落とす。
+    it(`should withhold the refresh token from a client without the refresh_token grant for ${framework}`, () => {
+      expect(
+        tokenRoute.includes(
+          "const clientAllowsRefreshGrant = (tokenClient.grantTypes ?? ['authorization_code']).includes(",
+        ),
+      ).toBe(true);
+      expect(
+        tokenRoute.includes(
+          'const issueRefreshToken = grantHasOfflineAccess && clientAllowsRefreshGrant;',
+        ),
+      ).toBe(true);
+      expect(
+        tokenRoute.includes(
+          'refresh_token: issueRefreshToken ? generateRandomString(32) : undefined',
+        ),
+      ).toBe(true);
+      expect(
+        tokenRoute.includes(
+          "      : validatedRequest.scope.filter((scopeValue) => scopeValue !== 'offline_access');",
+        ),
+      ).toBe(true);
+      expect(tokenRoute.includes("      scope: grantedScope.join(' '),")).toBe(true);
+    });
+  }
+});
+
+// P1 / RFC 7591 §2 + RFC 6749 §3.3: 生成された契約テストは、offlineAccessAllowed が ON でも
+// grant_types に refresh_token が無いクライアントには Refresh Token を配らないことを
+// 4 フレームワーク共通で示さなければならない。
+describe('Web-standard generated refresh grant registration contract', () => {
+  const generatedConformanceTests = [
+    {
+      framework: 'express',
+      conformance: new ExpressGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'conformance.test.ts')?.content ?? '',
+    },
+    {
+      framework: 'fastify',
+      conformance: new FastifyGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === 'conformance.test.ts')?.content ?? '',
+    },
+    {
+      framework: 'nextjs',
+      conformance: new NextJsGenerator()
+        .generate({ outputDir: './out', corePackageName: CORE_PKG })
+        .find((file) => file.path === '_oidc-provider/conformance.test.ts')?.content ?? '',
+    },
+  ];
+
+  for (const { framework, conformance } of generatedConformanceTests) {
+    it(`should generate the refresh grant registration contract for ${framework}`, () => {
+      expect(conformance.includes("['c-no-refresh-grant', {")).toBe(true);
+      expect(
+        conformance.includes("describe('Refresh Token issuance vs. registered grant_types'"),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should not issue a refresh token when the client does not register the refresh_token grant type',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should omit offline_access from the granted scope when the refresh token is withheld',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should issue a refresh token when the client registers the refresh_token grant type',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should still drop offline_access when prompt=consent is absent even if refresh_token is registered',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.match(/Refresh Token issuance vs\. registered grant_types/g)?.length,
+      ).toBe(1);
+    });
   }
 });
 

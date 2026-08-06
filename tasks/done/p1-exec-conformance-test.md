@@ -2,7 +2,31 @@
 
 ## ステータス
 
-🟠 High / 未着手
+✅ 完了（2026-08-06）
+
+Step 1（未定義参照の修正）と Step 2（generator テストによる再発防止）は先行して実装済みだった
+（`authorizationCodeConformanceHelper` の export と `web-standard/templates.ts` への差し込み、
+`packages/cli/src/__tests__/feature-generation.test.ts` の 2 ケース）。
+本タスクの完了で残っていた **Step 3（テストランナーへの接続）と Step 4（nextjs の実行可否確認）** を実施した。
+
+実装内容:
+
+- `express-flyio` / `fastify-flyio` / `nextjs-vercel` に `vitest` を devDependency として追加し、
+  `test:conformance: "vitest run"` と `test`（core build → typecheck → conformance）を hono に揃えた
+- root に `test:samples`（`pnpm --filter "./samples/*" test:conformance"`）を追加し、`test:ci` へ組み込んだ。
+  root の `test:conformance`（`tests/conformance` の OIDF Suite runner）と名前が衝突しないよう別名にしている
+- `.github/scripts/verify-ci-gate.mjs` に `assertSampleContractTestsAreExecuted` を追加した。
+  「root の `test:ci` が `test:samples` を呼ぶこと」と「全 sample が `test:conformance` を持つこと」を
+  固定する。後者が無いと `pnpm --filter` が対象 0 件のまま成功し、契約テストが再び黙って
+  実行されなくなる（`assertLintGateIsBacked` と同じ false green の穴）
+- Step 4: `nextjs-vercel` の `src/app/_oidc-provider/conformance.test.ts` は追加設定なしで
+  vitest から実行できた。`vitest.config.ts` の追加や `include` の絞り込みは不要
+
+検証結果（`pnpm run test:ci`）: express 67 / fastify 67 / hono 137 / nextjs 65 = **336 件すべて緑**。
+`pnpm run test:e2e` も 4 sample すべて緑で回帰なし。
+
+changeset は追加していない。変更は root / `.github/scripts` / `samples/*` の package.json に閉じており、
+publish 対象パッケージ（`packages/*`）の出荷物は 1 バイトも変わらないため。
 
 ## 背景
 
@@ -119,61 +143,61 @@ ${conformanceTestClientsBlock(features)}...
 
 ### Step 1: 未定義参照を直す（これ単体で 3 sample が緑になる）
 
-- [ ] `authorizationCodeConformanceHelper` を `export` する
-- [ ] `web-standard/templates.ts` の import に追加し、`webConformanceTestTemplate` の
+- [x] `authorizationCodeConformanceHelper` を `export` する
+- [x] `web-standard/templates.ts` の import に追加し、`webConformanceTestTemplate` の
       `introspectionConformanceBlock` と同じ features 条件で差し込む
-- [ ] `--disable introspection` で生成したときにヘルパーが出力されないことを確認する
+- [x] `--disable introspection` で生成したときにヘルパーが出力されないことを確認する
       （`noUnusedLocals` で `tsc` が落ちるため、ここを取り違えると別の壊れ方をする）
 
 ### Step 2: 再発防止
 
-- [ ] generator テストを追加する。「生成された `conformance.test.ts` が
+- [x] generator テストを追加する。「生成された `conformance.test.ts` が
       `conformanceAuthorizationCode(` を参照するなら、同じファイルが
       `async function conformanceAuthorizationCode(` を定義していること」を
       **4 フレームワーク × introspection 有効／無効**で検証する
-- [ ] 同じ形の穴が他にないか、`hono` 側のみで差し込まれている
+- [x] 同じ形の穴が他にないか、`hono` 側のみで差し込まれている
       `${...ConformanceHelper}` / `${...ModuleSetup}` 系を洗い出して確認する
       （`requestObjectConformanceModuleSetup` などは両方に入っているか要確認）
 
 ### Step 3: テストランナーへ接続する
 
-- [ ] `express-flyio` / `fastify-flyio` / `nextjs-vercel` に `vitest` を devDependency として追加
-- [ ] 3 sample に `test:conformance: "vitest run"` を追加し、`test` を hono と同じ構成に揃える
-- [ ] root の `test:ci` に sample の契約テストを追加する。例:
+- [x] `express-flyio` / `fastify-flyio` / `nextjs-vercel` に `vitest` を devDependency として追加
+- [x] 3 sample に `test:conformance: "vitest run"` を追加し、`test` を hono と同じ構成に揃える
+- [x] root の `test:ci` に sample の契約テストを追加する。例:
       `... && pnpm --filter "./packages/*" test && pnpm --filter "./samples/*" test:conformance && pnpm run test:conformance`
       - `test:conformance` を直接呼ぶ形にすると、sample の `test` が持つ
         `core/experimental build && typecheck` の再実行を避けられる（`test:ci` の前段で
         すでに build / typecheck 済みのため）
       - root の `test:conformance`（`tests/conformance`）と sample の `test:conformance` は
         名前が衝突して紛らわしい。どちらかの改名も検討してよい
-- [ ] `verify-ci-gate.mjs` が緑のままであることを確認する（`test:ci` の中に入れる限り不要のはず）
+- [x] `verify-ci-gate.mjs` が緑のままであることを確認する（`test:ci` の中に入れる限り不要のはず）
 
 ### Step 4: nextjs sample の実行可否を確認する
 
-- [ ] `samples/nextjs-vercel/src/app/_oidc-provider/conformance.test.ts` が vitest で動くか確認する。
+- [x] `samples/nextjs-vercel/src/app/_oidc-provider/conformance.test.ts` が vitest で動くか確認する。
       `.tsx` を含むディレクトリ配下にあるため、`include` の絞り込みや
       `vitest.config.ts` の追加が必要になる可能性がある
-- [ ] 動かない場合は、原因（Next.js 固有の解決、`node:sqlite` を使う storage-backend の読み込み等）を
+- [x] 動かない場合は、原因（Next.js 固有の解決、`node:sqlite` を使う storage-backend の読み込み等）を
       特定して対処するか、対処不能なら**その理由を明記した上で**当面 3 sample のみ接続する
 
 ## テスト要件
 
 `packages/cli`:
 
-- [ ] `should define conformanceAuthorizationCode when the generated conformance test references it`
+- [x] `should define conformanceAuthorizationCode when the generated conformance test references it`
       （express / fastify / nextjs / hono の 4 ケース）
-- [ ] `should not emit the authorization code helper when introspection is disabled`
+- [x] `should not emit the authorization code helper when introspection is disabled`
       （`noUnusedLocals` 対策の裏取り。4 ケース）
 
 sample:
 
-- [ ] 4 sample すべてで `pnpm --filter ./samples/<name> test:conformance` が緑
-- [ ] `pnpm run test:ci` が 4 sample の契約テストを実際に実行していること
+- [x] 4 sample すべてで `pnpm --filter ./samples/<name> test:conformance` が緑
+- [x] `pnpm run test:ci` が 4 sample の契約テストを実際に実行していること
       （ログに各 sample のテスト件数が出ること）
 
 回帰:
 
-- [ ] `pnpm run test:e2e` が従来どおり緑
+- [x] `pnpm run test:e2e` が従来どおり緑
 
 ## 完了条件
 

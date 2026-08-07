@@ -225,7 +225,9 @@ export {
   assertKeyStrength,
   assertKidStrategyConsistent,
   createCachedSigningKeyProvider,
+  createJwkSigningKeyProvider,
   getRegisteredSigningKeys,
+  resolveSigningKeyProvider,
   selectSigningKeyByAlg,
 } from './signing-key.js';
 
@@ -233,6 +235,7 @@ export type {
   SigningKey,
   SigningKeyProvider,
   KeyStrengthPolicy,
+  ResolveSigningKeyProviderOptions,
 } from './signing-key.js';
 
 export {

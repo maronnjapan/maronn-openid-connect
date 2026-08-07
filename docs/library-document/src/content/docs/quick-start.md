@@ -62,7 +62,18 @@ applyOidc(app, {
 export default app;
 ```
 
-`signingKeyProvider` は `{ getSigningKey(): Promise<SigningKey> }` を実装するオブジェクトで、RS256 の秘密鍵・公開 JWK・kid を返します。実装例はリポジトリの `samples/hono-cloudflare/src/app.ts` を参照してください。
+`signingKeyProvider` は `{ getSigningKey(): Promise<SigningKey> }` を実装するオブジェクトで、RS256 の秘密鍵・公開 JWK・kid を返します。自前で用意しなくても、core の `resolveSigningKeyProvider` に秘密鍵 JWK を渡せば構築できます。
+
+```typescript
+import { resolveSigningKeyProvider } from '@maronn-openid-connect/core';
+
+const signingKeyProvider = resolveSigningKeyProvider({
+  jwk: process.env.OIDC_SIGNING_KEY_JWK, // 秘密鍵 JWK（JSON 文字列）
+  fallbackKeyId: 'my-rs256-key',
+});
+```
+
+鍵は `pnpm generate:signing-key`（`scripts/generate-signing-key.mjs`）で生成できます。`jwk` を渡さない場合はプロセスごとに鍵を生成して起動時に警告を出します。この鍵はインスタンスをまたいで共有されないため、複数インスタンス構成・再起動・再デプロイをまたぐ検証では ID Token の署名検証が間欠的に失敗します（RFC 7515 §4.1.4 は `kid` で検証鍵を選び、OIDC Core 1.0 §10.1 は `kid` から鍵素材への対応が安定していることを前提とします）。実装例はリポジトリの `samples/hono-cloudflare/src/app.ts` を参照してください。
 
 `config.ts` のデフォルト値（クライアント登録・issuer 等）はローカル検証専用です。実運用相当の検証では環境変数 / DB / KV から供給してください。
 

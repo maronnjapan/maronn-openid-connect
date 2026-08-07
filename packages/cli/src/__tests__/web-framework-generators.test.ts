@@ -492,6 +492,21 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(file?.content).toContain('export const oidcHandlers = createOidcRouteHandlers(oidcProviderOptions)');
     });
 
+    // OIDC Core 1.0 §10.1 / RFC 7515 §4.1.4: relying parties pick the verification
+    // key by `kid`, so a serverless deployment must load one persisted key rather
+    // than generating fresh key material per instance under a fixed kid.
+    it('should resolve the signing key from a persisted JWK', () => {
+      const file = files.find((f) => f.path === '_oidc-provider/runtime.ts');
+      expect(file?.content).toContain('resolveSigningKeyProvider');
+      expect(file?.content).toContain("jwk: readEnv('OIDC_SIGNING_KEY_JWK')");
+      expect(file?.content).toContain("fallbackKeyId: 'nextjs-rs256-key'");
+    });
+
+    it('should not generate signing key material inside the runtime module', () => {
+      const file = files.find((f) => f.path === '_oidc-provider/runtime.ts');
+      expect(file?.content?.includes('crypto.subtle.generateKey')).toBe(false);
+    });
+
     it('should generate Upstash Redis with a local SQLite fallback', () => {
       const file = files.find((f) => f.path === '_oidc-provider/storage-backend.ts');
       const content = file?.content ?? '';

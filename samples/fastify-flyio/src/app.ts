@@ -1,9 +1,8 @@
 import Fastify from 'fastify';
 import {
   createCachedSigningKeyProvider,
+  resolveSigningKeyProvider,
   type AcrResolver,
-  type SigningKey,
-  type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import {
@@ -51,6 +50,22 @@ const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
   return { acr: preferred, amr: ['pwd'] };
 };
 
+// OIDC Core 1.0 §10.1: the OP publishes its keys at jwks_uri and names the one it
+// signed with via `kid`, which only holds together when a given kid always resolves
+// to the same key material. Fly.io can run several machines behind one hostname, so
+// the ephemeral fallback would give each machine a different key under the same kid
+// — set OIDC_SIGNING_KEY_JWK to keep the key stable across machines and restarts.
+const signingKeyProvider = createCachedSigningKeyProvider(
+  resolveSigningKeyProvider({
+    jwk: process.env.OIDC_SIGNING_KEY_JWK,
+    keyId: process.env.OIDC_SIGNING_KEY_ID,
+    fallbackKeyId: 'e2e-rs256-key',
+    persistenceHint:
+      'Run `pnpm generate:signing-key` and store the output with `fly secrets set OIDC_SIGNING_KEY_JWK=...`.',
+  }),
+  60_000,
+);
+
 export const app = Fastify();
 
 app.get('/', async (_request, reply) => {
@@ -71,51 +86,13 @@ await applyOidc(app, {
     allowNonPkceAuthorizationCodeFlow,
     allowUnsignedRequestObject,
   },
-  signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
+  signingKeyProvider,
   clientResolver: createInMemoryClientResolver(clients),
   tokenClientResolver: createInMemoryClientResolver(clients),
   storage: providerStores,
   acrResolver: sampleAcrResolver,
   corsOrigins: issuer,
 });
-
-function createEphemeralRs256KeyProvider(): SigningKeyProvider {
-  const keyPromise = generateSigningKey();
-  return {
-    async getSigningKey(): Promise<SigningKey> {
-      return keyPromise;
-    },
-    async getSigningKeys(): Promise<SigningKey[]> {
-      return [await keyPromise];
-    },
-  };
-}
-
-async function generateSigningKey(): Promise<SigningKey> {
-  const keyPair = await crypto.subtle.generateKey(
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: 'SHA-256',
-    },
-    true,
-    ['sign', 'verify'],
-  );
-  const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey) as JsonWebKey & {
-    alg?: string;
-    use?: string;
-    kid?: string;
-  };
-  publicJwk.alg = 'RS256';
-  publicJwk.use = 'sig';
-  publicJwk.kid = 'e2e-rs256-key';
-  return {
-    privateKey: keyPair.privateKey,
-    publicJwk,
-    keyId: 'e2e-rs256-key',
-  };
-}
 
 function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
   const encoded = process.env.OIDC_CLIENTS_JSON;

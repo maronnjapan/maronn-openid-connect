@@ -57,3 +57,35 @@
   - 資格情報総当たりの集計上限は p2-login-attempt-throttling-subject-scope 実装まで既存 `/login` と同水準のまま（本機能で悪化はしない）
 - **判定**: Pass with changes（指摘 4 件はすべて同日修正済み。Blocked 相当の未解決セキュリティ事項なし）
 - **次回可能日**: 2026-08-07（Review 3: 実装着手可否）
+
+## Review 3
+
+- **日付**: 2026-08-07（Review 2 と異なる暦日 / `next_review_on` 到達を確認して実施）
+- **観点**: 実装着手可否（追加調査なしで着手できるか / 受け入れ条件の客観性 / 対象ファイルと変更範囲 / API・CLI・テスト・Docs・Changeset の一貫性 / 実装順序と検証方法 / Experimental であることの利用者への明示）。Review 2 との差分として、main の移動（db9cbd1 → b69c525）の影響確認と、仕様が参照する実装パターンの実地照合を中心に据えた
+- **確認資料**:
+  - main b69c525 で `git diff db9cbd1..b69c525 -- packages/` が空であることを確認（Review 2 以降 `packages/` に変更なし。仕様・sources の行番号は全件現行のまま有効: tokenExchangeDispatchStep :3106 / transaction-binding ヘルパー :527-600 / loginRouteTemplate :4183 / `validateAuthorizationScope` :997 / `generateRandomString` :65 を個別に再確認）
+  - `packages/experimental/package.json`（exports が jarm / par / token-exchange の 3 subpath で package 名は `@maronn-openid-connect/experimental`。仕様の subpath 追加が同型で成立）
+  - `packages/cli/src/features.ts:60-131`（`EXPERIMENTAL_FEATURES` / `EXPERIMENTAL_FEATURE_KEYS` / `DEFAULT_FEATURES` の追加箇所）
+  - `packages/cli/src/index.ts:21-31, 55-75`（`withExperimentalPackage` のハードコード feature チェック / CLI コマンドが `generate` / `setup` のみであること / ヘルプの experimental 一覧が自動導出であること）
+  - `packages/cli/src/frameworks/hono/templates.ts:24-48`（`OIDC_ENDPOINT_METHODS` + `enforceOidcEndpointMethod`。`parMethod` の feature 条件付き補間が仕様の「許可メソッドマップ追加」の実在パターンであること）、:6358-6360（Set-Cookie 属性の endsWith 固定検証の既存書式）、:7601-7615（405/Allow のケース表）
+  - `tests/e2e/apps/client.mjs`（`/start-par` / `/start-exchange` / `/start-jarm` の機能別ルートパターン）/ `tests/e2e/specs/`（jarm.spec.ts 等の配置）/ `samples/hono-cloudflare/package.json:8`（generate スクリプトの `--enable` フラグ列）
+  - `docs/library-document/src/content/docs/experimental/`（par.md / token-exchange.md / jarm.md の 3 点構成と有効化手順の記法 `maronn-oidc generate hono --enable par`）
+  - `.github/scripts/ensure-experimental-changeset.mjs` の存在と CLAUDE.md / RELEASE.md の changeset 規約（仕様の Changeset 要件「experimental 手書き禁止・CLI のみ minor」が現行 release contract と一致）
+  - `tasks/experimental/done/jarm/{specification.md,review-log.md,state.yaml}`（承認済み仕様の「実装順序」節の書式と Review 3 の判定水準）
+- **指摘**:
+  1. **[着手阻害・修正] 「実装順序」節が無い**: Review 3 の確認項目「実装順序と検証方法」に対し、仕様は変更対象ファイルとテスト計画を持つが着手順が未定義だった（JARM の承認済み仕様は実装順序節を持つ）。experimental 実装 → exports → features → テンプレート → バイト同一確認 → サンプル再生成 + E2E → docs/changeset の 7 ステップを完了条件番号との対応付きで追加
+  2. **[修正] 理解資料の CLI コマンドが実在しない**: 「実装後の利用方法」が `npx @maronn-openid-connect/cli install hono` としていたが、CLI のコマンドは `generate` / `setup` のみで `install` は存在しない。docs の記法（`maronn-oidc generate hono --enable par`）に合わせ `maronn-oidc generate hono --enable device-authorization-grant --output ./src/oidc-provider` へ修正
+  3. **[変更範囲の欠落・修正] `packages/cli/src/index.ts` の `withExperimentalPackage` が変更対象に無かった**: install guidance へ experimental package を挿入する条件が `!features.par && !features.tokenExchange && !features.jarm` のハードコードで、`deviceAuthorizationGrant` を足さないと `--enable device-authorization-grant` 単独時に依存案内が欠ける。CLI オプション案へ変更必須箇所として追記（ヘルプ文字列は自動導出のため変更不要であることも明記）
+  4. **[E2E 組み込み方の確定・修正] E2E 計画が「tests/e2e/apps に擬似クライアントを配置」と新規ファイルを示唆していた**: 既存パターンは `client.mjs` へ `/start-*` ルートを足す方式（par / token-exchange / jarm で実証済み）。`/start-device`（device_authorization 実行 + バックグラウンドポーリング開始）と `/device-result`（終了状態の取得）の 2 ルート追加、spec ファイル `device-authorization-grant.spec.ts` 新設（discovery 自己スキップ踏襲）、`samples/*/package.json` の generate スクリプトへのフラグ追加を確定内容としてテスト計画 E2E 節を全面更新
+  5. **[確認・問題なし] 受け入れ条件の客観性と一貫性**: 完了条件 1〜8 はすべて機械的に検証可能（テスト通過・バイト diff・discovery 固定値・`git diff --exit-code packages/core` 相当・ログ検査とテスト保証）。公開 API 案（subpath export・関数シグネチャ）/ CLI オプション案 / ストア契約 / テスト計画 / ドキュメント要件 / Changeset 要件を通し読みし矛盾なし。依存する core 公開 API（`TokenError` / `generateRandomString` / 既存クライアント認証パイプライン）は現行 main で全件公開済み。conformance の Set-Cookie 属性固定検証は既存 transaction-binding テスト（:6358-6360）と同書式で書ける
+  6. **[確認・問題なし] Experimental の明示**: 生成コード冒頭コメント（EXPERIMENTAL・API 不安定・レート制限はデプロイ基盤責務）・`docs/library-document` experimental 配下ページ・`packages/experimental/README.md` 機能一覧の 3 点構成が既存 3 機能と揃っている。既定オフ・`--enable` 明示有効化・無効時バイト同一（完了条件 2）も定義済み
+  7. **[確認・問題なし] 405/Allow の網羅**: 新規エンドポイント 4 面を `OIDC_ENDPOINT_METHODS` に足す以上、HTTP メソッド強制の conformance ケース表にも feature 有効時のみ追加する必要がある。結合テスト計画へ 1 行追記した（指摘というより整合の補完）
+- **修正**（すべて同日反映）:
+  - specification.md: 実装順序節の新設（指摘 1）/ `withExperimentalPackage` の変更必須箇所追記（指摘 3）/ E2E 節の確定内容への全面更新（指摘 4）/ 405 ケース表追記と `OIDC_ENDPOINT_METHODS` の実名明記（指摘 7）
+  - understanding-guide.md: CLI コマンドの修正（指摘 2）。その他の記述は現行 main でも正確なため変更なし
+  - sources.md: リポジトリ内参照 8 件を追加（OIDC_ENDPOINT_METHODS / withExperimentalPackage / CLI コマンド一覧 / client.mjs / samples generate スクリプト / Set-Cookie 検証書式 / JARM 実装順序書式）
+- **残リスク**:
+  - 生成コードの実挙動（条件付き補間後の出力・バイト同一性・transaction-binding / par / jarm との組み合わせ）は実装時の完了条件 1・2 でのみ最終確認できる（過去 3 機能と同じ、仕様段階の既知の限界）
+  - リモートフィッシング（§5.4）と資格情報総当たりの集計上限（p2 タスク待ち）は Review 2 で確定した受容済みリスクのまま変更なし
+- **判定**: **Pass with changes**（指摘 1〜4・7 を同日中に修正反映済み。指摘 1〜4 は放置すれば実装時の調査・手戻り要因だったが、修正後は追加調査なしで実装順序ステップ 1 から着手可能。未解決事項ゼロ・セキュリティ未解決ゼロ・受け入れ条件は客観的に検証可能。Review 3 の全確認項目を満たしたため `status: Approved` / `implementation_ready: true` へ更新する）
+- **次回可能日**: —（3 回のレビューを完了。次は実装 Routine が「実装順序」ステップ 1 から着手する）

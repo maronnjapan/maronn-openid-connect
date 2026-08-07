@@ -309,6 +309,7 @@ export interface DeviceAuthorizationStore {
 
 - `--enable device-authorization-grant` で有効化。既定は無効
 - `packages/cli/src/features.ts`: `EXPERIMENTAL_FEATURES` に `'device-authorization-grant'` を追加、`OidcFeatureConfig` に `deviceAuthorizationGrant: boolean` を追加、JSDoc の機能一覧を更新
+- `packages/cli/src/index.ts`: `withExperimentalPackage`（:28-31）の feature チェック（現在 `!features.par && !features.tokenExchange && !features.jarm`）へ `deviceAuthorizationGrant` を追加する。忘れると `--enable device-authorization-grant` 単独指定時に install guidance へ experimental package が出ない。ヘルプ文字列の experimental 一覧は `EXPERIMENTAL_FEATURES.join` から自動導出されるため追加変更は不要
 - 既存 feature との組み合わせ制約なし（`refresh-token` の有無は offline_access の扱いにのみ影響。上記参照）
 
 ## 設定値とデフォルト（生成コードの config）
@@ -368,7 +369,7 @@ export const deviceAuthorizationConfig = {
 
 - 生成コード（CLI テンプレート）の変更点:
   - `packages/cli/src/frameworks/hono/templates.ts`:
-    - 許可メソッドマップに `/device_authorization: ['POST']`、`/device: ['GET','POST']`、`/device/login: ['POST']`、`/device/approve: ['POST']` を追加
+    - 許可メソッドマップ（`OIDC_ENDPOINT_METHODS`）に `/device_authorization: ['POST']`、`/device: ['GET','POST']`、`/device/login: ['POST']`、`/device/approve: ['POST']` を feature 条件付き補間で追加（`parMethod` と同型）
     - `deviceAuthorizationRouteTemplate`（バックチャネル）と `deviceVerificationRouteTemplate`（UI）を新設し、app テンプレートで feature 有効時のみ import / mount。UI テンプレートにはバインディング Cookie の組み立て・削除・抽出ヘルパー（`buildTransactionBindingCookie` 群と同形式。名前は `oidc_device_` プレフィックス）を含める
     - `store.ts` テンプレートに `deviceAuthorizationStore`（in-memory 既定実装 + globalThis レジストリ。`parStore` と同じパターン）を追加
     - token ルートに `deviceCodeDispatchStep` / catch 節（`DeviceAuthorizationError` → RFC 6749 §5.2 形式）を追加（`tokenExchangeDispatchStep` と同型）
@@ -405,12 +406,19 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 - バインディング: `POST /device` 照合成功応答の Set-Cookie 属性（`HttpOnly; Secure; SameSite=Lax; Path=/` と Max-Age）を固定値で検証 / バインディング Cookie 無しの `POST /device/login`・`POST /device/approve` が 403 になり状態が変化しないこと（有効な csrf_token を添えても通らないこと = トークン単独では防御にならない設計の検証）/ `POST /device` 再実行で旧 bindingSecret・旧 csrf_token が無効化されること / 完了応答で Cookie が `Max-Age=0` で削除されること
 - ポーリング系: 承認前 `authorization_pending` / interval 内連打で `slow_down`（以後 interval が +5 されること） / 拒否後 `access_denied` / 期限後 `expired_token` / 発行後の再利用 `invalid_grant`
 - 別クライアントの device_code 使用が `invalid_grant`
+- HTTP メソッド強制（RFC 9110 §15.5.6）の既存ケース表へ `/device_authorization`（`Allow: POST`）・`/device`（`Allow: GET, POST`）・`/device/login`・`/device/approve`（`Allow: POST`）を feature 有効時のみ追加する（`OIDC_ENDPOINT_METHODS` への登録と対で検証）
 - feature 無効時: `/device_authorization` が存在しない（404 系）こと・token の URN が `unsupported_grant_type` のままであること・discovery にメタデータが出ないこと（既存挙動の不変確認）
 
 ### E2E（tests/e2e — Playwright）
 
-- デバイス役の擬似クライアント（`tests/e2e/apps` に配置。ポーリングを行う最小 HTTP クライアント）と実ブラウザの組み合わせで、`samples/*` の CLI 生成 OP（feature 有効生成）に対しフルフローを通す
-  - ブラウザで `verification_uri_complete` を開き、事前入力された user_code で承認 → デバイス役がトークン取得 → UserInfo 到達
+デバイス役は新規アプリファイルではなく、既存の E2E 専用クライアント `tests/e2e/apps/client.mjs`（Node 組み込みのみの HTTP サーバー。experimental 機能ごとに `/start-*` ルートを足す既存パターン: `/start-par` / `/start-exchange` / `/start-jarm`）へルートを追加して実装する:
+
+- `/start-device`: `POST /device_authorization` を実行し、`user_code` / `verification_uri_complete` をテストへ返しつつ、バックグラウンドで `interval` を遵守した `POST /token` ポーリングを開始する
+- `/device-result`: ポーリングの終了状態（トークン取得 / `access_denied` / `expired_token` / 進行中）をテストが取得するためのルート
+- spec ファイルは `tests/e2e/specs/device-authorization-grant.spec.ts` を新設する（`pushed-authorization-requests.spec.ts:26` の discovery 自己スキップパターンを踏襲）
+- 前提: `samples/*/package.json` の `generate` スクリプトへ `--enable device-authorization-grant` を追加してサンプルを再生成する（`playwright.config.ts` の webServer が生成済みサンプル OP を起動する既存構成のまま）
+- シナリオ:
+  - Playwright の実ブラウザで `verification_uri_complete` を開き、事前入力された user_code で照合 → ログイン → 承認 → デバイス役がトークン取得 → UserInfo 到達
   - ブラウザで拒否 → デバイス役が `access_denied` を受ける
 
 ### 相互運用性
@@ -429,6 +437,18 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 - `packages/experimental/src` の変更に changeset を**手で書かない**（CI が patch を自動生成する。CLAUDE.md / RELEASE.md の規約）
 - `packages/cli` の変更には minor の changeset を手で追加する（新 feature フラグの追加）
 - `packages/core` は無変更のため changeset 不要
+
+## 実装順序
+
+実装 Routine は次の順で進める。各ステップの検証方法は「完了条件」の対応番号を参照する:
+
+1. `packages/experimental/src/device-authorization-grant/` の実装と単体テスト（`user-code` → `store` → `device-authorization-request` → `verification` → `device-code-grant` の順。完了条件 3 の単体分）
+2. `packages/experimental/package.json` に `exports["./device-authorization-grant"]` を追加（既存 3 機能と同型）
+3. `packages/cli/src/features.ts` へ feature 追加・`packages/cli/src/index.ts` の `withExperimentalPackage` の feature チェックへ追加（CLI オプション案の節参照）
+4. テンプレート変更（共有 `hono/templates.ts`）: `OIDC_ENDPOINT_METHODS` エントリ → `deviceAuthorizationStore` → バインディング Cookie ヘルパー → `deviceAuthorizationRouteTemplate` / `deviceVerificationRouteTemplate` → views 4 ページ → token ルートの `deviceCodeDispatchStep` → discovery → conformance テンプレート（完了条件 1・5・7・8）。続けて `web-standard/templates.ts` への組み込み（express / fastify / nextjs のルート登録。`parRouteTemplate` の組み込みと同じ手順）
+5. `--enable device-authorization-grant` なし生成のバイト同一確認（完了条件 2。変更前後の CLI で同一設定の生成物を diff する。サンプルが使う `--enable par --enable token-exchange --enable transaction-binding --enable jarm` の組み合わせでも確認する）
+6. `samples/*/package.json` の `generate` スクリプトへ `--enable device-authorization-grant` を追加してサンプル再生成 → E2E（tests/e2e。完了条件 3 の E2E 分）
+7. ドキュメント・changeset（changeset は CLI のみ minor を手書き。experimental は CI 自動生成のため作らない。完了条件 6）
 
 ## 完了条件
 

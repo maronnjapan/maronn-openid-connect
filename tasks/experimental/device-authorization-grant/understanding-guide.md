@@ -148,7 +148,7 @@ subject（誰が承認したか）は approved になって初めてレコード
 ## 実装後の利用方法（利用者視点）
 
 ```bash
-npx @maronn-openid-connect/cli install hono --enable device-authorization-grant
+maronn-oidc generate hono --enable device-authorization-grant --output ./src/oidc-provider
 pnpm sample:hono-cloudflare   # 生成 OP を起動
 # 上記「リクエスト・レスポンス実例」の curl で手動フローを一周できる
 ```

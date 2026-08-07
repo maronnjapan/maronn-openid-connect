@@ -6,11 +6,16 @@
 
 ## 1. このトピックで確認したいこと
 
-> **前提条件**: 本ファイルが扱うローテーション手順は「署名鍵が永続化されていること」を前提とする。
-> 現在のサンプル OP は起動ごとにエフェメラル鍵を生成しており、そもそもローテーションの対象になる
-> 安定した鍵が存在しない。この前段の論点は
-> `study-material/done/signing-key-persistence-and-instance-consistency.md`
-> （タスク: `tasks/p1-signing-key-persistence-in-samples.md`）で扱う。
+> **前提条件（解消済み）**: 本ファイルが扱うローテーション手順は「署名鍵が永続化されていること」を前提とする。
+> この前段の論点は `study-material/done/signing-key-persistence-and-instance-consistency.md`
+> （タスク: `tasks/done/p1-signing-key-persistence-in-samples.md`）で扱い、方針A＋D で実装済み:
+> core の `createJwkSigningKeyProvider` / `resolveSigningKeyProvider` が永続 JWK を読み込み、
+> 4 サンプルすべてが `OIDC_SIGNING_KEY_JWK` を設定すると安定した鍵で署名するようになった。
+> 未設定時は従来どおりプロセス単位のエフェメラル鍵にフォールバックし、起動時に警告を出す。
+>
+> したがって本ファイルの手順は、**`OIDC_SIGNING_KEY_JWK` を設定した状態**を出発点とする。
+> ただし現在の永続プロバイダは 1 鍵のみを公開するため、§7 で扱う「新旧 2 鍵の同時公開」には
+> 複数 JWK を読み込む provider（または `getSigningKeys()` が複数返す実装）の追加が別途必要になる。
 
 `SigningKeyProvider` / `createCachedSigningKeyProvider` / `assertHasRs256Key` / `selectSigningKeyByAlg` のコアは整っているが、
 **「実運用で署名鍵をどうローテーションするか」**の手順・タイミング・JWKS と Discovery の連動・古い `kid` のリタイア基準が、利用者に伝わる形で集約されていない。

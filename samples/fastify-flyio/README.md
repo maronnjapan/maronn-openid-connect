@@ -23,3 +23,21 @@ flyctl のインストール・`fly auth login`・アプリ名の決定（自動
 オプション: `--app-name` / `--region` / `--org` / `--dry-run`（詳細は `--help`）。
 
 単一Nodeプロセスを永続ボリューム付きでデプロイするPoC向けであり、複数インスタンス構成では共有DB用の `JsonStoreBackend` 実装へ置き換える。署名鍵は起動時生成のため、fly.tomlは単一マシン構成に固定している。
+
+## 署名鍵の固定
+
+`OIDC_SIGNING_KEY_JWK` を設定しない場合、OPはプロセス／インスタンスごとにRS256鍵をその場で生成し、起動時に警告を出す。`kid` は固定なのに鍵素材はインスタンスごとに異なるため、JWKSを取得したインスタンスと署名したインスタンスが違うとID Token・JWTアクセストークンの検証が間欠的に失敗する（OIDC Core 1.0 §10.1 / RFC 7515 §4.1.4 は `kid` から鍵素材への対応が安定していることを前提とする）。単一プロセスのローカル起動では顕在化しないが、複数インスタンス構成や再デプロイをまたぐ検証では固定鍵が必要になる。
+
+鍵はリポジトリルートで生成する（出力には秘密鍵が含まれるのでコミットしないこと）:
+
+```bash
+pnpm generate:signing-key --kid e2e-rs256-key
+```
+
+出力をFlyのsecretとして設定する:
+
+```bash
+fly secrets set OIDC_SIGNING_KEY_JWK="$(pnpm -s generate:signing-key --kid e2e-rs256-key)"
+```
+
+`OIDC_SIGNING_KEY_ID` を併用する場合は、JWKの `kid` と一致させること（食い違いは起動時エラーになる）。

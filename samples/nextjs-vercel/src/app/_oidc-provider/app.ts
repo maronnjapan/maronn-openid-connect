@@ -4,6 +4,8 @@ import { tokenApp } from './routes/token';
 import { userinfoApp } from './routes/userinfo';
 import { introspectionApp } from './routes/introspection';
 import { revocationApp } from './routes/revocation';
+import { deviceAuthorizationApp } from './routes/device-authorization';
+import { deviceApp } from './routes/device';
 import { jwksApp } from './routes/jwks';
 import { discoveryApp } from './routes/discovery';
 import { loginApp } from './routes/login';
@@ -18,6 +20,7 @@ import {
 } from './resolvers';
 import {
   defaultProviderStores,
+  deviceAuthorizationStore,
   type ProviderStores,
 } from './store';
 import { createViews, type Views } from './views';
@@ -94,6 +97,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.use('/userinfo', protectedCors);
   app.use('/introspect', protectedCors);
   app.use('/revoke', protectedCors);
+  app.use('/device_authorization', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
@@ -156,6 +160,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
     c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
     c.set('revocationResolvers', storeResolvers.revocationResolvers);
+    c.set('deviceAuthorizationStore', deviceAuthorizationStore);
 
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -176,6 +181,8 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.route('/userinfo', userinfoApp);
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
+  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', deviceApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

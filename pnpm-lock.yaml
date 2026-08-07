@@ -84,6 +84,9 @@ importers:
       '@maronn-openid-connect/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@maronn-openid-connect/experimental':
+        specifier: workspace:*
+        version: link:../../packages/experimental
     devDependencies:
       '@maronn-openid-connect/cli':
         specifier: workspace:*
@@ -109,6 +112,9 @@ importers:
       '@maronn-openid-connect/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@maronn-openid-connect/experimental':
+        specifier: workspace:*
+        version: link:../../packages/experimental
     devDependencies:
       '@maronn-openid-connect/cli':
         specifier: workspace:*
@@ -159,6 +165,9 @@ importers:
       '@maronn-openid-connect/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@maronn-openid-connect/experimental':
+        specifier: workspace:*
+        version: link:../../packages/experimental
     devDependencies:
       '@maronn-openid-connect/cli':
         specifier: workspace:*

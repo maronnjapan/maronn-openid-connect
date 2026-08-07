@@ -111,6 +111,28 @@ const testClients = new Map<string, RegisteredClient>([
     tokenEndpointAuthMethod: 'client_secret_basic',
     offlineAccessAllowed: true,
   }],
+  // EXPERIMENTAL (RFC 8628): a client registered for the device grant, plus a
+  // second one so the contract test can prove a device_code is refused when it is
+  // presented by a client other than the one it was issued to (§3.4).
+  ['c-device', {
+    clientId: 'c-device',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    offlineAccessAllowed: true,
+  }],
+  ['c-device-other', {
+    clientId: 'c-device-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
 ]);
 
 // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
@@ -902,6 +924,10 @@ describe('generated provider HTTP conformance', () => {
         { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
       { path: '/introspect', method: 'GET', allow: 'POST' },
       { path: '/revoke', method: 'GET', allow: 'POST' },
+      { path: '/device_authorization', method: 'GET', allow: 'POST' },
+      { path: '/device', method: 'PUT', allow: 'GET, POST' },
+      { path: '/device/login', method: 'GET', allow: 'POST' },
+      { path: '/device/approve', method: 'GET', allow: 'POST' },
         { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
         { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
       ];
@@ -2102,4 +2128,611 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
+
+  // EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628). Generated
+  // because this provider was created with --enable device-authorization-grant.
+  describe('Device Authorization Grant (RFC 8628)', () => {
+    const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function requestDeviceAuthorization(
+      overrides: Record<string, string> = {},
+    ): Promise<Response> {
+      return app.request('/device_authorization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-device',
+          client_secret: 's',
+          scope: 'openid',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function pollToken(
+      deviceCode: string,
+      overrides: Record<string, string> = {},
+    ): Promise<Response> {
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: DEVICE_GRANT_TYPE,
+          device_code: deviceCode,
+          client_id: 'c-device',
+          client_secret: 's',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    /** All Set-Cookie name=value pairs of a response, joined for a Cookie header. */
+    function cookieJar(...responses: Response[]): string {
+      return responses
+        .flatMap((res) => res.headers.getSetCookie())
+        .map((cookie) => cookie.split(';')[0] ?? '')
+        .filter((pair) => pair.length > 0 && !pair.endsWith('='))
+        .join('; ');
+    }
+
+    function submitUserCode(userCode: string, cookie = ''): Promise<Response> {
+      return app.request('/device', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams({ user_code: userCode }).toString(),
+      });
+    }
+
+    function deviceLogin(body: Record<string, string>, cookie: string): Promise<Response> {
+      return app.request('/device/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    function deviceApprove(body: Record<string, string>, cookie: string): Promise<Response> {
+      return app.request('/device/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    /**
+     * Drive the whole browser side of the flow: user_code -> login -> decision.
+     * The binding cookie is carried forward at every step, exactly as a browser
+     * would; without it the OP answers 403.
+     */
+    async function runDeviceFlow(
+      overrides: Record<string, string> = {},
+      decision: 'approve' | 'deny' = 'approve',
+    ): Promise<{ device_code: string; user_code: string; completed: Response }> {
+      const authorization = await (await requestDeviceAuthorization(overrides)).json();
+      const submitted = await submitUserCode(authorization.user_code);
+      const bindingCookie = cookieJar(submitted);
+      const loginRes = await deviceLogin(
+        {
+          user_code: authorization.user_code,
+          csrf_token: csrfFrom(await submitted.text()),
+          username: 'testuser',
+          password: 'password',
+        },
+        bindingCookie,
+      );
+      const sessionCookie = cookieJar(submitted, loginRes);
+      const completed = await deviceApprove(
+        {
+          user_code: authorization.user_code,
+          csrf_token: csrfFrom(await loginRes.text()),
+          decision,
+        },
+        sessionCookie,
+      );
+      return {
+        device_code: authorization.device_code,
+        user_code: authorization.user_code,
+        completed,
+      };
+    }
+
+    describe('Device authorization endpoint (RFC 8628 §3.1 / §3.2)', () => {
+      it('should return the six response fields with a non-cacheable body', async () => {
+        const res = await requestDeviceAuthorization();
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual([
+          'device_code',
+          'expires_in',
+          'interval',
+          'user_code',
+          'verification_uri',
+          'verification_uri_complete',
+        ]);
+      });
+
+      it('should return the configured lifetime and poll interval', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect([body.expires_in, body.interval]).toEqual([600, 5]);
+      });
+
+      it('should build verification_uri and verification_uri_complete from the issuer', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect(body.verification_uri).toBe('http://localhost:3000/device');
+        expect(body.verification_uri_complete).toBe(
+          'http://localhost:3000/device?user_code=' + body.user_code,
+        );
+      });
+
+      it('should mint a base-20 user_code in XXXX-XXXX form (RFC 8628 §6.1)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/.test(body.user_code)).toBe(true);
+      });
+
+      it('should mint a 256-bit device_code (RFC 8628 §5.2)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect((body.device_code as string).length).toBe(43);
+      });
+
+      it('should issue a distinct device_code for every request', async () => {
+        const first = await (await requestDeviceAuthorization()).json();
+        const second = await (await requestDeviceAuthorization()).json();
+
+        expect(first.device_code === second.device_code).toBe(false);
+      });
+
+      it('should reject a body that is not form-urlencoded', async () => {
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: 'c-device', scope: 'openid' }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Device authorization requests must use application/x-www-form-urlencoded',
+        });
+      });
+
+      it('should reject an unauthenticated request with 401 invalid_client', async () => {
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-device', scope: 'openid' }).toString(),
+        });
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      it('should reject a client that is not registered for the device grant', async () => {
+        const res = await requestDeviceAuthorization({ client_id: 'c-conf' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the device_code grant',
+        });
+      });
+
+      it('should reject a request with no scope', async () => {
+        // RFC 8628 §3.1 makes scope OPTIONAL; this OP requires it (and openid)
+        // everywhere, which is a documented profile restriction.
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-device', client_secret: 's' }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: scope',
+        });
+      });
+
+      it('should reject a scope without openid', async () => {
+        const res = await requestDeviceAuthorization({ scope: 'profile' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_scope',
+          error_description: 'The openid scope is required',
+        });
+      });
+    });
+
+    describe('Discovery metadata (RFC 8628 §4)', () => {
+      it('should advertise the device authorization endpoint', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.device_authorization_endpoint).toBe(
+          'http://localhost:3000/device_authorization',
+        );
+      });
+
+      it('should advertise the device_code grant type', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect((metadata.grant_types_supported as string[]).includes(DEVICE_GRANT_TYPE)).toBe(true);
+      });
+    });
+
+    describe('Verification UI (RFC 8628 §3.3)', () => {
+      it('should serve the code entry form without authentication', async () => {
+        const res = await app.request('/device');
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      });
+
+      it('should pre-fill the form from verification_uri_complete (§3.3.1)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const url = new URL(body.verification_uri_complete);
+        const html = await (await app.request(url.pathname + url.search)).text();
+
+        expect(html.includes('value="' + body.user_code + '"')).toBe(true);
+      });
+
+      it('should not expose a csrf_token before a code has matched', async () => {
+        // The csrf_token only appears on a response that also mints the binding
+        // cookie, so it is never readable by someone who only knows a user_code.
+        const html = await (await app.request('/device')).text();
+
+        expect(csrfFrom(html)).toBe('');
+      });
+
+      it('should answer an unknown user_code with the same reason-free message', async () => {
+        const res = await submitUserCode('BCDF-GHJK');
+
+        expect(res.status).toBe(400);
+        expect((await res.text()).includes('The code is invalid or has expired')).toBe(true);
+      });
+
+      it('should not set a binding cookie for an unknown user_code', async () => {
+        const res = await submitUserCode('BCDF-GHJK');
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should accept the user_code with its hyphen stripped and lower-cased', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await submitUserCode((body.user_code as string).replace('-', '').toLowerCase());
+
+        expect(res.status).toBe(200);
+      });
+
+      it('should set the binding cookie with the exact hardening attributes', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await submitUserCode(body.user_code);
+        const cookie = res.headers.getSetCookie()[0] ?? '';
+
+        expect(cookie.startsWith('oidc_device_' + (body.user_code as string).replace('-', '') + '=')).toBe(true);
+        expect(cookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+      });
+
+      it('should show the login form when no OP session exists', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const html = await (await submitUserCode(body.user_code)).text();
+
+        expect(html.includes('action="/device/login"')).toBe(true);
+      });
+
+      it('should embed a csrf_token once the code matched', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const html = await (await submitUserCode(body.user_code)).text();
+
+        expect(csrfFrom(html).length > 0).toBe(true);
+      });
+    });
+
+    describe('Browser binding enforcement (RFC 8628 §5.4)', () => {
+      it('should reject /device/login without the binding cookie even with a valid csrf_token', async () => {
+        // The whole point: a valid csrf_token is obtainable by anyone who knows
+        // the user_code, so it must NOT be sufficient on its own.
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const csrfToken = csrfFrom(await submitted.text());
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: csrfToken, username: 'testuser', password: 'password' },
+          '',
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should not establish a session when /device/login is unbound', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const csrfToken = csrfFrom(await submitted.text());
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: csrfToken, username: 'testuser', password: 'password' },
+          '',
+        );
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should reject /device/approve without the binding cookie', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const bindingCookie = cookieJar(submitted);
+        const loginRes = await deviceLogin(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await submitted.text()),
+            username: 'testuser',
+            password: 'password',
+          },
+          bindingCookie,
+        );
+        // Session cookie only: the forged request cannot carry the binding.
+        const sessionOnly = cookieJar(loginRes);
+
+        const res = await deviceApprove(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await loginRes.text()),
+            decision: 'approve',
+          },
+          sessionOnly,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should leave the record unapproved after an unbound approve attempt', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const bindingCookie = cookieJar(submitted);
+        const loginRes = await deviceLogin(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await submitted.text()),
+            username: 'testuser',
+            password: 'password',
+          },
+          bindingCookie,
+        );
+        await deviceApprove(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await loginRes.text()),
+            decision: 'approve',
+          },
+          cookieJar(loginRes),
+        );
+        const res = await pollToken(body.device_code);
+
+        expect((await res.json()).error).toBe('authorization_pending');
+      });
+
+      it('should reject a wrong csrf_token even with a valid binding cookie', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: 'forged', username: 'testuser', password: 'password' },
+          cookieJar(submitted),
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should invalidate the previous binding when the code is submitted again', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const first = await submitUserCode(body.user_code);
+        const firstCsrf = csrfFrom(await first.text());
+        const firstCookie = cookieJar(first);
+        await submitUserCode(body.user_code);
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: firstCsrf, username: 'testuser', password: 'password' },
+          firstCookie,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should clear the binding cookie once the decision is recorded', async () => {
+        const flow = await runDeviceFlow();
+        const cleared = flow.completed.headers.getSetCookie()[0] ?? '';
+
+        expect(cleared.startsWith('oidc_device_' + flow.user_code.replace('-', '') + '=;')).toBe(true);
+        expect(cleared.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0')).toBe(true);
+      });
+    });
+
+    describe('Token polling (RFC 8628 §3.5)', () => {
+      it('should answer authorization_pending before the user decides', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await pollToken(body.device_code);
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(await res.json()).toEqual({
+          error: 'authorization_pending',
+          error_description: 'The authorization request is still pending',
+        });
+      });
+
+      it('should answer slow_down when polled again inside the interval', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        await pollToken(body.device_code);
+        const res = await pollToken(body.device_code);
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'slow_down',
+          error_description: 'Polling too frequently. Increase the interval by 5 seconds.',
+        });
+      });
+
+      it('should reject a missing device_code with invalid_request', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            client_id: 'c-device',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: device_code',
+        });
+      });
+
+      it('should reject an unknown device_code with invalid_grant', async () => {
+        const res = await pollToken('not-a-real-device-code');
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject a device_code presented by another client with the same wording', async () => {
+        // RFC 8628 §3.4: the code belongs to the client it was issued to. The
+        // wording matches the unknown-code case so existence is not leaked.
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code: body.device_code,
+            client_id: 'c-device-other',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject a client that is not registered for the device grant', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code: 'anything',
+            client_id: 'c-conf',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the device_code grant',
+        });
+      });
+
+      it('should answer access_denied after the user denies', async () => {
+        const flow = await runDeviceFlow({}, 'deny');
+        const res = await pollToken(flow.device_code);
+
+        expect(await res.json()).toEqual({
+          error: 'access_denied',
+          error_description: 'The end-user denied the authorization request',
+        });
+      });
+    });
+
+    describe('Token issuance (RFC 8628 §3.5 → OIDC Core 1.0 §3.1.3.3)', () => {
+      it('should issue an access token and an ID Token after approval', async () => {
+        const flow = await runDeviceFlow();
+        const res = await pollToken(flow.device_code);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(body.token_type).toBe('Bearer');
+        expect(body.scope).toBe('openid');
+        expect(typeof body.access_token).toBe('string');
+        expect(typeof body.id_token).toBe('string');
+      });
+
+      it('should omit nonce and c_hash from the ID Token', async () => {
+        // RFC 8628 defines no nonce parameter, and there is no authorization code,
+        // so neither claim has a value to carry (OIDC Core 1.0 §2).
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(payload.nonce).toBeUndefined();
+        expect(payload.c_hash).toBeUndefined();
+      });
+
+      it('should carry the auth_time recorded at approval', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(typeof payload.auth_time).toBe('number');
+        expect(payload.aud).toBe('c-device');
+      });
+
+      it('should let the issued access token reach the UserInfo endpoint', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + body.access_token },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+
+      it('should refuse to redeem the same device_code twice', async () => {
+        const flow = await runDeviceFlow();
+        await pollToken(flow.device_code);
+        const res = await pollToken(flow.device_code);
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+    it('should issue a refresh token when offline_access was approved', async () => {
+      // OIDC Core 1.0 §11: the approval screen IS the explicit consent, and
+      // c-device is registered for the refresh_token grant.
+      const flow = await runDeviceFlow({ scope: 'openid offline_access' });
+      const res = await pollToken(flow.device_code);
+      const body = await res.json();
+
+      expect(typeof body.refresh_token).toBe('string');
+    });
+    });
+  });
 });

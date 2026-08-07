@@ -38,6 +38,7 @@ describe('DEFAULT_FEATURES', () => {
       par: false,
       tokenExchange: false,
       jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -55,6 +56,7 @@ describe('resolveFeatures', () => {
         par: false,
         tokenExchange: false,
         jarm: false,
+        deviceAuthorizationGrant: false,
         transactionBinding: false,
       });
     });
@@ -71,6 +73,7 @@ describe('resolveFeatures', () => {
         par: false,
         tokenExchange: false,
         jarm: false,
+        deviceAuthorizationGrant: false,
         transactionBinding: false,
       });
     });
@@ -87,6 +90,7 @@ describe('resolveFeatures', () => {
         par: false,
         tokenExchange: false,
         jarm: false,
+        deviceAuthorizationGrant: false,
         transactionBinding: false,
       });
     });
@@ -103,6 +107,7 @@ describe('resolveFeatures', () => {
         par: false,
         tokenExchange: false,
         jarm: false,
+        deviceAuthorizationGrant: false,
         transactionBinding: false,
       });
     });
@@ -143,6 +148,7 @@ describe('resolveFeatures', () => {
         par: false,
         tokenExchange: false,
         jarm: false,
+        deviceAuthorizationGrant: false,
         transactionBinding: true,
       });
     });

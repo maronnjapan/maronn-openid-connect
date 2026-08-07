@@ -6,6 +6,10 @@ import type {
   RefreshTokenInfo,
   UserClaims,
 } from '@maronn-openid-connect/core';
+import type {
+  DeviceAuthorizationRecord,
+  DeviceAuthorizationStore,
+} from '@maronn-openid-connect/experimental/device-authorization-grant';
 
 /**
  * In-memory Authorization Transaction Store.
@@ -817,3 +821,163 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
+
+/**
+ * EXPERIMENTAL — device verification binding cookie (RFC 8628 §5.4 / §3.3).
+ *
+ * Why this exists: the user_code is, by design, known to whoever started the
+ * device flow — and that party can be the attacker. A CSRF token that hangs off
+ * the record is therefore worthless on its own: the attacker POSTs /device with
+ * their own code, reads the token, and can then forge `POST /device/approve`
+ * (consent coercion: the victim's tokens land on the attacker's device) or
+ * `POST /device/login` (login CSRF: the victim's browser gets the attacker's
+ * OP session). Neither is stopped by keeping the token secret.
+ *
+ * The binding is what stops them. On a successful user_code match the OP mints a
+ * bindingSecret, hands the raw value to that one browser in an HttpOnly cookie,
+ * and stores only its SHA-256 hash on the record. /device/login and
+ * /device/approve refuse to run unless the presented cookie hashes to the stored
+ * value, so a forged cross-site POST — which cannot carry the victim's cookie
+ * (SameSite=Lax), and whose victim never held this record's cookie anyway — is
+ * rejected without relying on any secret staying secret.
+ *
+ * Unlike the optional transaction-binding feature this is ALWAYS on: for the
+ * authorize flow the transaction_id is normally confidential, so binding is
+ * extra hardening, while here the identifier is public to the attacker by
+ * construction. The cost is that driving the verification UI by hand with curl
+ * needs a cookie jar (-c / -b).
+ *
+ * The cookie name embeds the normalized user_code so two device flows can run in
+ * the same browser without overwriting each other's secret.
+ */
+export const DEVICE_BINDING_COOKIE_PREFIX = 'oidc_device_';
+
+/**
+ * Build the Set-Cookie value binding one device verification to this browser.
+ * Same attributes as the session cookie: HttpOnly (no JS access), Secure (HTTPS
+ * only; http://localhost is treated as trustworthy by browsers) and
+ * SameSite=Lax. Max-Age matches the remaining record TTL so an abandoned
+ * verification does not leave a cookie behind.
+ */
+export function buildDeviceBindingCookie(
+  userCode: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    DEVICE_BINDING_COOKIE_PREFIX + userCode + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears the binding cookie once the user has
+ * approved or denied, so the browser does not accumulate one cookie per flow.
+ */
+export function buildClearedDeviceBindingCookie(userCode: string): string {
+  return (
+    DEVICE_BINDING_COOKIE_PREFIX + userCode +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one device verification from a Cookie header.
+ * Returns null when the header is missing or this record's cookie is absent,
+ * which validateVerificationBinding() rejects with 403.
+ */
+export function parseDeviceBindingSecret(
+  cookieHeader: string | null,
+  userCode: string,
+): string | null {
+  if (!cookieHeader) return null;
+  const name = DEVICE_BINDING_COOKIE_PREFIX + userCode;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * EXPERIMENTAL — in-memory device authorization store (RFC 8628).
+ *
+ * Replace with a persistent store (Redis, KV, database) in production. Treat
+ * deviceCode and userCode as opaque external values: never interpolate them into
+ * a query, always bind them as parameters.
+ *
+ * - save / update: persist the record, ideally with a TTL derived from
+ *   record.expiresAt so entries cannot pile up.
+ * - consume(deviceCode): fetch AND delete in one atomic operation. A non-atomic
+ *   implementation lets the same device_code be redeemed concurrently.
+ * - Expired records whose device stopped polling are never reclaimed by the
+ *   token endpoint. A persistent implementation MAY drop them on its own after a
+ *   grace period (roughly one TTL); polling after that answers invalid_grant
+ *   instead of expired_token, which ends the client's flow just the same.
+ */
+export class InMemoryDeviceAuthorizationStore implements DeviceAuthorizationStore {
+  private records = new Map<string, DeviceAuthorizationRecord>();
+
+  async save(record: DeviceAuthorizationRecord): Promise<void> {
+    this.evictExpired();
+    this.records.set(record.deviceCode, record);
+  }
+
+  async findByDeviceCode(deviceCode: string): Promise<DeviceAuthorizationRecord | null> {
+    return this.records.get(deviceCode) ?? null;
+  }
+
+  async findByUserCode(userCode: string): Promise<DeviceAuthorizationRecord | null> {
+    for (const record of this.records.values()) {
+      if (record.userCode === userCode) return record;
+    }
+    return null;
+  }
+
+  async update(record: DeviceAuthorizationRecord): Promise<void> {
+    this.records.set(record.deviceCode, record);
+  }
+
+  async delete(deviceCode: string): Promise<void> {
+    this.records.delete(deviceCode);
+  }
+
+  async consume(deviceCode: string): Promise<DeviceAuthorizationRecord | null> {
+    const record = this.records.get(deviceCode) ?? null;
+    // Single use (RFC 8628 §3.5): delete on read so a replay of the same
+    // device_code can never mint a second token.
+    this.records.delete(deviceCode);
+    return record;
+  }
+
+  /**
+   * Drop records whose lifetime passed long enough ago that no device is still
+   * polling them, so an idle store cannot grow unbounded. The grace period keeps
+   * expired_token answerable for one more TTL after expiry.
+   */
+  private evictExpired(): void {
+    const cutoff = Date.now() - DEVICE_RECORD_EVICTION_GRACE_MS;
+    for (const [deviceCode, record] of this.records) {
+      if (record.expiresAt.getTime() < cutoff) {
+        this.records.delete(deviceCode);
+      }
+    }
+  }
+}
+
+/** Grace period before an expired record is reclaimed (one default TTL). */
+const DEVICE_RECORD_EVICTION_GRACE_MS = 600 * 1000;
+
+// Kept on globalThis for the same reason as the provider stores above: Next.js
+// instantiates route handlers and server actions in separate module layers.
+const deviceStoreRegistry = globalThis as typeof globalThis & {
+  __oidcDeviceAuthorizationStore?: DeviceAuthorizationStore;
+};
+
+export const deviceAuthorizationStore: DeviceAuthorizationStore =
+  (deviceStoreRegistry.__oidcDeviceAuthorizationStore ??=
+    new InMemoryDeviceAuthorizationStore());

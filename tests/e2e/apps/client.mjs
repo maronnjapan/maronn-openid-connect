@@ -10,6 +10,7 @@ const clientId = process.env.CLIENT_ID ?? 'e2e-client';
 const clientSecret = process.env.CLIENT_SECRET ?? 'e2e-client-secret';
 const redirectUri = new URL('/callback', clientBaseUrl).toString();
 const transactions = new Map();
+const deviceFlows = new Map();
 
 const server = createServer(async (req, res) => {
   try {
@@ -43,6 +44,19 @@ const server = createServer(async (req, res) => {
     // response as one signed JWT in the `response` query parameter.
     if (req.method === 'GET' && url.pathname === '/start-jarm') {
       await startAuthorization(url, res, { responseMode: 'query.jwt' });
+      return;
+    }
+    // EXPERIMENTAL (RFC 8628): act as the input-constrained device — ask for a
+    // device_code / user_code pair and start polling the token endpoint in the
+    // background while the browser side of the flow runs.
+    if (req.method === 'GET' && url.pathname === '/start-device') {
+      await startDeviceAuthorization(url, res);
+      return;
+    }
+    // Report what the background polling has reached so far, so the spec can
+    // wait for the outcome instead of reimplementing the poll loop.
+    if (req.method === 'GET' && url.pathname === '/device-result') {
+      reportDeviceResult(url, res);
       return;
     }
     if (req.method === 'GET' && url.pathname === '/callback') {
@@ -127,6 +141,105 @@ async function startPushedAuthorization(requestUrl, res) {
   authorizationUrl.searchParams.set('request_uri', pushed.request_uri);
 
   redirect(res, authorizationUrl.toString());
+}
+
+/**
+ * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628 §3.1 / §3.4).
+ *
+ * Plays the consumption device: one back-channel POST to get the codes, then a
+ * poll loop that honors the interval the OP asked for, including the +5 seconds
+ * a slow_down response demands (§3.5).
+ */
+async function startDeviceAuthorization(requestUrl, res) {
+  const authorization = await formPost(new URL('/device_authorization', issuer), {
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: requestUrl.searchParams.get('scope') ?? 'openid profile email',
+  });
+
+  const flowId = randomString(16);
+  const flow = {
+    status: 'pending',
+    userCode: authorization.user_code,
+    verificationUri: authorization.verification_uri,
+    verificationUriComplete: authorization.verification_uri_complete,
+    tokens: null,
+    error: null,
+  };
+  deviceFlows.set(flowId, flow);
+
+  // Deliberately not awaited: the device keeps polling while the spec drives
+  // the browser through the verification UI.
+  void pollDeviceToken(flow, authorization.device_code, authorization.interval);
+
+  sendJson(res, 200, {
+    flow_id: flowId,
+    user_code: authorization.user_code,
+    verification_uri: authorization.verification_uri,
+    verification_uri_complete: authorization.verification_uri_complete,
+    expires_in: authorization.expires_in,
+    interval: authorization.interval,
+  });
+}
+
+async function pollDeviceToken(flow, deviceCode, initialInterval) {
+  let intervalSeconds = initialInterval ?? 5;
+  const deadline = Date.now() + 60_000;
+
+  while (Date.now() < deadline) {
+    await sleep(intervalSeconds * 1000);
+    const response = await fetch(new URL('/token', issuer), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: deviceCode,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+    const body = await response.json();
+
+    if (response.ok) {
+      flow.status = 'complete';
+      flow.tokens = body;
+      return;
+    }
+    if (body.error === 'authorization_pending') continue;
+    // RFC 8628 §3.5: after slow_down the client MUST add 5 seconds.
+    if (body.error === 'slow_down') {
+      intervalSeconds += 5;
+      continue;
+    }
+    flow.status = 'failed';
+    flow.error = body.error;
+    return;
+  }
+
+  flow.status = 'failed';
+  flow.error = 'timeout';
+}
+
+function reportDeviceResult(url, res) {
+  const flowId = requireSearchParam(url, 'flow_id');
+  const flow = deviceFlows.get(flowId);
+  if (flow === undefined) {
+    sendJson(res, 404, { error: 'unknown_flow' });
+    return;
+  }
+  sendJson(res, 200, {
+    status: flow.status,
+    error: flow.error,
+    user_code: flow.userCode,
+    access_token: flow.tokens?.access_token ?? null,
+    id_token: flow.tokens?.id_token ?? null,
+    scope: flow.tokens?.scope ?? null,
+    token_type: flow.tokens?.token_type ?? null,
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function handleCallback(url, res) {

@@ -5,7 +5,7 @@
   "description": "Hono Cloudflare Workers sample backed by D1",
   "type": "module",
   "scripts": {
-    "generate": "maronn-oidc generate hono --enable par --enable token-exchange --enable transaction-binding --enable jarm --output ./src/oidc-provider",
+    "generate": "maronn-oidc generate hono --enable par --enable token-exchange --enable transaction-binding --enable jarm --enable device-authorization-grant --output ./src/oidc-provider",
     "check:generated": "pnpm run generate && node scripts/check-generated.mjs",
     "db:migrate:local": "wrangler d1 migrations apply maronn-openid-connect-sample --local --persist-to \"${OIDC_D1_PERSIST_PATH:-.wrangler/state}\"",
     "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && tsc --noEmit && wrangler deploy --dry-run --outdir dist",

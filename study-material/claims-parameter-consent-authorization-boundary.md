@@ -19,6 +19,7 @@
 | **同意の永続化・grant 管理**そのもの | `study-material/done/consent-grant-persistence-and-management.md` |
 | scope の**部分同意（チェックボックス）** | `study-material/scope-handling-validation-and-granted-scope.md` |
 | Discovery `claims_supported` / `claims_parameter_supported` の広告整合 | `study-material/done/discovery-claims-feature-advertisement.md` |
+| 要求**できるクレーム名の集合**が定義されていない（任意プロパティ読み出し） | `study-material/done/claims-parameter-claim-name-allowlist.md`、`tasks/p1-claims-parameter-claim-name-allowlist.md` |
 
 本ファイルは上記のいずれとも異なり、「**要求クレームを返してよいという判断を誰が下したのか**」だけを論点にする。
 

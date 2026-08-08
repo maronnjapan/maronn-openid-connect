@@ -142,3 +142,25 @@ OSS 利用者は **これらを自分のストア（D1 / KV / Postgres / Redis �
 - 外部 KV/Redis/DynamoDB 等を resolver/store の backing に使う場合は、それぞれのネイティブ TTL 失効に上記の「下限＝カスケード窓」を満たす値を設定すること。
 
 > 注（本タスクのスコープ）: 上記のうち token store（access/refresh）の遅延回収と本契約節を実装した。session 系 store（`AuthSessionInfo` / `BrowserSessionInfo` への `expiresAt` 付与と回収）は発行箇所（`login.ts` 等）の寿命設計を伴うため、別タスクの follow-up とする。
+
+## `UserClaimsResolver.findUserClaims` の戻り値は外部開示面である（claim disclosure contract）
+
+`UserClaimsResolver.findUserClaims(sub)` が返したオブジェクトは、UserInfo レスポンスへ現れうる面である。
+DB の行オブジェクトや内部ユーザーモデルをそのまま返すのは PoC で最も自然な書き方だが、
+そこに載った余剰フィールド（`password_hash`、内部フラグ、テナント ID 等）も同じ面に乗る。
+
+- **利用者側の契約**: `findUserClaims` は **開示してよいクレームだけを載せて返すこと**。
+  内部フィールドは resolver 内で除去する（生成 OP の `UserStore.getClaims` が `password` を落としているのが最小例）。
+- **OP 側の防壁（core が保証する範囲）**: 開示経路は 2 つあり、どちらもアロウリスト方式である。
+  - scope 経路（`filterClaimsByScope`）: `SCOPE_CLAIMS_MAP` に載ったクレーム名だけをコピーする。
+  - `claims` パラメータ経路（`applyRequestedClaims`）: キー名は RP が任意に指定できるため、
+    `DEFAULT_REQUESTABLE_CLAIMS`（`sub` ＋ `SCOPE_CLAIMS_MAP` の全クレーム）に含まれる名前だけを読み出し、
+    さらに `hasOwnProperty` 検査でプロトタイプチェーン由来のプロパティを除外する。
+- **アロウリスト外を要求されたときの挙動**: 黙って返さない（エラーにしない）。
+  OIDC Core 1.0 §5.5.1 は、要求クレームを返せない場合に OP がエラーを返してはならない（MUST NOT）と定める。
+  `essential: true` についても best effort（SHOULD）であり、返さないことは常に仕様適合である。
+- **独自クレームを公開する場合**: `handleUserInfoRequest({ allowedClaimNames })`
+  （ステップ関数を直接呼ぶ生成 OP では `applyRequestedClaims(..., allowedClaimNames)`）へ
+  OP の語彙を注入する。語彙は OIDC Discovery 1.0 §3 の `claims_supported` として公開する対象と一致させること。
+  **アロウリストを広げた時点で、その名前は `findUserClaims` の戻り値から開示される**ため、
+  拡張時は上記「利用者側の契約」を必ず併せて満たすこと。

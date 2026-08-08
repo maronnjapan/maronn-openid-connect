@@ -24,14 +24,14 @@ experimental 機能 `jarm` を experimental から外してよいか（昇格さ
 | ファイル | 行数 |
 |---|---|
 | [packages/experimental/src/jarm/index.ts](../../../../../packages/experimental/src/jarm/index.ts) | 43 |
-| [packages/experimental/src/jarm/response-jwt.ts](../../../../../packages/experimental/src/jarm/response-jwt.ts) | 143 |
+| [packages/experimental/src/jarm/response-jwt.ts](../../../../../packages/experimental/src/jarm/response-jwt.ts) | 153 |
 | [packages/experimental/src/jarm/response-mode.ts](../../../../../packages/experimental/src/jarm/response-mode.ts) | 65 |
 
 単体テスト:
 
 | ファイル | 行数 |
 |---|---|
-| [packages/experimental/src/jarm/response-jwt.test.ts](../../../../../packages/experimental/src/jarm/response-jwt.test.ts) | 338 |
+| [packages/experimental/src/jarm/response-jwt.test.ts](../../../../../packages/experimental/src/jarm/response-jwt.test.ts) | 366 |
 | [packages/experimental/src/jarm/response-mode.test.ts](../../../../../packages/experimental/src/jarm/response-mode.test.ts) | 102 |
 
 ### 1.2 CLI 統合（コード生成側）
@@ -41,13 +41,14 @@ experimental 機能 `jarm` を experimental から外してよいか（昇格さ
 | ファイル | 言及回数 |
 |---|---|
 | [packages/cli/src/__tests__/cli.test.ts](../../../../../packages/cli/src/__tests__/cli.test.ts) | 8 |
+| [packages/cli/src/__tests__/device-authorization-grant-feature.test.ts](../../../../../packages/cli/src/__tests__/device-authorization-grant-feature.test.ts) | 5 |
 | [packages/cli/src/__tests__/features.test.ts](../../../../../packages/cli/src/__tests__/features.test.ts) | 6 |
-| [packages/cli/src/__tests__/jarm-feature.test.ts](../../../../../packages/cli/src/__tests__/jarm-feature.test.ts) | 71 |
+| [packages/cli/src/__tests__/jarm-feature.test.ts](../../../../../packages/cli/src/__tests__/jarm-feature.test.ts) | 82 |
 | [packages/cli/src/__tests__/par-feature.test.ts](../../../../../packages/cli/src/__tests__/par-feature.test.ts) | 5 |
 | [packages/cli/src/__tests__/token-exchange-feature.test.ts](../../../../../packages/cli/src/__tests__/token-exchange-feature.test.ts) | 3 |
 | [packages/cli/src/features.ts](../../../../../packages/cli/src/features.ts) | 9 |
 | [packages/cli/src/frameworks/hono/index.ts](../../../../../packages/cli/src/frameworks/hono/index.ts) | 6 |
-| [packages/cli/src/frameworks/hono/templates.ts](../../../../../packages/cli/src/frameworks/hono/templates.ts) | 204 |
+| [packages/cli/src/frameworks/hono/templates.ts](../../../../../packages/cli/src/frameworks/hono/templates.ts) | 214 |
 | [packages/cli/src/frameworks/web-standard/templates.ts](../../../../../packages/cli/src/frameworks/web-standard/templates.ts) | 26 |
 | [packages/cli/src/index.ts](../../../../../packages/cli/src/index.ts) | 2 |
 
@@ -62,9 +63,9 @@ experimental 機能 `jarm` を experimental から外してよいか（昇格さ
 
 | フレームワーク | 差分ドキュメント | 追加 | 変更 | 削除 | 規模 |
 |---|---|---|---|---|---|
-| hono | [generated-code/hono.md](./generated-code/hono.md) | 1 | 4 | 0 | +618 / -59 |
-| express / fastify | [generated-code/express-fastify.md](./generated-code/express-fastify.md) | 1 | 4 | 0 | +618 / -59 |
-| nextjs | [generated-code/nextjs.md](./generated-code/nextjs.md) | 1 | 3 | 0 | +491 / -45 |
+| hono | [generated-code/hono.md](./generated-code/hono.md) | 1 | 4 | 0 | +716 / -59 |
+| express / fastify | [generated-code/express-fastify.md](./generated-code/express-fastify.md) | 1 | 4 | 0 | +716 / -59 |
+| nextjs | [generated-code/nextjs.md](./generated-code/nextjs.md) | 1 | 3 | 0 | +580 / -45 |
 
 差分に **現れない** 生成ファイル（この機能のレビューでは読む必要がないもの）:
 
@@ -79,10 +80,10 @@ experimental 機能 `jarm` を experimental から外してよいか（昇格さ
 
 | サンプル | --enable | この機能 |
 |---|---|---|
-| [samples/express-flyio](../../../../../samples/express-flyio) | （なし） | 無効 |
-| [samples/fastify-flyio](../../../../../samples/fastify-flyio) | （なし） | 無効 |
-| [samples/hono-cloudflare](../../../../../samples/hono-cloudflare) | par, token-exchange, transaction-binding, jarm | **有効** |
-| [samples/nextjs-vercel](../../../../../samples/nextjs-vercel) | （なし） | 無効 |
+| [samples/express-flyio](../../../../../samples/express-flyio) | device-authorization-grant | 無効 |
+| [samples/fastify-flyio](../../../../../samples/fastify-flyio) | device-authorization-grant | 無効 |
+| [samples/hono-cloudflare](../../../../../samples/hono-cloudflare) | par, token-exchange, transaction-binding, jarm, device-authorization-grant | **有効** |
+| [samples/nextjs-vercel](../../../../../samples/nextjs-vercel) | device-authorization-grant | 無効 |
 
 有効なサンプルの生成ディレクトリ（`src/oidc-provider` など）は、他機能と併用した合成結果です。
 単独の寄与は 1.3 の差分で、他機能との併用結果はサンプルの実コードと conformance.test.ts で確認できます。
@@ -99,7 +100,7 @@ experimental 機能 `jarm` を experimental から外してよいか（昇格さ
 | ファイル | 言及回数 |
 |---|---|
 | [docs/library-document/src/content/docs/experimental/index.md](../../../../../docs/library-document/src/content/docs/experimental/index.md) | 4 |
-| [docs/library-document/src/content/docs/experimental/jarm.md](../../../../../docs/library-document/src/content/docs/experimental/jarm.md) | 68 |
+| [docs/library-document/src/content/docs/experimental/jarm.md](../../../../../docs/library-document/src/content/docs/experimental/jarm.md) | 70 |
 | [packages/experimental/README.md](../../../../../packages/experimental/README.md) | 3 |
 
 ## 2. 推奨レビュー手順

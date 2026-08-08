@@ -2083,6 +2083,7 @@ import { jarmConfig } from './jarm.js';`
   const jarmCoreImports = features.jarm
     ? `
   AuthorizationErrorCode,
+  selectSigningKeyByAlg,
   type SigningKey,`
     : '';
   // Declared before the try block: AuthorizationError is thrown from steps that
@@ -2112,16 +2113,30 @@ import { jarmConfig } from './jarm.js';`
       );
     }
     if (jarmResolution.kind === 'jarm') {
-      // JARM §2.2: signed with the OP's general-purpose active signing key, whose
-      // public half is published at /.well-known/jwks.json under the same kid.
+      // JARM §3: this OP declares alg RS256 on every response JWT (the default
+      // for a client that registered no authorization_signed_response_alg), and
+      // discovery advertises authorization_signing_alg_values_supported:
+      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
+      // SigningKeyProvider may legitimately return ES256 as active alongside an
+      // RS256 + ES256 registered set — so the key is picked by alg from the
+      // registered set. Its public half is published at /.well-known/jwks.json
+      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
+      // registered, which surfaces as a server_error here (a configuration
+      // mistake) rather than as an unverifiable authorization response.
+      const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
       jarmResponse = {
         issuer,
         clientId: client.clientId,
-        signingKey: {
-          privateKey: c.get('privateKey'),
-          publicJwk: c.get('publicJwk'),
-          keyId: c.get('keyId'),
-        },
+        // Falls back to the single-key context so a hand-wired provider that
+        // never populated the key set keeps working; on the default single
+        // RS256 key both branches resolve the same key.
+        signingKey: jarmSigningKeys.length > 0
+          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+          : {
+              privateKey: c.get('privateKey'),
+              publicJwk: c.get('publicJwk'),
+              keyId: c.get('keyId'),
+            },
       };
     }
 
@@ -5425,8 +5440,10 @@ import { jarmConfig } from './jarm.js';`
   const jarmConsentCoreImports = features.jarm
     ? features.transactionBinding
       ? `
+  selectSigningKeyByAlg,
   type SigningKey,`
       : `
+  selectSigningKeyByAlg,
   type AuthTransaction,
   type SigningKey,`
     : '';
@@ -5446,16 +5463,24 @@ function resolveJarmResponse(
   transaction: AuthTransaction & JarmAuthTransactionFields,
 ): JarmResponseContext | undefined {
   if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
-  // JARM Section 2.2: signed with the OP's general-purpose active signing key,
-  // whose public half is published at /.well-known/jwks.json under the same kid.
+  // JARM Section 3: the response JWT always declares alg RS256, so the key is
+  // picked by alg from the registered key set rather than taken from the
+  // general-purpose ACTIVE key, which the SigningKeyProvider contract does not
+  // guarantee to be RS256. Its public half is published at
+  // /.well-known/jwks.json under the same kid. The single-key context is kept as
+  // a fallback for providers that never populated the key set; on the default
+  // single RS256 key both branches resolve the same key.
+  const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
   return {
     issuer: c.get('config').issuer,
     clientId: transaction.clientId,
-    signingKey: {
-      privateKey: c.get('privateKey'),
-      publicJwk: c.get('publicJwk'),
-      keyId: c.get('keyId'),
-    },
+    signingKey: jarmSigningKeys.length > 0
+      ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+      : {
+          privateKey: c.get('privateKey'),
+          publicJwk: c.get('publicJwk'),
+          keyId: c.get('keyId'),
+        },
   };
 }
 
@@ -11353,6 +11378,75 @@ export function jarmConformanceBlock(
       return { header, payload: decodeSegment(encodedPayload), signatureValid };
     }
 
+    describe('Signing key selection (JARM Section 3)', () => {
+      // A SigningKeyProvider may legitimately return an ES256 active key next to
+      // a registered set that also holds RS256 — packages/core's
+      // SigningKeyProvider contract documents alternate-alg key sets, and only
+      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
+      // JARM response JWT always declares alg RS256, so it must be signed with
+      // the RS256 key from that set: signing it with whichever key happens to be
+      // active would make Web Crypto refuse and break the authorization response
+      // delivery path for every client that asked for a JWT response mode.
+      it('should sign with the registered RS256 key when the active key is ES256', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const rs256Key: SigningKey = {
+          privateKey: rs256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+          keyId: 'mixed-rs256',
+        };
+        const es256Key: SigningKey = {
+          privateKey: es256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+          keyId: 'mixed-es256',
+        };
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is the ES256 one; the registered set holds both.
+          async getSigningKey(): Promise<SigningKey> {
+            return es256Key;
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [rs256Key, es256Key];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none with no session is
+        // login_required — a redirectable error, so it is answered in JARM mode
+        // straight from the authorize route, with no interaction to drive.
+        const res = await mixedApp.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const location = res.headers.get('Location') ?? '';
+        const jwt = queryOf(location).get('response') ?? '';
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          'RSASSA-PKCS1-v1_5',
+          rs256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(decodeSegment(encodedHeader)).toEqual({ alg: 'RS256', kid: 'mixed-rs256' });
+        expect(signatureValid).toBe(true);
+        expect(decodeSegment(encodedPayload).error).toBe('login_required');
+      });
+    });
+
 ${interactiveResponseTests}
     describe('Unsupported JWT response modes', () => {
       // JARM Section 2.3.2 / Section 2.3.3 exist in the specification but are not
@@ -11406,11 +11500,15 @@ ${jarmAuthorizeRouteResponsesComment}      it('should answer the SSO fast path w
         const res = await app.request(authorizeUrl({ response_mode: 'query.jwt' }), {
           headers: { Cookie: first.sessionCookie },
         });
-        const { payload, signatureValid } = await inspectJarmJwt(
+        const { header, payload, signatureValid } = await inspectJarmJwt(
           queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
         );
 
         expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        // JARM Section 3: the authorize route signs with the RS256 key selected
+        // from the registered key set, not with whichever key happens to be
+        // active, so the alg header always matches the key that produced it.
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
         expect(signatureValid).toBe(true);
         expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
       });
@@ -11423,11 +11521,12 @@ ${jarmAuthorizeRouteResponsesComment}      it('should answer the SSO fast path w
           authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
           { headers: { Cookie: first.sessionCookie } },
         );
-        const { payload, signatureValid } = await inspectJarmJwt(
+        const { header, payload, signatureValid } = await inspectJarmJwt(
           queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
         );
 
         expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
         expect(signatureValid).toBe(true);
         expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
       });

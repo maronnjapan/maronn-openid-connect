@@ -4,7 +4,7 @@
 
 🟠 High（実行時破綻 + Discovery の不正直）/ タスク化済み
 
-タスク: `tasks/p2-jarm-response-jwt-rs256-key-selection.md`（方針A を採用）。
+タスク: `tasks/done/p2-jarm-response-jwt-rs256-key-selection.md`（方針A を採用）。
 方針B（alg agility / `authorization_signed_response_alg` 対応）は保留のままで、
 タスクのスコープ外として明記してある。
 

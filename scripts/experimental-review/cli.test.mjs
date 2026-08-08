@@ -12,12 +12,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseCliArgs } from './cli.mjs';
 
-const cliPath = join(dirname(fileURLToPath(import.meta.url)), 'cli.mjs');
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const cliPath = join(scriptDir, 'cli.mjs');
+/** cli.mjs と同じ「このツール自身が住むリポジトリ」の解決。 */
+const toolRepoRoot = resolve(scriptDir, '../..');
 
 test('parseCliArgs', async (t) => {
   await t.test('should parse a single feature generate command', () => {
@@ -183,10 +186,16 @@ test('cli end-to-end against a fixture repo', async (t) => {
     );
   });
 
-  await t.test('should reject an unknown feature id with the valid list', () => {
-    const result = runCli(['device-authorization-grant', '--repo-root', root]);
+  await t.test('should reject an unknown feature id with the valid list', async () => {
+    // 有効な一覧はテストに焼き付けず CLI 自身の EXPERIMENTAL_FEATURES から取る。
+    // 焼き付けると、新しい experimental 機能を足すたびにこのテストが実装より先に
+    // 落ちる（device-authorization-grant の追加で実際にそうなった）。
+    const { EXPERIMENTAL_FEATURES } = await import(
+      pathToFileURL(join(toolRepoRoot, 'packages/cli/dist/features.js')).href
+    );
+    const result = runCli(['no-such-experimental-feature', '--repo-root', root]);
     assert.equal(result.status, 1);
-    assert.equal(result.stderr.includes('par, token-exchange, jarm'), true);
+    assert.equal(result.stderr.includes([...EXPERIMENTAL_FEATURES].join(', ')), true);
   });
 
   await t.test('should explain when the feature has no task directory', () => {

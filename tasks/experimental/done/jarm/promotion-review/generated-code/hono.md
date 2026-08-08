@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/conformance.test.ts b/with-jarm/conformance.test.ts
-index e0b983e..699bf7f 100644
+index c61cb59..4f09ae5 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-jarm/conformance.test.ts
 @@ -405,10 +405,11 @@ describe('generated provider HTTP conformance', () => {
@@ -40,10 +40,10 @@ index e0b983e..699bf7f 100644
        });
      });
  
-@@ -2173,4 +2174,331 @@ describe('generated provider HTTP conformance', () => {
+@@ -2228,4 +2229,405 @@ describe('generated provider HTTP conformance', () => {
+       ).toBe(false);
      });
    });
- 
 +
 +  // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
 +  // because this provider was created with --enable jarm. These tests pin the
@@ -174,6 +174,75 @@ index e0b983e..699bf7f 100644
 +      );
 +      return { header, payload: decodeSegment(encodedPayload), signatureValid };
 +    }
++
++    describe('Signing key selection (JARM Section 3)', () => {
++      // A SigningKeyProvider may legitimately return an ES256 active key next to
++      // a registered set that also holds RS256 — packages/core's
++      // SigningKeyProvider contract documents alternate-alg key sets, and only
++      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
++      // JARM response JWT always declares alg RS256, so it must be signed with
++      // the RS256 key from that set: signing it with whichever key happens to be
++      // active would make Web Crypto refuse and break the authorization response
++      // delivery path for every client that asked for a JWT response mode.
++      it('should sign with the registered RS256 key when the active key is ES256', async () => {
++        const rs256Pair = await crypto.subtle.generateKey(
++          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
++          true,
++          ['sign', 'verify'],
++        );
++        const es256Pair = await crypto.subtle.generateKey(
++          { name: 'ECDSA', namedCurve: 'P-256' },
++          true,
++          ['sign', 'verify'],
++        );
++        const rs256Key: SigningKey = {
++          privateKey: rs256Pair.privateKey,
++          publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
++          keyId: 'mixed-rs256',
++        };
++        const es256Key: SigningKey = {
++          privateKey: es256Pair.privateKey,
++          publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
++          keyId: 'mixed-es256',
++        };
++        const mixedProvider: SigningKeyProvider = {
++          // Active key is the ES256 one; the registered set holds both.
++          async getSigningKey(): Promise<SigningKey> {
++            return es256Key;
++          },
++          async getSigningKeys(): Promise<SigningKey[]> {
++            return [rs256Key, es256Key];
++          },
++        };
++        const mixedApp = createApp({
++          signingKeyProvider: mixedProvider,
++          clientResolver: createInMemoryClientResolver(testClients),
++        });
++
++        // OIDC Core 1.0 Section 3.1.2.1: prompt=none with no session is
++        // login_required — a redirectable error, so it is answered in JARM mode
++        // straight from the authorize route, with no interaction to drive.
++        const res = await mixedApp.request(
++          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
++        );
++        const location = res.headers.get('Location') ?? '';
++        const jwt = queryOf(location).get('response') ?? '';
++        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
++        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
++        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
++        const signatureValid = await crypto.subtle.verify(
++          'RSASSA-PKCS1-v1_5',
++          rs256Pair.publicKey,
++          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
++          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
++        );
++
++        expect([...queryOf(location).keys()]).toEqual(['response']);
++        expect(decodeSegment(encodedHeader)).toEqual({ alg: 'RS256', kid: 'mixed-rs256' });
++        expect(signatureValid).toBe(true);
++        expect(decodeSegment(encodedPayload).error).toBe('login_required');
++      });
++    });
 +
 +    describe('Success response (JARM Section 2.3.1)', () => {
 +      it('should deliver the authorization response as the only response query parameter', async () => {
@@ -335,11 +404,15 @@ index e0b983e..699bf7f 100644
 +        const res = await app.request(authorizeUrl({ response_mode: 'query.jwt' }), {
 +          headers: { Cookie: first.sessionCookie },
 +        });
-+        const { payload, signatureValid } = await inspectJarmJwt(
++        const { header, payload, signatureValid } = await inspectJarmJwt(
 +          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
 +        );
 +
 +        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
++        // JARM Section 3: the authorize route signs with the RS256 key selected
++        // from the registered key set, not with whichever key happens to be
++        // active, so the alg header always matches the key that produced it.
++        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
 +        expect(signatureValid).toBe(true);
 +        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
 +      });
@@ -352,11 +425,12 @@ index e0b983e..699bf7f 100644
 +          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
 +          { headers: { Cookie: first.sessionCookie } },
 +        );
-+        const { payload, signatureValid } = await inspectJarmJwt(
++        const { header, payload, signatureValid } = await inspectJarmJwt(
 +          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
 +        );
 +
 +        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
++        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
 +        expect(signatureValid).toBe(true);
 +        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
 +      });
@@ -373,19 +447,20 @@ index e0b983e..699bf7f 100644
 +  });
  });
 diff --git a/default-op/routes/authorize.ts b/with-jarm/routes/authorize.ts
-index 793f61e..089ed52 100644
+index 793f61e..ef0dfbd 100644
 --- a/default-op/routes/authorize.ts
 +++ b/with-jarm/routes/authorize.ts
-@@ -29,6 +29,8 @@ import {
+@@ -29,6 +29,9 @@ import {
    IdTokenHintError,
    type AuthorizationRequestParams,
    type JwkSet,
 +  AuthorizationErrorCode,
++  selectSigningKeyByAlg,
 +  type SigningKey,
  } from '@maronn-openid-connect/core';
  import { clientResolver as defaultClientResolver } from '../resolvers.js';
  import {
-@@ -37,6 +39,12 @@ import {
+@@ -37,6 +40,12 @@ import {
    authSessionStore as defaultAuthSessionStore,
  } from '../store.js';
  import { defaultViews, renderView } from '../views.js';
@@ -398,7 +473,7 @@ index 793f61e..089ed52 100644
  
  export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
  
-@@ -53,6 +61,19 @@ function isAuthorizationRequestParams(
+@@ -53,6 +62,19 @@ function isAuthorizationRequestParams(
    return typeof p['client_id'] === 'string';
  }
  
@@ -418,7 +493,7 @@ index 793f61e..089ed52 100644
  /**
   * Builds a redirect URL with an OAuth error response.
   * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
-@@ -61,26 +82,84 @@ function isAuthorizationRequestParams(
+@@ -61,26 +83,84 @@ function isAuthorizationRequestParams(
   * Section 5.2 allowed character set before being appended so user-controlled
   * fragments cannot smuggle control bytes into the redirect URL.
   *
@@ -509,7 +584,7 @@ index 793f61e..089ed52 100644
  /**
   * Iterates URLSearchParams and reports the first repeated key, if any.
   * OIDC Core 1.0 §3.1.2.1 / RFC 6749 §3.1: authorization request parameters
-@@ -148,6 +227,10 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -148,6 +228,10 @@ const handleAuthorizationRequest = async (c: any) => {
    }
  
    const params = rawParams;
@@ -520,7 +595,7 @@ index 793f61e..089ed52 100644
  
    try {
      const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
-@@ -189,6 +272,35 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -189,6 +273,49 @@ const handleAuthorizationRequest = async (c: any) => {
      // RFC 6749 §4.1.2.1: state is echoed only on redirectable errors from here on.
      const state = effectiveParams.state;
  
@@ -540,23 +615,37 @@ index 793f61e..089ed52 100644
 +      );
 +    }
 +    if (jarmResolution.kind === 'jarm') {
-+      // JARM §2.2: signed with the OP's general-purpose active signing key, whose
-+      // public half is published at /.well-known/jwks.json under the same kid.
++      // JARM §3: this OP declares alg RS256 on every response JWT (the default
++      // for a client that registered no authorization_signed_response_alg), and
++      // discovery advertises authorization_signing_alg_values_supported:
++      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
++      // SigningKeyProvider may legitimately return ES256 as active alongside an
++      // RS256 + ES256 registered set — so the key is picked by alg from the
++      // registered set. Its public half is published at /.well-known/jwks.json
++      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
++      // registered, which surfaces as a server_error here (a configuration
++      // mistake) rather than as an unverifiable authorization response.
++      const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
 +      jarmResponse = {
 +        issuer,
 +        clientId: client.clientId,
-+        signingKey: {
-+          privateKey: c.get('privateKey'),
-+          publicJwk: c.get('publicJwk'),
-+          keyId: c.get('keyId'),
-+        },
++        // Falls back to the single-key context so a hand-wired provider that
++        // never populated the key set keeps working; on the default single
++        // RS256 key both branches resolve the same key.
++        signingKey: jarmSigningKeys.length > 0
++          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
++          : {
++              privateKey: c.get('privateKey'),
++              publicJwk: c.get('publicJwk'),
++              keyId: c.get('keyId'),
++            },
 +      };
 +    }
 +
      // OIDC Core 1.0 §6.3: request_uri / registration are not supported here.
      rejectUnsupportedRequestParams(params, redirectUri, state);
  
-@@ -268,7 +380,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -268,7 +395,7 @@ const handleAuthorizationRequest = async (c: any) => {
      const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
      await transactionStore.put(
        'auth_txn:' + transactionId,
@@ -565,7 +654,7 @@ index 793f61e..089ed52 100644
        transactionTtlSeconds,
      );
  
-@@ -278,7 +390,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -278,7 +405,7 @@ const handleAuthorizationRequest = async (c: any) => {
      // prompt=none must not be combined with other values (OIDC Core 1.0 Section 3.1.2.1)
      if (promptValues.includes('none') && promptValues.length > 1) {
        await transactionStore.delete('auth_txn:' + transactionId);
@@ -574,7 +663,7 @@ index 793f61e..089ed52 100644
      }
  
      // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
-@@ -294,7 +406,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -294,7 +421,7 @@ const handleAuthorizationRequest = async (c: any) => {
        if (!jwksProvider) {
          // jwksProvider 未提供では hint を検証できない → login_required で拒否
          await transactionStore.delete('auth_txn:' + transactionId);
@@ -583,7 +672,7 @@ index 793f61e..089ed52 100644
        }
        try {
          const jwks = await jwksProvider();
-@@ -307,7 +419,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -307,7 +434,7 @@ const handleAuthorizationRequest = async (c: any) => {
        } catch (hintError) {
          await transactionStore.delete('auth_txn:' + transactionId);
          const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
@@ -592,7 +681,7 @@ index 793f61e..089ed52 100644
        }
      }
  
-@@ -320,14 +432,14 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -320,14 +447,14 @@ const handleAuthorizationRequest = async (c: any) => {
        // No sessionResolver configured → cannot verify session → login_required
        if (!sessionResolver) {
          await transactionStore.delete('auth_txn:' + transactionId);
@@ -609,7 +698,7 @@ index 793f61e..089ed52 100644
        }
  
        let session;
-@@ -354,20 +466,20 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -354,20 +481,20 @@ const handleAuthorizationRequest = async (c: any) => {
        } catch (promptError) {
          await transactionStore.delete('auth_txn:' + transactionId);
          if (promptError instanceof AuthorizationError) {
@@ -633,7 +722,7 @@ index 793f61e..089ed52 100644
        }
  
        // Filter offline_access if the client does not allow it
-@@ -397,12 +509,15 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -397,12 +524,15 @@ const handleAuthorizationRequest = async (c: any) => {
          authCodeData.grantId,
        );
  
@@ -655,7 +744,7 @@ index 793f61e..089ed52 100644
      }
  
      // OIDC Core 1.0 Section 3.1.2.3: an active OP session enables Single Sign-On.
-@@ -470,12 +585,15 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -470,12 +600,15 @@ const handleAuthorizationRequest = async (c: any) => {
                authCodeData.grantId,
              );
  
@@ -677,7 +766,7 @@ index 793f61e..089ed52 100644
            }
  
            const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
-@@ -497,20 +615,24 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -497,20 +630,24 @@ const handleAuthorizationRequest = async (c: any) => {
    } catch (error) {
      if (error instanceof AuthorizationError) {
        if (error.redirectUri) {
@@ -714,19 +803,20 @@ index 793f61e..089ed52 100644
        // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
        // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST
 diff --git a/default-op/routes/consent.ts b/with-jarm/routes/consent.ts
-index 9b71428..8d66015 100644
+index 9b71428..112f8f3 100644
 --- a/default-op/routes/consent.ts
 +++ b/with-jarm/routes/consent.ts
-@@ -4,6 +4,8 @@ import {
+@@ -4,6 +4,9 @@ import {
    validateCsrfToken,
    completeAuthTransaction,
    createAuthorizationCode,
++  selectSigningKeyByAlg,
 +  type AuthTransaction,
 +  type SigningKey,
  } from '@maronn-openid-connect/core';
  import {
    clientResolver as defaultClientResolver,
-@@ -15,9 +17,81 @@ import {
+@@ -15,9 +18,89 @@ import {
    authSessionStore as defaultAuthSessionStore,
  } from '../store.js';
  import { defaultViews, renderView } from '../views.js';
@@ -753,16 +843,24 @@ index 9b71428..8d66015 100644
 +  transaction: AuthTransaction & JarmAuthTransactionFields,
 +): JarmResponseContext | undefined {
 +  if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
-+  // JARM Section 2.2: signed with the OP's general-purpose active signing key,
-+  // whose public half is published at /.well-known/jwks.json under the same kid.
++  // JARM Section 3: the response JWT always declares alg RS256, so the key is
++  // picked by alg from the registered key set rather than taken from the
++  // general-purpose ACTIVE key, which the SigningKeyProvider contract does not
++  // guarantee to be RS256. Its public half is published at
++  // /.well-known/jwks.json under the same kid. The single-key context is kept as
++  // a fallback for providers that never populated the key set; on the default
++  // single RS256 key both branches resolve the same key.
++  const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
 +  return {
 +    issuer: c.get('config').issuer,
 +    clientId: transaction.clientId,
-+    signingKey: {
-+      privateKey: c.get('privateKey'),
-+      publicJwk: c.get('publicJwk'),
-+      keyId: c.get('keyId'),
-+    },
++    signingKey: jarmSigningKeys.length > 0
++      ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
++      : {
++          privateKey: c.get('privateKey'),
++          publicJwk: c.get('publicJwk'),
++          keyId: c.get('keyId'),
++        },
 +  };
 +}
 +
@@ -808,7 +906,7 @@ index 9b71428..8d66015 100644
  /**
   * Consent Page - GET
   * Displays the consent form for scope authorization.
-@@ -65,15 +139,17 @@ consentApp.post('/', async (c) => {
+@@ -65,15 +148,17 @@ consentApp.post('/', async (c) => {
    const issuer = config.issuer;
  
    if (action === 'deny') {
@@ -833,7 +931,7 @@ index 9b71428..8d66015 100644
    }
  
    const session = await authSessionStore.get(transactionId);
-@@ -124,11 +200,10 @@ consentApp.post('/', async (c) => {
+@@ -124,11 +209,10 @@ consentApp.post('/', async (c) => {
    await authSessionStore.delete(transactionId);
  
    // Redirect back to client with authorization code

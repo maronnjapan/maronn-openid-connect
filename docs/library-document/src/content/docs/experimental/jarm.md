@@ -106,7 +106,9 @@ export const jarmConfig = {
 | 応答パラメータ名 | `response` | JARM §2.3.1 |
 | 対応 `response_mode` | `query.jwt` / `jwt` | この OP は `response_type=code` 専用 |
 
-署名鍵は OP の汎用 `signingKeyProvider` の active key です。ID Token 用に別の鍵を設定している場合でも、JARM 応答は汎用鍵で署名されます（JARM は応答 JWT の鍵用途を分けていません）。公開鍵は `/.well-known/jwks.json` に同じ `kid` で載るため、クライアントは `kid` で検証鍵を解決できます。
+署名鍵は OP の汎用 `signingKeyProvider` が返す**登録鍵セットの中の RS256 鍵**です。ID Token 用に別の鍵を設定している場合でも、JARM 応答は汎用鍵で署名されます（JARM は応答 JWT の鍵用途を分けていません）。公開鍵は `/.well-known/jwks.json` に同じ `kid` で載るため、クライアントは `kid` で検証鍵を解決できます。
+
+応答 JWT の `alg` は常に `RS256` なので、鍵は active key（`getSigningKey()`）ではなく `getSigningKeys()` の返す鍵セットから alg で選ばれます。RS256 単一鍵構成では両者は同じ鍵になり、挙動は変わりません。RS256 と ES256 を併用し active key が ES256 の構成でも、JARM 応答は RS256 鍵で署名されます。汎用鍵セットに RS256 鍵が 1 本も無い場合は設定エラーとして認可リクエストが `server_error` で失敗します（誤った `alg` を表明した検証不能な JWT を返すことはありません）。
 
 ## フロー
 
@@ -298,7 +300,8 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 | 起動時に `jarmConfig.jarmResponseLifetimeSeconds must be an integer between 5 and 600 seconds` | 設定値が JARM §2.1 の推奨レンジ外です |
 | クライアントで `code` が見つからない | JARM モードでは `code` はクエリではなく JWT のクレームです。`response` をデコードしてください |
 | クライアントで `iss` パラメータが無いと言われる | 仕様どおりです。JARM モードでは JWT の `iss` クレームが同じ役割を担います |
-| 署名検証に失敗する | `kid` で鍵を選んでいるか確認してください。応答 JWT は ID Token 用の鍵ではなく、汎用 `signingKeyProvider` の active key で署名されます |
+| 署名検証に失敗する | `kid` で鍵を選んでいるか確認してください。応答 JWT は ID Token 用の鍵ではなく、汎用 `signingKeyProvider` の登録鍵セットにある RS256 鍵で署名されます |
+| 認可リクエストが `server_error` になる（`response_mode=query.jwt` のときだけ） | 汎用 `signingKeyProvider` の鍵セットに RS256 鍵がありません。JARM 応答は RS256 固定なので、RS256 鍵を 1 本登録してください |
 | `invalid_request: response_mode fragment.jwt is not supported` | 本実装は `query.jwt` / `jwt` のみ対応です |
 | 数分放置してからコールバックを処理すると `exp` 切れになる | 既定 60 秒です。リダイレクトを受けたらすぐ検証してください。延ばす場合も上限は 600 秒です |
 

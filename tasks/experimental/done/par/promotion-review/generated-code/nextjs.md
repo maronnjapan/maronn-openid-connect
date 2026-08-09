@@ -65,7 +65,7 @@ index f86e0f6..7b96fdb 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-par/_oidc-provider/conformance.test.ts
-index 441325b..427162e 100644
+index a76047d..e17d63c 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-par/_oidc-provider/conformance.test.ts
 @@ -7,6 +7,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -77,11 +77,10 @@ index 441325b..427162e 100644
  
  
  const REDIRECT_URI = 'http://localhost:3000/callback';
-@@ -2102,4 +2104,414 @@ describe('generated provider HTTP conformance', () => {
-     });
+@@ -2103,6 +2105,416 @@ describe('generated provider HTTP conformance', () => {
    });
  
-+
+ 
 +  // EXPERIMENTAL — Pushed Authorization Requests (RFC 9126). Generated because
 +  // this provider was created with --enable par. These tests pin the contract the
 +  // repository guarantees for the generated PAR endpoint: change the behavior and
@@ -491,7 +490,10 @@ index 441325b..427162e 100644
 +      });
 +    });
 +  });
- });
++
+   // The device authorization grant is disabled in this generated provider: no
+   // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
+   // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/_oidc-provider/routes/authorize.ts b/with-par/_oidc-provider/routes/authorize.ts
 index f7a4871..b144e90 100644
 --- a/default-op/_oidc-provider/routes/authorize.ts

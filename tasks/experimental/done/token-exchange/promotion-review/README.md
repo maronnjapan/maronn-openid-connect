@@ -39,6 +39,7 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 | ファイル | 言及回数 |
 |---|---|
 | [packages/cli/src/__tests__/cli.test.ts](../../../../../packages/cli/src/__tests__/cli.test.ts) | 1 |
+| [packages/cli/src/__tests__/device-authorization-grant-feature.test.ts](../../../../../packages/cli/src/__tests__/device-authorization-grant-feature.test.ts) | 7 |
 | [packages/cli/src/__tests__/features.test.ts](../../../../../packages/cli/src/__tests__/features.test.ts) | 6 |
 | [packages/cli/src/__tests__/jarm-feature.test.ts](../../../../../packages/cli/src/__tests__/jarm-feature.test.ts) | 6 |
 | [packages/cli/src/__tests__/par-feature.test.ts](../../../../../packages/cli/src/__tests__/par-feature.test.ts) | 5 |
@@ -76,10 +77,10 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 
 | サンプル | --enable | この機能 |
 |---|---|---|
-| [samples/express-flyio](../../../../../samples/express-flyio) | （なし） | 無効 |
-| [samples/fastify-flyio](../../../../../samples/fastify-flyio) | （なし） | 無効 |
-| [samples/hono-cloudflare](../../../../../samples/hono-cloudflare) | par, token-exchange, transaction-binding, jarm | **有効** |
-| [samples/nextjs-vercel](../../../../../samples/nextjs-vercel) | （なし） | 無効 |
+| [samples/express-flyio](../../../../../samples/express-flyio) | device-authorization-grant | 無効 |
+| [samples/fastify-flyio](../../../../../samples/fastify-flyio) | device-authorization-grant | 無効 |
+| [samples/hono-cloudflare](../../../../../samples/hono-cloudflare) | par, token-exchange, transaction-binding, jarm, device-authorization-grant | **有効** |
+| [samples/nextjs-vercel](../../../../../samples/nextjs-vercel) | device-authorization-grant | 無効 |
 
 有効なサンプルの生成ディレクトリ（`src/oidc-provider` など）は、他機能と併用した合成結果です。
 単独の寄与は 1.3 の差分で、他機能との併用結果はサンプルの実コードと conformance.test.ts で確認できます。
@@ -89,7 +90,7 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 | ファイル | 言及回数 |
 |---|---|
 | [tests/e2e/apps/client.mjs](../../../../../tests/e2e/apps/client.mjs) | 1 |
-| [tests/e2e/playwright.config.ts](../../../../../tests/e2e/playwright.config.ts) | 3 |
+| [tests/e2e/playwright.config.ts](../../../../../tests/e2e/playwright.config.ts) | 2 |
 | [tests/e2e/specs/token-exchange.spec.ts](../../../../../tests/e2e/specs/token-exchange.spec.ts) | 7 |
 | [tests/e2e/specs/transaction-binding.spec.ts](../../../../../tests/e2e/specs/transaction-binding.spec.ts) | 1 |
 

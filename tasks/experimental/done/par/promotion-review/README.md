@@ -42,13 +42,14 @@ experimental 機能 `par` を experimental から外してよいか（昇格さ�
 | ファイル | 言及回数 |
 |---|---|
 | [packages/cli/src/__tests__/cli.test.ts](../../../../../packages/cli/src/__tests__/cli.test.ts) | 12 |
+| [packages/cli/src/__tests__/device-authorization-grant-feature.test.ts](../../../../../packages/cli/src/__tests__/device-authorization-grant-feature.test.ts) | 8 |
 | [packages/cli/src/__tests__/features.test.ts](../../../../../packages/cli/src/__tests__/features.test.ts) | 8 |
 | [packages/cli/src/__tests__/jarm-feature.test.ts](../../../../../packages/cli/src/__tests__/jarm-feature.test.ts) | 6 |
 | [packages/cli/src/__tests__/par-feature.test.ts](../../../../../packages/cli/src/__tests__/par-feature.test.ts) | 67 |
 | [packages/cli/src/__tests__/token-exchange-feature.test.ts](../../../../../packages/cli/src/__tests__/token-exchange-feature.test.ts) | 26 |
 | [packages/cli/src/features.ts](../../../../../packages/cli/src/features.ts) | 9 |
 | [packages/cli/src/frameworks/hono/index.ts](../../../../../packages/cli/src/frameworks/hono/index.ts) | 5 |
-| [packages/cli/src/frameworks/hono/templates.ts](../../../../../packages/cli/src/frameworks/hono/templates.ts) | 167 |
+| [packages/cli/src/frameworks/hono/templates.ts](../../../../../packages/cli/src/frameworks/hono/templates.ts) | 168 |
 | [packages/cli/src/frameworks/web-standard/templates.ts](../../../../../packages/cli/src/frameworks/web-standard/templates.ts) | 49 |
 | [packages/cli/src/index.ts](../../../../../packages/cli/src/index.ts) | 3 |
 
@@ -82,10 +83,10 @@ experimental 機能 `par` を experimental から外してよいか（昇格さ�
 
 | サンプル | --enable | この機能 |
 |---|---|---|
-| [samples/express-flyio](../../../../../samples/express-flyio) | （なし） | 無効 |
-| [samples/fastify-flyio](../../../../../samples/fastify-flyio) | （なし） | 無効 |
-| [samples/hono-cloudflare](../../../../../samples/hono-cloudflare) | par, token-exchange, transaction-binding, jarm | **有効** |
-| [samples/nextjs-vercel](../../../../../samples/nextjs-vercel) | （なし） | 無効 |
+| [samples/express-flyio](../../../../../samples/express-flyio) | device-authorization-grant | 無効 |
+| [samples/fastify-flyio](../../../../../samples/fastify-flyio) | device-authorization-grant | 無効 |
+| [samples/hono-cloudflare](../../../../../samples/hono-cloudflare) | par, token-exchange, transaction-binding, jarm, device-authorization-grant | **有効** |
+| [samples/nextjs-vercel](../../../../../samples/nextjs-vercel) | device-authorization-grant | 無効 |
 
 有効なサンプルの生成ディレクトリ（`src/oidc-provider` など）は、他機能と併用した合成結果です。
 単独の寄与は 1.3 の差分で、他機能との併用結果はサンプルの実コードと conformance.test.ts で確認できます。

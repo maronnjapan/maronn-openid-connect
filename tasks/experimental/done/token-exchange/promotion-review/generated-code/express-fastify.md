@@ -39,7 +39,7 @@ index b21565e..55492c7 100644
        // The sample client authenticates with client_secret_post, so register it explicitly.
        tokenEndpointAuthMethod: 'client_secret_post',
 diff --git a/default-op/conformance.test.ts b/with-token-exchange/conformance.test.ts
-index e79008b..c709d4b 100644
+index 0ea71d7..a353fd0 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-token-exchange/conformance.test.ts
 @@ -7,6 +7,7 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -77,11 +77,10 @@ index e79008b..c709d4b 100644
  ]);
  
  // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
-@@ -2158,4 +2179,546 @@ describe('generated provider HTTP conformance', () => {
-     });
+@@ -2159,6 +2180,548 @@ describe('generated provider HTTP conformance', () => {
    });
  
-+
+ 
 +  // EXPERIMENTAL — OAuth 2.0 Token Exchange (RFC 8693). Generated because this
 +  // provider was created with --enable token-exchange. These tests pin the
 +  // contract the repository guarantees for the generated exchange grant: change
@@ -623,7 +622,10 @@ index e79008b..c709d4b 100644
 +    });
 +  });
 +
- });
++
+   // The device authorization grant is disabled in this generated provider: no
+   // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
+   // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/routes/discovery.ts b/with-token-exchange/routes/discovery.ts
 index 3208501..1dbed28 100644
 --- a/default-op/routes/discovery.ts

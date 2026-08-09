@@ -125,7 +125,7 @@ index cdd419c..275e126 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index e0b983e..ea31101 100644
+index c61cb59..89e240d 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -9,6 +9,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -137,11 +137,10 @@ index e0b983e..ea31101 100644
  
  /**
   * HTTP conformance smoke tests for the generated OpenID Connect Provider.
-@@ -2173,4 +2175,414 @@ describe('generated provider HTTP conformance', () => {
-     });
+@@ -2174,6 +2176,416 @@ describe('generated provider HTTP conformance', () => {
    });
  
-+
+ 
 +  // EXPERIMENTAL — Pushed Authorization Requests (RFC 9126). Generated because
 +  // this provider was created with --enable par. These tests pin the contract the
 +  // repository guarantees for the generated PAR endpoint: change the behavior and
@@ -551,7 +550,10 @@ index e0b983e..ea31101 100644
 +      });
 +    });
 +  });
- });
++
+   // The device authorization grant is disabled in this generated provider: no
+   // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
+   // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/routes/authorize.ts b/with-par/routes/authorize.ts
 index 793f61e..06eb0f4 100644
 --- a/default-op/routes/authorize.ts

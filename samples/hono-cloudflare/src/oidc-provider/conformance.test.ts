@@ -172,6 +172,19 @@ const testClients = new Map<string, RegisteredClient>([
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
     tokenEndpointAuthMethod: 'client_secret_post',
   }],
+  // A third device client that registered id_token_signed_response_alg, so the
+  // contract test can prove the device grant honors it just like the standard
+  // grants (OIDC Dynamic Client Registration 1.0 §2).
+  ['c-device-es256', {
+    clientId: 'c-device-es256',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    idTokenSignedResponseAlg: 'ES256' as const,
+  }],
 ]);
 
 // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
@@ -3348,11 +3361,18 @@ describe('generated provider HTTP conformance', () => {
   describe('Device Authorization Grant (RFC 8628)', () => {
     const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
 
+    /**
+     * The app under test. Defaults to the shared one; the ID Token signing key
+     * selection test passes an app built on a mixed RS256 + ES256 key set.
+     */
+    type DeviceTargetApp = { request: (path: string, init?: RequestInit) => Promise<Response> };
+
     // Pure helpers: they fetch and parse only. Every assertion lives in an it().
     function requestDeviceAuthorization(
       overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
     ): Promise<Response> {
-      return app.request('/device_authorization', {
+      return target.request('/device_authorization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -3367,8 +3387,9 @@ describe('generated provider HTTP conformance', () => {
     function pollToken(
       deviceCode: string,
       overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
     ): Promise<Response> {
-      return app.request('/token', {
+      return target.request('/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -3394,8 +3415,12 @@ describe('generated provider HTTP conformance', () => {
         .join('; ');
     }
 
-    function submitUserCode(userCode: string, cookie = ''): Promise<Response> {
-      return app.request('/device', {
+    function submitUserCode(
+      userCode: string,
+      cookie = '',
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -3405,8 +3430,12 @@ describe('generated provider HTTP conformance', () => {
       });
     }
 
-    function deviceLogin(body: Record<string, string>, cookie: string): Promise<Response> {
-      return app.request('/device/login', {
+    function deviceLogin(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -3416,8 +3445,12 @@ describe('generated provider HTTP conformance', () => {
       });
     }
 
-    function deviceApprove(body: Record<string, string>, cookie: string): Promise<Response> {
-      return app.request('/device/approve', {
+    function deviceApprove(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/approve', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -3435,9 +3468,10 @@ describe('generated provider HTTP conformance', () => {
     async function runDeviceFlow(
       overrides: Record<string, string> = {},
       decision: 'approve' | 'deny' = 'approve',
+      target: DeviceTargetApp = app,
     ): Promise<{ device_code: string; user_code: string; completed: Response }> {
-      const authorization = await (await requestDeviceAuthorization(overrides)).json();
-      const submitted = await submitUserCode(authorization.user_code);
+      const authorization = await (await requestDeviceAuthorization(overrides, target)).json();
+      const submitted = await submitUserCode(authorization.user_code, '', target);
       const bindingCookie = cookieJar(submitted);
       const loginRes = await deviceLogin(
         {
@@ -3447,6 +3481,7 @@ describe('generated provider HTTP conformance', () => {
           password: 'password',
         },
         bindingCookie,
+        target,
       );
       const sessionCookie = cookieJar(submitted, loginRes);
       const completed = await deviceApprove(
@@ -3456,6 +3491,7 @@ describe('generated provider HTTP conformance', () => {
           decision,
         },
         sessionCookie,
+        target,
       );
       return {
         device_code: authorization.device_code,
@@ -3947,6 +3983,96 @@ describe('generated provider HTTP conformance', () => {
 
       expect(typeof body.refresh_token).toBe('string');
     });
+    });
+
+    describe('ID Token signing key selection (OIDC Dynamic Client Registration 1.0 §4.2)', () => {
+      /** JOSE header of a compact JWS, decoded. */
+      function joseHeader(jwt: string): Record<string, unknown> {
+        const segment = jwt.split('.')[0] ?? '';
+        return JSON.parse(
+          new TextDecoder().decode(
+            Uint8Array.from(atob(segment.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)),
+          ),
+        );
+      }
+
+      // A client may register id_token_signed_response_alg, and the standard
+      // grants pick a registered key matching it. The device grant MUST NOT
+      // diverge: signing this client's ID Token with whichever key happens to be
+      // ACTIVE would hand it an RS256 token it rejects, and would compute at_hash
+      // with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      it('should sign the device grant ID Token with the alg the client registered', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is RS256; the registered set also holds an ES256 key.
+          async getSigningKey(): Promise<SigningKey> {
+            return {
+              privateKey: rs256Pair.privateKey,
+              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+              keyId: 'device-rs256',
+            };
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [
+              {
+                privateKey: rs256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+                keyId: 'device-rs256',
+              },
+              {
+                privateKey: es256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+                keyId: 'device-es256',
+              },
+            ];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+        const client = { client_id: 'c-device-es256', client_secret: 's' };
+
+        const flow = await runDeviceFlow(client, 'approve', mixedApp);
+        const body = await (await pollToken(flow.device_code, client, mixedApp)).json();
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] =
+          (body.id_token as string).split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          es256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: 'device-es256',
+        });
+        expect(signatureValid).toBe(true);
+      });
+
+      it('should keep signing with RS256 for a client that registered no alg', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'RS256',
+          typ: 'JWT',
+          kid: 'test-key',
+        });
+      });
     });
   });
 

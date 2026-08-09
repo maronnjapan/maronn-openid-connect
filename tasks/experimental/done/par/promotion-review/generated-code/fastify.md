@@ -77,7 +77,7 @@ index 38e8944..8480898 100644
    app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
    app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index e79008b..daa72f4 100644
+index 0ea71d7..76a89d1 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -7,6 +7,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -89,11 +89,10 @@ index e79008b..daa72f4 100644
  import { writeWebResponse } from './node-adapter.js';
  
  
-@@ -2158,4 +2160,414 @@ describe('generated provider HTTP conformance', () => {
-     });
+@@ -2159,6 +2161,416 @@ describe('generated provider HTTP conformance', () => {
    });
  
-+
+ 
 +  // EXPERIMENTAL — Pushed Authorization Requests (RFC 9126). Generated because
 +  // this provider was created with --enable par. These tests pin the contract the
 +  // repository guarantees for the generated PAR endpoint: change the behavior and
@@ -503,7 +502,10 @@ index e79008b..daa72f4 100644
 +      });
 +    });
 +  });
- });
++
+   // The device authorization grant is disabled in this generated provider: no
+   // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
+   // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/routes/authorize.ts b/with-par/routes/authorize.ts
 index 58a3620..5f19a92 100644
 --- a/default-op/routes/authorize.ts

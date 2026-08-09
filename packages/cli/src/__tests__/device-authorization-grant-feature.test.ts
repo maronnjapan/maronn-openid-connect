@@ -362,6 +362,48 @@ describe('generate with --enable device-authorization-grant', () => {
         expect(token.includes('error instanceof DeviceAuthorizationError')).toBe(true);
       });
 
+      // OIDC Dynamic Client Registration 1.0 §2 (id_token_signed_response_alg):
+      // the ID Token issued by the device_code grant must use the same alg the
+      // client registered, exactly as the authorization_code / refresh_token
+      // grants do. Taking the ACTIVE ID Token key instead would sign an ES256
+      // client's ID Token with RS256, which that client rejects.
+      it('should select the device grant ID Token key by the client registered alg', () => {
+        const token = fileContent(
+          generateFiles(framework, ['device-authorization-grant']),
+          providerPath(framework, 'routes/token.ts'),
+        );
+        const deviceBranch = token.slice(
+          token.indexOf('params.grant_type === DEVICE_CODE_GRANT_TYPE'),
+          token.indexOf('const grantType = validateGrantTypeSupported('),
+        );
+
+        expect(
+          deviceBranch.includes(
+            'selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg)',
+          ),
+        ).toBe(true);
+        expect(deviceBranch.includes('deviceRegisteredClient?.idTokenSignedResponseAlg')).toBe(
+          true,
+        );
+      });
+
+      it('should answer server_error when no device grant ID Token key matches the alg', () => {
+        const token = fileContent(
+          generateFiles(framework, ['device-authorization-grant']),
+          providerPath(framework, 'routes/token.ts'),
+        );
+        const deviceBranch = token.slice(
+          token.indexOf('params.grant_type === DEVICE_CODE_GRANT_TYPE'),
+          token.indexOf('const grantType = validateGrantTypeSupported('),
+        );
+
+        expect(
+          deviceBranch.includes(
+            'No ID Token signing key registered for alg "${deviceRequestedIdTokenAlg ?? \'RS256\'}"',
+          ),
+        ).toBe(true);
+      });
+
       it('should generate the device contract tests in conformance.test.ts', () => {
         const conformance = fileContent(
           generateFiles(framework, ['device-authorization-grant']),

@@ -312,8 +312,49 @@ tokenApp.post('/', async (c) => {
       const deviceConfig = c.get('config');
       const devicePrivateKey = c.get('privateKey');
       const deviceKeyId = c.get('keyId');
-      const deviceIdTokenPrivateKey = c.get('idTokenPrivateKey') ?? devicePrivateKey;
-      const deviceIdTokenKeyId = c.get('idTokenKeyId') ?? deviceKeyId;
+      // T-022: the ID Token this grant issues follows the SAME key-selection rule
+      // as the standard grants — pick a registered ID Token key whose alg matches
+      // the client's id_token_signed_response_alg (OIDC Dynamic Client
+      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
+      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // it rejects, and would hash at_hash with the wrong algorithm.
+      const deviceIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
+      const deviceFallbackIdKey: SigningKey | undefined =
+        c.get('idTokenPrivateKey') !== undefined
+          ? {
+              privateKey: c.get('idTokenPrivateKey'),
+              publicJwk: c.get('idTokenPublicJwk'),
+              keyId: c.get('idTokenKeyId') ?? deviceKeyId,
+            }
+          : undefined;
+      const deviceRegisteredClient = (await tokenClientResolver.findClient(
+        authenticatedClientId,
+      )) as RegisteredClient | null;
+      const deviceRequestedIdTokenAlg = deviceRegisteredClient?.idTokenSignedResponseAlg;
+      let deviceSelectedIdTokenKey: SigningKey;
+      if (deviceIdTokenSigningKeys.length > 0) {
+        try {
+          deviceSelectedIdTokenKey = selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg);
+        } catch {
+          c.header('Cache-Control', 'no-store');
+          c.header('Pragma', 'no-cache');
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: `No ID Token signing key registered for alg "${deviceRequestedIdTokenAlg ?? 'RS256'}"`,
+            },
+            500,
+          );
+        }
+      } else if (deviceFallbackIdKey) {
+        deviceSelectedIdTokenKey = deviceFallbackIdKey;
+      } else {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+      }
+      const deviceIdTokenPrivateKey = deviceSelectedIdTokenKey.privateKey;
+      const deviceIdTokenKeyId = deviceSelectedIdTokenKey.keyId;
       const deviceIssuer: AccessTokenIssuer =
         deviceConfig.accessTokenFormat === 'opaque'
           ? createOpaqueAccessTokenIssuer()

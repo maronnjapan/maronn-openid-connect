@@ -29,3 +29,29 @@
   - 未承諾リクエスト対策を user_code なしで UI 設計 + 保留数上限に寄せた受容コスト（正規クライアント侵害時はユーザーの拒否に依存）の妥当性は Review 2 の主要確認事項
 - **判定**: **Pass with changes**（指摘 1〜4 を同日中に修正反映済み。仕様の完全性の観点で残る事項はすべて未解決事項表に明示されており、Review 2 の観点（セキュリティ・適合性）に引き継ぐ）
 - **次回可能日**: 2026-08-09
+
+## Review 2
+
+- **日付**: 2026-08-09
+- **観点**: セキュリティと適合性（認証認可上の脅威: リプレイ・CSRF・インジェクション / 鍵・トークン・シークレットの扱い / ログ禁止情報 / 有効期限 / エラー情報の露出 / package 境界との整合 / CLI 後方互換 / 明示的有効化 / 生成コードの安全性 / セキュリティ要件のテスト検証可能性）。Review 1 からの引き継ぎ事項（slow_down 方式の再確認・user_code 非対応の受容コスト・U2・U3）を含む。Review 1 と同じ確認の反復は避け、一次資料はセキュリティ関連セクションの規範文言の再確認に限定した
+- **確認資料**:
+  - CIBA Core 1.0 §7.3 / §11 / §13 / §14 / §15 の規範文言（本文を再取得して確認。§13 のエラー語彙と HTTP ステータス対応・§11 の slow_down「at least 5 seconds for this and all subsequent requests」と invalid_grant「issued to another Client」・§7.3 のエントロピーと文字種・§14 の expired id_token_hint 受理勧告・§15 の static global identifier の文言が仕様書の記述と一致）
+  - `packages/experimental/src/device-authorization-grant/device-code-grant.ts`（状態機械の実挙動。denied 即削除・expired の評価順序・lastPolledAt 更新経路・同一文言 invalid_grant によるオラクル防止）
+  - `packages/experimental/src/device-authorization-grant/verification.ts`（binding Cookie 方式・CSRF の多層防御・レコード単位ログイン失敗計数と残存面の注記）
+  - `packages/cli/src/frameworks/hono/templates.ts`（token ルートの device 分岐がクライアント認証後・core の grant 検証前に置かれること / `/device` UI 3 ルートの防御構成 / 既存 `/login` の transaction CSRF と新規 sessionId 発行 / セッション・binding Cookie の属性 HttpOnly / Secure / SameSite=Lax / 生成コードに `login_hint` 等を出力するログが無いこと）
+  - `packages/cli/src/features.ts` / `packages/cli/src/__tests__/par-feature.test.ts`（experimental 機能の明示的有効化機構と unknown-feature エラーメッセージの構成）
+- **指摘**:
+  1. **[重大・修正] `/ciba/login` のログイン CSRF 防御が未定義だった**: 仕様は資格情報検証と OP セッション確立のみを定めており、CSRF 対策が無かった。既存の生成コードはセッションを確立するすべての POST を守っている（`/login` は auth transaction の CSRF、`/device/login` は binding Cookie + レコード CSRF。テンプレートは「forged POST が被害者ブラウザに OP セッションを確立するステップを binding で守る」と明記）のに対し、`/ciba/login` はどちらの錨も持たないため、攻撃者アカウントのセッションを被害者ブラウザへ植え付けるログイン CSRF（SSO / prompt=none へ波及）が成立し得た。フォーム埋め込みトークンのみでは不足（攻撃者が自分で `GET /ciba` を叩いて有効な対を入手できる）。**修正**: ログイントランザクション（id + CSRF + binding Cookie ハッシュ + 失敗計数、TTL 600 秒固定）を公開 API（`CibaLoginTransactionRecord` / `CibaLoginTransactionStore` / `createCibaLoginTransaction` / `validateCibaLoginSubmission` / `recordCibaLoginFailure` / in-memory 実装）として追加し、UI ルート表・セキュリティ要件表・テスト計画（単体 + conformance）に反映
+  2. **[重大・修正] `/ciba/login` の資格情報総当たりに計数の錨が無かった**: 既存 `/login` は auth transaction 単位、`/device/login` はレコード単位で失敗を計数するが、CIBA のログインはレコード特定より前に行われるため、仕様のままでは事実上無制限の資格情報試行面になっていた。**修正**: 指摘 1 のログイントランザクションを計数の錨とし、`maxLoginAttempts` 超過でトランザクション削除 + 429。残存面（トランザクション再発行で集計上は無制限）は既存 2 面と同一であることを仕様に明記し、subject 単位のスロットリングは既存タスク `p2-login-attempt-throttling-subject-scope` の責務のままとする
+  3. **[U2 確定] `maxPendingPerSubject` 超過時エラーは `invalid_request` 400 で確定**: §13 の `access_denied` 403（resource owner or OP denied）はクライアントにフロー終端（ユーザー拒否）と解釈される恐れがあり、保留数超過は保留分の処理で解消される一時的状態のため不適。CIBA Core に一時エラーの語彙が無いことも確認
+  4. **[U3 確定] denied レコードの即削除は Device Grant 実装と一致**: `device-code-grant.ts:137-143` が denied → `access_denied` 送出と同時に削除し、再ポーリングを同一文言の `invalid_grant` にしている。仕様の記述をそのまま確定
+  5. **[正確性・修正] `lastPolledAt`「結果によらず全ポーリング試行で更新」の記述を実挙動に合わせて修正**: Device Grant 実装の更新経路は `slow_down` と `authorization_pending` の 2 つで、他の結果はレコードを削除または consume するため更新対象が残らない。文言どおり実装すると削除直前の無意味な書き込みが生じ、実装が先例と乖離する余地があった
+  6. **[CLI 後方互換・記録] `par-feature.test.ts:112` が `'ciba'` を未定義機能名の例に使用**: `EXPERIMENTAL_FEATURES` へ `ciba` を追加すると `resolveFeatures({ enable: ['ciba'] })` が throw しなくなりテストが落ちる。実装時に別の未定義名へ差し替える注意を仕様書 CLI 節に追記
+  7. **[確認・変更なし] 以下は問題なしを確認**: slow_down 方式（§11 の MAY を採らない判断は恒久 +5 秒の MUST を満たし、invalid_request の終端セマンティクスを避ける点でも安全）/ auth_req_id 256bit は §7.3 の推奨 160bit を超過し文字種も適合 / トークン分岐がクライアント認証後に置かれる前提は device 分岐の実装と一致 / 承認操作の防御（セッション subject 一致 + セッション必須の一覧でしか得られないレコード CSRF + SameSite=Lax）は binding 不要の設計判断を含めて妥当 / エラー応答のオラクル化防止（同一文言・Cache-Control: no-store）/ ログ禁止情報（生成コードに該当ログ出力なし。仕様の禁止規定で担保）/ package 境界と依存方向は既存 4 機能と同型 / デフォルト無効・バイト同一の完了条件あり / セキュリティ要件は単体・conformance・E2E のいずれかで検証可能
+- **修正**: 指摘 1・2・5・6 と U2/U3 の確定を同日中に specification.md / understanding-guide.md / sources.md へ反映
+- **残リスク**:
+  - user_code 非対応の受容コスト（正規クライアント侵害時の最終防衛がユーザーの拒否操作）は、クライアント認証必須・保留数上限・pull 型 UI・承認画面の情報表示の 4 層で緩和した上で README 明記を要件とする現仕様を妥当と判断（PoC 検証ライブラリの位置づけと整合）
+  - `unknown_user_id` によるユーザー列挙は登録クライアントに限定される仕様上の受容。resolver の応答時間差による列挙も同じ受容範囲に含まれる（固定文言のみ規定。タイミング均一化は要求しない）
+  - ログイン失敗計数の集計上の無制限（トランザクション再発行）は既存 `/login`・`/device/login` と同一の残存面で、既存タスクの責務
+- **判定**: **Pass with changes**（指摘 1・2 は仕様段階で発見・同日修正済み。セキュリティ未解決事項は残っていない。未解決事項表に残る U1・U4 は実装構成の選択であり、セキュリティに影響しない）
+- **次回可能日**: 2026-08-10（Review 3: 実装着手可否）

@@ -171,11 +171,13 @@ RFC 6749 §5.2 の JSON 形。`Cache-Control: no-store` を付す。
 
 | ルート | 内容 |
 |---|---|
-| `GET /ciba` | OP セッション（`browserSessionStore`）が無ければログインフォーム。あればセッション subject 宛の保留中リクエスト一覧（クライアント名・scope・`binding_message`・有効期限）と承認/拒否ボタンを表示。表示時に各レコードの CSRF トークンを発行・保存 |
-| `POST /ciba/login` | 資格情報を検証（`authenticateUser` 契約 = `/device/login` と同じ swap point）。成功で OP セッション確立し一覧へ。失敗はセッション未確立のまま再表示（既存 `/login` と同じスロットリング方針の適用範囲は既存タスク p2-login-attempt-throttling-subject-scope に従う） |
+| `GET /ciba` | OP セッション（`browserSessionStore`）があればセッション subject 宛の保留中リクエスト一覧（クライアント名・scope・`binding_message`・有効期限）と承認/拒否ボタンを表示し、表示時に各レコードの CSRF トークンを発行・保存。セッションが無ければ**ログイントランザクション**（`CibaLoginTransactionRecord`、TTL 600 秒固定）を新規発行し、`login_transaction_id` と CSRF トークンを hidden フィールドに埋めたログインフォームを表示。bindingSecret の生値は HttpOnly / Secure / SameSite=Lax / Max-Age=600 の Cookie で配り、レコードには SHA-256 ハッシュのみ保存する（`/device` の binding と同じ方式） |
+| `POST /ciba/login` | `login_transaction_id` + `csrf_token` + 資格情報。ログイントランザクションを解決し、binding Cookie 生値のハッシュ一致 → CSRF 一致の順で検証（失敗は 403。不存在・期限切れ・不一致を文言で区別しない）。資格情報検証は `authenticateUser` 契約（`/device/login` と同じ swap point）。失敗はトランザクション単位で計数し `maxLoginAttempts` 超過でトランザクション削除 + 429。成功でトランザクションを削除し、**新規発行した** sessionId で OP セッションを確立（リクエストが持ち込んだセッション ID を再利用しない）して一覧へ |
 | `POST /ciba/approve` | `auth_req_id` + `decision`（approve/deny）+ CSRF トークン。OP セッション必須・レコードの subject とセッション subject の一致必須・CSRF 一致必須。approve でレコードを `approved` に更新し consent 記録（`grant` / `recordGrant`）と `grantId` 発行、deny で `denied` に更新 |
 
-Device Flow の `bindingSecret` Cookie に相当する仕組みは設けない（設計判断: Device Flow では user_code しかリンクが無いため Cookie 束縛が要ったが、CIBA の承認は認証済み OP セッションの subject 一致で束縛されており、`auth_req_id` を知っていてもセッションが無ければ承認操作は一切できない）。
+**承認操作**には Device Flow の `bindingSecret` Cookie に相当する仕組みを設けない（設計判断: Device Flow では user_code しかリンクが無いため Cookie 束縛が要ったが、CIBA の承認は認証済み OP セッションの subject 一致で束縛されており、レコードの CSRF トークンもセッション必須の一覧表示でしか得られない。`auth_req_id` を知っていてもセッションが無ければ承認操作は一切できない）。
+
+**ログインフォーム**にはブラウザ束縛を常時設ける（設計判断: ログイン成功は OP セッションという CIBA 外にも及ぶ状態（SSO / `prompt=none`）を作るため、クロスサイトの偽造 POST で攻撃者アカウントのセッションを被害者ブラウザへ植え付けるログイン CSRF を防ぐ必要がある。フォーム埋め込みトークンだけでは、攻撃者が自分で `GET /ciba` を叩いて有効な `login_transaction_id` + CSRF の対を入手し偽造フォームに埋め込めるため足りない。binding Cookie は被害者ブラウザに存在せず、偽造 POST はハッシュ一致で遮断される。`/device/login` の「セッションを確立するステップは binding で守る」原則と同じ）。ログイン失敗の計数はログイントランザクション単位で行う（既存 `/login`（auth transaction 単位）・`/device/login`（レコード単位）と同じ残存面: トランザクションを再発行すれば集計上の試行回数は無制限。subject 単位のスロットリングは `tasks/p2-login-attempt-throttling-subject-scope.md` の責務）。
 
 ### トークンリクエスト（CIBA §10.1, Poll モード） — 既存 `POST /token` への分岐
 
@@ -189,7 +191,7 @@ Device Flow の `bindingSecret` Cookie に相当する仕組みは設けない�
 2. レコード不存在 → `invalid_grant`
 3. レコードの `clientId` と認証済みクライアント不一致 → `invalid_grant`（§11「invalid or was issued to another Client」。レコードは削除しない）
 4. 期限切れ → `expired_token` を返しレコード削除
-5. 前回ポーリングから `interval` 未満 → `slow_down` を返し、レコードの `interval` を +5 秒して永続化（§11「the interval MUST be increased by at least 5 seconds for this and all subsequent requests」。過剰ポーリングへ `invalid_request` を返す選択肢（§11 の MAY）は採らず、Device Grant と同じ slow_down 方式に統一する設計判断）。`lastPolledAt` は結果によらず全ポーリング試行で更新する
+5. 前回ポーリングから `interval` 未満 → `slow_down` を返し、レコードの `interval` を +5 秒して永続化（§11「the interval MUST be increased by at least 5 seconds for this and all subsequent requests」。過剰ポーリングへ `invalid_request` を返す選択肢（§11 の MAY）は採らず、Device Grant と同じ slow_down 方式に統一する設計判断）。`lastPolledAt` の更新は `slow_down` と `authorization_pending` の 2 経路で行う（他の結果はレコードを削除または consume するため更新対象が残らない。Device Grant 実装 `device-code-grant.ts` の実挙動と同じ）
 6. `pending` → `authorization_pending`
 7. `denied` → `access_denied` を返しレコード削除（再ポーリングは `invalid_grant`。クライアントは §11 によりどちらでもフローを終了する）
 8. `approved` → レコードを atomic に `consume`（単回使用強制）し、トークン発行へ
@@ -266,6 +268,46 @@ export function processBackchannelAuthenticationRequest(input: {
 }): Promise<{ auth_req_id: string; expires_in: number; interval: number }>;
 // 失敗時 BackchannelAuthenticationError を throw
 
+// ログイントランザクション（ログイン CSRF 防御 + 試行回数計数の錨。/device の binding と同じ方式）
+export const CIBA_LOGIN_TRANSACTION_TTL_SECONDS = 600;
+
+export interface CibaLoginTransactionRecord {
+  id: string;             // 256bit Base64URL。hidden フィールドで運ぶ
+  csrfToken: string;      // 256bit Base64URL。hidden フィールドで運ぶ
+  bindingHash: string;    // bindingSecret（Cookie 生値）の SHA-256 Base64URL。生値は保存しない
+  loginAttempts: number;
+  expiresAt: Date;
+}
+
+export interface CibaLoginTransactionStore {
+  save(record: CibaLoginTransactionRecord): Promise<void>;
+  findById(id: string): Promise<CibaLoginTransactionRecord | null>;
+  update(record: CibaLoginTransactionRecord): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
+export function createCibaLoginTransaction(
+  store: CibaLoginTransactionStore,
+): Promise<{ record: CibaLoginTransactionRecord; bindingSecret: string }>;
+// bindingSecret 生値は戻り値のみ（生成コードが Cookie に載せる）
+
+export function validateCibaLoginSubmission(input: {
+  transactionId: string;
+  csrfToken: string;
+  bindingSecret: string | null | undefined; // Cookie から
+  store: CibaLoginTransactionStore;
+}): Promise<CibaLoginTransactionRecord>;
+// 不存在・期限切れ・binding 不一致・CSRF 不一致はすべて CibaVerificationError(403)。理由を区別しない
+
+export function recordCibaLoginFailure(
+  record: CibaLoginTransactionRecord,
+  store: CibaLoginTransactionStore,
+  maxLoginAttempts: number,
+): Promise<{ canRetry: boolean; remainingAttempts: number }>;
+// 上限到達でトランザクションを削除する
+
+export function createInMemoryCibaLoginTransactionStore(): CibaLoginTransactionStore;
+
 // 認証デバイス UI 用ヘルパー
 export function listPendingCibaRequests(input: {
   subject: string;
@@ -329,14 +371,15 @@ export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticati
 - `--enable ciba` で有効化（デフォルト無効）。`packages/cli/src/features.ts` の `EXPERIMENTAL_FEATURES` に `'ciba'` を追加し、`OidcFeatureConfig` に `ciba: boolean` を追加
 - 生成物（hono テンプレート起点・web-standard 変換で全フレームワークへ展開）:
   - `routes/backchannel-authentication.ts`: `POST /backchannel_authentication`。共有クライアント認証 → `processBackchannelAuthenticationRequest`。`c.get('cibaUserResolver')` が無ければ生成ユーザーフィクスチャを username で引くデフォルト resolver
-  - `routes/ciba-verification.ts`: `GET /ciba` / `POST /ciba/login` / `POST /ciba/approve`。views 契約に `cibaLoginPage` / `cibaPendingRequestsPage` を追加
+  - `routes/ciba-verification.ts`: `GET /ciba` / `POST /ciba/login` / `POST /ciba/approve`。views 契約に `cibaLoginPage` / `cibaPendingRequestsPage` を追加。ログイントランザクションの binding Cookie の発行・読み取りは生成コードの責務（`/device` の binding Cookie ヘルパーと同じ属性: HttpOnly / Secure / SameSite=Lax / Path 限定 / Max-Age=600）
   - token ルートへの `cibaDispatchStep`（deviceCodeDispatchStep と同型・core の `validateGrantTypeSupported` より前）と `CibaGrantError` の catch 分岐
   - discovery への追記: `backchannel_token_delivery_modes_supported: ['poll']` / `backchannel_authentication_endpoint: `${issuer}/backchannel_authentication``（CIBA §4 の REQUIRED 2 項目。OPTIONAL 項目は出力しない）
   - `grant_types_supported` へ `urn:openid:params:grant-type:ciba` を追加
-  - storage context: `cibaAuthenticationRequestStore`（デフォルト in-memory）
+  - storage context: `cibaAuthenticationRequestStore` / `cibaLoginTransactionStore`（いずれもデフォルト in-memory）
   - `ciba.ts`（設定ファイル）: `CibaConfig` の生成と起動時範囲検証
   - conformance.test.ts への CIBA シナリオ追加（`packages/cli` の生成コードを変更する。直接編集しない）
 - 既存機能との干渉なし: `ciba` 無効時の生成出力は現行とバイト同一であること（完了条件で検証）
+- 実装時の注意: `packages/cli/src/__tests__/par-feature.test.ts` の unknown-feature テストは `'ciba'` を「存在しない機能名」の例として使っている。`EXPERIMENTAL_FEATURES` へ `ciba` を追加すると `resolveFeatures({ enable: ['ciba'] })` が throw しなくなりこのテストが落ちるため、別の未定義名へ差し替えること
 
 ## 設定値とデフォルト
 
@@ -345,7 +388,8 @@ export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticati
 | `authReqIdExpiresIn` | 120 秒 | 30–600 | ユーザーが手元デバイスで承認するまでの現実的な待ち時間。範囲外は起動時エラー（PAR / Device と同じ方式） |
 | `pollingInterval` | 5 秒 | 1–60 | CIBA §7.3 の interval 省略時既定値と同値 |
 | `maxPendingPerSubject` | 10 | 1–100 | 承認 UI flood の抑止（設計判断） |
-| `maxLoginAttempts`（UI ログイン） | 既存 `/device` UI と同じ値を共有 | — | 生成コードの既存方針に従う |
+| `maxLoginAttempts`（UI ログイン） | 既存 `/device` UI と同じ値を共有 | — | 生成コードの既存方針に従う。計数の錨はログイントランザクション |
+| ログイントランザクション TTL | 600 秒（固定・非設定項目） | — | 既存 auth transaction の TTL / Cookie Max-Age と同値。設定面を増やさない設計判断 |
 
 ## バリデーション / エラー処理
 
@@ -363,7 +407,9 @@ export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticati
 | `auth_req_id` の推測・総当たり | 256bit CSPRNG（§7.3 の最低 128bit を超過）。ストアはキーを不透明値として扱い、永続実装ではパラメータ化問い合わせを使う（PAR / Device store と同じ注記） |
 | `auth_req_id` 漏洩によるトークン窃取 | トークン取得にはクライアント認証 + レコードの `clientId` 一致が必要（§11 invalid_grant）。`auth_req_id` 単独では何もできない |
 | 承認の乗っ取り（他人のリクエストを承認） | 承認操作は認証済み OP セッションの subject とレコード subject の一致が必須。`auth_req_id` を知っていても他人は承認できない |
-| CSRF による意図しない承認 | レコード単位 CSRF トークン（一覧表示時発行・使用時検証）。OP セッション Cookie は既存生成コードの属性（HttpOnly / SameSite）に従う |
+| CSRF による意図しない承認 | レコード単位 CSRF トークン（一覧表示時発行・使用時検証）。トークンはセッション必須の一覧表示でしか得られないため攻撃者は入手できない。OP セッション Cookie は既存生成コードの属性（HttpOnly / Secure / SameSite=Lax）に従い、クロスサイト POST にはそもそも載らない |
+| ログイン CSRF（偽造 POST で攻撃者アカウントの OP セッションを被害者ブラウザに植え付け、以後の SSO / `prompt=none` を汚染） | ログイントランザクションの binding Cookie（生値はブラウザのみ・レコードはハッシュ）+ CSRF トークン。攻撃者が自分で入手した `login_transaction_id` + CSRF の対を偽造フォームに埋めても、被害者ブラウザに binding Cookie が無いため 403（「入出力」の認証デバイス UI の節を参照） |
+| `/ciba/login` への資格情報総当たり | ログイントランザクション単位で失敗を計数し `maxLoginAttempts` で打ち切り（トランザクション削除 + 429）。残存面（トランザクション再発行による集計上の無制限）は既存 `/login`・`/device/login` と同一で、subject 単位のスロットリングは既存タスクの責務 |
 | 未承諾リクエストによる承認 UI flood・疲労攻撃（§7.1.2 の user_code が想定する脅威） | (1) クライアント認証必須で匿名からは送れない (2) `maxPendingPerSubject` で保留数を制限 (3) UI は pull 型でプッシュ通知が無く、割り込みが発生しない (4) 承認画面にクライアント名・scope・`binding_message` を必ず表示し、拒否ボタンを承認と同等の視認性で置く。残余リスク: 正規登録クライアントの侵害時はユーザーの明示的拒否に依存する（user_code 非対応の受容コスト。README に明記） |
 | consumption device と認証デバイスの取り違い（別トランザクションの承認） | `binding_message` を承認画面に表示（§7.1 の視覚的照合）。表示時 HTML エスケープを views 契約の要件とし、conformance テストでエスケープを固定検証 |
 | ユーザー列挙（`unknown_user_id` オラクル） | エラーコード自体は仕様の語彙（§13）であり返す。`error_description` は固定文言とし、resolver 例外と不存在を区別しない。クライアント認証必須のため匿名列挙は不可。残余リスク: 登録クライアントは存在確認が可能（仕様上の受容。プライバシー考慮に記載） |
@@ -399,6 +445,7 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 - `processBackchannelAuthenticationRequest`: 正常系（最小 / binding_message / requested_expiry クランプ / acr_values 保存）・ヒント 0/2 個・非対応ヒント種別・`request` 拒否・scope 検証・`openid` 欠落・grant 未登録・auth method none・delivery mode 不一致・binding_message 境界（100 文字 OK / 101 文字 NG / 制御文字 NG）・requested_expiry 非整数/0/負・保留数超過・`auth_req_id` の文字種と長さ
 - `approveCibaRequest` / `denyCibaRequest` / `listPendingCibaRequests`: subject 一致・CSRF 検証・期限切れ・状態遷移・consent 記録前提の grantId 受け渡し
+- `createCibaLoginTransaction` / `validateCibaLoginSubmission` / `recordCibaLoginFailure`: binding 不一致・CSRF 不一致・不存在・期限切れがすべて同一エラー（403）になること・生値がレコードに保存されないこと・失敗計数と上限到達時のトランザクション削除
 - `processCibaGrant`: 状態機械全遷移（pending → authorization_pending、interval 内再ポーリング → slow_down と +5 の永続化、denied → access_denied + 削除、期限切れ → expired_token + 削除、approved → 発行データ返却）・`auth_req_id` 欠落・不存在・クライアント不一致・consume 後の再要求 → invalid_grant
 - in-memory store: consume の単回性（並行 consume で 1 つだけ non-null）
 
@@ -410,6 +457,8 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 - 拒否 → access_denied、期限切れ → expired_token
 - 別クライアントによるポーリング → invalid_grant、応答の同一性（オラクル化防止）
 - binding_message の HTML エスケープ
+- ログイン CSRF 防御: binding Cookie を持たない `POST /ciba/login`（有効な `login_transaction_id` + CSRF を持っていても）が 403 になり、セッション Cookie が発行されないこと
+- ログイン失敗の計数: 上限到達で 429 になり、同じログイントランザクションで再試行できないこと
 - `ciba` 無効時: `/backchannel_authentication` が 404、grant URN が `unsupported_grant_type`、discovery に CIBA 項目が無いこと
 
 ### E2E（`tests/e2e`、Playwright）
@@ -442,8 +491,8 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 | ID | 内容 | 状態 |
 |---|---|---|
 | U1 | 認証デバイス UI のログインを既存 `/device` UI のログイン部品と共通化するか、CIBA 専用に複製するか（experimental 間重複許容の方針からは複製が既定。ただし同一 package 内の UI 部品共有は方針違反ではないため実装時に判断） | open |
-| U2 | `maxPendingPerSubject` 超過時のエラーコード（`invalid_request` 採用中。`access_denied` 403 の代替案は「ユーザーが拒否した」と誤読されるため不採用の暫定判断） | Review 2 で確定 |
-| U3 | denied レコードを access_denied 配信時に即削除する方式と、期限まで保持する方式の比較（現仕様は即削除。Device Grant 実装の実挙動と揃っているか実装前に確認） | Review 2 で確認 |
+| U2 | `maxPendingPerSubject` 超過時のエラーコード | **確定（Review 2）**: `invalid_request` 400 + 固定文言を採用。§13 の `access_denied` 403 は「resource owner or OP denied」の語彙で、クライアント実装がフロー全体の終端（ユーザー拒否）と解釈する恐れがある。保留数超過は保留分の処理で解消される一時的状態であり、終端を示唆しない `invalid_request` を採る。CIBA Core に一時エラーの語彙（`temporarily_unavailable` 相当）は存在しない |
+| U3 | denied レコードの削除タイミング | **確認済み（Review 2）**: Device Grant 実装は denied → `access_denied` 送出と同時に削除する（`packages/experimental/src/device-authorization-grant/device-code-grant.ts:137-143`）。本仕様の「即削除・再ポーリングは `invalid_grant`」は実装済み先例と一致 |
 | U4 | `TokenClientInfo` への `backchannelTokenDeliveryMode` の載せ方（交差型拡張の具体形。core 型変更を伴わないことの確認） | Review 3 で確定 |
 
 ## 将来の昇格考慮

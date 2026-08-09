@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-jarm/_oidc-provider/conformance.test.ts
-index a76047d..36039b5 100644
+index f4b1e80..6fbf4c9 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-jarm/_oidc-provider/conformance.test.ts
 @@ -366,10 +366,11 @@ describe('generated provider HTTP conformance', () => {
@@ -40,7 +40,7 @@ index a76047d..36039b5 100644
        });
      });
  
-@@ -2157,4 +2158,367 @@ describe('generated provider HTTP conformance', () => {
+@@ -2282,4 +2283,367 @@ describe('generated provider HTTP conformance', () => {
        ).toBe(false);
      });
    });

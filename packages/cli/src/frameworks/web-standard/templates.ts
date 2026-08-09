@@ -15,6 +15,7 @@ import {
   deviceVerificationRouteTemplate,
   discoveryRouteTemplate,
   endpointBehaviorConformanceBlock,
+  essentialAcrConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
   idTokenHintConformanceBlock,
   introspectionConformanceBlock,
@@ -2374,7 +2375,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${essentialAcrConformanceBlock()}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}});
 `;
 }
 

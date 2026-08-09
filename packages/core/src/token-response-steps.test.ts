@@ -14,6 +14,7 @@ import {
   resolveAcrAmr,
 } from './token-response.js';
 import { createJwtAccessTokenIssuer } from './access-token-issuer.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
 import type { AcrResolver } from './token-response.js';
 
 const NOW = 1_700_000_000;
@@ -222,6 +223,190 @@ describe('resolveAcrAmr', () => {
     const result = await resolveAcrAmr({ subject: 'user-1', clientId: 'client-1', acrResolver });
 
     expect(result).toEqual({ acr: undefined, amr: undefined });
+  });
+
+  // OIDC Core 1.0 §5.5.1.1 Requesting the "acr" Claim:
+  // "If the acr Claim is requested as an Essential Claim ... the Authorization Server
+  //  MUST return an acr Claim Value that matches one of the requested values ...
+  //  If this is an Essential Claim and the requirement cannot be met, then the
+  //  Authorization Server MUST treat that outcome as a failed authentication attempt."
+  describe('Essential acr claim request (OIDC Core 1.0 §5.5.1.1)', () => {
+    it('should throw when an essential acr request is not satisfied by the resolver', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+
+      await expect(
+        resolveAcrAmr({
+          subject: 'user-1',
+          clientId: 'client-1',
+          claims: { id_token: { acr: { essential: true, values: ['urn:example:loa:3'] } } },
+          acrResolver,
+        }),
+      ).rejects.toThrow(TokenError);
+    });
+
+    // RFC 6749 §5.2: the grant cannot satisfy the requested authentication
+    // requirement, so the token request fails with invalid_grant.
+    it('should throw invalid_grant without reflecting the requested values', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+
+      const error = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: { id_token: { acr: { essential: true, values: ['urn:example:loa:3'] } } },
+        acrResolver,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error).toMatchObject({
+        error: TokenErrorCode.InvalidGrant,
+        errorDescription: 'The essential acr claim request could not be satisfied',
+      });
+    });
+
+    it('should throw when an essential acr request is made and the resolver returns undefined', async () => {
+      const acrResolver: AcrResolver = async () => undefined;
+
+      await expect(
+        resolveAcrAmr({
+          subject: 'user-1',
+          clientId: 'client-1',
+          claims: { id_token: { acr: { essential: true, values: ['urn:example:loa:3'] } } },
+          acrResolver,
+        }),
+      ).rejects.toThrow(TokenError);
+    });
+
+    // No resolver means the OP has no way to produce any acr, so an essential
+    // request can never be met either.
+    it('should throw when an essential acr request is made and no resolver is configured', async () => {
+      await expect(
+        resolveAcrAmr({
+          subject: 'user-1',
+          clientId: 'client-1',
+          claims: { id_token: { acr: { essential: true, values: ['urn:example:loa:3'] } } },
+        }),
+      ).rejects.toThrow(TokenError);
+    });
+
+    it('should return the resolved acr when it matches one of the essential requested values', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:3', amr: ['pwd', 'otp'] });
+
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: {
+          id_token: { acr: { essential: true, values: ['urn:example:loa:2', 'urn:example:loa:3'] } },
+        },
+        acrResolver,
+      });
+
+      expect(result).toEqual({ acr: 'urn:example:loa:3', amr: ['pwd', 'otp'] });
+    });
+
+    // §5.5.1.1 allows the request to use the `value` member as well as `values`.
+    it('should accept a single value member for an essential acr request', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:3', amr: ['pwd', 'otp'] });
+
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: { id_token: { acr: { essential: true, value: 'urn:example:loa:3' } } },
+        acrResolver,
+      });
+
+      expect(result).toEqual({ acr: 'urn:example:loa:3', amr: ['pwd', 'otp'] });
+    });
+
+    it('should seed the resolver with the single value member of an essential acr request', async () => {
+      const seen: (string | undefined)[] = [];
+      const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
+        seen.push(requestedAcrValues);
+        return { acr: 'urn:example:loa:3', amr: ['pwd'] };
+      };
+
+      await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: { id_token: { acr: { essential: true, value: 'urn:example:loa:3' } } },
+        acrResolver,
+      });
+
+      expect(seen).toEqual(['urn:example:loa:3']);
+    });
+
+    // §5.5.1: "the Authorization Server MUST NOT generate an error when Claims are
+    // not returned, whether they are Essential or Voluntary" — the acr exception in
+    // §5.5.1.1 applies only to Essential requests, so a Voluntary one stays silent.
+    it('should not throw when the acr claim request is voluntary and unmatched', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: { id_token: { acr: { values: ['urn:example:loa:3'] } } },
+        acrResolver,
+      });
+
+      expect(result).toEqual({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+    });
+
+    it('should not throw when the acr claim request sets essential to false and is unmatched', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: { id_token: { acr: { essential: false, values: ['urn:example:loa:3'] } } },
+        acrResolver,
+      });
+
+      expect(result).toEqual({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+    });
+
+    // OIDC Core 1.0 §3.1.2.1 Note: acr_values requests the acr Claim as a Voluntary
+    // Claim, so it never triggers the §5.5.1.1 failed-authentication requirement.
+    it('should not throw when acr is requested only through the acr_values parameter', async () => {
+      const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        requestedAcrValues: 'urn:example:loa:3',
+        acrResolver,
+      });
+
+      expect(result).toEqual({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+    });
+
+    // OIDC Core 1.0 §12.1: the refresh_token grant replays the stored acr / amr.
+    // claims is not propagated to that path today, and the directly supplied values
+    // must pass through untouched even if a caller does forward it.
+    it('should skip the essential acr check when acr is directly provided', async () => {
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        acr: 'urn:example:loa:1',
+        amr: ['pwd'],
+        claims: { id_token: { acr: { essential: true, values: ['urn:example:loa:3'] } } },
+      });
+
+      expect(result).toEqual({ acr: 'urn:example:loa:1', amr: ['pwd'] });
+    });
+
+    // An essential entry with neither value nor values constrains nothing, so the
+    // §5.5.1 general rule applies again.
+    it('should not throw when an essential acr request carries no requested values', async () => {
+      const acrResolver: AcrResolver = async () => undefined;
+
+      const result = await resolveAcrAmr({
+        subject: 'user-1',
+        clientId: 'client-1',
+        claims: { id_token: { acr: { essential: true } } },
+        acrResolver,
+      });
+
+      expect(result).toEqual({ acr: undefined, amr: undefined });
+    });
   });
 });
 

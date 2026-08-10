@@ -4476,4 +4476,177 @@ describe('generated provider HTTP conformance', () => {
       });
     });
   });
+
+  describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
+    const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the contract
+    // stays visible in the it() blocks.
+    function decisionRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function decisionCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drives authorize -> login -> GET /consent and returns everything the browser
+    // holds at the consent screen, so each test only differs in the posted action.
+    async function reachConsent(state: string): Promise<{
+      transactionId: string;
+      csrfToken: string;
+      cookie: string;
+    }> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + DECISION_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = decisionRelativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const cookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: cookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: decisionCsrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = decisionRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: cookie } });
+
+      return { transactionId, csrfToken: decisionCsrfFrom(await consentGet.text()), cookie };
+    }
+
+    // The body is passed in whole so a test can leave 'action' out entirely
+    // without this helper branching on it.
+    function postConsent(cookie: string, body: Record<string, string>): Promise<Response> {
+      return app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    // A form rebuilt by a script or a test harness carries no submit-button value.
+    it('should not issue an authorization code when the consent POST omits the action parameter', async () => {
+      const flow = await reachConsent('decision-omitted');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    it('should not issue an authorization code when the consent POST sends an empty action value', async () => {
+      const flow = await reachConsent('decision-empty');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: '',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The realistic regression: the Approve button is renamed in views.ts, so the
+    // handler receives a value it never agreed to accept.
+    it('should not issue an authorization code when the consent POST sends an unknown action value', async () => {
+      const flow = await reachConsent('decision-unknown');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'allow',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // OIDC Core 1.0 §3.1.2.6: access_denied means the End-User denied the request.
+    // "No decision was obtained" is a different outcome, so it stops at the OP with
+    // its own error page instead of being redirected to the client.
+    it('should return 400 for a consent POST with an unrecognized action value', async () => {
+      const flow = await reachConsent('decision-400');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'accept',
+      });
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('Invalid consent decision. Please use the Approve or Deny button.')).toBe(true);
+      expect(body.includes('access_denied')).toBe(false);
+    });
+
+    it('should issue an authorization code when the consent POST sends action=approve', async () => {
+      const flow = await reachConsent('decision-approve');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'approve',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+      expect(callback.searchParams.get('state')).toBe('decision-approve');
+      expect(callback.searchParams.get('error')).toBe(null);
+      expect((callback.searchParams.get('code') ?? '').length > 0).toBe(true);
+    });
+
+    it('should redirect with error=access_denied when the consent POST sends action=deny', async () => {
+      const flow = await reachConsent('decision-deny');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'deny',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+      expect(callback.searchParams.get('error')).toBe('access_denied');
+      expect(callback.searchParams.get('state')).toBe('decision-deny');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+
+    // Consent must not be persisted either: a recorded consent would let a later
+    // prompt=none request succeed without the End-User ever having approved.
+    it('should not record consent via recordConsent when the action value is unrecognized', async () => {
+      await consentResolver.revokeConsent?.('testuser', 'c-conf');
+      const flow = await reachConsent('decision-no-record');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'approved',
+      });
+
+      expect(res.status).toBe(400);
+      expect(consentStore.hasConsent('testuser', 'c-conf', ['openid'])).toBe(false);
+    });
+  });
 });

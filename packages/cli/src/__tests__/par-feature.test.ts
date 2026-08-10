@@ -39,7 +39,12 @@ function discoveryPath(framework: string): string {
 
 describe('EXPERIMENTAL_FEATURES', () => {
   it('should list par among the experimental features', () => {
-    expect(EXPERIMENTAL_FEATURES).toEqual(['par', 'token-exchange', 'jarm']);
+    expect(EXPERIMENTAL_FEATURES).toEqual([
+      'par',
+      'token-exchange',
+      'jarm',
+      'device-authorization-grant',
+    ]);
   });
 });
 
@@ -58,6 +63,7 @@ describe('resolveFeatures with experimental features', () => {
       par: false,
       tokenExchange: false,
       jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -72,6 +78,7 @@ describe('resolveFeatures with experimental features', () => {
       par: true,
       tokenExchange: false,
       jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -96,6 +103,7 @@ describe('resolveFeatures with experimental features', () => {
       par: true,
       tokenExchange: false,
       jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });

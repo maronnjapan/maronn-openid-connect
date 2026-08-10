@@ -35,6 +35,10 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/introspect', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/revoke', handler: handle });
+  app.route({ method: ['POST', 'OPTIONS'], url: '/device_authorization', handler: handle });
+  app.route({ method: ['GET', 'POST'], url: '/device', handler: handle });
+  app.route({ method: ['POST'], url: '/device/login', handler: handle });
+  app.route({ method: ['POST'], url: '/device/approve', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });

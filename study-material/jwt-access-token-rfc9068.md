@@ -166,6 +166,9 @@ const accessTokenPayload: AccessTokenPayload = {
 
 - [ ] 本マップの状態列を各タスク完了後に更新する運用を確立する
 - [ ] Opaque AT と JWT AT の混在時に Discovery や resource server ガイドが整合するか確認する（Discovery に `access_token_types_supported` を追加するかは T-021 で扱う）
-- [ ] `client_id` を `AccessTokenPayload` の必須型フィールドに昇格させる（実態と型の不整合解消。Breaking change ではなく型の厳格化のみ）
+- [x] `client_id` を `AccessTokenPayload` の必須型フィールドに昇格させる（実態と型の不整合解消。Breaking change ではなく型の厳格化のみ）
+      → 📌 タスク化済み: `tasks/p3-jwt-access-token-required-claims-validation.md`
+      （`client_id` に加え、同じく RFC 9068 §2.2 で REQUIRED でありながら optional のままである `jti` も
+      発行時検証の対象に含める。本ファイルは他の項目が残るため `study-material/` に留める）
 - [ ] T-019（DPoP）実装開始前に p2（`jti`）を完了させる依存関係を確認・記録する
 - [ ] Opaque AT 使用時の `at_hash` 計算が正しく機能しているかテストで確認する

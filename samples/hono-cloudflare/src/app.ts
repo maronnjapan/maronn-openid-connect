@@ -35,7 +35,7 @@ const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.get('/', (c) => c.text('maronn-oidc Hono Cloudflare sample'));
+app.get('/', (c) => c.text('maronn-openid-connect Hono Cloudflare sample'));
 app.get('/health', (c) => c.json({ status: 'ok' }));
 
 applyOidc(app, {

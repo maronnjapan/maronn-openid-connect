@@ -26,7 +26,7 @@ ROOT_DIR="$(cd "${SAMPLE_DIR}/../.." && pwd)"
 # shellcheck source=scripts/lib/guide.sh
 . "${ROOT_DIR}/scripts/lib/guide.sh"
 
-D1_NAME="maronn-oidc-sample"
+D1_NAME="maronn-openid-connect-sample"
 STATE_DIR="${SAMPLE_DIR}/.deploy"
 ISSUER_FILE="${STATE_DIR}/issuer"
 DEPLOY_CONFIG="${SAMPLE_DIR}/wrangler.deploy.jsonc"

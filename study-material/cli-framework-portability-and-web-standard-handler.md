@@ -1,5 +1,22 @@
 # CLI ジェネレータのフレームワーク・ポータビリティ（Web 標準 `Request`/`Response` ハンドラ生成の検討）
 
+## ステータス
+
+🟢 **実質的に解決済み（要記述追随）**
+
+> **現状注記（重要）**
+> 本ファイルの初版は「CLI が Hono 1 種類しか出力できない」状態を前提に、Web 標準ハンドラを追加すべきかを論じたものである。
+> その後 **方針 A + B に相当する実装が既に入っており**、記述は現状と食い違っている。現状は次のとおり:
+>
+> - 登録済みジェネレータは **hono / express / fastify / nextjs の 4 種類**（`packages/cli/src/frameworks/index.ts`）
+> - express / fastify / nextjs は共通の `web-standard` ジェネレータへ委譲し、Fetch Standard の `Request` / `Response` だけに依存する `WebRouter` / `WebContext` ランタイム（`web-router.ts`）を生成する
+> - ルートロジックは Hono テンプレート 1 系統に集約され、`toWebRouteTemplate()` の文字列変換で Web 標準版へ派生している
+> - `samples/` にも `hono-cloudflare` / `express-flyio` / `fastify-flyio` / `nextjs-vercel` の 4 つが存在する
+>
+> したがって本ファイルの §5「現在の実装確認」以降は歴史的記録として読むこと。
+> **派生方式そのものの契約と回帰ガード**という後継の論点は
+> `study-material/done/cli-web-standard-template-derivation-contract.md` が扱う。
+
 ## 1. このトピックで確認したいこと
 
 CLAUDE.md が掲げる差別化軸「**Portability: Web 標準 API のみ使用し、JavaScript が動く環境ならどこでも動く**」に対し、**CLI コードジェネレータが現状 Hono フレームワーク 1 種類しか出力できない**点を確認し、ポータビリティ/拡張性を高めるために何を追加検討すべきかを整理する。
@@ -72,8 +89,17 @@ core ライブラリ自体は Web 標準 API（Web Crypto / `URLSearchParams` / 
 
 ## 9. タスク案
 
-※ 方針（A/B/C）が未確定のため、本トピックは**タスク化せず検討段階に留める**。方針確定後に以下を具体化する想定:
+初版のタスク案（方針 A/B の実装）は**すべて実施済み**である。
 
-- [ ]（方針確定後）第一候補ターゲットを 1 つ選定し、`FrameworkGenerator` 実装を追加する
-- [ ]（方針確定後）共通ロジックを Web 標準ハンドラへ抽出し、Hono ジェネレータを薄いアダプタへ再構成する
-- [ ]（方針確定後）生成物が対象ランタイムで起動し、Discovery / Token / UserInfo が応答する smoke テストを追加する
+- [x] 第一候補ターゲットを選定し、`FrameworkGenerator` 実装を追加する → express / fastify / nextjs の 3 つを追加済み
+- [x] 共通ロジックを Web 標準ハンドラへ抽出する → `web-standard` ジェネレータと `WebRouter` / `WebContext` ランタイムとして実現済み（ただし Hono テンプレートを正とし、そこから派生する形。Hono を薄いアダプタへ再構成する形にはなっていない）
+- [x] 生成物が対象ランタイムで起動する検証 → `samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel` の `conformance.test.ts` および `tests/conformance` の Suite 実行（`CONFORMANCE_SAMPLE_APP` で切替）でカバー
+
+残る論点は本ファイルの範囲を出ており、後継ファイルへ引き継ぐ:
+
+- 派生方式（Hono テンプレートからの文字列変換）の契約と回帰ガード → `study-material/done/cli-web-standard-template-derivation-contract.md`
+- 生成物と `samples/*` の一致を CI で保証すること → `study-material/done/cli-generated-output-conformance-ci.md`
+
+本ファイル自体に対して残っている作業:
+
+- [ ] §5「現在の実装確認」以降の本文を現状（4 ジェネレータ + web-standard 共通ランタイム）に合わせて書き直すか、歴史的記録として `study-material/done/` へ移すかを決める

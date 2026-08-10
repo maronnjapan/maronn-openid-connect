@@ -265,10 +265,11 @@ const handleAuthorizationRequest = async (c: any) => {
     const transactionId = await generateRandomString(32);
 
     // Store transaction
+    const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
     await transactionStore.put(
       'auth_txn:' + transactionId,
       transaction,
-      10 * 60, // 10 minutes TTL
+      transactionTtlSeconds,
     );
 
     // OIDC Core 1.0 Section 3.1.2.1: prompt is a space-delimited list

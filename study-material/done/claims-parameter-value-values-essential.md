@@ -40,6 +40,22 @@ OIDC Core 1.0 §5.5 の `claims` リクエストパラメータについて、**
 - したがって OP の妥当な実装は: 「要求された `value`/`values` に一致するクレーム値を持つときだけ
   そのクレームを返す。一致しなければ（essential でも）当該クレームを省略し、エラーにはしない」。
 
+#### 例外: `acr` と `sub`（この一般則が適用されないクレーム）
+
+§5.5.1 の「Claim を返せなくてもエラーにしてはならない」という MUST NOT には
+`unless otherwise specified in the description of the specific claim` という但し書きがある。
+したがって上記の一般則は、**個別クレームの記述で別途規定されているクレームには適用されない**。
+
+- **`acr`**: §5.5.1.1 が「Essential 要求（`value` / `values` 付き）を満たせない場合は
+  **認証失敗として扱わなければならない**」と規定する。本リポジトリは
+  `tasks/done/p1-essential-acr-claim-unmet-issuance-guard.md` でこの例外を実装済みで、
+  `resolveAcrAmr` が Essential 要求の不一致を `invalid_grant` の `TokenError` として投げる
+  （= ID Token を黙って発行しない）。認可エンドポイントで
+  `unmet_authentication_requirements` を返す案・追加認証を要求する案は
+  `study-material/done/claims-essential-acr-unmet-authentication-failure.md` に検討として残る。
+- **`sub`**: `value` メンバーの説明が「要求された `sub` と一致する End-User でなければならない」旨を
+  規定する。検討は `study-material/claims-sub-value-request-binding.md` を参照。
+
 ## 3. 参照資料
 
 - OpenID Connect Core 1.0 §5.5 Requesting Claims using the "claims" Request Parameter

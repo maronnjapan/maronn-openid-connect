@@ -6,6 +6,7 @@ import type { AccessTokenIssuer } from './access-token-issuer.js';
 import type { AccessTokenPayload } from './access-token.js';
 import { filterClaimsByScope } from './userinfo.js';
 import type { UserClaims, ClaimsParameter } from './userinfo.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
 
 /**
  * acr / amr resolver
@@ -354,6 +355,38 @@ export interface ResolvedAcrAmr {
 }
 
 /**
+ * `claims.id_token.acr` の要求を「要求値 + essential フラグ」に正規化したもの。
+ */
+interface AcrClaimRequest {
+  /** OIDC Core 1.0 §5.5.1.1: `value`（単数）と `values`（配列）の両方を要求値として扱う */
+  values: string[];
+  /** `essential === true` のときだけ §5.5.1.1 の強制対象になる */
+  essential: boolean;
+}
+
+/**
+ * OIDC Core 1.0 §5.5.1.1: `claims.id_token.acr` の要求値と essential フラグを取り出す。
+ *
+ * `value` / `values` のどちらも要求値として扱う（仕様は "with a `value` or `values`
+ * parameter" と規定している）。要求値が 1 つも無い場合は制約が無いため null を返す。
+ */
+function extractAcrClaimRequest(claims?: ClaimsParameter): AcrClaimRequest | null {
+  const entry = claims?.id_token?.['acr'];
+  if (!entry) return null;
+
+  const values: string[] = [];
+  if (typeof entry.value === 'string') values.push(entry.value);
+  if (Array.isArray(entry.values)) {
+    for (const value of entry.values) {
+      if (typeof value === 'string' && !values.includes(value)) values.push(value);
+    }
+  }
+  if (values.length === 0) return null;
+
+  return { values, essential: entry.essential === true };
+}
+
+/**
  * ステップ: ID Token に載せる acr / amr を解決する
  *
  * 優先順位:
@@ -361,8 +394,20 @@ export interface ResolvedAcrAmr {
  * 2. acrResolver（新規認証時）
  * 3. どちらも無ければ省略（core は認証ポリシーを決め打ちしない）
  *
- * OIDC Core 1.0 §5.5.1.1: `claims.id_token.acr.values` は acr_values 要求と等価。
- * `requestedAcrValues` が無い場合はこれを resolver への要求値として渡す。
+ * OIDC Core 1.0 §5.5.1.1: `claims.id_token.acr` の `value` / `values` は acr_values 要求と
+ * 等価。`requestedAcrValues` が無い場合はこれを resolver への要求値として渡す。
+ * Essential 要求（`essential: true`）の場合は、要求値こそが満たすべき制約なので
+ * `acr_values` より優先して resolver へ渡す。
+ *
+ * さらに §5.5.1.1 は Essential 要求を満たせないとき「認証失敗として扱う」ことを MUST と
+ * しているため、解決結果が要求値のいずれとも一致しない場合は {@link TokenError} を投げる。
+ * §5.5.1 の「Claim を返せなくてもエラーにしてはならない」という一般則には
+ * "unless otherwise specified in the description of the specific claim" という但し書きが
+ * あり、`acr` はその例外にあたる。
+ *
+ * 検証の対象は authorization_code grant のみ。refresh_token grant は §12.1 に従って
+ * 保存済みの acr / amr を直接渡す経路であり（`acr` / `amr` 指定時の早期 return）、
+ * そもそも claims が refresh 経路へ伝播していないため影響を受けない。
  */
 export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<ResolvedAcrAmr> {
   const { subject, clientId, acr, amr, requestedAcrValues, claims, acrResolver } = input;
@@ -370,23 +415,23 @@ export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<Resolved
   if (acr !== undefined || amr !== undefined) {
     return { acr, amr };
   }
+
+  const acrClaimRequest = extractAcrClaimRequest(claims);
+
   if (!acrResolver) {
+    // resolver が無い OP は acr を一切決められないため、Essential 要求は原理的に
+    // 満たせない。§5.5.1.1 の MUST に従い、黙って ID Token を発行しない。
+    assertEssentialAcrSatisfied(acrClaimRequest, undefined);
     return { acr: undefined, amr: undefined };
   }
 
-  // OIDC Core 1.0 §5.5.1.1: claims.id_token.acr.values is equivalent to
-  // requesting these acr values. Use it to seed acrResolver when the request
-  // did not provide a separate `acr_values` parameter.
-  let effectiveRequestedAcrValues = requestedAcrValues;
-  if (effectiveRequestedAcrValues === undefined && claims?.id_token) {
-    const acrEntry = claims.id_token['acr'];
-    if (acrEntry && Array.isArray(acrEntry.values)) {
-      const stringValues = acrEntry.values.filter((v): v is string => typeof v === 'string');
-      if (stringValues.length > 0) {
-        effectiveRequestedAcrValues = stringValues.join(' ');
-      }
-    }
-  }
+  // OIDC Core 1.0 §5.5.1.1 / §3.1.2.1: acr_values は Voluntary な要求にすぎないので、
+  // Essential な claims 要求があるときはそちらを resolver への要求値として優先する。
+  const claimsRequestedAcrValues = acrClaimRequest?.values.join(' ');
+  const effectiveRequestedAcrValues =
+    acrClaimRequest?.essential === true
+      ? claimsRequestedAcrValues
+      : (requestedAcrValues ?? claimsRequestedAcrValues);
 
   const result = await acrResolver({
     userId: subject,
@@ -394,7 +439,28 @@ export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<Resolved
     requestedAcrValues: effectiveRequestedAcrValues,
   });
 
+  assertEssentialAcrSatisfied(acrClaimRequest, result?.acr);
+
   return { acr: result?.acr, amr: result?.amr };
+}
+
+/**
+ * OIDC Core 1.0 §5.5.1.1: Essential な acr 要求を満たせない場合は認証失敗として扱う。
+ *
+ * RFC 6749 §5.2 の `invalid_grant`（この付与では要求された認証要件を満たせない）を返す。
+ * error_description には要求値を反映しない（入力反映を避ける既存方針に従う）。
+ */
+function assertEssentialAcrSatisfied(
+  request: AcrClaimRequest | null,
+  resolvedAcr: string | undefined,
+): void {
+  if (!request || !request.essential) return;
+  if (resolvedAcr !== undefined && request.values.includes(resolvedAcr)) return;
+
+  throw new TokenError(
+    TokenErrorCode.InvalidGrant,
+    'The essential acr claim request could not be satisfied',
+  );
 }
 
 /**

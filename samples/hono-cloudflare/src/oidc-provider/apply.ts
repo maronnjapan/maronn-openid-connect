@@ -6,6 +6,8 @@ import { userinfoApp } from './routes/userinfo.js';
 import { introspectionApp } from './routes/introspection.js';
 import { revocationApp } from './routes/revocation.js';
 import { parApp } from './routes/par.js';
+import { deviceAuthorizationApp } from './routes/device-authorization.js';
+import { deviceApp } from './routes/device.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
@@ -21,6 +23,7 @@ import {
 import {
   defaultProviderStores,
   parStore,
+  deviceAuthorizationStore,
   type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
@@ -139,6 +142,10 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/introspect': ['POST'],
   '/revoke': ['POST'],
   '/par': ['POST'],
+  '/device_authorization': ['POST'],
+  '/device': ['GET', 'POST'],
+  '/device/login': ['POST'],
+  '/device/approve': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -195,6 +202,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.use('/introspect', protectedCors);
   app.use('/revoke', protectedCors);
   app.use('/par', protectedCors);
+  app.use('/device_authorization', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
@@ -270,6 +278,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
     c.set('revocationResolvers', storeResolvers.revocationResolvers);
     c.set('parStore', parStore);
+    c.set('deviceAuthorizationStore', deviceAuthorizationStore);
 
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
@@ -294,6 +303,8 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
   app.route('/par', parApp);
+  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', deviceApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Get up and running with Maronn OIDC in minutes.
+description: Get up and running with Maronn OpenID Connect in minutes.
 ---
 
 ## Prerequisites

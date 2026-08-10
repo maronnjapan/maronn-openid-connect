@@ -17,6 +17,7 @@ import {
   parseClaimsRequestParameter,
   validateIdTokenHint,
   createAuthTransaction,
+  computeTransactionBindingHash,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
@@ -29,12 +30,16 @@ import {
   IdTokenHintError,
   type AuthorizationRequestParams,
   type JwkSet,
+  AuthorizationErrorCode,
+  selectSigningKeyByAlg,
+  type SigningKey,
 } from '@maronn-openid-connect/core';
 import { clientResolver as defaultClientResolver } from '../resolvers.js';
 import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
+  buildTransactionBindingCookie,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
 import {
@@ -44,6 +49,12 @@ import {
 } from '@maronn-openid-connect/experimental/par';
 import { parConfig } from './par.js';
 import { parStore as defaultParStore } from '../store.js';
+import {
+  buildJarmRedirectUrl,
+  createJarmResponseJwt,
+  resolveJarmResponseMode,
+} from '@maronn-openid-connect/experimental/jarm';
+import { jarmConfig } from './jarm.js';
 
 export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -61,6 +72,19 @@ function isAuthorizationRequestParams(
 }
 
 /**
+ * EXPERIMENTAL — JARM response context (JARM Section 2.1).
+ *
+ * Present only for a request that asked for response_mode=query.jwt (or its
+ * `jwt` shorthand). undefined means the plain query response this OP has always
+ * produced, so a client that does not ask for JARM sees no change at all.
+ */
+type JarmResponseContext = {
+  issuer: string;
+  clientId: string;
+  signingKey: SigningKey;
+};
+
+/**
  * Builds a redirect URL with an OAuth error response.
  * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
  *
@@ -68,23 +92,81 @@ function isAuthorizationRequestParams(
  * Section 5.2 allowed character set before being appended so user-controlled
  * fragments cannot smuggle control bytes into the redirect URL.
  *
- * RFC 9207 §2: when issuer is provided, the iss parameter is appended so the
- * client can pin the issuer that produced this authorization response.
+ * RFC 9207 Section 2: when issuer is provided, the iss parameter is appended so
+ * the client can pin the issuer that produced this authorization response.
+ *
+ * EXPERIMENTAL (JARM Section 2.1 / 2.3.1): when jarm is present the very same
+ * parameters travel as claims of one signed JWT in the `response` query
+ * parameter instead, and no plain error / error_description / state / iss
+ * parameter is added — the JWT's iss claim identifies the issuer (RFC 9700
+ * Section 2.1 accepts JARM as the issuer-identification mechanism).
  */
-function buildErrorRedirect(
+async function buildErrorRedirect(
+  jarm: JarmResponseContext | undefined,
   redirectUri: string,
   error: string,
   state?: string,
   errorDescription?: string,
   issuer?: string,
-): string {
+): Promise<string> {
+  // RFC 6749 Section 5.2: sanitize once, for both response shapes.
+  const description = errorDescription
+    ? sanitizeErrorDescription(errorDescription)
+    : undefined;
+  if (jarm) {
+    return buildJarmRedirectUrl(
+      redirectUri,
+      await createJarmResponseJwt({
+        issuer: jarm.issuer,
+        clientId: jarm.clientId,
+        parameters: { error, error_description: description, state },
+        signingKey: jarm.signingKey,
+        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
+      }),
+    );
+  }
   const url = new URL(redirectUri);
   url.searchParams.set('error', error);
-  if (errorDescription) {
-    url.searchParams.set('error_description', sanitizeErrorDescription(errorDescription));
+  if (description) {
+    url.searchParams.set('error_description', description);
   }
   if (state) url.searchParams.set('state', state);
   if (issuer) url.searchParams.set('iss', issuer);
+  return url.toString();
+}
+
+/**
+ * Builds the success redirect URL carrying the authorization code.
+ * OIDC Core 1.0 Section 3.1.2.5 / RFC 9207 Section 2 (iss).
+ *
+ * EXPERIMENTAL (JARM Section 2.3.1): when jarm is present the code and state
+ * become claims of a signed JWT delivered as the single `response` parameter;
+ * no plain code / state / iss parameter is added.
+ */
+async function buildSuccessRedirect(
+  jarm: JarmResponseContext | undefined,
+  redirectUri: string,
+  code: string,
+  state: string | undefined,
+  issuer: string,
+): Promise<string> {
+  if (jarm) {
+    return buildJarmRedirectUrl(
+      redirectUri,
+      await createJarmResponseJwt({
+        issuer: jarm.issuer,
+        clientId: jarm.clientId,
+        parameters: { code, state },
+        signingKey: jarm.signingKey,
+        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
+      }),
+    );
+  }
+  const url = new URL(redirectUri);
+  url.searchParams.set('code', code);
+  if (state) url.searchParams.set('state', state);
+  // RFC 9207 Section 2: include iss in success responses.
+  url.searchParams.set('iss', issuer);
   return url.toString();
 }
 
@@ -155,6 +237,10 @@ const handleAuthorizationRequest = async (c: any) => {
   }
 
   let params = rawParams;
+  // EXPERIMENTAL — JARM §2.3. Set once redirect_uri is verified; undefined means
+  // the plain query response. Every authorize-route response site below reads
+  // this local, so none of them depends on the transaction store round-trip.
+  let jarmResponse: JarmResponseContext | undefined;
 
   try {
     // EXPERIMENTAL — Pushed Authorization Requests (RFC 9126 §4).
@@ -217,6 +303,49 @@ const handleAuthorizationRequest = async (c: any) => {
     const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, client);
     // RFC 6749 §4.1.2.1: state is echoed only on redirectable errors from here on.
     const state = effectiveParams.state;
+
+    // EXPERIMENTAL — JARM §2.3: interpret response_mode now that redirect_uri is
+    // verified, so an unsupported JWT mode can be reported as a redirectable
+    // error. Values outside the `.jwt` family stay ignored exactly as before.
+    const jarmResolution = resolveJarmResponseMode(effectiveParams);
+    if (jarmResolution.kind === 'unsupported-jwt-mode') {
+      // JARM §2.3.2 / §2.3.3 (fragment.jwt / form_post.jwt) are not implemented
+      // here. The rejection itself goes back as a PLAIN query error: the OP
+      // cannot answer in a response mode it does not implement.
+      throw new AuthorizationError(
+        AuthorizationErrorCode.InvalidRequest,
+        'response_mode ' + jarmResolution.requested + ' is not supported',
+        redirectUri,
+        state,
+      );
+    }
+    if (jarmResolution.kind === 'jarm') {
+      // JARM §3: this OP declares alg RS256 on every response JWT (the default
+      // for a client that registered no authorization_signed_response_alg), and
+      // discovery advertises authorization_signing_alg_values_supported:
+      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
+      // SigningKeyProvider may legitimately return ES256 as active alongside an
+      // RS256 + ES256 registered set — so the key is picked by alg from the
+      // registered set. Its public half is published at /.well-known/jwks.json
+      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
+      // registered, which surfaces as a server_error here (a configuration
+      // mistake) rather than as an unverifiable authorization response.
+      const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+      jarmResponse = {
+        issuer,
+        clientId: client.clientId,
+        // Falls back to the single-key context so a hand-wired provider that
+        // never populated the key set keeps working; on the default single
+        // RS256 key both branches resolve the same key.
+        signingKey: jarmSigningKeys.length > 0
+          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+          : {
+              privateKey: c.get('privateKey'),
+              publicJwk: c.get('publicJwk'),
+              keyId: c.get('keyId'),
+            },
+      };
+    }
 
     // OIDC Core 1.0 §6.3: request_uri / registration are not supported here.
     rejectUnsupportedRequestParams(params, redirectUri, state);
@@ -290,14 +419,23 @@ const handleAuthorizationRequest = async (c: any) => {
 
     // Create authentication transaction
     const csrfToken = await generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken);
+    // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: the End-User who authenticates and
+    // consents must be the one behind THIS User-Agent. transaction_id alone cannot
+    // prove that (it rides in the URL and can leak), so a secret is handed to this
+    // browser in an HttpOnly cookie and only its hash is kept on the transaction.
+    // See buildTransactionBindingCookie() in store.ts for the threat this closes.
+    const bindingSecret = await generateRandomString(32);
+    const transaction = createAuthTransaction(validatedRequest, csrfToken, {
+      bindingHash: await computeTransactionBindingHash(bindingSecret),
+    });
     const transactionId = await generateRandomString(32);
 
     // Store transaction
+    const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
     await transactionStore.put(
       'auth_txn:' + transactionId,
-      transaction,
-      10 * 60, // 10 minutes TTL
+      jarmResponse ? { ...transaction, jarmResponseMode: 'query.jwt' } : transaction,
+      transactionTtlSeconds,
     );
 
     // OIDC Core 1.0 Section 3.1.2.1: prompt is a space-delimited list
@@ -306,7 +444,7 @@ const handleAuthorizationRequest = async (c: any) => {
     // prompt=none must not be combined with other values (OIDC Core 1.0 Section 3.1.2.1)
     if (promptValues.includes('none') && promptValues.length > 1) {
       await transactionStore.delete('auth_txn:' + transactionId);
-      return c.redirect(buildErrorRedirect(transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
+      return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
     }
 
     // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
@@ -322,7 +460,7 @@ const handleAuthorizationRequest = async (c: any) => {
       if (!jwksProvider) {
         // jwksProvider 未提供では hint を検証できない → login_required で拒否
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
+        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
       }
       try {
         const jwks = await jwksProvider();
@@ -335,7 +473,7 @@ const handleAuthorizationRequest = async (c: any) => {
       } catch (hintError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
+        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
       }
     }
 
@@ -348,14 +486,14 @@ const handleAuthorizationRequest = async (c: any) => {
       // No sessionResolver configured → cannot verify session → login_required
       if (!sessionResolver) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'sessionResolver is not configured; cannot satisfy prompt=none', issuer));
+        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'login_required', transaction.state, 'sessionResolver is not configured; cannot satisfy prompt=none', issuer));
       }
 
       // No consentResolver configured → cannot confirm consent → consent_required
       // (OIDC Core 1.0 Section 3.1.2.1: prompt=none must not display consent screen)
       if (!consentResolver) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
+        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
       }
 
       let session;
@@ -382,20 +520,20 @@ const handleAuthorizationRequest = async (c: any) => {
       } catch (promptError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         if (promptError instanceof AuthorizationError) {
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, promptError.error, transaction.state, promptError.errorDescription, issuer));
+          return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, promptError.error, transaction.state, promptError.errorDescription, issuer));
         }
         const serverDescription =
           promptError instanceof Error && promptError.message
             ? promptError.message
             : 'Unexpected error while evaluating prompt=none';
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'server_error', transaction.state, serverDescription, issuer));
+        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'server_error', transaction.state, serverDescription, issuer));
       }
 
       // Check max_age: if session is too old, prompt=none cannot trigger re-authentication
       // OIDC Core 1.0 Section 3.1.2.1
       if (transaction.maxAge !== undefined && requiresReauthentication(transaction.maxAge, session.authTime)) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
+        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
       }
 
       // Filter offline_access if the client does not allow it
@@ -425,12 +563,15 @@ const handleAuthorizationRequest = async (c: any) => {
         authCodeData.grantId,
       );
 
-      const redirectUrl = new URL(transaction.redirectUri);
-      redirectUrl.searchParams.set('code', authCodeData.code);
-      if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
-      // RFC 9207 §2: include iss in success responses too.
-      redirectUrl.searchParams.set('iss', issuer);
-      return c.redirect(redirectUrl.toString());
+      return c.redirect(
+        await buildSuccessRedirect(
+          jarmResponse,
+          transaction.redirectUri,
+          authCodeData.code,
+          transaction.state,
+          issuer,
+        ),
+      );
     }
 
     // OIDC Core 1.0 Section 3.1.2.3: an active OP session enables Single Sign-On.
@@ -498,12 +639,15 @@ const handleAuthorizationRequest = async (c: any) => {
               authCodeData.grantId,
             );
 
-            const redirectUrl = new URL(transaction.redirectUri);
-            redirectUrl.searchParams.set('code', authCodeData.code);
-            if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
-            // RFC 9207 §2: include iss in success responses.
-            redirectUrl.searchParams.set('iss', issuer);
-            return c.redirect(redirectUrl.toString());
+            return c.redirect(
+              await buildSuccessRedirect(
+                jarmResponse,
+                transaction.redirectUri,
+                authCodeData.code,
+                transaction.state,
+                issuer,
+              ),
+            );
           }
 
           const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -511,6 +655,13 @@ const handleAuthorizationRequest = async (c: any) => {
             subject: existingSession.subject,
             authTime: existingSession.authTime,
           });
+          // Hand the binding secret to this browser before the interactive steps.
+          // Only paths that continue in the browser get the cookie; paths that
+          // redirect straight back to the client never needed one.
+          c.header(
+            'Set-Cookie',
+            buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
+          );
           const consentUrl = new URL('/consent', c.req.url);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
@@ -519,6 +670,10 @@ const handleAuthorizationRequest = async (c: any) => {
     }
 
     // Redirect to login page (prompt=login forces re-authentication; handled in login route)
+    c.header(
+      'Set-Cookie',
+      buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
+    );
     const loginUrl = new URL('/login', c.req.url);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
@@ -554,20 +709,24 @@ const handleAuthorizationRequest = async (c: any) => {
     }
     if (error instanceof AuthorizationError) {
       if (error.redirectUri) {
-        const redirectUrl = new URL(error.redirectUri);
-        redirectUrl.searchParams.set('error', error.error);
-        if (error.errorDescription) {
-          redirectUrl.searchParams.set('error_description', error.errorDescription);
-        }
-        if (error.state) {
-          redirectUrl.searchParams.set('state', error.state);
-        }
         // RFC 9207 §2: include iss on error redirects so the client can
         // pin the issuer. config has already been read into context by
         // middleware; reread it here because the early-bound issuer is
-        // scoped to the try block.
-        redirectUrl.searchParams.set('iss', c.get('config').issuer);
-        return c.redirect(redirectUrl.toString());
+        // scoped to the try block. EXPERIMENTAL (JARM §2.1): when this request
+        // asked for a JWT response mode, the same members become claims of a
+        // signed JWT and no plain parameter is added. jarmResponse is undefined
+        // for errors thrown before response_mode was interpreted (unknown
+        // client, unsupported JWT mode), which is why those stay plain.
+        return c.redirect(
+          await buildErrorRedirect(
+            jarmResponse,
+            error.redirectUri,
+            error.error,
+            error.state,
+            error.errorDescription,
+            c.get('config').issuer,
+          ),
+        );
       }
       // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
       // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST

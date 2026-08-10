@@ -101,7 +101,7 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
 
 ヘッダコメント方式は全テンプレートの期待出力テストに波及するため、マニフェストファイル方式を採る。
 
-- [ ] 生成物に `.maronn-oidc.json` を追加し、次を記録する
+- [ ] 生成物に `.maronn-openid-connect.json` を追加し、次を記録する
 
       ```json
       {
@@ -124,7 +124,7 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
 - [ ] `docs/library-document/src/content/docs/guides/cli.md` に次を追記する
   - 既定では既存ファイルを上書きしないこと、`--force` / `--dry-run` の使い方
   - 生成直後にコミットしてから改造することを推奨する運用
-  - `.maronn-oidc.json` の見方と、上流のリリースノートと突き合わせる手順
+  - `.maronn-openid-connect.json` の見方と、上流のリリースノートと突き合わせる手順
 
 ## テスト要件
 
@@ -142,7 +142,7 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
 - [ ] `should not write any file when --dry-run is given`
 - [ ] `should list the files it would write when --dry-run is given`
 - [ ] `should refuse setup as well when the output directory already contains generated files`
-- [ ] `should write a .maronn-oidc.json manifest recording the cli version, framework and features`
+- [ ] `should write a .maronn-openid-connect.json manifest recording the cli version, framework and features`
       （マニフェストの内容を `toEqual` で固定。`features` は全キーを具体値で指定する）
 - [ ] `should update the manifest even when generate is run with --force`
 - [ ] 既存の生成テスト（ファイル数・ファイル一覧を固定しているもの）をマニフェスト追加後の値へ更新する
@@ -151,7 +151,7 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
 
 - [ ] 既存の出力ディレクトリに対する `generate` が、`--force` 無しでは 1 バイトも書き込まずに非ゼロ終了すること
 - [ ] `--dry-run` が書き込みを行わないこと
-- [ ] 生成物に `.maronn-oidc.json` が含まれ、`cliVersion` / `framework` / `features` が記録されていること
+- [ ] 生成物に `.maronn-openid-connect.json` が含まれ、`cliVersion` / `framework` / `features` が記録されていること
 - [ ] 下記がすべてパスすること
 
   ```bash

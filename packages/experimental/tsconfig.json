@@ -37,6 +37,8 @@
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "**/*.spec.ts"
+    "**/*.spec.ts",
+    // テスト専用フィクスチャ。dist へ出すと公開 package に未使用コードが載るため除外する。
+    "**/test-helpers.ts"
   ]
 }

@@ -21,11 +21,19 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
     : '';
   // RFC 9126 §2.3: the PAR endpoint answers anything other than POST with 405.
   const parMethod = features.par ? `  '/par': ['POST'],\n` : '';
+  // EXPERIMENTAL (RFC 8628): the device authorization endpoint is POST-only, and
+  // the verification UI is a browser surface (GET form + POST submissions).
+  const deviceMethods = features.deviceAuthorizationGrant
+    ? `  '/device_authorization': ['POST'],
+  '/device': ['GET', 'POST'],
+  '/device/login': ['POST'],
+  '/device/approve': ['POST'],\n`
+    : '';
   return `const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/authorize': ['GET', 'POST'],
   '/token': ['POST'],
   '/userinfo': ['GET', 'POST'],
-${introspectionMethod}${revocationMethod}${parMethod}  '/.well-known/jwks.json': ['GET'],
+${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}  '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
   '/consent': ['GET', 'POST'],
@@ -87,6 +95,27 @@ export function appTemplate(
   const parStoreImport = features.par
     ? `  parStore,\n`
     : '';
+  // EXPERIMENTAL (RFC 8628): the device authorization endpoint is a back-channel,
+  // client-authenticated POST endpoint, so it gets the same CORS policy as /token.
+  // The verification UI (/device...) is reached by direct browser navigation, so
+  // it needs no CORS headers — the same treatment as /login and /consent.
+  const deviceImport = features.deviceAuthorizationGrant
+    ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
+import { deviceApp } from './routes/device.js';\n`
+    : '';
+  const deviceCors = features.deviceAuthorizationGrant
+    ? `  app.use('/device_authorization', protectedCors);\n`
+    : '';
+  const deviceMount = features.deviceAuthorizationGrant
+    ? `  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', deviceApp);\n`
+    : '';
+  const deviceStorageContext = features.deviceAuthorizationGrant
+    ? `    c.set('deviceAuthorizationStore', deviceAuthorizationStore);\n`
+    : '';
+  const deviceStoreImport = features.deviceAuthorizationGrant
+    ? `  deviceAuthorizationStore,\n`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);\n`
     : '';
@@ -103,7 +132,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -117,7 +146,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -218,7 +247,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   const publicCors = cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 600 });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -280,7 +309,7 @@ ${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-co
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
     c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
@@ -301,7 +330,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -524,6 +553,85 @@ export function storeTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
+  // Optional hardening (--enable transaction-binding): off by default so the
+  // generated OP can be driven by hand (curl / HTTP client) without a cookie jar.
+  const transactionBindingHelpers = features.transactionBinding
+    ? `
+/**
+ * Auth transaction binding cookie - OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4.
+ *
+ * Why this exists: transaction_id travels in the URL, so it can leak through
+ * browser history, access logs or a shared screen. Without a second factor the
+ * OP cannot tell the browser that started the authorization request from anyone
+ * who merely knows that id, and that lets a third party read csrf_token off the
+ * consent page and finish the flow. Worse, an attacker can start a flow with
+ * their OWN client, lure the victim to /login?transaction_id=<attacker's> and
+ * have the victim's authorization code delivered to the attacker's client - a
+ * case the RP's state check cannot catch. Binding the transaction to a secret
+ * this browser holds in an HttpOnly cookie is the OP-side defense.
+ *
+ * The cookie name embeds the transaction id so two tabs can run two
+ * authorization flows at once without overwriting each other's secret. The
+ * cookie carries the raw secret; only its SHA-256 hash is stored on the
+ * transaction, so leaking the transaction store does not yield a usable cookie.
+ */
+export const TRANSACTION_BINDING_COOKIE_PREFIX = 'oidc_txn_';
+
+/**
+ * Build the Set-Cookie value binding a transaction to this browser.
+ * Same attributes as the session cookie: HttpOnly (no JS access), Secure
+ * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
+ * SameSite=Lax, because SameSite=Strict would drop the cookie on the cross-site
+ * navigation that starts the flow. Max-Age matches the transaction TTL so
+ * abandoned flows do not leave cookies behind. When the OP is always served
+ * over HTTPS, prefixing the name with '__Host-' is recommended.
+ */
+export function buildTransactionBindingCookie(
+  transactionId: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    TRANSACTION_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears a transaction binding cookie once the
+ * transaction is finished (code issued or access denied), so the browser does
+ * not accumulate one cookie per completed flow.
+ */
+export function buildClearedTransactionBindingCookie(transactionId: string): string {
+  return (
+    TRANSACTION_BINDING_COOKIE_PREFIX + transactionId +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one transaction from a Cookie request header.
+ * Returns undefined when the header is missing or this transaction's cookie is
+ * absent, which validateTransactionBinding() rejects.
+ */
+export function parseTransactionBindingSecret(
+  cookieHeader: string | null,
+  transactionId: string,
+): string | undefined {
+  if (!cookieHeader) return undefined;
+  const name = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return undefined;
+}
+`
+    : '';
   const parStoreTypeImport = features.par
     ? `
 import type {
@@ -589,6 +697,176 @@ export const parStore: PushedAuthorizationRequestStore =
     new InMemoryPushedAuthorizationRequestStore());
 `
     : '';
+  const deviceStoreTypeImport = features.deviceAuthorizationGrant
+    ? `
+import type {
+  DeviceAuthorizationRecord,
+  DeviceAuthorizationStore,
+} from '${EXPERIMENTAL_PACKAGE}/device-authorization-grant';`
+    : '';
+  const deviceStoreImplementation = features.deviceAuthorizationGrant
+    ? `
+/**
+ * EXPERIMENTAL — device verification binding cookie (RFC 8628 §5.4 / §3.3).
+ *
+ * Why this exists: the user_code is, by design, known to whoever started the
+ * device flow — and that party can be the attacker. A CSRF token that hangs off
+ * the record is therefore worthless on its own: the attacker POSTs /device with
+ * their own code, reads the token, and can then forge \`POST /device/approve\`
+ * (consent coercion: the victim's tokens land on the attacker's device) or
+ * \`POST /device/login\` (login CSRF: the victim's browser gets the attacker's
+ * OP session). Neither is stopped by keeping the token secret.
+ *
+ * The binding is what stops them. On a successful user_code match the OP mints a
+ * bindingSecret, hands the raw value to that one browser in an HttpOnly cookie,
+ * and stores only its SHA-256 hash on the record. /device/login and
+ * /device/approve refuse to run unless the presented cookie hashes to the stored
+ * value, so a forged cross-site POST — which cannot carry the victim's cookie
+ * (SameSite=Lax), and whose victim never held this record's cookie anyway — is
+ * rejected without relying on any secret staying secret.
+ *
+ * Unlike the optional transaction-binding feature this is ALWAYS on: for the
+ * authorize flow the transaction_id is normally confidential, so binding is
+ * extra hardening, while here the identifier is public to the attacker by
+ * construction. The cost is that driving the verification UI by hand with curl
+ * needs a cookie jar (-c / -b).
+ *
+ * The cookie name embeds the normalized user_code so two device flows can run in
+ * the same browser without overwriting each other's secret.
+ */
+export const DEVICE_BINDING_COOKIE_PREFIX = 'oidc_device_';
+
+/**
+ * Build the Set-Cookie value binding one device verification to this browser.
+ * Same attributes as the session cookie: HttpOnly (no JS access), Secure (HTTPS
+ * only; http://localhost is treated as trustworthy by browsers) and
+ * SameSite=Lax. Max-Age matches the remaining record TTL so an abandoned
+ * verification does not leave a cookie behind.
+ */
+export function buildDeviceBindingCookie(
+  userCode: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    DEVICE_BINDING_COOKIE_PREFIX + userCode + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears the binding cookie once the user has
+ * approved or denied, so the browser does not accumulate one cookie per flow.
+ */
+export function buildClearedDeviceBindingCookie(userCode: string): string {
+  return (
+    DEVICE_BINDING_COOKIE_PREFIX + userCode +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one device verification from a Cookie header.
+ * Returns null when the header is missing or this record's cookie is absent,
+ * which validateVerificationBinding() rejects with 403.
+ */
+export function parseDeviceBindingSecret(
+  cookieHeader: string | null,
+  userCode: string,
+): string | null {
+  if (!cookieHeader) return null;
+  const name = DEVICE_BINDING_COOKIE_PREFIX + userCode;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * EXPERIMENTAL — in-memory device authorization store (RFC 8628).
+ *
+ * Replace with a persistent store (Redis, KV, database) in production. Treat
+ * deviceCode and userCode as opaque external values: never interpolate them into
+ * a query, always bind them as parameters.
+ *
+ * - save / update: persist the record, ideally with a TTL derived from
+ *   record.expiresAt so entries cannot pile up.
+ * - consume(deviceCode): fetch AND delete in one atomic operation. A non-atomic
+ *   implementation lets the same device_code be redeemed concurrently.
+ * - Expired records whose device stopped polling are never reclaimed by the
+ *   token endpoint. A persistent implementation MAY drop them on its own after a
+ *   grace period (roughly one TTL); polling after that answers invalid_grant
+ *   instead of expired_token, which ends the client's flow just the same.
+ */
+export class InMemoryDeviceAuthorizationStore implements DeviceAuthorizationStore {
+  private records = new Map<string, DeviceAuthorizationRecord>();
+
+  async save(record: DeviceAuthorizationRecord): Promise<void> {
+    this.evictExpired();
+    this.records.set(record.deviceCode, record);
+  }
+
+  async findByDeviceCode(deviceCode: string): Promise<DeviceAuthorizationRecord | null> {
+    return this.records.get(deviceCode) ?? null;
+  }
+
+  async findByUserCode(userCode: string): Promise<DeviceAuthorizationRecord | null> {
+    for (const record of this.records.values()) {
+      if (record.userCode === userCode) return record;
+    }
+    return null;
+  }
+
+  async update(record: DeviceAuthorizationRecord): Promise<void> {
+    this.records.set(record.deviceCode, record);
+  }
+
+  async delete(deviceCode: string): Promise<void> {
+    this.records.delete(deviceCode);
+  }
+
+  async consume(deviceCode: string): Promise<DeviceAuthorizationRecord | null> {
+    const record = this.records.get(deviceCode) ?? null;
+    // Single use (RFC 8628 §3.5): delete on read so a replay of the same
+    // device_code can never mint a second token.
+    this.records.delete(deviceCode);
+    return record;
+  }
+
+  /**
+   * Drop records whose lifetime passed long enough ago that no device is still
+   * polling them, so an idle store cannot grow unbounded. The grace period keeps
+   * expired_token answerable for one more TTL after expiry.
+   */
+  private evictExpired(): void {
+    const cutoff = Date.now() - DEVICE_RECORD_EVICTION_GRACE_MS;
+    for (const [deviceCode, record] of this.records) {
+      if (record.expiresAt.getTime() < cutoff) {
+        this.records.delete(deviceCode);
+      }
+    }
+  }
+}
+
+/** Grace period before an expired record is reclaimed (one default TTL). */
+const DEVICE_RECORD_EVICTION_GRACE_MS = 600 * 1000;
+
+// Kept on globalThis for the same reason as the provider stores above: Next.js
+// instantiates route handlers and server actions in separate module layers.
+const deviceStoreRegistry = globalThis as typeof globalThis & {
+  __oidcDeviceAuthorizationStore?: DeviceAuthorizationStore;
+};
+
+export const deviceAuthorizationStore: DeviceAuthorizationStore =
+  (deviceStoreRegistry.__oidcDeviceAuthorizationStore ??=
+    new InMemoryDeviceAuthorizationStore());
+`
+    : '';
   return `import type {
   AuthTransaction,
   AuthTransactionStore,
@@ -596,7 +874,7 @@ export const parStore: PushedAuthorizationRequestStore =
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '${corePkg}';${parStoreTypeImport}
+} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}
 
 /**
  * In-memory Authorization Transaction Store.
@@ -852,7 +1130,7 @@ export function parseSessionId(cookieHeader: string | null): string | undefined 
 export function buildSessionCookie(sessionId: string): string {
   return SESSION_COOKIE_NAME + '=' + sessionId + '; HttpOnly; Secure; SameSite=Lax; Path=/';
 }
-
+${transactionBindingHelpers}
 /**
  * In-memory consent store. Records that a user granted a set of scopes to a
  * client so prompt=none can confirm consent without showing UI
@@ -1408,7 +1686,7 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
-${parStoreImplementation}`;
+${parStoreImplementation}${deviceStoreImplementation}`;
 }
 
 export function resolversTemplate(
@@ -1637,6 +1915,47 @@ export function authorizeRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
+  // Optional hardening (--enable transaction-binding). Off by default: no OIDC
+  // Core / OAuth 2.1 clause requires it, and requiring a cookie jar would break
+  // driving the login / consent steps by hand with curl.
+  const bindingCoreImport = features.transactionBinding
+    ? `
+  computeTransactionBindingHash,`
+    : '';
+  const bindingStoreImport = features.transactionBinding
+    ? `
+  buildTransactionBindingCookie,`
+    : '';
+  const bindingSecretStep = features.transactionBinding
+    ? `    // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: the End-User who authenticates and
+    // consents must be the one behind THIS User-Agent. transaction_id alone cannot
+    // prove that (it rides in the URL and can leak), so a secret is handed to this
+    // browser in an HttpOnly cookie and only its hash is kept on the transaction.
+    // See buildTransactionBindingCookie() in store.ts for the threat this closes.
+    const bindingSecret = await generateRandomString(32);
+    const transaction = createAuthTransaction(validatedRequest, csrfToken, {
+      bindingHash: await computeTransactionBindingHash(bindingSecret),
+    });
+`
+    : `    const transaction = createAuthTransaction(validatedRequest, csrfToken);
+`;
+  const bindingCookieOnConsentRedirect = features.transactionBinding
+    ? `          // Hand the binding secret to this browser before the interactive steps.
+          // Only paths that continue in the browser get the cookie; paths that
+          // redirect straight back to the client never needed one.
+          c.header(
+            'Set-Cookie',
+            buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
+          );
+`
+    : '';
+  const bindingCookieOnLoginRedirect = features.transactionBinding
+    ? `    c.header(
+      'Set-Cookie',
+      buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
+    );
+`
+    : '';
   const requestObjectImports = features.requestObject
     ? `
   resolveRequestObjectParams,
@@ -1748,6 +2067,286 @@ import { parStore as defaultParStore } from '../store.js';`
     }
 `
     : '';
+  // EXPERIMENTAL (JARM): response_mode=query.jwt / jwt turns the authorization
+  // response into a single signed JWT carried in the `response` query parameter.
+  // Every interpolation below collapses to the current output when the jarm
+  // feature is off, so the default generation is unchanged byte for byte.
+  const jarmImports = features.jarm
+    ? `
+import {
+  buildJarmRedirectUrl,
+  createJarmResponseJwt,
+  resolveJarmResponseMode,
+} from '${EXPERIMENTAL_PACKAGE}/jarm';
+import { jarmConfig } from './jarm.js';`
+    : '';
+  const jarmCoreImports = features.jarm
+    ? `
+  AuthorizationErrorCode,
+  selectSigningKeyByAlg,
+  type SigningKey,`
+    : '';
+  // Declared before the try block: AuthorizationError is thrown from steps that
+  // run before the transaction exists, and the catch below (which decides how to
+  // render a redirectable error) cannot see anything declared inside the try.
+  const jarmResponseBinding = features.jarm
+    ? `
+  // EXPERIMENTAL — JARM §2.3. Set once redirect_uri is verified; undefined means
+  // the plain query response. Every authorize-route response site below reads
+  // this local, so none of them depends on the transaction store round-trip.
+  let jarmResponse: JarmResponseContext | undefined;`
+    : '';
+  const jarmResolveStep = features.jarm
+    ? `    // EXPERIMENTAL — JARM §2.3: interpret response_mode now that redirect_uri is
+    // verified, so an unsupported JWT mode can be reported as a redirectable
+    // error. Values outside the \`.jwt\` family stay ignored exactly as before.
+    const jarmResolution = resolveJarmResponseMode(effectiveParams);
+    if (jarmResolution.kind === 'unsupported-jwt-mode') {
+      // JARM §2.3.2 / §2.3.3 (fragment.jwt / form_post.jwt) are not implemented
+      // here. The rejection itself goes back as a PLAIN query error: the OP
+      // cannot answer in a response mode it does not implement.
+      throw new AuthorizationError(
+        AuthorizationErrorCode.InvalidRequest,
+        'response_mode ' + jarmResolution.requested + ' is not supported',
+        redirectUri,
+        state,
+      );
+    }
+    if (jarmResolution.kind === 'jarm') {
+      // JARM §3: this OP declares alg RS256 on every response JWT (the default
+      // for a client that registered no authorization_signed_response_alg), and
+      // discovery advertises authorization_signing_alg_values_supported:
+      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
+      // SigningKeyProvider may legitimately return ES256 as active alongside an
+      // RS256 + ES256 registered set — so the key is picked by alg from the
+      // registered set. Its public half is published at /.well-known/jwks.json
+      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
+      // registered, which surfaces as a server_error here (a configuration
+      // mistake) rather than as an unverifiable authorization response.
+      const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+      jarmResponse = {
+        issuer,
+        clientId: client.clientId,
+        // Falls back to the single-key context so a hand-wired provider that
+        // never populated the key set keeps working; on the default single
+        // RS256 key both branches resolve the same key.
+        signingKey: jarmSigningKeys.length > 0
+          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+          : {
+              privateKey: c.get('privateKey'),
+              publicJwk: c.get('publicJwk'),
+              keyId: c.get('keyId'),
+            },
+      };
+    }
+
+`
+    : '';
+  // buildErrorRedirect becomes async under JARM (signing is async), so its call
+  // sites gain an await and the response-context argument.
+  const jarmAwait = features.jarm ? 'await ' : '';
+  const jarmErrorArg = features.jarm ? 'jarmResponse, ' : '';
+  // JARM mode is recorded on the stored transaction so the consent route — which
+  // only ever sees the transaction it read back from the store — can answer in
+  // the same mode. The auth transaction store MUST persist unknown fields.
+  const buildRedirectHelpers = features.jarm
+    ? `/**
+ * EXPERIMENTAL — JARM response context (JARM Section 2.1).
+ *
+ * Present only for a request that asked for response_mode=query.jwt (or its
+ * \`jwt\` shorthand). undefined means the plain query response this OP has always
+ * produced, so a client that does not ask for JARM sees no change at all.
+ */
+type JarmResponseContext = {
+  issuer: string;
+  clientId: string;
+  signingKey: SigningKey;
+};
+
+/**
+ * Builds a redirect URL with an OAuth error response.
+ * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
+ *
+ * errorDescription is optional; when supplied it is sanitized to the RFC 6749
+ * Section 5.2 allowed character set before being appended so user-controlled
+ * fragments cannot smuggle control bytes into the redirect URL.
+ *
+ * RFC 9207 Section 2: when issuer is provided, the iss parameter is appended so
+ * the client can pin the issuer that produced this authorization response.
+ *
+ * EXPERIMENTAL (JARM Section 2.1 / 2.3.1): when jarm is present the very same
+ * parameters travel as claims of one signed JWT in the \`response\` query
+ * parameter instead, and no plain error / error_description / state / iss
+ * parameter is added — the JWT's iss claim identifies the issuer (RFC 9700
+ * Section 2.1 accepts JARM as the issuer-identification mechanism).
+ */
+async function buildErrorRedirect(
+  jarm: JarmResponseContext | undefined,
+  redirectUri: string,
+  error: string,
+  state?: string,
+  errorDescription?: string,
+  issuer?: string,
+): Promise<string> {
+  // RFC 6749 Section 5.2: sanitize once, for both response shapes.
+  const description = errorDescription
+    ? sanitizeErrorDescription(errorDescription)
+    : undefined;
+  if (jarm) {
+    return buildJarmRedirectUrl(
+      redirectUri,
+      await createJarmResponseJwt({
+        issuer: jarm.issuer,
+        clientId: jarm.clientId,
+        parameters: { error, error_description: description, state },
+        signingKey: jarm.signingKey,
+        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
+      }),
+    );
+  }
+  const url = new URL(redirectUri);
+  url.searchParams.set('error', error);
+  if (description) {
+    url.searchParams.set('error_description', description);
+  }
+  if (state) url.searchParams.set('state', state);
+  if (issuer) url.searchParams.set('iss', issuer);
+  return url.toString();
+}
+
+/**
+ * Builds the success redirect URL carrying the authorization code.
+ * OIDC Core 1.0 Section 3.1.2.5 / RFC 9207 Section 2 (iss).
+ *
+ * EXPERIMENTAL (JARM Section 2.3.1): when jarm is present the code and state
+ * become claims of a signed JWT delivered as the single \`response\` parameter;
+ * no plain code / state / iss parameter is added.
+ */
+async function buildSuccessRedirect(
+  jarm: JarmResponseContext | undefined,
+  redirectUri: string,
+  code: string,
+  state: string | undefined,
+  issuer: string,
+): Promise<string> {
+  if (jarm) {
+    return buildJarmRedirectUrl(
+      redirectUri,
+      await createJarmResponseJwt({
+        issuer: jarm.issuer,
+        clientId: jarm.clientId,
+        parameters: { code, state },
+        signingKey: jarm.signingKey,
+        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
+      }),
+    );
+  }
+  const url = new URL(redirectUri);
+  url.searchParams.set('code', code);
+  if (state) url.searchParams.set('state', state);
+  // RFC 9207 Section 2: include iss in success responses.
+  url.searchParams.set('iss', issuer);
+  return url.toString();
+}`
+    : `/**
+ * Builds a redirect URL with an OAuth error response.
+ * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
+ *
+ * errorDescription is optional; when supplied it is sanitized to the RFC 6749
+ * Section 5.2 allowed character set before being appended so user-controlled
+ * fragments cannot smuggle control bytes into the redirect URL.
+ *
+ * RFC 9207 §2: when issuer is provided, the iss parameter is appended so the
+ * client can pin the issuer that produced this authorization response.
+ */
+function buildErrorRedirect(
+  redirectUri: string,
+  error: string,
+  state?: string,
+  errorDescription?: string,
+  issuer?: string,
+): string {
+  const url = new URL(redirectUri);
+  url.searchParams.set('error', error);
+  if (errorDescription) {
+    url.searchParams.set('error_description', sanitizeErrorDescription(errorDescription));
+  }
+  if (state) url.searchParams.set('state', state);
+  if (issuer) url.searchParams.set('iss', issuer);
+  return url.toString();
+}`;
+  const promptNoneSuccessRedirect = features.jarm
+    ? `      return c.redirect(
+        await buildSuccessRedirect(
+          jarmResponse,
+          transaction.redirectUri,
+          authCodeData.code,
+          transaction.state,
+          issuer,
+        ),
+      );`
+    : `      const redirectUrl = new URL(transaction.redirectUri);
+      redirectUrl.searchParams.set('code', authCodeData.code);
+      if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
+      // RFC 9207 §2: include iss in success responses too.
+      redirectUrl.searchParams.set('iss', issuer);
+      return c.redirect(redirectUrl.toString());`;
+  const ssoSuccessRedirect = features.jarm
+    ? `            return c.redirect(
+              await buildSuccessRedirect(
+                jarmResponse,
+                transaction.redirectUri,
+                authCodeData.code,
+                transaction.state,
+                issuer,
+              ),
+            );`
+    : `            const redirectUrl = new URL(transaction.redirectUri);
+            redirectUrl.searchParams.set('code', authCodeData.code);
+            if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
+            // RFC 9207 §2: include iss in success responses.
+            redirectUrl.searchParams.set('iss', issuer);
+            return c.redirect(redirectUrl.toString());`;
+  const catchErrorRedirect = features.jarm
+    ? `      if (error.redirectUri) {
+        // RFC 9207 §2: include iss on error redirects so the client can
+        // pin the issuer. config has already been read into context by
+        // middleware; reread it here because the early-bound issuer is
+        // scoped to the try block. EXPERIMENTAL (JARM §2.1): when this request
+        // asked for a JWT response mode, the same members become claims of a
+        // signed JWT and no plain parameter is added. jarmResponse is undefined
+        // for errors thrown before response_mode was interpreted (unknown
+        // client, unsupported JWT mode), which is why those stay plain.
+        return c.redirect(
+          await buildErrorRedirect(
+            jarmResponse,
+            error.redirectUri,
+            error.error,
+            error.state,
+            error.errorDescription,
+            c.get('config').issuer,
+          ),
+        );
+      }`
+    : `      if (error.redirectUri) {
+        const redirectUrl = new URL(error.redirectUri);
+        redirectUrl.searchParams.set('error', error.error);
+        if (error.errorDescription) {
+          redirectUrl.searchParams.set('error_description', error.errorDescription);
+        }
+        if (error.state) {
+          redirectUrl.searchParams.set('state', error.state);
+        }
+        // RFC 9207 §2: include iss on error redirects so the client can
+        // pin the issuer. config has already been read into context by
+        // middleware; reread it here because the early-bound issuer is
+        // scoped to the try block.
+        redirectUrl.searchParams.set('iss', c.get('config').issuer);
+        return c.redirect(redirectUrl.toString());
+      }`;
+  const jarmTransactionPutArg = features.jarm
+    ? `jarmResponse ? { ...transaction, jarmResponseMode: 'query.jwt' } : transaction,`
+    : `transaction,`;
   const offlineAccessStep = features.refreshToken
     ? `    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another
     // granting condition). The default policy drops offline_access from scope
@@ -1778,7 +2377,7 @@ import {
   parseAudienceParameter,
   parseClaimsRequestParameter,
   validateIdTokenHint,
-  createAuthTransaction,
+  createAuthTransaction,${bindingCoreImport}
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
@@ -1790,15 +2389,15 @@ import {
   AuthorizationError,
   IdTokenHintError,
   type AuthorizationRequestParams,
-  type JwkSet,
+  type JwkSet,${jarmCoreImports}
 } from '${corePkg}';
 import { clientResolver as defaultClientResolver } from '../resolvers.js';
 import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
-  authSessionStore as defaultAuthSessionStore,
+  authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${parImports}
+import { defaultViews, renderView } from '../views.js';${parImports}${jarmImports}
 
 export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -1815,33 +2414,7 @@ function isAuthorizationRequestParams(
   return typeof p['client_id'] === 'string';
 }
 
-/**
- * Builds a redirect URL with an OAuth error response.
- * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
- *
- * errorDescription is optional; when supplied it is sanitized to the RFC 6749
- * Section 5.2 allowed character set before being appended so user-controlled
- * fragments cannot smuggle control bytes into the redirect URL.
- *
- * RFC 9207 §2: when issuer is provided, the iss parameter is appended so the
- * client can pin the issuer that produced this authorization response.
- */
-function buildErrorRedirect(
-  redirectUri: string,
-  error: string,
-  state?: string,
-  errorDescription?: string,
-  issuer?: string,
-): string {
-  const url = new URL(redirectUri);
-  url.searchParams.set('error', error);
-  if (errorDescription) {
-    url.searchParams.set('error_description', sanitizeErrorDescription(errorDescription));
-  }
-  if (state) url.searchParams.set('state', state);
-  if (issuer) url.searchParams.set('iss', issuer);
-  return url.toString();
-}
+${buildRedirectHelpers}
 
 /**
  * Iterates URLSearchParams and reports the first repeated key, if any.
@@ -1909,7 +2482,7 @@ const handleAuthorizationRequest = async (c: any) => {
     return c.json({ error: 'invalid_request', error_description: 'Missing required parameter: client_id' }, 400);
   }
 
-${parParamsBinding}
+${parParamsBinding}${jarmResponseBinding}
 
   try {
 ${parResolveStep}    const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
@@ -1941,7 +2514,7 @@ ${requestObjectStep}
     // RFC 6749 §4.1.2.1: state is echoed only on redirectable errors from here on.
     const state = effectiveParams.state;
 
-${rejectUnsupportedStep}
+${jarmResolveStep}${rejectUnsupportedStep}
     // response_type=code and per-client response_type authorization.
     const responseType = validateResponseType(params, client, redirectUri, state);
 
@@ -2000,14 +2573,14 @@ ${offlineAccessStep}
 
     // Create authentication transaction
     const csrfToken = await generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken);
-    const transactionId = await generateRandomString(32);
+${bindingSecretStep}    const transactionId = await generateRandomString(32);
 
     // Store transaction
+    const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
     await transactionStore.put(
       'auth_txn:' + transactionId,
-      transaction,
-      10 * 60, // 10 minutes TTL
+      ${jarmTransactionPutArg}
+      transactionTtlSeconds,
     );
 
     // OIDC Core 1.0 Section 3.1.2.1: prompt is a space-delimited list
@@ -2016,7 +2589,7 @@ ${offlineAccessStep}
     // prompt=none must not be combined with other values (OIDC Core 1.0 Section 3.1.2.1)
     if (promptValues.includes('none') && promptValues.length > 1) {
       await transactionStore.delete('auth_txn:' + transactionId);
-      return c.redirect(buildErrorRedirect(transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
+      return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
     }
 
     // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
@@ -2032,7 +2605,7 @@ ${offlineAccessStep}
       if (!jwksProvider) {
         // jwksProvider 未提供では hint を検証できない → login_required で拒否
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
+        return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
       }
       try {
         const jwks = await jwksProvider();
@@ -2045,7 +2618,7 @@ ${offlineAccessStep}
       } catch (hintError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
+        return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
       }
     }
 
@@ -2058,14 +2631,14 @@ ${offlineAccessStep}
       // No sessionResolver configured → cannot verify session → login_required
       if (!sessionResolver) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'sessionResolver is not configured; cannot satisfy prompt=none', issuer));
+        return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, 'login_required', transaction.state, 'sessionResolver is not configured; cannot satisfy prompt=none', issuer));
       }
 
       // No consentResolver configured → cannot confirm consent → consent_required
       // (OIDC Core 1.0 Section 3.1.2.1: prompt=none must not display consent screen)
       if (!consentResolver) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
+        return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
       }
 
       let session;
@@ -2092,20 +2665,20 @@ ${offlineAccessStep}
       } catch (promptError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         if (promptError instanceof AuthorizationError) {
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, promptError.error, transaction.state, promptError.errorDescription, issuer));
+          return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, promptError.error, transaction.state, promptError.errorDescription, issuer));
         }
         const serverDescription =
           promptError instanceof Error && promptError.message
             ? promptError.message
             : 'Unexpected error while evaluating prompt=none';
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'server_error', transaction.state, serverDescription, issuer));
+        return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, 'server_error', transaction.state, serverDescription, issuer));
       }
 
       // Check max_age: if session is too old, prompt=none cannot trigger re-authentication
       // OIDC Core 1.0 Section 3.1.2.1
       if (transaction.maxAge !== undefined && requiresReauthentication(transaction.maxAge, session.authTime)) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
+        return c.redirect(${jarmAwait}buildErrorRedirect(${jarmErrorArg}transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
       }
 
       // Filter offline_access if the client does not allow it
@@ -2135,12 +2708,7 @@ ${offlineAccessStep}
         authCodeData.grantId,
       );
 
-      const redirectUrl = new URL(transaction.redirectUri);
-      redirectUrl.searchParams.set('code', authCodeData.code);
-      if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
-      // RFC 9207 §2: include iss in success responses too.
-      redirectUrl.searchParams.set('iss', issuer);
-      return c.redirect(redirectUrl.toString());
+${promptNoneSuccessRedirect}
     }
 
     // OIDC Core 1.0 Section 3.1.2.3: an active OP session enables Single Sign-On.
@@ -2208,12 +2776,7 @@ ${offlineAccessStep}
               authCodeData.grantId,
             );
 
-            const redirectUrl = new URL(transaction.redirectUri);
-            redirectUrl.searchParams.set('code', authCodeData.code);
-            if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
-            // RFC 9207 §2: include iss in success responses.
-            redirectUrl.searchParams.set('iss', issuer);
-            return c.redirect(redirectUrl.toString());
+${ssoSuccessRedirect}
           }
 
           const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -2221,7 +2784,7 @@ ${offlineAccessStep}
             subject: existingSession.subject,
             authTime: existingSession.authTime,
           });
-          const consentUrl = new URL('/consent', c.req.url);
+${bindingCookieOnConsentRedirect}          const consentUrl = new URL('/consent', c.req.url);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
         }
@@ -2229,27 +2792,12 @@ ${offlineAccessStep}
     }
 
     // Redirect to login page (prompt=login forces re-authentication; handled in login route)
-    const loginUrl = new URL('/login', c.req.url);
+${bindingCookieOnLoginRedirect}    const loginUrl = new URL('/login', c.req.url);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
   } catch (error) {
 ${parCatchBranch}    if (error instanceof AuthorizationError) {
-      if (error.redirectUri) {
-        const redirectUrl = new URL(error.redirectUri);
-        redirectUrl.searchParams.set('error', error.error);
-        if (error.errorDescription) {
-          redirectUrl.searchParams.set('error_description', error.errorDescription);
-        }
-        if (error.state) {
-          redirectUrl.searchParams.set('state', error.state);
-        }
-        // RFC 9207 §2: include iss on error redirects so the client can
-        // pin the issuer. config has already been read into context by
-        // middleware; reread it here because the early-bound issuer is
-        // scoped to the try block.
-        redirectUrl.searchParams.set('iss', c.get('config').issuer);
-        return c.redirect(redirectUrl.toString());
-      }
+${catchErrorRedirect}
       // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
       // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST
       // NOT redirect to the supplied redirect_uri. Browser callers get an HTML
@@ -2460,6 +3008,589 @@ parApp.post('/', async (c) => {
     return c.json({ error: 'server_error' }, 500);
   }
 });
+`;
+}
+
+/**
+ * EXPERIMENTAL — device authorization endpoint (RFC 8628 §3.1 / §3.2), generated
+ * only with `--enable device-authorization-grant`.
+ *
+ * Also owns the shared settings module for the feature: the verification UI and
+ * the discovery route import `deviceAuthorizationConfig` from here, so all three
+ * read one source of truth.
+ */
+export function deviceAuthorizationRouteTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
+  // actually issue refresh tokens. Baked in as a literal so the generated route
+  // has no runtime branch on a feature that is fixed at generation time.
+  const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
+  return `/**
+ * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628).
+ *
+ * This route was generated because the OP was created with
+ * \`--enable device-authorization-grant\`. It is backed by
+ * ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change in a breaking
+ * way between releases. Do not build production code on it without pinning the
+ * version.
+ *
+ * The device (a TV app, a CLI, an IoT box) POSTs here — back channel,
+ * client-authenticated — and receives a device_code it polls the token endpoint
+ * with, plus a short user_code the end user types into /device on another
+ * device's browser.
+ *
+ * NOTE (RFC 8628 §5.1): rate limiting the user_code guess surface is deliberately
+ * left to the deployment layer (reverse proxy / platform), not implemented here.
+ * An in-process counter cannot work on runtimes without shared memory between
+ * instances (Cloudflare Workers and friends), so putting one here would give a
+ * false sense of protection. The in-band defenses are the 20^8 user_code
+ * entropy, the short TTL, and answering every failed match identically.
+ */
+import { Hono } from 'hono';
+import {
+  DeviceAuthorizationError,
+  applyOfflineAccessPolicy,
+  buildDeviceAuthorizationResponse,
+  createDeviceAuthorizationRecord,
+  validateDeviceAuthorizationScope,
+  validateDeviceGrantAllowed,
+} from '${EXPERIMENTAL_PACKAGE}/device-authorization-grant';
+import {
+  TokenError,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  sanitizeErrorDescription,
+  validateClientAuthMethod,
+  verifyClientSecret,
+} from '${corePkg}';
+import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
+import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';
+
+/**
+ * EXPERIMENTAL — Device Authorization Grant settings (RFC 8628).
+ *
+ * Imported by the verification UI and the discovery route, so keep all three in
+ * sync when changing them.
+ *
+ * - deviceCodeExpiresIn: §3.2 expires_in, in seconds. Keep it short: it is the
+ *   window in which a user_code can be guessed (§5.1) or phished (§5.4).
+ * - pollInterval: §3.2 interval, in seconds. The token endpoint raises a
+ *   record's own interval by 5 every time it answers slow_down.
+ * - maxLoginAttempts: failed device logins allowed per record before it is
+ *   denied. Per-record only — see the security notes in the verification route.
+ *
+ * Not configurable: the user_code charset (RFC 8628 §6.1 base-20) and length (8).
+ * They carry the entropy claim, so they are constants in the experimental
+ * package rather than something a config typo can weaken.
+ */
+export const deviceAuthorizationConfig = {
+  deviceCodeExpiresIn: 600,
+  pollInterval: 5,
+  maxLoginAttempts: 5,
+};
+
+export const deviceAuthorizationApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * RFC 8628 §3.1: the device authorization request body MUST be
+ * application/x-www-form-urlencoded (it follows RFC 6749 §3.2.1).
+ */
+function isFormUrlEncoded(contentType: string): boolean {
+  const [mediaType = ''] = contentType.toLowerCase().split(';');
+  return mediaType.trim() === 'application/x-www-form-urlencoded';
+}
+
+function noStore(c: any): void {
+  // RFC 8628 §3.2 has no explicit rule, but device_code is a credential, so the
+  // response follows the token response rules of RFC 6749 §5.1.
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+}
+
+/**
+ * Device Authorization Endpoint
+ * RFC 8628 §3.1 / §3.2
+ */
+deviceAuthorizationApp.post('/', async (c) => {
+  const contentType = c.req.header('Content-Type') ?? '';
+  if (!isFormUrlEncoded(contentType)) {
+    noStore(c);
+    return c.json({ error: 'invalid_request', error_description: 'Device authorization requests must use application/x-www-form-urlencoded' }, 400);
+  }
+
+  // RFC 6749 §3.1: request parameters MUST NOT be repeated. Read the raw body so
+  // URLSearchParams iteration exposes duplicates instead of silently keeping the last.
+  const rawBody = await c.req.text();
+  const params: Record<string, string> = {};
+  const seen = new Set<string>();
+  let duplicateKey: string | undefined;
+  for (const [key, value] of new URLSearchParams(rawBody)) {
+    if (seen.has(key)) {
+      duplicateKey = key;
+      break;
+    }
+    seen.add(key);
+    params[key] = value;
+  }
+
+  if (duplicateKey !== undefined) {
+    noStore(c);
+    return c.json({ error: 'invalid_request', error_description: \`Parameter "\${sanitizeErrorDescription(duplicateKey)}" must not be repeated\` }, 400);
+  }
+
+  const authorization = c.req.header('Authorization') ?? '';
+
+  try {
+    const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
+    const deviceStore = c.get('deviceAuthorizationStore') ?? defaultDeviceAuthorizationStore;
+    const config = c.get('config');
+
+    // --- Client authentication pipeline -------------------------------------
+    // RFC 8628 §3.1: "The client authentication requirements of Section 3.2.1 of
+    // [RFC6749] apply" — so this is the same pipeline the token endpoint runs,
+    // step function for step function. Public clients present only client_id.
+    const presentedCredentials = extractClientCredentials({
+      params,
+      authorizationHeader: authorization,
+    });
+    const client = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(client, presentedCredentials);
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
+
+    // --- Device authorization pipeline --------------------------------------
+    // Each step below is an independent function from
+    // ${EXPERIMENTAL_PACKAGE}/device-authorization-grant, called in RFC 8628 §3.1
+    // order. Delete a call to drop that validation, or insert your own logic
+    // between steps.
+
+    // RFC 6749 §5.2: the client must be registered for the device_code grant.
+    validateDeviceGrantAllowed(client);
+
+    // RFC 8628 §3.1 leaves scope OPTIONAL, but this OP requires scope and openid
+    // everywhere (same rule as /authorize). Requests that omit scope — legal per
+    // RFC 8628 — are therefore rejected: a known, deliberate profile restriction.
+    const requestedScope = validateDeviceAuthorizationScope(params['scope']);
+
+    // OIDC Core 1.0 §11: drop offline_access when it could never be granted.
+    const scope = applyOfflineAccessPolicy(requestedScope, {
+      client,
+      refreshTokenFeatureEnabled: ${refreshTokenFeatureEnabled},
+    });
+
+    // RFC 8628 §3.2 / §5.2: mint a 256-bit device_code and a collision-checked
+    // base-20 user_code, then store the pending record under both.
+    const record = await createDeviceAuthorizationRecord({
+      clientId: client.clientId,
+      scope,
+      store: deviceStore,
+      expiresIn: deviceAuthorizationConfig.deviceCodeExpiresIn,
+      interval: deviceAuthorizationConfig.pollInterval,
+    });
+
+    // Never log device_code or user_code: both are live credentials for the
+    // lifetime of the record (RFC 8628 §5.1 / §5.2).
+
+    noStore(c);
+    return c.json(buildDeviceAuthorizationResponse(record, config.issuer));
+  } catch (error) {
+    noStore(c);
+    if (error instanceof DeviceAuthorizationError) {
+      // RFC 6749 §5.2 error shape. Authentication failures never reach here —
+      // they are core TokenErrors, handled below with their 401.
+      return c.json({ error: error.code, error_description: error.errorDescription }, error.statusCode);
+    }
+    if (error instanceof TokenError) {
+      const status = error.statusCode as 400 | 401;
+      if (error.wwwAuthenticate) {
+        c.header('WWW-Authenticate', error.wwwAuthenticate);
+      }
+      return c.json({ error: error.error, error_description: error.errorDescription }, status);
+    }
+    return c.json({ error: 'server_error' }, 500);
+  }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — device verification UI (RFC 8628 §3.3), generated only with
+ * `--enable device-authorization-grant`.
+ *
+ * Three POST steps hang off one mount point (`/device`, `/device/login`,
+ * `/device/approve`) so the whole browser-facing surface of the feature lives in
+ * a single generated file that can be deleted with the feature.
+ */
+export function deviceVerificationRouteTemplate(corePkg: string): string {
+  return `/**
+ * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant, verification UI
+ * (RFC 8628 §3.3).
+ *
+ * This route was generated because the OP was created with
+ * \`--enable device-authorization-grant\`. It is backed by
+ * ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change in a breaking
+ * way between releases. Do not build production code on it without pinning the
+ * version.
+ *
+ * The end user opens /device on a second device, types the user_code the first
+ * device is showing, signs in, and approves or denies. The device learns the
+ * outcome only by polling the token endpoint — there is no push channel.
+ *
+ * ## Why every POST here demands a binding cookie
+ *
+ * The user_code is known to whoever started the flow, and that party can be the
+ * attacker. A CSRF token stored on the record is therefore not a defense: the
+ * attacker can fetch a valid one by POSTing /device with their own code. What
+ * stops both consent coercion (a forged /device/approve that ships the victim's
+ * tokens to the attacker's device) and login CSRF (a forged /device/login that
+ * plants the attacker's session in the victim's browser) is the binding cookie
+ * minted below — see buildDeviceBindingCookie() in store.ts for the full model.
+ * The hidden csrf_token is kept as defense in depth, never as the only check.
+ */
+import { Hono } from 'hono';
+import {
+  DeviceAuthorizationError,
+  DeviceVerificationError,
+  INVALID_USER_CODE_MESSAGE,
+  approveDeviceAuthorization,
+  denyDeviceAuthorization,
+  findPendingRecordByUserCode,
+  issueVerificationBinding,
+  recordDeviceLoginFailure,
+  validateVerificationBinding,
+  validateVerificationCsrfToken,
+  type DeviceAuthorizationRecord,
+} from '${EXPERIMENTAL_PACKAGE}/device-authorization-grant';
+import { generateRandomString } from '${corePkg}';
+import {
+  browserSessionStore as defaultBrowserSessionStore,
+  buildClearedDeviceBindingCookie,
+  buildDeviceBindingCookie,
+  buildSessionCookie,
+  parseDeviceBindingSecret,
+  parseSessionId,
+  userStore,
+} from '../store.js';
+import { defaultViews, renderView } from '../views.js';
+import { deviceAuthorizationConfig } from './device-authorization.js';
+
+export const deviceApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * Attach a Set-Cookie to a Response a view already produced.
+ *
+ * renderView() builds its own Response, so headers staged on the framework
+ * context never reach it. Rebuilding the Response is the framework-neutral way
+ * to add the cookie without making views cookie-aware.
+ */
+function withCookie(response: Response, cookie: string): Response {
+  const headers = new Headers(response.headers);
+  headers.append('Set-Cookie', cookie);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/**
+ * Remaining lifetime of a record, in whole seconds, never negative.
+ *
+ * Rounded up so the cookie always outlives the record it binds: a cookie that
+ * expired first would turn a still-valid verification into an unexplained 403.
+ */
+function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
+  return Math.max(0, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));
+}
+
+/**
+ * Re-render the code entry form with the single, reason-free failure message.
+ *
+ * RFC 8628 §5.1: unknown, expired and already-used codes must be
+ * indistinguishable, otherwise the response itself confirms which codes exist.
+ */
+function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Response {
+  return renderView(
+    views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
+    { status: 400 },
+  );
+}
+
+/** Map a verification failure to its error page; anything else is re-thrown. */
+function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+  if (error instanceof DeviceVerificationError) {
+    return renderView(
+      views.errorPage({ error: error.message, statusCode: error.statusCode }),
+      { status: error.statusCode },
+    );
+  }
+  if (error instanceof DeviceAuthorizationError) {
+    return renderView(
+      views.errorPage({ error: error.errorDescription, statusCode: 400 }),
+      { status: 400 },
+    );
+  }
+  throw error;
+}
+
+/**
+ * User code entry form - GET
+ * RFC 8628 §3.3 / §3.3.1
+ *
+ * Unauthenticated and side-effect free. A user_code in the query string
+ * (verification_uri_complete) only pre-fills the field: nothing is looked up or
+ * mutated until the form is submitted, so following the complete URI never
+ * consumes or reveals anything.
+ */
+deviceApp.get('/', (c) => {
+  const views = c.get('views') ?? defaultViews;
+  return renderView(views.deviceVerificationPage({ userCode: c.req.query('user_code') ?? '' }));
+});
+
+/**
+ * User code submission - POST
+ * RFC 8628 §3.3
+ *
+ * On a match this is where the browser binding is minted, so this is also the
+ * first response that may carry a csrf_token. Everything downstream requires the
+ * cookie this response sets.
+ */
+deviceApp.post('/', async (c) => {
+  const body = await c.req.parseBody();
+  const submittedUserCode = String(body['user_code'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const deviceStore = c.get('deviceAuthorizationStore');
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+
+  const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
+  if (!record) {
+    return renderInvalidUserCode(views, submittedUserCode);
+  }
+
+  // Rotate the binding secret and the csrf token together. A second browser
+  // submitting the same user_code takes the binding over (last writer wins);
+  // that is inherent to a flow whose identifier is shareable by design.
+  const { bindingSecret, csrfToken } = await issueVerificationBinding(record, deviceStore);
+  const cookie = buildDeviceBindingCookie(
+    record.userCode,
+    bindingSecret,
+    remainingTtlSeconds(record),
+  );
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+  if (session) {
+    return withCookie(renderView(views.deviceApprovalPage({
+      userCode: record.userCodeDisplay,
+      csrfToken,
+      clientId: record.clientId,
+      scopes: record.scope,
+    })), cookie);
+  }
+
+  return withCookie(renderView(views.deviceLoginPage({
+    userCode: record.userCodeDisplay,
+    csrfToken,
+  })), cookie);
+});
+
+/**
+ * Device login - POST
+ * RFC 8628 §3.3
+ *
+ * Binding first, then CSRF, then credentials: the binding is what proves this is
+ * the browser that submitted the user_code, and it must gate the step that would
+ * otherwise let a forged POST establish an OP session in the victim's browser.
+ */
+deviceApp.post('/login', async (c) => {
+  const body = await c.req.parseBody();
+  const submittedUserCode = String(body['user_code'] ?? '');
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const username = String(body['username'] ?? '');
+  const password = String(body['password'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const deviceStore = c.get('deviceAuthorizationStore');
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const authenticateUser =
+    c.get('authenticateUser') ??
+    ((u: string, p: string) => userStore.authenticate(u, p));
+
+  const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
+  if (!record) {
+    return renderInvalidUserCode(views, submittedUserCode);
+  }
+
+  try {
+    await validateVerificationBinding(
+      record,
+      parseDeviceBindingSecret(c.req.header('Cookie') ?? null, record.userCode),
+    );
+    validateVerificationCsrfToken(record, csrfToken);
+  } catch (error) {
+    return renderVerificationError(views, error);
+  }
+
+  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
+  // upstream IdP) without touching anything above or below it.
+  const user = await authenticateUser(username, password);
+  if (!user) {
+    // Per-record throttling only. An attacker holding a device-grant client can
+    // mint unlimited records, so the aggregate password-guess budget is the same
+    // as the one on /login — subject-scoped throttling is tracked separately in
+    // tasks/p2-login-attempt-throttling-subject-scope.md.
+    const failure = await recordDeviceLoginFailure(
+      record,
+      deviceStore,
+      deviceAuthorizationConfig.maxLoginAttempts,
+    );
+    if (!failure.canRetry) {
+      // The record is now denied: the device gets access_denied on its next poll.
+      return renderView(views.errorPage({
+        error: 'Too many login attempts',
+        statusCode: 429,
+      }), { status: 429 });
+    }
+    return renderView(views.deviceLoginPage({
+      userCode: record.userCodeDisplay,
+      csrfToken,
+      error: 'Invalid credentials',
+      remainingAttempts: failure.remainingAttempts,
+    }));
+  }
+
+  const authTime = Math.floor(Date.now() / 1000);
+  const sessionId = generateRandomString(32);
+  await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
+
+  // Two cookies on one response: the new OP session, and the binding cookie the
+  // approval POST will have to present again.
+  const withSession = withCookie(renderView(views.deviceApprovalPage({
+    userCode: record.userCodeDisplay,
+    csrfToken,
+    clientId: record.clientId,
+    scopes: record.scope,
+  })), buildSessionCookie(sessionId));
+  return withSession;
+});
+
+/**
+ * Approve or deny - POST
+ * RFC 8628 §3.3
+ *
+ * The only state-changing step of the UI, so it demands all three: an OP
+ * session, the binding cookie, and the csrf_token.
+ */
+deviceApp.post('/approve', async (c) => {
+  const body = await c.req.parseBody();
+  const submittedUserCode = String(body['user_code'] ?? '');
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const decision = String(body['decision'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const deviceStore = c.get('deviceAuthorizationStore');
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const consentResolver = c.get('consentResolver');
+
+  const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
+  if (!record) {
+    return renderInvalidUserCode(views, submittedUserCode);
+  }
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+  if (!session) {
+    return renderView(views.errorPage({
+      error: 'Sign in again to approve this device',
+      statusCode: 401,
+    }), { status: 401 });
+  }
+
+  const clearCookie = buildClearedDeviceBindingCookie(record.userCode);
+  try {
+    await validateVerificationBinding(
+      record,
+      parseDeviceBindingSecret(c.req.header('Cookie') ?? null, record.userCode),
+    );
+
+    if (decision === 'approve') {
+      // csrf_token is validated inside; the record moves to approved with the
+      // subject, auth_time, scope and a fresh grantId the token endpoint reads.
+      const approved = await approveDeviceAuthorization({
+        record,
+        store: deviceStore,
+        csrfToken,
+        subject: session.subject,
+        authTime: session.authTime,
+      });
+      // Record the consent the same way /consent does, so a later Authorization
+      // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
+      await consentResolver?.recordConsent?.(
+        approved.subject,
+        approved.clientId,
+        approved.approvedScope ?? approved.scope,
+      );
+      await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
+      return withCookie(renderView(views.deviceCompletedPage({
+        approved: true,
+        clientId: approved.clientId,
+      })), clearCookie);
+    }
+
+    await denyDeviceAuthorization({ record, store: deviceStore, csrfToken });
+    return withCookie(renderView(views.deviceCompletedPage({
+      approved: false,
+      clientId: record.clientId,
+    })), clearCookie);
+  } catch (error) {
+    return renderVerificationError(views, error);
+  }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — JARM settings module, generated only with `--enable jarm`.
+ *
+ * Kept in its own file (rather than config.ts) so the JARM feature can be
+ * removed by deleting the files it generated, and so the authorize and consent
+ * routes read one shared setting.
+ */
+export function jarmConfigTemplate(): string {
+  return `/**
+ * EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM).
+ *
+ * This module was generated because the OP was created with \`--enable jarm\`.
+ * It is backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may
+ * change in a breaking way between releases. Do not build production code on it
+ * without pinning the version.
+ *
+ * Imported by the authorize and consent routes, so keep all three in sync when
+ * changing these settings.
+ *
+ * - jarmResponseLifetimeSeconds: how long the response JWT stays valid (its
+ *   \`exp\` claim). JARM Section 2.1 RECOMMENDs a maximum lifetime of 10 minutes,
+ *   so values outside 5-600 seconds fail fast at module load. Keep it short: the
+ *   JWT rides in a URL and only needs to survive one browser redirect.
+ *
+ * Not configurable: the signing algorithm (RS256, JARM Section 3's default for a
+ * client with no registered authorization_signed_response_alg), the response
+ * parameter name (\`response\`, JARM Section 2.3.1) and the supported response
+ * modes (\`query.jwt\` / \`jwt\` — this OP implements response_type=code only, so
+ * \`fragment.jwt\` and \`form_post.jwt\` are rejected with invalid_request).
+ */
+import { assertJarmLifetimeSeconds } from '${EXPERIMENTAL_PACKAGE}/jarm';
+
+export const jarmConfig = {
+  jarmResponseLifetimeSeconds: 60,
+};
+
+assertJarmLifetimeSeconds(jarmConfig.jarmResponseLifetimeSeconds);
 `;
 }
 
@@ -2827,6 +3958,235 @@ export const tokenExchangeConfig = {
     }
 `
     : '';
+  // EXPERIMENTAL (RFC 8628 §3.4): dispatch the device_code grant before core's
+  // validateGrantTypeSupported rejects the URN. Every interpolation below
+  // collapses to the current output when the feature is off, so the default
+  // generation is unchanged byte for byte.
+  const deviceGrantImports = features.deviceAuthorizationGrant
+    ? `
+import {
+  DEVICE_CODE_GRANT_TYPE,
+  DeviceAuthorizationError,
+  processDeviceCodeGrant,
+} from '${EXPERIMENTAL_PACKAGE}/device-authorization-grant';
+import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';`
+    : '';
+  // The device grant issues a refresh token under exactly the conditions the
+  // standard grants do, so the block only exists when refresh tokens do.
+  const deviceRefreshTokenBlock =
+    features.deviceAuthorizationGrant && features.refreshToken
+      ? `
+      // OIDC Core 1.0 §11: offline_access survived the device authorization
+      // endpoint's policy check only if this client may hold refresh tokens, and
+      // the approval screen the user just went through IS the explicit consent
+      // that §11 asks for. Nothing further to gate on here.
+      const deviceRefreshToken = deviceGrant.scope.includes('offline_access')
+        ? generateRandomString(32)
+        : undefined;
+      if (deviceRefreshToken) {
+        const deviceRefreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
+        await deviceRefreshTokenStore.set(deviceRefreshToken, {
+          subject: deviceGrant.subject,
+          clientId: deviceGrant.clientId,
+          scope: deviceGrant.scope,
+          // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
+          // inherit originalIssuedAt so the deadline never slides forward.
+          expiresAt: deviceIssuedAt + deviceConfig.refreshTokenAbsoluteLifetime,
+          originalIssuedAt: deviceIssuedAt,
+          used: false,
+          grantId: deviceGrant.grantId,
+          iat: deviceIssuedAt,
+          issuer: deviceConfig.issuer,
+          audience: deviceAudience,
+          authTime: deviceGrant.authTime,
+          // RFC 8628 has no nonce parameter, so the re-issued ID Token has none
+          // to preserve either.
+          nonce: undefined,
+          acr: deviceAcr,
+          amr: deviceAmr,
+          azp: undefined,
+        });
+      }
+`
+      : '';
+  const deviceRefreshTokenField =
+    features.deviceAuthorizationGrant && features.refreshToken
+      ? `
+        refresh_token: deviceRefreshToken,`
+      : '';
+  const deviceCodeDispatchStep = features.deviceAuthorizationGrant
+    ? `
+    // --- EXPERIMENTAL: OAuth 2.0 Device Authorization Grant (RFC 8628 §3.4) ---
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject it
+    // with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    if (params.grant_type === DEVICE_CODE_GRANT_TYPE) {
+      const deviceStore = c.get('deviceAuthorizationStore') ?? defaultDeviceAuthorizationStore;
+
+      // RFC 8628 §3.5 state machine. Everything except "approved" throws:
+      // authorization_pending / slow_down / access_denied / expired_token, plus
+      // invalid_request / invalid_grant / unauthorized_client from §3.4.
+      const deviceGrant = await processDeviceCodeGrant({
+        params,
+        client: tokenClient,
+        store: deviceStore,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const deviceConfig = c.get('config');
+      const devicePrivateKey = c.get('privateKey');
+      const deviceKeyId = c.get('keyId');
+      // T-022: the ID Token this grant issues follows the SAME key-selection rule
+      // as the standard grants — pick a registered ID Token key whose alg matches
+      // the client's id_token_signed_response_alg (OIDC Dynamic Client
+      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
+      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // it rejects, and would hash at_hash with the wrong algorithm.
+      const deviceIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
+      const deviceFallbackIdKey: SigningKey | undefined =
+        c.get('idTokenPrivateKey') !== undefined
+          ? {
+              privateKey: c.get('idTokenPrivateKey'),
+              publicJwk: c.get('idTokenPublicJwk'),
+              keyId: c.get('idTokenKeyId') ?? deviceKeyId,
+            }
+          : undefined;
+      const deviceRegisteredClient = (await tokenClientResolver.findClient(
+        authenticatedClientId,
+      )) as RegisteredClient | null;
+      const deviceRequestedIdTokenAlg = deviceRegisteredClient?.idTokenSignedResponseAlg;
+      let deviceSelectedIdTokenKey: SigningKey;
+      if (deviceIdTokenSigningKeys.length > 0) {
+        try {
+          deviceSelectedIdTokenKey = selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg);
+        } catch {
+          c.header('Cache-Control', 'no-store');
+          c.header('Pragma', 'no-cache');
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: \`No ID Token signing key registered for alg "\${deviceRequestedIdTokenAlg ?? 'RS256'}"\`,
+            },
+            500,
+          );
+        }
+      } else if (deviceFallbackIdKey) {
+        deviceSelectedIdTokenKey = deviceFallbackIdKey;
+      } else {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+      }
+      const deviceIdTokenPrivateKey = deviceSelectedIdTokenKey.privateKey;
+      const deviceIdTokenKeyId = deviceSelectedIdTokenKey.keyId;
+      const deviceIssuer: AccessTokenIssuer =
+        deviceConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3). RFC 8628 has no resource parameter, so
+      // nothing else is requested.
+      const deviceAudience = buildAccessTokenAudience({
+        userInfoEndpoint: \`\${deviceConfig.issuer}/userinfo\`,
+        issuer: deviceConfig.issuer,
+      });
+
+      const deviceIssuedAt = Math.floor(Date.now() / 1000);
+      const deviceAccessTokenPayload = buildAccessTokenPayload({
+        issuer: deviceConfig.issuer,
+        subject: deviceGrant.subject,
+        clientId: deviceGrant.clientId,
+        scope: deviceGrant.scope,
+        audience: deviceAudience,
+        expiresIn: deviceConfig.accessTokenExpiresIn,
+        issuedAt: deviceIssuedAt,
+      });
+      const deviceAccessToken = await deviceIssuer.issue({
+        payload: deviceAccessTokenPayload,
+        privateKey: devicePrivateKey,
+        keyId: deviceKeyId,
+      });
+
+      // The device authorization endpoint requires the openid scope, so an ID
+      // Token is always issued. It carries no nonce (RFC 8628 defines no such
+      // parameter, and OIDC Core 1.0 §2 only requires nonce when the
+      // authentication request carried one) and no c_hash (there is no code).
+      const deviceAtHash = await computeAtHash(deviceAccessToken, deviceIdTokenPrivateKey);
+      const deviceAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
+      const { acr: deviceAcr, amr: deviceAmr } = await resolveAcrAmr({
+        subject: deviceGrant.subject,
+        clientId: deviceGrant.clientId,
+        acrResolver: deviceAcrResolver,
+      });
+      const deviceIdTokenPayload = buildIdTokenPayload({
+        issuer: deviceConfig.issuer,
+        subject: deviceGrant.subject,
+        clientId: deviceGrant.clientId,
+        scope: deviceGrant.scope,
+        expiresIn: deviceConfig.idTokenExpiresIn,
+        issuedAt: deviceIssuedAt,
+        atHash: deviceAtHash,
+        authTime: deviceGrant.authTime,
+        acr: deviceAcr,
+        amr: deviceAmr,
+      });
+      const deviceIdToken = await generateIdToken({
+        payload: deviceIdTokenPayload,
+        privateKey: deviceIdTokenPrivateKey,
+        keyId: deviceIdTokenKeyId,
+      });
+
+      await accessTokenStore.set(deviceAccessToken, {
+        sub: deviceGrant.subject,
+        clientId: deviceGrant.clientId,
+        scope: deviceGrant.scope,
+        expiresAt: deviceIssuedAt + deviceConfig.accessTokenExpiresIn,
+        // Inherit the grantId minted at approval so revoking the grant kills
+        // every token issued from this device authorization.
+        grantId: deviceGrant.grantId,
+        iat: deviceIssuedAt,
+        nbf: deviceIssuedAt,
+        audience: deviceAudience,
+        issuer: deviceConfig.issuer,
+        jti: deviceAccessTokenPayload.jti,
+      });
+${deviceRefreshTokenBlock}
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: deviceAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: deviceConfig.accessTokenExpiresIn,
+        id_token: deviceIdToken,
+        scope: deviceGrant.scope.join(' '),${deviceRefreshTokenField}
+      });
+    }
+`
+    : '';
+  const deviceGrantCatchBranch = features.deviceAuthorizationGrant
+    ? `    if (error instanceof DeviceAuthorizationError) {
+      // RFC 8628 §3.5: authorization_pending / slow_down / access_denied /
+      // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
+      // only come from client authentication, which runs before the branch and
+      // throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+`
+    : '';
   const tokenExchangeCatchBranch = features.tokenExchange
     ? `    if (error instanceof TokenExchangeError) {
       // RFC 8693 §2.2.2: the exchange errors use the RFC 6749 §5.2 shape. They
@@ -2882,7 +4242,7 @@ import {
   accessTokenStore as defaultAccessTokenStore,
   authCodeStore as defaultAuthCodeStore,${refreshStoreImport}
 } from '../store.js';
-import type { RegisteredClient } from '../config.js';${tokenExchangeImports}
+import type { RegisteredClient } from '../config.js';${tokenExchangeImports}${deviceGrantImports}
 ${tokenExchangeConfigBlock}
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -2993,7 +4353,7 @@ ${refreshStoreConst}
     await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
     const authenticatedClientId = presentedCredentials.clientId;
-${tokenExchangeDispatchStep}
+${tokenExchangeDispatchStep}${deviceCodeDispatchStep}
     // --- Token request validation pipeline --------------------------------
     // Each step below is an independent core function, called in the same order
     // as core's validateTokenRequest(). Delete a call to drop that validation,
@@ -3228,7 +4588,7 @@ ${refreshTokenPersistenceBlock}    c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(tokenResponse);
   } catch (error) {
-${tokenExchangeCatchBranch}    if (error instanceof TokenError) {
+${tokenExchangeCatchBranch}${deviceGrantCatchBranch}    if (error instanceof TokenError) {
       const status = error.statusCode as 400 | 401;
       // RFC 6750 Section 3 / OAuth 2.1 Section 5.2: 401 responses include WWW-Authenticate
       if (error.wwwAuthenticate) {
@@ -3602,6 +4962,11 @@ export function discoveryRouteTemplate(
     `'authorization_code'`,
     ...(features.refreshToken ? [`'refresh_token'`] : []),
     ...(features.tokenExchange ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`] : []),
+    // RFC 8628 §4: the device grant is advertised only when it is generated, so
+    // a client can detect support through discovery.
+    ...(features.deviceAuthorizationGrant
+      ? [`'urn:ietf:params:oauth:grant-type:device_code'`]
+      : []),
   ];
   const grantTypesSupportedEntry = `    grantTypesSupported: [${supportedGrantTypes.join(', ')}],
 `;
@@ -3648,6 +5013,31 @@ export function discoveryRouteTemplate(
     ],
 `
     : '';
+  // EXPERIMENTAL (JARM §4): response_modes_supported is an existing core
+  // DiscoveryConfig field, so the JWT-secured modes are advertised by widening
+  // the value the template passes in — no core change.
+  const responseModesSupportedEntry = features.jarm
+    ? `    // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0 §3:
+    // the OP only implements the authorization code flow, whose authorization
+    // response is returned via query. EXPERIMENTAL (JARM §4): this provider was
+    // generated with --enable jarm, so the JWT-secured query modes are advertised
+    // alongside it. Extend this list when form_post (or other modes) are added.
+    responseModesSupported: ['query', 'query.jwt', 'jwt'],`
+    : `    // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0 §3:
+    // the OP only implements the authorization code flow, whose authorization
+    // response is returned via query, so response_modes_supported is pinned to
+    // ['query']. Extend this list when form_post (or other modes) are added.
+    responseModesSupported: ['query'],`;
+  // EXPERIMENTAL (JARM §4): authorization_signing_alg_values_supported has no
+  // core DiscoveryConfig field, so it is merged onto the metadata object the
+  // same way the PAR endpoint metadata is.
+  const jarmDiscoveryMetadata = features.jarm
+    ? `
+    // EXPERIMENTAL — JARM §4 metadata. The response JWT is always signed with
+    // RS256 (JARM §3: the default for a client that registered no
+    // authorization_signed_response_alg), so exactly one alg is advertised.
+    authorization_signing_alg_values_supported: ['RS256'],`
+    : '';
   // EXPERIMENTAL (RFC 9126 §5): pushed_authorization_request_endpoint is merged
   // onto the metadata object core builds, so core needs no change to advertise it.
   const parDiscoveryImport = features.par
@@ -3662,6 +5052,14 @@ import { parConfig } from './par.js';`
     ...(parConfig.requirePushedAuthorizationRequests
       ? { require_pushed_authorization_requests: true }
       : {}),`
+    : '';
+  // EXPERIMENTAL (RFC 8628 §4): device_authorization_endpoint has no core
+  // DiscoveryConfig field, so it is merged onto the metadata object the same way
+  // the PAR endpoint metadata is — core needs no change to advertise it.
+  const deviceDiscoveryMetadata = features.deviceAuthorizationGrant
+    ? `
+    // EXPERIMENTAL — RFC 8628 §4 metadata.
+    device_authorization_endpoint: \`\${issuer}/device_authorization\`,`
     : '';
   return `import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '${corePkg}';
@@ -3703,11 +5101,7 @@ discoveryApp.get('/', (c) => {
     tokenEndpoint: \`\${issuer}/token\`,
     jwksUri: \`\${issuer}/.well-known/jwks.json\`,
     responseTypesSupported: ['code'],
-    // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0 §3:
-    // the OP only implements the authorization code flow, whose authorization
-    // response is returned via query, so response_modes_supported is pinned to
-    // ['query']. Extend this list when form_post (or other modes) are added.
-    responseModesSupported: ['query'],
+${responseModesSupportedEntry}
     subjectTypesSupported: ['public'],
     idTokenSigningKeys,
     userinfoEndpoint: \`\${issuer}/userinfo\`,
@@ -3779,17 +5173,92 @@ ${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
   // not in OIDC Discovery, so it is added separately.
   return c.json({
     ...metadata,
-    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}
+    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${jarmDiscoveryMetadata}
   });
 });
 `;
 }
 
-export function loginRouteTemplate(corePkg: string): string {
+export function loginRouteTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const bindingImports = features.transactionBinding
+    ? `
+  validateTransactionBinding,
+  AuthTransactionError,
+  type AuthTransaction,`
+    : '';
+  const bindingStoreImport = features.transactionBinding
+    ? `
+  parseTransactionBindingSecret,`
+    : '';
+  const bindingGuard = features.transactionBinding
+    ? `
+/**
+ * Enforce that this step comes from the User-Agent that started the transaction
+ * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
+ * back, or undefined when the binding holds.
+ *
+ * The failure is rendered by the OP itself and never redirected to the client's
+ * redirect_uri: at this point we cannot tell whose transaction this is, so
+ * answering the client would leak that a transaction exists — and, in the
+ * lured-victim case, would hand the attacker's client a code for the victim.
+ * See buildTransactionBindingCookie() in store.ts for the full threat model.
+ */
+async function rejectUnboundTransaction(
+  transaction: AuthTransaction,
+  transactionId: string,
+  cookieHeader: string | null,
+  views: typeof defaultViews,
+): Promise<Response | undefined> {
+  try {
+    await validateTransactionBinding(
+      transaction,
+      parseTransactionBindingSecret(cookieHeader, transactionId),
+    );
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof AuthTransactionError)) throw error;
+    return renderView(views.errorPage({
+      error: error.message,
+      statusCode: error.httpStatusCode,
+    }), { status: error.httpStatusCode });
+  }
+}
+`
+    : '';
+  const bindingCheckBeforeLoginForm = features.transactionBinding
+    ? `
+  // Checked BEFORE rendering: the login page embeds csrf_token, so anyone who
+  // could load this page with a leaked transaction_id would obtain the token
+  // that the POST handlers validate.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
+`
+    : '';
+  const bindingCheckBeforeLoginCsrf = features.transactionBinding
+    ? `  // Checked before validateCsrfToken: the CSRF token only proves the request
+  // carries a value from the form, and that form is reachable by anyone holding
+  // transaction_id. The binding proves it is the same browser.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
+`
+    : '';
   return `import { Hono } from 'hono';
 import {
   getAuthTransaction,
-  validateCsrfToken,
+  validateCsrfToken,${bindingImports}
   handleLoginFailure,
   generateRandomString,
 } from '${corePkg}';
@@ -3798,13 +5267,13 @@ import {
   authSessionStore as defaultAuthSessionStore,
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
-  parseSessionId,
+  parseSessionId,${bindingStoreImport}
   userStore,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const loginApp = new Hono<{ Variables: Record<string, any> }>();
-
+${bindingGuard}
 /**
  * Login Page - GET
  * Displays the login form for user authentication.
@@ -3818,7 +5287,7 @@ loginApp.get('/', async (c) => {
   const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-
+${bindingCheckBeforeLoginForm}
   return renderView(views.loginPage({
     transactionId,
     csrfToken: transaction.csrfToken,
@@ -3847,7 +5316,7 @@ loginApp.post('/', async (c) => {
     ((u: string, p: string) => userStore.authenticate(u, p));
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  validateCsrfToken(transaction, csrfToken);
+${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
 
   // Authenticate user
   const user = await authenticateUser(username, password);
@@ -3905,13 +5374,244 @@ loginApp.post('/', async (c) => {
 `;
 }
 
-export function consentRouteTemplate(corePkg: string): string {
+export function consentRouteTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const bindingImports = features.transactionBinding
+    ? `
+  validateTransactionBinding,
+  AuthTransactionError,
+  type AuthTransaction,`
+    : '';
+  const bindingStoreImport = features.transactionBinding
+    ? `
+  buildClearedTransactionBindingCookie,
+  parseTransactionBindingSecret,`
+    : '';
+  const bindingGuard = features.transactionBinding
+    ? `
+/**
+ * Enforce that this step comes from the User-Agent that started the transaction
+ * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
+ * back, or undefined when the binding holds.
+ *
+ * The failure is rendered by the OP itself and never redirected to the client's
+ * redirect_uri: without a verified owner, answering the client would let an
+ * attacker who lured a victim into their own transaction collect a code for the
+ * victim's identity. See buildTransactionBindingCookie() in store.ts.
+ */
+async function rejectUnboundTransaction(
+  transaction: AuthTransaction,
+  transactionId: string,
+  cookieHeader: string | null,
+  views: typeof defaultViews,
+): Promise<Response | undefined> {
+  try {
+    await validateTransactionBinding(
+      transaction,
+      parseTransactionBindingSecret(cookieHeader, transactionId),
+    );
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof AuthTransactionError)) throw error;
+    return renderView(views.errorPage({
+      error: error.message,
+      statusCode: error.httpStatusCode,
+    }), { status: error.httpStatusCode });
+  }
+}
+`
+    : '';
+  const bindingCheckBeforeConsentForm = features.transactionBinding
+    ? `
+  // Checked BEFORE rendering: the consent page embeds csrf_token, so a third
+  // party holding a leaked transaction_id must not be able to read it here and
+  // then complete POST /consent on the End-User's behalf.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
+`
+    : '';
+  const bindingCheckBeforeConsentCsrf = features.transactionBinding
+    ? `  // Checked before validateCsrfToken and before any decision is acted on: this
+  // is the step that mints the authorization code, so an unbound caller must not
+  // reach it — neither to approve nor to deny on the End-User's behalf.
+  const bindingError = await rejectUnboundTransaction(
+    transaction,
+    transactionId,
+    c.req.header('Cookie') ?? null,
+    views,
+  );
+  if (bindingError) return bindingError;
+`
+    : '';
+  const clearBindingCookieOnDeny = features.transactionBinding
+    ? `    // The transaction is over; drop its binding cookie so the browser does not
+    // keep one cookie per finished flow.
+    c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
+`
+    : '';
+  const clearBindingCookieOnSuccess = features.transactionBinding
+    ? `  // The transaction is over; drop its binding cookie so the browser does not
+  // keep one cookie per finished flow.
+  c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
+
+`
+    : '';
+  // EXPERIMENTAL (JARM): the consent route is where the interactive flow produces
+  // its authorization response, so it must answer in the mode the authorize route
+  // recorded on the transaction. Every interpolation collapses to the current
+  // output when the jarm feature is off.
+  const jarmConsentImports = features.jarm
+    ? `
+import {
+  buildJarmRedirectUrl,
+  createJarmResponseJwt,
+  type JarmAuthTransactionFields,
+} from '${EXPERIMENTAL_PACKAGE}/jarm';
+import { jarmConfig } from './jarm.js';`
+    : '';
+  // transaction-binding already imports AuthTransaction, so only add it when that
+  // feature is off — a duplicate named import would not compile.
+  const jarmConsentCoreImports = features.jarm
+    ? features.transactionBinding
+      ? `
+  selectSigningKeyByAlg,
+  type SigningKey,`
+      : `
+  selectSigningKeyByAlg,
+  type AuthTransaction,
+  type SigningKey,`
+    : '';
+  const jarmConsentHelpers = features.jarm
+    ? `
+/**
+ * EXPERIMENTAL — JARM (JWT Secured Authorization Response Mode).
+ *
+ * The authorize route recorded the requested response mode on the transaction
+ * (jarmResponseMode). This route only ever sees the transaction it read back
+ * from the store, so the auth transaction store MUST persist fields it does not
+ * know about — otherwise a client that asked for a JWT response silently gets a
+ * plain query response instead. conformance.test.ts pins that round trip.
+ */
+function resolveJarmResponse(
+  c: any,
+  transaction: AuthTransaction & JarmAuthTransactionFields,
+): JarmResponseContext | undefined {
+  if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
+  // JARM Section 3: the response JWT always declares alg RS256, so the key is
+  // picked by alg from the registered key set rather than taken from the
+  // general-purpose ACTIVE key, which the SigningKeyProvider contract does not
+  // guarantee to be RS256. Its public half is published at
+  // /.well-known/jwks.json under the same kid. The single-key context is kept as
+  // a fallback for providers that never populated the key set; on the default
+  // single RS256 key both branches resolve the same key.
+  const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+  return {
+    issuer: c.get('config').issuer,
+    clientId: transaction.clientId,
+    signingKey: jarmSigningKeys.length > 0
+      ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+      : {
+          privateKey: c.get('privateKey'),
+          publicJwk: c.get('publicJwk'),
+          keyId: c.get('keyId'),
+        },
+  };
+}
+
+type JarmResponseContext = {
+  issuer: string;
+  clientId: string;
+  signingKey: SigningKey;
+};
+
+/**
+ * EXPERIMENTAL — JARM Section 2.3.1: deliver the authorization response as the
+ * single \`response\` query parameter holding a signed JWT. Without a JARM
+ * transaction this is the plain query response the OP has always produced
+ * (RFC 9207 Section 2 appends iss; in JARM mode the JWT's iss claim carries the
+ * same statement, so no plain iss parameter is added).
+ */
+async function buildConsentRedirect(
+  jarm: JarmResponseContext | undefined,
+  redirectUri: string,
+  parameters: Record<string, string | undefined>,
+  issuer: string,
+): Promise<string> {
+  if (jarm) {
+    return buildJarmRedirectUrl(
+      redirectUri,
+      await createJarmResponseJwt({
+        issuer: jarm.issuer,
+        clientId: jarm.clientId,
+        parameters,
+        signingKey: jarm.signingKey,
+        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
+      }),
+    );
+  }
+  const url = new URL(redirectUri);
+  for (const [name, value] of Object.entries(parameters)) {
+    if (value !== undefined) url.searchParams.set(name, value);
+  }
+  url.searchParams.set('iss', issuer);
+  return url.toString();
+}
+`
+    : '';
+  const consentDenyRedirect = features.jarm
+    ? `  if (action === 'deny') {
+    await transactionStore.delete('auth_txn:' + transactionId);
+    await authSessionStore.delete(transactionId);
+${clearBindingCookieOnDeny}    // EXPERIMENTAL (JARM §2.1): a request that asked for response_mode=query.jwt
+    // gets its error as a signed JWT too, so the client can verify that the OP
+    // it trusts is the one that denied the request.
+    return c.redirect(
+      await buildConsentRedirect(resolveJarmResponse(c, transaction), transaction.redirectUri, {
+        error: 'access_denied',
+        state: transaction.state,
+      }, issuer),
+    );
+  }`
+    : `  if (action === 'deny') {
+    const redirectUrl = new URL(transaction.redirectUri);
+    redirectUrl.searchParams.set('error', 'access_denied');
+    if (transaction.state) {
+      redirectUrl.searchParams.set('state', transaction.state);
+    }
+    redirectUrl.searchParams.set('iss', issuer);
+    await transactionStore.delete('auth_txn:' + transactionId);
+    await authSessionStore.delete(transactionId);
+${clearBindingCookieOnDeny}    return c.redirect(redirectUrl.toString());
+  }`;
+  const consentSuccessRedirect = features.jarm
+    ? `${clearBindingCookieOnSuccess}  // Redirect back to client with authorization code
+  return c.redirect(
+    await buildConsentRedirect(resolveJarmResponse(c, transaction), responseParams.redirectUri, {
+      code: authCodeData.code,
+      state: responseParams.state,
+    }, issuer),
+  );`
+    : `${clearBindingCookieOnSuccess}  // Redirect back to client with authorization code
+  const redirectUrl = new URL(responseParams.redirectUri);
+  redirectUrl.searchParams.set('code', authCodeData.code);
+  if (responseParams.state) {
+    redirectUrl.searchParams.set('state', responseParams.state);
+  }
+  redirectUrl.searchParams.set('iss', issuer);
+  return c.redirect(redirectUrl.toString());`;
   return `import { Hono } from 'hono';
 import {
   getAuthTransaction,
-  validateCsrfToken,
+  validateCsrfToken,${bindingImports}
   completeAuthTransaction,
-  createAuthorizationCode,
+  createAuthorizationCode,${jarmConsentCoreImports}
 } from '${corePkg}';
 import {
   clientResolver as defaultClientResolver,
@@ -3920,12 +5620,12 @@ import {
 import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
-  authSessionStore as defaultAuthSessionStore,
+  authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import { defaultViews, renderView } from '../views.js';${jarmConsentImports}
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
-
+${bindingGuard}${jarmConsentHelpers}
 /**
  * Consent Page - GET
  * Displays the consent form for scope authorization.
@@ -3939,7 +5639,7 @@ consentApp.get('/', async (c) => {
   const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-
+${bindingCheckBeforeConsentForm}
   return renderView(views.consentPage({
     transactionId,
     csrfToken: transaction.csrfToken,
@@ -3965,24 +5665,14 @@ consentApp.post('/', async (c) => {
   const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-  validateCsrfToken(transaction, csrfToken);
+${bindingCheckBeforeConsentCsrf}  validateCsrfToken(transaction, csrfToken);
 
   // RFC 9207 §2: include the issuer identifier on every authorization response
   // (success and error) so clients can pin the issuer that produced the response.
   const config = c.get('config');
   const issuer = config.issuer;
 
-  if (action === 'deny') {
-    const redirectUrl = new URL(transaction.redirectUri);
-    redirectUrl.searchParams.set('error', 'access_denied');
-    if (transaction.state) {
-      redirectUrl.searchParams.set('state', transaction.state);
-    }
-    redirectUrl.searchParams.set('iss', issuer);
-    await transactionStore.delete('auth_txn:' + transactionId);
-    await authSessionStore.delete(transactionId);
-    return c.redirect(redirectUrl.toString());
-  }
+${consentDenyRedirect}
 
   const session = await authSessionStore.get(transactionId);
   if (!session) {
@@ -4031,14 +5721,7 @@ consentApp.post('/', async (c) => {
 
   await authSessionStore.delete(transactionId);
 
-  // Redirect back to client with authorization code
-  const redirectUrl = new URL(responseParams.redirectUri);
-  redirectUrl.searchParams.set('code', authCodeData.code);
-  if (responseParams.state) {
-    redirectUrl.searchParams.set('state', responseParams.state);
-  }
-  redirectUrl.searchParams.set('iss', issuer);
-  return c.redirect(redirectUrl.toString());
+${consentSuccessRedirect}
 });
 `;
 }
@@ -4082,6 +5765,27 @@ export function applyTemplate(
   const parStoreImport = features.par
     ? `  parStore,\n`
     : '';
+  // EXPERIMENTAL (RFC 8628): the device authorization endpoint is a back-channel,
+  // client-authenticated POST endpoint, so it gets the same CORS policy as /token.
+  // The verification UI (/device...) is reached by direct browser navigation, so
+  // it needs no CORS headers — the same treatment as /login and /consent.
+  const deviceImport = features.deviceAuthorizationGrant
+    ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
+import { deviceApp } from './routes/device.js';\n`
+    : '';
+  const deviceCors = features.deviceAuthorizationGrant
+    ? `  app.use('/device_authorization', protectedCors);\n`
+    : '';
+  const deviceMount = features.deviceAuthorizationGrant
+    ? `  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', deviceApp);\n`
+    : '';
+  const deviceStorageContext = features.deviceAuthorizationGrant
+    ? `    c.set('deviceAuthorizationStore', deviceAuthorizationStore);\n`
+    : '';
+  const deviceStoreImport = features.deviceAuthorizationGrant
+    ? `  deviceAuthorizationStore,\n`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);\n`
     : '';
@@ -4098,7 +5802,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -4112,7 +5816,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -4256,7 +5960,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -4326,7 +6030,7 @@ ${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-co
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -4347,7 +6051,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -4637,7 +6341,185 @@ revocationApp.post('/', async (c) => {
 `;
 }
 
-export function viewsTemplate(): string {
+export function viewsTemplate(
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  // EXPERIMENTAL (RFC 8628 §3.3): the four device pages are generated only with
+  // --enable device-authorization-grant. Every interpolation below collapses to
+  // '' when the feature is off, so the default views.ts is unchanged byte for byte.
+  const deviceParamTypes = features.deviceAuthorizationGrant
+    ? `
+export interface DeviceVerificationPageParams {
+  /**
+   * user_code to pre-fill the input with. Comes from the query string of
+   * verification_uri_complete (RFC 8628 §3.3.1) or from the user's own previous
+   * submission, so it is untrusted input and MUST be escaped before rendering.
+   */
+  userCode?: string;
+  /**
+   * Failure message for a code that did not match. RFC 8628 §5.1: the same text
+   * is used for unknown, expired and already-used codes, so do not add detail
+   * here — it would tell an attacker which codes exist.
+   */
+  error?: string;
+}
+
+export interface DeviceLoginPageParams {
+  /** user_code in display form; carried through as a hidden field. */
+  userCode: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts for this device authorization */
+  remainingAttempts?: number;
+}
+
+export interface DeviceApprovalPageParams {
+  /**
+   * user_code in display form. RFC 8628 §5.4: show it so the user can compare it
+   * with the code on the device screen — that comparison is the only defense
+   * against a remote phishing attempt that lured them to approve someone else's
+   * device.
+   */
+  userCode: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Client the device authorization was requested by */
+  clientId: string;
+  /** Scopes the device asked for */
+  scopes: string[];
+}
+
+export interface DeviceCompletedPageParams {
+  /** true when the user approved, false when they denied */
+  approved: boolean;
+  /** Client the decision applied to */
+  clientId: string;
+}
+`
+    : '';
+  const deviceViewsMembers = features.deviceAuthorizationGrant
+    ? `  /** EXPERIMENTAL (RFC 8628 §3.3): render the user_code entry form */
+  deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the sign-in form for a device flow */
+  deviceLoginPage(params: DeviceLoginPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the approve / deny screen */
+  deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the "go back to your device" screen */
+  deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult;
+`
+    : '';
+  const deviceDefaultViews = features.deviceAuthorizationGrant
+    ? `function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): string {
+  const errorHtml = params.error
+    ? \`<p style="color: red;">\${escapeHtml(params.error)}</p>\`
+    : '';
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Device Activation</title></head>
+<body>
+  <h1>Device Activation</h1>
+  <p>Enter the code shown on your device.</p>
+  \${errorHtml}
+  <form method="POST" action="/device">
+    <div>
+      <label for="user_code">Code:</label>
+      <input type="text" id="user_code" name="user_code" value="\${escapeHtml(params.userCode ?? '')}" required />
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>\`;
+}
+
+function defaultDeviceLoginPage(params: DeviceLoginPageParams): string {
+  const errorHtml = params.error
+    ? \`<p style="color: red;">\${escapeHtml(params.error)}\${
+        params.remainingAttempts !== undefined
+          ? \`. Attempts remaining: \${params.remainingAttempts}\`
+          : ''
+      }</p>\`
+    : '';
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Login</title></head>
+<body>
+  <h1>Login</h1>
+  <p>Activating device code <strong>\${escapeHtml(params.userCode)}</strong></p>
+  \${errorHtml}
+  <form method="POST" action="/device/login">
+    <input type="hidden" name="user_code" value="\${escapeHtml(params.userCode)}" />
+    <input type="hidden" name="csrf_token" value="\${escapeHtml(params.csrfToken)}" />
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>\`;
+}
+
+function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): string {
+  const scopeListHtml = params.scopes
+    .map((s) => \`    <li>\${escapeHtml(s)}</li>\`)
+    .join('\\n');
+
+  // RFC 8628 §5.4: the code is repeated here on purpose. Ask the user to check it
+  // against the device in front of them before approving.
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Authorize Device</title></head>
+<body>
+  <h1>Authorize Device</h1>
+  <p>Confirm that your device is showing this code: <strong>\${escapeHtml(params.userCode)}</strong></p>
+  <p>Do not continue if the code does not match.</p>
+  <p>Client <strong>\${escapeHtml(params.clientId)}</strong> is requesting access to the following scopes:</p>
+  <ul>
+\${scopeListHtml}
+  </ul>
+  <form method="POST" action="/device/approve">
+    <input type="hidden" name="user_code" value="\${escapeHtml(params.userCode)}" />
+    <input type="hidden" name="csrf_token" value="\${escapeHtml(params.csrfToken)}" />
+    <button type="submit" name="decision" value="approve">Approve</button>
+    <button type="submit" name="decision" value="deny">Deny</button>
+  </form>
+</body>
+</html>\`;
+}
+
+function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): string {
+  const outcome = params.approved
+    ? \`<p>You approved <strong>\${escapeHtml(params.clientId)}</strong>.</p>\`
+    : \`<p>You denied <strong>\${escapeHtml(params.clientId)}</strong>.</p>\`;
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Device Activation</title></head>
+<body>
+  <h1>Device Activation</h1>
+\${outcome}
+  <p>You can close this page and go back to your device.</p>
+</body>
+</html>\`;
+}
+
+`
+    : '';
+  const deviceDefaultViewsEntries = features.deviceAuthorizationGrant
+    ? `  deviceVerificationPage: defaultDeviceVerificationPage,
+  deviceLoginPage: defaultDeviceLoginPage,
+  deviceApprovalPage: defaultDeviceApprovalPage,
+  deviceCompletedPage: defaultDeviceCompletedPage,
+`
+    : '';
   return `/**
  * UI Views for OpenID Connect Provider.
  *
@@ -4691,7 +6573,7 @@ export interface ErrorPageParams {
   /** HTTP status code */
   statusCode: number;
 }
-
+${deviceParamTypes}
 // ============================================================
 // Views Interface
 // ============================================================
@@ -4710,7 +6592,7 @@ export interface Views {
   consentPage(params: ConsentPageParams): ViewResult;
   /** Render a generic error page */
   errorPage(params: ErrorPageParams): ViewResult;
-}
+${deviceViewsMembers}}
 
 /** Options applied when renderView wraps an HTML string into a Response. */
 export interface RenderViewInit {
@@ -4834,7 +6716,7 @@ function defaultErrorPage(params: ErrorPageParams): string {
 </html>\`;
 }
 
-/**
+${deviceDefaultViews}/**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
  */
@@ -4842,7 +6724,7 @@ export const defaultViews: Views = {
   loginPage: defaultLoginPage,
   consentPage: defaultConsentPage,
   errorPage: defaultErrorPage,
-};
+${deviceDefaultViewsEntries}};
 
 /**
  * Build a Views instance, overriding any subset of the default views with your
@@ -4990,10 +6872,11 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
     const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-    // The login -> consent handoff is keyed by transaction_id (not a cookie), so the
-    // flow needs no cookie jar. These helpers only fetch and parse: they make no
-    // assertions and contain no branching, so every check stays in the it() blocks as
-    // an expect(). Test code carries no logic that could drift from the OP's behavior.
+    // The flow carries forward whatever cookie /authorize set, like a browser
+    // would, so it passes with or without --enable transaction-binding. These
+    // helpers only fetch and parse: they make no assertions and contain no
+    // branching, so every check stays in the it() blocks as an expect(). Test code
+    // carries no logic that could drift from the OP's behavior.
     function relativeFrom(location: string | null): string {
       const url = new URL(location ?? '', 'http://localhost');
       return url.pathname + url.search;
@@ -5045,13 +6928,18 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
@@ -5061,10 +6949,10 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
@@ -5152,10 +7040,11 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
     const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-    // The login -> consent handoff is keyed by transaction_id (not a cookie), so the
-    // flow needs no cookie jar. These helpers only fetch and parse: they make no
-    // assertions and contain no branching, so every check stays in the it() blocks as
-    // an expect(). Test code carries no logic that could drift from the OP's behavior.
+    // The flow carries forward whatever cookie /authorize set, like a browser
+    // would, so it passes with or without --enable transaction-binding. These
+    // helpers only fetch and parse: they make no assertions and contain no
+    // branching, so every check stays in the it() blocks as an expect(). Test code
+    // carries no logic that could drift from the OP's behavior.
     function relativeFrom(location: string | null): string {
       const url = new URL(location ?? '', 'http://localhost');
       return url.pathname + url.search;
@@ -5207,13 +7096,18 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
@@ -5223,10 +7117,10 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
@@ -5577,6 +7471,377 @@ function requestObjectValueConformanceBlock(features: OidcFeatureConfig): string
  * Uses only string concatenation (no nested template literals) so it injects
  * cleanly into the outer generated-file template literal.
  */
+/**
+ * Auth transaction / User-Agent binding contract.
+ *
+ * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 assume the End-User who authenticates and
+ * consents is the one behind the User-Agent that sent the authorization request,
+ * but leave the mechanism to the implementation. The generated OP hands that
+ * browser a secret in an HttpOnly cookie and stores only its hash, so holding
+ * `transaction_id` alone drives no step of the flow. This block pins that
+ * contract: if a user edits the generated routes and drops the check, these
+ * tests fail.
+ */
+export function transactionBindingConformanceBlock(
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  if (!features.transactionBinding) return transactionBindingDisabledConformanceBlock();
+  return `
+  describe('Auth transaction User-Agent binding', () => {
+    const BINDING_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the contract
+    // stays visible in the it() blocks.
+    function bindingRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function bindingCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Start one authorization request and return everything a browser would hold
+    // after it: where the OP sent us, the transaction id, and the binding cookie.
+    async function startFlow(state: string): Promise<{
+      loginPath: string;
+      transactionId: string;
+      cookie: string;
+    }> {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + BINDING_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = bindingRelativeFrom(res.headers.get('Location'));
+      return {
+        loginPath,
+        transactionId:
+          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '',
+        cookie: (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '',
+      };
+    }
+
+    // Log in and reach the consent page as the browser that owns the transaction.
+    async function loginAndReachConsent(flow: {
+      loginPath: string;
+      transactionId: string;
+      cookie: string;
+    }): Promise<{ consentPath: string; consentCsrf: string }> {
+      const loginGet = await app.request(flow.loginPath, {
+        headers: { Cookie: flow.cookie },
+      });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: flow.cookie },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: bindingCsrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = bindingRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: flow.cookie } });
+      return { consentPath, consentCsrf: bindingCsrfFrom(await consentGet.text()) };
+    }
+
+    // The authorization endpoint issues the binding secret; without it there is
+    // nothing to check the later steps against.
+    it('should set a transaction binding cookie on the redirect to the login page', async () => {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=binding-set&prompt=consent' +
+        '&code_challenge=' + BINDING_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const transactionId =
+        new URL(bindingRelativeFrom(res.headers.get('Location')), 'http://localhost')
+          .searchParams.get('transaction_id') ?? '';
+      const setCookie = res.headers.get('Set-Cookie') ?? '';
+
+      expect(res.status).toBe(302);
+      // Named per transaction so two tabs can run two flows at once, and marked
+      // HttpOnly/Secure/SameSite=Lax like the session cookie.
+      expect(setCookie.startsWith('oidc_txn_' + transactionId + '=')).toBe(true);
+      expect(setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+    });
+
+    // The csrf_token lives in this HTML. If a leaked transaction_id were enough to
+    // fetch it, the CSRF defense would reduce to the secrecy of a URL parameter.
+    it('should not expose the csrf token for GET /login without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-login-get');
+
+      const res = await app.request(flow.loginPath);
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('csrf_token')).toBe(false);
+    });
+
+    it('should return 400 for GET /consent without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-consent-get');
+      await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent?transaction_id=' + flow.transactionId);
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('csrf_token')).toBe(false);
+    });
+
+    it('should reject POST /login without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-login-post');
+      const loginGet = await app.request(flow.loginPath, { headers: { Cookie: flow.cookie } });
+      const csrf = bindingCsrfFrom(await loginGet.text());
+
+      const res = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: csrf,
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      // Stopped by the OP itself (400), never redirected onward to the client.
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The core threat: someone holding transaction_id and a valid csrf_token
+    // (both readable from a shared screen or a browser history entry) must still
+    // not be able to complete the grant.
+    it('should not issue an authorization code for POST /consent without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-consent-post');
+      const consent = await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The lured-victim case: the attacker starts their own transaction, so their
+    // cookie is a perfectly valid binding cookie — just not for THIS transaction.
+    it('should not issue an authorization code for POST /consent with another transactions binding cookie', async () => {
+      const victim = await startFlow('binding-victim');
+      const consent = await loginAndReachConsent(victim);
+      const attacker = await startFlow('binding-attacker');
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: attacker.cookie,
+        },
+        body: new URLSearchParams({
+          transaction_id: victim.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    it('should reject POST /consent action=deny without the transaction binding cookie', async () => {
+      const flow = await startFlow('binding-deny');
+      const consent = await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'deny',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // Regression guard: the binding must not break the flow it protects.
+    it('should issue an authorization code for the normal flow with a valid binding cookie', async () => {
+      const flow = await startFlow('binding-happy');
+      const consent = await loginAndReachConsent(flow);
+
+      const res = await app.request('/consent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: flow.cookie,
+        },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: consent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.searchParams.get('state')).toBe('binding-happy');
+      expect((callback.searchParams.get('code') ?? '').length).toBe(43);
+      // The finished transaction's cookie is cleared so it cannot pile up.
+      expect(res.headers.get('Set-Cookie')).toBe(
+        'oidc_txn_' + flow.transactionId + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+      );
+    });
+
+    // Two tabs, two clients, at the same time: the cookie is named per
+    // transaction, so neither flow overwrites the other's secret.
+    it('should complete two concurrent authorization flows in the same browser', async () => {
+      const first = await startFlow('binding-tab-one');
+      const second = await startFlow('binding-tab-two');
+      const bothCookies = first.cookie + '; ' + second.cookie;
+
+      const firstConsent = await loginAndReachConsent({ ...first, cookie: bothCookies });
+      const secondConsent = await loginAndReachConsent({ ...second, cookie: bothCookies });
+
+      const firstRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bothCookies },
+        body: new URLSearchParams({
+          transaction_id: first.transactionId,
+          csrf_token: firstConsent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+      const secondRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bothCookies },
+        body: new URLSearchParams({
+          transaction_id: second.transactionId,
+          csrf_token: secondConsent.consentCsrf,
+          action: 'approve',
+        }).toString(),
+      });
+      const firstCallback = new URL(firstRes.headers.get('Location') ?? '', 'http://localhost');
+      const secondCallback = new URL(secondRes.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(firstCallback.searchParams.get('state')).toBe('binding-tab-one');
+      expect(secondCallback.searchParams.get('state')).toBe('binding-tab-two');
+      expect((firstCallback.searchParams.get('code') ?? '').length).toBe(43);
+      expect((secondCallback.searchParams.get('code') ?? '').length).toBe(43);
+    });
+  });
+`;
+}
+
+/**
+ * Contract for the DEFAULT build, where transaction binding is off.
+ *
+ * This is not merely "the tests are skipped": the frictionless behavior is
+ * itself the contract the project concept depends on. A PoC developer must be
+ * able to drive authorize -> login -> consent with curl and no cookie jar, so
+ * these tests fail if the binding ever becomes unconditional.
+ */
+function transactionBindingDisabledConformanceBlock(): string {
+  return `
+  describe('Auth transaction User-Agent binding (disabled by default)', () => {
+    const NO_BINDING_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function noBindingRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function noBindingCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drive the whole flow WITHOUT ever sending a Cookie header, exactly as a
+    // curl session would. No assertions or branching in here.
+    async function flowWithoutCookies(state: string): Promise<{
+      authorizeSetCookie: string | null;
+      loginFormStatus: number;
+      consentFormStatus: number;
+      consentFormHasCsrf: boolean;
+      callbackCode: string;
+      callbackState: string | null;
+    }> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + NO_BINDING_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = noBindingRelativeFrom(authorizeRes.headers.get('Location'));
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath);
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: noBindingCsrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      const consentPath = noBindingRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath);
+      const consentHtml = await consentGet.text();
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: noBindingCsrfFrom(consentHtml),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+
+      return {
+        authorizeSetCookie: authorizeRes.headers.get('Set-Cookie'),
+        loginFormStatus: loginGet.status,
+        consentFormStatus: consentGet.status,
+        consentFormHasCsrf: noBindingCsrfFrom(consentHtml).length > 0,
+        callbackCode: callback.searchParams.get('code') ?? '',
+        callbackState: callback.searchParams.get('state'),
+      };
+    }
+
+    it('should not set any binding cookie on the redirect to the login page', async () => {
+      const flow = await flowWithoutCookies('no-binding-cookie');
+
+      expect(flow.authorizeSetCookie).toBe(null);
+    });
+
+    // The whole point of leaving this off by default: transaction_id alone is
+    // enough to walk the flow, so the OP can be explored by hand.
+    it('should complete the whole flow without sending a single cookie', async () => {
+      const flow = await flowWithoutCookies('no-binding-flow');
+
+      expect(flow.loginFormStatus).toBe(200);
+      expect(flow.consentFormStatus).toBe(200);
+      expect(flow.consentFormHasCsrf).toBe(true);
+      expect(flow.callbackState).toBe('no-binding-flow');
+      expect(flow.callbackCode.length).toBe(43);
+    });
+  });
+`;
+}
+
 export function customViewConformanceTestBlock(): string {
   return `
   describe('custom view rendering (ViewResult / renderView)', () => {
@@ -5627,8 +7892,13 @@ export function customViewConformanceTestBlock(): string {
         '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
       const authorizeRes = await app.request(authorizeUrl);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-      const res = await app.request(loginUrl.pathname + loginUrl.search);
+      const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
 
       // The login body carries a dynamic transaction_id / csrf_token, so the
       // status + content type pin that renderView delivered a text/html Response
@@ -5653,6 +7923,49 @@ export function customViewConformanceTestBlock(): string {
  * `c-conf` deliberately does NOT register the exchange URN: it is the fixture
  * for the unauthorized_client contract.
  */
+function deviceAuthorizationConformanceClients(features: OidcFeatureConfig): string {
+  if (!features.deviceAuthorizationGrant) return '';
+  const deviceGrantTypes = features.refreshToken
+    ? `['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token']`
+    : `['urn:ietf:params:oauth:grant-type:device_code']`;
+  return `  // EXPERIMENTAL (RFC 8628): a client registered for the device grant, plus a
+  // second one so the contract test can prove a device_code is refused when it is
+  // presented by a client other than the one it was issued to (§3.4).
+  ['c-device', {
+    clientId: 'c-device',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ${deviceGrantTypes},
+    tokenEndpointAuthMethod: 'client_secret_post',
+    offlineAccessAllowed: true,
+  }],
+  ['c-device-other', {
+    clientId: 'c-device-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  // A third device client that registered id_token_signed_response_alg, so the
+  // contract test can prove the device grant honors it just like the standard
+  // grants (OIDC Dynamic Client Registration 1.0 §2).
+  ['c-device-es256', {
+    clientId: 'c-device-es256',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    idTokenSignedResponseAlg: 'ES256' as const,
+  }],
+`;
+}
+
 function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
   if (!features.tokenExchange) return '';
   return `  // EXPERIMENTAL (RFC 8693): a confidential client registered for the exchange
@@ -5686,7 +7999,7 @@ function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
  * Emitted only when the introspection endpoint is generated: it is the only
  * caller, and the generated sample tsconfig sets noUnusedLocals.
  */
-function authorizationCodeConformanceHelper(features: OidcFeatureConfig): string {
+export function authorizationCodeConformanceHelper(features: OidcFeatureConfig): string {
   if (!features.introspection) return '';
   return `
 // RFC 7636 Appendix B example PKCE pair: verifier
@@ -5715,13 +8028,18 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
       '&code_challenge=' + CONFORMANCE_PKCE_CHALLENGE + '&code_challenge_method=S256',
   );
   const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+  // Carry forward whatever cookie /authorize set, exactly as a browser would.
+  // With --enable transaction-binding this is the per-transaction binding
+  // secret the later steps require; without it this is '' and the OP ignores
+  // it, so the same flow works in both builds.
+  const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
   const transactionId =
     new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-  const loginGet = await app.request(loginPath);
+  const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
   const loginRes = await app.request('/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
     body: new URLSearchParams({
       transaction_id: transactionId,
       csrf_token: csrfFrom(await loginGet.text()),
@@ -5731,10 +8049,10 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
   });
 
   const consentPath = relativeFrom(loginRes.headers.get('Location'));
-  const consentGet = await app.request(consentPath);
+  const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
   const consentRes = await app.request('/consent', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
     body: new URLSearchParams({
       transaction_id: transactionId,
       csrf_token: csrfFrom(await consentGet.text()),
@@ -5780,7 +8098,7 @@ export function conformanceTestClientsBlock(features: OidcFeatureConfig): string
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_basic',
   }],
-${tokenExchangeConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}]);
 `;
   }
   return `const testClients = new Map<string, RegisteredClient>([
@@ -5817,7 +8135,7 @@ ${tokenExchangeConformanceClients(features)}]);
     tokenEndpointAuthMethod: 'client_secret_basic',
     offlineAccessAllowed: true,
   }],
-${tokenExchangeConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}]);
 `;
 }
 
@@ -6201,14 +8519,19 @@ export function pkceDisabledConformanceBlock(features: OidcFeatureConfig): strin
       );
       expect(authorizeRes.status).toBe(302);
       const loginPath = relativePathFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       expect(loginPath.startsWith('/login?')).toBe(true);
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6220,10 +8543,10 @@ export function pkceDisabledConformanceBlock(features: OidcFeatureConfig): strin
       const consentPath = relativePathFrom(loginRes.headers.get('Location'));
       expect(consentPath.startsWith('/consent?')).toBe(true);
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6278,12 +8601,17 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6292,10 +8620,10 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6341,12 +8669,17 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6355,10 +8688,10 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6402,12 +8735,17 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6416,10 +8754,10 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6463,6 +8801,15 @@ export function endpointBehaviorConformanceBlock(
   const revocationMethodTest = features.revocation
     ? `
       { path: '/revoke', method: 'GET', allow: 'POST' },`
+    : '';
+  // EXPERIMENTAL (RFC 8628): the four device endpoints registered in
+  // OIDC_ENDPOINT_METHODS must enforce their method lists like every other one.
+  const deviceMethodTests = features.deviceAuthorizationGrant
+    ? `
+      { path: '/device_authorization', method: 'GET', allow: 'POST' },
+      { path: '/device', method: 'PUT', allow: 'GET, POST' },
+      { path: '/device/login', method: 'GET', allow: 'POST' },
+      { path: '/device/approve', method: 'GET', allow: 'POST' },`
     : '';
   const corsPreflightTest = includeHonoApplyParity
     ? `    it('should give createApp and applyOidc the same CORS preflight behavior', async () => {
@@ -6514,7 +8861,7 @@ export function endpointBehaviorConformanceBlock(
     it('should return 405 and an exact Allow header for unsupported endpoint methods', async () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
-        { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },${introspectionMethodTest}${revocationMethodTest}
+        { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },${introspectionMethodTest}${revocationMethodTest}${deviceMethodTests}
         { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
         { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
       ];
@@ -6574,11 +8921,16 @@ ${corsPreflightTest}
       );
       expect(authorizeRes.status).toBe(302);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginUrl.pathname + loginUrl.search);
+      const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6588,10 +8940,12 @@ ${corsPreflightTest}
       });
       expect(loginRes.status).toBe(302);
       const consentUrl = new URL(loginRes.headers.get('Location') ?? '', 'http://localhost');
-      const consentGet = await app.request(consentUrl.pathname + consentUrl.search);
+      const consentGet = await app.request(consentUrl.pathname + consentUrl.search, {
+        headers: { Cookie: bindingCookie },
+      });
       const denyRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -6698,12 +9052,17 @@ export function idTokenHintConformanceBlock(): string {
         '&code_challenge=' + HINT_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
       const loginPath = hintRelativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: hintCsrfToken(await loginGet.text()),
@@ -6713,10 +9072,10 @@ export function idTokenHintConformanceBlock(): string {
       });
       hintSessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
       const consentPath = hintRelativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: hintCsrfToken(await consentGet.text()),
@@ -6915,13 +9274,18 @@ export function consentWithdrawalConformanceBlock(features: OidcFeatureConfig): 
       );
       expect(authorizeRes.status).toBe(302);
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
@@ -6932,10 +9296,10 @@ export function consentWithdrawalConformanceBlock(features: OidcFeatureConfig): 
       expect(loginRes.status).toBe(302);
       const sessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
@@ -7120,13 +9484,18 @@ export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): stri
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       const transactionId =
         new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
-      const loginGet = await app.request(loginPath);
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
@@ -7136,10 +9505,10 @@ export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): stri
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath);
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
@@ -7784,12 +10153,17 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
           '/authorize?client_id=c-conf&request_uri=' + encodeURIComponent(requestUri),
         );
         const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+        // Carry forward whatever cookie /authorize set, exactly as a browser would.
+        // With --enable transaction-binding this is the per-transaction binding
+        // secret the later steps require; without it this is '' and the OP ignores
+        // it, so the same flow works in both builds.
+        const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
         const transactionId =
           new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-        const loginGet = await app.request(loginPath);
+        const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
         const loginRes = await app.request('/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
           body: new URLSearchParams({
             transaction_id: transactionId,
             csrf_token: csrfFrom(await loginGet.text()),
@@ -7798,10 +10172,10 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
           }).toString(),
         });
         const consentPath = relativeFrom(loginRes.headers.get('Location'));
-        const consentGet = await app.request(consentPath);
+        const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
         const consentRes = await app.request('/consent', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
           body: new URLSearchParams({
             transaction_id: transactionId,
             csrf_token: csrfFrom(await consentGet.text()),
@@ -7845,12 +10219,17 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
             encodeURIComponent(requestUri),
         );
         const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+        // Carry forward whatever cookie /authorize set, exactly as a browser would.
+        // With --enable transaction-binding this is the per-transaction binding
+        // secret the later steps require; without it this is '' and the OP ignores
+        // it, so the same flow works in both builds.
+        const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
         const transactionId =
           new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-        const loginGet = await app.request(loginPath);
+        const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
         const loginRes = await app.request('/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
           body: new URLSearchParams({
             transaction_id: transactionId,
             csrf_token: csrfFrom(await loginGet.text()),
@@ -7859,7 +10238,7 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
           }).toString(),
         });
         const consentPath = relativeFrom(loginRes.headers.get('Location'));
-        const consentHtml = await (await app.request(consentPath)).text();
+        const consentHtml = await (await app.request(consentPath, { headers: { Cookie: bindingCookie } })).text();
 
         expect(authorizeRes.status).toBe(302);
         // The consent screen lists the pushed scope, not the tampered one.
@@ -8012,6 +10391,1326 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
 `;
 }
 
+/**
+ * How the target framework answers the interactive (login -> consent) flow when
+ * JARM is enabled.
+ *
+ * - 'jwt': the consent route signs the response, so the contract test asserts the
+ *   JARM JWT. This is the normal case (hono / express / fastify / web-standard).
+ * - 'plain': the consent step cannot produce a verifiable response JWT and stays
+ *   on the plain query response. Next.js is the only such target — see
+ *   {@link jarmInteractiveConsentPlainBlock} for why — and the contract test must
+ *   assert the plain response, or it would be green while the generated provider
+ *   does the opposite.
+ */
+export type JarmConsentResponseMode = 'jwt' | 'plain';
+
+/**
+ * Contract tests for a target whose consent route answers in the recorded JARM
+ * mode: the login -> consent flow delivers one signed JWT in `response`.
+ */
+function jarmInteractiveConsentJwtBlock(): string {
+  return `    describe('Success response (JARM Section 2.3.1)', () => {
+      it('should deliver the authorization response as the only response query parameter', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+
+        // JARM Section 2.3.1: the response is carried by a single \`response\`
+        // parameter. The plain code / state / iss parameters MUST NOT be added —
+        // the JWT's iss claim replaces RFC 9207's iss parameter.
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+      });
+
+      it('should sign the response JWT with RS256 under a kid published in JWKS', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const inspected = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+
+        // JARM Section 3: RS256 is the default (and here the only) algorithm.
+        // No typ header: JARM does not define one and its Section 2.3.1 example
+        // header carries only kid and alg.
+        expect(inspected.header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(inspected.signatureValid).toBe(true);
+      });
+
+      it('should carry exactly iss, aud, exp, code and state as claims', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+
+        // JARM Section 2.1: iss / aud / exp are REQUIRED and the authorization
+        // response parameters travel as claims of the same JWT. The claim set is
+        // pinned whole so an added claim (a PII leak, for instance) fails here.
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+        expect(payload.iss).toBe('http://localhost:3000');
+        expect(payload.aud).toBe('c-conf');
+        expect(payload.state).toBe('jarm-state');
+      });
+
+      it('should exchange the code carried by the response JWT for tokens', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: String(payload.code ?? ''),
+            redirect_uri: REDIRECT_URI,
+            client_id: 'c-conf',
+            client_secret: 's',
+            code_verifier: PKCE_VERIFIER,
+          }).toString(),
+        });
+
+        // JARM changes only how the response is delivered; the code itself is an
+        // ordinary authorization code and the token endpoint is untouched.
+        expect(res.status).toBe(200);
+        expect((await res.json()).token_type).toBe('Bearer');
+      });
+
+      it('should treat the jwt shorthand as query.jwt', async () => {
+        // JARM Section 2.3.4: for response_type=code the default JWT delivery
+        // mode is query.jwt, so the \`jwt\` shorthand means exactly that.
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'jwt' }));
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(location).get('response') ?? '',
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+    });
+
+    describe('Error response (JARM Section 2.1)', () => {
+      it('should return a signed error JWT when the End-User denies consent', async () => {
+        const { location } = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt' }),
+          'deny',
+        );
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(location).get('response') ?? '',
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'error', 'exp', 'iss', 'state']);
+        expect(payload.error).toBe('access_denied');
+        expect(payload.state).toBe('jarm-state');
+      });
+
+${jarmPromptNoneErrorTest()}    });
+`;
+}
+
+/**
+ * Contract tests for a target whose consent step cannot answer in JARM mode.
+ *
+ * Next.js drives consent through a Server Action (app/consent/actions.ts), which
+ * is bundled separately from the Route Handlers and therefore holds its own
+ * instance of the signing key provider. A response signed there would carry the
+ * same `kid` as /.well-known/jwks.json but different key material, so every
+ * client would fail signature verification — returning a plain query response is
+ * the safer answer. These tests pin that limitation instead of asserting a JARM
+ * response the generated provider never produces.
+ */
+function jarmInteractiveConsentPlainBlock(): string {
+  return `    describe('Interactive flow response (Next.js Server Action limitation)', () => {
+      // On this target the consent step runs as a Next.js Server Action, which is
+      // bundled apart from the Route Handlers and holds its own signing key
+      // provider instance. A response JWT signed there would carry the same kid as
+      // /.well-known/jwks.json but different key material, so every client would
+      // fail signature verification. The Server Action therefore keeps the plain
+      // query response, and these tests pin that so the limitation stays visible.
+      it('should return the plain query response after login and consent', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+
+        // RFC 9207 Section 2: the plain response carries iss, because no JWT iss
+        // claim is available to identify the issuer here.
+        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
+        expect(queryOf(location).get('state')).toBe('jarm-state');
+        expect(queryOf(location).get('iss')).toBe('http://localhost:3000');
+      });
+
+      it('should return the plain query error when the End-User denies consent', async () => {
+        const { location } = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt' }),
+          'deny',
+        );
+
+        expect([...queryOf(location).keys()].sort()).toEqual(['error', 'iss', 'state']);
+        expect(queryOf(location).get('error')).toBe('access_denied');
+        expect(queryOf(location).get('state')).toBe('jarm-state');
+      });
+
+      it('should exchange the plainly delivered code for tokens', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: queryOf(location).get('code') ?? '',
+            redirect_uri: REDIRECT_URI,
+            client_id: 'c-conf',
+            client_secret: 's',
+            code_verifier: PKCE_VERIFIER,
+          }).toString(),
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).token_type).toBe('Bearer');
+      });
+    });
+
+    describe('Error response (JARM Section 2.1)', () => {
+${jarmPromptNoneErrorTest()}    });
+`;
+}
+
+/**
+ * prompt=none without a session is answered inside the authorize route, which is
+ * an ordinary Route Handler on every target, so this test is shared by both
+ * consent-response modes.
+ */
+function jarmPromptNoneErrorTest(): string {
+  return `      it('should return a signed error JWT for a prompt=none request with no session', async () => {
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none without a session is
+        // login_required. It is a redirectable error, so JARM applies to it.
+        const res = await app.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(payload.error).toBe('login_required');
+        expect(payload.state).toBe('jarm-state');
+      });
+`;
+}
+
+/**
+ * EXPERIMENTAL — Device Authorization Grant (RFC 8628) contract tests, generated
+ * only with `--enable device-authorization-grant`.
+ *
+ * These pin the behavior the repository guarantees for the generated device
+ * flow: change it and they fail, which is how a customized OP learns it has
+ * drifted from the contract (CLAUDE.md).
+ */
+export function deviceAuthorizationConformanceBlock(features: OidcFeatureConfig): string {
+  if (!features.deviceAuthorizationGrant) {
+    return `
+  // The device authorization grant is disabled in this generated provider: no
+  // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
+  // default-off contract so enabling the feature by accident is visible.
+  describe('Device Authorization Grant disabled (RFC 8628)', () => {
+    it('should not serve a device authorization endpoint', async () => {
+      const res = await app.request('/device_authorization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: 'c-conf', scope: 'openid' }).toString(),
+      });
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should not serve the device verification UI', async () => {
+      const res = await app.request('/device');
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should reject the device_code grant with unsupported_grant_type', async () => {
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          device_code: 'anything',
+          client_id: 'c-conf',
+          client_secret: 's',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('unsupported_grant_type');
+    });
+
+    it('should not advertise device authorization metadata', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+      const metadata = await res.json();
+
+      expect(metadata.device_authorization_endpoint).toBeUndefined();
+    });
+
+    it('should not advertise the device_code grant type', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+      const metadata = await res.json();
+
+      expect(
+        (metadata.grant_types_supported as string[]).includes(
+          'urn:ietf:params:oauth:grant-type:device_code',
+        ),
+      ).toBe(false);
+    });
+  });
+`;
+  }
+  const refreshTokenExpectation = features.refreshToken
+    ? `
+    it('should issue a refresh token when offline_access was approved', async () => {
+      // OIDC Core 1.0 §11: the approval screen IS the explicit consent, and
+      // c-device is registered for the refresh_token grant.
+      const flow = await runDeviceFlow({ scope: 'openid offline_access' });
+      const res = await pollToken(flow.device_code);
+      const body = await res.json();
+
+      expect(typeof body.refresh_token).toBe('string');
+    });
+`
+    : `
+    it('should not issue a refresh token when the refresh-token feature is off', async () => {
+      const flow = await runDeviceFlow({ scope: 'openid offline_access' });
+      const res = await pollToken(flow.device_code);
+      const body = await res.json();
+
+      expect(body.refresh_token).toBeUndefined();
+    });
+`;
+  return `
+  // EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628). Generated
+  // because this provider was created with --enable device-authorization-grant.
+  describe('Device Authorization Grant (RFC 8628)', () => {
+    const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
+
+    /**
+     * The app under test. Defaults to the shared one; the ID Token signing key
+     * selection test passes an app built on a mixed RS256 + ES256 key set.
+     */
+    type DeviceTargetApp = { request: (path: string, init?: RequestInit) => Promise<Response> };
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function requestDeviceAuthorization(
+      overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device_authorization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-device',
+          client_secret: 's',
+          scope: 'openid',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function pollToken(
+      deviceCode: string,
+      overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: DEVICE_GRANT_TYPE,
+          device_code: deviceCode,
+          client_id: 'c-device',
+          client_secret: 's',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    /** All Set-Cookie name=value pairs of a response, joined for a Cookie header. */
+    function cookieJar(...responses: Response[]): string {
+      return responses
+        .flatMap((res) => res.headers.getSetCookie())
+        .map((cookie) => cookie.split(';')[0] ?? '')
+        .filter((pair) => pair.length > 0 && !pair.endsWith('='))
+        .join('; ');
+    }
+
+    function submitUserCode(
+      userCode: string,
+      cookie = '',
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams({ user_code: userCode }).toString(),
+      });
+    }
+
+    function deviceLogin(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    function deviceApprove(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    /**
+     * Drive the whole browser side of the flow: user_code -> login -> decision.
+     * The binding cookie is carried forward at every step, exactly as a browser
+     * would; without it the OP answers 403.
+     */
+    async function runDeviceFlow(
+      overrides: Record<string, string> = {},
+      decision: 'approve' | 'deny' = 'approve',
+      target: DeviceTargetApp = app,
+    ): Promise<{ device_code: string; user_code: string; completed: Response }> {
+      const authorization = await (await requestDeviceAuthorization(overrides, target)).json();
+      const submitted = await submitUserCode(authorization.user_code, '', target);
+      const bindingCookie = cookieJar(submitted);
+      const loginRes = await deviceLogin(
+        {
+          user_code: authorization.user_code,
+          csrf_token: csrfFrom(await submitted.text()),
+          username: 'testuser',
+          password: 'password',
+        },
+        bindingCookie,
+        target,
+      );
+      const sessionCookie = cookieJar(submitted, loginRes);
+      const completed = await deviceApprove(
+        {
+          user_code: authorization.user_code,
+          csrf_token: csrfFrom(await loginRes.text()),
+          decision,
+        },
+        sessionCookie,
+        target,
+      );
+      return {
+        device_code: authorization.device_code,
+        user_code: authorization.user_code,
+        completed,
+      };
+    }
+
+    describe('Device authorization endpoint (RFC 8628 §3.1 / §3.2)', () => {
+      it('should return the six response fields with a non-cacheable body', async () => {
+        const res = await requestDeviceAuthorization();
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual([
+          'device_code',
+          'expires_in',
+          'interval',
+          'user_code',
+          'verification_uri',
+          'verification_uri_complete',
+        ]);
+      });
+
+      it('should return the configured lifetime and poll interval', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect([body.expires_in, body.interval]).toEqual([600, 5]);
+      });
+
+      it('should build verification_uri and verification_uri_complete from the issuer', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect(body.verification_uri).toBe('http://localhost:3000/device');
+        expect(body.verification_uri_complete).toBe(
+          'http://localhost:3000/device?user_code=' + body.user_code,
+        );
+      });
+
+      it('should mint a base-20 user_code in XXXX-XXXX form (RFC 8628 §6.1)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/.test(body.user_code)).toBe(true);
+      });
+
+      it('should mint a 256-bit device_code (RFC 8628 §5.2)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect((body.device_code as string).length).toBe(43);
+      });
+
+      it('should issue a distinct device_code for every request', async () => {
+        const first = await (await requestDeviceAuthorization()).json();
+        const second = await (await requestDeviceAuthorization()).json();
+
+        expect(first.device_code === second.device_code).toBe(false);
+      });
+
+      it('should reject a body that is not form-urlencoded', async () => {
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: 'c-device', scope: 'openid' }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Device authorization requests must use application/x-www-form-urlencoded',
+        });
+      });
+
+      it('should reject an unauthenticated request with 401 invalid_client', async () => {
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-device', scope: 'openid' }).toString(),
+        });
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      it('should reject a client that is not registered for the device grant', async () => {
+        const res = await requestDeviceAuthorization({ client_id: 'c-conf' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the device_code grant',
+        });
+      });
+
+      it('should reject a request with no scope', async () => {
+        // RFC 8628 §3.1 makes scope OPTIONAL; this OP requires it (and openid)
+        // everywhere, which is a documented profile restriction.
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-device', client_secret: 's' }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: scope',
+        });
+      });
+
+      it('should reject a scope without openid', async () => {
+        const res = await requestDeviceAuthorization({ scope: 'profile' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_scope',
+          error_description: 'The openid scope is required',
+        });
+      });
+    });
+
+    describe('Discovery metadata (RFC 8628 §4)', () => {
+      it('should advertise the device authorization endpoint', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.device_authorization_endpoint).toBe(
+          'http://localhost:3000/device_authorization',
+        );
+      });
+
+      it('should advertise the device_code grant type', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect((metadata.grant_types_supported as string[]).includes(DEVICE_GRANT_TYPE)).toBe(true);
+      });
+    });
+
+    describe('Verification UI (RFC 8628 §3.3)', () => {
+      it('should serve the code entry form without authentication', async () => {
+        const res = await app.request('/device');
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      });
+
+      it('should pre-fill the form from verification_uri_complete (§3.3.1)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const url = new URL(body.verification_uri_complete);
+        const html = await (await app.request(url.pathname + url.search)).text();
+
+        expect(html.includes('value="' + body.user_code + '"')).toBe(true);
+      });
+
+      it('should not expose a csrf_token before a code has matched', async () => {
+        // The csrf_token only appears on a response that also mints the binding
+        // cookie, so it is never readable by someone who only knows a user_code.
+        const html = await (await app.request('/device')).text();
+
+        expect(csrfFrom(html)).toBe('');
+      });
+
+      it('should answer an unknown user_code with the same reason-free message', async () => {
+        const res = await submitUserCode('BCDF-GHJK');
+
+        expect(res.status).toBe(400);
+        expect((await res.text()).includes('The code is invalid or has expired')).toBe(true);
+      });
+
+      it('should not set a binding cookie for an unknown user_code', async () => {
+        const res = await submitUserCode('BCDF-GHJK');
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should accept the user_code with its hyphen stripped and lower-cased', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await submitUserCode((body.user_code as string).replace('-', '').toLowerCase());
+
+        expect(res.status).toBe(200);
+      });
+
+      it('should set the binding cookie with the exact hardening attributes', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await submitUserCode(body.user_code);
+        const cookie = res.headers.getSetCookie()[0] ?? '';
+
+        expect(cookie.startsWith('oidc_device_' + (body.user_code as string).replace('-', '') + '=')).toBe(true);
+        expect(cookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+      });
+
+      it('should show the login form when no OP session exists', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const html = await (await submitUserCode(body.user_code)).text();
+
+        expect(html.includes('action="/device/login"')).toBe(true);
+      });
+
+      it('should embed a csrf_token once the code matched', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const html = await (await submitUserCode(body.user_code)).text();
+
+        expect(csrfFrom(html).length > 0).toBe(true);
+      });
+    });
+
+    describe('Browser binding enforcement (RFC 8628 §5.4)', () => {
+      it('should reject /device/login without the binding cookie even with a valid csrf_token', async () => {
+        // The whole point: a valid csrf_token is obtainable by anyone who knows
+        // the user_code, so it must NOT be sufficient on its own.
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const csrfToken = csrfFrom(await submitted.text());
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: csrfToken, username: 'testuser', password: 'password' },
+          '',
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should not establish a session when /device/login is unbound', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const csrfToken = csrfFrom(await submitted.text());
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: csrfToken, username: 'testuser', password: 'password' },
+          '',
+        );
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should reject /device/approve without the binding cookie', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const bindingCookie = cookieJar(submitted);
+        const loginRes = await deviceLogin(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await submitted.text()),
+            username: 'testuser',
+            password: 'password',
+          },
+          bindingCookie,
+        );
+        // Session cookie only: the forged request cannot carry the binding.
+        const sessionOnly = cookieJar(loginRes);
+
+        const res = await deviceApprove(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await loginRes.text()),
+            decision: 'approve',
+          },
+          sessionOnly,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should leave the record unapproved after an unbound approve attempt', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const bindingCookie = cookieJar(submitted);
+        const loginRes = await deviceLogin(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await submitted.text()),
+            username: 'testuser',
+            password: 'password',
+          },
+          bindingCookie,
+        );
+        await deviceApprove(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await loginRes.text()),
+            decision: 'approve',
+          },
+          cookieJar(loginRes),
+        );
+        const res = await pollToken(body.device_code);
+
+        expect((await res.json()).error).toBe('authorization_pending');
+      });
+
+      it('should reject a wrong csrf_token even with a valid binding cookie', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: 'forged', username: 'testuser', password: 'password' },
+          cookieJar(submitted),
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should invalidate the previous binding when the code is submitted again', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const first = await submitUserCode(body.user_code);
+        const firstCsrf = csrfFrom(await first.text());
+        const firstCookie = cookieJar(first);
+        await submitUserCode(body.user_code);
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: firstCsrf, username: 'testuser', password: 'password' },
+          firstCookie,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should clear the binding cookie once the decision is recorded', async () => {
+        const flow = await runDeviceFlow();
+        const cleared = flow.completed.headers.getSetCookie()[0] ?? '';
+
+        expect(cleared.startsWith('oidc_device_' + flow.user_code.replace('-', '') + '=;')).toBe(true);
+        expect(cleared.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0')).toBe(true);
+      });
+    });
+
+    describe('Token polling (RFC 8628 §3.5)', () => {
+      it('should answer authorization_pending before the user decides', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await pollToken(body.device_code);
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(await res.json()).toEqual({
+          error: 'authorization_pending',
+          error_description: 'The authorization request is still pending',
+        });
+      });
+
+      it('should answer slow_down when polled again inside the interval', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        await pollToken(body.device_code);
+        const res = await pollToken(body.device_code);
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'slow_down',
+          error_description: 'Polling too frequently. Increase the interval by 5 seconds.',
+        });
+      });
+
+      it('should reject a missing device_code with invalid_request', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            client_id: 'c-device',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: device_code',
+        });
+      });
+
+      it('should reject an unknown device_code with invalid_grant', async () => {
+        const res = await pollToken('not-a-real-device-code');
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject a device_code presented by another client with the same wording', async () => {
+        // RFC 8628 §3.4: the code belongs to the client it was issued to. The
+        // wording matches the unknown-code case so existence is not leaked.
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code: body.device_code,
+            client_id: 'c-device-other',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject a client that is not registered for the device grant', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code: 'anything',
+            client_id: 'c-conf',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the device_code grant',
+        });
+      });
+
+      it('should answer access_denied after the user denies', async () => {
+        const flow = await runDeviceFlow({}, 'deny');
+        const res = await pollToken(flow.device_code);
+
+        expect(await res.json()).toEqual({
+          error: 'access_denied',
+          error_description: 'The end-user denied the authorization request',
+        });
+      });
+    });
+
+    describe('Token issuance (RFC 8628 §3.5 → OIDC Core 1.0 §3.1.3.3)', () => {
+      it('should issue an access token and an ID Token after approval', async () => {
+        const flow = await runDeviceFlow();
+        const res = await pollToken(flow.device_code);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(body.token_type).toBe('Bearer');
+        expect(body.scope).toBe('openid');
+        expect(typeof body.access_token).toBe('string');
+        expect(typeof body.id_token).toBe('string');
+      });
+
+      it('should omit nonce and c_hash from the ID Token', async () => {
+        // RFC 8628 defines no nonce parameter, and there is no authorization code,
+        // so neither claim has a value to carry (OIDC Core 1.0 §2).
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(payload.nonce).toBeUndefined();
+        expect(payload.c_hash).toBeUndefined();
+      });
+
+      it('should carry the auth_time recorded at approval', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(typeof payload.auth_time).toBe('number');
+        expect(payload.aud).toBe('c-device');
+      });
+
+      it('should let the issued access token reach the UserInfo endpoint', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + body.access_token },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+
+      it('should refuse to redeem the same device_code twice', async () => {
+        const flow = await runDeviceFlow();
+        await pollToken(flow.device_code);
+        const res = await pollToken(flow.device_code);
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+${refreshTokenExpectation}    });
+
+    describe('ID Token signing key selection (OIDC Dynamic Client Registration 1.0 §4.2)', () => {
+      /** JOSE header of a compact JWS, decoded. */
+      function joseHeader(jwt: string): Record<string, unknown> {
+        const segment = jwt.split('.')[0] ?? '';
+        return JSON.parse(
+          new TextDecoder().decode(
+            Uint8Array.from(atob(segment.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)),
+          ),
+        );
+      }
+
+      // A client may register id_token_signed_response_alg, and the standard
+      // grants pick a registered key matching it. The device grant MUST NOT
+      // diverge: signing this client's ID Token with whichever key happens to be
+      // ACTIVE would hand it an RS256 token it rejects, and would compute at_hash
+      // with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      it('should sign the device grant ID Token with the alg the client registered', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is RS256; the registered set also holds an ES256 key.
+          async getSigningKey(): Promise<SigningKey> {
+            return {
+              privateKey: rs256Pair.privateKey,
+              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+              keyId: 'device-rs256',
+            };
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [
+              {
+                privateKey: rs256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+                keyId: 'device-rs256',
+              },
+              {
+                privateKey: es256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+                keyId: 'device-es256',
+              },
+            ];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+        const client = { client_id: 'c-device-es256', client_secret: 's' };
+
+        const flow = await runDeviceFlow(client, 'approve', mixedApp);
+        const body = await (await pollToken(flow.device_code, client, mixedApp)).json();
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] =
+          (body.id_token as string).split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          es256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: 'device-es256',
+        });
+        expect(signatureValid).toBe(true);
+      });
+
+      it('should keep signing with RS256 for a client that registered no alg', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'RS256',
+          typ: 'JWT',
+          kid: 'test-key',
+        });
+      });
+    });
+  });
+`;
+}
+
+export function jarmConformanceBlock(
+  features: OidcFeatureConfig,
+  consentResponseMode: JarmConsentResponseMode = 'jwt',
+): string {
+  if (!features.jarm) return '';
+  const interactiveResponseTests =
+    consentResponseMode === 'plain'
+      ? jarmInteractiveConsentPlainBlock()
+      : jarmInteractiveConsentJwtBlock();
+  // The two paths below answer inside the authorize route, so they are genuine
+  // JARM responses on every target. Why that is worth stating differs per mode.
+  const jarmAuthorizeRouteResponsesComment =
+    consentResponseMode === 'plain'
+      ? `      // These paths answer inside the authorize route — a Route Handler, which
+      // shares the signing key provider with /.well-known/jwks.json — so they do
+      // produce a verifiable JARM response even though the consent step above
+      // cannot.
+`
+      : `      // The authorize route records the mode on the transaction and the consent
+      // route reads it back, so a store that drops unknown fields would answer in
+      // plain query. These paths, by contrast, answer inside the authorize route
+      // itself and never touch the store round trip.
+`;
+  return `
+  // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
+  // because this provider was created with --enable jarm. These tests pin the
+  // contract the repository guarantees for the generated JARM responses: change
+  // the behavior and they fail, which is how a customized OP learns it drifted.
+  describe('JWT Secured Authorization Response Mode (JARM)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure helpers: they fetch, parse and verify only. Every assertion lives in
+    // an it(), and none of them branches on the OP's behavior.
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function firstCookie(res: Response): string {
+      return (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+    }
+
+    function decodeSegment(segment: string): Record<string, unknown> {
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    function authorizeUrl(overrides: Record<string, string> = {}): string {
+      return '/authorize?' + new URLSearchParams({
+        response_type: 'code',
+        client_id: 'c-conf',
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid',
+        state: 'jarm-state',
+        nonce: 'jarm-nonce',
+        code_challenge: PKCE_CHALLENGE_S256,
+        code_challenge_method: 'S256',
+        ...overrides,
+      }).toString();
+    }
+
+    /**
+     * Drives authorize -> login -> consent and returns the final Location plus
+     * the browser session cookie login handed out (used by the SSO / prompt=none
+     * cases below). The transaction cookie is carried forward exactly as a
+     * browser would, so this works with or without --enable transaction-binding.
+     */
+    async function interactiveFlow(
+      url: string,
+      action: 'approve' | 'deny' = 'approve',
+    ): Promise<{ location: string; sessionCookie: string }> {
+      const authorizeRes = await app.request(url);
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      const bindingCookie = firstCookie(authorizeRes);
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const sessionCookie = firstCookie(loginRes);
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action,
+        }).toString(),
+      });
+
+      return {
+        location: consentRes.headers.get('Location') ?? '',
+        sessionCookie,
+      };
+    }
+
+    function queryOf(location: string): URLSearchParams {
+      return new URL(location, 'http://localhost').searchParams;
+    }
+
+    /**
+     * JARM Section 2.4 / Section 5.1, from the client's side: resolve the key
+     * from the OP's jwks_uri by kid and verify the RS256 signature before any
+     * claim is trusted.
+     */
+    async function inspectJarmJwt(jwt: string): Promise<{
+      header: Record<string, unknown>;
+      payload: Record<string, unknown>;
+      signatureValid: boolean;
+    }> {
+      const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+      const header = decodeSegment(encodedHeader);
+      const jwks = await (await app.request('/.well-known/jwks.json')).json();
+      const jwk = (jwks.keys as Array<Record<string, unknown>>).find(
+        (candidate) => candidate.kid === header.kid,
+      );
+      const key = await crypto.subtle.importKey(
+        'jwk',
+        { kty: 'RSA', n: jwk?.n as string, e: jwk?.e as string },
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['verify'],
+      );
+      const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const signatureValid = await crypto.subtle.verify(
+        'RSASSA-PKCS1-v1_5',
+        key,
+        Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+        new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+      );
+      return { header, payload: decodeSegment(encodedPayload), signatureValid };
+    }
+
+    describe('Signing key selection (JARM Section 3)', () => {
+      // A SigningKeyProvider may legitimately return an ES256 active key next to
+      // a registered set that also holds RS256 — packages/core's
+      // SigningKeyProvider contract documents alternate-alg key sets, and only
+      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
+      // JARM response JWT always declares alg RS256, so it must be signed with
+      // the RS256 key from that set: signing it with whichever key happens to be
+      // active would make Web Crypto refuse and break the authorization response
+      // delivery path for every client that asked for a JWT response mode.
+      it('should sign with the registered RS256 key when the active key is ES256', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const rs256Key: SigningKey = {
+          privateKey: rs256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+          keyId: 'mixed-rs256',
+        };
+        const es256Key: SigningKey = {
+          privateKey: es256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+          keyId: 'mixed-es256',
+        };
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is the ES256 one; the registered set holds both.
+          async getSigningKey(): Promise<SigningKey> {
+            return es256Key;
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [rs256Key, es256Key];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none with no session is
+        // login_required — a redirectable error, so it is answered in JARM mode
+        // straight from the authorize route, with no interaction to drive.
+        const res = await mixedApp.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const location = res.headers.get('Location') ?? '';
+        const jwt = queryOf(location).get('response') ?? '';
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          'RSASSA-PKCS1-v1_5',
+          rs256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(decodeSegment(encodedHeader)).toEqual({ alg: 'RS256', kid: 'mixed-rs256' });
+        expect(signatureValid).toBe(true);
+        expect(decodeSegment(encodedPayload).error).toBe('login_required');
+      });
+    });
+
+${interactiveResponseTests}
+    describe('Unsupported JWT response modes', () => {
+      // JARM Section 2.3.2 / Section 2.3.3 exist in the specification but are not
+      // implemented by this OP (response_type=code only, no auto-submitting form).
+      // The rejection itself is a PLAIN query error: the OP cannot answer in a
+      // response mode it does not implement.
+      it('should reject fragment.jwt with a plain invalid_request redirect', async () => {
+        const res = await app.request(authorizeUrl({ response_mode: 'fragment.jwt' }));
+        const query = queryOf(res.headers.get('Location') ?? '');
+
+        expect(res.status).toBe(302);
+        expect([...query.keys()].sort()).toEqual(['error', 'error_description', 'iss', 'state']);
+        expect(query.get('error')).toBe('invalid_request');
+        expect(query.get('error_description')).toBe('response_mode fragment.jwt is not supported');
+        expect(query.get('state')).toBe('jarm-state');
+      });
+
+      it('should reject form_post.jwt with a plain invalid_request redirect', async () => {
+        const res = await app.request(authorizeUrl({ response_mode: 'form_post.jwt' }));
+        const query = queryOf(res.headers.get('Location') ?? '');
+
+        expect(query.get('error')).toBe('invalid_request');
+        expect(query.get('error_description')).toBe('response_mode form_post.jwt is not supported');
+      });
+    });
+
+    describe('Unchanged behavior without a JWT response mode', () => {
+      it('should return the plain query response when response_mode is absent', async () => {
+        const { location } = await interactiveFlow(authorizeUrl());
+
+        // The whole point of the isolation: enabling JARM must not change the
+        // response for a client that did not ask for it.
+        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
+        expect(queryOf(location).get('iss')).toBe('http://localhost:3000');
+      });
+
+      it('should keep ignoring a non-JWT response_mode value', async () => {
+        // form_post is not implemented and never was; JARM only adds meaning to
+        // the .jwt family, so this request is answered exactly as before.
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'form_post' }));
+
+        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
+      });
+    });
+
+    describe('Transaction store round trip', () => {
+${jarmAuthorizeRouteResponsesComment}      it('should answer the SSO fast path with a signed JWT', async () => {
+        const first = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'consent' }),
+        );
+        const res = await app.request(authorizeUrl({ response_mode: 'query.jwt' }), {
+          headers: { Cookie: first.sessionCookie },
+        });
+        const { header, payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        // JARM Section 3: the authorize route signs with the RS256 key selected
+        // from the registered key set, not with whichever key happens to be
+        // active, so the alg header always matches the key that produced it.
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+
+      it('should answer a prompt=none success with a signed JWT', async () => {
+        const first = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'consent' }),
+        );
+        const res = await app.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+          { headers: { Cookie: first.sessionCookie } },
+        );
+        const { header, payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+    });
+
+    describe('Discovery metadata (JARM Section 4)', () => {
+      it('should advertise the JWT response modes and the response signing algorithm', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
+        expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
+      });
+    });
+  });
+`;
+}
+
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
@@ -8019,6 +11718,16 @@ export function conformanceTestTemplate(
   const exportPublicJwkImport = features.requestObject
     ? `import { exportPublicJwk } from '${corePkg}';\n`
     : '';
+  const responseModesSupportedExpectation = features.jarm
+    ? `        // OAuth 2.0 Multiple Response Type Encoding Practices §2 + JARM §4: the
+        // code flow returns the authorization response via query, and this OP was
+        // generated with --enable jarm, so the JWT-secured query modes are
+        // advertised alongside it.
+        response_modes_supported: ['query', 'query.jwt', 'jwt'],`
+    : `        // OAuth 2.0 Multiple Response Type Encoding Practices §2: the code flow
+        // returns the authorization response via query, so the OP advertises
+        // response_modes_supported as exactly ['query'].
+        response_modes_supported: ['query'],`;
   // Experimental (RFC 9126): the PAR contract tests need the store and the
   // generated PAR settings.
   const parConformanceImports = features.par
@@ -8251,10 +11960,7 @@ ${persistentStorageConformanceBlock()}
         jwks_uri: 'http://localhost:3000/.well-known/jwks.json',
         userinfo_endpoint: 'http://localhost:3000/userinfo',
         response_types_supported: ['code'],
-        // OAuth 2.0 Multiple Response Type Encoding Practices §2: the code flow
-        // returns the authorization response via query, so the OP advertises
-        // response_modes_supported as exactly ['query'].
-        response_modes_supported: ['query'],
+${responseModesSupportedExpectation}
       });
     });
 
@@ -8523,6 +12229,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}});
 `;
 }

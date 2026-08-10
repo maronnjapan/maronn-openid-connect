@@ -54,7 +54,7 @@ const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
 export const app = express();
 
 app.get('/', (_req, res) => {
-  res.type('text/plain').send('maronn-oidc Express sample');
+  res.type('text/plain').send('maronn-openid-connect Express sample');
 });
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });

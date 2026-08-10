@@ -114,3 +114,9 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 ## Feature Toggles
 
 CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` を機能単位で増減できます。詳細は [CLI Guide](../../guides/cli/) を参照してください。
+
+これらとは別に、**既定では無効**の Optional 機能があります。stable な core の実装ですが、どの OIDC Core / OAuth 2.1 の条文も要求していないため既定から外しており、`--enable` で明示したときだけ生成されます。
+
+| 機能名 | 内容 | 関連仕様 |
+|---|---|---|
+| `transaction-binding` | 認可トランザクションを、それを開始した User-Agent に HttpOnly Cookie で束縛する。`transaction_id` が漏れても `/login`・`/consent` を進行できなくなる代わりに、ブラウザ以外（curl 等）から触るには Cookie の持ち回りが必要になる | OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 |

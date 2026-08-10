@@ -17,18 +17,31 @@ const oidcClientsJson = JSON.stringify([
     clientSecret: 'e2e-client-secret',
     redirectUris: [`${clientBaseURL}/callback`],
     clientType: 'confidential',
-    // The token-exchange URN is registered so the RFC 8693 spec can run against
-    // a sample OP generated with --enable token-exchange. Sample OPs generated
-    // without it reject the grant with unsupported_grant_type, and that spec
-    // skips itself on discovery.
+    // The token-exchange and device_code URNs are registered so the RFC 8693 and
+    // RFC 8628 specs can run against a sample OP generated with the matching
+    // --enable flag. Sample OPs generated without it reject the grant with
+    // unsupported_grant_type, and those specs skip themselves on discovery.
     grantTypes: [
       'authorization_code',
       'refresh_token',
       'urn:ietf:params:oauth:grant-type:token-exchange',
+      'urn:ietf:params:oauth:grant-type:device_code',
     ],
     tokenEndpointAuthMethod: 'client_secret_post',
     responseTypes: ['code'],
     offlineAccessAllowed: true,
+  },
+  {
+    // EXPERIMENTAL (RFC 8628 §3.4): a second device-grant client, so the spec can
+    // prove a device_code is refused when presented by a client other than the
+    // one it was issued to.
+    clientId: 'e2e-device-other',
+    clientSecret: 'e2e-device-other-secret',
+    redirectUris: [`${clientBaseURL}/unused-callback`],
+    clientType: 'confidential',
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    responseTypes: ['code'],
   },
   {
     clientId: 'e2e-resource-server',

@@ -263,3 +263,12 @@ CLI生成された`samples/*`のOpenID Providerを実際に起動し、E2E専用
 
 レビューコメント対応後は、対応したコメントIDと判断を作業報告に含める。
 未対応にしたコメントがある場合は、理由を明記する。
+
+## experimental 機能の昇格レビュー
+
+experimental 機能（`packages/experimental`）を experimental から外すかどうかの判断は、人間のレビュアーが行う。その判断材料として、機能ごとに昇格レビューパケット（`tasks/experimental/(done/)<feature-id>/promotion-review/`）を `pnpm review:experimental <feature-id>` で生成する仕組みがある。詳細は `tasks/experimental/README.md` を参照。
+
+- パケットの `README.md` と `generated-code/` はツールの生成物。手で編集せず、必ず `pnpm review:experimental <feature-id>` で再生成すること
+- `decision.md` は人間のレビュアー専用の判断記録。テンプレートの初回生成はツールが行うが、その内容の記入・変更・削除を人間の明示的な指示なしに行ってはならない
+- `packages/experimental/src` や `packages/cli` のテンプレートなど、機能の生成コードへの寄与（footprint）に影響する変更をしたときは、該当機能のパケットを再生成して同じコミットに含めること（`pnpm review:experimental --all --check` で一致確認できる）
+- ツール本体は `scripts/experimental-review/` にあり、変更時は `pnpm run test:experimental-review` を通すこと

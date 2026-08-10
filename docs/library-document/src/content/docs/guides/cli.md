@@ -81,9 +81,25 @@ maronn-oidc generate express --disable pkce
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
 
+### Optional Features
+
+Optional 機能は **stable な core の実装** ですが、**既定では無効**です。`--enable` で明示したときだけ生成されます。
+
+Experimental と違い API は安定しています。既定から外している理由は別で、**どの OIDC Core / OAuth 2.1 の条文もこれを要求していない**ためです。このライブラリの既定生成物は「仕様そのもの」に保ち、「この仕様で自分の要件が実現できるか」を確かめている利用者が、ライブラリ独自のハードニングに答えを混ぜられないようにしています。
+
+```bash
+maronn-oidc generate hono --enable transaction-binding
+```
+
+| 機能名 | 既定 | 内容 | 関連仕様 |
+|---|---|---|---|
+| `transaction-binding` | 無効 | 認可トランザクションを、それを開始した User-Agent に HttpOnly Cookie（`oidc_txn_<transaction_id>`）で束縛する。有効時は `/login`・`/consent` の GET / POST が Cookie を提示しない相手を 400 で拒否するため、URL を流れる `transaction_id` が漏れてもフローを進行できない | OIDC Core 1.0 §3.1.2.3 / §3.1.2.4（同一性の保証手段は実装責務）。OWASP CSRF Prevention Cheat Sheet |
+
+**有効化するとブラウザ以外から触りにくくなります。** curl や HTTP クライアントで `/authorize` → `transaction_id` を手で拾って `/login` を叩く、という進め方は Cookie を持ち回らないと 400 になります（`curl -c cookies.txt -b cookies.txt` 相当が必要）。手元で仕様を試す段階では無効のまま、束縛の挙動そのものを検証したいときに有効化する、という使い分けを想定しています。
+
 ### Experimental Features
 
-Experimental 機能は上記とは別カテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成され、実装は別 package の `@maronn-openid-connect/experimental` にあります。
+Experimental 機能は上記いずれとも別カテゴリで、**既定では無効**です。`--enable` で明示したときだけ生成され、実装は別 package の `@maronn-openid-connect/experimental` にあります。
 
 ```bash
 maronn-oidc generate hono --enable par
@@ -96,7 +112,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 |---|---|---|---|
 | `par` | 無効 | Pushed Authorization Requests エンドポイント（`/par`）と認可エンドポイントの `request_uri` 解決 | RFC 9126 |
 
-API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](/maronn-oidc/experimental/) を参照してください。
+API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](../../experimental/) を参照してください。
 
 ## Contract Test (conformance.test.ts)
 

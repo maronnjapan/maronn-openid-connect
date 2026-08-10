@@ -112,7 +112,7 @@ if [ -z "${APP_NAME}" ] && [ -f "${APP_NAME_FILE}" ]; then
 fi
 if [ -z "${APP_NAME}" ]; then
   suffix="$(node -e 'console.log(require("node:crypto").randomBytes(3).toString("hex"))' 2>/dev/null || date +%s | tail -c 7)"
-  default_app_name="maronn-oidc-${SAMPLE_NAME}-${suffix}"
+  default_app_name="maronn-openid-connect-${SAMPLE_NAME}-${suffix}"
   guide_info "Fly のアプリ名は全アカウントを通じてグローバルに一意である必要があるため、衝突しにくい候補を生成しました。"
   guide_ask APP_NAME "使用するアプリ名（公開URLは https://<アプリ名>.fly.dev になります）" "${default_app_name}"
 fi

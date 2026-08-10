@@ -34,7 +34,7 @@ ROOT_DIR="$(cd "${SAMPLE_DIR}/../.." && pwd)"
 # Pinned so every run resolves the same CLI major; pnpm dlx caches it after
 # the first download, so no global install is required.
 VERCEL_PKG="vercel@56"
-PROJECT_NAME="maronn-oidc-sample-nextjs-vercel"
+PROJECT_NAME="maronn-openid-connect-sample-nextjs-vercel"
 STATE_DIR="${SAMPLE_DIR}/.deploy"
 ISSUER_FILE="${STATE_DIR}/issuer"
 

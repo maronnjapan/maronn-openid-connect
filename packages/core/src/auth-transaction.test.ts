@@ -1,15 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
   checkPromptNone,
+  computeTransactionBindingHash,
   createAuthTransaction,
   AuthTransactionError,
   AuthTransactionErrorCode,
   getAuthTransaction,
   validateCsrfToken,
+  validateTransactionBinding,
   handleLoginFailure,
   completeAuthTransaction,
   requiresReauthentication,
 } from './auth-transaction.js';
+import { sha256 } from './crypto-utils.js';
 import type {
   AuthTransaction,
   AuthTransactionStore,
@@ -374,6 +377,44 @@ describe('createAuthTransaction', () => {
     expect(txn.codeChallenge).toBeUndefined();
     expect(txn.codeChallengeMethod).toBeUndefined();
   });
+
+  describe('User-Agent binding', () => {
+    it('should store the bindingHash passed through options', async () => {
+      const validated = createValidatedRequest();
+      const bindingHash = await computeTransactionBindingHash('binding-secret');
+      const txn = createAuthTransaction(validated, 'csrf', { bindingHash });
+      expect(txn.bindingHash).toBe(bindingHash);
+    });
+
+    // The raw secret lives only in the User-Agent's cookie. Storing the hash means
+    // a leak of the transaction store alone cannot be replayed as a valid binding.
+    it('should store only the hash and never the raw binding secret in the transaction', async () => {
+      const validated = createValidatedRequest();
+      const bindingHash = await computeTransactionBindingHash('binding-secret');
+      const txn = createAuthTransaction(validated, 'csrf', { bindingHash });
+      expect(JSON.stringify(txn).includes('binding-secret')).toBe(false);
+    });
+
+    it('should leave bindingHash undefined when no options are given', () => {
+      const validated = createValidatedRequest();
+      const txn = createAuthTransaction(validated, 'csrf');
+      expect(txn.bindingHash).toBeUndefined();
+    });
+
+    it('should apply ttlMs from the options object', async () => {
+      const validated = createValidatedRequest();
+      const bindingHash = await computeTransactionBindingHash('binding-secret');
+      const txn = createAuthTransaction(validated, 'csrf', { ttlMs: 1000, bindingHash });
+      expect(txn.expiresAt - txn.createdAt).toBe(1000);
+    });
+
+    it('should keep the numeric ttlMs argument working for backward compatibility', () => {
+      const validated = createValidatedRequest();
+      const txn = createAuthTransaction(validated, 'csrf', 2000);
+      expect(txn.expiresAt - txn.createdAt).toBe(2000);
+      expect(txn.bindingHash).toBeUndefined();
+    });
+  });
 });
 
 describe('getAuthTransaction', () => {
@@ -412,6 +453,86 @@ describe('validateCsrfToken', () => {
   it('should not throw when token matches', () => {
     const txn = createTransaction({ csrfToken: 'real' });
     expect(() => validateCsrfToken(txn, 'real')).not.toThrow();
+  });
+});
+
+// OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the End-User that is authenticated and that
+// grants consent must be the same User-Agent that sent the authorization request.
+// The spec leaves the mechanism to the implementation; this binds the transaction
+// to a secret handed to that User-Agent in a cookie.
+describe('validateTransactionBinding', () => {
+  it('should accept a transaction when the presented binding secret matches the stored hash', async () => {
+    const txn = createTransaction({
+      bindingHash: await computeTransactionBindingHash('binding-secret'),
+    });
+    await expect(validateTransactionBinding(txn, 'binding-secret')).resolves.toBeUndefined();
+  });
+
+  it('should reject a transaction when the presented binding secret does not match', async () => {
+    const txn = createTransaction({
+      bindingHash: await computeTransactionBindingHash('binding-secret'),
+    });
+    await expect(validateTransactionBinding(txn, 'other-secret')).rejects.toMatchObject({
+      name: 'AuthTransactionError',
+      code: AuthTransactionErrorCode.InvalidTransactionBinding,
+    });
+  });
+
+  it('should reject a transaction when no binding secret is presented', async () => {
+    const txn = createTransaction({
+      bindingHash: await computeTransactionBindingHash('binding-secret'),
+    });
+    await expect(validateTransactionBinding(txn, undefined)).rejects.toMatchObject({
+      name: 'AuthTransactionError',
+      code: AuthTransactionErrorCode.InvalidTransactionBinding,
+    });
+  });
+
+  it('should reject a transaction when an empty binding secret is presented', async () => {
+    const txn = createTransaction({
+      bindingHash: await computeTransactionBindingHash('binding-secret'),
+    });
+    await expect(validateTransactionBinding(txn, '')).rejects.toMatchObject({
+      name: 'AuthTransactionError',
+      code: AuthTransactionErrorCode.InvalidTransactionBinding,
+    });
+  });
+
+  // Backward compatibility: transactions created before binding was introduced
+  // (or by a generated OP the user stripped the binding out of) carry no
+  // bindingHash and must keep working.
+  it('should skip binding validation when the transaction has no bindingHash', async () => {
+    const txn = createTransaction();
+    expect(txn.bindingHash).toBeUndefined();
+    await expect(validateTransactionBinding(txn, undefined)).resolves.toBeUndefined();
+  });
+
+  it('should report 400 as the HTTP status code for a binding failure', async () => {
+    const txn = createTransaction({
+      bindingHash: await computeTransactionBindingHash('binding-secret'),
+    });
+    try {
+      await validateTransactionBinding(txn, 'other-secret');
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(AuthTransactionError);
+      expect((e as AuthTransactionError).httpStatusCode).toBe(400);
+    }
+  });
+});
+
+describe('computeTransactionBindingHash', () => {
+  it('should return the base64url SHA-256 digest of the binding secret', async () => {
+    // SHA-256('binding-secret') as base64url, computed independently of the implementation.
+    expect(await computeTransactionBindingHash('binding-secret')).toBe(
+      await sha256('binding-secret'),
+    );
+  });
+
+  it('should return different hashes for different secrets', async () => {
+    const a = await computeTransactionBindingHash('secret-a');
+    const b = await computeTransactionBindingHash('secret-b');
+    expect(a === b).toBe(false);
   });
 });
 

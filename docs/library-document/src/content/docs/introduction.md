@@ -1,17 +1,17 @@
 ---
 title: Introduction
-description: What is Maronn OIDC and when to use it.
+description: What is Maronn OpenID Connect and when to use it.
 ---
 
-## What is Maronn OIDC?
+## What is Maronn OpenID Connect?
 
-Maronn OIDC は、OpenID Connect Core 1.0 と OAuth 2.1 に準拠した軽量なプロバイダーライブラリです。
+Maronn OpenID Connect は、OpenID Connect Core 1.0 と OAuth 2.1 に準拠した軽量なプロバイダーライブラリです。
 
 PoC開発者が「自分の要件がこの仕様で実現できるか？」を素早く検証するためのブリッジを提供します。検証が完了したら、本格的な IdaaS や OSS へ移行していくユースケースを想定しています。
 
 ## Why not Keycloak or Auth0?
 
-| | Maronn OIDC | Keycloak | Auth0 |
+| | Maronn OpenID Connect | Keycloak | Auth0 |
 |---|---|---|---|
 | セットアップ | 数分 | 数時間〜 | SaaS設定が必要 |
 | 依存関係 | ゼロ (production) | 重厚 | クラウド依存 |

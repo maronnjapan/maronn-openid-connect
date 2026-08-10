@@ -128,7 +128,7 @@ export function createBasicOpConformanceArtifacts(options = {}) {
     sampleApp,
     config: {
       alias,
-      description: `maronn-oidc Basic OP certification check for the ${sampleApp.displayName} sample`,
+      description: `maronn-openid-connect Basic OP certification check for the ${sampleApp.displayName} sample`,
       server: {
         discoveryUrl: `${opIssuer}/.well-known/openid-configuration`,
       },

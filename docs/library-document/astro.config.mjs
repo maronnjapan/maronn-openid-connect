@@ -6,7 +6,7 @@ import starlight from '@astrojs/starlight';
 const base =
   process.env.BASE_PATH !== undefined
     ? process.env.BASE_PATH
-    : '/maronn-oidc';
+    : '/maronn-openid-connect';
 
 /** @type {import('astro').AstroUserConfig} */
 export default defineConfig({
@@ -14,14 +14,14 @@ export default defineConfig({
   base,
   integrations: [
     starlight({
-      title: 'Maronn OIDC',
+      title: 'Maronn OpenID Connect',
       description:
         'Lightweight OpenID Connect / OAuth 2.1 provider library for rapidly verifying specs in PoC.',
       social: [
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/maronnjapan/maronn-oidc',
+          href: 'https://github.com/maronnjapan/maronn-openid-connect',
         },
       ],
       sidebar: [
@@ -61,6 +61,11 @@ export default defineConfig({
             { label: 'Experimental機能とは', slug: 'experimental' },
             { label: 'PAR (RFC 9126)', slug: 'experimental/par' },
             { label: 'Token Exchange (RFC 8693)', slug: 'experimental/token-exchange' },
+            { label: 'JARM', slug: 'experimental/jarm' },
+            {
+              label: 'Device Authorization Grant (RFC 8628)',
+              slug: 'experimental/device-authorization-grant',
+            },
           ],
         },
       ],

@@ -27,7 +27,7 @@ describe('createBasicOpConformanceArtifacts', () => {
       assert.equal(BASIC_OP_TEST_PLAN, 'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]');
       assert.deepEqual(artifacts.config, {
         alias: 'maronn-basic-op',
-        description: 'maronn-oidc Basic OP certification check for the Hono Cloudflare sample',
+        description: 'maronn-openid-connect Basic OP certification check for the Hono Cloudflare sample',
         server: {
           discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration',
         },
@@ -216,7 +216,7 @@ describe('createBasicOpConformanceArtifacts', () => {
         'https://conformance-nginx:8443/test/a/alias-with-trailing-slashes/callback',
         'https://conformance-nginx:8443/test/a/alias-with-trailing-slashes/callback?dummy1=lorem&dummy2=ipsum',
       ]);
-      assert.equal(artifacts.config.description, 'maronn-oidc Basic OP certification check for the Express sample');
+      assert.equal(artifacts.config.description, 'maronn-openid-connect Basic OP certification check for the Express sample');
     });
   });
 });

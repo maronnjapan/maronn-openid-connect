@@ -8,7 +8,7 @@
 # concurrent machine would mint a different key under the same kid and break
 # token verification. Single-machine is a hard requirement, not a tuning
 # choice, until the sample loads a persisted signing key.
-app = "maronn-oidc-sample-express-flyio"
+app = "maronn-openid-connect-sample-express-flyio"
 primary_region = "nrt"
 
 [build]

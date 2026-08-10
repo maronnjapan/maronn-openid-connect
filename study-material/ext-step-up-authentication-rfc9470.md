@@ -104,7 +104,8 @@ buildStepUpChallenge({ acrValues: 'urn:mace:incommon:iap:silver', maxAge: 0 })
 
 不足／要確認:
 
-- 🟡 **`AcrResolver` が「要求された acr を満たせない」場合の標準的なエラーパス**: 現在は `undefined` を返すと `acr` クレームが ID Token から落ちるだけ。要求された acr を満たせない場合に明示的にフローを止めて `unmet_authentication_requirements` (OIDC Core §3.1.2.6) を返す経路が無い。
+- 🟡 **`AcrResolver` が「要求された acr を満たせない」場合の標準的なエラーパス**: 現在は `undefined` を返すと `acr` クレームが ID Token から落ちるだけ。要求された acr を満たせない場合に明示的にフローを止める経路が無い。
+  → **本論点は OIDC Core §5.5.1.1 の MUST（Essential な `acr` 要求を満たせない場合は認証失敗として扱う）そのものであり、RFC 9470 とは独立した Core 準拠の論点として `study-material/done/claims-essential-acr-unmet-authentication-failure.md` に分離した。** 最小実装（黙って発行しない）は `tasks/p1-essential-acr-claim-unmet-issuance-guard.md`、認可エンドポイントでの `unmet_authentication_requirements` 返却と追加認証要求は同 study-material の方針 B / C として検討中。なお `unmet_authentication_requirements` は §3.1.2.6 の列挙には含まれず、別仕様（OpenID Connect Core Error Code `unmet_authentication_requirements` 1.0）が定義し IANA に登録されたコードである。
 - 🟡 **リソースサーバ向け WWW-Authenticate ヘルパーが無い**: Step-up を「OP + RS 一式で検証したい」PoC ユーザーは自前で WWW-Authenticate を組み立てる必要がある。
 - 🟡 **Discovery の `acr_values_supported`** が広告されていない: クライアントが「この OP に Step-up を要求できる acr_values 候補」を見られない。本論点は `study-material/discovery-optional-metadata-fields.md` 側と連動。
 - 🟡 **`max_age=0` のエッジケース**: 0 は「常に再認証要求」を意味するが、`requiresReauthentication(0, authTime)` が正しく true を返すかは要テスト。

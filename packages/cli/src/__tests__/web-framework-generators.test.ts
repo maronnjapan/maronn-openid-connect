@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ExpressGenerator } from '../frameworks/express/index.js';
 import { FastifyGenerator } from '../frameworks/fastify/index.js';
 import { NextJsGenerator } from '../frameworks/nextjs/index.js';
+import { DEFAULT_FEATURES } from '../features.js';
 
 const CORE_PKG = '@maronn-openid-connect/core';
 
@@ -501,6 +502,7 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(content).toContain('UPSTASH_REDIS_REST_TOKEN');
       expect(content).toContain("readEnv('VERCEL')");
       expect(content).toContain("readEnv('OIDC_SQLITE_PATH') ?? '.data/oidc.sqlite'");
+      expect(content).toContain("private readonly namespace = 'maronn-openid-connect:'");
     });
 
     // OAuth 2.1 §4.1.2 / §4.3.1: Next.js also uses the Web-standard generated OP,
@@ -608,6 +610,7 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(actions?.content).toContain("successUrl.searchParams.set('iss', issuer)");
       expect(actions?.content).toContain("denyUrl.searchParams.set('iss', issuer)");
     });
+
   });
 });
 

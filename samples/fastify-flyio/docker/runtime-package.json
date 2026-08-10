@@ -1,5 +1,5 @@
 {
-  "name": "maronn-oidc-sample-fastify-flyio-runtime",
+  "name": "maronn-openid-connect-sample-fastify-flyio-runtime",
   "private": true,
   "type": "module",
   "dependencies": {

@@ -35,6 +35,9 @@
 
 - `claims` パラメータの consent / 認可境界（scope を迂回して claims で取得できてしまう問題）:
   `study-material/claims-parameter-consent-authorization-boundary.md`
+- `claims` パラメータで**要求できるクレーム名の集合**（アロウリスト）が定義されていない問題:
+  `study-material/done/claims-parameter-claim-name-allowlist.md`、`tasks/p1-claims-parameter-claim-name-allowlist.md`
+  → 本ファイルが扱う「語彙を**広げる**」判断の前提として、「語彙を**定義する**」側を先に固定する必要がある
 - `claims` パラメータの `value` / `values` / `essential` の判定規則:
   `study-material/done/claims-parameter-value-values-essential.md`
 - `claims.id_token` メンバーを ID Token に反映する経路:

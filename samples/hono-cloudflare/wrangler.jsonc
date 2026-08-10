@@ -1,12 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "maronn-oidc-hono-cloudflare",
+  "name": "maronn-openid-connect-hono-cloudflare",
   "main": "src/app.ts",
   "compatibility_date": "2026-07-23",
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "maronn-oidc-sample",
+      "database_name": "maronn-openid-connect-sample",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }

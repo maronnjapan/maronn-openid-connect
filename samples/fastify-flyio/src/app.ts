@@ -54,7 +54,7 @@ const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
 export const app = Fastify();
 
 app.get('/', async (_request, reply) => {
-  return reply.type('text/plain').send('maronn-oidc Fastify sample');
+  return reply.type('text/plain').send('maronn-openid-connect Fastify sample');
 });
 app.get('/health', async () => {
   return { status: 'ok' };

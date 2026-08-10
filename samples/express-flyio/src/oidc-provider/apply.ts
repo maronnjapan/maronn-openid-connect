@@ -11,6 +11,8 @@ const OIDC_ENDPOINTS = [
   '/userinfo',
   '/introspect',
   '/revoke',
+  '/device_authorization',
+  '/device',
   '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',

@@ -76,7 +76,7 @@ RFC 8693 は専用の AS メタデータフィールドを定義せず、
 > - エンドポイント URL 検証は `tasks/p3-discovery-endpoint-url-validation.md`。
 >   本タスクが入ると、そちらの検証対象に PAR エンドポイントを含められるようになる。
 > - JARM の広告値そのものが実鍵と乖離しうる件は
->   `tasks/p2-jarm-response-jwt-rs256-key-selection.md`（別タスク）。
+>   `tasks/done/p2-jarm-response-jwt-rs256-key-selection.md`（別タスク）。
 
 ## 対象ファイル
 

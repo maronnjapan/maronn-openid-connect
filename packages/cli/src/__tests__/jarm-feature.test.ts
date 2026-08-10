@@ -36,6 +36,7 @@ describe('resolveFeatures with jarm', () => {
       par: false,
       tokenExchange: false,
       jarm: true,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -60,6 +61,7 @@ describe('resolveFeatures with jarm', () => {
       par: true,
       tokenExchange: true,
       jarm: true,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -74,6 +76,7 @@ describe('resolveFeatures with jarm', () => {
       par: false,
       tokenExchange: false,
       jarm: true,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -194,6 +197,66 @@ describe('generate with --enable jarm', () => {
       expect(content.includes("from '@maronn-openid-connect/experimental/jarm'")).toBe(
         consentAnswersInJarmMode,
       );
+    });
+
+    // JARM Section 3: this OP always declares alg RS256 on the response JWT, so
+    // the key it signs with must be an RS256 key. The general-purpose ACTIVE key
+    // (signingKeyProvider.getSigningKey()) carries no such guarantee — a provider
+    // that returns ES256 as active and [RS256, ES256] as the registered set is
+    // valid under the SigningKeyProvider contract — so the key is selected by alg
+    // from the registered set instead.
+    it('should select the RS256 key from the registered key set in the authorize route', () => {
+      const content = fileContent(
+        generateFiles(framework, ['jarm']),
+        providerPath(framework, 'routes/authorize.ts'),
+      );
+
+      expect(content.includes("selectSigningKeyByAlg(jarmSigningKeys, 'RS256')")).toBe(true);
+    });
+
+    it('should select the RS256 key from the registered key set in the consent route', () => {
+      const content = fileContent(
+        generateFiles(framework, ['jarm']),
+        providerPath(framework, 'routes/consent.ts'),
+      );
+
+      expect(content.includes("selectSigningKeyByAlg(jarmSigningKeys, 'RS256')")).toBe(
+        consentAnswersInJarmMode,
+      );
+    });
+
+    // Backward compatibility: a hand-wired provider that never populated the
+    // registered key set (only the single-key context) keeps working, and on the
+    // default single-RS256-key configuration both paths resolve the same key.
+    it('should fall back to the single-key context when no key set is registered', () => {
+      const authorize = fileContent(
+        generateFiles(framework, ['jarm']),
+        providerPath(framework, 'routes/authorize.ts'),
+      );
+
+      expect(
+        authorize.includes(
+          "jarmSigningKeys.length > 0\n          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')",
+        ),
+      ).toBe(true);
+    });
+
+    it('should import selectSigningKeyByAlg from core wherever it signs a JARM response', () => {
+      const files = generateFiles(framework, ['jarm']);
+      const authorize = fileContent(files, providerPath(framework, 'routes/authorize.ts'));
+      const consent = fileContent(files, providerPath(framework, 'routes/consent.ts'));
+
+      expect(authorize.includes('  selectSigningKeyByAlg,')).toBe(true);
+      expect(consent.includes('  selectSigningKeyByAlg,')).toBe(consentAnswersInJarmMode);
+    });
+
+    it('should not import selectSigningKeyByAlg into the authorize route without jarm', () => {
+      const content = fileContent(
+        generateFiles(framework),
+        providerPath(framework, 'routes/authorize.ts'),
+      );
+
+      expect(content.includes('selectSigningKeyByAlg')).toBe(false);
     });
 
     // JARM Section 4: both metadata members are advertised, one through core's

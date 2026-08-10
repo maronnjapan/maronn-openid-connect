@@ -67,6 +67,7 @@ pnpm add @maronn-openid-connect/experimental
 | `par` | Pushed Authorization Requests | RFC 9126 | [PAR](./par/) |
 | `token-exchange` | OAuth 2.0 Token Exchange | RFC 8693 | [Token Exchange](./token-exchange/) |
 | `jarm` | JWT Secured Authorization Response Mode | JARM (OpenID Foundation Final) | [JARM](./jarm/) |
+| `device-authorization-grant` | Device Authorization Grant | RFC 8628 | [Device Authorization Grant](./device-authorization-grant/) |
 
 ## 問題の報告
 

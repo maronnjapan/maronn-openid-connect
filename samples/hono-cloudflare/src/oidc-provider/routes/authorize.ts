@@ -31,6 +31,7 @@ import {
   type AuthorizationRequestParams,
   type JwkSet,
   AuthorizationErrorCode,
+  selectSigningKeyByAlg,
   type SigningKey,
 } from '@maronn-openid-connect/core';
 import { clientResolver as defaultClientResolver } from '../resolvers.js';
@@ -319,16 +320,30 @@ const handleAuthorizationRequest = async (c: any) => {
       );
     }
     if (jarmResolution.kind === 'jarm') {
-      // JARM §2.2: signed with the OP's general-purpose active signing key, whose
-      // public half is published at /.well-known/jwks.json under the same kid.
+      // JARM §3: this OP declares alg RS256 on every response JWT (the default
+      // for a client that registered no authorization_signed_response_alg), and
+      // discovery advertises authorization_signing_alg_values_supported:
+      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
+      // SigningKeyProvider may legitimately return ES256 as active alongside an
+      // RS256 + ES256 registered set — so the key is picked by alg from the
+      // registered set. Its public half is published at /.well-known/jwks.json
+      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
+      // registered, which surfaces as a server_error here (a configuration
+      // mistake) rather than as an unverifiable authorization response.
+      const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
       jarmResponse = {
         issuer,
         clientId: client.clientId,
-        signingKey: {
-          privateKey: c.get('privateKey'),
-          publicJwk: c.get('publicJwk'),
-          keyId: c.get('keyId'),
-        },
+        // Falls back to the single-key context so a hand-wired provider that
+        // never populated the key set keeps working; on the default single
+        // RS256 key both branches resolve the same key.
+        signingKey: jarmSigningKeys.length > 0
+          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+          : {
+              privateKey: c.get('privateKey'),
+              publicJwk: c.get('publicJwk'),
+              keyId: c.get('keyId'),
+            },
       };
     }
 

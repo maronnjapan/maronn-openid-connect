@@ -49,6 +49,15 @@ CLIコマンドでフロー実装コードを生成し、利用者はそのコ�
 - `samples/*` の `conformance.test.ts` は、CLI生成OPが本リポジトリの想定する挙動を満たすことを利用者に示す契約テストとして扱うこと。生成OPの挙動やresolver/store契約を変更する場合は、`packages/cli`のテンプレートと各sampleの`conformance.test.ts`を更新し、利用者が生成コードを改変して想定挙動から外れた場合にテスト失敗で認識できるようにすること
 - `packages/experimental/src` の変更に対して changeset を手で書かないこと。main への push で CI が patch の changeset を自動生成する（`.github/scripts/ensure-experimental-changeset.mjs`）。experimental の bump はどんな変更でも patch 固定で、minor / major を指定すると `pnpm run test:release-contract` が落ちる。詳細は `RELEASE.md` の「experimental の自動 publish」を参照
 - 利用者は生成コードをカスタマイズしてよいが、`conformance.test.ts` が通らない状態は本リポジトリが担保するBasic OP挙動から外れている可能性がある。その前提が必要な変更では、README・コメント・タスク文書のいずれかに明示すること
+- `packages/experimental` の機能を実装しきったら（experimental 本体・CLI 統合・テスト・ドキュメントが揃った時点で）、`docs/implementation-guides/experimental/` にその機能の実装解説を日本語版と英語版の両方で必ず作成すること。解説には「その機能は何をする機能でどんなユースケースがあるのか」に加えて、関連するコードの全文（`packages/experimental/src/<feature-id>/` の全ファイル、CLIが生成コードへ注入する差分、その機能のE2Eスペック。抜粋ではなく全文）を掲載し、実装の隅々まで理解できる説明を付けること。`packages/experimental/src` やCLI統合を変更したときは、該当機能の解説の掲載コードと説明も同じ変更内で更新すること。構成の詳細は `docs/implementation-guides/experimental/README.md` を参照
+
+## ドキュメント作成の規約
+
+README・実装解説・タスク文書などのMarkdown資料を作成・改稿するときは、次を必ず守ること。
+
+- 日本語の文書を書く・推敲するときは `japanese-tech-writing` スキルを必ず使うこと。内容に応じて `tech-article-writing` などの文章生成系スキルも併用してよい
+- 人間が読みやすい文章にすること。LLM特有の空虚な言い回し（「重要なのは〜である」「多角的に」「まとめると」「不可欠」「鍵となる」など、論点を足さない定型句）を使わないこと
+- 実装解説では、対象コードを抜粋ではなく全文で掲載すること（`docs/implementation-guides/experimental/` の各解説を基準とする）
 
 ## テストコードの書き方
 

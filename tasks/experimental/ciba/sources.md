@@ -33,6 +33,11 @@
 | `packages/core/src/id-token.ts:276` / 365-372 | `validateIdTokenHint` が exp 切れを拒否すること（id_token_hint を初期スコープから外す根拠） |
 | `packages/core/src/index.ts` | `extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret` / `TokenClientInfo` / `validateIdTokenHint` の公開確認 |
 | `packages/cli/src/features.ts` | `EXPERIMENTAL_FEATURES` / `OidcFeatureConfig` の追加箇所 |
+| `packages/cli/src/frameworks/hono/templates.ts:511-515` | `RegisteredClient = ClientInfo & TokenClientInfo & { ... }` の既存交差型。`backchannelTokenDeliveryMode` を条件挿入する先（U4 確定の根拠） |
+| `packages/experimental/src/par/par-request.test.ts:24` | `ClientInfo & TokenClientInfo` の交差型でクライアント型を拡張する先例（U4 確定の根拠） |
+| `packages/experimental/src/token-exchange/token-exchange-request.ts:142-158` | `grantTypes` 未指定→`['authorization_code']` 既定・auth method `none` 拒否の実装先例。CIBA の検証順序 3〜4 が踏襲する形 |
+| `packages/cli/src/index.ts:28-38` | `withExperimentalPackage` の feature チェック。`features.ciba` の追加が必要になる変更点（CLI オプション案・実装順序に反映） |
+| `tasks/experimental/done/device-authorization-grant/specification.md` | 実装順序の節の構成先例（samples の `generate` スクリプトへの `--enable` 追加・バイト同一 diff の手順を含む） |
 | `tasks/T-019-dpop.md` | 重複回避の確認（DPoP は別タスク） |
 
 ## 二次資料
@@ -42,5 +47,5 @@
 ## 記録（規範と設計判断の区別）
 
 - **規範**: ヒントはちょうど 1 つ（§7.2 で違反は invalid_request の MUST）/ auth_req_id 最低 128bit・文字種制限（§7.3）/ slow_down は当該以後のすべてのリクエストで +5 秒（§11）/ クライアント認証は登録された方式で MUST（§7.1）/ discovery の `backchannel_token_delivery_modes_supported` と `backchannel_authentication_endpoint` は REQUIRED（§4）/ Poll の ID トークンに CIBA 固有クレーム不要（§10.3.1 の要求は Push 限定）
-- **設計判断（仕様が余地を残す部分）**: 公開クライアント（auth method `none`）の `unauthorized_client` 拒否 / 非対応ヒント種別への `invalid_request` / `requested_expiry` のクランプ（§7.1 は MAY）/ 過剰ポーリングへ `invalid_request`（§11 の MAY）ではなく slow_down 方式で統一 / `maxPendingPerSubject` 上限と超過時 `invalid_request`（Review 2 で確定: §13 `access_denied` はフロー終端と誤読されるため不採用）/ denied レコードの access_denied 配信時削除（Review 2 で Device Grant 実装との一致を確認し確定）/ `backchannelTokenDeliveryMode` 未設定を poll とみなす / user_code・署名リクエスト・Ping/Push の非対応 / ログインフォームへのログイントランザクション（binding Cookie + CSRF + 失敗計数、TTL 600 秒固定）の常時適用（Review 2 追加。CIBA Core は AD 上のユーザー認証方法を対象外としており、これは仕様の対象外領域の実装判断）
+- **設計判断（仕様が余地を残す部分）**: 公開クライアント（auth method `none`）の `unauthorized_client` 拒否 / 非対応ヒント種別への `invalid_request` / `requested_expiry` のクランプ（§7.1 は MAY）/ 過剰ポーリングへ `invalid_request`（§11 の MAY）ではなく slow_down 方式で統一 / `maxPendingPerSubject` 上限と超過時 `invalid_request`（Review 2 で確定: §13 `access_denied` はフロー終端と誤読されるため不採用）/ denied レコードの access_denied 配信時削除（Review 2 で Device Grant 実装との一致を確認し確定）/ `backchannelTokenDeliveryMode` 未設定を poll とみなす / user_code・署名リクエスト・Ping/Push の非対応 / ログインフォームへのログイントランザクション（binding Cookie + CSRF + 失敗計数、TTL 600 秒固定）の常時適用（Review 2 追加。CIBA Core は AD 上のユーザー認証方法を対象外としており、これは仕様の対象外領域の実装判断）/ UI ログイン部品の CIBA 専用複製（U1、Review 3 で確定: バイト同一の完了条件と機能独立性を優先）/ `CibaClientInfo` 交差型と `RegisteredClient` への条件挿入（U4、Review 3 で確定: core 型変更なし）
 - **仕様の対象外を実装で埋めた部分**: 認証デバイスへの到達手段と AD 上のユーザー認証方法（§7.1 が明示的に out of scope）→ OP ホストのブラウザ UI + 既存 `authenticateUser` 契約で実装

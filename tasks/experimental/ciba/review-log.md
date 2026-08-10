@@ -55,3 +55,29 @@
   - ログイン失敗計数の集計上の無制限（トランザクション再発行）は既存 `/login`・`/device/login` と同一の残存面で、既存タスクの責務
 - **判定**: **Pass with changes**（指摘 1・2 は仕様段階で発見・同日修正済み。セキュリティ未解決事項は残っていない。未解決事項表に残る U1・U4 は実装構成の選択であり、セキュリティに影響しない）
 - **次回可能日**: 2026-08-10（Review 3: 実装着手可否）
+
+## Review 3
+
+- **日付**: 2026-08-10
+- **観点**: 実装着手可否（追加調査なしで着手できるか / 受け入れ条件の客観性 / 対象ファイルと変更範囲 / API・CLI・テスト・Docs・Changeset の一貫性 / 実装順序と検証方法 / Experimental であることの利用者への明示）。Review 1・2 で確認済みの事項（一次資料の規範文言・セキュリティ対策・状態機械の先例一致）は反復せず、残っていた U1・U4 の確定と、実装 Routine が仕様書だけで作業を完遂できるかの検証に集中した
+- **確認資料**:
+  - `packages/core/src/token-request.ts:63-85`（`TokenClientInfo` の全フィールド。`grantTypes` は `string[]` で CIBA URN を追加登録でき、交差型拡張を妨げる索引シグネチャ等が無いことを確認）
+  - `packages/cli/src/frameworks/hono/templates.ts:511-548`（`RegisteredClient = ClientInfo & TokenClientInfo & { offlineAccessAllowed?; ... }` の既存交差型と `createInMemoryClientResolver`。U4 の挿入先）
+  - `packages/experimental/src/par/par-request.test.ts:24` / `packages/experimental/src/token-exchange/token-exchange-request.ts:142-158`（交差型拡張と grantTypes / auth method `none` 検証の実装先例）
+  - `packages/cli/src/features.ts` 全文（`EXPERIMENTAL_FEATURES` / `EXPERIMENTAL_FEATURE_KEYS` / `DEFAULT_FEATURES` / `resolveFeatures` の追加箇所が仕様の記述どおりであることを確認）
+  - `packages/cli/src/index.ts:28-38`（`withExperimentalPackage` の feature チェック。仕様書に未記載だった変更点）
+  - `packages/cli/src/__tests__/par-feature.test.ts:111-113`（`'ciba'` を未定義名に使う unknown-feature テストの現物）
+  - `docs/implementation-guides/experimental/`（`<feature-id>.ja.md` / `.en.md` の命名規約と device-authorization-grant の先例）
+  - `tasks/experimental/done/device-authorization-grant/specification.md`（実装順序・完了条件の構成先例。samples の `generate` スクリプトへの `--enable` 追加手順を含む）
+- **指摘**:
+  1. **[U4 確定] `backchannelTokenDeliveryMode` の載せ方**: experimental 側に `CibaClientInfo = TokenClientInfo & { backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push' }` を定義し、生成コード側は `RegisteredClient`（`templates.ts:511` の既存交差型）へ同フィールドを `ciba` 有効時のみ条件挿入する。`RegisteredClient` は構造的部分型として `CibaClientInfo` に代入可能で core 型変更は不要。交差型の先例 2 件（`RegisteredClient` 自身・`par-request.test.ts:24`）を確認
+  2. **[API 一貫性・修正] 公開API案が検証順序 5 を型的に実行できなかった**: `processBackchannelAuthenticationRequest` の引数が `client: TokenClientInfo` のままで、検証順序 5（delivery mode 判定）が読むフィールドが型に存在しなかった。`CibaClientInfo` を公開 API に追加し引数型を差し替え
+  3. **[U1 確定] UI ログイン部品は CIBA 専用に複製**: (1) `ciba` 無効時バイト同一の完了条件と device 側の既存回帰期待は、CIBA のテンプレートブロックが device のブロックに触れない構成で最も確実に守れる（共通部品への括り出しは device のみ有効な生成出力を変えてしまう） (2) 機能独立性・切り出しやすさ優先の運用方針 (3) views 契約が別エントリで増える設計との整合。experimental パッケージ内もログイントランザクション実装を `ciba/` 内に複製する
+  4. **[変更範囲の欠落・修正] `withExperimentalPackage`（`packages/cli/src/index.ts:28`）への `features.ciba` 追加が仕様書に未記載だった**: experimental パッケージのインストールガイダンス挿入条件で、device 追加時にも変更された実証済みの変更点。CLI オプション案と実装順序に追記
+  5. **[Docs 一貫性・修正] `docs/implementation-guides/experimental/ciba.ja.md` / `.en.md` の作成要件が漏れていた**: CLAUDE.md は実装完了時に日英の実装解説（コード全文掲載）を必須としており、既存 4 機能すべてに先例がある。ドキュメント要件と完了条件 7 に追加
+  6. **[実装順序・修正] 実装順序の節が無かった**: done の device-authorization-grant 仕様書には実装 Routine 向けの実装順序の節があり、samples の `generate` スクリプトへの `--enable` 追加（E2E の前提）とバイト同一 diff の手順を含む。同じ構成で 7 ステップの実装順序を追加し、各ステップを完了条件の番号に対応付けた
+  7. **[確認・変更なし] 以下は着手可能を確認**: 完了条件はすべて客観的（テストのグリーン・バイト同一 diff・`--check` 一致・表との一致）/ `features.ts` の変更箇所は仕様の記述と現物が一致 / `par-feature.test.ts` の差し替え注意は現物と一致（`toThrow` の部分一致仕様により `ciba` 追加で throw 自体が消えて確実に落ちる）/ Experimental である旨の明示は README 節・ヘルプ文言・生成コードコメント・実装解説の 4 経路で担保 / Changeset 要件は CLAUDE.md（experimental は自動 patch・手書き禁止、CLI は minor 手書き）と一致 / 依存方向は既存 4 機能と同型
+- **修正**: 指摘 1〜6 を同日中に specification.md（公開API案・CLI オプション案・実装順序・ドキュメント要件・完了条件・未解決事項）/ understanding-guide.md（実装後の利用方法）/ sources.md（リポジトリ内参照・記録）へ反映
+- **残リスク**: セキュリティ・仕様適合の未解決事項なし。受容済みの残余リスク（user_code 非対応の受容コスト・登録クライアントによるユーザー存在確認・ログイン失敗計数の集計上の無制限）はいずれも README 明記または既存タスクの責務として仕様に固定済み。実装時に判明した齟齬は review-log に追記して扱いを決める
+- **判定**: **Pass with changes**（指摘はすべて同日修正済み。未解決事項表に open の項目は無く、追加調査なしで実装に着手できる）
+- **次回可能日**: —（3 回完了。以後は実装 Routine が引き継ぐ）

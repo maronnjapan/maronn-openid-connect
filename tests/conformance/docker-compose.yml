@@ -48,7 +48,7 @@ services:
       OIDC_CLIENTS_JSON: ${OIDC_CLIENTS_JSON:?OIDC_CLIENTS_JSON must be generated before running compose}
       OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW: ${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}
       OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT: ${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-0}
-      OIDC_D1_PERSIST_PATH: /tmp/maronn-oidc-d1
+      OIDC_D1_PERSIST_PATH: /tmp/maronn-openid-connect-d1
 
   op-tls:
     image: nginx:1.27-alpine

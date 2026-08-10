@@ -24,6 +24,10 @@ jobs:
         steps:
             - uses: actions/checkout@v7
 
+            - name: Configure GitHub Pages
+              id: pages
+              uses: actions/configure-pages@v5
+
             - uses: pnpm/action-setup@v4
               with:
                   version: 10.17.0
@@ -37,6 +41,8 @@ jobs:
               run: pnpm install
 
             - name: Build docs
+              env:
+                  BASE_PATH: ${{ steps.pages.outputs.base_path }}
               run: pnpm --filter @maronn-openid-connect/docs build:doc
 
             - uses: actions/upload-pages-artifact@v5

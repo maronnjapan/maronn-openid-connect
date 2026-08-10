@@ -20,7 +20,7 @@ pnpm deploy:nextjs-vercel
 
 Vercel CLIは `pnpm dlx` 経由で使うためグローバルインストール不要。`vercel login`（未ログイン時のみ）とUpstash Redisの資格情報以外はすべて自動化されている:
 
-- プロジェクト（`maronn-oidc-sample-nextjs-vercel`）の作成またはリンク
+- プロジェクト（`maronn-openid-connect-sample-nextjs-vercel`）の作成またはリンク
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` が未設定なら、Vercel Marketplace連携またはUpstashコンソールでの作成手順をガイドし、貼り付け入力で `vercel env add` まで実施
 - ローカルでの `vercel build`（workspace依存の `@maronn-openid-connect/core` をローカルで解決）と `--prebuilt` での本番デプロイ
 - 公開URLの `OIDC_ISSUER` への固定（初回のみ2回デプロイ）とDiscoveryでのissuer検証

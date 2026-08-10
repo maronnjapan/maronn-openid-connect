@@ -135,6 +135,42 @@ patch を例外にすると「試していない組み合わせを許可宣言�
 突き合わせ、既に公開済みのものは `is not being published because version X is already published on npm`
 としてスキップするので、バージョンが上がったパッケージだけが publish される。
 
+### samples / tests / docs はバージョニングしない
+
+`.changeset/config.json` で `privatePackages.version` を `false` にしている。
+`private: true` のワークスペース（`samples/*`・`tests/*`・`docs/*`）は
+Changesets のバージョン上げと CHANGELOG 生成の対象外になる。
+
+既定値（`true`）のままだと、これらも publish 対象と同じようにバージョンが上がる。
+特に `samples/*` は core / experimental を `workspace:*` で参照しているため、
+`updateInternalDependencies: "patch"` の連鎖で core か experimental が出るたびに patch が積まれ、
+「Version Packages」PR の Releases 一覧に次のような項目が並んでいた。
+
+```markdown
+## @maronn-openid-connect/sample-hono-cloudflare@0.0.7
+
+### Patch Changes
+
+- Updated dependencies [1eca98c]
+  - @maronn-openid-connect/experimental@0.0.4
+```
+
+`sample-hono-cloudflare` は npm に出ないので、利用者がこのバージョンを取得する手段はない。
+リリース PR は「今回 npm に何が出るか」を読む場所なので、出ないものが混ざると
+publish 対象を数え違える。samples は CLI 生成コードの動作確認用であって
+提供物ではない、というリポジトリの前提（CLAUDE.md「ディレクトリの構成」）とも食い違う。
+
+対象を `ignore` で名前指定せず `privatePackages` で切っているのは、publish するかどうかの
+情報源を `package.json` の `private` 1 つに保つため。sample やテスト用ワークスペースを
+追加しても `.changeset/config.json` を触らなくて済む。
+
+この設定は `pnpm run test:release-contract`
+（`.github/scripts/verify-release-contract.mjs` の `assertPrivatePackagesAreNotVersioned`）で
+CI から強制している。設定を戻すと CI が落ちる。
+
+なお、この設定を入れる前に生成された `samples/*/CHANGELOG.md` と `package.json` の
+`version` はそのまま残っており、以後は更新されない。
+
 ---
 
 ## experimental の自動 publish
@@ -370,7 +406,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
    |---|---|
    | Provider | GitHub Actions |
    | Organization / user | `maronnjapan` |
-   | Repository | `maronn-oidc` |
+   | Repository | `maronn-openid-connect` |
    | Workflow filename | `release.yml` |
    | Environment | （未使用なので空欄） |
 
@@ -501,6 +537,7 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 | CI で `@maronn-openid-connect/experimental を patch 以外で上げる changeset がありますが…` で落ちる | 意図した挙動。experimental の bump は patch 固定なので、該当 changeset の bump 種別を `patch` に直す（[experimental の bump は常に patch に固定する](#experimental-の-bump-は常に-patch-に固定する)） |
 | experimental の実装を変更したのに Version Packages PR が立たない | 変更が `packages/experimental/src` の実装ファイル以外（テスト・README・package.json）ではないか確認する。それ以外なら release job の `Ensure experimental release changeset` ステップのログで比較基準コミットと判定理由を確認する（[experimental の自動 publish](#experimental-の自動-publish)） |
 | Version Packages PR に experimental の変更が 1 つしか載っていない | `auto-experimental-patch.md` は毎回上書きされるので通常は起きない。手書きの experimental changeset が残っていると自動生成がスキップされるため、`.changeset/` に手書きのものが無いか確認する |
+| Version Packages PR に `sample-*` など publish しないパッケージのバージョンアップが並ぶ | `.changeset/config.json` の `privatePackages.version` が `false` になっているか確認する（[samples / tests / docs はバージョニングしない](#samples--tests--docs-はバージョニングしない)）。CI では `pnpm run test:release-contract` が同じ設定を検査している |
 | Version Packages PR をマージしたのに publish されず、また Version Packages PR が立つ | release job の `Ensure experimental release changeset` のログを見る。「未リリースの変更が N 件あるため」と出ているなら比較基準の判定が壊れている（[なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)）。マージ直後の main では「変更がないため changeset を作成しない」になるのが正しい |
 | CI で `main のバージョンが npm に出ていません` で落ちる | publish 段階へ到達しないまま run が終わっている。上の行と同じ調査をする（[publish に到達したことを検証する](#publish-に到達したことを検証する)） |
 

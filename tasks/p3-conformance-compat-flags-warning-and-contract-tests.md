@@ -94,7 +94,7 @@ return validateCodeChallenge(codeChallenge, codeChallengeMethod, redirectUri, st
   // 例（各サンプルの app.ts / runtime.ts）
   if (config.allowNonPkceAuthorizationCodeFlow || config.allowUnsignedRequestObject) {
     console.warn(
-      '[maronn-oidc] OIDF conformance compatibility mode is ENABLED. ' +
+      '[maronn-openid-connect] OIDF conformance compatibility mode is ENABLED. ' +
       'Security requirements are relaxed: ' +
       (config.allowNonPkceAuthorizationCodeFlow
         ? 'PKCE may be omitted by confidential clients (OAuth 2.1 4.1.1/7.5); ' : '') +

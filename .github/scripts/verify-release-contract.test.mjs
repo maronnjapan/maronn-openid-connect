@@ -6,6 +6,7 @@ import {
   assertExperimentalCorePeerDependencyShape,
   assertExperimentalCorePeerRangeCoversNextCore,
   assertExperimentalReleasesAreAlwaysPatch,
+  assertPrivatePackagesAreNotVersioned,
   computeNextVersion,
   parseChangesetBumps,
   parseMinimumCoreVersion,
@@ -349,6 +350,41 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
           '0.1.0',
         ),
       /"\^0\.1\.0" から下限を読み取れません/,
+    );
+  });
+});
+
+describe('assertPrivatePackagesAreNotVersioned', () => {
+  it('should accept a config that turns versioning off for private packages', () => {
+    assert.doesNotThrow(() => {
+      assertPrivatePackagesAreNotVersioned({ privatePackages: { version: false, tag: false } });
+    });
+  });
+
+  it('should accept the false shorthand that turns off both versioning and tagging', () => {
+    assert.doesNotThrow(() => {
+      assertPrivatePackagesAreNotVersioned({ privatePackages: false });
+    });
+  });
+
+  it('should reject a config without privatePackages because Changesets versions them by default', () => {
+    assert.throws(
+      () => assertPrivatePackagesAreNotVersioned({ access: 'public' }),
+      /`privatePackages\.version` を false にしてください/,
+    );
+  });
+
+  it('should reject a config that keeps versioning private packages', () => {
+    assert.throws(
+      () => assertPrivatePackagesAreNotVersioned({ privatePackages: { version: true } }),
+      /`privatePackages\.version` を false にしてください/,
+    );
+  });
+
+  it('should reject a config that only omits the version key', () => {
+    assert.throws(
+      () => assertPrivatePackagesAreNotVersioned({ privatePackages: { tag: false } }),
+      /`privatePackages\.version` を false にしてください/,
     );
   });
 });

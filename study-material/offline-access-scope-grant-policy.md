@@ -13,6 +13,9 @@
   - `tasks/p1-refresh-scope-offline-access-rotation.md`（ローテーション時の offline_access 取り扱い）
   - `study-material/refresh-token-rotation-replay-grace.md`（ローテーション誤検知緩和）
 - 本ファイルは「拡張ポイントの**使い方**・**設計パターン**」をハブ化し、上記既存タスクには無い差分を提供する。
+- なお「Refresh Token の発行そのものを `offline_access`（OIDC 固有 scope）に紐づけてよいか」という
+  前段の適用範囲の論点は `study-material/oauth-only-authorization-request-openid-scope-policy.md` が扱う。
+  本ファイルは「`offline_access` を**付与するかどうか**」に限定する。
 
 ## 2. 関連する仕様・基準
 

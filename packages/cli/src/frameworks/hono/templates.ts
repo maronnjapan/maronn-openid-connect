@@ -4754,6 +4754,16 @@ const handler = async (c: any) => {
 
     // OIDC Core 1.0 §5.5: overlay the individually requested claims that the
     // token endpoint stored with this access token (claims.userinfo members).
+    // The claims.userinfo key names are RP-controlled, so only names inside the
+    // OP's declared vocabulary are read off userClaims — the default allowlist is
+    // DEFAULT_REQUESTABLE_CLAIMS (sub + every SCOPE_CLAIMS_MAP claim). A surplus
+    // field your userClaimsResolver returns (a DB row, an internal model) is
+    // therefore never disclosed by naming it in claims. Requests outside the
+    // allowlist are dropped silently, never rejected (OIDC Core 1.0 §5.5.1: the OP
+    // MUST NOT return an error for a claim it cannot provide). Pass a fourth
+    // argument to publish your own vocabulary — keep it in sync with the
+    // claims_supported you advertise in Discovery (OIDC Discovery 1.0 §3), and
+    // make findUserClaims return only disclosable claims before widening it.
     const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
 
     const client = (await clientResolver.findClient(
@@ -11711,6 +11721,131 @@ ${jarmAuthorizeRouteResponsesComment}      it('should answer the SSO fast path w
 `;
 }
 
+/**
+ * Shared, framework-neutral conformance block pinning the `claims` parameter claim
+ * name allowlist (OIDC Core 1.0 §5.5.1).
+ *
+ * The claims.userinfo member names are RP-controlled. The generated OP reads them
+ * off whatever userClaimsResolver returned, so without an allowlist a single
+ * `claims={"userinfo":{"password_hash":null}}` request would disclose a surplus
+ * field of the user's internal model regardless of scope. core restricts the
+ * readable names to DEFAULT_REQUESTABLE_CLAIMS (sub + every SCOPE_CLAIMS_MAP claim)
+ * and drops the rest silently — §5.5.1 forbids erroring on a claim the OP cannot
+ * (or will not) provide.
+ *
+ * This block installs a deliberately leaky user store through the generated
+ * `storage` option, so a customization that bypasses the allowlist (e.g. reading
+ * userClaims directly in routes/userinfo.ts) fails here.
+ *
+ * Returned as a string interpolated into each framework's conformance template.
+ */
+export function claimsAllowlistConformanceBlock(): string {
+  return `
+  // OIDC Core 1.0 §5.5 / §5.5.1: the claims parameter lets the RP ask for claims,
+  // but the OP decides what it will hand back. findUserClaims' return value is an
+  // externally disclosed surface (study-material/resolver-and-store-contract.md),
+  // and the allowlist is the OP-side last line of defense over it.
+  describe('Claims Parameter Claim Name Allowlist (OIDC Core 1.0 §5.5.1)', () => {
+    const USERINFO_AUD = 'http://localhost:3000/userinfo';
+    // A resolver returning its internal user model verbatim — the most natural PoC
+    // implementation, and the one the allowlist has to survive. password_hash is an
+    // own field (a surplus column); phone_number is inherited from the prototype,
+    // as an ORM/class-backed model would expose it.
+    class LeakyUserModel {
+      readonly sub = 'testuser';
+      readonly email = 'test@example.com';
+      readonly password_hash = '$2b$12$notarealhash';
+      get phone_number(): string {
+        return '+81-3-0000-0000';
+      }
+    }
+    const leakyUserRecord = new LeakyUserModel();
+
+    function createLeakyApp(): ReturnType<typeof createApp> {
+      return createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: {
+          ...defaultProviderStores,
+          userStore: {
+            authenticate: () => undefined,
+            getClaims: () => leakyUserRecord,
+          },
+        },
+      });
+    }
+
+    it('should not disclose a surplus resolver field named in the claims parameter', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('conf-claims-surplus', {
+        sub: 'testuser',
+        clientId: 'c-conf',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+        audience: [USERINFO_AUD],
+        issuer: 'http://localhost:3000',
+        claims: { userinfo: { email: null, password_hash: null } },
+      });
+
+      const res = await createLeakyApp().request('/userinfo', {
+        headers: { Authorization: 'Bearer conf-claims-surplus' },
+      });
+
+      // The allowlisted email is returned; password_hash is absent. Pinned as an
+      // exact body so a newly leaked member cannot slip past the assertion.
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ sub: 'testuser', email: 'test@example.com' });
+    });
+
+    // Only own properties are read. phone_number is an allowlisted claim name, but
+    // this model exposes it through a prototype getter rather than as an own field,
+    // so the claims parameter cannot reach it — findUserClaims must place every
+    // disclosable claim on the returned object itself.
+    it('should not disclose a prototype chain property named in the claims parameter', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('conf-claims-prototype', {
+        sub: 'testuser',
+        clientId: 'c-conf',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+        audience: [USERINFO_AUD],
+        issuer: 'http://localhost:3000',
+        claims: { userinfo: { phone_number: null, constructor: null, toString: null } },
+      });
+
+      const res = await createLeakyApp().request('/userinfo', {
+        headers: { Authorization: 'Bearer conf-claims-prototype' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ sub: 'testuser' });
+    });
+
+    // §5.5.1: "the OP MUST NOT return an error" when a requested claim cannot be
+    // provided — declining a name is a 200 with the claim omitted, never a 4xx.
+    it('should answer 200 when every requested claim name is outside the allowlist', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('conf-claims-not-allowed', {
+        sub: 'testuser',
+        clientId: 'c-conf',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+        audience: [USERINFO_AUD],
+        issuer: 'http://localhost:3000',
+        claims: { userinfo: { password_hash: { essential: true } } },
+      });
+
+      const res = await createLeakyApp().request('/userinfo', {
+        headers: { Authorization: 'Bearer conf-claims-not-allowed' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ sub: 'testuser' });
+    });
+  });
+`;
+}
+
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
@@ -11747,7 +11882,7 @@ import { Hono } from 'hono';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { applyOidc } from './apply.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, defaultProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
@@ -12175,6 +12310,7 @@ ${featureDisabledDiscoveryConformanceTests(features)}  });
       });
     });
   });
+${claimsAllowlistConformanceBlock()}
 
 ${introspectionConformanceBlock(features)}
   describe('Authorization Endpoint non-redirect errors', () => {

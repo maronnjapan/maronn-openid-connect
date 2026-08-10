@@ -197,6 +197,7 @@ export {
   UserInfoError,
   UserInfoErrorCode,
   SCOPE_CLAIMS_MAP,
+  DEFAULT_REQUESTABLE_CLAIMS,
   // UserInfo リクエスト処理のステップ関数（handleUserInfoRequest はこれらの合成）
   resolveUserInfoAccessToken,
   validateUserInfoTokenExpiration,

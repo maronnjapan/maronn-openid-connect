@@ -5,6 +5,7 @@ import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
   authorizationCodeConformanceHelper,
   authorizeRouteTemplate,
+  claimsAllowlistConformanceBlock,
   configTemplate,
   conformanceTestClientsBlock,
   consentWithdrawalConformanceBlock,
@@ -1960,7 +1961,7 @@ import { tokenExchangeConfig } from './routes/token.js';`
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, defaultProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
@@ -2345,6 +2346,7 @@ ${featureDisabledDiscoveryConformanceTests(features)}  });
       });
     });
   });
+${claimsAllowlistConformanceBlock()}
 
 ${introspectionConformanceBlock(features)}
   describe('Authorization Endpoint non-redirect errors', () => {

@@ -10,7 +10,7 @@
     "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && tsc --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --external:fastify --outfile=dist/server.js --sourcemap",
     "start": "node dist/server.js",
     "launch": "pnpm run build && pnpm run start",
-    "test": "pnpm --filter @maronn-openid-connect/core run build && pnpm run typecheck && pnpm run test:conformance",
+    "test": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && pnpm run typecheck && pnpm run test:conformance",
     "test:conformance": "vitest run",
     "typecheck": "tsc --noEmit"
   },

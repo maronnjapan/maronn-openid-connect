@@ -1,6 +1,7 @@
 import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
+import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
   authorizationCodeConformanceHelper,
   authorizeRouteTemplate,
@@ -9,6 +10,9 @@ import {
   consentWithdrawalConformanceBlock,
   consentRouteTemplate,
   customViewConformanceTestBlock,
+  deviceAuthorizationConformanceBlock,
+  deviceAuthorizationRouteTemplate,
+  deviceVerificationRouteTemplate,
   discoveryRouteTemplate,
   endpointBehaviorConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
@@ -420,6 +424,25 @@ export function webAppTemplate(
   const parStoreImport = features.par
     ? `  parStore,\n`
     : '';
+  // EXPERIMENTAL (RFC 8628): back-channel endpoint gets the /token CORS policy;
+  // the verification UI is browser navigation, so it needs none (like /login).
+  const deviceImport = features.deviceAuthorizationGrant
+    ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
+import { deviceApp } from './routes/device.js';\n`
+    : '';
+  const deviceCors = features.deviceAuthorizationGrant
+    ? `  app.use('/device_authorization', protectedCors);\n`
+    : '';
+  const deviceMount = features.deviceAuthorizationGrant
+    ? `  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', deviceApp);\n`
+    : '';
+  const deviceStorageContext = features.deviceAuthorizationGrant
+    ? `    c.set('deviceAuthorizationStore', deviceAuthorizationStore);\n`
+    : '';
+  const deviceStoreImport = features.deviceAuthorizationGrant
+    ? `  deviceAuthorizationStore,\n`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);\n`
     : '';
@@ -434,7 +457,7 @@ export function webAppTemplate(
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -448,7 +471,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
 import {
@@ -522,7 +545,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
@@ -580,7 +603,7 @@ ${introspectionCors}${revocationCors}${parCors}  app.use('/.well-known/openid-co
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }
@@ -598,7 +621,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -654,6 +677,13 @@ export function expressApplyTemplate(
   const parEndpoint = features.par
     ? `  '/par',\n`
     : '';
+  // EXPERIMENTAL (RFC 8628): the device authorization endpoint and the whole
+  // verification UI. '/device' also covers '/device/login' and '/device/approve'
+  // because app.use() matches by path prefix.
+  const deviceEndpoints = features.deviceAuthorizationGrant
+    ? `  '/device_authorization',
+  '/device',\n`
+    : '';
   return `import type { Express } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -665,7 +695,7 @@ const OIDC_ENDPOINTS = [
   '/authorize',
   '/token',
   '/userinfo',
-${introspectionEndpoint}${revocationEndpoint}${parEndpoint}  '/.well-known/jwks.json',
+${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}  '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',
   '/consent',
@@ -702,6 +732,14 @@ export function fastifyApplyTemplate(
   const parRoute = features.par
     ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/par', handler: handle });\n`
     : '';
+  // EXPERIMENTAL (RFC 8628): Fastify needs each verification UI path registered
+  // explicitly — unlike Express it does not match by prefix.
+  const deviceRoutes = features.deviceAuthorizationGrant
+    ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/device_authorization', handler: handle });
+  app.route({ method: ['GET', 'POST'], url: '/device', handler: handle });
+  app.route({ method: ['POST'], url: '/device/login', handler: handle });
+  app.route({ method: ['POST'], url: '/device/approve', handler: handle });\n`
+    : '';
   return `import type { FastifyInstance } from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -737,7 +775,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/authorize', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/token', handler: handle });
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
-${introspectionRoute}${revocationRoute}${parRoute}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
+${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
@@ -1785,6 +1823,7 @@ export function webConformanceTestTemplate(
   errorPageMode: 'html' | 'redirect' = 'html',
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
+  jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
 ): string {
   const usesRedirect = errorPageMode === 'redirect';
   // Next.js delegates the non-redirect authorization error to a framework-native
@@ -2335,7 +2374,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${jarmConformanceBlock(features)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}});
 `;
 }
 
@@ -2344,7 +2383,15 @@ function webCoreGeneratedFiles(
   errorPageMode: 'html' | 'redirect' = 'html',
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
+  jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
 ): GeneratedFile[] {
+  // EXPERIMENTAL (JARM): on a target whose consent step cannot sign a verifiable
+  // response JWT (Next.js Server Actions — see nextJsConsentActionTemplate), the
+  // framework-neutral consent route must stay on the plain query response as
+  // well. Otherwise the generated conformance test, which drives this route,
+  // would pin a JARM response the deployed provider never produces.
+  const consentFeatures: OidcFeatureConfig =
+    jarmConsentResponseMode === 'plain' ? { ...features, jarm: false } : features;
   return [
     { path: 'app.ts', content: webAppTemplate(corePkg, features) },
     { path: 'web-router.ts', content: webRouterTemplate() },
@@ -2360,7 +2407,7 @@ function webCoreGeneratedFiles(
         'through the generated request context',
       ),
     },
-    { path: 'views.ts', content: viewsTemplate() },
+    { path: 'views.ts', content: viewsTemplate(features) },
     { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features)) },
     { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
     { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },
@@ -2374,6 +2421,19 @@ function webCoreGeneratedFiles(
     ...(features.par
       ? [{ path: 'routes/par.ts', content: toWebRouteTemplate(parRouteTemplate(corePkg)) }]
       : []),
+    // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
+    ...(features.deviceAuthorizationGrant
+      ? [
+        {
+          path: 'routes/device-authorization.ts',
+          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features)),
+        },
+        {
+          path: 'routes/device.ts',
+          content: toWebRouteTemplate(deviceVerificationRouteTemplate(corePkg)),
+        },
+      ]
+      : []),
     // Experimental (JARM): settings module, only generated with --enable jarm.
     // Framework-neutral already (no Hono types), so it is emitted as-is.
     ...(features.jarm
@@ -2382,10 +2442,16 @@ function webCoreGeneratedFiles(
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
     { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },
     { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg, features)) },
-    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, features)) },
+    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, consentFeatures)) },
     {
       path: 'conformance.test.ts',
-      content: webConformanceTestTemplate(corePkg, errorPageMode, features, includeNodeAdapterContract),
+      content: webConformanceTestTemplate(
+        corePkg,
+        errorPageMode,
+        features,
+        includeNodeAdapterContract,
+        jarmConsentResponseMode,
+      ),
     },
   ];
 }
@@ -2410,10 +2476,16 @@ export function nextJsGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): GeneratedFile[] {
-  const internalFiles = webCoreGeneratedFiles(corePkg, 'redirect', features).map((file) => ({
-    path: `_oidc-provider/${file.path}`,
-    content: toNextJsModuleImports(file.content),
-  }));
+  // Next.js drives login / consent through Server Actions, which are bundled
+  // apart from the Route Handlers and hold their own signing key provider
+  // instance. A JARM response signed there would fail every client's signature
+  // check, so this target answers the interactive flow in plain query.
+  const internalFiles = webCoreGeneratedFiles(corePkg, 'redirect', features, false, 'plain').map(
+    (file) => ({
+      path: `_oidc-provider/${file.path}`,
+      content: toNextJsModuleImports(file.content),
+    }),
+  );
 
   return [
     ...internalFiles,
@@ -2462,6 +2534,30 @@ export function nextJsGeneratedFiles(
         {
           path: 'par/route.ts',
           content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['POST', 'OPTIONS']),
+        },
+      ]
+      : []),
+    // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
+    // Unlike login / consent the verification UI is served by Route Handlers, not
+    // Next.js pages: it renders through the same views.ts contract as the other
+    // frameworks, so the feature can be removed by deleting what it generated.
+    ...(features.deviceAuthorizationGrant
+      ? [
+        {
+          path: 'device_authorization/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['POST', 'OPTIONS']),
+        },
+        {
+          path: 'device/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['GET', 'POST']),
+        },
+        {
+          path: 'device/login/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
+        },
+        {
+          path: 'device/approve/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
         },
       ]
       : []),

@@ -74,14 +74,16 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 |---|---|
 | `routes/jarm.ts` | 設定値 `jarmConfig` と、起動時に範囲を検証する `assertJarmLifetimeSeconds` 呼び出し |
 | `routes/authorize.ts` | `response_mode` の解釈、応答 JWT を組む `buildSuccessRedirect` / `buildErrorRedirect`、トランザクションへのモード記録 |
-| `routes/consent.ts` | 承認 / 拒否の応答を記録済みモードで返す分岐 |
+| `routes/consent.ts` | 承認 / 拒否の応答を記録済みモードで返す分岐（Next.js を除く。下記「Next.js の制限」参照） |
 | `routes/discovery.ts` | `response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
-| `conformance.test.ts` | JARM の契約テストの追加 |
+| `conformance.test.ts` | JARM の契約テストの追加。ターゲットが実際に返す応答形式を固定する |
 
 :::caution[Next.js の制限]
 Next.js ターゲットでは、ログイン・同意画面を経由する応答は **JARM になりません**（平文クエリのままです）。Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` は署名鍵プロバイダの別インスタンスを持ちます。ここで署名すると `/.well-known/jwks.json` と同じ `kid` を名乗りながら鍵素材が異なる JWT ができ、クライアント側の署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全なため、Server Action は JARM 分岐を持ちません。
 
 Next.js で JARM 応答が得られるのは、`prompt=none` と SSO 再利用のように authorize ルート内で完結する経路だけです。詳細は [既知の制約](#既知の制約) を参照してください。
+
+この制限は生成物にも一貫して反映されます。Next.js ターゲットでは `routes/consent.ts` にも JARM 分岐が入らず、生成される `conformance.test.ts` は「ログイン・同意を挟む応答は平文クエリで返る」ことを固定します。契約テストが緑なのに実際の provider は平文を返す、という食い違いは起きません。
 :::
 
 ## 設定
@@ -104,7 +106,9 @@ export const jarmConfig = {
 | 応答パラメータ名 | `response` | JARM §2.3.1 |
 | 対応 `response_mode` | `query.jwt` / `jwt` | この OP は `response_type=code` 専用 |
 
-署名鍵は OP の汎用 `signingKeyProvider` の active key です。ID Token 用に別の鍵を設定している場合でも、JARM 応答は汎用鍵で署名されます（JARM は応答 JWT の鍵用途を分けていません）。公開鍵は `/.well-known/jwks.json` に同じ `kid` で載るため、クライアントは `kid` で検証鍵を解決できます。
+署名鍵は OP の汎用 `signingKeyProvider` が返す**登録鍵セットの中の RS256 鍵**です。ID Token 用に別の鍵を設定している場合でも、JARM 応答は汎用鍵で署名されます（JARM は応答 JWT の鍵用途を分けていません）。公開鍵は `/.well-known/jwks.json` に同じ `kid` で載るため、クライアントは `kid` で検証鍵を解決できます。
+
+応答 JWT の `alg` は常に `RS256` なので、鍵は active key（`getSigningKey()`）ではなく `getSigningKeys()` の返す鍵セットから alg で選ばれます。RS256 単一鍵構成では両者は同じ鍵になり、挙動は変わりません。RS256 と ES256 を併用し active key が ES256 の構成でも、JARM 応答は RS256 鍵で署名されます。汎用鍵セットに RS256 鍵が 1 本も無い場合は設定エラーとして認可リクエストが `server_error` で失敗します（誤った `alg` を表明した検証不能な JWT を返すことはありません）。
 
 ## フロー
 
@@ -237,7 +241,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
   AuthTransaction & JarmAuthTransactionFields;
 ```
 
-**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。生成された `conformance.test.ts` の全フローテストがこの round-trip を検出します。
+**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。生成された `conformance.test.ts` の全フローテストがこの round-trip を検出します（Next.js は consent がそもそも平文なので、この round-trip を使いません）。
 
 なお `prompt=none` と SSO 再利用の応答は authorize ルート内で完結するため、store の往復に依存しません。ストアの取りこぼしが影響するのはログイン・同意画面を挟む経路だけです。
 
@@ -273,7 +277,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 - 署名アルゴリズムは RS256 固定です。クライアント別 `authorization_signed_response_alg`（§3）や PS256 / ES256 は非対応です
 - `.jwt` 系以外の `response_mode`（`form_post` / `fragment` など）は従来どおり**無視**します。JARM は `.jwt` 系にだけ意味を足す拡張であり、有効化によって他の値の扱いは変わりません
 - Dynamic Client Registration がないため、クライアントメタデータによる JARM 設定はできません
-- **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全と判断しています。`prompt=none` と SSO 再利用（authorize ルート内で完結する経路）は Next.js でも JARM 応答になります。hono / express / fastify / web-standard には、この制限はありません
+- **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全と判断しています。`prompt=none` と SSO 再利用（authorize ルート内で完結する経路）は Next.js でも JARM 応答になります。Next.js 向けに生成される `routes/consent.ts` と `conformance.test.ts` もこの挙動に揃えてあるので、契約テストは実際の応答形式をそのまま固定します。hono / express / fastify / web-standard には、この制限はありません
 
 ## core 機能との違い
 
@@ -296,7 +300,8 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 | 起動時に `jarmConfig.jarmResponseLifetimeSeconds must be an integer between 5 and 600 seconds` | 設定値が JARM §2.1 の推奨レンジ外です |
 | クライアントで `code` が見つからない | JARM モードでは `code` はクエリではなく JWT のクレームです。`response` をデコードしてください |
 | クライアントで `iss` パラメータが無いと言われる | 仕様どおりです。JARM モードでは JWT の `iss` クレームが同じ役割を担います |
-| 署名検証に失敗する | `kid` で鍵を選んでいるか確認してください。応答 JWT は ID Token 用の鍵ではなく、汎用 `signingKeyProvider` の active key で署名されます |
+| 署名検証に失敗する | `kid` で鍵を選んでいるか確認してください。応答 JWT は ID Token 用の鍵ではなく、汎用 `signingKeyProvider` の登録鍵セットにある RS256 鍵で署名されます |
+| 認可リクエストが `server_error` になる（`response_mode=query.jwt` のときだけ） | 汎用 `signingKeyProvider` の鍵セットに RS256 鍵がありません。JARM 応答は RS256 固定なので、RS256 鍵を 1 本登録してください |
 | `invalid_request: response_mode fragment.jwt is not supported` | 本実装は `query.jwt` / `jwt` のみ対応です |
 | 数分放置してからコールバックを処理すると `exp` 切れになる | 既定 60 秒です。リダイレクトを受けたらすぐ検証してください。延ばす場合も上限は 600 秒です |
 

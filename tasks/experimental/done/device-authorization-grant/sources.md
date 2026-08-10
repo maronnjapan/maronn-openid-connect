@@ -37,6 +37,17 @@
 | `packages/cli/src/features.ts` | EXPERIMENTAL_FEATURES / OidcFeatureConfig — feature フラグの追加箇所 |
 | `tasks/experimental/done/{par,token-exchange,jarm}/` | 過去サイクルの仕様書式・候補評価の経緯（JARM サイクルで本機能が次サイクル有力候補と明記） |
 | `tasks/T-019-dpop.md` | DPoP は core 側タスクとして進行中 → experimental 候補から除外する根拠 |
+| `packages/cli/src/frameworks/hono/templates.ts:527-600` | transaction-binding Cookie ヘルパー群と設計コメント — 「識別子を知るだけの第三者が csrf_token を読める」問題の既存分析と、生値 Cookie + ハッシュ保存・SameSite=Lax・Max-Age=TTL のパターン（device 検証 UI のバインディングが踏襲。Review 2 で参照） |
+| `packages/core/src/auth-transaction.ts` | `computeTransactionBindingHash` / `validateTransactionBinding` — バインディングのハッシュ照合が core 公開 API として確立していることの確認（Review 2 で参照） |
+| `tasks/p2-login-attempt-throttling-subject-scope.md` | subject 単位ログイン試行スロットリングの既存タスク — `/device/login` 経由の資格情報総当たりの残存面を既存 `/login` と同一水準として扱い、同タスクの対象に含める根拠（Review 2 で参照） |
+| `tasks/p3-csrf-token-constant-time-comparison.md` | CSRF トークン定数時間比較の既存タスク — csrf_token 直接比較の水準を既存 login / consent と揃え、同タスクの適用範囲に本機能を含める根拠（Review 2 で参照） |
+| `packages/cli/src/frameworks/hono/templates.ts:24-48` | `OIDC_ENDPOINT_METHODS` と `enforceOidcEndpointMethod` — 許可メソッドマップの実名・feature 条件付き補間（`parMethod`）の実例・405/Allow の conformance ケース表（:7601-7615）（Review 3 で参照） |
+| `packages/cli/src/index.ts:21-31` | `withExperimentalPackage` — experimental feature 選択時のみ install guidance へ experimental package を挿入するハードコード feature チェック。本機能追加時の変更必須箇所（Review 3 で参照） |
+| `packages/cli/src/index.ts:55-75` | CLI コマンドは `generate` / `setup` の 2 つのみ（`install` は存在しない）。ヘルプの experimental 一覧は `EXPERIMENTAL_FEATURES.join` から自動導出（Review 3 で参照） |
+| `tests/e2e/apps/client.mjs` | E2E 専用クライアント — Node 組み込みのみの HTTP サーバーに `/start-par` / `/start-exchange` / `/start-jarm` の機能別ルートを足す既存パターン（`/start-device` が踏襲）（Review 3 で参照） |
+| `samples/hono-cloudflare/package.json:8` | `generate` スクリプトの `--enable` フラグ列 — サンプル再生成時に `--enable device-authorization-grant` を追記する箇所と、バイト同一確認に使う既存有効フラグの組み合わせ（Review 3 で参照） |
+| `packages/cli/src/frameworks/hono/templates.ts:6358-6360` | transaction-binding conformance テストの Set-Cookie 属性固定検証（`HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<TTL>` の endsWith 検証）— バインディング Cookie の属性検証が踏襲する書式（Review 3 で参照） |
+| `tasks/experimental/done/jarm/specification.md` | 承認済み仕様の「実装順序」節の書式 — 本仕様の実装順序節が踏襲（Review 3 で参照） |
 
 ## 二次資料
 

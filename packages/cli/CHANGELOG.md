@@ -1,5 +1,126 @@
 # @maronn-openid-connect/cli
 
+## 0.2.0
+
+### Minor Changes
+
+- 81d28b8: `--enable device-authorization-grant` を追加しました。OAuth 2.0 Device Authorization Grant（RFC 8628）を生成 OP に組み込む Experimental 機能です。
+
+  ブラウザを持たない・文字入力が困難なデバイス（スマート TV / CLI ツール / IoT 機器）が、別デバイスのブラウザでユーザーに承認してもらい、自分はトークンエンドポイントをポーリングしてトークンを受け取るフローを検証できます。
+
+  ## 有効化方法
+
+  ```bash
+  maronn-oidc generate hono --enable device-authorization-grant
+  pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
+  ```
+
+  hono / express / fastify / nextjs のすべてで生成できます。ロジックは `@maronn-openid-connect/experimental/device-authorization-grant` が提供します。
+
+  ## 有効時に生成されるもの
+
+  - `routes/device-authorization.ts`: デバイス認可エンドポイント（`POST /device_authorization`）と設定値 `deviceAuthorizationConfig`（`deviceCodeExpiresIn` / `pollInterval` / `maxLoginAttempts`）
+  - `routes/device.ts`: 検証 UI（`GET/POST /device` / `POST /device/login` / `POST /device/approve`）
+  - `views.ts`: `deviceVerificationPage` / `deviceLoginPage` / `deviceApprovalPage` / `deviceCompletedPage` の 4 ページ（差し替え可能）
+  - `store.ts`: `InMemoryDeviceAuthorizationStore` と、ブラウザバインディング Cookie（`oidc_device_<user_code>`）のヘルパー
+  - `routes/token.ts`: `grant_type=urn:ietf:params:oauth:grant-type:device_code` の分岐と RFC 8628 §3.5 の状態機械（`authorization_pending` / `slow_down` / `access_denied` / `expired_token`）
+  - `routes/discovery.ts`: `device_authorization_endpoint` と `grant_types_supported` への URN 追加（RFC 8628 §4）
+  - `conformance.test.ts`: デバイスフローの契約テスト
+
+  ## 移行上の注意
+
+  - **既定は無効です。** `--enable` を付けずに生成した OP の出力と挙動は従来どおりで、変更はありません（`conformance.test.ts` にのみ「機能が無効であること」を固定する契約テストが追加されます）
+  - **検証 UI の 3 ステップにはブラウザバインディング Cookie が必須です。** `user_code` はフロー開始者に既知である前提のため、CSRF トークン単独では承認強要もログイン CSRF も防げません。この Cookie は `transaction-binding` feature とは独立に常時有効で、curl で手動実行する場合は cookie jar（`-c` / `-b`）が必要です
+  - **`scope` は必須で `openid` を含む必要があります。** RFC 8628 §3.1 では OPTIONAL ですが、本 OP は認可エンドポイントと同じプロファイル制限を課します
+  - **`user_code` の総当たりに対するレート制限は実装していません。** RFC 8628 §5.1 の対策のうちエントロピー（20^8）と短い TTL は実装済みですが、レート制限はデプロイ基盤の責務です
+  - **Experimental です。** API・設定値・生成コードの構造はマイナーリリースでも破壊的に変更されることがあります
+
+- fe151e8: `--enable jarm` を追加しました。JWT Secured Authorization Response Mode (JARM) の試験実装を生成コードへ組み込みます。
+
+  有効化すると、クライアントが `response_mode=query.jwt`（または省略形 `jwt`）を指定した認可リクエストに対して、生成 OP は認可レスポンスを RS256 署名付き JWT 1 つにまとめ、`redirect_uri?response=<JWT>` で返します。JWT には JARM §2.1 の必須クレーム（`iss` / `aud` / `exp`）と、成功時は `code` / `state`、エラー時は `error` / `error_description` / `state` が入ります。素の `code` / `state` / `iss` クエリパラメータは付きません。discovery は `response_modes_supported: ['query', 'query.jwt', 'jwt']` と `authorization_signing_alg_values_supported: ['RS256']` を広告します（JARM §4）。
+
+  ```bash
+  maronn-oidc generate hono --enable jarm
+  pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
+  ```
+
+  実装は `@maronn-openid-connect/experimental/jarm` にあります。**Experimental であり、API・設定・生成コードの構造はマイナーリリースでも破壊的に変更されることがあります。** 利用する場合は `@maronn-openid-connect/experimental` のバージョンを固定してください。
+
+  移行上の注意:
+
+  - `--enable jarm` を付けない生成物は現行とバイト単位で同一です。既存 OP を再生成しても差分は出ません
+  - `--enable jarm` を付けても、クライアントが `response_mode` に `.jwt` 系の値を指定しない限り応答は従来どおりの平文クエリです。`form_post` / `fragment` など `.jwt` 以外の値は従来どおり無視します
+  - `fragment.jwt` / `form_post.jwt` は非対応で、指定されると平文クエリの `invalid_request` を返します
+  - 応答 JWT の暗号化（JWE）とクライアント別 `authorization_signed_response_alg` は非対応です。署名は RS256 固定です
+  - JARM モードは auth transaction に記録され、ログイン・同意を挟んで store を往復します。auth transaction store の実装を差し替えている場合は、**未知のフィールドを透過的に保存する**必要があります。落とすと JARM を要求したクライアントへ静かに平文クエリで応答します
+  - **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。`prompt=none` と SSO 再利用は Next.js でも JARM 応答になります。Next.js 向けに生成される `routes/consent.ts` と `conformance.test.ts` もこの挙動に揃えてあります。hono / express / fastify / web-standard には、この制限はありません
+
+### Patch Changes
+
+- f939cfd: `--enable device-authorization-grant` で生成した OP が、デバイスコードグラントの ID Token をクライアント登録の `id_token_signed_response_alg` に従って署名するよう修正しました（OIDC Dynamic Client Registration 1.0 §4.2）。
+
+  ## 何が起きていたか
+
+  `routes/token.ts` の `grant_type=urn:ietf:params:oauth:grant-type:device_code` 分岐は、ID Token の署名鍵として登録鍵セットから alg を選ばず、汎用の **ACTIVE** な ID Token 鍵（`idTokenPrivateKey`）をそのまま使っていました。
+
+  同じ生成 OP でも authorization_code / refresh_token グラントは登録鍵セットから `selectSigningKeyByAlg()` でクライアントの登録 alg に合う鍵を選ぶため、`idTokenSignedResponseAlg: 'ES256'` を登録したクライアントに対して、
+
+  - authorization_code グラント → ES256 で署名された ID Token
+  - device_code グラント → ACTIVE 鍵（既定 RS256）で署名された ID Token
+
+  という不整合が生じていました。クライアントは登録 alg で検証するため、デバイスフローで受け取った ID Token を拒否します。あわせて `at_hash` も誤ったハッシュ関数（alg 由来）で計算されていました（OIDC Core 1.0 §3.1.3.6）。
+
+  ## 修正内容
+
+  デバイスコードグラント分岐に、標準グラントと同じ鍵選択を入れました。
+
+  - 登録済み ID Token 鍵セットがある場合はクライアントの `idTokenSignedResponseAlg`（未指定は OIDC 既定の `RS256`）に合う鍵を選ぶ
+  - 合う鍵が無い場合はサーバー設定エラーとして `server_error` (500) を返す（`Cache-Control: no-store` 付き）
+  - 鍵セットが空の場合は従来どおり単一鍵コンテキストへフォールバックする
+
+  `conformance.test.ts` には、RS256 を ACTIVE にしたまま RS256 + ES256 の鍵セットを登録した OP に対してデバイスフローを実行し、`id_token_signed_response_alg: ES256` のクライアントが ES256 署名の ID Token を受け取ることを固定する契約テストを追加しています。
+
+  ## 移行上の注意
+
+  - `id_token_signed_response_alg` を登録していないクライアント（＝既定 RS256）だけを使っている場合、生成される ID Token に変化はありません
+  - 生成コードを再生成すると `routes/token.ts` と `conformance.test.ts` が更新されます
+
+- 9daa295: `--enable jarm` で生成される OP が、JARM 応答 JWT を**登録鍵セットの RS256 鍵**で署名するようになりました。
+
+  これまでは汎用 `signingKeyProvider` の active key（`getSigningKey()` の戻り値）をそのまま使っていました。JARM 応答 JWT の JOSE ヘッダは常に `alg: RS256` 固定なので、active key が RS256 でない構成では Web Crypto が署名を拒否し、`response_mode=query.jwt` を要求したクライアントが認可レスポンスをまったく受け取れませんでした。
+
+  `SigningKeyProvider` は `getSigningKey()` が ES256、`getSigningKeys()` が `[RS256, ES256]` を返す実装を正式に許容しており（RS256 必須は**鍵セット**への要求です）、この構成で JARM を有効にすると認可フローが実行時に壊れていました。
+
+  - authorize ルートと consent ルートの両方で、`selectSigningKeyByAlg(signingKeys, 'RS256')` により鍵セットから RS256 鍵を選びます
+  - 鍵セットが未設定の生成コード（旧来の単一鍵コンテキストだけを配線した実装）は従来どおり動きます
+  - RS256 単一鍵構成では選択結果が active key と一致するため、生成される応答 JWT は変わりません
+  - 鍵セットに RS256 鍵が無い場合は、検証不能な JWT を返さず `server_error` として失敗します
+  - Discovery の `authorization_signing_alg_values_supported: ['RS256']` が、実際に署名へ使う鍵の alg と一致するようになりました
+
+  `--enable jarm` を付けない生成物に差分はありません。移行作業は不要です。
+
+- ec6f267: 生成される `conformance.test.ts` の 2 つの不具合を修正しました。どちらも契約テストが「生成 OP の実際の挙動」を表していない状態でした。
+
+  **1. express / fastify / nextjs の契約テストが必ず 1 件失敗していた**
+
+  introspection の契約テスト（`should echo the jti of an access token issued by the token endpoint`）は、ストアへレコードを直接注入するのではなく実際の認可フローでトークンを発行するため `conformanceAuthorizationCode()` を呼びます。しかしこのヘルパー定義は hono のテンプレートからしか出力されていなかったため、express / fastify / nextjs の生成物では `ReferenceError: conformanceAuthorizationCode is not defined` になっていました。ヘルパーを web-standard のテンプレートからも出力するようにしています。
+
+  これらのサンプルは `conformance.test.ts` を実行していなかった（`test` が typecheck のみ）ため気付かれていませんでした。生成物を再生成すると `conformance.test.ts` にヘルパー定義が追加されます。
+
+  **2. Next.js + `--enable jarm` の契約テストが、生成 OP が返さない JARM 応答を固定していた**
+
+  Next.js の consent は Server Action（`consent/actions.ts`）として動き、Route Handler とは別バンドルになるため署名鍵プロバイダの別インスタンスを持ちます。ここで署名した応答 JWT は検証できないため、Server Action は平文クエリ応答のままにしてあります（既知の制限）。
+
+  ところがフレームワーク非依存の `routes/consent.ts` には JARM 分岐が入っており、契約テストはそちら経由で `/consent` を叩いていました。その結果、**契約テストは「ログイン・同意を挟むと署名付き JWT が返る」ことを緑で主張する一方、実際に配備される Next.js provider は平文クエリを返す**という食い違いが起きていました。
+
+  Next.js ターゲットでは `routes/consent.ts` からも JARM 分岐を外し、生成される契約テストが平文クエリ応答を固定するようにしました。`prompt=none` と SSO 再利用（authorize ルート内で完結し、Route Handler として動く経路）は従来どおり署名付き JWT を返し、契約テストもそれを固定します。
+
+  移行上の注意:
+
+  - `--enable jarm` を付けない生成物は、`conformance.test.ts` へのヘルパー追加（不具合 1 の修正）を除いて現行と同一です
+  - hono / express / fastify / web-standard の JARM 挙動と契約テストは変わりません
+  - Next.js で `--enable jarm` を使っている場合、生成される `routes/consent.ts` から JARM 分岐が消えます。これは Server Action 側の実挙動に合わせた修正で、配備される provider の応答は変わりません
+
 ## 0.1.1
 
 ### Patch Changes

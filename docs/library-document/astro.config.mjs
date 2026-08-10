@@ -62,6 +62,10 @@ export default defineConfig({
             { label: 'PAR (RFC 9126)', slug: 'experimental/par' },
             { label: 'Token Exchange (RFC 8693)', slug: 'experimental/token-exchange' },
             { label: 'JARM', slug: 'experimental/jarm' },
+            {
+              label: 'Device Authorization Grant (RFC 8628)',
+              slug: 'experimental/device-authorization-grant',
+            },
           ],
         },
       ],

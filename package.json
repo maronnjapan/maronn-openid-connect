@@ -13,10 +13,12 @@
         "deploy:express-flyio": "bash samples/express-flyio/scripts/deploy-fly.sh",
         "deploy:fastify-flyio": "bash samples/fastify-flyio/scripts/deploy-fly.sh",
         "deploy:nextjs-vercel": "bash samples/nextjs-vercel/scripts/deploy-vercel.sh",
-        "test:ci": "pnpm run test:ci-gate && pnpm run test:supply-chain && pnpm run test:release-contract && pnpm --filter \"./packages/*\" test && pnpm run test:conformance",
+        "test:ci": "pnpm run test:ci-gate && pnpm run test:supply-chain && pnpm run test:release-contract && pnpm run test:experimental-review && pnpm --filter \"./packages/*\" test && pnpm run test:conformance",
         "test:ci-gate": "node .github/scripts/verify-ci-gate.mjs",
         "test:supply-chain": "node --test .github/scripts/*.test.mjs",
         "test:release-contract": "node .github/scripts/verify-release-contract.mjs",
+        "test:experimental-review": "pnpm --filter @maronn-openid-connect/cli build && node --test \"scripts/experimental-review/**/*.test.mjs\"",
+        "review:experimental": "pnpm --filter @maronn-openid-connect/cli build && node scripts/experimental-review/cli.mjs",
         "test:e2e": "pnpm --filter @maronn-openid-connect/e2e test:e2e",
         "test:conformance": "pnpm --filter @maronn-openid-connect/conformance test",
         "conformance:basic-op": "pnpm --filter @maronn-openid-connect/conformance basic-op",
@@ -49,13 +51,14 @@
             "vite@>=6.0.0 <6.4.3": "6.4.3",
             "rollup@>=4.0.0 <4.59.0": "4.59.0",
             "picomatch@>=4.0.0 <4.0.4": "4.0.4",
-            "js-yaml@>=3.0.0 <4.0.0": "3.15.0",
-            "js-yaml@>=4.0.0 <5.0.0": "4.3.0",
+            "js-yaml@>=3.0.0 <4.0.0": "3.15.1",
+            "js-yaml@>=4.0.0 <5.0.0": "4.3.1",
             "fast-uri@>=3.0.0 <3.1.5": "3.1.5",
             "svgo@>=4.0.0 <4.0.2": "4.0.2",
             "sharp@<0.35.0": "0.35.3",
             "postcss@>=8.0.0 <8.5.23": "8.5.23",
-            "undici@>=7.0.0 <7.29.0": "7.29.0"
+            "undici@>=7.0.0 <7.29.0": "7.29.0",
+            "nanoid@>=3.0.0 <3.3.17": "3.3.17"
         }
     }
 }

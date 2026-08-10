@@ -32,6 +32,13 @@ const DEFAULT_LIFETIME_SECONDS = 60;
  * 場合の既定は RS256。この OP はクライアント別 alg を持たないため RS256 固定と
  * する。設定で変更できないので、クライアントが §2.4 で拒否する `alg: none` を
  * この OP が生成することはない。
+ *
+ * 固定であることの裏返しとして、{@link createJarmResponseJwt} に渡す `signingKey`
+ * は **RS256 鍵でなければならない**。RFC 7515 §4.1.1 の `alg` は「この JWS が
+ * どのアルゴリズムで署名されたか」の表明であり、別種の鍵で署名した JWS に
+ * `alg: RS256` を付けることは許されない。実際には Web Crypto が鍵と
+ * アルゴリズムの不一致で例外を投げるため、そのような JWS が生成されることは
+ * ない（署名偽造の余地は無く、失敗するのは署名処理そのもの）。
  */
 const RESPONSE_SIGNING_ALG = 'RS256';
 
@@ -87,7 +94,10 @@ export function assertJarmLifetimeSeconds(value: number): void {
  * @param options.issuer `iss` クレーム（OP の issuer）
  * @param options.clientId `aud` クレーム（応答先クライアント）
  * @param options.parameters 認可レスポンスパラメータ（code/state または error 系）
- * @param options.signingKey 応答 JWT の署名鍵（OP の汎用 signingKeyProvider の active key）
+ * @param options.signingKey 応答 JWT の署名鍵。**RS256 鍵であること**（JOSE ヘッダの
+ *   `alg` は常に RS256 固定なので、他の alg の鍵を渡すと Web Crypto が署名を拒否して
+ *   例外になる）。生成コードは登録鍵セットから `selectSigningKeyByAlg(keys, 'RS256')`
+ *   で選ぶこと。active key はこの契約を満たす保証がない。
  * @param options.lifetimeSeconds `exp` までの秒数（既定 60）
  * @param options.now 発行時刻（テスト用の注入点。既定は現在時刻）
  */

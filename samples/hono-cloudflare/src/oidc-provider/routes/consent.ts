@@ -7,6 +7,7 @@ import {
   type AuthTransaction,
   completeAuthTransaction,
   createAuthorizationCode,
+  selectSigningKeyByAlg,
   type SigningKey,
 } from '@maronn-openid-connect/core';
 import {
@@ -75,16 +76,24 @@ function resolveJarmResponse(
   transaction: AuthTransaction & JarmAuthTransactionFields,
 ): JarmResponseContext | undefined {
   if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
-  // JARM Section 2.2: signed with the OP's general-purpose active signing key,
-  // whose public half is published at /.well-known/jwks.json under the same kid.
+  // JARM Section 3: the response JWT always declares alg RS256, so the key is
+  // picked by alg from the registered key set rather than taken from the
+  // general-purpose ACTIVE key, which the SigningKeyProvider contract does not
+  // guarantee to be RS256. Its public half is published at
+  // /.well-known/jwks.json under the same kid. The single-key context is kept as
+  // a fallback for providers that never populated the key set; on the default
+  // single RS256 key both branches resolve the same key.
+  const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
   return {
     issuer: c.get('config').issuer,
     clientId: transaction.clientId,
-    signingKey: {
-      privateKey: c.get('privateKey'),
-      publicJwk: c.get('publicJwk'),
-      keyId: c.get('keyId'),
-    },
+    signingKey: jarmSigningKeys.length > 0
+      ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+      : {
+          privateKey: c.get('privateKey'),
+          publicJwk: c.get('publicJwk'),
+          keyId: c.get('keyId'),
+        },
   };
 }
 

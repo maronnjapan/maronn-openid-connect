@@ -6,6 +6,8 @@ import { userinfoApp } from './routes/userinfo.js';
 import { introspectionApp } from './routes/introspection.js';
 import { revocationApp } from './routes/revocation.js';
 import { parApp } from './routes/par.js';
+import { deviceAuthorizationApp } from './routes/device-authorization.js';
+import { deviceApp } from './routes/device.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
@@ -21,6 +23,7 @@ import {
 import {
   defaultProviderStores,
   parStore,
+  deviceAuthorizationStore,
   type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
@@ -108,6 +111,10 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/introspect': ['POST'],
   '/revoke': ['POST'],
   '/par': ['POST'],
+  '/device_authorization': ['POST'],
+  '/device': ['GET', 'POST'],
+  '/device/login': ['POST'],
+  '/device/approve': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -152,6 +159,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   app.use('/introspect', protectedCors);
   app.use('/revoke', protectedCors);
   app.use('/par', protectedCors);
+  app.use('/device_authorization', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
@@ -219,6 +227,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
     c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
     c.set('revocationResolvers', storeResolvers.revocationResolvers);
     c.set('parStore', parStore);
+    c.set('deviceAuthorizationStore', deviceAuthorizationStore);
 
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -243,6 +252,8 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
   app.route('/par', parApp);
+  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', deviceApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

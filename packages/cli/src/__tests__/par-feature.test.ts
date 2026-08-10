@@ -39,7 +39,12 @@ function discoveryPath(framework: string): string {
 
 describe('EXPERIMENTAL_FEATURES', () => {
   it('should list par among the experimental features', () => {
-    expect(EXPERIMENTAL_FEATURES).toEqual(['par', 'token-exchange']);
+    expect(EXPERIMENTAL_FEATURES).toEqual([
+      'par',
+      'token-exchange',
+      'jarm',
+      'device-authorization-grant',
+    ]);
   });
 });
 
@@ -57,6 +62,8 @@ describe('resolveFeatures with experimental features', () => {
       requestObject: true,
       par: false,
       tokenExchange: false,
+      jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -70,6 +77,8 @@ describe('resolveFeatures with experimental features', () => {
       requestObject: true,
       par: true,
       tokenExchange: false,
+      jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
@@ -93,13 +102,15 @@ describe('resolveFeatures with experimental features', () => {
       requestObject: true,
       par: true,
       tokenExchange: false,
+      jarm: false,
+      deviceAuthorizationGrant: false,
       transactionBinding: false,
     });
   });
 
   it('should name the experimental features in the unknown-feature error', () => {
     expect(() => resolveFeatures({ enable: ['ciba'] })).toThrow(
-      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange',
+      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm',
     );
   });
 });

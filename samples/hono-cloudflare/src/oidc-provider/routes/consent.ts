@@ -7,6 +7,8 @@ import {
   type AuthTransaction,
   completeAuthTransaction,
   createAuthorizationCode,
+  selectSigningKeyByAlg,
+  type SigningKey,
 } from '@maronn-openid-connect/core';
 import {
   clientResolver as defaultClientResolver,
@@ -20,6 +22,12 @@ import {
   parseTransactionBindingSecret,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
+import {
+  buildJarmRedirectUrl,
+  createJarmResponseJwt,
+  type JarmAuthTransactionFields,
+} from '@maronn-openid-connect/experimental/jarm';
+import { jarmConfig } from './jarm.js';
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -52,6 +60,80 @@ async function rejectUnboundTransaction(
       statusCode: error.httpStatusCode,
     }), { status: error.httpStatusCode });
   }
+}
+
+/**
+ * EXPERIMENTAL — JARM (JWT Secured Authorization Response Mode).
+ *
+ * The authorize route recorded the requested response mode on the transaction
+ * (jarmResponseMode). This route only ever sees the transaction it read back
+ * from the store, so the auth transaction store MUST persist fields it does not
+ * know about — otherwise a client that asked for a JWT response silently gets a
+ * plain query response instead. conformance.test.ts pins that round trip.
+ */
+function resolveJarmResponse(
+  c: any,
+  transaction: AuthTransaction & JarmAuthTransactionFields,
+): JarmResponseContext | undefined {
+  if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
+  // JARM Section 3: the response JWT always declares alg RS256, so the key is
+  // picked by alg from the registered key set rather than taken from the
+  // general-purpose ACTIVE key, which the SigningKeyProvider contract does not
+  // guarantee to be RS256. Its public half is published at
+  // /.well-known/jwks.json under the same kid. The single-key context is kept as
+  // a fallback for providers that never populated the key set; on the default
+  // single RS256 key both branches resolve the same key.
+  const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+  return {
+    issuer: c.get('config').issuer,
+    clientId: transaction.clientId,
+    signingKey: jarmSigningKeys.length > 0
+      ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
+      : {
+          privateKey: c.get('privateKey'),
+          publicJwk: c.get('publicJwk'),
+          keyId: c.get('keyId'),
+        },
+  };
+}
+
+type JarmResponseContext = {
+  issuer: string;
+  clientId: string;
+  signingKey: SigningKey;
+};
+
+/**
+ * EXPERIMENTAL — JARM Section 2.3.1: deliver the authorization response as the
+ * single `response` query parameter holding a signed JWT. Without a JARM
+ * transaction this is the plain query response the OP has always produced
+ * (RFC 9207 Section 2 appends iss; in JARM mode the JWT's iss claim carries the
+ * same statement, so no plain iss parameter is added).
+ */
+async function buildConsentRedirect(
+  jarm: JarmResponseContext | undefined,
+  redirectUri: string,
+  parameters: Record<string, string | undefined>,
+  issuer: string,
+): Promise<string> {
+  if (jarm) {
+    return buildJarmRedirectUrl(
+      redirectUri,
+      await createJarmResponseJwt({
+        issuer: jarm.issuer,
+        clientId: jarm.clientId,
+        parameters,
+        signingKey: jarm.signingKey,
+        lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
+      }),
+    );
+  }
+  const url = new URL(redirectUri);
+  for (const [name, value] of Object.entries(parameters)) {
+    if (value !== undefined) url.searchParams.set(name, value);
+  }
+  url.searchParams.set('iss', issuer);
+  return url.toString();
 }
 
 /**
@@ -122,18 +204,20 @@ consentApp.post('/', async (c) => {
   const issuer = config.issuer;
 
   if (action === 'deny') {
-    const redirectUrl = new URL(transaction.redirectUri);
-    redirectUrl.searchParams.set('error', 'access_denied');
-    if (transaction.state) {
-      redirectUrl.searchParams.set('state', transaction.state);
-    }
-    redirectUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
     // The transaction is over; drop its binding cookie so the browser does not
     // keep one cookie per finished flow.
     c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
-    return c.redirect(redirectUrl.toString());
+    // EXPERIMENTAL (JARM §2.1): a request that asked for response_mode=query.jwt
+    // gets its error as a signed JWT too, so the client can verify that the OP
+    // it trusts is the one that denied the request.
+    return c.redirect(
+      await buildConsentRedirect(resolveJarmResponse(c, transaction), transaction.redirectUri, {
+        error: 'access_denied',
+        state: transaction.state,
+      }, issuer),
+    );
   }
 
   // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
@@ -209,11 +293,10 @@ consentApp.post('/', async (c) => {
   c.header('Set-Cookie', buildClearedTransactionBindingCookie(transactionId));
 
   // Redirect back to client with authorization code
-  const redirectUrl = new URL(responseParams.redirectUri);
-  redirectUrl.searchParams.set('code', authCodeData.code);
-  if (responseParams.state) {
-    redirectUrl.searchParams.set('state', responseParams.state);
-  }
-  redirectUrl.searchParams.set('iss', issuer);
-  return c.redirect(redirectUrl.toString());
+  return c.redirect(
+    await buildConsentRedirect(resolveJarmResponse(c, transaction), responseParams.redirectUri, {
+      code: authCodeData.code,
+      state: responseParams.state,
+    }, issuer),
+  );
 });

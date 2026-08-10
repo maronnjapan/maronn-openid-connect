@@ -171,7 +171,7 @@ describe('CLI', () => {
         vi.spyOn(console, 'log').mockImplementation(() => {});
         run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
         expect(consoleSpy).toHaveBeenCalledWith(
-          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange',
+          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant',
         );
         expect(process.exitCode).toBe(1);
         vi.restoreAllMocks();
@@ -199,6 +199,23 @@ describe('CLI', () => {
         run(['generate', 'hono', '-o', join(testDir, 'par-install-output'), '--enable', 'par']);
         const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
         expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should add the experimental package to the install guidance when jarm is enabled', () => {
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', join(testDir, 'jarm-install-output'), '--enable', 'jarm']);
+        const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
+        expect(logged.includes('Experimental features enabled: jarm')).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should not generate the JARM settings module by default', () => {
+        const outputDir = join(testDir, 'jarm-default-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        expect(existsSync(join(outputDir, 'routes/jarm.ts'))).toBe(false);
         vi.restoreAllMocks();
       });
 

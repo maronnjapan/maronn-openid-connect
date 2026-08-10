@@ -55,8 +55,15 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  *
  * - par: Pushed Authorization Requests (RFC 9126).
  * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation only.
+ * - jarm: JWT Secured Authorization Response Mode (JARM), signed query.jwt only.
+ * - device-authorization-grant: OAuth 2.0 Device Authorization Grant (RFC 8628).
  */
-export const EXPERIMENTAL_FEATURES = ['par', 'token-exchange'] as const;
+export const EXPERIMENTAL_FEATURES = [
+  'par',
+  'token-exchange',
+  'jarm',
+  'device-authorization-grant',
+] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
 
@@ -80,6 +87,18 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   route dispatches the `urn:ietf:params:oauth:grant-type:token-exchange`
  *   grant (RFC 8693) to `@maronn-openid-connect/experimental/token-exchange` before
  *   core's grant_type validation would reject the URN.
+ * - jarm: experimental, disabled by default. When true, the authorize route
+ *   interprets `response_mode=query.jwt` (and its `jwt` shorthand) and returns
+ *   the authorization response as a single signed JWT in the `response` query
+ *   parameter, via `@maronn-openid-connect/experimental/jarm`. A request that
+ *   does not ask for a JWT response mode is answered exactly as before.
+ * - deviceAuthorizationGrant: experimental, disabled by default. When true, the
+ *   OP additionally serves the device authorization endpoint
+ *   (POST /device_authorization), the verification UI (/device, /device/login,
+ *   /device/approve) and dispatches the
+ *   `urn:ietf:params:oauth:grant-type:device_code` grant (RFC 8628) to
+ *   `@maronn-openid-connect/experimental/device-authorization-grant` before
+ *   core's grant_type validation would reject the URN.
  * - transactionBinding: optional hardening, disabled by default. When true, the
  *   authorize endpoint issues a per-transaction HttpOnly cookie and the
  *   login / consent steps refuse to run for a User-Agent that cannot present
@@ -93,6 +112,8 @@ export interface OidcFeatureConfig {
   requestObject: boolean;
   par: boolean;
   tokenExchange: boolean;
+  jarm: boolean;
+  deviceAuthorizationGrant: boolean;
   transactionBinding: boolean;
 }
 
@@ -114,6 +135,8 @@ const OPTIONAL_FEATURE_KEYS: Record<OptionalFeatureName, keyof OidcFeatureConfig
 const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatureConfig> = {
   par: 'par',
   'token-exchange': 'tokenExchange',
+  jarm: 'jarm',
+  'device-authorization-grant': 'deviceAuthorizationGrant',
 };
 
 /**
@@ -128,6 +151,8 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   requestObject: true,
   par: false,
   tokenExchange: false,
+  jarm: false,
+  deviceAuthorizationGrant: false,
   transactionBinding: false,
 };
 

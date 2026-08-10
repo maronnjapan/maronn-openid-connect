@@ -1,9 +1,17 @@
 {
   "name": "@maronn-openid-connect/experimental",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {
+    "./device-authorization-grant": {
+      "types": "./dist/device-authorization-grant/index.d.ts",
+      "import": "./dist/device-authorization-grant/index.js"
+    },
+    "./jarm": {
+      "types": "./dist/jarm/index.d.ts",
+      "import": "./dist/jarm/index.js"
+    },
     "./par": {
       "types": "./dist/par/index.d.ts",
       "import": "./dist/par/index.js"

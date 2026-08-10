@@ -45,6 +45,10 @@ OAuth 2.1 / OIDC を本番ライクに走らせる場合、HTTP レイヤーで�
   - `HttpOnly`: JS から触れない。
   - `SameSite=Lax`: 認可リダイレクトをまたぐ場合は `Lax`（`Strict` だと Cross-Site から戻ってきた時に Cookie が送られず認可フローが破綻する）。
   - `Path` / `Domain` を OP のホストに絞る。
+  - **名前プレフィックス（`__Host-`）によるホスト隔離**は本ファイルの範囲外。
+    属性だけでは兄弟ホストからの Cookie 書き込み（RFC 6265 §8.6 Weak Integrity）を防げないため、
+    その論点は `study-material/done/op-cookie-host-prefix-and-domain-isolation.md` /
+    `tasks/p2-op-cookie-host-prefix.md` が扱う。
 - **OAuth 2.0 Security BCP（RFC 9700。RFC 6819 を更新）**:
   - フロントチャネル経路（Authorization Endpoint）の HTTPS 必須、リダイレクト URI の厳格一致（実装済み）、`state` のエントロピー、CSRF 防御（`state` または PKCE で代替済み）。
 - **OWASP ASVS 4.x**: WebApp として認可サーバを建てるなら、ASVS V3（Session Management）、V7（Errors and Logging）、V14（Config）を参照。

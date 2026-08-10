@@ -14,6 +14,9 @@ import {
   revocationRouteTemplate,
   jwksRouteTemplate,
   parRouteTemplate,
+  deviceAuthorizationRouteTemplate,
+  deviceVerificationRouteTemplate,
+  jarmConfigTemplate,
   discoveryRouteTemplate,
   loginRouteTemplate,
   consentRouteTemplate,
@@ -34,7 +37,7 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'config.ts', content: configTemplate(pkg, features) },
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
-      { path: 'views.ts', content: viewsTemplate() },
+      { path: 'views.ts', content: viewsTemplate(features) },
       { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features) },
       { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features) },
       { path: 'routes/userinfo.ts', content: userinfoRouteTemplate(pkg) },
@@ -47,6 +50,20 @@ export class HonoGenerator implements FrameworkGenerator {
       // Experimental (RFC 9126): only generated with --enable par.
       ...(features.par
         ? [{ path: 'routes/par.ts', content: parRouteTemplate(pkg) }]
+        : []),
+      // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
+      ...(features.deviceAuthorizationGrant
+        ? [
+          {
+            path: 'routes/device-authorization.ts',
+            content: deviceAuthorizationRouteTemplate(pkg, features),
+          },
+          { path: 'routes/device.ts', content: deviceVerificationRouteTemplate(pkg) },
+        ]
+        : []),
+      // Experimental (JARM): settings module, only generated with --enable jarm.
+      ...(features.jarm
+        ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
         : []),
       { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg) },
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features) },

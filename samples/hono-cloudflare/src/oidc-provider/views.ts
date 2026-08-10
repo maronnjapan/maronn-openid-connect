@@ -52,6 +52,55 @@ export interface ErrorPageParams {
   statusCode: number;
 }
 
+export interface DeviceVerificationPageParams {
+  /**
+   * user_code to pre-fill the input with. Comes from the query string of
+   * verification_uri_complete (RFC 8628 §3.3.1) or from the user's own previous
+   * submission, so it is untrusted input and MUST be escaped before rendering.
+   */
+  userCode?: string;
+  /**
+   * Failure message for a code that did not match. RFC 8628 §5.1: the same text
+   * is used for unknown, expired and already-used codes, so do not add detail
+   * here — it would tell an attacker which codes exist.
+   */
+  error?: string;
+}
+
+export interface DeviceLoginPageParams {
+  /** user_code in display form; carried through as a hidden field. */
+  userCode: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts for this device authorization */
+  remainingAttempts?: number;
+}
+
+export interface DeviceApprovalPageParams {
+  /**
+   * user_code in display form. RFC 8628 §5.4: show it so the user can compare it
+   * with the code on the device screen — that comparison is the only defense
+   * against a remote phishing attempt that lured them to approve someone else's
+   * device.
+   */
+  userCode: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Client the device authorization was requested by */
+  clientId: string;
+  /** Scopes the device asked for */
+  scopes: string[];
+}
+
+export interface DeviceCompletedPageParams {
+  /** true when the user approved, false when they denied */
+  approved: boolean;
+  /** Client the decision applied to */
+  clientId: string;
+}
+
 // ============================================================
 // Views Interface
 // ============================================================
@@ -70,6 +119,14 @@ export interface Views {
   consentPage(params: ConsentPageParams): ViewResult;
   /** Render a generic error page */
   errorPage(params: ErrorPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the user_code entry form */
+  deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the sign-in form for a device flow */
+  deviceLoginPage(params: DeviceLoginPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the approve / deny screen */
+  deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult;
+  /** EXPERIMENTAL (RFC 8628 §3.3): render the "go back to your device" screen */
+  deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult;
 }
 
 /** Options applied when renderView wraps an HTML string into a Response. */
@@ -200,6 +257,106 @@ ${descriptionHtml}</body>
 </html>`;
 }
 
+function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): string {
+  const errorHtml = params.error
+    ? `<p style="color: red;">${escapeHtml(params.error)}</p>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html>
+<head><title>Device Activation</title></head>
+<body>
+  <h1>Device Activation</h1>
+  <p>Enter the code shown on your device.</p>
+  ${errorHtml}
+  <form method="POST" action="/device">
+    <div>
+      <label for="user_code">Code:</label>
+      <input type="text" id="user_code" name="user_code" value="${escapeHtml(params.userCode ?? '')}" required />
+    </div>
+    <button type="submit">Continue</button>
+  </form>
+</body>
+</html>`;
+}
+
+function defaultDeviceLoginPage(params: DeviceLoginPageParams): string {
+  const errorHtml = params.error
+    ? `<p style="color: red;">${escapeHtml(params.error)}${
+        params.remainingAttempts !== undefined
+          ? `. Attempts remaining: ${params.remainingAttempts}`
+          : ''
+      }</p>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html>
+<head><title>Login</title></head>
+<body>
+  <h1>Login</h1>
+  <p>Activating device code <strong>${escapeHtml(params.userCode)}</strong></p>
+  ${errorHtml}
+  <form method="POST" action="/device/login">
+    <input type="hidden" name="user_code" value="${escapeHtml(params.userCode)}" />
+    <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>`;
+}
+
+function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): string {
+  const scopeListHtml = params.scopes
+    .map((s) => `    <li>${escapeHtml(s)}</li>`)
+    .join('\n');
+
+  // RFC 8628 §5.4: the code is repeated here on purpose. Ask the user to check it
+  // against the device in front of them before approving.
+  return `<!DOCTYPE html>
+<html>
+<head><title>Authorize Device</title></head>
+<body>
+  <h1>Authorize Device</h1>
+  <p>Confirm that your device is showing this code: <strong>${escapeHtml(params.userCode)}</strong></p>
+  <p>Do not continue if the code does not match.</p>
+  <p>Client <strong>${escapeHtml(params.clientId)}</strong> is requesting access to the following scopes:</p>
+  <ul>
+${scopeListHtml}
+  </ul>
+  <form method="POST" action="/device/approve">
+    <input type="hidden" name="user_code" value="${escapeHtml(params.userCode)}" />
+    <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
+    <button type="submit" name="decision" value="approve">Approve</button>
+    <button type="submit" name="decision" value="deny">Deny</button>
+  </form>
+</body>
+</html>`;
+}
+
+function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): string {
+  const outcome = params.approved
+    ? `<p>You approved <strong>${escapeHtml(params.clientId)}</strong>.</p>`
+    : `<p>You denied <strong>${escapeHtml(params.clientId)}</strong>.</p>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head><title>Device Activation</title></head>
+<body>
+  <h1>Device Activation</h1>
+${outcome}
+  <p>You can close this page and go back to your device.</p>
+</body>
+</html>`;
+}
+
 /**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
@@ -208,6 +365,10 @@ export const defaultViews: Views = {
   loginPage: defaultLoginPage,
   consentPage: defaultConsentPage,
   errorPage: defaultErrorPage,
+  deviceVerificationPage: defaultDeviceVerificationPage,
+  deviceLoginPage: defaultDeviceLoginPage,
+  deviceApprovalPage: defaultDeviceApprovalPage,
+  deviceCompletedPage: defaultDeviceCompletedPage,
 };
 
 /**

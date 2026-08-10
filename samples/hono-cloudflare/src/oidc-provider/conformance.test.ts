@@ -150,6 +150,41 @@ const testClients = new Map<string, RegisteredClient>([
     grantTypes: ['authorization_code', 'urn:ietf:params:oauth:grant-type:token-exchange'],
     tokenEndpointAuthMethod: 'none',
   }],
+  // EXPERIMENTAL (RFC 8628): a client registered for the device grant, plus a
+  // second one so the contract test can prove a device_code is refused when it is
+  // presented by a client other than the one it was issued to (§3.4).
+  ['c-device', {
+    clientId: 'c-device',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    offlineAccessAllowed: true,
+  }],
+  ['c-device-other', {
+    clientId: 'c-device-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  // A third device client that registered id_token_signed_response_alg, so the
+  // contract test can prove the device grant honors it just like the standard
+  // grants (OIDC Dynamic Client Registration 1.0 §2).
+  ['c-device-es256', {
+    clientId: 'c-device-es256',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    idTokenSignedResponseAlg: 'ES256' as const,
+  }],
 ]);
 
 // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
@@ -428,10 +463,11 @@ describe('generated provider HTTP conformance', () => {
         jwks_uri: 'http://localhost:3000/.well-known/jwks.json',
         userinfo_endpoint: 'http://localhost:3000/userinfo',
         response_types_supported: ['code'],
-        // OAuth 2.0 Multiple Response Type Encoding Practices §2: the code flow
-        // returns the authorization response via query, so the OP advertises
-        // response_modes_supported as exactly ['query'].
-        response_modes_supported: ['query'],
+        // OAuth 2.0 Multiple Response Type Encoding Practices §2 + JARM §4: the
+        // code flow returns the authorization response via query, and this OP was
+        // generated with --enable jarm, so the JWT-secured query modes are
+        // advertised alongside it.
+        response_modes_supported: ['query', 'query.jwt', 'jwt'],
       });
     });
 
@@ -1145,6 +1181,10 @@ describe('generated provider HTTP conformance', () => {
         { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
       { path: '/introspect', method: 'GET', allow: 'POST' },
       { path: '/revoke', method: 'GET', allow: 'POST' },
+      { path: '/device_authorization', method: 'GET', allow: 'POST' },
+      { path: '/device', method: 'PUT', allow: 'GET, POST' },
+      { path: '/device/login', method: 'GET', allow: 'POST' },
+      { path: '/device/approve', method: 'GET', allow: 'POST' },
         { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
         { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
       ];
@@ -3315,6 +3355,1127 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
+
+  // EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628). Generated
+  // because this provider was created with --enable device-authorization-grant.
+  describe('Device Authorization Grant (RFC 8628)', () => {
+    const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
+
+    /**
+     * The app under test. Defaults to the shared one; the ID Token signing key
+     * selection test passes an app built on a mixed RS256 + ES256 key set.
+     */
+    type DeviceTargetApp = { request: (path: string, init?: RequestInit) => Promise<Response> };
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function requestDeviceAuthorization(
+      overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device_authorization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-device',
+          client_secret: 's',
+          scope: 'openid',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function pollToken(
+      deviceCode: string,
+      overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: DEVICE_GRANT_TYPE,
+          device_code: deviceCode,
+          client_id: 'c-device',
+          client_secret: 's',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    /** All Set-Cookie name=value pairs of a response, joined for a Cookie header. */
+    function cookieJar(...responses: Response[]): string {
+      return responses
+        .flatMap((res) => res.headers.getSetCookie())
+        .map((cookie) => cookie.split(';')[0] ?? '')
+        .filter((pair) => pair.length > 0 && !pair.endsWith('='))
+        .join('; ');
+    }
+
+    function submitUserCode(
+      userCode: string,
+      cookie = '',
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams({ user_code: userCode }).toString(),
+      });
+    }
+
+    function deviceLogin(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    function deviceApprove(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    /**
+     * Drive the whole browser side of the flow: user_code -> login -> decision.
+     * The binding cookie is carried forward at every step, exactly as a browser
+     * would; without it the OP answers 403.
+     */
+    async function runDeviceFlow(
+      overrides: Record<string, string> = {},
+      decision: 'approve' | 'deny' = 'approve',
+      target: DeviceTargetApp = app,
+    ): Promise<{ device_code: string; user_code: string; completed: Response }> {
+      const authorization = await (await requestDeviceAuthorization(overrides, target)).json();
+      const submitted = await submitUserCode(authorization.user_code, '', target);
+      const bindingCookie = cookieJar(submitted);
+      const loginRes = await deviceLogin(
+        {
+          user_code: authorization.user_code,
+          csrf_token: csrfFrom(await submitted.text()),
+          username: 'testuser',
+          password: 'password',
+        },
+        bindingCookie,
+        target,
+      );
+      const sessionCookie = cookieJar(submitted, loginRes);
+      const completed = await deviceApprove(
+        {
+          user_code: authorization.user_code,
+          csrf_token: csrfFrom(await loginRes.text()),
+          decision,
+        },
+        sessionCookie,
+        target,
+      );
+      return {
+        device_code: authorization.device_code,
+        user_code: authorization.user_code,
+        completed,
+      };
+    }
+
+    describe('Device authorization endpoint (RFC 8628 §3.1 / §3.2)', () => {
+      it('should return the six response fields with a non-cacheable body', async () => {
+        const res = await requestDeviceAuthorization();
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual([
+          'device_code',
+          'expires_in',
+          'interval',
+          'user_code',
+          'verification_uri',
+          'verification_uri_complete',
+        ]);
+      });
+
+      it('should return the configured lifetime and poll interval', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect([body.expires_in, body.interval]).toEqual([600, 5]);
+      });
+
+      it('should build verification_uri and verification_uri_complete from the issuer', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect(body.verification_uri).toBe('http://localhost:3000/device');
+        expect(body.verification_uri_complete).toBe(
+          'http://localhost:3000/device?user_code=' + body.user_code,
+        );
+      });
+
+      it('should mint a base-20 user_code in XXXX-XXXX form (RFC 8628 §6.1)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/.test(body.user_code)).toBe(true);
+      });
+
+      it('should mint a 256-bit device_code (RFC 8628 §5.2)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+
+        expect((body.device_code as string).length).toBe(43);
+      });
+
+      it('should issue a distinct device_code for every request', async () => {
+        const first = await (await requestDeviceAuthorization()).json();
+        const second = await (await requestDeviceAuthorization()).json();
+
+        expect(first.device_code === second.device_code).toBe(false);
+      });
+
+      it('should reject a body that is not form-urlencoded', async () => {
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: 'c-device', scope: 'openid' }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Device authorization requests must use application/x-www-form-urlencoded',
+        });
+      });
+
+      it('should reject an unauthenticated request with 401 invalid_client', async () => {
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-device', scope: 'openid' }).toString(),
+        });
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      it('should reject a client that is not registered for the device grant', async () => {
+        const res = await requestDeviceAuthorization({ client_id: 'c-conf' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the device_code grant',
+        });
+      });
+
+      it('should reject a request with no scope', async () => {
+        // RFC 8628 §3.1 makes scope OPTIONAL; this OP requires it (and openid)
+        // everywhere, which is a documented profile restriction.
+        const res = await app.request('/device_authorization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-device', client_secret: 's' }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: scope',
+        });
+      });
+
+      it('should reject a scope without openid', async () => {
+        const res = await requestDeviceAuthorization({ scope: 'profile' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_scope',
+          error_description: 'The openid scope is required',
+        });
+      });
+    });
+
+    describe('Discovery metadata (RFC 8628 §4)', () => {
+      it('should advertise the device authorization endpoint', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.device_authorization_endpoint).toBe(
+          'http://localhost:3000/device_authorization',
+        );
+      });
+
+      it('should advertise the device_code grant type', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect((metadata.grant_types_supported as string[]).includes(DEVICE_GRANT_TYPE)).toBe(true);
+      });
+    });
+
+    describe('Verification UI (RFC 8628 §3.3)', () => {
+      it('should serve the code entry form without authentication', async () => {
+        const res = await app.request('/device');
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      });
+
+      it('should pre-fill the form from verification_uri_complete (§3.3.1)', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const url = new URL(body.verification_uri_complete);
+        const html = await (await app.request(url.pathname + url.search)).text();
+
+        expect(html.includes('value="' + body.user_code + '"')).toBe(true);
+      });
+
+      it('should not expose a csrf_token before a code has matched', async () => {
+        // The csrf_token only appears on a response that also mints the binding
+        // cookie, so it is never readable by someone who only knows a user_code.
+        const html = await (await app.request('/device')).text();
+
+        expect(csrfFrom(html)).toBe('');
+      });
+
+      it('should answer an unknown user_code with the same reason-free message', async () => {
+        const res = await submitUserCode('BCDF-GHJK');
+
+        expect(res.status).toBe(400);
+        expect((await res.text()).includes('The code is invalid or has expired')).toBe(true);
+      });
+
+      it('should not set a binding cookie for an unknown user_code', async () => {
+        const res = await submitUserCode('BCDF-GHJK');
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should accept the user_code with its hyphen stripped and lower-cased', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await submitUserCode((body.user_code as string).replace('-', '').toLowerCase());
+
+        expect(res.status).toBe(200);
+      });
+
+      it('should set the binding cookie with the exact hardening attributes', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await submitUserCode(body.user_code);
+        const cookie = res.headers.getSetCookie()[0] ?? '';
+
+        expect(cookie.startsWith('oidc_device_' + (body.user_code as string).replace('-', '') + '=')).toBe(true);
+        expect(cookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+      });
+
+      it('should show the login form when no OP session exists', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const html = await (await submitUserCode(body.user_code)).text();
+
+        expect(html.includes('action="/device/login"')).toBe(true);
+      });
+
+      it('should embed a csrf_token once the code matched', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const html = await (await submitUserCode(body.user_code)).text();
+
+        expect(csrfFrom(html).length > 0).toBe(true);
+      });
+    });
+
+    describe('Browser binding enforcement (RFC 8628 §5.4)', () => {
+      it('should reject /device/login without the binding cookie even with a valid csrf_token', async () => {
+        // The whole point: a valid csrf_token is obtainable by anyone who knows
+        // the user_code, so it must NOT be sufficient on its own.
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const csrfToken = csrfFrom(await submitted.text());
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: csrfToken, username: 'testuser', password: 'password' },
+          '',
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should not establish a session when /device/login is unbound', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const csrfToken = csrfFrom(await submitted.text());
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: csrfToken, username: 'testuser', password: 'password' },
+          '',
+        );
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should reject /device/approve without the binding cookie', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const bindingCookie = cookieJar(submitted);
+        const loginRes = await deviceLogin(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await submitted.text()),
+            username: 'testuser',
+            password: 'password',
+          },
+          bindingCookie,
+        );
+        // Session cookie only: the forged request cannot carry the binding.
+        const sessionOnly = cookieJar(loginRes);
+
+        const res = await deviceApprove(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await loginRes.text()),
+            decision: 'approve',
+          },
+          sessionOnly,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should leave the record unapproved after an unbound approve attempt', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+        const bindingCookie = cookieJar(submitted);
+        const loginRes = await deviceLogin(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await submitted.text()),
+            username: 'testuser',
+            password: 'password',
+          },
+          bindingCookie,
+        );
+        await deviceApprove(
+          {
+            user_code: body.user_code,
+            csrf_token: csrfFrom(await loginRes.text()),
+            decision: 'approve',
+          },
+          cookieJar(loginRes),
+        );
+        const res = await pollToken(body.device_code);
+
+        expect((await res.json()).error).toBe('authorization_pending');
+      });
+
+      it('should reject a wrong csrf_token even with a valid binding cookie', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const submitted = await submitUserCode(body.user_code);
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: 'forged', username: 'testuser', password: 'password' },
+          cookieJar(submitted),
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should invalidate the previous binding when the code is submitted again', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const first = await submitUserCode(body.user_code);
+        const firstCsrf = csrfFrom(await first.text());
+        const firstCookie = cookieJar(first);
+        await submitUserCode(body.user_code);
+
+        const res = await deviceLogin(
+          { user_code: body.user_code, csrf_token: firstCsrf, username: 'testuser', password: 'password' },
+          firstCookie,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should clear the binding cookie once the decision is recorded', async () => {
+        const flow = await runDeviceFlow();
+        const cleared = flow.completed.headers.getSetCookie()[0] ?? '';
+
+        expect(cleared.startsWith('oidc_device_' + flow.user_code.replace('-', '') + '=;')).toBe(true);
+        expect(cleared.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0')).toBe(true);
+      });
+    });
+
+    describe('Token polling (RFC 8628 §3.5)', () => {
+      it('should answer authorization_pending before the user decides', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await pollToken(body.device_code);
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(await res.json()).toEqual({
+          error: 'authorization_pending',
+          error_description: 'The authorization request is still pending',
+        });
+      });
+
+      it('should answer slow_down when polled again inside the interval', async () => {
+        const body = await (await requestDeviceAuthorization()).json();
+        await pollToken(body.device_code);
+        const res = await pollToken(body.device_code);
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'slow_down',
+          error_description: 'Polling too frequently. Increase the interval by 5 seconds.',
+        });
+      });
+
+      it('should reject a missing device_code with invalid_request', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            client_id: 'c-device',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: device_code',
+        });
+      });
+
+      it('should reject an unknown device_code with invalid_grant', async () => {
+        const res = await pollToken('not-a-real-device-code');
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject a device_code presented by another client with the same wording', async () => {
+        // RFC 8628 §3.4: the code belongs to the client it was issued to. The
+        // wording matches the unknown-code case so existence is not leaked.
+        const body = await (await requestDeviceAuthorization()).json();
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code: body.device_code,
+            client_id: 'c-device-other',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject a client that is not registered for the device grant', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code: 'anything',
+            client_id: 'c-conf',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the device_code grant',
+        });
+      });
+
+      it('should answer access_denied after the user denies', async () => {
+        const flow = await runDeviceFlow({}, 'deny');
+        const res = await pollToken(flow.device_code);
+
+        expect(await res.json()).toEqual({
+          error: 'access_denied',
+          error_description: 'The end-user denied the authorization request',
+        });
+      });
+    });
+
+    describe('Token issuance (RFC 8628 §3.5 → OIDC Core 1.0 §3.1.3.3)', () => {
+      it('should issue an access token and an ID Token after approval', async () => {
+        const flow = await runDeviceFlow();
+        const res = await pollToken(flow.device_code);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(body.token_type).toBe('Bearer');
+        expect(body.scope).toBe('openid');
+        expect(typeof body.access_token).toBe('string');
+        expect(typeof body.id_token).toBe('string');
+      });
+
+      it('should omit nonce and c_hash from the ID Token', async () => {
+        // RFC 8628 defines no nonce parameter, and there is no authorization code,
+        // so neither claim has a value to carry (OIDC Core 1.0 §2).
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(payload.nonce).toBeUndefined();
+        expect(payload.c_hash).toBeUndefined();
+      });
+
+      it('should carry the auth_time recorded at approval', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(typeof payload.auth_time).toBe('number');
+        expect(payload.aud).toBe('c-device');
+      });
+
+      it('should let the issued access token reach the UserInfo endpoint', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + body.access_token },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+
+      it('should refuse to redeem the same device_code twice', async () => {
+        const flow = await runDeviceFlow();
+        await pollToken(flow.device_code);
+        const res = await pollToken(flow.device_code);
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The device_code is invalid, expired, or was issued to another client',
+        });
+      });
+
+    it('should issue a refresh token when offline_access was approved', async () => {
+      // OIDC Core 1.0 §11: the approval screen IS the explicit consent, and
+      // c-device is registered for the refresh_token grant.
+      const flow = await runDeviceFlow({ scope: 'openid offline_access' });
+      const res = await pollToken(flow.device_code);
+      const body = await res.json();
+
+      expect(typeof body.refresh_token).toBe('string');
+    });
+    });
+
+    describe('ID Token signing key selection (OIDC Dynamic Client Registration 1.0 §4.2)', () => {
+      /** JOSE header of a compact JWS, decoded. */
+      function joseHeader(jwt: string): Record<string, unknown> {
+        const segment = jwt.split('.')[0] ?? '';
+        return JSON.parse(
+          new TextDecoder().decode(
+            Uint8Array.from(atob(segment.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)),
+          ),
+        );
+      }
+
+      // A client may register id_token_signed_response_alg, and the standard
+      // grants pick a registered key matching it. The device grant MUST NOT
+      // diverge: signing this client's ID Token with whichever key happens to be
+      // ACTIVE would hand it an RS256 token it rejects, and would compute at_hash
+      // with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      it('should sign the device grant ID Token with the alg the client registered', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is RS256; the registered set also holds an ES256 key.
+          async getSigningKey(): Promise<SigningKey> {
+            return {
+              privateKey: rs256Pair.privateKey,
+              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+              keyId: 'device-rs256',
+            };
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [
+              {
+                privateKey: rs256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+                keyId: 'device-rs256',
+              },
+              {
+                privateKey: es256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+                keyId: 'device-es256',
+              },
+            ];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+        const client = { client_id: 'c-device-es256', client_secret: 's' };
+
+        const flow = await runDeviceFlow(client, 'approve', mixedApp);
+        const body = await (await pollToken(flow.device_code, client, mixedApp)).json();
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] =
+          (body.id_token as string).split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          es256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: 'device-es256',
+        });
+        expect(signatureValid).toBe(true);
+      });
+
+      it('should keep signing with RS256 for a client that registered no alg', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'RS256',
+          typ: 'JWT',
+          kid: 'test-key',
+        });
+      });
+    });
+  });
+
+  // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
+  // because this provider was created with --enable jarm. These tests pin the
+  // contract the repository guarantees for the generated JARM responses: change
+  // the behavior and they fail, which is how a customized OP learns it drifted.
+  describe('JWT Secured Authorization Response Mode (JARM)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure helpers: they fetch, parse and verify only. Every assertion lives in
+    // an it(), and none of them branches on the OP's behavior.
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function firstCookie(res: Response): string {
+      return (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+    }
+
+    function decodeSegment(segment: string): Record<string, unknown> {
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    function authorizeUrl(overrides: Record<string, string> = {}): string {
+      return '/authorize?' + new URLSearchParams({
+        response_type: 'code',
+        client_id: 'c-conf',
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid',
+        state: 'jarm-state',
+        nonce: 'jarm-nonce',
+        code_challenge: PKCE_CHALLENGE_S256,
+        code_challenge_method: 'S256',
+        ...overrides,
+      }).toString();
+    }
+
+    /**
+     * Drives authorize -> login -> consent and returns the final Location plus
+     * the browser session cookie login handed out (used by the SSO / prompt=none
+     * cases below). The transaction cookie is carried forward exactly as a
+     * browser would, so this works with or without --enable transaction-binding.
+     */
+    async function interactiveFlow(
+      url: string,
+      action: 'approve' | 'deny' = 'approve',
+    ): Promise<{ location: string; sessionCookie: string }> {
+      const authorizeRes = await app.request(url);
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      const bindingCookie = firstCookie(authorizeRes);
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const sessionCookie = firstCookie(loginRes);
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action,
+        }).toString(),
+      });
+
+      return {
+        location: consentRes.headers.get('Location') ?? '',
+        sessionCookie,
+      };
+    }
+
+    function queryOf(location: string): URLSearchParams {
+      return new URL(location, 'http://localhost').searchParams;
+    }
+
+    /**
+     * JARM Section 2.4 / Section 5.1, from the client's side: resolve the key
+     * from the OP's jwks_uri by kid and verify the RS256 signature before any
+     * claim is trusted.
+     */
+    async function inspectJarmJwt(jwt: string): Promise<{
+      header: Record<string, unknown>;
+      payload: Record<string, unknown>;
+      signatureValid: boolean;
+    }> {
+      const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+      const header = decodeSegment(encodedHeader);
+      const jwks = await (await app.request('/.well-known/jwks.json')).json();
+      const jwk = (jwks.keys as Array<Record<string, unknown>>).find(
+        (candidate) => candidate.kid === header.kid,
+      );
+      const key = await crypto.subtle.importKey(
+        'jwk',
+        { kty: 'RSA', n: jwk?.n as string, e: jwk?.e as string },
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['verify'],
+      );
+      const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const signatureValid = await crypto.subtle.verify(
+        'RSASSA-PKCS1-v1_5',
+        key,
+        Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+        new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+      );
+      return { header, payload: decodeSegment(encodedPayload), signatureValid };
+    }
+
+    describe('Signing key selection (JARM Section 3)', () => {
+      // A SigningKeyProvider may legitimately return an ES256 active key next to
+      // a registered set that also holds RS256 — packages/core's
+      // SigningKeyProvider contract documents alternate-alg key sets, and only
+      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
+      // JARM response JWT always declares alg RS256, so it must be signed with
+      // the RS256 key from that set: signing it with whichever key happens to be
+      // active would make Web Crypto refuse and break the authorization response
+      // delivery path for every client that asked for a JWT response mode.
+      it('should sign with the registered RS256 key when the active key is ES256', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const rs256Key: SigningKey = {
+          privateKey: rs256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+          keyId: 'mixed-rs256',
+        };
+        const es256Key: SigningKey = {
+          privateKey: es256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+          keyId: 'mixed-es256',
+        };
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is the ES256 one; the registered set holds both.
+          async getSigningKey(): Promise<SigningKey> {
+            return es256Key;
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [rs256Key, es256Key];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none with no session is
+        // login_required — a redirectable error, so it is answered in JARM mode
+        // straight from the authorize route, with no interaction to drive.
+        const res = await mixedApp.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const location = res.headers.get('Location') ?? '';
+        const jwt = queryOf(location).get('response') ?? '';
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          'RSASSA-PKCS1-v1_5',
+          rs256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(decodeSegment(encodedHeader)).toEqual({ alg: 'RS256', kid: 'mixed-rs256' });
+        expect(signatureValid).toBe(true);
+        expect(decodeSegment(encodedPayload).error).toBe('login_required');
+      });
+    });
+
+    describe('Success response (JARM Section 2.3.1)', () => {
+      it('should deliver the authorization response as the only response query parameter', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+
+        // JARM Section 2.3.1: the response is carried by a single `response`
+        // parameter. The plain code / state / iss parameters MUST NOT be added —
+        // the JWT's iss claim replaces RFC 9207's iss parameter.
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+      });
+
+      it('should sign the response JWT with RS256 under a kid published in JWKS', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const inspected = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+
+        // JARM Section 3: RS256 is the default (and here the only) algorithm.
+        // No typ header: JARM does not define one and its Section 2.3.1 example
+        // header carries only kid and alg.
+        expect(inspected.header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(inspected.signatureValid).toBe(true);
+      });
+
+      it('should carry exactly iss, aud, exp, code and state as claims', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+
+        // JARM Section 2.1: iss / aud / exp are REQUIRED and the authorization
+        // response parameters travel as claims of the same JWT. The claim set is
+        // pinned whole so an added claim (a PII leak, for instance) fails here.
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+        expect(payload.iss).toBe('http://localhost:3000');
+        expect(payload.aud).toBe('c-conf');
+        expect(payload.state).toBe('jarm-state');
+      });
+
+      it('should exchange the code carried by the response JWT for tokens', async () => {
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
+        const { payload } = await inspectJarmJwt(queryOf(location).get('response') ?? '');
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: String(payload.code ?? ''),
+            redirect_uri: REDIRECT_URI,
+            client_id: 'c-conf',
+            client_secret: 's',
+            code_verifier: PKCE_VERIFIER,
+          }).toString(),
+        });
+
+        // JARM changes only how the response is delivered; the code itself is an
+        // ordinary authorization code and the token endpoint is untouched.
+        expect(res.status).toBe(200);
+        expect((await res.json()).token_type).toBe('Bearer');
+      });
+
+      it('should treat the jwt shorthand as query.jwt', async () => {
+        // JARM Section 2.3.4: for response_type=code the default JWT delivery
+        // mode is query.jwt, so the `jwt` shorthand means exactly that.
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'jwt' }));
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(location).get('response') ?? '',
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+    });
+
+    describe('Error response (JARM Section 2.1)', () => {
+      it('should return a signed error JWT when the End-User denies consent', async () => {
+        const { location } = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt' }),
+          'deny',
+        );
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(location).get('response') ?? '',
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'error', 'exp', 'iss', 'state']);
+        expect(payload.error).toBe('access_denied');
+        expect(payload.state).toBe('jarm-state');
+      });
+
+      it('should return a signed error JWT for a prompt=none request with no session', async () => {
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none without a session is
+        // login_required. It is a redirectable error, so JARM applies to it.
+        const res = await app.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const { payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(signatureValid).toBe(true);
+        expect(payload.error).toBe('login_required');
+        expect(payload.state).toBe('jarm-state');
+      });
+    });
+
+    describe('Unsupported JWT response modes', () => {
+      // JARM Section 2.3.2 / Section 2.3.3 exist in the specification but are not
+      // implemented by this OP (response_type=code only, no auto-submitting form).
+      // The rejection itself is a PLAIN query error: the OP cannot answer in a
+      // response mode it does not implement.
+      it('should reject fragment.jwt with a plain invalid_request redirect', async () => {
+        const res = await app.request(authorizeUrl({ response_mode: 'fragment.jwt' }));
+        const query = queryOf(res.headers.get('Location') ?? '');
+
+        expect(res.status).toBe(302);
+        expect([...query.keys()].sort()).toEqual(['error', 'error_description', 'iss', 'state']);
+        expect(query.get('error')).toBe('invalid_request');
+        expect(query.get('error_description')).toBe('response_mode fragment.jwt is not supported');
+        expect(query.get('state')).toBe('jarm-state');
+      });
+
+      it('should reject form_post.jwt with a plain invalid_request redirect', async () => {
+        const res = await app.request(authorizeUrl({ response_mode: 'form_post.jwt' }));
+        const query = queryOf(res.headers.get('Location') ?? '');
+
+        expect(query.get('error')).toBe('invalid_request');
+        expect(query.get('error_description')).toBe('response_mode form_post.jwt is not supported');
+      });
+    });
+
+    describe('Unchanged behavior without a JWT response mode', () => {
+      it('should return the plain query response when response_mode is absent', async () => {
+        const { location } = await interactiveFlow(authorizeUrl());
+
+        // The whole point of the isolation: enabling JARM must not change the
+        // response for a client that did not ask for it.
+        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
+        expect(queryOf(location).get('iss')).toBe('http://localhost:3000');
+      });
+
+      it('should keep ignoring a non-JWT response_mode value', async () => {
+        // form_post is not implemented and never was; JARM only adds meaning to
+        // the .jwt family, so this request is answered exactly as before.
+        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'form_post' }));
+
+        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
+      });
+    });
+
+    describe('Transaction store round trip', () => {
+      // The authorize route records the mode on the transaction and the consent
+      // route reads it back, so a store that drops unknown fields would answer in
+      // plain query. These paths, by contrast, answer inside the authorize route
+      // itself and never touch the store round trip.
+      it('should answer the SSO fast path with a signed JWT', async () => {
+        const first = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'consent' }),
+        );
+        const res = await app.request(authorizeUrl({ response_mode: 'query.jwt' }), {
+          headers: { Cookie: first.sessionCookie },
+        });
+        const { header, payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        // JARM Section 3: the authorize route signs with the RS256 key selected
+        // from the registered key set, not with whichever key happens to be
+        // active, so the alg header always matches the key that produced it.
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+
+      it('should answer a prompt=none success with a signed JWT', async () => {
+        const first = await interactiveFlow(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'consent' }),
+        );
+        const res = await app.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+          { headers: { Cookie: first.sessionCookie } },
+        );
+        const { header, payload, signatureValid } = await inspectJarmJwt(
+          queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
+        );
+
+        expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
+        expect(signatureValid).toBe(true);
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
+      });
+    });
+
+    describe('Discovery metadata (JARM Section 4)', () => {
+      it('should advertise the JWT response modes and the response signing algorithm', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
+        expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
+      });
+    });
+  });
 
   describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
     const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';

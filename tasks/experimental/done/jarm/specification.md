@@ -172,9 +172,7 @@ subpath export（`packages/experimental/package.json` の `exports["./jarm"]` �
  *  - { kind: 'plain' }: 未指定 / 'query' / .jwt 系以外の値（従来挙動を維持）
  *  - { kind: 'unsupported-jwt-mode', requested: string }: fragment.jwt / form_post.jwt /
  *    その他 '.jwt' で終わる未知値。呼び出し側が invalid_request のリダイレクト可能エラーにする */
-export function resolveJarmResponseMode(
-  params: Record<string, string | undefined>,
-): JarmResponseModeResolution;
+export function resolveJarmResponseMode(params: object): JarmResponseModeResolution;
 
 export type JarmResponseModeResolution =
   | { kind: 'jarm'; mode: 'query.jwt' }
@@ -187,12 +185,12 @@ export type JarmResponseModeResolution =
  *  header: { alg: 'RS256', kid: signingKey.keyId }（typ なし）
  *  payload: { iss, aud, exp, ...parameters } */
 export async function createJarmResponseJwt(options: {
-  issuer: string;                        // iss クレーム
-  clientId: string;                      // aud クレーム
-  parameters: Record<string, string>;    // code/state または error/error_description/state
-  signingKey: SigningKey;                // core の型を再利用
-  lifetimeSeconds?: number;              // デフォルト 60
-  now?: Date;                            // テスト用の時刻注入
+  issuer: string;                                   // iss クレーム
+  clientId: string;                                 // aud クレーム
+  parameters: Record<string, string | undefined>;   // code/state または error/error_description/state
+  signingKey: SigningKey;                           // core の型を再利用
+  lifetimeSeconds?: number;                         // デフォルト 60
+  now?: Date;                                       // テスト用の時刻注入
 }): Promise<string>;
 
 /** redirect_uri に response パラメータのみを付けた URL を返す（JARM §2.3.1） */
@@ -387,7 +385,7 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 ## Changeset要件
 
-- `@maronn-openid-connect/experimental`: **手書きの changeset を作らない**（Review 3 で修正）。`packages/experimental/src` の変更は main への push で CI が patch の changeset を自動生成する（`.github/scripts/ensure-experimental-changeset.mjs`）。experimental の bump はどんな変更でも patch 固定で、minor / major を指定すると `pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`）が失敗する（RELEASE.md「experimental の bump は常に patch に固定する」・CLAUDE.md の同旨規約）
+- `@maronn-openid-connect/experimental`: **patch の手書き changeset を追加する**（実装時に修正。下記「実装時の小修正」#8）。Review 3 は「手書きしない」と結論したが、PR の必須チェック `changeset-coverage`（`.github/scripts/verify-changeset-coverage.mjs`）が「出荷物を変えた publish 可能パッケージには**この PR 自身の** changeset が必要」と要求するため、手書きしないと PR がマージできない。`ensure-experimental-changeset.mjs` は手書きの changeset を検出すると自動生成をスキップする設計（`hasManualExperimentalChangeset`）なので二重にはならない。**bump は必ず patch**にすること。minor / major を指定すると `pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs`）が失敗する（RELEASE.md「experimental の bump は常に patch に固定する」・CLAUDE.md の同旨規約）
 - `@maronn-openid-connect/cli`: minor の手書き changeset（`--enable jarm` の追加。既存デフォルト挙動は不変のため breaking ではない）
 - core: 変更なし（changeset 不要）
 
@@ -415,7 +413,11 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 ## 未解決事項
 
-なし。セキュリティ上の未解決事項: なし。
+| ID | 内容 | 状況 |
+|---|---|---|
+| U4 | **Next.js ターゲットの consent Server Action で JARM 応答を返せない**（実装時に判明。「実装時の小修正」#6 参照）。Next.js は Server Action を Route Handler と別バンドルに分けるため、Server Action 側の署名鍵プロバイダのインスタンスが `jwks_uri` を公開する側と異なり、署名検証が必ず失敗する。現状は平文クエリで据え置き、制限として明示している | **要再レビュー**。恒久対応（署名鍵を両バンドルで共有する仕組み、または応答構築を Route Handler 側へ寄せる設計）は本仕様のスコープ外であり、推測で補完せず次サイクルの仕様検討に回す。セキュリティ上の欠陥ではない（検証不能な JWT を返すより安全側へ倒している）が、Next.js 利用者には JARM の主目的が同意経由の経路で得られない |
+
+セキュリティ上の未解決事項: なし。
 
 ### 解決済み
 
@@ -424,6 +426,21 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 | U3 | E2E 専用クライアント（`tests/e2e/apps`）への JARM 検証組み込み方（既存クライアントの構造確認） | `tests/e2e/apps/client.mjs` は Node 組み込みのみの HTTP サーバーで、experimental 機能ごとに `/start-*` ルートを足す既存パターン（`/start-par` / `/start-exchange`）を持つ。`/start-jarm` ルート＋`/callback` の JARM 分岐（iss 先行確認 → jwks 取得 → `node:crypto` で RS256 検証 → aud/exp 確認 → code 抽出）で組み込める。spec は discovery 自己スキップパターン（`pushed-authorization-requests.spec.ts:26`）を踏襲。確定内容はテスト計画の E2E 節に記載 | Review 3（2026-08-04） |
 | U1 | `buildErrorRedirect` の 8 呼び出しサイトすべてで `transaction` がスコープにあるかの網羅確認 | 8 サイト（`templates.ts:2019, 2035, 2048, 2061, 2068, 2095, 2101, 2108`）すべてが `createAuthTransaction`（:2003）直後のローカル変数 `transaction` を参照することをテンプレート通読で確認。トランザクション不在のサイトは無い。put（:2007）は全サイトより前に完了しており、参照はローカル変数のため store round-trip にも依存しない（行番号は当時の main 45997d8 時点。現在位置と構造不変の再確認は棚卸し表を参照） | Review 2（2026-08-03） |
 | U2 | 応答 JWT 生成の async 化と jarm 無効時バイト同一の両立戦略 | ヘルパー定義の丸ごと条件付き補間＋呼び出しサイトの `${jarmAwait}` / `${jarmTxnArg}` 補間で解決（「CLI生成コードからの利用方法」実装上の必須要件 5 に確定内容を記載） | Review 2（2026-08-03） |
+
+## 実装時の小修正（2026-08-04）
+
+実装 Routine で仕様と実装の双方を更新した差分。いずれも仕様の意図を変えず、型安全性・実挙動との整合のための修正である。
+
+| # | 内容 | 理由 |
+|---|---|---|
+| 1 | `createJarmResponseJwt` の `parameters` を `Record<string, string>` → `Record<string, string \| undefined>` へ | バリデーション 3（「値が `undefined` のパラメータはクレームに含めない」）を型として表現するため。生成コードは `{ code, state: transaction.state }` の形で `string \| undefined` を渡す |
+| 2 | 応答 JWT のクレーム構築を `{ iss, aud, exp, ...parameters }` → 「`parameters` を先に展開し `iss` / `aud` / `exp` を後から設定」へ | `parameters` に同名キーがあっても OP 自身の表明を上書きできないようにするハードニング。クレーム集合は仕様どおりで JSON のキー順のみが変わる（単体テストで固定） |
+| 3 | `resolveJarmResponseMode` の引数型を `Record<string, string \| undefined>` → `object` へ。値が文字列でなければ `plain` を返す | core の `AuthorizationRequestParams` は index signature を持たない interface で `Record` に代入できないため。`effectiveParams` をそのまま渡せる形にした（仕様の呼び出し方は不変） |
+| 4 | 生成コードの `AuthorizationError` 第 1 引数を文字列リテラルではなく `AuthorizationErrorCode.InvalidRequest` へ | core の `AuthorizationErrorCode` は TS の `enum` であり文字列リテラルを受け付けないため |
+| 5 | `jarmConfig` の置き場所を、jarm 有効時のみ生成する新規ファイル `routes/jarm.ts` に確定 | PAR は `routes/par.ts`（エンドポイント本体）に同居させたが、JARM は新規エンドポイントを持たないため設定専用モジュールとして独立させた。authorize / consent の両ルートが参照する |
+| 6 | Next.js の consent Server Action（`consent/actions.ts`）は **JARM 非対応のまま据え置き**（実装 → E2E で不可と判明 → 撤回） | Next.js サンプルの実際の同意フローは共有の `routes/consent.ts` ではなく Server Action を通るため、一度は 7 サイト目として実装した。しかし E2E（nextjs サンプル）で署名検証が必ず失敗することが判明。Next.js は Server Action を Route Handler と別バンドルへ分けるため、Server Action 側は署名鍵プロバイダの**別インスタンス**を持つ。実測では応答 JWT の `kid` は `/.well-known/jwks.json` と一致するのに鍵素材が異なり（`verify` が false）、クライアントは必ず検証に失敗する。検証できない JWT を返すより平文で返すほうが安全と判断し、Server Action は平文クエリのまま据え置いた。CLI テストで「Server Action の生成物が jarm 有無で同一」であることを固定し、docs の「既知の制約」・changeset・生成コードのコメントに制限を明記した。**恒久対応は再レビュー扱い**（下記「未解決事項」参照） |
+| 7 | consent ルートの `type AuthTransaction` import を transaction-binding 無効時のみ追加 | transaction-binding が既に同じ型を import しており、両方有効だと named import が重複してコンパイルできないため |
+| 8 | `@maronn-openid-connect/experimental` にも **patch の手書き changeset** を追加（Review 3 の「手書きしない」を修正） | 必須チェック `changeset-coverage` が PR 自身の changeset を要求するため、手書きなしではマージできない。`ensure-experimental-changeset.mjs` は手書きがあれば自動生成をスキップするので二重にならない。patch 固定の規約は維持している |
 
 ## 将来の昇格考慮
 

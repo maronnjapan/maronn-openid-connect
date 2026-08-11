@@ -8036,6 +8036,9 @@ function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
  *
  * Emitted only when the introspection endpoint is generated: it is the only
  * caller, and the generated sample tsconfig sets noUnusedLocals.
+ *
+ * Shared with the web-standard frameworks (express / fastify / nextjs): they emit
+ * the same introspectionConformanceBlock, so they need the same helper definition.
  */
 export function authorizationCodeConformanceHelper(features: OidcFeatureConfig): string {
   if (!features.introspection) return '';

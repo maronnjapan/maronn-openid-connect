@@ -10,7 +10,8 @@
     "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && next build",
     "start": "next start --hostname ${HOST:-127.0.0.1} --port ${PORT:-3010}",
     "launch": "pnpm run build && pnpm run start",
-    "test": "pnpm run typecheck",
+    "test": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && pnpm run typecheck && pnpm run test:conformance",
+    "test:conformance": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
     "next": "^16.2.12",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.6"
   }
 }

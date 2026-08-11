@@ -1,6 +1,6 @@
 {
   "name": "@maronn-openid-connect/experimental",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {
@@ -58,7 +58,7 @@
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@maronn-openid-connect/core": "workspace:*",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.2.0",
     "typescript": "^5.7.2",
     "vitest": "^3.2.6"
   }

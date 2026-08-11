@@ -37,7 +37,7 @@ index b21565e..55492c7 100644
        // The sample client authenticates with client_secret_post, so register it explicitly.
        tokenEndpointAuthMethod: 'client_secret_post',
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-token-exchange/_oidc-provider/conformance.test.ts
-index a76047d..2821a19 100644
+index dbce5cd..f6cb398 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-token-exchange/_oidc-provider/conformance.test.ts
 @@ -7,6 +7,7 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -75,7 +75,7 @@ index a76047d..2821a19 100644
  ]);
  
  // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
-@@ -2103,6 +2124,548 @@ describe('generated provider HTTP conformance', () => {
+@@ -2103,6 +2124,690 @@ describe('generated provider HTTP conformance', () => {
    });
  
  
@@ -89,9 +89,11 @@ index a76047d..2821a19 100644
 +    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 +    const EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
 +    const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
-+    // The exchange rejects every kind of unusable subject_token with one
-+    // description so the response cannot be used as an existence oracle.
++    // The exchange rejects every kind of unusable subject_token / actor_token
++    // with one description each, so the response cannot be used as an existence
++    // oracle.
 +    const SUBJECT_INVALID_DESCRIPTION = 'The provided subject_token is not valid';
++    const ACTOR_INVALID_DESCRIPTION = 'The provided actor_token is not valid';
 +    const TARGET_REJECTED_DESCRIPTION =
 +      'The requested target is not allowed for token exchange';
 +
@@ -123,9 +125,24 @@ index a76047d..2821a19 100644
 +      });
 +    }
 +
++    // Decode a JWT access token's payload (base64url, RFC 7515 §2) so the act
++    // claim of a delegated token can be pinned. The generated default issues
++    // JWT access tokens (config.accessTokenFormat: 'jwt').
++    function decodeJwtPayload(token: string): Record<string, unknown> {
++      const segment = token.split('.')[1] ?? '';
++      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
++      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
++      return JSON.parse(atob(padded)) as Record<string, unknown>;
++    }
++
 +    // Drive authorize -> login -> consent over HTTP and hand back the code. No
 +    // assertions and no branching here: the flow contract lives in the it()s.
-+    async function authorizeFlow(clientId: string, scope: string, claims?: string): Promise<string> {
++    async function authorizeFlow(
++      clientId: string,
++      scope: string,
++      claims?: string,
++      username = 'testuser',
++    ): Promise<string> {
 +      const authorizeUrl =
 +        '/authorize?response_type=code&client_id=' + clientId +
 +        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
@@ -151,7 +168,7 @@ index a76047d..2821a19 100644
 +        body: new URLSearchParams({
 +          transaction_id: transactionId,
 +          csrf_token: csrfFrom(await loginGet.text()),
-+          username: 'testuser',
++          username,
 +          password: 'password',
 +        }).toString(),
 +      });
@@ -176,8 +193,9 @@ index a76047d..2821a19 100644
 +      scope: string,
 +      clientId = 'c-exchange',
 +      claims?: string,
++      username = 'testuser',
 +    ): Promise<string> {
-+      const code = await authorizeFlow(clientId, scope, claims);
++      const code = await authorizeFlow(clientId, scope, claims, username);
 +      const res = await postToken({
 +        client_id: clientId,
 +        ...(clientId === 'c-public-exchange' ? {} : { client_secret: 's' }),
@@ -187,6 +205,13 @@ index a76047d..2821a19 100644
 +        code_verifier: PKCE_VERIFIER,
 +      });
 +      return ((await res.json()) as Record<string, string>).access_token;
++    }
++
++    // An actor_token with a sub distinct from the subject: the second seeded
++    // user runs the same flow, so delegation tests can tell subject and actor
++    // apart in the act claim.
++    function actorTokenFor(scope: string): Promise<string> {
++      return subjectTokenFor(scope, 'c-exchange', undefined, 'otheruser');
 +    }
 +
 +    describe('Successful exchange', () => {
@@ -418,20 +443,66 @@ index a76047d..2821a19 100644
 +        });
 +      });
 +
-+      // Delegation (RFC 8693 §1.1 / §4) is out of scope and refused explicitly.
-+      it('should reject a delegation request carrying actor_token', async () => {
++      // RFC 8693 §2.1: actor_token_type is REQUIRED when actor_token is present.
++      it('should reject actor_token without actor_token_type', async () => {
 +        const subjectToken = await subjectTokenFor('openid');
 +        const res = await exchangeRequest({
 +          subject_token: subjectToken,
 +          actor_token: subjectToken,
++        });
++
++        expect(res.status).toBe(400);
++        expect(await res.json()).toEqual({
++          error: 'invalid_request',
++          error_description: 'actor_token_type is required when actor_token is present',
++        });
++      });
++
++      // RFC 8693 §2.1: actor_token_type MUST NOT be included without actor_token.
++      it('should reject actor_token_type without actor_token', async () => {
++        const subjectToken = await subjectTokenFor('openid');
++        const res = await exchangeRequest({
++          subject_token: subjectToken,
 +          actor_token_type: ACCESS_TOKEN_TYPE,
 +        });
 +
 +        expect(res.status).toBe(400);
 +        expect(await res.json()).toEqual({
 +          error: 'invalid_request',
++          error_description: 'actor_token_type must not be present without actor_token',
++        });
++      });
++
++      it('should reject an unsupported actor_token_type with invalid_request', async () => {
++        const subjectToken = await subjectTokenFor('openid');
++        const res = await exchangeRequest({
++          subject_token: subjectToken,
++          actor_token: subjectToken,
++          actor_token_type: 'urn:ietf:params:oauth:token-type:id_token',
++        });
++
++        expect(res.status).toBe(400);
++        expect(await res.json()).toEqual({
++          error: 'invalid_request',
 +          error_description:
-+            'Delegation is not supported: actor_token and actor_token_type must not be present.',
++            'Unsupported actor_token_type. Only urn:ietf:params:oauth:token-type:access_token is supported.',
++        });
++      });
++
++      // The actor_token failure description is fixed for the same oracle-
++      // elimination reason as the subject_token one.
++      it('should reject an unknown actor_token with the fixed description', async () => {
++        const subjectToken = await subjectTokenFor('openid');
++        const res = await exchangeRequest({
++          subject_token: subjectToken,
++          actor_token: 'not-a-real-token',
++          actor_token_type: ACCESS_TOKEN_TYPE,
++        });
++
++        expect(res.status).toBe(400);
++        expect(await res.json()).toEqual({
++          error: 'invalid_request',
++          error_description: ACTOR_INVALID_DESCRIPTION,
 +        });
 +      });
 +
@@ -532,6 +603,77 @@ index a76047d..2821a19 100644
 +
 +        expect(res.status).toBe(200);
 +        expect((await res.json()).scope).toBe('email');
++      });
++    });
++
++    describe('Delegation (RFC 8693 §4.1)', () => {
++      // sub stays the subject; the actor appears only in the act claim.
++      it('should record the actor in the act claim of the issued token', async () => {
++        const subjectToken = await subjectTokenFor('openid profile');
++        const actorToken = await actorTokenFor('openid');
++        const res = await exchangeRequest({
++          subject_token: subjectToken,
++          actor_token: actorToken,
++          actor_token_type: ACCESS_TOKEN_TYPE,
++        });
++        const body = await res.json();
++        const payload = decodeJwtPayload(body.access_token as string);
++
++        expect(res.status).toBe(200);
++        expect(payload.sub).toBe('testuser');
++        expect(payload.act).toEqual({ sub: 'otheruser' });
++      });
++
++      it('should not add an act claim to an impersonation exchange', async () => {
++        const subjectToken = await subjectTokenFor('openid');
++        const body = await (await exchangeRequest({ subject_token: subjectToken })).json();
++        const payload = decodeJwtPayload(body.access_token as string);
++
++        expect(payload.act).toBe(undefined);
++      });
++
++      // RFC 8693 §4.1: exchanging a delegated token again pushes the prior
++      // actor one level down; the outermost act names the current actor.
++      it('should nest the prior actor when a delegated token is exchanged again', async () => {
++        const subjectToken = await subjectTokenFor('openid');
++        const firstActor = await actorTokenFor('openid');
++        const delegated = (await (
++          await exchangeRequest({
++            subject_token: subjectToken,
++            actor_token: firstActor,
++            actor_token_type: ACCESS_TOKEN_TYPE,
++          })
++        ).json()).access_token as string;
++        const secondActor = await actorTokenFor('openid');
++        const res = await exchangeRequest({
++          subject_token: delegated,
++          actor_token: secondActor,
++          actor_token_type: ACCESS_TOKEN_TYPE,
++        });
++        const payload = decodeJwtPayload((await res.json()).access_token as string);
++
++        expect(res.status).toBe(200);
++        expect(payload.act).toEqual({ sub: 'otheruser', act: { sub: 'otheruser' } });
++      });
++
++      // A delegated token is an ordinary access token of the subject: the
++      // UserInfo endpoint answers for the subject, not the actor.
++      it('should answer UserInfo for the subject of a delegated token', async () => {
++        const subjectToken = await subjectTokenFor('openid profile');
++        const actorToken = await actorTokenFor('openid');
++        const delegated = (await (
++          await exchangeRequest({
++            subject_token: subjectToken,
++            actor_token: actorToken,
++            actor_token_type: ACCESS_TOKEN_TYPE,
++          })
++        ).json()).access_token as string;
++        const res = await app.request('/userinfo', {
++          headers: { Authorization: 'Bearer ' + delegated },
++        });
++
++        expect(res.status).toBe(200);
++        expect((await res.json()).sub).toBe('testuser');
 +      });
 +    });
 +
@@ -638,7 +780,7 @@ index 6561812..9869c58 100644
      // (no client_secret) are accepted at the token endpoint.
      tokenEndpointAuthMethodsSupported: [
 diff --git a/default-op/_oidc-provider/routes/token.ts b/with-token-exchange/_oidc-provider/routes/token.ts
-index 9e85fa1..0ec47df 100644
+index 9e85fa1..83c7e0c 100644
 --- a/default-op/_oidc-provider/routes/token.ts
 +++ b/with-token-exchange/_oidc-provider/routes/token.ts
 @@ -43,6 +43,7 @@ import {
@@ -649,7 +791,7 @@ index 9e85fa1..0ec47df 100644
  } from '../resolvers';
  import {
    accessTokenStore as defaultAccessTokenStore,
-@@ -50,6 +51,25 @@ import {
+@@ -50,6 +51,26 @@ import {
    refreshTokenStore as defaultRefreshTokenStore,
  } from '../store';
  import type { RegisteredClient } from '../config';
@@ -658,6 +800,7 @@ index 9e85fa1..0ec47df 100644
 +  TokenExchangeError,
 +  buildTokenExchangeResponse,
 +  processTokenExchangeRequest,
++  type ExchangedAccessTokenInfo,
 +} from '@maronn-openid-connect/experimental/token-exchange';
 +
 +/**
@@ -675,7 +818,7 @@ index 9e85fa1..0ec47df 100644
  
  export const tokenApp = new WebRouter();
  
-@@ -164,6 +184,101 @@ tokenApp.post('/', async (c) => {
+@@ -164,6 +185,111 @@ tokenApp.post('/', async (c) => {
  
      const authenticatedClientId = presentedCredentials.clientId;
  
@@ -734,14 +877,20 @@ index 9e85fa1..0ec47df 100644
 +        issuedAt: exchangeIssuedAt,
 +      });
 +      const exchangedToken = await exchangeIssuer.issue({
-+        payload: exchangePayload,
++        payload: {
++          ...exchangePayload,
++          // RFC 8693 §4.1: a delegation exchange records the current actor in
++          // the act claim (chains already nested by processTokenExchangeRequest).
++          // Impersonation exchanges carry no act claim.
++          ...(grant.actor === undefined ? {} : { act: grant.actor }),
++        },
 +        privateKey: c.get('privateKey'),
 +        keyId: c.get('keyId'),
 +      });
 +
-+      await accessTokenStore.set(exchangedToken, {
-+        // RFC 8693 §1.1: impersonation — the exchanged token acts as the same
-+        // subject, but is bound to the client that requested the exchange.
++      const exchangeMetadata: ExchangedAccessTokenInfo = {
++        // RFC 8693 §1.1: the exchanged token acts as the same subject, but is
++        // bound to the client that requested the exchange.
 +        sub: grant.subject,
 +        clientId: grant.clientId,
 +        scope: grant.scope,
@@ -757,10 +906,14 @@ index 9e85fa1..0ec47df 100644
 +        // so it is a distinct store record even when it is exchanged twice from
 +        // the same subject_token within one second.
 +        jti: exchangePayload.jti,
++        // Persisting act lets a later exchange that presents THIS token as its
++        // subject_token pick up the chain (RFC 8693 §4.1 nesting).
++        ...(grant.actor === undefined ? {} : { act: grant.actor }),
 +        // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
 +        // deliberately NOT inherited: an exchanged token yields scope-based
 +        // claims only at the UserInfo endpoint.
-+      });
++      };
++      await accessTokenStore.set(exchangedToken, exchangeMetadata);
 +
 +      // RFC 6749 §5.1: token responses MUST NOT be cached.
 +      c.header('Cache-Control', 'no-store');
@@ -777,7 +930,7 @@ index 9e85fa1..0ec47df 100644
      // --- Token request validation pipeline --------------------------------
      // Each step below is an independent core function, called in the same order
      // as core's validateTokenRequest(). Delete a call to drop that validation,
-@@ -547,6 +662,17 @@ tokenApp.post('/', async (c) => {
+@@ -547,6 +673,17 @@ tokenApp.post('/', async (c) => {
      c.header('Pragma', 'no-cache');
      return c.json(tokenResponse);
    } catch (error) {

@@ -20,7 +20,7 @@ core のバージョンは安定性のシグナルとして扱い、experimental
 | feature-id | 内容 | 準拠仕様 | import 元 |
 |---|---|---|---|
 | `par` | Pushed Authorization Requests | RFC 9126 | `@maronn-openid-connect/experimental/par` |
-| `token-exchange` | OAuth 2.0 Token Exchange（impersonation のみ） | RFC 8693 | `@maronn-openid-connect/experimental/token-exchange` |
+| `token-exchange` | OAuth 2.0 Token Exchange（impersonation と delegation） | RFC 8693 | `@maronn-openid-connect/experimental/token-exchange` |
 | `jarm` | JWT Secured Authorization Response Mode（署名付き `query.jwt` のみ） | JARM (OpenID Foundation Final, 2022-11-09) | `@maronn-openid-connect/experimental/jarm` |
 | `device-authorization-grant` | OAuth 2.0 Device Authorization Grant | RFC 8628 | `@maronn-openid-connect/experimental/device-authorization-grant` |
 
@@ -123,7 +123,8 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  * change in a breaking way between releases.
  *
  * - par: Pushed Authorization Requests (RFC 9126).
- * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation only.
+ * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation and
+ *   delegation (act claim per §4.1).
  * - jarm: JWT Secured Authorization Response Mode (JARM), signed query.jwt only.
  * - device-authorization-grant: OAuth 2.0 Device Authorization Grant (RFC 8628).
  */

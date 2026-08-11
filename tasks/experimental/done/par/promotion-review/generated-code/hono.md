@@ -125,7 +125,7 @@ index cdd419c..275e126 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index c61cb59..89e240d 100644
+index dad52d8..273b9e2 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -9,6 +9,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto

@@ -140,7 +140,7 @@ grant ディスパッチ・ポーリング状態機械・承認 UI という実�
 npx @maronn-openid-connect/cli install hono --enable ciba
 ```
 
-1. クライアント定義に `grantTypes: [..., 'urn:openid:params:grant-type:ciba']` を追加する（`token_endpoint_auth_method` は `none` 以外）
+1. クライアント定義に `grantTypes: [..., 'urn:openid:params:grant-type:ciba']` を追加する（`token_endpoint_auth_method` は `none` 以外）。`backchannelTokenDeliveryMode` は未設定でよい（`poll` とみなされる）。設定するなら `'poll'` のみが受理される
 2. `login_hint` を自分のユーザーストアへ引き当てたい場合は context の `cibaUserResolver` を差し替える（デフォルトは生成ユーザーフィクスチャの username 照合）
 3. CD 役のアプリから `POST /backchannel_authentication` → ポーリング。ユーザーはブラウザで `/ciba` を開いて承認する
 4. discovery（`/.well-known/openid-configuration`）に `backchannel_token_delivery_modes_supported: ["poll"]` と `backchannel_authentication_endpoint` が出ていることが有効化の確認になる

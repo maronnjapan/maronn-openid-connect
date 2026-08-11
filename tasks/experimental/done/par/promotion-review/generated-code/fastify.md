@@ -77,7 +77,7 @@ index 38e8944..8480898 100644
    app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
    app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index 0ea71d7..76a89d1 100644
+index d568e91..648804a 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -7,6 +7,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto

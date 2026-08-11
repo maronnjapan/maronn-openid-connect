@@ -252,6 +252,11 @@ export type CibaUserResolver = (
   loginHint: string,
 ) => Promise<{ subject: string } | null> | { subject: string } | null;
 
+// クライアント拡張（core 型変更なし。検証順序 5 の delivery mode 判定に使う）
+export type CibaClientInfo = TokenClientInfo & {
+  backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';
+};
+
 // バックチャネル認証エンドポイント処理
 export interface CibaConfig {
   authReqIdExpiresIn: number;   // 秒。default 120, 範囲 30–600
@@ -261,7 +266,7 @@ export interface CibaConfig {
 
 export function processBackchannelAuthenticationRequest(input: {
   params: Record<string, string>;
-  client: TokenClientInfo;       // core の型。認証済み
+  client: CibaClientInfo;        // 認証済み。TokenClientInfo の交差型拡張
   store: CibaAuthenticationRequestStore;
   config: CibaConfig;
   resolveUser: CibaUserResolver;
@@ -364,11 +369,16 @@ export class CibaGrantError extends Error {
 export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticationRequestStore;
 ```
 
-`TokenClientInfo` は core 公開型をそのまま使う。クライアント設定の任意項目 `backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push'` は生成コード側のクライアント定義（resolver が返すオブジェクト）に追加する語彙で、core の型変更は行わない（`TokenClientInfo` を交差型で拡張して受け取る）。
+`TokenClientInfo` は core 公開型をそのまま使う。`backchannelTokenDeliveryMode` の載せ方（U4、Review 3 で確定）:
+
+- experimental 側は上記 `CibaClientInfo`（`TokenClientInfo` の交差型）を定義し、`processBackchannelAuthenticationRequest` の引数型に使う。core の型変更は行わない
+- 生成コード側は既存の `RegisteredClient = ClientInfo & TokenClientInfo & { offlineAccessAllowed?; userinfoSignedResponseAlg?; idTokenSignedResponseAlg? }`（`packages/cli/src/frameworks/hono/templates.ts:511`）の交差メンバーへ `backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push'` を **`ciba` 有効時のみ**追加する（`exampleClientGrantFields` と同じ条件挿入。無効時バイト同一の完了条件を守る）
+- `RegisteredClient` は構造的部分型として `CibaClientInfo` に代入可能なため、生成コードのクライアント resolver の戻り値をそのまま渡せる。交差型でクライアント型を拡張する形は `par-request.test.ts:24`（`ClientInfo & TokenClientInfo`）と `RegisteredClient` 自身に先例がある
 
 ## CLIオプション案
 
-- `--enable ciba` で有効化（デフォルト無効）。`packages/cli/src/features.ts` の `EXPERIMENTAL_FEATURES` に `'ciba'` を追加し、`OidcFeatureConfig` に `ciba: boolean` を追加
+- `--enable ciba` で有効化（デフォルト無効）。`packages/cli/src/features.ts` の `EXPERIMENTAL_FEATURES` に `'ciba'` を追加し、`OidcFeatureConfig` に `ciba: boolean` を追加（`EXPERIMENTAL_FEATURE_KEYS` / `DEFAULT_FEATURES` / JSDoc も同時に更新）
+- `packages/cli/src/index.ts:28` の `withExperimentalPackage` の feature チェックへ `features.ciba` を追加（experimental パッケージをインストールガイダンスに含める条件。device-authorization-grant 追加時と同じ 1 行）
 - 生成物（hono テンプレート起点・web-standard 変換で全フレームワークへ展開）:
   - `routes/backchannel-authentication.ts`: `POST /backchannel_authentication`。共有クライアント認証 → `processBackchannelAuthenticationRequest`。`c.get('cibaUserResolver')` が無ければ生成ユーザーフィクスチャを username で引くデフォルト resolver
   - `routes/ciba-verification.ts`: `GET /ciba` / `POST /ciba/login` / `POST /ciba/approve`。views 契約に `cibaLoginPage` / `cibaPendingRequestsPage` を追加。ログイントランザクションの binding Cookie の発行・読み取りは生成コードの責務（`/device` の binding Cookie ヘルパーと同じ属性: HttpOnly / Secure / SameSite=Lax / Path 限定 / Max-Age=600）
@@ -468,14 +478,27 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 
 ## ドキュメント要件
 
-- `packages/experimental/README.md` に `ciba` の節を追加（Poll のみ・login_hint のみ・非目標・残余リスクの明記）
+- `packages/experimental/README.md` に `ciba` の節を追加（Poll のみ・login_hint のみ・非目標・残余リスク（user_code 非対応の受容コスト・`unknown_user_id` の存在確認・`login_hint` の PII 性）の明記）
 - CLI の `--enable` ヘルプ文言（`features.ts` の JSDoc とヘルプ出力）
 - 生成コードコメントに Experimental である旨と API 不安定の警告（既存機能と同じ形式）
+- `docs/implementation-guides/experimental/ciba.ja.md` / `ciba.en.md` を作成する（CLAUDE.md の規約。実装しきった時点で必須。掲載コードは抜粋ではなく全文。`device-authorization-grant.ja.md` / `.en.md` の構成を基準とする）
 
 ## Changeset要件
 
 - `packages/experimental/src` の変更に changeset を手で書かない（CI が patch を自動生成。CLAUDE.md / RELEASE.md 準拠）
 - `packages/cli` の変更には minor の changeset を書く（新機能フラグ追加）
+
+## 実装順序
+
+実装 Routine は次の順で進める。各ステップの検証方法は「完了条件」の対応番号を参照する:
+
+1. `packages/experimental/src/ciba/` の実装と単体テスト（`store` → `errors` → `backchannel-authentication-request` → `verification`（ログイントランザクション含む）→ `ciba-grant` の順。t_wada 流に red → green で進める。完了条件 1）
+2. `packages/experimental/package.json` に `exports["./ciba"]` を追加（既存 4 機能と同型）
+3. `packages/cli/src/features.ts` へ feature 追加・`packages/cli/src/index.ts:28` の `withExperimentalPackage` へ `features.ciba` を追加。同時に `packages/cli/src/__tests__/par-feature.test.ts:112` の未定義機能名 `'ciba'` を別の未定義名へ差し替える（CLI オプション案の節参照）
+4. テンプレート変更（共有 `hono/templates.ts`）: `RegisteredClient` への `backchannelTokenDeliveryMode` 条件追加とクライアントフィクスチャ → storage context（`cibaAuthenticationRequestStore` / `cibaLoginTransactionStore`）→ `ciba.ts` 設定 → `routes/backchannel-authentication.ts` → `routes/ciba-verification.ts` と views 2 ページ → token ルートの `cibaDispatchStep` と catch 分岐 → discovery → conformance テンプレート（完了条件 2・6）。続けて `web-standard/templates.ts` への組み込み（express / fastify / nextjs のルート登録。device の組み込みと同じ手順）
+5. `--enable ciba` なし生成のバイト同一確認（完了条件 3。変更前後の CLI で同一設定の生成物を diff する。サンプルが使う既存の `--enable` 組み合わせでも確認する）
+6. `samples/*/package.json` の `generate` スクリプトへ `--enable ciba` を追加してサンプル再生成 → `tests/e2e` に承認・拒否シナリオと CD 役テストクライアント（`tests/e2e/apps`）を追加（完了条件 4）
+7. ドキュメント（README 節・ヘルプ・実装解説 ja/en）・changeset（CLI のみ minor を手書き。experimental は CI 自動生成のため作らない）・`pnpm review:experimental ciba` でパケット生成（完了条件 5・7）
 
 ## 完了条件
 
@@ -485,15 +508,16 @@ packages/cli  ─────> @maronn-openid-connect/experimental（許可・�
 4. E2E シナリオ（承認・拒否）が通る
 5. `pnpm review:experimental ciba` でパケットが生成され `--check` が通る
 6. discovery 出力・エラー応答が本仕様の表と一致する
+7. ドキュメント要件（`docs/implementation-guides/experimental/ciba.ja.md` / `.en.md` を含む）・Changeset要件を満たす
 
 ## 未解決事項
 
 | ID | 内容 | 状態 |
 |---|---|---|
-| U1 | 認証デバイス UI のログインを既存 `/device` UI のログイン部品と共通化するか、CIBA 専用に複製するか（experimental 間重複許容の方針からは複製が既定。ただし同一 package 内の UI 部品共有は方針違反ではないため実装時に判断） | open |
+| U1 | 認証デバイス UI のログインを既存 `/device` UI のログイン部品と共通化するか、CIBA 専用に複製するか | **確定（Review 3）**: CIBA 専用に複製する。根拠: (1) 完了条件 3（`ciba` 無効時のバイト同一）と device 側の既存回帰期待は、CIBA のテンプレートブロックが device のブロックに一切触れない構成で最も確実に守れる。共通部品への括り出しは device のみ有効な生成出力を変えてしまう (2) 機能単位の独立性と将来の切り出しやすさを優先し、重複排除だけを目的とした共通化はしない方針（experimental の運用方針）に従う (3) views 契約も `cibaLoginPage` / `cibaPendingRequestsPage` として device と別エントリで増える設計であり、テンプレート側だけ共有しても契約は分かれる。experimental パッケージ内も同様に、ログイントランザクション実装を `device-authorization-grant` から import せず `ciba/` 内に持つ（「他 experimental 機能とコードを共有しない」の既定どおり） |
 | U2 | `maxPendingPerSubject` 超過時のエラーコード | **確定（Review 2）**: `invalid_request` 400 + 固定文言を採用。§13 の `access_denied` 403 は「resource owner or OP denied」の語彙で、クライアント実装がフロー全体の終端（ユーザー拒否）と解釈する恐れがある。保留数超過は保留分の処理で解消される一時的状態であり、終端を示唆しない `invalid_request` を採る。CIBA Core に一時エラーの語彙（`temporarily_unavailable` 相当）は存在しない |
 | U3 | denied レコードの削除タイミング | **確認済み（Review 2）**: Device Grant 実装は denied → `access_denied` 送出と同時に削除する（`packages/experimental/src/device-authorization-grant/device-code-grant.ts:137-143`）。本仕様の「即削除・再ポーリングは `invalid_grant`」は実装済み先例と一致 |
-| U4 | `TokenClientInfo` への `backchannelTokenDeliveryMode` の載せ方（交差型拡張の具体形。core 型変更を伴わないことの確認） | Review 3 で確定 |
+| U4 | `TokenClientInfo` への `backchannelTokenDeliveryMode` の載せ方 | **確定（Review 3）**: experimental 側に `CibaClientInfo = TokenClientInfo & { backchannelTokenDeliveryMode?: 'poll' \| 'ping' \| 'push' }` を定義し、生成コード側は `RegisteredClient`（`templates.ts:511` の既存交差型）へ同フィールドを `ciba` 有効時のみ条件挿入する。`RegisteredClient` は構造的部分型として `CibaClientInfo` に代入可能で、core の型変更は不要（「公開API案」の節に反映済み） |
 
 ## 将来の昇格考慮
 

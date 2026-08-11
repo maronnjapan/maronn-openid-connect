@@ -82,7 +82,7 @@ index 38e8944..5fb7ac8 100644
    app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
    app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
 diff --git a/default-op/conformance.test.ts b/with-device-authorization-grant/conformance.test.ts
-index 0ea71d7..57b3651 100644
+index d568e91..d47b25e 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-device-authorization-grant/conformance.test.ts
 @@ -112,6 +112,41 @@ const testClients = new Map<string, RegisteredClient>([
@@ -896,7 +896,7 @@ index 0ea71d7..57b3651 100644
 +      });
      });
    });
- });
+ 
 diff --git a/with-device-authorization-grant/routes/device-authorization.ts b/with-device-authorization-grant/routes/device-authorization.ts
 new file mode 100644
 index 0000000..380c423
@@ -1853,7 +1853,7 @@ index dbe5fc3..da8db5b 100644
 +  (deviceStoreRegistry.__oidcDeviceAuthorizationStore ??=
 +    new InMemoryDeviceAuthorizationStore());
 diff --git a/default-op/views.ts b/with-device-authorization-grant/views.ts
-index 3fe56ad..8a76e64 100644
+index b084077..6dc42f5 100644
 --- a/default-op/views.ts
 +++ b/with-device-authorization-grant/views.ts
 @@ -52,6 +52,55 @@ export interface ErrorPageParams {
@@ -1927,7 +1927,7 @@ index 3fe56ad..8a76e64 100644
  }
  
  /** Options applied when renderView wraps an HTML string into a Response. */
-@@ -194,6 +251,106 @@ ${descriptionHtml}</body>
+@@ -200,6 +257,106 @@ ${descriptionHtml}</body>
  </html>`;
  }
  
@@ -2034,7 +2034,7 @@ index 3fe56ad..8a76e64 100644
  /**
   * Default Views used when no custom views are injected.
   * These render minimal, unstyled HTML so the flow works out of the box.
-@@ -202,6 +359,10 @@ export const defaultViews: Views = {
+@@ -208,6 +365,10 @@ export const defaultViews: Views = {
    loginPage: defaultLoginPage,
    consentPage: defaultConsentPage,
    errorPage: defaultErrorPage,

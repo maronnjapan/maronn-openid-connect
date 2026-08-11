@@ -135,7 +135,7 @@ index cdd419c..65cab81 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/conformance.test.ts b/with-device-authorization-grant/conformance.test.ts
-index c61cb59..3e1169f 100644
+index dad52d8..fc9bd13 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-device-authorization-grant/conformance.test.ts
 @@ -127,6 +127,41 @@ const testClients = new Map<string, RegisteredClient>([
@@ -482,13 +482,13 @@ index c61cb59..3e1169f 100644
 +    describe('Discovery metadata (RFC 8628 §4)', () => {
 +      it('should advertise the device authorization endpoint', async () => {
 +        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
- 
--      expect(metadata.device_authorization_endpoint).toBeUndefined();
++
 +        expect(metadata.device_authorization_endpoint).toBe(
 +          'http://localhost:3000/device_authorization',
 +        );
 +      });
-+
+ 
+-      expect(metadata.device_authorization_endpoint).toBeUndefined();
 +      it('should advertise the device_code grant type', async () => {
 +        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
 +
@@ -949,7 +949,7 @@ index c61cb59..3e1169f 100644
 +      });
      });
    });
- });
+ 
 diff --git a/with-device-authorization-grant/routes/device-authorization.ts b/with-device-authorization-grant/routes/device-authorization.ts
 new file mode 100644
 index 0000000..8074602
@@ -1906,7 +1906,7 @@ index dbe5fc3..da8db5b 100644
 +  (deviceStoreRegistry.__oidcDeviceAuthorizationStore ??=
 +    new InMemoryDeviceAuthorizationStore());
 diff --git a/default-op/views.ts b/with-device-authorization-grant/views.ts
-index 3fe56ad..8a76e64 100644
+index b084077..6dc42f5 100644
 --- a/default-op/views.ts
 +++ b/with-device-authorization-grant/views.ts
 @@ -52,6 +52,55 @@ export interface ErrorPageParams {
@@ -1980,7 +1980,7 @@ index 3fe56ad..8a76e64 100644
  }
  
  /** Options applied when renderView wraps an HTML string into a Response. */
-@@ -194,6 +251,106 @@ ${descriptionHtml}</body>
+@@ -200,6 +257,106 @@ ${descriptionHtml}</body>
  </html>`;
  }
  
@@ -2087,7 +2087,7 @@ index 3fe56ad..8a76e64 100644
  /**
   * Default Views used when no custom views are injected.
   * These render minimal, unstyled HTML so the flow works out of the box.
-@@ -202,6 +359,10 @@ export const defaultViews: Views = {
+@@ -208,6 +365,10 @@ export const defaultViews: Views = {
    loginPage: defaultLoginPage,
    consentPage: defaultConsentPage,
    errorPage: defaultErrorPage,

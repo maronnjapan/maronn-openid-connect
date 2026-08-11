@@ -2824,9 +2824,11 @@ describe('generated provider HTTP conformance', () => {
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
     const EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
     const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
-    // The exchange rejects every kind of unusable subject_token with one
-    // description so the response cannot be used as an existence oracle.
+    // The exchange rejects every kind of unusable subject_token / actor_token
+    // with one description each, so the response cannot be used as an existence
+    // oracle.
     const SUBJECT_INVALID_DESCRIPTION = 'The provided subject_token is not valid';
+    const ACTOR_INVALID_DESCRIPTION = 'The provided actor_token is not valid';
     const TARGET_REJECTED_DESCRIPTION =
       'The requested target is not allowed for token exchange';
 
@@ -2858,9 +2860,24 @@ describe('generated provider HTTP conformance', () => {
       });
     }
 
+    // Decode a JWT access token's payload (base64url, RFC 7515 §2) so the act
+    // claim of a delegated token can be pinned. The generated default issues
+    // JWT access tokens (config.accessTokenFormat: 'jwt').
+    function decodeJwtPayload(token: string): Record<string, unknown> {
+      const segment = token.split('.')[1] ?? '';
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      return JSON.parse(atob(padded)) as Record<string, unknown>;
+    }
+
     // Drive authorize -> login -> consent over HTTP and hand back the code. No
     // assertions and no branching here: the flow contract lives in the it()s.
-    async function authorizeFlow(clientId: string, scope: string, claims?: string): Promise<string> {
+    async function authorizeFlow(
+      clientId: string,
+      scope: string,
+      claims?: string,
+      username = 'testuser',
+    ): Promise<string> {
       const authorizeUrl =
         '/authorize?response_type=code&client_id=' + clientId +
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
@@ -2886,7 +2903,7 @@ describe('generated provider HTTP conformance', () => {
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
-          username: 'testuser',
+          username,
           password: 'password',
         }).toString(),
       });
@@ -2911,8 +2928,9 @@ describe('generated provider HTTP conformance', () => {
       scope: string,
       clientId = 'c-exchange',
       claims?: string,
+      username = 'testuser',
     ): Promise<string> {
-      const code = await authorizeFlow(clientId, scope, claims);
+      const code = await authorizeFlow(clientId, scope, claims, username);
       const res = await postToken({
         client_id: clientId,
         ...(clientId === 'c-public-exchange' ? {} : { client_secret: 's' }),
@@ -2922,6 +2940,13 @@ describe('generated provider HTTP conformance', () => {
         code_verifier: PKCE_VERIFIER,
       });
       return ((await res.json()) as Record<string, string>).access_token;
+    }
+
+    // An actor_token with a sub distinct from the subject: the second seeded
+    // user runs the same flow, so delegation tests can tell subject and actor
+    // apart in the act claim.
+    function actorTokenFor(scope: string): Promise<string> {
+      return subjectTokenFor(scope, 'c-exchange', undefined, 'otheruser');
     }
 
     describe('Successful exchange', () => {
@@ -3153,20 +3178,66 @@ describe('generated provider HTTP conformance', () => {
         });
       });
 
-      // Delegation (RFC 8693 §1.1 / §4) is out of scope and refused explicitly.
-      it('should reject a delegation request carrying actor_token', async () => {
+      // RFC 8693 §2.1: actor_token_type is REQUIRED when actor_token is present.
+      it('should reject actor_token without actor_token_type', async () => {
         const subjectToken = await subjectTokenFor('openid');
         const res = await exchangeRequest({
           subject_token: subjectToken,
           actor_token: subjectToken,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'actor_token_type is required when actor_token is present',
+        });
+      });
+
+      // RFC 8693 §2.1: actor_token_type MUST NOT be included without actor_token.
+      it('should reject actor_token_type without actor_token', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
           actor_token_type: ACCESS_TOKEN_TYPE,
         });
 
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({
           error: 'invalid_request',
+          error_description: 'actor_token_type must not be present without actor_token',
+        });
+      });
+
+      it('should reject an unsupported actor_token_type with invalid_request', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: subjectToken,
+          actor_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
           error_description:
-            'Delegation is not supported: actor_token and actor_token_type must not be present.',
+            'Unsupported actor_token_type. Only urn:ietf:params:oauth:token-type:access_token is supported.',
+        });
+      });
+
+      // The actor_token failure description is fixed for the same oracle-
+      // elimination reason as the subject_token one.
+      it('should reject an unknown actor_token with the fixed description', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: 'not-a-real-token',
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: ACTOR_INVALID_DESCRIPTION,
         });
       });
 
@@ -3267,6 +3338,77 @@ describe('generated provider HTTP conformance', () => {
 
         expect(res.status).toBe(200);
         expect((await res.json()).scope).toBe('email');
+      });
+    });
+
+    describe('Delegation (RFC 8693 §4.1)', () => {
+      // sub stays the subject; the actor appears only in the act claim.
+      it('should record the actor in the act claim of the issued token', async () => {
+        const subjectToken = await subjectTokenFor('openid profile');
+        const actorToken = await actorTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: actorToken,
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+        const body = await res.json();
+        const payload = decodeJwtPayload(body.access_token as string);
+
+        expect(res.status).toBe(200);
+        expect(payload.sub).toBe('testuser');
+        expect(payload.act).toEqual({ sub: 'otheruser' });
+      });
+
+      it('should not add an act claim to an impersonation exchange', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const body = await (await exchangeRequest({ subject_token: subjectToken })).json();
+        const payload = decodeJwtPayload(body.access_token as string);
+
+        expect(payload.act).toBe(undefined);
+      });
+
+      // RFC 8693 §4.1: exchanging a delegated token again pushes the prior
+      // actor one level down; the outermost act names the current actor.
+      it('should nest the prior actor when a delegated token is exchanged again', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const firstActor = await actorTokenFor('openid');
+        const delegated = (await (
+          await exchangeRequest({
+            subject_token: subjectToken,
+            actor_token: firstActor,
+            actor_token_type: ACCESS_TOKEN_TYPE,
+          })
+        ).json()).access_token as string;
+        const secondActor = await actorTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: delegated,
+          actor_token: secondActor,
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+        const payload = decodeJwtPayload((await res.json()).access_token as string);
+
+        expect(res.status).toBe(200);
+        expect(payload.act).toEqual({ sub: 'otheruser', act: { sub: 'otheruser' } });
+      });
+
+      // A delegated token is an ordinary access token of the subject: the
+      // UserInfo endpoint answers for the subject, not the actor.
+      it('should answer UserInfo for the subject of a delegated token', async () => {
+        const subjectToken = await subjectTokenFor('openid profile');
+        const actorToken = await actorTokenFor('openid');
+        const delegated = (await (
+          await exchangeRequest({
+            subject_token: subjectToken,
+            actor_token: actorToken,
+            actor_token_type: ACCESS_TOKEN_TYPE,
+          })
+        ).json()).access_token as string;
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + delegated },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
       });
     });
 
@@ -4474,6 +4616,179 @@ describe('generated provider HTTP conformance', () => {
         expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
         expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
       });
+    });
+  });
+
+  describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
+    const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the contract
+    // stays visible in the it() blocks.
+    function decisionRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function decisionCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drives authorize -> login -> GET /consent and returns everything the browser
+    // holds at the consent screen, so each test only differs in the posted action.
+    async function reachConsent(state: string): Promise<{
+      transactionId: string;
+      csrfToken: string;
+      cookie: string;
+    }> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + DECISION_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = decisionRelativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const cookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: cookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: decisionCsrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = decisionRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: cookie } });
+
+      return { transactionId, csrfToken: decisionCsrfFrom(await consentGet.text()), cookie };
+    }
+
+    // The body is passed in whole so a test can leave 'action' out entirely
+    // without this helper branching on it.
+    function postConsent(cookie: string, body: Record<string, string>): Promise<Response> {
+      return app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    // A form rebuilt by a script or a test harness carries no submit-button value.
+    it('should not issue an authorization code when the consent POST omits the action parameter', async () => {
+      const flow = await reachConsent('decision-omitted');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    it('should not issue an authorization code when the consent POST sends an empty action value', async () => {
+      const flow = await reachConsent('decision-empty');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: '',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The realistic regression: the Approve button is renamed in views.ts, so the
+    // handler receives a value it never agreed to accept.
+    it('should not issue an authorization code when the consent POST sends an unknown action value', async () => {
+      const flow = await reachConsent('decision-unknown');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'allow',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // OIDC Core 1.0 §3.1.2.6: access_denied means the End-User denied the request.
+    // "No decision was obtained" is a different outcome, so it stops at the OP with
+    // its own error page instead of being redirected to the client.
+    it('should return 400 for a consent POST with an unrecognized action value', async () => {
+      const flow = await reachConsent('decision-400');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'accept',
+      });
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('Invalid consent decision. Please use the Approve or Deny button.')).toBe(true);
+      expect(body.includes('access_denied')).toBe(false);
+    });
+
+    it('should issue an authorization code when the consent POST sends action=approve', async () => {
+      const flow = await reachConsent('decision-approve');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'approve',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+      expect(callback.searchParams.get('state')).toBe('decision-approve');
+      expect(callback.searchParams.get('error')).toBe(null);
+      expect((callback.searchParams.get('code') ?? '').length > 0).toBe(true);
+    });
+
+    it('should redirect with error=access_denied when the consent POST sends action=deny', async () => {
+      const flow = await reachConsent('decision-deny');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'deny',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+      expect(callback.searchParams.get('error')).toBe('access_denied');
+      expect(callback.searchParams.get('state')).toBe('decision-deny');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+
+    // Consent must not be persisted either: a recorded consent would let a later
+    // prompt=none request succeed without the End-User ever having approved.
+    it('should not record consent via recordConsent when the action value is unrecognized', async () => {
+      await consentResolver.revokeConsent?.('testuser', 'c-conf');
+      const flow = await reachConsent('decision-no-record');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'approved',
+      });
+
+      expect(res.status).toBe(400);
+      expect(consentStore.hasConsent('testuser', 'c-conf', ['openid'])).toBe(false);
     });
   });
 });

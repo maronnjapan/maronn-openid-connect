@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/conformance.test.ts b/with-jarm/conformance.test.ts
-index c61cb59..4f09ae5 100644
+index dad52d8..0bad719 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-jarm/conformance.test.ts
 @@ -405,10 +405,11 @@ describe('generated provider HTTP conformance', () => {
@@ -40,11 +40,10 @@ index c61cb59..4f09ae5 100644
        });
      });
  
-@@ -2228,4 +2229,405 @@ describe('generated provider HTTP conformance', () => {
-       ).toBe(false);
+@@ -2229,6 +2230,407 @@ describe('generated provider HTTP conformance', () => {
      });
    });
-+
+ 
 +  // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
 +  // because this provider was created with --enable jarm. These tests pin the
 +  // contract the repository guarantees for the generated JARM responses: change
@@ -445,7 +444,10 @@ index c61cb59..4f09ae5 100644
 +      });
 +    });
 +  });
- });
++
+   describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
+     const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+ 
 diff --git a/default-op/routes/authorize.ts b/with-jarm/routes/authorize.ts
 index 793f61e..ef0dfbd 100644
 --- a/default-op/routes/authorize.ts
@@ -803,7 +805,7 @@ index 793f61e..ef0dfbd 100644
        // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
        // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST
 diff --git a/default-op/routes/consent.ts b/with-jarm/routes/consent.ts
-index 9b71428..112f8f3 100644
+index 83fc9ef..440f153 100644
 --- a/default-op/routes/consent.ts
 +++ b/with-jarm/routes/consent.ts
 @@ -4,6 +4,9 @@ import {
@@ -930,8 +932,8 @@ index 9b71428..112f8f3 100644
 +    );
    }
  
-   const session = await authSessionStore.get(transactionId);
-@@ -124,11 +209,10 @@ consentApp.post('/', async (c) => {
+   // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
+@@ -145,11 +230,10 @@ consentApp.post('/', async (c) => {
    await authSessionStore.delete(transactionId);
  
    // Redirect back to client with authorization code

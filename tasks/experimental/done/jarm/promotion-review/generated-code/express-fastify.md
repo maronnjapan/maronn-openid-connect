@@ -23,7 +23,7 @@ express / fastify の生成コード差分は完全に同一のため、まと�
 
 ````diff
 diff --git a/default-op/conformance.test.ts b/with-jarm/conformance.test.ts
-index 0ea71d7..8fbc0cd 100644
+index d568e91..10ce188 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-jarm/conformance.test.ts
 @@ -413,10 +413,11 @@ describe('generated provider HTTP conformance', () => {
@@ -42,11 +42,10 @@ index 0ea71d7..8fbc0cd 100644
        });
      });
  
-@@ -2213,4 +2214,405 @@ describe('generated provider HTTP conformance', () => {
-       ).toBe(false);
+@@ -2214,6 +2215,407 @@ describe('generated provider HTTP conformance', () => {
      });
    });
-+
+ 
 +  // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
 +  // because this provider was created with --enable jarm. These tests pin the
 +  // contract the repository guarantees for the generated JARM responses: change
@@ -447,7 +446,10 @@ index 0ea71d7..8fbc0cd 100644
 +      });
 +    });
 +  });
- });
++
+   describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
+     const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+ 
 diff --git a/default-op/routes/authorize.ts b/with-jarm/routes/authorize.ts
 index 58a3620..854d542 100644
 --- a/default-op/routes/authorize.ts
@@ -805,7 +807,7 @@ index 58a3620..854d542 100644
        // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
        // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST
 diff --git a/default-op/routes/consent.ts b/with-jarm/routes/consent.ts
-index eafd758..833b958 100644
+index b463053..e8acc51 100644
 --- a/default-op/routes/consent.ts
 +++ b/with-jarm/routes/consent.ts
 @@ -4,6 +4,9 @@ import {
@@ -932,8 +934,8 @@ index eafd758..833b958 100644
 +    );
    }
  
-   const session = await authSessionStore.get(transactionId);
-@@ -124,11 +209,10 @@ consentApp.post('/', async (c) => {
+   // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
+@@ -145,11 +230,10 @@ consentApp.post('/', async (c) => {
    await authSessionStore.delete(transactionId);
  
    // Redirect back to client with authorization code

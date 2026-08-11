@@ -23,14 +23,14 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 
 | ファイル | 行数 |
 |---|---|
-| [packages/experimental/src/token-exchange/index.ts](../../../../../packages/experimental/src/token-exchange/index.ts) | 33 |
-| [packages/experimental/src/token-exchange/token-exchange-request.ts](../../../../../packages/experimental/src/token-exchange/token-exchange-request.ts) | 456 |
+| [packages/experimental/src/token-exchange/index.ts](../../../../../packages/experimental/src/token-exchange/index.ts) | 39 |
+| [packages/experimental/src/token-exchange/token-exchange-request.ts](../../../../../packages/experimental/src/token-exchange/token-exchange-request.ts) | 595 |
 
 単体テスト:
 
 | ファイル | 行数 |
 |---|---|
-| [packages/experimental/src/token-exchange/token-exchange-request.test.ts](../../../../../packages/experimental/src/token-exchange/token-exchange-request.test.ts) | 920 |
+| [packages/experimental/src/token-exchange/token-exchange-request.test.ts](../../../../../packages/experimental/src/token-exchange/token-exchange-request.test.ts) | 1221 |
 
 ### 1.2 CLI 統合（コード生成側）
 
@@ -43,7 +43,7 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 | [packages/cli/src/__tests__/features.test.ts](../../../../../packages/cli/src/__tests__/features.test.ts) | 6 |
 | [packages/cli/src/__tests__/jarm-feature.test.ts](../../../../../packages/cli/src/__tests__/jarm-feature.test.ts) | 6 |
 | [packages/cli/src/__tests__/par-feature.test.ts](../../../../../packages/cli/src/__tests__/par-feature.test.ts) | 5 |
-| [packages/cli/src/__tests__/token-exchange-feature.test.ts](../../../../../packages/cli/src/__tests__/token-exchange-feature.test.ts) | 48 |
+| [packages/cli/src/__tests__/token-exchange-feature.test.ts](../../../../../packages/cli/src/__tests__/token-exchange-feature.test.ts) | 51 |
 | [packages/cli/src/features.ts](../../../../../packages/cli/src/features.ts) | 9 |
 | [packages/cli/src/frameworks/hono/templates.ts](../../../../../packages/cli/src/frameworks/hono/templates.ts) | 52 |
 | [packages/cli/src/frameworks/web-standard/templates.ts](../../../../../packages/cli/src/frameworks/web-standard/templates.ts) | 6 |
@@ -60,9 +60,9 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 
 | フレームワーク | 差分ドキュメント | 追加 | 変更 | 削除 | 規模 |
 |---|---|---|---|---|---|
-| hono | [generated-code/hono.md](./generated-code/hono.md) | 0 | 4 | 0 | +694 / -2 |
-| express / fastify | [generated-code/express-fastify.md](./generated-code/express-fastify.md) | 0 | 4 | 0 | +694 / -2 |
-| nextjs | [generated-code/nextjs.md](./generated-code/nextjs.md) | 0 | 4 | 0 | +694 / -2 |
+| hono | [generated-code/hono.md](./generated-code/hono.md) | 0 | 4 | 0 | +847 / -2 |
+| express / fastify | [generated-code/express-fastify.md](./generated-code/express-fastify.md) | 0 | 4 | 0 | +847 / -2 |
+| nextjs | [generated-code/nextjs.md](./generated-code/nextjs.md) | 0 | 4 | 0 | +847 / -2 |
 
 差分に **現れない** 生成ファイル（この機能のレビューでは読む必要がないもの）:
 
@@ -91,7 +91,7 @@ experimental 機能 `token-exchange` を experimental から外してよいか�
 |---|---|
 | [tests/e2e/apps/client.mjs](../../../../../tests/e2e/apps/client.mjs) | 1 |
 | [tests/e2e/playwright.config.ts](../../../../../tests/e2e/playwright.config.ts) | 2 |
-| [tests/e2e/specs/token-exchange.spec.ts](../../../../../tests/e2e/specs/token-exchange.spec.ts) | 7 |
+| [tests/e2e/specs/token-exchange.spec.ts](../../../../../tests/e2e/specs/token-exchange.spec.ts) | 8 |
 | [tests/e2e/specs/transaction-binding.spec.ts](../../../../../tests/e2e/specs/transaction-binding.spec.ts) | 1 |
 
 ### 1.6 ドキュメント

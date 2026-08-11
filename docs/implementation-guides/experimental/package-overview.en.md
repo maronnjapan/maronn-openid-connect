@@ -23,7 +23,7 @@ Four features are implemented, each exposed as its own subpath export.
 | feature-id | What it is | Spec | Import from |
 |---|---|---|---|
 | `par` | Pushed Authorization Requests | RFC 9126 | `@maronn-openid-connect/experimental/par` |
-| `token-exchange` | OAuth 2.0 Token Exchange (impersonation only) | RFC 8693 | `@maronn-openid-connect/experimental/token-exchange` |
+| `token-exchange` | OAuth 2.0 Token Exchange (impersonation and delegation) | RFC 8693 | `@maronn-openid-connect/experimental/token-exchange` |
 | `jarm` | JWT Secured Authorization Response Mode (signed `query.jwt` only) | JARM (OpenID Foundation Final, 2022-11-09) | `@maronn-openid-connect/experimental/jarm` |
 | `device-authorization-grant` | OAuth 2.0 Device Authorization Grant | RFC 8628 | `@maronn-openid-connect/experimental/device-authorization-grant` |
 
@@ -126,7 +126,8 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  * change in a breaking way between releases.
  *
  * - par: Pushed Authorization Requests (RFC 9126).
- * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation only.
+ * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation and
+ *   delegation (act claim per §4.1).
  * - jarm: JWT Secured Authorization Response Mode (JARM), signed query.jwt only.
  * - device-authorization-grant: OAuth 2.0 Device Authorization Grant (RFC 8628).
  */

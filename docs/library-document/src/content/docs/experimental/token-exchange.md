@@ -1,6 +1,6 @@
 ---
 title: Token Exchange (RFC 8693)
-description: 手元のアクセストークンを、権限を絞った別のアクセストークンへ交換する RFC 8693 の試験実装。
+description: 手元のアクセストークンを、権限を絞った別のアクセストークンへ交換する RFC 8693 の試験実装。impersonation と delegation（act claim）の両方に対応。
 ---
 
 :::caution[Experimental]
@@ -23,22 +23,28 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 交換で権限は**単調に狭まります**。scope は元トークンの部分集合、audience は許可リスト内、有効期限は元トークンの残存期間以下、`sub` は変更不可です。
 
+交換には impersonation と delegation の 2 つの型があります（RFC 8693 §1.1）。
+`actor_token` を付けない交換（impersonation）は、単純に subject として振る舞うトークンを発行します。
+`actor_token` を付けた交換（delegation）は、`sub` はそのままに「誰が subject の代理として振る舞うか」を発行 JWT の `act` claim に記録します。委譲を連鎖させると `act` のネストとして履歴が残ります。
+
 ## 対応仕様
 
 | 仕様 | 対応範囲 |
 |---|---|
-| RFC 8693 §2.1 | 交換リクエスト（`subject_token` / `subject_token_type` / `scope` / `audience` / `resource` / `requested_token_type`） |
+| RFC 8693 §2.1 | 交換リクエスト（`subject_token` / `subject_token_type` / `scope` / `audience` / `resource` / `requested_token_type` / `actor_token` / `actor_token_type`） |
 | RFC 8693 §2.2.1 | 成功レスポンス（`access_token` / `issued_token_type` / `token_type` / `expires_in` / `scope`） |
 | RFC 8693 §2.2.2 | エラーレスポンス（`invalid_target` を含む） |
 | RFC 8693 §3 | token type identifier（`urn:ietf:params:oauth:token-type:access_token` のみ） |
-| RFC 8693 §1.1 | impersonation のみ。**delegation は非対応** |
-| RFC 8693 §4 | **非対応**（`act` / `may_act` claim） |
+| RFC 8693 §1.1 | impersonation と delegation の両方 |
+| RFC 8693 §4.1 | `act` claim（委譲チェーンのネストを含む） |
+| RFC 8693 §4.4 | **非対応**（`may_act` claim） |
 | RFC 8693 §2.1（複数指定） | **非対応**（`audience` / `resource` の複数出現） |
 
 ## ユースケース
 
 - API ゲートウェイが受けたユーザートークンを、内部サービス専用の audience 制限付きトークンへ交換する構成を検証する
 - 「scope を落としたトークンを下流に配る」（least privilege）設計が自分のクライアント実装で成立するか確認する
+- 「どのサービスがユーザーの代理として動いたか」をトークン自身に記録する delegation 設計（`act` claim）を検証する
 - 交換ポリシー（対象許可リスト・クライアント許可）の設計を、IdaaS 導入前に手元で試す
 
 ## 前提条件
@@ -47,6 +53,7 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 - 交換を行うクライアントが **confidential client** であること（public client は拒否されます）
 - そのクライアントの `grantTypes` に交換 URN が登録されていること
 - `subject_token` が**この OP 自身が発行したアクセストークン**であること（外部 IdP 発行トークンは非対応）
+- delegation を使う場合は、`actor_token` も同様にこの OP 発行のアクセストークンであること
 
 ## 有効化
 
@@ -115,9 +122,11 @@ Client (confidential)                          OP
   |    grant_type=...:token-exchange             |  リクエストと同じ規則）
   |    subject_token=<access token>              |  交換 grant の登録確認
   |    subject_token_type=...:access_token       |  パラメータ検証
-  |    [scope=...] [audience=... | resource=...] |  subject_token の有効性検証
+  |    [actor_token=... actor_token_type=...]    |  subject_token（と actor_token）の
+  |    [scope=...] [audience=... | resource=...] |  有効性検証
   |                                              |  scope 縮小・対象許可リストの検証
-  |                                              |  新トークン発行（期限は残存期間で cap）
+  |                                              |  新トークン発行（期限は残存期間で cap、
+  |                                              |  delegation なら act claim を記録）
   |<-- 200 {access_token, issued_token_type, ----|
   |         token_type, expires_in, scope}       |
   |                                              |
@@ -158,6 +167,38 @@ Pragma: no-cache
 
 `scope` は要求と同一でも常に含まれます。`refresh_token` は発行されません。
 
+### delegation の例
+
+`actor_token` に呼び出し側自身のアクセストークンを添えると delegation になります（`actor_token_type` は必須です）。
+
+```http
+POST /token HTTP/1.1
+Host: op.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=2YotnFZFEjr1zCsicMWpAA
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&actor_token=dGhlIGdhdGV3YXkncyBvd24gdG9rZW4
+&actor_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&scope=openid
+&client_id=gateway&client_secret=s3cret
+```
+
+レスポンスボディの形は impersonation と同一です。違いは発行される JWT の中にあり、payload に `act` claim が加わります。
+
+```json
+{
+  "iss": "https://op.example.com",
+  "sub": "user-123",
+  "act": { "sub": "gateway-service" },
+  "scope": "openid"
+}
+```
+
+`sub` は subject_token のまま変わらず、actor は `act.sub` にだけ現れます。delegation で発行されたトークンをさらに subject_token として交換すると、過去の actor は `act.act` へネストされます（RFC 8693 §4.1）。
+`actor_token` は交換時点で有効であることだけを確認され、発行トークンの寿命は cap しません（寿命は subject_token の残存期間だけで決まります）。
+
 ## API 利用例
 
 生成コードを使わず core / experimental を直接組み込む場合は、合成関数かステップ関数を呼び出します。トークンの**発行と保存はこのモジュールでは行いません**。RFC 8693 固有の検証・導出だけを担当し、発行は core の既存部品と組み合わせます。
@@ -178,7 +219,8 @@ const grant = await processTokenExchangeRequest({
   allowedTargets: ['internal-billing-api'],
   configuredExpiresIn: 3600,
 });
-// => { subject, clientId, scope, requestedAudience, expiresIn, grantId }
+// => { subject, clientId, scope, requestedAudience, expiresIn, grantId, actor? }
+//    actor は delegation（actor_token あり）のときだけ入る act claim の値
 
 // 2. 発行と保存は core の既存パイプラインで行う
 const audience = buildAccessTokenAudience({
@@ -187,7 +229,11 @@ const audience = buildAccessTokenAudience({
   issuer,
 });
 const token = await accessTokenIssuer.issue({
-  payload: buildAccessTokenPayload({ issuer, subject: grant.subject, /* ... */ }),
+  payload: {
+    ...buildAccessTokenPayload({ issuer, subject: grant.subject, /* ... */ }),
+    // RFC 8693 §4.1: delegation なら act claim を JWT に載せる
+    ...(grant.actor === undefined ? {} : { act: grant.actor }),
+  },
   privateKey,
   keyId,
 });
@@ -200,7 +246,9 @@ return buildTokenExchangeResponse({
 });
 ```
 
-ステップ関数（`authorizeTokenExchangeClient` / `parseTokenExchangeParams` / `resolveSubjectToken` / `validateExchangeScope` / `resolveExchangeTarget` / `computeExchangedTokenLifetime`）を個別に呼べば、検証の差し替えや削除ができます。`processTokenExchangeRequest` はこれらを仕様順に合成しただけの関数です。
+ステップ関数（`authorizeTokenExchangeClient` / `parseTokenExchangeParams` / `resolveSubjectToken` / `resolveActorToken` / `composeActClaim` / `validateExchangeScope` / `resolveExchangeTarget` / `computeExchangedTokenLifetime`）を個別に呼べば、検証の差し替えや削除ができます。`processTokenExchangeRequest` はこれらを仕様順に合成しただけの関数です。
+
+delegation で発行したトークンをストアへ保存するときは、metadata に `act` も保存してください（構造的拡張型 `ExchangedAccessTokenInfo` が用意されています）。保存しておくと、そのトークンを後日 subject_token として再交換したときに委譲チェーンが `act` のネストとして引き継がれます。
 
 ### 分岐の位置
 
@@ -216,10 +264,11 @@ return buildTokenExchangeResponse({
 | クライアントの `grantTypes` に交換 URN が未登録 | 400 | `unauthorized_client` |
 | public client からの交換要求 | 400 | `unauthorized_client` |
 | `subject_token` / `subject_token_type` 欠落 | 400 | `invalid_request` |
-| `subject_token_type` / `requested_token_type` が非対応値 | 400 | `invalid_request` |
-| `actor_token` / `actor_token_type` の存在（delegation 要求） | 400 | `invalid_request` |
+| `subject_token_type` / `requested_token_type` / `actor_token_type` が非対応値 | 400 | `invalid_request` |
+| `actor_token` と `actor_token_type` の片方だけが存在（§2.1 の組み合わせ違反） | 400 | `invalid_request` |
 | `resource` が絶対 URI でない・fragment を含む | 400 | `invalid_request` |
 | `subject_token` が無効（不存在・期限切れ・失効済み・nbf 未来） | 400 | `invalid_request` |
+| `actor_token` が無効（同上） | 400 | `invalid_request` |
 | 要求 scope が `subject_token` の scope を超過 | 400 | `invalid_scope` |
 | `audience` / `resource` が `allowedTargets` 外 | 400 | `invalid_target` |
 
@@ -227,15 +276,16 @@ return buildTokenExchangeResponse({
 無効な `subject_token` は **`invalid_request`** です。RFC 8693 §2.2.2 がそう定めています。authorization_code / refresh_token grant の感覚で `invalid_grant` を期待するとテストを誤ります。
 :::
 
-`subject_token` の解決に失敗したときの `error_description` は、失敗の種別によらず同一です（`The provided subject_token is not valid`）。応答差から「そのトークンが存在したか・失効したか」を判別できないようにするためです。`invalid_target` の `error_description` も固定で、`allowedTargets` の内容を露出しません。
+`subject_token` の解決に失敗したときの `error_description` は、失敗の種別によらず同一です（`The provided subject_token is not valid`）。応答差から「そのトークンが存在したか・失効したか」を判別できないようにするためです。`actor_token` にも専用の固定文言（`The provided actor_token is not valid`）が 1 つだけあります。`invalid_target` の `error_description` も固定で、`allowedTargets` の内容を露出しません。
 
 ## セキュリティ上の注意
 
 | 論点 | 実装 / 注意点 |
 |---|---|
 | 窃取トークンの増幅 | RFC 8693 §2.1 は「クライアント認証を省くと、窃取されたトークンを STS 経由で別のトークンへ増幅できる」と注記しています。本実装はクライアント認証必須に加え、**public client を拒否**し、クライアント単位で交換 URN の明示登録を要求します |
-| 権限昇格 | 要求 scope は `subject_token` の部分集合のみ。省略時も継承であり拡大しません |
+| 権限昇格 | 要求 scope は `subject_token` の部分集合のみ。省略時も継承であり拡大しません。delegation でも `sub` は変わらず、actor は `act` に記録されるだけです |
 | 対象の不正拡大 | `allowedTargets` 許可リスト（既定は空）外は `invalid_target`。`sub` は変更されません |
+| actor のなりすまし | `actor_token` は subject_token と同一の検証（本 OP 発行・有効・nbf）を通過したものだけが `act` に記録されます |
 | トークン寿命の洗浄 | `expires_in = min(設定値, subject の残存秒数)`。交換を連鎖しても寿命は単調減少します |
 | 失効の回避 | 交換後トークンは `subject_token` の `grantId` を継承して保存されるため、grant 単位の失効（認可コード再利用検知など）が交換後トークンにも波及します |
 | 存在確認オラクル | 解決失敗の `error` / `error_description` を失敗種別で区別しません |
@@ -246,9 +296,11 @@ return buildTokenExchangeResponse({
 
 ## 既知の制約
 
-- **delegation 非対応**: `actor_token` / `actor_token_type` を含むリクエストは `invalid_request` で拒否されます。`act` / `may_act` claim（RFC 8693 §4）も未実装です
+- **`may_act` claim 非対応**: `act`（RFC 8693 §4.1）は対応済みですが、`may_act`（§4.4）は未実装です
+- **introspection 応答に `act` は含まれません**: `act` は発行 JWT とストア metadata に記録されますが、RFC 8693 §4.2 の introspection 応答への `act` 追加は未対応です。actor の確認は JWT のデコードで行ってください
+- **`actor_token` は発行トークンの寿命を cap しません**: 寿命は `subject_token` の残存期間だけで決まります。actor のトークンが失効しても、発行済みの delegation トークンは残存期間まで有効です
 - **`audience` / `resource` は単一値のみ**: RFC 8693 §2.1 は複数出現を許容しますが、生成 OP のトークンエンドポイントは RFC 6749 §3.2 に基づき重複パラメータを 400 で拒否します。意図的な制限です
-- **`subject_token` はこの OP 発行のアクセストークンのみ**: id_token / refresh_token / JWT / SAML アサーションや、外部 IdP が発行したトークンは受け付けません
+- **`subject_token` / `actor_token` はこの OP 発行のアクセストークンのみ**: id_token / refresh_token / JWT / SAML アサーションや、外部 IdP が発行したトークンは受け付けません
 - **発行できるのはアクセストークンのみ**: 交換で ID Token や refresh token は発行されません。`openid` scope が残っていても ID Token は返りません（UserInfo へのアクセスは可能なままです）
 - **`claims` パラメータは継承されません**: 認可時に `claims`（OIDC Core 1.0 §5.5）で要求した個別クレームは交換後トークンへ伝播しません。交換後トークンで UserInfo を呼ぶと scope ベースのクレームだけが返ります。認可時の同意対象を交換経由で下流へ広げないための設計です
 - **`allowedTargets` はグローバル設定のみ**: クライアント単位の対象許可は非対応です
@@ -269,6 +321,8 @@ return buildTokenExchangeResponse({
 | `unauthorized_client: Public clients are not allowed...` | public client からの交換は仕様上の設計判断で拒否しています。confidential client を使ってください |
 | `invalid_target` が返る | `tokenExchangeConfig.allowedTargets` に対象が入っていません。既定は空です |
 | `invalid_request: The provided subject_token is not valid` | `subject_token` が不存在・期限切れ・失効済み・nbf 未来のいずれかです。種別は意図的に区別されません |
+| `invalid_request: The provided actor_token is not valid` | `actor_token` について同上です |
+| `invalid_request: actor_token_type is required...` | `actor_token` を送るときは `actor_token_type` も必須です（RFC 8693 §2.1） |
 | 交換後トークンで UserInfo が 401 | `aud` 検証で落ちている可能性があります。OP の UserInfo エンドポイントは常に `aud` の恒久メンバとして含まれるので、生成コードの `buildAccessTokenAudience` 呼び出しを消していないか確認してください |
 | 交換後トークンの UserInfo に個別クレームが出ない | 仕様どおりです。`claims` パラメータは継承されません（既知の制約を参照） |
 | `expires_in` が設定値より小さい | 仕様どおりです。`subject_token` の残存期間で cap されています |

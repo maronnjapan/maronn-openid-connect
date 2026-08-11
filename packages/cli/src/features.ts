@@ -54,7 +54,8 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  * change in a breaking way between releases.
  *
  * - par: Pushed Authorization Requests (RFC 9126).
- * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation only.
+ * - token-exchange: OAuth 2.0 Token Exchange (RFC 8693), impersonation and
+ *   delegation (act claim per §4.1).
  * - jarm: JWT Secured Authorization Response Mode (JARM), signed query.jwt only.
  * - device-authorization-grant: OAuth 2.0 Device Authorization Grant (RFC 8628).
  */

@@ -67,7 +67,7 @@ index f86e0f6..a670ba9 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-device-authorization-grant/_oidc-provider/conformance.test.ts
-index a76047d..fb026d3 100644
+index dbce5cd..2733036 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-device-authorization-grant/_oidc-provider/conformance.test.ts
 @@ -111,6 +111,41 @@ const testClients = new Map<string, RegisteredClient>([
@@ -881,7 +881,7 @@ index a76047d..fb026d3 100644
 +      });
      });
    });
- });
+ 
 diff --git a/with-device-authorization-grant/_oidc-provider/routes/device-authorization.ts b/with-device-authorization-grant/_oidc-provider/routes/device-authorization.ts
 new file mode 100644
 index 0000000..2ecd529
@@ -1838,7 +1838,7 @@ index dbe5fc3..da8db5b 100644
 +  (deviceStoreRegistry.__oidcDeviceAuthorizationStore ??=
 +    new InMemoryDeviceAuthorizationStore());
 diff --git a/default-op/_oidc-provider/views.ts b/with-device-authorization-grant/_oidc-provider/views.ts
-index 3fe56ad..8a76e64 100644
+index b084077..6dc42f5 100644
 --- a/default-op/_oidc-provider/views.ts
 +++ b/with-device-authorization-grant/_oidc-provider/views.ts
 @@ -52,6 +52,55 @@ export interface ErrorPageParams {
@@ -1912,7 +1912,7 @@ index 3fe56ad..8a76e64 100644
  }
  
  /** Options applied when renderView wraps an HTML string into a Response. */
-@@ -194,6 +251,106 @@ ${descriptionHtml}</body>
+@@ -200,6 +257,106 @@ ${descriptionHtml}</body>
  </html>`;
  }
  
@@ -2019,7 +2019,7 @@ index 3fe56ad..8a76e64 100644
  /**
   * Default Views used when no custom views are injected.
   * These render minimal, unstyled HTML so the flow works out of the box.
-@@ -202,6 +359,10 @@ export const defaultViews: Views = {
+@@ -208,6 +365,10 @@ export const defaultViews: Views = {
    loginPage: defaultLoginPage,
    consentPage: defaultConsentPage,
    errorPage: defaultErrorPage,

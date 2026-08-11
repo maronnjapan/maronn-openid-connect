@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-jarm/_oidc-provider/conformance.test.ts
-index a76047d..36039b5 100644
+index dbce5cd..cceef15 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-jarm/_oidc-provider/conformance.test.ts
 @@ -366,10 +366,11 @@ describe('generated provider HTTP conformance', () => {
@@ -40,11 +40,10 @@ index a76047d..36039b5 100644
        });
      });
  
-@@ -2157,4 +2158,367 @@ describe('generated provider HTTP conformance', () => {
-       ).toBe(false);
+@@ -2158,6 +2159,369 @@ describe('generated provider HTTP conformance', () => {
      });
    });
-+
+ 
 +  // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
 +  // because this provider was created with --enable jarm. These tests pin the
 +  // contract the repository guarantees for the generated JARM responses: change
@@ -407,7 +406,10 @@ index a76047d..36039b5 100644
 +      });
 +    });
 +  });
- });
++
+   describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
+     const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+ 
 diff --git a/default-op/_oidc-provider/routes/authorize.ts b/with-jarm/_oidc-provider/routes/authorize.ts
 index f7a4871..405d927 100644
 --- a/default-op/_oidc-provider/routes/authorize.ts

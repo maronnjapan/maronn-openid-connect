@@ -14,7 +14,7 @@
         "typecheck": "tsc --noEmit && node --check apps/client.mjs && node --check apps/resource-server.mjs"
     },
     "devDependencies": {
-        "@playwright/test": "^1.60.0",
+        "@playwright/test": "^1.62.1",
         "@types/node": "^26.2.0",
         "typescript": "^5.7.2"
     }

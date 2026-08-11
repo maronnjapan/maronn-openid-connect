@@ -13,6 +13,7 @@
         "deploy:express-flyio": "bash samples/express-flyio/scripts/deploy-fly.sh",
         "deploy:fastify-flyio": "bash samples/fastify-flyio/scripts/deploy-fly.sh",
         "deploy:nextjs-vercel": "bash samples/nextjs-vercel/scripts/deploy-vercel.sh",
+        "generate:signing-key": "node scripts/generate-signing-key.mjs",
         "test:ci": "pnpm run test:ci-gate && pnpm run test:supply-chain && pnpm run test:release-contract && pnpm run test:experimental-review && pnpm --filter \"./packages/*\" test && pnpm run test:conformance",
         "test:ci-gate": "node .github/scripts/verify-ci-gate.mjs",
         "test:supply-chain": "node --test .github/scripts/*.test.mjs",

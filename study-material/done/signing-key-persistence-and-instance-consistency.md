@@ -282,3 +282,36 @@ Basic OP として提供する上で確認すべきこと:
       片方の JWKS で他方の ID Token を検証すると失敗することを回帰テストで固定する
       （エフェメラル方式の危険性を実証し、修正後に成功へ反転させる）
 - [ ] `study-material/signing-key-rotation-operations.md` に「本ファイルが前提条件である」旨の相互参照を追記する
+
+## 10. 決定と実装結果（2026-08-07）
+
+採用方針: **A（env に JWK）＋ D（core にローダを置く）**。方針B（デプロイ先ネイティブのストア）は
+サンプルごとに実装が分かれ保守コストが上がるため見送り、方針C は Workers で解決しないため単独では採らなかった。
+
+core に追加した公開 API は 2 つに絞った（`RELEASE-v0.x-scope.md` の「core の API 面積」への配慮）:
+
+- `createJwkSigningKeyProvider(jwk, keyId?, strengthPolicy?)`:
+  永続 JWK（JSON 文字列またはオブジェクト）から `SigningKeyProvider` を作る。
+  JSON パース・`kid` の解決と不一致検出・秘密鍵素材（`d`）の有無・`assertKeyStrength` を
+  **同期的に**検証してから返すため、設定ミスは最初のトークン発行時ではなく起動時に落ちる。
+  `crypto.subtle.importKey` だけを遅延させているので、Workers で top-level await が要らない。
+  公開する JWK からは `d/p/q/dp/dq/qi/oth/k` を落とす（RFC 7517 §4）。
+- `resolveSigningKeyProvider({ jwk, keyId, fallbackKeyId, persistenceHint, onEphemeralFallback })`:
+  永続鍵があればそれを、無ければプロセス単位のエフェメラル RS256 鍵を返し、後者では警告を出す。
+  エフェメラル生成関数自体は core 内部に閉じてあり、警告を経由せずには到達できない。
+
+サンプル 4 種はいずれも `resolveSigningKeyProvider` を呼ぶだけになり、鍵生成コードは消えた。
+nextjs-vercel の `runtime.ts` は CLI 生成物なので `packages/cli` の `nextJsRuntimeTemplate` を直し、
+生成し直している（`src/app.ts` を持つ 3 サンプルは CLI 生成対象外なので直接編集）。
+
+鍵生成は `pnpm generate:signing-key [--kid <id>] [--bits <n>]`（`scripts/generate-signing-key.mjs`）で行い、
+`pnpm deploy:*` の各スクリプトが secret の有無を確認して、未設定なら生成と設定を対話的に案内する
+（`wrangler secret put` / `fly secrets import` / `vercel env add`）。
+
+### 未了
+
+- **事実確認（Cloudflare Workers のアイソレート・ライフサイクル一次資料）は未実施**。
+  実行環境の egress プロキシが `developers.cloudflare.com` を遮断しており、一次資料を参照できなかった。
+  §3〜§4 の Workers に関する記述は未確定のままとする。ネットワークが通る環境で確認して確定させること。
+- 複数鍵の同時公開（ローテーション中の新旧 2 鍵）は本タスクの範囲外。
+  `study-material/signing-key-rotation-operations.md` を参照。

@@ -2,9 +2,8 @@ import { env } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import {
   createCachedSigningKeyProvider,
+  resolveSigningKeyProvider,
   type AcrResolver,
-  type SigningKey,
-  type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import {
@@ -17,6 +16,13 @@ interface Bindings {
   DB: D1Database;
   ISSUER?: string;
   OIDC_CLIENTS_JSON?: string;
+  /**
+   * Private RS256 signing key as a JWK JSON string. Set it as a Worker secret
+   * (`wrangler secret put OIDC_SIGNING_KEY_JWK`) with the output of
+   * `pnpm generate:signing-key`. Without it every isolate signs with its own
+   * key under the same kid, so ID Token verification fails intermittently.
+   */
+  OIDC_SIGNING_KEY_JWK?: string;
   OIDC_SIGNING_KEY_ID?: string;
   OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW?: string;
   OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT?: string;
@@ -32,6 +38,22 @@ const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
   if (!preferred) return undefined;
   return { acr: preferred, amr: ['pwd'] };
 };
+
+// OIDC Core 1.0 §10.1: the OP publishes its keys at jwks_uri and names the one
+// it signed with via `kid`, which only works when a given kid always resolves to
+// the same key material. Cloudflare Workers runs this module once per isolate,
+// so the ephemeral fallback would hand every isolate a different key under the
+// same kid — set OIDC_SIGNING_KEY_JWK as a secret to keep the key stable.
+const signingKeyProvider = createCachedSigningKeyProvider(
+  resolveSigningKeyProvider({
+    jwk: bindings.OIDC_SIGNING_KEY_JWK,
+    keyId: bindings.OIDC_SIGNING_KEY_ID,
+    fallbackKeyId: 'hono-cloudflare-rs256-key',
+    persistenceHint:
+      'Run `pnpm generate:signing-key` and store the output with `wrangler secret put OIDC_SIGNING_KEY_JWK`.',
+  }),
+  60_000,
+);
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -51,10 +73,7 @@ applyOidc(app, {
     allowUnsignedRequestObject:
       bindings.OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT === '1',
   },
-  signingKeyProvider: createCachedSigningKeyProvider(
-    createEphemeralRs256KeyProvider(bindings.OIDC_SIGNING_KEY_ID),
-    60_000,
-  ),
+  signingKeyProvider,
   clientResolver: createInMemoryClientResolver(clients),
   tokenClientResolver: createInMemoryClientResolver(clients),
   storage: (context) => createD1ProviderStores(context.env.DB as D1Database),
@@ -63,40 +82,6 @@ applyOidc(app, {
 });
 
 export default app;
-
-function createEphemeralRs256KeyProvider(keyId = 'hono-cloudflare-rs256-key'): SigningKeyProvider {
-  const keyPromise = generateSigningKey(keyId);
-  return {
-    async getSigningKey(): Promise<SigningKey> {
-      return keyPromise;
-    },
-    async getSigningKeys(): Promise<SigningKey[]> {
-      return [await keyPromise];
-    },
-  };
-}
-
-async function generateSigningKey(keyId: string): Promise<SigningKey> {
-  const keyPair = await crypto.subtle.generateKey(
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: 'SHA-256',
-    },
-    true,
-    ['sign', 'verify'],
-  );
-  const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey) as JsonWebKey & {
-    alg?: string;
-    use?: string;
-    kid?: string;
-  };
-  publicJwk.alg = 'RS256';
-  publicJwk.use = 'sig';
-  publicJwk.kid = keyId;
-  return { privateKey: keyPair.privateKey, publicJwk, keyId };
-}
 
 function readRegisteredClients(encoded?: string): ReadonlyMap<string, RegisteredClient> {
   if (encoded) {

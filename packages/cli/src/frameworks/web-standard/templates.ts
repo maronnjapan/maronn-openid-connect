@@ -1037,9 +1037,8 @@ function readEnv(name: string): string | undefined {
 export function nextJsRuntimeTemplate(corePkg: string): string {
   return `import {
   createCachedSigningKeyProvider,
+  resolveSigningKeyProvider,
   type AcrResolver,
-  type SigningKey,
-  type SigningKeyProvider,
 } from '${corePkg}';
 import { createInMemoryClientResolver, type RegisteredClient } from './config';
 import { createOidcRouteHandlers } from './next';
@@ -1048,8 +1047,21 @@ import type { OidcProviderOptions } from './app';
 
 declare const process: { env: Record<string, string | undefined> } | undefined;
 
+// OIDC Core 1.0 §10.1: the OP publishes its keys at jwks_uri and names the one it
+// signed with via \`kid\`, which only holds together when a given kid always resolves
+// to the same key material. Serverless platforms run this module once per instance,
+// so without a persisted key every instance would sign with different key material
+// under the same kid and relying parties would fail verification intermittently.
+// Set OIDC_SIGNING_KEY_JWK (a private RS256 JWK) to keep the key stable across
+// instances, restarts, and redeploys.
 const signingKeyProvider = createCachedSigningKeyProvider(
-  createEphemeralRs256KeyProvider(),
+  resolveSigningKeyProvider({
+    jwk: readEnv('OIDC_SIGNING_KEY_JWK'),
+    keyId: readEnv('OIDC_SIGNING_KEY_ID'),
+    fallbackKeyId: 'nextjs-rs256-key',
+    persistenceHint:
+      'Set OIDC_SIGNING_KEY_JWK to a private RS256 JWK to keep the key stable across instances.',
+  }),
   60_000,
 );
 const providerStores = createNextJsProviderStores();
@@ -1174,45 +1186,6 @@ function parseRegisteredClients(encoded: string): ReadonlyMap<string, Registered
 function readEnv(name: string): string | undefined {
   if (typeof process === 'undefined') return undefined;
   return process.env[name];
-}
-
-function createEphemeralRs256KeyProvider(): SigningKeyProvider {
-  const keyPromise = generateSigningKey();
-  return {
-    async getSigningKey(): Promise<SigningKey> {
-      return keyPromise;
-    },
-    async getSigningKeys(): Promise<SigningKey[]> {
-      return [await keyPromise];
-    },
-  };
-}
-
-async function generateSigningKey(): Promise<SigningKey> {
-  const keyPair = await crypto.subtle.generateKey(
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: 'SHA-256',
-    },
-    true,
-    ['sign', 'verify'],
-  );
-  const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey) as JsonWebKey & {
-    alg?: string;
-    use?: string;
-    kid?: string;
-  };
-  publicJwk.alg = 'RS256';
-  publicJwk.use = 'sig';
-  publicJwk.kid = readEnv('OIDC_SIGNING_KEY_ID') ?? 'nextjs-rs256-key';
-
-  return {
-    privateKey: keyPair.privateKey,
-    publicJwk,
-    keyId: publicJwk.kid,
-  };
 }
 `;
 }

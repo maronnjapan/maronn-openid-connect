@@ -77,7 +77,7 @@ index 24030b2..0d96daf 100644
    '/.well-known/openid-configuration',
    '/login',
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index 0ea71d7..76a89d1 100644
+index d568e91..648804a 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -7,6 +7,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto

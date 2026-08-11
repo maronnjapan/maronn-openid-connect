@@ -7,10 +7,11 @@
  * 処理する。core と同じく「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードは
  * ステップ関数を順に呼び出して検証を差し替え・削除できるようにする。
  *
- * 初期スコープは **impersonation 型の交換**（`actor_token` なし）に限定する。
- * 交換で権限が単調に狭まること（scope は部分集合・audience は許可リスト内・
- * 寿命は subject_token の残存期間以下・`sub` は変更不可）が本モジュールの
- * セキュリティ設計の中核である。
+ * **impersonation 型**（`actor_token` なし。交換後トークンは subject として振る舞う）と
+ * **delegation 型**（`actor_token` あり。RFC 8693 §4.1 の `act` claim で actor を記録する）の
+ * 両方に対応する。どちらでも、交換で権限が単調に狭まること（scope は部分集合・
+ * audience は許可リスト内・寿命は subject_token の残存期間以下・`sub` は変更不可）が
+ * 本モジュールのセキュリティ設計の中核である。
  *
  * トークンの発行・保存は行わない。呼び出し側（生成コード）が core の
  * `buildAccessTokenAudience` / `buildAccessTokenPayload` / `AccessTokenIssuer` /
@@ -38,6 +39,14 @@ export const TOKEN_TYPE_ACCESS_TOKEN = 'urn:ietf:params:oauth:token-type:access_
  */
 export const SUBJECT_TOKEN_INVALID_DESCRIPTION =
   'The provided subject_token is not valid';
+
+/**
+ * actor_token の解決に失敗したときの固定 error_description。
+ * {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} と同じオラクル排除方針で、
+ * どのパラメータが不正だったかだけを伝え、失敗理由は区別しない。
+ */
+export const ACTOR_TOKEN_INVALID_DESCRIPTION =
+  'The provided actor_token is not valid';
 
 /**
  * Token Exchange のエラーコード。
@@ -78,6 +87,29 @@ export class TokenExchangeError extends Error {
   }
 }
 
+/**
+ * RFC 8693 §4.1 の `act` claim 値。
+ *
+ * `sub` が現在の actor。委譲が連鎖した場合は `act` のネストでチェーンを表し、
+ * 最外が現在の actor、最深が最も古い actor になる。
+ */
+export interface TokenExchangeActor {
+  sub: string;
+  act?: TokenExchangeActor;
+}
+
+/**
+ * 交換で発行したトークンの store metadata。
+ *
+ * core の {@link AccessTokenInfo} に `act` を加えた構造的拡張。生成コードが
+ * delegation の発行時にこの形で store へ保存しておくと、そのトークンを後日
+ * subject_token として再交換したときに {@link processTokenExchangeRequest} が
+ * `act` を読み出して委譲チェーンを繋げられる（core は無変更のまま）。
+ */
+export type ExchangedAccessTokenInfo = AccessTokenInfo & {
+  act?: TokenExchangeActor;
+};
+
 /** 検証済みの Token Exchange リクエストパラメータ（RFC 8693 §2.1）。 */
 export interface ParsedTokenExchangeParams {
   subjectToken: string;
@@ -85,6 +117,8 @@ export interface ParsedTokenExchangeParams {
   scope?: string;
   audience?: string;
   resource?: string;
+  /** delegation の actor_token。省略時は undefined（impersonation） */
+  actorToken?: string;
 }
 
 /**
@@ -92,7 +126,7 @@ export interface ParsedTokenExchangeParams {
  * `buildAccessTokenPayload` / `AccessTokenIssuer.issue` / `accessTokenStore.set` へ流す。
  */
 export interface TokenExchangeGrant {
-  /** subject_token の `sub` を継承する（impersonation なので本人固定） */
+  /** subject_token の `sub` を継承する（delegation でも actor は `act` にのみ現れる） */
   subject: string;
   /** 交換を要求したクライアント（subject_token の発行先クライアントではない） */
   clientId: string;
@@ -104,6 +138,11 @@ export interface TokenExchangeGrant {
   expiresIn: number;
   /** subject_token の `grantId` を継承する（grant 単位失効の連動） */
   grantId?: string;
+  /**
+   * delegation の act claim 値（RFC 8693 §4.1）。impersonation では undefined。
+   * 生成コードは JWT payload と store metadata の両方へ `act` として載せる。
+   */
+  actor?: TokenExchangeActor;
 }
 
 /** RFC 8693 §2.2.1 の成功レスポンスボディ。 */
@@ -168,14 +207,6 @@ export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
 export function parseTokenExchangeParams(
   params: Record<string, string>,
 ): ParsedTokenExchangeParams {
-  // 非目標: delegation（RFC 8693 §1.1 / §4）。未対応であることを明示して拒否する。
-  if (params['actor_token'] !== undefined || params['actor_token_type'] !== undefined) {
-    throw new TokenExchangeError(
-      'invalid_request',
-      'Delegation is not supported: actor_token and actor_token_type must not be present.',
-    );
-  }
-
   const subjectToken = optional(params['subject_token']);
   if (subjectToken === undefined) {
     throw new TokenExchangeError('invalid_request', 'subject_token is required');
@@ -213,11 +244,35 @@ export function parseTokenExchangeParams(
     );
   }
 
+  // delegation（RFC 8693 §2.1）: actor_token_type は actor_token があるとき REQUIRED、
+  // 無いとき MUST NOT be included。
+  const actorToken = optional(params['actor_token']);
+  const actorTokenType = optional(params['actor_token_type']);
+  if (actorToken !== undefined && actorTokenType === undefined) {
+    throw new TokenExchangeError(
+      'invalid_request',
+      'actor_token_type is required when actor_token is present',
+    );
+  }
+  if (actorToken === undefined && actorTokenType !== undefined) {
+    throw new TokenExchangeError(
+      'invalid_request',
+      'actor_token_type must not be present without actor_token',
+    );
+  }
+  if (actorTokenType !== undefined && actorTokenType !== TOKEN_TYPE_ACCESS_TOKEN) {
+    throw new TokenExchangeError(
+      'invalid_request',
+      `Unsupported actor_token_type. Only ${TOKEN_TYPE_ACCESS_TOKEN} is supported.`,
+    );
+  }
+
   return {
     subjectToken,
     scope: optional(params['scope']),
     audience: optional(params['audience']),
     resource,
+    actorToken,
   };
 }
 
@@ -237,20 +292,56 @@ export async function resolveSubjectToken(options: {
   accessTokenResolver: AccessTokenResolver;
   now?: Date;
 }): Promise<AccessTokenInfo> {
-  const info = await options.accessTokenResolver.findAccessToken(options.subjectToken);
-  if (info === null) {
-    // 不存在・失効済みのいずれも resolver が null を返す。
-    throw invalidSubjectToken();
-  }
+  return resolveExchangeToken(
+    options.subjectToken,
+    options.accessTokenResolver,
+    options.now,
+    invalidSubjectToken,
+  );
+}
 
-  const nowSeconds = toEpochSeconds(options.now);
-  if (info.expiresAt <= nowSeconds) {
-    throw invalidSubjectToken();
+/**
+ * ステップ 3': actor_token を解決し、有効性を検証する（delegation のみ）。
+ *
+ * 検証内容は {@link resolveSubjectToken} と同一（本 OP 発行のアクセストークンで、
+ * 存在・期限・nbf を満たすこと）。actor_token は「交換を要求した時点で actor が
+ * 実在し有効なトークンを保持していること」の確認であり、発行後トークンの寿命は
+ * actor_token に連動しない（{@link computeExchangedTokenLifetime} 参照）。
+ *
+ * 失敗理由は応答から区別できない（{@link ACTOR_TOKEN_INVALID_DESCRIPTION}）。
+ *
+ * @throws {TokenExchangeError} invalid_request
+ */
+export async function resolveActorToken(options: {
+  actorToken: string;
+  accessTokenResolver: AccessTokenResolver;
+  now?: Date;
+}): Promise<AccessTokenInfo> {
+  return resolveExchangeToken(
+    options.actorToken,
+    options.accessTokenResolver,
+    options.now,
+    invalidActorToken,
+  );
+}
+
+/**
+ * ステップ 3'': act claim を組み立てる（RFC 8693 §4.1、delegation のみ）。
+ *
+ * 最外の `sub` は今回の actor。subject_token が既に `act` を持つ（＝それ自体が
+ * 委譲で発行された）場合は、そのチェーンをネストへ押し下げる。これで
+ * 「最外が現在の actor、最深が最も古い actor」という §4.1 の規則を満たす。
+ */
+export function composeActClaim(options: {
+  /** actor_token の sub */
+  actorSub: string;
+  /** subject_token の store metadata に保存されていた act チェーン */
+  subjectActChain?: TokenExchangeActor;
+}): TokenExchangeActor {
+  if (options.subjectActChain === undefined) {
+    return { sub: options.actorSub };
   }
-  if (info.nbf !== undefined && info.nbf > nowSeconds) {
-    throw invalidSubjectToken();
-  }
-  return info;
+  return { sub: options.actorSub, act: options.subjectActChain };
 }
 
 /**
@@ -393,6 +484,21 @@ export async function processTokenExchangeRequest(
     now: context.now,
   });
 
+  // delegation: actor_token を解決し、act claim を組み立てる（RFC 8693 §4.1）。
+  // subject_token 自体が委譲で発行されていた場合、その act チェーンをネストへ継承する。
+  let actor: TokenExchangeActor | undefined;
+  if (parsed.actorToken !== undefined) {
+    const actorInfo = await resolveActorToken({
+      actorToken: parsed.actorToken,
+      accessTokenResolver: context.accessTokenResolver,
+      now: context.now,
+    });
+    actor = composeActClaim({
+      actorSub: actorInfo.sub,
+      subjectActChain: (subject as ExchangedAccessTokenInfo).act,
+    });
+  }
+
   const scope = validateExchangeScope(parsed.scope, subject.scope);
 
   const requestedAudience = resolveExchangeTarget({
@@ -415,6 +521,7 @@ export async function processTokenExchangeRequest(
     requestedAudience,
     expiresIn,
     grantId: subject.grantId,
+    ...(actor === undefined ? {} : { actor }),
   };
 }
 
@@ -436,6 +543,38 @@ function toEpochSeconds(now: Date | undefined): number {
 
 function invalidSubjectToken(): TokenExchangeError {
   return new TokenExchangeError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION);
+}
+
+function invalidActorToken(): TokenExchangeError {
+  return new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION);
+}
+
+/**
+ * subject_token / actor_token 共通の解決と有効性検証。
+ * RFC 8693 §2.1: "the authorization server MUST perform the appropriate validation
+ * procedures for the indicated token type"。本機能は本 OP 発行のアクセストークンに
+ * 限るため、store メタデータの有効性検証（存在・期限・nbf）でこれを満たす。
+ */
+async function resolveExchangeToken(
+  token: string,
+  accessTokenResolver: AccessTokenResolver,
+  now: Date | undefined,
+  invalidToken: () => TokenExchangeError,
+): Promise<AccessTokenInfo> {
+  const info = await accessTokenResolver.findAccessToken(token);
+  if (info === null) {
+    // 不存在・失効済みのいずれも resolver が null を返す。
+    throw invalidToken();
+  }
+
+  const nowSeconds = toEpochSeconds(now);
+  if (info.expiresAt <= nowSeconds) {
+    throw invalidToken();
+  }
+  if (info.nbf !== undefined && info.nbf > nowSeconds) {
+    throw invalidToken();
+  }
+  return info;
 }
 
 /**

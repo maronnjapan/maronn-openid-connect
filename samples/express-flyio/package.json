@@ -10,8 +10,9 @@
     "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && tsc --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --external:express --outfile=dist/server.js --sourcemap",
     "start": "node dist/server.js",
     "launch": "pnpm run build && pnpm run start",
-    "test": "pnpm run typecheck",
-    "typecheck": "tsc --noEmit"
+    "test": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental run build && pnpm run typecheck && pnpm run test:conformance",
+    "typecheck": "tsc --noEmit",
+    "test:conformance": "vitest run"
   },
   "dependencies": {
     "@maronn-openid-connect/core": "workspace:*",
@@ -23,6 +24,7 @@
     "@types/node": "^26.1.2",
     "esbuild": "^0.25.12",
     "express": "^5.2.1",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.6"
   }
 }

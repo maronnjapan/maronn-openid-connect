@@ -45,6 +45,13 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
           <li key={scope}>{scope}</li>
         ))}
       </ul>
+      {/*
+        The submit buttons carry the authorization decision (OIDC Core 1.0
+        Section 3.1.2.4). consentAction accepts exactly two values — 'approve'
+        and 'deny' — and rejects everything else, so customizing this markup must
+        keep both button values as they are: renaming 'approve' makes every
+        approval fail with an error page. See ./actions.ts.
+      */}
       <form action={consentAction}>
         <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />

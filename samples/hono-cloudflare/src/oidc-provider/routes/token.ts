@@ -56,6 +56,7 @@ import {
   TokenExchangeError,
   buildTokenExchangeResponse,
   processTokenExchangeRequest,
+  type ExchangedAccessTokenInfo,
 } from '@maronn-openid-connect/experimental/token-exchange';
 import {
   DEVICE_CODE_GRANT_TYPE,
@@ -245,14 +246,20 @@ tokenApp.post('/', async (c) => {
         issuedAt: exchangeIssuedAt,
       });
       const exchangedToken = await exchangeIssuer.issue({
-        payload: exchangePayload,
+        payload: {
+          ...exchangePayload,
+          // RFC 8693 §4.1: a delegation exchange records the current actor in
+          // the act claim (chains already nested by processTokenExchangeRequest).
+          // Impersonation exchanges carry no act claim.
+          ...(grant.actor === undefined ? {} : { act: grant.actor }),
+        },
         privateKey: c.get('privateKey'),
         keyId: c.get('keyId'),
       });
 
-      await accessTokenStore.set(exchangedToken, {
-        // RFC 8693 §1.1: impersonation — the exchanged token acts as the same
-        // subject, but is bound to the client that requested the exchange.
+      const exchangeMetadata: ExchangedAccessTokenInfo = {
+        // RFC 8693 §1.1: the exchanged token acts as the same subject, but is
+        // bound to the client that requested the exchange.
         sub: grant.subject,
         clientId: grant.clientId,
         scope: grant.scope,
@@ -268,10 +275,14 @@ tokenApp.post('/', async (c) => {
         // so it is a distinct store record even when it is exchanged twice from
         // the same subject_token within one second.
         jti: exchangePayload.jti,
+        // Persisting act lets a later exchange that presents THIS token as its
+        // subject_token pick up the chain (RFC 8693 §4.1 nesting).
+        ...(grant.actor === undefined ? {} : { act: grant.actor }),
         // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
         // deliberately NOT inherited: an exchanged token yields scope-based
         // claims only at the UserInfo endpoint.
-      });
+      };
+      await accessTokenStore.set(exchangedToken, exchangeMetadata);
 
       // RFC 6749 §5.1: token responses MUST NOT be cached.
       c.header('Cache-Control', 'no-store');

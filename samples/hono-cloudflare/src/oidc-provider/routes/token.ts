@@ -683,6 +683,28 @@ tokenApp.post('/', async (c) => {
         ? validatedRequest.hadOfflineAccess
         : validatedRequest.scope.includes('offline_access');
 
+    // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: grant_types の既定は
+    // ["authorization_code"]。refresh_token grant を登録していないクライアントへ Refresh Token を
+    // 渡しても、そのトークンを提示した時点で validateClientGrantType が unauthorized_client を
+    // 返すだけで一度も使えない。使えない長期資格情報を保存させるのは RFC 9700 §4.14
+    // （Refresh Token の露出を最小化する）の趣旨に反するため、発行そのものを行わない。
+    // offlineAccessAllowed（生成コード独自の同意側スイッチ）と grantTypes（登録上の権限）は
+    // 独立したスイッチなので、両方が揃ったときだけ発行する。
+    const clientAllowsRefreshGrant = (tokenClient.grantTypes ?? ['authorization_code']).includes(
+      'refresh_token',
+    );
+    const issueRefreshToken = grantHasOfflineAccess && clientAllowsRefreshGrant;
+
+    // RFC 6749 §3.3: 付与した scope が要求と異なる場合は、レスポンスの scope でクライアントへ
+    // 通知する。Refresh Token を発行しないのに offline_access を付与済みとして返すと
+    // 「offline_access はあるのに refresh_token が無い」矛盾したレスポンスになるため、
+    // 発行を見送ったときは付与 scope からも offline_access を落とす。
+    // なお refresh_token grant はこのクライアントでは validateClientGrantType に弾かれて
+    // ここへ到達しないため、この絞り込みが効くのは authorization_code grant だけになる。
+    const grantedScope = issueRefreshToken
+      ? validatedRequest.scope
+      : validatedRequest.scope.filter((scopeValue) => scopeValue !== 'offline_access');
+
     // --- Token response pipeline --------------------------------------------
     // Each step below is an independent core function, called in the same order
     // as core's generateTokenResponse(). Add your own ID Token claims by editing
@@ -698,7 +720,7 @@ tokenApp.post('/', async (c) => {
       issuer: config.issuer,
       subject,
       clientId: validatedRequest.clientId,
-      scope: validatedRequest.scope,
+      scope: grantedScope,
       audience: effectiveAudience,
       expiresIn: config.accessTokenExpiresIn,
       issuedAt,
@@ -744,7 +766,7 @@ tokenApp.post('/', async (c) => {
         issuer: config.issuer,
         subject,
         clientId: validatedRequest.clientId,
-        scope: validatedRequest.scope,
+        scope: grantedScope,
         expiresIn: config.idTokenExpiresIn,
         issuedAt,
         atHash,
@@ -770,8 +792,8 @@ tokenApp.post('/', async (c) => {
       token_type: 'Bearer' as const,
       expires_in: config.accessTokenExpiresIn,
       id_token: idToken,
-      scope: validatedRequest.scope.join(' '),
-      refresh_token: grantHasOfflineAccess ? generateRandomString(32) : undefined,
+      scope: grantedScope.join(' '),
+      refresh_token: issueRefreshToken ? generateRandomString(32) : undefined,
     };
 
     // Store access token info for UserInfo / Introspection / Revocation endpoints.
@@ -781,7 +803,7 @@ tokenApp.post('/', async (c) => {
     await accessTokenStore.set(tokenResponse.access_token, {
       sub: subject,
       clientId: validatedRequest.clientId,
-      scope: validatedRequest.scope,
+      scope: grantedScope,
       expiresAt: issuedAt + config.accessTokenExpiresIn,
       grantId: validatedRequest.grantId,
       iat: issuedAt,

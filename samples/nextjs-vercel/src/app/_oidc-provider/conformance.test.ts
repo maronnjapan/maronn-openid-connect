@@ -111,6 +111,20 @@ const testClients = new Map<string, RegisteredClient>([
     tokenEndpointAuthMethod: 'client_secret_basic',
     offlineAccessAllowed: true,
   }],
+  // The most likely misconfiguration: the consent-side switch (offlineAccessAllowed)
+  // is on, but RFC 7591 §2 grant_types still defaults to ["authorization_code"], so
+  // the client may never present grant_type=refresh_token. The OP must therefore
+  // withhold the refresh token instead of handing out one that can never be used.
+  ['c-no-refresh-grant', {
+    clientId: 'c-no-refresh-grant',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    offlineAccessAllowed: true,
+  }],
   // EXPERIMENTAL (RFC 8628): a client registered for the device grant, plus a
   // second one so the contract test can prove a device_code is refused when it is
   // presented by a client other than the one it was issued to (§3.4).
@@ -1746,6 +1760,136 @@ describe('generated provider HTTP conformance', () => {
 
       expect(await userinfoStatus(firstAccess)).toBe(401);
       expect(await userinfoStatus(secondAccess)).toBe(200);
+    });
+  });
+
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2 + RFC 6749 §3.3 / §5.1:
+  // offline_access の同意（OIDC Core 1.0 §11）と grant_types の登録は独立したスイッチであり、
+  // 両方が揃わない限り Refresh Token は発行しない。発行を見送ったときは付与 scope からも
+  // offline_access を落とし、レスポンス内で矛盾が起きないようにする。
+  describe('Refresh Token issuance vs. registered grant_types', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Fetch-and-parse only: no assertions and no branching live in these helpers, so
+    // every contract stays visible as an expect() inside the it() blocks.
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drives authorize -> login -> consent for an arbitrary client so the same flow can
+    // be replayed for a client that registered the refresh_token grant and for one that
+    // did not. promptConsent selects whether OIDC Core 1.0 §11 grants offline_access.
+    async function authorizeCode(clientId: string, promptConsent: boolean): Promise<string> {
+      const authorizeUrl =
+        '/authorize?response_type=code&client_id=' + clientId +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent('openid offline_access') +
+        '&state=rt-grant' + (promptConsent ? '&prompt=consent' : '') +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+
+      const authorizeRes = await app.request(authorizeUrl);
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would, so the
+      // flow passes with and without --enable transaction-binding.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      return callback.searchParams.get('code') ?? '';
+    }
+
+    function exchangeCode(clientId: string, code: string): Promise<Response> {
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: 's',
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: PKCE_VERIFIER,
+        }).toString(),
+      });
+    }
+
+    // RFC 7591 §2: grant_types omitted defaults to ["authorization_code"]. c-no-refresh-grant
+    // registers exactly that while still allowing offline_access on the consent side, so a
+    // refresh token issued here would be rejected with unauthorized_client on first use.
+    it('should not issue a refresh token when the client does not register the refresh_token grant type', async () => {
+      const code = await authorizeCode('c-no-refresh-grant', true);
+      const res = await exchangeCode('c-no-refresh-grant', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.refresh_token).toBeUndefined();
+    });
+
+    // RFC 6749 §3.3: the granted scope differs from the requested one, so it is reported
+    // back. Leaving offline_access in while withholding the refresh token would tell the
+    // client it holds offline access it cannot actually use.
+    it('should omit offline_access from the granted scope when the refresh token is withheld', async () => {
+      const code = await authorizeCode('c-no-refresh-grant', true);
+      const res = await exchangeCode('c-no-refresh-grant', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid');
+    });
+
+    // Regression guard: the registered-and-consented path is unchanged. c-conf registers
+    // grant_types ['authorization_code', 'refresh_token'] and offlineAccessAllowed.
+    it('should issue a refresh token when the client registers the refresh_token grant type', async () => {
+      const code = await authorizeCode('c-conf', true);
+      const res = await exchangeCode('c-conf', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(typeof body.refresh_token).toBe('string');
+      expect(body.scope).toBe('openid offline_access');
+    });
+
+    // OIDC Core 1.0 §11 stays an independent condition: registering the refresh_token
+    // grant does not substitute for the end-user consent that grants offline_access.
+    it('should still drop offline_access when prompt=consent is absent even if refresh_token is registered', async () => {
+      const code = await authorizeCode('c-conf', false);
+      const res = await exchangeCode('c-conf', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid');
+      expect(body.refresh_token).toBeUndefined();
     });
   });
 

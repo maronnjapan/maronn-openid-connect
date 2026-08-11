@@ -130,6 +130,34 @@ describe('HonoGenerator', () => {
       );
     });
 
+    // P1 / RFC 7591 §2: 契約テストは「offlineAccessAllowed は ON だが grant_types に
+    // refresh_token が無い」という最も起きやすい設定ミスを再現できなければならない。
+    it('should register a client whose grant_types omit refresh_token for the contract test', () => {
+      const content = file?.content ?? '';
+      expect(content).toContain("['c-no-refresh-grant', {");
+      expect(content).toContain("    clientId: 'c-no-refresh-grant',");
+      expect(content).toContain("    grantTypes: ['authorization_code'],\n    tokenEndpointAuthMethod: 'client_secret_post',\n    offlineAccessAllowed: true,");
+    });
+
+    // P1 / RFC 7591 §2 + RFC 6749 §3.3: 使えない Refresh Token を配らないこと、および
+    // 見送ったときに offline_access を付与 scope から落とすことを契約として固定する。
+    it('should generate the refresh token grant registration conformance contract', () => {
+      const content = file?.content ?? '';
+      expect(content).toContain("describe('Refresh Token issuance vs. registered grant_types'");
+      expect(content).toContain(
+        'should not issue a refresh token when the client does not register the refresh_token grant type',
+      );
+      expect(content).toContain(
+        'should omit offline_access from the granted scope when the refresh token is withheld',
+      );
+      expect(content).toContain(
+        'should issue a refresh token when the client registers the refresh_token grant type',
+      );
+      expect(content).toContain(
+        'should still drop offline_access when prompt=consent is absent even if refresh_token is registered',
+      );
+    });
+
     // OIDC Core 1.0 §3.1.2.1: the generated OP's behavior contract must pin that a
     // hint is verified on every prompt path and never satisfied by another user's
     // SSO session.
@@ -1222,11 +1250,41 @@ describe('HonoGenerator', () => {
       expect(content).toContain("validatedRequest.scope.includes('offline_access')");
       // refresh_token grant: 縮小後 scope ではなく元 grant の hadOfflineAccess で判定する
       expect(content).toContain('validatedRequest.hadOfflineAccess');
-      // 計算結果でリフレッシュトークン値の発行可否を決める
+      // 計算結果と grant_types 登録の両方でリフレッシュトークン値の発行可否を決める
       expect(content).toContain(
-        'refresh_token: grantHasOfflineAccess ? generateRandomString(32) : undefined',
+        'const issueRefreshToken = grantHasOfflineAccess && clientAllowsRefreshGrant;',
+      );
+      expect(content).toContain(
+        'refresh_token: issueRefreshToken ? generateRandomString(32) : undefined',
       );
       expect(content).toContain('refreshTokenStore.set(tokenResponse.refresh_token');
+    });
+
+    // P1 / RFC 7591 §2 + OIDC Dynamic Client Registration 1.0 §2: grant_types の既定は
+    // ["authorization_code"]。refresh_token grant を登録していないクライアントへ Refresh Token を
+    // 渡しても validateClientGrantType に unauthorized_client で弾かれるだけなので発行しない。
+    it('should require the refresh_token grant registration before issuing a refresh token', () => {
+      const tokenFile = files.find((f) => f.path === 'routes/token.ts');
+      const content = tokenFile?.content ?? '';
+      // RFC 7591 §2 の既定値をそのまま fallback にして grantTypes を参照する
+      expect(content).toContain(
+        "const clientAllowsRefreshGrant = (tokenClient.grantTypes ?? ['authorization_code']).includes(",
+      );
+      expect(content).toContain("      'refresh_token',\n    );");
+    });
+
+    // P1 / RFC 6749 §3.3: Refresh Token を発行しなかったときは付与 scope からも offline_access を
+    // 落とし、「offline_access はあるのに refresh_token が無い」矛盾したレスポンスを避ける。
+    it('should drop offline_access from the granted scope when the refresh token is withheld', () => {
+      const tokenFile = files.find((f) => f.path === 'routes/token.ts');
+      const content = tokenFile?.content ?? '';
+      expect(content).toContain(
+        "      : validatedRequest.scope.filter((scopeValue) => scopeValue !== 'offline_access');",
+      );
+      // レスポンス・アクセストークン・ID Token はすべて付与 scope を使う
+      expect(content).toContain("      scope: grantedScope.join(' '),");
+      expect(content).toMatch(/buildAccessTokenPayload\(\{[\s\S]+?scope: grantedScope,/);
+      expect(content).toMatch(/buildIdTokenPayload\(\{[\s\S]+?scope: grantedScope,/);
     });
 
     // P1 / RFC 6749 §6: 縮小後 scope から offline_access が落ちても、grant が offline_access を
@@ -1237,8 +1295,8 @@ describe('HonoGenerator', () => {
       const tokenFile = files.find((f) => f.path === 'routes/token.ts');
       const content = tokenFile?.content ?? '';
       expect(content).toContain('const refreshTokenScope');
-      // access token は縮小後 scope のまま
-      expect(content).toMatch(/accessTokenStore\.set[\s\S]+scope: validatedRequest\.scope/);
+      // access token は縮小後 scope（= 付与 scope）のまま
+      expect(content).toMatch(/accessTokenStore\.set[\s\S]+scope: grantedScope,/);
       // refresh token は offline_access を保持した scope を永続化する
       expect(content).toMatch(/refreshTokenStore\.set[\s\S]+scope: refreshTokenScope/);
     });

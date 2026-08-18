@@ -20,7 +20,7 @@
   "devDependencies": {
     "@maronn-openid-connect/cli": "workspace:*",
     "@types/node": "^26.2.0",
-    "esbuild": "^0.25.12",
+    "esbuild": "^0.28.2",
     "fastify": "^5.6.2",
     "typescript": "^5.7.2"
   }

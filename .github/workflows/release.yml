@@ -113,7 +113,7 @@ jobs:
 
             - name: Create Release PR or Publish to npm
               id: changesets
-              uses: changesets/action@v1
+              uses: changesets/action@v2
               with:
                   # 未消化の changeset があれば Version Packages PR を作成/更新する。
                   version: pnpm run ci:version

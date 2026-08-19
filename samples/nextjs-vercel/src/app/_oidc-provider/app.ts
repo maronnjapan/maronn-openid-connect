@@ -157,6 +157,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
     c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
+    c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);
     c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
     c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
     c.set('revocationResolvers', storeResolvers.revocationResolvers);

@@ -15,10 +15,19 @@ Refresh Token は本リポジトリの既定で **絶対有効期限 7,776,000 �
 | `grant_types` から `refresh_token` を外した | ✅ される（`validateClientGrantType`） |
 | `token_endpoint_auth_method` を変更した | ✅ される（`validateClientAuthMethod`） |
 | `client_secret` を回転した | ✅ される（`verifyClientSecret`） |
-| `offlineAccessAllowed` を `false` にした | ❌ **されない** |
+| ~~`offlineAccessAllowed` を `false` にした~~ | 独自フラグごと廃止済み（下記の追記を参照） |
 | 同意（consent）を撤回した / 同意対象 scope を絞った | ❌ **されない**（明示的な revoke API を呼んだ場合を除く） |
 
 前者 3 つはクライアント**認証・認可**の経路にあるため再評価される。後者 2 つは**認可時点でしか評価されない**ため、既存の Refresh Token には効かない。
+
+> 追記: `offlineAccessAllowed` は廃止され、Refresh Token の可否は `grant_types` に一本化された。
+> `grant_types` は refresh 時に `validateClientGrantType` が再評価するため、この行の
+> 「されない」は解消している。あわせて online refresh token（`offline_access` を伴わない
+> 付与で発行され、ログインセッションに束縛される Refresh Token）が入ったので、
+> セッション終了という失効軸が 1 つ増えた。offline refresh token（`offline_access` あり）は
+> 従来どおりセッションから独立しており、本ファイルの残る論点（同意撤回が既存 grant に
+> 届かない）はそちらに当てはまる。
+> 経緯は `study-material/done/offline-access-grant-vs-client-grant-types-consistency.md` を参照。
 
 本ファイルはこの「発行後のポリシー変更が、既存 grant に届かない」という差分を扱う。
 

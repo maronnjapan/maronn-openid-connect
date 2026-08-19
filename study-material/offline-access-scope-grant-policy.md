@@ -4,6 +4,15 @@
 
 🟡 設計ハブ / 既存実装あり・ドキュメント不足
 
+> 追記: §4.3 と §5 が問題にしていた二系統ガード（`isOfflineAccessGranted` と
+> `RegisteredClient.offlineAccessAllowed`）は方針 B の方向で解消済み。
+> `OfflineAccessGrantedCallback` の context に `client` が渡るようになり、既定判定が
+> `prompt=consent` とクライアント登録 `grant_types` の両方を見る。生成コードの
+> `offlineAccessAllowed` フィルタは削除した。
+> 経緯は `study-material/done/offline-access-grant-vs-client-grant-types-consistency.md`、
+> 実装は `tasks/done/p1-refresh-token-issuance-requires-refresh-grant-registration.md` を参照。
+> 本ファイルに残る課題は「代替条件の実装パターンをどう示すか」（方針 A / C）である。
+
 ## 1. このトピックで確認したいこと
 
 - OpenID Connect Core 1.0 §11 が定める **`offline_access` scope** の付与条件は「`prompt=consent` を含むこと、または `other conditions for processing the request permitting offline access to the requested resources are in place`」と規定されている。後段の「その他の条件」は OP 実装の裁量に委ねられている。

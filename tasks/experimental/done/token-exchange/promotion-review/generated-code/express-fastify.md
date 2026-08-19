@@ -23,13 +23,13 @@ express / fastify の生成コード差分は完全に同一のため、まと�
 
 ````diff
 diff --git a/default-op/config.ts b/with-token-exchange/config.ts
-index b21565e..55492c7 100644
+index 17faa4d..1aaa160 100644
 --- a/default-op/config.ts
 +++ b/with-token-exchange/config.ts
-@@ -129,7 +129,10 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
-       offlineAccessAllowed: true,
-       // RFC 7591 §2: grant_types default is ["authorization_code"]. This client uses
-       // offline_access (refresh tokens), so it must explicitly register refresh_token.
+@@ -157,7 +157,10 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
+       // tokens at all: an online refresh token (bound to the login session) on every
+       // authorization, and an offline one (usable after logout) when offline_access
+       // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
 -      grantTypes: ['authorization_code', 'refresh_token'],
 +      // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
 +      // this confidential client exchange its access tokens. Remove it to forbid
@@ -39,7 +39,7 @@ index b21565e..55492c7 100644
        // The sample client authenticates with client_secret_post, so register it explicitly.
        tokenEndpointAuthMethod: 'client_secret_post',
 diff --git a/default-op/conformance.test.ts b/with-token-exchange/conformance.test.ts
-index d568e91..01e9a8a 100644
+index 75a5580..733e04f 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-token-exchange/conformance.test.ts
 @@ -7,6 +7,7 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -50,9 +50,9 @@ index d568e91..01e9a8a 100644
  import { writeWebResponse } from './node-adapter.js';
  
  
-@@ -112,6 +113,26 @@ const testClients = new Map<string, RegisteredClient>([
-     tokenEndpointAuthMethod: 'client_secret_basic',
-     offlineAccessAllowed: true,
+@@ -122,6 +123,26 @@ const testClients = new Map<string, RegisteredClient>([
+     grantTypes: ['authorization_code'],
+     tokenEndpointAuthMethod: 'client_secret_post',
    }],
 +  // EXPERIMENTAL (RFC 8693): a confidential client registered for the exchange
 +  // grant, and a public one registered for it as well — the latter pins that a
@@ -77,7 +77,7 @@ index d568e91..01e9a8a 100644
  ]);
  
  // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
-@@ -2159,6 +2180,690 @@ describe('generated provider HTTP conformance', () => {
+@@ -2459,6 +2480,690 @@ describe('generated provider HTTP conformance', () => {
    });
  
  
@@ -782,18 +782,18 @@ index 3208501..1dbed28 100644
      // (no client_secret) are accepted at the token endpoint.
      tokenEndpointAuthMethodsSupported: [
 diff --git a/default-op/routes/token.ts b/with-token-exchange/routes/token.ts
-index 6c1eb64..964bd9c 100644
+index a0d0f5c..4a530d3 100644
 --- a/default-op/routes/token.ts
 +++ b/with-token-exchange/routes/token.ts
-@@ -43,6 +43,7 @@ import {
-   tokenClientResolver as defaultTokenClientResolver,
+@@ -46,6 +46,7 @@ import {
    authorizationCodeResolver as defaultAuthorizationCodeResolver,
    refreshTokenResolver as defaultRefreshTokenResolver,
+   authenticationSessionResolver as defaultAuthenticationSessionResolver,
 +  accessTokenResolver as defaultAccessTokenResolver,
  } from '../resolvers.js';
  import {
    accessTokenStore as defaultAccessTokenStore,
-@@ -50,6 +51,26 @@ import {
+@@ -53,6 +54,26 @@ import {
    refreshTokenStore as defaultRefreshTokenStore,
  } from '../store.js';
  import type { RegisteredClient } from '../config.js';
@@ -820,7 +820,7 @@ index 6c1eb64..964bd9c 100644
  
  export const tokenApp = new WebRouter();
  
-@@ -164,6 +185,111 @@ tokenApp.post('/', async (c) => {
+@@ -171,6 +192,111 @@ tokenApp.post('/', async (c) => {
  
      const authenticatedClientId = presentedCredentials.clientId;
  
@@ -932,7 +932,7 @@ index 6c1eb64..964bd9c 100644
      // --- Token request validation pipeline --------------------------------
      // Each step below is an independent core function, called in the same order
      // as core's validateTokenRequest(). Delete a call to drop that validation,
-@@ -547,6 +673,17 @@ tokenApp.post('/', async (c) => {
+@@ -591,6 +717,17 @@ tokenApp.post('/', async (c) => {
      c.header('Pragma', 'no-cache');
      return c.json(tokenResponse);
    } catch (error) {

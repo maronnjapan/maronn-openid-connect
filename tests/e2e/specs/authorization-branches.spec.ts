@@ -35,7 +35,7 @@ test.describe('Authorization endpoint browser branches', () => {
     await expect(page.getByTestId('authorization-issuer')).toHaveText(issuer);
   });
 
-  test('should issue and rotate a refresh token only for an offline_access grant', async ({
+  test('should issue and rotate a refresh token for an offline_access grant', async ({
     page,
     request,
     baseURL,
@@ -89,6 +89,90 @@ test.describe('Authorization endpoint browser branches', () => {
     });
     expect(refreshedUserInfoResponse.status()).toBe(200);
     expect(await refreshedUserInfoResponse.json()).toEqual({ sub: 'testuser' });
+  });
+
+  // OIDC Core 1.0 §11 は offline_access を「End-User が居ない（not logged in）ときにも使える
+  // Refresh Token」と定義し、Refresh Token の利用がその用途に限られないことも明示している
+  // （"The Authorization Server MAY grant Refresh Tokens in other contexts"）。この OP は
+  // その other contexts を online refresh token として実装し、ログインセッションへ束縛する。
+  // ここでは実ブラウザで「セッションが終わると online refresh token が死ぬ」ことを確かめる。
+  test('should stop an online refresh token once re-authentication ends the login session', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    // offline_access を要求しない = online refresh token。prompt=consent は同意画面を
+    // 必ず出してテストを決定的にするためで、offline_access の付与には効かない。
+    await page.goto(`${clientBaseURL}/start?scope=${encodeURIComponent('openid')}&prompt=consent`);
+    await loginAndApprove(page, 'testuser');
+    const onlineRefreshToken = await requiredText(page, 'token-refresh-token');
+    expect(onlineRefreshToken).toHaveLength(43);
+
+    // セッションが生きている間は使える。
+    const whileLoggedIn = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: onlineRefreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(whileLoggedIn.status()).toBe(200);
+    const rotated = await whileLoggedIn.json() as Record<string, unknown>;
+    expect(rotated.scope).toBe('openid');
+    const rotatedRefreshToken = requireString(rotated.refresh_token, 'rotated refresh token');
+
+    // prompt=login は既存のブラウザセッションを破棄して認証をやり直させる
+    // （OIDC Core 1.0 §3.1.2.1）。ログアウト相当のセッション終了がここで起きる。
+    await page.goto(`${clientBaseURL}/start?prompt=login`);
+    await loginAndApprove(page, 'testuser');
+
+    // 束縛先セッションが消えたので、ローテーション後の online refresh token も使えない。
+    const afterReauthentication = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: rotatedRefreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(afterReauthentication.status()).toBe(400);
+    expect(await afterReauthentication.json()).toEqual({
+      error: 'invalid_grant',
+      error_description: 'The authentication session bound to this refresh token has ended',
+    });
+  });
+
+  // 対になる確認: offline_access を付与した Refresh Token はセッションから独立しているので、
+  // 同じ再認証を挟んでも使い続けられる。これが online と offline を分ける唯一の違い。
+  test('should keep an offline_access refresh token usable after re-authentication', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    await page.goto(
+      `${clientBaseURL}/start?scope=${encodeURIComponent('openid offline_access')}&prompt=consent`,
+    );
+    await loginAndApprove(page, 'testuser');
+    const offlineRefreshToken = await requiredText(page, 'token-refresh-token');
+    expect(offlineRefreshToken).toHaveLength(43);
+
+    await page.goto(`${clientBaseURL}/start?prompt=login`);
+    await loginAndApprove(page, 'testuser');
+
+    const afterReauthentication = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: offlineRefreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(afterReauthentication.status()).toBe(200);
+    const refreshed = await afterReauthentication.json() as Record<string, unknown>;
+    expect(refreshed.scope).toBe('openid offline_access');
   });
 
   test('should require a matching browser session for prompt none with id_token_hint', async ({

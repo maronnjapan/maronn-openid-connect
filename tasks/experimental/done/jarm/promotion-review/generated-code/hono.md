@@ -21,10 +21,10 @@
 
 ````diff
 diff --git a/default-op/conformance.test.ts b/with-jarm/conformance.test.ts
-index dad52d8..0bad719 100644
+index 58258e6..9d521b3 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-jarm/conformance.test.ts
-@@ -405,10 +405,11 @@ describe('generated provider HTTP conformance', () => {
+@@ -415,10 +415,11 @@ describe('generated provider HTTP conformance', () => {
          jwks_uri: 'http://localhost:3000/.well-known/jwks.json',
          userinfo_endpoint: 'http://localhost:3000/userinfo',
          response_types_supported: ['code'],
@@ -40,7 +40,7 @@ index dad52d8..0bad719 100644
        });
      });
  
-@@ -2229,6 +2230,407 @@ describe('generated provider HTTP conformance', () => {
+@@ -2529,6 +2530,407 @@ describe('generated provider HTTP conformance', () => {
      });
    });
  
@@ -449,7 +449,7 @@ index dad52d8..0bad719 100644
      const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
  
 diff --git a/default-op/routes/authorize.ts b/with-jarm/routes/authorize.ts
-index 793f61e..ef0dfbd 100644
+index a3ffab2..c9be0d0 100644
 --- a/default-op/routes/authorize.ts
 +++ b/with-jarm/routes/authorize.ts
 @@ -29,6 +29,9 @@ import {
@@ -647,7 +647,7 @@ index 793f61e..ef0dfbd 100644
      // OIDC Core 1.0 §6.3: request_uri / registration are not supported here.
      rejectUnsupportedRequestParams(params, redirectUri, state);
  
-@@ -268,7 +395,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -270,7 +397,7 @@ const handleAuthorizationRequest = async (c: any) => {
      const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
      await transactionStore.put(
        'auth_txn:' + transactionId,
@@ -656,7 +656,7 @@ index 793f61e..ef0dfbd 100644
        transactionTtlSeconds,
      );
  
-@@ -278,7 +405,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -280,7 +407,7 @@ const handleAuthorizationRequest = async (c: any) => {
      // prompt=none must not be combined with other values (OIDC Core 1.0 Section 3.1.2.1)
      if (promptValues.includes('none') && promptValues.length > 1) {
        await transactionStore.delete('auth_txn:' + transactionId);
@@ -665,7 +665,7 @@ index 793f61e..ef0dfbd 100644
      }
  
      // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
-@@ -294,7 +421,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -296,7 +423,7 @@ const handleAuthorizationRequest = async (c: any) => {
        if (!jwksProvider) {
          // jwksProvider 未提供では hint を検証できない → login_required で拒否
          await transactionStore.delete('auth_txn:' + transactionId);
@@ -674,7 +674,7 @@ index 793f61e..ef0dfbd 100644
        }
        try {
          const jwks = await jwksProvider();
-@@ -307,7 +434,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -309,7 +436,7 @@ const handleAuthorizationRequest = async (c: any) => {
        } catch (hintError) {
          await transactionStore.delete('auth_txn:' + transactionId);
          const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
@@ -683,7 +683,7 @@ index 793f61e..ef0dfbd 100644
        }
      }
  
-@@ -320,14 +447,14 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -322,14 +449,14 @@ const handleAuthorizationRequest = async (c: any) => {
        // No sessionResolver configured → cannot verify session → login_required
        if (!sessionResolver) {
          await transactionStore.delete('auth_txn:' + transactionId);
@@ -700,7 +700,7 @@ index 793f61e..ef0dfbd 100644
        }
  
        let session;
-@@ -354,20 +481,20 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -356,20 +483,20 @@ const handleAuthorizationRequest = async (c: any) => {
        } catch (promptError) {
          await transactionStore.delete('auth_txn:' + transactionId);
          if (promptError instanceof AuthorizationError) {
@@ -723,8 +723,8 @@ index 793f61e..ef0dfbd 100644
 +        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
        }
  
-       // Filter offline_access if the client does not allow it
-@@ -397,12 +524,15 @@ const handleAuthorizationRequest = async (c: any) => {
+       // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
+@@ -401,12 +528,15 @@ const handleAuthorizationRequest = async (c: any) => {
          authCodeData.grantId,
        );
  
@@ -746,7 +746,7 @@ index 793f61e..ef0dfbd 100644
      }
  
      // OIDC Core 1.0 Section 3.1.2.3: an active OP session enables Single Sign-On.
-@@ -470,12 +600,15 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -473,12 +603,15 @@ const handleAuthorizationRequest = async (c: any) => {
                authCodeData.grantId,
              );
  
@@ -768,7 +768,7 @@ index 793f61e..ef0dfbd 100644
            }
  
            const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
-@@ -497,20 +630,24 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -503,20 +636,24 @@ const handleAuthorizationRequest = async (c: any) => {
    } catch (error) {
      if (error instanceof AuthorizationError) {
        if (error.redirectUri) {
@@ -805,7 +805,7 @@ index 793f61e..ef0dfbd 100644
        // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
        // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST
 diff --git a/default-op/routes/consent.ts b/with-jarm/routes/consent.ts
-index 83fc9ef..440f153 100644
+index 41d7d41..83b82e2 100644
 --- a/default-op/routes/consent.ts
 +++ b/with-jarm/routes/consent.ts
 @@ -4,6 +4,9 @@ import {
@@ -817,8 +817,8 @@ index 83fc9ef..440f153 100644
 +  type SigningKey,
  } from '@maronn-openid-connect/core';
  import {
-   clientResolver as defaultClientResolver,
-@@ -15,9 +18,89 @@ import {
+   consentResolver as defaultConsentResolver,
+@@ -14,9 +17,89 @@ import {
    authSessionStore as defaultAuthSessionStore,
  } from '../store.js';
  import { defaultViews, renderView } from '../views.js';
@@ -908,7 +908,7 @@ index 83fc9ef..440f153 100644
  /**
   * Consent Page - GET
   * Displays the consent form for scope authorization.
-@@ -65,15 +148,17 @@ consentApp.post('/', async (c) => {
+@@ -63,15 +146,17 @@ consentApp.post('/', async (c) => {
    const issuer = config.issuer;
  
    if (action === 'deny') {
@@ -933,7 +933,7 @@ index 83fc9ef..440f153 100644
    }
  
    // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
-@@ -145,11 +230,10 @@ consentApp.post('/', async (c) => {
+@@ -144,11 +229,10 @@ consentApp.post('/', async (c) => {
    await authSessionStore.delete(transactionId);
  
    // Redirect back to client with authorization code

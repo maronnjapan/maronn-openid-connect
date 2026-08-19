@@ -29,7 +29,6 @@ const oidcClientsJson = JSON.stringify([
     ],
     tokenEndpointAuthMethod: 'client_secret_post',
     responseTypes: ['code'],
-    offlineAccessAllowed: true,
   },
   {
     // EXPERIMENTAL (RFC 8628 §3.4): a second device-grant client, so the spec can

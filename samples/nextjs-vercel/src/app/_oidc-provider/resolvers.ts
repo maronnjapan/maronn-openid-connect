@@ -7,6 +7,8 @@ import type {
   AccessTokenInfo,
   RefreshTokenResolver,
   RefreshTokenInfo,
+  AuthenticationSessionResolver,
+  AuthenticationSessionInfo,
   UserClaimsResolver,
   UserClaims,
   IntrospectionAccessTokenResolver,
@@ -124,6 +126,21 @@ export function createStoreResolvers(stores: ProviderStores) {
       if (!sessionId) return null;
       const session = await browserSessionStore.get(sessionId);
       if (!session) return null;
+      // sessionId まで返すのは online refresh token のため。認可コードへ引き継ぎ、
+      // トークンエンドポイントが Refresh Token をこのセッションへ束縛する。
+      return { subject: session.subject, authTime: session.authTime, sessionId };
+    },
+  };
+
+  // online refresh token の束縛先セッションを sessionId から引く。sessionResolver は
+  // Cookie を持つブラウザリクエストから引く入口で、トークンエンドポイントには End-User の
+  // Cookie が届かないため、保存された sessionId から直接引くこちらが要る。
+  // 終了したセッションでは必ず null を返すこと。返し続けると online refresh token が
+  // ログアウト後も使えてしまう。
+  const authenticationSessionResolver: AuthenticationSessionResolver = {
+    async findSession(sessionId: string): Promise<AuthenticationSessionInfo | null> {
+      const session = await browserSessionStore.get(sessionId);
+      if (!session) return null;
       return { subject: session.subject, authTime: session.authTime };
     },
   };
@@ -154,6 +171,7 @@ export function createStoreResolvers(stores: ProviderStores) {
     authorizationCodeResolver,
     accessTokenResolver,
     refreshTokenResolver,
+    authenticationSessionResolver,
     userClaimsResolver,
     introspectionAccessTokenResolver,
     introspectionRefreshTokenResolver,
@@ -169,6 +187,8 @@ const defaultStoreResolvers = createStoreResolvers(defaultProviderStores);
 export const authorizationCodeResolver = defaultStoreResolvers.authorizationCodeResolver;
 export const accessTokenResolver = defaultStoreResolvers.accessTokenResolver;
 export const refreshTokenResolver = defaultStoreResolvers.refreshTokenResolver;
+export const authenticationSessionResolver =
+  defaultStoreResolvers.authenticationSessionResolver;
 export const userClaimsResolver = defaultStoreResolvers.userClaimsResolver;
 export const introspectionAccessTokenResolver =
   defaultStoreResolvers.introspectionAccessTokenResolver;

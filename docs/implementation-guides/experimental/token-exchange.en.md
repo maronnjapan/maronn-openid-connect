@@ -2058,8 +2058,11 @@ The sample confidential client's `grantTypes` gains the exchange URN (inside `de
 Removing the URN from a client is how an operator forbids exchanges for it.
 
 ```typescript
-      // RFC 7591 §2: grant_types default is ["authorization_code"]. This client uses
-      // offline_access (refresh tokens), so it must explicitly register refresh_token.
+      // RFC 7591 §2: grant_types default is ["authorization_code"]. Registering
+      // refresh_token is the single switch that lets this client receive refresh
+      // tokens at all: an online refresh token (bound to the login session) on every
+      // authorization, and an offline one (usable after logout) when offline_access
+      // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
       // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
       // this confidential client exchange its access tokens. Remove it to forbid
       // exchanges for this client; public clients are rejected either way.

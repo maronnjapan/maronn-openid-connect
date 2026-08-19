@@ -17,6 +17,8 @@ import {
   validateRefreshTokenExpiration,
   validateRefreshTokenIdleTimeout,
   validateRefreshTokenScope,
+  validateRefreshTokenSession,
+  clientAllowsRefreshTokenGrant,
   buildValidatedRefreshTokenRequest,
   buildAccessTokenPayload,
   computeAtHash,
@@ -43,6 +45,7 @@ import {
   tokenClientResolver as defaultTokenClientResolver,
   authorizationCodeResolver as defaultAuthorizationCodeResolver,
   refreshTokenResolver as defaultRefreshTokenResolver,
+  authenticationSessionResolver as defaultAuthenticationSessionResolver,
   accessTokenResolver as defaultAccessTokenResolver,
 } from '../resolvers.js';
 import {
@@ -160,6 +163,10 @@ tokenApp.post('/', async (c) => {
       c.get('authCodeResolver') ?? defaultAuthorizationCodeResolver;
     const refreshTokenResolver =
       c.get('refreshTokenResolver') ?? defaultRefreshTokenResolver;
+    // online refresh token の束縛先セッションを sessionId から引く。差し替えると
+    // 「セッションが生きているか」の判定そのものを差し替えられる。
+    const authenticationSessionResolver =
+      c.get('authenticationSessionResolver') ?? defaultAuthenticationSessionResolver;
     const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
     const accessTokenStore = c.get('accessTokenStore') ?? defaultAccessTokenStore;
     const refreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
@@ -519,6 +526,12 @@ tokenApp.post('/', async (c) => {
       // to enable it, or remove this step if your experiment has no idle lifetime.
       validateRefreshTokenIdleTimeout(refreshTokenInfo, undefined);
 
+      // online refresh token（sessionId を持つ RT）は、束縛先のログインセッションが
+      // 生きている間だけ使える。ログアウト・別ユーザーでの再ログインでセッションが
+      // 消えれば invalid_grant になる。offline_access が付与された RT は sessionId を
+      // 持たないため、このステップを素通りしてログアウト後も使い続けられる。
+      await validateRefreshTokenSession(refreshTokenInfo, authenticationSessionResolver);
+
       // RFC 6749 §6: requested scope may only narrow the original grant.
       const effectiveScope = validateRefreshTokenScope(
         params.scope,
@@ -671,6 +684,15 @@ tokenApp.post('/', async (c) => {
     const directAcr = validatedRequest.grantType === 'refresh_token' ? validatedRequest.acr : undefined;
     const directAmr = validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : undefined;
 
+    // --- Refresh Token を発行するかの判定 -------------------------------------
+    //
+    // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: grant_types の既定は
+    // ["authorization_code"]。refresh_token を登録していないクライアントへ RT を渡しても、
+    // 次に grant_type=refresh_token を出した瞬間 validateClientGrantType が
+    // unauthorized_client で拒否する。一度も使えない長期資格情報を保存させるだけなので
+    // （RFC 9700 §4.14）、登録が無ければ発行しない。
+    const clientAllowsRefreshGrant = clientAllowsRefreshTokenGrant(tokenClient);
+
     // RFC 6749 §6 / OIDC Core 1.0 §11: refresh 時の scope 縮小は当該リクエストの access token /
     // ID Token の権限縮小として扱い、refresh token rotation の可否とは切り離す。rotation 可否は
     // 「元の grant が offline_access を持っていたか」で判断する。
@@ -679,9 +701,28 @@ tokenApp.post('/', async (c) => {
     //   (validatedRequest.hadOfflineAccess)。縮小後 scope から offline_access を落としても
     //   元 grant の権限は失われないため rotation を継続する。
     const grantHasOfflineAccess =
-      validatedRequest.grantType === 'refresh_token'
+      clientAllowsRefreshGrant &&
+      (validatedRequest.grantType === 'refresh_token'
         ? validatedRequest.hadOfflineAccess
-        : validatedRequest.scope.includes('offline_access');
+        : validatedRequest.scope.includes('offline_access'));
+
+    // online refresh token の束縛先セッション。
+    // OIDC Core 1.0 §11 は offline_access を「End-User が居ない（not logged in）ときにも
+    // 使える Refresh Token」と定義したうえで、Refresh Token の利用がその用途に限られない
+    // ことも明示している（"The Authorization Server MAY grant Refresh Tokens in other
+    // contexts"）。この OP はその other contexts を online refresh token として実装し、
+    // ログインセッションへ束縛する。offline_access がある grant は束縛しない。
+    // - authorization_code grant: 認可コードが持つ sessionId（ログイン時に確立したもの）。
+    // - refresh_token grant: 元 RT の束縛をそのまま引き継ぎ、rotation で外れないようにする。
+    const boundSessionId = grantHasOfflineAccess ? undefined : validatedRequest.sessionId;
+
+    // 束縛先が分からなければ online refresh token は発行しない。ブラウザセッションを
+    // 持たない経路（device authorization grant）が該当する。ログアウトで止まる保証を
+    // 付けられない RT を配らないための fail-closed。
+    const issueRefreshToken =
+      clientAllowsRefreshGrant &&
+      (grantHasOfflineAccess ||
+        (config.onlineRefreshTokenEnabled && boundSessionId !== undefined));
 
     // --- Token response pipeline --------------------------------------------
     // Each step below is an independent core function, called in the same order
@@ -771,7 +812,7 @@ tokenApp.post('/', async (c) => {
       expires_in: config.accessTokenExpiresIn,
       id_token: idToken,
       scope: validatedRequest.scope.join(' '),
-      refresh_token: grantHasOfflineAccess ? generateRandomString(32) : undefined,
+      refresh_token: issueRefreshToken ? generateRandomString(32) : undefined,
     };
 
     // Store access token info for UserInfo / Introspection / Revocation endpoints.
@@ -854,6 +895,9 @@ tokenApp.post('/', async (c) => {
         acr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.acr : resolvedAcr,
         amr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : resolvedAmr,
         azp: validatedRequest.grantType === 'refresh_token' ? validatedRequest.azp : undefined,
+        // online refresh token の束縛。undefined なら offline refresh token として
+        // セッションから独立し、ログアウト後も使える。
+        sessionId: boundSessionId,
       });
     }
 

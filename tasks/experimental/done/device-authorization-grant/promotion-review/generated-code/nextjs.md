@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/_oidc-provider/app.ts b/with-device-authorization-grant/_oidc-provider/app.ts
-index f86e0f6..a670ba9 100644
+index 1bfc18d..38bf4e5 100644
 --- a/default-op/_oidc-provider/app.ts
 +++ b/with-device-authorization-grant/_oidc-provider/app.ts
 @@ -4,6 +4,8 @@ import { tokenApp } from './routes/token';
@@ -49,7 +49,7 @@ index f86e0f6..a670ba9 100644
    app.use('/.well-known/openid-configuration', publicCors);
    app.use('/.well-known/jwks.json', publicCors);
  
-@@ -156,6 +160,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
+@@ -157,6 +161,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
      c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
      c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
      c.set('revocationResolvers', storeResolvers.revocationResolvers);
@@ -57,7 +57,7 @@ index f86e0f6..a670ba9 100644
  
      if (options.acrResolver) {
        c.set('acrResolver', options.acrResolver);
-@@ -176,6 +181,8 @@ export function createApp(options: OidcProviderOptions): WebRouter {
+@@ -177,6 +182,8 @@ export function createApp(options: OidcProviderOptions): WebRouter {
    app.route('/userinfo', userinfoApp);
    app.route('/introspect', introspectionApp);
    app.route('/revoke', revocationApp);
@@ -67,12 +67,12 @@ index f86e0f6..a670ba9 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-device-authorization-grant/_oidc-provider/conformance.test.ts
-index dbce5cd..2733036 100644
+index 57e9e5c..e57e5b2 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-device-authorization-grant/_oidc-provider/conformance.test.ts
-@@ -111,6 +111,41 @@ const testClients = new Map<string, RegisteredClient>([
-     tokenEndpointAuthMethod: 'client_secret_basic',
-     offlineAccessAllowed: true,
+@@ -121,6 +121,40 @@ const testClients = new Map<string, RegisteredClient>([
+     grantTypes: ['authorization_code'],
+     tokenEndpointAuthMethod: 'client_secret_post',
    }],
 +  // EXPERIMENTAL (RFC 8628): a client registered for the device grant, plus a
 +  // second one so the contract test can prove a device_code is refused when it is
@@ -85,7 +85,6 @@ index dbce5cd..2733036 100644
 +    responseTypes: ['code'],
 +    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
 +    tokenEndpointAuthMethod: 'client_secret_post',
-+    offlineAccessAllowed: true,
 +  }],
 +  ['c-device-other', {
 +    clientId: 'c-device-other',
@@ -112,7 +111,7 @@ index dbce5cd..2733036 100644
  ]);
  
  // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
-@@ -902,6 +937,10 @@ describe('generated provider HTTP conformance', () => {
+@@ -912,6 +946,10 @@ describe('generated provider HTTP conformance', () => {
          { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
        { path: '/introspect', method: 'GET', allow: 'POST' },
        { path: '/revoke', method: 'GET', allow: 'POST' },
@@ -123,7 +122,7 @@ index dbce5cd..2733036 100644
          { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
          { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
        ];
-@@ -2103,58 +2142,723 @@ describe('generated provider HTTP conformance', () => {
+@@ -2403,58 +2441,723 @@ describe('generated provider HTTP conformance', () => {
    });
  
  
@@ -414,8 +413,7 @@ index dbce5cd..2733036 100644
 +    describe('Discovery metadata (RFC 8628 §4)', () => {
 +      it('should advertise the device authorization endpoint', async () => {
 +        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
- 
--      expect(metadata.device_authorization_endpoint).toBeUndefined();
++
 +        expect(metadata.device_authorization_endpoint).toBe(
 +          'http://localhost:3000/device_authorization',
 +        );
@@ -423,7 +421,8 @@ index dbce5cd..2733036 100644
 +
 +      it('should advertise the device_code grant type', async () => {
 +        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
-+
+ 
+-      expect(metadata.device_authorization_endpoint).toBeUndefined();
 +        expect((metadata.grant_types_supported as string[]).includes(DEVICE_GRANT_TYPE)).toBe(true);
 +      });
      });
@@ -434,12 +433,7 @@ index dbce5cd..2733036 100644
 +    describe('Verification UI (RFC 8628 §3.3)', () => {
 +      it('should serve the code entry form without authentication', async () => {
 +        const res = await app.request('/device');
- 
--      expect(
--        (metadata.grant_types_supported as string[]).includes(
--          'urn:ietf:params:oauth:grant-type:device_code',
--        ),
--      ).toBe(false);
++
 +        expect(res.status).toBe(200);
 +        expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
 +      });
@@ -640,7 +634,12 @@ index dbce5cd..2733036 100644
 +        const body = await (await requestDeviceAuthorization()).json();
 +        await pollToken(body.device_code);
 +        const res = await pollToken(body.device_code);
-+
+ 
+-      expect(
+-        (metadata.grant_types_supported as string[]).includes(
+-          'urn:ietf:params:oauth:grant-type:device_code',
+-        ),
+-      ).toBe(false);
 +        expect(res.status).toBe(400);
 +        expect(await res.json()).toEqual({
 +          error: 'slow_down',
@@ -1428,10 +1427,10 @@ index 6561812..dfdf0f5 100644
    });
  });
 diff --git a/default-op/_oidc-provider/routes/token.ts b/with-device-authorization-grant/_oidc-provider/routes/token.ts
-index 9e85fa1..6e84813 100644
+index fbe0d61..98d27e9 100644
 --- a/default-op/_oidc-provider/routes/token.ts
 +++ b/with-device-authorization-grant/_oidc-provider/routes/token.ts
-@@ -50,6 +50,12 @@ import {
+@@ -53,6 +53,12 @@ import {
    refreshTokenStore as defaultRefreshTokenStore,
  } from '../store';
  import type { RegisteredClient } from '../config';
@@ -1444,7 +1443,7 @@ index 9e85fa1..6e84813 100644
  
  export const tokenApp = new WebRouter();
  
-@@ -164,6 +170,194 @@ tokenApp.post('/', async (c) => {
+@@ -171,6 +177,194 @@ tokenApp.post('/', async (c) => {
  
      const authenticatedClientId = presentedCredentials.clientId;
  
@@ -1639,7 +1638,7 @@ index 9e85fa1..6e84813 100644
      // --- Token request validation pipeline --------------------------------
      // Each step below is an independent core function, called in the same order
      // as core's validateTokenRequest(). Delete a call to drop that validation,
-@@ -547,6 +741,18 @@ tokenApp.post('/', async (c) => {
+@@ -591,6 +785,18 @@ tokenApp.post('/', async (c) => {
      c.header('Pragma', 'no-cache');
      return c.json(tokenResponse);
    } catch (error) {
@@ -1659,7 +1658,7 @@ index 9e85fa1..6e84813 100644
        const status = error.statusCode as 400 | 401;
        // RFC 6750 Section 3 / OAuth 2.1 Section 5.2: 401 responses include WWW-Authenticate
 diff --git a/default-op/_oidc-provider/store.ts b/with-device-authorization-grant/_oidc-provider/store.ts
-index dbe5fc3..da8db5b 100644
+index e530896..7412bab 100644
 --- a/default-op/_oidc-provider/store.ts
 +++ b/with-device-authorization-grant/_oidc-provider/store.ts
 @@ -6,6 +6,10 @@ import type {
@@ -1673,7 +1672,7 @@ index dbe5fc3..da8db5b 100644
  
  /**
   * In-memory Authorization Transaction Store.
-@@ -817,3 +821,163 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
+@@ -823,3 +827,163 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
  export const browserSessionStore = defaultProviderStores.browserSessionStore;
  export const consentStore = defaultProviderStores.consentStore;
  export const userStore = defaultProviderStores.userStore;

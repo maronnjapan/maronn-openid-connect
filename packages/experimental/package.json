@@ -53,7 +53,7 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/experimental#readme",
   "peerDependencies": {
-    "@maronn-openid-connect/core": ">=0.1.1 <1.0.0"
+    "@maronn-openid-connect/core": ">=0.2.0 <1.0.0"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

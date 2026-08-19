@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/_oidc-provider/app.ts b/with-par/_oidc-provider/app.ts
-index f86e0f6..7b96fdb 100644
+index 1bfc18d..b9a2ff8 100644
 --- a/default-op/_oidc-provider/app.ts
 +++ b/with-par/_oidc-provider/app.ts
 @@ -4,6 +4,7 @@ import { tokenApp } from './routes/token';
@@ -48,7 +48,7 @@ index f86e0f6..7b96fdb 100644
    app.use('/.well-known/openid-configuration', publicCors);
    app.use('/.well-known/jwks.json', publicCors);
  
-@@ -156,6 +159,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
+@@ -157,6 +160,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
      c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
      c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
      c.set('revocationResolvers', storeResolvers.revocationResolvers);
@@ -56,7 +56,7 @@ index f86e0f6..7b96fdb 100644
  
      if (options.acrResolver) {
        c.set('acrResolver', options.acrResolver);
-@@ -176,6 +180,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
+@@ -177,6 +181,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
    app.route('/userinfo', userinfoApp);
    app.route('/introspect', introspectionApp);
    app.route('/revoke', revocationApp);
@@ -65,7 +65,7 @@ index f86e0f6..7b96fdb 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-par/_oidc-provider/conformance.test.ts
-index dbce5cd..85ba139 100644
+index 57e9e5c..c66db8c 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-par/_oidc-provider/conformance.test.ts
 @@ -7,6 +7,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -77,7 +77,7 @@ index dbce5cd..85ba139 100644
  
  
  const REDIRECT_URI = 'http://localhost:3000/callback';
-@@ -2103,6 +2105,416 @@ describe('generated provider HTTP conformance', () => {
+@@ -2403,6 +2405,416 @@ describe('generated provider HTTP conformance', () => {
    });
  
  
@@ -495,7 +495,7 @@ index dbce5cd..85ba139 100644
    // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
    // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/_oidc-provider/routes/authorize.ts b/with-par/_oidc-provider/routes/authorize.ts
-index f7a4871..b144e90 100644
+index dc9fbe0..60d67fb 100644
 --- a/default-op/_oidc-provider/routes/authorize.ts
 +++ b/with-par/_oidc-provider/routes/authorize.ts
 @@ -37,6 +37,13 @@ import {
@@ -545,7 +545,7 @@ index f7a4871..b144e90 100644
      const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
      const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
      const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
-@@ -495,6 +524,35 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -501,6 +530,35 @@ const handleAuthorizationRequest = async (c: any) => {
      loginUrl.searchParams.set('transaction_id', transactionId);
      return c.redirect(loginUrl.toString());
    } catch (error) {
@@ -769,7 +769,7 @@ index 0000000..d803a4f
 +  }
 +});
 diff --git a/default-op/_oidc-provider/store.ts b/with-par/_oidc-provider/store.ts
-index dbe5fc3..da06be0 100644
+index e530896..ef42ec2 100644
 --- a/default-op/_oidc-provider/store.ts
 +++ b/with-par/_oidc-provider/store.ts
 @@ -6,6 +6,10 @@ import type {
@@ -783,7 +783,7 @@ index dbe5fc3..da06be0 100644
  
  /**
   * In-memory Authorization Transaction Store.
-@@ -817,3 +821,58 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
+@@ -823,3 +827,58 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
  export const browserSessionStore = defaultProviderStores.browserSessionStore;
  export const consentStore = defaultProviderStores.consentStore;
  export const userStore = defaultProviderStores.userStore;

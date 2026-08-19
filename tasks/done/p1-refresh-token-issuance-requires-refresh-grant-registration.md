@@ -2,7 +2,22 @@
 
 ## ステータス
 
-🟠 High / 未着手
+🟢 完了 / 方針 C ではなく方針 A + online refresh token として実装
+
+本タスクは当初「使えない Refresh Token を配らない安全網」（`study-material/done/offline-access-grant-vs-client-grant-types-consistency.md` の方針 C）だけを対象にしていた。
+実装時に、その前提だった「認可エンドポイントは `grant_types` を構造的に参照できない」を解消する方向へ判断が変わり、方針 A（独自フラグ `offlineAccessAllowed` を廃止して標準メタデータへ一本化）を採った。
+あわせて online refresh token を実装し、`offline_access` の有無が「セッションに束縛されるか」の違いになるようにした。
+
+実装した内容は次のとおり。
+
+- `ClientInfo` に `grantTypes` を追加し、`OfflineAccessGrantedCallback` の context に `client` を渡す。既定判定を「`prompt=consent` かつ `grant_types` に `refresh_token` を含む」に変更した（`packages/core/src/authorization-request.ts`）
+- `grant_types` の既定値（`["authorization_code"]`）の解釈を `packages/core/src/client-grant-types.ts` に集約し、認可エンドポイントとトークンエンドポイントで同じ判定を使うようにした
+- 生成コードから `offlineAccessAllowed` と、authorize / consent に重複していた scope フィルタを削除した
+- online refresh token を追加した。`offline_access` を伴わない付与では、発行元のログインセッションへ束縛した Refresh Token を発行し、セッションが終われば `invalid_grant` になる（`RefreshTokenInfo.sessionId` / `validateRefreshTokenSession`）
+- トークンエンドポイントは `grant_types` に `refresh_token` が無いクライアントへ Refresh Token を発行しない
+
+「発行 scope から `offline_access` を落とすか」は不要になった。
+`grant_types` を見た判定が認可エンドポイントで効くため、登録の無いクライアントには `offline_access` がそもそも付与されない。
 
 ## 背景
 
@@ -202,14 +217,14 @@ TDD で先に Red を作る。テストケース名は「should + 動詞」形�
 
 ## 完了条件
 
-- [ ] 上記テストがすべてパスする
-- [ ] `grantTypes` に `refresh_token` を含まないクライアントへ Refresh Token が発行されない
-- [ ] 既存の example client（`grantTypes` に `refresh_token` を含む）の挙動が変わらない
-- [ ] `samples/*` は CLI 再生成の結果として更新されている（手編集していない）
-- [ ] 実行コマンド:
+- [x] 上記テストがすべてパスする
+- [x] `grantTypes` に `refresh_token` を含まないクライアントへ Refresh Token が発行されない
+- [x] 既存の example client（`grantTypes` に `refresh_token` を含む）の挙動が変わらない
+- [x] `samples/*` は CLI 再生成の結果として更新されている（手編集していない）
+- [x] 実行コマンド:
   ```bash
   pnpm --filter @maronn-openid-connect/cli test
   pnpm --filter @maronn-openid-connect/core test
   pnpm -r --filter './samples/*' test
   ```
-- [ ] `packages/cli` の出荷物が変わるため changeset を追加する
+- [x] `packages/cli` の出荷物が変わるため changeset を追加する

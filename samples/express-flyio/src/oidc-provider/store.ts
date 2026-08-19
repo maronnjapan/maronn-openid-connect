@@ -190,6 +190,12 @@ export class RefreshTokenStore {
 export interface AuthSessionInfo {
   subject: string;
   authTime: number;
+  /**
+   * このログインで確立（または再利用）したブラウザセッションの識別子。
+   * consent 画面を経て発行する認可コードへ引き継ぎ、online refresh token を
+   * そのセッションへ束縛するために使う。
+   */
+  sessionId?: string;
 }
 
 export class AuthSessionStore {

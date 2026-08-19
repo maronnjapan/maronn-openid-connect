@@ -31,6 +31,16 @@ export {
 } from './authorization-request.js';
 
 export {
+  clientAllowsGrantType,
+  clientAllowsRefreshTokenGrant,
+  DEFAULT_CLIENT_GRANT_TYPES,
+} from './client-grant-types.js';
+
+export type {
+  GrantTypeRegisteredClient,
+} from './client-grant-types.js';
+
+export {
   parseRequestObject,
   RequestObjectError,
 } from './request-object.js';
@@ -70,6 +80,7 @@ export {
   validateRefreshTokenExpiration,
   validateRefreshTokenIdleTimeout,
   validateRefreshTokenScope,
+  validateRefreshTokenSession,
   buildValidatedRefreshTokenRequest,
   validateRefreshTokenGrant,
   TokenError,
@@ -77,6 +88,8 @@ export {
 } from './token-request.js';
 
 export type {
+  AuthenticationSessionInfo,
+  AuthenticationSessionResolver,
   TokenRequestParams,
   TokenClientInfo,
   TokenClientResolver,

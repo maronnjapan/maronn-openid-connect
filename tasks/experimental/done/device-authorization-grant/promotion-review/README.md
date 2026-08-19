@@ -70,10 +70,10 @@ experimental 機能 `device-authorization-grant` を experimental から外し�
 
 | フレームワーク | 差分ドキュメント | 追加 | 変更 | 削除 | 規模 |
 |---|---|---|---|---|---|
-| hono | [generated-code/hono.md](./generated-code/hono.md) | 2 | 7 | 0 | +1807 / -36 |
-| express | [generated-code/express.md](./generated-code/express.md) | 2 | 7 | 0 | +1794 / -36 |
-| fastify | [generated-code/fastify.md](./generated-code/fastify.md) | 2 | 7 | 0 | +1796 / -36 |
-| nextjs | [generated-code/nextjs.md](./generated-code/nextjs.md) | 6 | 6 | 0 | +1818 / -36 |
+| hono | [generated-code/hono.md](./generated-code/hono.md) | 2 | 7 | 0 | +1806 / -36 |
+| express | [generated-code/express.md](./generated-code/express.md) | 2 | 7 | 0 | +1793 / -36 |
+| fastify | [generated-code/fastify.md](./generated-code/fastify.md) | 2 | 7 | 0 | +1795 / -36 |
+| nextjs | [generated-code/nextjs.md](./generated-code/nextjs.md) | 6 | 6 | 0 | +1817 / -36 |
 
 差分に **現れない** 生成ファイル（この機能のレビューでは読む必要がないもの）:
 

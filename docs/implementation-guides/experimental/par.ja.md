@@ -1668,7 +1668,7 @@ conformance.test.ts の差分には、この機能が生成 OP に保証させ�
 
 ````diff
 diff --git a/default-op/app.ts b/with-par/app.ts
-index 47c2951..7707c0e 100644
+index 4246f6b..270379c 100644
 --- a/default-op/app.ts
 +++ b/with-par/app.ts
 @@ -5,6 +5,7 @@ import { tokenApp } from './routes/token.js';
@@ -1703,7 +1703,7 @@ index 47c2951..7707c0e 100644
    app.use('/.well-known/openid-configuration', publicCors);
    app.use('/.well-known/jwks.json', publicCors);
    // CORS must run first so OPTIONS preflights are answered before method enforcement.
-@@ -214,6 +218,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
+@@ -215,6 +219,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
      c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
      c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
      c.set('revocationResolvers', storeResolvers.revocationResolvers);
@@ -1711,7 +1711,7 @@ index 47c2951..7707c0e 100644
  
      // P1: default cookie-based session + consent resolvers so prompt=none /
      // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
-@@ -237,6 +242,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
+@@ -238,6 +243,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
    app.route('/userinfo', userinfoApp);
    app.route('/introspect', introspectionApp);
    app.route('/revoke', revocationApp);
@@ -1720,7 +1720,7 @@ index 47c2951..7707c0e 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/apply.ts b/with-par/apply.ts
-index cdd419c..275e126 100644
+index db15234..ec6d629 100644
 --- a/default-op/apply.ts
 +++ b/with-par/apply.ts
 @@ -5,6 +5,7 @@ import { tokenApp } from './routes/token.js';
@@ -1755,7 +1755,7 @@ index cdd419c..275e126 100644
    app.use('/.well-known/openid-configuration', publicCors);
    app.use('/.well-known/jwks.json', publicCors);
    // CORS must run first so OPTIONS preflights are answered before method enforcement.
-@@ -265,6 +269,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
+@@ -266,6 +270,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
      c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
      c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
      c.set('revocationResolvers', storeResolvers.revocationResolvers);
@@ -1763,7 +1763,7 @@ index cdd419c..275e126 100644
  
      // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
      if (options.acrResolver) {
-@@ -288,6 +293,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
+@@ -289,6 +294,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
    app.route('/userinfo', userinfoApp);
    app.route('/introspect', introspectionApp);
    app.route('/revoke', revocationApp);
@@ -1772,7 +1772,7 @@ index cdd419c..275e126 100644
    app.route('/.well-known/openid-configuration', discoveryApp);
    app.route('/login', loginApp);
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index c61cb59..89e240d 100644
+index 58258e6..2a12eca 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -9,6 +9,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -1784,7 +1784,7 @@ index c61cb59..89e240d 100644
  
  /**
   * HTTP conformance smoke tests for the generated OpenID Connect Provider.
-@@ -2174,6 +2176,416 @@ describe('generated provider HTTP conformance', () => {
+@@ -2474,6 +2476,416 @@ describe('generated provider HTTP conformance', () => {
    });
  
  
@@ -2202,7 +2202,7 @@ index c61cb59..89e240d 100644
    // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
    // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/routes/authorize.ts b/with-par/routes/authorize.ts
-index 793f61e..06eb0f4 100644
+index a3ffab2..cfa29de 100644
 --- a/default-op/routes/authorize.ts
 +++ b/with-par/routes/authorize.ts
 @@ -37,6 +37,13 @@ import {
@@ -2252,7 +2252,7 @@ index 793f61e..06eb0f4 100644
      const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
      const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
      const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
-@@ -495,6 +524,35 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -501,6 +530,35 @@ const handleAuthorizationRequest = async (c: any) => {
      loginUrl.searchParams.set('transaction_id', transactionId);
      return c.redirect(loginUrl.toString());
    } catch (error) {
@@ -2476,7 +2476,7 @@ index 0000000..0369ff8
 +  }
 +});
 diff --git a/default-op/store.ts b/with-par/store.ts
-index dbe5fc3..da06be0 100644
+index e530896..ef42ec2 100644
 --- a/default-op/store.ts
 +++ b/with-par/store.ts
 @@ -6,6 +6,10 @@ import type {
@@ -2490,7 +2490,7 @@ index dbe5fc3..da06be0 100644
  
  /**
   * In-memory Authorization Transaction Store.
-@@ -817,3 +821,58 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
+@@ -823,3 +827,58 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
  export const browserSessionStore = defaultProviderStores.browserSessionStore;
  export const consentStore = defaultProviderStores.consentStore;
  export const userStore = defaultProviderStores.userStore;

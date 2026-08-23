@@ -2852,7 +2852,15 @@ ${ssoSuccessRedirect}
             // login → consent の受け渡しに sessionId も載せる。
             sessionId: existingSession.sessionId,
           });
-${bindingCookieOnConsentRedirect}          const consentUrl = new URL('/consent', c.req.url);
+${bindingCookieOnConsentRedirect}          // Internal redirects (/login, /consent) are built on config.issuer, never
+          // on the request URL: some runtimes derive the request URL from the Host
+          // header, which would let the sender pick the redirect origin and receive
+          // transaction_id there (RFC 9700 §2.1: redirect only to trusted URIs).
+          // OIDC Discovery 1.0 §3 makes the advertised issuer the source of truth
+          // for URLs that point at the OP itself. A subpath issuer contributes only
+          // its origin here ('/consent' is an absolute path) — subpath mounting is
+          // not supported by the generated routes.
+          const consentUrl = new URL('/consent', config.issuer);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
         }
@@ -2860,7 +2868,9 @@ ${bindingCookieOnConsentRedirect}          const consentUrl = new URL('/consent'
     }
 
     // Redirect to login page (prompt=login forces re-authentication; handled in login route)
-${bindingCookieOnLoginRedirect}    const loginUrl = new URL('/login', c.req.url);
+${bindingCookieOnLoginRedirect}    // config.issuer, not the request URL, decides the redirect origin — see the
+    // /consent redirect above (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+    const loginUrl = new URL('/login', config.issuer);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
   } catch (error) {
@@ -5392,6 +5402,7 @@ import {
   parseSessionId,${bindingStoreImport}
   userStore,
 } from '../store.js';
+import { defaultProviderConfig } from '../config.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const loginApp = new Hono<{ Variables: Record<string, any> }>();
@@ -5491,8 +5502,12 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
     sessionId,
   });
 
-  // Redirect to consent page
-  const consentUrl = new URL('/consent', c.req.url);
+  // Redirect to consent page. config.issuer, not the request URL, decides the
+  // redirect origin: some runtimes derive the request URL from the Host header,
+  // which would let the sender pick where transaction_id lands (OIDC Discovery
+  // 1.0 §3 / RFC 9700 §2.1).
+  const config = c.get('config') ?? defaultProviderConfig;
+  const consentUrl = new URL('/consent', config.issuer);
   consentUrl.searchParams.set('transaction_id', transactionId);
   return c.redirect(consentUrl.toString());
 });
@@ -8948,6 +8963,158 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
     });
   });
 
+`;
+}
+
+/**
+ * Internal redirect origin contract. The /login and /consent redirects the OP
+ * issues for its own UI must land on the origin advertised as `issuer`
+ * (OIDC Discovery 1.0 §3), never on the origin of the incoming request URL,
+ * which runtimes such as @hono/node-server derive from the attacker-writable
+ * Host header (RFC 9700 §2.1: redirect only to trusted URIs). The tests drive
+ * requests that carry an attacker origin in the request URL and Host header
+ * and pin the Location origin to the configured issuer.
+ */
+export function internalRedirectOriginConformanceBlock(): string {
+  return `
+  describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)', () => {
+    // RFC 7636 Appendix B example PKCE challenge.
+    const REDIRECT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function issuerAuthorizeUrl(origin: string, overrides: Record<string, string> = {}): string {
+      return origin + '/authorize?' + new URLSearchParams({
+        response_type: 'code',
+        client_id: 'c-conf',
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid',
+        state: 'redirect-origin',
+        code_challenge: REDIRECT_PKCE_CHALLENGE,
+        code_challenge_method: 'S256',
+        ...overrides,
+      }).toString();
+    }
+
+    function redirectOriginCsrf(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function redirectOriginCookie(res: Response): string {
+      return (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+    }
+
+    // Drives authorize -> login POST from an attacker origin and returns each
+    // Location plus the session cookie login handed out. The transaction cookie
+    // is carried forward exactly as a browser would, so this works with or
+    // without --enable transaction-binding. Pure fetch-and-parse: every check
+    // stays in the it() blocks as an expect().
+    async function loginFromOrigin(origin: string): Promise<{
+      loginRedirect: string;
+      consentRedirect: string;
+      sessionCookie: string;
+    }> {
+      const authorizeRes = await app.request(issuerAuthorizeUrl(origin), {
+        headers: { Host: 'attacker.example' },
+      });
+      const loginRedirect = authorizeRes.headers.get('Location') ?? '';
+      const bindingCookie = redirectOriginCookie(authorizeRes);
+      const loginUrl = new URL(loginRedirect, 'http://localhost');
+      const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(origin + loginUrl.pathname + loginUrl.search, {
+        headers: { Cookie: bindingCookie },
+      });
+      const loginRes = await app.request(origin + '/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: bindingCookie,
+          Host: 'attacker.example',
+        },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: redirectOriginCsrf(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      return {
+        loginRedirect,
+        consentRedirect: loginRes.headers.get('Location') ?? '',
+        sessionCookie: redirectOriginCookie(loginRes),
+      };
+    }
+
+    it('should build the login redirect Location on the configured issuer origin', async () => {
+      const res = await app.request(issuerAuthorizeUrl('http://localhost:3000'));
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/login');
+      expect(location.searchParams.has('transaction_id')).toBe(true);
+    });
+
+    it('should ignore the Host header when building the login redirect Location', async () => {
+      // Runtimes such as @hono/node-server build the request URL from the Host
+      // header, so an attacker-controlled Host arrives here as an attacker-origin
+      // request URL. Both are sent; neither may reach the Location.
+      const res = await app.request(issuerAuthorizeUrl('http://attacker.example'), {
+        headers: { Host: 'attacker.example' },
+      });
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/login');
+    });
+
+    it('should build the consent redirect Location on the configured issuer origin', async () => {
+      // SSO path: an established OP session makes /authorize redirect straight
+      // to /consent (OIDC Core 1.0 §3.1.2.3). prompt=consent forces the consent
+      // screen (OIDC Core 1.0 §3.1.2.1), so this stays on the /consent redirect
+      // even when another test already recorded a consent grant in the shared
+      // store. The attacker origin on this second request must not leak into
+      // that Location either.
+      const first = await loginFromOrigin('http://attacker.example');
+      const res = await app.request(
+        issuerAuthorizeUrl('http://attacker.example', { prompt: 'consent' }),
+        { headers: { Cookie: first.sessionCookie, Host: 'attacker.example' } },
+      );
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/consent');
+    });
+
+    it('should build the consent redirect Location on the configured issuer origin after login', async () => {
+      const flow = await loginFromOrigin('http://attacker.example');
+      const location = new URL(flow.consentRedirect);
+
+      expect(new URL(flow.loginRedirect).origin).toBe('http://localhost:3000');
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/consent');
+    });
+
+    it('should keep the login redirect Location on the issuer origin for a subpath issuer', async () => {
+      // '/login' is an absolute path, so a subpath issuer contributes only its
+      // origin — the same result the express/fastify/nextjs adapters produce
+      // when they rebase request URLs onto the issuer. Subpath mounting of the
+      // generated routes is a separate, unsupported concern.
+      const subpathApp = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        config: { issuer: 'https://op.example.com/op' },
+      });
+      const res = await subpathApp.request(issuerAuthorizeUrl('https://op.example.com'));
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('https://op.example.com');
+      expect(location.pathname).toBe('/login');
+    });
+  });
 `;
 }
 
@@ -13032,6 +13199,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
 `;
 }

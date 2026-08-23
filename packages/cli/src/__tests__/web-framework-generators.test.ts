@@ -97,6 +97,51 @@ describe('Web-standard generated id_token_hint handling', () => {
   }
 });
 
+// OIDC Discovery 1.0 §3 / RFC 9700 §2.1: internal redirects (/login, /consent)
+// are built on the configured issuer in every Web-standard framework, so the
+// invariant "the OP's own origin comes from config, not from request headers"
+// is visible in the route code itself, not only in the adapters.
+describe('Web-standard generated internal redirect origin', () => {
+  const generatedInternalRedirects = [
+    {
+      framework: 'express',
+      files: new ExpressGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '',
+    },
+    {
+      framework: 'fastify',
+      files: new FastifyGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '',
+    },
+    {
+      framework: 'nextjs',
+      files: new NextJsGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '_oidc-provider/',
+    },
+  ];
+
+  for (const { framework, files, prefix } of generatedInternalRedirects) {
+    const authorize = files.find((f) => f.path === `${prefix}routes/authorize.ts`)?.content ?? '';
+    const login = files.find((f) => f.path === `${prefix}routes/login.ts`)?.content ?? '';
+    const conformance = files.find((f) => f.path === `${prefix}conformance.test.ts`)?.content ?? '';
+
+    it(`should build internal redirects on config.issuer for ${framework}`, () => {
+      expect(authorize.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/login', config.issuer)")).toBe(true);
+      expect(login.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/consent', c.req.url)")).toBe(false);
+      expect(authorize.includes("new URL('/login', c.req.url)")).toBe(false);
+      expect(login.includes("new URL('/consent', c.req.url)")).toBe(false);
+    });
+
+    it(`should generate the internal redirect origin conformance contract for ${framework}`, () => {
+      expect(conformance.includes("describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)'")).toBe(true);
+      expect(conformance.includes("it('should ignore the Host header when building the login redirect Location'")).toBe(true);
+      expect(conformance.includes("it('should keep the login redirect Location on the issuer origin for a subpath issuer'")).toBe(true);
+    });
+  }
+});
+
 // OIDC Core 1.0 §3.1.2.4: "the Authorization Server MUST obtain an authorization
 // decision before releasing information to the Relying Party." Every Web-standard
 // framework therefore detects the affirmative decision on an allowlist; a missing,

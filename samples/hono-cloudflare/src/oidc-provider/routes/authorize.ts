@@ -668,7 +668,15 @@ const handleAuthorizationRequest = async (c: any) => {
             'Set-Cookie',
             buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
           );
-          const consentUrl = new URL('/consent', c.req.url);
+          // Internal redirects (/login, /consent) are built on config.issuer, never
+          // on the request URL: some runtimes derive the request URL from the Host
+          // header, which would let the sender pick the redirect origin and receive
+          // transaction_id there (RFC 9700 §2.1: redirect only to trusted URIs).
+          // OIDC Discovery 1.0 §3 makes the advertised issuer the source of truth
+          // for URLs that point at the OP itself. A subpath issuer contributes only
+          // its origin here ('/consent' is an absolute path) — subpath mounting is
+          // not supported by the generated routes.
+          const consentUrl = new URL('/consent', config.issuer);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
         }
@@ -680,7 +688,9 @@ const handleAuthorizationRequest = async (c: any) => {
       'Set-Cookie',
       buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),
     );
-    const loginUrl = new URL('/login', c.req.url);
+    // config.issuer, not the request URL, decides the redirect origin — see the
+    // /consent redirect above (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+    const loginUrl = new URL('/login', config.issuer);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
   } catch (error) {

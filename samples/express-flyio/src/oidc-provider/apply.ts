@@ -21,6 +21,9 @@ const OIDC_ENDPOINTS = [
 
 export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   const oidc = createApp(options);
+  // The advertised issuer is the source of truth for the OP's own origin
+  // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
+  // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
   for (const endpoint of OIDC_ENDPOINTS) {

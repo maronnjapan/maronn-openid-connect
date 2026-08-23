@@ -7,7 +7,7 @@
 # up a sample OP on real infrastructure so the sqlite-on-a-volume storage
 # backend can be checked against an actual HTTP/TLS deployment. It is not a
 # production deployment guide for library users — samples/* exist for
-# internal verification of CLI-generated code (see CLAUDE.md).
+# internal verification of CLI-generated code (see the repository README.md).
 #
 # Zero-argument usage is the intended path: everything that can be derived
 # is derived, and the script guides interactively through the only two

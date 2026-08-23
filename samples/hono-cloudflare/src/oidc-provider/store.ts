@@ -267,8 +267,8 @@ export function parseSessionId(cookieHeader: string | null): string | undefined 
 
 /**
  * Build the Set-Cookie value for the browser session.
- * Attributes per study-material/http-security-headers-and-tls.md:
- * HttpOnly (no JS access), Secure (HTTPS only), SameSite=Lax. SameSite=Strict
+ * Security attributes: HttpOnly (no JS access), Secure (HTTPS only),
+ * SameSite=Lax. SameSite=Strict
  * would drop the cookie on the cross-site authorization redirect return and
  * break the flow, so Lax is required.
  */

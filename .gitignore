@@ -33,3 +33,17 @@ Thumbs.db
 samples/*/.deploy/
 samples/*/wrangler.deploy.jsonc
 samples/*/.vercel/
+
+# Personal working set (kept in the notes repository)
+/.notes
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+/tasks
+/study-material
+/.review
+/.claude
+/.agents
+/.serena
+/.mcp.json
+/docs/implementation-guides

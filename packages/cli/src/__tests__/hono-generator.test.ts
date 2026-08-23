@@ -68,6 +68,28 @@ describe('HonoGenerator', () => {
       expect(files).toHaveLength(16);
     });
 
+    it('should not expose private working-note paths in generated files', () => {
+      const generatedVariants = [
+        files,
+        generator.generate({
+          ...options,
+          features: {
+            ...DEFAULT_FEATURES,
+            deviceAuthorizationGrant: true,
+          },
+        }),
+      ];
+      const generatedContent = generatedVariants
+        .flat()
+        .map((file) => `${file.path}\n${file.content}`)
+        .join('\n');
+
+      expect(generatedContent).not.toContain(['CLAUDE', '.md'].join(''));
+      expect(generatedContent).not.toContain('tasks/');
+      expect(generatedContent).not.toContain('study-material/');
+      expect(generatedContent).not.toContain('docs/implementation-guides/');
+    });
+
     it('should generate an injectable persistent JSON storage contract', () => {
       const store = files.find((f) => f.path === 'store.ts');
       const resolvers = files.find((f) => f.path === 'resolvers.ts');
@@ -2359,8 +2381,8 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
       expect(storeFile?.content).toContain('export function buildSessionCookie');
     });
 
-    // Cookie attributes per study-material/http-security-headers-and-tls.md:
-    // HttpOnly / Secure / SameSite=Lax (Strict would break the auth redirect return).
+    // HttpOnly blocks JavaScript access, Secure restricts transport to HTTPS, and
+    // SameSite=Lax preserves the authorization redirect return that Strict would drop.
     it('should build the session cookie with HttpOnly, Secure and SameSite=Lax', () => {
       expect(storeFile?.content).toContain('HttpOnly; Secure; SameSite=Lax; Path=/');
     });

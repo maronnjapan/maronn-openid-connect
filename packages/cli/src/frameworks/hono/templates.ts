@@ -1157,8 +1157,8 @@ export function parseSessionId(cookieHeader: string | null): string | undefined 
 
 /**
  * Build the Set-Cookie value for the browser session.
- * Attributes per study-material/http-security-headers-and-tls.md:
- * HttpOnly (no JS access), Secure (HTTPS only), SameSite=Lax. SameSite=Strict
+ * Security attributes: HttpOnly (no JS access), Secure (HTTPS only),
+ * SameSite=Lax. SameSite=Strict
  * would drop the cookie on the cross-site authorization redirect return and
  * break the flow, so Lax is required.
  */
@@ -3510,8 +3510,7 @@ deviceApp.post('/login', async (c) => {
   if (!user) {
     // Per-record throttling only. An attacker holding a device-grant client can
     // mint unlimited records, so the aggregate password-guess budget is the same
-    // as the one on /login — subject-scoped throttling is tracked separately in
-    // tasks/p2-login-attempt-throttling-subject-scope.md.
+    // as the one on /login. Subject-scoped throttling is a separate concern.
     const failure = await recordDeviceLoginFailure(
       record,
       deviceStore,
@@ -6912,8 +6911,8 @@ export function createViews(overrides?: Partial<Views>): Views {
  *   so the reuse is detectable and the grantId is still known. If a user customizes
  *   the generated store to physically delete (store.ts delete()) instead of
  *   consume(), the cascade silently stops firing and these tests fail — surfacing
- *   the broken contract (CLAUDE.md: conformance.test.ts is the generated OP's
- *   behavior contract).
+ *   the broken contract (the repository README defines conformance.test.ts as
+ *   the generated OP's behavior contract).
  *
  * Returned as a string interpolated into each framework's conformance template.
  * Uses only string concatenation (no nested template literals) so it injects
@@ -11209,7 +11208,7 @@ function jarmPromptNoneErrorTest(): string {
  *
  * These pin the behavior the repository guarantees for the generated device
  * flow: change it and they fail, which is how a customized OP learns it has
- * drifted from the contract (CLAUDE.md).
+ * drifted from the behavior contract documented in the repository README.
  */
 export function deviceAuthorizationConformanceBlock(features: OidcFeatureConfig): string {
   if (!features.deviceAuthorizationGrant) {

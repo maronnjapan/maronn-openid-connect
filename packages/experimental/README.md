@@ -65,8 +65,3 @@ Experimental 機能が core へ昇格する目安は次のとおりです。
 ## 利用者ドキュメント
 
 `docs/library-document` の Experimental セクションを参照してください。
-
-## 実装解説
-
-各機能を「何を・どう実装したか」をコード全文つきで説明する解説（日本語・英語）を
-`docs/implementation-guides/experimental/` に置いています。実装の内側を読むときはこちらを参照してください。

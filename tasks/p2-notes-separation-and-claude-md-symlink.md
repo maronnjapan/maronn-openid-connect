@@ -1,4 +1,4 @@
-# [P2] 作業メモを notes リポジトリへ分離し、公開規約を README.md に切り出す
+# [P2] OSS実装に関係しない資産を notes リポジトリへ集約し、公開規約を README.md に切り出す
 
 ## ステータス
 
@@ -6,35 +6,56 @@
 
 ## 背景
 
-OSS実装リポジトリは public であり、作業メモと非公開情報を置きたくない。
-一方でメモ自体は git 管理下に置いて履歴を残したいし、ローカル作業中は OSS実装リポジトリ配下から参照できる状態を保ちたい。
+公開リポジトリには OSS 実装に関係するものだけを置きたい。
+作業メモ、レビュー資料、エージェント設定、個人用の実装解説は、別リポジトリ（notes）で git 管理する。
 
-メモ類は別リポジトリで管理し、OSS実装リポジトリ側には git 管理対象外のシンボリックリンクだけを置く。
-ローカルでは既存チェックアウト（`/var/www/notes-maronn-openid-connect`）へリンクし、Claude Code on the Web では `.notes` を実クローンとして取得する。
-
-`CLAUDE.md` のうち公開してよい規約は `README.md` として切り出し、公開リポジトリのルートに説明文書を残す。
+ローカルでは OSS実装リポジトリ配下から今までどおり参照したいので、notes 側の実体へシンボリックリンクを張る。
+Claude Code on the Web（クラウド実行）でも同じ状態を再現できるようにし、既存のルーティーンをその前提へ合わせる。
 
 ## 決定事項
 
-2026-08-23 に依頼者が判断した内容を、以下の設計の前提とする。
+2026-08-23 に依頼者が判断した内容を設計の前提とする。
 
 1. `CLAUDE.md` の公開してよい部分を `README.md` へ切り出す
-2. `tasks/` と `study-material/` も notes リポジトリへ移す。`scripts/experimental-review/` は現時点で意義が弱いため削除してよい
+2. `tasks/` と `study-material/` を notes リポジトリへ移す。`scripts/experimental-review/` は意義が弱いため削除してよい
 3. 本タスク文書自身も notes リポジトリへ移す
-4. Claude Code on the Web からも `.notes` の内容を取得できるようにする
+4. Claude Code on the Web からも notes の内容を取得できるようにする
+5. `.review/` `.claude/` `.agents/` など文書・設定系のディレクトリも公開リポジトリに残さない。OSS 実装に関係しないものは全部外す
+6. `docs/implementation-guides/experimental/` は個人用なので notes へ移す
 
-決定3により、本文書は最終的に `.notes/tasks/` へ移る。
-notes リポジトリにまだ中身が無く、この作業環境から書き込めないため、フェーズ3の移送で `tasks/` 全体と一緒に運ぶ。
+決定5により、ブートストラップ用のスクリプトも OSS 側には置かない。
+リンクを張るスクリプトは notes リポジトリに置き、そこから OSS実装リポジトリへ symlink とフックだけを配る。
 
-## リポジトリ情報
+## 移す・残す・消すの一覧
 
-| | notes リポジトリ | OSS実装リポジトリ |
-|---|---|---|
-| ローカルパス | `/var/www/notes-maronn-openid-connect` | `/var/www/maronn-openid-provider` |
-| GitHub URL | https://github.com/maronnjapan/notes-maronn-openid-connect | https://github.com/maronnjapan/maronn-openid-connect |
+notes 側のディレクトリ名は、先頭ドットを外した名前に揃える（notes リポジトリ自体は隠しディレクトリの集合ではないため）。
 
-OSS実装リポジトリはローカルディレクトリ名（`maronn-openid-provider`）と GitHub 上のリポジトリ名（`maronn-openid-connect`）が異なる。
-`.mcp.json` の serena 起動引数も `--project /var/www/maronn-openid-provider` を指している。
+### notes リポジトリへ移すもの
+
+| 現在の場所 | notes 側 | OSS 側に張るリンク | 容量 |
+|---|---|---|---|
+| `CLAUDE.md` | `CLAUDE.md` | `CLAUDE.md -> .notes/CLAUDE.md` | 19 KB |
+| `AGENTS.md` / `GEMINI.md` | （実体は持たない） | `AGENTS.md -> CLAUDE.md` / `GEMINI.md -> CLAUDE.md` | — |
+| `tasks/` | `tasks/` | `tasks -> .notes/tasks` | 2.9 MB |
+| `study-material/` | `study-material/` | `study-material -> .notes/study-material` | 3.5 MB |
+| `.review/` | `review/` | `.review -> .notes/review` | 36 KB |
+| `.claude/`（skills / docs / settings.json） | `claude/` | `.claude -> .notes/claude` | 508 KB |
+| `.agents/` | `agents/` | `.agents -> .notes/agents` | 172 KB |
+| `.serena/` | `serena/` | `.serena -> .notes/serena` | 20 KB |
+| `.mcp.json` | `mcp.json` | `.mcp.json -> .notes/mcp.json` | 339 B |
+| `docs/implementation-guides/` | `implementation-guides/` | `docs/implementation-guides -> ../.notes/implementation-guides` | 1.2 MB |
+
+### 削除するもの
+
+| 対象 | 理由 |
+|---|---|
+| `scripts/experimental-review/`（100 KB） | 決定2。`tasks/experimental/` を読むため移送すると壊れる。生成済みパケットは `tasks/` と一緒に notes へ残る |
+| `package.json` の `review:experimental` / `test:experimental-review` | 上と同じ。`test:ci` の連結からも外す |
+| `.codex`（0 バイトの空ファイル） | 中身が無く、役割も残っていない |
+
+### 公開リポジトリに残すもの
+
+`packages/` `samples/` `tests/` `docs/library-document/` `scripts/`（`sample-up.sh` と `lib/`）`.github/` `.changeset/` `package.json` `pnpm-lock.yaml` `pnpm-workspace.yaml` `LICENSE` `RELEASE.md`、および新規に作る `README.md`。
 
 ## 着手前に確定している事実
 
@@ -43,11 +64,11 @@ OSS実装リポジトリはローカルディレクトリ名（`maronn-openid-pr
 ### notes リポジトリは現在 public で、コミットが 1 つも無い
 
 認証情報なしで `git clone` が成功し、`warning: You appear to have cloned an empty repository.` が返る。
-つまり現状は「非公開リポジトリ」ではなく、中身も空である。
-メモを push する前に GitHub 側で private へ変更する必要がある（フェーズ0）。
+現状は「非公開リポジトリ」ではなく、中身も空である。
+移送の前に GitHub 側で private へ変える（フェーズ0）。
 
-この事実はクラウド対応の設計にも効く。
-public のままなら誰でも読めてしまい、private にするとクラウドからの取得に認証が要る。
+private 化はクラウド対応にも効く。
+public のままなら誰でも読め、private にするとクラウドからの取得に GitHub App の許可が要る。
 
 ### `CLAUDE.md` は追跡されている
 
@@ -90,16 +111,59 @@ On branch master        # エイリアスは実行されない
 
 `git pull` の追従は `.git/hooks/post-merge` で実装する。
 git 2.43.0 では fast-forward の pull でも post-merge が動き、フックの cwd はワークツリーのルートになることを実測した。
-`git fetch` 単体と `git pull --rebase`（post-merge ではなく post-rewrite が動く）は `pnpm notes:sync` で追従させる。
+`git fetch` 単体と `git pull --rebase`（post-merge ではなく post-rewrite が動く）は notes 側の `scripts/pull.sh` を直接叩く。
 
 ### `ln -sfn` は宛先が実ディレクトリのとき、その中にリンクを作る
 
 終了コードは 0 で、失敗として検出できない。
-`.notes` が実ディレクトリとして存在する場合に静かに壊れるため、スクリプト側で事前判定して停止させる。
+移送前のディレクトリが残ったままリンクを張ると静かに壊れるため、スクリプト側で事前判定する。
 
-### SessionStart フックは終了コード 0 で JSON を出せば文脈へ注入できる
+### 公開ファイルに残る参照
 
-Claude Code の SessionStart フックは、標準出力に次の形の JSON を出すとその内容が文脈へ入る。
+移送すると解決できなくなる参照は次のとおり。
+
+| 参照先 | 参照元 | 件数 |
+|---|---|---|
+| `CLAUDE.md` | `RELEASE.md` 2 / `docs/implementation-guides/experimental/README.md` 2 / `samples/README.md` 1 / `samples/*/scripts/deploy-*.sh` 2 / `scripts/lib/deploy-fly-node-sample.sh` 1 / `packages/cli/src/frameworks/hono/templates.ts` 2 | 10 |
+| `tasks/*.md` `study-material/*.md` | `docs/implementation-guides/experimental/*` 36 / `packages/experimental/src/device-authorization-grant/verification.ts` 2 / `packages/cli/src/frameworks/hono/templates.ts` 2 / `packages/core/src/token-response.ts` 1 / `packages/cli/src/__tests__/hono-generator.test.ts` 1 / `tests/conformance/README.md` 1 / `.github/scripts/verify-ci-gate.mjs` 1 | 44 |
+| `docs/implementation-guides/experimental/` | `packages/experimental/README.md:72` | 1 |
+
+`docs/implementation-guides/` 自体が notes へ移るので、そこからの 36 件と `CLAUDE.md` 参照 2 件は一緒に移動する。
+公開側に残って直す必要があるのは、`CLAUDE.md` 参照 8 件、メモパス参照 8 件、実装解説への参照 1 件になる。
+
+`packages/cli/src/frameworks/hono/templates.ts` の 2 件は生成コードへ出力され、`samples/*/src/oidc-provider/` の 8 箇所がその実体になっている。
+`packages/experimental/src/.../verification.ts` の 2 件は実装解説に全文掲載されているため、直したら解説側も同じ変更で直す。
+
+### ビルドとテストはメモ類を読まない
+
+`.github/workflows/`、`vitest.config.ts`、`pnpm-workspace.yaml` のいずれもメモ類に依存していない。
+`pnpm-workspace.yaml` の対象は `packages/*` `samples/*` `tests/*` `docs/*` で、`docs/implementation-guides` には `package.json` が無いためワークスペースには入らない。
+`docs/library-document` のサイトも実装解説を参照していない。
+
+例外は昇格レビューツールで、`scripts/experimental-review/lib/repo.mjs:62-63` が `tasks/experimental/<feature-id>` を読む。
+`pnpm run test:experimental-review` は `pnpm run test:ci` に含まれており、`tasks/` を移すとここだけが壊れる。
+決定2に従って削除する。
+
+`.github/scripts/verify-ci-gate.mjs` が要求するのは `pnpm run build` → `pnpm run typecheck` → `pnpm run test:ci` の順序だけで、`test:ci` の内訳は検査していない。
+
+### クラウド実行の制約
+
+Claude Code のドキュメント（cloud environments / claude-code-on-the-web / hooks）で確認した制約が 4 つある。
+どれも設計に直接効く。
+
+1. **セットアップスクリプトはキャッシュされる**。環境のセットアップスクリプトは初回セッションでだけ走り、その後はファイルシステムのスナップショットが再利用される（スクリプトを変更したときと約 7 日で再実行）。ここで notes を clone しても、次のセッションでは古いまま使われる。毎セッション必要な取得はここに置けない
+2. **環境変数に資格情報を置くことは推奨されていない**。cloud environment には専用のシークレットストアが無く、環境を使う人は全員値を読める
+3. **`git push` はセッションの作業ブランチにしか通らない**。GitHub プロキシの push protection により、セッションが開いているリポジトリの作業ブランチ以外への push は拒否される。clone / fetch / PR 操作は通る
+4. **GitHub API はセッションに attach したリポジトリにしか届かない**。attach していないリポジトリへの API 要求は 403 になる
+
+制約3と4から、クラウドセッションから notes を更新する経路は「notes リポジトリを attach し、Contents API（`gh api` または GitHub MCP の `create_or_update_file` / `push_files`）でコミットする」になる。
+`git push` は使えない。
+
+制約1から、毎セッションの notes 取得はセットアップスクリプトではなくセッション側（ルーティーンのプロンプト、または SessionStart フック）で行う。
+
+### SessionStart フックの契約と限界
+
+SessionStart フックは終了コード 0 で次の JSON を出すと、その内容がセッションの文脈に入る。
 
 ```json
 {
@@ -111,106 +175,75 @@ Claude Code の SessionStart フックは、標準出力に次の形の JSON を
 ```
 
 プレーンテキストの標準出力もそのまま文脈へ入り、フックはセッション開始をブロックできない。
-`.claude/settings.json` には既に `npx -y gh-setup-hooks` の SessionStart フックがあるため、2 つ目のフックとして追加する。
 
-### `CLAUDE.md` を参照している箇所
+ただしフックは Claude Code の起動後に走るため、フックが作った `CLAUDE.md` や `.claude/skills/` がその場で読み込まれる保証は無い。
+さらに今回の構成では `.claude/settings.json` 自体が notes 側へ移るので、notes を取得する前にフック定義が存在しない。
+クラウドでは、フックではなく**ルーティーンのプロンプト冒頭の手順**を一次の経路とする（フェーズ4）。
 
-`grep -rn 'CLAUDE\.md'` の結果は 207 件。
-`study-material/` 116 件、`tasks/` 74 件、`.claude/docs/` 6 件はメモ側なので、フェーズ3で一緒に移る。
-公開のまま残るのは次の 10 件で、参照先を `README.md` へ差し替える。
+### 影響を受けるルーティーン
 
-| ファイル | 件数 |
-|---|---|
-| `RELEASE.md`（161 行目・468 行目） | 2 |
-| `docs/implementation-guides/experimental/README.md`（47 行目・53 行目） | 2 |
-| `samples/README.md`（3 行目） | 1 |
-| `samples/nextjs-vercel/scripts/deploy-vercel.sh`（7 行目） | 1 |
-| `samples/hono-cloudflare/scripts/deploy-cloudflare.sh`（7 行目） | 1 |
-| `scripts/lib/deploy-fly-node-sample.sh`（10 行目） | 1 |
-| `packages/cli/src/frameworks/hono/templates.ts`（6800 行目・10779 行目） | 2 |
+アカウントに登録されている 7 件のうち、このリポジトリを対象にしているのは 2 件。
 
-`packages/cli` の 2 件は CLI ソースの JSDoc であり、生成コードには出力されない。
-`grep -rn "reuse-cascade contract\|drifted from the contract" samples/` が空になることで確認した。
-
-### `tasks/` と `study-material/` を参照している公開ファイル
-
-フェーズ3で移送すると、次の参照が公開ツリーから解決できなくなる。
-
-| ファイル | 件数 | 備考 |
+| ID | 名前 | 影響 |
 |---|---|---|
-| `docs/implementation-guides/experimental/*.ja.md` / `*.en.md` | 36 | 解説本文と、掲載しているソース全文の両方に含まれる |
-| `packages/experimental/src/device-authorization-grant/verification.ts` | 2 | 実装解説に全文掲載されているため、直すと解説側も直す |
-| `packages/cli/src/frameworks/hono/templates.ts` | 2 | 生成コードへ出力される。`samples/*/src/oidc-provider` の 8 箇所はこの 2 件が実体 |
-| `packages/core/src/token-response.ts` | 1 | |
-| `packages/cli/src/__tests__/hono-generator.test.ts` | 1 | |
-| `tests/conformance/README.md` | 1 | |
-| `.github/scripts/verify-ci-gate.mjs` | 1 | |
+| `trig_016iJPrzys767Mh4RKXxZZfv` | リポジトリのコードレビューとタスク実装 | `study-material/` `tasks/` `CLAUDE.md` `.claude/skills/` `docs/implementation-guides/` を読み書きする。全面的に修正が要る |
+| `trig_01GjuLdeCrwEQVLisnKh1QXU` | Experimental機能 仕様策定・レビュー・実装 | `tasks/experimental/` `CLAUDE.md` `.claude/skills/` `docs/implementation-guides/experimental/` `pnpm review:experimental` を参照する。全面的に修正が要る |
+| `trig_01SXA2TNgjZWWvagYqAdJSWa` | @maronn-openid-connect パッケージ追従（週次） | 対象は `maronnjapan/publish-oidc-app`。公開パッケージの `--help` だけを見るため影響なし |
 
-### ビルドとテストはメモ類を読まない
-
-`.github/workflows/`、`vitest.config.ts`、`pnpm-workspace.yaml` のいずれもメモ類に依存していない。
-`pnpm-workspace.yaml` の対象は `packages/*` `samples/*` `tests/*` `docs/*` だけなので、`.notes` を置いても pnpm のワークスペース走査には入らない。
-
-例外は昇格レビューツールで、`scripts/experimental-review/lib/repo.mjs:62-63` が `tasks/experimental/<feature-id>` を読む。
-`pnpm run test:experimental-review` は `pnpm run test:ci` に含まれており、`tasks/` を移すとここだけが壊れる。
-決定2に従い、このツールごと削除する（フェーズ4）。
-
-`.github/scripts/verify-ci-gate.mjs` が要求するのは `pnpm run build` → `pnpm run typecheck` → `pnpm run test:ci` の順序だけで、`test:ci` の内訳は検査していない。
-`test:ci` から `test:experimental-review` を外しても CI ゲートは通る。
+残る 4 件（AIポートフォリオ 3 件、クイズ作成、トークンリミット調整）は別リポジトリで、影響しない。
 
 ## 全体像
 
-依存関係の順にフェーズを分ける。
-フェーズ1まで終われば `CLAUDE.md` は公開ツリーから消える。
-
 | フェーズ | 内容 | 前提 |
 |---|---|---|
-| 0 | notes リポジトリを private にし、初期コミットを作る | なし |
-| 1 | `CLAUDE.md` の分離、`README.md` の切り出し、リンクと同期の仕組み | 0 |
-| 2 | Claude Code on the Web からの `.notes` 取得 | 1 |
-| 3 | `tasks/` `study-material/` `.review/` `.claude/docs/` の移送と参照修復 | 1 |
-| 4 | 昇格レビューツールの削除 | 3 |
+| 0 | notes リポジトリを private にし、初期コミットとアクセス権を整える | なし |
+| 1 | `README.md` の切り出しと `CLAUDE.md` の分離 | 0 |
+| 2 | メモ・設定・実装解説の移送と参照修復 | 1 |
+| 3 | 昇格レビューツールの削除 | 2 |
+| 4 | クラウド実行からの notes 取得 | 2 |
+| 5 | ルーティーン 2 件の修正 | 2〜4 |
 
 ## フェーズ0: notes リポジトリの前提整備
 
 - [ ] GitHub の Settings → General → Danger Zone → Change repository visibility で `notes-maronn-openid-connect` を private にする
-- [ ] private 化のあと、認証なしの `git clone https://github.com/maronnjapan/notes-maronn-openid-connect` が失敗することを確認する
+- [ ] private 化のあと、認証なしの `git clone` が失敗することを確認する
+- [ ] Claude の GitHub App から notes リポジトリへアクセスできるようにする（クラウドセッションが clone と Contents API を使うため）
 - [ ] `/var/www/notes-maronn-openid-connect` の内容を push し、リモートが空でない状態にする
-- [ ] `/var/www/maronn-openid-provider` で `git remote -v` の origin が `https://github.com/maronnjapan/maronn-openid-connect` であることを確認する
-- [ ] `/var/www/notes-maronn-openid-connect` で `git remote -v` の origin が notes リポジトリであることを確認する
+- [ ] `/var/www/maronn-openid-provider` の origin が `https://github.com/maronnjapan/maronn-openid-connect` であることを確認する
 
-## フェーズ1: `CLAUDE.md` の分離と `README.md` の切り出し
+## フェーズ1: `README.md` の切り出しと `CLAUDE.md` の分離
 
 ### タスク1-1: `README.md` を作る
 
-`CLAUDE.md` の次の節をそのまま `README.md` へ移す。
-公開ライブラリの読者に向けた文書なので、移したあとに宛先（開発者向けか利用者向けか）が混ざっていないかを見直す。
+`CLAUDE.md` の次の節を `README.md` へ移す。
+公開ライブラリの読者に向けた文書になるので、移したあとに宛先（開発者向けか利用者向けか）が混ざっていないかを見直す。
 
-| 移す節 | 理由 |
+| 移す節 | 補足 |
 |---|---|
-| プロジェクトについて（コンセプト、ターゲットユーザー、差別化の3軸、リリース方針、利用者の入口） | ライブラリの位置づけそのもの |
-| 実装におけるルール | 外部コントリビュータにも効く規約 |
-| ドキュメント作成の規約 | 同上 |
-| テストコードの書き方 | 同上。`.claude/skills/` は公開されているため参照も残せる |
-| コマンド | 公開情報 |
-| アーキテクチャ | 公開情報 |
-| 準拠仕様 | 公開情報 |
-| ディレクトリの構成 | 公開情報。ただし `tasks/` と `study-material/` の記述は notes 側へ移った旨に書き換える |
+| プロジェクトについて（コンセプト、ターゲットユーザー、差別化の3軸、リリース方針、利用者の入口） | そのまま |
+| 実装におけるルール | 実装解説の作成先を notes 側に書き換える |
+| ドキュメント作成の規約 | スキルの参照先を notes 側に書き換える |
+| テストコードの書き方 | そのまま |
+| コマンド | そのまま |
+| アーキテクチャ | そのまま |
+| 準拠仕様 | そのまま |
+| ディレクトリの構成 | `tasks/` `study-material/` の記述を落とす |
 
-`.notes/CLAUDE.md` に残すのは次の 3 つとする。
+`.notes/CLAUDE.md` に残すのは次の 4 つ。
 
 - `README.md` を先に読むよう促す 1 行
 - レビュー内容について（`.review/` の運用）
-- `tasks/` と `study-material/` の運用（`.notes` 配下にある旨とパス）
+- `tasks/` と `study-material/` の運用（notes 配下にある旨とパス）
+- 実装解説の置き場所（`.notes/implementation-guides/`）と作成規約
+
+「experimental 機能の昇格レビュー」の節は、フェーズ3のツール削除に合わせて消す。
 
 - [ ] `README.md` を作成する（`japanese-tech-writing` スキルを使う）
-- [ ] `.notes/CLAUDE.md` を上記 3 点に絞る
-- [ ] 「experimental 機能の昇格レビュー」の節は、フェーズ4のツール削除に合わせて消す
+- [ ] `.notes/CLAUDE.md` を上記 4 点に絞る
 
 ### タスク1-2: `CLAUDE.md` の実体を notes リポジトリへ移す
 
-- [ ] `CLAUDE.md` を `/var/www/notes-maronn-openid-connect/CLAUDE.md` へ移す
-- [ ] notes リポジトリでコミットして push する
+- [ ] `CLAUDE.md` を `/var/www/notes-maronn-openid-connect/CLAUDE.md` へ移してコミットする
 
 ### タスク1-3: `.gitignore` の更新
 
@@ -218,412 +251,338 @@ Claude Code の SessionStart フックは、標準出力に次の形の JSON を
 末尾に次の節を追加する。
 
 ```
-# Work notes (notes repository; see scripts/setup-notes.sh)
+# Personal working set (kept in the private notes repository)
 /.notes
 /CLAUDE.md
 /AGENTS.md
 /GEMINI.md
+/tasks
+/study-material
+/.review
+/.claude
+/.agents
+/.serena
+/.mcp.json
+/docs/implementation-guides
 ```
 
 - [ ] 先頭スラッシュ付きで追記する（ルート直下だけを対象にするため）
 - [ ] `.notes` に末尾スラッシュを付けない（シンボリックリンクにマッチしなくなるため）
 
-### タスク1-4: 3 ファイルの追跡を外す
+### タスク1-4: 追跡を外す
 
 - [ ] `git rm --cached CLAUDE.md AGENTS.md GEMINI.md` を実行する
 - [ ] `.gitignore` と `README.md` の変更と合わせて 1 コミットにする
 
-### タスク1-5: `scripts/setup-notes.sh` の作成
+### タスク1-5: notes リポジトリにリンク用スクリプトを置く
 
-既存の `scripts/sample-up.sh` に合わせ、`scripts/lib/guide.sh` の出力ヘルパーを使う。
-ローカルとクラウドの両方を 1 本で扱う。
-
-- `NOTES_LOCAL_PATH`（既定 `/var/www/notes-maronn-openid-connect`）に git リポジトリがあれば、そこへのシンボリックリンクを張る
-- 無ければ notes リポジトリを `.notes` へクローンする（クラウド実行の経路。フェーズ2で使う）
-- `--hook` を付けると、SessionStart フック用の JSON だけを出して必ず終了コード 0 で終わる
+OSS 側にはスクリプトを置かない（決定5）。
+notes リポジトリに `scripts/link-oss-repo.sh` と `scripts/pull.sh` を作る。
 
 ```bash
 #!/usr/bin/env bash
-# notes リポジトリをこのリポジトリへ結びつける。
+# notes リポジトリを OSS 実装リポジトリのチェックアウトへリンクする。
 #
-#   pnpm notes:setup            ローカル: 既存チェックアウトへ symlink / クラウド: clone
-#   pnpm notes:setup -- --hook  SessionStart フック用（JSON だけを出し、常に成功で終わる）
+#   bash scripts/link-oss-repo.sh [OSS リポジトリのパス]
 #
-# ローカルの置き場所は NOTES_LOCAL_PATH で変えられる。
-# private リポジトリを認証付きで取得する場合は NOTES_REPO_TOKEN に read 権限の
-# ファイングレイン PAT を渡す（環境変数のみ。リポジトリには置かない）。
+# 既定は /var/www/maronn-openid-provider。OSS_REPO_PATH でも指定できる。
+# OSS 側にはファイルを置かず、symlink と post-merge フックだけを張る。
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# shellcheck source=scripts/lib/guide.sh
-. "${SCRIPT_DIR}/lib/guide.sh"
+NOTES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OSS_ROOT="${1:-${OSS_REPO_PATH:-/var/www/maronn-openid-provider}}"
+EXPECTED_REPO="maronn-openid-connect"
 
-NOTES_LOCAL_PATH="${NOTES_LOCAL_PATH:-/var/www/notes-maronn-openid-connect}"
-NOTES_REPO_URL="${NOTES_REPO_URL:-https://github.com/maronnjapan/notes-maronn-openid-connect}"
-NOTES_LINK="${ROOT_DIR}/.notes"
-HOOK_MARKER="maronn-notes-sync"
+BLOCKED=0
 
-HOOK_MODE=0
-if [ "${1:-}" = "--hook" ]; then
-  HOOK_MODE=1
+info() { printf 'ℹ %s\n' "$*"; }
+ok()   { printf '✔ %s\n' "$*"; }
+err()  { printf '✗ %s\n' "$*" >&2; }
+
+if [ ! -e "${OSS_ROOT}/.git" ]; then
+  err "${OSS_ROOT} が git リポジトリではありません。"
+  exit 1
 fi
-
-# フック経由で呼ばれたとき、外側リポジトリの git 環境変数を引き継がない。
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
-
-# worktree でも正しい hooks ディレクトリを指す。
-HOOK_PATH="$(git -C "${ROOT_DIR}" rev-parse --git-path hooks/post-merge 2>/dev/null || echo '.git/hooks/post-merge')"
-case "${HOOK_PATH}" in
-  /*) ;;
-  *) HOOK_PATH="${ROOT_DIR}/${HOOK_PATH}" ;;
+remote="$(git -C "${OSS_ROOT}" remote get-url origin 2>/dev/null || echo '')"
+case "${remote}" in
+  *"${EXPECTED_REPO}"*) ;;
+  *)
+    err "${OSS_ROOT} の origin が ${EXPECTED_REPO} ではありません: ${remote}"
+    exit 1
+    ;;
 esac
+OSS_ROOT="$(cd "${OSS_ROOT}" && pwd)"
 
-# 認証が要る場合だけ Authorization ヘッダを付ける。
-# URL に埋めるとリモート設定へ残るため、コマンド単位の -c で渡す。
-notes_git() {
-  if [ -n "${NOTES_REPO_TOKEN:-}" ]; then
-    local header
-    header="$(printf 'x-access-token:%s' "${NOTES_REPO_TOKEN}" | base64 | tr -d '\n')"
-    git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${header}" "$@"
-  else
-    git "$@"
-  fi
-}
-
-# 成功時は状態を表す 1 行を、失敗時は理由を 1 行返す。
-setup_links() {
-  local mode name
-  if [ -d "${NOTES_LINK}" ] && [ ! -L "${NOTES_LINK}" ] && [ ! -e "${NOTES_LINK}/.git" ]; then
+# link <OSS 側の相対パス> <リンク先>
+link() {
+  local dest="${OSS_ROOT}/$1" target="$2"
+  if [ -e "${dest}" ] && [ ! -L "${dest}" ]; then
     # ln -sfn は宛先が実ディレクトリのとき、その中にリンクを作って成功扱いになる。
-    echo ".notes が git リポジトリでない実ディレクトリとして存在します: ${NOTES_LINK}"
-    return 1
+    err "$1 が実体として残っています。notes へ移してから再実行してください。"
+    BLOCKED=$((BLOCKED + 1))
+    return 0
   fi
-
-  if [ -e "${NOTES_LOCAL_PATH}/.git" ]; then
-    if [ -d "${NOTES_LINK}" ] && [ ! -L "${NOTES_LINK}" ]; then
-      echo ".notes にクローン済みの実体があります。ローカルチェックアウトへ切り替えるには先に削除してください。"
-      return 1
-    fi
-    ln -sfn "${NOTES_LOCAL_PATH}" "${NOTES_LINK}"
-    mode="symlink -> ${NOTES_LOCAL_PATH}"
-  elif [ -e "${NOTES_LINK}/.git" ]; then
-    notes_git -C "${NOTES_LINK}" pull --ff-only --quiet >/dev/null 2>&1 || true
-    mode="clone (updated)"
-  else
-    if ! notes_git clone --quiet "${NOTES_REPO_URL}" "${NOTES_LINK}" >/dev/null 2>&1; then
-      echo "notes リポジトリを取得できませんでした: ${NOTES_REPO_URL}"
-      return 1
-    fi
-    mode="clone (fresh)"
-  fi
-
-  if [ -f "${ROOT_DIR}/CLAUDE.md" ] && [ ! -L "${ROOT_DIR}/CLAUDE.md" ]; then
-    echo "CLAUDE.md が実ファイルとして残っています。先に notes リポジトリへ移してください。"
-    return 1
-  fi
-  if [ ! -f "${NOTES_LINK}/CLAUDE.md" ]; then
-    echo ".notes/CLAUDE.md がありません。notes リポジトリの内容を確認してください。"
-    return 1
-  fi
-  ln -sf .notes/CLAUDE.md "${ROOT_DIR}/CLAUDE.md"
-  ln -sf CLAUDE.md "${ROOT_DIR}/AGENTS.md"
-  ln -sf CLAUDE.md "${ROOT_DIR}/GEMINI.md"
-
-  # フェーズ3で移送するメモ類。notes 側に無いもの、実体が残っているものは飛ばす。
-  for name in tasks study-material .review; do
-    if [ ! -d "${NOTES_LINK}/${name}" ]; then
-      continue
-    fi
-    if [ -e "${ROOT_DIR}/${name}" ] && [ ! -L "${ROOT_DIR}/${name}" ]; then
-      continue
-    fi
-    ln -sfn ".notes/${name}" "${ROOT_DIR}/${name}"
-  done
-  if [ -d "${NOTES_LINK}/claude-docs" ]; then
-    if [ ! -e "${ROOT_DIR}/.claude/docs" ] || [ -L "${ROOT_DIR}/.claude/docs" ]; then
-      ln -sfn ../.notes/claude-docs "${ROOT_DIR}/.claude/docs"
-    fi
-  fi
-
-  echo "${mode}"
+  mkdir -p "$(dirname "${dest}")"
+  ln -sfn "${target}" "${dest}"
+  ok "$1 -> ${target}"
 }
 
-# 0: 設置した / 2: 別のフックがあるので触らない
-install_hook() {
-  if [ -e "${HOOK_PATH}" ] && ! grep -q "${HOOK_MARKER}" "${HOOK_PATH}"; then
-    return 2
+# notes 側に存在するときだけ張る（段階移行の途中でも動くように）
+link_if_present() {
+  local notes_path="$1" oss_path="$2" target="$3"
+  if [ -e "${NOTES_ROOT}/${notes_path}" ]; then
+    link "${oss_path}" "${target}"
+  else
+    info "${notes_path} は notes 側に無いのでスキップします。"
   fi
+}
+
+link .notes "${NOTES_ROOT}"
+
+link_if_present CLAUDE.md CLAUDE.md .notes/CLAUDE.md
+if [ -L "${OSS_ROOT}/CLAUDE.md" ]; then
+  link AGENTS.md CLAUDE.md
+  link GEMINI.md CLAUDE.md
+fi
+link_if_present tasks                 tasks                      .notes/tasks
+link_if_present study-material        study-material             .notes/study-material
+link_if_present review                .review                    .notes/review
+link_if_present claude                .claude                    .notes/claude
+link_if_present agents                .agents                    .notes/agents
+link_if_present serena                .serena                    .notes/serena
+link_if_present mcp.json              .mcp.json                  .notes/mcp.json
+link_if_present implementation-guides docs/implementation-guides ../.notes/implementation-guides
+
+HOOK_PATH="$(git -C "${OSS_ROOT}" rev-parse --git-path hooks/post-merge)"
+case "${HOOK_PATH}" in /*) ;; *) HOOK_PATH="${OSS_ROOT}/${HOOK_PATH}" ;; esac
+if [ -e "${HOOK_PATH}" ] && ! grep -q 'maronn-notes-sync' "${HOOK_PATH}"; then
+  info "既存の post-merge フックがあるため上書きしません: ${HOOK_PATH}"
+  info '次の1行を追記してください: "$(git rev-parse --show-toplevel)/.notes/scripts/pull.sh" || true'
+else
   mkdir -p "$(dirname "${HOOK_PATH}")"
   cat > "${HOOK_PATH}" <<'HOOK'
 #!/usr/bin/env sh
-# maronn-notes-sync: scripts/setup-notes.sh が生成。git pull（merge）後に .notes を追従させる。
-"$(git rev-parse --show-toplevel)/scripts/notes-sync.sh" || true
+# maronn-notes-sync: notes リポジトリの link-oss-repo.sh が生成。git pull 後に notes を追従させる。
+"$(git rev-parse --show-toplevel)/.notes/scripts/pull.sh" || true
 HOOK
   chmod +x "${HOOK_PATH}"
-  return 0
-}
-
-emit_hook_json() {
-  # 改行とダブルクォートだけ最小限にエスケープして 1 つの JSON にする。
-  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' \
-    "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')"
-}
-
-if [ "${HOOK_MODE}" = "1" ]; then
-  if result="$(setup_links 2>&1)"; then
-    install_hook >/dev/null 2>&1 || true
-    emit_hook_json "作業メモは .notes に用意済み（${result}）。規約は README.md、作業メモの運用は .notes/CLAUDE.md を参照すること。tasks / study-material も .notes 配下にある。"
-  else
-    emit_hook_json "作業メモ（.notes）は取得できなかった: ${result} 規約は README.md を参照すること。"
-  fi
-  exit 0
+  ok "post-merge フックを設定しました。"
 fi
 
-guide_step "notes リポジトリを結びつけます"
-if ! result="$(setup_links 2>&1)"; then
-  guide_err "${result}"
+if [ "${BLOCKED}" -gt 0 ]; then
+  err "${BLOCKED} 件は実体が残っているためリンクできませんでした。"
   exit 1
 fi
-guide_ok ".notes: ${result}"
-guide_ok "CLAUDE.md -> .notes/CLAUDE.md / AGENTS.md・GEMINI.md -> CLAUDE.md"
-
-guide_step "git pull 後の追従フックを設定します"
-set +e
-install_hook
-hook_status=$?
-set -e
-if [ "${hook_status}" = "2" ]; then
-  guide_warn "既存の post-merge フックがあるため上書きしません: ${HOOK_PATH}"
-  guide_info "次の1行を既存フックへ追記してください:"
-  guide_info '  "$(git rev-parse --show-toplevel)/scripts/notes-sync.sh" || true'
-else
-  guide_ok "post-merge フックを設定しました。"
-fi
-
-guide_info "git fetch 単体と git pull --rebase にはフックが無いため、pnpm notes:sync を使ってください。"
-guide_ok "セットアップが完了しました。"
+ok "リンクを張り終えました。"
 ```
-
-- [ ] `chmod +x scripts/setup-notes.sh` を実行する
-
-### タスク1-6: `scripts/notes-sync.sh` の作成
 
 ```bash
 #!/usr/bin/env bash
-# .notes（notes リポジトリ）を最新へ追従させる。
-#
-#   pnpm notes:sync
-#
-# scripts/setup-notes.sh が設定する post-merge フックからも呼ばれる。
+# notes リポジトリを最新へ追従させる。post-merge フックからも呼ばれる。
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# shellcheck source=scripts/lib/guide.sh
-. "${SCRIPT_DIR}/lib/guide.sh"
-
+NOTES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# フック経由のとき、外側リポジトリの git 環境変数を引き継がない。
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
-
-NOTES_LINK="${ROOT_DIR}/.notes"
-
-notes_git() {
-  if [ -n "${NOTES_REPO_TOKEN:-}" ]; then
-    local header
-    header="$(printf 'x-access-token:%s' "${NOTES_REPO_TOKEN}" | base64 | tr -d '\n')"
-    git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${header}" "$@"
-  else
-    git "$@"
-  fi
-}
-
-if [ ! -e "${NOTES_LINK}/.git" ]; then
-  guide_info ".notes が未設定のためスキップします（pnpm notes:setup で設定できます）。"
-  exit 0
-fi
-
-guide_step ".notes を追従させます"
-if ! notes_git -C "${NOTES_LINK}" fetch; then
-  guide_err ".notes の fetch に失敗しました。"
+if ! git -C "${NOTES_ROOT}" fetch --quiet; then
+  printf '⚠ notes の fetch に失敗しました。\n' >&2
   exit 1
 fi
-if ! notes_git -C "${NOTES_LINK}" pull --ff-only; then
-  guide_err ".notes を fast-forward できませんでした。手動で確認してください。"
+if ! git -C "${NOTES_ROOT}" pull --ff-only --quiet; then
+  printf '⚠ notes を fast-forward できませんでした。手動で確認してください。\n' >&2
   exit 1
 fi
-guide_ok ".notes を更新しました。"
+printf '✔ notes を更新しました。\n'
 ```
 
-- [ ] `chmod +x scripts/notes-sync.sh` を実行する
-- [ ] `--ff-only` にする（メモ側にローカル変更があるとき、勝手にマージコミットを作らないため）
+- [ ] 2 本とも `chmod +x` する
+- [ ] `pull.sh` は `--ff-only` にする（メモ側にローカル変更があるとき、勝手にマージコミットを作らないため）
 
-### タスク1-7: `package.json` にコマンドを追加する
+### タスク1-6: 動作確認
 
-既存の `sample:*` / `deploy:*` と同じ形式で追加する。
+この 2 本のスクリプトは、notes 側と OSS 側の upstream を模したサンドボックスで実行し、12 本のリンク生成、リンク越しの読み取り、`git status` が汚れないこと、サブディレクトリからの `git pull` での追従、ガード（実体が残っている / origin が別リポジトリ / 既存 post-merge フックあり / 再実行）を確認してある（2026-08-23、git 2.43.0）。
+実環境では次を確認する。
 
-```json
-"notes:setup": "bash scripts/setup-notes.sh",
-"notes:sync": "bash scripts/notes-sync.sh",
-```
+- [ ] `bash /var/www/notes-maronn-openid-connect/scripts/link-oss-repo.sh` を実行する
+- [ ] `readlink CLAUDE.md` が `.notes/CLAUDE.md` を返し、`cat CLAUDE.md` で notes 側の中身が読める
+- [ ] `git status --porcelain` に移送対象が現れない
+- [ ] `git -C .notes rev-parse HEAD` を控えてから `packages/core` で `git pull` を実行し、notes 側の HEAD も更新される
 
-- [ ] `scripts` の並びの先頭側（`sample:*` の直前）へ追加する
+## フェーズ2: メモ・設定・実装解説の移送と参照修復
 
-### タスク1-8: 公開ファイルの `CLAUDE.md` 参照を `README.md` へ差し替える
+### タスク2-1: 移送
 
-- [ ] `RELEASE.md:161` / `RELEASE.md:468`
-- [ ] `docs/implementation-guides/experimental/README.md:47`（日本語）と `:53`（英語）
-- [ ] `samples/README.md:3`
-- [ ] `samples/nextjs-vercel/scripts/deploy-vercel.sh:7`
-- [ ] `samples/hono-cloudflare/scripts/deploy-cloudflare.sh:7`
-- [ ] `scripts/lib/deploy-fly-node-sample.sh:10`
-- [ ] `packages/cli/src/frameworks/hono/templates.ts:6800` / `:10779`
-- [ ] `grep -rn 'CLAUDE\.md' --exclude-dir=node_modules --exclude-dir=tasks --exclude-dir=study-material --exclude-dir=.claude .` が 0 件になる
-
-### タスク1-9: 動作確認
-
-タスク1-5とタスク1-6のスクリプトは、notes 側と OSS 側の upstream を模したサンドボックスで動かし、symlink 経路・clone 経路・`--hook` の成功と失敗・post-merge の追従・ガード（`.notes` が実ディレクトリ、`CLAUDE.md` が実ファイル、`tasks/` が実ディレクトリのまま、notes 取得失敗、既存 post-merge フックあり、`.notes` 未設定）を確認してある（2026-08-23、git 2.43.0）。`NOTES_REPO_TOKEN` を設定した経路では、`.git/config` にも `.notes/.git/config` にもトークンが残らないことを確認した。
-実環境での確認は次の手順で行う。
-
-- [ ] `pnpm notes:setup` を実行する
-- [ ] `readlink .notes` が `/var/www/notes-maronn-openid-connect` を返す
-- [ ] `readlink CLAUDE.md` が `.notes/CLAUDE.md`、`readlink AGENTS.md` と `readlink GEMINI.md` が `CLAUDE.md` を返す
-- [ ] `head -1 CLAUDE.md` で notes リポジトリ側の中身が読める
-- [ ] `git status --porcelain` に `.notes` `CLAUDE.md` `AGENTS.md` `GEMINI.md` が現れない
-- [ ] `git check-ignore -v .notes CLAUDE.md AGENTS.md GEMINI.md` が 4 行返す
-- [ ] `git -C .notes rev-parse HEAD` を控えてから `git pull` を実行し、`.notes` 側の HEAD も更新される
-- [ ] `packages/core` などサブディレクトリで `git pull` を実行しても `.notes` が追従する
-- [ ] `git fetch` のあと `pnpm notes:sync` で `.notes` が追従する
-- [ ] `pnpm --filter @maronn-openid-connect/cli test` と `pnpm run test:supply-chain` が通る
-
-## フェーズ2: Claude Code on the Web からの `.notes` 取得
-
-クラウドセッションはコンテナ起動時に OSS実装リポジトリだけをクローンする。
-`.notes` は追跡対象外なので、セッション側で取得する必要がある。
-取得経路は 3 つあり、上から順に試す。
-
-| 経路 | 仕組み | 前提 |
-|---|---|---|
-| A: セッションの git 認証で clone | `scripts/setup-notes.sh` の clone 経路がそのまま通る | 接続した GitHub アカウントの認証がプロキシ経由で private リポジトリにも及ぶこと |
-| B: 環境変数のトークンで clone | `NOTES_REPO_TOKEN` を cloud environment の環境変数に置き、`http.extraheader` で認証する | notes リポジトリだけに read 権限を持つファイングレイン PAT を発行できること |
-| C: セッション内でリポジトリを追加してから clone | エージェントがリポジトリ追加を実行し、その後 `pnpm notes:setup` を呼ぶ | 毎セッションでエージェント操作が要る |
-
-経路Aが通るかは環境設定に依存するため、フェーズ2の最初に 1 セッションで試す。
-通らない場合は経路Bを既定にする。
-
-### タスク2-1: 経路Aの可否を確認する
-
-- [ ] notes リポジトリを private にした状態でクラウドセッションを開き、`git clone https://github.com/maronnjapan/notes-maronn-openid-connect /tmp/notes-probe` が成功するか確かめる
-- [ ] 成功したら経路Aを採用し、タスク2-2 は環境変数なしで進める
-
-### タスク2-2: 経路B（トークン）の設定
-
-- [ ] GitHub の Settings → Developer settings → Personal access tokens → Fine-grained tokens で、`notes-maronn-openid-connect` のみ・Contents: Read-only・有効期限つきのトークンを発行する
-- [ ] Claude Code の cloud environment 設定（環境変数）に `NOTES_REPO_TOKEN` として登録する
-- [ ] トークンをリポジトリのファイル・コミットメッセージ・PR 本文へ書かない
-- [ ] `scripts/setup-notes.sh` はコマンド単位の `-c http.extraheader` でトークンを渡し、`.git/config` へ残さない（実装済み）
-
-### タスク2-3: SessionStart フックを追加する
-
-`.claude/settings.json` の `SessionStart` に 2 つ目のフックを足す。
-既存の `npx -y gh-setup-hooks` は残す。
-
-```json
-{
-  "type": "command",
-  "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/setup-notes.sh\" --hook",
-  "timeout": 120
-}
-```
-
-- [ ] `--hook` は常に終了コード 0 で終わり、JSON 以外を標準出力へ出さない（実装済み）
-- [ ] 取得に失敗したときも、`README.md` を参照するよう促す JSON を返す
-- [ ] ローカルセッションでも同じフックが動くため、`NOTES_LOCAL_PATH` があれば symlink 経路になることを確認する
-
-### タスク2-4: 動作確認
-
-- [ ] クラウドセッションを開き、`.notes` が実クローンとして存在する
-- [ ] `cat CLAUDE.md` が notes 側の内容を返す
-- [ ] `git status --porcelain` に `.notes` が現れない
-- [ ] `pnpm notes:sync` でクラウド側の `.notes` も更新できる
-- [ ] notes を取得できない状態（トークン未設定など）でも、セッションが正常に開始し、フックのメッセージが `README.md` を案内する
-
-## フェーズ3: メモ類の移送と参照修復
-
-### タスク3-1: 移送
-
-notes リポジトリ側のディレクトリ名は、OSS実装リポジトリ側のリンク名に合わせる。
-`.claude/docs` だけは notes 側で `claude-docs` とし、`.claude` 配下のリンクから参照する。
-
-| 移送元 | 移送先 | リンク |
-|---|---|---|
-| `tasks/` | `.notes/tasks/` | `tasks -> .notes/tasks` |
-| `study-material/` | `.notes/study-material/` | `study-material -> .notes/study-material` |
-| `.review/` | `.notes/.review/` | `.review -> .notes/.review` |
-| `.claude/docs/` | `.notes/claude-docs/` | `.claude/docs -> ../.notes/claude-docs` |
-
-- [ ] `git mv` ではなく、notes リポジトリへコピーしてから OSS実装リポジトリ側で `git rm -r` する（履歴は notes 側で作り直す）
+- [ ] 「移す・残す・消すの一覧」の表に従って notes リポジトリへコピーし、notes 側でコミットする
+- [ ] OSS 側で `git rm -r` し、`.gitignore` の追加と同じコミットにまとめる
 - [ ] 本タスク文書も `tasks/` と一緒に移す（決定3）
-- [ ] `.gitignore` に `/tasks` `/study-material` `/.review` `/.claude/docs` を追加する
-- [ ] `pnpm notes:setup` を再実行し、4 つのリンクが張られることを確認する
+- [ ] `.codex` を削除する
+- [ ] `bash /var/www/notes-maronn-openid-connect/scripts/link-oss-repo.sh` を再実行し、12 本のリンクが張られることを確認する
+- [ ] `.claude` がリンク経由でも Claude Code から読めること（スキルとサブエージェントが認識されること）をローカルセッションで確認する
 
-### タスク3-2: 参照修復
+### タスク2-2: 参照修復
 
-移送で解決できなくなる参照を直す。
-パスを書かず、内容で説明する形へ寄せる（`tasks/p2-doc-path-reference-repair-and-link-check.md` の表記規約の議論と揃える）。
+パスを書かず、内容で説明する形へ寄せる。
 
-- [ ] `packages/cli/src/frameworks/hono/templates.ts` の 2 件。生成コードへ出力されるため、修正後に `samples/*` を再生成する
-- [ ] `packages/experimental/src/device-authorization-grant/verification.ts` の 2 件。`docs/implementation-guides/experimental/device-authorization-grant.{ja,en}.md` の掲載コードも同じ変更で直す
-- [ ] `packages/core/src/token-response.ts` の 1 件
-- [ ] `packages/cli/src/__tests__/hono-generator.test.ts` の 1 件
-- [ ] `tests/conformance/README.md` の 1 件
-- [ ] `.github/scripts/verify-ci-gate.mjs` の 1 件
-- [ ] `docs/implementation-guides/experimental/*.{ja,en}.md` の残り
-- [ ] `grep -rnE '(tasks|study-material)/[A-Za-z0-9._/-]+\.(md|yaml)' --exclude-dir=node_modules .` が 0 件になる
+- [ ] `RELEASE.md:161` / `:468` の `CLAUDE.md` 参照を `README.md` へ
+- [ ] `samples/README.md:3`、`samples/nextjs-vercel/scripts/deploy-vercel.sh:7`、`samples/hono-cloudflare/scripts/deploy-cloudflare.sh:7`、`scripts/lib/deploy-fly-node-sample.sh:10` の `CLAUDE.md` 参照を `README.md` へ
+- [ ] `packages/cli/src/frameworks/hono/templates.ts` の 4 件（`CLAUDE.md` 2 件、メモパス 2 件）。生成コードへ出るので、修正後に `samples/*` を再生成する
+- [ ] `packages/experimental/src/device-authorization-grant/verification.ts` の 2 件。掲載元の実装解説（notes 側へ移動済み）も同じ変更で直す
+- [ ] `packages/core/src/token-response.ts` の 1 件、`packages/cli/src/__tests__/hono-generator.test.ts` の 1 件、`tests/conformance/README.md` の 1 件、`.github/scripts/verify-ci-gate.mjs` の 1 件
+- [ ] `packages/experimental/README.md:72` の実装解説への参照。公開しない資料なので、参照ごと落とすか「実装解説は非公開の作業リポジトリにある」と書き換える
+- [ ] `grep -rnE '(tasks|study-material|docs/implementation-guides)/[A-Za-z0-9._/-]+' --exclude-dir=node_modules .` と `grep -rn 'CLAUDE\.md' --exclude-dir=node_modules .` が 0 件になる
 
-### タスク3-3: 動作確認
+### タスク2-3: 動作確認
 
 - [ ] `pnpm run build` と `pnpm run typecheck` が通る
 - [ ] `pnpm --filter "./packages/*" test` が通る
 - [ ] `pnpm run test:conformance` が通る（`samples/*` を再生成したため）
 
-## フェーズ4: 昇格レビューツールの削除
-
-決定2に従い、`tasks/experimental/*/promotion-review/` を生成する仕組みを畳む。
-パケット自体は `tasks/` と一緒に notes 側へ移るため、生成物が消えるわけではない。
+## フェーズ3: 昇格レビューツールの削除
 
 - [ ] `scripts/experimental-review/` を削除する
 - [ ] `package.json` から `review:experimental` と `test:experimental-review` を削除し、`test:ci` の連結からも外す
-- [ ] `docs/implementation-guides/experimental/README.md`（日英）と `package-overview.{ja,en}.md` の言及（計 6 箇所）を削除または書き換える
-- [ ] `.notes/CLAUDE.md` の「experimental 機能の昇格レビュー」節を削除する（タスク1-1 で先に消していれば確認だけ）
-- [ ] `pnpm run test:ci` が通る
-- [ ] `pnpm run test:ci-gate` が通る（`build` → `typecheck` → `test:ci` の順序は変えないため通るはず）
+- [ ] `docs/library-document` 側に昇格レビューへの言及が無いことを確認する（現状は無い）
+- [ ] notes 側へ移した実装解説（`package-overview.{ja,en}.md` と `README.md`、計 6 箇所）の言及を削除または書き換える
+- [ ] `pnpm run test:ci` と `pnpm run test:ci-gate` が通る
+
+## フェーズ4: クラウド実行からの notes 取得
+
+「クラウド実行の制約」に挙げた 4 点により、経路は次のように分かれる。
+
+| 用途 | 経路 |
+|---|---|
+| 共通ツールの導入（`gh` など） | 環境のセットアップスクリプト。キャッシュされるので毎回は走らない |
+| notes の取得とリンク | セッションごとに実行する。ルーティーンはプロンプト冒頭の手順として持つ |
+| notes への書き戻し | notes リポジトリを attach し、Contents API でコミットする。`git push` は通らない |
+
+### タスク4-1: 環境のセットアップスクリプトを整える
+
+現在 `.claude/settings.json` にある SessionStart フック（`npx -y gh-setup-hooks`）は、`.claude` の移送で公開リポジトリから消える。
+同じ役目を環境側へ移す。
+
+- [ ] cloud environment（ルーティーンが使う `env_01PiSbws3dCeheBW4X8733eC`）のセットアップスクリプトに `npx -y gh-setup-hooks || true` を入れる
+- [ ] セットアップスクリプトで notes を clone しない（キャッシュされて古い内容が固定されるため）
+- [ ] 資格情報を環境変数へ置かない（専用のシークレットストアが無く、環境を使う人が全員読める）
+
+### タスク4-2: セッションごとのブートストラップ手順を決める
+
+次の 4 手をルーティーンのプロンプト（フェーズ5）と、手動セッション用の手順書（notes 側）に載せる。
+
+1. notes リポジトリをセッションに追加する（`add_repo`。private なので GitHub App の許可が要る）
+2. `git clone https://github.com/maronnjapan/notes-maronn-openid-connect /opt/notes`
+3. `bash /opt/notes/scripts/link-oss-repo.sh <OSS リポジトリのパス>`
+4. `.notes/CLAUDE.md` を読む。公開側の規約は OSS リポジトリの `README.md`
+
+- [ ] 手順書を notes リポジトリの `docs/cloud-session-bootstrap.md`（仮）に置く
+- [ ] スキルはリンク作成が Claude Code の起動後になるため、スキルとして自動認識されない場合がある。その場合は `.notes/claude/skills/<name>/SKILL.md` を直接読んで従う旨を手順書に明記する
+
+### タスク4-3: 取得と書き戻しの経路を実地確認する
+
+紙の上では通るが、GitHub App の許可状況とツールの可否に依存する。
+移送後にクラウドセッションを 1 つ開いて確かめる。
+
+- [ ] private の notes リポジトリを `add_repo` でセッションに追加できる
+- [ ] 追加後に `git clone` が成功する
+- [ ] `link-oss-repo.sh` が通り、`cat CLAUDE.md` で notes の内容が読める
+- [ ] Contents API（`gh api` または GitHub MCP の `create_or_update_file`）で notes リポジトリへ 1 ファイルコミットできる
+- [ ] `git push` で notes へ push しようとすると拒否されることを確認する（push protection の確認。拒否が正しい挙動）
+
+いずれかが通らない場合の代替を決めておく。
+
+- 取得が通らない → ルーティーンはメモを必要とする作業を行わず、その旨を報告して終了する
+- 書き戻しが通らない → ルーティーンは成果物をセッションの出力として残し、人間がローカルで notes へコミットする
+
+## フェーズ5: ルーティーンの修正
+
+対象は 2 件。
+どちらも移送が完了してから更新する（先に更新すると、まだ存在しないパスを参照して失敗する）。
+
+### 共通: プロンプト冒頭に足すブロック
+
+```markdown
+## 作業メモの取得（最初に必ず実行する）
+
+このリポジトリの作業メモ（CLAUDE.md / tasks / study-material / レビュー資料 / 実装解説 / skills）は
+非公開の notes リポジトリ `maronnjapan/notes-maronn-openid-connect` にある。
+OSS リポジトリを用意したら、次を実行してから作業を始める。
+
+1. notes リポジトリをこのセッションに追加する（add_repo）
+2. `git clone https://github.com/maronnjapan/notes-maronn-openid-connect /opt/notes`
+3. `bash /opt/notes/scripts/link-oss-repo.sh <OSS リポジトリのパス>`
+4. `.notes/CLAUDE.md` を読む。公開側の規約は OSS リポジトリの README.md
+
+取得できなかった場合は、メモを必要とする作業（tasks の選定、study-material の作成、
+実装解説の作成）を行わず、取得できなかったことを報告して終了する。
+
+## メモの書き戻し
+
+notes リポジトリへは `git push` できない（クラウドセッションの GitHub プロキシは、
+セッションの作業ブランチ以外への push を拒否する）。
+notes 側のファイルを追加・更新するときは GitHub の Contents API を使う
+（`gh api` または GitHub MCP の create_or_update_file / push_files）。
+コミット先は notes リポジトリの main で、PR は作らない。
+OSS リポジトリのコード変更は従来どおりブランチと PR で行う。
+```
+
+### `trig_016iJPrzys767Mh4RKXxZZfv`（リポジトリのコードレビューとタスク実装）
+
+| 現在の記述 | 変更後 |
+|---|---|
+| 「CLAUDE.mdの規約に必ず従う」 | 「OSS リポジトリの `README.md` と `.notes/CLAUDE.md` の規約に必ず従う」 |
+| Part 1「`study-material` 配下にファイルとして作成」 | 読むのは `study-material/`（notes へのリンク）、保存は notes リポジトリへ Contents API でコミット |
+| Part 1「study-material と tasks の変更をブランチにコミットし、プルリクエストを作成してマージ」 | notes リポジトリの main へ Contents API で直接コミットする。PR は作らない |
+| Part 2「tasks/ から優先度最高のファイルを1つ選ぶ」 | 参照先は変えない（リンク経由で読める）。ただしタスクファイルの `tasks/done/` への移動は notes リポジトリ側への操作になる |
+| Part 2「Part 1 の PR をマージし、main を最新化してから開始」 | Part 1 は PR を作らないので、この前提を削る |
+| Part 3「`docs/implementation-guides/` 配下に解説を作成」 | `.notes/implementation-guides/` 配下に作成し、notes リポジトリへコミットする |
+| Part 3「`japanese-tech-writing` スキル（リポジトリの `.claude/skills/` にある）」 | 「`.notes/claude/skills/japanese-tech-writing/`。スキルとして認識されない場合は `SKILL.md` を直接読んで従う」 |
+| 終了時報告 | notes へのコミットと OSS の PR を分けて報告させる |
+
+- [ ] 上記を反映したプロンプトへ `update_trigger` で差し替える
+
+### `trig_01GjuLdeCrwEQVLisnKh1QXU`（Experimental機能 仕様策定・レビュー・実装）
+
+| 現在の記述 | 変更後 |
+|---|---|
+| 「CLAUDE.mdの規約（「ドキュメント作成の規約」を含む）」 | 「`README.md` と `.notes/CLAUDE.md` の規約」 |
+| Phase 1「変更は `tasks/experimental/` 配下の仕様関連ファイルのみ」 | 参照は同じ。保存先は notes リポジトリの `tasks/experimental/` |
+| Phase 1 の締め「仕様関連ファイルをブランチにコミットし、PR を作成してマージ」 | notes リポジトリの main へ Contents API でコミットする。PR は作らない |
+| Phase 2「Phase 1 の PR をマージし、main を最新化してから開始」 | Phase 1 は PR を作らないので、この前提を削る |
+| 開始時の確認にある `docs/implementation-guides/experimental/` | `.notes/implementation-guides/experimental/` |
+| ドキュメント「`docs/implementation-guides/experimental/` に日英の実装解説を作成」 | `.notes/implementation-guides/experimental/` に作成し、notes リポジトリへコミットする |
+| 「機械照合可能な diff は昇格レビューパケット（`pnpm review:experimental` の生成物）が保持する」 | 昇格レビューツールは削除済み。この一文と、パケット再生成の指示（「昇格レビューパケットの再生成が必要な場合は同じコミットに含める」）を削る |
+| 「`japanese-tech-writing` スキル（リポジトリの `.claude/skills/` にある）」 | 「`.notes/claude/skills/japanese-tech-writing/`。認識されない場合は `SKILL.md` を直接読む」 |
+| state.yaml の更新とタスク移動（`tasks/experimental/done/`） | notes リポジトリ側への操作として明記する |
+
+- [ ] 上記を反映したプロンプトへ `update_trigger` で差し替える
+
+### タスク5-1: 修正後の確認
+
+- [ ] 各ルーティーンを 1 回手動実行し、notes の取得とリンクまで到達することを確認する
+- [ ] メモの書き戻し（Contents API でのコミット）が成功することを確認する
+- [ ] OSS 側の PR が従来どおり作られることを確認する
+- [ ] `trig_01SXA2TNgjZWWvagYqAdJSWa`（週次のパッケージ追従）は変更しない
 
 ## 完了条件
 
-- 以後のコミットと main の公開ツリーに `.notes` `CLAUDE.md` `AGENTS.md` `GEMINI.md` `tasks/` `study-material/` `.review/` `.claude/docs/` が含まれない
+- 公開ツリーに残るのが「移す・残す・消すの一覧」の「残すもの」だけになっている
 - 公開リポジトリのルートに `README.md` があり、開発規約が読める
-- `pnpm notes:setup` の実行だけで、ローカルでは symlink、クラウドでは clone として `.notes` が用意される
-- クラウドセッションの開始時に `.notes` が取得され、取得できない場合も `README.md` を案内して正常に開始する
-- `git pull` を実行すると、サブディレクトリからでも `.notes` が追従する
-- 公開ファイルに `CLAUDE.md` `tasks/` `study-material/` への解決できない参照が残っていない
+- `bash <notes>/scripts/link-oss-repo.sh` の実行だけで、ローカルの OSS チェックアウトが従来どおり使える
+- `git pull` を実行すると、サブディレクトリからでも notes が追従する
+- 公開ファイルに `CLAUDE.md` / `tasks/` / `study-material/` / `docs/implementation-guides/` への解決できない参照が残っていない
+- クラウドセッションから notes を取得でき、書き戻し経路が確認できている
+- ルーティーン 2 件が新しい構成で完走する
 - `pnpm run test:ci` と `pnpm run test:e2e` が緑
 
-過去の履歴に残る `CLAUDE.md` は削除しない。
-`git rm --cached` が消すのは tip のツリーだけであり、履歴から消すには 218 コミットを書き換えて force push する必要がある。
+過去の履歴に残る `CLAUDE.md` やメモ類は削除しない。
+`git rm` が消すのは以後のツリーだけであり、履歴から消すには 218 コミットを書き換えて force push する必要がある。
 それは 10 件以上の open PR のブランチを無効化する。
-`CLAUDE.md` の中身は開発規約であって資格情報ではなく、フェーズ1で公開部分は `README.md` へ移るため、履歴書き換えの費用に見合わない。
 
-`tasks/` と `study-material/` も同様に、過去の履歴には残る。
-公開したくない記述が含まれている場合は、移送前に該当箇所を洗い出す必要がある。
-
-- [ ] 移送対象のメモに、公開したくない記述（資格情報、他者の非公開情報）が含まれていないかを確認する。含まれる場合は履歴書き換えの要否を別途判断する
+- [ ] 移送対象に、公開したままにできない記述（資格情報、他者の非公開情報）が含まれていないかを確認する。含まれる場合は履歴書き換えの要否を別途判断する
 
 ## スコープ外
 
-- notes リポジトリへの push 自動化
-- notes リポジトリと OSS実装リポジトリ間の自動マージとコンフリクト解決
 - 履歴からの削除（「完了条件」に理由を記載）
-- `git fetch` 単体をシェル側で追従させる設定。次のシェル関数を各自の `~/.bashrc` や `~/.zshrc` に置けば実現できるが、リポジトリにコミットできる設定ではないため notes リポジトリ側の手順書で扱う
+- notes リポジトリと OSS実装リポジトリ間の自動マージとコンフリクト解決
+- `git fetch` 単体をシェル側で追従させる設定。次のシェル関数を各自の `~/.bashrc` や `~/.zshrc` に置けば実現できるが、リポジトリにコミットできる設定ではないため notes 側の手順書で扱う
 
   ```bash
   git() {
@@ -632,28 +591,25 @@ notes リポジトリ側のディレクトリ名は、OSS実装リポジトリ�
       fetch|pull)
         local root
         root="$(command git rev-parse --show-toplevel 2>/dev/null)" || return 0
-        [ -e "${root}/.notes/.git" ] && command git -C "${root}/.notes" "$1"
+        [ -e "${root}/.notes/scripts/pull.sh" ] && "${root}/.notes/scripts/pull.sh"
         ;;
     esac
   }
   ```
 
-- `.claude/settings.json` の Windows 依存の通知フックと、`.mcp.json` のローカルパス。公開されているが秘匿情報ではない。分離するなら `.claude/settings.local.json` への移動を含めて別タスクで扱う
+- 他 5 件のルーティーン（AIポートフォリオ 3 件、クイズ作成、トークンリミット調整、週次のパッケージ追従）。対象リポジトリが違うため影響しない
 
 ## 元の指示書からの変更点
 
 | 元の記述 | 変更内容 | 理由 |
 |---|---|---|
-| notes リポジトリは非公開という前提 | private 化と初期 push をフェーズ0として明示 | 実際には public かつコミットが 1 つも無い |
-| `.gitignore` に `.notes/` | `/.notes` へ変更 | 末尾スラッシュ付きパターンはシンボリックリンクにマッチしない |
-| `.gitignore` に `CLAUDE.md` | `/CLAUDE.md` `/AGENTS.md` `/GEMINI.md` へ拡張 | `AGENTS.md` と `GEMINI.md` は `CLAUDE.md` を指す追跡済みリンクで、放置すると公開ツリーで壊れる |
-| タスク2「該当する場合のみ」 | 必須手順に変更 | `CLAUDE.md` は追跡済み |
-| `git config alias.fetch` / `alias.pull` | post-merge フックと `pnpm notes:sync` に置き換え | git は組み込みコマンドを隠すエイリアスを無視する |
-| `ln -sfn` を無条件実行 | `.notes` が実ディレクトリのとき停止する判定を追加 | 実ディレクトリ宛てだと、その中にリンクを作って成功扱いになる |
-| `CLAUDE.md` を `ln -sf` で無条件上書き | 実ファイルが残っているとき停止する判定を追加 | 退避前に実行すると実体を消す |
-| スクリプトを素の `echo` で構成 | `scripts/lib/guide.sh` の出力ヘルパーを使用 | 既存スクリプトの規約に合わせる |
-| 起動手段が `bash scripts/setup-notes.sh` | `pnpm notes:setup` / `pnpm notes:sync` を追加 | ルート `package.json` の `sample:*` / `deploy:*` と同じ入口に揃える |
-| 対象は `CLAUDE.md` のみ | `README.md` 切り出し、メモ類 4 種の移送、昇格レビューツール削除を追加 | 依頼者の決定1・2・3 |
-| クラウド実行は対象外 | フェーズ2として取り込み、取得経路を 3 つ用意 | 依頼者の決定4 |
-| 参照修復の記載なし | `CLAUDE.md` 参照 10 件とメモパス参照 44 件の修復をタスク化 | 移送すると公開ツリーから解決できなくなる |
-| 受け入れ基準「コミット履歴に一切含まれていない」 | 「以後のコミットと main の公開ツリーに含まれない」へ変更 | 履歴書き換えは 218 コミットの force push と open PR の無効化を伴う |
+| notes リポジトリは非公開という前提 | private 化と初期 push、GitHub App のアクセス付与をフェーズ0として明示 | 実際には public かつコミットが 1 つも無い |
+| 対象は `.notes/` と `CLAUDE.md` | 文書・設定系 10 種の移送、`README.md` 切り出し、昇格レビューツール削除、ルーティーン修正まで拡張 | 依頼者の決定1〜6 |
+| `.gitignore` に `.notes/` | `/.notes` ほか 12 行に変更 | 末尾スラッシュ付きパターンはシンボリックリンクにマッチしない。`AGENTS.md` と `GEMINI.md` は追跡済みリンクで、放置すると公開ツリーで壊れる |
+| `git config alias.fetch` / `alias.pull` | post-merge フックと notes 側の `pull.sh` に置き換え | git は組み込みコマンドを隠すエイリアスを無視する |
+| セットアップスクリプトを OSS 側の `scripts/setup-notes.sh` に置く | notes 側の `scripts/link-oss-repo.sh` に置く | 決定5。OSS 側に実装以外のファイルを増やさない |
+| `ln -sfn` を無条件実行 | 実体が残っているときは報告して続行し、最後に非ゼロで終わる | 実ディレクトリ宛てだと、その中にリンクを作って成功扱いになる |
+| クラウド実行は対象外 | フェーズ4として取り込み、セットアップスクリプトのキャッシュ・push protection・API のリポジトリスコープ・秘密の置き場所の制約に合わせて経路を分けた | 依頼者の決定4 |
+| 参照修復の記載なし | 公開側に残る 17 件の修復をタスク化 | 移送すると公開ツリーから解決できなくなる |
+| ルーティーンの記載なし | 対象 2 件の書き換え表を追加 | 依頼者の指示。移送後は参照先と書き戻し先が変わる |
+| 受け入れ基準「コミット履歴に一切含まれていない」 | 「以後のツリーに含まれない」へ変更 | 履歴書き換えは 218 コミットの force push と open PR の無効化を伴う |

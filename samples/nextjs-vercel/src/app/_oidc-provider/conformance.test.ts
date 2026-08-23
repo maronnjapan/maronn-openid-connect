@@ -3,7 +3,7 @@ import type { SigningKeyProvider, SigningKey } from '@maronn-openid-connect/core
 import { exportPublicJwk } from '@maronn-openid-connect/core';
 import { createApp, validateSigningKeySet } from './app';
 import { createInMemoryClientResolver, type RegisteredClient } from './config';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, parseSessionId, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store';
 import { consentResolver } from './resolvers';
 import { defaultViews } from './views';
 import { renderView } from './views';
@@ -78,8 +78,9 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
 }
 
 const testClients = new Map<string, RegisteredClient>([
-  // offlineAccessAllowed + refresh_token grant so the reuse-cascade tests can drive
-  // the full code/refresh flow and observe revocation across the grant.
+  // RFC 7591 §2: registering the refresh_token grant is what makes this client
+  // eligible for refresh tokens at all, so the reuse-cascade tests can drive the
+  // full code/refresh flow and observe revocation across the grant.
   ['c-conf', {
     clientId: 'c-conf',
     clientSecret: 's',
@@ -88,7 +89,6 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'client_secret_post',
-    offlineAccessAllowed: true,
   }],
   ['c-public', {
     clientId: 'c-public',
@@ -97,7 +97,6 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'none',
-    offlineAccessAllowed: true,
   }],
   // A confidential client registered for client_secret_basic so the conformance
   // suite can drive Authorization: Basic authentication (RFC 6749 §2.3.1).
@@ -109,7 +108,18 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'client_secret_basic',
-    offlineAccessAllowed: true,
+  }],
+  // RFC 7591 §2 の既定（grant_types = ["authorization_code"]）そのままのクライアント。
+  // Refresh Token を一切受け取れないこと、offline_access が付与 scope から落ちることを
+  // 契約として固定するために置く。
+  ['c-conf-no-refresh', {
+    clientId: 'c-conf-no-refresh',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
   }],
   // EXPERIMENTAL (RFC 8628): a client registered for the device grant, plus a
   // second one so the contract test can prove a device_code is refused when it is
@@ -122,7 +132,6 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'client_secret_post',
-    offlineAccessAllowed: true,
   }],
   ['c-device-other', {
     clientId: 'c-device-other',
@@ -1805,6 +1814,296 @@ describe('generated provider HTTP conformance', () => {
       expect(location.searchParams.get('state')).toBe('req-uri');
     });
   });
+
+  // OIDC Core 1.0 §11 は offline_access を「End-User が居ない（not logged in）ときにも
+  // 使える Refresh Token を要求する scope」と定義し、Refresh Token の利用がその用途に
+  // 限られないことも明示している（"The use of Refresh Tokens is not exclusive to the
+  // offline_access use case. The Authorization Server MAY grant Refresh Tokens in other
+  // contexts that are beyond the scope of this specification."）。
+  //
+  // この生成 OP はその other contexts を online refresh token として実装する。何が
+  // 発行されるかは次の 2 つで決まる。
+  //
+  // | grant_types に refresh_token | offline_access の付与 | 発行される Refresh Token |
+  // |---|---|---|
+  // | 無し | -    | 発行しない（使えない長期資格情報を配らない）|
+  // | 有り | 無し | online: ログインセッションに束縛。セッションが終われば invalid_grant |
+  // | 有り | 有り | offline: セッション非依存。ログアウト後も使える |
+  describe('Online and offline refresh tokens (OIDC Core 1.0 §11)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return /name="csrf_token" value="([^"]+)"/.exec(html)?.[1] ?? '';
+    }
+
+    // 各テストが自分だけのストアを持つ provider を作る。ブラウザセッションを直接消せる
+    // ので、「ログアウトしたら online refresh token が止まる」を実フロー越しに固定できる。
+    function createIsolatedProvider() {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const stores = createJsonProviderStores(backend);
+      const provider = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: stores,
+      });
+      return { provider, stores };
+    }
+
+    // authorize -> login -> consent を実際に往復し、認可コードと、そのログインで確立した
+    // セッション id を返す。sessionId はログアウトを再現するために使う。
+    async function authorize(
+      provider: ReturnType<typeof createApp>,
+      options: { clientId: string; scope: string; prompt?: string },
+    ): Promise<{ code: string; sessionId: string }> {
+      const authorizeUrl =
+        '/authorize?response_type=code&client_id=' + options.clientId +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(options.scope) +
+        '&state=online-rt' +
+        (options.prompt === undefined ? '' : '&prompt=' + options.prompt) +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+
+      const authorizeRes = await provider.request(authorizeUrl);
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would
+      // (the per-transaction binding secret when that feature is enabled).
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await provider.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await provider.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      // /login sets exactly one cookie: the browser (OP) session. Its value is the
+      // session an online refresh token gets bound to.
+      const sessionId = parseSessionId(loginRes.headers.get('Set-Cookie')) ?? '';
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await provider.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await provider.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+
+      return { code: callback.searchParams.get('code') ?? '', sessionId };
+    }
+
+    async function exchangeCode(
+      provider: ReturnType<typeof createApp>,
+      clientId: string,
+      code: string,
+    ): Promise<Response> {
+      return provider.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: PKCE_VERIFIER,
+          client_id: clientId,
+          client_secret: 's',
+        }).toString(),
+      });
+    }
+
+    async function refresh(
+      provider: ReturnType<typeof createApp>,
+      clientId: string,
+      refreshToken: string,
+    ): Promise<Response> {
+      return provider.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: clientId,
+          client_secret: 's',
+        }).toString(),
+      });
+    }
+
+    it('should issue a refresh token without offline_access when the client registers the refresh_token grant', async () => {
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+
+      const res = await exchangeCode(provider, 'c-conf', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(typeof body.refresh_token).toBe('string');
+      // offline_access は要求していないので付与 scope にも入らない。
+      expect(body.scope).toBe('openid');
+    });
+
+    it('should keep the online refresh token usable while the login session is alive', async () => {
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      const res = await refresh(provider, 'c-conf', issued.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid');
+    });
+
+    it('should reject the online refresh token after the login session ended', async () => {
+      const { provider, stores } = createIsolatedProvider();
+      const { code, sessionId } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      // ログアウト相当: ブラウザ (OP) セッションを終了させる。
+      await stores.browserSessionStore.delete(sessionId);
+
+      const res = await refresh(provider, 'c-conf', issued.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+    });
+
+    it('should keep the online refresh token bound to the session across rotation', async () => {
+      const { provider, stores } = createIsolatedProvider();
+      const { code, sessionId } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      // 1 回ローテーションしても束縛は外れない（外れると 1 リフレッシュで offline 化する）。
+      const rotated = await (await refresh(provider, 'c-conf', issued.refresh_token as string)).json();
+      await stores.browserSessionStore.delete(sessionId);
+
+      const res = await refresh(provider, 'c-conf', rotated.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+    });
+
+    it('should keep the offline refresh token usable after the login session ended', async () => {
+      const { provider, stores } = createIsolatedProvider();
+      // OIDC Core 1.0 §11: offline_access needs prompt=consent.
+      const { code, sessionId } = await authorize(provider, {
+        clientId: 'c-conf',
+        scope: 'openid offline_access',
+        prompt: 'consent',
+      });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      await stores.browserSessionStore.delete(sessionId);
+
+      const res = await refresh(provider, 'c-conf', issued.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid offline_access');
+    });
+
+    it('should not issue a refresh token to a client that does not register the refresh_token grant', async () => {
+      // RFC 7591 §2: grant_types の既定は ["authorization_code"]。発行しても
+      // unauthorized_client で拒否されるだけの Refresh Token は配らない。
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, { clientId: 'c-conf-no-refresh', scope: 'openid' });
+
+      const res = await exchangeCode(provider, 'c-conf-no-refresh', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.refresh_token).toBe(undefined);
+    });
+
+    it('should drop offline_access for a client that does not register the refresh_token grant', async () => {
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, {
+        clientId: 'c-conf-no-refresh',
+        scope: 'openid offline_access',
+        prompt: 'consent',
+      });
+
+      const res = await exchangeCode(provider, 'c-conf-no-refresh', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid');
+      expect(body.refresh_token).toBe(undefined);
+    });
+
+    it('should issue only offline refresh tokens when onlineRefreshTokenEnabled is false', async () => {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const provider = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: createJsonProviderStores(backend),
+        config: { onlineRefreshTokenEnabled: false },
+      });
+
+      const online = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const onlineBody = await (await exchangeCode(provider, 'c-conf', online.code)).json();
+      expect(onlineBody.refresh_token).toBe(undefined);
+
+      const offline = await authorize(provider, {
+        clientId: 'c-conf',
+        scope: 'openid offline_access',
+        prompt: 'consent',
+      });
+      const offlineBody = await (await exchangeCode(provider, 'c-conf', offline.code)).json();
+      expect(typeof offlineBody.refresh_token).toBe('string');
+    });
+  });
+
 
   describe('Token Revocation Endpoint (RFC 7009)', () => {
     it('should reject a non-form revocation request before parsing the body', async () => {

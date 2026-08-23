@@ -25,6 +25,7 @@ import {
   validateRefreshTokenClient,
   validateRefreshTokenExpiration,
   validateRefreshTokenIdleTimeout,
+  validateRefreshTokenSession,
   validateRefreshTokenScope,
   validateRefreshTokenUnused,
   verifyAuthorizationCodePkce,
@@ -32,6 +33,8 @@ import {
   TokenErrorCode,
 } from './token-request.js';
 import type {
+  AuthenticationSessionInfo,
+  AuthenticationSessionResolver,
   AuthorizationCodeInfo,
   AuthorizationCodeResolver,
   RefreshTokenInfo,
@@ -453,7 +456,22 @@ describe('buildValidatedAuthorizationCodeRequest', () => {
       audience: ['https://api.example.org'],
       acrValues: 'urn:example:loa:2',
       claims: { id_token: { acr: { essential: true } } },
+      sessionId: undefined,
       codeVerified: true,
+    });
+  });
+
+  it('should carry the authorization sessionId so the token endpoint can bind an online refresh token', () => {
+    const result = buildValidatedAuthorizationCodeRequest(
+      'authorization-code',
+      { ...defaultAuthorizationCode, sessionId: 'session-abc' },
+      'client123',
+      true
+    );
+
+    expect(result).toMatchObject({
+      grantType: 'authorization_code',
+      sessionId: 'session-abc',
     });
   });
 });
@@ -600,6 +618,105 @@ describe('validateRefreshTokenScope', () => {
   });
 });
 
+// OIDC Core 1.0 §11: offline_access は「End-User が居なくても（not logged in）」使える
+// Refresh Token を要求する scope。§11 末尾が明示するとおり Refresh Token の利用は
+// offline_access 専用ではなく、AS は他の文脈でも発行してよい（MAY grant Refresh Tokens
+// in other contexts）。本実装はその「他の文脈」を online refresh token として扱い、
+// 発行元の認証セッションへ束縛する。セッションが終われば RT も使えなくなる。
+describe('validateRefreshTokenSession', () => {
+  // offline_access なし = online refresh token。sessionId で認証セッションへ束縛する。
+  const onlineRefreshToken: RefreshTokenInfo = {
+    ...defaultRefreshToken,
+    scope: ['openid', 'profile'],
+    sessionId: 'session-abc',
+  };
+
+  // offline_access あり = offline refresh token。sessionId を持たない。
+  const offlineRefreshToken: RefreshTokenInfo = {
+    ...defaultRefreshToken,
+    sessionId: undefined,
+  };
+
+  function createSessionResolver(
+    sessions: Record<string, AuthenticationSessionInfo>,
+  ): AuthenticationSessionResolver {
+    return {
+      findSession: async (sessionId: string) => sessions[sessionId] ?? null,
+    };
+  }
+
+  it('should accept an offline refresh token without consulting the session resolver', async () => {
+    let lookups = 0;
+    const resolver: AuthenticationSessionResolver = {
+      findSession: async () => {
+        lookups += 1;
+        return null;
+      },
+    };
+
+    await validateRefreshTokenSession(offlineRefreshToken, resolver);
+
+    expect(lookups).toBe(0);
+  });
+
+  it('should accept an offline refresh token when no session resolver is configured', async () => {
+    const error = await validateRefreshTokenSession(offlineRefreshToken, undefined)
+      .then(() => undefined)
+      .catch((e: unknown) => e);
+
+    expect(error).toBe(undefined);
+  });
+
+  it('should accept an online refresh token while its authentication session is alive', async () => {
+    const resolver = createSessionResolver({
+      'session-abc': { subject: 'subject-123', authTime: 1_699_999_000 },
+    });
+
+    const error = await validateRefreshTokenSession(onlineRefreshToken, resolver)
+      .then(() => undefined)
+      .catch((e: unknown) => e);
+
+    expect(error).toBe(undefined);
+  });
+
+  it('should reject an online refresh token after its authentication session ended', async () => {
+    const resolver = createSessionResolver({});
+
+    const error = await validateRefreshTokenSession(onlineRefreshToken, resolver)
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      error: TokenErrorCode.InvalidGrant,
+      errorDescription: 'The authentication session bound to this refresh token has ended',
+    });
+  });
+
+  it('should reject an online refresh token when the session now belongs to another subject', async () => {
+    const resolver = createSessionResolver({
+      'session-abc': { subject: 'other-subject', authTime: 1_699_999_000 },
+    });
+
+    const error = await validateRefreshTokenSession(onlineRefreshToken, resolver)
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      error: TokenErrorCode.InvalidGrant,
+      errorDescription: 'The authentication session bound to this refresh token belongs to another subject',
+    });
+  });
+
+  it('should reject an online refresh token when no session resolver is configured', async () => {
+    // fail-closed: セッションを確認できないなら、束縛が生きている保証が無い。
+    const error = await validateRefreshTokenSession(onlineRefreshToken, undefined)
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      error: TokenErrorCode.InvalidGrant,
+      errorDescription: 'Authentication session resolver not provided',
+    });
+  });
+});
+
 describe('buildValidatedRefreshTokenRequest', () => {
   it('should build the validated refresh token request from step results', () => {
     const result = buildValidatedRefreshTokenRequest(
@@ -622,6 +739,21 @@ describe('buildValidatedRefreshTokenRequest', () => {
       azp: 'client123',
       originalIssuedAt: 1_699_000_000,
       hadOfflineAccess: true,
+      sessionId: undefined,
+    });
+  });
+
+  it('should carry the bound sessionId so rotation keeps the online refresh token session-bound', () => {
+    const result = buildValidatedRefreshTokenRequest(
+      { ...defaultRefreshToken, scope: ['openid'], sessionId: 'session-abc' },
+      'client123',
+      ['openid']
+    );
+
+    expect(result).toMatchObject({
+      grantType: 'refresh_token',
+      sessionId: 'session-abc',
+      hadOfflineAccess: false,
     });
   });
 });

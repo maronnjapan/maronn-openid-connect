@@ -2,14 +2,24 @@
 
 ## ステータス
 
-🟠 Major（仕様準拠・利用者体験・設定事故）/ **一部タスク化済み**
+🟢 解決済み / 方針 A（+ 方針 B のシグネチャ拡張）を採用
 
-- 方針 C（発行直前の安全網。使えない RT を配らない）
-  → `tasks/p1-refresh-token-issuance-requires-refresh-grant-registration.md`
-- 方針 A（`offlineAccessAllowed` を廃止し標準 `grant_types` へ一本化）は
-  **設計判断が未決のため未タスク化**。§7 の「最初の分岐」（独自フラグを独立軸として残すか）を
-  人間が決めてから着手する
-- 方針 B / D も同上（未タスク化）
+§7 の「最初の分岐」（独自フラグを独立軸として残すか）は、**残さない**と決着した。
+判断の根拠は、独立軸として意味を持つ唯一のケース「refresh_token grant は許すが offline access は許さない」を、
+独自フラグではなく **online refresh token** として実装したことにある。
+online refresh token は `offline_access` を伴わない付与で発行され、発行元のログインセッションに束縛される。
+セッションが終われば使えないので、「セッションを超えるアクセスは許さない」という区別は
+`offline_access` の付与の有無だけで表現できる。
+
+採用した内容:
+
+- `ClientInfo` に `grantTypes` を追加し、`OfflineAccessGrantedCallback` の context に `client` を渡す（方針 B のシグネチャ拡張）
+- `defaultIsOfflineAccessGranted` を「`prompt=consent` かつ `grant_types` に `refresh_token` を含む」に変更
+- 生成コードから `offlineAccessAllowed` と重複フィルタを削除（方針 A）
+- 事故 A（使えない RT を発行する）はトークンエンドポイントの発行判定でも塞いだ
+
+移行の告知は破壊的変更として changeset に記載した。実装は
+`tasks/done/p1-refresh-token-issuance-requires-refresh-grant-registration.md` を参照。
 
 ## 1. このトピックで確認したいこと
 

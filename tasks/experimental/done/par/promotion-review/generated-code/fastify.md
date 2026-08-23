@@ -21,7 +21,7 @@
 
 ````diff
 diff --git a/default-op/app.ts b/with-par/app.ts
-index b3c93a8..a4ccade 100644
+index 430b0f1..4406c4a 100644
 --- a/default-op/app.ts
 +++ b/with-par/app.ts
 @@ -4,6 +4,7 @@ import { tokenApp } from './routes/token.js';
@@ -48,7 +48,7 @@ index b3c93a8..a4ccade 100644
    app.use('/.well-known/openid-configuration', publicCors);
    app.use('/.well-known/jwks.json', publicCors);
  
-@@ -156,6 +159,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
+@@ -157,6 +160,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
      c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
      c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
      c.set('revocationResolvers', storeResolvers.revocationResolvers);
@@ -56,7 +56,7 @@ index b3c93a8..a4ccade 100644
  
      if (options.acrResolver) {
        c.set('acrResolver', options.acrResolver);
-@@ -176,6 +180,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
+@@ -177,6 +181,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
    app.route('/userinfo', userinfoApp);
    app.route('/introspect', introspectionApp);
    app.route('/revoke', revocationApp);
@@ -77,7 +77,7 @@ index 38e8944..8480898 100644
    app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
    app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
 diff --git a/default-op/conformance.test.ts b/with-par/conformance.test.ts
-index d568e91..648804a 100644
+index 75a5580..0109c65 100644
 --- a/default-op/conformance.test.ts
 +++ b/with-par/conformance.test.ts
 @@ -7,6 +7,8 @@ import { accessTokenStore, authSessionStore, consentStore, createJsonProviderSto
@@ -89,7 +89,7 @@ index d568e91..648804a 100644
  import { writeWebResponse } from './node-adapter.js';
  
  
-@@ -2159,6 +2161,416 @@ describe('generated provider HTTP conformance', () => {
+@@ -2459,6 +2461,416 @@ describe('generated provider HTTP conformance', () => {
    });
  
  
@@ -507,7 +507,7 @@ index d568e91..648804a 100644
    // endpoint, no metadata, and the URN stays an unsupported grant. These pin the
    // default-off contract so enabling the feature by accident is visible.
 diff --git a/default-op/routes/authorize.ts b/with-par/routes/authorize.ts
-index 58a3620..5f19a92 100644
+index 19ebc73..16ee534 100644
 --- a/default-op/routes/authorize.ts
 +++ b/with-par/routes/authorize.ts
 @@ -37,6 +37,13 @@ import {
@@ -557,7 +557,7 @@ index 58a3620..5f19a92 100644
      const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
      const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
      const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
-@@ -495,6 +524,35 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -501,6 +530,35 @@ const handleAuthorizationRequest = async (c: any) => {
      loginUrl.searchParams.set('transaction_id', transactionId);
      return c.redirect(loginUrl.toString());
    } catch (error) {
@@ -781,7 +781,7 @@ index 0000000..ff30e44
 +  }
 +});
 diff --git a/default-op/store.ts b/with-par/store.ts
-index dbe5fc3..da06be0 100644
+index e530896..ef42ec2 100644
 --- a/default-op/store.ts
 +++ b/with-par/store.ts
 @@ -6,6 +6,10 @@ import type {
@@ -795,7 +795,7 @@ index dbe5fc3..da06be0 100644
  
  /**
   * In-memory Authorization Transaction Store.
-@@ -817,3 +821,58 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
+@@ -823,3 +827,58 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
  export const browserSessionStore = defaultProviderStores.browserSessionStore;
  export const consentStore = defaultProviderStores.consentStore;
  export const userStore = defaultProviderStores.userStore;

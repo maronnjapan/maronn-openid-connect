@@ -9,7 +9,6 @@ import {
 } from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
-import type { RegisteredClient } from '../_oidc-provider/config';
 import { defaultProviderStores } from '../_oidc-provider/store';
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
@@ -76,22 +75,19 @@ export async function consentAction(formData: FormData): Promise<void> {
     transactionStore,
   );
 
-  // Filter offline_access if the client does not allow it.
-  // findClient() is typed as ClientResolver here, so narrow back to the
-  // registered-client shape that carries offlineAccessAllowed.
-  const clientConfig = (await oidcProviderOptions.clientResolver?.findClient(
-    transaction.clientId,
-  )) as RegisteredClient | null | undefined;
-  const grantedScope = transaction.scope.split(' ').filter((s) => {
-    if (s === 'offline_access' && !clientConfig?.offlineAccessAllowed) return false;
-    return Boolean(s);
-  });
+  // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
+  // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
+  // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
+  const grantedScope = transaction.scope.split(' ').filter(Boolean);
 
   // OIDC Core 1.0 Section 3.1.3.1: TTL is configurable via ProviderConfig.
   const authCodeData = await createAuthorizationCode({
     authorizationResponse: { ...responseParams, scope: grantedScope },
     subject: session.subject,
     authTime: session.authTime,
+    // online refresh token をこのログインセッションへ束縛する（login フローが
+    // authSessionStore へ載せた値）。ログアウトすれば RT も使えなくなる。
+    sessionId: session.sessionId,
     ttlSeconds: oidcProviderOptions.config?.authorizationCodeTtl,
   });
   await authCodeStore.set(authCodeData.code, authCodeData);

@@ -19,6 +19,25 @@ export interface ProviderConfig {
    */
   refreshTokenAbsoluteLifetime: number;
   /**
+   * online refresh token（`offline_access` が付与されていない grant にも発行する
+   * Refresh Token）を有効にするか。
+   *
+   * OIDC Core 1.0 §11 は `offline_access` を「End-User が居ない（not logged in）ときにも
+   * 使える Refresh Token」と定義したうえで、Refresh Token の利用がその用途に限られない
+   * ことを明示している（"The use of Refresh Tokens is not exclusive to the
+   * `offline_access` use case. The Authorization Server MAY grant Refresh Tokens in
+   * other contexts that are beyond the scope of this specification."）。本 OP はその
+   * 「other contexts」を online refresh token として実装する。
+   *
+   * - `true`（既定）: `grant_types` に `refresh_token` を登録したクライアントには、
+   *   `offline_access` が無くても Refresh Token を発行する。ただし発行元のログイン
+   *   セッションへ束縛され、セッションが終われば `invalid_grant` になる。ブラウザ
+   *   セッションを持たない経路（device authorization grant）では発行しない。
+   * - `false`: Refresh Token は `offline_access` が付与された grant にだけ発行する。
+   *   ログアウトしても使い続けられる offline refresh token だけになる。
+   */
+  onlineRefreshTokenEnabled: boolean;
+  /**
    * アクセストークンの形式。
    * - 'jwt' (デフォルト): 自己完結。ステートレス検証可能だが即時失効が困難。
    * - 'opaque'         : 不透明文字列。リソースサーバは Introspection / ストア参照で検証。
@@ -71,6 +90,9 @@ export const defaultProviderConfig: ProviderConfig = {
   idTokenExpiresIn: 3600,
   // OAuth 2.1 §6.1: refresh token は initial issuance から 90 日（7776000 秒）で必ず失効する。
   refreshTokenAbsoluteLifetime: 7776000,
+  // OIDC Core 1.0 §11: offline_access 無しの Refresh Token（online refresh token）も
+  // 発行する。ログインセッションに束縛されるため、ログアウトすると使えなくなる。
+  onlineRefreshTokenEnabled: true,
   accessTokenFormat: 'jwt',
   // OIDC Core 1.0 §3.1.3.1: authorization code は short-lived であるべき（5 分 = 300 秒）。
   authorizationCodeTtl: 300,
@@ -90,9 +112,14 @@ export function createProviderConfig(
 }
 
 /**
- * Extended client info with offline_access permission.
- * offlineAccessAllowed: controls whether the client may request refresh tokens
- * via the offline_access scope (OAuth 2.1 / OIDC offline_access).
+ * Extended client info for this provider.
+ *
+ * Whether a client may receive refresh tokens is decided by the standard
+ * `grantTypes` registration metadata (RFC 7591 §2 / OIDC Dynamic Client
+ * Registration 1.0 §2) it already carries through TokenClientInfo — there is no
+ * separate provider-specific switch. `grantTypes` containing `refresh_token`
+ * gates both refresh token flavors; OIDC Core 1.0 §11 (prompt=consent) decides
+ * which flavor the authorization produces.
  *
  * userinfoSignedResponseAlg: when set, the UserInfo endpoint returns a signed JWT
  * with content-type `application/jwt` (OIDC Core 1.0 Section 5.3.2 — client metadata
@@ -109,7 +136,6 @@ export function createProviderConfig(
  * rejected as a server configuration error.
  */
 export type RegisteredClient = ClientInfo & TokenClientInfo & {
-  offlineAccessAllowed?: boolean;
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
   idTokenSignedResponseAlg?: 'RS256' | 'ES256';
 };
@@ -126,9 +152,11 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
       clientSecret: 'example-secret',
       redirectUris: ['http://localhost:3000/callback'],
       clientType: 'confidential' as const,
-      offlineAccessAllowed: true,
-      // RFC 7591 §2: grant_types default is ["authorization_code"]. This client uses
-      // offline_access (refresh tokens), so it must explicitly register refresh_token.
+      // RFC 7591 §2: grant_types default is ["authorization_code"]. Registering
+      // refresh_token is the single switch that lets this client receive refresh
+      // tokens at all: an online refresh token (bound to the login session) on every
+      // authorization, and an offline one (usable after logout) when offline_access
+      // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
       // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
       // this confidential client exchange its access tokens. Remove it to forbid
       // exchanges for this client; public clients are rejected either way.

@@ -21,10 +21,10 @@
 
 ````diff
 diff --git a/default-op/_oidc-provider/conformance.test.ts b/with-jarm/_oidc-provider/conformance.test.ts
-index dbce5cd..cceef15 100644
+index 57e9e5c..48f5c84 100644
 --- a/default-op/_oidc-provider/conformance.test.ts
 +++ b/with-jarm/_oidc-provider/conformance.test.ts
-@@ -366,10 +366,11 @@ describe('generated provider HTTP conformance', () => {
+@@ -376,10 +376,11 @@ describe('generated provider HTTP conformance', () => {
          jwks_uri: 'http://localhost:3000/.well-known/jwks.json',
          userinfo_endpoint: 'http://localhost:3000/userinfo',
          response_types_supported: ['code'],
@@ -40,7 +40,7 @@ index dbce5cd..cceef15 100644
        });
      });
  
-@@ -2158,6 +2159,369 @@ describe('generated provider HTTP conformance', () => {
+@@ -2458,6 +2459,369 @@ describe('generated provider HTTP conformance', () => {
      });
    });
  
@@ -411,7 +411,7 @@ index dbce5cd..cceef15 100644
      const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
  
 diff --git a/default-op/_oidc-provider/routes/authorize.ts b/with-jarm/_oidc-provider/routes/authorize.ts
-index f7a4871..405d927 100644
+index dc9fbe0..563e79d 100644
 --- a/default-op/_oidc-provider/routes/authorize.ts
 +++ b/with-jarm/_oidc-provider/routes/authorize.ts
 @@ -29,6 +29,9 @@ import {
@@ -609,7 +609,7 @@ index f7a4871..405d927 100644
      // OIDC Core 1.0 §6.3: request_uri / registration are not supported here.
      rejectUnsupportedRequestParams(params, redirectUri, state);
  
-@@ -268,7 +395,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -270,7 +397,7 @@ const handleAuthorizationRequest = async (c: any) => {
      const transactionTtlSeconds = 10 * 60; // 10 minutes TTL
      await transactionStore.put(
        'auth_txn:' + transactionId,
@@ -618,7 +618,7 @@ index f7a4871..405d927 100644
        transactionTtlSeconds,
      );
  
-@@ -278,7 +405,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -280,7 +407,7 @@ const handleAuthorizationRequest = async (c: any) => {
      // prompt=none must not be combined with other values (OIDC Core 1.0 Section 3.1.2.1)
      if (promptValues.includes('none') && promptValues.length > 1) {
        await transactionStore.delete('auth_txn:' + transactionId);
@@ -627,7 +627,7 @@ index f7a4871..405d927 100644
      }
  
      // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
-@@ -294,7 +421,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -296,7 +423,7 @@ const handleAuthorizationRequest = async (c: any) => {
        if (!jwksProvider) {
          // jwksProvider 未提供では hint を検証できない → login_required で拒否
          await transactionStore.delete('auth_txn:' + transactionId);
@@ -636,7 +636,7 @@ index f7a4871..405d927 100644
        }
        try {
          const jwks = await jwksProvider();
-@@ -307,7 +434,7 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -309,7 +436,7 @@ const handleAuthorizationRequest = async (c: any) => {
        } catch (hintError) {
          await transactionStore.delete('auth_txn:' + transactionId);
          const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
@@ -645,7 +645,7 @@ index f7a4871..405d927 100644
        }
      }
  
-@@ -320,14 +447,14 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -322,14 +449,14 @@ const handleAuthorizationRequest = async (c: any) => {
        // No sessionResolver configured → cannot verify session → login_required
        if (!sessionResolver) {
          await transactionStore.delete('auth_txn:' + transactionId);
@@ -662,7 +662,7 @@ index f7a4871..405d927 100644
        }
  
        let session;
-@@ -354,20 +481,20 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -356,20 +483,20 @@ const handleAuthorizationRequest = async (c: any) => {
        } catch (promptError) {
          await transactionStore.delete('auth_txn:' + transactionId);
          if (promptError instanceof AuthorizationError) {
@@ -685,8 +685,8 @@ index f7a4871..405d927 100644
 +        return c.redirect(await buildErrorRedirect(jarmResponse, transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
        }
  
-       // Filter offline_access if the client does not allow it
-@@ -397,12 +524,15 @@ const handleAuthorizationRequest = async (c: any) => {
+       // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
+@@ -401,12 +528,15 @@ const handleAuthorizationRequest = async (c: any) => {
          authCodeData.grantId,
        );
  
@@ -708,7 +708,7 @@ index f7a4871..405d927 100644
      }
  
      // OIDC Core 1.0 Section 3.1.2.3: an active OP session enables Single Sign-On.
-@@ -470,12 +600,15 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -473,12 +603,15 @@ const handleAuthorizationRequest = async (c: any) => {
                authCodeData.grantId,
              );
  
@@ -730,7 +730,7 @@ index f7a4871..405d927 100644
            }
  
            const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
-@@ -497,20 +630,24 @@ const handleAuthorizationRequest = async (c: any) => {
+@@ -503,20 +636,24 @@ const handleAuthorizationRequest = async (c: any) => {
    } catch (error) {
      if (error instanceof AuthorizationError) {
        if (error.redirectUri) {

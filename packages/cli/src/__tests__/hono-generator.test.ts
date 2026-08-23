@@ -1224,9 +1224,50 @@ describe('HonoGenerator', () => {
       expect(content).toContain('validatedRequest.hadOfflineAccess');
       // 計算結果でリフレッシュトークン値の発行可否を決める
       expect(content).toContain(
-        'refresh_token: grantHasOfflineAccess ? generateRandomString(32) : undefined',
+        'refresh_token: issueRefreshToken ? generateRandomString(32) : undefined',
       );
       expect(content).toContain('refreshTokenStore.set(tokenResponse.refresh_token');
+    });
+
+    // RFC 7591 §2: grant_types の既定は ["authorization_code"]。登録の無いクライアントへ
+    // Refresh Token を渡しても unauthorized_client で拒否されるだけなので発行しない。
+    it('should gate refresh token issuance on the registered refresh_token grant type', () => {
+      const tokenFile = files.find((f) => f.path === 'routes/token.ts');
+      const content = tokenFile?.content ?? '';
+      expect(content).toContain(
+        'const clientAllowsRefreshGrant = clientAllowsRefreshTokenGrant(tokenClient);',
+      );
+      expect(content).toContain('const issueRefreshToken =');
+      expect(content).toContain('clientAllowsRefreshGrant &&');
+    });
+
+    // OIDC Core 1.0 §11: offline_access 無しの Refresh Token（online refresh token）は
+    // 発行元のログインセッションへ束縛し、セッションが終われば invalid_grant にする。
+    it('should bind an online refresh token to the login session', () => {
+      const tokenFile = files.find((f) => f.path === 'routes/token.ts');
+      const content = tokenFile?.content ?? '';
+      // offline_access がある grant はセッションから独立させる
+      expect(content).toContain(
+        'const boundSessionId = grantHasOfflineAccess ? undefined : validatedRequest.sessionId;',
+      );
+      // 束縛先が分からなければ online refresh token は発行しない
+      expect(content).toContain('config.onlineRefreshTokenEnabled && boundSessionId !== undefined');
+      // 束縛は永続化され、rotation でも維持される
+      expect(content).toContain('sessionId: boundSessionId,');
+      // refresh のたびにセッションの生存を確認する
+      expect(content).toContain(
+        'await validateRefreshTokenSession(refreshTokenInfo, authenticationSessionResolver);',
+      );
+    });
+
+    it('should carry the login session id from login through consent into the authorization code', () => {
+      const loginFile = files.find((f) => f.path === 'routes/login.ts');
+      const consentFile = files.find((f) => f.path === 'routes/consent.ts');
+      // login: 確立したブラウザセッションの id を consent への受け渡しに載せる
+      expect(loginFile?.content).toContain('await authSessionStore.set(transactionId, {');
+      expect(loginFile?.content).toContain('sessionId,');
+      // consent: その id を認可コードへ引き継ぐ
+      expect(consentFile?.content).toContain('sessionId: session.sessionId,');
     });
 
     // P1 / RFC 6749 §6: 縮小後 scope から offline_access が落ちても、grant が offline_access を
@@ -1365,21 +1406,40 @@ describe('HonoGenerator', () => {
     // and the template documents how to override the callback.
     it('should document the applyOfflineAccessPolicy customization point in authorize route', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain('applyOfflineAccessPolicy(scope, effectiveParams, prompt)');
+      // client を渡すのは、OIDC Core 1.0 §11 の同意条件に加えて、RFC 7591 §2 の
+      // 登録 grant_types も既定判定が見るため。
+      expect(file?.content).toContain(
+        'applyOfflineAccessPolicy(scope, effectiveParams, prompt, client)',
+      );
       expect(file?.content).toContain('prompt=consent');
     });
 
-    it('should filter offline_access scope in consent when client does not allow it', () => {
+    // offline_access の可否は authorize の applyOfflineAccessPolicy で確定するので、
+    // consent 側で独自フラグを見て再フィルタしない（二重管理の解消）。
+    it('should not re-filter offline_access in the consent route', () => {
       const consentFile = files.find((f) => f.path === 'routes/consent.ts');
-      expect(consentFile?.content).toContain("'offline_access'");
-      expect(consentFile?.content).toContain('offlineAccessAllowed');
       expect(consentFile?.content).toContain('grantedScope');
+      expect(consentFile?.content).toContain(
+        "const grantedScope = transaction.scope.split(' ').filter(Boolean);",
+      );
+      expect(consentFile?.content).not.toContain('offlineAccessAllowed');
     });
 
-    it('should define offlineAccessAllowed in default registered client config', () => {
+    // Refresh Token の可否は標準の grant_types メタデータだけで決まる。OP 独自の
+    // スイッチは持たない（RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2）。
+    it('should not define a provider-specific offline access switch in the registered client config', () => {
       const configFile = files.find((f) => f.path === 'config.ts');
-      expect(configFile?.content).toContain('offlineAccessAllowed');
       expect(configFile?.content).toContain('RegisteredClient');
+      expect(configFile?.content).not.toContain('offlineAccessAllowed');
+      expect(configFile?.content).toContain(
+        "grantTypes: ['authorization_code', 'refresh_token'],",
+      );
+    });
+
+    it('should expose the online refresh token toggle in the provider config', () => {
+      const configFile = files.find((f) => f.path === 'config.ts');
+      expect(configFile?.content).toContain('onlineRefreshTokenEnabled: boolean;');
+      expect(configFile?.content).toContain('onlineRefreshTokenEnabled: true,');
     });
 
     it('should expose dynamic provider config helpers instead of static provider config', () => {

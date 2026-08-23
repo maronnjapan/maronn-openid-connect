@@ -699,7 +699,14 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(actions?.content).toContain("import { oidcProviderOptions } from '../_oidc-provider/runtime'");
       expect(actions?.content).toContain('completeAuthTransaction(');
       expect(actions?.content).toContain('createAuthorizationCode({');
-      expect(actions?.content).toContain('offlineAccessAllowed');
+      // offline_access の可否は authorize の applyOfflineAccessPolicy で確定済みなので
+      // Server Action 側で独自フラグを見て再フィルタしない。
+      expect(actions?.content).not.toContain('offlineAccessAllowed');
+      expect(actions?.content).toContain(
+        "const grantedScope = transaction.scope.split(' ').filter(Boolean);",
+      );
+      // online refresh token をこのログインセッションへ束縛するため sessionId を引き継ぐ。
+      expect(actions?.content).toContain('sessionId: session.sessionId,');
       expect(actions?.content).toContain('consentResolver.recordConsent?.(');
       // RFC 9207 §2: iss on both success and deny responses.
       expect(actions?.content).toContain("successUrl.searchParams.set('iss', issuer)");

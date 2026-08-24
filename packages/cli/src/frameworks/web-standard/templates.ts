@@ -18,6 +18,7 @@ import {
   endpointBehaviorConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
   idTokenHintConformanceBlock,
+  internalRedirectOriginConformanceBlock,
   introspectionConformanceBlock,
   introspectionRouteTemplate,
   jwksRouteTemplate,
@@ -342,6 +343,10 @@ export function toWebRequest(
   bodyOverride?: BodyInit | null,
 ): Request {
   const path = incoming.originalUrl ?? incoming.url ?? '/';
+  // Only the path is taken from the incoming request; the origin comes from
+  // baseUrl (config.issuer via applyOidc). URLs the OP builds for itself —
+  // the /login and /consent redirect Locations — therefore never depend on
+  // the Host header (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
   const url = new URL(path, baseUrl);
   const headers = new Headers();
   for (const [name, value] of Object.entries(incoming.headers)) {
@@ -707,6 +712,9 @@ ${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}  '
 
 export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   const oidc = createApp(options);
+  // The advertised issuer is the source of truth for the OP's own origin
+  // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
+  // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
   for (const endpoint of OIDC_ENDPOINTS) {
@@ -753,6 +761,9 @@ export type ApplyOidcOptions = OidcProviderOptions;
 
 export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions): Promise<void> {
   const oidc = createApp(options);
+  // The advertised issuer is the source of truth for the OP's own origin
+  // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
+  // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
   if (!app.hasContentTypeParser('application/x-www-form-urlencoded')) {
@@ -824,6 +835,10 @@ export function createOidcRouteHandlers(options: NextOidcProviderOptions): NextO
   };
 }
 
+// The advertised issuer is the source of truth for the OP's own origin
+// (OIDC Discovery 1.0 §3): rebasing here keeps every URL the OP derives from
+// the request — including the /login and /consent redirect Locations —
+// independent of the Host header the runtime saw (RFC 9700 §2.1).
 function rebaseRequestOrigin(request: Request, issuer: string | undefined): Request {
   if (!issuer) return request;
 
@@ -2403,7 +2418,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
 `;
 }
 

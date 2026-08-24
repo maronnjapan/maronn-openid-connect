@@ -13,6 +13,7 @@ import {
   parseSessionId,
   userStore,
 } from '../store.js';
+import { defaultProviderConfig } from '../config.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const loginApp = new WebRouter();
@@ -112,8 +113,12 @@ loginApp.post('/', async (c) => {
     sessionId,
   });
 
-  // Redirect to consent page
-  const consentUrl = new URL('/consent', c.req.url);
+  // Redirect to consent page. config.issuer, not the request URL, decides the
+  // redirect origin: some runtimes derive the request URL from the Host header,
+  // which would let the sender pick where transaction_id lands (OIDC Discovery
+  // 1.0 §3 / RFC 9700 §2.1).
+  const config = c.get('config') ?? defaultProviderConfig;
+  const consentUrl = new URL('/consent', config.issuer);
   consentUrl.searchParams.set('transaction_id', transactionId);
   return c.redirect(consentUrl.toString());
 });

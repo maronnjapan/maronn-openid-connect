@@ -298,6 +298,37 @@ describe('HonoGenerator', () => {
     });
   });
 
+  // OIDC Discovery 1.0 §3 / RFC 9700 §2.1: internal redirects (/login, /consent)
+  // must be built on the configured issuer, never on the incoming request URL,
+  // which runtimes such as @hono/node-server derive from the Host header.
+  describe('internal redirect origin derivation', () => {
+    const files = generator.generate(options);
+    const authorize = files.find((f) => f.path === 'routes/authorize.ts')?.content ?? '';
+    const login = files.find((f) => f.path === 'routes/login.ts')?.content ?? '';
+    const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
+
+    it('should build the consent and login redirects on config.issuer in the authorize route', () => {
+      expect(authorize.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/login', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/consent', c.req.url)")).toBe(false);
+      expect(authorize.includes("new URL('/login', c.req.url)")).toBe(false);
+    });
+
+    it('should build the consent redirect on config.issuer in the login route', () => {
+      expect(login.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(login.includes("new URL('/consent', c.req.url)")).toBe(false);
+    });
+
+    it('should generate the internal redirect origin conformance contract', () => {
+      expect(conformance.includes("describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)'")).toBe(true);
+      expect(conformance.includes("it('should build the login redirect Location on the configured issuer origin'")).toBe(true);
+      expect(conformance.includes("it('should ignore the Host header when building the login redirect Location'")).toBe(true);
+      expect(conformance.includes("it('should build the consent redirect Location on the configured issuer origin'")).toBe(true);
+      expect(conformance.includes("it('should build the consent redirect Location on the configured issuer origin after login'")).toBe(true);
+      expect(conformance.includes("it('should keep the login redirect Location on the issuer origin for a subpath issuer'")).toBe(true);
+    });
+  });
+
   describe('core imports', () => {
     const files = generator.generate(options);
 

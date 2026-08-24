@@ -158,7 +158,7 @@ Changesets のバージョン上げと CHANGELOG 生成の対象外になる。
 `sample-hono-cloudflare` は npm に出ないので、利用者がこのバージョンを取得する手段はない。
 リリース PR は「今回 npm に何が出るか」を読む場所なので、出ないものが混ざると
 publish 対象を数え違える。samples は CLI 生成コードの動作確認用であって
-提供物ではない、というリポジトリの前提（CLAUDE.md「ディレクトリの構成」）とも食い違う。
+提供物ではない、というリポジトリの前提（README.md「ディレクトリの構成」）とも食い違う。
 
 対象を `ignore` で名前指定せず `privatePackages` で切っているのは、publish するかどうかの
 情報源を `package.json` の `private` 1 つに保つため。sample やテスト用ワークスペースを
@@ -465,7 +465,7 @@ Version Packages PR に現れず、publish されないまま main に埋もれ�
 - **Version Packages PR**（head branch が `changeset-release/` 始まり）: changeset を消化する側なので、
   要求すると「changeset を消す PR が changeset を要求される」デッドロックになる
 - **Dependabot PR**: 更新対象は `packages/*` の devDependencies で出荷物は変わらない
-  （本リポジトリの `dependencies` は workspace 内部のみ、という CLAUDE.md の規約が前提）。
+  （本リポジトリの `dependencies` は workspace 内部のみ、という README.md の規約が前提）。
   publish が必要な bump だと判断したときは、担当者が手動で changeset を足す
 
 ### provenance の自動検証と手動確認

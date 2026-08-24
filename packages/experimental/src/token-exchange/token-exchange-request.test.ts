@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { AccessTokenInfo, AccessTokenResolver, TokenClientInfo } from '@maronn-openid-connect/core';
 import {
+  ACTOR_TOKEN_INVALID_DESCRIPTION,
   SUBJECT_TOKEN_INVALID_DESCRIPTION,
   TOKEN_EXCHANGE_GRANT_TYPE,
   TOKEN_TYPE_ACCESS_TOKEN,
   TokenExchangeError,
   authorizeTokenExchangeClient,
   buildTokenExchangeResponse,
+  composeActClaim,
   computeExchangedTokenLifetime,
   parseTokenExchangeParams,
   processTokenExchangeRequest,
+  resolveActorToken,
   resolveExchangeTarget,
   resolveSubjectToken,
   validateExchangeScope,
+  type ExchangedAccessTokenInfo,
 } from './token-exchange-request.js';
 
 /** 2026-01-01T00:00:00Z。Unix epoch 秒で 1767225600。 */
@@ -44,6 +48,13 @@ function subjectTokenInfo(overrides: Partial<AccessTokenInfo> = {}): AccessToken
 function resolverFor(info: AccessTokenInfo | null): AccessTokenResolver {
   return {
     findAccessToken: async () => info,
+  };
+}
+
+/** delegation テスト用: トークン文字列ごとに別の情報を返す resolver。 */
+function resolverByToken(map: Record<string, AccessTokenInfo>): AccessTokenResolver {
+  return {
+    findAccessToken: async (token) => map[token] ?? null,
   };
 }
 
@@ -103,6 +114,7 @@ describe('parseTokenExchangeParams', () => {
         scope: undefined,
         audience: undefined,
         resource: undefined,
+        actorToken: undefined,
       });
     });
 
@@ -112,12 +124,15 @@ describe('parseTokenExchangeParams', () => {
         audience: 'internal-api',
         resource: 'https://internal.example.com/api',
         requested_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        actor_token: 'actor-access-token',
+        actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
       });
       expect(parseTokenExchangeParams(params)).toEqual({
         subjectToken: 'subject-access-token',
         scope: 'api:read',
         audience: 'internal-api',
         resource: 'https://internal.example.com/api',
+        actorToken: 'actor-access-token',
       });
     });
 
@@ -129,6 +144,7 @@ describe('parseTokenExchangeParams', () => {
         scope: undefined,
         audience: undefined,
         resource: undefined,
+        actorToken: undefined,
       });
     });
 
@@ -203,24 +219,67 @@ describe('parseTokenExchangeParams', () => {
     });
   });
 
-  describe('Delegation parameters (non-goal)', () => {
-    // RFC 8693 §1.1 / §2.1: delegation は初期スコープ外。明示的に拒否する。
-    it('should reject a request carrying actor_token with invalid_request', () => {
+  describe('Delegation parameters (RFC 8693 §2.1)', () => {
+    it('should return the actor token when actor_token and actor_token_type are present', () => {
+      const params = validParams({
+        actor_token: 'actor-access-token',
+        actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+      });
+      expect(parseTokenExchangeParams(params)).toEqual({
+        subjectToken: 'subject-access-token',
+        scope: undefined,
+        audience: undefined,
+        resource: undefined,
+        actorToken: 'actor-access-token',
+      });
+    });
+
+    // RFC 8693 §2.1: actor_token_type は actor_token があるとき REQUIRED。
+    it('should reject actor_token without actor_token_type with invalid_request', () => {
       const params = validParams({ actor_token: 'actor-access-token' });
       expect(() => parseTokenExchangeParams(params)).toThrow(
         new TokenExchangeError(
           'invalid_request',
-          'Delegation is not supported: actor_token and actor_token_type must not be present.',
+          'actor_token_type is required when actor_token is present',
         ),
       );
     });
 
-    it('should reject a request carrying actor_token_type with invalid_request', () => {
+    // RFC 8693 §2.1: actor_token_type は actor_token が無いとき MUST NOT be included。
+    it('should reject actor_token_type without actor_token with invalid_request', () => {
       const params = validParams({ actor_token_type: TOKEN_TYPE_ACCESS_TOKEN });
       expect(() => parseTokenExchangeParams(params)).toThrow(
         new TokenExchangeError(
           'invalid_request',
-          'Delegation is not supported: actor_token and actor_token_type must not be present.',
+          'actor_token_type must not be present without actor_token',
+        ),
+      );
+    });
+
+    // 空文字の actor_token は「送られなかった」扱い。残った actor_token_type が
+    // 単独指定として拒否される。
+    it('should treat a blank actor_token as omitted and reject the remaining actor_token_type', () => {
+      const params = validParams({
+        actor_token: '   ',
+        actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+      });
+      expect(() => parseTokenExchangeParams(params)).toThrow(
+        new TokenExchangeError(
+          'invalid_request',
+          'actor_token_type must not be present without actor_token',
+        ),
+      );
+    });
+
+    it('should reject an id_token actor_token_type with invalid_request', () => {
+      const params = validParams({
+        actor_token: 'actor-access-token',
+        actor_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+      });
+      expect(() => parseTokenExchangeParams(params)).toThrow(
+        new TokenExchangeError(
+          'invalid_request',
+          'Unsupported actor_token_type. Only urn:ietf:params:oauth:token-type:access_token is supported.',
         ),
       );
     });
@@ -406,6 +465,93 @@ describe('resolveSubjectToken', () => {
         `invalid_request:${SUBJECT_TOKEN_INVALID_DESCRIPTION}`,
         `invalid_request:${SUBJECT_TOKEN_INVALID_DESCRIPTION}`,
       ]);
+    });
+  });
+});
+
+describe('resolveActorToken', () => {
+  it('should return the resolved access token info when the actor token is valid', async () => {
+    const info = subjectTokenInfo({ sub: 'service-a', clientId: 'gateway' });
+    const resolved = await resolveActorToken({
+      actorToken: 'actor-access-token',
+      accessTokenResolver: resolverFor(info),
+      now: NOW,
+    });
+    expect(resolved).toEqual(info);
+  });
+
+  it('should pass the actor token through to the resolver', async () => {
+    const seen: string[] = [];
+    const resolver: AccessTokenResolver = {
+      findAccessToken: async (token) => {
+        seen.push(token);
+        return subjectTokenInfo();
+      },
+    };
+    await resolveActorToken({ actorToken: 'actor-access-token', accessTokenResolver: resolver, now: NOW });
+    expect(seen).toEqual(['actor-access-token']);
+  });
+
+  describe('Invalid actor tokens', () => {
+    // subject_token と同じオラクル排除方針: 失敗理由は応答から区別できない。
+    it('should reject an unknown actor token with the fixed invalid_request description', async () => {
+      await expect(
+        resolveActorToken({
+          actorToken: 'unknown',
+          accessTokenResolver: resolverFor(null),
+          now: NOW,
+        }),
+      ).rejects.toThrow(new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+    });
+
+    it('should reject an expired actor token with the fixed invalid_request description', async () => {
+      await expect(
+        resolveActorToken({
+          actorToken: 'expired',
+          accessTokenResolver: resolverFor(subjectTokenInfo({ expiresAt: NOW_SECONDS - 1 })),
+          now: NOW,
+        }),
+      ).rejects.toThrow(new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+    });
+
+    it('should reject an actor token whose nbf is in the future with the fixed invalid_request description', async () => {
+      await expect(
+        resolveActorToken({
+          actorToken: 'not-yet-valid',
+          accessTokenResolver: resolverFor(subjectTokenInfo({ nbf: NOW_SECONDS + 1 })),
+          now: NOW,
+        }),
+      ).rejects.toThrow(new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+    });
+  });
+});
+
+describe('composeActClaim', () => {
+  // RFC 8693 §4.1: act claim は現在の actor を識別する。
+  it('should build a single-level act claim for the first delegation', () => {
+    expect(composeActClaim({ actorSub: 'service-a' })).toEqual({ sub: 'service-a' });
+  });
+
+  // RFC 8693 §4.1: 委譲チェーンは act のネストで表す。最外が現在の actor、
+  // ネストが過去の actor（最も古い actor が最深）。
+  it('should nest the subject token act chain under the current actor', () => {
+    expect(
+      composeActClaim({
+        actorSub: 'service-b',
+        subjectActChain: { sub: 'service-a' },
+      }),
+    ).toEqual({ sub: 'service-b', act: { sub: 'service-a' } });
+  });
+
+  it('should keep a two-level prior chain intact under the current actor', () => {
+    expect(
+      composeActClaim({
+        actorSub: 'service-c',
+        subjectActChain: { sub: 'service-b', act: { sub: 'service-a' } },
+      }),
+    ).toEqual({
+      sub: 'service-c',
+      act: { sub: 'service-b', act: { sub: 'service-a' } },
     });
   });
 });
@@ -899,22 +1045,177 @@ describe('processTokenExchangeRequest', () => {
       );
     });
 
-    it('should reject a delegation request with invalid_request', async () => {
+    it('should reject an unknown actor_token with invalid_request', async () => {
       await expect(
         processTokenExchangeRequest({
-          params: validParams({ actor_token: 'actor' }),
+          params: validParams({
+            actor_token: 'unknown-actor-token',
+            actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+          }),
           client: confidentialClient(),
-          accessTokenResolver: resolverFor(subjectTokenInfo()),
+          accessTokenResolver: resolverByToken({
+            'subject-access-token': subjectTokenInfo(),
+          }),
           allowedTargets: [],
           configuredExpiresIn: 60,
           now: NOW,
         }),
       ).rejects.toThrow(
-        new TokenExchangeError(
-          'invalid_request',
-          'Delegation is not supported: actor_token and actor_token_type must not be present.',
-        ),
+        new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION),
       );
+    });
+
+    it('should reject an expired actor_token with invalid_request', async () => {
+      await expect(
+        processTokenExchangeRequest({
+          params: validParams({
+            actor_token: 'actor-access-token',
+            actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+          }),
+          client: confidentialClient(),
+          accessTokenResolver: resolverByToken({
+            'subject-access-token': subjectTokenInfo(),
+            'actor-access-token': subjectTokenInfo({
+              sub: 'service-a',
+              expiresAt: NOW_SECONDS - 1,
+            }),
+          }),
+          allowedTargets: [],
+          configuredExpiresIn: 60,
+          now: NOW,
+        }),
+      ).rejects.toThrow(
+        new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION),
+      );
+    });
+  });
+
+  describe('Delegation exchanges (RFC 8693 §1.1 / §4.1)', () => {
+    it('should record the actor of a delegation exchange in the grant material', async () => {
+      const grant = await processTokenExchangeRequest({
+        params: validParams({
+          scope: 'api:read',
+          actor_token: 'actor-access-token',
+          actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        }),
+        client: confidentialClient(),
+        accessTokenResolver: resolverByToken({
+          'subject-access-token': subjectTokenInfo(),
+          'actor-access-token': subjectTokenInfo({ sub: 'service-a', clientId: 'gateway' }),
+        }),
+        allowedTargets: [],
+        configuredExpiresIn: 3600,
+        now: NOW,
+      });
+      expect(grant).toEqual({
+        subject: 'user-1',
+        clientId: 'exchange-client',
+        scope: ['api:read'],
+        requestedAudience: ['https://op.example.com/userinfo'],
+        expiresIn: 300,
+        grantId: 'grant-1',
+        actor: { sub: 'service-a' },
+      });
+    });
+
+    // delegation でも sub は subject_token のもの。actor は act にのみ現れる。
+    it('should keep the subject unchanged in a delegation exchange', async () => {
+      const grant = await processTokenExchangeRequest({
+        params: validParams({
+          actor_token: 'actor-access-token',
+          actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        }),
+        client: confidentialClient(),
+        accessTokenResolver: resolverByToken({
+          'subject-access-token': subjectTokenInfo({ sub: 'user-42' }),
+          'actor-access-token': subjectTokenInfo({ sub: 'service-a' }),
+        }),
+        allowedTargets: [],
+        configuredExpiresIn: 60,
+        now: NOW,
+      });
+      expect(grant).toMatchObject({
+        subject: 'user-42',
+        actor: { sub: 'service-a' },
+      });
+    });
+
+    it('should leave the actor undefined for an impersonation exchange', async () => {
+      const grant = await processTokenExchangeRequest({
+        params: validParams(),
+        client: confidentialClient(),
+        accessTokenResolver: resolverFor(subjectTokenInfo()),
+        allowedTargets: [],
+        configuredExpiresIn: 60,
+        now: NOW,
+      });
+      expect(grant.actor).toBeUndefined();
+    });
+
+    // RFC 8693 §4.1: subject_token が既に act を持つ（＝それ自体が委譲で発行された）
+    // 場合、過去の actor はネストへ押し下がり、最外は今回の actor になる。
+    it('should chain the prior actor when the subject token already carries an act claim', async () => {
+      const delegatedSubject: ExchangedAccessTokenInfo = {
+        ...subjectTokenInfo(),
+        act: { sub: 'service-a' },
+      };
+      const grant = await processTokenExchangeRequest({
+        params: validParams({
+          actor_token: 'actor-access-token',
+          actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        }),
+        client: confidentialClient(),
+        accessTokenResolver: resolverByToken({
+          'subject-access-token': delegatedSubject,
+          'actor-access-token': subjectTokenInfo({ sub: 'service-b' }),
+        }),
+        allowedTargets: [],
+        configuredExpiresIn: 60,
+        now: NOW,
+      });
+      expect(grant.actor).toEqual({ sub: 'service-b', act: { sub: 'service-a' } });
+    });
+
+    // 設計判断: 有効期間の cap は subject_token の残存期間だけで決まる。actor_token は
+    // 交換時点の本人性確認に使うのであって、発行後トークンの寿命は actor に連動しない。
+    it('should not cap the lifetime by the actor token expiry', async () => {
+      const grant = await processTokenExchangeRequest({
+        params: validParams({
+          actor_token: 'actor-access-token',
+          actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        }),
+        client: confidentialClient(),
+        accessTokenResolver: resolverByToken({
+          'subject-access-token': subjectTokenInfo({ expiresAt: NOW_SECONDS + 300 }),
+          'actor-access-token': subjectTokenInfo({
+            sub: 'service-a',
+            expiresAt: NOW_SECONDS + 30,
+          }),
+        }),
+        allowedTargets: [],
+        configuredExpiresIn: 3600,
+        now: NOW,
+      });
+      expect(grant.expiresIn).toBe(300);
+    });
+
+    // grantId は subject 側を継承する。actor の grant には連ならない。
+    it('should inherit the grant id from the subject token, not the actor token', async () => {
+      const grant = await processTokenExchangeRequest({
+        params: validParams({
+          actor_token: 'actor-access-token',
+          actor_token_type: TOKEN_TYPE_ACCESS_TOKEN,
+        }),
+        client: confidentialClient(),
+        accessTokenResolver: resolverByToken({
+          'subject-access-token': subjectTokenInfo({ grantId: 'grant-subject' }),
+          'actor-access-token': subjectTokenInfo({ sub: 'service-a', grantId: 'grant-actor' }),
+        }),
+        allowedTargets: [],
+        configuredExpiresIn: 60,
+        now: NOW,
+      });
+      expect(grant.grantId).toBe('grant-subject');
     });
   });
 });

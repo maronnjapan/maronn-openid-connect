@@ -66,18 +66,21 @@ export async function loginAction(formData: FormData): Promise<void> {
 
   const authTime = Math.floor(Date.now() / 1000);
 
-  // Store authenticated subject for the consent step (per-transaction handoff).
-  await authSessionStore.set(transactionId, {
-    subject: user.sub,
-    authTime,
-  });
-
   // Establish a persistent browser (OP) session so SSO / prompt=none / max_age
   // work on subsequent authorization requests (OIDC Core 1.0 Section 3.1.2.3).
   // Cookie attributes match buildSessionCookie() in store.ts so the
   // sessionResolver can read it back.
   const sessionId = await generateRandomString(32);
   await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
+
+  // Store authenticated subject for the consent step (per-transaction handoff).
+  // sessionId も渡すのは online refresh token のため。consent 経由で発行する認可
+  // コードにこのセッションを引き継ぎ、ログアウトで使えなくなる RT を作る。
+  await authSessionStore.set(transactionId, {
+    subject: user.sub,
+    authTime,
+    sessionId,
+  });
   cookieStore.set(SESSION_COOKIE_NAME, sessionId, {
     httpOnly: true,
     secure: true,

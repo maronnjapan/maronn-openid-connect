@@ -54,6 +54,13 @@ export interface AuthorizationCodeData {
   acrValues?: string;
   /** OIDC Core 1.0 §5.5: claims request preserved for ID Token issuance at the token endpoint. */
   claims?: ClaimsParameter;
+  /**
+   * この認可コードを発行した OP 認証セッションの識別子。
+   * トークンエンドポイントが online refresh token をこのセッションへ束縛するために使う
+   * （`sessionId` を持つ Refresh Token はセッション終了で `invalid_grant` になる）。
+   * ブラウザセッションを持たない経路（device authorization grant など）では省略する。
+   */
+  sessionId?: string;
 }
 
 /**
@@ -68,6 +75,13 @@ export interface CreateAuthorizationCodeOptions {
   authTime: number;
   /** 認可コードの有効期間（秒）。デフォルト: 300 (OIDC Core SHOULD be short-lived) */
   ttlSeconds?: number;
+  /**
+   * 認証セッションの識別子。渡すと発行データに引き継がれ、トークンエンドポイントが
+   * online refresh token をこのセッションへ束縛できる。省略すると、その認可から
+   * 発行される Refresh Token は `offline_access` を持つ場合のみ（= offline refresh
+   * token として）発行される。
+   */
+  sessionId?: string;
 }
 
 /** 認可コードのデフォルト TTL（秒） */
@@ -85,7 +99,7 @@ const DEFAULT_AUTH_CODE_TTL_SECONDS = 300;
 export async function createAuthorizationCode(
   options: CreateAuthorizationCodeOptions,
 ): Promise<AuthorizationCodeData> {
-  const { authorizationResponse, subject, authTime, ttlSeconds } = options;
+  const { authorizationResponse, subject, authTime, ttlSeconds, sessionId } = options;
 
   const code = generateRandomString(32);
   const grantId = generateRandomString(32);
@@ -122,6 +136,9 @@ export async function createAuthorizationCode(
   }
   if (authorizationResponse.claims !== undefined) {
     data.claims = authorizationResponse.claims;
+  }
+  if (sessionId !== undefined) {
+    data.sessionId = sessionId;
   }
 
   return data;

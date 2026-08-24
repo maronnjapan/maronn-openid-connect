@@ -614,11 +614,20 @@ describe('validatePromptParameter', () => {
 });
 
 describe('applyOfflineAccessPolicy', () => {
+  // RFC 7591 §2: grant_types の既定は ["authorization_code"] なので、offline_access を
+  // 扱うケースでは refresh_token を登録したクライアントを渡す。
+  const refreshGrantClient: ClientInfo = {
+    clientId: 'client123',
+    redirectUris: ['https://client.example.org/cb'],
+    grantTypes: ['authorization_code', 'refresh_token'],
+  };
+
   it('should keep offline_access when prompt includes consent', async () => {
     const result = await applyOfflineAccessPolicy(
       ['openid', 'offline_access'],
       validParams({ scope: 'openid offline_access', prompt: 'consent' }),
-      ['consent']
+      ['consent'],
+      refreshGrantClient
     );
 
     expect(result).toEqual(['openid', 'offline_access']);
@@ -629,7 +638,21 @@ describe('applyOfflineAccessPolicy', () => {
     const result = await applyOfflineAccessPolicy(
       ['openid', 'offline_access'],
       validParams({ scope: 'openid offline_access' }),
-      undefined
+      undefined,
+      refreshGrantClient
+    );
+
+    expect(result).toEqual(['openid']);
+  });
+
+  it('should drop offline_access when the client does not register the refresh_token grant type', async () => {
+    // RFC 7591 §2: grant_types 未登録 = ["authorization_code"]。発行しても使えない
+    // Refresh Token を配らないよう、認可の時点で offline_access を落とす。
+    const result = await applyOfflineAccessPolicy(
+      ['openid', 'offline_access'],
+      validParams({ scope: 'openid offline_access', prompt: 'consent' }),
+      ['consent'],
+      { clientId: 'client123', redirectUris: ['https://client.example.org/cb'] }
     );
 
     expect(result).toEqual(['openid']);
@@ -639,7 +662,8 @@ describe('applyOfflineAccessPolicy', () => {
     const result = await applyOfflineAccessPolicy(
       ['openid', 'profile'],
       validParams({ scope: 'openid profile' }),
-      undefined
+      undefined,
+      refreshGrantClient
     );
 
     expect(result).toEqual(['openid', 'profile']);
@@ -650,6 +674,7 @@ describe('applyOfflineAccessPolicy', () => {
       ['openid', 'offline_access'],
       validParams({ scope: 'openid offline_access' }),
       undefined,
+      refreshGrantClient,
       () => true
     );
 

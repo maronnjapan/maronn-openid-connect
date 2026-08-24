@@ -256,6 +256,34 @@ describe('createJarmResponseJwt', () => {
       expect(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(jwt)).toBe(true);
     });
 
+    // JARM §3 / RFC 7515 §4.1.1: this function always declares `alg: RS256`, so
+    // the JOSE header would lie about the signature if it accepted another key
+    // type. Web Crypto refuses to sign with a mismatched key, which is what pins
+    // the contract "signingKey MUST be an RS256 key" — the caller (the CLI
+    // generated code) is responsible for selecting one.
+    it('should reject an ES256 signing key instead of signing under the RS256 header', async () => {
+      const ecdsaKeyPair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      );
+      const ecdsaPublicJwk = await crypto.subtle.exportKey('jwk', ecdsaKeyPair.publicKey);
+
+      await expect(
+        createJarmResponseJwt({
+          issuer: 'http://localhost:3000',
+          clientId: 'my-client',
+          parameters: { code: 'auth-code-1' },
+          signingKey: {
+            privateKey: ecdsaKeyPair.privateKey,
+            publicJwk: ecdsaPublicJwk,
+            keyId: 'es256-key',
+          },
+          now: NOW,
+        }),
+      ).rejects.toThrow();
+    });
+
     // Non-ASCII claim values must survive as UTF-8 before base64url encoding.
     it('should encode non-ASCII claim values as UTF-8', async () => {
       const jwt = await createJarmResponseJwt({

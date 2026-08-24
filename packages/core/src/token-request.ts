@@ -1,4 +1,6 @@
 import { TokenError, TokenErrorCode } from './token-error.js';
+import type { AuthenticationSessionResolver } from './authentication-session.js';
+import { clientAllowsGrantType } from './client-grant-types.js';
 import { validateAuthorizationCodeGrant } from './authorization-code-grant.js';
 import { validateRefreshTokenGrant } from './refresh-token-grant.js';
 
@@ -25,8 +27,15 @@ export {
   validateRefreshTokenGrant,
   validateRefreshTokenIdleTimeout,
   validateRefreshTokenScope,
+  validateRefreshTokenSession,
   validateRefreshTokenUnused,
 } from './refresh-token-grant.js';
+// online refresh token のセッション束縛契約。トークンエンドポイントの利用者が
+// token-request からまとめて import できるよう再exportする。
+export type {
+  AuthenticationSessionInfo,
+  AuthenticationSessionResolver,
+} from './authentication-session.js';
 export type {
   ResolvedAuthorizationCode,
 } from './authorization-code-grant.js';
@@ -123,6 +132,13 @@ export interface AuthorizationCodeInfo {
   acrValues?: string;
   /** OIDC Core 1.0 §5.5: claims request preserved from authorization for ID Token issuance. */
   claims?: import('./userinfo.js').ClaimsParameter;
+  /**
+   * この認可コードを発行した OP 認証セッションの識別子。
+   * online refresh token（`offline_access` 無しで発行する Refresh Token）を
+   * そのセッションへ束縛するために引き継ぐ。セッションを持たない経路
+   * （device authorization grant など）では undefined。
+   */
+  sessionId?: string;
 }
 
 /**
@@ -236,6 +252,16 @@ export interface RefreshTokenInfo {
    * 通常は client_id と同じ。refresh 時にも同じ値を保持する。
    */
   azp?: string;
+  /**
+   * この Refresh Token を束縛している OP 認証セッションの識別子。
+   *
+   * - **設定あり = online refresh token**: End-User がログインしている間だけ使える。
+   *   {@link validateRefreshTokenSession} が毎回セッションの生存を確認し、
+   *   終了していれば `invalid_grant` で拒否する。rotation では同じ値を引き継ぐ。
+   * - **未設定 = offline refresh token**: OIDC Core 1.0 §11 の `offline_access` が
+   *   付与された grant。End-User が居なくなった後も使える。
+   */
+  sessionId?: string;
 }
 
 /**
@@ -308,6 +334,16 @@ export interface TokenRequestContext {
    * `invalid_grant` で失効させる。絶対寿命とは独立で、いずれか早い方で失効する。
    */
   refreshTokenIdleTimeoutSeconds?: number;
+  /**
+   * online refresh token（{@link RefreshTokenInfo.sessionId} を持つ RT）の束縛先
+   * 認証セッションを解決するリゾルバー。
+   *
+   * 未指定でも offline refresh token（`sessionId` 無し）は従来どおり検証できる。
+   * ただし online refresh token が提示された場合は fail-closed で `invalid_grant` に
+   * なる（セッションの生存を確認できないため）。online refresh token を発行する OP は
+   * 必ず設定すること。
+   */
+  authenticationSessionResolver?: AuthenticationSessionResolver;
 }
 
 /**
@@ -331,6 +367,11 @@ export interface ValidatedAuthorizationCodeRequest {
   acrValues?: string;
   /** OIDC Core 1.0 §5.5: claims request from the authorization step. */
   claims?: import('./userinfo.js').ClaimsParameter;
+  /**
+   * 認可コードを発行した OP 認証セッションの識別子。
+   * 呼び出し側はこれを online refresh token の {@link RefreshTokenInfo.sessionId} に渡す。
+   */
+  sessionId?: string;
   codeVerified: boolean;
 }
 
@@ -378,6 +419,12 @@ export interface ValidatedRefreshTokenRequest {
    * rotation 可否を判定し、縮小後 scope に offline_access が無くても rotation を継続する。
    */
   hadOfflineAccess: boolean;
+  /**
+   * 元 refresh token が束縛していた OP 認証セッションの識別子（online refresh token のみ）。
+   * 呼び出し側は rotation 後の RT にも同じ値を保存し、束縛を維持する。
+   * offline refresh token では undefined。
+   */
+  sessionId?: string;
 }
 
 /**
@@ -461,8 +508,7 @@ export function validateClientGrantType(
   client: TokenClientInfo,
   grantType: string,
 ): void {
-  const allowedGrantTypes = client.grantTypes ?? ['authorization_code'];
-  if (!allowedGrantTypes.includes(grantType)) {
+  if (!clientAllowsGrantType(client, grantType)) {
     throw new TokenError(
       TokenErrorCode.UnauthorizedClient,
       `Client is not authorized to use grant_type: ${grantType}`

@@ -7,6 +7,10 @@ export function toWebRequest(
   bodyOverride?: BodyInit | null,
 ): Request {
   const path = incoming.originalUrl ?? incoming.url ?? '/';
+  // Only the path is taken from the incoming request; the origin comes from
+  // baseUrl (config.issuer via applyOidc). URLs the OP builds for itself —
+  // the /login and /consent redirect Locations — therefore never depend on
+  // the Host header (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
   const url = new URL(path, baseUrl);
   const headers = new Headers();
   for (const [name, value] of Object.entries(incoming.headers)) {

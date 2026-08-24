@@ -253,6 +253,8 @@ export function buildValidatedAuthorizationCodeRequest(
     audience: authorizationCode.audience,
     acrValues: authorizationCode.acrValues,
     claims: authorizationCode.claims,
+    // online refresh token をこの認可を生んだ認証セッションへ束縛するために引き継ぐ。
+    sessionId: authorizationCode.sessionId,
     codeVerified,
   };
 }

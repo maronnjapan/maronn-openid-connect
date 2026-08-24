@@ -5,7 +5,7 @@ import { exportPublicJwk } from '@maronn-openid-connect/core';
 import { createApp, validateSigningKeySet } from './app.js';
 import { applyOidc } from './apply.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, defaultProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, defaultProviderStores, parseSessionId, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';
@@ -97,8 +97,9 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
 }
 
 const testClients = new Map<string, RegisteredClient>([
-  // offlineAccessAllowed + refresh_token grant so the reuse-cascade tests can drive
-  // the full code/refresh flow and observe revocation across the grant.
+  // RFC 7591 §2: registering the refresh_token grant is what makes this client
+  // eligible for refresh tokens at all, so the reuse-cascade tests can drive the
+  // full code/refresh flow and observe revocation across the grant.
   ['c-conf', {
     clientId: 'c-conf',
     clientSecret: 's',
@@ -107,7 +108,6 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'client_secret_post',
-    offlineAccessAllowed: true,
   }],
   ['c-public', {
     clientId: 'c-public',
@@ -116,7 +116,6 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'none',
-    offlineAccessAllowed: true,
   }],
   // A confidential client registered for client_secret_basic so the conformance
   // suite can drive Authorization: Basic authentication (RFC 6749 §2.3.1).
@@ -128,7 +127,18 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'client_secret_basic',
-    offlineAccessAllowed: true,
+  }],
+  // RFC 7591 §2 の既定（grant_types = ["authorization_code"]）そのままのクライアント。
+  // Refresh Token を一切受け取れないこと、offline_access が付与 scope から落ちることを
+  // 契約として固定するために置く。
+  ['c-conf-no-refresh', {
+    clientId: 'c-conf-no-refresh',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
   }],
   // EXPERIMENTAL (RFC 8693): a confidential client registered for the exchange
   // grant, and a public one registered for it as well — the latter pins that a
@@ -161,7 +171,6 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
     tokenEndpointAuthMethod: 'client_secret_post',
-    offlineAccessAllowed: true,
   }],
   ['c-device-other', {
     clientId: 'c-device-other',
@@ -171,6 +180,19 @@ const testClients = new Map<string, RegisteredClient>([
     responseTypes: ['code'],
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
     tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  // A third device client that registered id_token_signed_response_alg, so the
+  // contract test can prove the device grant honors it just like the standard
+  // grants (OIDC Dynamic Client Registration 1.0 §2).
+  ['c-device-es256', {
+    clientId: 'c-device-es256',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    idTokenSignedResponseAlg: 'ES256' as const,
   }],
 ]);
 
@@ -690,8 +712,8 @@ describe('generated provider HTTP conformance', () => {
 
   // OIDC Core 1.0 §5.5 / §5.5.1: the claims parameter lets the RP ask for claims,
   // but the OP decides what it will hand back. findUserClaims' return value is an
-  // externally disclosed surface (study-material/resolver-and-store-contract.md),
-  // and the allowlist is the OP-side last line of defense over it.
+  // externally disclosed surface, and the allowlist is the OP-side last line of
+  // defense over it.
   describe('Claims Parameter Claim Name Allowlist (OIDC Core 1.0 §5.5.1)', () => {
     const USERINFO_AUD = 'http://localhost:3000/userinfo';
     // A resolver returning its internal user model verbatim — the most natural PoC
@@ -1262,6 +1284,145 @@ describe('generated provider HTTP conformance', () => {
       // at runtime; the exact-body wrapping is pinned by the renderView unit tests.
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+    });
+  });
+
+  describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)', () => {
+    // RFC 7636 Appendix B example PKCE challenge.
+    const REDIRECT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function issuerAuthorizeUrl(origin: string, overrides: Record<string, string> = {}): string {
+      return origin + '/authorize?' + new URLSearchParams({
+        response_type: 'code',
+        client_id: 'c-conf',
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid',
+        state: 'redirect-origin',
+        code_challenge: REDIRECT_PKCE_CHALLENGE,
+        code_challenge_method: 'S256',
+        ...overrides,
+      }).toString();
+    }
+
+    function redirectOriginCsrf(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function redirectOriginCookie(res: Response): string {
+      return (res.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+    }
+
+    // Drives authorize -> login POST from an attacker origin and returns each
+    // Location plus the session cookie login handed out. The transaction cookie
+    // is carried forward exactly as a browser would, so this works with or
+    // without --enable transaction-binding. Pure fetch-and-parse: every check
+    // stays in the it() blocks as an expect().
+    async function loginFromOrigin(origin: string): Promise<{
+      loginRedirect: string;
+      consentRedirect: string;
+      sessionCookie: string;
+    }> {
+      const authorizeRes = await app.request(issuerAuthorizeUrl(origin), {
+        headers: { Host: 'attacker.example' },
+      });
+      const loginRedirect = authorizeRes.headers.get('Location') ?? '';
+      const bindingCookie = redirectOriginCookie(authorizeRes);
+      const loginUrl = new URL(loginRedirect, 'http://localhost');
+      const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(origin + loginUrl.pathname + loginUrl.search, {
+        headers: { Cookie: bindingCookie },
+      });
+      const loginRes = await app.request(origin + '/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: bindingCookie,
+          Host: 'attacker.example',
+        },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: redirectOriginCsrf(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      return {
+        loginRedirect,
+        consentRedirect: loginRes.headers.get('Location') ?? '',
+        sessionCookie: redirectOriginCookie(loginRes),
+      };
+    }
+
+    it('should build the login redirect Location on the configured issuer origin', async () => {
+      const res = await app.request(issuerAuthorizeUrl('http://localhost:3000'));
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/login');
+      expect(location.searchParams.has('transaction_id')).toBe(true);
+    });
+
+    it('should ignore the Host header when building the login redirect Location', async () => {
+      // Runtimes such as @hono/node-server build the request URL from the Host
+      // header, so an attacker-controlled Host arrives here as an attacker-origin
+      // request URL. Both are sent; neither may reach the Location.
+      const res = await app.request(issuerAuthorizeUrl('http://attacker.example'), {
+        headers: { Host: 'attacker.example' },
+      });
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/login');
+    });
+
+    it('should build the consent redirect Location on the configured issuer origin', async () => {
+      // SSO path: an established OP session makes /authorize redirect straight
+      // to /consent (OIDC Core 1.0 §3.1.2.3). prompt=consent forces the consent
+      // screen (OIDC Core 1.0 §3.1.2.1), so this stays on the /consent redirect
+      // even when another test already recorded a consent grant in the shared
+      // store. The attacker origin on this second request must not leak into
+      // that Location either.
+      const first = await loginFromOrigin('http://attacker.example');
+      const res = await app.request(
+        issuerAuthorizeUrl('http://attacker.example', { prompt: 'consent' }),
+        { headers: { Cookie: first.sessionCookie, Host: 'attacker.example' } },
+      );
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/consent');
+    });
+
+    it('should build the consent redirect Location on the configured issuer origin after login', async () => {
+      const flow = await loginFromOrigin('http://attacker.example');
+      const location = new URL(flow.consentRedirect);
+
+      expect(new URL(flow.loginRedirect).origin).toBe('http://localhost:3000');
+      expect(location.origin).toBe('http://localhost:3000');
+      expect(location.pathname).toBe('/consent');
+    });
+
+    it('should keep the login redirect Location on the issuer origin for a subpath issuer', async () => {
+      // '/login' is an absolute path, so a subpath issuer contributes only its
+      // origin — the same result the express/fastify/nextjs adapters produce
+      // when they rebase request URLs onto the issuer. Subpath mounting of the
+      // generated routes is a separate, unsupported concern.
+      const subpathApp = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        config: { issuer: 'https://op.example.com/op' },
+      });
+      const res = await subpathApp.request(issuerAuthorizeUrl('https://op.example.com'));
+      const location = new URL(res.headers.get('Location') ?? '');
+
+      expect(res.status).toBe(302);
+      expect(location.origin).toBe('https://op.example.com');
+      expect(location.pathname).toBe('/login');
     });
   });
 
@@ -2159,6 +2320,296 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
+  // OIDC Core 1.0 §11 は offline_access を「End-User が居ない（not logged in）ときにも
+  // 使える Refresh Token を要求する scope」と定義し、Refresh Token の利用がその用途に
+  // 限られないことも明示している（"The use of Refresh Tokens is not exclusive to the
+  // offline_access use case. The Authorization Server MAY grant Refresh Tokens in other
+  // contexts that are beyond the scope of this specification."）。
+  //
+  // この生成 OP はその other contexts を online refresh token として実装する。何が
+  // 発行されるかは次の 2 つで決まる。
+  //
+  // | grant_types に refresh_token | offline_access の付与 | 発行される Refresh Token |
+  // |---|---|---|
+  // | 無し | -    | 発行しない（使えない長期資格情報を配らない）|
+  // | 有り | 無し | online: ログインセッションに束縛。セッションが終われば invalid_grant |
+  // | 有り | 有り | offline: セッション非依存。ログアウト後も使える |
+  describe('Online and offline refresh tokens (OIDC Core 1.0 §11)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return /name="csrf_token" value="([^"]+)"/.exec(html)?.[1] ?? '';
+    }
+
+    // 各テストが自分だけのストアを持つ provider を作る。ブラウザセッションを直接消せる
+    // ので、「ログアウトしたら online refresh token が止まる」を実フロー越しに固定できる。
+    function createIsolatedProvider() {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const stores = createJsonProviderStores(backend);
+      const provider = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: stores,
+      });
+      return { provider, stores };
+    }
+
+    // authorize -> login -> consent を実際に往復し、認可コードと、そのログインで確立した
+    // セッション id を返す。sessionId はログアウトを再現するために使う。
+    async function authorize(
+      provider: ReturnType<typeof createApp>,
+      options: { clientId: string; scope: string; prompt?: string },
+    ): Promise<{ code: string; sessionId: string }> {
+      const authorizeUrl =
+        '/authorize?response_type=code&client_id=' + options.clientId +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(options.scope) +
+        '&state=online-rt' +
+        (options.prompt === undefined ? '' : '&prompt=' + options.prompt) +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+
+      const authorizeRes = await provider.request(authorizeUrl);
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would
+      // (the per-transaction binding secret when that feature is enabled).
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await provider.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await provider.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      // /login sets exactly one cookie: the browser (OP) session. Its value is the
+      // session an online refresh token gets bound to.
+      const sessionId = parseSessionId(loginRes.headers.get('Set-Cookie')) ?? '';
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await provider.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await provider.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+
+      return { code: callback.searchParams.get('code') ?? '', sessionId };
+    }
+
+    async function exchangeCode(
+      provider: ReturnType<typeof createApp>,
+      clientId: string,
+      code: string,
+    ): Promise<Response> {
+      return provider.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: PKCE_VERIFIER,
+          client_id: clientId,
+          client_secret: 's',
+        }).toString(),
+      });
+    }
+
+    async function refresh(
+      provider: ReturnType<typeof createApp>,
+      clientId: string,
+      refreshToken: string,
+    ): Promise<Response> {
+      return provider.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: clientId,
+          client_secret: 's',
+        }).toString(),
+      });
+    }
+
+    it('should issue a refresh token without offline_access when the client registers the refresh_token grant', async () => {
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+
+      const res = await exchangeCode(provider, 'c-conf', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(typeof body.refresh_token).toBe('string');
+      // offline_access は要求していないので付与 scope にも入らない。
+      expect(body.scope).toBe('openid');
+    });
+
+    it('should keep the online refresh token usable while the login session is alive', async () => {
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      const res = await refresh(provider, 'c-conf', issued.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid');
+    });
+
+    it('should reject the online refresh token after the login session ended', async () => {
+      const { provider, stores } = createIsolatedProvider();
+      const { code, sessionId } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      // ログアウト相当: ブラウザ (OP) セッションを終了させる。
+      await stores.browserSessionStore.delete(sessionId);
+
+      const res = await refresh(provider, 'c-conf', issued.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+    });
+
+    it('should keep the online refresh token bound to the session across rotation', async () => {
+      const { provider, stores } = createIsolatedProvider();
+      const { code, sessionId } = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      // 1 回ローテーションしても束縛は外れない（外れると 1 リフレッシュで offline 化する）。
+      const rotated = await (await refresh(provider, 'c-conf', issued.refresh_token as string)).json();
+      await stores.browserSessionStore.delete(sessionId);
+
+      const res = await refresh(provider, 'c-conf', rotated.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+    });
+
+    it('should keep the offline refresh token usable after the login session ended', async () => {
+      const { provider, stores } = createIsolatedProvider();
+      // OIDC Core 1.0 §11: offline_access needs prompt=consent.
+      const { code, sessionId } = await authorize(provider, {
+        clientId: 'c-conf',
+        scope: 'openid offline_access',
+        prompt: 'consent',
+      });
+      const issued = await (await exchangeCode(provider, 'c-conf', code)).json();
+
+      await stores.browserSessionStore.delete(sessionId);
+
+      const res = await refresh(provider, 'c-conf', issued.refresh_token as string);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid offline_access');
+    });
+
+    it('should not issue a refresh token to a client that does not register the refresh_token grant', async () => {
+      // RFC 7591 §2: grant_types の既定は ["authorization_code"]。発行しても
+      // unauthorized_client で拒否されるだけの Refresh Token は配らない。
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, { clientId: 'c-conf-no-refresh', scope: 'openid' });
+
+      const res = await exchangeCode(provider, 'c-conf-no-refresh', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.refresh_token).toBe(undefined);
+    });
+
+    it('should drop offline_access for a client that does not register the refresh_token grant', async () => {
+      const { provider } = createIsolatedProvider();
+      const { code } = await authorize(provider, {
+        clientId: 'c-conf-no-refresh',
+        scope: 'openid offline_access',
+        prompt: 'consent',
+      });
+
+      const res = await exchangeCode(provider, 'c-conf-no-refresh', code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.scope).toBe('openid');
+      expect(body.refresh_token).toBe(undefined);
+    });
+
+    it('should issue only offline refresh tokens when onlineRefreshTokenEnabled is false', async () => {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const provider = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: createJsonProviderStores(backend),
+        config: { onlineRefreshTokenEnabled: false },
+      });
+
+      const online = await authorize(provider, { clientId: 'c-conf', scope: 'openid' });
+      const onlineBody = await (await exchangeCode(provider, 'c-conf', online.code)).json();
+      expect(onlineBody.refresh_token).toBe(undefined);
+
+      const offline = await authorize(provider, {
+        clientId: 'c-conf',
+        scope: 'openid offline_access',
+        prompt: 'consent',
+      });
+      const offlineBody = await (await exchangeCode(provider, 'c-conf', offline.code)).json();
+      expect(typeof offlineBody.refresh_token).toBe('string');
+    });
+  });
+
+
   describe('Token Revocation Endpoint (RFC 7009)', () => {
     it('should reject a non-form revocation request before parsing the body', async () => {
       const res = await app.request('/revoke', {
@@ -2915,9 +3366,11 @@ describe('generated provider HTTP conformance', () => {
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
     const EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
     const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
-    // The exchange rejects every kind of unusable subject_token with one
-    // description so the response cannot be used as an existence oracle.
+    // The exchange rejects every kind of unusable subject_token / actor_token
+    // with one description each, so the response cannot be used as an existence
+    // oracle.
     const SUBJECT_INVALID_DESCRIPTION = 'The provided subject_token is not valid';
+    const ACTOR_INVALID_DESCRIPTION = 'The provided actor_token is not valid';
     const TARGET_REJECTED_DESCRIPTION =
       'The requested target is not allowed for token exchange';
 
@@ -2949,9 +3402,24 @@ describe('generated provider HTTP conformance', () => {
       });
     }
 
+    // Decode a JWT access token's payload (base64url, RFC 7515 §2) so the act
+    // claim of a delegated token can be pinned. The generated default issues
+    // JWT access tokens (config.accessTokenFormat: 'jwt').
+    function decodeJwtPayload(token: string): Record<string, unknown> {
+      const segment = token.split('.')[1] ?? '';
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      return JSON.parse(atob(padded)) as Record<string, unknown>;
+    }
+
     // Drive authorize -> login -> consent over HTTP and hand back the code. No
     // assertions and no branching here: the flow contract lives in the it()s.
-    async function authorizeFlow(clientId: string, scope: string, claims?: string): Promise<string> {
+    async function authorizeFlow(
+      clientId: string,
+      scope: string,
+      claims?: string,
+      username = 'testuser',
+    ): Promise<string> {
       const authorizeUrl =
         '/authorize?response_type=code&client_id=' + clientId +
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
@@ -2977,7 +3445,7 @@ describe('generated provider HTTP conformance', () => {
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
-          username: 'testuser',
+          username,
           password: 'password',
         }).toString(),
       });
@@ -3002,8 +3470,9 @@ describe('generated provider HTTP conformance', () => {
       scope: string,
       clientId = 'c-exchange',
       claims?: string,
+      username = 'testuser',
     ): Promise<string> {
-      const code = await authorizeFlow(clientId, scope, claims);
+      const code = await authorizeFlow(clientId, scope, claims, username);
       const res = await postToken({
         client_id: clientId,
         ...(clientId === 'c-public-exchange' ? {} : { client_secret: 's' }),
@@ -3013,6 +3482,13 @@ describe('generated provider HTTP conformance', () => {
         code_verifier: PKCE_VERIFIER,
       });
       return ((await res.json()) as Record<string, string>).access_token;
+    }
+
+    // An actor_token with a sub distinct from the subject: the second seeded
+    // user runs the same flow, so delegation tests can tell subject and actor
+    // apart in the act claim.
+    function actorTokenFor(scope: string): Promise<string> {
+      return subjectTokenFor(scope, 'c-exchange', undefined, 'otheruser');
     }
 
     describe('Successful exchange', () => {
@@ -3244,20 +3720,66 @@ describe('generated provider HTTP conformance', () => {
         });
       });
 
-      // Delegation (RFC 8693 §1.1 / §4) is out of scope and refused explicitly.
-      it('should reject a delegation request carrying actor_token', async () => {
+      // RFC 8693 §2.1: actor_token_type is REQUIRED when actor_token is present.
+      it('should reject actor_token without actor_token_type', async () => {
         const subjectToken = await subjectTokenFor('openid');
         const res = await exchangeRequest({
           subject_token: subjectToken,
           actor_token: subjectToken,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'actor_token_type is required when actor_token is present',
+        });
+      });
+
+      // RFC 8693 §2.1: actor_token_type MUST NOT be included without actor_token.
+      it('should reject actor_token_type without actor_token', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
           actor_token_type: ACCESS_TOKEN_TYPE,
         });
 
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({
           error: 'invalid_request',
+          error_description: 'actor_token_type must not be present without actor_token',
+        });
+      });
+
+      it('should reject an unsupported actor_token_type with invalid_request', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: subjectToken,
+          actor_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
           error_description:
-            'Delegation is not supported: actor_token and actor_token_type must not be present.',
+            'Unsupported actor_token_type. Only urn:ietf:params:oauth:token-type:access_token is supported.',
+        });
+      });
+
+      // The actor_token failure description is fixed for the same oracle-
+      // elimination reason as the subject_token one.
+      it('should reject an unknown actor_token with the fixed description', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: 'not-a-real-token',
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: ACTOR_INVALID_DESCRIPTION,
         });
       });
 
@@ -3361,6 +3883,77 @@ describe('generated provider HTTP conformance', () => {
       });
     });
 
+    describe('Delegation (RFC 8693 §4.1)', () => {
+      // sub stays the subject; the actor appears only in the act claim.
+      it('should record the actor in the act claim of the issued token', async () => {
+        const subjectToken = await subjectTokenFor('openid profile');
+        const actorToken = await actorTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: subjectToken,
+          actor_token: actorToken,
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+        const body = await res.json();
+        const payload = decodeJwtPayload(body.access_token as string);
+
+        expect(res.status).toBe(200);
+        expect(payload.sub).toBe('testuser');
+        expect(payload.act).toEqual({ sub: 'otheruser' });
+      });
+
+      it('should not add an act claim to an impersonation exchange', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const body = await (await exchangeRequest({ subject_token: subjectToken })).json();
+        const payload = decodeJwtPayload(body.access_token as string);
+
+        expect(payload.act).toBe(undefined);
+      });
+
+      // RFC 8693 §4.1: exchanging a delegated token again pushes the prior
+      // actor one level down; the outermost act names the current actor.
+      it('should nest the prior actor when a delegated token is exchanged again', async () => {
+        const subjectToken = await subjectTokenFor('openid');
+        const firstActor = await actorTokenFor('openid');
+        const delegated = (await (
+          await exchangeRequest({
+            subject_token: subjectToken,
+            actor_token: firstActor,
+            actor_token_type: ACCESS_TOKEN_TYPE,
+          })
+        ).json()).access_token as string;
+        const secondActor = await actorTokenFor('openid');
+        const res = await exchangeRequest({
+          subject_token: delegated,
+          actor_token: secondActor,
+          actor_token_type: ACCESS_TOKEN_TYPE,
+        });
+        const payload = decodeJwtPayload((await res.json()).access_token as string);
+
+        expect(res.status).toBe(200);
+        expect(payload.act).toEqual({ sub: 'otheruser', act: { sub: 'otheruser' } });
+      });
+
+      // A delegated token is an ordinary access token of the subject: the
+      // UserInfo endpoint answers for the subject, not the actor.
+      it('should answer UserInfo for the subject of a delegated token', async () => {
+        const subjectToken = await subjectTokenFor('openid profile');
+        const actorToken = await actorTokenFor('openid');
+        const delegated = (await (
+          await exchangeRequest({
+            subject_token: subjectToken,
+            actor_token: actorToken,
+            actor_token_type: ACCESS_TOKEN_TYPE,
+          })
+        ).json()).access_token as string;
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + delegated },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+    });
+
     describe('Target policy (allowedTargets)', () => {
       // The generated default is an empty list, so any named target is refused
       // until the operator opts in. The list is restored after each test.
@@ -3452,11 +4045,18 @@ describe('generated provider HTTP conformance', () => {
   describe('Device Authorization Grant (RFC 8628)', () => {
     const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
 
+    /**
+     * The app under test. Defaults to the shared one; the ID Token signing key
+     * selection test passes an app built on a mixed RS256 + ES256 key set.
+     */
+    type DeviceTargetApp = { request: (path: string, init?: RequestInit) => Promise<Response> };
+
     // Pure helpers: they fetch and parse only. Every assertion lives in an it().
     function requestDeviceAuthorization(
       overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
     ): Promise<Response> {
-      return app.request('/device_authorization', {
+      return target.request('/device_authorization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -3471,8 +4071,9 @@ describe('generated provider HTTP conformance', () => {
     function pollToken(
       deviceCode: string,
       overrides: Record<string, string> = {},
+      target: DeviceTargetApp = app,
     ): Promise<Response> {
-      return app.request('/token', {
+      return target.request('/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -3498,8 +4099,12 @@ describe('generated provider HTTP conformance', () => {
         .join('; ');
     }
 
-    function submitUserCode(userCode: string, cookie = ''): Promise<Response> {
-      return app.request('/device', {
+    function submitUserCode(
+      userCode: string,
+      cookie = '',
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -3509,8 +4114,12 @@ describe('generated provider HTTP conformance', () => {
       });
     }
 
-    function deviceLogin(body: Record<string, string>, cookie: string): Promise<Response> {
-      return app.request('/device/login', {
+    function deviceLogin(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -3520,8 +4129,12 @@ describe('generated provider HTTP conformance', () => {
       });
     }
 
-    function deviceApprove(body: Record<string, string>, cookie: string): Promise<Response> {
-      return app.request('/device/approve', {
+    function deviceApprove(
+      body: Record<string, string>,
+      cookie: string,
+      target: DeviceTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/device/approve', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -3539,9 +4152,10 @@ describe('generated provider HTTP conformance', () => {
     async function runDeviceFlow(
       overrides: Record<string, string> = {},
       decision: 'approve' | 'deny' = 'approve',
+      target: DeviceTargetApp = app,
     ): Promise<{ device_code: string; user_code: string; completed: Response }> {
-      const authorization = await (await requestDeviceAuthorization(overrides)).json();
-      const submitted = await submitUserCode(authorization.user_code);
+      const authorization = await (await requestDeviceAuthorization(overrides, target)).json();
+      const submitted = await submitUserCode(authorization.user_code, '', target);
       const bindingCookie = cookieJar(submitted);
       const loginRes = await deviceLogin(
         {
@@ -3551,6 +4165,7 @@ describe('generated provider HTTP conformance', () => {
           password: 'password',
         },
         bindingCookie,
+        target,
       );
       const sessionCookie = cookieJar(submitted, loginRes);
       const completed = await deviceApprove(
@@ -3560,6 +4175,7 @@ describe('generated provider HTTP conformance', () => {
           decision,
         },
         sessionCookie,
+        target,
       );
       return {
         device_code: authorization.device_code,
@@ -4052,6 +4668,96 @@ describe('generated provider HTTP conformance', () => {
       expect(typeof body.refresh_token).toBe('string');
     });
     });
+
+    describe('ID Token signing key selection (OIDC Dynamic Client Registration 1.0 §4.2)', () => {
+      /** JOSE header of a compact JWS, decoded. */
+      function joseHeader(jwt: string): Record<string, unknown> {
+        const segment = jwt.split('.')[0] ?? '';
+        return JSON.parse(
+          new TextDecoder().decode(
+            Uint8Array.from(atob(segment.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)),
+          ),
+        );
+      }
+
+      // A client may register id_token_signed_response_alg, and the standard
+      // grants pick a registered key matching it. The device grant MUST NOT
+      // diverge: signing this client's ID Token with whichever key happens to be
+      // ACTIVE would hand it an RS256 token it rejects, and would compute at_hash
+      // with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      it('should sign the device grant ID Token with the alg the client registered', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is RS256; the registered set also holds an ES256 key.
+          async getSigningKey(): Promise<SigningKey> {
+            return {
+              privateKey: rs256Pair.privateKey,
+              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+              keyId: 'device-rs256',
+            };
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [
+              {
+                privateKey: rs256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+                keyId: 'device-rs256',
+              },
+              {
+                privateKey: es256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+                keyId: 'device-es256',
+              },
+            ];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+        const client = { client_id: 'c-device-es256', client_secret: 's' };
+
+        const flow = await runDeviceFlow(client, 'approve', mixedApp);
+        const body = await (await pollToken(flow.device_code, client, mixedApp)).json();
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] =
+          (body.id_token as string).split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          es256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: 'device-es256',
+        });
+        expect(signatureValid).toBe(true);
+      });
+
+      it('should keep signing with RS256 for a client that registered no alg', async () => {
+        const flow = await runDeviceFlow();
+        const body = await (await pollToken(flow.device_code)).json();
+
+        expect(joseHeader(body.id_token)).toEqual({
+          alg: 'RS256',
+          typ: 'JWT',
+          kid: 'test-key',
+        });
+      });
+    });
   });
 
   // EXPERIMENTAL — JWT Secured Authorization Response Mode (JARM). Generated
@@ -4183,6 +4889,75 @@ describe('generated provider HTTP conformance', () => {
       );
       return { header, payload: decodeSegment(encodedPayload), signatureValid };
     }
+
+    describe('Signing key selection (JARM Section 3)', () => {
+      // A SigningKeyProvider may legitimately return an ES256 active key next to
+      // a registered set that also holds RS256 — packages/core's
+      // SigningKeyProvider contract documents alternate-alg key sets, and only
+      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
+      // JARM response JWT always declares alg RS256, so it must be signed with
+      // the RS256 key from that set: signing it with whichever key happens to be
+      // active would make Web Crypto refuse and break the authorization response
+      // delivery path for every client that asked for a JWT response mode.
+      it('should sign with the registered RS256 key when the active key is ES256', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const rs256Key: SigningKey = {
+          privateKey: rs256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+          keyId: 'mixed-rs256',
+        };
+        const es256Key: SigningKey = {
+          privateKey: es256Pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+          keyId: 'mixed-es256',
+        };
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is the ES256 one; the registered set holds both.
+          async getSigningKey(): Promise<SigningKey> {
+            return es256Key;
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [rs256Key, es256Key];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+
+        // OIDC Core 1.0 Section 3.1.2.1: prompt=none with no session is
+        // login_required — a redirectable error, so it is answered in JARM mode
+        // straight from the authorize route, with no interaction to drive.
+        const res = await mixedApp.request(
+          authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
+        );
+        const location = res.headers.get('Location') ?? '';
+        const jwt = queryOf(location).get('response') ?? '';
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          'RSASSA-PKCS1-v1_5',
+          rs256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect([...queryOf(location).keys()]).toEqual(['response']);
+        expect(decodeSegment(encodedHeader)).toEqual({ alg: 'RS256', kid: 'mixed-rs256' });
+        expect(signatureValid).toBe(true);
+        expect(decodeSegment(encodedPayload).error).toBe('login_required');
+      });
+    });
 
     describe('Success response (JARM Section 2.3.1)', () => {
       it('should deliver the authorization response as the only response query parameter', async () => {
@@ -4344,11 +5119,15 @@ describe('generated provider HTTP conformance', () => {
         const res = await app.request(authorizeUrl({ response_mode: 'query.jwt' }), {
           headers: { Cookie: first.sessionCookie },
         });
-        const { payload, signatureValid } = await inspectJarmJwt(
+        const { header, payload, signatureValid } = await inspectJarmJwt(
           queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
         );
 
         expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        // JARM Section 3: the authorize route signs with the RS256 key selected
+        // from the registered key set, not with whichever key happens to be
+        // active, so the alg header always matches the key that produced it.
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
         expect(signatureValid).toBe(true);
         expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
       });
@@ -4361,11 +5140,12 @@ describe('generated provider HTTP conformance', () => {
           authorizeUrl({ response_mode: 'query.jwt', prompt: 'none' }),
           { headers: { Cookie: first.sessionCookie } },
         );
-        const { payload, signatureValid } = await inspectJarmJwt(
+        const { header, payload, signatureValid } = await inspectJarmJwt(
           queryOf(res.headers.get('Location') ?? '').get('response') ?? '',
         );
 
         expect([...queryOf(res.headers.get('Location') ?? '').keys()]).toEqual(['response']);
+        expect(header).toEqual({ alg: 'RS256', kid: 'test-key' });
         expect(signatureValid).toBe(true);
         expect(Object.keys(payload).sort()).toEqual(['aud', 'code', 'exp', 'iss', 'state']);
       });
@@ -4378,6 +5158,179 @@ describe('generated provider HTTP conformance', () => {
         expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
         expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
       });
+    });
+  });
+
+  describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
+    const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the contract
+    // stays visible in the it() blocks.
+    function decisionRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function decisionCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drives authorize -> login -> GET /consent and returns everything the browser
+    // holds at the consent screen, so each test only differs in the posted action.
+    async function reachConsent(state: string): Promise<{
+      transactionId: string;
+      csrfToken: string;
+      cookie: string;
+    }> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + DECISION_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = decisionRelativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const cookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: cookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: decisionCsrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = decisionRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: cookie } });
+
+      return { transactionId, csrfToken: decisionCsrfFrom(await consentGet.text()), cookie };
+    }
+
+    // The body is passed in whole so a test can leave 'action' out entirely
+    // without this helper branching on it.
+    function postConsent(cookie: string, body: Record<string, string>): Promise<Response> {
+      return app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    // A form rebuilt by a script or a test harness carries no submit-button value.
+    it('should not issue an authorization code when the consent POST omits the action parameter', async () => {
+      const flow = await reachConsent('decision-omitted');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    it('should not issue an authorization code when the consent POST sends an empty action value', async () => {
+      const flow = await reachConsent('decision-empty');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: '',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The realistic regression: the Approve button is renamed in views.ts, so the
+    // handler receives a value it never agreed to accept.
+    it('should not issue an authorization code when the consent POST sends an unknown action value', async () => {
+      const flow = await reachConsent('decision-unknown');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'allow',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // OIDC Core 1.0 §3.1.2.6: access_denied means the End-User denied the request.
+    // "No decision was obtained" is a different outcome, so it stops at the OP with
+    // its own error page instead of being redirected to the client.
+    it('should return 400 for a consent POST with an unrecognized action value', async () => {
+      const flow = await reachConsent('decision-400');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'accept',
+      });
+      const body = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(body.includes('Invalid consent decision. Please use the Approve or Deny button.')).toBe(true);
+      expect(body.includes('access_denied')).toBe(false);
+    });
+
+    it('should issue an authorization code when the consent POST sends action=approve', async () => {
+      const flow = await reachConsent('decision-approve');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'approve',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+      expect(callback.searchParams.get('state')).toBe('decision-approve');
+      expect(callback.searchParams.get('error')).toBe(null);
+      expect((callback.searchParams.get('code') ?? '').length > 0).toBe(true);
+    });
+
+    it('should redirect with error=access_denied when the consent POST sends action=deny', async () => {
+      const flow = await reachConsent('decision-deny');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'deny',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.origin + callback.pathname).toBe(REDIRECT_URI);
+      expect(callback.searchParams.get('error')).toBe('access_denied');
+      expect(callback.searchParams.get('state')).toBe('decision-deny');
+      expect(callback.searchParams.get('code')).toBe(null);
+    });
+
+    // Consent must not be persisted either: a recorded consent would let a later
+    // prompt=none request succeed without the End-User ever having approved.
+    it('should not record consent via recordConsent when the action value is unrecognized', async () => {
+      await consentResolver.revokeConsent?.('testuser', 'c-conf');
+      const flow = await reachConsent('decision-no-record');
+
+      const res = await postConsent(flow.cookie, {
+        transaction_id: flow.transactionId,
+        csrf_token: flow.csrfToken,
+        action: 'approved',
+      });
+
+      expect(res.status).toBe(400);
+      expect(consentStore.hasConsent('testuser', 'c-conf', ['openid'])).toBe(false);
     });
   });
 });

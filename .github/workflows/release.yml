@@ -113,15 +113,18 @@ jobs:
 
             - name: Create Release PR or Publish to npm
               id: changesets
-              uses: changesets/action@v1
+              uses: changesets/action@v2
               with:
+                  # v2 で入力名が kebab-case へ改名された（version → version-script,
+                  # publish → publish-script）。v1 の名前のままだと入力が無視され、
+                  # PR も publish も起きないまま run だけ成功する。
                   # 未消化の changeset があれば Version Packages PR を作成/更新する。
-                  version: pnpm run ci:version
+                  version-script: pnpm run ci:version
                   # その PR がマージされ changeset が無くなった push で publish する。
                   # ci:publish は build 後に `changeset publish`（実体は pnpm publish）を実行する。
-                  publish: pnpm run ci:publish
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  publish-script: pnpm run ci:publish
+                  # v2 は GITHUB_TOKEN 環境変数を読まなくなったため、入力で明示的に渡す。
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
 
             # npm Trusted Publishing automatically creates provenance for public
             # packages. Verify signatures, then require a verified SLSA provenance
@@ -129,7 +132,7 @@ jobs:
             - name: Verify published package provenance
               if: steps.changesets.outputs.published == 'true'
               env:
-                  PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+                  PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
               run: node .github/scripts/verify-npm-provenance.mjs
 
             # version 段階と publish 段階の分岐が壊れると、Version Packages PR をマージしても

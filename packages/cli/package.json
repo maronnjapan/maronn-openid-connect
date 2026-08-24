@@ -47,7 +47,7 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/cli#readme",
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.6"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

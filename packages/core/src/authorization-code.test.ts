@@ -182,5 +182,19 @@ describe('createAuthorizationCode', () => {
       const result = await createAuthorizationCode(createValidOptions());
       expect(result.acrValues).toBeUndefined();
     });
+
+    // online refresh token（offline_access 無しで発行する Refresh Token）を、この認可を
+    // 生んだ認証セッションへ束縛するために引き継ぐ。
+    it('should include sessionId when the authorization was issued within a session', async () => {
+      const result = await createAuthorizationCode(
+        createValidOptions({ sessionId: 'session-abc' }),
+      );
+      expect(result.sessionId).toBe('session-abc');
+    });
+
+    it('should not include sessionId when absent', async () => {
+      const result = await createAuthorizationCode(createValidOptions());
+      expect(result.sessionId).toBeUndefined();
+    });
   });
 });

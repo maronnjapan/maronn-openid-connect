@@ -17,6 +17,14 @@ import type { ClaimsParameter } from './userinfo.js';
 export interface SessionInfo {
   subject: string;
   authTime: number;
+  /**
+   * このセッションの識別子（任意）。
+   * online refresh token（`offline_access` 無しで発行する Refresh Token）を
+   * このセッションへ束縛するために、認可コードへ引き継ぐ値。
+   * セッション識別子を外部へ出したくない実装は省略してよく、その場合は
+   * online refresh token が発行されない（offline_access のみで発行される）。
+   */
+  sessionId?: string;
 }
 
 export interface SessionResolver {

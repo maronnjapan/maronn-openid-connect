@@ -99,6 +99,146 @@ describe('Web-standard generated id_token_hint handling', () => {
   }
 });
 
+// OIDC Discovery 1.0 §3 / RFC 9700 §2.1: internal redirects (/login, /consent)
+// are built on the configured issuer in every Web-standard framework, so the
+// invariant "the OP's own origin comes from config, not from request headers"
+// is visible in the route code itself, not only in the adapters.
+describe('Web-standard generated internal redirect origin', () => {
+  const generatedInternalRedirects = [
+    {
+      framework: 'express',
+      files: new ExpressGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '',
+    },
+    {
+      framework: 'fastify',
+      files: new FastifyGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '',
+    },
+    {
+      framework: 'nextjs',
+      files: new NextJsGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '_oidc-provider/',
+    },
+  ];
+
+  for (const { framework, files, prefix } of generatedInternalRedirects) {
+    const authorize = files.find((f) => f.path === `${prefix}routes/authorize.ts`)?.content ?? '';
+    const login = files.find((f) => f.path === `${prefix}routes/login.ts`)?.content ?? '';
+    const conformance = files.find((f) => f.path === `${prefix}conformance.test.ts`)?.content ?? '';
+
+    it(`should build internal redirects on config.issuer for ${framework}`, () => {
+      expect(authorize.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/login', config.issuer)")).toBe(true);
+      expect(login.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/consent', c.req.url)")).toBe(false);
+      expect(authorize.includes("new URL('/login', c.req.url)")).toBe(false);
+      expect(login.includes("new URL('/consent', c.req.url)")).toBe(false);
+    });
+
+    it(`should generate the internal redirect origin conformance contract for ${framework}`, () => {
+      expect(conformance.includes("describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)'")).toBe(true);
+      expect(conformance.includes("it('should ignore the Host header when building the login redirect Location'")).toBe(true);
+      expect(conformance.includes("it('should keep the login redirect Location on the issuer origin for a subpath issuer'")).toBe(true);
+    });
+  }
+});
+
+// OIDC Core 1.0 §3.1.2.4: "the Authorization Server MUST obtain an authorization
+// decision before releasing information to the Relying Party." Every Web-standard
+// framework therefore detects the affirmative decision on an allowlist; a missing,
+// empty or unknown `action` is "no decision obtained" and must not issue a code.
+describe('Web-standard generated consent decision allowlist', () => {
+  const generatedConsent = [
+    {
+      framework: 'express',
+      files: new ExpressGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '',
+    },
+    {
+      framework: 'fastify',
+      files: new FastifyGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '',
+    },
+    {
+      framework: 'nextjs',
+      files: new NextJsGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      prefix: '_oidc-provider/',
+    },
+  ];
+
+  for (const { framework, files, prefix } of generatedConsent) {
+    const consentRoute =
+      files.find((file) => file.path === `${prefix}routes/consent.ts`)?.content ?? '';
+    const views = files.find((file) => file.path === `${prefix}views.ts`)?.content ?? '';
+
+    it(`should approve only the allowlisted action value for ${framework}`, () => {
+      expect(
+        consentRoute.includes(`  if (action !== 'approve') {
+    return renderView(views.errorPage({
+      error: 'Invalid consent decision. Please use the Approve or Deny button.',
+      statusCode: 400,
+    }), { status: 400 });
+  }`),
+      ).toBe(true);
+    });
+
+    it(`should submit the same decision value the handler accepts for ${framework}`, () => {
+      expect(
+        views.includes('<button type="submit" name="action" value="approve">Approve</button>'),
+      ).toBe(true);
+      expect(
+        views.includes('<button type="submit" name="action" value="deny">Deny</button>'),
+      ).toBe(true);
+      expect(consentRoute.includes("if (action === 'deny') {")).toBe(true);
+    });
+
+    it(`should generate the consent decision contract test for ${framework}`, () => {
+      const conformance =
+        files.find((file) => file.path === `${prefix}conformance.test.ts`)?.content ?? '';
+
+      expect(
+        conformance.includes("describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)'"),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should not issue an authorization code when the consent POST omits the action parameter',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should not issue an authorization code when the consent POST sends an empty action value',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should not issue an authorization code when the consent POST sends an unknown action value',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should return 400 for a consent POST with an unrecognized action value',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should issue an authorization code when the consent POST sends action=approve',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should redirect with error=access_denied when the consent POST sends action=deny',
+        ),
+      ).toBe(true);
+      expect(
+        conformance.includes(
+          'should not record consent via recordConsent when the action value is unrecognized',
+        ),
+      ).toBe(true);
+    });
+  }
+});
+
 describe('ExpressGenerator', () => {
   const generator = new ExpressGenerator();
   const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
@@ -606,13 +746,37 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       expect(actions?.content).toContain("import { oidcProviderOptions } from '../_oidc-provider/runtime'");
       expect(actions?.content).toContain('completeAuthTransaction(');
       expect(actions?.content).toContain('createAuthorizationCode({');
-      expect(actions?.content).toContain('offlineAccessAllowed');
+      // offline_access の可否は authorize の applyOfflineAccessPolicy で確定済みなので
+      // Server Action 側で独自フラグを見て再フィルタしない。
+      expect(actions?.content).not.toContain('offlineAccessAllowed');
+      expect(actions?.content).toContain(
+        "const grantedScope = transaction.scope.split(' ').filter(Boolean);",
+      );
+      // online refresh token をこのログインセッションへ束縛するため sessionId を引き継ぐ。
+      expect(actions?.content).toContain('sessionId: session.sessionId,');
       expect(actions?.content).toContain('consentResolver.recordConsent?.(');
       // RFC 9207 §2: iss on both success and deny responses.
       expect(actions?.content).toContain("successUrl.searchParams.set('iss', issuer)");
       expect(actions?.content).toContain("denyUrl.searchParams.set('iss', issuer)");
     });
 
+    // OIDC Core 1.0 §3.1.2.4: the Server Action mints the authorization code, so it
+    // must obtain the decision on the same allowlist as the route handlers. §3.1.2.6:
+    // an unrecognized value is not access_denied, so it stops at the OP's own error
+    // page instead of returning to the client.
+    it('should approve only the allowlisted action value in the consent Server Action', () => {
+      const actions = files.find((f) => f.path === 'consent/actions.ts');
+      const page = files.find((f) => f.path === 'consent/page.tsx');
+
+      expect(actions?.content).toContain("if (action !== 'approve') {");
+      expect(actions?.content).toContain(
+        "'/oidc-error?error=invalid_request&error_description=' +",
+      );
+      expect(actions?.content).toContain(
+        "encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.')",
+      );
+      expect(page?.content).toContain('<button type="submit" name="action" value="approve">');
+    });
   });
 });
 

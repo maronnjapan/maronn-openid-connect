@@ -214,8 +214,7 @@ deviceApp.post('/login', async (c) => {
   if (!user) {
     // Per-record throttling only. An attacker holding a device-grant client can
     // mint unlimited records, so the aggregate password-guess budget is the same
-    // as the one on /login — subject-scoped throttling is tracked separately in
-    // tasks/p2-login-attempt-throttling-subject-scope.md.
+    // as the one on /login. Subject-scoped throttling is a separate concern.
     const failure = await recordDeviceLoginFailure(
       record,
       deviceStore,

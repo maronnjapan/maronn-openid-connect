@@ -21,6 +21,10 @@ export function createOidcRouteHandlers(options: NextOidcProviderOptions): NextO
   };
 }
 
+// The advertised issuer is the source of truth for the OP's own origin
+// (OIDC Discovery 1.0 §3): rebasing here keeps every URL the OP derives from
+// the request — including the /login and /consent redirect Locations —
+// independent of the Host header the runtime saw (RFC 9700 §2.1).
 function rebaseRequestOrigin(request: Request, issuer: string | undefined): Request {
   if (!issuer) return request;
 

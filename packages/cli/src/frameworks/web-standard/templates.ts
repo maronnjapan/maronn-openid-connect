@@ -7,6 +7,7 @@ import {
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
+  consentDecisionConformanceBlock,
   consentWithdrawalConformanceBlock,
   consentRouteTemplate,
   customViewConformanceTestBlock,
@@ -17,6 +18,7 @@ import {
   endpointBehaviorConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
   idTokenHintConformanceBlock,
+  internalRedirectOriginConformanceBlock,
   introspectionConformanceBlock,
   introspectionRouteTemplate,
   jwksRouteTemplate,
@@ -31,6 +33,8 @@ import {
   requestObjectConformanceBeforeAll,
   requestObjectConformanceModuleSetup,
   resolversTemplate,
+  onlineRefreshTokenConformanceBlock,
+  onlineRefreshTokenConformanceStoreImport,
   reuseFlowConformanceTestBlock,
   revocationDisabledConformanceBlock,
   revocationRouteTemplate,
@@ -339,6 +343,10 @@ export function toWebRequest(
   bodyOverride?: BodyInit | null,
 ): Request {
   const path = incoming.originalUrl ?? incoming.url ?? '/';
+  // Only the path is taken from the incoming request; the origin comes from
+  // baseUrl (config.issuer via applyOidc). URLs the OP builds for itself —
+  // the /login and /consent redirect Locations — therefore never depend on
+  // the Host header (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
   const url = new URL(path, baseUrl);
   const headers = new Headers();
   for (const [name, value] of Object.entries(incoming.headers)) {
@@ -444,7 +452,8 @@ import { deviceApp } from './routes/device.js';\n`
     ? `  deviceAuthorizationStore,\n`
     : '';
   const refreshStorageContext = features.refreshToken
-    ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);\n`
+    ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
+    c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
     : '';
   const introspectionStorageContext = features.introspection
     ? `    c.set('introspectionAccessTokenResolver', storeResolvers.introspectionAccessTokenResolver);
@@ -703,6 +712,9 @@ ${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}  '
 
 export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   const oidc = createApp(options);
+  // The advertised issuer is the source of truth for the OP's own origin
+  // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
+  // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
   for (const endpoint of OIDC_ENDPOINTS) {
@@ -749,6 +761,9 @@ export type ApplyOidcOptions = OidcProviderOptions;
 
 export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions): Promise<void> {
   const oidc = createApp(options);
+  // The advertised issuer is the source of truth for the OP's own origin
+  // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
+  // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
   if (!app.hasContentTypeParser('application/x-www-form-urlencoded')) {
@@ -820,6 +835,10 @@ export function createOidcRouteHandlers(options: NextOidcProviderOptions): NextO
   };
 }
 
+// The advertised issuer is the source of truth for the OP's own origin
+// (OIDC Discovery 1.0 §3): rebasing here keeps every URL the OP derives from
+// the request — including the /login and /consent redirect Locations —
+// independent of the Host header the runtime saw (RFC 9700 §2.1).
 function rebaseRequestOrigin(request: Request, issuer: string | undefined): Request {
   if (!issuer) return request;
 
@@ -1524,18 +1543,21 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 
   const authTime = Math.floor(Date.now() / 1000);
 
-  // Store authenticated subject for the consent step (per-transaction handoff).
-  await authSessionStore.set(transactionId, {
-    subject: user.sub,
-    authTime,
-  });
-
   // Establish a persistent browser (OP) session so SSO / prompt=none / max_age
   // work on subsequent authorization requests (OIDC Core 1.0 Section 3.1.2.3).
   // Cookie attributes match buildSessionCookie() in store.ts so the
   // sessionResolver can read it back.
   const sessionId = await generateRandomString(32);
   await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
+
+  // Store authenticated subject for the consent step (per-transaction handoff).
+  // sessionId も渡すのは online refresh token のため。consent 経由で発行する認可
+  // コードにこのセッションを引き継ぎ、ログアウトで使えなくなる RT を作る。
+  await authSessionStore.set(transactionId, {
+    subject: user.sub,
+    authTime,
+    sessionId,
+  });
   cookieStore.set(SESSION_COOKIE_NAME, sessionId, {
     httpOnly: true,
     secure: true,
@@ -1648,6 +1670,13 @@ ${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
           <li key={scope}>{scope}</li>
         ))}
       </ul>
+      {/*
+        The submit buttons carry the authorization decision (OIDC Core 1.0
+        Section 3.1.2.4). consentAction accepts exactly two values — 'approve'
+        and 'deny' — and rejects everything else, so customizing this markup must
+        keep both button values as they are: renaming 'approve' makes every
+        approval fail with an error page. See ./actions.ts.
+      */}
       <form action={consentAction}>
         <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
@@ -1729,7 +1758,6 @@ import {
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
-import type { RegisteredClient } from '../_oidc-provider/config';
 ${bindingStoreImport}
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
@@ -1766,6 +1794,25 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 ${clearBindingCookie}    redirect(denyUrl.toString());
   }
 
+  // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
+  // authorization decision before releasing information to the Relying Party."
+  // This action mints the authorization code, so it detects the affirmative
+  // decision on an allowlist just like the route handlers: a missing, empty or
+  // unknown 'action' means no decision was obtained and must not approve.
+  //
+  // 'approve' is the decision value this provider accepts, and it MUST stay in
+  // sync with the Approve button in consent/page.tsx.
+  //
+  // Section 3.1.2.6: access_denied means the End-User denied the request, which
+  // is not the same as no decision at all — an unrecognized value therefore goes
+  // to the OP's own error page instead of back to the client.
+  if (action !== 'approve') {
+    redirect(
+      '/oidc-error?error=invalid_request&error_description=' +
+        encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.'),
+    );
+  }
+
   const session = await authSessionStore.get(transactionId);
   if (!session) {
     redirect(\`/login?transaction_id=\${encodeURIComponent(transactionId)}\`);
@@ -1777,22 +1824,19 @@ ${clearBindingCookie}    redirect(denyUrl.toString());
     transactionStore,
   );
 
-  // Filter offline_access if the client does not allow it.
-  // findClient() is typed as ClientResolver here, so narrow back to the
-  // registered-client shape that carries offlineAccessAllowed.
-  const clientConfig = (await oidcProviderOptions.clientResolver?.findClient(
-    transaction.clientId,
-  )) as RegisteredClient | null | undefined;
-  const grantedScope = transaction.scope.split(' ').filter((s) => {
-    if (s === 'offline_access' && !clientConfig?.offlineAccessAllowed) return false;
-    return Boolean(s);
-  });
+  // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
+  // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
+  // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
+  const grantedScope = transaction.scope.split(' ').filter(Boolean);
 
   // OIDC Core 1.0 Section 3.1.3.1: TTL is configurable via ProviderConfig.
   const authCodeData = await createAuthorizationCode({
     authorizationResponse: { ...responseParams, scope: grantedScope },
     subject: session.subject,
     authTime: session.authTime,
+    // online refresh token をこのログインセッションへ束縛する（login フローが
+    // authSessionStore へ載せた値）。ログアウトすれば RT も使えなくなる。
+    sessionId: session.sessionId,
     ttlSeconds: oidcProviderOptions.config?.authorizationCodeTtl,
   });
   await authCodeStore.set(authCodeData.code, authCodeData);
@@ -1960,7 +2004,7 @@ import { tokenExchangeConfig } from './routes/token.js';`
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
@@ -2374,7 +2418,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
 `;
 }
 

@@ -2,6 +2,7 @@
  * Authentication Request（認可リクエスト）のバリデーション
  * OIDC Core 1.0 Section 3.1.2 / OAuth 2.1 に準拠
  */
+import { clientAllowsRefreshTokenGrant } from './client-grant-types.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 import { isLoopbackHostname } from './loopback.js';
 import { parseRequestObject, RequestObjectError } from './request-object.js';
@@ -114,6 +115,15 @@ export interface ClientInfo {
    */
   responseTypes?: string[];
   /**
+   * このクライアントが Token Endpoint で使用してよい grant_type の一覧。
+   * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 既定は `["authorization_code"]`。
+   * 認可エンドポイントはこれを `offline_access` の付与判定に使う（OIDC Core 1.0 §11 の
+   * ユーザー同意条件とは独立した、クライアント登録上の権限という軸）。
+   * {@link TokenClientInfo.grantTypes} と同じ値であり、生成コードのように 1 つの
+   * クライアントレコードを両エンドポイントで共有する場合は 1 箇所に書けばよい。
+   */
+  grantTypes?: string[];
+  /**
    * クライアント登録メタデータ `default_max_age`（秒）。
    * OIDC Dynamic Client Registration 1.0 §2: リクエストに `max_age` が無い場合の
    * 既定の再認証鮮度として OP 側で適用する。`max_age` リクエストパラメータが
@@ -168,17 +178,28 @@ export interface ClientResolver {
  */
 export type OfflineAccessGrantedCallback = (
   request: AuthorizationRequestParams,
-  context: { promptValues: string[] },
+  context: { promptValues: string[]; client: ClientInfo },
 ) => boolean | Promise<boolean>;
 
 /**
  * `offline_access` の既定許可ロジック。
- * OIDC Core 1.0 §11 が明示する `prompt=consent` のみを許可条件とする安全側の実装。
+ *
+ * 独立した 2 軸の AND を取る。
+ *
+ * 1. OIDC Core 1.0 §11 が明示する**エンドユーザーの同意**（`prompt=consent`）
+ * 2. RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2 の**クライアント登録上の権限**
+ *    （`grant_types` に `refresh_token` を含むこと。既定は `["authorization_code"]`）
+ *
+ * 2 を見ないと、`refresh_token` grant を登録していないクライアントへ Refresh Token を
+ * 発行してしまう。その Refresh Token は `validateClientGrantType` が
+ * `unauthorized_client` で拒否するため一度も使えず、クライアントに長期資格情報を
+ * 保存させるだけになる（RFC 9700 §4.14）。しかも失敗するのは発行時ではなく
+ * クライアントが実際に更新を試みた時点なので、設定ミスの発見が遅れる。
  */
 export const defaultIsOfflineAccessGranted: OfflineAccessGrantedCallback = (
   _request,
-  { promptValues },
-) => promptValues.includes('consent');
+  { promptValues, client },
+) => promptValues.includes('consent') && clientAllowsRefreshTokenGrant(client);
 
 /**
  * validateAuthorizationRequest のオプション
@@ -1040,6 +1061,7 @@ export async function applyOfflineAccessPolicy(
   scope: string[],
   effectiveParams: AuthorizationRequestParams,
   promptValues: string[] | undefined,
+  client: ClientInfo,
   isOfflineAccessGranted: OfflineAccessGrantedCallback = defaultIsOfflineAccessGranted,
 ): Promise<string[]> {
   if (!scope.includes('offline_access')) {
@@ -1048,6 +1070,7 @@ export async function applyOfflineAccessPolicy(
 
   const granted = await isOfflineAccessGranted(effectiveParams, {
     promptValues: promptValues ?? [],
+    client,
   });
   if (granted) {
     return scope;
@@ -1187,6 +1210,7 @@ export async function validateAuthorizationRequest(
     scope,
     effective,
     prompt,
+    client,
     options.isOfflineAccessGranted,
   );
 

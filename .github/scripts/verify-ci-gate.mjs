@@ -13,7 +13,7 @@
  * ここでは ci.yml と packages/* の package.json を突き合わせ、
  * ゲートが機能する形で残っていることをテストとして固定する。
  *
- * 参照: tasks/done/p1-ci-push-trigger-and-static-verification-gate.md
+ * この検査は、過去に main へビルド不能なコードが入った回帰を防ぐ。
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';

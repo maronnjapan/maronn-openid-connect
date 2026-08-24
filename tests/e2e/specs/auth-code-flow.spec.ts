@@ -64,7 +64,15 @@ test.describe('Authorization Code Flow', () => {
     expect(idToken.split('.')).toHaveLength(3);
     await expect(page.getByTestId('token-expires-in')).toHaveText('3600');
     await expect(page.getByTestId('token-scope')).toHaveText('openid profile email');
-    await expect(page.getByTestId('token-refresh-token')).toHaveText('');
+    // offline_access 無しでも Refresh Token は返る。これはログインセッションに束縛された
+    // online refresh token で、セッションが終われば使えなくなる（OIDC Core 1.0 §11 が
+    // 認める "other contexts"）。online と offline の寿命の違いは
+    // authorization-branches.spec.ts が確かめる。
+    const refreshToken = await locatorText(
+      page.getByTestId('token-refresh-token'),
+      'refresh token',
+    );
+    expect(refreshToken).toHaveLength(43);
     await expect(page.getByTestId('userinfo-sub')).toHaveText('testuser');
     await expect(page.getByTestId('userinfo-email')).toHaveText('test@example.com');
     await expect(page.getByTestId('resource-subject')).toHaveText('testuser');

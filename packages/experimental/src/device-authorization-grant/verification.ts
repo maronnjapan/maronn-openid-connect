@@ -133,9 +133,8 @@ export async function validateVerificationBinding(
  * hidden フィールドの csrf_token を照合する（多層防御）。
  *
  * 主防御は {@link validateVerificationBinding} なので、常に binding を先に検証して
- * から呼ぶこと。比較の定数時間化は既存 login / consent の `validateCsrfToken` と
- * 同じ水準に揃えてある（`tasks/p3-csrf-token-constant-time-comparison.md` の
- * 適用範囲に本機能も含める）。
+ * から呼ぶこと。比較方法は既存 login / consent の `validateCsrfToken` と
+ * 同じ水準に揃えてある。定数時間比較への変更時は本機能にも同じ方針を適用する。
  *
  * @throws {DeviceVerificationError} 403
  */
@@ -156,9 +155,8 @@ export function validateVerificationCsrfToken(
  *
  * 既知の残存面: device グラントを許可されたクライアントを持つ攻撃者はレコードを
  * 無制限に発行できるため、集計上のパスワード試行回数は無制限になる。これは既存
- * `/login` ルート（auth transaction を無制限に開始できる）と同一の残存面であり、
- * subject 単位のスロットリングは
- * `tasks/p2-login-attempt-throttling-subject-scope.md` の責務とする。
+ * `/login` ルート（auth transaction を無制限に開始できる）と同一の残存面である。
+ * subject 単位のスロットリングは別機能の責務とする。
  */
 export async function recordDeviceLoginFailure(
   record: DeviceAuthorizationRecord,

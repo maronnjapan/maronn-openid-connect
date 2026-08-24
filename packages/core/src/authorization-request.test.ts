@@ -60,6 +60,15 @@ const defaultClient: ClientInfo = {
   redirectUris: ['https://client.example.org/cb'],
 };
 
+// RFC 7591 §2: grant_types の既定は ["authorization_code"]。offline_access は
+// refresh_token grant を登録したクライアントにしか付与されないため、offline_access を
+// 扱うテストはこのクライアントを使う。
+const refreshGrantClient: ClientInfo = {
+  clientId: 'client123',
+  redirectUris: ['https://client.example.org/cb'],
+  grantTypes: ['authorization_code', 'refresh_token'],
+};
+
 // Default valid parameters (PKCE required in OAuth 2.1)
 function validParams(
   overrides?: Partial<AuthorizationRequestParams>
@@ -1877,7 +1886,7 @@ describe('validateAuthorizationRequest', () => {
       const params = validParams({ scope: 'openid offline_access' });
       const result = await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
       );
       expect(result.scope).toEqual(['openid']);
     });
@@ -1886,7 +1895,7 @@ describe('validateAuthorizationRequest', () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'login' });
       const result = await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
       );
       expect(result.scope).toEqual(['openid']);
     });
@@ -1895,37 +1904,37 @@ describe('validateAuthorizationRequest', () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
       const result = await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
       );
-      expect(result.scope).toContain('offline_access');
+      expect(result.scope).toEqual(['openid', 'offline_access']);
     });
 
     it('should retain offline_access when prompt includes consent among others', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'login consent' });
       const result = await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
       );
-      expect(result.scope).toContain('offline_access');
+      expect(result.scope).toEqual(['openid', 'offline_access']);
     });
 
     it('should drop offline_access when prompt=none and offline_access is requested', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'none' });
       const result = await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
       );
-      expect(result.scope).not.toContain('offline_access');
+      expect(result.scope).toEqual(['openid']);
     });
 
     it('should allow a custom isOfflineAccessGranted callback to override the default', async () => {
       const params = validParams({ scope: 'openid offline_access' });
       const result = await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
         { isOfflineAccessGranted: () => true },
       );
-      expect(result.scope).toContain('offline_access');
+      expect(result.scope).toEqual(['openid', 'offline_access']);
     });
 
     it('should pass parsed prompt values to the custom callback', async () => {
@@ -1933,7 +1942,7 @@ describe('validateAuthorizationRequest', () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'login' });
       await validateAuthorizationRequest(
         params,
-        createClientResolver([defaultClient]),
+        createClientResolver([refreshGrantClient]),
         {
           isOfflineAccessGranted: (_req, ctx) => {
             received = ctx.promptValues;
@@ -1942,6 +1951,71 @@ describe('validateAuthorizationRequest', () => {
         },
       );
       expect(received).toEqual(['login']);
+    });
+  });
+
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: grant_types はクライアントが
+  // token endpoint で使える grant type の登録。refresh_token を登録していないクライアントに
+  // offline_access を付与しても、その Refresh Token は unauthorized_client で拒否されるだけ
+  // なので、認可の時点で offline_access を落とす。
+  describe('offline_access gating by registered grant_types', () => {
+    it('should drop offline_access when the client omits grant_types', async () => {
+      const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
+      const result = await validateAuthorizationRequest(
+        params,
+        createClientResolver([defaultClient]),
+      );
+      expect(result.scope).toEqual(['openid']);
+    });
+
+    it('should drop offline_access when the client registers only authorization_code', async () => {
+      const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
+      const result = await validateAuthorizationRequest(
+        params,
+        createClientResolver([
+          {
+            clientId: 'client123',
+            redirectUris: ['https://client.example.org/cb'],
+            grantTypes: ['authorization_code'],
+          },
+        ]),
+      );
+      expect(result.scope).toEqual(['openid']);
+    });
+
+    it('should retain offline_access when the client registers the refresh_token grant type', async () => {
+      const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
+      const result = await validateAuthorizationRequest(
+        params,
+        createClientResolver([refreshGrantClient]),
+      );
+      expect(result.scope).toEqual(['openid', 'offline_access']);
+    });
+
+    it('should pass the resolved client to the custom callback', async () => {
+      let receivedGrantTypes: string[] | undefined;
+      const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
+      await validateAuthorizationRequest(
+        params,
+        createClientResolver([refreshGrantClient]),
+        {
+          isOfflineAccessGranted: (_req, ctx) => {
+            receivedGrantTypes = ctx.client.grantTypes;
+            return false;
+          },
+        },
+      );
+      expect(receivedGrantTypes).toEqual(['authorization_code', 'refresh_token']);
+    });
+
+    it('should let a custom callback grant offline_access to a client without the refresh_token grant type', async () => {
+      const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
+      const result = await validateAuthorizationRequest(
+        params,
+        createClientResolver([defaultClient]),
+        { isOfflineAccessGranted: () => true },
+      );
+      expect(result.scope).toEqual(['openid', 'offline_access']);
     });
   });
 });

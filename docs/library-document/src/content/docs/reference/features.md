@@ -75,7 +75,19 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 
 ### Refresh Token
 
-- `offline_access` scope が付与された場合に発行
+発行するかどうかは、クライアント登録メタデータ `grant_types` に `refresh_token` があるかで決まる（RFC 7591 §2 の既定は `["authorization_code"]`）。
+登録が無いクライアントには発行しない。
+発行されても `unauthorized_client` で拒否されるだけの長期資格情報を渡さないためである。
+
+登録があるクライアントには、2 種類のリフレッシュトークンを発行し分ける。
+
+- **online refresh token**：`offline_access` を伴わない付与で発行する。発行元のログインセッションに束縛され、セッションが終わると `invalid_grant` になる。OIDC Core 1.0 §11 が認める「`offline_access` 以外の文脈」にあたる
+- **offline refresh token**：`offline_access` が付与された場合に発行する（付与には `prompt=consent` が必要。OIDC Core 1.0 §11）。セッションから独立しており、End-User がログアウトした後も使える
+
+online refresh token を発行せず offline のみに戻すには、`ProviderConfig.onlineRefreshTokenEnabled` を `false` にする。
+
+どちらの種類も次の失効機構を共有する。
+
 - rotation 対応（使用ごとに新トークン発行、ローテーション後の再提示を検知）
 - absolute lifetime で失効（初回発行時刻起点。rotation しても失効時刻は延びない。OAuth 2.1 §6.1）
 - idle timeout（最終使用からの経過時間）による失効に対応

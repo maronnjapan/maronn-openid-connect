@@ -4,7 +4,7 @@
 # This is verification tooling for maintainers of this repository: it puts the
 # CLI-generated OP onto real Cloudflare infrastructure so the D1 storage
 # backend can be checked against an actual HTTPS deployment. It is not a
-# production deployment guide for library users (see CLAUDE.md).
+# production deployment guide for library users (see the repository README.md).
 #
 # Zero-argument usage is the intended path. The script automates everything
 # wrangler allows: D1 database creation/reuse, database_id resolution (the

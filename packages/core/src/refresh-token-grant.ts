@@ -1,4 +1,5 @@
 import { TokenError, TokenErrorCode } from './token-error.js';
+import type { AuthenticationSessionResolver } from './authentication-session.js';
 import type {
   RefreshTokenInfo,
   RefreshTokenResolver,
@@ -128,6 +129,55 @@ export function validateRefreshTokenIdleTimeout(
 }
 
 /**
+ * online refresh token の束縛先セッションがまだ生きていることを検証する。
+ *
+ * OIDC Core 1.0 §11 は `offline_access` を「End-User が居ない（not logged in）ときにも
+ * 使える Refresh Token」と定義し、Refresh Token の利用がその用途に限られないことも
+ * 明示している（"The use of Refresh Tokens is not exclusive to the `offline_access`
+ * use case. The Authorization Server MAY grant Refresh Tokens in other contexts"）。
+ * 本実装ではその「other contexts」を online refresh token とし、`sessionId` で
+ * 認証セッションへ束縛する。
+ *
+ * - `sessionId` 無し（offline refresh token）: 何も検証しない。セッションから独立している。
+ * - `sessionId` あり（online refresh token）: セッションが解決できなければ
+ *   `invalid_grant`。解決できても subject が変わっていれば `invalid_grant`。
+ *
+ * リゾルバー未指定で online refresh token が提示された場合は fail-closed で拒否する。
+ * 「確認できないので通す」にすると、ログアウト後も使える RT が生まれてしまう。
+ */
+export async function validateRefreshTokenSession(
+  refreshTokenInfo: RefreshTokenInfo,
+  sessionResolver: AuthenticationSessionResolver | undefined,
+): Promise<void> {
+  const { sessionId } = refreshTokenInfo;
+  if (sessionId === undefined) {
+    return;
+  }
+
+  if (!sessionResolver) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'Authentication session resolver not provided'
+    );
+  }
+
+  const session = await sessionResolver.findSession(sessionId);
+  if (!session) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'The authentication session bound to this refresh token has ended'
+    );
+  }
+
+  if (session.subject !== refreshTokenInfo.subject) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'The authentication session bound to this refresh token belongs to another subject'
+    );
+  }
+}
+
+/**
  * refresh_token grant の要求 scope を検証・正規化する。
  *
  * 未指定なら元 grant の scope を返す。指定時は空値を拒否し、重複を除去したうえで
@@ -188,6 +238,9 @@ export function buildValidatedRefreshTokenRequest(
     originalIssuedAt: refreshTokenInfo.originalIssuedAt,
     // RFC 6749 §6 / OIDC Core 1.0 §11: rotation 可否は縮小後ではなく元 grant で判定する。
     hadOfflineAccess: refreshTokenInfo.scope.includes('offline_access'),
+    // online refresh token の束縛は rotation を跨いで維持する。ここで落とすと
+    // 1 回リフレッシュしただけでセッション束縛が外れた offline RT に化ける。
+    sessionId: refreshTokenInfo.sessionId,
   };
 }
 
@@ -202,8 +255,9 @@ export function buildValidatedRefreshTokenRequest(
  * 3. {@link validateRefreshTokenClient}
  * 4. {@link validateRefreshTokenExpiration}
  * 5. {@link validateRefreshTokenIdleTimeout}
- * 6. {@link validateRefreshTokenScope}
- * 7. {@link buildValidatedRefreshTokenRequest}
+ * 6. {@link validateRefreshTokenSession}
+ * 7. {@link validateRefreshTokenScope}
+ * 8. {@link buildValidatedRefreshTokenRequest}
  *
  * grant_type の検証・クライアント認証・クライアント別 grant 認可を含む
  * フルの検証経路は {@link validateTokenRequest} が担う。この関数を直接使う場合、
@@ -219,6 +273,7 @@ export async function validateRefreshTokenGrant(
     authenticatedClientId,
     refreshTokenResolver,
     refreshTokenIdleTimeoutSeconds,
+    authenticationSessionResolver,
   } = context;
   const { refreshTokenInfo } = await resolveRefreshToken(
     params,
@@ -233,6 +288,10 @@ export async function validateRefreshTokenGrant(
   validateRefreshTokenIdleTimeout(
     refreshTokenInfo,
     refreshTokenIdleTimeoutSeconds,
+  );
+  await validateRefreshTokenSession(
+    refreshTokenInfo,
+    authenticationSessionResolver,
   );
   const effectiveScope = validateRefreshTokenScope(
     params.scope,

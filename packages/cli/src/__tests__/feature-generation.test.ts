@@ -190,8 +190,10 @@ describe('generate with feature toggles', () => {
       const result = generateWith('hono', ['refresh-token']);
       const config = fileContent(result, 'config.ts');
       expect(config.includes("grantTypes: ['authorization_code'],")).toBe(true);
-      expect(config.includes('offlineAccessAllowed: true')).toBe(false);
+      expect(config.includes('offlineAccessAllowed')).toBe(false);
       expect(config.includes('refreshTokenAbsoluteLifetime')).toBe(false);
+      // online refresh token のトグルは refresh-token 機能とセットで消える
+      expect(config.includes('onlineRefreshTokenEnabled')).toBe(false);
     });
 
     it('should restrict the token endpoint to the authorization_code grant', () => {
@@ -214,7 +216,11 @@ describe('generate with feature toggles', () => {
     it('should never grant offline_access in the authorize route', () => {
       const result = generateWith('hono', ['refresh-token']);
       const authorize = fileContent(result, 'routes/authorize.ts');
-      expect(authorize.includes('applyOfflineAccessPolicy(scope, effectiveParams, prompt, () => false)')).toBe(true);
+      expect(
+        authorize.includes(
+          'applyOfflineAccessPolicy(scope, effectiveParams, prompt, client, () => false)',
+        ),
+      ).toBe(true);
     });
 
     it('should advertise only the authorization_code grant in discovery', () => {
@@ -231,6 +237,9 @@ describe('generate with feature toggles', () => {
       expect(conformance.includes("error: 'unsupported_grant_type'")).toBe(true);
       expect(conformance.includes('rotated refresh token reuse')).toBe(false);
       expect(conformance.includes('offlineAccessAllowed')).toBe(false);
+      // refresh-token 無効時は online/offline refresh token の契約テストごと出さない
+      expect(conformance.includes('Online and offline refresh tokens')).toBe(false);
+      expect(conformance.includes('parseSessionId')).toBe(false);
     });
   });
 

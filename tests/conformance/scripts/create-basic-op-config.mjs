@@ -242,7 +242,6 @@ function createStaticClient({
     grantTypes: ['authorization_code', 'refresh_token'],
     tokenEndpointAuthMethod,
     responseTypes: ['code'],
-    offlineAccessAllowed: true,
   };
   // OIDC Core 1.0 §6.1: register the client JWKS for signed Request Object
   // verification only when supplied (keeps the default config shape unchanged).

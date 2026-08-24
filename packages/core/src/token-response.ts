@@ -526,7 +526,7 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
   // array case is handled correctly. Default (no idTokenAudiences) → aud = clientId
   // (single string), azp omitted. When additional audiences are supplied → aud becomes
   // an array and azp = clientId is emitted, so a multi-audience ID Token can never drop
-  // the required azp — see study-material/done/id-token-azp-claim-policy.md.
+  // the azp required by OIDC Core 1.0 Section 2 for multiple audiences.
   const { aud, azp } = buildIdTokenAudience({ clientId, additional: idTokenAudiences });
   payload.aud = aud;
   if (azp !== undefined) {

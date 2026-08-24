@@ -190,6 +190,12 @@ export class RefreshTokenStore {
 export interface AuthSessionInfo {
   subject: string;
   authTime: number;
+  /**
+   * このログインで確立（または再利用）したブラウザセッションの識別子。
+   * consent 画面を経て発行する認可コードへ引き継ぎ、online refresh token を
+   * そのセッションへ束縛するために使う。
+   */
+  sessionId?: string;
 }
 
 export class AuthSessionStore {
@@ -257,8 +263,8 @@ export function parseSessionId(cookieHeader: string | null): string | undefined 
 
 /**
  * Build the Set-Cookie value for the browser session.
- * Attributes per study-material/http-security-headers-and-tls.md:
- * HttpOnly (no JS access), Secure (HTTPS only), SameSite=Lax. SameSite=Strict
+ * Security attributes: HttpOnly (no JS access), Secure (HTTPS only),
+ * SameSite=Lax. SameSite=Strict
  * would drop the cookie on the cross-site authorization redirect return and
  * break the flow, so Lax is required.
  */

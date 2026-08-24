@@ -115,9 +115,68 @@ test.describe('Token Exchange (RFC 8693)', () => {
     });
   });
 
-  // Delegation (RFC 8693 §1.1 / §4) is out of scope for this feature and is
-  // refused before the subject token is even looked up.
-  test('should reject a delegation request carrying actor_token', async ({ request, baseURL }) => {
+  // Delegation (RFC 8693 §1.1 / §4.1): two real browser logins provide a
+  // subject token (testuser) and an actor token (otheruser); the exchange
+  // itself is performed by this spec over the back channel, and the act claim
+  // of the issued JWT is decoded and pinned.
+  test('should record the actor in the act claim of a delegated exchange', async ({
+    page,
+    browser,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const supported = await supportsTokenExchange(request, issuer);
+    test.skip(!supported, 'This sample OP was generated without --enable token-exchange');
+
+    // Subject: testuser completes the Authorization Code Flow in the default context.
+    const subjectToken = await obtainAccessToken(page, 'testuser');
+
+    // Actor: otheruser runs the same flow in an isolated browser context, so the
+    // OP's browser-session cookie of the first login cannot leak into it.
+    const actorContext = await browser.newContext();
+    const actorToken = await obtainAccessToken(await actorContext.newPage(), 'otheruser');
+    await actorContext.close();
+
+    const response = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: EXCHANGE_GRANT_TYPE,
+        subject_token: subjectToken,
+        subject_token_type: ACCESS_TOKEN_TYPE,
+        actor_token: actorToken,
+        actor_token_type: ACCESS_TOKEN_TYPE,
+        scope: 'openid',
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+
+    expect(response.status()).toBe(200);
+    const body = (await response.json()) as {
+      access_token: string;
+      issued_token_type: string;
+      token_type: string;
+    };
+    expect(body.issued_token_type).toBe(ACCESS_TOKEN_TYPE);
+    expect(body.token_type).toBe('Bearer');
+
+    // RFC 8693 §4.1: sub stays the subject; the actor appears only in act.
+    const payload = decodeJwtPayload(body.access_token);
+    expect(payload.sub).toBe('testuser');
+    expect(payload.act).toEqual({ sub: 'otheruser' });
+
+    // The delegated token is an ordinary access token of the subject.
+    const userInfo = await request.get(`${issuer}/userinfo`, {
+      headers: { Authorization: `Bearer ${body.access_token}` },
+    });
+    expect(userInfo.status()).toBe(200);
+    expect(((await userInfo.json()) as { sub: string }).sub).toBe('testuser');
+  });
+
+  // RFC 8693 §2.1: actor_token_type is REQUIRED when actor_token is present.
+  // Parameter pairing is validated before any token is resolved, so no live
+  // token is needed here.
+  test('should reject actor_token without actor_token_type', async ({ request, baseURL }) => {
     const issuer = requireBaseUrl(baseURL);
     const supported = await supportsTokenExchange(request, issuer);
     test.skip(!supported, 'This sample OP was generated without --enable token-exchange');
@@ -128,7 +187,6 @@ test.describe('Token Exchange (RFC 8693)', () => {
         subject_token: 'never-issued-token',
         subject_token_type: ACCESS_TOKEN_TYPE,
         actor_token: 'never-issued-token',
-        actor_token_type: ACCESS_TOKEN_TYPE,
         client_id: clientId,
         client_secret: clientSecret,
       },
@@ -137,8 +195,7 @@ test.describe('Token Exchange (RFC 8693)', () => {
     expect(response.status()).toBe(400);
     expect(await response.json()).toEqual({
       error: 'invalid_request',
-      error_description:
-        'Delegation is not supported: actor_token and actor_token_type must not be present.',
+      error_description: 'actor_token_type is required when actor_token is present',
     });
   });
 
@@ -146,6 +203,30 @@ test.describe('Token Exchange (RFC 8693)', () => {
   // subject token, so it is covered by the generated conformance contract tests
   // rather than duplicated here.
 });
+
+/**
+ * Complete the ordinary Authorization Code Flow at the E2E client app as the
+ * given user and read the raw access token off the client's result page.
+ */
+async function obtainAccessToken(
+  page: import('@playwright/test').Page,
+  username: string,
+): Promise<string> {
+  await page.goto(`${clientBaseURL}/start`);
+  await page.getByLabel('Username:').fill(username);
+  await page.getByLabel('Password:').fill('password');
+  await page.getByRole('button', { name: 'Login' }).click();
+  await page.getByRole('button', { name: 'Approve' }).click();
+  return (await page.getByTestId('token-access-token').textContent()) ?? '';
+}
+
+/** Decode a JWT access token's payload (base64url, RFC 7515 §2). */
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const segment = token.split('.')[1] ?? '';
+  const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+  return JSON.parse(atob(padded)) as Record<string, unknown>;
+}
 
 async function grantTypesSupported(
   request: { get(url: string): Promise<{ json(): Promise<unknown> }> },

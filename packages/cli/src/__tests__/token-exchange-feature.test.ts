@@ -240,8 +240,38 @@ describe('generate with --enable token-exchange', () => {
           tokenRoutePath(framework),
         );
 
-        expect(content.includes('await accessTokenStore.set(exchangedToken, {')).toBe(true);
+        expect(content.includes('const exchangeMetadata: ExchangedAccessTokenInfo = {')).toBe(true);
+        expect(content.includes('await accessTokenStore.set(exchangedToken, exchangeMetadata);')).toBe(
+          true,
+        );
         expect(content.includes('grantId: grant.grantId,')).toBe(true);
+      });
+
+      // RFC 8693 §4.1: delegation の act claim は JWT payload と store metadata の両方に載る。
+      it('should embed the act claim of a delegation exchange in the issued token payload', () => {
+        const content = fileContent(
+          generateFiles(framework, ['token-exchange']),
+          tokenRoutePath(framework),
+        );
+        const issueIndex = content.indexOf('await exchangeIssuer.issue({');
+        const issueBlock = content.slice(issueIndex, content.indexOf('});', issueIndex));
+
+        expect(issueBlock.includes('...(grant.actor === undefined ? {} : { act: grant.actor }),')).toBe(
+          true,
+        );
+      });
+
+      it('should persist the act claim so a later exchange can chain it', () => {
+        const content = fileContent(
+          generateFiles(framework, ['token-exchange']),
+          tokenRoutePath(framework),
+        );
+        const setIndex = content.indexOf('const exchangeMetadata: ExchangedAccessTokenInfo = {');
+        const storeBlock = content.slice(setIndex, content.indexOf('};', setIndex));
+
+        expect(storeBlock.includes('...(grant.actor === undefined ? {} : { act: grant.actor }),')).toBe(
+          true,
+        );
       });
 
       // RFC 9068 §2.2 / RFC 7519 §4.1.7: the exchanged token carries its own jti,
@@ -262,8 +292,8 @@ describe('generate with --enable token-exchange', () => {
           generateFiles(framework, ['token-exchange']),
           tokenRoutePath(framework),
         );
-        const setIndex = content.indexOf('await accessTokenStore.set(exchangedToken, {');
-        const storeBlock = content.slice(setIndex, content.indexOf('});', setIndex));
+        const setIndex = content.indexOf('const exchangeMetadata: ExchangedAccessTokenInfo = {');
+        const storeBlock = content.slice(setIndex, content.indexOf('};', setIndex));
 
         expect(storeBlock.includes('claims:')).toBe(false);
       });
@@ -301,6 +331,15 @@ describe('generate with --enable token-exchange', () => {
         );
 
         expect(content.includes("describe('Token Exchange (RFC 8693)'")).toBe(true);
+      });
+
+      it('should generate delegation contract tests in conformance.test.ts', () => {
+        const content = fileContent(
+          generateFiles(framework, ['token-exchange']),
+          conformancePath(framework),
+        );
+
+        expect(content.includes("describe('Delegation (RFC 8693 §4.1)'")).toBe(true);
       });
     });
 

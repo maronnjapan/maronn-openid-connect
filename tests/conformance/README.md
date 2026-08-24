@@ -262,8 +262,7 @@ Request Object パラメータの黙殺を修正（`request` / `request_uri` を
   screenshot）か、optional（`oidcc-ensure-request-with-acr-values-succeeds` の acr SHOULD
   warning）。
 
-詳細と残課題の対応手順は `tasks/done/p1-basic-op-static-client-conformance-result-2026-06-21.md`
-を参照してください。
+詳細と残課題の対応手順は作業用 notes リポジトリで管理しています。
 
 acr resolver の配線（`acr_values` を ID Token の `acr` として echo）と unsigned Request
 Object 互換モード（`OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT=1`）を sample 起動側に追加した後の

@@ -104,7 +104,6 @@ describe('createBasicOpConformanceArtifacts', () => {
           grantTypes: ['authorization_code', 'refresh_token'],
           tokenEndpointAuthMethod: 'client_secret_basic',
           responseTypes: ['code'],
-          offlineAccessAllowed: true,
           // OIDC Core 1.0 §6.1 / RFC 9101: the OP trusts the public half so it can
           // verify Request Objects the suite signs with the private half.
           jwks: { keys: [REQUEST_OBJECT_PUBLIC_JWK] },
@@ -120,7 +119,6 @@ describe('createBasicOpConformanceArtifacts', () => {
           grantTypes: ['authorization_code', 'refresh_token'],
           tokenEndpointAuthMethod: 'client_secret_basic',
           responseTypes: ['code'],
-          offlineAccessAllowed: true,
           jwks: { keys: [REQUEST_OBJECT_PUBLIC_JWK] },
         },
         {
@@ -134,7 +132,6 @@ describe('createBasicOpConformanceArtifacts', () => {
           grantTypes: ['authorization_code', 'refresh_token'],
           tokenEndpointAuthMethod: 'client_secret_post',
           responseTypes: ['code'],
-          offlineAccessAllowed: true,
           jwks: { keys: [REQUEST_OBJECT_PUBLIC_JWK] },
         },
       ]);

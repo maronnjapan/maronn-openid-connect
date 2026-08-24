@@ -68,6 +68,28 @@ describe('HonoGenerator', () => {
       expect(files).toHaveLength(16);
     });
 
+    it('should not expose private working-note paths in generated files', () => {
+      const generatedVariants = [
+        files,
+        generator.generate({
+          ...options,
+          features: {
+            ...DEFAULT_FEATURES,
+            deviceAuthorizationGrant: true,
+          },
+        }),
+      ];
+      const generatedContent = generatedVariants
+        .flat()
+        .map((file) => `${file.path}\n${file.content}`)
+        .join('\n');
+
+      expect(generatedContent).not.toContain(['CLAUDE', '.md'].join(''));
+      expect(generatedContent).not.toContain('tasks/');
+      expect(generatedContent).not.toContain('study-material/');
+      expect(generatedContent).not.toContain('docs/implementation-guides/');
+    });
+
     it('should generate an injectable persistent JSON storage contract', () => {
       const store = files.find((f) => f.path === 'store.ts');
       const resolvers = files.find((f) => f.path === 'resolvers.ts');
@@ -239,6 +261,71 @@ describe('HonoGenerator', () => {
       expect(content).toContain("expect(callback.searchParams.get('state')).toBe('deny-state')");
       expect(content).toContain("expect(callback.searchParams.get('iss')).toBe('http://localhost:3000')");
       expect(content).toContain('should allow a public client to revoke its own token with client_id only');
+    });
+
+    // OIDC Core 1.0 §3.1.2.4: the OP must obtain an authorization decision before
+    // releasing information to the RP. The contract test pins that a missing /
+    // empty / unknown `action` never mints a code, so a user who edits the consent
+    // view's button value (or posts the form from a script) fails the test instead
+    // of silently getting a fail-open approval.
+    it('should pin the consent decision allowlist in the generated contract', () => {
+      const content = file?.content ?? '';
+      expect(content).toContain("describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)'");
+      expect(content).toContain(
+        'should not issue an authorization code when the consent POST omits the action parameter',
+      );
+      expect(content).toContain(
+        'should not issue an authorization code when the consent POST sends an empty action value',
+      );
+      expect(content).toContain(
+        'should not issue an authorization code when the consent POST sends an unknown action value',
+      );
+      expect(content).toContain(
+        'should return 400 for a consent POST with an unrecognized action value',
+      );
+      expect(content).toContain(
+        'should issue an authorization code when the consent POST sends action=approve',
+      );
+      expect(content).toContain(
+        'should redirect with error=access_denied when the consent POST sends action=deny',
+      );
+      expect(content).toContain(
+        'should not record consent via recordConsent when the action value is unrecognized',
+      );
+      expect(content).toContain(
+        "expect(consentStore.hasConsent('testuser', 'c-conf', ['openid'])).toBe(false)",
+      );
+    });
+  });
+
+  // OIDC Discovery 1.0 §3 / RFC 9700 §2.1: internal redirects (/login, /consent)
+  // must be built on the configured issuer, never on the incoming request URL,
+  // which runtimes such as @hono/node-server derive from the Host header.
+  describe('internal redirect origin derivation', () => {
+    const files = generator.generate(options);
+    const authorize = files.find((f) => f.path === 'routes/authorize.ts')?.content ?? '';
+    const login = files.find((f) => f.path === 'routes/login.ts')?.content ?? '';
+    const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
+
+    it('should build the consent and login redirects on config.issuer in the authorize route', () => {
+      expect(authorize.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/login', config.issuer)")).toBe(true);
+      expect(authorize.includes("new URL('/consent', c.req.url)")).toBe(false);
+      expect(authorize.includes("new URL('/login', c.req.url)")).toBe(false);
+    });
+
+    it('should build the consent redirect on config.issuer in the login route', () => {
+      expect(login.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(login.includes("new URL('/consent', c.req.url)")).toBe(false);
+    });
+
+    it('should generate the internal redirect origin conformance contract', () => {
+      expect(conformance.includes("describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)'")).toBe(true);
+      expect(conformance.includes("it('should build the login redirect Location on the configured issuer origin'")).toBe(true);
+      expect(conformance.includes("it('should ignore the Host header when building the login redirect Location'")).toBe(true);
+      expect(conformance.includes("it('should build the consent redirect Location on the configured issuer origin'")).toBe(true);
+      expect(conformance.includes("it('should build the consent redirect Location on the configured issuer origin after login'")).toBe(true);
+      expect(conformance.includes("it('should keep the login redirect Location on the issuer origin for a subpath issuer'")).toBe(true);
     });
   });
 
@@ -1190,9 +1277,50 @@ describe('HonoGenerator', () => {
       expect(content).toContain('validatedRequest.hadOfflineAccess');
       // 計算結果でリフレッシュトークン値の発行可否を決める
       expect(content).toContain(
-        'refresh_token: grantHasOfflineAccess ? generateRandomString(32) : undefined',
+        'refresh_token: issueRefreshToken ? generateRandomString(32) : undefined',
       );
       expect(content).toContain('refreshTokenStore.set(tokenResponse.refresh_token');
+    });
+
+    // RFC 7591 §2: grant_types の既定は ["authorization_code"]。登録の無いクライアントへ
+    // Refresh Token を渡しても unauthorized_client で拒否されるだけなので発行しない。
+    it('should gate refresh token issuance on the registered refresh_token grant type', () => {
+      const tokenFile = files.find((f) => f.path === 'routes/token.ts');
+      const content = tokenFile?.content ?? '';
+      expect(content).toContain(
+        'const clientAllowsRefreshGrant = clientAllowsRefreshTokenGrant(tokenClient);',
+      );
+      expect(content).toContain('const issueRefreshToken =');
+      expect(content).toContain('clientAllowsRefreshGrant &&');
+    });
+
+    // OIDC Core 1.0 §11: offline_access 無しの Refresh Token（online refresh token）は
+    // 発行元のログインセッションへ束縛し、セッションが終われば invalid_grant にする。
+    it('should bind an online refresh token to the login session', () => {
+      const tokenFile = files.find((f) => f.path === 'routes/token.ts');
+      const content = tokenFile?.content ?? '';
+      // offline_access がある grant はセッションから独立させる
+      expect(content).toContain(
+        'const boundSessionId = grantHasOfflineAccess ? undefined : validatedRequest.sessionId;',
+      );
+      // 束縛先が分からなければ online refresh token は発行しない
+      expect(content).toContain('config.onlineRefreshTokenEnabled && boundSessionId !== undefined');
+      // 束縛は永続化され、rotation でも維持される
+      expect(content).toContain('sessionId: boundSessionId,');
+      // refresh のたびにセッションの生存を確認する
+      expect(content).toContain(
+        'await validateRefreshTokenSession(refreshTokenInfo, authenticationSessionResolver);',
+      );
+    });
+
+    it('should carry the login session id from login through consent into the authorization code', () => {
+      const loginFile = files.find((f) => f.path === 'routes/login.ts');
+      const consentFile = files.find((f) => f.path === 'routes/consent.ts');
+      // login: 確立したブラウザセッションの id を consent への受け渡しに載せる
+      expect(loginFile?.content).toContain('await authSessionStore.set(transactionId, {');
+      expect(loginFile?.content).toContain('sessionId,');
+      // consent: その id を認可コードへ引き継ぐ
+      expect(consentFile?.content).toContain('sessionId: session.sessionId,');
     });
 
     // P1 / RFC 6749 §6: 縮小後 scope から offline_access が落ちても、grant が offline_access を
@@ -1331,21 +1459,40 @@ describe('HonoGenerator', () => {
     // and the template documents how to override the callback.
     it('should document the applyOfflineAccessPolicy customization point in authorize route', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain('applyOfflineAccessPolicy(scope, effectiveParams, prompt)');
+      // client を渡すのは、OIDC Core 1.0 §11 の同意条件に加えて、RFC 7591 §2 の
+      // 登録 grant_types も既定判定が見るため。
+      expect(file?.content).toContain(
+        'applyOfflineAccessPolicy(scope, effectiveParams, prompt, client)',
+      );
       expect(file?.content).toContain('prompt=consent');
     });
 
-    it('should filter offline_access scope in consent when client does not allow it', () => {
+    // offline_access の可否は authorize の applyOfflineAccessPolicy で確定するので、
+    // consent 側で独自フラグを見て再フィルタしない（二重管理の解消）。
+    it('should not re-filter offline_access in the consent route', () => {
       const consentFile = files.find((f) => f.path === 'routes/consent.ts');
-      expect(consentFile?.content).toContain("'offline_access'");
-      expect(consentFile?.content).toContain('offlineAccessAllowed');
       expect(consentFile?.content).toContain('grantedScope');
+      expect(consentFile?.content).toContain(
+        "const grantedScope = transaction.scope.split(' ').filter(Boolean);",
+      );
+      expect(consentFile?.content).not.toContain('offlineAccessAllowed');
     });
 
-    it('should define offlineAccessAllowed in default registered client config', () => {
+    // Refresh Token の可否は標準の grant_types メタデータだけで決まる。OP 独自の
+    // スイッチは持たない（RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2）。
+    it('should not define a provider-specific offline access switch in the registered client config', () => {
       const configFile = files.find((f) => f.path === 'config.ts');
-      expect(configFile?.content).toContain('offlineAccessAllowed');
       expect(configFile?.content).toContain('RegisteredClient');
+      expect(configFile?.content).not.toContain('offlineAccessAllowed');
+      expect(configFile?.content).toContain(
+        "grantTypes: ['authorization_code', 'refresh_token'],",
+      );
+    });
+
+    it('should expose the online refresh token toggle in the provider config', () => {
+      const configFile = files.find((f) => f.path === 'config.ts');
+      expect(configFile?.content).toContain('onlineRefreshTokenEnabled: boolean;');
+      expect(configFile?.content).toContain('onlineRefreshTokenEnabled: true,');
     });
 
     it('should expose dynamic provider config helpers instead of static provider config', () => {
@@ -2265,8 +2412,8 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
       expect(storeFile?.content).toContain('export function buildSessionCookie');
     });
 
-    // Cookie attributes per study-material/http-security-headers-and-tls.md:
-    // HttpOnly / Secure / SameSite=Lax (Strict would break the auth redirect return).
+    // HttpOnly blocks JavaScript access, Secure restricts transport to HTTPS, and
+    // SameSite=Lax preserves the authorization redirect return that Strict would drop.
     it('should build the session cookie with HttpOnly, Secure and SameSite=Lax', () => {
       expect(storeFile?.content).toContain('HttpOnly; Secure; SameSite=Lax; Path=/');
     });
@@ -2331,6 +2478,39 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
       );
       // Only the per-transaction handoff is cleared; the OP session persists.
       expect(consentFile?.content).not.toContain('browserSessionStore.delete');
+    });
+
+    // OIDC Core 1.0 Section 3.1.2.4: the authorization decision MUST be obtained
+    // before information is released to the RP. Detecting only the negative value
+    // (`deny`) would make every other value — missing, empty, unknown — approve.
+    it('should approve only the allowlisted action value', () => {
+      expect(consentFile?.content).toContain(`  if (action !== 'approve') {
+    return renderView(views.errorPage({
+      error: 'Invalid consent decision. Please use the Approve or Deny button.',
+      statusCode: 400,
+    }), { status: 400 });
+  }`);
+    });
+
+    // OIDC Core 1.0 Section 3.1.2.6: access_denied means the resource owner denied
+    // the request, which is not the same as no decision having been obtained. An
+    // unrecognized value therefore stops at the OP instead of returning to the RP.
+    it('should stop an unrecognized action at the OP instead of redirecting access_denied', () => {
+      const content = consentFile?.content ?? '';
+      const unknownActionIndex = content.indexOf("if (action !== 'approve') {");
+      const denyRedirectIndex = content.indexOf("redirectUrl.searchParams.set('error', 'access_denied')");
+
+      expect(denyRedirectIndex < unknownActionIndex).toBe(true);
+      expect(content.split("searchParams.set('error', 'access_denied')").length - 1).toBe(1);
+    });
+
+    it('should submit the same decision value from the consent view that the handler accepts', () => {
+      const views = files.find((f) => f.path === 'views.ts')?.content ?? '';
+
+      expect(views).toContain('<button type="submit" name="action" value="approve">Approve</button>');
+      expect(views).toContain('<button type="submit" name="action" value="deny">Deny</button>');
+      expect(consentFile?.content).toContain("if (action === 'deny') {");
+      expect(consentFile?.content).toContain("if (action !== 'approve') {");
     });
   });
 

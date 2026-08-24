@@ -211,13 +211,15 @@ const handleAuthorizationRequest = async (c: any) => {
     // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
     const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
 
-    // OIDC Core 1.0 §11: offline_access requires prompt=consent (or another
-    // granting condition). The default policy drops offline_access from scope
-    // unless prompt=consent is present. To inject your own grant policy (e.g.
-    // honor a previously recorded user consent), pass a callback:
-    //   scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt,
+    // offline_access は 2 つの独立した条件を両方満たしたときだけ残る。
+    // - OIDC Core 1.0 §11: エンドユーザーの同意（prompt=consent）
+    // - RFC 7591 §2: クライアント登録の grant_types に refresh_token があること
+    //   （既定は ["authorization_code"]）。無いまま offline_access を通すと、発行した
+    //   Refresh Token が unauthorized_client で拒否されるだけの死んだ資格情報になる。
+    // 独自の許可条件を差し込むならコールバックを渡す（client も受け取れる）:
+    //   scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt, client,
     //     (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req));
-    scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt);
+    scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt, client);
 
     // OIDC Core 1.0 §3.1.2.1: display is page|popup|touch|wap.
     const display = validateDisplayParameter(effectiveParams, redirectUri, state);
@@ -370,12 +372,11 @@ const handleAuthorizationRequest = async (c: any) => {
         return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
       }
 
-      // Filter offline_access if the client does not allow it
-      const clientConfig = await clientResolver.findClient(transaction.clientId);
-      const grantedScope = transaction.scope.split(' ').filter((s: string) => {
-        if (s === 'offline_access' && !clientConfig?.offlineAccessAllowed) return false;
-        return Boolean(s);
-      });
+      // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
+      // 後の値。offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、
+      // クライアント登録 grant_types に refresh_token があるか）はそこで判定済みなので、
+      // ここで再フィルタしない。
+      const grantedScope = transaction.scope.split(' ').filter(Boolean);
 
       // Generate authorization code via core helper
       const responseParams = await completeAuthTransaction(
@@ -387,6 +388,9 @@ const handleAuthorizationRequest = async (c: any) => {
         authorizationResponse: { ...responseParams, scope: grantedScope },
         subject: session.subject,
         authTime: session.authTime,
+        // online refresh token をこのログインセッションへ束縛するために引き継ぐ。
+        // セッションが終われば、その RT は invalid_grant になる。
+        sessionId: session.sessionId,
         // OIDC Core 1.0 §3.1.3.1: TTL は ProviderConfig から設定可能（既定 300 秒）。
         ttlSeconds: config.authorizationCodeTtl,
       });
@@ -444,12 +448,9 @@ const handleAuthorizationRequest = async (c: any) => {
             ));
 
           if (consentAlreadyGranted) {
-            // Filter offline_access if the client does not allow it
-            const clientConfig = await clientResolver.findClient(transaction.clientId);
-            const grantedScope = transaction.scope.split(' ').filter((s: string) => {
-              if (s === 'offline_access' && !clientConfig?.offlineAccessAllowed) return false;
-              return Boolean(s);
-            });
+            // transaction.scope は applyOfflineAccessPolicy 通過後の値（prompt=consent と
+            // クライアントの grant_types で offline_access の可否は判定済み）。再フィルタしない。
+            const grantedScope = transaction.scope.split(' ').filter(Boolean);
 
             const responseParams = await completeAuthTransaction(
               transactionId,
@@ -460,6 +461,8 @@ const handleAuthorizationRequest = async (c: any) => {
               authorizationResponse: { ...responseParams, scope: grantedScope },
               subject: existingSession.subject,
               authTime: existingSession.authTime,
+              // online refresh token を、この SSO で再利用したログインセッションへ束縛する。
+              sessionId: existingSession.sessionId,
               // OIDC Core 1.0 §3.1.3.1: TTL は ProviderConfig から設定可能（既定 300 秒）。
               ttlSeconds: config.authorizationCodeTtl,
             });
@@ -482,8 +485,19 @@ const handleAuthorizationRequest = async (c: any) => {
           await authSessionStore.set(transactionId, {
             subject: existingSession.subject,
             authTime: existingSession.authTime,
+            // consent 画面を経由しても online refresh token の束縛先を見失わないよう、
+            // login → consent の受け渡しに sessionId も載せる。
+            sessionId: existingSession.sessionId,
           });
-          const consentUrl = new URL('/consent', c.req.url);
+          // Internal redirects (/login, /consent) are built on config.issuer, never
+          // on the request URL: some runtimes derive the request URL from the Host
+          // header, which would let the sender pick the redirect origin and receive
+          // transaction_id there (RFC 9700 §2.1: redirect only to trusted URIs).
+          // OIDC Discovery 1.0 §3 makes the advertised issuer the source of truth
+          // for URLs that point at the OP itself. A subpath issuer contributes only
+          // its origin here ('/consent' is an absolute path) — subpath mounting is
+          // not supported by the generated routes.
+          const consentUrl = new URL('/consent', config.issuer);
           consentUrl.searchParams.set('transaction_id', transactionId);
           return c.redirect(consentUrl.toString());
         }
@@ -491,7 +505,9 @@ const handleAuthorizationRequest = async (c: any) => {
     }
 
     // Redirect to login page (prompt=login forces re-authentication; handled in login route)
-    const loginUrl = new URL('/login', c.req.url);
+    // config.issuer, not the request URL, decides the redirect origin — see the
+    // /consent redirect above (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+    const loginUrl = new URL('/login', config.issuer);
     loginUrl.searchParams.set('transaction_id', transactionId);
     return c.redirect(loginUrl.toString());
   } catch (error) {

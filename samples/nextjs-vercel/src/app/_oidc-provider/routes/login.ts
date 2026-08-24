@@ -13,6 +13,7 @@ import {
   parseSessionId,
   userStore,
 } from '../store';
+import { defaultProviderConfig } from '../config';
 import { defaultViews, renderView } from '../views';
 
 export const loginApp = new WebRouter();
@@ -96,12 +97,6 @@ loginApp.post('/', async (c) => {
 
   const authTime = Math.floor(Date.now() / 1000);
 
-  // Store authenticated subject for the consent step (per-transaction handoff).
-  await authSessionStore.set(transactionId, {
-    subject: user.sub,
-    authTime,
-  });
-
   // Establish a persistent browser (OP) session and set the session cookie so
   // SSO / prompt=none / max_age work on subsequent authorization requests
   // (OIDC Core 1.0 Section 3.1.2.3).
@@ -109,8 +104,21 @@ loginApp.post('/', async (c) => {
   await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
   c.header('Set-Cookie', buildSessionCookie(sessionId));
 
-  // Redirect to consent page
-  const consentUrl = new URL('/consent', c.req.url);
+  // Store authenticated subject for the consent step (per-transaction handoff).
+  // sessionId も渡すのは online refresh token のため。consent 経由で発行する認可
+  // コードにこのセッションを引き継ぎ、ログアウトで使えなくなる RT を作る。
+  await authSessionStore.set(transactionId, {
+    subject: user.sub,
+    authTime,
+    sessionId,
+  });
+
+  // Redirect to consent page. config.issuer, not the request URL, decides the
+  // redirect origin: some runtimes derive the request URL from the Host header,
+  // which would let the sender pick where transaction_id lands (OIDC Discovery
+  // 1.0 §3 / RFC 9700 §2.1).
+  const config = c.get('config') ?? defaultProviderConfig;
+  const consentUrl = new URL('/consent', config.issuer);
   consentUrl.searchParams.set('transaction_id', transactionId);
   return c.redirect(consentUrl.toString());
 });

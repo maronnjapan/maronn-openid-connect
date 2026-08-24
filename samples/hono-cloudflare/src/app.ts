@@ -100,7 +100,6 @@ function readRegisteredClients(encoded?: string): ReadonlyMap<string, Registered
         grantTypes: ['authorization_code', 'refresh_token'],
         tokenEndpointAuthMethod: 'client_secret_post',
         responseTypes: ['code'],
-        offlineAccessAllowed: true,
       },
     ],
     [

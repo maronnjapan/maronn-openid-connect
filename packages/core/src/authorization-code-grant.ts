@@ -249,6 +249,10 @@ export function buildValidatedAuthorizationCodeRequest(
     grantId: authorizationCode.grantId,
     redirectUri: authorizationCode.redirectUri,
     scope: authorizationCode.scope,
+    // OIDC Core 1.0 §2 / §3.1.3.3: ID Token の sub / auth_time は認可時に確定した値を
+    // そのまま使う。消費済みコードを再取得せずに済むよう、検証結果に載せて運ぶ。
+    subject: authorizationCode.subject,
+    authTime: authorizationCode.authTime,
     nonce: authorizationCode.nonce,
     audience: authorizationCode.audience,
     acrValues: authorizationCode.acrValues,

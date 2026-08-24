@@ -4371,8 +4371,7 @@ import {
   authorizationCodeResolver as defaultAuthorizationCodeResolver,${refreshResolverImport}${tokenExchangeResolverImport}
 } from '../resolvers.js';
 import {
-  accessTokenStore as defaultAccessTokenStore,
-  authCodeStore as defaultAuthCodeStore,${refreshStoreImport}
+  accessTokenStore as defaultAccessTokenStore,${refreshStoreImport}
 } from '../store.js';
 import type { RegisteredClient } from '../config.js';${tokenExchangeImports}${deviceGrantImports}
 ${tokenExchangeConfigBlock}
@@ -4456,8 +4455,7 @@ tokenApp.post('/', async (c) => {
     const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
     const authorizationCodeResolver =
       c.get('authCodeResolver') ?? defaultAuthorizationCodeResolver;
-${refreshResolverConst}    const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
-    const accessTokenStore = c.get('accessTokenStore') ?? defaultAccessTokenStore;
+${refreshResolverConst}    const accessTokenStore = c.get('accessTokenStore') ?? defaultAccessTokenStore;
 ${refreshStoreConst}
     // --- Client authentication pipeline -------------------------------------
     // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
@@ -4539,33 +4537,20 @@ ${grantValidationStep}
     const idTokenPrivateKey = selectedIdTokenKey.privateKey;
     const idTokenKeyId = selectedIdTokenKey.keyId;
 
-    let subject: string;
-    let authTime: number | undefined;
-    let nonce: string | undefined;
-
-    if (validatedRequest.grantType === 'authorization_code') {
-      const authCode = await authCodeStore.get(validatedRequest.code);
-      if (!authCode?.subject || !authCode.authTime) {
-        throw new TokenError(
-          TokenErrorCode.InvalidGrant,
-          'Authorization code missing required subject context',
-        );
-      }
-      subject = authCode.subject;
-      authTime = authCode.authTime;
-      nonce = validatedRequest.nonce;
-    } else {
-      // refresh_token grant
-      // OIDC Core 1.0 §12.2: the re-issued ID Token retains iss/sub/aud/exp/iat/
-      // auth_time/azp/acr/amr — nonce is NOT in that list. nonce binds an
-      // Authentication Request to its ID Token (§2); a refresh has no such request,
-      // so carrying the old nonce adds no replay protection. Major OPs (Google,
-      // Auth0) omit it on refresh, so we omit it here by default. auth_time is
-      // still preserved per §12.1.
-      subject = validatedRequest.subject;
-      authTime = validatedRequest.authTime;
-      nonce = undefined;
-    }
+    // OIDC Core 1.0 §2 / §3.1.3.3: sub and auth_time were fixed at the
+    // authorization step and both grant branches of the validated request carry
+    // them, so the consumed authorization code is never re-read from the store
+    // (the used=true record exists only for reuse detection — OAuth 2.1 §4.1.2).
+    const subject = validatedRequest.subject;
+    const authTime = validatedRequest.authTime;
+    // OIDC Core 1.0 §12.2: the re-issued ID Token retains iss/sub/aud/exp/iat/
+    // auth_time/azp/acr/amr — nonce is NOT in that list. nonce binds an
+    // Authentication Request to its ID Token (§2); a refresh has no such request,
+    // so carrying the old nonce adds no replay protection. Major OPs (Google,
+    // Auth0) omit it on refresh, so we omit it here by default. auth_time is
+    // still preserved per §12.1.
+    const nonce =
+      validatedRequest.grantType === 'authorization_code' ? validatedRequest.nonce : undefined;
 
     // Choose access token issuer based on config (default: JWT).
     // Opaque tokens are recommended when immediate revocation is required,
@@ -9118,6 +9103,193 @@ export function internalRedirectOriginConformanceBlock(): string {
 `;
 }
 
+/**
+ * Shared, framework-neutral conformance block for the authorization-code
+ * subject context (OIDC Core 1.0 §2 / §3.1.3.3): the ID Token's sub and
+ * auth_time come from the validated request — carried from the stored
+ * authorization code — so the token route never re-reads the consumed code.
+ * The block pins that contract by running the full flow against a store whose
+ * consume() physically deletes the code: issuance must still succeed, because
+ * the used=true record exists only for reuse detection (OAuth 2.1 §4.1.2).
+ */
+export function subjectContextConformanceBlock(): string {
+  return `
+  describe('Authorization code subject context (OIDC Core 1.0 §2 / §3.1.3.3)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const SUBJECT_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const SUBJECT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return /name="csrf_token" value="([^"]+)"/.exec(html)?.[1] ?? '';
+    }
+
+    // Isolated provider whose store wraps the JSON factory:
+    // - set() records subject / authTime at issuance so the ID Token claims can
+    //   be pinned to the exact values recorded at authorization, and
+    // - consume() can be flipped to a physical delete to prove issuance does not
+    //   depend on re-reading the consumed code.
+    function createSubjectContextProvider(options: { deleteOnConsume: boolean }) {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const stores = createJsonProviderStores(backend);
+      const issued: Array<{ subject: string; authTime: number | undefined }> = [];
+      const baseAuthCodeStore = stores.authCodeStore;
+      const recordingAuthCodeStore: typeof baseAuthCodeStore = {
+        async set(code, info) {
+          issued.push({
+            subject: (info as { subject: string }).subject,
+            authTime: (info as { authTime?: number }).authTime,
+          });
+          await baseAuthCodeStore.set(code, info);
+        },
+        async get(code) {
+          return baseAuthCodeStore.get(code);
+        },
+        async consume(code) {
+          if (options.deleteOnConsume) {
+            await baseAuthCodeStore.delete(code);
+            return;
+          }
+          await baseAuthCodeStore.consume(code);
+        },
+        async delete(code) {
+          await baseAuthCodeStore.delete(code);
+        },
+      };
+      const provider = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: { ...stores, authCodeStore: recordingAuthCodeStore },
+      });
+      return { provider, issued, authCodeStore: recordingAuthCodeStore };
+    }
+
+    // Drive authorize -> login -> consent over HTTP and return the code. Pure
+    // fetch-and-parse: every contract check stays in the it() blocks.
+    async function subjectContextAuthorize(
+      provider: ReturnType<typeof createApp>,
+    ): Promise<string> {
+      const authorizeRes = await provider.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+          '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+          '&scope=openid&state=subject-context&prompt=consent' +
+          '&code_challenge=' + SUBJECT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would
+      // (the per-transaction binding secret when that feature is enabled).
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await provider.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await provider.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await provider.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await provider.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+
+      return new URL(consentRes.headers.get('Location') ?? '', 'http://localhost')
+        .searchParams.get('code') ?? '';
+    }
+
+    function subjectContextExchange(
+      provider: ReturnType<typeof createApp>,
+      code: string,
+    ): Promise<Response> {
+      return provider.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: SUBJECT_PKCE_VERIFIER,
+          client_id: 'c-conf',
+          client_secret: 's',
+        }).toString(),
+      });
+    }
+
+    it('should issue an ID Token whose sub matches the authenticated end-user', async () => {
+      // OIDC Core 1.0 §2: sub is REQUIRED and identifies the End-User fixed at
+      // the authorization step ('testuser' is the generated user store's sub).
+      const { provider } = createSubjectContextProvider({ deleteOnConsume: false });
+      const code = await subjectContextAuthorize(provider);
+      const res = await subjectContextExchange(provider, code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(idTokenPayload(body.id_token as string).sub).toBe('testuser');
+    });
+
+    it('should issue an ID Token whose auth_time matches the authentication time recorded at authorization', async () => {
+      // OIDC Core 1.0 §2: auth_time reflects the End-User authentication time
+      // recorded when the code was issued — pinned to the exact stored value.
+      const { provider, issued } = createSubjectContextProvider({ deleteOnConsume: false });
+      const code = await subjectContextAuthorize(provider);
+      const body = await (await subjectContextExchange(provider, code)).json();
+
+      expect(issued).toHaveLength(1);
+      expect(idTokenPayload(body.id_token as string).auth_time).toBe(issued[0]?.authTime);
+    });
+
+    it('should still issue tokens when the authorization code store physically deletes consumed codes', async () => {
+      // The used=true contract exists only for reuse detection (OAuth 2.1
+      // §4.1.2): issuance itself reads subject / auth_time from the validated
+      // request, so a store that physically deletes consumed codes loses the
+      // reuse cascade but never blocks a normal token response.
+      const { provider, authCodeStore } = createSubjectContextProvider({ deleteOnConsume: true });
+      const code = await subjectContextAuthorize(provider);
+      const res = await subjectContextExchange(provider, code);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(idTokenPayload(body.id_token as string).sub).toBe('testuser');
+      // Prove the delete actually happened, so this test cannot pass vacuously.
+      expect(await authCodeStore.get(code)).toBeUndefined();
+    });
+  });
+`;
+}
+
 export function endpointBehaviorConformanceBlock(
   features: OidcFeatureConfig,
   includeHonoApplyParity = false,
@@ -13199,6 +13371,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${subjectContextConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
 `;
 }

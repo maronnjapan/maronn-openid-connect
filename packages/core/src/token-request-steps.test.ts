@@ -63,6 +63,8 @@ const defaultAuthorizationCode: AuthorizationCodeInfo = {
   redirectUri: 'https://client.example.org/cb',
   redirectUriExplicit: true,
   scope: ['openid', 'profile'],
+  subject: 'subject-123',
+  authTime: 1_699_999_000,
   codeChallenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
   codeChallengeMethod: 'S256',
   expiresAt: 1_700_000_100,
@@ -452,6 +454,8 @@ describe('buildValidatedAuthorizationCodeRequest', () => {
       grantId: 'grant-123',
       redirectUri: 'https://client.example.org/cb',
       scope: ['openid', 'profile'],
+      subject: 'subject-123',
+      authTime: 1_699_999_000,
       nonce: 'nonce-123',
       audience: ['https://api.example.org'],
       acrValues: 'urn:example:loa:2',
@@ -472,6 +476,57 @@ describe('buildValidatedAuthorizationCodeRequest', () => {
     expect(result).toMatchObject({
       grantType: 'authorization_code',
       sessionId: 'session-abc',
+    });
+  });
+
+  // OIDC Core 1.0 §2: sub is REQUIRED in the ID Token, and §3.1.3.3 requires the
+  // authorization_code token response to include an ID Token. The validated
+  // request must therefore carry the subject fixed at authorization time.
+  it('should return the subject stored on the authorization code', () => {
+    const result = buildValidatedAuthorizationCodeRequest(
+      'authorization-code',
+      { ...defaultAuthorizationCode, subject: 'end-user-42' },
+      'client123',
+      true
+    );
+
+    expect(result).toMatchObject({
+      grantType: 'authorization_code',
+      subject: 'end-user-42',
+    });
+  });
+
+  // OIDC Core 1.0 §2: auth_time is REQUIRED when max_age was requested or the
+  // client registered require_auth_time, so the value recorded at authorization
+  // must reach the token endpoint through the validated request.
+  it('should return the authTime stored on the authorization code', () => {
+    const result = buildValidatedAuthorizationCodeRequest(
+      'authorization-code',
+      { ...defaultAuthorizationCode, authTime: 1_699_999_000 },
+      'client123',
+      true
+    );
+
+    expect(result).toMatchObject({
+      grantType: 'authorization_code',
+      authTime: 1_699_999_000,
+    });
+  });
+
+  it('should return undefined authTime when the authorization code has none', () => {
+    const { authTime: _omitted, ...withoutAuthTime } = {
+      ...defaultAuthorizationCode,
+    };
+    const result = buildValidatedAuthorizationCodeRequest(
+      'authorization-code',
+      withoutAuthTime,
+      'client123',
+      true
+    );
+
+    expect(result).toMatchObject({
+      grantType: 'authorization_code',
+      authTime: undefined,
     });
   });
 });

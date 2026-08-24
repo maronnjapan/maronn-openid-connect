@@ -448,7 +448,9 @@ describe('HonoGenerator', () => {
     // claims, so the refresh branch must omit it (nonce = undefined).
     it('should omit nonce on refresh-issued ID Tokens in token route', () => {
       const file = files.find((f) => f.path === 'routes/token.ts');
-      expect(file?.content).toContain('nonce = undefined;');
+      expect(file?.content).toContain(
+        "validatedRequest.grantType === 'authorization_code' ? validatedRequest.nonce : undefined;",
+      );
     });
 
     it('should import every UserInfo step function in userinfo route', () => {
@@ -1246,20 +1248,23 @@ describe('HonoGenerator', () => {
       expect(storeFile?.content).not.toContain('consumed');
     });
 
-    it('should populate token subject/authTime from stored authorization code', () => {
+    // P2 / OIDC Core 1.0 §2, §3.1.3.3: subject / auth_time は ValidatedAuthorizationCodeRequest
+    // が運ぶため、消費済み認可コードをストアから再取得しない。store が消費済みコードを
+    // 物理削除しても正常なトークン発行は成立する（used=true 保持は再利用検知 cascade 専用）。
+    it('should not re-read the authorization code store after consuming the code', () => {
       const tokenFile = files.find((f) => f.path === 'routes/token.ts');
-      expect(tokenFile?.content).toContain('const authCode = await authCodeStore.get(validatedRequest.code);');
-      expect(tokenFile?.content).toContain('TokenErrorCode.InvalidGrant');
-      // authorization_code branch assigns subject/authTime from auth code
-      expect(tokenFile?.content).toContain('subject = authCode.subject;');
-      expect(tokenFile?.content).toContain('authTime = authCode.authTime;');
+      expect(tokenFile?.content).not.toContain('authCodeStore.get(validatedRequest.code');
+      // 再取得が消えたことで token ルートは authCodeStore 自体を使わない
+      expect(tokenFile?.content).not.toContain('defaultAuthCodeStore');
+      expect(tokenFile?.content).toContain('const subject = validatedRequest.subject;');
+      expect(tokenFile?.content).toContain('const authTime = validatedRequest.authTime;');
     });
 
     it('should handle refresh_token grant by using subject from validated request', () => {
       const tokenFile = files.find((f) => f.path === 'routes/token.ts');
       expect(tokenFile?.content).toContain("validatedRequest.grantType === 'authorization_code'");
-      // refresh_token branch assigns subject from validated request
-      expect(tokenFile?.content).toContain('subject = validatedRequest.subject;');
+      // 判別共用体の両枝が subject を持つため、grant 種別に依らず同じ代入で済む
+      expect(tokenFile?.content).toContain('const subject = validatedRequest.subject;');
       expect(tokenFile?.content).toContain('refreshTokenResolver');
     });
 
@@ -1383,9 +1388,12 @@ describe('HonoGenerator', () => {
       const content = tokenFile?.content ?? '';
       // ID Token の発行は scope.includes('openid') で判定
       expect(content).toContain("if (validatedRequest.scope.includes('openid')) {");
-      // refresh_token branch でも authTime / nonce を validatedRequest から復元
-      expect(content).toContain('authTime = validatedRequest.authTime');
-      expect(content).toContain('nonce = validatedRequest.nonce');
+      // authTime は grant 種別に依らず validatedRequest から取り、nonce は
+      // authorization_code grant のみ引き継ぐ（OIDC Core 1.0 §12.2）
+      expect(content).toContain('const authTime = validatedRequest.authTime;');
+      expect(content).toContain(
+        "validatedRequest.grantType === 'authorization_code' ? validatedRequest.nonce : undefined;",
+      );
     });
 
     // P1 / OAuth 2.1 §6.1: refresh token は initial issuance からの absolute lifetime のみで
@@ -1521,7 +1529,8 @@ describe('HonoGenerator', () => {
       const tokenFile = files.find((f) => f.path === 'routes/token.ts');
       expect(tokenFile?.content).toContain("c.get('tokenClientResolver')");
       expect(tokenFile?.content).toContain("c.get('authCodeResolver')");
-      expect(tokenFile?.content).toContain("c.get('authCodeStore')");
+      // 消費済みコードを再取得しないため、token ルートは authCodeStore を参照しない
+      expect(tokenFile?.content).not.toContain("c.get('authCodeStore')");
     });
 
     it('should issue authorization codes via core createAuthorizationCode helper', () => {

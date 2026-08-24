@@ -80,6 +80,7 @@ function createValidContext(overrides?: {
     redirectUri: 'https://client.example.com/cb',
     redirectUriExplicit: false,
     scope: ['openid', 'profile'],
+    subject: 'user-123',
     codeChallenge: '', // set below
     codeChallengeMethod: 'S256',
     expiresAt: now + 600,
@@ -490,6 +491,31 @@ describe('validateTokenRequest', () => {
         clientId: 'client-123',
         code: 'valid-auth-code',
         codeVerified: false,
+      });
+    });
+
+    // OIDC Core 1.0 §2 / §3.1.3.3: the authorization_code token response must
+    // include an ID Token whose sub (and, when recorded, auth_time) come from
+    // the authorization step, so the validated request carries both.
+    it('should expose subject on the validated request for the authorization_code grant', async () => {
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const { context } = createValidContext({
+        authCode: {
+          codeChallenge,
+          codeChallengeMethod: 'S256',
+          subject: 'end-user-42',
+          authTime: 1_699_999_000,
+        },
+        codeVerifier,
+      });
+
+      const result = await validateTokenRequest(context);
+
+      expect(result).toMatchObject({
+        grantType: 'authorization_code',
+        subject: 'end-user-42',
+        authTime: 1_699_999_000,
       });
     });
 

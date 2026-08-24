@@ -123,6 +123,18 @@ export interface AuthorizationCodeInfo {
   codeChallengeMethod?: 'S256';
   expiresAt: number;
   used: boolean;
+  /**
+   * 発行時に確定した End-User 識別子。ID Token の `sub`（OIDC Core 1.0 §2 REQUIRED）の
+   * 源であり、authorization_code grant では ID Token 発行が必須（§3.1.3.3）のため、
+   * 認可コードには必ず存在する。
+   */
+  subject: string;
+  /**
+   * 発行時の認証時刻（Unix epoch 秒）。ID Token の `auth_time` の源。
+   * `max_age` 要求時、またはクライアントが `require_auth_time` を登録している場合に
+   * REQUIRED（OIDC Core 1.0 §2）。
+   */
+  authTime?: number;
   nonce?: string;
   audience?: string[];
   /**
@@ -145,6 +157,12 @@ export interface AuthorizationCodeInfo {
  * 認可コードを解決するインターフェース
  */
 export interface AuthorizationCodeResolver {
+  /**
+   * 認可コードを引き当てる。戻り値は発行時に保存した認証コンテキスト
+   * （{@link AuthorizationCodeInfo.subject} / {@link AuthorizationCodeInfo.authTime}）を
+   * 含むこと。Token Endpoint はこの値だけで ID Token の `sub` / `auth_time` を確定し、
+   * 消費済みコードの再取得は行わない。
+   */
   findAuthorizationCode(code: string): Promise<AuthorizationCodeInfo | null>;
   /**
    * 認可コードを「使用済み」にする。**物理削除ではなく `used=true` への状態遷移として
@@ -165,6 +183,12 @@ export interface AuthorizationCodeResolver {
    * （SHOULD 違反）。生成 OP では `store.ts` の `consume()`（used 更新）を使い、
    * `delete()`（物理削除）は使わないこと。この契約は各 sample の `conformance.test.ts`
    * で固定している。
+   *
+   * この「used=true を保持する」契約の目的は上記の再利用検知 cascade **のみ**である。
+   * トークン発行自体は {@link ValidatedAuthorizationCodeRequest} が運ぶ
+   * `subject` / `authTime` で完結し、消費済みレコードの再取得には依存しない。
+   * したがって物理削除で実装しても正常なトークン発行は失敗しない（失われるのは
+   * 再利用検知 cascade だけである）。
    */
   revokeAuthorizationCode(code: string): Promise<void>;
   /**
@@ -357,6 +381,16 @@ export interface ValidatedAuthorizationCodeRequest {
   grantId: string;
   redirectUri: string;
   scope: string[];
+  /**
+   * 認可時に確定した End-User 識別子。ID Token の `sub`（OIDC Core 1.0 §2 REQUIRED）に使う。
+   * refresh 側（{@link ValidatedRefreshTokenRequest.subject}）とフィールド名を揃えている。
+   */
+  subject: string;
+  /**
+   * 認可時に記録された認証時刻（Unix epoch 秒）。ID Token の `auth_time` に使う
+   * （OIDC Core 1.0 §2: `max_age` 要求時 / `require_auth_time` 登録時に REQUIRED）。
+   */
+  authTime?: number;
   nonce?: string;
   audience?: string[];
   /**

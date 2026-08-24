@@ -50,7 +50,6 @@ import {
 } from '../resolvers.js';
 import {
   accessTokenStore as defaultAccessTokenStore,
-  authCodeStore as defaultAuthCodeStore,
   refreshTokenStore as defaultRefreshTokenStore,
 } from '../store.js';
 import type { RegisteredClient } from '../config.js';
@@ -167,7 +166,6 @@ tokenApp.post('/', async (c) => {
     // 「セッションが生きているか」の判定そのものを差し替えられる。
     const authenticationSessionResolver =
       c.get('authenticationSessionResolver') ?? defaultAuthenticationSessionResolver;
-    const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
     const accessTokenStore = c.get('accessTokenStore') ?? defaultAccessTokenStore;
     const refreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
 
@@ -626,33 +624,20 @@ tokenApp.post('/', async (c) => {
     const idTokenPrivateKey = selectedIdTokenKey.privateKey;
     const idTokenKeyId = selectedIdTokenKey.keyId;
 
-    let subject: string;
-    let authTime: number | undefined;
-    let nonce: string | undefined;
-
-    if (validatedRequest.grantType === 'authorization_code') {
-      const authCode = await authCodeStore.get(validatedRequest.code);
-      if (!authCode?.subject || !authCode.authTime) {
-        throw new TokenError(
-          TokenErrorCode.InvalidGrant,
-          'Authorization code missing required subject context',
-        );
-      }
-      subject = authCode.subject;
-      authTime = authCode.authTime;
-      nonce = validatedRequest.nonce;
-    } else {
-      // refresh_token grant
-      // OIDC Core 1.0 §12.2: the re-issued ID Token retains iss/sub/aud/exp/iat/
-      // auth_time/azp/acr/amr — nonce is NOT in that list. nonce binds an
-      // Authentication Request to its ID Token (§2); a refresh has no such request,
-      // so carrying the old nonce adds no replay protection. Major OPs (Google,
-      // Auth0) omit it on refresh, so we omit it here by default. auth_time is
-      // still preserved per §12.1.
-      subject = validatedRequest.subject;
-      authTime = validatedRequest.authTime;
-      nonce = undefined;
-    }
+    // OIDC Core 1.0 §2 / §3.1.3.3: sub and auth_time were fixed at the
+    // authorization step and both grant branches of the validated request carry
+    // them, so the consumed authorization code is never re-read from the store
+    // (the used=true record exists only for reuse detection — OAuth 2.1 §4.1.2).
+    const subject = validatedRequest.subject;
+    const authTime = validatedRequest.authTime;
+    // OIDC Core 1.0 §12.2: the re-issued ID Token retains iss/sub/aud/exp/iat/
+    // auth_time/azp/acr/amr — nonce is NOT in that list. nonce binds an
+    // Authentication Request to its ID Token (§2); a refresh has no such request,
+    // so carrying the old nonce adds no replay protection. Major OPs (Google,
+    // Auth0) omit it on refresh, so we omit it here by default. auth_time is
+    // still preserved per §12.1.
+    const nonce =
+      validatedRequest.grantType === 'authorization_code' ? validatedRequest.nonce : undefined;
 
     // Choose access token issuer based on config (default: JWT).
     // Opaque tokens are recommended when immediate revocation is required,

@@ -175,7 +175,7 @@ describe('resolveRequestObjectParams', () => {
     });
   });
 
-  it('should reject a broken request JWT with a non-redirectable invalid_request', async () => {
+  it('should reject a broken request JWT with a non-redirectable invalid_request_object', async () => {
     const error = await resolveRequestObjectParams(
       validParams({ request: 'not-a-jwt' }),
       defaultClient,
@@ -184,7 +184,7 @@ describe('resolveRequestObjectParams', () => {
 
     expect(error).toBeInstanceOf(AuthorizationError);
     const authError = error as AuthorizationError;
-    expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequest);
+    expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
     expect(authError.redirectable).toBe(false);
   });
 
@@ -201,7 +201,7 @@ describe('resolveRequestObjectParams', () => {
 
     expect(error).toBeInstanceOf(AuthorizationError);
     const authError = error as AuthorizationError;
-    expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequest);
+    expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
     expect(authError.redirectable).toBe(false);
   });
 });

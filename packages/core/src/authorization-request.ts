@@ -33,6 +33,10 @@ export enum AuthorizationErrorCode {
   LoginRequired = 'login_required',
   AccountSelectionRequired = 'account_selection_required',
   ConsentRequired = 'consent_required',
+  // OIDC Core 1.0 Section 6.3: returned when the request_uri is unreachable or
+  // yields invalid data, or the request parameter carries an invalid Request Object.
+  InvalidRequestUri = 'invalid_request_uri',
+  InvalidRequestObject = 'invalid_request_object',
   // OIDC Core 1.0 Section 6.3: returned when the OP does not support the
   // request / request_uri parameters but the client used them.
   RequestNotSupported = 'request_not_supported',
@@ -810,7 +814,8 @@ export interface ResolvedRequestObjectParams {
  * ある場合は署名付き JWS Request Object をクライアント登録鍵（`ClientInfo.jwks`）で
  * 検証し、claim をクエリ値に supersede した有効パラメータ集合を返す。検証失敗
  * （壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
- * 内部の redirect_uri も信用せず非リダイレクトの invalid_request とする。
+ * 内部の redirect_uri も信用せず非リダイレクトの invalid_request_object
+ * （OIDC Core 1.0 §6.3）とする。
  *
  * `response_type` / `client_id` は OAuth 2.0 request syntax 側を正とするため
  * 上書きしない（後段の {@link validateRequestObjectConsistency} で一致検証する）。
@@ -847,8 +852,11 @@ export async function resolveRequestObjectParams(
     });
   } catch (e) {
     if (e instanceof RequestObjectError) {
+      // OIDC Core 1.0 §6.3: an invalid Request Object is reported as
+      // invalid_request_object, distinguishing "fix your Request Object"
+      // from request_not_supported ("stop using the request parameter").
       throw new AuthorizationError(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
         e.message,
       );
     }

@@ -59,7 +59,7 @@
     "@edge-runtime/vm": "^5.0.0",
     "@maronn-openid-connect/core": "workspace:*",
     "@types/node": "^26.2.0",
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.6"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }

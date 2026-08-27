@@ -16,6 +16,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "types": ["node"],
     "rootDir": "./src",
     "outDir": "./dist",
     "removeComments": true,

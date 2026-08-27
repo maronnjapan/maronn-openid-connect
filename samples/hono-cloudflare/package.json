@@ -23,8 +23,8 @@
     "@maronn-openid-connect/cli": "workspace:*",
     "@cloudflare/workers-types": "^5.20260723.1",
     "hono": "^4.12.34",
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.113.0"
   }
 }

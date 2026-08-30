@@ -207,7 +207,7 @@ const testClients = new Map<string, RegisteredClient>([
     redirectUris: [REDIRECT_URI],
     clientType: 'confidential' as const,
     responseTypes: ['code'],
-    grantTypes: ['authorization_code', 'urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer'],
+    grantTypes: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer'],
     tokenEndpointAuthMethod: 'client_secret_post',
   }],
   ['c-idjag-other', {
@@ -4052,7 +4052,11 @@ describe('generated provider HTTP conformance', () => {
 
     // Drive authorize -> login -> consent over HTTP and hand back the code. No
     // assertions and no branching here: the flow contract lives in the it()s.
-    async function xaaAuthorizeFlow(clientId: string, scope: string): Promise<string> {
+    async function xaaAuthorizeFlow(
+      clientId: string,
+      scope: string,
+      username = 'testuser',
+    ): Promise<string> {
       const authorizeUrl =
         '/authorize?response_type=code&client_id=' + clientId +
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
@@ -4075,7 +4079,7 @@ describe('generated provider HTTP conformance', () => {
         body: new URLSearchParams({
           transaction_id: transactionId,
           csrf_token: xaaCsrfFrom(await loginGet.text()),
-          username: 'testuser',
+          username,
           password: 'password',
         }).toString(),
       });
@@ -4097,8 +4101,11 @@ describe('generated provider HTTP conformance', () => {
 
     // The identity assertion the issuance half consumes: an ID Token from the
     // ordinary Authorization Code Flow of the given client.
-    async function xaaCodeFlowTokens(clientId: string): Promise<Record<string, string>> {
-      const code = await xaaAuthorizeFlow(clientId, 'openid profile');
+    async function xaaCodeFlowTokens(
+      clientId: string,
+      username = 'testuser',
+    ): Promise<Record<string, string>> {
+      const code = await xaaAuthorizeFlow(clientId, 'openid profile', username);
       const res = await postXaaToken({
         client_id: clientId,
         client_secret: 's',
@@ -4308,8 +4315,7 @@ describe('generated provider HTTP conformance', () => {
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({
           error: 'invalid_request',
-          error_description:
-            'Unsupported subject_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token is supported.',
+          error_description: 'Unsupported subject_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token or urn:ietf:params:oauth:token-type:refresh_token is supported.',
         });
       });
 
@@ -4371,6 +4377,144 @@ describe('generated provider HTTP conformance', () => {
           });
         } finally {
           idJagConfig.allowedScopes = undefined;
+        }
+      });
+
+      // draft §4.3 MAY: a refresh token of this OP may stand in for the ID Token.
+      it('should issue an ID-JAG from a refresh token subject', async () => {
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(body.token_type).toBe('N_A');
+        const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+        // The subject claims come from the refresh token's stored grant context.
+        expect(claims.iss).toBe(XAA_OWN_ISSUER);
+        expect(claims.sub).toBe('testuser');
+        expect(claims.aud).toBe(XAA_PEER_AS_ISSUER);
+        expect(typeof claims.auth_time).toBe('number');
+      });
+
+      it('should not consume the refresh token when issuing an ID-JAG', async () => {
+        // The exchange is not the refresh grant: no rotation happens, so the
+        // same refresh token mints a second ID-JAG (draft §4.4.3's renewal path).
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        const first = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+        const second = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+      });
+
+      it('should reject a rotated refresh token subject with the fixed description', async () => {
+        // OAuth 2.1 §4.3.1: presenting a rotated-out token is validated exactly
+        // like the standard refresh grant would.
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        await postXaaToken({
+          client_id: 'c-idjag',
+          client_secret: 's',
+          grant_type: 'refresh_token',
+          refresh_token: tokens.refresh_token,
+        });
+
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: XAA_SUBJECT_INVALID_DESCRIPTION,
+        });
+      });
+
+      it('should reject a refresh token subject while allowRefreshTokenSubjects is off', async () => {
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        idJagConfig.allowRefreshTokenSubjects = false;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: tokens.refresh_token,
+              subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description:
+              'Unsupported subject_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token is supported.',
+          });
+        } finally {
+          idJagConfig.allowRefreshTokenSubjects = true;
+        }
+      });
+
+      // Extension (draft §9.7): actor tokens are an explicit opt-in; the
+      // generated default keeps them off.
+      it('should record the actor in the act claim when actor tokens are enabled', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const actorIdToken = (await xaaCodeFlowTokens('c-idjag', 'otheruser')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: actorIdToken,
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+          const body = (await res.json()) as Record<string, unknown>;
+
+          expect(res.status).toBe(200);
+          const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+          // RFC 8693 §4.1: sub stays the resource owner; the actor appears only in act.
+          expect(claims.sub).toBe('testuser');
+          expect(claims.act).toEqual({ sub: 'otheruser' });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      it('should reject an actor ID Token issued to another client with the fixed description', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const foreignActorToken = (await xaaCodeFlowTokens('c-conf')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: foreignActorToken,
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
         }
       });
     });
@@ -4551,6 +4695,30 @@ describe('generated provider HTTP conformance', () => {
         expect(await res.json()).toEqual({
           error: 'unauthorized_client',
           error_description: 'Public clients are not allowed to use the jwt-bearer grant type',
+        });
+      });
+
+      it('should preserve the act claim of an actor-bearing ID-JAG on the issued access token', async () => {
+        // RFC 8693 §4.1: the actor record survives the redemption, on the JWT
+        // and in the store alike — dropping it would hide who actually acts.
+        const assertion = await mintExternalIdJag({ act: { sub: 'external-actor' } });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+        expect(claims.sub).toBe('testuser');
+        expect(claims.act).toEqual({ sub: 'external-actor' });
+      });
+
+      it('should reject a malformed act claim with invalid_grant', async () => {
+        const assertion = await mintExternalIdJag({ act: { role: 'admin' } });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The assertion act claim is malformed',
         });
       });
 

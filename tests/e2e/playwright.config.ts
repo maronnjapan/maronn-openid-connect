@@ -123,8 +123,12 @@ export default defineConfig({
         RESOURCE_SERVER_CLIENT_SECRET: 'e2e-resource-server-secret',
         RESOURCE_SERVER_REDIRECT_URI: `${resourceServerURL}/unused-callback`,
         // EXPERIMENTAL (ID-JAG draft §4.3): this OP plays the IdP and may issue
-        // ID-JAGs for the second OP's trust domain.
-        ...(startXaaOp ? { XAA_ALLOWED_AUDIENCES: xaaIssuer } : {}),
+        // ID-JAGs for the second OP's trust domain. Actor tokens (an opt-in
+        // extension) are enabled so the delegation spec can exercise the act
+        // claim over real HTTP.
+        ...(startXaaOp
+          ? { XAA_ALLOWED_AUDIENCES: xaaIssuer, XAA_ALLOW_ACTOR_TOKENS: '1' }
+          : {}),
         ...(process.env.OIDC_SQLITE_PATH
           ? { OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH }
           : {}),

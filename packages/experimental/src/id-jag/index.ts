@@ -68,6 +68,7 @@ export {
   processIdJagRedemptionRequest,
   resolveIdJagGrantScope,
   verifyIdJagAssertion,
+  type IdJagAccessTokenInfo,
   type IdJagAssertionPayload,
   type IdJagRedemptionContext,
   type IdJagRedemptionGrant,

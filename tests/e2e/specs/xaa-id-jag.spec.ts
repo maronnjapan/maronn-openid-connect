@@ -13,6 +13,7 @@ const EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const JWT_BEARER_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 const ID_JAG_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id-jag';
 const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
+const REFRESH_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:refresh_token';
 const ID_JAG_GRANT_PROFILE = 'urn:ietf:params:oauth:grant-profile:id-jag';
 
 /**
@@ -112,6 +113,114 @@ test.describe('Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-au
     });
     expect(userInfoRes.status()).toBe(200);
     expect(((await userInfoRes.json()) as { sub: string }).sub).toBe('testuser');
+  });
+
+  // draft §4.3.2 / §4.4.3: when the ID Token has expired, the refresh token
+  // from the same SSO stands in as the subject and yields a fresh ID-JAG
+  // without a new sign-on round trip.
+  test('should issue and redeem an ID-JAG from a refresh token subject', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const idpIssuer = requireBaseUrl(baseURL);
+    test.skip(!(await supportsXaa(request, idpIssuer)), XAA_SKIP_REASON);
+
+    const { refreshToken } = await obtainTokens(page);
+    expect(refreshToken).not.toBe('');
+
+    const exchangeRes = await request.post(`${idpIssuer}/token`, {
+      form: {
+        grant_type: EXCHANGE_GRANT_TYPE,
+        requested_token_type: ID_JAG_TOKEN_TYPE,
+        subject_token: refreshToken,
+        subject_token_type: REFRESH_TOKEN_TYPE,
+        audience: xaaIssuer,
+        scope: 'openid profile',
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(exchangeRes.status()).toBe(200);
+    const exchangeBody = (await exchangeRes.json()) as Record<string, unknown>;
+    expect(exchangeBody.token_type).toBe('N_A');
+
+    const idJag = String(exchangeBody.access_token);
+    const jagClaims = decodeJwtSegment(idJag.split('.')[1] ?? '');
+    // The subject claims come from the refresh token's stored grant context.
+    expect(jagClaims.sub).toBe('testuser');
+    expect(typeof jagClaims.auth_time).toBe('number');
+
+    const redeemRes = await request.post(`${xaaIssuer}/token`, {
+      form: {
+        grant_type: JWT_BEARER_GRANT_TYPE,
+        assertion: idJag,
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(redeemRes.status()).toBe(200);
+    expect(((await redeemRes.json()) as Record<string, unknown>).token_type).toBe('Bearer');
+  });
+
+  // Extension (draft §9.7): the IdP records who acts on the subject's behalf,
+  // and the resource AS preserves that record on its own access token.
+  test('should carry the actor through the chain as the act claim', async ({
+    page,
+    browser,
+    request,
+    baseURL,
+  }) => {
+    const idpIssuer = requireBaseUrl(baseURL);
+    test.skip(!(await supportsXaa(request, idpIssuer)), XAA_SKIP_REASON);
+
+    // Subject: testuser signs in in the default context.
+    const subjectIdToken = await obtainIdToken(page);
+    // Actor: otheruser runs the same flow in an isolated context, so the OP's
+    // browser-session cookie of the first login cannot leak into it.
+    const actorContext = await browser.newContext();
+    const actorIdToken = await obtainIdToken(await actorContext.newPage(), 'otheruser');
+    await actorContext.close();
+
+    const exchangeRes = await request.post(`${idpIssuer}/token`, {
+      form: {
+        grant_type: EXCHANGE_GRANT_TYPE,
+        requested_token_type: ID_JAG_TOKEN_TYPE,
+        subject_token: subjectIdToken,
+        subject_token_type: ID_TOKEN_TYPE,
+        actor_token: actorIdToken,
+        actor_token_type: ID_TOKEN_TYPE,
+        audience: xaaIssuer,
+        scope: 'openid profile',
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(exchangeRes.status()).toBe(200);
+    const idJag = String(
+      ((await exchangeRes.json()) as Record<string, unknown>).access_token,
+    );
+    const jagClaims = decodeJwtSegment(idJag.split('.')[1] ?? '');
+    // RFC 8693 §4.1: sub stays the resource owner; the actor appears only in act.
+    expect(jagClaims.sub).toBe('testuser');
+    expect(jagClaims.act).toEqual({ sub: 'otheruser' });
+
+    const redeemRes = await request.post(`${xaaIssuer}/token`, {
+      form: {
+        grant_type: JWT_BEARER_GRANT_TYPE,
+        assertion: idJag,
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(redeemRes.status()).toBe(200);
+    const redeemBody = (await redeemRes.json()) as Record<string, unknown>;
+
+    const accessTokenClaims = decodeJwtSegment(
+      String(redeemBody.access_token).split('.')[1] ?? '',
+    );
+    expect(accessTokenClaims.sub).toBe('testuser');
+    expect(accessTokenClaims.act).toEqual({ sub: 'otheruser' });
   });
 
   test('should advertise the XAA metadata on both trust domains', async ({
@@ -226,16 +335,29 @@ const XAA_SKIP_REASON =
   'This sample OP was generated without --enable id-jag, or the second (resource AS) OP instance is not running';
 
 /**
- * Complete the ordinary Authorization Code Flow at the E2E client app as
- * testuser and read the raw ID Token off the client's result page.
+ * Complete the ordinary Authorization Code Flow at the E2E client app as the
+ * given user and read the raw tokens off the client's result page.
  */
-async function obtainIdToken(page: import('@playwright/test').Page): Promise<string> {
+async function obtainTokens(
+  page: import('@playwright/test').Page,
+  username = 'testuser',
+): Promise<{ idToken: string; refreshToken: string }> {
   await page.goto(`${clientBaseURL}/start`);
-  await page.getByLabel('Username:').fill('testuser');
+  await page.getByLabel('Username:').fill(username);
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
   await page.getByRole('button', { name: 'Approve' }).click();
-  return (await page.getByTestId('token-id-token').textContent()) ?? '';
+  return {
+    idToken: (await page.getByTestId('token-id-token').textContent()) ?? '',
+    refreshToken: (await page.getByTestId('token-refresh-token').textContent()) ?? '',
+  };
+}
+
+async function obtainIdToken(
+  page: import('@playwright/test').Page,
+  username = 'testuser',
+): Promise<string> {
+  return (await obtainTokens(page, username)).idToken;
 }
 
 /** SSO plus the token exchange: hand back a freshly issued ID-JAG. */

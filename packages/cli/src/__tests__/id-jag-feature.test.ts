@@ -8,11 +8,11 @@ const EXCHANGE_GRANT_URN = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const JWT_BEARER_GRANT_URN = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 const ID_JAG_TOKEN_TYPE_URN = 'urn:ietf:params:oauth:token-type:id-jag';
 
-function generateFiles(framework: string, enable: string[] = []) {
+function generateFiles(framework: string, enable: string[] = [], disable: string[] = []) {
   return generate({
     framework,
     outputDir: './out',
-    features: resolveFeatures({ enable }),
+    features: resolveFeatures({ enable, disable }),
   }).files;
 }
 
@@ -247,6 +247,51 @@ describe('generate with --enable id-jag', () => {
         // Next.js strips the .js extension from relative imports, so only the
         // module specifier's stem is pinned here.
         expect(content.includes("import { idJagConfig } from './routes/token")).toBe(true);
+      });
+    });
+
+    describe('Refresh-token subjects and actor tokens', () => {
+      it('should generate the refresh-subject knob and resolver hand-off by default', () => {
+        const content = fileContent(
+          generateFiles(framework, ['id-jag']),
+          tokenRoutePath(framework),
+        );
+        expect(content.includes('allowRefreshTokenSubjects: true,')).toBe(true);
+        // draft §4.3.3: the exchange validates refresh-token subjects with the
+        // SAME resolvers the standard refresh grant uses.
+        expect(
+          content.includes('? { refreshTokenResolver, authenticationSessionResolver }'),
+        ).toBe(true);
+      });
+
+      it('should drop the refresh-subject wiring when refresh tokens are disabled', () => {
+        const content = fileContent(
+          generateFiles(framework, ['id-jag'], ['refresh-token']),
+          tokenRoutePath(framework),
+        );
+        expect(content.includes('allowRefreshTokenSubjects')).toBe(false);
+      });
+
+      it('should generate the actor knob disabled by default', () => {
+        const content = fileContent(
+          generateFiles(framework, ['id-jag']),
+          tokenRoutePath(framework),
+        );
+        expect(content.includes('allowActorTokens: false,')).toBe(true);
+        expect(content.includes('allowActorTokens: idJagConfig.allowActorTokens,')).toBe(true);
+      });
+
+      it('should preserve the act claim on the redeemed access token and its metadata', () => {
+        const content = fileContent(
+          generateFiles(framework, ['id-jag']),
+          tokenRoutePath(framework),
+        );
+        expect(
+          content.includes('...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),'),
+        ).toBe(true);
+        expect(content.includes('const idJagAccessTokenMetadata: IdJagAccessTokenInfo = {')).toBe(
+          true,
+        );
       });
     });
 

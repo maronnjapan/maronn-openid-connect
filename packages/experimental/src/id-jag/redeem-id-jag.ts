@@ -21,6 +21,7 @@
 import type { webcrypto } from 'node:crypto';
 import {
   extractAlgorithmParamsFromJwk,
+  type AccessTokenInfo,
   type Jwk,
   type JwkSet,
   type TokenClientInfo,
@@ -112,6 +113,17 @@ export interface IdJagRedemptionGrant {
    */
   actor?: IdJagActor;
 }
+
+/**
+ * redemption で発行したアクセストークンの store metadata。
+ *
+ * core の {@link AccessTokenInfo} に `act` を加えた構造的拡張。act 付き ID-JAG から
+ * 発行したトークンをこの形で保存すると、introspection や後続処理が actor の記録を
+ * 参照できる（core は無変更のまま。token-exchange 機能の同名パターンと同型）。
+ */
+export type IdJagAccessTokenInfo = AccessTokenInfo & {
+  act?: IdJagActor;
+};
 
 /** ID-JAG redemption 処理のコンテキスト。 */
 export interface IdJagRedemptionContext {

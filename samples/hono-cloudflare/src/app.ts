@@ -24,6 +24,7 @@ interface Bindings {
   XAA_ALLOWED_AUDIENCES?: string;
   XAA_TRUSTED_IDP_ISSUER?: string;
   XAA_TRUSTED_IDP_JWKS_URI?: string;
+  XAA_ALLOW_ACTOR_TOKENS?: string;
 }
 
 const bindings = env as Bindings;
@@ -51,6 +52,11 @@ if (bindings.XAA_TRUSTED_IDP_ISSUER) {
         `${bindings.XAA_TRUSTED_IDP_ISSUER}/.well-known/jwks.json`,
     },
   ];
+}
+// Actor tokens (act claim) are an opt-in extension beyond the draft's
+// normative scope, so they stay off unless the deployment flips this.
+if (bindings.XAA_ALLOW_ACTOR_TOKENS === '1') {
+  idJagConfig.allowActorTokens = true;
 }
 
 const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {

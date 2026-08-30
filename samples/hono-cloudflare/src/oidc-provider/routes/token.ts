@@ -67,6 +67,7 @@ import {
   matchesIdJagIssuanceRequest,
   processIdJagIssuanceRequest,
   processIdJagRedemptionRequest,
+  type IdJagAccessTokenInfo,
   type IdJagTrustedIdentityProvider,
 } from '@maronn-openid-connect/experimental/id-jag';
 import type { JwkSet } from '@maronn-openid-connect/core';
@@ -105,6 +106,19 @@ export const tokenExchangeConfig = {
  * - allowedScopes: optional cap on the scopes an ID-JAG may carry. undefined
  *   passes the requested scopes through (the resource AS applies its own
  *   policy again on redemption).
+ * - allowRefreshTokenSubjects: whether a refresh token this OP issued may stand
+ *   in for the ID Token as the subject_token (draft §4.3 MAY), so a client can
+ *   request a fresh ID-JAG after its ID Token expired without a new SSO round
+ *   trip. Validated exactly like the standard refresh_token grant (rotation
+ *   reuse revokes the token family; online tokens require the login session to
+ *   be alive); the refresh token is NOT consumed. Grants without the openid
+ *   scope are refused — their refresh token replaces no identity assertion.
+ * - allowActorTokens: whether an actor_token (an ID Token this OP issued to the
+ *   authenticated client, identifying who acts on the subject's behalf) is
+ *   accepted and recorded as the ID-JAG's act claim (RFC 8693 §4.1). The draft
+ *   defines no normative actor processing (§9.7 sketches extensions), so this
+ *   is an opt-in extension and defaults to false — an actor_token is rejected
+ *   until you flip it.
  *
  * Consuming side (this OP as the resource authorization server, draft §4.4):
  * - trustedIdentityProviders: the IdPs whose ID-JAGs are accepted on the
@@ -116,6 +130,8 @@ export const idJagConfig = {
   allowedAudiences: [] as string[],
   idJagLifetimeSeconds: 300,
   allowedScopes: undefined as string[] | undefined,
+  allowRefreshTokenSubjects: true,
+  allowActorTokens: false,
   trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
 };
 
@@ -324,6 +340,13 @@ tokenApp.post('/', async (c) => {
         allowedAudiences: idJagConfig.allowedAudiences,
         allowedScopes: idJagConfig.allowedScopes,
         lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
+        // Extension (draft §9.7): when enabled, an actor_token (an ID Token this
+        // OP issued to the authenticated client) is validated the same way as
+        // the subject and recorded as the ID-JAG's act claim.
+        allowActorTokens: idJagConfig.allowActorTokens,
+        ...(idJagConfig.allowRefreshTokenSubjects
+          ? { refreshTokenResolver, authenticationSessionResolver }
+          : {}),
       });
 
       // RFC 6749 §5.1: token responses MUST NOT be cached. The ID-JAG itself is
@@ -384,12 +407,19 @@ tokenApp.post('/', async (c) => {
         issuedAt: idJagIssuedAt,
       });
       const idJagAccessToken = await idJagTokenIssuer.issue({
-        payload: idJagAccessTokenPayload,
+        payload: {
+          ...idJagAccessTokenPayload,
+          // RFC 8693 §4.1: an act claim carried by the ID-JAG is preserved on
+          // the issued access token, so downstream services still see WHO acts
+          // on the subject's behalf (dropping it would silently turn the
+          // delegation into impersonation).
+          ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+        },
         privateKey: c.get('privateKey'),
         keyId: c.get('keyId'),
       });
 
-      await accessTokenStore.set(idJagAccessToken, {
+      const idJagAccessTokenMetadata: IdJagAccessTokenInfo = {
         // draft §4.4.1: the ID-JAG's sub is used as the local subject directly
         // (subject resolution by identical sub; JIT provisioning is out of scope).
         sub: idJagGrant.subject,
@@ -405,7 +435,11 @@ tokenApp.post('/', async (c) => {
         audience: idJagAudience,
         issuer: idJagRedemptionConfig.issuer,
         jti: idJagAccessTokenPayload.jti,
-      });
+        // The actor record is persisted too, so opaque-token introspection and
+        // store-based tooling can surface it just like the JWT claim.
+        ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+      };
+      await accessTokenStore.set(idJagAccessToken, idJagAccessTokenMetadata);
 
       // RFC 6749 §5.1: token responses MUST NOT be cached.
       c.header('Cache-Control', 'no-store');

@@ -60,6 +60,16 @@ export const SUBJECT_TOKEN_INVALID_DESCRIPTION =
   'The provided subject_token is not valid';
 
 /**
+ * 発行側で actor_token（ID トークン）の検証に失敗したときの固定 error_description。
+ *
+ * {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} と同じオラクル排除方針で、どの
+ * パラメータが不正だったかだけを伝え、失敗理由（署名、iss、aud、期限）は
+ * 区別しない。token-exchange 機能の actor_token 解決失敗と同じ文言。
+ */
+export const ACTOR_TOKEN_INVALID_DESCRIPTION =
+  'The provided actor_token is not valid';
+
+/**
  * 受領側で「iss が信頼リスト外」と「署名検証失敗」の両方に使う固定 error_description。
  *
  * 両者を区別すると、応答の違いから信頼済み IdP のリストを外部から探索できて

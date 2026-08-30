@@ -29,7 +29,7 @@ import {
   ASSERTION_UNTRUSTED_DESCRIPTION,
   IdJagError,
 } from './errors.js';
-import { ID_JAG_JWT_TYP } from './issue-id-jag.js';
+import { ID_JAG_JWT_TYP, type IdJagActor } from './issue-id-jag.js';
 
 /** RFC 7523 §2.1: JWT authorization grant の grant type 識別子。 */
 export const JWT_BEARER_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
@@ -74,6 +74,8 @@ export interface IdJagAssertionPayload {
   auth_time?: number;
   acr?: string;
   amr?: string[];
+  /** RFC 8693 §4.1 / draft §3.1 OPTIONAL: subject の代理として振る舞う actor */
+  act?: IdJagActor;
 }
 
 /**
@@ -102,6 +104,13 @@ export interface IdJagRedemptionGrant {
   authTime?: number;
   acr?: string;
   amr?: string[];
+  /**
+   * ID-JAG の act claim。存在する場合、生成コードは発行するアクセストークンの
+   * payload と store メタデータの両方へ `act` として引き継ぐ（RFC 8693 §4.1 の
+   * 意味論を下流に保つ。黙って落とすと actor の記録が消え、委譲が impersonation に
+   * 化ける — draft §9.7 が警告する方向の劣化）。
+   */
+  actor?: IdJagActor;
 }
 
 /** ID-JAG redemption 処理のコンテキスト。 */
@@ -367,6 +376,14 @@ export async function verifyIdJagAssertion(options: {
       ? (payload['amr'] as string[])
       : undefined;
 
+  // act（draft §3.1 OPTIONAL / RFC 8693 §4.1）: 存在する場合は構造を検証して
+  // そのまま引き継ぐ。黙って落とすと actor の記録が消えて委譲が impersonation に
+  // 見えてしまうため、不明な形は拒否する（fail-closed）。
+  const act = payload['act'];
+  if (act !== undefined && !isValidActorChain(act)) {
+    throw invalidAssertion('The assertion act claim is malformed');
+  }
+
   return {
     iss,
     sub,
@@ -380,6 +397,7 @@ export async function verifyIdJagAssertion(options: {
     ...(authTime === undefined ? {} : { auth_time: authTime }),
     ...(acr === undefined ? {} : { acr }),
     ...(amr === undefined ? {} : { amr }),
+    ...(act === undefined ? {} : { act: act as IdJagActor }),
   };
 }
 
@@ -473,6 +491,7 @@ export async function processIdJagRedemptionRequest(
     ...(assertion.auth_time === undefined ? {} : { authTime: assertion.auth_time }),
     ...(assertion.acr === undefined ? {} : { acr: assertion.acr }),
     ...(assertion.amr === undefined ? {} : { amr: assertion.amr }),
+    ...(assertion.act === undefined ? {} : { actor: assertion.act }),
   };
 }
 
@@ -490,6 +509,24 @@ function splitScope(scope: string | undefined): string[] {
 
 function invalidAssertion(description: string): IdJagError {
   return new IdJagError('invalid_grant', description);
+}
+
+/**
+ * RFC 8693 §4.1 の act claim 構造（`sub` 必須、`act` のネストは同形）を検証する。
+ * ネストは「最外が現在の actor、最深が最も古い actor」のチェーンを表す。
+ */
+function isValidActorChain(value: unknown): value is IdJagActor {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const actor = value as { sub?: unknown; act?: unknown };
+  if (typeof actor.sub !== 'string' || actor.sub.length === 0) {
+    return false;
+  }
+  if (actor.act !== undefined && !isValidActorChain(actor.act)) {
+    return false;
+  }
+  return true;
 }
 
 /**

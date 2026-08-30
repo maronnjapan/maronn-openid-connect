@@ -585,3 +585,69 @@ describe('processIdJagRedemptionRequest', () => {
     expect(first).toEqual(second);
   });
 });
+
+describe('verifyIdJagAssertion with an act claim', () => {
+  // draft §3.1 OPTIONAL / RFC 8693 §4.1: act は検証して素通しする（黙って落とさない）
+  it('should return the act claim of an actor-bearing ID-JAG', async () => {
+    const assertion = await mintIdJag({ claims: { act: { sub: 'actor-1' } } });
+    await expect(
+      verifyIdJagAssertion({
+        assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      }),
+    ).resolves.toMatchObject({ act: { sub: 'actor-1' } });
+  });
+
+  // RFC 8693 §4.1: ネストした act はより古い actor のチェーンを表す
+  it('should accept a nested act chain', async () => {
+    const assertion = await mintIdJag({
+      claims: { act: { sub: 'actor-1', act: { sub: 'actor-0' } } },
+    });
+    await expect(
+      verifyIdJagAssertion({
+        assertion,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        identityProviders,
+        now: NOW,
+      }),
+    ).resolves.toMatchObject({ act: { sub: 'actor-1', act: { sub: 'actor-0' } } });
+  });
+
+  it('should reject a non-object act claim', async () => {
+    const assertion = await mintIdJag({ claims: { act: 'actor-1' } });
+    await expectAssertionRejection(assertion, 'The assertion act claim is malformed');
+  });
+
+  it('should reject an act claim without a sub', async () => {
+    const assertion = await mintIdJag({ claims: { act: { role: 'admin' } } });
+    await expectAssertionRejection(assertion, 'The assertion act claim is malformed');
+  });
+
+  it('should reject an act claim with a malformed nested chain', async () => {
+    const assertion = await mintIdJag({ claims: { act: { sub: 'actor-1', act: { sub: 42 } } } });
+    await expectAssertionRejection(assertion, 'The assertion act claim is malformed');
+  });
+});
+
+describe('processIdJagRedemptionRequest with an act claim', () => {
+  // 生成コードが act をアクセストークンへ引き継げるよう、grant 素材に含める
+  it('should propagate the act claim into the grant material', async () => {
+    const assertion = await mintIdJag({ claims: { act: { sub: 'actor-1' } } });
+    await expect(processIdJagRedemptionRequest(redemptionContext(assertion))).resolves.toMatchObject(
+      {
+        subject: 'user-1',
+        actor: { sub: 'actor-1' },
+      },
+    );
+  });
+
+  it('should leave the actor undefined for an act-less ID-JAG', async () => {
+    const assertion = await mintIdJag();
+    const grant = await processIdJagRedemptionRequest(redemptionContext(assertion));
+    expect('actor' in grant).toBe(false);
+  });
+});

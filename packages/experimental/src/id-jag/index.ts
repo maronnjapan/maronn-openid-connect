@@ -20,10 +20,14 @@
  *   トークンの発行素材を導出する
  *
  * 既存の token-exchange 機能とは grant_type URN を共有するがコードは共有しない。
- * SAML subject / refresh_token subject / RAR / actor_token / DPoP は非対応
- * （notes リポジトリの仕様書の非目標を参照）。
+ * subject_token は ID トークンを必須対応とし、refresh token は設定（resolver の
+ * 注入）で追加受理できる（draft §4.3 の MAY）。actor_token（本 OP 発行の
+ * ID トークン）の受理と act claim の発行は、draft §9.7 の指針に沿った本機能
+ * 独自の拡張として設定で有効化できる（既定は無効）。
+ * SAML subject / RAR / DPoP は非対応（notes リポジトリの仕様書の非目標を参照）。
  */
 export {
+  ACTOR_TOKEN_INVALID_DESCRIPTION,
   ASSERTION_UNTRUSTED_DESCRIPTION,
   SUBJECT_TOKEN_INVALID_DESCRIPTION,
   IdJagError,
@@ -35,6 +39,7 @@ export {
   ID_JAG_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT_TYPE,
   TOKEN_TYPE_ID_TOKEN,
+  TOKEN_TYPE_REFRESH_TOKEN,
   authorizeIdJagIssuanceClient,
   buildIdJagClaims,
   buildIdJagIssuanceResponse,
@@ -42,11 +47,15 @@ export {
   matchesIdJagIssuanceRequest,
   parseIdJagIssuanceParams,
   processIdJagIssuanceRequest,
+  resolveIdJagActor,
   resolveIdJagSubject,
+  resolveIdJagSubjectFromRefreshToken,
   validateIdJagAudience,
   validateIdJagScope,
+  type IdJagActor,
   type IdJagClaims,
   type IdJagIssuanceContext,
+  type IdJagIssuanceParseOptions,
   type IdJagIssuanceResponse,
   type IdJagSubject,
   type ParsedIdJagIssuanceParams,

@@ -1,12 +1,23 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { generateIdToken, type TokenClientInfo } from '@maronn-openid-connect/core';
-import { IdJagError, SUBJECT_TOKEN_INVALID_DESCRIPTION } from './errors.js';
+import {
+  generateIdToken,
+  type AuthenticationSessionResolver,
+  type RefreshTokenInfo,
+  type RefreshTokenResolver,
+  type TokenClientInfo,
+} from '@maronn-openid-connect/core';
+import {
+  ACTOR_TOKEN_INVALID_DESCRIPTION,
+  IdJagError,
+  SUBJECT_TOKEN_INVALID_DESCRIPTION,
+} from './errors.js';
 import {
   ID_JAG_GRANT_PROFILE,
   ID_JAG_JWT_TYP,
   ID_JAG_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT_TYPE,
   TOKEN_TYPE_ID_TOKEN,
+  TOKEN_TYPE_REFRESH_TOKEN,
   authorizeIdJagIssuanceClient,
   buildIdJagClaims,
   buildIdJagIssuanceResponse,
@@ -14,7 +25,9 @@ import {
   matchesIdJagIssuanceRequest,
   parseIdJagIssuanceParams,
   processIdJagIssuanceRequest,
+  resolveIdJagActor,
   resolveIdJagSubject,
+  resolveIdJagSubjectFromRefreshToken,
   validateIdJagAudience,
   validateIdJagScope,
   type IdJagIssuanceContext,
@@ -199,6 +212,7 @@ describe('parseIdJagIssuanceParams', () => {
   it('should return the typed parameters', () => {
     expect(parseIdJagIssuanceParams(validParams({ resource: 'https://api.example.net/files' }))).toEqual({
       subjectToken: validIdToken,
+      subjectTokenType: TOKEN_TYPE_ID_TOKEN,
       audience: AUDIENCE,
       scope: 'openid profile',
       resource: 'https://api.example.net/files',
@@ -208,6 +222,7 @@ describe('parseIdJagIssuanceParams', () => {
   it('should treat omitted scope and resource as undefined', () => {
     expect(parseIdJagIssuanceParams(validParams({ scope: undefined }))).toEqual({
       subjectToken: validIdToken,
+      subjectTokenType: TOKEN_TYPE_ID_TOKEN,
       audience: AUDIENCE,
       scope: undefined,
       resource: undefined,
@@ -226,7 +241,7 @@ describe('parseIdJagIssuanceParams', () => {
     );
   });
 
-  // 非目標: saml2 / refresh_token / access_token の subject は受けない
+  // 非目標: saml2 / access_token の subject は受けない
   it('should reject a saml2 subject_token_type with invalid_request', () => {
     expect(() =>
       parseIdJagIssuanceParams(
@@ -240,12 +255,45 @@ describe('parseIdJagIssuanceParams', () => {
     );
   });
 
-  it('should reject a refresh_token subject_token_type with invalid_request', () => {
+  // refresh subject（draft §4.3 MAY）は受理ポリシーで有効化したときだけ受ける
+  it('should reject a refresh_token subject_token_type when not enabled', () => {
+    expect(() =>
+      parseIdJagIssuanceParams(validParams({ subject_token_type: TOKEN_TYPE_REFRESH_TOKEN })),
+    ).toThrow(
+      new IdJagError(
+        'invalid_request',
+        `Unsupported subject_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} is supported.`,
+      ),
+    );
+  });
+
+  it('should accept a refresh_token subject_token_type when enabled', () => {
+    expect(
+      parseIdJagIssuanceParams(
+        validParams({ subject_token: 'rt-1', subject_token_type: TOKEN_TYPE_REFRESH_TOKEN }),
+        { allowRefreshTokenSubjects: true },
+      ),
+    ).toEqual({
+      subjectToken: 'rt-1',
+      subjectTokenType: TOKEN_TYPE_REFRESH_TOKEN,
+      audience: AUDIENCE,
+      scope: 'openid profile',
+      resource: undefined,
+    });
+  });
+
+  it('should list both supported subject types when refresh subjects are enabled', () => {
     expect(() =>
       parseIdJagIssuanceParams(
-        validParams({ subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token' }),
+        validParams({ subject_token_type: 'urn:ietf:params:oauth:token-type:saml2' }),
+        { allowRefreshTokenSubjects: true },
       ),
-    ).toThrow(IdJagError);
+    ).toThrow(
+      new IdJagError(
+        'invalid_request',
+        `Unsupported subject_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} or ${TOKEN_TYPE_REFRESH_TOKEN} is supported.`,
+      ),
+    );
   });
 
   // draft §4.3: audience は REQUIRED
@@ -277,19 +325,73 @@ describe('parseIdJagIssuanceParams', () => {
     ).toThrow(IdJagError);
   });
 
-  // draft §9.7: actor_token の処理規則は未定義なので fail-safe に拒否する
-  it('should reject an actor_token with invalid_request', () => {
+  // actor 受理を有効化していない構成では fail-safe に拒否する
+  it('should reject an actor_token when not enabled', () => {
     expect(() => parseIdJagIssuanceParams(validParams({ actor_token: 'some-token' }))).toThrow(
       new IdJagError('invalid_request', 'actor_token is not supported for ID-JAG issuance'),
     );
   });
 
-  it('should reject an actor_token_type with invalid_request', () => {
+  it('should reject an actor_token_type when not enabled', () => {
     expect(() =>
       parseIdJagIssuanceParams(
         validParams({ actor_token_type: 'urn:ietf:params:oauth:token-type:access_token' }),
       ),
     ).toThrow(IdJagError);
+  });
+
+  it('should return the actor_token when actor tokens are enabled', () => {
+    expect(
+      parseIdJagIssuanceParams(
+        validParams({ actor_token: 'actor-id-token', actor_token_type: TOKEN_TYPE_ID_TOKEN }),
+        { allowActorTokens: true },
+      ),
+    ).toEqual({
+      subjectToken: validIdToken,
+      subjectTokenType: TOKEN_TYPE_ID_TOKEN,
+      audience: AUDIENCE,
+      scope: 'openid profile',
+      resource: undefined,
+      actorToken: 'actor-id-token',
+    });
+  });
+
+  // RFC 8693 §2.1: actor_token と actor_token_type の対応規則
+  it('should reject an actor_token without actor_token_type when enabled', () => {
+    expect(() =>
+      parseIdJagIssuanceParams(validParams({ actor_token: 'actor-id-token' }), {
+        allowActorTokens: true,
+      }),
+    ).toThrow(
+      new IdJagError('invalid_request', 'actor_token_type is required when actor_token is present'),
+    );
+  });
+
+  it('should reject an actor_token_type without actor_token when enabled', () => {
+    expect(() =>
+      parseIdJagIssuanceParams(validParams({ actor_token_type: TOKEN_TYPE_ID_TOKEN }), {
+        allowActorTokens: true,
+      }),
+    ).toThrow(
+      new IdJagError('invalid_request', 'actor_token_type must not be present without actor_token'),
+    );
+  });
+
+  it('should reject a non-id_token actor_token_type when enabled', () => {
+    expect(() =>
+      parseIdJagIssuanceParams(
+        validParams({
+          actor_token: 'actor-token',
+          actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        }),
+        { allowActorTokens: true },
+      ),
+    ).toThrow(
+      new IdJagError(
+        'invalid_request',
+        `Unsupported actor_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} is supported.`,
+      ),
+    );
   });
 
   // 非目標: RAR
@@ -723,5 +825,317 @@ describe('processIdJagIssuanceRequest', () => {
     );
     const { payload } = decodeJwt(response.access_token);
     expect(payload['resource']).toBe('https://api.example.net/files');
+  });
+});
+
+function refreshTokenInfoFixture(overrides: Partial<RefreshTokenInfo> = {}): RefreshTokenInfo {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return {
+    subject: 'user-1',
+    clientId: CLIENT_ID,
+    scope: ['openid', 'profile'],
+    expiresAt: nowSeconds + 3600,
+    used: false,
+    grantId: 'grant-1',
+    originalIssuedAt: nowSeconds - 60,
+    authTime: nowSeconds - 120,
+    acr: 'urn:mace:incommon:iap:silver',
+    amr: ['pwd', 'mfa'],
+    ...overrides,
+  };
+}
+
+/** 'rt-1' だけを解決する resolver。family 失効の呼び出しを revokedGrants に記録する。 */
+function refreshResolverFor(
+  info: RefreshTokenInfo | null,
+  revokedGrants: string[] = [],
+): RefreshTokenResolver {
+  return {
+    resolve: async (token) => (token === 'rt-1' ? info : null),
+    revokeRefreshToken: async () => {},
+    revokeTokensByGrantId: async (grantId) => {
+      revokedGrants.push(grantId);
+    },
+  };
+}
+
+function sessionResolverFor(liveSessionId: string | null): AuthenticationSessionResolver {
+  return {
+    findSession: async (sessionId) =>
+      liveSessionId !== null && sessionId === liveSessionId
+        ? { subject: 'user-1', authTime: Math.floor(Date.now() / 1000) - 120 }
+        : null,
+  };
+}
+
+describe('resolveIdJagSubjectFromRefreshToken', () => {
+  // draft §4.3.3: RT の保存情報から subject のクレームを組み立てる
+  it('should return the subject material from a valid refresh token', async () => {
+    const info = refreshTokenInfoFixture();
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(info),
+      }),
+    ).resolves.toEqual({
+      sub: 'user-1',
+      authTime: info.authTime,
+      acr: 'urn:mace:incommon:iap:silver',
+      amr: ['pwd', 'mfa'],
+    });
+  });
+
+  it('should reject an unknown refresh token with the fixed description', async () => {
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(null),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  // OAuth 2.1 §4.3.1: rotation 済み RT の再提示は refresh grant と同じく family を失効する
+  it('should reject a rotated refresh token and revoke its token family', async () => {
+    const revokedGrants: string[] = [];
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ used: true }),
+          revokedGrants,
+        ),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+    expect(revokedGrants).toEqual(['grant-1']);
+  });
+
+  it('should reject a refresh token issued to another client with the fixed description', async () => {
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ clientId: 'another-client' }),
+        ),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  it('should reject an expired refresh token with the fixed description', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ expiresAt: nowSeconds - 60 }),
+        ),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  // ID トークン（Identity Assertion）が存在し得ない grant の RT は代替にならない
+  it('should reject a refresh token whose grant lacks the openid scope', async () => {
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ scope: ['profile', 'email'] }),
+        ),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  it('should accept an online refresh token while its session is alive', async () => {
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ sessionId: 'session-1' }),
+        ),
+        authenticationSessionResolver: sessionResolverFor('session-1'),
+      }),
+    ).resolves.toMatchObject({ sub: 'user-1' });
+  });
+
+  it('should reject an online refresh token after its session ended', async () => {
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ sessionId: 'session-1' }),
+        ),
+        authenticationSessionResolver: sessionResolverFor(null),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  // fail-closed: online RT は session resolver 無しでは検証できないので拒否する
+  it('should reject an online refresh token when no session resolver is provided', async () => {
+    await expect(
+      resolveIdJagSubjectFromRefreshToken({
+        refreshToken: 'rt-1',
+        clientId: CLIENT_ID,
+        refreshTokenResolver: refreshResolverFor(
+          refreshTokenInfoFixture({ sessionId: 'session-1' }),
+        ),
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION));
+  });
+});
+
+describe('resolveIdJagActor', () => {
+  // §9.7 の指針: actor は本 OP 発行・認証クライアント宛ての ID トークンに限る
+  it('should return the actor sub from a valid ID Token', async () => {
+    const actorIdToken = await mintIdToken({ sub: 'actor-1' });
+    await expect(
+      resolveIdJagActor({
+        actorToken: actorIdToken,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        jwks: idpKey.jwks,
+      }),
+    ).resolves.toEqual({ sub: 'actor-1' });
+  });
+
+  it('should reject an actor ID Token issued to another client with the fixed description', async () => {
+    const foreignActorToken = await mintIdToken({ sub: 'actor-1', aud: 'another-client' });
+    await expect(
+      resolveIdJagActor({
+        actorToken: foreignActorToken,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        jwks: idpKey.jwks,
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  it('should reject a tampered actor token with the same fixed description', async () => {
+    const actorIdToken = await mintIdToken({ sub: 'actor-1' });
+    const [headerB64 = '', payloadB64 = ''] = actorIdToken.split('.');
+    await expect(
+      resolveIdJagActor({
+        actorToken: `${headerB64}.${payloadB64}.AAAA`,
+        issuer: ISSUER,
+        clientId: CLIENT_ID,
+        jwks: idpKey.jwks,
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+  });
+});
+
+describe('buildIdJagClaims with an actor', () => {
+  // RFC 8693 §4.1 / draft §3.1: act は sub と別のクレームとして actor を記録する
+  it('should embed the actor as the act claim', () => {
+    const claims = buildIdJagClaims({
+      issuer: ISSUER,
+      subject: { sub: 'user-1' },
+      audience: AUDIENCE,
+      clientId: CLIENT_ID,
+      scope: [],
+      actor: { sub: 'actor-1' },
+      lifetimeSeconds: 300,
+      now: NOW,
+    });
+    expect(claims.sub).toBe('user-1');
+    expect(claims.act).toEqual({ sub: 'actor-1' });
+  });
+});
+
+describe('processIdJagIssuanceRequest with refresh token subjects and actors', () => {
+  it('should issue an ID-JAG from a refresh token subject when the resolver is provided', async () => {
+    const info = refreshTokenInfoFixture();
+    const response = await processIdJagIssuanceRequest(
+      issuanceContext({
+        params: validParams({
+          subject_token: 'rt-1',
+          subject_token_type: TOKEN_TYPE_REFRESH_TOKEN,
+        }),
+        refreshTokenResolver: refreshResolverFor(info),
+      }),
+    );
+    expect(response.token_type).toBe('N_A');
+    const { payload } = decodeJwt(response.access_token);
+    expect(payload).toMatchObject({
+      iss: ISSUER,
+      sub: 'user-1',
+      aud: AUDIENCE,
+      client_id: CLIENT_ID,
+      auth_time: info.authTime,
+      acr: 'urn:mace:incommon:iap:silver',
+      amr: ['pwd', 'mfa'],
+    });
+  });
+
+  // resolver 未注入の構成では refresh subject は従来どおり拒否される
+  it('should reject a refresh token subject when no resolver is provided', async () => {
+    await expect(
+      processIdJagIssuanceRequest(
+        issuanceContext({
+          params: validParams({
+            subject_token: 'rt-1',
+            subject_token_type: TOKEN_TYPE_REFRESH_TOKEN,
+          }),
+        }),
+      ),
+    ).rejects.toThrow(
+      new IdJagError(
+        'invalid_request',
+        `Unsupported subject_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} is supported.`,
+      ),
+    );
+  });
+
+  it('should embed the act claim when actor tokens are enabled', async () => {
+    const actorIdToken = await mintIdToken({ sub: 'actor-1' });
+    const response = await processIdJagIssuanceRequest(
+      issuanceContext({
+        allowActorTokens: true,
+        params: validParams({
+          actor_token: actorIdToken,
+          actor_token_type: TOKEN_TYPE_ID_TOKEN,
+        }),
+      }),
+    );
+    const { payload } = decodeJwt(response.access_token);
+    // RFC 8693 §4.1: sub は resource owner のまま、actor は act にだけ現れる
+    expect(payload['sub']).toBe('user-1');
+    expect(payload['act']).toEqual({ sub: 'actor-1' });
+  });
+
+  it('should reject an actor_token when actor tokens are not enabled', async () => {
+    const actorIdToken = await mintIdToken({ sub: 'actor-1' });
+    await expect(
+      processIdJagIssuanceRequest(
+        issuanceContext({
+          params: validParams({
+            actor_token: actorIdToken,
+            actor_token_type: TOKEN_TYPE_ID_TOKEN,
+          }),
+        }),
+      ),
+    ).rejects.toThrow(
+      new IdJagError('invalid_request', 'actor_token is not supported for ID-JAG issuance'),
+    );
+  });
+
+  it('should reject an invalid actor token with the fixed actor description', async () => {
+    await expect(
+      processIdJagIssuanceRequest(
+        issuanceContext({
+          allowActorTokens: true,
+          params: validParams({
+            actor_token: 'not-a-jwt',
+            actor_token_type: TOKEN_TYPE_ID_TOKEN,
+          }),
+        }),
+      ),
+    ).rejects.toThrow(new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
   });
 });

@@ -68,6 +68,7 @@ import {
   processIdJagIssuanceRequest,
   processIdJagRedemptionRequest,
   type IdJagAccessTokenInfo,
+  type IdJagActorTokenResolver,
   type IdJagTrustedIdentityProvider,
 } from '@maronn-openid-connect/experimental/id-jag';
 import type { JwkSet } from '@maronn-openid-connect/core';
@@ -113,12 +114,23 @@ export const tokenExchangeConfig = {
  *   reuse revokes the token family; online tokens require the login session to
  *   be alive); the refresh token is NOT consumed. Grants without the openid
  *   scope are refused — their refresh token replaces no identity assertion.
- * - allowActorTokens: whether an actor_token (an ID Token this OP issued to the
- *   authenticated client, identifying who acts on the subject's behalf) is
- *   accepted and recorded as the ID-JAG's act claim (RFC 8693 §4.1). The draft
- *   defines no normative actor processing (§9.7 sketches extensions), so this
- *   is an opt-in extension and defaults to false — an actor_token is rejected
- *   until you flip it.
+ * - allowActorTokens: whether an actor_token (identifying who acts on the
+ *   subject's behalf) is accepted and recorded as the ID-JAG's act claim
+ *   (RFC 8693 §4.1). The draft defines no normative actor processing (§9.7
+ *   sketches extensions), so this is an opt-in extension and defaults to
+ *   false — an actor_token is rejected until you flip it, whatever else is
+ *   configured. An actor_token_type of id_token always goes through the
+ *   built-in validation (an ID Token this OP issued to the authenticated
+ *   client).
+ * - actorTokenResolver: hook for actor_token types OTHER than id_token
+ *   (RFC 8693 allows any token type identifier). The library validates the
+ *   request structure and the shape of what you return; validating the token
+ *   CONTENT (signature, revocation, whose token it is) is entirely this
+ *   function's job. Return the act value ({ sub, act? }) for a valid token,
+ *   null for an invalid one (answered with a fixed invalid_request), or throw
+ *   IdJagError to pick the response yourself. It cannot replace the built-in
+ *   id_token validation, and it is never called while allowActorTokens is
+ *   false.
  *
  * Consuming side (this OP as the resource authorization server, draft §4.4):
  * - trustedIdentityProviders: the IdPs whose ID-JAGs are accepted on the
@@ -132,6 +144,7 @@ export const idJagConfig = {
   allowedScopes: undefined as string[] | undefined,
   allowRefreshTokenSubjects: true,
   allowActorTokens: false,
+  actorTokenResolver: undefined as IdJagActorTokenResolver | undefined,
   trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
 };
 
@@ -340,10 +353,14 @@ tokenApp.post('/', async (c) => {
         allowedAudiences: idJagConfig.allowedAudiences,
         allowedScopes: idJagConfig.allowedScopes,
         lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
-        // Extension (draft §9.7): when enabled, an actor_token (an ID Token this
-        // OP issued to the authenticated client) is validated the same way as
-        // the subject and recorded as the ID-JAG's act claim.
+        // Extension (draft §9.7): when enabled, an actor_token is recorded as
+        // the ID-JAG's act claim. id_token actors get the same built-in
+        // validation as the subject; other types go to the deployment's
+        // resolver (content validation is the resolver's responsibility).
         allowActorTokens: idJagConfig.allowActorTokens,
+        ...(idJagConfig.actorTokenResolver === undefined
+          ? {}
+          : { actorTokenResolver: idJagConfig.actorTokenResolver }),
         ...(idJagConfig.allowRefreshTokenSubjects
           ? { refreshTokenResolver, authenticationSessionResolver }
           : {}),

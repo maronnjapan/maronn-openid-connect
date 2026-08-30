@@ -4374,6 +4374,7 @@ import {
   processIdJagIssuanceRequest,
   processIdJagRedemptionRequest,
   type IdJagAccessTokenInfo,
+  type IdJagActorTokenResolver,
   type IdJagTrustedIdentityProvider,
 } from '${EXPERIMENTAL_PACKAGE}/id-jag';
 import type { JwkSet } from '${corePkg}';`
@@ -4414,12 +4415,23 @@ import type { JwkSet } from '${corePkg}';`
  * - allowedScopes: optional cap on the scopes an ID-JAG may carry. undefined
  *   passes the requested scopes through (the resource AS applies its own
  *   policy again on redemption).${idJagRefreshConfigDoc}
- * - allowActorTokens: whether an actor_token (an ID Token this OP issued to the
- *   authenticated client, identifying who acts on the subject's behalf) is
- *   accepted and recorded as the ID-JAG's act claim (RFC 8693 §4.1). The draft
- *   defines no normative actor processing (§9.7 sketches extensions), so this
- *   is an opt-in extension and defaults to false — an actor_token is rejected
- *   until you flip it.
+ * - allowActorTokens: whether an actor_token (identifying who acts on the
+ *   subject's behalf) is accepted and recorded as the ID-JAG's act claim
+ *   (RFC 8693 §4.1). The draft defines no normative actor processing (§9.7
+ *   sketches extensions), so this is an opt-in extension and defaults to
+ *   false — an actor_token is rejected until you flip it, whatever else is
+ *   configured. An actor_token_type of id_token always goes through the
+ *   built-in validation (an ID Token this OP issued to the authenticated
+ *   client).
+ * - actorTokenResolver: hook for actor_token types OTHER than id_token
+ *   (RFC 8693 allows any token type identifier). The library validates the
+ *   request structure and the shape of what you return; validating the token
+ *   CONTENT (signature, revocation, whose token it is) is entirely this
+ *   function's job. Return the act value ({ sub, act? }) for a valid token,
+ *   null for an invalid one (answered with a fixed invalid_request), or throw
+ *   IdJagError to pick the response yourself. It cannot replace the built-in
+ *   id_token validation, and it is never called while allowActorTokens is
+ *   false.
  *
  * Consuming side (this OP as the resource authorization server, draft §4.4):
  * - trustedIdentityProviders: the IdPs whose ID-JAGs are accepted on the
@@ -4432,6 +4444,7 @@ export const idJagConfig = {
   idJagLifetimeSeconds: 300,
   allowedScopes: undefined as string[] | undefined,${idJagRefreshConfigField}
   allowActorTokens: false,
+  actorTokenResolver: undefined as IdJagActorTokenResolver | undefined,
   trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
 };
 
@@ -4558,10 +4571,14 @@ async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIdentityPr
         allowedAudiences: idJagConfig.allowedAudiences,
         allowedScopes: idJagConfig.allowedScopes,
         lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
-        // Extension (draft §9.7): when enabled, an actor_token (an ID Token this
-        // OP issued to the authenticated client) is validated the same way as
-        // the subject and recorded as the ID-JAG's act claim.
-        allowActorTokens: idJagConfig.allowActorTokens,${idJagRefreshSubjectArgs}
+        // Extension (draft §9.7): when enabled, an actor_token is recorded as
+        // the ID-JAG's act claim. id_token actors get the same built-in
+        // validation as the subject; other types go to the deployment's
+        // resolver (content validation is the resolver's responsibility).
+        allowActorTokens: idJagConfig.allowActorTokens,
+        ...(idJagConfig.actorTokenResolver === undefined
+          ? {}
+          : { actorTokenResolver: idJagConfig.actorTokenResolver }),${idJagRefreshSubjectArgs}
       });
 
       // RFC 6749 §5.1: token responses MUST NOT be cached. The ID-JAG itself is
@@ -11765,6 +11782,115 @@ ${refreshSubjectContract}
           });
         } finally {
           idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      // Actor token types beyond id_token are an extension point: the library
+      // validates the request structure, idJagConfig.actorTokenResolver
+      // validates the token content. Without a resolver they stay rejected.
+      it('should reject a custom actor_token_type while no resolver is configured', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'opaque-actor-token',
+              actor_token_type: 'urn:example:token-type:badge',
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description:
+              'Unsupported actor_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token is supported.',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      it('should record the act chain resolved by the deployment actor token resolver', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = async ({ actorToken, actorTokenType, clientId }) =>
+          actorTokenType === 'urn:example:token-type:badge' &&
+          actorToken === 'badge-7' &&
+          clientId === 'c-idjag'
+            ? { sub: 'badge-actor', act: { sub: 'upstream-actor' } }
+            : null;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'badge-7',
+              actor_token_type: 'urn:example:token-type:badge',
+            }),
+          );
+          const body = (await res.json()) as Record<string, unknown>;
+
+          expect(res.status).toBe(200);
+          const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+          // The subject stays the resource owner; the resolver's chain lands in act.
+          expect(claims.sub).toBe('testuser');
+          expect(claims.act).toEqual({ sub: 'badge-actor', act: { sub: 'upstream-actor' } });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = undefined;
+        }
+      });
+
+      it('should answer a null from the actor token resolver with the fixed description', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = async () => null;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'opaque-actor-token',
+              actor_token_type: 'urn:example:token-type:badge',
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = undefined;
+        }
+      });
+
+      it('should keep the built-in id_token actor validation even when a resolver is configured', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        let resolverCalls = 0;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = async () => {
+          resolverCalls += 1;
+          return { sub: 'resolver-must-not-decide-this' };
+        };
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'not-a-jwt',
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+          expect(resolverCalls).toBe(0);
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = undefined;
         }
       });
     });

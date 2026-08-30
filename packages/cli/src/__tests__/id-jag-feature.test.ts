@@ -281,6 +281,24 @@ describe('generate with --enable id-jag', () => {
         expect(content.includes('allowActorTokens: idJagConfig.allowActorTokens,')).toBe(true);
       });
 
+      it('should expose the custom actor token resolver hook unset by default', () => {
+        const content = fileContent(
+          generateFiles(framework, ['id-jag']),
+          tokenRoutePath(framework),
+        );
+        expect(
+          content.includes('actorTokenResolver: undefined as IdJagActorTokenResolver | undefined,'),
+        ).toBe(true);
+        // The hook is handed to the module only when the deployment sets it, so
+        // the built-in id_token-only behaviour stays the default.
+        expect(
+          content.includes('...(idJagConfig.actorTokenResolver === undefined'),
+        ).toBe(true);
+        expect(
+          content.includes(': { actorTokenResolver: idJagConfig.actorTokenResolver }),'),
+        ).toBe(true);
+      });
+
       it('should preserve the act claim on the redeemed access token and its metadata', () => {
         const content = fileContent(
           generateFiles(framework, ['id-jag']),

@@ -26,10 +26,14 @@ import {
   parseIdJagIssuanceParams,
   processIdJagIssuanceRequest,
   resolveIdJagActor,
+  resolveIdJagActorFromCustomToken,
   resolveIdJagSubject,
   resolveIdJagSubjectFromRefreshToken,
   validateIdJagAudience,
   validateIdJagScope,
+  type IdJagActor,
+  type IdJagActorTokenResolver,
+  type IdJagActorTokenResolverInput,
   type IdJagIssuanceContext,
 } from './issue-id-jag.js';
 import {
@@ -353,6 +357,7 @@ describe('parseIdJagIssuanceParams', () => {
       scope: 'openid profile',
       resource: undefined,
       actorToken: 'actor-id-token',
+      actorTokenType: TOKEN_TYPE_ID_TOKEN,
     });
   });
 
@@ -391,6 +396,42 @@ describe('parseIdJagIssuanceParams', () => {
         'invalid_request',
         `Unsupported actor_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} is supported.`,
       ),
+    );
+  });
+
+  // リゾルバ注入時の構造検証: 種別は通すが、対応規則と gate はそのまま働く
+  it('should return a custom actor_token_type when custom types are allowed', () => {
+    expect(
+      parseIdJagIssuanceParams(
+        validParams({
+          actor_token: 'opaque-actor-token',
+          actor_token_type: 'urn:example:token-type:badge',
+        }),
+        { allowActorTokens: true, allowCustomActorTokenTypes: true },
+      ),
+    ).toEqual({
+      subjectToken: validIdToken,
+      subjectTokenType: TOKEN_TYPE_ID_TOKEN,
+      audience: AUDIENCE,
+      scope: 'openid profile',
+      resource: undefined,
+      actorToken: 'opaque-actor-token',
+      actorTokenType: 'urn:example:token-type:badge',
+    });
+  });
+
+  // allowActorTokens は親スイッチ: リゾルバ受理の構成でも無効化が優先される
+  it('should reject an actor_token while actor tokens are disabled even when custom types are allowed', () => {
+    expect(() =>
+      parseIdJagIssuanceParams(
+        validParams({
+          actor_token: 'opaque-actor-token',
+          actor_token_type: 'urn:example:token-type:badge',
+        }),
+        { allowCustomActorTokenTypes: true },
+      ),
+    ).toThrow(
+      new IdJagError('invalid_request', 'actor_token is not supported for ID-JAG issuance'),
     );
   });
 
@@ -1030,6 +1071,126 @@ describe('resolveIdJagActor', () => {
   });
 });
 
+describe('resolveIdJagActorFromCustomToken', () => {
+  const CUSTOM_TYPE = 'urn:example:token-type:badge';
+
+  // 責務分担の契約: リクエスト構造はライブラリ、トークン内容はリゾルバ
+  it('should pass the token, type and client to the resolver and return its actor', async () => {
+    const received: IdJagActorTokenResolverInput[] = [];
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver: (input) => {
+          received.push(input);
+          return { sub: 'actor-1' };
+        },
+      }),
+    ).resolves.toEqual({ sub: 'actor-1' });
+    expect(received).toEqual([
+      { actorToken: 'opaque-actor-token', actorTokenType: CUSTOM_TYPE, clientId: CLIENT_ID },
+    ]);
+  });
+
+  // actor_token 自体が委譲済みのケース: リゾルバ経路はチェーン発行に対応する
+  it('should preserve a nested act chain returned by the resolver', async () => {
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver: () => ({ sub: 'actor-1', act: { sub: 'actor-0' } }),
+      }),
+    ).resolves.toEqual({ sub: 'actor-1', act: { sub: 'actor-0' } });
+  });
+
+  // draft §9.7 の開示最小化: act に載るのは sub と同形の act だけ
+  it('should strip properties other than sub and act from the resolver result', async () => {
+    const resolver: IdJagActorTokenResolver = () =>
+      ({
+        sub: 'actor-1',
+        email: 'actor@example.com',
+        act: { sub: 'actor-0', department: 'sales' },
+      }) as unknown as IdJagActor;
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver,
+      }),
+    ).resolves.toEqual({ sub: 'actor-1', act: { sub: 'actor-0' } });
+  });
+
+  it('should reject with the fixed description when the resolver returns null', async () => {
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver: () => null,
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  // リゾルバが応答を明示したいときは IdJagError を投げる（そのまま透過する）
+  it('should pass through an IdJagError thrown by the resolver', async () => {
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver: () => {
+          throw new IdJagError('invalid_request', 'The actor badge has been revoked');
+        },
+      }),
+    ).rejects.toThrow(new IdJagError('invalid_request', 'The actor badge has been revoked'));
+  });
+
+  // リゾルバのバグ・依存障害はクライアント起因に見せない（server_error 経路）
+  it('should propagate an unexpected resolver exception unchanged', async () => {
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver: () => {
+          throw new TypeError('store connection lost');
+        },
+      }),
+    ).rejects.toThrow(new TypeError('store connection lost'));
+  });
+
+  it('should throw an Error when the resolver returns an actor with an empty sub', async () => {
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver: () => ({ sub: '' }),
+      }),
+    ).rejects.toThrow(
+      'The actorTokenResolver returned a malformed actor: sub must be a non-empty string at every level of the act chain',
+    );
+  });
+
+  it('should throw an Error when a nested act level is missing its sub', async () => {
+    const resolver: IdJagActorTokenResolver = () =>
+      ({ sub: 'actor-1', act: { name: 'no-sub-here' } }) as unknown as IdJagActor;
+    await expect(
+      resolveIdJagActorFromCustomToken({
+        actorToken: 'opaque-actor-token',
+        actorTokenType: CUSTOM_TYPE,
+        clientId: CLIENT_ID,
+        resolver,
+      }),
+    ).rejects.toThrow(
+      'The actorTokenResolver returned a malformed actor: sub must be a non-empty string at every level of the act chain',
+    );
+  });
+});
+
 describe('buildIdJagClaims with an actor', () => {
   // RFC 8693 §4.1 / draft §3.1: act は sub と別のクレームとして actor を記録する
   it('should embed the actor as the act claim', () => {
@@ -1137,5 +1298,83 @@ describe('processIdJagIssuanceRequest with refresh token subjects and actors', (
         }),
       ),
     ).rejects.toThrow(new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+  });
+
+  it('should embed the act chain resolved by the custom actor token resolver', async () => {
+    const response = await processIdJagIssuanceRequest(
+      issuanceContext({
+        allowActorTokens: true,
+        actorTokenResolver: () => ({ sub: 'actor-1', act: { sub: 'actor-0' } }),
+        params: validParams({
+          actor_token: 'opaque-actor-token',
+          actor_token_type: 'urn:example:token-type:badge',
+        }),
+      }),
+    );
+    const { payload } = decodeJwt(response.access_token);
+    expect(payload['sub']).toBe('user-1');
+    expect(payload['act']).toEqual({ sub: 'actor-1', act: { sub: 'actor-0' } });
+  });
+
+  // 組込み経路の非バイパス: id_token 種別はリゾルバ注入時も組込み検証で処理する
+  it('should keep the built-in validation for id_token actors and never call the resolver', async () => {
+    let resolverCalls = 0;
+    await expect(
+      processIdJagIssuanceRequest(
+        issuanceContext({
+          allowActorTokens: true,
+          actorTokenResolver: () => {
+            resolverCalls += 1;
+            return { sub: 'resolver-must-not-decide-this' };
+          },
+          params: validParams({
+            actor_token: 'not-a-jwt',
+            actor_token_type: TOKEN_TYPE_ID_TOKEN,
+          }),
+        }),
+      ),
+    ).rejects.toThrow(new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION));
+    expect(resolverCalls).toBe(0);
+  });
+
+  it('should reject a custom actor_token_type when no resolver is configured', async () => {
+    await expect(
+      processIdJagIssuanceRequest(
+        issuanceContext({
+          allowActorTokens: true,
+          params: validParams({
+            actor_token: 'opaque-actor-token',
+            actor_token_type: 'urn:example:token-type:badge',
+          }),
+        }),
+      ),
+    ).rejects.toThrow(
+      new IdJagError(
+        'invalid_request',
+        `Unsupported actor_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} is supported.`,
+      ),
+    );
+  });
+
+  // allowActorTokens は親スイッチ: リゾルバを注入しても無効の間は受けない
+  it('should reject actor tokens while disabled even when a resolver is configured', async () => {
+    let resolverCalls = 0;
+    await expect(
+      processIdJagIssuanceRequest(
+        issuanceContext({
+          actorTokenResolver: () => {
+            resolverCalls += 1;
+            return { sub: 'actor-1' };
+          },
+          params: validParams({
+            actor_token: 'opaque-actor-token',
+            actor_token_type: 'urn:example:token-type:badge',
+          }),
+        }),
+      ),
+    ).rejects.toThrow(
+      new IdJagError('invalid_request', 'actor_token is not supported for ID-JAG issuance'),
+    );
+    expect(resolverCalls).toBe(0);
   });
 });

@@ -25,6 +25,7 @@ interface Bindings {
   XAA_TRUSTED_IDP_ISSUER?: string;
   XAA_TRUSTED_IDP_JWKS_URI?: string;
   XAA_ALLOW_ACTOR_TOKENS?: string;
+  XAA_ACTOR_TOKEN_RESOLVER?: string;
 }
 
 const bindings = env as Bindings;
@@ -57,6 +58,23 @@ if (bindings.XAA_TRUSTED_IDP_ISSUER) {
 // normative scope, so they stay off unless the deployment flips this.
 if (bindings.XAA_ALLOW_ACTOR_TOKENS === '1') {
   idJagConfig.allowActorTokens = true;
+}
+// Demo of the actor_token extension point: actor_token types other than
+// id_token are only accepted through a deployment-provided resolver, and the
+// resolver owns the CONTENT validation (the library only checks the request
+// structure and the shape of the returned act value). This one accepts an
+// access token this very OP issued, by looking it up in the OP's own store —
+// anything unknown, expired, or issued to a different client resolves to null,
+// which the endpoint answers with the fixed invalid_request description.
+if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
+  idJagConfig.actorTokenResolver = async ({ actorToken, actorTokenType, clientId }) => {
+    if (actorTokenType !== 'urn:ietf:params:oauth:token-type:access_token') return null;
+    const stores = createD1ProviderStores(bindings.DB);
+    const info = await stores.accessTokenStore.get(actorToken);
+    if (info === undefined || info.clientId !== clientId) return null;
+    if (info.expiresAt <= Math.floor(Date.now() / 1000)) return null;
+    return { sub: info.sub };
+  };
 }
 
 const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {

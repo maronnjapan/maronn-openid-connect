@@ -125,9 +125,14 @@ export default defineConfig({
         // EXPERIMENTAL (ID-JAG draft §4.3): this OP plays the IdP and may issue
         // ID-JAGs for the second OP's trust domain. Actor tokens (an opt-in
         // extension) are enabled so the delegation spec can exercise the act
-        // claim over real HTTP.
+        // claim over real HTTP, and the sample's demo resolver accepts this
+        // OP's own access tokens as a custom actor_token type.
         ...(startXaaOp
-          ? { XAA_ALLOWED_AUDIENCES: xaaIssuer, XAA_ALLOW_ACTOR_TOKENS: '1' }
+          ? {
+              XAA_ALLOWED_AUDIENCES: xaaIssuer,
+              XAA_ALLOW_ACTOR_TOKENS: '1',
+              XAA_ACTOR_TOKEN_RESOLVER: 'access-token',
+            }
           : {}),
         ...(process.env.OIDC_SQLITE_PATH
           ? { OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH }

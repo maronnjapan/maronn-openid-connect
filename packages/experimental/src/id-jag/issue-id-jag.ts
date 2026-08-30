@@ -10,7 +10,9 @@
  * draft §4.3 の MAY）を受け取り、検証のうえで別トラストドメインのリソース AS
  * 宛ての署名付き authorization grant JWT（ID-JAG）を発行する。
  * actor_token（本 OP 発行の ID トークン）の受理を有効化すると、発行する ID-JAG に
- * `act` claim（RFC 8693 §4.1 / draft §3.1 OPTIONAL）を記録できる。
+ * `act` claim（RFC 8693 §4.1 / draft §3.1 OPTIONAL）を記録できる。id_token 以外の
+ * actor_token 種別は、内容検証を担うデプロイ側リゾルバ
+ * （{@link IdJagActorTokenResolver}）を注入したときだけ受ける。
  *
  * core と同じ「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードは
  * ステップ関数を順に呼び出して検証を差し替え・削除できるようにする。
@@ -94,14 +96,47 @@ const WEB_CRYPTO_ALGORITHM = 'RSASSA-PKCS1-v1_5';
 /**
  * RFC 8693 §4.1 の `act` claim 値。
  *
- * 発行側が actor_token（ID トークン）から作る値は常に 1 段（`sub` のみ）。
- * ネストした `act` は、他の IdP が発行した ID-JAG を受領側で扱うときに現れ得る
- * 形として型上は許容する。
+ * 発行側が actor_token（ID トークン）の組込み検証から作る値は常に 1 段
+ * （`sub` のみ）。ネストした `act` は、{@link IdJagActorTokenResolver} が
+ * 委譲チェーンを返したときの発行と、他の IdP が発行した ID-JAG を受領側で
+ * 扱うときに現れる。
  */
 export interface IdJagActor {
   sub: string;
   act?: IdJagActor;
 }
+
+/** {@link IdJagActorTokenResolver} に渡される入力。 */
+export interface IdJagActorTokenResolverInput {
+  /** リクエストの actor_token。構造検証（非空・対応規則）のみ済みで内容は未検証 */
+  actorToken: string;
+  /** リクエストの actor_token_type。id_token URN 以外の値だけがここへ来る */
+  actorTokenType: string;
+  /** 認証済みクライアントの client_id（actor_token の帰属確認に使える） */
+  clientId: string;
+}
+
+/**
+ * id_token 以外の actor_token 種別の内容検証を担うデプロイ側フック。
+ *
+ * RFC 8693 §2.1 の actor_token_type は任意の token type identifier を取り得る。
+ * ライブラリはリクエスト構造（対応規則・非空・{@link IdJagIssuanceContext.allowActorTokens}
+ * の gate）と戻り値の構造だけを検証し、トークン内容の検証（署名・失効・帰属）は
+ * このリゾルバの責務とする。`urn:ietf:params:oauth:token-type:id_token` は常に
+ * 組込み検証（{@link resolveIdJagActor}）で処理され、リゾルバには渡らない。
+ *
+ * 戻り値の契約:
+ * - `IdJagActor`（`{ sub, act? }` のチェーン）— 検証済み actor。構造検証と
+ *   正規化（`sub` / `act` 以外の属性の除去）を通ってから act claim になる
+ * - `null` — 無効な actor_token。固定文言の invalid_request になる
+ * - `IdJagError` を投げる — そのままエラー応答になる（エラー内容の細分化は
+ *   オラクルになり得るため、固定文言方針の維持を推奨）
+ * - その他の例外 — リゾルバの実装バグ・依存障害として伝播し、生成コードの
+ *   共通 catch が server_error（500）にする
+ */
+export type IdJagActorTokenResolver = (
+  input: IdJagActorTokenResolverInput,
+) => Promise<IdJagActor | null> | IdJagActor | null;
 
 /** 検証済みの ID-JAG 発行リクエストパラメータ（draft §4.3）。 */
 export interface ParsedIdJagIssuanceParams {
@@ -114,8 +149,13 @@ export interface ParsedIdJagIssuanceParams {
   scope?: string;
   /** RFC 8707 §2 のリソース識別子。省略時は undefined */
   resource?: string;
-  /** actor の ID トークン。actor 受理が有効なときだけ設定され得る */
+  /** actor のトークン。actor 受理が有効なときだけ設定され得る */
   actorToken?: string;
+  /**
+   * actor_token の種別。`actorToken` と常に対で設定される（RFC 8693 §2.1 の
+   * 対応規則を parse が強制する）。id_token URN 以外はリゾルバ受理時のみ
+   */
+  actorTokenType?: string;
 }
 
 /** {@link parseIdJagIssuanceParams} の受理ポリシー。既定はどちらも無効（安全側）。 */
@@ -131,6 +171,13 @@ export interface IdJagIssuanceParseOptions {
    * 明示的に有効化したときだけ受ける。無効時の存在は invalid_request。
    */
   allowActorTokens?: boolean;
+  /**
+   * id_token 以外の actor_token_type を（構造検証のうえで）通すか。
+   * 生成コードは `idJagConfig.actorTokenResolver` の有無から渡す。
+   * false（既定）なら id_token 以外の種別は invalid_request。
+   * `allowActorTokens` が無効な間はこの値に関わらず actor_token 自体を受けない。
+   */
+  allowCustomActorTokenTypes?: boolean;
 }
 
 /** subject_token（ID トークン）の検証で得た発行素材。 */
@@ -207,9 +254,16 @@ export interface IdJagIssuanceContext {
   /**
    * actor_token（ID トークン）を受けて `act` claim を発行するか。既定 false（安全側）。
    * draft §4.3 に actor の処理規則は無く、§9.7 の指針に沿った本機能独自の拡張なので、
-   * 明示的な有効化を要求する。
+   * 明示的な有効化を要求する。false の間は `actorTokenResolver` を注入していても
+   * actor_token を受けない（単一の親スイッチ）。
    */
   allowActorTokens?: boolean;
+  /**
+   * id_token 以外の actor_token_type の内容検証を担うデプロイ側フック。
+   * 未注入なら id_token 以外の種別は invalid_request で拒否される。
+   * id_token の組込み検証はこのフックでは差し替えられない。
+   */
+  actorTokenResolver?: IdJagActorTokenResolver;
   /** 現在時刻。テストと決定的な期限計算のために注入できる */
   now?: Date;
 }
@@ -335,9 +389,15 @@ export function parseIdJagIssuanceParams(
         'actor_token_type must not be present without actor_token',
       );
     }
-    // actor は「誰が subject の代理として振る舞うか」の本人表明なので、subject と
-    // 同じく本 OP 発行の ID トークンに限る。
-    if (actorTokenType !== undefined && actorTokenType !== TOKEN_TYPE_ID_TOKEN) {
+    // actor は「誰が subject の代理として振る舞うか」の本人表明なので、既定では
+    // subject と同じく本 OP 発行の ID トークンに限る。他の種別（RFC 8693 §2.1 は
+    // 任意の token type identifier を許す）は、内容検証を担うリゾルバが注入
+    // されているときだけ通す。ここでの検証はリクエスト構造まで（内容はリゾルバ）。
+    if (
+      actorTokenType !== undefined &&
+      actorTokenType !== TOKEN_TYPE_ID_TOKEN &&
+      options.allowCustomActorTokenTypes !== true
+    ) {
       throw new IdJagError(
         'invalid_request',
         `Unsupported actor_token_type for ID-JAG issuance. Only ${TOKEN_TYPE_ID_TOKEN} is supported.`,
@@ -360,7 +420,10 @@ export function parseIdJagIssuanceParams(
     audience,
     scope: optional(params['scope']),
     resource,
-    ...(actorToken === undefined ? {} : { actorToken }),
+    // 対応規則の検証済み: actorToken があれば actorTokenType も必ずある。
+    ...(actorToken === undefined
+      ? {}
+      : { actorToken, actorTokenType: actorTokenType as string }),
   };
 }
 
@@ -524,6 +587,67 @@ export async function resolveIdJagActor(options: {
     throw error;
   }
   return { sub: payload.sub };
+}
+
+/**
+ * ステップ 3'-C: id_token 以外の actor_token をデプロイ側リゾルバへ委譲する。
+ *
+ * ライブラリ側の検証は「リクエスト構造」（parse 済み）と「リゾルバ戻り値の構造」
+ * まで。トークン内容の検証（署名・失効・帰属）は {@link IdJagActorTokenResolver}
+ * の契約どおりリゾルバの責務とする。戻り値は正規化コピーを経由し、`sub` / `act`
+ * 以外の属性は act claim に載せない（draft §9.7 の開示最小化）。ネストした
+ * `act` チェーンはそのまま発行できる（actor_token 自体が委譲済みのケース）。
+ *
+ * id_token 種別はこの関数を通らない（{@link resolveIdJagActor} の組込み検証が
+ * 常に適用され、リゾルバでは差し替えられない）。
+ *
+ * @throws {IdJagError} invalid_request（リゾルバが null を返した。固定文言）、
+ *   またはリゾルバ自身が投げた IdJagError（そのまま透過する）
+ * @throws {Error} リゾルバが malformed な actor を返した（デプロイ側のバグ。
+ *   生成コードの共通 catch が server_error にする）
+ */
+export async function resolveIdJagActorFromCustomToken(options: {
+  actorToken: string;
+  actorTokenType: string;
+  clientId: string;
+  resolver: IdJagActorTokenResolver;
+}): Promise<IdJagActor> {
+  const resolved = await options.resolver({
+    actorToken: options.actorToken,
+    actorTokenType: options.actorTokenType,
+    clientId: options.clientId,
+  });
+  if (resolved === null) {
+    throw new IdJagError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION);
+  }
+  const actor = copyActorChain(resolved);
+  if (actor === undefined) {
+    throw new Error(
+      'The actorTokenResolver returned a malformed actor: sub must be a non-empty string at every level of the act chain',
+    );
+  }
+  return actor;
+}
+
+/**
+ * リゾルバ戻り値の構造検証を兼ねた正規化コピー。
+ * `sub`（非空文字列）と同形のネスト `act` だけを写し、他の属性は落とす。
+ * 構造が壊れていれば undefined。
+ */
+function copyActorChain(value: unknown): IdJagActor | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const sub = record['sub'];
+  if (typeof sub !== 'string' || sub.length === 0) {
+    return undefined;
+  }
+  if (record['act'] === undefined) {
+    return { sub };
+  }
+  const act = copyActorChain(record['act']);
+  return act === undefined ? undefined : { sub, act };
 }
 
 /**
@@ -709,6 +833,7 @@ export async function processIdJagIssuanceRequest(
   const parsed = parseIdJagIssuanceParams(context.params, {
     allowRefreshTokenSubjects: context.refreshTokenResolver !== undefined,
     allowActorTokens: context.allowActorTokens === true,
+    allowCustomActorTokenTypes: context.actorTokenResolver !== undefined,
   });
 
   const subject =
@@ -732,15 +857,27 @@ export async function processIdJagIssuanceRequest(
 
   // actor（拡張）: subject の解決後に検証する。act は「誰が subject の代理として
   // 振る舞うか」の記録であり、sub は actor が居ても変わらない（RFC 8693 §4.1）。
+  // id_token 種別は常に組込み検証で、リゾルバでは差し替えられない。それ以外の
+  // 種別は parse がリゾルバ注入時にだけ通しているので、ここでは非 undefined を
+  // 前提にできる。
   const actor =
     parsed.actorToken === undefined
       ? undefined
-      : await resolveIdJagActor({
-          actorToken: parsed.actorToken,
-          issuer: context.issuer,
-          clientId: context.client.clientId,
-          jwks: context.jwks,
-        });
+      : parsed.actorTokenType === TOKEN_TYPE_ID_TOKEN
+        ? await resolveIdJagActor({
+            actorToken: parsed.actorToken,
+            issuer: context.issuer,
+            clientId: context.client.clientId,
+            jwks: context.jwks,
+          })
+        : await resolveIdJagActorFromCustomToken({
+            actorToken: parsed.actorToken,
+            // 対応規則の検証済み: actorToken があれば actorTokenType もある。
+            actorTokenType: parsed.actorTokenType as string,
+            clientId: context.client.clientId,
+            // parse が独自種別を受けた時点で resolver は注入済み。
+            resolver: context.actorTokenResolver as IdJagActorTokenResolver,
+          });
 
   validateIdJagAudience({
     audience: parsed.audience,

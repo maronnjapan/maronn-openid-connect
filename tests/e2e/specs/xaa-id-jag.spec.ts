@@ -14,6 +14,7 @@ const JWT_BEARER_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 const ID_JAG_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id-jag';
 const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
 const REFRESH_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:refresh_token';
+const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 const ID_JAG_GRANT_PROFILE = 'urn:ietf:params:oauth:grant-profile:id-jag';
 
 /**
@@ -223,6 +224,68 @@ test.describe('Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-au
     expect(accessTokenClaims.act).toEqual({ sub: 'otheruser' });
   });
 
+  // Extension point: actor_token types beyond id_token are accepted only
+  // through a deployment-provided resolver that owns the content validation.
+  // The sample OP wires a demo resolver (XAA_ACTOR_TOKEN_RESOLVER=access-token)
+  // that resolves an access token this IdP itself issued via its own store.
+  test('should resolve a custom actor_token type through the deployment resolver', async ({
+    page,
+    browser,
+    request,
+    baseURL,
+  }) => {
+    const idpIssuer = requireBaseUrl(baseURL);
+    test.skip(!(await supportsXaa(request, idpIssuer)), XAA_SKIP_REASON);
+
+    const subjectIdToken = await obtainIdToken(page);
+    // The actor's credential here is otheruser's ACCESS token (not an ID
+    // Token), obtained in an isolated browser context.
+    const actorContext = await browser.newContext();
+    const { accessToken: actorAccessToken } = await obtainTokens(
+      await actorContext.newPage(),
+      'otheruser',
+    );
+    await actorContext.close();
+    expect(actorAccessToken).not.toBe('');
+
+    const exchangeRes = await request.post(`${idpIssuer}/token`, {
+      form: {
+        grant_type: EXCHANGE_GRANT_TYPE,
+        requested_token_type: ID_JAG_TOKEN_TYPE,
+        subject_token: subjectIdToken,
+        subject_token_type: ID_TOKEN_TYPE,
+        actor_token: actorAccessToken,
+        actor_token_type: ACCESS_TOKEN_TYPE,
+        audience: xaaIssuer,
+        scope: 'openid profile',
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(exchangeRes.status()).toBe(200);
+    const idJag = String(
+      ((await exchangeRes.json()) as Record<string, unknown>).access_token,
+    );
+    const jagClaims = decodeJwtSegment(idJag.split('.')[1] ?? '');
+    expect(jagClaims.sub).toBe('testuser');
+    expect(jagClaims.act).toEqual({ sub: 'otheruser' });
+
+    const redeemRes = await request.post(`${xaaIssuer}/token`, {
+      form: {
+        grant_type: JWT_BEARER_GRANT_TYPE,
+        assertion: idJag,
+        client_id: clientId,
+        client_secret: clientSecret,
+      },
+    });
+    expect(redeemRes.status()).toBe(200);
+    const redeemBody = (await redeemRes.json()) as Record<string, unknown>;
+    const accessTokenClaims = decodeJwtSegment(
+      String(redeemBody.access_token).split('.')[1] ?? '',
+    );
+    expect(accessTokenClaims.act).toEqual({ sub: 'otheruser' });
+  });
+
   test('should advertise the XAA metadata on both trust domains', async ({
     request,
     baseURL,
@@ -341,7 +404,7 @@ const XAA_SKIP_REASON =
 async function obtainTokens(
   page: import('@playwright/test').Page,
   username = 'testuser',
-): Promise<{ idToken: string; refreshToken: string }> {
+): Promise<{ idToken: string; accessToken: string; refreshToken: string }> {
   await page.goto(`${clientBaseURL}/start`);
   await page.getByLabel('Username:').fill(username);
   await page.getByLabel('Password:').fill('password');
@@ -349,6 +412,7 @@ async function obtainTokens(
   await page.getByRole('button', { name: 'Approve' }).click();
   return {
     idToken: (await page.getByTestId('token-id-token').textContent()) ?? '',
+    accessToken: (await page.getByTestId('token-access-token').textContent()) ?? '',
     refreshToken: (await page.getByTestId('token-refresh-token').textContent()) ?? '',
   };
 }

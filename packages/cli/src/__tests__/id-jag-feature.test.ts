@@ -281,16 +281,21 @@ describe('generate with --enable id-jag', () => {
         expect(content.includes('allowActorTokens: idJagConfig.allowActorTokens,')).toBe(true);
       });
 
-      it('should expose the custom actor token resolver hook unset by default', () => {
+      it('should ship the actor token resolver with an ID Token default', () => {
         const content = fileContent(
           generateFiles(framework, ['id-jag']),
           tokenRoutePath(framework),
         );
         expect(
-          content.includes('actorTokenResolver: undefined as IdJagActorTokenResolver | undefined,'),
+          content.includes('const defaultIdJagActorTokenResolver: IdJagActorTokenResolver = async'),
         ).toBe(true);
-        // The hook is handed to the module only when the deployment sets it, so
-        // the built-in id_token-only behaviour stays the default.
+        expect(
+          content.includes(
+            'actorTokenResolver: defaultIdJagActorTokenResolver as IdJagActorTokenResolver | undefined,',
+          ),
+        ).toBe(true);
+        // Every accepted actor token type reaches the same hook; the resolver
+        // itself decides what it validates.
         expect(
           content.includes('...(idJagConfig.actorTokenResolver === undefined'),
         ).toBe(true);

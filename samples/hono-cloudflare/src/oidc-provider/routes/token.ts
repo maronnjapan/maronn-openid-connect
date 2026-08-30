@@ -64,9 +64,11 @@ import {
 import {
   IdJagError,
   JWT_BEARER_GRANT_TYPE,
+  TOKEN_TYPE_ID_TOKEN,
   matchesIdJagIssuanceRequest,
   processIdJagIssuanceRequest,
   processIdJagRedemptionRequest,
+  resolveIdJagActor,
   type IdJagAccessTokenInfo,
   type IdJagActorTokenResolver,
   type IdJagTrustedIdentityProvider,
@@ -119,18 +121,16 @@ export const tokenExchangeConfig = {
  *   (RFC 8693 §4.1). The draft defines no normative actor processing (§9.7
  *   sketches extensions), so this is an opt-in extension and defaults to
  *   false — an actor_token is rejected until you flip it, whatever else is
- *   configured. An actor_token_type of id_token always goes through the
- *   built-in validation (an ID Token this OP issued to the authenticated
- *   client).
- * - actorTokenResolver: hook for actor_token types OTHER than id_token
- *   (RFC 8693 allows any token type identifier). The library validates the
- *   request structure and the shape of what you return; validating the token
- *   CONTENT (signature, revocation, whose token it is) is entirely this
- *   function's job. Return the act value ({ sub, act? }) for a valid token,
- *   null for an invalid one (answered with a fixed invalid_request), or throw
- *   IdJagError to pick the response yourself. It cannot replace the built-in
- *   id_token validation, and it is never called while allowActorTokens is
- *   false.
+ *   configured. Every token type identifier RFC 8693 §3 defines is accepted
+ *   the same way; the type alone decides nothing.
+ * - actorTokenResolver: validates the actor_token's CONTENT (signature,
+ *   revocation, whose token it is) — for every accepted type, this OP's own
+ *   ID Tokens included. The library only checks the request structure and the
+ *   shape of what you return. Return the act value ({ sub, act? }) for a valid
+ *   token, null for an invalid one (answered with a fixed invalid_request), or
+ *   throw IdJagError to pick the response yourself. The default below handles
+ *   ID Tokens this OP issued to the authenticated client; extend or replace it
+ *   to cover the other types. Clearing it rejects every actor_token.
  *
  * Consuming side (this OP as the resource authorization server, draft §4.4):
  * - trustedIdentityProviders: the IdPs whose ID-JAGs are accepted on the
@@ -138,13 +138,24 @@ export const tokenExchangeConfig = {
  *   `jwks` when present, otherwise from `jwksUri` (fetched and cached below).
  *   Never derive the key source from the assertion itself.
  */
+const defaultIdJagActorTokenResolver: IdJagActorTokenResolver = async ({
+  actorToken,
+  actorTokenType,
+  clientId,
+  issuer,
+  jwks,
+}) =>
+  actorTokenType === TOKEN_TYPE_ID_TOKEN
+    ? resolveIdJagActor({ actorToken, issuer, clientId, jwks })
+    : null;
+
 export const idJagConfig = {
   allowedAudiences: [] as string[],
   idJagLifetimeSeconds: 300,
   allowedScopes: undefined as string[] | undefined,
   allowRefreshTokenSubjects: true,
   allowActorTokens: false,
-  actorTokenResolver: undefined as IdJagActorTokenResolver | undefined,
+  actorTokenResolver: defaultIdJagActorTokenResolver as IdJagActorTokenResolver | undefined,
   trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
 };
 
@@ -354,9 +365,8 @@ tokenApp.post('/', async (c) => {
         allowedScopes: idJagConfig.allowedScopes,
         lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
         // Extension (draft §9.7): when enabled, an actor_token is recorded as
-        // the ID-JAG's act claim. id_token actors get the same built-in
-        // validation as the subject; other types go to the deployment's
-        // resolver (content validation is the resolver's responsibility).
+        // the ID-JAG's act claim. Every accepted token type goes through the
+        // same resolver, which owns the content validation.
         allowActorTokens: idJagConfig.allowActorTokens,
         ...(idJagConfig.actorTokenResolver === undefined
           ? {}

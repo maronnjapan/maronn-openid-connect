@@ -224,11 +224,11 @@ test.describe('Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-au
     expect(accessTokenClaims.act).toEqual({ sub: 'otheruser' });
   });
 
-  // Extension point: actor_token types beyond id_token are accepted only
-  // through a deployment-provided resolver that owns the content validation.
-  // The sample OP wires a demo resolver (XAA_ACTOR_TOKEN_RESOLVER=access-token)
-  // that resolves an access token this IdP itself issued via its own store.
-  test('should resolve a custom actor_token type through the deployment resolver', async ({
+  // Every actor_token type RFC 8693 defines is accepted the same way; the
+  // deployment's resolver owns the content validation. The sample OP wires a
+  // demo resolver (XAA_ACTOR_TOKEN_RESOLVER=access-token) that adds access
+  // tokens this IdP itself issued, resolved through its own store.
+  test('should resolve an access_token actor through the deployment resolver', async ({
     page,
     browser,
     request,

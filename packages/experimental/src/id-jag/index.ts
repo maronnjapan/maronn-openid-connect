@@ -21,11 +21,12 @@
  *
  * 既存の token-exchange 機能とは grant_type URN を共有するがコードは共有しない。
  * subject_token は ID トークンを必須対応とし、refresh token は設定（resolver の
- * 注入）で追加受理できる（draft §4.3 の MAY）。actor_token（本 OP 発行の
- * ID トークン）の受理と act claim の発行は、draft §9.7 の指針に沿った本機能
- * 独自の拡張として設定で有効化できる（既定は無効）。id_token 以外の actor_token
- * 種別は `IdJagActorTokenResolver` の注入で受けられる（リクエスト構造の検証は
- * ライブラリ、トークン内容の検証はリゾルバの責務）。
+ * 注入）で追加受理できる（draft §4.3 の MAY）。actor_token の受理と act claim の
+ * 発行は、draft §9.7 の指針に沿った本機能独自の拡張として設定で有効化できる
+ * （既定は無効）。actor_token の種別は
+ * RFC 8693 §3 の token type identifier を一律に受け、内容検証は種別によらず
+ * `IdJagActorTokenResolver` が担う（リクエスト構造の検証はライブラリ、
+ * トークン内容の検証はリゾルバの責務）。
  * SAML subject / RAR / DPoP は非対応（notes リポジトリの仕様書の非目標を参照）。
  */
 export {
@@ -36,12 +37,17 @@ export {
   type IdJagErrorCode,
 } from './errors.js';
 export {
+  ACTOR_TOKEN_TYPES_SUPPORTED,
   ID_JAG_GRANT_PROFILE,
   ID_JAG_JWT_TYP,
   ID_JAG_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT_TYPE,
+  TOKEN_TYPE_ACCESS_TOKEN,
   TOKEN_TYPE_ID_TOKEN,
+  TOKEN_TYPE_JWT,
   TOKEN_TYPE_REFRESH_TOKEN,
+  TOKEN_TYPE_SAML1,
+  TOKEN_TYPE_SAML2,
   authorizeIdJagIssuanceClient,
   buildIdJagClaims,
   buildIdJagIssuanceResponse,
@@ -50,7 +56,7 @@ export {
   parseIdJagIssuanceParams,
   processIdJagIssuanceRequest,
   resolveIdJagActor,
-  resolveIdJagActorFromCustomToken,
+  resolveIdJagActorToken,
   resolveIdJagSubject,
   resolveIdJagSubjectFromRefreshToken,
   validateIdJagAudience,

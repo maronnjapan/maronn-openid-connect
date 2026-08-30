@@ -44,6 +44,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'token-exchange',
       'jarm',
       'device-authorization-grant',
+      'id-jag',
     ]);
   });
 });
@@ -64,6 +65,7 @@ describe('resolveFeatures with experimental features', () => {
       tokenExchange: false,
       jarm: false,
       deviceAuthorizationGrant: false,
+      idJag: false,
       transactionBinding: false,
     });
   });
@@ -79,6 +81,7 @@ describe('resolveFeatures with experimental features', () => {
       tokenExchange: false,
       jarm: false,
       deviceAuthorizationGrant: false,
+      idJag: false,
       transactionBinding: false,
     });
   });
@@ -104,13 +107,14 @@ describe('resolveFeatures with experimental features', () => {
       tokenExchange: false,
       jarm: false,
       deviceAuthorizationGrant: false,
+      idJag: false,
       transactionBinding: false,
     });
   });
 
   it('should name the experimental features in the unknown-feature error', () => {
     expect(() => resolveFeatures({ enable: ['ciba'] })).toThrow(
-      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm',
+      'Unknown feature: "ciba". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag',
     );
   });
 });

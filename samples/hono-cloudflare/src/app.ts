@@ -11,6 +11,7 @@ import {
   createInMemoryClientResolver,
   type RegisteredClient,
 } from './oidc-provider/config.js';
+import { idJagConfig } from './oidc-provider/routes/token.js';
 import { createD1ProviderStores } from './storage.js';
 
 interface Bindings {
@@ -20,11 +21,37 @@ interface Bindings {
   OIDC_SIGNING_KEY_ID?: string;
   OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW?: string;
   OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT?: string;
+  XAA_ALLOWED_AUDIENCES?: string;
+  XAA_TRUSTED_IDP_ISSUER?: string;
+  XAA_TRUSTED_IDP_JWKS_URI?: string;
 }
 
 const bindings = env as Bindings;
 const issuer = bindings.ISSUER ?? 'http://127.0.0.1:3010';
 const clients = readRegisteredClients(bindings.OIDC_CLIENTS_JSON);
+
+// EXPERIMENTAL (Cross-App Access / ID-JAG): wire the trust configuration from
+// env vars so two instances of this sample can play the IdP and the resource
+// authorization server against each other (tests/e2e does exactly that).
+// With the vars unset the generated fail-safe defaults stay: no ID-JAG is
+// issued and none is accepted.
+const xaaAllowedAudiences = (bindings.XAA_ALLOWED_AUDIENCES ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
+if (xaaAllowedAudiences.length > 0) {
+  idJagConfig.allowedAudiences = xaaAllowedAudiences;
+}
+if (bindings.XAA_TRUSTED_IDP_ISSUER) {
+  idJagConfig.trustedIdentityProviders = [
+    {
+      issuer: bindings.XAA_TRUSTED_IDP_ISSUER,
+      jwksUri:
+        bindings.XAA_TRUSTED_IDP_JWKS_URI ||
+        `${bindings.XAA_TRUSTED_IDP_ISSUER}/.well-known/jwks.json`,
+    },
+  ];
+}
 
 const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
   if (!requestedAcrValues) return undefined;

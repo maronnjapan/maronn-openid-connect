@@ -8,6 +8,10 @@
       "types": "./dist/device-authorization-grant/index.d.ts",
       "import": "./dist/device-authorization-grant/index.js"
     },
+    "./id-jag": {
+      "types": "./dist/id-jag/index.d.ts",
+      "import": "./dist/id-jag/index.js"
+    },
     "./jarm": {
       "types": "./dist/jarm/index.d.ts",
       "import": "./dist/jarm/index.js"

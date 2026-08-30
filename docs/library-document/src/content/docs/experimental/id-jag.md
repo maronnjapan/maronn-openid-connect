@@ -40,14 +40,16 @@ Requesting App          IdP OP                   Resource App の AS
 
 | 仕様 | 対応範囲 |
 |---|---|
-| ID-JAG draft §3.1 | ID-JAG のクレーム（iss / sub / aud / client_id / jti / exp / iat / scope / resource / auth_time / acr / amr）と `typ: oauth-id-jag+jwt` |
-| ID-JAG draft §4.3 | 発行リクエスト（`audience` 必須、subject_token は ID トークンのみ）と処理規則（assertion の aud とクライアントの一致検証を含む） |
+| ID-JAG draft §3.1 | ID-JAG のクレーム（iss / sub / aud / client_id / jti / exp / iat / scope / resource / auth_time / acr / amr / act）と `typ: oauth-id-jag+jwt` |
+| ID-JAG draft §4.3 | 発行リクエスト（`audience` 必須、subject_token は ID トークンと refresh token）と処理規則（assertion の aud とクライアントの一致検証を含む） |
+| ID-JAG draft §4.3.2 / §4.3.3 | refresh token の subject_token（`allowRefreshTokenSubjects`、既定 true）。検証は通常の refresh_token grant と同一（rotation 再利用で family 失効、online RT のセッション生存確認）。RT は消費しない |
+| ID-JAG draft §9.7（拡張） | `actor_token`（本 OP 発行の ID トークン）と `act` クレーム（`allowActorTokens`、既定 false の opt-in）。受領側は act を発行アクセストークンへ引き継ぐ |
 | ID-JAG draft §4.3.4 | 発行レスポンス（`token_type: N_A`、refresh_token なし） |
 | ID-JAG draft §4.4 | jwt-bearer での受領（typ / aud / client_id の MUST 検証、refresh_token なし、有効期間内の再提示可） |
 | ID-JAG draft §7 | AS metadata（`identity_chaining_requested_token_types_supported` / `authorization_grant_profiles_supported`） |
 | ID-JAG draft §9.3 | 同一トラストドメイン内での利用禁止（発行側と受領側の二重ガード） |
 | ID-JAG draft §3.2（sub_id / SAML NameID） | **非対応** |
-| ID-JAG draft §4.3（saml2 / refresh_token subject、actor_token） | **非対応**（明示的に拒否） |
+| ID-JAG draft §4.3（saml2 subject） | **非対応**（明示的に拒否） |
 | RFC 9396（authorization_details / RAR） | **非対応**（明示的に拒否） |
 | DPoP による sender-constraining（draft §9.8） | **非対応** |
 
@@ -62,7 +64,8 @@ Requesting App          IdP OP                   Resource App の AS
 - 生成 OP を `--enable id-jag` で作成していること
 - 要求側クライアントが **confidential client** であること（public client は両側で拒否されます）
 - 発行を要求するクライアントの `grantTypes` に Token Exchange の URN、ID-JAG を提示するクライアントの `grantTypes` に jwt-bearer の URN が登録されていること
-- 発行側の `subject_token` が**その OP 自身が発行した ID トークン**で、`aud` が要求クライアント自身であること
+- 発行側の `subject_token` が**その OP 自身が発行した ID トークン**（`aud` が要求クライアント自身であること）、または `allowRefreshTokenSubjects` 有効時は**その OP 自身が発行した refresh token**（`openid` scope を持つ grant のもの）であること
+- `actor_token` を使う場合は `idJagConfig.allowActorTokens` を有効化し、actor_token もその OP 発行・要求クライアント宛ての ID トークンであること
 - 要求側クライアントが発行側 IdP と受領側 AS の両方で**同じ client_id** を使っていること（client_id の対応表は初期実装では持ちません）
 
 ## 有効化
@@ -98,6 +101,11 @@ export const idJagConfig = {
   idJagLifetimeSeconds: 300,
   // 発行側: 許可する scope の上限。undefined は素通し（受領側ポリシーに委ねる）
   allowedScopes: undefined as string[] | undefined,
+  // 発行側: refresh token を subject_token として受けるか（draft §4.3 MAY）。
+  // refresh-token feature 有効時のみ生成される。検証は通常の refresh grant と同一
+  allowRefreshTokenSubjects: true,
+  // 発行側: actor_token を受けて act クレームを発行するか（draft 範囲外の opt-in 拡張）
+  allowActorTokens: false,
   // 受領側: 信頼する IdP。jwks（インライン）か jwksUri（取得して 300 秒キャッシュ）
   trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
 };
@@ -136,12 +144,17 @@ curl -s -X POST https://as.resource-app.example/token \
 
 応答に `id_token` と `refresh_token` は含まれません。
 アクセストークンが切れたら、ID-JAG が有効なうちは同じものを再提示し、切れていたら手元の ID トークンで新しい ID-JAG を取り直します（draft §4.4.3。ID-JAG がリフレッシュトークンの代替になります）。
+ID トークンも切れている場合は、`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token` で IdP のリフレッシュトークンをそのまま subject にでき、ユーザーを再ログインさせずに ID-JAG を更新できます。
+
+代理実行を記録したいときは、`idJagConfig.allowActorTokens` を有効にしたうえで `actor_token`（actor の ID トークン）と `actor_token_type=...id_token` を追加します。
+発行される ID-JAG に `act: {"sub":"<actor の sub>"}` が入り、redemption 後のアクセストークンにも同じ `act` が引き継がれます。
 
 ## エラー
 
 | 状況 | error |
 |---|---|
-| subject_token（ID トークン）の検証失敗 | `invalid_request`（失敗理由を区別しない固定文言） |
+| subject_token（ID トークン / refresh token）の検証失敗 | `invalid_request`（失敗理由を区別しない固定文言） |
+| actor_token の検証失敗（`allowActorTokens` 有効時）、無効時の actor_token の存在 | `invalid_request`（検証失敗は固定文言） |
 | `audience` が許可リスト外、または自 OP 自身 | `invalid_target` |
 | assertion の iss が信頼リスト外、または署名不正 | `invalid_grant`（両者を区別しない固定文言。信頼リストの探索防止） |
 | assertion の typ / aud / exp / client_id の不一致 | `invalid_grant`（個別の文言） |
@@ -149,8 +162,8 @@ curl -s -X POST https://as.resource-app.example/token \
 
 ## 制限事項
 
-- subject_token は ID トークンのみです。SAML assertion と refresh token（draft が MAY で認める形）は受け付けません
-- `authorization_details`（RAR）と `actor_token` は明示的に拒否します
+- subject_token は ID トークンと（`allowRefreshTokenSubjects` 有効時の）refresh token です。SAML assertion は受け付けません
+- `authorization_details`（RAR）は明示的に拒否します。`actor_token` は `allowActorTokens` を有効化するまで拒否され、有効時も本 OP 発行・要求クライアント宛ての ID トークンに限ります（act は 1 段のみで、チェーンの発行はしません）
 - ID-JAG の `client_id` クレームは IdP で認証したクライアントの client_id をそのまま使います。両 AS で client_id が異なる構成（draft §5 の対応表）には対応していません
 - `jti` によるリプレイ拒否は行いません。有効期間内の再提示は draft §4.4.3 が意図する正当な利用形態です（クライアント認証と `client_id` 一致、短い exp が束縛を担います）
 - 受領側の subject 解決は「ID-JAG の `sub` をそのままローカル subject にする」に固定です。JIT プロビジョニングはありません

@@ -30,7 +30,8 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
     !features.par &&
     !features.tokenExchange &&
     !features.jarm &&
-    !features.deviceAuthorizationGrant
+    !features.deviceAuthorizationGrant &&
+    !features.idJag
   ) {
     return installCommand;
   }

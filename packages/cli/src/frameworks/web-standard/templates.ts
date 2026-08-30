@@ -28,6 +28,7 @@ import {
   jarmConformanceBlock,
   jarmConfigTemplate,
   tokenExchangeConformanceBlock,
+  idJagConformanceBlock,
   pkceDisabledConformanceBlock,
   persistentStorageConformanceBlock,
   requestObjectConformanceBeforeAll,
@@ -1921,7 +1922,10 @@ export function webConformanceTestTemplate(
         ].join('\\n'),
       );
     });`;
-  const exportPublicJwkImport = features.requestObject
+  // exportPublicJwk is needed by the Request Object fixtures and by the ID-JAG
+  // block (which publishes the fake external IdP key as a JWK). Either feature
+  // pulls the single import in; both together still emit it once.
+  const exportPublicJwkImport = features.requestObject || features.idJag
     ? `import { exportPublicJwk } from '${corePkg}';\n`
     : '';
   const nodeAdapterImport = includeNodeAdapterContract
@@ -2000,6 +2004,12 @@ import { parConfig } from './routes/par.js';`
     ? `
 import { tokenExchangeConfig } from './routes/token.js';`
     : '';
+  // Experimental (ID-JAG draft): the Cross-App Access contract tests flip the
+  // generated allow lists (audiences / trusted IdPs) to cover both policies.
+  const idJagConformanceImports = features.idJag
+    ? `
+import { idJagConfig } from './routes/token.js';`
+    : '';
   return `import { describe, it, expect, beforeAll } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
@@ -2007,7 +2017,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2418,7 +2428,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
 `;
 }
 

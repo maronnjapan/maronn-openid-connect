@@ -35,6 +35,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'jarm',
       'device-authorization-grant',
       'id-jag',
+      'ciba',
     ]);
   });
 });
@@ -56,6 +57,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       jarm: false,
       deviceAuthorizationGrant: true,
       idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });
@@ -90,6 +92,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       jarm: true,
       deviceAuthorizationGrant: true,
       idJag: true,
+      ciba: false,
       transactionBinding: false,
     });
   });
@@ -108,6 +111,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       jarm: false,
       deviceAuthorizationGrant: true,
       idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });

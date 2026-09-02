@@ -80,6 +80,12 @@ import {
   processDeviceCodeGrant,
 } from '@maronn-openid-connect/experimental/device-authorization-grant';
 import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';
+import {
+  CIBA_GRANT_TYPE,
+  CibaGrantError,
+  processCibaGrant,
+} from '@maronn-openid-connect/experimental/ciba';
+import { cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore } from '../store.js';
 
 /**
  * EXPERIMENTAL — OAuth 2.0 Token Exchange settings (RFC 8693).
@@ -772,6 +778,196 @@ tokenApp.post('/', async (c) => {
       });
     }
 
+    // --- EXPERIMENTAL: CIBA grant (CIBA Core 1.0 §10.1, poll mode) ----------
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject
+    // it with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    if (params.grant_type === CIBA_GRANT_TYPE) {
+      const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+
+      // CIBA §11 state machine. Everything except "approved" throws:
+      // authorization_pending / slow_down / access_denied / expired_token, plus
+      // invalid_request / invalid_grant.
+      const cibaGrant = await processCibaGrant({
+        params,
+        client: tokenClient,
+        store: cibaStore,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const cibaTokenConfig = c.get('config');
+      const cibaPrivateKey = c.get('privateKey');
+      const cibaKeyId = c.get('keyId');
+      // T-022: the ID Token this grant issues follows the SAME key-selection rule
+      // as the standard grants — pick a registered ID Token key whose alg matches
+      // the client's id_token_signed_response_alg (OIDC Dynamic Client
+      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
+      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // it rejects, and would hash at_hash with the wrong algorithm.
+      const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
+      const cibaFallbackIdKey: SigningKey | undefined =
+        c.get('idTokenPrivateKey') !== undefined
+          ? {
+              privateKey: c.get('idTokenPrivateKey'),
+              publicJwk: c.get('idTokenPublicJwk'),
+              keyId: c.get('idTokenKeyId') ?? cibaKeyId,
+            }
+          : undefined;
+      const cibaRegisteredClient = (await tokenClientResolver.findClient(
+        authenticatedClientId,
+      )) as RegisteredClient | null;
+      const cibaRequestedIdTokenAlg = cibaRegisteredClient?.idTokenSignedResponseAlg;
+      let cibaSelectedIdTokenKey: SigningKey;
+      if (cibaIdTokenSigningKeys.length > 0) {
+        try {
+          cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
+        } catch {
+          c.header('Cache-Control', 'no-store');
+          c.header('Pragma', 'no-cache');
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: `No ID Token signing key registered for alg "${cibaRequestedIdTokenAlg ?? 'RS256'}"`,
+            },
+            500,
+          );
+        }
+      } else if (cibaFallbackIdKey) {
+        cibaSelectedIdTokenKey = cibaFallbackIdKey;
+      } else {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+      }
+      const cibaIdTokenPrivateKey = cibaSelectedIdTokenKey.privateKey;
+      const cibaIdTokenKeyId = cibaSelectedIdTokenKey.keyId;
+      const cibaIssuer: AccessTokenIssuer =
+        cibaTokenConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3). CIBA §7.1 has no resource parameter,
+      // so nothing else is requested.
+      const cibaAudience = buildAccessTokenAudience({
+        userInfoEndpoint: `${cibaTokenConfig.issuer}/userinfo`,
+        issuer: cibaTokenConfig.issuer,
+      });
+
+      const cibaIssuedAt = Math.floor(Date.now() / 1000);
+      const cibaAccessTokenPayload = buildAccessTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        audience: cibaAudience,
+        expiresIn: cibaTokenConfig.accessTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+      });
+      const cibaAccessToken = await cibaIssuer.issue({
+        payload: cibaAccessTokenPayload,
+        privateKey: cibaPrivateKey,
+        keyId: cibaKeyId,
+      });
+
+      // The backchannel authentication endpoint requires the openid scope, so
+      // an ID Token is always issued. It carries no nonce (CIBA §7.1 defines no
+      // such parameter, and OIDC Core 1.0 §2 only requires nonce when the
+      // authentication request carried one) and no c_hash (there is no code).
+      // Poll mode adds no CIBA-specific claims either — the auth_req_id claim
+      // of §10.3.1 belongs to the push-mode token delivery message.
+      const cibaAtHash = await computeAtHash(cibaAccessToken, cibaIdTokenPrivateKey);
+      const cibaAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
+      const { acr: cibaAcr, amr: cibaAmr } = await resolveAcrAmr({
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        acrResolver: cibaAcrResolver,
+      });
+      const cibaIdTokenPayload = buildIdTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresIn: cibaTokenConfig.idTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+        atHash: cibaAtHash,
+        authTime: cibaGrant.authTime,
+        acr: cibaAcr,
+        amr: cibaAmr,
+      });
+      const cibaIdToken = await generateIdToken({
+        payload: cibaIdTokenPayload,
+        privateKey: cibaIdTokenPrivateKey,
+        keyId: cibaIdTokenKeyId,
+      });
+
+      await accessTokenStore.set(cibaAccessToken, {
+        sub: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresAt: cibaIssuedAt + cibaTokenConfig.accessTokenExpiresIn,
+        // Inherit the grantId minted at approval so revoking the grant kills
+        // every token issued from this backchannel authentication.
+        grantId: cibaGrant.grantId,
+        iat: cibaIssuedAt,
+        nbf: cibaIssuedAt,
+        audience: cibaAudience,
+        issuer: cibaTokenConfig.issuer,
+        jti: cibaAccessTokenPayload.jti,
+      });
+
+      // OIDC Core 1.0 §11: offline_access survived the backchannel
+      // authentication endpoint's policy check only if this client may hold
+      // refresh tokens, and the approval screen the user just went through IS
+      // the explicit consent that §11 asks for. Nothing further to gate on here.
+      const cibaRefreshToken = cibaGrant.scope.includes('offline_access')
+        ? generateRandomString(32)
+        : undefined;
+      if (cibaRefreshToken) {
+        const cibaRefreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
+        await cibaRefreshTokenStore.set(cibaRefreshToken, {
+          subject: cibaGrant.subject,
+          clientId: cibaGrant.clientId,
+          scope: cibaGrant.scope,
+          // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
+          // inherit originalIssuedAt so the deadline never slides forward.
+          expiresAt: cibaIssuedAt + cibaTokenConfig.refreshTokenAbsoluteLifetime,
+          originalIssuedAt: cibaIssuedAt,
+          used: false,
+          grantId: cibaGrant.grantId,
+          iat: cibaIssuedAt,
+          issuer: cibaTokenConfig.issuer,
+          audience: cibaAudience,
+          authTime: cibaGrant.authTime,
+          // CIBA §7.1 defines no nonce parameter, so the re-issued ID Token has
+          // none to preserve either.
+          nonce: undefined,
+          acr: cibaAcr,
+          amr: cibaAmr,
+          azp: undefined,
+        });
+      }
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: cibaAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: cibaTokenConfig.accessTokenExpiresIn,
+        id_token: cibaIdToken,
+        scope: cibaGrant.scope.join(' '),
+        refresh_token: cibaRefreshToken,
+      });
+    }
+
     // --- Token request validation pipeline --------------------------------
     // Each step below is an independent core function, called in the same order
     // as core's validateTokenRequest(). Delete a call to drop that validation,
@@ -1219,6 +1415,18 @@ tokenApp.post('/', async (c) => {
     }
     if (error instanceof DeviceAuthorizationError) {
       // RFC 8628 §3.5: authorization_pending / slow_down / access_denied /
+      // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
+      // only come from client authentication, which runs before the branch and
+      // throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+    if (error instanceof CibaGrantError) {
+      // CIBA §11: authorization_pending / slow_down / access_denied /
       // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
       // only come from client authentication, which runs before the branch and
       // throws core's TokenError.

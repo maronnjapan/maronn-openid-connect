@@ -31,7 +31,8 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
     !features.tokenExchange &&
     !features.jarm &&
     !features.deviceAuthorizationGrant &&
-    !features.idJag
+    !features.idJag &&
+    !features.ciba
   ) {
     return installCommand;
   }
@@ -312,7 +313,8 @@ export function run(args: string[]): void {
         features.par ||
         features.tokenExchange ||
         features.jarm ||
-        features.deviceAuthorizationGrant
+        features.deviceAuthorizationGrant ||
+        features.ciba
       ) {
         console.log(`  4. Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`);
         console.log(`  5. Start the server\n`);

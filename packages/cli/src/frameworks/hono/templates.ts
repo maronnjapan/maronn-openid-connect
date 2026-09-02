@@ -29,11 +29,20 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   '/device/login': ['POST'],
   '/device/approve': ['POST'],\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the backchannel authentication endpoint is
+  // POST-only, and the authentication device UI is a browser surface (a GET
+  // listing / login form + POST submissions).
+  const cibaMethods = features.ciba
+    ? `  '/backchannel_authentication': ['POST'],
+  '/ciba': ['GET'],
+  '/ciba/login': ['POST'],
+  '/ciba/approve': ['POST'],\n`
+    : '';
   return `const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/authorize': ['GET', 'POST'],
   '/token': ['POST'],
   '/userinfo': ['GET', 'POST'],
-${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}  '/.well-known/jwks.json': ['GET'],
+${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}  '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
   '/consent': ['GET', 'POST'],
@@ -116,6 +125,48 @@ import { deviceApp } from './routes/device.js';\n`
   const deviceStoreImport = features.deviceAuthorizationGrant
     ? `  deviceAuthorizationStore,\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the backchannel authentication endpoint is a
+  // back-channel, client-authenticated POST endpoint, so it gets the same CORS
+  // policy as /token. The authentication device UI (/ciba...) is reached by
+  // direct browser navigation, so it needs no CORS headers — the same treatment
+  // as /login and /consent.
+  const cibaImport = features.ciba
+    ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';\n`
+    : '';
+  const cibaCors = features.ciba
+    ? `  app.use('/backchannel_authentication', protectedCors);\n`
+    : '';
+  const cibaMount = features.ciba
+    ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);\n`
+    : '';
+  // The default CIBA user resolver treats login_hint as the username of the
+  // injected user store, so a custom storage option is honored without extra
+  // wiring. options.cibaUserResolver overrides the whole resolution.
+  const cibaStorageContext = features.ciba
+    ? `    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));`
+    : '';
+  const cibaStoreImport = features.ciba
+    ? `  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,\n`
+    : '';
+  const cibaOptionsField = features.ciba
+    ? `  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -133,7 +184,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -147,7 +198,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}${deviceStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -213,7 +264,7 @@ export interface CreateAppOptions {
    * Override only when hints are signed by a different key set.
    */
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-  corsOrigins?: CorsOrigins;
+${cibaOptionsField}  corsOrigins?: CorsOrigins;
 }
 
 export function validateSigningKeySet(
@@ -248,7 +299,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   const publicCors = cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 600 });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -310,7 +361,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-kn
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
     c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
@@ -331,7 +382,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -427,6 +478,9 @@ export function configTemplate(
       ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`]
       : []),
     ...(features.idJag ? [`'urn:ietf:params:oauth:grant-type:jwt-bearer'`] : []),
+    // EXPERIMENTAL (CIBA Core 1.0 §7.1): registering the CIBA URN is what lets
+    // this confidential client start backchannel authentication requests.
+    ...(features.ciba ? [`'urn:openid:params:grant-type:ciba'`] : []),
   ].join(', ');
   const exampleClientExchangeComment = features.tokenExchange
     ? `      // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
@@ -441,6 +495,13 @@ export function configTemplate(
       // identity provider. Remove either to forbid that half of Cross-App Access.
 `
     : '';
+  const exampleClientCibaComment = features.ciba
+    ? `      // EXPERIMENTAL (CIBA Core 1.0 §7.1): registering the CIBA URN is what lets
+      // this confidential client POST /backchannel_authentication and poll the
+      // token endpoint with the resulting auth_req_id. Remove it to forbid CIBA
+      // for this client; public clients are rejected either way.
+`
+    : '';
   const noRefreshGrantComment = features.tokenExchange
     ? `      // RFC 7591 §2: grant_types default is ["authorization_code"]. The refresh_token
       // grant is disabled in this generated provider, so it is not registered.
@@ -448,15 +509,23 @@ export function configTemplate(
     : `      // RFC 7591 §2: grant_types default is ["authorization_code"]. The refresh_token
       // grant is disabled in this generated provider, so only authorization_code is registered.
 `;
+  // EXPERIMENTAL (CIBA Core 1.0 §4): backchannel_token_delivery_mode client
+  // metadata. This provider only offers poll, so registering ping or push makes
+  // every backchannel authentication request fail with unauthorized_client.
+  // Omitted means poll.
+  const cibaClientField = features.ciba
+    ? `
+  backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';`
+    : '';
   const exampleClientGrantFields = features.refreshToken
     ? `      // RFC 7591 §2: grant_types default is ["authorization_code"]. Registering
       // refresh_token is the single switch that lets this client receive refresh
       // tokens at all: an online refresh token (bound to the login session) on every
       // authorization, and an offline one (usable after logout) when offline_access
       // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
-${exampleClientExchangeComment}${exampleClientIdJagComment}      grantTypes: [${exampleClientGrantTypes}],
+${exampleClientExchangeComment}${exampleClientIdJagComment}${exampleClientCibaComment}      grantTypes: [${exampleClientGrantTypes}],
 `
-    : `${noRefreshGrantComment}${exampleClientExchangeComment}${exampleClientIdJagComment}      grantTypes: [${exampleClientGrantTypes}],
+    : `${noRefreshGrantComment}${exampleClientExchangeComment}${exampleClientIdJagComment}${exampleClientCibaComment}      grantTypes: [${exampleClientGrantTypes}],
 `;
   return `import type {
   ClientInfo,
@@ -552,7 +621,7 @@ export function createProviderConfig(
  */
 export type RegisteredClient = ClientInfo & TokenClientInfo & {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
-  idTokenSignedResponseAlg?: 'RS256' | 'ES256';
+  idTokenSignedResponseAlg?: 'RS256' | 'ES256';${cibaClientField}
 };
 
 /**
@@ -908,6 +977,109 @@ export const deviceAuthorizationStore: DeviceAuthorizationStore =
     new InMemoryDeviceAuthorizationStore());
 `
     : '';
+  const cibaStoreTypeImport = features.ciba
+    ? `
+import {
+  createInMemoryCibaAuthenticationRequestStore,
+  createInMemoryCibaLoginTransactionStore,
+  type CibaAuthenticationRequestStore,
+  type CibaLoginTransactionStore,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';`
+    : '';
+  const cibaStoreImplementation = features.ciba
+    ? `
+/**
+ * EXPERIMENTAL — CIBA login transaction binding cookie (CIBA Core 1.0; the
+ * authentication device UI itself is outside the spec's scope, §7.1).
+ *
+ * Why this exists: a successful login on /ciba/login establishes an OP session,
+ * whose reach goes beyond CIBA (SSO, prompt=none). A hidden csrf_token alone
+ * cannot stop login CSRF: the attacker fetches their own /ciba login form,
+ * reads a valid login_transaction_id + csrf_token pair, and embeds both in a
+ * forged cross-site POST — planting the attacker's session in the victim's
+ * browser. What stops it is this cookie: the login form response binds the
+ * transaction to the browser that requested it by handing that one browser the
+ * raw bindingSecret in an HttpOnly cookie while the transaction stores only its
+ * SHA-256 hash. A forged POST cannot carry the victim's cookie (SameSite=Lax),
+ * and the victim never held this transaction's cookie anyway.
+ *
+ * The cookie name embeds the transaction id so two login forms can run in the
+ * same browser without overwriting each other's secret.
+ */
+export const CIBA_LOGIN_BINDING_COOKIE_PREFIX = 'oidc_ciba_login_';
+
+/**
+ * Build the Set-Cookie value binding one CIBA login transaction to this
+ * browser. Same attributes as the session cookie: HttpOnly (no JS access),
+ * Secure (HTTPS only; http://localhost is treated as trustworthy by browsers)
+ * and SameSite=Lax. Max-Age matches the transaction TTL so an abandoned login
+ * form does not leave a cookie behind.
+ */
+export function buildCibaLoginBindingCookie(
+  transactionId: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    CIBA_LOGIN_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears the binding cookie once the login
+ * succeeded, so the browser does not accumulate one cookie per login form.
+ */
+export function buildClearedCibaLoginBindingCookie(transactionId: string): string {
+  return (
+    CIBA_LOGIN_BINDING_COOKIE_PREFIX + transactionId +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one CIBA login transaction from a Cookie
+ * header. Returns null when the header is missing or this transaction's cookie
+ * is absent, which validateCibaLoginSubmission() rejects with 403.
+ */
+export function parseCibaLoginBindingSecret(
+  cookieHeader: string | null,
+  transactionId: string,
+): string | null {
+  if (!cookieHeader) return null;
+  const name = CIBA_LOGIN_BINDING_COOKIE_PREFIX + transactionId;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return null;
+}
+
+// EXPERIMENTAL — CIBA stores. The in-memory implementations ship with
+// ${EXPERIMENTAL_PACKAGE}/ciba; replace them with persistent stores (Redis, KV,
+// database) in production. Treat authReqId and the login transaction id as
+// opaque external values: never interpolate them into a query, always bind
+// them as parameters. Kept on globalThis for the same reason as the provider
+// stores above: Next.js instantiates route handlers and server actions in
+// separate module layers.
+const cibaStoreRegistry = globalThis as typeof globalThis & {
+  __oidcCibaAuthenticationRequestStore?: CibaAuthenticationRequestStore;
+  __oidcCibaLoginTransactionStore?: CibaLoginTransactionStore;
+};
+
+export const cibaAuthenticationRequestStore: CibaAuthenticationRequestStore =
+  (cibaStoreRegistry.__oidcCibaAuthenticationRequestStore ??=
+    createInMemoryCibaAuthenticationRequestStore());
+
+export const cibaLoginTransactionStore: CibaLoginTransactionStore =
+  (cibaStoreRegistry.__oidcCibaLoginTransactionStore ??=
+    createInMemoryCibaLoginTransactionStore());
+`
+    : '';
   return `import type {
   AuthTransaction,
   AuthTransactionStore,
@@ -915,7 +1087,7 @@ export const deviceAuthorizationStore: DeviceAuthorizationStore =
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}
+} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}
 
 /**
  * In-memory Authorization Transaction Store.
@@ -1733,7 +1905,7 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
-${parStoreImplementation}${deviceStoreImplementation}`;
+${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}`;
 }
 
 export function resolversTemplate(
@@ -3644,6 +3816,536 @@ deviceApp.post('/approve', async (c) => {
 }
 
 /**
+ * EXPERIMENTAL — CIBA backchannel authentication endpoint (CIBA Core 1.0 §7),
+ * generated only with `--enable ciba`.
+ *
+ * Also owns the shared settings module for the feature: the authentication
+ * device UI, the token route dispatch and the discovery route import
+ * `cibaConfig` from here, so all of them read one source of truth.
+ */
+export function backchannelAuthenticationRouteTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
+  // actually issue refresh tokens. Baked in as a literal so the generated route
+  // has no runtime branch on a feature that is fixed at generation time.
+  const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
+  return `/**
+ * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
+ * (CIBA Core 1.0), poll mode.
+ *
+ * This route was generated because the OP was created with \`--enable ciba\`.
+ * It is backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may
+ * change in a breaking way between releases. Do not build production code on it
+ * without pinning the version.
+ *
+ * The consumption device (a call-center console, a kiosk, a smart speaker
+ * backend) POSTs here — back channel, client-authenticated — with a login_hint
+ * naming the user, and receives an auth_req_id it polls the token endpoint
+ * with. The user approves or denies on their own browser at /ciba.
+ *
+ * NOTE (CIBA §15): the login_hint is a user identifier and therefore PII.
+ * Never log it, and never echo it in an error_description. Rate limiting the
+ * endpoint as a whole is deliberately left to the deployment layer (reverse
+ * proxy / platform): an in-process counter cannot work on runtimes without
+ * shared memory between instances. The in-band defenses are mandatory client
+ * authentication, the fixed unknown_user_id wording, and the per-subject
+ * pending-request cap below.
+ */
+import { Hono } from 'hono';
+import {
+  BackchannelAuthenticationError,
+  processBackchannelAuthenticationRequest,
+  type CibaClientInfo,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';
+import {
+  TokenError,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  sanitizeErrorDescription,
+  validateClientAuthMethod,
+  verifyClientSecret,
+} from '${corePkg}';
+import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
+import {
+  cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
+  userStore,
+} from '../store.js';
+
+/**
+ * EXPERIMENTAL — CIBA settings (CIBA Core 1.0).
+ *
+ * Imported by the authentication device UI, the token route and the discovery
+ * route, so keep all of them in sync when changing them.
+ *
+ * - authReqIdExpiresIn: §7.3 expires_in, in seconds (range 30–600). Keep it
+ *   short: it is the window the user has to approve, and the window in which a
+ *   pending request can pile up on the approval screen.
+ * - pollingInterval: §7.3 interval, in seconds (range 1–60). The token endpoint
+ *   raises a record's own interval by 5 every time it answers slow_down (§11).
+ * - maxPendingPerSubject: pending backchannel requests allowed per user (range
+ *   1–100) before new ones are refused — the flood defense for the approval
+ *   screen (the role §7.1.2's unsupported user_code would otherwise play).
+ * - maxLoginAttempts: failed /ciba logins allowed per login transaction before
+ *   it is discarded. Per-transaction only — see the notes in the UI route.
+ */
+export const cibaConfig = {
+  authReqIdExpiresIn: 120,
+  pollingInterval: 5,
+  maxPendingPerSubject: 10,
+  maxLoginAttempts: 5,
+};
+
+// Fail fast on a config edit that leaves the documented ranges: a typo here
+// weakens either the approval-screen flood cap or the polling contract.
+if (cibaConfig.authReqIdExpiresIn < 30 || cibaConfig.authReqIdExpiresIn > 600) {
+  throw new Error('cibaConfig.authReqIdExpiresIn must be between 30 and 600 seconds');
+}
+if (cibaConfig.pollingInterval < 1 || cibaConfig.pollingInterval > 60) {
+  throw new Error('cibaConfig.pollingInterval must be between 1 and 60 seconds');
+}
+if (cibaConfig.maxPendingPerSubject < 1 || cibaConfig.maxPendingPerSubject > 100) {
+  throw new Error('cibaConfig.maxPendingPerSubject must be between 1 and 100');
+}
+
+export const backchannelAuthenticationApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * CIBA §7.1: the backchannel authentication request body MUST be
+ * application/x-www-form-urlencoded.
+ */
+function isFormUrlEncoded(contentType: string): boolean {
+  const [mediaType = ''] = contentType.toLowerCase().split(';');
+  return mediaType.trim() === 'application/x-www-form-urlencoded';
+}
+
+function noStore(c: any): void {
+  // auth_req_id is a credential, so the response follows the token response
+  // rules of RFC 6749 §5.1 / §5.2.
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+}
+
+/**
+ * Backchannel Authentication Endpoint
+ * CIBA Core 1.0 §7.1 / §7.2 / §7.3
+ */
+backchannelAuthenticationApp.post('/', async (c) => {
+  const contentType = c.req.header('Content-Type') ?? '';
+  if (!isFormUrlEncoded(contentType)) {
+    noStore(c);
+    return c.json({ error: 'invalid_request', error_description: 'Backchannel authentication requests must use application/x-www-form-urlencoded' }, 400);
+  }
+
+  // RFC 6749 §3.1: request parameters MUST NOT be repeated. Read the raw body so
+  // URLSearchParams iteration exposes duplicates instead of silently keeping the last.
+  const rawBody = await c.req.text();
+  const params: Record<string, string> = {};
+  const seen = new Set<string>();
+  let duplicateKey: string | undefined;
+  for (const [key, value] of new URLSearchParams(rawBody)) {
+    if (seen.has(key)) {
+      duplicateKey = key;
+      break;
+    }
+    seen.add(key);
+    params[key] = value;
+  }
+
+  if (duplicateKey !== undefined) {
+    noStore(c);
+    return c.json({ error: 'invalid_request', error_description: \`Parameter "\${sanitizeErrorDescription(duplicateKey)}" must not be repeated\` }, 400);
+  }
+
+  const authorization = c.req.header('Authorization') ?? '';
+
+  try {
+    const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
+    const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+
+    // --- Client authentication pipeline -------------------------------------
+    // CIBA §7.1: "The Client MUST authenticate ... using the authentication
+    // method registered for its client_id" — the same pipeline the token
+    // endpoint runs, step function for step function.
+    const presentedCredentials = extractClientCredentials({
+      params,
+      authorizationHeader: authorization,
+    });
+    const client = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(client, presentedCredentials);
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
+
+    // login_hint → subject resolution is the deployment's swap point: the
+    // default (wired in app.ts) treats the hint as a username of the configured
+    // user store. Replace c.set('cibaUserResolver', ...) — or the fallback
+    // below — to resolve email addresses, phone numbers, or your own ids.
+    const resolveUser =
+      c.get('cibaUserResolver') ??
+      (async (loginHint: string) => {
+        const claims = await userStore.getClaims(loginHint);
+        return claims ? { subject: claims.sub } : null;
+      });
+
+    // --- Backchannel authentication pipeline --------------------------------
+    // Validation runs in CIBA §7.1 order inside the experimental package:
+    // client checks (public client / grant registration / delivery mode) →
+    // request parameter rejection → the one-and-only-one hint rule → scope →
+    // binding_message → requested_expiry → login_hint resolution → the
+    // per-subject pending cap → record creation.
+    const response = await processBackchannelAuthenticationRequest({
+      params,
+      client: client as CibaClientInfo,
+      store: cibaStore,
+      config: cibaConfig,
+      refreshTokenFeatureEnabled: ${refreshTokenFeatureEnabled},
+      resolveUser,
+    });
+
+    // Never log auth_req_id (a live credential) or login_hint (PII, CIBA §15).
+
+    noStore(c);
+    return c.json(response);
+  } catch (error) {
+    noStore(c);
+    if (error instanceof BackchannelAuthenticationError) {
+      // CIBA §13 / RFC 6749 §5.2 error shape. Authentication failures never
+      // reach here — they are core TokenErrors, handled below with their 401.
+      return c.json({ error: error.code, error_description: error.errorDescription }, error.statusCode);
+    }
+    if (error instanceof TokenError) {
+      const status = error.statusCode as 400 | 401;
+      if (error.wwwAuthenticate) {
+        c.header('WWW-Authenticate', error.wwwAuthenticate);
+      }
+      return c.json({ error: error.error, error_description: error.errorDescription }, status);
+    }
+    return c.json({ error: 'server_error' }, 500);
+  }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — CIBA authentication device UI, generated only with
+ * `--enable ciba`.
+ *
+ * The GET listing / login form and the two POST steps hang off one mount point
+ * (`/ciba`, `/ciba/login`, `/ciba/approve`) so the whole browser-facing surface
+ * of the feature lives in a single generated file that can be deleted with the
+ * feature.
+ */
+export function cibaVerificationRouteTemplate(corePkg: string): string {
+  return `/**
+ * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
+ * (CIBA Core 1.0), authentication device UI.
+ *
+ * This route was generated because the OP was created with \`--enable ciba\`.
+ * It is backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may
+ * change in a breaking way between releases. Do not build production code on it
+ * without pinning the version.
+ *
+ * CIBA Core leaves the authentication device — how the user is reached and how
+ * they authenticate — outside the specification (§7.1). This UI implements it
+ * as an OP-hosted browser page the user visits themselves: sign in at /ciba,
+ * review the pending requests addressed to you (client, scopes,
+ * binding_message), and approve or deny. The consumption device learns the
+ * outcome only by polling the token endpoint — there is no push channel in
+ * poll mode.
+ *
+ * ## Why the login form demands a binding cookie
+ *
+ * A successful login establishes an OP session, whose reach goes beyond CIBA
+ * (SSO, prompt=none). A hidden csrf_token alone cannot stop login CSRF: the
+ * attacker fetches their own login form, reads a valid transaction id + token
+ * pair, and embeds both in a forged cross-site POST — planting the attacker's
+ * session in the victim's browser. The login transaction's binding cookie
+ * (minted below, hash-stored) is what stops it — see
+ * buildCibaLoginBindingCookie() in store.ts for the full model.
+ *
+ * ## Why approve / deny does NOT use a binding cookie
+ *
+ * The approval is already bound to the authenticated OP session: the record's
+ * subject must equal the session subject, and the per-record csrf_token is only
+ * ever rendered on the session-gated listing. Knowing an auth_req_id gives an
+ * attacker no step to forge.
+ */
+import { Hono } from 'hono';
+import {
+  CibaVerificationError,
+  approveCibaRequest,
+  createCibaLoginTransaction,
+  denyCibaRequest,
+  listPendingCibaRequests,
+  recordCibaLoginFailure,
+  validateCibaLoginSubmission,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';
+import { generateRandomString } from '${corePkg}';
+import {
+  browserSessionStore as defaultBrowserSessionStore,
+  buildCibaLoginBindingCookie,
+  buildClearedCibaLoginBindingCookie,
+  buildSessionCookie,
+  cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
+  cibaLoginTransactionStore as defaultCibaLoginTransactionStore,
+  parseCibaLoginBindingSecret,
+  parseSessionId,
+  userStore,
+} from '../store.js';
+import { defaultViews, renderView } from '../views.js';
+import { cibaConfig } from './backchannel-authentication.js';
+
+export const cibaApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * Attach a Set-Cookie to a Response a view already produced.
+ *
+ * renderView() builds its own Response, so headers staged on the framework
+ * context never reach it. Rebuilding the Response is the framework-neutral way
+ * to add the cookie without making views cookie-aware.
+ */
+function withCookie(response: Response, cookie: string): Response {
+  const headers = new Headers(response.headers);
+  headers.append('Set-Cookie', cookie);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/** Map a verification failure to its error page; anything else is re-thrown. */
+function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+  if (error instanceof CibaVerificationError) {
+    return renderView(
+      views.errorPage({ error: error.message, statusCode: error.statusCode }),
+      { status: error.statusCode },
+    );
+  }
+  throw error;
+}
+
+/** Remaining lifetime of a pending request, in whole seconds, never negative. */
+function remainingSeconds(expiresAt: Date): number {
+  return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
+}
+
+/**
+ * Render the session subject's pending requests with freshly rotated CSRF
+ * tokens (the only place those tokens are ever exposed, and it is
+ * session-gated).
+ */
+async function renderPendingRequests(c: any, subject: string): Promise<Response> {
+  const views = c.get('views') ?? defaultViews;
+  const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+  const pending = await listPendingCibaRequests({ subject, store: cibaStore });
+  return renderView(views.cibaPendingRequestsPage({
+    requests: pending.map((record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      scopes: record.scope,
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  }));
+}
+
+/**
+ * Listing / login form - GET
+ *
+ * With an OP session: list the pending requests addressed to the signed-in
+ * user. Without one: mint a login transaction and show the sign-in form, with
+ * the binding cookie this response sets.
+ */
+cibaApp.get('/', async (c) => {
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const loginTransactionStore =
+    c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+  if (session) {
+    return renderPendingRequests(c, session.subject);
+  }
+
+  const { record, bindingSecret } = await createCibaLoginTransaction(loginTransactionStore);
+  const cookie = buildCibaLoginBindingCookie(
+    record.id,
+    bindingSecret,
+    remainingSeconds(record.expiresAt),
+  );
+  return withCookie(renderView(views.cibaLoginPage({
+    loginTransactionId: record.id,
+    csrfToken: record.csrfToken,
+  })), cookie);
+});
+
+/**
+ * Sign in - POST
+ *
+ * Binding first, then CSRF, then credentials: the binding is what proves this
+ * is the browser the login form was issued to, and it must gate the step that
+ * would otherwise let a forged POST establish an OP session in the victim's
+ * browser.
+ */
+cibaApp.post('/login', async (c) => {
+  const body = await c.req.parseBody();
+  const transactionId = String(body['login_transaction_id'] ?? '');
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const username = String(body['username'] ?? '');
+  const password = String(body['password'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const loginTransactionStore =
+    c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
+  const authenticateUser =
+    c.get('authenticateUser') ??
+    ((u: string, p: string) => userStore.authenticate(u, p));
+
+  let transaction;
+  try {
+    transaction = await validateCibaLoginSubmission({
+      transactionId,
+      csrfToken,
+      bindingSecret: parseCibaLoginBindingSecret(c.req.header('Cookie') ?? null, transactionId),
+      store: loginTransactionStore,
+    });
+  } catch (error) {
+    return renderVerificationError(views, error);
+  }
+
+  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
+  // upstream IdP) without touching anything above or below it.
+  const user = await authenticateUser(username, password);
+  if (!user) {
+    // Per-transaction throttling only. Anyone can mint fresh login
+    // transactions by reloading /ciba, so the aggregate password-guess budget
+    // is the same as the one on /login. Subject-scoped throttling is a
+    // separate concern.
+    const failure = await recordCibaLoginFailure(
+      transaction,
+      loginTransactionStore,
+      cibaConfig.maxLoginAttempts,
+    );
+    if (!failure.canRetry) {
+      // The transaction is gone: this form cannot be retried at all.
+      return renderView(views.errorPage({
+        error: 'Too many login attempts',
+        statusCode: 429,
+      }), { status: 429 });
+    }
+    return renderView(views.cibaLoginPage({
+      loginTransactionId: transaction.id,
+      csrfToken: transaction.csrfToken,
+      error: 'Invalid credentials',
+      remainingAttempts: failure.remainingAttempts,
+    }));
+  }
+
+  // The transaction is single-use: a successful login consumes it, and the
+  // session is established under a NEWLY minted id (never one the request
+  // brought along — session fixation).
+  await loginTransactionStore.delete(transaction.id);
+  const authTime = Math.floor(Date.now() / 1000);
+  const sessionId = generateRandomString(32);
+  await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
+
+  // Two cookies on one response: the new OP session, and the cleared login
+  // binding (it is single-use and would otherwise linger until Max-Age).
+  const listing = await renderPendingRequests(c, user.sub);
+  return withCookie(
+    withCookie(listing, buildSessionCookie(sessionId)),
+    buildClearedCibaLoginBindingCookie(transaction.id),
+  );
+});
+
+/**
+ * Approve or deny - POST
+ *
+ * The only state-changing step of the UI. It demands an OP session whose
+ * subject owns the record, plus the per-record csrf_token from the
+ * session-gated listing.
+ */
+cibaApp.post('/approve', async (c) => {
+  const body = await c.req.parseBody();
+  const authReqId = String(body['auth_req_id'] ?? '');
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const decision = String(body['decision'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+  const consentResolver = c.get('consentResolver');
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+  if (!session) {
+    return renderView(views.errorPage({
+      error: 'Sign in again to review this request',
+      statusCode: 401,
+    }), { status: 401 });
+  }
+
+  if (decision !== 'approve' && decision !== 'deny') {
+    return renderView(views.errorPage({
+      error: 'invalid_request',
+      errorDescription: 'decision must be approve or deny',
+      statusCode: 400,
+    }), { status: 400 });
+  }
+
+  try {
+    if (decision === 'approve') {
+      // subject and csrf_token are validated inside; the record moves to
+      // approved with auth_time, scope and a fresh grantId the token endpoint
+      // reads.
+      const approved = await approveCibaRequest({
+        authReqId,
+        subject: session.subject,
+        csrfToken,
+        authTime: session.authTime,
+        grantId: generateRandomString(32),
+        store: cibaStore,
+      });
+      // Record the consent the same way /consent does, so a later Authorization
+      // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
+      await consentResolver?.recordConsent?.(
+        approved.subject,
+        approved.clientId,
+        approved.approvedScope ?? approved.scope,
+      );
+      await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
+      return renderView(views.cibaCompletedPage({
+        approved: true,
+        clientId: approved.clientId,
+      }));
+    }
+
+    const record = await cibaStore.findByAuthReqId(authReqId);
+    await denyCibaRequest({
+      authReqId,
+      subject: session.subject,
+      csrfToken,
+      store: cibaStore,
+    });
+    return renderView(views.cibaCompletedPage({
+      approved: false,
+      clientId: record?.clientId ?? '',
+    }));
+  } catch (error) {
+    return renderVerificationError(views, error);
+  }
+});
+`;
+}
+
+/**
  * EXPERIMENTAL — JARM settings module, generated only with `--enable jarm`.
  *
  * Kept in its own file (rather than config.ts) so the JARM feature can be
@@ -4316,6 +5018,237 @@ ${deviceRefreshTokenBlock}
     }
 `
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0 §10.1): dispatch the CIBA grant before core's
+  // validateGrantTypeSupported rejects the URN. Every interpolation below
+  // collapses to the current output when the feature is off, so the default
+  // generation is unchanged byte for byte.
+  const cibaGrantImports = features.ciba
+    ? `
+import {
+  CIBA_GRANT_TYPE,
+  CibaGrantError,
+  processCibaGrant,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';
+import { cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore } from '../store.js';`
+    : '';
+  // The CIBA grant issues a refresh token under exactly the conditions the
+  // standard grants do, so the block only exists when refresh tokens do.
+  const cibaRefreshTokenBlock =
+    features.ciba && features.refreshToken
+      ? `
+      // OIDC Core 1.0 §11: offline_access survived the backchannel
+      // authentication endpoint's policy check only if this client may hold
+      // refresh tokens, and the approval screen the user just went through IS
+      // the explicit consent that §11 asks for. Nothing further to gate on here.
+      const cibaRefreshToken = cibaGrant.scope.includes('offline_access')
+        ? generateRandomString(32)
+        : undefined;
+      if (cibaRefreshToken) {
+        const cibaRefreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
+        await cibaRefreshTokenStore.set(cibaRefreshToken, {
+          subject: cibaGrant.subject,
+          clientId: cibaGrant.clientId,
+          scope: cibaGrant.scope,
+          // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
+          // inherit originalIssuedAt so the deadline never slides forward.
+          expiresAt: cibaIssuedAt + cibaTokenConfig.refreshTokenAbsoluteLifetime,
+          originalIssuedAt: cibaIssuedAt,
+          used: false,
+          grantId: cibaGrant.grantId,
+          iat: cibaIssuedAt,
+          issuer: cibaTokenConfig.issuer,
+          audience: cibaAudience,
+          authTime: cibaGrant.authTime,
+          // CIBA §7.1 defines no nonce parameter, so the re-issued ID Token has
+          // none to preserve either.
+          nonce: undefined,
+          acr: cibaAcr,
+          amr: cibaAmr,
+          azp: undefined,
+        });
+      }
+`
+      : '';
+  const cibaRefreshTokenField =
+    features.ciba && features.refreshToken
+      ? `
+        refresh_token: cibaRefreshToken,`
+      : '';
+  const cibaDispatchStep = features.ciba
+    ? `
+    // --- EXPERIMENTAL: CIBA grant (CIBA Core 1.0 §10.1, poll mode) ----------
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject
+    // it with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    if (params.grant_type === CIBA_GRANT_TYPE) {
+      const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+
+      // CIBA §11 state machine. Everything except "approved" throws:
+      // authorization_pending / slow_down / access_denied / expired_token, plus
+      // invalid_request / invalid_grant.
+      const cibaGrant = await processCibaGrant({
+        params,
+        client: tokenClient,
+        store: cibaStore,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const cibaTokenConfig = c.get('config');
+      const cibaPrivateKey = c.get('privateKey');
+      const cibaKeyId = c.get('keyId');
+      // T-022: the ID Token this grant issues follows the SAME key-selection rule
+      // as the standard grants — pick a registered ID Token key whose alg matches
+      // the client's id_token_signed_response_alg (OIDC Dynamic Client
+      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
+      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // it rejects, and would hash at_hash with the wrong algorithm.
+      const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
+      const cibaFallbackIdKey: SigningKey | undefined =
+        c.get('idTokenPrivateKey') !== undefined
+          ? {
+              privateKey: c.get('idTokenPrivateKey'),
+              publicJwk: c.get('idTokenPublicJwk'),
+              keyId: c.get('idTokenKeyId') ?? cibaKeyId,
+            }
+          : undefined;
+      const cibaRegisteredClient = (await tokenClientResolver.findClient(
+        authenticatedClientId,
+      )) as RegisteredClient | null;
+      const cibaRequestedIdTokenAlg = cibaRegisteredClient?.idTokenSignedResponseAlg;
+      let cibaSelectedIdTokenKey: SigningKey;
+      if (cibaIdTokenSigningKeys.length > 0) {
+        try {
+          cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
+        } catch {
+          c.header('Cache-Control', 'no-store');
+          c.header('Pragma', 'no-cache');
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: \`No ID Token signing key registered for alg "\${cibaRequestedIdTokenAlg ?? 'RS256'}"\`,
+            },
+            500,
+          );
+        }
+      } else if (cibaFallbackIdKey) {
+        cibaSelectedIdTokenKey = cibaFallbackIdKey;
+      } else {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+      }
+      const cibaIdTokenPrivateKey = cibaSelectedIdTokenKey.privateKey;
+      const cibaIdTokenKeyId = cibaSelectedIdTokenKey.keyId;
+      const cibaIssuer: AccessTokenIssuer =
+        cibaTokenConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3). CIBA §7.1 has no resource parameter,
+      // so nothing else is requested.
+      const cibaAudience = buildAccessTokenAudience({
+        userInfoEndpoint: \`\${cibaTokenConfig.issuer}/userinfo\`,
+        issuer: cibaTokenConfig.issuer,
+      });
+
+      const cibaIssuedAt = Math.floor(Date.now() / 1000);
+      const cibaAccessTokenPayload = buildAccessTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        audience: cibaAudience,
+        expiresIn: cibaTokenConfig.accessTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+      });
+      const cibaAccessToken = await cibaIssuer.issue({
+        payload: cibaAccessTokenPayload,
+        privateKey: cibaPrivateKey,
+        keyId: cibaKeyId,
+      });
+
+      // The backchannel authentication endpoint requires the openid scope, so
+      // an ID Token is always issued. It carries no nonce (CIBA §7.1 defines no
+      // such parameter, and OIDC Core 1.0 §2 only requires nonce when the
+      // authentication request carried one) and no c_hash (there is no code).
+      // Poll mode adds no CIBA-specific claims either — the auth_req_id claim
+      // of §10.3.1 belongs to the push-mode token delivery message.
+      const cibaAtHash = await computeAtHash(cibaAccessToken, cibaIdTokenPrivateKey);
+      const cibaAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
+      const { acr: cibaAcr, amr: cibaAmr } = await resolveAcrAmr({
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        acrResolver: cibaAcrResolver,
+      });
+      const cibaIdTokenPayload = buildIdTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresIn: cibaTokenConfig.idTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+        atHash: cibaAtHash,
+        authTime: cibaGrant.authTime,
+        acr: cibaAcr,
+        amr: cibaAmr,
+      });
+      const cibaIdToken = await generateIdToken({
+        payload: cibaIdTokenPayload,
+        privateKey: cibaIdTokenPrivateKey,
+        keyId: cibaIdTokenKeyId,
+      });
+
+      await accessTokenStore.set(cibaAccessToken, {
+        sub: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresAt: cibaIssuedAt + cibaTokenConfig.accessTokenExpiresIn,
+        // Inherit the grantId minted at approval so revoking the grant kills
+        // every token issued from this backchannel authentication.
+        grantId: cibaGrant.grantId,
+        iat: cibaIssuedAt,
+        nbf: cibaIssuedAt,
+        audience: cibaAudience,
+        issuer: cibaTokenConfig.issuer,
+        jti: cibaAccessTokenPayload.jti,
+      });
+${cibaRefreshTokenBlock}
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: cibaAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: cibaTokenConfig.accessTokenExpiresIn,
+        id_token: cibaIdToken,
+        scope: cibaGrant.scope.join(' '),${cibaRefreshTokenField}
+      });
+    }
+`
+    : '';
+  const cibaGrantCatchBranch = features.ciba
+    ? `    if (error instanceof CibaGrantError) {
+      // CIBA §11: authorization_pending / slow_down / access_denied /
+      // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
+      // only come from client authentication, which runs before the branch and
+      // throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+`
+    : '';
   const deviceGrantCatchBranch = features.deviceAuthorizationGrant
     ? `    if (error instanceof DeviceAuthorizationError) {
       // RFC 8628 §3.5: authorization_pending / slow_down / access_denied /
@@ -4756,7 +5689,7 @@ import {
   accessTokenStore as defaultAccessTokenStore,
   authCodeStore as defaultAuthCodeStore,${refreshStoreImport}
 } from '../store.js';
-import type { RegisteredClient } from '../config.js';${tokenExchangeImports}${idJagImports}${deviceGrantImports}
+import type { RegisteredClient } from '../config.js';${tokenExchangeImports}${idJagImports}${deviceGrantImports}${cibaGrantImports}
 ${tokenExchangeConfigBlock}${idJagConfigBlock}
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -4867,7 +5800,7 @@ ${refreshStoreConst}
     await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
     const authenticatedClientId = presentedCredentials.clientId;
-${idJagIssuanceDispatchStep}${idJagRedemptionDispatchStep}${tokenExchangeDispatchStep}${deviceCodeDispatchStep}
+${idJagIssuanceDispatchStep}${idJagRedemptionDispatchStep}${tokenExchangeDispatchStep}${deviceCodeDispatchStep}${cibaDispatchStep}
     // --- Token request validation pipeline --------------------------------
     // Each step below is an independent core function, called in the same order
     // as core's validateTokenRequest(). Delete a call to drop that validation,
@@ -5102,7 +6035,7 @@ ${refreshTokenPersistenceBlock}    c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(tokenResponse);
   } catch (error) {
-${idJagCatchBranch}${tokenExchangeCatchBranch}${deviceGrantCatchBranch}    if (error instanceof TokenError) {
+${idJagCatchBranch}${tokenExchangeCatchBranch}${deviceGrantCatchBranch}${cibaGrantCatchBranch}    if (error instanceof TokenError) {
       const status = error.statusCode as 400 | 401;
       // RFC 6750 Section 3 / OAuth 2.1 Section 5.2: 401 responses include WWW-Authenticate
       if (error.wwwAuthenticate) {
@@ -5488,6 +6421,9 @@ export function discoveryRouteTemplate(
     ...(features.deviceAuthorizationGrant
       ? [`'urn:ietf:params:oauth:grant-type:device_code'`]
       : []),
+    // CIBA Core 1.0 §4: the CIBA grant is advertised only when it is generated,
+    // so a client can detect support through discovery.
+    ...(features.ciba ? [`'urn:openid:params:grant-type:ciba'`] : []),
   ];
   const grantTypesSupportedEntry = `    grantTypesSupported: [${supportedGrantTypes.join(', ')}],
 `;
@@ -5581,6 +6517,17 @@ import { parConfig } from './par.js';`
     ? `
     // EXPERIMENTAL — RFC 8628 §4 metadata.
     device_authorization_endpoint: \`\${issuer}/device_authorization\`,`
+    : '';
+  // EXPERIMENTAL (CIBA Core 1.0 §4): both REQUIRED metadata entries are merged
+  // onto the metadata object core builds, so core needs no change to advertise
+  // them. The OPTIONAL entries (signing algs, user code support) are not
+  // output: this build supports neither signed requests nor user codes.
+  const cibaDiscoveryMetadata = features.ciba
+    ? `
+    // EXPERIMENTAL — CIBA Core 1.0 §4 metadata. Only the poll delivery mode is
+    // offered, so exactly one mode is advertised.
+    backchannel_token_delivery_modes_supported: ['poll'],
+    backchannel_authentication_endpoint: \`\${issuer}/backchannel_authentication\`,`
     : '';
   // EXPERIMENTAL (ID-JAG draft §7): both role advertisements are merged onto
   // the metadata object core builds, so core needs no change. Only the profile
@@ -5708,7 +6655,7 @@ ${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
   // not in OIDC Discovery, so it is added separately.
   return c.json({
     ...metadata,
-    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}
+    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${cibaDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}
   });
 });
 `;
@@ -6349,6 +7296,43 @@ import { deviceApp } from './routes/device.js';\n`
   const deviceStoreImport = features.deviceAuthorizationGrant
     ? `  deviceAuthorizationStore,\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): same policy split as createApp — the
+  // back-channel endpoint shares the /token CORS policy, the authentication
+  // device UI is plain browser navigation.
+  const cibaImport = features.ciba
+    ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';\n`
+    : '';
+  const cibaCors = features.ciba
+    ? `  app.use('/backchannel_authentication', protectedCors);\n`
+    : '';
+  const cibaMount = features.ciba
+    ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);\n`
+    : '';
+  const cibaStorageContext = features.ciba
+    ? `    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));`
+    : '';
+  const cibaStoreImport = features.ciba
+    ? `  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,\n`
+    : '';
+  const cibaOptionsField = features.ciba
+    ? `  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -6366,7 +7350,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -6380,7 +7364,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}${deviceStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -6471,7 +7455,7 @@ export interface ApplyOidcOptions {
    * Token / UserInfo / Introspection / Revocation エンドポイントに適用される。
    * Discovery / JWKS は仕様上常に '*' 固定 (OIDC Discovery / RFC 8414 で公開資産扱い)。
    */
-  corsOrigins?: CorsOrigins;
+${cibaOptionsField}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -6524,7 +7508,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -6594,7 +7578,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-kn
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -6615,7 +7599,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -7084,6 +8068,172 @@ function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): string {
   deviceCompletedPage: defaultDeviceCompletedPage,
 `
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the three CIBA pages are generated only with
+  // --enable ciba. Every interpolation below collapses to '' when the feature
+  // is off, so the default views.ts is unchanged byte for byte.
+  const cibaParamTypes = features.ciba
+    ? `
+export interface CibaLoginPageParams {
+  /** Login transaction id; carried through as a hidden field. */
+  loginTransactionId: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts for this login transaction */
+  remainingAttempts?: number;
+}
+
+export interface CibaPendingRequestParams {
+  /** auth_req_id; carried through as a hidden field of the decision form. */
+  authReqId: string;
+  /** Client that asked for the backchannel authentication */
+  clientId: string;
+  /** Scopes the client asked for */
+  scopes: string[];
+  /**
+   * CIBA Core 1.0 §7.1 binding_message: shown so the user can compare it with
+   * the message on the consumption device — the visual check that they are
+   * approving THEIR transaction and not someone else's. Client-supplied text:
+   * it MUST be escaped before rendering.
+   */
+  bindingMessage?: string;
+  /** Seconds until this request expires */
+  expiresInSeconds: number;
+  /** Per-record CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+}
+
+export interface CibaPendingRequestsPageParams {
+  /** Pending backchannel authentication requests addressed to the signed-in user */
+  requests: CibaPendingRequestParams[];
+}
+
+export interface CibaCompletedPageParams {
+  /** true when the user approved, false when they denied */
+  approved: boolean;
+  /** Client the decision applied to */
+  clientId: string;
+}
+`
+    : '';
+  const cibaViewsMembers = features.ciba
+    ? `  /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
+  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
+  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
+  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
+`
+    : '';
+  const cibaDefaultViews = features.ciba
+    ? `function defaultCibaLoginPage(params: CibaLoginPageParams): string {
+  const errorHtml = params.error
+    ? \`<p style="color: red;">\${escapeHtml(params.error)}\${
+        params.remainingAttempts !== undefined
+          ? \`. Attempts remaining: \${params.remainingAttempts}\`
+          : ''
+      }</p>\`
+    : '';
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Sign in</title></head>
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in to review sign-in requests sent to you.</p>
+  \${errorHtml}
+  <form method="POST" action="/ciba/login">
+    <input type="hidden" name="login_transaction_id" value="\${escapeHtml(params.loginTransactionId)}" />
+    <input type="hidden" name="csrf_token" value="\${escapeHtml(params.csrfToken)}" />
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>\`;
+}
+
+function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): string {
+  if (params.requests.length === 0) {
+    return \`<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+  <p>No pending sign-in requests.</p>
+</body>
+</html>\`;
+  }
+
+  // CIBA Core 1.0 §7.1: the binding_message is repeated here on purpose. Ask
+  // the user to check it against the device that started the request before
+  // approving. The Deny button is rendered with the same prominence as Approve.
+  const requestListHtml = params.requests
+    .map((request) => {
+      const scopeListHtml = request.scopes
+        .map((s) => \`      <li>\${escapeHtml(s)}</li>\`)
+        .join('\\n');
+      const bindingMessageHtml = request.bindingMessage
+        ? \`    <p>Confirm that your device is showing this message: <strong>\${escapeHtml(request.bindingMessage)}</strong></p>\\n\`
+        : '';
+      return \`  <section>
+    <p>Client <strong>\${escapeHtml(request.clientId)}</strong> is requesting access to the following scopes:</p>
+    <ul>
+\${scopeListHtml}
+    </ul>
+\${bindingMessageHtml}    <p>This request expires in \${request.expiresInSeconds} seconds.</p>
+    <form method="POST" action="/ciba/approve">
+      <input type="hidden" name="auth_req_id" value="\${escapeHtml(request.authReqId)}" />
+      <input type="hidden" name="csrf_token" value="\${escapeHtml(request.csrfToken)}" />
+      <button type="submit" name="decision" value="approve">Approve</button>
+      <button type="submit" name="decision" value="deny">Deny</button>
+    </form>
+  </section>\`;
+    })
+    .join('\\n');
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+  <p>Only approve a request you started yourself on another device.</p>
+\${requestListHtml}
+</body>
+</html>\`;
+}
+
+function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
+  const outcome = params.approved
+    ? \`<p>You approved <strong>\${escapeHtml(params.clientId)}</strong>.</p>\`
+    : \`<p>You denied <strong>\${escapeHtml(params.clientId)}</strong>.</p>\`;
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+\${outcome}
+  <p>You can close this page and go back to your device.</p>
+</body>
+</html>\`;
+}
+
+`
+    : '';
+  const cibaDefaultViewsEntries = features.ciba
+    ? `  cibaLoginPage: defaultCibaLoginPage,
+  cibaPendingRequestsPage: defaultCibaPendingRequestsPage,
+  cibaCompletedPage: defaultCibaCompletedPage,
+`
+    : '';
   return `/**
  * UI Views for OpenID Connect Provider.
  *
@@ -7137,7 +8287,7 @@ export interface ErrorPageParams {
   /** HTTP status code */
   statusCode: number;
 }
-${deviceParamTypes}
+${deviceParamTypes}${cibaParamTypes}
 // ============================================================
 // Views Interface
 // ============================================================
@@ -7156,7 +8306,7 @@ export interface Views {
   consentPage(params: ConsentPageParams): ViewResult;
   /** Render a generic error page */
   errorPage(params: ErrorPageParams): ViewResult;
-${deviceViewsMembers}}
+${deviceViewsMembers}${cibaViewsMembers}}
 
 /** Options applied when renderView wraps an HTML string into a Response. */
 export interface RenderViewInit {
@@ -7286,7 +8436,7 @@ function defaultErrorPage(params: ErrorPageParams): string {
 </html>\`;
 }
 
-${deviceDefaultViews}/**
+${deviceDefaultViews}${cibaDefaultViews}/**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
  */
@@ -7294,7 +8444,7 @@ export const defaultViews: Views = {
   loginPage: defaultLoginPage,
   consentPage: defaultConsentPage,
   errorPage: defaultErrorPage,
-${deviceDefaultViewsEntries}};
+${deviceDefaultViewsEntries}${cibaDefaultViewsEntries}};
 
 /**
  * Build a Views instance, overriding any subset of the default views with your
@@ -8535,6 +9685,60 @@ function deviceAuthorizationConformanceClients(features: OidcFeatureConfig): str
 `;
 }
 
+function cibaConformanceClients(features: OidcFeatureConfig): string {
+  if (!features.ciba) return '';
+  const cibaGrantTypes = features.refreshToken
+    ? `['urn:openid:params:grant-type:ciba', 'refresh_token']`
+    : `['urn:openid:params:grant-type:ciba']`;
+  return `  // EXPERIMENTAL (CIBA Core 1.0): a client registered for the CIBA grant, plus
+  // a second one so the contract test can prove an auth_req_id is refused when
+  // it is presented by a client other than the one it was issued to (§11).
+  ['c-ciba', {
+    clientId: 'c-ciba',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ${cibaGrantTypes},
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  ['c-ciba-other', {
+    clientId: 'c-ciba-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  // A client that registered the ping delivery mode, so the contract test can
+  // prove this poll-only provider refuses it (CIBA §4 advertises ['poll']).
+  ['c-ciba-ping', {
+    clientId: 'c-ciba-ping',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    backchannelTokenDeliveryMode: 'ping' as const,
+  }],
+  // A CIBA client that registered id_token_signed_response_alg, so the contract
+  // test can prove the CIBA grant honors it just like the standard grants
+  // (OIDC Dynamic Client Registration 1.0 §2).
+  ['c-ciba-es256', {
+    clientId: 'c-ciba-es256',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    idTokenSignedResponseAlg: 'ES256' as const,
+  }],
+`;
+}
+
 function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
   if (!features.tokenExchange) return '';
   return `  // EXPERIMENTAL (RFC 8693): a confidential client registered for the exchange
@@ -8709,7 +9913,7 @@ export function conformanceTestClientsBlock(features: OidcFeatureConfig): string
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_basic',
   }],
-${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}]);
 `;
   }
   return `const testClients = new Map<string, RegisteredClient>([
@@ -8756,7 +9960,7 @@ ${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClie
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_post',
   }],
-${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}]);
 `;
 }
 
@@ -13597,6 +14801,900 @@ ${refreshTokenExpectation}    });
 `;
 }
 
+export function cibaConformanceBlock(features: OidcFeatureConfig): string {
+  if (!features.ciba) {
+    return `
+  // CIBA is disabled in this generated provider: no backchannel authentication
+  // endpoint, no authentication device UI, no metadata, and the URN stays an
+  // unsupported grant. These pin the default-off contract so enabling the
+  // feature by accident is visible.
+  describe('CIBA disabled (CIBA Core 1.0)', () => {
+    it('should not serve a backchannel authentication endpoint', async () => {
+      const res = await app.request('/backchannel_authentication', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: 'c-conf', scope: 'openid', login_hint: 'testuser' }).toString(),
+      });
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should not serve the authentication device UI', async () => {
+      const res = await app.request('/ciba');
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should reject the CIBA grant with unsupported_grant_type', async () => {
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          auth_req_id: 'anything',
+          client_id: 'c-conf',
+          client_secret: 's',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('unsupported_grant_type');
+    });
+
+    it('should not advertise CIBA metadata', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+      const metadata = await res.json();
+
+      expect(metadata.backchannel_authentication_endpoint).toBeUndefined();
+      expect(metadata.backchannel_token_delivery_modes_supported).toBeUndefined();
+    });
+
+    it('should not advertise the CIBA grant type', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+      const metadata = await res.json();
+
+      expect(
+        (metadata.grant_types_supported as string[]).includes(
+          'urn:openid:params:grant-type:ciba',
+        ),
+      ).toBe(false);
+    });
+  });
+`;
+  }
+  const refreshTokenExpectation = features.refreshToken
+    ? `
+    it('should issue a refresh token when offline_access was approved', async () => {
+      // OIDC Core 1.0 §11: the approval screen IS the explicit consent, and
+      // c-ciba is registered for the refresh_token grant.
+      const flow = await runCibaFlow({ scope: 'openid offline_access' });
+      const res = await pollCibaToken(flow.auth_req_id);
+      const body = await res.json();
+
+      expect(typeof body.refresh_token).toBe('string');
+    });
+`
+    : `
+    it('should not issue a refresh token when the refresh-token feature is off', async () => {
+      const flow = await runCibaFlow({ scope: 'openid offline_access' });
+      const res = await pollCibaToken(flow.auth_req_id);
+      const body = await res.json();
+
+      expect(body.refresh_token).toBeUndefined();
+    });
+`;
+  return `
+  // EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
+  // (CIBA Core 1.0, poll mode). Generated because this provider was created
+  // with --enable ciba.
+  describe('CIBA (CIBA Core 1.0, poll mode)', () => {
+    const CIBA_URN = 'urn:openid:params:grant-type:ciba';
+
+    // The record store is module-global and outlives each test, while the
+    // backchannel endpoint caps pending requests per subject
+    // (cibaConfig.maxPendingPerSubject). Clearing testuser's leftovers keeps
+    // every test inside the cap and keeps the listing assertions deterministic.
+    afterEach(async () => {
+      for (const record of await cibaAuthenticationRequestStore.listPendingBySubject('testuser')) {
+        await cibaAuthenticationRequestStore.delete(record.authReqId);
+      }
+    });
+
+    /**
+     * The app under test. Defaults to the shared one; the ID Token signing key
+     * selection test passes an app built on a mixed RS256 + ES256 key set.
+     */
+    type CibaTargetApp = { request: (path: string, init?: RequestInit) => Promise<Response> };
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function requestBackchannelAuthentication(
+      overrides: Record<string, string> = {},
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/backchannel_authentication', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-ciba',
+          client_secret: 's',
+          scope: 'openid',
+          login_hint: 'testuser',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function pollCibaToken(
+      authReqId: string,
+      overrides: Record<string, string> = {},
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: CIBA_URN,
+          auth_req_id: authReqId,
+          client_id: 'c-ciba',
+          client_secret: 's',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function cibaCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function loginTransactionIdFrom(html: string): string {
+      return html.match(/name="login_transaction_id" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    /** All Set-Cookie name=value pairs of a response, joined for a Cookie header. */
+    function cibaCookieJar(...responses: Response[]): string {
+      return responses
+        .flatMap((res) => res.headers.getSetCookie())
+        .map((cookie) => cookie.split(';')[0] ?? '')
+        .filter((pair) => pair.length > 0 && !pair.endsWith('='))
+        .join('; ');
+    }
+
+    function cibaLogin(
+      body: Record<string, string>,
+      cookie: string,
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/ciba/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    function cibaDecide(
+      body: Record<string, string>,
+      cookie: string,
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/ciba/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    /**
+     * Sign in on the authentication device UI and return the pending-requests
+     * listing plus the session cookie. The login binding cookie is carried
+     * forward exactly as a browser would; without it the OP answers 403.
+     */
+    async function cibaSignIn(
+      target: CibaTargetApp = app,
+    ): Promise<{ listingHtml: string; sessionCookie: string }> {
+      const form = await target.request('/ciba');
+      const formHtml = await form.text();
+      const loginRes = await cibaLogin(
+        {
+          login_transaction_id: loginTransactionIdFrom(formHtml),
+          csrf_token: cibaCsrfFrom(formHtml),
+          username: 'testuser',
+          password: 'password',
+        },
+        cibaCookieJar(form),
+        target,
+      );
+      return {
+        listingHtml: await loginRes.text(),
+        sessionCookie: cibaCookieJar(loginRes),
+      };
+    }
+
+    /**
+     * Drive the whole browser side of the flow: sign in, find the request's
+     * csrf token on the listing, and record the decision.
+     */
+    async function runCibaFlow(
+      overrides: Record<string, string> = {},
+      decision: 'approve' | 'deny' = 'approve',
+      target: CibaTargetApp = app,
+    ): Promise<{ auth_req_id: string; completed: Response }> {
+      const authorization = await (await requestBackchannelAuthentication(overrides, target)).json();
+      const { listingHtml, sessionCookie } = await cibaSignIn(target);
+      const completed = await cibaDecide(
+        {
+          auth_req_id: authorization.auth_req_id,
+          csrf_token: cibaCsrfFrom(listingHtml),
+          decision,
+        },
+        sessionCookie,
+        target,
+      );
+      return { auth_req_id: authorization.auth_req_id, completed };
+    }
+
+    describe('Backchannel authentication endpoint (CIBA Section 7)', () => {
+      it('should return the three response fields with a non-cacheable body', async () => {
+        const res = await requestBackchannelAuthentication();
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual(['auth_req_id', 'expires_in', 'interval']);
+      });
+
+      it('should return the configured lifetime and poll interval', async () => {
+        const body = await (await requestBackchannelAuthentication()).json();
+
+        expect([body.expires_in, body.interval]).toEqual([120, 5]);
+      });
+
+      it('should mint a 256-bit auth_req_id in the Base64URL character set', async () => {
+        // CIBA Section 7.3: at least 128 bits of entropy, characters limited to
+        // A-Z a-z 0-9 . - _ (Base64URL is a subset).
+        const body = await (await requestBackchannelAuthentication()).json();
+
+        expect(/^[A-Za-z0-9_-]{43}$/.test(body.auth_req_id)).toBe(true);
+      });
+
+      it('should issue a distinct auth_req_id for every request', async () => {
+        const first = await (await requestBackchannelAuthentication()).json();
+        const second = await (await requestBackchannelAuthentication()).json();
+
+        expect(first.auth_req_id === second.auth_req_id).toBe(false);
+      });
+
+      it('should honor requested_expiry by clamping it into the allowed range', async () => {
+        const body = await (await requestBackchannelAuthentication({ requested_expiry: '60' })).json();
+
+        expect(body.expires_in).toBe(60);
+      });
+
+      it('should reject a body that is not form-urlencoded', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: 'c-ciba', scope: 'openid', login_hint: 'testuser' }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Backchannel authentication requests must use application/x-www-form-urlencoded',
+        });
+      });
+
+      it('should reject an unauthenticated request with 401 invalid_client', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-ciba', scope: 'openid', login_hint: 'testuser' }).toString(),
+        });
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      it('should reject a client that is not registered for the CIBA grant', async () => {
+        const res = await requestBackchannelAuthentication({ client_id: 'c-conf' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the CIBA grant',
+        });
+      });
+
+      it('should reject a client registered for the ping delivery mode', async () => {
+        // This provider only advertises ['poll'] (CIBA Section 4).
+        const res = await requestBackchannelAuthentication({ client_id: 'c-ciba-ping' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'This provider only supports the poll token delivery mode',
+        });
+      });
+
+      it('should reject a request with no scope', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-ciba',
+            client_secret: 's',
+            login_hint: 'testuser',
+          }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: scope',
+        });
+      });
+
+      it('should reject a scope without openid', async () => {
+        const res = await requestBackchannelAuthentication({ scope: 'profile' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_scope',
+          error_description: 'The openid scope is required',
+        });
+      });
+
+      it('should reject a request with no hint', async () => {
+        // CIBA Section 7.1: one (and only one) of the hints is REQUIRED.
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-ciba',
+            client_secret: 's',
+            scope: 'openid',
+          }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Exactly one of login_hint, id_token_hint or login_hint_token is required',
+        });
+      });
+
+      it('should reject a request with two hints', async () => {
+        const res = await requestBackchannelAuthentication({ id_token_hint: 'x' });
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe('invalid_request');
+      });
+
+      it('should reject id_token_hint as an unsupported hint type', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-ciba',
+            client_secret: 's',
+            scope: 'openid',
+            id_token_hint: 'x',
+          }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Only login_hint is supported by this provider',
+        });
+      });
+
+      it('should answer an unknown login_hint with the fixed unknown_user_id wording', async () => {
+        const res = await requestBackchannelAuthentication({ login_hint: 'nobody' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unknown_user_id',
+          error_description: 'The login_hint could not be matched to a user',
+        });
+      });
+
+      it('should reject an oversized binding_message', async () => {
+        const res = await requestBackchannelAuthentication({ binding_message: 'a'.repeat(101) });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_binding_message',
+          error_description: 'binding_message must be 1 to 100 characters without control characters',
+        });
+      });
+
+      it('should reject a non-integer requested_expiry', async () => {
+        const res = await requestBackchannelAuthentication({ requested_expiry: 'soon' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'requested_expiry must be a positive integer',
+        });
+      });
+    });
+
+    describe('Discovery metadata (CIBA Section 4)', () => {
+      it('should advertise the backchannel authentication endpoint', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.backchannel_authentication_endpoint).toBe(
+          'http://localhost:3000/backchannel_authentication',
+        );
+      });
+
+      it('should advertise only the poll delivery mode', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.backchannel_token_delivery_modes_supported).toEqual(['poll']);
+      });
+
+      it('should advertise the CIBA grant type', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect((metadata.grant_types_supported as string[]).includes(CIBA_URN)).toBe(true);
+      });
+    });
+
+    describe('Authentication device UI', () => {
+      it('should show the sign-in form when no OP session exists', async () => {
+        const res = await app.request('/ciba');
+        const html = await res.text();
+
+        expect(res.status).toBe(200);
+        expect(html.includes('action="/ciba/login"')).toBe(true);
+      });
+
+      it('should set the login binding cookie with the exact hardening attributes', async () => {
+        const res = await app.request('/ciba');
+        const html = await res.text();
+        const cookie = res.headers.getSetCookie()[0] ?? '';
+
+        expect(cookie.startsWith('oidc_ciba_login_' + loginTransactionIdFrom(html) + '=')).toBe(true);
+        expect(cookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+      });
+
+      it('should reject /ciba/login without the binding cookie even with a valid csrf_token', async () => {
+        // The whole point: a valid transaction id + csrf pair is obtainable by
+        // anyone who loads /ciba themselves, so it must NOT suffice on its own.
+        const form = await app.request('/ciba');
+        const html = await form.text();
+
+        const res = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(html),
+            csrf_token: cibaCsrfFrom(html),
+            username: 'testuser',
+            password: 'password',
+          },
+          '',
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should not establish a session when /ciba/login is unbound', async () => {
+        const form = await app.request('/ciba');
+        const html = await form.text();
+
+        const res = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(html),
+            csrf_token: cibaCsrfFrom(html),
+            username: 'testuser',
+            password: 'password',
+          },
+          '',
+        );
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should reject a wrong csrf_token even with a valid binding cookie', async () => {
+        const form = await app.request('/ciba');
+        const html = await form.text();
+
+        const res = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(html),
+            csrf_token: 'forged',
+            username: 'testuser',
+            password: 'password',
+          },
+          cibaCookieJar(form),
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should discard the login transaction after too many failed attempts', async () => {
+        const form = await app.request('/ciba');
+        const html = await form.text();
+        const cookie = cibaCookieJar(form);
+        const credentials = {
+          login_transaction_id: loginTransactionIdFrom(html),
+          csrf_token: cibaCsrfFrom(html),
+          username: 'testuser',
+          password: 'wrong',
+        };
+
+        let res = await cibaLogin(credentials, cookie);
+        for (let i = 0; i < 4; i++) {
+          res = await cibaLogin(credentials, cookie);
+        }
+        const retry = await cibaLogin({ ...credentials, password: 'password' }, cookie);
+
+        expect(res.status).toBe(429);
+        // The transaction is gone: even the right password cannot use this form.
+        expect(retry.status).toBe(403);
+      });
+
+      it('should list the pending request with its client, scopes and binding message', async () => {
+        await requestBackchannelAuthentication({ binding_message: 'AB-123' });
+        const { listingHtml } = await cibaSignIn();
+
+        expect(listingHtml.includes('<strong>c-ciba</strong>')).toBe(true);
+        expect(listingHtml.includes('<li>openid</li>')).toBe(true);
+        expect(listingHtml.includes('<strong>AB-123</strong>')).toBe(true);
+      });
+
+      it('should HTML-escape the binding message on the approval screen', async () => {
+        await requestBackchannelAuthentication({
+          binding_message: "<img src=x onerror=alert(1)>",
+        });
+        const { listingHtml } = await cibaSignIn();
+
+        expect(listingHtml.includes('<img src=x')).toBe(false);
+        expect(listingHtml.includes('&lt;img src=x onerror=alert(1)&gt;')).toBe(true);
+      });
+
+      it('should show an empty listing to a user with no pending requests', async () => {
+        const { listingHtml } = await cibaSignIn();
+
+        expect(listingHtml.includes('No pending sign-in requests.')).toBe(true);
+      });
+
+      it('should not list requests addressed to another user', async () => {
+        // The pending request names testuser; otheruser signs in and must not
+        // see it (nor its csrf_token).
+        await requestBackchannelAuthentication();
+        const form = await app.request('/ciba');
+        const formHtml = await form.text();
+        const loginRes = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(formHtml),
+            csrf_token: cibaCsrfFrom(formHtml),
+            username: 'otheruser',
+            password: 'password',
+          },
+          cibaCookieJar(form),
+        );
+        const listingHtml = await loginRes.text();
+
+        expect(listingHtml.includes('No pending sign-in requests.')).toBe(true);
+      });
+
+      it('should refuse the decision without an OP session', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { listingHtml } = await cibaSignIn();
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: cibaCsrfFrom(listingHtml),
+            decision: 'approve',
+          },
+          '',
+        );
+
+        expect(res.status).toBe(401);
+      });
+
+      it('should refuse a decision by a session whose subject does not own the record', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { listingHtml } = await cibaSignIn();
+        const csrfToken = cibaCsrfFrom(listingHtml);
+        // otheruser signs in on their own browser and replays testuser's form.
+        const otherForm = await app.request('/ciba');
+        const otherFormHtml = await otherForm.text();
+        const otherLogin = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(otherFormHtml),
+            csrf_token: cibaCsrfFrom(otherFormHtml),
+            username: 'otheruser',
+            password: 'password',
+          },
+          cibaCookieJar(otherForm),
+        );
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: csrfToken,
+            decision: 'approve',
+          },
+          cibaCookieJar(otherLogin),
+        );
+
+        expect(res.status).toBe(403);
+        // The record is untouched: the rightful user can still decide.
+        const poll = await pollCibaToken(authorization.auth_req_id);
+        expect((await poll.json()).error).toBe('authorization_pending');
+      });
+
+      it('should refuse a decision with a wrong csrf_token', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { sessionCookie } = await cibaSignIn();
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: 'forged',
+            decision: 'approve',
+          },
+          sessionCookie,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should refuse an unknown decision value', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { listingHtml, sessionCookie } = await cibaSignIn();
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: cibaCsrfFrom(listingHtml),
+            decision: 'maybe',
+          },
+          sessionCookie,
+        );
+
+        expect(res.status).toBe(400);
+      });
+    });
+
+    describe('Token polling (CIBA Section 10.1 / 11)', () => {
+      it('should answer authorization_pending before the user decides', async () => {
+        const body = await (await requestBackchannelAuthentication()).json();
+        const res = await pollCibaToken(body.auth_req_id);
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(await res.json()).toEqual({
+          error: 'authorization_pending',
+          error_description: 'The authentication request is still pending',
+        });
+      });
+
+      it('should answer slow_down when polled again inside the interval', async () => {
+        const body = await (await requestBackchannelAuthentication()).json();
+        await pollCibaToken(body.auth_req_id);
+        const res = await pollCibaToken(body.auth_req_id);
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'slow_down',
+          error_description: 'Polling too frequently. Increase the interval by 5 seconds.',
+        });
+      });
+
+      it('should reject a missing auth_req_id with invalid_request', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: CIBA_URN,
+            client_id: 'c-ciba',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: auth_req_id',
+        });
+      });
+
+      it('should reject an unknown auth_req_id with invalid_grant', async () => {
+        const res = await pollCibaToken('not-a-real-auth-req-id');
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The auth_req_id is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject an auth_req_id presented by another client with the same wording', async () => {
+        // CIBA Section 11: the auth_req_id belongs to the client it was issued
+        // to. The wording matches the unknown-id case so existence is not leaked.
+        const body = await (await requestBackchannelAuthentication()).json();
+        const res = await pollCibaToken(body.auth_req_id, {
+          client_id: 'c-ciba-other',
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The auth_req_id is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should answer access_denied after the user denies', async () => {
+        const flow = await runCibaFlow({}, 'deny');
+        const res = await pollCibaToken(flow.auth_req_id);
+
+        expect(await res.json()).toEqual({
+          error: 'access_denied',
+          error_description: 'The end-user denied the authentication request',
+        });
+      });
+    });
+
+    describe('Token issuance (CIBA Section 10.1 → OIDC Core 1.0 Section 3.1.3.3)', () => {
+      it('should issue an access token and an ID Token after approval', async () => {
+        const flow = await runCibaFlow();
+        const res = await pollCibaToken(flow.auth_req_id);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(body.token_type).toBe('Bearer');
+        expect(body.scope).toBe('openid');
+        expect(typeof body.access_token).toBe('string');
+        expect(typeof body.id_token).toBe('string');
+      });
+
+      it('should omit nonce and c_hash from the ID Token', async () => {
+        // CIBA Section 7.1 defines no nonce parameter, and there is no
+        // authorization code, so neither claim has a value to carry
+        // (OIDC Core 1.0 Section 2). Poll mode adds no CIBA-specific claims:
+        // the auth_req_id claim of Section 10.3.1 belongs to push delivery.
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(payload.nonce).toBeUndefined();
+        expect(payload.c_hash).toBeUndefined();
+      });
+
+      it('should carry the auth_time recorded at approval', async () => {
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(typeof payload.auth_time).toBe('number');
+        expect(payload.aud).toBe('c-ciba');
+      });
+
+      it('should let the issued access token reach the UserInfo endpoint', async () => {
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + body.access_token },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+
+      it('should refuse to redeem the same auth_req_id twice', async () => {
+        const flow = await runCibaFlow();
+        await pollCibaToken(flow.auth_req_id);
+        const res = await pollCibaToken(flow.auth_req_id);
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The auth_req_id is invalid, expired, or was issued to another client',
+        });
+      });
+${refreshTokenExpectation}    });
+
+    describe('ID Token signing key selection (OIDC Dynamic Client Registration 1.0 Section 2)', () => {
+      /** JOSE header of a compact JWS, decoded. */
+      function cibaJoseHeader(jwt: string): Record<string, unknown> {
+        const segment = jwt.split('.')[0] ?? '';
+        return JSON.parse(
+          new TextDecoder().decode(
+            Uint8Array.from(atob(segment.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)),
+          ),
+        );
+      }
+
+      // A client may register id_token_signed_response_alg, and the standard
+      // grants pick a registered key matching it. The CIBA grant MUST NOT
+      // diverge: signing this client's ID Token with whichever key happens to
+      // be ACTIVE would hand it an RS256 token it rejects, and would compute
+      // at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      it('should sign the CIBA grant ID Token with the alg the client registered', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is RS256; the registered set also holds an ES256 key.
+          async getSigningKey(): Promise<SigningKey> {
+            return {
+              privateKey: rs256Pair.privateKey,
+              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+              keyId: 'ciba-rs256',
+            };
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [
+              {
+                privateKey: rs256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+                keyId: 'ciba-rs256',
+              },
+              {
+                privateKey: es256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+                keyId: 'ciba-es256',
+              },
+            ];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+        const client = { client_id: 'c-ciba-es256', client_secret: 's' };
+
+        const flow = await runCibaFlow(client, 'approve', mixedApp);
+        const body = await (await pollCibaToken(flow.auth_req_id, client, mixedApp)).json();
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] =
+          (body.id_token as string).split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          es256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect(cibaJoseHeader(body.id_token)).toEqual({
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: 'ciba-es256',
+        });
+        expect(signatureValid).toBe(true);
+      });
+
+      it('should keep signing with RS256 for a client that registered no alg', async () => {
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+
+        expect(cibaJoseHeader(body.id_token)).toEqual({
+          alg: 'RS256',
+          typ: 'JWT',
+          kid: 'test-key',
+        });
+      });
+    });
+  });
+`;
+}
+
 export function jarmConformanceBlock(
   features: OidcFeatureConfig,
   consentResponseMode: JarmConsentResponseMode = 'jwt',
@@ -14147,7 +16245,17 @@ import { tokenExchangeConfig } from './routes/token.js';`
     ? `
 import { idJagConfig } from './routes/token.js';`
     : '';
-  return `import { describe, it, expect, beforeAll } from 'vitest';
+  // Experimental (CIBA Core 1.0): the CIBA contract tests clear testuser's
+  // leftover pending requests after each test — the store is module-global and
+  // the backchannel endpoint caps pending requests per subject.
+  const cibaConformanceImports = features.ciba
+    ? `
+import { cibaAuthenticationRequestStore } from './store.js';`
+    : '';
+  const vitestNames = features.ciba
+    ? 'describe, it, expect, beforeAll, afterEach'
+    : 'describe, it, expect, beforeAll';
+  return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 import { Hono } from 'hono';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
@@ -14156,7 +16264,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -14635,6 +16743,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
 `;
 }

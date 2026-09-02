@@ -4,6 +4,10 @@
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {
+    "./ciba": {
+      "types": "./dist/ciba/index.d.ts",
+      "import": "./dist/ciba/index.js"
+    },
     "./device-authorization-grant": {
       "types": "./dist/device-authorization-grant/index.d.ts",
       "import": "./dist/device-authorization-grant/index.js"

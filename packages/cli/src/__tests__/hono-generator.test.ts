@@ -77,6 +77,7 @@ describe('HonoGenerator', () => {
             ...DEFAULT_FEATURES,
             deviceAuthorizationGrant: true,
             idJag: false,
+            ciba: false,
           },
         }),
       ];

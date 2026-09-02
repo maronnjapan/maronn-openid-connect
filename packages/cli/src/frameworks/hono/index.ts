@@ -16,6 +16,8 @@ import {
   parRouteTemplate,
   deviceAuthorizationRouteTemplate,
   deviceVerificationRouteTemplate,
+  backchannelAuthenticationRouteTemplate,
+  cibaVerificationRouteTemplate,
   jarmConfigTemplate,
   discoveryRouteTemplate,
   loginRouteTemplate,
@@ -59,6 +61,16 @@ export class HonoGenerator implements FrameworkGenerator {
             content: deviceAuthorizationRouteTemplate(pkg, features),
           },
           { path: 'routes/device.ts', content: deviceVerificationRouteTemplate(pkg) },
+        ]
+        : []),
+      // Experimental (CIBA Core 1.0): only generated with --enable ciba.
+      ...(features.ciba
+        ? [
+          {
+            path: 'routes/backchannel-authentication.ts',
+            content: backchannelAuthenticationRouteTemplate(pkg, features),
+          },
+          { path: 'routes/ciba-verification.ts', content: cibaVerificationRouteTemplate(pkg) },
         ]
         : []),
       // Experimental (JARM): settings module, only generated with --enable jarm.

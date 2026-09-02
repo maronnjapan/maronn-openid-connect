@@ -8,6 +8,8 @@ import { revocationApp } from './routes/revocation.js';
 import { parApp } from './routes/par.js';
 import { deviceAuthorizationApp } from './routes/device-authorization.js';
 import { deviceApp } from './routes/device.js';
+import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
@@ -24,6 +26,8 @@ import {
   defaultProviderStores,
   parStore,
   deviceAuthorizationStore,
+  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,
   type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
@@ -90,6 +94,14 @@ export interface CreateAppOptions {
    * Override only when hints are signed by a different key set.
    */
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
+  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
   corsOrigins?: CorsOrigins;
 }
 
@@ -115,6 +127,10 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/device': ['GET', 'POST'],
   '/device/login': ['POST'],
   '/device/approve': ['POST'],
+  '/backchannel_authentication': ['POST'],
+  '/ciba': ['GET'],
+  '/ciba/login': ['POST'],
+  '/ciba/approve': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -160,6 +176,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   app.use('/revoke', protectedCors);
   app.use('/par', protectedCors);
   app.use('/device_authorization', protectedCors);
+  app.use('/backchannel_authentication', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
@@ -229,7 +246,12 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
     c.set('revocationResolvers', storeResolvers.revocationResolvers);
     c.set('parStore', parStore);
     c.set('deviceAuthorizationStore', deviceAuthorizationStore);
-
+    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
     c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
@@ -255,6 +277,8 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   app.route('/par', parApp);
   app.route('/device_authorization', deviceAuthorizationApp);
   app.route('/device', deviceApp);
+  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

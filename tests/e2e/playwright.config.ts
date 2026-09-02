@@ -38,6 +38,7 @@ const oidcClientsJson = JSON.stringify([
       'urn:ietf:params:oauth:grant-type:token-exchange',
       'urn:ietf:params:oauth:grant-type:device_code',
       'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      'urn:openid:params:grant-type:ciba',
     ],
     tokenEndpointAuthMethod: 'client_secret_post',
     responseTypes: ['code'],
@@ -51,6 +52,18 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    responseTypes: ['code'],
+  },
+  {
+    // EXPERIMENTAL (CIBA Core 1.0 §11): a second CIBA-grant client, so the spec
+    // can prove an auth_req_id is refused when presented by a client other than
+    // the one it was issued to.
+    clientId: 'e2e-ciba-other',
+    clientSecret: 'e2e-ciba-other-secret',
+    redirectUris: [`${clientBaseURL}/unused-callback`],
+    clientType: 'confidential',
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
     tokenEndpointAuthMethod: 'client_secret_post',
     responseTypes: ['code'],
   },

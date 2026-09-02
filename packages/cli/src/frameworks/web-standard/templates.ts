@@ -4,6 +4,9 @@ import type { OidcFeatureConfig } from '../../features.js';
 import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
   authorizationCodeConformanceHelper,
+  cibaConformanceBlock,
+  backchannelAuthenticationRouteTemplate,
+  cibaVerificationRouteTemplate,
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
@@ -452,6 +455,46 @@ import { deviceApp } from './routes/device.js';\n`
   const deviceStoreImport = features.deviceAuthorizationGrant
     ? `  deviceAuthorizationStore,\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): back-channel endpoint gets the /token CORS
+  // policy; the authentication device UI is browser navigation, so it needs
+  // none (like /login).
+  const cibaImport = features.ciba
+    ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';\n`
+    : '';
+  const cibaCors = features.ciba
+    ? `  app.use('/backchannel_authentication', protectedCors);\n`
+    : '';
+  const cibaMount = features.ciba
+    ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);\n`
+    : '';
+  // The default CIBA user resolver treats login_hint as the username of the
+  // injected user store, so a custom storage option is honored without extra
+  // wiring. options.cibaUserResolver overrides the whole resolution.
+  const cibaStorageContext = features.ciba
+    ? `    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));\n`
+    : '';
+  const cibaStoreImport = features.ciba
+    ? `  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,\n`
+    : '';
+  const cibaOptionsField = features.ciba
+    ? `  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -467,7 +510,7 @@ import { deviceApp } from './routes/device.js';\n`
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -481,7 +524,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}${deviceStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
 import {
@@ -517,7 +560,7 @@ export interface OidcProviderOptions {
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-  corsOrigins?: CorsOrigins;
+${cibaOptionsField}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -555,7 +598,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
@@ -613,7 +656,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-kn
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }
@@ -631,7 +674,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -694,6 +737,13 @@ export function expressApplyTemplate(
     ? `  '/device_authorization',
   '/device',\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the backchannel authentication endpoint and
+  // the whole authentication device UI. '/ciba' also covers '/ciba/login' and
+  // '/ciba/approve' because app.use() matches by path prefix.
+  const cibaEndpoints = features.ciba
+    ? `  '/backchannel_authentication',
+  '/ciba',\n`
+    : '';
   return `import type { Express } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -705,7 +755,7 @@ const OIDC_ENDPOINTS = [
   '/authorize',
   '/token',
   '/userinfo',
-${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}  '/.well-known/jwks.json',
+${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}${cibaEndpoints}  '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',
   '/consent',
@@ -753,6 +803,14 @@ export function fastifyApplyTemplate(
   app.route({ method: ['POST'], url: '/device/login', handler: handle });
   app.route({ method: ['POST'], url: '/device/approve', handler: handle });\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): Fastify needs each authentication device UI
+  // path registered explicitly — unlike Express it does not match by prefix.
+  const cibaRoutes = features.ciba
+    ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/backchannel_authentication', handler: handle });
+  app.route({ method: ['GET'], url: '/ciba', handler: handle });
+  app.route({ method: ['POST'], url: '/ciba/login', handler: handle });
+  app.route({ method: ['POST'], url: '/ciba/approve', handler: handle });\n`
+    : '';
   return `import type { FastifyInstance } from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -791,7 +849,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/authorize', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/token', handler: handle });
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
-${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
+${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}${cibaRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
@@ -2010,14 +2068,24 @@ import { tokenExchangeConfig } from './routes/token.js';`
     ? `
 import { idJagConfig } from './routes/token.js';`
     : '';
-  return `import { describe, it, expect, beforeAll } from 'vitest';
+  // Experimental (CIBA Core 1.0): the CIBA contract tests clear testuser's
+  // leftover pending requests after each test — the store is module-global and
+  // the backchannel endpoint caps pending requests per subject.
+  const cibaConformanceImports = features.ciba
+    ? `
+import { cibaAuthenticationRequestStore } from './store.js';`
+    : '';
+  const vitestNames = features.ciba
+    ? 'describe, it, expect, beforeAll, afterEach'
+    : 'describe, it, expect, beforeAll';
+  return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2428,7 +2496,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
 `;
 }
 
@@ -2485,6 +2553,19 @@ function webCoreGeneratedFiles(
         {
           path: 'routes/device.ts',
           content: toWebRouteTemplate(deviceVerificationRouteTemplate(corePkg)),
+        },
+      ]
+      : []),
+    // Experimental (CIBA Core 1.0): only generated with --enable ciba.
+    ...(features.ciba
+      ? [
+        {
+          path: 'routes/backchannel-authentication.ts',
+          content: toWebRouteTemplate(backchannelAuthenticationRouteTemplate(corePkg, features)),
+        },
+        {
+          path: 'routes/ciba-verification.ts',
+          content: toWebRouteTemplate(cibaVerificationRouteTemplate(corePkg)),
         },
       ]
       : []),
@@ -2611,6 +2692,31 @@ export function nextJsGeneratedFiles(
         },
         {
           path: 'device/approve/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
+        },
+      ]
+      : []),
+    // Experimental (CIBA Core 1.0): only generated with --enable ciba. Like the
+    // device verification UI, the authentication device UI is served by Route
+    // Handlers, not Next.js pages: it renders through the same views.ts contract
+    // as the other frameworks, so the feature can be removed by deleting what it
+    // generated.
+    ...(features.ciba
+      ? [
+        {
+          path: 'backchannel_authentication/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['POST', 'OPTIONS']),
+        },
+        {
+          path: 'ciba/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['GET']),
+        },
+        {
+          path: 'ciba/login/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
+        },
+        {
+          path: 'ciba/approve/route.ts',
           content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
         },
       ]

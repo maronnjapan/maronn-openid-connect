@@ -94,7 +94,7 @@ discoveryApp.get('/', (c) => {
       'phone_number',
       'phone_number_verified',
     ],
-    grantTypesSupported: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'urn:ietf:params:oauth:grant-type:device_code'],
+    grantTypesSupported: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'urn:ietf:params:oauth:grant-type:device_code', 'urn:openid:params:grant-type:ciba'],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
     // (no client_secret) are accepted at the token endpoint.
     tokenEndpointAuthMethodsSupported: [
@@ -154,6 +154,10 @@ discoveryApp.get('/', (c) => {
       : {}),
     // EXPERIMENTAL — RFC 8628 §4 metadata.
     device_authorization_endpoint: `${issuer}/device_authorization`,
+    // EXPERIMENTAL — CIBA Core 1.0 §4 metadata. Only the poll delivery mode is
+    // offered, so exactly one mode is advertised.
+    backchannel_token_delivery_modes_supported: ['poll'],
+    backchannel_authentication_endpoint: `${issuer}/backchannel_authentication`,
     // EXPERIMENTAL — JARM §4 metadata. The response JWT is always signed with
     // RS256 (JARM §3: the default for a client that registered no
     // authorization_signed_response_alg), so exactly one alg is advertised.

@@ -53,6 +53,7 @@ describe('resolveFeatures with token-exchange', () => {
       jarm: false,
       deviceAuthorizationGrant: false,
       idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });
@@ -69,6 +70,7 @@ describe('resolveFeatures with token-exchange', () => {
       jarm: false,
       deviceAuthorizationGrant: false,
       idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });
@@ -95,6 +97,7 @@ describe('resolveFeatures with token-exchange', () => {
       jarm: false,
       deviceAuthorizationGrant: false,
       idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });

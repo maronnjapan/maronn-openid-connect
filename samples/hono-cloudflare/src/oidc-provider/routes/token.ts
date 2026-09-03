@@ -24,6 +24,7 @@ import {
   computeAtHash,
   resolveAcrAmr,
   buildIdTokenPayload,
+  pickIdTokenRequestedClaims,
   generateIdToken,
   generateRandomString,
   buildAccessTokenAudience,
@@ -44,6 +45,7 @@ import {
 import {
   tokenClientResolver as defaultTokenClientResolver,
   authorizationCodeResolver as defaultAuthorizationCodeResolver,
+  userClaimsResolver as defaultUserClaimsResolver,
   refreshTokenResolver as defaultRefreshTokenResolver,
   authenticationSessionResolver as defaultAuthenticationSessionResolver,
   accessTokenResolver as defaultAccessTokenResolver,
@@ -1271,6 +1273,22 @@ tokenApp.post('/', async (c) => {
         acr: resolvedAcr,
         amr: resolvedAmr,
       });
+
+      // OIDC Core 1.0 §5.5: reflect standard claims requested via the claims
+      // parameter's id_token member (e.g. {"id_token":{"email":null}}) into the
+      // ID Token, independently of the granted scope. Only authorization_code
+      // carries the claims context (a refresh grant does not persist it).
+      // pickIdTokenRequestedClaims allowlists the §5.4 standard claims, so
+      // protocol claims (iss/sub/aud/exp/...) can never be replaced through it.
+      const idTokenClaimsRequest =
+        validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined;
+      if (idTokenClaimsRequest?.id_token && Object.keys(idTokenClaimsRequest.id_token).length > 0) {
+        const userClaimsResolver = c.get('userClaimsResolver') ?? defaultUserClaimsResolver;
+        const idTokenUserClaims = await userClaimsResolver.findUserClaims(subject);
+        if (idTokenUserClaims) {
+          Object.assign(idTokenPayload, pickIdTokenRequestedClaims(idTokenUserClaims, idTokenClaimsRequest));
+        }
+      }
 
       // Add your own ID Token claims here, e.g.:
       //   idTokenPayload.tenant_id = await lookupTenant(subject);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { generateTokenResponse, buildAccessTokenAudience, buildIdTokenAudience } from './token-response.js';
+import { generateTokenResponse, buildAccessTokenAudience, buildIdTokenAudience, pickIdTokenRequestedClaims } from './token-response.js';
 import type { TokenResponseOptions, TokenResponse } from './token-response.js';
 import { base64UrlToArrayBuffer, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
 
@@ -852,6 +852,134 @@ describe('generateTokenResponse', () => {
     });
   });
 
+  // OIDC Core 1.0 §5.5: the id_token top-level member of the claims request
+  // parameter requests that the listed individual Claims be returned in the
+  // ID Token, independently of the granted scope (§5.4).
+  describe('ID Token claims requested via claims.id_token member (OIDC Core §5.5)', () => {
+    const userClaims = {
+      sub: 'user-claims',
+      name: 'Alice',
+      email: 'alice@example.com',
+      email_verified: true,
+    };
+
+    it('should include email claim requested via claims.id_token without email scope', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims,
+        claims: { id_token: { email: null } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.email).toBe('alice@example.com');
+    });
+
+    it('should include both claims when name and email are requested', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims,
+        claims: { id_token: { name: null, email: null } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.name).toBe('Alice');
+      expect(payload.email).toBe('alice@example.com');
+    });
+
+    it('should include email claim when the requested value matches', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims,
+        claims: { id_token: { email: { value: 'alice@example.com' } } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.email).toBe('alice@example.com');
+    });
+
+    it('should omit email claim when the requested value does not match', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims,
+        claims: { id_token: { email: { value: 'other@example.com' } } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      // OIDC Core 1.0 §5.5.1: a non-matching value request is omitted, not an error.
+      expect(payload.email).toBeUndefined();
+    });
+
+    it('should omit missing essential claim without raising an error', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims: { sub: 'user-claims', name: 'Alice' },
+        claims: { id_token: { email: { essential: true } } },
+      });
+      // OIDC Core 1.0 §5.5.1: unfulfilled essential claims MUST NOT cause an error.
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.email).toBeUndefined();
+    });
+
+    it('should not let claims.id_token override the iss protocol claim', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims: { ...userClaims, iss: 'https://evil.example.com' } as never,
+        claims: { id_token: { iss: { value: 'https://evil.example.com' } } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.iss).toBe('https://op.example.com');
+    });
+
+    it('should not reflect sub value requests via claims.id_token', async () => {
+      const options = createValidOptions({
+        subject: 'user-real',
+        scope: ['openid'],
+        userClaims: { ...userClaims, sub: 'user-real' },
+        claims: { id_token: { sub: { value: 'user-spoofed' } } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      // sub binding requests are out of scope here (tracked separately);
+      // the ID Token always carries the authenticated subject.
+      expect(payload.sub).toBe('user-real');
+    });
+
+    it('should ignore unknown claims requested via claims.id_token', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims: { ...userClaims, custom_claim: 'x' } as never,
+        claims: { id_token: { custom_claim: null } },
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.custom_claim).toBeUndefined();
+    });
+
+    it('should reflect requested claims and still feed acr.values to the resolver', async () => {
+      const options = createValidOptions({
+        scope: ['openid'],
+        userClaims,
+        claims: {
+          id_token: {
+            email: null,
+            acr: { values: ['urn:example:loa:2'] },
+          },
+        },
+        acrResolver: async ({ requestedAcrValues }) => ({
+          acr: requestedAcrValues ?? 'unset',
+          amr: ['pwd'],
+        }),
+      });
+      const { response } = await generateTokenResponse(options);
+      const { payload } = decodeJwt(response.id_token!);
+      expect(payload.email).toBe('alice@example.com');
+      // OIDC Core 1.0 §5.5.1.1: acr.values seeds the resolver's requested values.
+      expect(payload.acr).toBe('urn:example:loa:2');
+    });
+  });
+
   describe('Token signature verification', () => {
     it('should produce valid RS256 signature for access_token', async () => {
       const options = createValidOptions();
@@ -1046,6 +1174,59 @@ describe('generateTokenResponse - ID Token aud/azp shape', () => {
 });
 
 // Direct unit tests for the aud/azp policy helper (OIDC Core 1.0 §2 / §3.1.3.7 (4-5)).
+describe('pickIdTokenRequestedClaims', () => {
+  const userClaims = {
+    sub: 'user-1',
+    name: 'Alice',
+    email: 'alice@example.com',
+    address: { country: 'JP', locality: 'Tokyo' },
+  };
+
+  it('should return empty object when claims parameter is absent', () => {
+    expect(pickIdTokenRequestedClaims(userClaims, undefined)).toEqual({});
+  });
+
+  it('should return empty object when id_token member is absent', () => {
+    expect(
+      pickIdTokenRequestedClaims(userClaims, { userinfo: { email: null } }),
+    ).toEqual({});
+  });
+
+  it('should pick requested standard claims that exist on the user', () => {
+    expect(
+      pickIdTokenRequestedClaims(userClaims, {
+        id_token: { email: null, name: null, phone_number: null },
+      }),
+    ).toEqual({ email: 'alice@example.com', name: 'Alice' });
+  });
+
+  it('should match object-typed claims by deep equality', () => {
+    // OIDC Core 1.0 §5.5.1: value comparison of JSON values (address is an object).
+    expect(
+      pickIdTokenRequestedClaims(userClaims, {
+        id_token: { address: { value: { country: 'JP', locality: 'Tokyo' } } },
+      }),
+    ).toEqual({ address: { country: 'JP', locality: 'Tokyo' } });
+  });
+
+  it('should exclude sub and protocol claims from the allowlist', () => {
+    expect(
+      pickIdTokenRequestedClaims(
+        { ...userClaims, iss: 'https://evil.example.com' } as never,
+        { id_token: { sub: { value: 'user-1' }, iss: null, aud: null, exp: null } },
+      ),
+    ).toEqual({});
+  });
+
+  it('should exclude acr so the resolver seed path stays the single acr source', () => {
+    expect(
+      pickIdTokenRequestedClaims({ ...userClaims, acr: 'urn:x' } as never, {
+        id_token: { acr: { values: ['urn:x'] } },
+      }),
+    ).toEqual({});
+  });
+});
+
 describe('buildIdTokenAudience', () => {
   it('should return aud as a single string and no azp for the client alone', () => {
     expect(buildIdTokenAudience({ clientId: 'c1' })).toEqual({ aud: 'c1' });

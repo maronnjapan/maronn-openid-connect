@@ -45,6 +45,51 @@ describe('Web-standard generated validation pipelines', () => {
   }
 });
 
+// OIDC Core 1.0 §5.5: standard claims requested via the claims parameter's
+// id_token member are reflected into the ID Token in every Web-standard framework.
+describe('Web-standard generated claims.id_token member reflection', () => {
+  const generatedProviders = [
+    {
+      framework: 'express',
+      files: new ExpressGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      tokenPath: 'routes/token.ts',
+      conformancePath: 'conformance.test.ts',
+    },
+    {
+      framework: 'fastify',
+      files: new FastifyGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      tokenPath: 'routes/token.ts',
+      conformancePath: 'conformance.test.ts',
+    },
+    {
+      framework: 'nextjs',
+      files: new NextJsGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
+      tokenPath: '_oidc-provider/routes/token.ts',
+      conformancePath: '_oidc-provider/conformance.test.ts',
+    },
+  ];
+
+  for (const { framework, files, tokenPath, conformancePath } of generatedProviders) {
+    const tokenRoute = files.find((file) => file.path === tokenPath)?.content ?? '';
+    const conformance = files.find((file) => file.path === conformancePath)?.content ?? '';
+
+    it(`should reflect claims.id_token requests through pickIdTokenRequestedClaims for ${framework}`, () => {
+      expect(tokenRoute.includes('pickIdTokenRequestedClaims,')).toBe(true);
+      expect(
+        tokenRoute.includes(
+          'Object.assign(idTokenPayload, pickIdTokenRequestedClaims(idTokenUserClaims, idTokenClaimsRequest));',
+        ),
+      ).toBe(true);
+      expect(tokenRoute.includes('userClaimsResolver as defaultUserClaimsResolver,')).toBe(true);
+    });
+
+    it(`should generate the claims parameter id_token member conformance contract for ${framework}`, () => {
+      expect(conformance.includes("describe('claims parameter id_token member (OIDC Core §5.5)'")).toBe(true);
+      expect(conformance.includes("it('should include email claim in the ID Token when requested via the id_token member without email scope'")).toBe(true);
+    });
+  }
+});
+
 describe('Web-standard generated id_token_hint handling', () => {
   const generatedAuthorizeRoutes = [
     {

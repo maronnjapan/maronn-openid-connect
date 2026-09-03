@@ -6911,6 +6911,136 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
+  // OIDC Core 1.0 §5.5: the id_token top-level member of the claims request
+  // parameter requests that the listed individual Claims be returned in the
+  // ID Token, independently of the granted scope (§5.4).
+  describe('claims parameter id_token member (OIDC Core §5.5)', () => {
+    // RFC 7636 Appendix B example PKCE pair.
+    const CLAIMS_IDT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const CLAIMS_IDT_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+
+    function claimsIdtRelative(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function claimsIdtCsrf(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function claimsIdtDecodeJwtPayload(token: string): Record<string, unknown> {
+      const segment = token.split('.')[1] ?? '';
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      return JSON.parse(atob(padded)) as Record<string, unknown>;
+    }
+
+    // Drives authorize -> login -> consent with a claims request parameter and
+    // exchanges the code, handing back the decoded ID Token payload. Pure data
+    // collection: no assertions or branching here, the contract lives in the it()s.
+    async function idTokenPayloadFor(
+      scope: string,
+      claims: Record<string, unknown>,
+    ): Promise<Record<string, unknown>> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+          '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+          '&scope=' + encodeURIComponent(scope) +
+          '&state=claims-idt&prompt=consent' +
+          '&claims=' + encodeURIComponent(JSON.stringify(claims)) +
+          '&code_challenge=' + CLAIMS_IDT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = claimsIdtRelative(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: claimsIdtCsrf(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      const consentPath = claimsIdtRelative(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: claimsIdtCsrf(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code =
+        new URL(consentRes.headers.get('Location') ?? '', 'http://localhost')
+          .searchParams.get('code') ?? '';
+
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          client_id: 'c-conf',
+          client_secret: 's',
+          code_verifier: CLAIMS_IDT_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const body = (await tokenRes.json()) as Record<string, string>;
+      return claimsIdtDecodeJwtPayload(body.id_token ?? '');
+    }
+
+    it('should include email claim in the ID Token when requested via the id_token member without email scope', async () => {
+      const payload = await idTokenPayloadFor('openid', { id_token: { email: null } });
+
+      expect(payload.email).toBe('test@example.com');
+      expect(payload.sub).toBe('testuser');
+    });
+
+    it('should omit a value-constrained claim that does not match without failing the flow', async () => {
+      // OIDC Core 1.0 §5.5.1: a non-matching value request is omitted, not an error.
+      const payload = await idTokenPayloadFor('openid', {
+        id_token: { email: { value: 'someone-else@example.com' } },
+      });
+
+      expect(payload.email).toBe(undefined);
+      expect(payload.sub).toBe('testuser');
+    });
+
+    it('should keep protocol claims authoritative when listed in the id_token member', async () => {
+      const payload = await idTokenPayloadFor('openid', {
+        id_token: { iss: null, email: null },
+      });
+
+      expect(payload.iss).toBe('http://localhost:3000');
+      expect(payload.email).toBe('test@example.com');
+    });
+
+    it('should not pull scope-derived claims into the ID Token beyond the requested ones', async () => {
+      // OIDC Core 1.0 §5.4: with response_type=code, scope-derived claims are
+      // returned from the UserInfo endpoint; only the claims.id_token requests
+      // land in the ID Token.
+      const payload = await idTokenPayloadFor('openid profile', {
+        id_token: { email: null },
+      });
+
+      expect(payload.email).toBe('test@example.com');
+      expect(payload.name).toBe(undefined);
+    });
+  });
+
   describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
     const DECISION_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 

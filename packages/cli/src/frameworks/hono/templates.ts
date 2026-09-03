@@ -12,6 +12,15 @@ import type { OidcFeatureConfig } from '../../features.js';
  */
 export const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 
+/**
+ * Escape a value for embedding in a single-quoted string of the generated code.
+ * Custom scope names and subjects come from the command line, so they are never
+ * interpolated raw (RFC 6749 §3.3 allows an apostrophe inside a scope token).
+ */
+function singleQuoted(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   const introspectionMethod = features.introspection
     ? `  '/introspect': ['POST'],\n`
@@ -396,6 +405,124 @@ async function resolveProviderStores(
 ): Promise<ProviderStores> {
   if (!storage) return defaultProviderStores;
   return typeof storage === 'function' ? storage(context) : storage;
+}
+`;
+}
+
+/**
+ * Generated `scopes.ts` — the custom scopes declared with `--scope`, plus the
+ * per-End-User filtering seam. Emitted only when at least one custom scope was
+ * declared, so an OP generated without them is byte-identical to before this
+ * option existed.
+ */
+export function customScopesTemplate(
+  scopes: string[],
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const toListLiteral = (values: string[]): string =>
+    values.length === 0 ? '[]' : `[${values.map((value) => `'${singleQuoted(value)}'`).join(', ')}]`;
+  // offline_access is a standard scope only where the refresh-token feature was
+  // generated; with it disabled the OP never grants it (OIDC Core 1.0 §11), so
+  // it must not reach scopes_supported either.
+  const standardScopes = [
+    'openid',
+    'profile',
+    'email',
+    'address',
+    'phone',
+    ...(features.refreshToken ? ['offline_access'] : []),
+  ];
+  const exampleScope = scopes[0] ?? 'reports.read';
+  return `/**
+ * Scope policy for this provider.
+ *
+ * The custom scopes below were declared with the CLI's \`--scope\` option, and this
+ * module is the single place the generated provider asks its two scope questions.
+ * It deliberately imports nothing, so both answers can be rewritten — including
+ * against a database — without touching a route.
+ *
+ * 1. "May this value be requested at all?" — \`findUnsupportedScopes()\`, called by
+ *    the authorization endpoint (and by the device / CIBA request endpoints when
+ *    those features are generated). A value that is neither standard nor declared
+ *    here is rejected with \`invalid_scope\` (RFC 6749 §3.3 / §4.1.2.1).
+ * 2. "May THIS End-User be granted it?" — \`resolveGrantableScopes()\`, called from
+ *    every step that turns a request into a grant. **This is where per-user scope
+ *    filtering goes**; see its doc comment below.
+ *
+ * Custom scopes carry no UserInfo claims of their own: OIDC Core 1.0 §5.4 defines
+ * claims for profile / email / address / phone only, so \`filterClaimsByScope()\`
+ * ignores them. Return your own claims for a custom scope by editing
+ * routes/userinfo.ts.
+ */
+
+/**
+ * Scopes this provider implements itself and always accepts: \`openid\` (OIDC Core
+ * 1.0 §3.1.2.1), the four claim scopes (§5.4)${features.refreshToken ? ' and `offline_access` (§11)' : ''}.
+ */
+export const STANDARD_SCOPES: readonly string[] = ${toListLiteral(standardScopes)};
+
+/** Declared with \`--scope\`: the custom scopes this provider accepts. */
+export const CUSTOM_SCOPES: readonly string[] = ${toListLiteral(scopes)};
+
+/**
+ * OIDC Discovery 1.0 §3 \`scopes_supported\`: every value this OP accepts. It is
+ * OP metadata, so it lists what the provider supports — not what a particular
+ * End-User ends up being granted, which resolveGrantableScopes() decides.
+ */
+export const SUPPORTED_SCOPES: readonly string[] = [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
+
+/**
+ * Per-End-User scope restrictions, keyed by scope: only the listed subjects may
+ * be granted that scope. Empty by default, so every accepted scope is grantable
+ * to every authenticated End-User.
+ *
+ * This is the quickest way to restrict a scope — uncomment and fill in. For
+ * anything richer (roles, tenants, a database), write it in
+ * resolveGrantableScopes() below instead.
+ */
+export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
+  // '${singleQuoted(exampleScope)}': ['testuser'],
+};
+
+/**
+ * Narrow the requested scopes to what this End-User may actually be granted.
+ *
+ * **This is the per-user scope filtering seam.** It runs once the End-User is
+ * known, and every step that decides a grant already awaits it:
+ *
+ * - routes/consent.ts — the consent screen (what is displayed) and the approval
+ *   (what is granted)
+ * - routes/authorize.ts — the SSO fast path and prompt=none, which grant without
+ *   showing consent. Both narrow BEFORE looking up stored consent, because a
+ *   consent lookup for a scope the subject can never hold would never match.
+ * - routes/device.ts / routes/ciba-verification.ts — the device and CIBA approval
+ *   steps, when those features are generated
+ *
+ * It is async so a database / KV lookup can be dropped in without touching any
+ * call site. \`requested\` also carries the standard scopes, so a policy may
+ * narrow those too.
+ *
+ * Dropping a scope narrows the grant rather than failing the request: RFC 6749
+ * §3.3 lets the authorization server issue a scope narrower than the one asked
+ * for, and the token response reports the granted \`scope\`. To refuse the whole
+ * request instead, throw from the call site that suits your flow.
+ */
+export async function resolveGrantableScopes(
+  requested: readonly string[],
+  subject: string,
+): Promise<string[]> {
+  return requested.filter((scope) => {
+    const allowedSubjects = RESTRICTED_SCOPE_SUBJECTS[scope];
+    return allowedSubjects === undefined || allowedSubjects.includes(subject);
+  });
+}
+
+/**
+ * Requested scopes this OP does not accept at all. A non-empty result means the
+ * request must be rejected with \`invalid_scope\` (RFC 6749 §3.3).
+ */
+export function findUnsupportedScopes(requested: readonly string[]): string[] {
+  return requested.filter((scope) => !SUPPORTED_SCOPES.includes(scope));
 }
 `;
 }
@@ -2160,7 +2287,67 @@ export async function revokeConsentAndTokens(subject: string, clientId: string):
 export function authorizeRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // Custom scopes (--scope). With none declared every interpolation below is
+  // empty and the route is byte-identical to before.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImports = customScopesDeclared
+    ? `
+import { findUnsupportedScopes, resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  // AuthorizationErrorCode is already imported by the jarm feature; importing it
+  // twice would not compile.
+  const customScopeCoreImports = customScopesDeclared && !features.jarm
+    ? `
+  AuthorizationErrorCode,`
+    : '';
+  const customScopeStep = customScopesDeclared
+    ? `
+    // RFC 6749 §3.3 / §4.1.2.1: this provider was generated with a declared scope
+    // allow list (scopes.ts), so a value outside it is rejected instead of being
+    // carried into the grant. Placed AFTER applyOfflineAccessPolicy on purpose:
+    // offline_access that the policy already dropped must stay "ignored"
+    // (OIDC Core 1.0 §11) rather than turning the request into invalid_scope.
+    const unsupportedScopes = findUnsupportedScopes(scope);
+    if (unsupportedScopes.length > 0) {
+      throw new AuthorizationError(
+        AuthorizationErrorCode.InvalidScope,
+        'Unsupported scope: ' + unsupportedScopes.join(' '),
+        redirectUri,
+        state,
+      );
+    }
+`
+    : '';
+  // Both non-interactive paths below decide the grant without ever reaching
+  // /consent, so each applies the scope policy (scopes.ts) for itself.
+  const promptNoneUserScopeStep = customScopesDeclared
+    ? `
+        // Apply the scope policy BEFORE the consent lookup: searching consent for
+        // a scope this End-User can never hold would answer consent_required
+        // forever (OIDC Core 1.0 §3.1.2.1). See resolveGrantableScopes() in
+        // scopes.ts — that function is where per-user filtering is written.
+        transaction.scope = (await resolveGrantableScopes(
+          transaction.scope.split(' ').filter(Boolean),
+          session.subject,
+        )).join(' ');
+`
+    : '';
+  const ssoUserScopeStep = customScopesDeclared
+    ? `
+          // Apply the scope policy before the consent lookup below, for the same
+          // reason as the prompt=none path. The narrowed value is only held in
+          // memory: the interactive branch hands the transaction back to
+          // /consent, which applies the policy again with the authenticated
+          // subject it reads out of authSessionStore.
+          transaction.scope = (await resolveGrantableScopes(
+            transaction.scope.split(' ').filter(Boolean),
+            existingSession.subject,
+          )).join(' ');
+
+`
+    : '';
   // Optional hardening (--enable transaction-binding). Off by default: no OIDC
   // Core / OAuth 2.1 clause requires it, and requiring a cookie jar would break
   // driving the login / consent steps by hand with curl.
@@ -2637,7 +2824,7 @@ import {
   AuthorizationError,
   IdTokenHintError,
   type AuthorizationRequestParams,
-  type JwkSet,${jarmCoreImports}
+  type JwkSet,${jarmCoreImports}${customScopeCoreImports}
 } from '${corePkg}';
 import { clientResolver as defaultClientResolver } from '../resolvers.js';
 import {
@@ -2645,7 +2832,7 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${parImports}${jarmImports}
+import { defaultViews, renderView } from '../views.js';${parImports}${jarmImports}${customScopeImports}
 
 export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -2778,7 +2965,7 @@ ${jarmResolveStep}${rejectUnsupportedStep}
     // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
     const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
 
-${offlineAccessStep}
+${offlineAccessStep}${customScopeStep}
     // OIDC Core 1.0 §3.1.2.1: display is page|popup|touch|wap.
     const display = validateDisplayParameter(effectiveParams, redirectUri, state);
 
@@ -2906,7 +3093,7 @@ ${bindingSecretStep}    const transactionId = await generateRandomString(32);
         // コンセント確認より前に置くのは、コンセント検索が session.subject をキーに
         // するため — 不一致のまま進むと別ユーザーのコンセントを見てしまう。
         validatePromptNoneIdTokenHint(transaction, session, verifiedHintSubject);
-
+${promptNoneUserScopeStep}
         // OIDC Core 1.0 §3.1.2.1: not consented → consent_required (the OP must
         // not show a consent screen for prompt=none).
         await validatePromptNoneConsent(transaction, session, consentResolver);
@@ -2989,7 +3176,7 @@ ${promptNoneSuccessRedirect}
           // scopes to this client, skip the consent screen and issue the code
           // directly — the interactive analogue of the prompt=none silent path.
           const consentResolver = c.get('consentResolver');
-          const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+${ssoUserScopeStep}          const requestedScopes = transaction.scope.split(' ').filter(Boolean);
           const consentAlreadyGranted =
             !promptValues.includes('consent') &&
             consentResolver !== undefined &&
@@ -3284,11 +3471,34 @@ parApp.post('/', async (c) => {
 export function deviceAuthorizationRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
   // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
   // actually issue refresh tokens. Baked in as a literal so the generated route
   // has no runtime branch on a feature that is fixed at generation time.
   const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
+  // --scope: the device authorization request carries a scope like /authorize
+  // does, so it answers to the same declared allow list (scopes.ts).
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { findUnsupportedScopes } from '../scopes.js';`
+    : '';
+  const customScopeStep = customScopesDeclared
+    ? `
+    // RFC 6749 §3.3: reject a scope this OP never declared, the same way
+    // /authorize does. Checked after applyOfflineAccessPolicy so an
+    // offline_access that the policy already dropped stays ignored rather than
+    // becoming invalid_scope (OIDC Core 1.0 §11).
+    const unsupportedScopes = findUnsupportedScopes(scope);
+    if (unsupportedScopes.length > 0) {
+      throw new DeviceAuthorizationError(
+        'invalid_scope',
+        'Unsupported scope: ' + unsupportedScopes.join(' '),
+      );
+    }
+`
+    : '';
   return `/**
  * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628).
  *
@@ -3328,7 +3538,7 @@ import {
   verifyClientSecret,
 } from '${corePkg}';
 import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
-import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';
+import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';${customScopeImport}
 
 /**
  * EXPERIMENTAL — Device Authorization Grant settings (RFC 8628).
@@ -3443,7 +3653,7 @@ deviceAuthorizationApp.post('/', async (c) => {
       client,
       refreshTokenFeatureEnabled: ${refreshTokenFeatureEnabled},
     });
-
+${customScopeStep}
     // RFC 8628 §3.2 / §5.2: mint a 256-bit device_code and a collision-checked
     // base-20 user_code, then store the pending record under both.
     const record = await createDeviceAuthorizationRecord({
@@ -3487,7 +3697,37 @@ deviceAuthorizationApp.post('/', async (c) => {
  * `/device/approve`) so the whole browser-facing surface of the feature lives in
  * a single generated file that can be deleted with the feature.
  */
-export function deviceVerificationRouteTemplate(corePkg: string): string {
+export function deviceVerificationRouteTemplate(
+  corePkg: string,
+  scopes: string[] = [],
+): string {
+  // The verification UI is where the device flow learns who the End-User is, so
+  // it is where the scope policy (scopes.ts) is applied. With no custom scope
+  // declared every interpolation below is empty.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  const approvalPageScopes = (subject: string): string =>
+    customScopesDeclared
+      ? `await resolveGrantableScopes(record.scope, ${subject})`
+      : 'record.scope';
+  const approveNarrowStep = customScopesDeclared
+    ? `
+      // Apply the scope policy to what was approved. approveDeviceAuthorization()
+      // copies the requested scope into approvedScope, so the policy is applied
+      // to the record afterwards and persisted; the token endpoint reads
+      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
+      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      approved.approvedScope = await resolveGrantableScopes(
+        approved.approvedScope ?? approved.scope,
+        session.subject,
+      );
+      await deviceStore.update(approved);
+
+`
+    : '';
   return `/**
  * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant, verification UI
  * (RFC 8628 §3.3).
@@ -3538,7 +3778,7 @@ import {
   userStore,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
-import { deviceAuthorizationConfig } from './device-authorization.js';
+import { deviceAuthorizationConfig } from './device-authorization.js';${customScopeImport}
 
 export const deviceApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -3651,7 +3891,7 @@ deviceApp.post('/', async (c) => {
       userCode: record.userCodeDisplay,
       csrfToken,
       clientId: record.clientId,
-      scopes: record.scope,
+      scopes: ${approvalPageScopes('session.subject')},
     })), cookie);
   }
 
@@ -3735,7 +3975,7 @@ deviceApp.post('/login', async (c) => {
     userCode: record.userCodeDisplay,
     csrfToken,
     clientId: record.clientId,
-    scopes: record.scope,
+    scopes: ${approvalPageScopes('user.sub')},
   })), buildSessionCookie(sessionId));
   return withSession;
 });
@@ -3789,7 +4029,7 @@ deviceApp.post('/approve', async (c) => {
         subject: session.subject,
         authTime: session.authTime,
       });
-      // Record the consent the same way /consent does, so a later Authorization
+${approveNarrowStep}      // Record the consent the same way /consent does, so a later Authorization
       // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
       await consentResolver?.recordConsent?.(
         approved.subject,
@@ -3826,11 +4066,39 @@ deviceApp.post('/approve', async (c) => {
 export function backchannelAuthenticationRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
   // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
   // actually issue refresh tokens. Baked in as a literal so the generated route
   // has no runtime branch on a feature that is fixed at generation time.
   const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
+  // --scope: a backchannel authentication request carries a scope like
+  // /authorize does, so it answers to the same declared allow list (scopes.ts).
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { findUnsupportedScopes } from '../scopes.js';`
+    : '';
+  const customScopeStep = customScopesDeclared
+    ? `    // RFC 6749 §3.3: reject a scope this OP never declared, the same allow list
+    // /authorize uses (scopes.ts). Checked before the pipeline so a request for
+    // an unknown scope never reaches the store. offline_access is left out of
+    // the check: the pipeline applies its own policy and ignores it when it
+    // cannot be granted (OIDC Core 1.0 §11), which must not become an error.
+    const unsupportedScopes = findUnsupportedScopes(
+      (params['scope'] ?? '')
+        .split(' ')
+        .filter((scope) => scope.length > 0 && scope !== 'offline_access'),
+    );
+    if (unsupportedScopes.length > 0) {
+      throw new BackchannelAuthenticationError(
+        'invalid_scope',
+        'Unsupported scope: ' + unsupportedScopes.join(' '),
+      );
+    }
+
+`
+    : '';
   return `/**
  * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
  * (CIBA Core 1.0), poll mode.
@@ -3871,7 +4139,7 @@ import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.
 import {
   cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
   userStore,
-} from '../store.js';
+} from '../store.js';${customScopeImport}
 
 /**
  * EXPERIMENTAL — CIBA settings (CIBA Core 1.0).
@@ -3990,7 +4258,7 @@ backchannelAuthenticationApp.post('/', async (c) => {
         return claims ? { subject: claims.sub } : null;
       });
 
-    // --- Backchannel authentication pipeline --------------------------------
+${customScopeStep}    // --- Backchannel authentication pipeline --------------------------------
     // Validation runs in CIBA §7.1 order inside the experimental package:
     // client checks (public client / grant registration / delivery mode) →
     // request parameter rejection → the one-and-only-one hint rule → scope →
@@ -4038,7 +4306,55 @@ backchannelAuthenticationApp.post('/', async (c) => {
  * of the feature lives in a single generated file that can be deleted with the
  * feature.
  */
-export function cibaVerificationRouteTemplate(corePkg: string): string {
+export function cibaVerificationRouteTemplate(
+  corePkg: string,
+  scopes: string[] = [],
+): string {
+  // The authentication device UI is where CIBA learns who the End-User is, so it
+  // is where the scope policy (scopes.ts) is applied.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  // The policy is async, so the listing resolves its rows before rendering.
+  const pendingRequestRows = customScopesDeclared
+    ? `  const requests = await Promise.all(
+    pending.map(async (record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      // Show only what this End-User can actually grant (scopes.ts).
+      scopes: await resolveGrantableScopes(record.scope, subject),
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  );
+  return renderView(views.cibaPendingRequestsPage({ requests }));`
+    : `  return renderView(views.cibaPendingRequestsPage({
+    requests: pending.map((record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      scopes: record.scope,
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  }));`;
+  const approveNarrowStep = customScopesDeclared
+    ? `      // Apply the scope policy to what was approved. approveCibaRequest()
+      // copies the requested scope into approvedScope, so the policy is applied
+      // to the record afterwards and persisted; the token endpoint reads
+      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
+      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      approved.approvedScope = await resolveGrantableScopes(
+        approved.approvedScope ?? approved.scope,
+        session.subject,
+      );
+      await cibaStore.update(approved);
+
+`
+    : '';
   return `/**
  * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
  * (CIBA Core 1.0), authentication device UI.
@@ -4096,7 +4412,7 @@ import {
   userStore,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
-import { cibaConfig } from './backchannel-authentication.js';
+import { cibaConfig } from './backchannel-authentication.js';${customScopeImport}
 
 export const cibaApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -4142,16 +4458,7 @@ async function renderPendingRequests(c: any, subject: string): Promise<Response>
   const views = c.get('views') ?? defaultViews;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const pending = await listPendingCibaRequests({ subject, store: cibaStore });
-  return renderView(views.cibaPendingRequestsPage({
-    requests: pending.map((record) => ({
-      authReqId: record.authReqId,
-      clientId: record.clientId,
-      scopes: record.scope,
-      bindingMessage: record.bindingMessage,
-      expiresInSeconds: remainingSeconds(record.expiresAt),
-      csrfToken: record.csrfToken ?? '',
-    })),
-  }));
+${pendingRequestRows}
 }
 
 /**
@@ -4313,7 +4620,7 @@ cibaApp.post('/approve', async (c) => {
         grantId: generateRandomString(32),
         store: cibaStore,
       });
-      // Record the consent the same way /consent does, so a later Authorization
+${approveNarrowStep}      // Record the consent the same way /consent does, so a later Authorization
       // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
       await consentResolver?.recordConsent?.(
         approved.subject,
@@ -6388,8 +6695,24 @@ jwksApp.get('/', async (c) => {
 export function discoveryRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
-  const scopesSupportedEntry = features.refreshToken
+  // --scope: the declared scopes live in scopes.ts, which also owns the standard
+  // list, so the advertisement reads from there instead of repeating it. Without
+  // a declaration the literal below is unchanged.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { SUPPORTED_SCOPES } from '../scopes.js';`
+    : '';
+  const scopesSupportedEntry = customScopesDeclared
+    ? `    // OIDC Discovery 1.0 §3: scopes_supported is this OP's scope allow list —
+    // the standard scopes plus the custom ones declared with --scope (see
+    // scopes.ts). It is OP metadata, so it lists what the provider accepts, not
+    // what a particular End-User is granted (resolveGrantableScopes decides that).
+    scopesSupported: [...SUPPORTED_SCOPES],
+`
+    : features.refreshToken
     ? `    // OIDC Core 1.0 §11: offline_access is advertised so relying parties (and the
     // OIDF Conformance Suite's oidcc-refresh-token module) know they may request
     // refresh tokens via 'scope=openid offline_access' with prompt=consent.
@@ -6545,7 +6868,7 @@ import { parConfig } from './par.js';`
     : '';
   return `import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '${corePkg}';
-import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}
+import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}${customScopeImport}
 
 export const discoveryApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -6867,7 +7190,45 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
 export function consentRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // The consent step is where the interactive flow turns the requested scope into
+  // a granted one, and it is the first step that knows who the End-User is, so it
+  // is where the scope policy (scopes.ts) is applied. With no custom scope
+  // declared every interpolation below is empty.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImports = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  const consentGetScopeResolution = customScopesDeclared
+    ? `  // Display only what THIS End-User can actually grant. The subject comes from
+  // the auth session that /login (or the SSO fast path) stored for this
+  // transaction; without one there is nothing to apply the policy to, so the
+  // request is shown as-is and POST /consent stops on the same missing session.
+  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
+  const consentSession = await authSessionStore.get(transactionId);
+  const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+  const displayedScopes = consentSession
+    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
+    : requestedScopes;
+
+`
+    : '';
+  const consentDisplayScopes = customScopesDeclared
+    ? 'displayedScopes'
+    : "transaction.scope.split(' ').filter(Boolean)";
+  const consentGrantedScope = customScopesDeclared
+    ? `
+  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place to
+  // write per-user filtering). A dropped scope narrows the grant rather than
+  // failing the request: RFC 6749 §3.3 lets the authorization server issue a
+  // narrower scope, and the token response reports what was granted.
+  const grantedScope = await resolveGrantableScopes(
+    transaction.scope.split(' ').filter(Boolean),
+    session.subject,
+  );`
+    : `  const grantedScope = transaction.scope.split(' ').filter(Boolean);`;
   const bindingImports = features.transactionBinding
     ? `
   validateTransactionBinding,
@@ -7111,7 +7472,7 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${jarmConsentImports}
+import { defaultViews, renderView } from '../views.js';${jarmConsentImports}${customScopeImports}
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
 ${bindingGuard}${jarmConsentHelpers}
@@ -7129,10 +7490,10 @@ consentApp.get('/', async (c) => {
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
 ${bindingCheckBeforeConsentForm}
-  return renderView(views.consentPage({
+${consentGetScopeResolution}  return renderView(views.consentPage({
     transactionId,
     csrfToken: transaction.csrfToken,
-    scopes: transaction.scope.split(' ').filter(Boolean),
+    scopes: ${consentDisplayScopes},
     clientId: transaction.clientId,
   }));
 });
@@ -7200,7 +7561,7 @@ ${consentDenyRedirect}
   // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
   // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
   // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
-  const grantedScope = transaction.scope.split(' ').filter(Boolean);
+${consentGrantedScope}
 
   // Generate authorization code via core helper
   // OIDC Core 1.0 Section 3.1.3.1: TTL is configurable via ProviderConfig
@@ -9964,7 +10325,16 @@ ${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClie
 `;
 }
 
-export function scopesSupportedConformanceTest(features: OidcFeatureConfig): string {
+export function scopesSupportedConformanceTest(
+  features: OidcFeatureConfig,
+  scopes: string[] = [],
+): string {
+  // --scope: the pinned list below is the whole advertisement, so a declared
+  // custom scope has to appear in it or the contract test would fail against the
+  // provider it was generated with.
+  const customScopeEntries = scopes
+    .map((scope) => `        '${singleQuoted(scope)}',\n`)
+    .join('');
   if (!features.refreshToken) {
     return `    // The refresh_token feature is disabled: offline_access must NOT be advertised
     // (OIDC Core 1.0 §11 — it would never be granted). The full list is pinned so
@@ -9980,7 +10350,7 @@ export function scopesSupportedConformanceTest(features: OidcFeatureConfig): str
         'email',
         'address',
         'phone',
-      ]);
+${customScopeEntries}      ]);
     });
 
     // The token endpoint only offers authorization_code (supportedGrantTypes), and
@@ -10010,8 +10380,153 @@ export function scopesSupportedConformanceTest(features: OidcFeatureConfig): str
         'address',
         'phone',
         'offline_access',
-      ]);
+${customScopeEntries}      ]);
     });
+`;
+}
+
+/**
+ * Contract tests for the custom scopes declared with `--scope`. Generated only
+ * when at least one was declared, so a provider without them keeps exactly the
+ * conformance file it had before.
+ */
+export function customScopeConformanceBlock(scopes: string[] = []): string {
+  const declaredScope = scopes[0];
+  if (declaredScope === undefined) return '';
+  // A value the generated provider cannot possibly accept, used to pin the
+  // allow-list rejection. Derived so it can never collide with a declaration.
+  let undeclaredScope = 'undeclared.scope';
+  while (scopes.includes(undeclaredScope)) undeclaredScope += '.x';
+  const scope = singleQuoted(declaredScope);
+
+  return `
+  describe('Custom scopes', () => {
+    // RFC 7636 Appendix B example pair.
+    const CUSTOM_SCOPE_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const CUSTOM_SCOPE_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function csrfTokenFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function relativeLocation(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    /**
+     * Drives authorize -> login -> consent -> token for client 'c-conf' as
+     * \`username\` and returns the scope the token response reports as granted.
+     * Pure data collection: every assertion stays in the it() blocks.
+     */
+    async function grantedScopeFor(scope: string, username: string): Promise<string[]> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(scope) +
+        '&state=custom-scope&prompt=consent' +
+        '&code_challenge=' + CUSTOM_SCOPE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would
+      // (the per-transaction binding secret with --enable transaction-binding,
+      // an empty string otherwise).
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await loginGet.text()),
+          username,
+          password: 'password',
+        }).toString(),
+      });
+
+      const consentPath = relativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost')
+        .searchParams.get('code') ?? '';
+
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-conf',
+          client_secret: 's',
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: CUSTOM_SCOPE_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const tokenBody = await tokenRes.json();
+      return String(tokenBody.scope ?? '').split(' ').filter(Boolean);
+    }
+
+    // RFC 6749 §3.3 / §4.1.2.1: declaring custom scopes makes scopes.ts the OP's
+    // allow list, so a value outside it is a redirectable invalid_scope rather
+    // than something carried into the grant.
+    it('should reject a scope that was never declared with invalid_scope', async () => {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent('openid ${undeclaredScope}') +
+        '&state=custom-scope-reject' +
+        '&code_challenge=' + CUSTOM_SCOPE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+      expect(location.searchParams.get('error')).toBe('invalid_scope');
+      expect(location.searchParams.get('state')).toBe('custom-scope-reject');
+    });
+
+    // The standard scopes stay untouched by the allow list: they are part of it.
+    it('should still accept the standard scopes', async () => {
+      const granted = await grantedScopeFor('openid profile email', 'testuser');
+
+      expect(granted).toEqual(['openid', 'profile', 'email']);
+    });
+
+    // The empty default policy grants every declared scope to everyone.
+    it('should grant the declared scope ${scope} to an authenticated End-User', async () => {
+      const granted = await grantedScopeFor('openid ${scope}', 'testuser');
+
+      expect(granted).toEqual(['openid', '${scope}']);
+    });
+
+    // Pins that per-user filtering is actually wired: the policy edited in
+    // scopes.ts decides the grant of the whole authorize -> token flow, and a
+    // scope the End-User may not have is dropped rather than failing the request
+    // (RFC 6749 §3.3 — the token response reports what was granted). Delete this
+    // test if you replace resolveGrantableScopes() with your own policy.
+    it('should honor a per-End-User restriction written in scopes.ts', async () => {
+      RESTRICTED_SCOPE_SUBJECTS['${scope}'] = ['otheruser'];
+      try {
+        expect(await grantedScopeFor('openid ${scope}', 'testuser')).toEqual(['openid']);
+        expect(await grantedScopeFor('openid ${scope}', 'otheruser')).toEqual([
+          'openid',
+          '${scope}',
+        ]);
+      } finally {
+        delete RESTRICTED_SCOPE_SUBJECTS['${scope}'];
+      }
+    });
+  });
 `;
 }
 
@@ -16209,7 +16724,14 @@ export function consentDecisionConformanceBlock(): string {
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // --scope: the custom scope block flips the generated policy at runtime to pin
+  // that per-End-User filtering is wired through the whole flow.
+  const customScopeConformanceImport = scopes.length > 0
+    ? `
+import { RESTRICTED_SCOPE_SUBJECTS } from './scopes.js';`
+    : '';
   // exportPublicJwk is needed by the Request Object fixtures and by the ID-JAG
   // block (which publishes the fake external IdP key as a JWK). Either feature
   // pulls the single import in; both together still emit it once.
@@ -16264,7 +16786,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -16478,7 +17000,7 @@ ${responseModesSupportedExpectation}
       });
     });
 
-${scopesSupportedConformanceTest(features)}
+${scopesSupportedConformanceTest(features, scopes)}
     // OIDC Core 1.0 §2 / §3.1.3.6 + Discovery 1.0 §3: claims_supported advertises
     // the claims the OP can supply, including the ID Token protocol claims
     // (auth_time/nonce/acr/amr/azp/at_hash). The full list is pinned so dropping
@@ -16743,6 +17265,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

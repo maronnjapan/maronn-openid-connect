@@ -4,12 +4,17 @@ import type { OidcFeatureConfig } from '../../features.js';
 import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
   authorizationCodeConformanceHelper,
+  cibaConformanceBlock,
+  backchannelAuthenticationRouteTemplate,
+  cibaVerificationRouteTemplate,
   authorizeRouteTemplate,
   configTemplate,
   conformanceTestClientsBlock,
   consentDecisionConformanceBlock,
   consentWithdrawalConformanceBlock,
   consentRouteTemplate,
+  customScopeConformanceBlock,
+  customScopesTemplate,
   customViewConformanceTestBlock,
   deviceAuthorizationConformanceBlock,
   deviceAuthorizationRouteTemplate,
@@ -28,6 +33,7 @@ import {
   jarmConformanceBlock,
   jarmConfigTemplate,
   tokenExchangeConformanceBlock,
+  idJagConformanceBlock,
   pkceDisabledConformanceBlock,
   persistentStorageConformanceBlock,
   requestObjectConformanceBeforeAll,
@@ -451,6 +457,46 @@ import { deviceApp } from './routes/device.js';\n`
   const deviceStoreImport = features.deviceAuthorizationGrant
     ? `  deviceAuthorizationStore,\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): back-channel endpoint gets the /token CORS
+  // policy; the authentication device UI is browser navigation, so it needs
+  // none (like /login).
+  const cibaImport = features.ciba
+    ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';\n`
+    : '';
+  const cibaCors = features.ciba
+    ? `  app.use('/backchannel_authentication', protectedCors);\n`
+    : '';
+  const cibaMount = features.ciba
+    ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);\n`
+    : '';
+  // The default CIBA user resolver treats login_hint as the username of the
+  // injected user store, so a custom storage option is honored without extra
+  // wiring. options.cibaUserResolver overrides the whole resolution.
+  const cibaStorageContext = features.ciba
+    ? `    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));\n`
+    : '';
+  const cibaStoreImport = features.ciba
+    ? `  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,\n`
+    : '';
+  const cibaOptionsField = features.ciba
+    ? `  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -466,7 +512,7 @@ import { deviceApp } from './routes/device.js';\n`
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -480,7 +526,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}${deviceStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
 import {
@@ -516,7 +562,7 @@ export interface OidcProviderOptions {
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-  corsOrigins?: CorsOrigins;
+${cibaOptionsField}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -554,7 +600,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
@@ -612,7 +658,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-kn
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }
@@ -630,7 +676,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -693,6 +739,13 @@ export function expressApplyTemplate(
     ? `  '/device_authorization',
   '/device',\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the backchannel authentication endpoint and
+  // the whole authentication device UI. '/ciba' also covers '/ciba/login' and
+  // '/ciba/approve' because app.use() matches by path prefix.
+  const cibaEndpoints = features.ciba
+    ? `  '/backchannel_authentication',
+  '/ciba',\n`
+    : '';
   return `import type { Express } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -704,7 +757,7 @@ const OIDC_ENDPOINTS = [
   '/authorize',
   '/token',
   '/userinfo',
-${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}  '/.well-known/jwks.json',
+${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}${cibaEndpoints}  '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',
   '/consent',
@@ -752,6 +805,14 @@ export function fastifyApplyTemplate(
   app.route({ method: ['POST'], url: '/device/login', handler: handle });
   app.route({ method: ['POST'], url: '/device/approve', handler: handle });\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): Fastify needs each authentication device UI
+  // path registered explicitly — unlike Express it does not match by prefix.
+  const cibaRoutes = features.ciba
+    ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/backchannel_authentication', handler: handle });
+  app.route({ method: ['GET'], url: '/ciba', handler: handle });
+  app.route({ method: ['POST'], url: '/ciba/login', handler: handle });
+  app.route({ method: ['POST'], url: '/ciba/approve', handler: handle });\n`
+    : '';
   return `import type { FastifyInstance } from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -790,7 +851,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/authorize', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/token', handler: handle });
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
-${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
+${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}${cibaRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
@@ -1573,7 +1634,32 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 export function nextJsConsentPageTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // Mirror routes/consent.ts and show what THIS End-User can actually grant. With
+  // no custom scope declared every interpolation below is empty and the page is
+  // unchanged.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
+    : '';
+  const consentPageScopes = customScopesDeclared
+    ? `  // The subject comes from the auth session that the login step stored for this
+  // transaction; without one there is nothing to apply the scope policy to, so
+  // the request is shown as-is and the Server Action stops on the same missing
+  // session.
+  const consentSession = await authSessionStore.get(transactionId);
+  const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+  const scopes = consentSession
+    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
+    : requestedScopes;`
+    : `  const scopes = transaction.scope.split(' ').filter(Boolean);`;
+  const consentPageStores = customScopesDeclared
+    ? `
+const authSessionStore =
+  (oidcProviderOptions.storage ?? defaultProviderStores).authSessionStore;`
+    : '';
   const bindingImports = features.transactionBinding
     ? `import { cookies } from 'next/headers';
 import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';`
@@ -1626,10 +1712,10 @@ async function isBoundToThisBrowser(
   return `${bindingImports}
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 ${bindingStoreImport}
-import { consentAction } from './actions';
+import { consentAction } from './actions';${customScopeImport}
 
 const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
+  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;${consentPageStores}
 
 export const dynamic = 'force-dynamic';
 
@@ -1656,7 +1742,7 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
+${bindingCheck}${consentPageScopes}
 
   return (
     <main>
@@ -1696,7 +1782,26 @@ ${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
 export function nextJsConsentActionTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // This Server Action is the Next.js counterpart of routes/consent.ts, so it
+  // applies the scope policy the same way.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
+    : '';
+  const consentGrantedScope = customScopesDeclared
+    ? `
+  // Apply the scope policy (resolveGrantableScopes in _oidc-provider/scopes.ts —
+  // the place to write per-user filtering). A dropped scope narrows the grant
+  // rather than failing the request: RFC 6749 §3.3 lets the authorization server
+  // issue a narrower scope, and the token response reports what was granted.
+  const grantedScope = await resolveGrantableScopes(
+    transaction.scope.split(' ').filter(Boolean),
+    session.subject,
+  );`
+    : `  const grantedScope = transaction.scope.split(' ').filter(Boolean);`;
   const bindingCookiesImport = features.transactionBinding
     ? `
 import { cookies } from 'next/headers';`
@@ -1758,7 +1863,7 @@ import {
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
-${bindingStoreImport}
+${bindingStoreImport}${customScopeImport}
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
 const { transactionStore, authCodeStore, authSessionStore } = providerStores;
@@ -1827,7 +1932,7 @@ ${clearBindingCookie}    redirect(denyUrl.toString());
   // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
   // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
   // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
-  const grantedScope = transaction.scope.split(' ').filter(Boolean);
+${consentGrantedScope}
 
   // OIDC Core 1.0 Section 3.1.3.1: TTL is configurable via ProviderConfig.
   const authCodeData = await createAuthorizationCode({
@@ -1868,8 +1973,15 @@ export function webConformanceTestTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
   jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
+  scopes: string[] = [],
 ): string {
   const usesRedirect = errorPageMode === 'redirect';
+  // --scope: the custom scope block flips the generated policy at runtime to pin
+  // that per-End-User filtering is wired through the whole flow.
+  const customScopeConformanceImport = scopes.length > 0
+    ? `
+import { RESTRICTED_SCOPE_SUBJECTS } from './scopes.js';`
+    : '';
   // Next.js delegates the non-redirect authorization error to a framework-native
   // error page (app/oidc-error → error.tsx), so its generated provider is wired
   // with authorizationErrorRedirectPath and the conformance test pins the 303.
@@ -1921,7 +2033,10 @@ export function webConformanceTestTemplate(
         ].join('\\n'),
       );
     });`;
-  const exportPublicJwkImport = features.requestObject
+  // exportPublicJwk is needed by the Request Object fixtures and by the ID-JAG
+  // block (which publishes the fake external IdP key as a JWK). Either feature
+  // pulls the single import in; both together still emit it once.
+  const exportPublicJwkImport = features.requestObject || features.idJag
     ? `import { exportPublicJwk } from '${corePkg}';\n`
     : '';
   const nodeAdapterImport = includeNodeAdapterContract
@@ -2000,14 +2115,30 @@ import { parConfig } from './routes/par.js';`
     ? `
 import { tokenExchangeConfig } from './routes/token.js';`
     : '';
-  return `import { describe, it, expect, beforeAll } from 'vitest';
+  // Experimental (ID-JAG draft): the Cross-App Access contract tests flip the
+  // generated allow lists (audiences / trusted IdPs) to cover both policies.
+  const idJagConformanceImports = features.idJag
+    ? `
+import { idJagConfig } from './routes/token.js';`
+    : '';
+  // Experimental (CIBA Core 1.0): the CIBA contract tests clear testuser's
+  // leftover pending requests after each test — the store is module-global and
+  // the backchannel endpoint caps pending requests per subject.
+  const cibaConformanceImports = features.ciba
+    ? `
+import { cibaAuthenticationRequestStore } from './store.js';`
+    : '';
+  const vitestNames = features.ciba
+    ? 'describe, it, expect, beforeAll, afterEach'
+    : 'describe, it, expect, beforeAll';
+  return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2183,7 +2314,7 @@ ${responseModesSupportedExpectation}
       });
     });
 
-${scopesSupportedConformanceTest(features)}
+${scopesSupportedConformanceTest(features, scopes)}
     // OIDC Core 1.0 §2 / §3.1.3.6 + Discovery 1.0 §3: claims_supported advertises
     // the claims the OP can supply, including the ID Token protocol claims
     // (auth_time/nonce/acr/amr/azp/at_hash). The full list is pinned so dropping
@@ -2418,7 +2549,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 
@@ -2428,6 +2559,7 @@ function webCoreGeneratedFiles(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
   jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
+  scopes: string[] = [],
 ): GeneratedFile[] {
   // EXPERIMENTAL (JARM): on a target whose consent step cannot sign a verifiable
   // response JWT (Next.js Server Actions — see nextJsConsentActionTemplate), the
@@ -2440,6 +2572,11 @@ function webCoreGeneratedFiles(
     { path: 'app.ts', content: webAppTemplate(corePkg, features) },
     { path: 'web-router.ts', content: webRouterTemplate() },
     { path: 'config.ts', content: configTemplate(corePkg, features) },
+    // Custom scopes (--scope): the scope policy module is only generated when
+    // at least one was declared.
+    ...(scopes.length > 0
+      ? [{ path: 'scopes.ts', content: customScopesTemplate(scopes, features) }]
+      : []),
     {
       path: 'store.ts',
       content: storeTemplate(corePkg, features),
@@ -2452,7 +2589,7 @@ function webCoreGeneratedFiles(
       ),
     },
     { path: 'views.ts', content: viewsTemplate(features) },
-    { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features)) },
+    { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
     { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },
     ...(features.introspection
@@ -2470,11 +2607,24 @@ function webCoreGeneratedFiles(
       ? [
         {
           path: 'routes/device-authorization.ts',
-          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features)),
+          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features, scopes)),
         },
         {
           path: 'routes/device.ts',
-          content: toWebRouteTemplate(deviceVerificationRouteTemplate(corePkg)),
+          content: toWebRouteTemplate(deviceVerificationRouteTemplate(corePkg, scopes)),
+        },
+      ]
+      : []),
+    // Experimental (CIBA Core 1.0): only generated with --enable ciba.
+    ...(features.ciba
+      ? [
+        {
+          path: 'routes/backchannel-authentication.ts',
+          content: toWebRouteTemplate(backchannelAuthenticationRouteTemplate(corePkg, features, scopes)),
+        },
+        {
+          path: 'routes/ciba-verification.ts',
+          content: toWebRouteTemplate(cibaVerificationRouteTemplate(corePkg, scopes)),
         },
       ]
       : []),
@@ -2484,9 +2634,9 @@ function webCoreGeneratedFiles(
       ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
       : []),
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
-    { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },
+    { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg, features)) },
-    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, consentFeatures)) },
+    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, consentFeatures, scopes)) },
     {
       path: 'conformance.test.ts',
       content: webConformanceTestTemplate(
@@ -2495,6 +2645,7 @@ function webCoreGeneratedFiles(
         features,
         includeNodeAdapterContract,
         jarmConsentResponseMode,
+        scopes,
       ),
     },
   ];
@@ -2508,9 +2659,10 @@ export function webGeneratedFiles(
   corePkg: string,
   applyTemplate: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): GeneratedFile[] {
   return [
-    ...webCoreGeneratedFiles(corePkg, 'html', features, true),
+    ...webCoreGeneratedFiles(corePkg, 'html', features, true, 'jwt', scopes),
     { path: 'apply.ts', content: applyTemplate },
     { path: 'node-adapter.ts', content: nodeAdapterTemplate() },
   ];
@@ -2519,12 +2671,20 @@ export function webGeneratedFiles(
 export function nextJsGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): GeneratedFile[] {
   // Next.js drives login / consent through Server Actions, which are bundled
   // apart from the Route Handlers and hold their own signing key provider
   // instance. A JARM response signed there would fail every client's signature
   // check, so this target answers the interactive flow in plain query.
-  const internalFiles = webCoreGeneratedFiles(corePkg, 'redirect', features, false, 'plain').map(
+  const internalFiles = webCoreGeneratedFiles(
+    corePkg,
+    'redirect',
+    features,
+    false,
+    'plain',
+    scopes,
+  ).map(
     (file) => ({
       path: `_oidc-provider/${file.path}`,
       content: toNextJsModuleImports(file.content),
@@ -2605,6 +2765,31 @@ export function nextJsGeneratedFiles(
         },
       ]
       : []),
+    // Experimental (CIBA Core 1.0): only generated with --enable ciba. Like the
+    // device verification UI, the authentication device UI is served by Route
+    // Handlers, not Next.js pages: it renders through the same views.ts contract
+    // as the other frameworks, so the feature can be removed by deleting what it
+    // generated.
+    ...(features.ciba
+      ? [
+        {
+          path: 'backchannel_authentication/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['POST', 'OPTIONS']),
+        },
+        {
+          path: 'ciba/route.ts',
+          content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', ['GET']),
+        },
+        {
+          path: 'ciba/login/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
+        },
+        {
+          path: 'ciba/approve/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
+        },
+      ]
+      : []),
     {
       path: '.well-known/jwks.json/route.ts',
       content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', [
@@ -2623,8 +2808,8 @@ export function nextJsGeneratedFiles(
     // Handlers) so the UI can be customized with JSX and the React ecosystem.
     { path: 'login/page.tsx', content: nextJsLoginPageTemplate(corePkg, features) },
     { path: 'login/actions.ts', content: nextJsLoginActionTemplate(corePkg, features) },
-    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg, features) },
-    { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg, features) },
+    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg, features, scopes) },
+    { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg, features, scopes) },
     // Non-redirect authorization errors (OIDC Core 1.0 §3.1.2.2) land on this
     // page, which throws so the App Router error boundary (error.tsx) renders the
     // OAuth error — keeping error UI framework-native like login / consent.

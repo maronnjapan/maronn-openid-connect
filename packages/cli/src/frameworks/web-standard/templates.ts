@@ -1,8 +1,6 @@
 import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
-import { NO_CUSTOM_SCOPES, hasCustomScopes, hasPerUserScopes } from '../../scopes.js';
-import type { CustomScopeConfig } from '../../scopes.js';
 import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
   authorizationCodeConformanceHelper,
@@ -1636,28 +1634,28 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 export function nextJsConsentPageTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --user-scope: mirror routes/consent.ts and show what THIS End-User can
-  // actually grant. With no per-user scope declared both interpolations below
-  // are empty and the page is unchanged.
-  const perUserScopesDeclared = hasPerUserScopes(scopes);
-  const customScopeImport = perUserScopesDeclared
+  // Mirror routes/consent.ts and show what THIS End-User can actually grant. With
+  // no custom scope declared every interpolation below is empty and the page is
+  // unchanged.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
     ? `
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
-  const consentPageScopes = perUserScopesDeclared
-    ? `  // --user-scope: the subject comes from the auth session that the login step
-  // stored for this transaction; without one there is nothing to narrow by, so
+  const consentPageScopes = customScopesDeclared
+    ? `  // The subject comes from the auth session that the login step stored for this
+  // transaction; without one there is nothing to apply the scope policy to, so
   // the request is shown as-is and the Server Action stops on the same missing
   // session.
   const consentSession = await authSessionStore.get(transactionId);
   const requestedScopes = transaction.scope.split(' ').filter(Boolean);
   const scopes = consentSession
-    ? resolveGrantableScopes(requestedScopes, consentSession.subject)
+    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
     : requestedScopes;`
     : `  const scopes = transaction.scope.split(' ').filter(Boolean);`;
-  const consentPageStores = perUserScopesDeclared
+  const consentPageStores = customScopesDeclared
     ? `
 const authSessionStore =
   (oidcProviderOptions.storage ?? defaultProviderStores).authSessionStore;`
@@ -1784,21 +1782,22 @@ ${bindingCheck}${consentPageScopes}
 export function nextJsConsentActionTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --user-scope: this Server Action is the Next.js counterpart of
-  // routes/consent.ts, so it narrows the grant the same way.
-  const perUserScopesDeclared = hasPerUserScopes(scopes);
-  const customScopeImport = perUserScopesDeclared
+  // This Server Action is the Next.js counterpart of routes/consent.ts, so it
+  // applies the scope policy the same way.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
     ? `
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
-  const consentGrantedScope = perUserScopesDeclared
+  const consentGrantedScope = customScopesDeclared
     ? `
-  // --user-scope: scopes reserved for other subjects are dropped from the grant
-  // rather than failing the request (RFC 6749 §3.3 lets the authorization server
-  // issue a narrower scope; the token response reports what was granted).
-  const grantedScope = resolveGrantableScopes(
+  // Apply the scope policy (resolveGrantableScopes in _oidc-provider/scopes.ts —
+  // the place to write per-user filtering). A dropped scope narrows the grant
+  // rather than failing the request: RFC 6749 §3.3 lets the authorization server
+  // issue a narrower scope, and the token response reports what was granted.
+  const grantedScope = await resolveGrantableScopes(
     transaction.scope.split(' ').filter(Boolean),
     session.subject,
   );`
@@ -1974,15 +1973,14 @@ export function webConformanceTestTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
   jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
   const usesRedirect = errorPageMode === 'redirect';
-  // --user-scope: the per-subject contract test drives the generated policy
-  // module directly, because the HTTP flow can only sign in as a user the
-  // generated store knows while declarations name arbitrary subjects.
-  const customScopeConformanceImport = hasPerUserScopes(scopes)
+  // --scope: the custom scope block flips the generated policy at runtime to pin
+  // that per-End-User filtering is wired through the whole flow.
+  const customScopeConformanceImport = scopes.length > 0
     ? `
-import { resolveGrantableScopes } from './scopes.js';`
+import { RESTRICTED_SCOPE_SUBJECTS } from './scopes.js';`
     : '';
   // Next.js delegates the non-redirect authorization error to a framework-native
   // error page (app/oidc-error → error.tsx), so its generated provider is wired
@@ -2561,7 +2559,7 @@ function webCoreGeneratedFiles(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
   jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): GeneratedFile[] {
   // EXPERIMENTAL (JARM): on a target whose consent step cannot sign a verifiable
   // response JWT (Next.js Server Actions — see nextJsConsentActionTemplate), the
@@ -2574,9 +2572,9 @@ function webCoreGeneratedFiles(
     { path: 'app.ts', content: webAppTemplate(corePkg, features) },
     { path: 'web-router.ts', content: webRouterTemplate() },
     { path: 'config.ts', content: configTemplate(corePkg, features) },
-    // Custom scopes (--scope / --user-scope): the policy module is only
-    // generated when at least one was declared.
-    ...(hasCustomScopes(scopes)
+    // Custom scopes (--scope): the scope policy module is only generated when
+    // at least one was declared.
+    ...(scopes.length > 0
       ? [{ path: 'scopes.ts', content: customScopesTemplate(scopes, features) }]
       : []),
     {
@@ -2661,7 +2659,7 @@ export function webGeneratedFiles(
   corePkg: string,
   applyTemplate: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): GeneratedFile[] {
   return [
     ...webCoreGeneratedFiles(corePkg, 'html', features, true, 'jwt', scopes),
@@ -2673,7 +2671,7 @@ export function webGeneratedFiles(
 export function nextJsGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): GeneratedFile[] {
   // Next.js drives login / consent through Server Actions, which are bundled
   // apart from the Route Handlers and hold their own signing key provider

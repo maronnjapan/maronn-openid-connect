@@ -135,4 +135,6 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` 
 
 ## Custom Scopes
 
-生成 OP が受け付けるスコープは、標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）に加えて、CLI の `--scope`（全ユーザーに一律許容）と `--user-scope <subject>:<scope>`（特定ユーザーにだけ許容）で宣言できます。宣言すると `scopes.ts` が生成され、認可エンドポイントは宣言していないスコープを `invalid_scope` で拒否し（RFC 6749 §3.3）、ユーザーごとに許容したスコープは対象外の End-User の付与スコープから落とされます。宣言が無ければ何も生成されず、既定の生成物の挙動は変わりません。詳細は [CLI Guide](../../guides/cli/#custom-scopes) を参照してください。
+生成 OP が受け付けるスコープは、標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）に加えて、CLI の `--scope` で宣言できます。宣言すると `scopes.ts` が生成され、discovery の `scopes_supported` に載り、認可エンドポイントは宣言していないスコープを `invalid_scope` で拒否します（RFC 6749 §3.3）。
+
+「誰にどのスコープを許すか」は CLI のオプションではなく、生成された `scopes.ts` の `resolveGrantableScopes()` に書きます。同意・SSO・`prompt=none`・device / CIBA の承認から呼び出された状態で生成されるので、この 1 関数を書き換えるだけで全経路に反映されます。宣言が無ければ何も生成されず、既定の生成物の挙動は変わりません。詳細は [CLI Guide](../../guides/cli/#custom-scopes) を参照してください。

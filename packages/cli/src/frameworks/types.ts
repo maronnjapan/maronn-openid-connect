@@ -9,7 +9,6 @@ export interface GeneratedFile {
 }
 
 import type { OidcFeatureConfig } from '../features.js';
-import type { CustomScopeConfig } from '../scopes.js';
 
 /**
  * Options for code generation
@@ -22,10 +21,10 @@ export interface GeneratorOptions {
   /** Resolved feature toggles for the generated provider (default: every feature enabled) */
   features?: OidcFeatureConfig;
   /**
-   * Custom scopes the generated provider accepts, from `--scope` / `--user-scope`
+   * Custom scopes the generated provider accepts, from `--scope`
    * (default: none declared, which generates no scope policy at all).
    */
-  scopes?: CustomScopeConfig;
+  scopes?: string[];
 }
 
 /**

@@ -1,6 +1,5 @@
 import type { FrameworkGenerator, GeneratedFile, GeneratorOptions } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
-import { NO_CUSTOM_SCOPES, hasCustomScopes } from '../../scopes.js';
 import {
   appTemplate,
   applyTemplate,
@@ -34,15 +33,15 @@ export class HonoGenerator implements FrameworkGenerator {
   generate(options: GeneratorOptions): GeneratedFile[] {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
-    const scopes = options.scopes ?? NO_CUSTOM_SCOPES;
+    const scopes = options.scopes ?? [];
 
     return [
       { path: 'app.ts', content: appTemplate(pkg, features) },
       { path: 'apply.ts', content: applyTemplate(pkg, features) },
       { path: 'config.ts', content: configTemplate(pkg, features) },
-      // Custom scopes (--scope / --user-scope): the policy module is only
-      // generated when at least one was declared.
-      ...(hasCustomScopes(scopes)
+      // Custom scopes (--scope): the scope policy module is only generated when
+      // at least one was declared.
+      ...(scopes.length > 0
         ? [{ path: 'scopes.ts', content: customScopesTemplate(scopes, features) }]
         : []),
       { path: 'store.ts', content: storeTemplate(pkg, features) },

@@ -1,8 +1,6 @@
 import { getGenerator, getAvailableFrameworks } from './frameworks/index.js';
 import { DEFAULT_FEATURES } from './features.js';
 import type { OidcFeatureConfig } from './features.js';
-import { NO_CUSTOM_SCOPES } from './scopes.js';
-import type { CustomScopeConfig } from './scopes.js';
 import type { GeneratedFile } from './frameworks/types.js';
 
 export interface GenerateOptions {
@@ -18,7 +16,7 @@ export interface GenerateOptions {
    * Custom scopes the generated provider accepts (default: none declared, so no
    * scope policy is generated and the provider keeps accepting any scope value).
    */
-  scopes?: CustomScopeConfig;
+  scopes?: string[];
 }
 
 export interface GenerateResult {
@@ -37,7 +35,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     outputDir,
     corePackageName = DEFAULT_CORE_PACKAGE,
     features = { ...DEFAULT_FEATURES },
-    scopes = { ...NO_CUSTOM_SCOPES },
+    scopes = [],
   } = options;
 
   const generator = getGenerator(framework);

@@ -5,22 +5,13 @@ import { tmpdir } from 'node:os';
 import { resolveFeatures } from '../features.js';
 import { generate } from '../generator.js';
 import { run } from '../index.js';
-import {
-  NO_CUSTOM_SCOPES,
-  RESERVED_SCOPES,
-  hasCustomScopes,
-  hasPerUserScopes,
-  listCustomScopes,
-  listRestrictedScopes,
-  resolveCustomScopes,
-} from '../scopes.js';
-import type { CustomScopeConfig } from '../scopes.js';
+import { RESERVED_SCOPES, resolveCustomScopes } from '../scopes.js';
 
 const FRAMEWORKS = ['hono', 'express', 'fastify', 'nextjs'] as const;
 
 function generateFiles(
   framework: string,
-  scopes: CustomScopeConfig,
+  scopes: string[],
   enable: string[] = [],
   disable: string[] = [],
 ) {
@@ -48,47 +39,28 @@ function scopeModuleSpecifier(framework: string): string {
 
 describe('resolveCustomScopes', () => {
   it('should declare no custom scope by default', () => {
-    expect(resolveCustomScopes({})).toEqual(NO_CUSTOM_SCOPES);
-    expect(hasCustomScopes(NO_CUSTOM_SCOPES)).toBe(false);
-    expect(hasPerUserScopes(NO_CUSTOM_SCOPES)).toBe(false);
+    expect(resolveCustomScopes({})).toEqual([]);
   });
 
   it('should split a comma-separated --scope list', () => {
-    expect(resolveCustomScopes({ scope: ['reports.read, reports.write'] })).toEqual({
-      global: ['reports.read', 'reports.write'],
-      perUser: {},
-    });
+    expect(resolveCustomScopes({ scope: ['reports.read, reports.write'] })).toEqual([
+      'reports.read',
+      'reports.write',
+    ]);
   });
 
   it('should accept --scope repeatedly and drop duplicates', () => {
-    expect(resolveCustomScopes({ scope: ['reports.read', 'reports.read,billing.read'] })).toEqual({
-      global: ['reports.read', 'billing.read'],
-      perUser: {},
-    });
+    expect(resolveCustomScopes({ scope: ['reports.read', 'reports.read,billing.read'] })).toEqual([
+      'reports.read',
+      'billing.read',
+    ]);
   });
 
-  it('should parse --user-scope as <subject>:<scope list>', () => {
-    expect(
-      resolveCustomScopes({ userScope: ['alice:admin.write,billing.read', 'bob:billing.read'] }),
-    ).toEqual({
-      global: [],
-      perUser: { alice: ['admin.write', 'billing.read'], bob: ['billing.read'] },
-    });
-  });
-
-  it('should merge repeated --user-scope declarations for the same subject', () => {
-    expect(
-      resolveCustomScopes({ userScope: ['alice:admin.write', 'alice:admin.write,billing.read'] }),
-    ).toEqual({ global: [], perUser: { alice: ['admin.write', 'billing.read'] } });
-  });
-
-  // The split is on the FIRST colon, which is what lets a URN-shaped scope name
-  // survive (RFC 6749 §3.3 allows ':' inside a scope token).
-  it('should split on the first colon so a scope name may contain colons', () => {
-    expect(resolveCustomScopes({ userScope: ['alice:urn:example:reports'] })).toEqual({
-      global: [],
-      perUser: { alice: ['urn:example:reports'] },
-    });
+  // RFC 6749 §3.3 allows ':' inside a scope token, so URN-shaped names work.
+  it('should accept a URN-shaped scope name', () => {
+    expect(resolveCustomScopes({ scope: ['urn:example:reports'] })).toEqual([
+      'urn:example:reports',
+    ]);
   });
 
   it('should reject a standard scope declared as custom', () => {
@@ -97,9 +69,6 @@ describe('resolveCustomScopes', () => {
         `Scope "${reserved}" is a standard scope`,
       );
     }
-    expect(() => resolveCustomScopes({ userScope: ['alice:email'] })).toThrow(
-      'Scope "email" is a standard scope',
-    );
   });
 
   it('should reject a scope value outside the RFC 6749 scope-token charset', () => {
@@ -114,50 +83,16 @@ describe('resolveCustomScopes', () => {
     );
   });
 
-  it('should reject a --user-scope value without a subject', () => {
-    expect(() => resolveCustomScopes({ userScope: ['admin.write'] })).toThrow(
-      'Expected <subject>:<scope>',
+  it('should reject an empty --scope value', () => {
+    expect(() => resolveCustomScopes({ scope: [' , '] })).toThrow(
+      '--scope requires at least one scope name',
     );
-    expect(() => resolveCustomScopes({ userScope: [':admin.write'] })).toThrow(
-      'Expected <subject>:<scope>',
-    );
-    expect(() => resolveCustomScopes({ userScope: ['  :admin.write'] })).toThrow(
-      'Invalid --user-scope subject',
-    );
-  });
-
-  it('should reject a --user-scope value without a scope', () => {
-    expect(() => resolveCustomScopes({ userScope: ['alice:'] })).toThrow(
-      '--user-scope requires at least one scope name',
-    );
-  });
-
-  // Declaring both would be a contradiction: the global declaration already
-  // grants it to everyone, so the per-user restriction could never apply.
-  it('should reject a scope declared both globally and per user, in either order', () => {
-    expect(() =>
-      resolveCustomScopes({ scope: ['admin.write'], userScope: ['alice:admin.write'] }),
-    ).toThrow('has no effect');
-    expect(() =>
-      resolveCustomScopes({ userScope: ['alice:admin.write'], scope: ['admin.write'] }),
-    ).toThrow('has no effect');
-  });
-
-  it('should report which scopes are restricted to specific subjects', () => {
-    const scopes = resolveCustomScopes({
-      scope: ['reports.read'],
-      userScope: ['alice:admin.write', 'bob:billing.read'],
-    });
-
-    expect(listCustomScopes(scopes)).toEqual(['reports.read', 'admin.write', 'billing.read']);
-    expect(listRestrictedScopes(scopes)).toEqual(['admin.write', 'billing.read']);
-    expect(hasPerUserScopes(scopes)).toBe(true);
   });
 });
 
 describe('generation without custom scopes', () => {
   it.each(FRAMEWORKS)('should not generate a scope policy module for %s', (framework) => {
-    const files = generateFiles(framework, NO_CUSTOM_SCOPES);
+    const files = generateFiles(framework, []);
 
     expect(files.some((file) => file.path.endsWith('scopes.ts'))).toBe(false);
   });
@@ -165,7 +100,7 @@ describe('generation without custom scopes', () => {
   // The whole feature is opt-in: a provider generated without a declaration must
   // not gain a scope allow list, so it keeps accepting arbitrary scope values.
   it.each(FRAMEWORKS)('should not reference the scope policy anywhere for %s', (framework) => {
-    const files = generateFiles(framework, NO_CUSTOM_SCOPES, [
+    const files = generateFiles(framework, [], [
       'par',
       'device-authorization-grant',
       'ciba',
@@ -176,31 +111,43 @@ describe('generation without custom scopes', () => {
     for (const file of files) {
       expect(file.content).not.toContain('findUnsupportedScopes');
       expect(file.content).not.toContain('resolveGrantableScopes');
-      expect(file.content).not.toContain("from '../scopes.js'");
+      expect(file.content).not.toContain('scopes.js');
     }
   });
 });
 
 describe('generated scopes.ts', () => {
-  const scopes = resolveCustomScopes({
-    scope: ['reports.read'],
-    userScope: ['alice:admin.write'],
-  });
-
-  it.each(FRAMEWORKS)('should generate the policy module for %s', (framework) => {
-    const files = generateFiles(framework, scopes);
-    const content = fileContent(files, internalPath(framework, 'scopes.ts'));
+  it.each(FRAMEWORKS)('should generate the scope policy module for %s', (framework) => {
+    const content = fileContent(
+      generateFiles(framework, ['reports.read']),
+      internalPath(framework, 'scopes.ts'),
+    );
 
     expect(content).toContain(
-      "export const GLOBAL_CUSTOM_SCOPES: readonly string[] = ['reports.read'];",
+      "export const CUSTOM_SCOPES: readonly string[] = ['reports.read'];",
     );
-    expect(content).toContain("'alice': ['admin.write'],");
+    expect(content).toContain(
+      'export const SUPPORTED_SCOPES: readonly string[] = [...STANDARD_SCOPES, ...CUSTOM_SCOPES];',
+    );
     expect(content).toContain('export function findUnsupportedScopes(');
-    expect(content).toContain('export function resolveGrantableScopes(');
+  });
+
+  // The seam the CLI deliberately does NOT model: which End-User may hold which
+  // scope is written here, not passed as a flag.
+  it('should expose an async per-End-User filtering seam with an empty default', () => {
+    const content = fileContent(generateFiles('hono', ['reports.read']), 'scopes.ts');
+
+    expect(content).toContain(
+      'export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {',
+    );
+    expect(content).toContain("  // 'reports.read': ['testuser'],");
+    expect(content).toContain(
+      'export async function resolveGrantableScopes(\n  requested: readonly string[],\n  subject: string,\n): Promise<string[]> {',
+    );
   });
 
   it('should advertise offline_access as a standard scope with the refresh-token feature on', () => {
-    const content = fileContent(generateFiles('hono', scopes), 'scopes.ts');
+    const content = fileContent(generateFiles('hono', ['reports.read']), 'scopes.ts');
 
     expect(content).toContain(
       "export const STANDARD_SCOPES: readonly string[] = ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'];",
@@ -211,7 +158,7 @@ describe('generated scopes.ts', () => {
   // granted, so it must not become part of the advertised allow list either.
   it('should drop offline_access from the standard scopes with --disable refresh-token', () => {
     const content = fileContent(
-      generateFiles('hono', scopes, [], ['refresh-token']),
+      generateFiles('hono', ['reports.read'], [], ['refresh-token']),
       'scopes.ts',
     );
 
@@ -221,26 +168,22 @@ describe('generated scopes.ts', () => {
   });
 
   it('should escape a scope name that contains a quote', () => {
-    const content = fileContent(
-      generateFiles('hono', { global: ["reports'read"], perUser: {} }),
-      'scopes.ts',
-    );
+    const content = fileContent(generateFiles('hono', ["reports'read"]), 'scopes.ts');
 
     expect(content).toContain("['reports\\'read']");
   });
 });
 
 describe('generated authorization endpoint', () => {
-  const globalOnly = resolveCustomScopes({ scope: ['reports.read'] });
-  const perUser = resolveCustomScopes({ userScope: ['alice:admin.write'] });
-
   it.each(FRAMEWORKS)('should reject an undeclared scope with invalid_scope on %s', (framework) => {
     const content = fileContent(
-      generateFiles(framework, globalOnly),
+      generateFiles(framework, ['reports.read']),
       internalPath(framework, 'routes/authorize.ts'),
     );
 
-    expect(content).toContain("import {\n  findUnsupportedScopes,\n}");
+    expect(content).toContain(
+      `import { findUnsupportedScopes, resolveGrantableScopes } from '${scopeModuleSpecifier(framework)}';`,
+    );
     expect(content).toContain('const unsupportedScopes = findUnsupportedScopes(scope);');
     expect(content).toContain('AuthorizationErrorCode.InvalidScope');
   });
@@ -248,43 +191,38 @@ describe('generated authorization endpoint', () => {
   // OIDC Core 1.0 §11 requires ignoring an offline_access that cannot be granted,
   // so the allow-list check must run after applyOfflineAccessPolicy dropped it.
   it('should check the allow list after the offline_access policy', () => {
-    const content = fileContent(generateFiles('hono', globalOnly), 'routes/authorize.ts');
+    const content = fileContent(generateFiles('hono', ['reports.read']), 'routes/authorize.ts');
 
     expect(content.indexOf('scope = await applyOfflineAccessPolicy')).toBeLessThan(
       content.indexOf('const unsupportedScopes = findUnsupportedScopes(scope)'),
     );
   });
 
-  it('should not narrow per user when only --scope was declared', () => {
-    const content = fileContent(generateFiles('hono', globalOnly), 'routes/authorize.ts');
+  // Both grant without showing consent, and both look consent up by scope, so
+  // each has to apply the policy before that lookup or it could never match.
+  it.each(FRAMEWORKS)(
+    'should apply the policy before the consent lookup of prompt=none and SSO on %s',
+    (framework) => {
+      const content = fileContent(
+        generateFiles(framework, ['reports.read']),
+        internalPath(framework, 'routes/authorize.ts'),
+      );
 
-    expect(content).not.toContain('resolveGrantableScopes');
-  });
-
-  // Both non-interactive paths decide the grant without reaching /consent, and
-  // both look up consent by scope, so each has to narrow before that lookup.
-  it.each(FRAMEWORKS)('should narrow prompt=none and SSO by subject on %s', (framework) => {
-    const content = fileContent(
-      generateFiles(framework, perUser),
-      internalPath(framework, 'routes/authorize.ts'),
-    );
-
-    expect(content).toContain('resolveGrantableScopes(\n          transaction.scope');
-    expect(content.indexOf('session.subject,\n        ).join(\' \');')).toBeLessThan(
-      content.indexOf('await validatePromptNoneConsent('),
-    );
-    expect(content.indexOf('existingSession.subject,\n          ).join(\' \');')).toBeLessThan(
-      content.indexOf('await consentResolver.hasConsent('),
-    );
-  });
+      expect(content).toContain('transaction.scope = (await resolveGrantableScopes(');
+      expect(content.indexOf("session.subject,\n        )).join(' ');")).toBeLessThan(
+        content.indexOf('await validatePromptNoneConsent('),
+      );
+      expect(content.indexOf("existingSession.subject,\n          )).join(' ');")).toBeLessThan(
+        content.indexOf('await consentResolver.hasConsent('),
+      );
+    },
+  );
 });
 
 describe('generated consent step', () => {
-  const perUser = resolveCustomScopes({ userScope: ['alice:admin.write'] });
-
-  it.each(FRAMEWORKS)('should narrow the granted scope by subject on %s', (framework) => {
+  it.each(FRAMEWORKS)('should apply the policy to the granted scope on %s', (framework) => {
     const content = fileContent(
-      generateFiles(framework, perUser),
+      generateFiles(framework, ['reports.read']),
       internalPath(framework, 'routes/consent.ts'),
     );
 
@@ -292,13 +230,13 @@ describe('generated consent step', () => {
       `import { resolveGrantableScopes } from '${scopeModuleSpecifier(framework)}';`,
     );
     expect(content).toContain(
-      'const grantedScope = resolveGrantableScopes(\n    transaction.scope.split(\' \').filter(Boolean),\n    session.subject,\n  );',
+      "const grantedScope = await resolveGrantableScopes(\n    transaction.scope.split(' ').filter(Boolean),\n    session.subject,\n  );",
     );
   });
 
   it.each(FRAMEWORKS)('should display only the grantable scopes on %s', (framework) => {
     const content = fileContent(
-      generateFiles(framework, perUser),
+      generateFiles(framework, ['reports.read']),
       internalPath(framework, 'routes/consent.ts'),
     );
 
@@ -306,25 +244,16 @@ describe('generated consent step', () => {
     expect(content).toContain('scopes: displayedScopes,');
   });
 
-  it('should not touch the consent route when only --scope was declared', () => {
-    const content = fileContent(
-      generateFiles('hono', resolveCustomScopes({ scope: ['reports.read'] })),
-      'routes/consent.ts',
-    );
-
-    expect(content).not.toContain('resolveGrantableScopes');
-  });
-
   // Next.js drives consent through a page + Server Action instead of the
-  // framework-neutral route, so both need the same narrowing.
-  it('should narrow the Next.js consent page and Server Action', () => {
-    const files = generateFiles('nextjs', perUser);
+  // framework-neutral route, so both need the same policy call.
+  it('should apply the policy in the Next.js consent page and Server Action', () => {
+    const files = generateFiles('nextjs', ['reports.read']);
 
     expect(fileContent(files, 'consent/page.tsx')).toContain(
       "import { resolveGrantableScopes } from '../_oidc-provider/scopes';",
     );
     expect(fileContent(files, 'consent/actions.ts')).toContain(
-      'const grantedScope = resolveGrantableScopes(',
+      'const grantedScope = await resolveGrantableScopes(',
     );
   });
 });
@@ -332,10 +261,7 @@ describe('generated consent step', () => {
 describe('generated discovery metadata', () => {
   it.each(FRAMEWORKS)('should advertise the declared scopes on %s', (framework) => {
     const content = fileContent(
-      generateFiles(
-        framework,
-        resolveCustomScopes({ scope: ['reports.read'], userScope: ['alice:admin.write'] }),
-      ),
+      generateFiles(framework, ['reports.read']),
       internalPath(framework, 'routes/discovery.ts'),
     );
 
@@ -346,7 +272,7 @@ describe('generated discovery metadata', () => {
   });
 
   it('should keep the literal scope list without custom scopes', () => {
-    const content = fileContent(generateFiles('hono', NO_CUSTOM_SCOPES), 'routes/discovery.ts');
+    const content = fileContent(generateFiles('hono', []), 'routes/discovery.ts');
 
     expect(content).toContain(
       "scopesSupported: ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'],",
@@ -354,15 +280,10 @@ describe('generated discovery metadata', () => {
   });
 });
 
-describe('generated experimental request endpoints', () => {
-  const scopes = resolveCustomScopes({
-    scope: ['reports.read'],
-    userScope: ['alice:admin.write'],
-  });
-
+describe('generated experimental endpoints', () => {
   it('should apply the allow list to the device authorization endpoint', () => {
     const content = fileContent(
-      generateFiles('hono', scopes, ['device-authorization-grant']),
+      generateFiles('hono', ['reports.read'], ['device-authorization-grant']),
       'routes/device-authorization.ts',
     );
 
@@ -370,22 +291,24 @@ describe('generated experimental request endpoints', () => {
     expect(content).toContain("throw new DeviceAuthorizationError(\n        'invalid_scope',");
   });
 
-  it('should narrow the device approval by subject', () => {
+  it('should apply the policy to the device approval', () => {
     const content = fileContent(
-      generateFiles('hono', scopes, ['device-authorization-grant']),
+      generateFiles('hono', ['reports.read'], ['device-authorization-grant']),
       'routes/device.ts',
     );
 
-    expect(content).toContain('approved.approvedScope = resolveGrantableScopes(');
+    expect(content).toContain('approved.approvedScope = await resolveGrantableScopes(');
     expect(content).toContain('await deviceStore.update(approved);');
-    expect(content).toContain('scopes: resolveGrantableScopes(record.scope, session.subject),');
+    expect(content).toContain(
+      'scopes: await resolveGrantableScopes(record.scope, session.subject),',
+    );
   });
 
   // CIBA §7.1 leaves offline_access to the pipeline's own policy, so the
   // pre-check must not turn an ignorable offline_access into invalid_scope.
   it('should apply the allow list to the backchannel authentication endpoint', () => {
     const content = fileContent(
-      generateFiles('hono', scopes, ['ciba']),
+      generateFiles('hono', ['reports.read'], ['ciba']),
       'routes/backchannel-authentication.ts',
     );
 
@@ -393,49 +316,44 @@ describe('generated experimental request endpoints', () => {
     expect(content).toContain("throw new BackchannelAuthenticationError(\n        'invalid_scope',");
   });
 
-  it('should narrow the CIBA approval by subject', () => {
+  it('should apply the policy to the CIBA approval and pending listing', () => {
     const content = fileContent(
-      generateFiles('hono', scopes, ['ciba']),
+      generateFiles('hono', ['reports.read'], ['ciba']),
       'routes/ciba-verification.ts',
     );
 
-    expect(content).toContain('approved.approvedScope = resolveGrantableScopes(');
+    expect(content).toContain('approved.approvedScope = await resolveGrantableScopes(');
     expect(content).toContain('await cibaStore.update(approved);');
+    expect(content).toContain('scopes: await resolveGrantableScopes(record.scope, subject),');
   });
 });
 
 describe('generated conformance test', () => {
-  const scopes = resolveCustomScopes({
-    scope: ['reports.read'],
-    userScope: ['alice:admin.write', 'testuser:billing.read'],
-  });
-
   it.each(FRAMEWORKS)('should pin the declared scopes in scopes_supported on %s', (framework) => {
     const content = fileContent(
-      generateFiles(framework, scopes),
+      generateFiles(framework, ['reports.read', 'reports.write']),
       internalPath(framework, 'conformance.test.ts'),
     );
 
-    expect(content).toContain("        'offline_access',\n        'reports.read',\n        'admin.write',\n        'billing.read',\n");
+    expect(content).toContain(
+      "        'offline_access',\n        'reports.read',\n        'reports.write',\n",
+    );
   });
 
-  it('should pin both directions of the per-user policy', () => {
-    const content = fileContent(generateFiles('hono', scopes), 'conformance.test.ts');
+  it('should pin the allow list and the filtering seam', () => {
+    const content = fileContent(generateFiles('hono', ['reports.read']), 'conformance.test.ts');
 
     expect(content).toContain("describe('Custom scopes', () => {");
     expect(content).toContain('should reject a scope that was never declared with invalid_scope');
     expect(content).toContain(
-      'should grant the globally declared scope reports.read to an authenticated End-User',
+      'should grant the declared scope reports.read to an authenticated End-User',
     );
-    expect(content).toContain('should grant billing.read to testuser, who was declared for it');
-    expect(content).toContain(
-      'should drop admin.write from the grant of an End-User it was not declared for',
-    );
-    expect(content).toContain("resolveGrantableScopes(requested, 'alice')");
+    expect(content).toContain('should honor a per-End-User restriction written in scopes.ts');
+    expect(content).toContain("RESTRICTED_SCOPE_SUBJECTS['reports.read'] = ['otheruser'];");
   });
 
   it('should not generate the custom scope block without a declaration', () => {
-    const content = fileContent(generateFiles('hono', NO_CUSTOM_SCOPES), 'conformance.test.ts');
+    const content = fileContent(generateFiles('hono', []), 'conformance.test.ts');
 
     expect(content).not.toContain("describe('Custom scopes'");
   });
@@ -451,46 +369,28 @@ describe('CLI', () => {
     vi.restoreAllMocks();
   });
 
-  it('should write scopes.ts for --scope and --user-scope', () => {
+  it('should write scopes.ts for --scope', () => {
     testDir = mkdtempSync(join(tmpdir(), 'maronn-cli-scope-'));
     const outputDir = join(testDir, 'out');
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    run([
-      'generate',
-      'hono',
-      '-o',
-      outputDir,
-      '--scope',
-      'reports.read',
-      '--user-scope',
-      'alice:admin.write',
-    ]);
+    run(['generate', 'hono', '-o', outputDir, '--scope', 'reports.read,reports.write']);
 
     expect(existsSync(join(outputDir, 'scopes.ts'))).toBe(true);
-    const content = readFileSync(join(outputDir, 'scopes.ts'), 'utf-8');
-    expect(content).toContain("['reports.read']");
-    expect(content).toContain("'alice': ['admin.write'],");
+    expect(readFileSync(join(outputDir, 'scopes.ts'), 'utf-8')).toContain(
+      "['reports.read', 'reports.write']",
+    );
   });
 
-  it('should report the declared scopes', () => {
+  it('should report the declared scopes and where the filtering goes', () => {
     testDir = mkdtempSync(join(tmpdir(), 'maronn-cli-scope-'));
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    run([
-      'generate',
-      'hono',
-      '-o',
-      join(testDir, 'out'),
-      '--scope',
-      'reports.read',
-      '--user-scope',
-      'alice:admin.write',
-    ]);
+    run(['generate', 'hono', '-o', join(testDir, 'out'), '--scope', 'reports.read']);
 
     const output = logSpy.mock.calls.map((call) => call[0]).join('\n');
-    expect(output).toContain('Custom scopes: reports.read, admin.write');
-    expect(output).toContain('Allowed only for alice: admin.write');
+    expect(output).toContain('Custom scopes: reports.read');
+    expect(output).toContain('resolveGrantableScopes()');
   });
 
   it('should fail on an invalid scope declaration without writing files', () => {
@@ -508,13 +408,13 @@ describe('CLI', () => {
     expect(existsSync(outputDir)).toBe(false);
   });
 
-  it('should document both options in the help output', () => {
+  it('should document --scope in the help output', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     run(['--help']);
 
     const output = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(output).toContain('--scope <scopes>');
-    expect(output).toContain('--user-scope <value>');
+    expect(output).toContain('resolveGrantableScopes()');
   });
 });

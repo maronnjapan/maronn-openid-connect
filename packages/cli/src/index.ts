@@ -10,7 +10,7 @@ import {
   resolveFeatures,
 } from './features.js';
 import type { OidcFeatureConfig } from './features.js';
-import { listCustomScopes, resolveCustomScopes } from './scopes.js';
+import { resolveCustomScopes } from './scopes.js';
 
 const INSTALL_COMMANDS: Record<string, string> = {
   hono: 'pnpm add hono @maronn-openid-connect/core',
@@ -77,9 +77,7 @@ Options:
   --entry, -e <file>    Entry file to patch with OIDC setup (setup command only, default: ./src/index.ts)
   --enable <features>   Comma-separated features to enable (repeatable)
   --disable <features>  Comma-separated features to remove from the default set (repeatable)
-  --scope <scopes>      Comma-separated custom scopes allowed for every user (repeatable)
-  --user-scope <value>  Custom scopes for one user only, as
-                        <subject>:<scope>[,<scope>...] (repeatable)
+  --scope <scopes>      Comma-separated custom scopes the provider accepts (repeatable)
   --help, -h            Show this help message
 
 Features (all enabled by default): ${features}
@@ -95,13 +93,13 @@ Experimental features (disabled by default): ${experimentalFeatures}
 
 Custom scopes (none declared by default): the standard scopes (openid, profile,
   email, address, phone, offline_access) are always handled by the generated
-  provider. Declaring any custom scope also turns scope handling into an allow
-  list: a request for a value that was never declared is rejected with
-  invalid_scope. Examples:
-    --scope reports.read,reports.write     allowed for every End-User
-    --user-scope alice:admin.write         allowed for subject "alice" only
-  A per-user scope is advertised in scopes_supported like any other, and is
-  dropped from the grant of an End-User who may not have it.
+  provider. Declare anything else with --scope, e.g.:
+    --scope reports.read,reports.write
+  The declared scopes are advertised in scopes_supported, and a request for a
+  value that was never declared is rejected with invalid_scope. Which End-User
+  may be granted which scope is left to the generated code: scopes.ts holds
+  resolveGrantableScopes(), already wired into consent, SSO, prompt=none and the
+  device / CIBA approvals, as the one place to write that filtering.
 `);
 }
 
@@ -113,7 +111,6 @@ function parseArgs(args: string[]): {
   enable: string[];
   disable: string[];
   scope: string[];
-  userScope: string[];
   help: boolean;
 } {
   let command: string | undefined;
@@ -122,10 +119,8 @@ function parseArgs(args: string[]): {
   let entryFile = './src/index.ts';
   const enable: string[] = [];
   const disable: string[] = [];
-  // Custom scope declarations are kept raw here: --user-scope carries its own
-  // <subject>:<scope,scope> syntax, so splitting is resolveCustomScopes()'s job.
+  // Kept raw here; splitting and validation are resolveCustomScopes()'s job.
   const scope: string[] = [];
-  const userScope: string[] = [];
   let help = false;
 
   const splitFeatureList = (value: string | undefined): string[] =>
@@ -151,10 +146,6 @@ function parseArgs(args: string[]): {
       i++;
       const value = args[i];
       if (value !== undefined) scope.push(value);
-    } else if (arg === '--user-scope') {
-      i++;
-      const value = args[i];
-      if (value !== undefined) userScope.push(value);
     } else if (!command) {
       command = arg;
     } else if (!framework) {
@@ -162,7 +153,7 @@ function parseArgs(args: string[]): {
     }
   }
 
-  return { command, framework, outputDir, entryFile, enable, disable, scope, userScope, help };
+  return { command, framework, outputDir, entryFile, enable, disable, scope, help };
 }
 
 function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; content: string }>): void {
@@ -286,10 +277,7 @@ export function run(args: string[]): void {
       enable: parsed.enable,
       disable: parsed.disable,
     });
-    const scopes = resolveCustomScopes({
-      scope: parsed.scope,
-      userScope: parsed.userScope,
-    });
+    const scopes = resolveCustomScopes({ scope: parsed.scope });
     const result = generate({
       framework: parsed.framework,
       outputDir: parsed.outputDir,
@@ -317,14 +305,12 @@ export function run(args: string[]): void {
         `Warning: experimental features are provided by ${EXPERIMENTAL_PACKAGE} and their APIs may change in a breaking way.\n`,
       );
     }
-    const declaredScopes = listCustomScopes(scopes);
-    if (declaredScopes.length > 0) {
-      console.log(`Custom scopes: ${declaredScopes.join(', ')}`);
-      for (const [subject, names] of Object.entries(scopes.perUser)) {
-        console.log(`  Allowed only for ${subject}: ${names.join(', ')}`);
-      }
+    if (scopes.length > 0) {
+      console.log(`Custom scopes: ${scopes.join(', ')}`);
       console.log(
-        'A scope that was not declared is now rejected with invalid_scope; edit scopes.ts to change the policy.\n',
+        'A scope that was not declared is now rejected with invalid_scope. Write per-End-User\n' +
+          'filtering in resolveGrantableScopes() (scopes.ts); it is already wired into every step\n' +
+          'that decides a grant.\n',
       );
     }
     writeGeneratedFiles(parsed.outputDir, result.files);

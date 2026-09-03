@@ -4,14 +4,6 @@
 
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
-import {
-  NO_CUSTOM_SCOPES,
-  hasCustomScopes,
-  hasPerUserScopes,
-  listCustomScopes,
-  listRestrictedScopes,
-} from '../../scopes.js';
-import type { CustomScopeConfig } from '../../scopes.js';
 
 /**
  * Package that hosts the experimental (unstable) features. Generated code only
@@ -418,17 +410,17 @@ async function resolveProviderStores(
 }
 
 /**
- * Generated `scopes.ts` — the custom scope policy declared with `--scope` and
- * `--user-scope`. Emitted only when at least one custom scope was declared, so
- * an OP generated without them is byte-identical to before this option existed.
+ * Generated `scopes.ts` — the custom scopes declared with `--scope`, plus the
+ * per-End-User filtering seam. Emitted only when at least one custom scope was
+ * declared, so an OP generated without them is byte-identical to before this
+ * option existed.
  */
 export function customScopesTemplate(
-  scopes: CustomScopeConfig,
+  scopes: string[],
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
-  const toStringLiteral = (value: string): string => `'${singleQuoted(value)}'`;
   const toListLiteral = (values: string[]): string =>
-    values.length === 0 ? '[]' : `[${values.map(toStringLiteral).join(', ')}]`;
+    values.length === 0 ? '[]' : `[${values.map((value) => `'${singleQuoted(value)}'`).join(', ')}]`;
   // offline_access is a standard scope only where the refresh-token feature was
   // generated; with it disabled the OP never grants it (OIDC Core 1.0 §11), so
   // it must not reach scopes_supported either.
@@ -440,29 +432,22 @@ export function customScopesTemplate(
     'phone',
     ...(features.refreshToken ? ['offline_access'] : []),
   ];
-  const perUserEntries = Object.entries(scopes.perUser)
-    .map(([subject, names]) => `  ${toStringLiteral(subject)}: ${toListLiteral(names)},\n`)
-    .join('');
-  const userScopesLiteral = perUserEntries.length > 0 ? `{\n${perUserEntries}}` : '{}';
+  const exampleScope = scopes[0] ?? 'reports.read';
   return `/**
- * Custom scope policy for this provider, generated from the CLI's \`--scope\`
- * (allowed for every End-User) and \`--user-scope\` (allowed only for the listed
- * subjects) options.
+ * Scope policy for this provider.
  *
- * This module is the single place the generated provider asks the two scope
- * questions, and it deliberately imports nothing: swapping either function for a
- * database / KV lookup is all it takes to move the policy out of generated code.
+ * The custom scopes below were declared with the CLI's \`--scope\` option, and this
+ * module is the single place the generated provider asks its two scope questions.
+ * It deliberately imports nothing, so both answers can be rewritten — including
+ * against a database — without touching a route.
  *
  * 1. "May this value be requested at all?" — \`findUnsupportedScopes()\`, called by
  *    the authorization endpoint (and by the device / CIBA request endpoints when
- *    those features are generated). Anything not declared here is rejected with
- *    \`invalid_scope\` (RFC 6749 §3.3 / §4.1.2.1). Declaring a custom scope is
- *    therefore what turns this OP's scope handling into an allow list.
- * 2. "May THIS End-User be granted it?" — \`resolveGrantableScopes()\`, called once
- *    the subject is known (consent, SSO, prompt=none, device / CIBA approval). A
- *    scope the subject may not have is dropped from the grant rather than failing
- *    the request: RFC 6749 §3.3 lets the authorization server issue a narrower
- *    scope than requested, and the token response reports the granted \`scope\`.
+ *    those features are generated). A value that is neither standard nor declared
+ *    here is rejected with \`invalid_scope\` (RFC 6749 §3.3 / §4.1.2.1).
+ * 2. "May THIS End-User be granted it?" — \`resolveGrantableScopes()\`, called from
+ *    every step that turns a request into a grant. **This is where per-user scope
+ *    filtering goes**; see its doc comment below.
  *
  * Custom scopes carry no UserInfo claims of their own: OIDC Core 1.0 §5.4 defines
  * claims for profile / email / address / phone only, so \`filterClaimsByScope()\`
@@ -471,63 +456,73 @@ export function customScopesTemplate(
  */
 
 /**
- * Scopes this provider implements itself and always allows: \`openid\` (OIDC Core
+ * Scopes this provider implements itself and always accepts: \`openid\` (OIDC Core
  * 1.0 §3.1.2.1), the four claim scopes (§5.4)${features.refreshToken ? ' and `offline_access` (§11)' : ''}.
  */
 export const STANDARD_SCOPES: readonly string[] = ${toListLiteral(standardScopes)};
 
-/** \`--scope\`: custom scopes every authenticated End-User may be granted. */
-export const GLOBAL_CUSTOM_SCOPES: readonly string[] = ${toListLiteral(scopes.global)};
+/** Declared with \`--scope\`: the custom scopes this provider accepts. */
+export const CUSTOM_SCOPES: readonly string[] = ${toListLiteral(scopes)};
 
 /**
- * \`--user-scope\`: custom scopes only the listed subjects may be granted, keyed by
- * subject. A subject that is absent here simply has no restricted scope.
+ * OIDC Discovery 1.0 §3 \`scopes_supported\`: every value this OP accepts. It is
+ * OP metadata, so it lists what the provider supports — not what a particular
+ * End-User ends up being granted, which resolveGrantableScopes() decides.
  */
-export const USER_CUSTOM_SCOPES: Readonly<Record<string, readonly string[]>> = ${userScopesLiteral};
+export const SUPPORTED_SCOPES: readonly string[] = [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
 
 /**
- * OIDC Discovery 1.0 §3 \`scopes_supported\`: every value this OP is willing to
- * accept. Per-user scopes belong here too — they are supported by the OP, and
- * whether a given End-User gets one is a policy decision, not OP metadata.
+ * Per-End-User scope restrictions, keyed by scope: only the listed subjects may
+ * be granted that scope. Empty by default, so every accepted scope is grantable
+ * to every authenticated End-User.
+ *
+ * This is the quickest way to restrict a scope — uncomment and fill in. For
+ * anything richer (roles, tenants, a database), write it in
+ * resolveGrantableScopes() below instead.
  */
-export const SUPPORTED_SCOPES: readonly string[] = [
-  ...new Set([
-    ...STANDARD_SCOPES,
-    ...GLOBAL_CUSTOM_SCOPES,
-    ...Object.values(USER_CUSTOM_SCOPES).flat(),
-  ]),
-];
+export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
+  // '${singleQuoted(exampleScope)}': ['testuser'],
+};
 
 /**
- * Supported scopes that are NOT allowed for everyone. Only these are dropped by
- * resolveGrantableScopes(), so standard and global custom scopes always survive.
+ * Narrow the requested scopes to what this End-User may actually be granted.
+ *
+ * **This is the per-user scope filtering seam.** It runs once the End-User is
+ * known, and every step that decides a grant already awaits it:
+ *
+ * - routes/consent.ts — the consent screen (what is displayed) and the approval
+ *   (what is granted)
+ * - routes/authorize.ts — the SSO fast path and prompt=none, which grant without
+ *   showing consent. Both narrow BEFORE looking up stored consent, because a
+ *   consent lookup for a scope the subject can never hold would never match.
+ * - routes/device.ts / routes/ciba-verification.ts — the device and CIBA approval
+ *   steps, when those features are generated
+ *
+ * It is async so a database / KV lookup can be dropped in without touching any
+ * call site. \`requested\` also carries the standard scopes, so a policy may
+ * narrow those too.
+ *
+ * Dropping a scope narrows the grant rather than failing the request: RFC 6749
+ * §3.3 lets the authorization server issue a scope narrower than the one asked
+ * for, and the token response reports the granted \`scope\`. To refuse the whole
+ * request instead, throw from the call site that suits your flow.
  */
-export const RESTRICTED_SCOPES: readonly string[] = SUPPORTED_SCOPES.filter(
-  (scope) =>
-    !STANDARD_SCOPES.includes(scope) && !GLOBAL_CUSTOM_SCOPES.includes(scope),
-);
+export async function resolveGrantableScopes(
+  requested: readonly string[],
+  subject: string,
+): Promise<string[]> {
+  return requested.filter((scope) => {
+    const allowedSubjects = RESTRICTED_SCOPE_SUBJECTS[scope];
+    return allowedSubjects === undefined || allowedSubjects.includes(subject);
+  });
+}
 
 /**
- * Requested scopes this OP does not support at all. A non-empty result means the
+ * Requested scopes this OP does not accept at all. A non-empty result means the
  * request must be rejected with \`invalid_scope\` (RFC 6749 §3.3).
  */
 export function findUnsupportedScopes(requested: readonly string[]): string[] {
   return requested.filter((scope) => !SUPPORTED_SCOPES.includes(scope));
-}
-
-/**
- * Narrow requested scopes to what this End-User may actually be granted, keeping
- * the requested order. Called only after authentication, because the subject is
- * what decides the outcome.
- */
-export function resolveGrantableScopes(
-  requested: readonly string[],
-  subject: string,
-): string[] {
-  const allowedForSubject = USER_CUSTOM_SCOPES[subject] ?? [];
-  return requested.filter(
-    (scope) => !RESTRICTED_SCOPES.includes(scope) || allowedForSubject.includes(scope),
-  );
 }
 `;
 }
@@ -2292,18 +2287,14 @@ export async function revokeConsentAndTokens(subject: string, clientId: string):
 export function authorizeRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // Custom scopes (--scope / --user-scope). With none declared every
-  // interpolation below is empty and the route is byte-identical to before.
-  const customScopesDeclared = hasCustomScopes(scopes);
-  const perUserScopesDeclared = hasPerUserScopes(scopes);
+  // Custom scopes (--scope). With none declared every interpolation below is
+  // empty and the route is byte-identical to before.
+  const customScopesDeclared = scopes.length > 0;
   const customScopeImports = customScopesDeclared
     ? `
-import {
-  findUnsupportedScopes,${perUserScopesDeclared ? `
-  resolveGrantableScopes,` : ''}
-} from '../scopes.js';`
+import { findUnsupportedScopes, resolveGrantableScopes } from '../scopes.js';`
     : '';
   // AuthorizationErrorCode is already imported by the jarm feature; importing it
   // twice would not compile.
@@ -2329,31 +2320,31 @@ import {
     }
 `
     : '';
-  // --user-scope: the requested scope is narrowed to what the authenticated
-  // subject may hold. Both non-interactive paths below decide the grant without
-  // ever reaching /consent, so each has to narrow for itself.
-  const promptNoneUserScopeStep = perUserScopesDeclared
+  // Both non-interactive paths below decide the grant without ever reaching
+  // /consent, so each applies the scope policy (scopes.ts) for itself.
+  const promptNoneUserScopeStep = customScopesDeclared
     ? `
-        // --user-scope: narrow to what THIS End-User may be granted BEFORE the
-        // consent lookup. Searching consent for a scope the subject can never
-        // hold would answer consent_required forever (OIDC Core 1.0 §3.1.2.1).
-        transaction.scope = resolveGrantableScopes(
+        // Apply the scope policy BEFORE the consent lookup: searching consent for
+        // a scope this End-User can never hold would answer consent_required
+        // forever (OIDC Core 1.0 §3.1.2.1). See resolveGrantableScopes() in
+        // scopes.ts — that function is where per-user filtering is written.
+        transaction.scope = (await resolveGrantableScopes(
           transaction.scope.split(' ').filter(Boolean),
           session.subject,
-        ).join(' ');
+        )).join(' ');
 `
     : '';
-  const ssoUserScopeStep = perUserScopesDeclared
+  const ssoUserScopeStep = customScopesDeclared
     ? `
-          // --user-scope: narrow to what THIS End-User may be granted before the
-          // consent lookup below, for the same reason as the prompt=none path.
-          // The narrowed value is only held in memory: the interactive branch
-          // hands the transaction back to /consent, which narrows it again from
-          // the authenticated subject it reads out of authSessionStore.
-          transaction.scope = resolveGrantableScopes(
+          // Apply the scope policy before the consent lookup below, for the same
+          // reason as the prompt=none path. The narrowed value is only held in
+          // memory: the interactive branch hands the transaction back to
+          // /consent, which applies the policy again with the authenticated
+          // subject it reads out of authSessionStore.
+          transaction.scope = (await resolveGrantableScopes(
             transaction.scope.split(' ').filter(Boolean),
             existingSession.subject,
-          ).join(' ');
+          )).join(' ');
 
 `
     : '';
@@ -3480,15 +3471,15 @@ parApp.post('/', async (c) => {
 export function deviceAuthorizationRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
   // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
   // actually issue refresh tokens. Baked in as a literal so the generated route
   // has no runtime branch on a feature that is fixed at generation time.
   const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
-  // --scope / --user-scope: the device authorization request is a scope request
-  // like /authorize, so it answers to the same declared allow list (scopes.ts).
-  const customScopesDeclared = hasCustomScopes(scopes);
+  // --scope: the device authorization request carries a scope like /authorize
+  // does, so it answers to the same declared allow list (scopes.ts).
+  const customScopesDeclared = scopes.length > 0;
   const customScopeImport = customScopesDeclared
     ? `
 import { findUnsupportedScopes } from '../scopes.js';`
@@ -3708,26 +3699,28 @@ ${customScopeStep}
  */
 export function deviceVerificationRouteTemplate(
   corePkg: string,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --user-scope: the verification UI is where the device flow learns who the
-  // End-User is, so it is where the per-user narrowing has to happen. With no
-  // per-user scope declared every interpolation below is empty.
-  const perUserScopesDeclared = hasPerUserScopes(scopes);
-  const customScopeImport = perUserScopesDeclared
+  // The verification UI is where the device flow learns who the End-User is, so
+  // it is where the scope policy (scopes.ts) is applied. With no custom scope
+  // declared every interpolation below is empty.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
     ? `
 import { resolveGrantableScopes } from '../scopes.js';`
     : '';
   const approvalPageScopes = (subject: string): string =>
-    perUserScopesDeclared ? `resolveGrantableScopes(record.scope, ${subject})` : 'record.scope';
-  const approveNarrowStep = perUserScopesDeclared
+    customScopesDeclared
+      ? `await resolveGrantableScopes(record.scope, ${subject})`
+      : 'record.scope';
+  const approveNarrowStep = customScopesDeclared
     ? `
-      // --user-scope: narrow the approved scope to what THIS End-User may hold.
-      // approveDeviceAuthorization() copies the requested scope into
-      // approvedScope, so the narrowing is applied to the record afterwards and
-      // persisted; the token endpoint reads approvedScope, and RFC 6749 §3.3
-      // allows a granted scope narrower than the request.
-      approved.approvedScope = resolveGrantableScopes(
+      // Apply the scope policy to what was approved. approveDeviceAuthorization()
+      // copies the requested scope into approvedScope, so the policy is applied
+      // to the record afterwards and persisted; the token endpoint reads
+      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
+      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      approved.approvedScope = await resolveGrantableScopes(
         approved.approvedScope ?? approved.scope,
         session.subject,
       );
@@ -4073,15 +4066,15 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
 export function backchannelAuthenticationRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
   // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
   // actually issue refresh tokens. Baked in as a literal so the generated route
   // has no runtime branch on a feature that is fixed at generation time.
   const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
-  // --scope / --user-scope: a backchannel authentication request carries a scope
-  // like /authorize does, so it answers to the same declared allow list.
-  const customScopesDeclared = hasCustomScopes(scopes);
+  // --scope: a backchannel authentication request carries a scope like
+  // /authorize does, so it answers to the same declared allow list (scopes.ts).
+  const customScopesDeclared = scopes.length > 0;
   const customScopeImport = customScopesDeclared
     ? `
 import { findUnsupportedScopes } from '../scopes.js';`
@@ -4315,25 +4308,46 @@ ${customScopeStep}    // --- Backchannel authentication pipeline ---------------
  */
 export function cibaVerificationRouteTemplate(
   corePkg: string,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --user-scope: the authentication device UI is where CIBA learns who the
-  // End-User is, so it is where the per-user narrowing has to happen.
-  const perUserScopesDeclared = hasPerUserScopes(scopes);
-  const customScopeImport = perUserScopesDeclared
+  // The authentication device UI is where CIBA learns who the End-User is, so it
+  // is where the scope policy (scopes.ts) is applied.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
     ? `
 import { resolveGrantableScopes } from '../scopes.js';`
     : '';
-  const pendingRequestScopes = perUserScopesDeclared
-    ? 'resolveGrantableScopes(record.scope, subject)'
-    : 'record.scope';
-  const approveNarrowStep = perUserScopesDeclared
-    ? `      // --user-scope: narrow the approved scope to what THIS End-User may hold.
-      // approveCibaRequest() copies the requested scope into approvedScope, so
-      // the narrowing is applied to the record afterwards and persisted; the
-      // token endpoint reads approvedScope, and RFC 6749 §3.3 allows a granted
-      // scope narrower than the request.
-      approved.approvedScope = resolveGrantableScopes(
+  // The policy is async, so the listing resolves its rows before rendering.
+  const pendingRequestRows = customScopesDeclared
+    ? `  const requests = await Promise.all(
+    pending.map(async (record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      // Show only what this End-User can actually grant (scopes.ts).
+      scopes: await resolveGrantableScopes(record.scope, subject),
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  );
+  return renderView(views.cibaPendingRequestsPage({ requests }));`
+    : `  return renderView(views.cibaPendingRequestsPage({
+    requests: pending.map((record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      scopes: record.scope,
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  }));`;
+  const approveNarrowStep = customScopesDeclared
+    ? `      // Apply the scope policy to what was approved. approveCibaRequest()
+      // copies the requested scope into approvedScope, so the policy is applied
+      // to the record afterwards and persisted; the token endpoint reads
+      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
+      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      approved.approvedScope = await resolveGrantableScopes(
         approved.approvedScope ?? approved.scope,
         session.subject,
       );
@@ -4444,16 +4458,7 @@ async function renderPendingRequests(c: any, subject: string): Promise<Response>
   const views = c.get('views') ?? defaultViews;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const pending = await listPendingCibaRequests({ subject, store: cibaStore });
-  return renderView(views.cibaPendingRequestsPage({
-    requests: pending.map((record) => ({
-      authReqId: record.authReqId,
-      clientId: record.clientId,
-      scopes: ${pendingRequestScopes},
-      bindingMessage: record.bindingMessage,
-      expiresInSeconds: remainingSeconds(record.expiresAt),
-      csrfToken: record.csrfToken ?? '',
-    })),
-  }));
+${pendingRequestRows}
 }
 
 /**
@@ -6690,22 +6695,21 @@ jwksApp.get('/', async (c) => {
 export function discoveryRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --scope / --user-scope: the declared scopes live in scopes.ts, which also
-  // owns the standard list, so the advertisement reads from there instead of
-  // repeating it. Without a declaration the literal below is unchanged.
-  const customScopesDeclared = hasCustomScopes(scopes);
+  // --scope: the declared scopes live in scopes.ts, which also owns the standard
+  // list, so the advertisement reads from there instead of repeating it. Without
+  // a declaration the literal below is unchanged.
+  const customScopesDeclared = scopes.length > 0;
   const customScopeImport = customScopesDeclared
     ? `
 import { SUPPORTED_SCOPES } from '../scopes.js';`
     : '';
   const scopesSupportedEntry = customScopesDeclared
-    ? `    // OIDC Discovery 1.0 §3: scopes_supported is this OP's scope allow list, made
-    // of the standard scopes plus the custom ones declared with --scope and
-    // --user-scope (see scopes.ts). Per-user scopes are advertised too: the OP
-    // does support them, and whether a given End-User is granted one is a policy
-    // decision rather than OP metadata.
+    ? `    // OIDC Discovery 1.0 §3: scopes_supported is this OP's scope allow list —
+    // the standard scopes plus the custom ones declared with --scope (see
+    // scopes.ts). It is OP metadata, so it lists what the provider accepts, not
+    // what a particular End-User is granted (resolveGrantableScopes decides that).
     scopesSupported: [...SUPPORTED_SCOPES],
 `
     : features.refreshToken
@@ -7186,40 +7190,41 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
 export function consentRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --user-scope: the consent step is where the interactive flow turns the
-  // requested scope into a granted one, and it is the first step that knows who
-  // the End-User is, so it is where the per-user narrowing happens. With no
-  // per-user scope declared every interpolation below is empty.
-  const perUserScopesDeclared = hasPerUserScopes(scopes);
-  const customScopeImports = perUserScopesDeclared
+  // The consent step is where the interactive flow turns the requested scope into
+  // a granted one, and it is the first step that knows who the End-User is, so it
+  // is where the scope policy (scopes.ts) is applied. With no custom scope
+  // declared every interpolation below is empty.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImports = customScopesDeclared
     ? `
 import { resolveGrantableScopes } from '../scopes.js';`
     : '';
-  const consentGetScopeResolution = perUserScopesDeclared
-    ? `  // --user-scope: display what THIS End-User can actually grant. The subject
-  // comes from the auth session that /login (or the SSO fast path) stored for
-  // this transaction; without one there is nothing to narrow by, so the request
-  // is shown as-is and POST /consent stops on the same missing session.
+  const consentGetScopeResolution = customScopesDeclared
+    ? `  // Display only what THIS End-User can actually grant. The subject comes from
+  // the auth session that /login (or the SSO fast path) stored for this
+  // transaction; without one there is nothing to apply the policy to, so the
+  // request is shown as-is and POST /consent stops on the same missing session.
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
   const consentSession = await authSessionStore.get(transactionId);
   const requestedScopes = transaction.scope.split(' ').filter(Boolean);
   const displayedScopes = consentSession
-    ? resolveGrantableScopes(requestedScopes, consentSession.subject)
+    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
     : requestedScopes;
 
 `
     : '';
-  const consentDisplayScopes = perUserScopesDeclared
+  const consentDisplayScopes = customScopesDeclared
     ? 'displayedScopes'
     : "transaction.scope.split(' ').filter(Boolean)";
-  const consentGrantedScope = perUserScopesDeclared
+  const consentGrantedScope = customScopesDeclared
     ? `
-  // --user-scope: scopes reserved for other subjects are dropped from the grant
-  // rather than failing the request (RFC 6749 §3.3 lets the authorization server
-  // issue a narrower scope; the token response reports what was granted).
-  const grantedScope = resolveGrantableScopes(
+  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place to
+  // write per-user filtering). A dropped scope narrows the grant rather than
+  // failing the request: RFC 6749 §3.3 lets the authorization server issue a
+  // narrower scope, and the token response reports what was granted.
+  const grantedScope = await resolveGrantableScopes(
     transaction.scope.split(' ').filter(Boolean),
     session.subject,
   );`
@@ -10322,12 +10327,12 @@ ${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClie
 
 export function scopesSupportedConformanceTest(
   features: OidcFeatureConfig,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --scope / --user-scope: the pinned list below is the whole advertisement, so
-  // a declared custom scope has to appear in it or the contract test would fail
-  // against the provider it was generated with.
-  const customScopeEntries = listCustomScopes(scopes)
+  // --scope: the pinned list below is the whole advertisement, so a declared
+  // custom scope has to appear in it or the contract test would fail against the
+  // provider it was generated with.
+  const customScopeEntries = scopes
     .map((scope) => `        '${singleQuoted(scope)}',\n`)
     .join('');
   if (!features.refreshToken) {
@@ -10381,89 +10386,18 @@ ${customScopeEntries}      ]);
 }
 
 /**
- * Contract tests for the custom scopes declared with `--scope` / `--user-scope`.
- * Generated only when at least one was declared, so a provider without them
- * keeps exactly the conformance file it had before.
+ * Contract tests for the custom scopes declared with `--scope`. Generated only
+ * when at least one was declared, so a provider without them keeps exactly the
+ * conformance file it had before.
  */
-export function customScopeConformanceBlock(
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
-): string {
-  if (!hasCustomScopes(scopes)) return '';
-  const declared = listCustomScopes(scopes);
-  const restricted = listRestrictedScopes(scopes);
-  const globalScope = scopes.global[0];
-  // A value the generated provider cannot possibly know, used to pin the
+export function customScopeConformanceBlock(scopes: string[] = []): string {
+  const declaredScope = scopes[0];
+  if (declaredScope === undefined) return '';
+  // A value the generated provider cannot possibly accept, used to pin the
   // allow-list rejection. Derived so it can never collide with a declaration.
   let undeclaredScope = 'undeclared.scope';
-  while (declared.includes(undeclaredScope)) undeclaredScope += '.x';
-
-  const globalScopeTest = globalScope === undefined
-    ? ''
-    : `
-    // --scope: allowed for every authenticated End-User, so the grant carries it
-    // for the fixture user without any per-user declaration.
-    it('should grant the globally declared scope ${singleQuoted(globalScope)} to an authenticated End-User', async () => {
-      const granted = await grantedScopeFor('openid ${singleQuoted(globalScope)}', 'testuser');
-
-      expect(granted).toEqual(['openid', '${singleQuoted(globalScope)}']);
-    });
-`;
-
-  // The end-to-end flow can only sign in as a user the generated store knows, so
-  // the per-user contract is driven through testuser: one scope it was declared
-  // for proves the grant, one it was not proves the narrowing. Whichever of the
-  // two the declarations allow is generated.
-  const testuserScopes = scopes.perUser['testuser'] ?? [];
-  const grantedRestricted = restricted.find((scope) => testuserScopes.includes(scope));
-  const droppedRestricted = restricted.find((scope) => !testuserScopes.includes(scope));
-  const grantedRestrictedTest = grantedRestricted === undefined
-    ? ''
-    : `
-    // --user-scope: testuser is one of the subjects ${singleQuoted(grantedRestricted)} was
-    // declared for, so the grant keeps it.
-    it('should grant ${singleQuoted(grantedRestricted)} to testuser, who was declared for it', async () => {
-      const granted = await grantedScopeFor('openid ${singleQuoted(grantedRestricted)}', 'testuser');
-
-      expect(granted).toEqual(['openid', '${singleQuoted(grantedRestricted)}']);
-    });
-`;
-  const droppedRestrictedTest = droppedRestricted === undefined
-    ? ''
-    : `
-    // --user-scope: ${singleQuoted(droppedRestricted)} was declared for other subjects
-    // only, so it is dropped from testuser's grant instead of failing the request
-    // (RFC 6749 §3.3: the authorization server may issue a narrower scope, and
-    // the token response reports what was actually granted).
-    it('should drop ${singleQuoted(droppedRestricted)} from the grant of an End-User it was not declared for', async () => {
-      const granted = await grantedScopeFor('openid ${singleQuoted(droppedRestricted)}', 'testuser');
-
-      expect(granted).toEqual(['openid']);
-    });
-`;
-
-  // Every declared subject, checked directly against the policy module: the HTTP
-  // flow can only authenticate as a user the generated store knows, while the
-  // declarations name arbitrary subjects.
-  const perUserPolicyTest = Object.keys(scopes.perUser).length === 0
-    ? ''
-    : `
-    // The policy module itself, so every declared subject is covered — the flow
-    // above can only sign in as a user the generated store knows, but
-    // --user-scope names arbitrary subjects.
-    it('should narrow the requested scope to what each declared subject may hold', () => {
-      const requested = ['openid'${restricted.map((scope) => `, '${singleQuoted(scope)}'`).join('')}];
-
-${Object.entries(scopes.perUser)
-      .map(([subject, names]) => {
-        const granted = ['openid', ...restricted.filter((scope) => names.includes(scope))];
-        return `      expect(resolveGrantableScopes(requested, '${singleQuoted(subject)}')).toEqual([${granted
-          .map((scope) => `'${singleQuoted(scope)}'`)
-          .join(', ')}]);\n`;
-      })
-      .join('')}      // A subject with no declaration of its own keeps only what everyone may hold.
-      expect(resolveGrantableScopes(requested, 'nobody')).toEqual(['openid']);
-    });
-`;
+  while (scopes.includes(undeclaredScope)) undeclaredScope += '.x';
+  const scope = singleQuoted(declaredScope);
 
   return `
   describe('Custom scopes', () => {
@@ -10567,7 +10501,32 @@ ${Object.entries(scopes.perUser)
 
       expect(granted).toEqual(['openid', 'profile', 'email']);
     });
-${globalScopeTest}${grantedRestrictedTest}${droppedRestrictedTest}${perUserPolicyTest}  });
+
+    // The empty default policy grants every declared scope to everyone.
+    it('should grant the declared scope ${scope} to an authenticated End-User', async () => {
+      const granted = await grantedScopeFor('openid ${scope}', 'testuser');
+
+      expect(granted).toEqual(['openid', '${scope}']);
+    });
+
+    // Pins that per-user filtering is actually wired: the policy edited in
+    // scopes.ts decides the grant of the whole authorize -> token flow, and a
+    // scope the End-User may not have is dropped rather than failing the request
+    // (RFC 6749 §3.3 — the token response reports what was granted). Delete this
+    // test if you replace resolveGrantableScopes() with your own policy.
+    it('should honor a per-End-User restriction written in scopes.ts', async () => {
+      RESTRICTED_SCOPE_SUBJECTS['${scope}'] = ['otheruser'];
+      try {
+        expect(await grantedScopeFor('openid ${scope}', 'testuser')).toEqual(['openid']);
+        expect(await grantedScopeFor('openid ${scope}', 'otheruser')).toEqual([
+          'openid',
+          '${scope}',
+        ]);
+      } finally {
+        delete RESTRICTED_SCOPE_SUBJECTS['${scope}'];
+      }
+    });
+  });
 `;
 }
 
@@ -16765,14 +16724,13 @@ export function consentDecisionConformanceBlock(): string {
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
+  scopes: string[] = [],
 ): string {
-  // --user-scope: the per-subject contract test drives the generated policy
-  // module directly, because the HTTP flow can only sign in as a user the
-  // generated store knows while declarations name arbitrary subjects.
-  const customScopeConformanceImport = hasPerUserScopes(scopes)
+  // --scope: the custom scope block flips the generated policy at runtime to pin
+  // that per-End-User filtering is wired through the whole flow.
+  const customScopeConformanceImport = scopes.length > 0
     ? `
-import { resolveGrantableScopes } from './scopes.js';`
+import { RESTRICTED_SCOPE_SUBJECTS } from './scopes.js';`
     : '';
   // exportPublicJwk is needed by the Request Object fixtures and by the ID-JAG
   // block (which publishes the fake external IdP key as a JWK). Either feature

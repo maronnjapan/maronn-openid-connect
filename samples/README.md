@@ -30,6 +30,9 @@ pnpm deploy:hono-cloudflare
 pnpm deploy:express-flyio
 pnpm deploy:fastify-flyio
 pnpm deploy:nextjs-vercel
+
+# express-flyio / fastify-flyio は Fly.io に加えて GCP Cloud Run でも検証できる
+pnpm deploy:gcp -- express-flyio   # または fastify-flyio / all（詳細は scripts/README.md）
 ```
 
 デプロイスクリプトは冪等で、アプリ名・issuer などの決定事項は各サンプルの `.deploy/`（gitignore済み）に保存されるため、2回目以降は確認なしで再デプロイされる。各スクリプトは `--dry-run` で実行内容だけを確認でき、`--help` でガイド内容の全体像を表示する。

@@ -10,6 +10,7 @@ import {
   createInMemoryClientResolver,
   type RegisteredClient,
 } from './oidc-provider/config.js';
+import { idJagConfig } from './oidc-provider/routes/token.js';
 import { createD1ProviderStores } from './storage.js';
 
 interface Bindings {
@@ -26,11 +27,65 @@ interface Bindings {
   OIDC_SIGNING_KEY_ID?: string;
   OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW?: string;
   OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT?: string;
+  XAA_ALLOWED_AUDIENCES?: string;
+  XAA_TRUSTED_IDP_ISSUER?: string;
+  XAA_TRUSTED_IDP_JWKS_URI?: string;
+  XAA_ALLOW_ACTOR_TOKENS?: string;
+  XAA_ACTOR_TOKEN_RESOLVER?: string;
 }
 
 const bindings = env as Bindings;
 const issuer = bindings.ISSUER ?? 'http://127.0.0.1:3010';
 const clients = readRegisteredClients(bindings.OIDC_CLIENTS_JSON);
+
+// EXPERIMENTAL (Cross-App Access / ID-JAG): wire the trust configuration from
+// env vars so two instances of this sample can play the IdP and the resource
+// authorization server against each other (tests/e2e does exactly that).
+// With the vars unset the generated fail-safe defaults stay: no ID-JAG is
+// issued and none is accepted.
+const xaaAllowedAudiences = (bindings.XAA_ALLOWED_AUDIENCES ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
+if (xaaAllowedAudiences.length > 0) {
+  idJagConfig.allowedAudiences = xaaAllowedAudiences;
+}
+if (bindings.XAA_TRUSTED_IDP_ISSUER) {
+  idJagConfig.trustedIdentityProviders = [
+    {
+      issuer: bindings.XAA_TRUSTED_IDP_ISSUER,
+      jwksUri:
+        bindings.XAA_TRUSTED_IDP_JWKS_URI ||
+        `${bindings.XAA_TRUSTED_IDP_ISSUER}/.well-known/jwks.json`,
+    },
+  ];
+}
+// Actor tokens (act claim) are an opt-in extension beyond the draft's
+// normative scope, so they stay off unless the deployment flips this.
+if (bindings.XAA_ALLOW_ACTOR_TOKENS === '1') {
+  idJagConfig.allowActorTokens = true;
+}
+// Demo of the actor_token extension point: idJagConfig.actorTokenResolver owns
+// the CONTENT validation of every actor_token the OP accepts (the library only
+// checks the request structure and the shape of the returned act value). This
+// one adds access tokens this very OP issued, by looking them up in the OP's
+// own store, and hands every other token type to the generated default (which
+// validates this OP's ID Tokens). Anything unknown, expired, or issued to a
+// different client resolves to null, which the endpoint answers with the fixed
+// invalid_request description.
+if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
+  const generatedActorTokenResolver = idJagConfig.actorTokenResolver;
+  idJagConfig.actorTokenResolver = async (input) => {
+    if (input.actorTokenType === 'urn:ietf:params:oauth:token-type:access_token') {
+      const stores = createD1ProviderStores(bindings.DB);
+      const info = await stores.accessTokenStore.get(input.actorToken);
+      if (info === undefined || info.clientId !== input.clientId) return null;
+      if (info.expiresAt <= Math.floor(Date.now() / 1000)) return null;
+      return { sub: info.sub };
+    }
+    return generatedActorTokenResolver === undefined ? null : generatedActorTokenResolver(input);
+  };
+}
 
 const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
   if (!requestedAcrValues) return undefined;

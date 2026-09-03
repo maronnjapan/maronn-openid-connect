@@ -58,12 +58,21 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  *   delegation (act claim per §4.1).
  * - jarm: JWT Secured Authorization Response Mode (JARM), signed query.jwt only.
  * - device-authorization-grant: OAuth 2.0 Device Authorization Grant (RFC 8628).
+ * - id-jag: Identity Assertion Authorization Grant / Cross-App Access
+ *   (draft-ietf-oauth-identity-assertion-authz-grant-04) — issuing ID-JAGs via
+ *   token exchange and redeeming them on the jwt-bearer grant.
+ * - ciba: OpenID Connect Client-Initiated Backchannel Authentication (CIBA)
+ *   Core 1.0, poll mode only — the client presents a login_hint over the back
+ *   channel and polls the token endpoint while the user approves on their own
+ *   browser.
  */
 export const EXPERIMENTAL_FEATURES = [
   'par',
   'token-exchange',
   'jarm',
   'device-authorization-grant',
+  'id-jag',
+  'ciba',
 ] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
@@ -100,6 +109,21 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   `urn:ietf:params:oauth:grant-type:device_code` grant (RFC 8628) to
  *   `@maronn-openid-connect/experimental/device-authorization-grant` before
  *   core's grant_type validation would reject the URN.
+ * - idJag: experimental, disabled by default. When true, the token route issues
+ *   ID-JAGs (Cross-App Access, draft-ietf-oauth-identity-assertion-authz-grant)
+ *   on the token-exchange grant for
+ *   `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and redeems
+ *   ID-JAGs from trusted identity providers on the
+ *   `urn:ietf:params:oauth:grant-type:jwt-bearer` grant, both via
+ *   `@maronn-openid-connect/experimental/id-jag` and both dispatched before
+ *   core's grant_type validation would reject the URNs.
+ * - ciba: experimental, disabled by default. When true, the OP additionally
+ *   serves the backchannel authentication endpoint
+ *   (POST /backchannel_authentication), the authentication device UI (/ciba,
+ *   /ciba/login, /ciba/approve) and dispatches the
+ *   `urn:openid:params:grant-type:ciba` grant (CIBA Core 1.0, poll mode) to
+ *   `@maronn-openid-connect/experimental/ciba` before core's grant_type
+ *   validation would reject the URN.
  * - transactionBinding: optional hardening, disabled by default. When true, the
  *   authorize endpoint issues a per-transaction HttpOnly cookie and the
  *   login / consent steps refuse to run for a User-Agent that cannot present
@@ -115,6 +139,8 @@ export interface OidcFeatureConfig {
   tokenExchange: boolean;
   jarm: boolean;
   deviceAuthorizationGrant: boolean;
+  idJag: boolean;
+  ciba: boolean;
   transactionBinding: boolean;
 }
 
@@ -138,6 +164,8 @@ const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatu
   'token-exchange': 'tokenExchange',
   jarm: 'jarm',
   'device-authorization-grant': 'deviceAuthorizationGrant',
+  'id-jag': 'idJag',
+  ciba: 'ciba',
 };
 
 /**
@@ -154,6 +182,8 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   tokenExchange: false,
   jarm: false,
   deviceAuthorizationGrant: false,
+  idJag: false,
+  ciba: false,
   transactionBinding: false,
 };
 

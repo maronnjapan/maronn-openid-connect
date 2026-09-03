@@ -1,12 +1,20 @@
 {
   "name": "@maronn-openid-connect/experimental",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {
+    "./ciba": {
+      "types": "./dist/ciba/index.d.ts",
+      "import": "./dist/ciba/index.js"
+    },
     "./device-authorization-grant": {
       "types": "./dist/device-authorization-grant/index.d.ts",
       "import": "./dist/device-authorization-grant/index.js"
+    },
+    "./id-jag": {
+      "types": "./dist/id-jag/index.d.ts",
+      "import": "./dist/id-jag/index.js"
     },
     "./jarm": {
       "types": "./dist/jarm/index.d.ts",
@@ -53,13 +61,13 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/experimental#readme",
   "peerDependencies": {
-    "@maronn-openid-connect/core": ">=0.2.0 <1.0.0"
+    "@maronn-openid-connect/core": ">=0.3.0 <1.0.0"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@maronn-openid-connect/core": "workspace:*",
     "@types/node": "^26.2.0",
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.6"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }

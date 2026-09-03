@@ -114,6 +114,8 @@ export {
   computeAtHash,
   resolveAcrAmr,
   buildIdTokenPayload,
+  pickIdTokenRequestedClaims,
+  ID_TOKEN_REQUESTABLE_CLAIMS,
 } from './token-response.js';
 
 export type {
@@ -217,6 +219,7 @@ export {
   validateUserInfoAudience,
   resolveUserInfoClaims,
   applyRequestedClaims,
+  matchesRequestedValue,
 } from './userinfo.js';
 
 export type {

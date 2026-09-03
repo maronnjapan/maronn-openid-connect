@@ -300,6 +300,32 @@ describe('HonoGenerator', () => {
     });
   });
 
+  // OIDC Core 1.0 §5.5: standard claims requested via the claims parameter's
+  // id_token member are reflected into the ID Token, independently of scope.
+  describe('claims parameter id_token member reflection', () => {
+    const files = generator.generate(options);
+    const tokenRoute = files.find((f) => f.path === 'routes/token.ts')?.content ?? '';
+    const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
+
+    it('should reflect claims.id_token requests through pickIdTokenRequestedClaims in the token route', () => {
+      expect(tokenRoute.includes('pickIdTokenRequestedClaims,')).toBe(true);
+      expect(
+        tokenRoute.includes(
+          'Object.assign(idTokenPayload, pickIdTokenRequestedClaims(idTokenUserClaims, idTokenClaimsRequest));',
+        ),
+      ).toBe(true);
+      expect(tokenRoute.includes('userClaimsResolver as defaultUserClaimsResolver,')).toBe(true);
+    });
+
+    it('should generate the claims parameter id_token member conformance contract', () => {
+      expect(conformance.includes("describe('claims parameter id_token member (OIDC Core §5.5)'")).toBe(true);
+      expect(conformance.includes("it('should include email claim in the ID Token when requested via the id_token member without email scope'")).toBe(true);
+      expect(conformance.includes("it('should omit a value-constrained claim that does not match without failing the flow'")).toBe(true);
+      expect(conformance.includes("it('should keep protocol claims authoritative when listed in the id_token member'")).toBe(true);
+      expect(conformance.includes("it('should not pull scope-derived claims into the ID Token beyond the requested ones'")).toBe(true);
+    });
+  });
+
   // OIDC Discovery 1.0 §3 / RFC 9700 §2.1: internal redirects (/login, /consent)
   // must be built on the configured issuer, never on the incoming request URL,
   // which runtimes such as @hono/node-server derive from the Host header.

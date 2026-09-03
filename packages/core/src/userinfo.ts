@@ -317,7 +317,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * 等価判定は深い等価（`deepEqual`）。`address` のようなオブジェクト型クレームも
  * 構造（メンバーの値）で一致判定する。
  */
-function matchesRequestedValue(
+export function matchesRequestedValue(
   actual: unknown,
   entry: ClaimRequestValue
 ): boolean {

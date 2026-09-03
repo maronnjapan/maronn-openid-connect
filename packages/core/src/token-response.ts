@@ -4,7 +4,7 @@ import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJ
 import { createJwtAccessTokenIssuer } from './access-token-issuer.js';
 import type { AccessTokenIssuer } from './access-token-issuer.js';
 import type { AccessTokenPayload } from './access-token.js';
-import { filterClaimsByScope } from './userinfo.js';
+import { filterClaimsByScope, matchesRequestedValue, SCOPE_CLAIMS_MAP } from './userinfo.js';
 import type { UserClaims, ClaimsParameter } from './userinfo.js';
 
 /**
@@ -120,8 +120,10 @@ export interface TokenResponseOptions {
   /**
    * OIDC Core 1.0 §5.5: parsed `claims` request parameter from the authorization step.
    * `claims.id_token.acr.values` is fed into the acrResolver as requested acr_values
-   * so the resolver can satisfy the requested values where possible. Unknown id_token
-   * claim members are ignored.
+   * so the resolver can satisfy the requested values where possible. Standard claims
+   * requested via the `id_token` member (e.g. `{"id_token":{"email":null}}`) are
+   * reflected into the ID Token independently of scope when `userClaims` is provided
+   * ({@link pickIdTokenRequestedClaims}). Other id_token claim members are ignored.
    */
   claims?: ClaimsParameter;
 }
@@ -398,6 +400,57 @@ export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<Resolved
 }
 
 /**
+ * `claims.id_token` メンバーで要求できる標準クレームの許可リスト。
+ *
+ * OIDC Core 1.0 §5.4 の scope 対応クレーム（profile / email / address / phone）に限定する。
+ * `sub`・`acr`・プロトコルクレーム（iss / aud / exp / iat / at_hash / nonce / auth_time /
+ * amr / azp）はこの集合に含まれないため、`claims` パラメータ経由で ID Token の
+ * 確定済みクレームを上書き・注入することはできない。
+ * - `sub` の値要求はトークン発行先のバインディングというセキュリティ上の意味を持つため
+ *   別トピックとして扱い、ここでは反映しない
+ * - `acr` は {@link resolveAcrAmr} の seed 経路（§5.5.1.1）が担うため二重処理しない
+ */
+export const ID_TOKEN_REQUESTABLE_CLAIMS: ReadonlySet<string> = new Set(
+  Object.values(SCOPE_CLAIMS_MAP).flat(),
+);
+
+/**
+ * ステップ: `claims.id_token` メンバー（OIDC Core 1.0 §5.5）で個別要求された
+ * 標準クレームを、ID Token に載せる形で取り出す。
+ *
+ * §5.5: 「id_token — Requests that the listed individual Claims be returned in
+ * the ID Token.」に対応する。granted scope とは独立に、要求されたクレームだけを返す。
+ *
+ * - {@link ID_TOKEN_REQUESTABLE_CLAIMS} にある標準クレームのみ対象（許可リスト方式）
+ * - ユーザーが値を持たないクレームは省略する。§5.5.1: essential クレームを返せない
+ *   場合でもエラーにしてはならない（MUST NOT）
+ * - `value` / `values` 制約は実値との深い等価で判定し、不一致なら省略する
+ *   （UserInfo 側の {@link matchesRequestedValue} と同一規則）
+ *
+ * 戻り値に `sub` やプロトコルクレームが含まれることはないため、組み立て済みの
+ * ID Token payload へ `Object.assign` で重ねても確定済みクレームは壊れない。
+ */
+export function pickIdTokenRequestedClaims(
+  userClaims: UserClaims,
+  claims?: ClaimsParameter,
+): Partial<UserClaims> {
+  const result: Record<string, unknown> = {};
+  if (!claims?.id_token) {
+    return result as Partial<UserClaims>;
+  }
+
+  for (const [claimName, entry] of Object.entries(claims.id_token)) {
+    if (!ID_TOKEN_REQUESTABLE_CLAIMS.has(claimName)) continue;
+    const value = (userClaims as unknown as Record<string, unknown>)[claimName];
+    if (value === undefined || value === null) continue;
+    if (!matchesRequestedValue(value, entry)) continue;
+    result[claimName] = value;
+  }
+
+  return result as Partial<UserClaims>;
+}
+
+/**
  * ID Token payload 組み立てのオプション。
  */
 export interface IdTokenPayloadInput {
@@ -419,6 +472,12 @@ export interface IdTokenPayloadInput {
   idTokenAudiences?: string[];
   /** scope に応じて含めるユーザクレーム */
   userClaims?: UserClaims;
+  /**
+   * OIDC Core 1.0 §5.5: Authorization Request の `claims` パラメータ。
+   * `id_token` メンバーで個別要求された標準クレームを、scope と独立に ID Token へ
+   * 反映する（{@link pickIdTokenRequestedClaims}）。userClaims が無い場合は反映しない。
+   */
+  claims?: ClaimsParameter;
 }
 
 /**
@@ -442,6 +501,7 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
     amr,
     idTokenAudiences,
     userClaims,
+    claims,
   } = input;
   const issuedAt = input.issuedAt ?? Math.floor(Date.now() / 1000);
 
@@ -452,6 +512,11 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
   // ここではユーザクレーム由来の sub などによる spoof を防げる。
   if (userClaims) {
     Object.assign(payload, filterClaimsByScope(userClaims, scope));
+
+    // OIDC Core 1.0 §5.5: claims.id_token で個別要求された標準クレームを scope と
+    // 独立に反映する。許可リスト（ID_TOKEN_REQUESTABLE_CLAIMS）でプロトコルクレームは
+    // 除外済みだが、後続のプロトコルクレーム代入が最終値を確定する二重防御とする。
+    Object.assign(payload, pickIdTokenRequestedClaims(userClaims, claims));
   }
 
   payload.iss = issuer;
@@ -593,6 +658,7 @@ export async function generateTokenResponse(options: TokenResponseOptions): Prom
       amr: resolvedAmr,
       idTokenAudiences,
       userClaims,
+      claims,
     });
 
     idToken = await generateIdToken({

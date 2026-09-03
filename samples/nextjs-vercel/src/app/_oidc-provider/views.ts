@@ -101,6 +101,49 @@ export interface DeviceCompletedPageParams {
   clientId: string;
 }
 
+export interface CibaLoginPageParams {
+  /** Login transaction id; carried through as a hidden field. */
+  loginTransactionId: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts for this login transaction */
+  remainingAttempts?: number;
+}
+
+export interface CibaPendingRequestParams {
+  /** auth_req_id; carried through as a hidden field of the decision form. */
+  authReqId: string;
+  /** Client that asked for the backchannel authentication */
+  clientId: string;
+  /** Scopes the client asked for */
+  scopes: string[];
+  /**
+   * CIBA Core 1.0 §7.1 binding_message: shown so the user can compare it with
+   * the message on the consumption device — the visual check that they are
+   * approving THEIR transaction and not someone else's. Client-supplied text:
+   * it MUST be escaped before rendering.
+   */
+  bindingMessage?: string;
+  /** Seconds until this request expires */
+  expiresInSeconds: number;
+  /** Per-record CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+}
+
+export interface CibaPendingRequestsPageParams {
+  /** Pending backchannel authentication requests addressed to the signed-in user */
+  requests: CibaPendingRequestParams[];
+}
+
+export interface CibaCompletedPageParams {
+  /** true when the user approved, false when they denied */
+  approved: boolean;
+  /** Client the decision applied to */
+  clientId: string;
+}
+
 // ============================================================
 // Views Interface
 // ============================================================
@@ -127,6 +170,12 @@ export interface Views {
   deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the "go back to your device" screen */
   deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
+  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
+  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
+  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
 }
 
 /** Options applied when renderView wraps an HTML string into a Response. */
@@ -357,6 +406,105 @@ ${outcome}
 </html>`;
 }
 
+function defaultCibaLoginPage(params: CibaLoginPageParams): string {
+  const errorHtml = params.error
+    ? `<p style="color: red;">${escapeHtml(params.error)}${
+        params.remainingAttempts !== undefined
+          ? `. Attempts remaining: ${params.remainingAttempts}`
+          : ''
+      }</p>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html>
+<head><title>Sign in</title></head>
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in to review sign-in requests sent to you.</p>
+  ${errorHtml}
+  <form method="POST" action="/ciba/login">
+    <input type="hidden" name="login_transaction_id" value="${escapeHtml(params.loginTransactionId)}" />
+    <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>`;
+}
+
+function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): string {
+  if (params.requests.length === 0) {
+    return `<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+  <p>No pending sign-in requests.</p>
+</body>
+</html>`;
+  }
+
+  // CIBA Core 1.0 §7.1: the binding_message is repeated here on purpose. Ask
+  // the user to check it against the device that started the request before
+  // approving. The Deny button is rendered with the same prominence as Approve.
+  const requestListHtml = params.requests
+    .map((request) => {
+      const scopeListHtml = request.scopes
+        .map((s) => `      <li>${escapeHtml(s)}</li>`)
+        .join('\n');
+      const bindingMessageHtml = request.bindingMessage
+        ? `    <p>Confirm that your device is showing this message: <strong>${escapeHtml(request.bindingMessage)}</strong></p>\n`
+        : '';
+      return `  <section>
+    <p>Client <strong>${escapeHtml(request.clientId)}</strong> is requesting access to the following scopes:</p>
+    <ul>
+${scopeListHtml}
+    </ul>
+${bindingMessageHtml}    <p>This request expires in ${request.expiresInSeconds} seconds.</p>
+    <form method="POST" action="/ciba/approve">
+      <input type="hidden" name="auth_req_id" value="${escapeHtml(request.authReqId)}" />
+      <input type="hidden" name="csrf_token" value="${escapeHtml(request.csrfToken)}" />
+      <button type="submit" name="decision" value="approve">Approve</button>
+      <button type="submit" name="decision" value="deny">Deny</button>
+    </form>
+  </section>`;
+    })
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+  <p>Only approve a request you started yourself on another device.</p>
+${requestListHtml}
+</body>
+</html>`;
+}
+
+function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
+  const outcome = params.approved
+    ? `<p>You approved <strong>${escapeHtml(params.clientId)}</strong>.</p>`
+    : `<p>You denied <strong>${escapeHtml(params.clientId)}</strong>.</p>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+${outcome}
+  <p>You can close this page and go back to your device.</p>
+</body>
+</html>`;
+}
+
 /**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
@@ -369,6 +517,9 @@ export const defaultViews: Views = {
   deviceLoginPage: defaultDeviceLoginPage,
   deviceApprovalPage: defaultDeviceApprovalPage,
   deviceCompletedPage: defaultDeviceCompletedPage,
+  cibaLoginPage: defaultCibaLoginPage,
+  cibaPendingRequestsPage: defaultCibaPendingRequestsPage,
+  cibaCompletedPage: defaultCibaCompletedPage,
 };
 
 /**

@@ -6,6 +6,6 @@ export class NextJsGenerator implements FrameworkGenerator {
   readonly displayName = 'Next.js';
 
   generate(options: GeneratorOptions): GeneratedFile[] {
-    return nextJsGeneratedFiles(options.corePackageName, options.features);
+    return nextJsGeneratedFiles(options.corePackageName, options.features, options.scopes);
   }
 }

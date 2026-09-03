@@ -6,6 +6,8 @@ import { introspectionApp } from './routes/introspection';
 import { revocationApp } from './routes/revocation';
 import { deviceAuthorizationApp } from './routes/device-authorization';
 import { deviceApp } from './routes/device';
+import { backchannelAuthenticationApp } from './routes/backchannel-authentication';
+import { cibaApp } from './routes/ciba-verification';
 import { jwksApp } from './routes/jwks';
 import { discoveryApp } from './routes/discovery';
 import { loginApp } from './routes/login';
@@ -21,6 +23,8 @@ import {
 import {
   defaultProviderStores,
   deviceAuthorizationStore,
+  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,
   type ProviderStores,
 } from './store';
 import { createViews, type Views } from './views';
@@ -57,6 +61,14 @@ export interface OidcProviderOptions {
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
+  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
   corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
@@ -98,6 +110,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.use('/introspect', protectedCors);
   app.use('/revoke', protectedCors);
   app.use('/device_authorization', protectedCors);
+  app.use('/backchannel_authentication', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
@@ -162,6 +175,12 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     c.set('introspectionRefreshTokenResolver', storeResolvers.introspectionRefreshTokenResolver);
     c.set('revocationResolvers', storeResolvers.revocationResolvers);
     c.set('deviceAuthorizationStore', deviceAuthorizationStore);
+    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));
 
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -184,6 +203,8 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.route('/revoke', revocationApp);
   app.route('/device_authorization', deviceAuthorizationApp);
   app.route('/device', deviceApp);
+  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

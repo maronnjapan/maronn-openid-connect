@@ -12,6 +12,15 @@ import type { OidcFeatureConfig } from '../../features.js';
  */
 export const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 
+/**
+ * Escape a value for embedding in a single-quoted string of the generated code.
+ * Custom scope names and subjects come from the command line, so they are never
+ * interpolated raw (RFC 6749 §3.3 allows an apostrophe inside a scope token).
+ */
+function singleQuoted(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   const introspectionMethod = features.introspection
     ? `  '/introspect': ['POST'],\n`
@@ -29,11 +38,20 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   '/device/login': ['POST'],
   '/device/approve': ['POST'],\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the backchannel authentication endpoint is
+  // POST-only, and the authentication device UI is a browser surface (a GET
+  // listing / login form + POST submissions).
+  const cibaMethods = features.ciba
+    ? `  '/backchannel_authentication': ['POST'],
+  '/ciba': ['GET'],
+  '/ciba/login': ['POST'],
+  '/ciba/approve': ['POST'],\n`
+    : '';
   return `const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/authorize': ['GET', 'POST'],
   '/token': ['POST'],
   '/userinfo': ['GET', 'POST'],
-${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}  '/.well-known/jwks.json': ['GET'],
+${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}  '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
   '/consent': ['GET', 'POST'],
@@ -116,6 +134,48 @@ import { deviceApp } from './routes/device.js';\n`
   const deviceStoreImport = features.deviceAuthorizationGrant
     ? `  deviceAuthorizationStore,\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the backchannel authentication endpoint is a
+  // back-channel, client-authenticated POST endpoint, so it gets the same CORS
+  // policy as /token. The authentication device UI (/ciba...) is reached by
+  // direct browser navigation, so it needs no CORS headers — the same treatment
+  // as /login and /consent.
+  const cibaImport = features.ciba
+    ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';\n`
+    : '';
+  const cibaCors = features.ciba
+    ? `  app.use('/backchannel_authentication', protectedCors);\n`
+    : '';
+  const cibaMount = features.ciba
+    ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);\n`
+    : '';
+  // The default CIBA user resolver treats login_hint as the username of the
+  // injected user store, so a custom storage option is honored without extra
+  // wiring. options.cibaUserResolver overrides the whole resolution.
+  const cibaStorageContext = features.ciba
+    ? `    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));`
+    : '';
+  const cibaStoreImport = features.ciba
+    ? `  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,\n`
+    : '';
+  const cibaOptionsField = features.ciba
+    ? `  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -133,7 +193,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -147,7 +207,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}${deviceStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -213,7 +273,7 @@ export interface CreateAppOptions {
    * Override only when hints are signed by a different key set.
    */
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-  corsOrigins?: CorsOrigins;
+${cibaOptionsField}  corsOrigins?: CorsOrigins;
 }
 
 export function validateSigningKeySet(
@@ -248,7 +308,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   const publicCors = cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 600 });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -310,7 +370,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-kn
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
     c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
@@ -331,7 +391,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -345,6 +405,124 @@ async function resolveProviderStores(
 ): Promise<ProviderStores> {
   if (!storage) return defaultProviderStores;
   return typeof storage === 'function' ? storage(context) : storage;
+}
+`;
+}
+
+/**
+ * Generated `scopes.ts` — the custom scopes declared with `--scope`, plus the
+ * per-End-User filtering seam. Emitted only when at least one custom scope was
+ * declared, so an OP generated without them is byte-identical to before this
+ * option existed.
+ */
+export function customScopesTemplate(
+  scopes: string[],
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const toListLiteral = (values: string[]): string =>
+    values.length === 0 ? '[]' : `[${values.map((value) => `'${singleQuoted(value)}'`).join(', ')}]`;
+  // offline_access is a standard scope only where the refresh-token feature was
+  // generated; with it disabled the OP never grants it (OIDC Core 1.0 §11), so
+  // it must not reach scopes_supported either.
+  const standardScopes = [
+    'openid',
+    'profile',
+    'email',
+    'address',
+    'phone',
+    ...(features.refreshToken ? ['offline_access'] : []),
+  ];
+  const exampleScope = scopes[0] ?? 'reports.read';
+  return `/**
+ * Scope policy for this provider.
+ *
+ * The custom scopes below were declared with the CLI's \`--scope\` option, and this
+ * module is the single place the generated provider asks its two scope questions.
+ * It deliberately imports nothing, so both answers can be rewritten — including
+ * against a database — without touching a route.
+ *
+ * 1. "May this value be requested at all?" — \`findUnsupportedScopes()\`, called by
+ *    the authorization endpoint (and by the device / CIBA request endpoints when
+ *    those features are generated). A value that is neither standard nor declared
+ *    here is rejected with \`invalid_scope\` (RFC 6749 §3.3 / §4.1.2.1).
+ * 2. "May THIS End-User be granted it?" — \`resolveGrantableScopes()\`, called from
+ *    every step that turns a request into a grant. **This is where per-user scope
+ *    filtering goes**; see its doc comment below.
+ *
+ * Custom scopes carry no UserInfo claims of their own: OIDC Core 1.0 §5.4 defines
+ * claims for profile / email / address / phone only, so \`filterClaimsByScope()\`
+ * ignores them. Return your own claims for a custom scope by editing
+ * routes/userinfo.ts.
+ */
+
+/**
+ * Scopes this provider implements itself and always accepts: \`openid\` (OIDC Core
+ * 1.0 §3.1.2.1), the four claim scopes (§5.4)${features.refreshToken ? ' and `offline_access` (§11)' : ''}.
+ */
+export const STANDARD_SCOPES: readonly string[] = ${toListLiteral(standardScopes)};
+
+/** Declared with \`--scope\`: the custom scopes this provider accepts. */
+export const CUSTOM_SCOPES: readonly string[] = ${toListLiteral(scopes)};
+
+/**
+ * OIDC Discovery 1.0 §3 \`scopes_supported\`: every value this OP accepts. It is
+ * OP metadata, so it lists what the provider supports — not what a particular
+ * End-User ends up being granted, which resolveGrantableScopes() decides.
+ */
+export const SUPPORTED_SCOPES: readonly string[] = [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
+
+/**
+ * Per-End-User scope restrictions, keyed by scope: only the listed subjects may
+ * be granted that scope. Empty by default, so every accepted scope is grantable
+ * to every authenticated End-User.
+ *
+ * This is the quickest way to restrict a scope — uncomment and fill in. For
+ * anything richer (roles, tenants, a database), write it in
+ * resolveGrantableScopes() below instead.
+ */
+export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
+  // '${singleQuoted(exampleScope)}': ['testuser'],
+};
+
+/**
+ * Narrow the requested scopes to what this End-User may actually be granted.
+ *
+ * **This is the per-user scope filtering seam.** It runs once the End-User is
+ * known, and every step that decides a grant already awaits it:
+ *
+ * - routes/consent.ts — the consent screen (what is displayed) and the approval
+ *   (what is granted)
+ * - routes/authorize.ts — the SSO fast path and prompt=none, which grant without
+ *   showing consent. Both narrow BEFORE looking up stored consent, because a
+ *   consent lookup for a scope the subject can never hold would never match.
+ * - routes/device.ts / routes/ciba-verification.ts — the device and CIBA approval
+ *   steps, when those features are generated
+ *
+ * It is async so a database / KV lookup can be dropped in without touching any
+ * call site. \`requested\` also carries the standard scopes, so a policy may
+ * narrow those too.
+ *
+ * Dropping a scope narrows the grant rather than failing the request: RFC 6749
+ * §3.3 lets the authorization server issue a scope narrower than the one asked
+ * for, and the token response reports the granted \`scope\`. To refuse the whole
+ * request instead, throw from the call site that suits your flow.
+ */
+export async function resolveGrantableScopes(
+  requested: readonly string[],
+  subject: string,
+): Promise<string[]> {
+  return requested.filter((scope) => {
+    const allowedSubjects = RESTRICTED_SCOPE_SUBJECTS[scope];
+    return allowedSubjects === undefined || allowedSubjects.includes(subject);
+  });
+}
+
+/**
+ * Requested scopes this OP does not accept at all. A non-empty result means the
+ * request must be rejected with \`invalid_scope\` (RFC 6749 §3.3).
+ */
+export function findUnsupportedScopes(requested: readonly string[]): string[] {
+  return requested.filter((scope) => !SUPPORTED_SCOPES.includes(scope));
 }
 `;
 }
@@ -421,12 +599,34 @@ export function configTemplate(
   const exampleClientGrantTypes = [
     `'authorization_code'`,
     ...(features.refreshToken ? [`'refresh_token'`] : []),
-    ...(features.tokenExchange ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`] : []),
+    // EXPERIMENTAL (ID-JAG draft §4.3): requesting an ID-JAG is a token-exchange
+    // request, so enabling id-jag alone also registers the exchange URN.
+    ...(features.tokenExchange || features.idJag
+      ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`]
+      : []),
+    ...(features.idJag ? [`'urn:ietf:params:oauth:grant-type:jwt-bearer'`] : []),
+    // EXPERIMENTAL (CIBA Core 1.0 §7.1): registering the CIBA URN is what lets
+    // this confidential client start backchannel authentication requests.
+    ...(features.ciba ? [`'urn:openid:params:grant-type:ciba'`] : []),
   ].join(', ');
   const exampleClientExchangeComment = features.tokenExchange
     ? `      // EXPERIMENTAL (RFC 8693): registering the token-exchange URN is what lets
       // this confidential client exchange its access tokens. Remove it to forbid
       // exchanges for this client; public clients are rejected either way.
+`
+    : '';
+  const exampleClientIdJagComment = features.idJag
+    ? `      // EXPERIMENTAL (ID-JAG draft §4.3 / §4.4): the token-exchange URN lets this
+      // confidential client request an ID-JAG for a trusted resource authorization
+      // server, and the jwt-bearer URN lets it redeem an ID-JAG issued by a trusted
+      // identity provider. Remove either to forbid that half of Cross-App Access.
+`
+    : '';
+  const exampleClientCibaComment = features.ciba
+    ? `      // EXPERIMENTAL (CIBA Core 1.0 §7.1): registering the CIBA URN is what lets
+      // this confidential client POST /backchannel_authentication and poll the
+      // token endpoint with the resulting auth_req_id. Remove it to forbid CIBA
+      // for this client; public clients are rejected either way.
 `
     : '';
   const noRefreshGrantComment = features.tokenExchange
@@ -436,15 +636,23 @@ export function configTemplate(
     : `      // RFC 7591 §2: grant_types default is ["authorization_code"]. The refresh_token
       // grant is disabled in this generated provider, so only authorization_code is registered.
 `;
+  // EXPERIMENTAL (CIBA Core 1.0 §4): backchannel_token_delivery_mode client
+  // metadata. This provider only offers poll, so registering ping or push makes
+  // every backchannel authentication request fail with unauthorized_client.
+  // Omitted means poll.
+  const cibaClientField = features.ciba
+    ? `
+  backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';`
+    : '';
   const exampleClientGrantFields = features.refreshToken
     ? `      // RFC 7591 §2: grant_types default is ["authorization_code"]. Registering
       // refresh_token is the single switch that lets this client receive refresh
       // tokens at all: an online refresh token (bound to the login session) on every
       // authorization, and an offline one (usable after logout) when offline_access
       // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
-${exampleClientExchangeComment}      grantTypes: [${exampleClientGrantTypes}],
+${exampleClientExchangeComment}${exampleClientIdJagComment}${exampleClientCibaComment}      grantTypes: [${exampleClientGrantTypes}],
 `
-    : `${noRefreshGrantComment}${exampleClientExchangeComment}      grantTypes: [${exampleClientGrantTypes}],
+    : `${noRefreshGrantComment}${exampleClientExchangeComment}${exampleClientIdJagComment}${exampleClientCibaComment}      grantTypes: [${exampleClientGrantTypes}],
 `;
   return `import type {
   ClientInfo,
@@ -540,7 +748,7 @@ export function createProviderConfig(
  */
 export type RegisteredClient = ClientInfo & TokenClientInfo & {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
-  idTokenSignedResponseAlg?: 'RS256' | 'ES256';
+  idTokenSignedResponseAlg?: 'RS256' | 'ES256';${cibaClientField}
 };
 
 /**
@@ -896,6 +1104,109 @@ export const deviceAuthorizationStore: DeviceAuthorizationStore =
     new InMemoryDeviceAuthorizationStore());
 `
     : '';
+  const cibaStoreTypeImport = features.ciba
+    ? `
+import {
+  createInMemoryCibaAuthenticationRequestStore,
+  createInMemoryCibaLoginTransactionStore,
+  type CibaAuthenticationRequestStore,
+  type CibaLoginTransactionStore,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';`
+    : '';
+  const cibaStoreImplementation = features.ciba
+    ? `
+/**
+ * EXPERIMENTAL — CIBA login transaction binding cookie (CIBA Core 1.0; the
+ * authentication device UI itself is outside the spec's scope, §7.1).
+ *
+ * Why this exists: a successful login on /ciba/login establishes an OP session,
+ * whose reach goes beyond CIBA (SSO, prompt=none). A hidden csrf_token alone
+ * cannot stop login CSRF: the attacker fetches their own /ciba login form,
+ * reads a valid login_transaction_id + csrf_token pair, and embeds both in a
+ * forged cross-site POST — planting the attacker's session in the victim's
+ * browser. What stops it is this cookie: the login form response binds the
+ * transaction to the browser that requested it by handing that one browser the
+ * raw bindingSecret in an HttpOnly cookie while the transaction stores only its
+ * SHA-256 hash. A forged POST cannot carry the victim's cookie (SameSite=Lax),
+ * and the victim never held this transaction's cookie anyway.
+ *
+ * The cookie name embeds the transaction id so two login forms can run in the
+ * same browser without overwriting each other's secret.
+ */
+export const CIBA_LOGIN_BINDING_COOKIE_PREFIX = 'oidc_ciba_login_';
+
+/**
+ * Build the Set-Cookie value binding one CIBA login transaction to this
+ * browser. Same attributes as the session cookie: HttpOnly (no JS access),
+ * Secure (HTTPS only; http://localhost is treated as trustworthy by browsers)
+ * and SameSite=Lax. Max-Age matches the transaction TTL so an abandoned login
+ * form does not leave a cookie behind.
+ */
+export function buildCibaLoginBindingCookie(
+  transactionId: string,
+  bindingSecret: string,
+  ttlSeconds: number,
+): string {
+  return (
+    CIBA_LOGIN_BINDING_COOKIE_PREFIX + transactionId + '=' + bindingSecret +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that clears the binding cookie once the login
+ * succeeded, so the browser does not accumulate one cookie per login form.
+ */
+export function buildClearedCibaLoginBindingCookie(transactionId: string): string {
+  return (
+    CIBA_LOGIN_BINDING_COOKIE_PREFIX + transactionId +
+    '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+  );
+}
+
+/**
+ * Extract the binding secret for one CIBA login transaction from a Cookie
+ * header. Returns null when the header is missing or this transaction's cookie
+ * is absent, which validateCibaLoginSubmission() rejects with 403.
+ */
+export function parseCibaLoginBindingSecret(
+  cookieHeader: string | null,
+  transactionId: string,
+): string | null {
+  if (!cookieHeader) return null;
+  const name = CIBA_LOGIN_BINDING_COOKIE_PREFIX + transactionId;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === name) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return null;
+}
+
+// EXPERIMENTAL — CIBA stores. The in-memory implementations ship with
+// ${EXPERIMENTAL_PACKAGE}/ciba; replace them with persistent stores (Redis, KV,
+// database) in production. Treat authReqId and the login transaction id as
+// opaque external values: never interpolate them into a query, always bind
+// them as parameters. Kept on globalThis for the same reason as the provider
+// stores above: Next.js instantiates route handlers and server actions in
+// separate module layers.
+const cibaStoreRegistry = globalThis as typeof globalThis & {
+  __oidcCibaAuthenticationRequestStore?: CibaAuthenticationRequestStore;
+  __oidcCibaLoginTransactionStore?: CibaLoginTransactionStore;
+};
+
+export const cibaAuthenticationRequestStore: CibaAuthenticationRequestStore =
+  (cibaStoreRegistry.__oidcCibaAuthenticationRequestStore ??=
+    createInMemoryCibaAuthenticationRequestStore());
+
+export const cibaLoginTransactionStore: CibaLoginTransactionStore =
+  (cibaStoreRegistry.__oidcCibaLoginTransactionStore ??=
+    createInMemoryCibaLoginTransactionStore());
+`
+    : '';
   return `import type {
   AuthTransaction,
   AuthTransactionStore,
@@ -903,7 +1214,7 @@ export const deviceAuthorizationStore: DeviceAuthorizationStore =
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}
+} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}
 
 /**
  * In-memory Authorization Transaction Store.
@@ -1721,7 +2032,7 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
-${parStoreImplementation}${deviceStoreImplementation}`;
+${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}`;
 }
 
 export function resolversTemplate(
@@ -1976,7 +2287,67 @@ export async function revokeConsentAndTokens(subject: string, clientId: string):
 export function authorizeRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // Custom scopes (--scope). With none declared every interpolation below is
+  // empty and the route is byte-identical to before.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImports = customScopesDeclared
+    ? `
+import { findUnsupportedScopes, resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  // AuthorizationErrorCode is already imported by the jarm feature; importing it
+  // twice would not compile.
+  const customScopeCoreImports = customScopesDeclared && !features.jarm
+    ? `
+  AuthorizationErrorCode,`
+    : '';
+  const customScopeStep = customScopesDeclared
+    ? `
+    // RFC 6749 §3.3 / §4.1.2.1: this provider was generated with a declared scope
+    // allow list (scopes.ts), so a value outside it is rejected instead of being
+    // carried into the grant. Placed AFTER applyOfflineAccessPolicy on purpose:
+    // offline_access that the policy already dropped must stay "ignored"
+    // (OIDC Core 1.0 §11) rather than turning the request into invalid_scope.
+    const unsupportedScopes = findUnsupportedScopes(scope);
+    if (unsupportedScopes.length > 0) {
+      throw new AuthorizationError(
+        AuthorizationErrorCode.InvalidScope,
+        'Unsupported scope: ' + unsupportedScopes.join(' '),
+        redirectUri,
+        state,
+      );
+    }
+`
+    : '';
+  // Both non-interactive paths below decide the grant without ever reaching
+  // /consent, so each applies the scope policy (scopes.ts) for itself.
+  const promptNoneUserScopeStep = customScopesDeclared
+    ? `
+        // Apply the scope policy BEFORE the consent lookup: searching consent for
+        // a scope this End-User can never hold would answer consent_required
+        // forever (OIDC Core 1.0 §3.1.2.1). See resolveGrantableScopes() in
+        // scopes.ts — that function is where per-user filtering is written.
+        transaction.scope = (await resolveGrantableScopes(
+          transaction.scope.split(' ').filter(Boolean),
+          session.subject,
+        )).join(' ');
+`
+    : '';
+  const ssoUserScopeStep = customScopesDeclared
+    ? `
+          // Apply the scope policy before the consent lookup below, for the same
+          // reason as the prompt=none path. The narrowed value is only held in
+          // memory: the interactive branch hands the transaction back to
+          // /consent, which applies the policy again with the authenticated
+          // subject it reads out of authSessionStore.
+          transaction.scope = (await resolveGrantableScopes(
+            transaction.scope.split(' ').filter(Boolean),
+            existingSession.subject,
+          )).join(' ');
+
+`
+    : '';
   // Optional hardening (--enable transaction-binding). Off by default: no OIDC
   // Core / OAuth 2.1 clause requires it, and requiring a cookie jar would break
   // driving the login / consent steps by hand with curl.
@@ -2453,7 +2824,7 @@ import {
   AuthorizationError,
   IdTokenHintError,
   type AuthorizationRequestParams,
-  type JwkSet,${jarmCoreImports}
+  type JwkSet,${jarmCoreImports}${customScopeCoreImports}
 } from '${corePkg}';
 import { clientResolver as defaultClientResolver } from '../resolvers.js';
 import {
@@ -2461,7 +2832,7 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${parImports}${jarmImports}
+import { defaultViews, renderView } from '../views.js';${parImports}${jarmImports}${customScopeImports}
 
 export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -2594,7 +2965,7 @@ ${jarmResolveStep}${rejectUnsupportedStep}
     // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
     const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
 
-${offlineAccessStep}
+${offlineAccessStep}${customScopeStep}
     // OIDC Core 1.0 §3.1.2.1: display is page|popup|touch|wap.
     const display = validateDisplayParameter(effectiveParams, redirectUri, state);
 
@@ -2722,7 +3093,7 @@ ${bindingSecretStep}    const transactionId = await generateRandomString(32);
         // コンセント確認より前に置くのは、コンセント検索が session.subject をキーに
         // するため — 不一致のまま進むと別ユーザーのコンセントを見てしまう。
         validatePromptNoneIdTokenHint(transaction, session, verifiedHintSubject);
-
+${promptNoneUserScopeStep}
         // OIDC Core 1.0 §3.1.2.1: not consented → consent_required (the OP must
         // not show a consent screen for prompt=none).
         await validatePromptNoneConsent(transaction, session, consentResolver);
@@ -2805,7 +3176,7 @@ ${promptNoneSuccessRedirect}
           // scopes to this client, skip the consent screen and issue the code
           // directly — the interactive analogue of the prompt=none silent path.
           const consentResolver = c.get('consentResolver');
-          const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+${ssoUserScopeStep}          const requestedScopes = transaction.scope.split(' ').filter(Boolean);
           const consentAlreadyGranted =
             !promptValues.includes('consent') &&
             consentResolver !== undefined &&
@@ -3100,11 +3471,34 @@ parApp.post('/', async (c) => {
 export function deviceAuthorizationRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
   // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
   // actually issue refresh tokens. Baked in as a literal so the generated route
   // has no runtime branch on a feature that is fixed at generation time.
   const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
+  // --scope: the device authorization request carries a scope like /authorize
+  // does, so it answers to the same declared allow list (scopes.ts).
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { findUnsupportedScopes } from '../scopes.js';`
+    : '';
+  const customScopeStep = customScopesDeclared
+    ? `
+    // RFC 6749 §3.3: reject a scope this OP never declared, the same way
+    // /authorize does. Checked after applyOfflineAccessPolicy so an
+    // offline_access that the policy already dropped stays ignored rather than
+    // becoming invalid_scope (OIDC Core 1.0 §11).
+    const unsupportedScopes = findUnsupportedScopes(scope);
+    if (unsupportedScopes.length > 0) {
+      throw new DeviceAuthorizationError(
+        'invalid_scope',
+        'Unsupported scope: ' + unsupportedScopes.join(' '),
+      );
+    }
+`
+    : '';
   return `/**
  * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628).
  *
@@ -3144,7 +3538,7 @@ import {
   verifyClientSecret,
 } from '${corePkg}';
 import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
-import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';
+import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';${customScopeImport}
 
 /**
  * EXPERIMENTAL — Device Authorization Grant settings (RFC 8628).
@@ -3259,7 +3653,7 @@ deviceAuthorizationApp.post('/', async (c) => {
       client,
       refreshTokenFeatureEnabled: ${refreshTokenFeatureEnabled},
     });
-
+${customScopeStep}
     // RFC 8628 §3.2 / §5.2: mint a 256-bit device_code and a collision-checked
     // base-20 user_code, then store the pending record under both.
     const record = await createDeviceAuthorizationRecord({
@@ -3303,7 +3697,37 @@ deviceAuthorizationApp.post('/', async (c) => {
  * `/device/approve`) so the whole browser-facing surface of the feature lives in
  * a single generated file that can be deleted with the feature.
  */
-export function deviceVerificationRouteTemplate(corePkg: string): string {
+export function deviceVerificationRouteTemplate(
+  corePkg: string,
+  scopes: string[] = [],
+): string {
+  // The verification UI is where the device flow learns who the End-User is, so
+  // it is where the scope policy (scopes.ts) is applied. With no custom scope
+  // declared every interpolation below is empty.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  const approvalPageScopes = (subject: string): string =>
+    customScopesDeclared
+      ? `await resolveGrantableScopes(record.scope, ${subject})`
+      : 'record.scope';
+  const approveNarrowStep = customScopesDeclared
+    ? `
+      // Apply the scope policy to what was approved. approveDeviceAuthorization()
+      // copies the requested scope into approvedScope, so the policy is applied
+      // to the record afterwards and persisted; the token endpoint reads
+      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
+      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      approved.approvedScope = await resolveGrantableScopes(
+        approved.approvedScope ?? approved.scope,
+        session.subject,
+      );
+      await deviceStore.update(approved);
+
+`
+    : '';
   return `/**
  * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant, verification UI
  * (RFC 8628 §3.3).
@@ -3354,7 +3778,7 @@ import {
   userStore,
 } from '../store.js';
 import { defaultViews, renderView } from '../views.js';
-import { deviceAuthorizationConfig } from './device-authorization.js';
+import { deviceAuthorizationConfig } from './device-authorization.js';${customScopeImport}
 
 export const deviceApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -3467,7 +3891,7 @@ deviceApp.post('/', async (c) => {
       userCode: record.userCodeDisplay,
       csrfToken,
       clientId: record.clientId,
-      scopes: record.scope,
+      scopes: ${approvalPageScopes('session.subject')},
     })), cookie);
   }
 
@@ -3551,7 +3975,7 @@ deviceApp.post('/login', async (c) => {
     userCode: record.userCodeDisplay,
     csrfToken,
     clientId: record.clientId,
-    scopes: record.scope,
+    scopes: ${approvalPageScopes('user.sub')},
   })), buildSessionCookie(sessionId));
   return withSession;
 });
@@ -3605,7 +4029,7 @@ deviceApp.post('/approve', async (c) => {
         subject: session.subject,
         authTime: session.authTime,
       });
-      // Record the consent the same way /consent does, so a later Authorization
+${approveNarrowStep}      // Record the consent the same way /consent does, so a later Authorization
       // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
       await consentResolver?.recordConsent?.(
         approved.subject,
@@ -3624,6 +4048,603 @@ deviceApp.post('/approve', async (c) => {
       approved: false,
       clientId: record.clientId,
     })), clearCookie);
+  } catch (error) {
+    return renderVerificationError(views, error);
+  }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — CIBA backchannel authentication endpoint (CIBA Core 1.0 §7),
+ * generated only with `--enable ciba`.
+ *
+ * Also owns the shared settings module for the feature: the authentication
+ * device UI, the token route dispatch and the discovery route import
+ * `cibaConfig` from here, so all of them read one source of truth.
+ */
+export function backchannelAuthenticationRouteTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
+): string {
+  // OIDC Core 1.0 §11: offline_access is only grantable when this provider can
+  // actually issue refresh tokens. Baked in as a literal so the generated route
+  // has no runtime branch on a feature that is fixed at generation time.
+  const refreshTokenFeatureEnabled = features.refreshToken ? 'true' : 'false';
+  // --scope: a backchannel authentication request carries a scope like
+  // /authorize does, so it answers to the same declared allow list (scopes.ts).
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { findUnsupportedScopes } from '../scopes.js';`
+    : '';
+  const customScopeStep = customScopesDeclared
+    ? `    // RFC 6749 §3.3: reject a scope this OP never declared, the same allow list
+    // /authorize uses (scopes.ts). Checked before the pipeline so a request for
+    // an unknown scope never reaches the store. offline_access is left out of
+    // the check: the pipeline applies its own policy and ignores it when it
+    // cannot be granted (OIDC Core 1.0 §11), which must not become an error.
+    const unsupportedScopes = findUnsupportedScopes(
+      (params['scope'] ?? '')
+        .split(' ')
+        .filter((scope) => scope.length > 0 && scope !== 'offline_access'),
+    );
+    if (unsupportedScopes.length > 0) {
+      throw new BackchannelAuthenticationError(
+        'invalid_scope',
+        'Unsupported scope: ' + unsupportedScopes.join(' '),
+      );
+    }
+
+`
+    : '';
+  return `/**
+ * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
+ * (CIBA Core 1.0), poll mode.
+ *
+ * This route was generated because the OP was created with \`--enable ciba\`.
+ * It is backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may
+ * change in a breaking way between releases. Do not build production code on it
+ * without pinning the version.
+ *
+ * The consumption device (a call-center console, a kiosk, a smart speaker
+ * backend) POSTs here — back channel, client-authenticated — with a login_hint
+ * naming the user, and receives an auth_req_id it polls the token endpoint
+ * with. The user approves or denies on their own browser at /ciba.
+ *
+ * NOTE (CIBA §15): the login_hint is a user identifier and therefore PII.
+ * Never log it, and never echo it in an error_description. Rate limiting the
+ * endpoint as a whole is deliberately left to the deployment layer (reverse
+ * proxy / platform): an in-process counter cannot work on runtimes without
+ * shared memory between instances. The in-band defenses are mandatory client
+ * authentication, the fixed unknown_user_id wording, and the per-subject
+ * pending-request cap below.
+ */
+import { Hono } from 'hono';
+import {
+  BackchannelAuthenticationError,
+  processBackchannelAuthenticationRequest,
+  type CibaClientInfo,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';
+import {
+  TokenError,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  sanitizeErrorDescription,
+  validateClientAuthMethod,
+  verifyClientSecret,
+} from '${corePkg}';
+import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
+import {
+  cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
+  userStore,
+} from '../store.js';${customScopeImport}
+
+/**
+ * EXPERIMENTAL — CIBA settings (CIBA Core 1.0).
+ *
+ * Imported by the authentication device UI, the token route and the discovery
+ * route, so keep all of them in sync when changing them.
+ *
+ * - authReqIdExpiresIn: §7.3 expires_in, in seconds (range 30–600). Keep it
+ *   short: it is the window the user has to approve, and the window in which a
+ *   pending request can pile up on the approval screen.
+ * - pollingInterval: §7.3 interval, in seconds (range 1–60). The token endpoint
+ *   raises a record's own interval by 5 every time it answers slow_down (§11).
+ * - maxPendingPerSubject: pending backchannel requests allowed per user (range
+ *   1–100) before new ones are refused — the flood defense for the approval
+ *   screen (the role §7.1.2's unsupported user_code would otherwise play).
+ * - maxLoginAttempts: failed /ciba logins allowed per login transaction before
+ *   it is discarded. Per-transaction only — see the notes in the UI route.
+ */
+export const cibaConfig = {
+  authReqIdExpiresIn: 120,
+  pollingInterval: 5,
+  maxPendingPerSubject: 10,
+  maxLoginAttempts: 5,
+};
+
+// Fail fast on a config edit that leaves the documented ranges: a typo here
+// weakens either the approval-screen flood cap or the polling contract.
+if (cibaConfig.authReqIdExpiresIn < 30 || cibaConfig.authReqIdExpiresIn > 600) {
+  throw new Error('cibaConfig.authReqIdExpiresIn must be between 30 and 600 seconds');
+}
+if (cibaConfig.pollingInterval < 1 || cibaConfig.pollingInterval > 60) {
+  throw new Error('cibaConfig.pollingInterval must be between 1 and 60 seconds');
+}
+if (cibaConfig.maxPendingPerSubject < 1 || cibaConfig.maxPendingPerSubject > 100) {
+  throw new Error('cibaConfig.maxPendingPerSubject must be between 1 and 100');
+}
+
+export const backchannelAuthenticationApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * CIBA §7.1: the backchannel authentication request body MUST be
+ * application/x-www-form-urlencoded.
+ */
+function isFormUrlEncoded(contentType: string): boolean {
+  const [mediaType = ''] = contentType.toLowerCase().split(';');
+  return mediaType.trim() === 'application/x-www-form-urlencoded';
+}
+
+function noStore(c: any): void {
+  // auth_req_id is a credential, so the response follows the token response
+  // rules of RFC 6749 §5.1 / §5.2.
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+}
+
+/**
+ * Backchannel Authentication Endpoint
+ * CIBA Core 1.0 §7.1 / §7.2 / §7.3
+ */
+backchannelAuthenticationApp.post('/', async (c) => {
+  const contentType = c.req.header('Content-Type') ?? '';
+  if (!isFormUrlEncoded(contentType)) {
+    noStore(c);
+    return c.json({ error: 'invalid_request', error_description: 'Backchannel authentication requests must use application/x-www-form-urlencoded' }, 400);
+  }
+
+  // RFC 6749 §3.1: request parameters MUST NOT be repeated. Read the raw body so
+  // URLSearchParams iteration exposes duplicates instead of silently keeping the last.
+  const rawBody = await c.req.text();
+  const params: Record<string, string> = {};
+  const seen = new Set<string>();
+  let duplicateKey: string | undefined;
+  for (const [key, value] of new URLSearchParams(rawBody)) {
+    if (seen.has(key)) {
+      duplicateKey = key;
+      break;
+    }
+    seen.add(key);
+    params[key] = value;
+  }
+
+  if (duplicateKey !== undefined) {
+    noStore(c);
+    return c.json({ error: 'invalid_request', error_description: \`Parameter "\${sanitizeErrorDescription(duplicateKey)}" must not be repeated\` }, 400);
+  }
+
+  const authorization = c.req.header('Authorization') ?? '';
+
+  try {
+    const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
+    const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+
+    // --- Client authentication pipeline -------------------------------------
+    // CIBA §7.1: "The Client MUST authenticate ... using the authentication
+    // method registered for its client_id" — the same pipeline the token
+    // endpoint runs, step function for step function.
+    const presentedCredentials = extractClientCredentials({
+      params,
+      authorizationHeader: authorization,
+    });
+    const client = await resolveAuthenticatedTokenClient(
+      presentedCredentials.clientId,
+      tokenClientResolver,
+    );
+    validateClientAuthMethod(client, presentedCredentials);
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
+
+    // login_hint → subject resolution is the deployment's swap point: the
+    // default (wired in app.ts) treats the hint as a username of the configured
+    // user store. Replace c.set('cibaUserResolver', ...) — or the fallback
+    // below — to resolve email addresses, phone numbers, or your own ids.
+    const resolveUser =
+      c.get('cibaUserResolver') ??
+      (async (loginHint: string) => {
+        const claims = await userStore.getClaims(loginHint);
+        return claims ? { subject: claims.sub } : null;
+      });
+
+${customScopeStep}    // --- Backchannel authentication pipeline --------------------------------
+    // Validation runs in CIBA §7.1 order inside the experimental package:
+    // client checks (public client / grant registration / delivery mode) →
+    // request parameter rejection → the one-and-only-one hint rule → scope →
+    // binding_message → requested_expiry → login_hint resolution → the
+    // per-subject pending cap → record creation.
+    const response = await processBackchannelAuthenticationRequest({
+      params,
+      client: client as CibaClientInfo,
+      store: cibaStore,
+      config: cibaConfig,
+      refreshTokenFeatureEnabled: ${refreshTokenFeatureEnabled},
+      resolveUser,
+    });
+
+    // Never log auth_req_id (a live credential) or login_hint (PII, CIBA §15).
+
+    noStore(c);
+    return c.json(response);
+  } catch (error) {
+    noStore(c);
+    if (error instanceof BackchannelAuthenticationError) {
+      // CIBA §13 / RFC 6749 §5.2 error shape. Authentication failures never
+      // reach here — they are core TokenErrors, handled below with their 401.
+      return c.json({ error: error.code, error_description: error.errorDescription }, error.statusCode);
+    }
+    if (error instanceof TokenError) {
+      const status = error.statusCode as 400 | 401;
+      if (error.wwwAuthenticate) {
+        c.header('WWW-Authenticate', error.wwwAuthenticate);
+      }
+      return c.json({ error: error.error, error_description: error.errorDescription }, status);
+    }
+    return c.json({ error: 'server_error' }, 500);
+  }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — CIBA authentication device UI, generated only with
+ * `--enable ciba`.
+ *
+ * The GET listing / login form and the two POST steps hang off one mount point
+ * (`/ciba`, `/ciba/login`, `/ciba/approve`) so the whole browser-facing surface
+ * of the feature lives in a single generated file that can be deleted with the
+ * feature.
+ */
+export function cibaVerificationRouteTemplate(
+  corePkg: string,
+  scopes: string[] = [],
+): string {
+  // The authentication device UI is where CIBA learns who the End-User is, so it
+  // is where the scope policy (scopes.ts) is applied.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  // The policy is async, so the listing resolves its rows before rendering.
+  const pendingRequestRows = customScopesDeclared
+    ? `  const requests = await Promise.all(
+    pending.map(async (record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      // Show only what this End-User can actually grant (scopes.ts).
+      scopes: await resolveGrantableScopes(record.scope, subject),
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  );
+  return renderView(views.cibaPendingRequestsPage({ requests }));`
+    : `  return renderView(views.cibaPendingRequestsPage({
+    requests: pending.map((record) => ({
+      authReqId: record.authReqId,
+      clientId: record.clientId,
+      scopes: record.scope,
+      bindingMessage: record.bindingMessage,
+      expiresInSeconds: remainingSeconds(record.expiresAt),
+      csrfToken: record.csrfToken ?? '',
+    })),
+  }));`;
+  const approveNarrowStep = customScopesDeclared
+    ? `      // Apply the scope policy to what was approved. approveCibaRequest()
+      // copies the requested scope into approvedScope, so the policy is applied
+      // to the record afterwards and persisted; the token endpoint reads
+      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
+      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      approved.approvedScope = await resolveGrantableScopes(
+        approved.approvedScope ?? approved.scope,
+        session.subject,
+      );
+      await cibaStore.update(approved);
+
+`
+    : '';
+  return `/**
+ * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
+ * (CIBA Core 1.0), authentication device UI.
+ *
+ * This route was generated because the OP was created with \`--enable ciba\`.
+ * It is backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may
+ * change in a breaking way between releases. Do not build production code on it
+ * without pinning the version.
+ *
+ * CIBA Core leaves the authentication device — how the user is reached and how
+ * they authenticate — outside the specification (§7.1). This UI implements it
+ * as an OP-hosted browser page the user visits themselves: sign in at /ciba,
+ * review the pending requests addressed to you (client, scopes,
+ * binding_message), and approve or deny. The consumption device learns the
+ * outcome only by polling the token endpoint — there is no push channel in
+ * poll mode.
+ *
+ * ## Why the login form demands a binding cookie
+ *
+ * A successful login establishes an OP session, whose reach goes beyond CIBA
+ * (SSO, prompt=none). A hidden csrf_token alone cannot stop login CSRF: the
+ * attacker fetches their own login form, reads a valid transaction id + token
+ * pair, and embeds both in a forged cross-site POST — planting the attacker's
+ * session in the victim's browser. The login transaction's binding cookie
+ * (minted below, hash-stored) is what stops it — see
+ * buildCibaLoginBindingCookie() in store.ts for the full model.
+ *
+ * ## Why approve / deny does NOT use a binding cookie
+ *
+ * The approval is already bound to the authenticated OP session: the record's
+ * subject must equal the session subject, and the per-record csrf_token is only
+ * ever rendered on the session-gated listing. Knowing an auth_req_id gives an
+ * attacker no step to forge.
+ */
+import { Hono } from 'hono';
+import {
+  CibaVerificationError,
+  approveCibaRequest,
+  createCibaLoginTransaction,
+  denyCibaRequest,
+  listPendingCibaRequests,
+  recordCibaLoginFailure,
+  validateCibaLoginSubmission,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';
+import { generateRandomString } from '${corePkg}';
+import {
+  browserSessionStore as defaultBrowserSessionStore,
+  buildCibaLoginBindingCookie,
+  buildClearedCibaLoginBindingCookie,
+  buildSessionCookie,
+  cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
+  cibaLoginTransactionStore as defaultCibaLoginTransactionStore,
+  parseCibaLoginBindingSecret,
+  parseSessionId,
+  userStore,
+} from '../store.js';
+import { defaultViews, renderView } from '../views.js';
+import { cibaConfig } from './backchannel-authentication.js';${customScopeImport}
+
+export const cibaApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * Attach a Set-Cookie to a Response a view already produced.
+ *
+ * renderView() builds its own Response, so headers staged on the framework
+ * context never reach it. Rebuilding the Response is the framework-neutral way
+ * to add the cookie without making views cookie-aware.
+ */
+function withCookie(response: Response, cookie: string): Response {
+  const headers = new Headers(response.headers);
+  headers.append('Set-Cookie', cookie);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/** Map a verification failure to its error page; anything else is re-thrown. */
+function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+  if (error instanceof CibaVerificationError) {
+    return renderView(
+      views.errorPage({ error: error.message, statusCode: error.statusCode }),
+      { status: error.statusCode },
+    );
+  }
+  throw error;
+}
+
+/** Remaining lifetime of a pending request, in whole seconds, never negative. */
+function remainingSeconds(expiresAt: Date): number {
+  return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
+}
+
+/**
+ * Render the session subject's pending requests with freshly rotated CSRF
+ * tokens (the only place those tokens are ever exposed, and it is
+ * session-gated).
+ */
+async function renderPendingRequests(c: any, subject: string): Promise<Response> {
+  const views = c.get('views') ?? defaultViews;
+  const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+  const pending = await listPendingCibaRequests({ subject, store: cibaStore });
+${pendingRequestRows}
+}
+
+/**
+ * Listing / login form - GET
+ *
+ * With an OP session: list the pending requests addressed to the signed-in
+ * user. Without one: mint a login transaction and show the sign-in form, with
+ * the binding cookie this response sets.
+ */
+cibaApp.get('/', async (c) => {
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const loginTransactionStore =
+    c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+  if (session) {
+    return renderPendingRequests(c, session.subject);
+  }
+
+  const { record, bindingSecret } = await createCibaLoginTransaction(loginTransactionStore);
+  const cookie = buildCibaLoginBindingCookie(
+    record.id,
+    bindingSecret,
+    remainingSeconds(record.expiresAt),
+  );
+  return withCookie(renderView(views.cibaLoginPage({
+    loginTransactionId: record.id,
+    csrfToken: record.csrfToken,
+  })), cookie);
+});
+
+/**
+ * Sign in - POST
+ *
+ * Binding first, then CSRF, then credentials: the binding is what proves this
+ * is the browser the login form was issued to, and it must gate the step that
+ * would otherwise let a forged POST establish an OP session in the victim's
+ * browser.
+ */
+cibaApp.post('/login', async (c) => {
+  const body = await c.req.parseBody();
+  const transactionId = String(body['login_transaction_id'] ?? '');
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const username = String(body['username'] ?? '');
+  const password = String(body['password'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const loginTransactionStore =
+    c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
+  const authenticateUser =
+    c.get('authenticateUser') ??
+    ((u: string, p: string) => userStore.authenticate(u, p));
+
+  let transaction;
+  try {
+    transaction = await validateCibaLoginSubmission({
+      transactionId,
+      csrfToken,
+      bindingSecret: parseCibaLoginBindingSecret(c.req.header('Cookie') ?? null, transactionId),
+      store: loginTransactionStore,
+    });
+  } catch (error) {
+    return renderVerificationError(views, error);
+  }
+
+  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
+  // upstream IdP) without touching anything above or below it.
+  const user = await authenticateUser(username, password);
+  if (!user) {
+    // Per-transaction throttling only. Anyone can mint fresh login
+    // transactions by reloading /ciba, so the aggregate password-guess budget
+    // is the same as the one on /login. Subject-scoped throttling is a
+    // separate concern.
+    const failure = await recordCibaLoginFailure(
+      transaction,
+      loginTransactionStore,
+      cibaConfig.maxLoginAttempts,
+    );
+    if (!failure.canRetry) {
+      // The transaction is gone: this form cannot be retried at all.
+      return renderView(views.errorPage({
+        error: 'Too many login attempts',
+        statusCode: 429,
+      }), { status: 429 });
+    }
+    return renderView(views.cibaLoginPage({
+      loginTransactionId: transaction.id,
+      csrfToken: transaction.csrfToken,
+      error: 'Invalid credentials',
+      remainingAttempts: failure.remainingAttempts,
+    }));
+  }
+
+  // The transaction is single-use: a successful login consumes it, and the
+  // session is established under a NEWLY minted id (never one the request
+  // brought along — session fixation).
+  await loginTransactionStore.delete(transaction.id);
+  const authTime = Math.floor(Date.now() / 1000);
+  const sessionId = generateRandomString(32);
+  await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
+
+  // Two cookies on one response: the new OP session, and the cleared login
+  // binding (it is single-use and would otherwise linger until Max-Age).
+  const listing = await renderPendingRequests(c, user.sub);
+  return withCookie(
+    withCookie(listing, buildSessionCookie(sessionId)),
+    buildClearedCibaLoginBindingCookie(transaction.id),
+  );
+});
+
+/**
+ * Approve or deny - POST
+ *
+ * The only state-changing step of the UI. It demands an OP session whose
+ * subject owns the record, plus the per-record csrf_token from the
+ * session-gated listing.
+ */
+cibaApp.post('/approve', async (c) => {
+  const body = await c.req.parseBody();
+  const authReqId = String(body['auth_req_id'] ?? '');
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const decision = String(body['decision'] ?? '');
+
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+  const consentResolver = c.get('consentResolver');
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+  if (!session) {
+    return renderView(views.errorPage({
+      error: 'Sign in again to review this request',
+      statusCode: 401,
+    }), { status: 401 });
+  }
+
+  if (decision !== 'approve' && decision !== 'deny') {
+    return renderView(views.errorPage({
+      error: 'invalid_request',
+      errorDescription: 'decision must be approve or deny',
+      statusCode: 400,
+    }), { status: 400 });
+  }
+
+  try {
+    if (decision === 'approve') {
+      // subject and csrf_token are validated inside; the record moves to
+      // approved with auth_time, scope and a fresh grantId the token endpoint
+      // reads.
+      const approved = await approveCibaRequest({
+        authReqId,
+        subject: session.subject,
+        csrfToken,
+        authTime: session.authTime,
+        grantId: generateRandomString(32),
+        store: cibaStore,
+      });
+${approveNarrowStep}      // Record the consent the same way /consent does, so a later Authorization
+      // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
+      await consentResolver?.recordConsent?.(
+        approved.subject,
+        approved.clientId,
+        approved.approvedScope ?? approved.scope,
+      );
+      await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
+      return renderView(views.cibaCompletedPage({
+        approved: true,
+        clientId: approved.clientId,
+      }));
+    }
+
+    const record = await cibaStore.findByAuthReqId(authReqId);
+    await denyCibaRequest({
+      authReqId,
+      subject: session.subject,
+      csrfToken,
+      store: cibaStore,
+    });
+    return renderView(views.cibaCompletedPage({
+      approved: false,
+      clientId: record?.clientId ?? '',
+    }));
   } catch (error) {
     return renderVerificationError(views, error);
   }
@@ -4304,6 +5325,237 @@ ${deviceRefreshTokenBlock}
     }
 `
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0 §10.1): dispatch the CIBA grant before core's
+  // validateGrantTypeSupported rejects the URN. Every interpolation below
+  // collapses to the current output when the feature is off, so the default
+  // generation is unchanged byte for byte.
+  const cibaGrantImports = features.ciba
+    ? `
+import {
+  CIBA_GRANT_TYPE,
+  CibaGrantError,
+  processCibaGrant,
+} from '${EXPERIMENTAL_PACKAGE}/ciba';
+import { cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore } from '../store.js';`
+    : '';
+  // The CIBA grant issues a refresh token under exactly the conditions the
+  // standard grants do, so the block only exists when refresh tokens do.
+  const cibaRefreshTokenBlock =
+    features.ciba && features.refreshToken
+      ? `
+      // OIDC Core 1.0 §11: offline_access survived the backchannel
+      // authentication endpoint's policy check only if this client may hold
+      // refresh tokens, and the approval screen the user just went through IS
+      // the explicit consent that §11 asks for. Nothing further to gate on here.
+      const cibaRefreshToken = cibaGrant.scope.includes('offline_access')
+        ? generateRandomString(32)
+        : undefined;
+      if (cibaRefreshToken) {
+        const cibaRefreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
+        await cibaRefreshTokenStore.set(cibaRefreshToken, {
+          subject: cibaGrant.subject,
+          clientId: cibaGrant.clientId,
+          scope: cibaGrant.scope,
+          // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
+          // inherit originalIssuedAt so the deadline never slides forward.
+          expiresAt: cibaIssuedAt + cibaTokenConfig.refreshTokenAbsoluteLifetime,
+          originalIssuedAt: cibaIssuedAt,
+          used: false,
+          grantId: cibaGrant.grantId,
+          iat: cibaIssuedAt,
+          issuer: cibaTokenConfig.issuer,
+          audience: cibaAudience,
+          authTime: cibaGrant.authTime,
+          // CIBA §7.1 defines no nonce parameter, so the re-issued ID Token has
+          // none to preserve either.
+          nonce: undefined,
+          acr: cibaAcr,
+          amr: cibaAmr,
+          azp: undefined,
+        });
+      }
+`
+      : '';
+  const cibaRefreshTokenField =
+    features.ciba && features.refreshToken
+      ? `
+        refresh_token: cibaRefreshToken,`
+      : '';
+  const cibaDispatchStep = features.ciba
+    ? `
+    // --- EXPERIMENTAL: CIBA grant (CIBA Core 1.0 §10.1, poll mode) ----------
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject
+    // it with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    if (params.grant_type === CIBA_GRANT_TYPE) {
+      const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+
+      // CIBA §11 state machine. Everything except "approved" throws:
+      // authorization_pending / slow_down / access_denied / expired_token, plus
+      // invalid_request / invalid_grant.
+      const cibaGrant = await processCibaGrant({
+        params,
+        client: tokenClient,
+        store: cibaStore,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const cibaTokenConfig = c.get('config');
+      const cibaPrivateKey = c.get('privateKey');
+      const cibaKeyId = c.get('keyId');
+      // T-022: the ID Token this grant issues follows the SAME key-selection rule
+      // as the standard grants — pick a registered ID Token key whose alg matches
+      // the client's id_token_signed_response_alg (OIDC Dynamic Client
+      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
+      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // it rejects, and would hash at_hash with the wrong algorithm.
+      const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
+      const cibaFallbackIdKey: SigningKey | undefined =
+        c.get('idTokenPrivateKey') !== undefined
+          ? {
+              privateKey: c.get('idTokenPrivateKey'),
+              publicJwk: c.get('idTokenPublicJwk'),
+              keyId: c.get('idTokenKeyId') ?? cibaKeyId,
+            }
+          : undefined;
+      const cibaRegisteredClient = (await tokenClientResolver.findClient(
+        authenticatedClientId,
+      )) as RegisteredClient | null;
+      const cibaRequestedIdTokenAlg = cibaRegisteredClient?.idTokenSignedResponseAlg;
+      let cibaSelectedIdTokenKey: SigningKey;
+      if (cibaIdTokenSigningKeys.length > 0) {
+        try {
+          cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
+        } catch {
+          c.header('Cache-Control', 'no-store');
+          c.header('Pragma', 'no-cache');
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: \`No ID Token signing key registered for alg "\${cibaRequestedIdTokenAlg ?? 'RS256'}"\`,
+            },
+            500,
+          );
+        }
+      } else if (cibaFallbackIdKey) {
+        cibaSelectedIdTokenKey = cibaFallbackIdKey;
+      } else {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+      }
+      const cibaIdTokenPrivateKey = cibaSelectedIdTokenKey.privateKey;
+      const cibaIdTokenKeyId = cibaSelectedIdTokenKey.keyId;
+      const cibaIssuer: AccessTokenIssuer =
+        cibaTokenConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3). CIBA §7.1 has no resource parameter,
+      // so nothing else is requested.
+      const cibaAudience = buildAccessTokenAudience({
+        userInfoEndpoint: \`\${cibaTokenConfig.issuer}/userinfo\`,
+        issuer: cibaTokenConfig.issuer,
+      });
+
+      const cibaIssuedAt = Math.floor(Date.now() / 1000);
+      const cibaAccessTokenPayload = buildAccessTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        audience: cibaAudience,
+        expiresIn: cibaTokenConfig.accessTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+      });
+      const cibaAccessToken = await cibaIssuer.issue({
+        payload: cibaAccessTokenPayload,
+        privateKey: cibaPrivateKey,
+        keyId: cibaKeyId,
+      });
+
+      // The backchannel authentication endpoint requires the openid scope, so
+      // an ID Token is always issued. It carries no nonce (CIBA §7.1 defines no
+      // such parameter, and OIDC Core 1.0 §2 only requires nonce when the
+      // authentication request carried one) and no c_hash (there is no code).
+      // Poll mode adds no CIBA-specific claims either — the auth_req_id claim
+      // of §10.3.1 belongs to the push-mode token delivery message.
+      const cibaAtHash = await computeAtHash(cibaAccessToken, cibaIdTokenPrivateKey);
+      const cibaAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
+      const { acr: cibaAcr, amr: cibaAmr } = await resolveAcrAmr({
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        acrResolver: cibaAcrResolver,
+      });
+      const cibaIdTokenPayload = buildIdTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresIn: cibaTokenConfig.idTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+        atHash: cibaAtHash,
+        authTime: cibaGrant.authTime,
+        acr: cibaAcr,
+        amr: cibaAmr,
+      });
+      const cibaIdToken = await generateIdToken({
+        payload: cibaIdTokenPayload,
+        privateKey: cibaIdTokenPrivateKey,
+        keyId: cibaIdTokenKeyId,
+      });
+
+      await accessTokenStore.set(cibaAccessToken, {
+        sub: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresAt: cibaIssuedAt + cibaTokenConfig.accessTokenExpiresIn,
+        // Inherit the grantId minted at approval so revoking the grant kills
+        // every token issued from this backchannel authentication.
+        grantId: cibaGrant.grantId,
+        iat: cibaIssuedAt,
+        nbf: cibaIssuedAt,
+        audience: cibaAudience,
+        issuer: cibaTokenConfig.issuer,
+        jti: cibaAccessTokenPayload.jti,
+      });
+${cibaRefreshTokenBlock}
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: cibaAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: cibaTokenConfig.accessTokenExpiresIn,
+        id_token: cibaIdToken,
+        scope: cibaGrant.scope.join(' '),${cibaRefreshTokenField}
+      });
+    }
+`
+    : '';
+  const cibaGrantCatchBranch = features.ciba
+    ? `    if (error instanceof CibaGrantError) {
+      // CIBA §11: authorization_pending / slow_down / access_denied /
+      // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
+      // only come from client authentication, which runs before the branch and
+      // throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+`
+    : '';
   const deviceGrantCatchBranch = features.deviceAuthorizationGrant
     ? `    if (error instanceof DeviceAuthorizationError) {
       // RFC 8628 §3.5: authorization_pending / slow_down / access_denied /
@@ -4324,6 +5576,376 @@ ${deviceRefreshTokenBlock}
       // RFC 8693 §2.2.2: the exchange errors use the RFC 6749 §5.2 shape. They
       // are always 400 — a 401 can only come from client authentication, which
       // runs before the branch and throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+`
+    : '';
+
+  // EXPERIMENTAL (ID-JAG draft §4.3 / §4.4): Cross-App Access. Two extra grant
+  // branches — ID-JAG issuance inside the token-exchange grant, and ID-JAG
+  // redemption as the jwt-bearer grant. Every interpolation below collapses to
+  // the current output when the id-jag feature is off, so the default
+  // generation is unchanged byte for byte.
+  //
+  // When both id-jag and token-exchange are enabled, the issuance branch must
+  // run BEFORE the token-exchange branch: both share the grant_type URN and are
+  // told apart by requested_token_type. Only when token-exchange is off does the
+  // issuance step also answer the remaining token-exchange requests (with a
+  // pointer to the single requested_token_type this build supports), so the
+  // discovery advertisement of the exchange grant never dead-ends in
+  // unsupported_grant_type.
+  const idJagTokenExchangeConstImport =
+    features.idJag && !features.tokenExchange
+      ? `
+  ID_JAG_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT_TYPE,`
+      : '';
+  const idJagImports = features.idJag
+    ? `
+import {
+  IdJagError,
+  JWT_BEARER_GRANT_TYPE,${idJagTokenExchangeConstImport}
+  TOKEN_TYPE_ID_TOKEN,
+  matchesIdJagIssuanceRequest,
+  processIdJagIssuanceRequest,
+  processIdJagRedemptionRequest,
+  resolveIdJagActor,
+  type IdJagAccessTokenInfo,
+  type IdJagActorTokenResolver,
+  type IdJagTrustedIdentityProvider,
+} from '${EXPERIMENTAL_PACKAGE}/id-jag';
+import type { JwkSet } from '${corePkg}';`
+    : '';
+  // draft §4.3 MAY: refresh-token subjects only exist when the generated OP
+  // issues refresh tokens at all, so the knob and the resolver hand-off are
+  // emitted under the refresh-token feature.
+  const idJagRefreshConfigDoc =
+    features.idJag && features.refreshToken
+      ? `
+ * - allowRefreshTokenSubjects: whether a refresh token this OP issued may stand
+ *   in for the ID Token as the subject_token (draft §4.3 MAY), so a client can
+ *   request a fresh ID-JAG after its ID Token expired without a new SSO round
+ *   trip. Validated exactly like the standard refresh_token grant (rotation
+ *   reuse revokes the token family; online tokens require the login session to
+ *   be alive); the refresh token is NOT consumed. Grants without the openid
+ *   scope are refused — their refresh token replaces no identity assertion.`
+      : '';
+  const idJagRefreshConfigField =
+    features.idJag && features.refreshToken
+      ? `
+  allowRefreshTokenSubjects: true,`
+      : '';
+  const idJagConfigBlock = features.idJag
+    ? `
+/**
+ * EXPERIMENTAL — Cross-App Access (XAA) / ID-JAG settings
+ * (draft-ietf-oauth-identity-assertion-authz-grant-04).
+ *
+ * Issuing side (this OP as the IdP, draft §4.3):
+ * - allowedAudiences: resource authorization server issuers this IdP may issue
+ *   an ID-JAG for. Empty by default (fail safe): every issuance request is
+ *   rejected with invalid_target until you list the peer AS issuers here.
+ *   Adding an entry grants that cross-app connection on behalf of every user —
+ *   there is no per-user consent screen in this flow.
+ * - idJagLifetimeSeconds: ID-JAG lifetime. Keep it short (draft example: 300);
+ *   clients are expected to request a fresh one instead of holding it.
+ * - allowedScopes: optional cap on the scopes an ID-JAG may carry. undefined
+ *   passes the requested scopes through (the resource AS applies its own
+ *   policy again on redemption).${idJagRefreshConfigDoc}
+ * - allowActorTokens: whether an actor_token (identifying who acts on the
+ *   subject's behalf) is accepted and recorded as the ID-JAG's act claim
+ *   (RFC 8693 §4.1). The draft defines no normative actor processing (§9.7
+ *   sketches extensions), so this is an opt-in extension and defaults to
+ *   false — an actor_token is rejected until you flip it, whatever else is
+ *   configured. Every token type identifier RFC 8693 §3 defines is accepted
+ *   the same way; the type alone decides nothing.
+ * - actorTokenResolver: validates the actor_token's CONTENT (signature,
+ *   revocation, whose token it is) — for every accepted type, this OP's own
+ *   ID Tokens included. The library only checks the request structure and the
+ *   shape of what you return. Return the act value ({ sub, act? }) for a valid
+ *   token, null for an invalid one (answered with a fixed invalid_request), or
+ *   throw IdJagError to pick the response yourself. The default below handles
+ *   ID Tokens this OP issued to the authenticated client; extend or replace it
+ *   to cover the other types. Clearing it rejects every actor_token.
+ *
+ * Consuming side (this OP as the resource authorization server, draft §4.4):
+ * - trustedIdentityProviders: the IdPs whose ID-JAGs are accepted on the
+ *   jwt-bearer grant. Empty by default (fail safe). Keys come from the inline
+ *   \`jwks\` when present, otherwise from \`jwksUri\` (fetched and cached below).
+ *   Never derive the key source from the assertion itself.
+ */
+const defaultIdJagActorTokenResolver: IdJagActorTokenResolver = async ({
+  actorToken,
+  actorTokenType,
+  clientId,
+  issuer,
+  jwks,
+}) =>
+  actorTokenType === TOKEN_TYPE_ID_TOKEN
+    ? resolveIdJagActor({ actorToken, issuer, clientId, jwks })
+    : null;
+
+export const idJagConfig = {
+  allowedAudiences: [] as string[],
+  idJagLifetimeSeconds: 300,
+  allowedScopes: undefined as string[] | undefined,${idJagRefreshConfigField}
+  allowActorTokens: false,
+  actorTokenResolver: defaultIdJagActorTokenResolver as IdJagActorTokenResolver | undefined,
+  trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
+};
+
+/**
+ * EXPERIMENTAL — jwks_uri cache for trusted identity providers.
+ *
+ * A fetched JWKS is reused for 300 seconds, so a signing-key rotation at the
+ * IdP can take up to that long to be picked up (a verification that fails
+ * within the window is answered as an untrusted assertion). The fetch target
+ * comes exclusively from the static idJagConfig above — never from request or
+ * assertion content — which is what keeps this endpoint SSRF-free.
+ */
+const idJagJwksCache = new Map<string, { jwks: JwkSet; expiresAt: number }>();
+const ID_JAG_JWKS_CACHE_TTL_MS = 300_000;
+
+async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIdentityProvider[]> {
+  const resolved: IdJagTrustedIdentityProvider[] = [];
+  for (const entry of idJagConfig.trustedIdentityProviders) {
+    if (entry.jwks !== undefined) {
+      resolved.push({ issuer: entry.issuer, jwks: entry.jwks });
+      continue;
+    }
+    if (entry.jwksUri === undefined) {
+      // An entry with neither jwks nor jwksUri can never verify anything; skip
+      // it so the assertion is answered with the fixed untrusted description.
+      continue;
+    }
+    const cached = idJagJwksCache.get(entry.jwksUri);
+    if (cached !== undefined && cached.expiresAt > Date.now()) {
+      resolved.push({ issuer: entry.issuer, jwks: cached.jwks });
+      continue;
+    }
+    // A failed fetch propagates: the generic catch turns it into server_error,
+    // which is honest — the assertion was never evaluated, so invalid_grant
+    // would wrongly blame the client for an outage on this side.
+    const response = await fetch(entry.jwksUri);
+    if (!response.ok) {
+      throw new Error(\`Fetching the JWKS of trusted IdP \${entry.issuer} failed with status \${response.status}\`);
+    }
+    const jwks = (await response.json()) as JwkSet;
+    idJagJwksCache.set(entry.jwksUri, { jwks, expiresAt: Date.now() + ID_JAG_JWKS_CACHE_TTL_MS });
+    resolved.push({ issuer: entry.issuer, jwks });
+  }
+  return resolved;
+}
+`
+    : '';
+  // draft §4.3 MAY: refresh-token subjects hand the SAME resolvers to the
+  // module that the standard refresh grant uses, so rotation-reuse revocation,
+  // client binding, expiry and online-session liveness behave identically. The
+  // consts referenced here are the ones the refresh grant declares above the
+  // dispatch, so this collapses to nothing when refresh tokens are off.
+  const idJagRefreshSubjectArgs =
+    features.idJag && features.refreshToken
+      ? `
+        ...(idJagConfig.allowRefreshTokenSubjects
+          ? { refreshTokenResolver, authenticationSessionResolver }
+          : {}),`
+      : '';
+  const idJagTokenExchangeFallbackStep =
+    features.idJag && !features.tokenExchange
+      ? `
+    // Generated without --enable token-exchange: the exchange grant exists here
+    // only to issue ID-JAGs, so any other requested_token_type is answered with
+    // a pointer instead of falling through to unsupported_grant_type (discovery
+    // does advertise the exchange grant in this build).
+    if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: \`This authorization server only supports requested_token_type \${ID_JAG_TOKEN_TYPE} for token exchange\`,
+        },
+        400,
+      );
+    }
+`
+      : '';
+  const idJagIssuanceDispatchStep = features.idJag
+    ? `
+    // --- EXPERIMENTAL: ID-JAG issuance (Cross-App Access, draft §4.3) ------
+    // A token-exchange request whose requested_token_type is the ID-JAG URN.
+    // Dispatched right after client authentication and BEFORE the plain
+    // token-exchange branch (same grant_type URN) and core's
+    // validateGrantTypeSupported. The subject_token must be an ID Token this OP
+    // issued to the authenticated client; the result is a signed grant JWT for
+    // the resource authorization server named by \`audience\` — not an access
+    // token (the response carries token_type N_A).
+    //
+    // Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change
+    // in a breaking way between releases. The underlying specification is an
+    // IETF draft (-04) and may itself change. Do not build production code on
+    // this without pinning versions.
+    if (matchesIdJagIssuanceRequest(params)) {
+      const idJagIssuanceConfig = c.get('config');
+      // The ID-JAG is signed with a registered RS256 key so the peer AS can
+      // verify it against this OP's JWKS endpoint (same key-selection contract
+      // as JARM: RS256 is pinned, the active key may be a different alg).
+      const idJagSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+      let idJagSigningKey: SigningKey;
+      try {
+        idJagSigningKey = selectSigningKeyByAlg(idJagSigningKeys, 'RS256');
+      } catch {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json(
+          { error: 'server_error', error_description: 'No RS256 signing key registered for ID-JAG issuance' },
+          500,
+        );
+      }
+      // The subject_token is verified against the same JWKS that id_token_hint
+      // uses (the OP's own ID Token signing keys) — draft §4.3.3 requires the
+      // assertion's audience to be the authenticated client, which
+      // processIdJagIssuanceRequest checks.
+      const idJagJwks = await c.get('jwksProvider')();
+
+      const idJagIssuanceResponse = await processIdJagIssuanceRequest({
+        params,
+        client: tokenClient,
+        issuer: idJagIssuanceConfig.issuer,
+        jwks: idJagJwks,
+        signingKey: idJagSigningKey,
+        allowedAudiences: idJagConfig.allowedAudiences,
+        allowedScopes: idJagConfig.allowedScopes,
+        lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
+        // Extension (draft §9.7): when enabled, an actor_token is recorded as
+        // the ID-JAG's act claim. Every accepted token type goes through the
+        // same resolver, which owns the content validation.
+        allowActorTokens: idJagConfig.allowActorTokens,
+        ...(idJagConfig.actorTokenResolver === undefined
+          ? {}
+          : { actorTokenResolver: idJagConfig.actorTokenResolver }),${idJagRefreshSubjectArgs}
+      });
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached. The ID-JAG itself is
+      // not persisted — it is a self-contained signed grant the peer AS
+      // verifies by signature and exp.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(idJagIssuanceResponse);
+    }
+${idJagTokenExchangeFallbackStep}`
+    : '';
+  const idJagRedemptionDispatchStep = features.idJag
+    ? `
+    // --- EXPERIMENTAL: ID-JAG redemption (Cross-App Access, draft §4.4) ----
+    // The jwt-bearer grant (RFC 7523 §2.1). The assertion must be an ID-JAG
+    // (typ oauth-id-jag+jwt) issued by one of idJagConfig.trustedIdentityProviders
+    // for THIS issuer and for the authenticated client. This OP then issues its
+    // own access token — the IdP never mints tokens for this AS.
+    //
+    // No ID Token is issued (this is not an OIDC authentication flow: the
+    // openid scope only grants UserInfo access) and no refresh token is issued
+    // (draft §4.4.3 SHOULD NOT — re-presenting the still-valid ID-JAG replaces
+    // the refresh token).
+    if (params.grant_type === JWT_BEARER_GRANT_TYPE) {
+      const idJagRedemptionConfig = c.get('config');
+      const idJagIdentityProviders = await resolveTrustedIdentityProviders();
+
+      const idJagGrant = await processIdJagRedemptionRequest({
+        params,
+        client: tokenClient,
+        issuer: idJagRedemptionConfig.issuer,
+        identityProviders: idJagIdentityProviders,
+        configuredExpiresIn: idJagRedemptionConfig.accessTokenExpiresIn,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const idJagTokenIssuer: AccessTokenIssuer =
+        idJagRedemptionConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint
+      // stays a permanent member (RFC 9068 §3); the ID-JAG's resource claim
+      // (RFC 8707) contributes the requested resources.
+      const idJagAudience = buildAccessTokenAudience({
+        userInfoEndpoint: \`\${idJagRedemptionConfig.issuer}/userinfo\`,
+        requested: idJagGrant.requestedResources,
+        issuer: idJagRedemptionConfig.issuer,
+      });
+
+      const idJagIssuedAt = Math.floor(Date.now() / 1000);
+      const idJagAccessTokenPayload = buildAccessTokenPayload({
+        issuer: idJagRedemptionConfig.issuer,
+        subject: idJagGrant.subject,
+        clientId: idJagGrant.clientId,
+        scope: idJagGrant.scope,
+        audience: idJagAudience,
+        expiresIn: idJagGrant.expiresIn,
+        issuedAt: idJagIssuedAt,
+      });
+      const idJagAccessToken = await idJagTokenIssuer.issue({
+        payload: {
+          ...idJagAccessTokenPayload,
+          // RFC 8693 §4.1: an act claim carried by the ID-JAG is preserved on
+          // the issued access token, so downstream services still see WHO acts
+          // on the subject's behalf (dropping it would silently turn the
+          // delegation into impersonation).
+          ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+        },
+        privateKey: c.get('privateKey'),
+        keyId: c.get('keyId'),
+      });
+
+      const idJagAccessTokenMetadata: IdJagAccessTokenInfo = {
+        // draft §4.4.1: the ID-JAG's sub is used as the local subject directly
+        // (subject resolution by identical sub; JIT provisioning is out of scope).
+        sub: idJagGrant.subject,
+        clientId: idJagGrant.clientId,
+        scope: idJagGrant.scope,
+        expiresAt: idJagIssuedAt + idJagGrant.expiresIn,
+        // Each redemption is its own grant: revoking one issued token must not
+        // affect tokens from other redemptions of the same (re-presentable)
+        // ID-JAG, so the payload's own jti doubles as the grant id.
+        grantId: idJagAccessTokenPayload.jti,
+        iat: idJagIssuedAt,
+        nbf: idJagIssuedAt,
+        audience: idJagAudience,
+        issuer: idJagRedemptionConfig.issuer,
+        jti: idJagAccessTokenPayload.jti,
+        // The actor record is persisted too, so opaque-token introspection and
+        // store-based tooling can surface it just like the JWT claim.
+        ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+      };
+      await accessTokenStore.set(idJagAccessToken, idJagAccessTokenMetadata);
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: idJagAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: idJagGrant.expiresIn,
+        scope: idJagGrant.scope.join(' '),
+      });
+    }
+`
+    : '';
+  const idJagCatchBranch = features.idJag
+    ? `    if (error instanceof IdJagError) {
+      // ID-JAG errors use the RFC 6749 §5.2 shape and are always 400 — a 401
+      // can only come from client authentication, which runs before both
+      // branches and throws core's TokenError. Issuance failures map to
+      // invalid_request / invalid_target / invalid_scope / unauthorized_client
+      // (RFC 8693 §2.2.2); assertion failures on redemption map to
+      // invalid_grant (RFC 7521 §4.1).
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
       return c.json(
@@ -4374,8 +5996,8 @@ import {
   accessTokenStore as defaultAccessTokenStore,
   authCodeStore as defaultAuthCodeStore,${refreshStoreImport}
 } from '../store.js';
-import type { RegisteredClient } from '../config.js';${tokenExchangeImports}${deviceGrantImports}
-${tokenExchangeConfigBlock}
+import type { RegisteredClient } from '../config.js';${tokenExchangeImports}${idJagImports}${deviceGrantImports}${cibaGrantImports}
+${tokenExchangeConfigBlock}${idJagConfigBlock}
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
@@ -4485,7 +6107,7 @@ ${refreshStoreConst}
     await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
     const authenticatedClientId = presentedCredentials.clientId;
-${tokenExchangeDispatchStep}${deviceCodeDispatchStep}
+${idJagIssuanceDispatchStep}${idJagRedemptionDispatchStep}${tokenExchangeDispatchStep}${deviceCodeDispatchStep}${cibaDispatchStep}
     // --- Token request validation pipeline --------------------------------
     // Each step below is an independent core function, called in the same order
     // as core's validateTokenRequest(). Delete a call to drop that validation,
@@ -4720,7 +6342,7 @@ ${refreshTokenPersistenceBlock}    c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(tokenResponse);
   } catch (error) {
-${tokenExchangeCatchBranch}${deviceGrantCatchBranch}    if (error instanceof TokenError) {
+${idJagCatchBranch}${tokenExchangeCatchBranch}${deviceGrantCatchBranch}${cibaGrantCatchBranch}    if (error instanceof TokenError) {
       const status = error.statusCode as 400 | 401;
       // RFC 6750 Section 3 / OAuth 2.1 Section 5.2: 401 responses include WWW-Authenticate
       if (error.wwwAuthenticate) {
@@ -5073,8 +6695,24 @@ jwksApp.get('/', async (c) => {
 export function discoveryRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
-  const scopesSupportedEntry = features.refreshToken
+  // --scope: the declared scopes live in scopes.ts, which also owns the standard
+  // list, so the advertisement reads from there instead of repeating it. Without
+  // a declaration the literal below is unchanged.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { SUPPORTED_SCOPES } from '../scopes.js';`
+    : '';
+  const scopesSupportedEntry = customScopesDeclared
+    ? `    // OIDC Discovery 1.0 §3: scopes_supported is this OP's scope allow list —
+    // the standard scopes plus the custom ones declared with --scope (see
+    // scopes.ts). It is OP metadata, so it lists what the provider accepts, not
+    // what a particular End-User is granted (resolveGrantableScopes decides that).
+    scopesSupported: [...SUPPORTED_SCOPES],
+`
+    : features.refreshToken
     ? `    // OIDC Core 1.0 §11: offline_access is advertised so relying parties (and the
     // OIDF Conformance Suite's oidcc-refresh-token module) know they may request
     // refresh tokens via 'scope=openid offline_access' with prompt=consent.
@@ -5093,12 +6731,22 @@ export function discoveryRouteTemplate(
   const supportedGrantTypes = [
     `'authorization_code'`,
     ...(features.refreshToken ? [`'refresh_token'`] : []),
-    ...(features.tokenExchange ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`] : []),
+    // EXPERIMENTAL (ID-JAG draft §4.3): issuing an ID-JAG happens on the
+    // token-exchange grant, so enabling id-jag alone also advertises it.
+    ...(features.tokenExchange || features.idJag
+      ? [`'urn:ietf:params:oauth:grant-type:token-exchange'`]
+      : []),
+    // EXPERIMENTAL (ID-JAG draft §7.2): a resource AS that advertises the
+    // id-jag grant profile MUST also advertise the jwt-bearer grant.
+    ...(features.idJag ? [`'urn:ietf:params:oauth:grant-type:jwt-bearer'`] : []),
     // RFC 8628 §4: the device grant is advertised only when it is generated, so
     // a client can detect support through discovery.
     ...(features.deviceAuthorizationGrant
       ? [`'urn:ietf:params:oauth:grant-type:device_code'`]
       : []),
+    // CIBA Core 1.0 §4: the CIBA grant is advertised only when it is generated,
+    // so a client can detect support through discovery.
+    ...(features.ciba ? [`'urn:openid:params:grant-type:ciba'`] : []),
   ];
   const grantTypesSupportedEntry = `    grantTypesSupported: [${supportedGrantTypes.join(', ')}],
 `;
@@ -5193,9 +6841,34 @@ import { parConfig } from './par.js';`
     // EXPERIMENTAL — RFC 8628 §4 metadata.
     device_authorization_endpoint: \`\${issuer}/device_authorization\`,`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0 §4): both REQUIRED metadata entries are merged
+  // onto the metadata object core builds, so core needs no change to advertise
+  // them. The OPTIONAL entries (signing algs, user code support) are not
+  // output: this build supports neither signed requests nor user codes.
+  const cibaDiscoveryMetadata = features.ciba
+    ? `
+    // EXPERIMENTAL — CIBA Core 1.0 §4 metadata. Only the poll delivery mode is
+    // offered, so exactly one mode is advertised.
+    backchannel_token_delivery_modes_supported: ['poll'],
+    backchannel_authentication_endpoint: \`\${issuer}/backchannel_authentication\`,`
+    : '';
+  // EXPERIMENTAL (ID-JAG draft §7): both role advertisements are merged onto
+  // the metadata object core builds, so core needs no change. Only the profile
+  // support is advertised — the trusted-IdP list and the audience allow list
+  // are deliberately NOT disclosed (draft §9.4 MUST NOT).
+  const idJagDiscoveryMetadata = features.idJag
+    ? `
+    // EXPERIMENTAL — ID-JAG draft §7.1: this OP can issue an ID-JAG via token
+    // exchange (identity-chaining requested token type).
+    identity_chaining_requested_token_types_supported: ['urn:ietf:params:oauth:token-type:id-jag'],
+    // EXPERIMENTAL — ID-JAG draft §7.2: this OP can process the ID-JAG grant
+    // profile on the jwt-bearer grant. Which issuers are actually trusted is
+    // local policy and is not disclosed here (draft §9.4).
+    authorization_grant_profiles_supported: ['urn:ietf:params:oauth:grant-profile:id-jag'],`
+    : '';
   return `import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '${corePkg}';
-import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}
+import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}${customScopeImport}
 
 export const discoveryApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -5305,7 +6978,7 @@ ${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
   // not in OIDC Discovery, so it is added separately.
   return c.json({
     ...metadata,
-    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${jarmDiscoveryMetadata}
+    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${cibaDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}
   });
 });
 `;
@@ -5517,7 +7190,45 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
 export function consentRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
+  // The consent step is where the interactive flow turns the requested scope into
+  // a granted one, and it is the first step that knows who the End-User is, so it
+  // is where the scope policy (scopes.ts) is applied. With no custom scope
+  // declared every interpolation below is empty.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImports = customScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../scopes.js';`
+    : '';
+  const consentGetScopeResolution = customScopesDeclared
+    ? `  // Display only what THIS End-User can actually grant. The subject comes from
+  // the auth session that /login (or the SSO fast path) stored for this
+  // transaction; without one there is nothing to apply the policy to, so the
+  // request is shown as-is and POST /consent stops on the same missing session.
+  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
+  const consentSession = await authSessionStore.get(transactionId);
+  const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+  const displayedScopes = consentSession
+    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
+    : requestedScopes;
+
+`
+    : '';
+  const consentDisplayScopes = customScopesDeclared
+    ? 'displayedScopes'
+    : "transaction.scope.split(' ').filter(Boolean)";
+  const consentGrantedScope = customScopesDeclared
+    ? `
+  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place to
+  // write per-user filtering). A dropped scope narrows the grant rather than
+  // failing the request: RFC 6749 §3.3 lets the authorization server issue a
+  // narrower scope, and the token response reports what was granted.
+  const grantedScope = await resolveGrantableScopes(
+    transaction.scope.split(' ').filter(Boolean),
+    session.subject,
+  );`
+    : `  const grantedScope = transaction.scope.split(' ').filter(Boolean);`;
   const bindingImports = features.transactionBinding
     ? `
   validateTransactionBinding,
@@ -5761,7 +7472,7 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${jarmConsentImports}
+import { defaultViews, renderView } from '../views.js';${jarmConsentImports}${customScopeImports}
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
 ${bindingGuard}${jarmConsentHelpers}
@@ -5779,10 +7490,10 @@ consentApp.get('/', async (c) => {
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
 ${bindingCheckBeforeConsentForm}
-  return renderView(views.consentPage({
+${consentGetScopeResolution}  return renderView(views.consentPage({
     transactionId,
     csrfToken: transaction.csrfToken,
-    scopes: transaction.scope.split(' ').filter(Boolean),
+    scopes: ${consentDisplayScopes},
     clientId: transaction.clientId,
   }));
 });
@@ -5850,7 +7561,7 @@ ${consentDenyRedirect}
   // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
   // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
   // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
-  const grantedScope = transaction.scope.split(' ').filter(Boolean);
+${consentGrantedScope}
 
   // Generate authorization code via core helper
   // OIDC Core 1.0 Section 3.1.3.1: TTL is configurable via ProviderConfig
@@ -5946,6 +7657,43 @@ import { deviceApp } from './routes/device.js';\n`
   const deviceStoreImport = features.deviceAuthorizationGrant
     ? `  deviceAuthorizationStore,\n`
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): same policy split as createApp — the
+  // back-channel endpoint shares the /token CORS policy, the authentication
+  // device UI is plain browser navigation.
+  const cibaImport = features.ciba
+    ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
+import { cibaApp } from './routes/ciba-verification.js';\n`
+    : '';
+  const cibaCors = features.ciba
+    ? `  app.use('/backchannel_authentication', protectedCors);\n`
+    : '';
+  const cibaMount = features.ciba
+    ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
+  app.route('/ciba', cibaApp);\n`
+    : '';
+  const cibaStorageContext = features.ciba
+    ? `    c.set('cibaAuthenticationRequestStore', cibaAuthenticationRequestStore);
+    c.set('cibaLoginTransactionStore', cibaLoginTransactionStore);
+    c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
+      const claims = await stores.userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    }));`
+    : '';
+  const cibaStoreImport = features.ciba
+    ? `  cibaAuthenticationRequestStore,
+  cibaLoginTransactionStore,\n`
+    : '';
+  const cibaOptionsField = features.ciba
+    ? `  /**
+   * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+   * authentication request is for. Defaults to treating the hint as a username
+   * of the configured user store. Return null when no user matches.
+   */
+  cibaUserResolver?: (
+    loginHint: string,
+  ) => Promise<{ subject: string } | null> | { subject: string } | null;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -5963,7 +7711,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -5977,7 +7725,7 @@ import {
 } from './resolvers.js';
 import {
   defaultProviderStores,
-${parStoreImport}${deviceStoreImport}  type ProviderStores,
+${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -6068,7 +7816,7 @@ export interface ApplyOidcOptions {
    * Token / UserInfo / Introspection / Revocation エンドポイントに適用される。
    * Discovery / JWKS は仕様上常に '*' 固定 (OIDC Discovery / RFC 8414 で公開資産扱い)。
    */
-  corsOrigins?: CorsOrigins;
+${cibaOptionsField}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -6121,7 +7869,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -6191,7 +7939,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}  app.use('/.well-kn
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -6212,7 +7960,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -6681,6 +8429,172 @@ function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): string {
   deviceCompletedPage: defaultDeviceCompletedPage,
 `
     : '';
+  // EXPERIMENTAL (CIBA Core 1.0): the three CIBA pages are generated only with
+  // --enable ciba. Every interpolation below collapses to '' when the feature
+  // is off, so the default views.ts is unchanged byte for byte.
+  const cibaParamTypes = features.ciba
+    ? `
+export interface CibaLoginPageParams {
+  /** Login transaction id; carried through as a hidden field. */
+  loginTransactionId: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts for this login transaction */
+  remainingAttempts?: number;
+}
+
+export interface CibaPendingRequestParams {
+  /** auth_req_id; carried through as a hidden field of the decision form. */
+  authReqId: string;
+  /** Client that asked for the backchannel authentication */
+  clientId: string;
+  /** Scopes the client asked for */
+  scopes: string[];
+  /**
+   * CIBA Core 1.0 §7.1 binding_message: shown so the user can compare it with
+   * the message on the consumption device — the visual check that they are
+   * approving THEIR transaction and not someone else's. Client-supplied text:
+   * it MUST be escaped before rendering.
+   */
+  bindingMessage?: string;
+  /** Seconds until this request expires */
+  expiresInSeconds: number;
+  /** Per-record CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+}
+
+export interface CibaPendingRequestsPageParams {
+  /** Pending backchannel authentication requests addressed to the signed-in user */
+  requests: CibaPendingRequestParams[];
+}
+
+export interface CibaCompletedPageParams {
+  /** true when the user approved, false when they denied */
+  approved: boolean;
+  /** Client the decision applied to */
+  clientId: string;
+}
+`
+    : '';
+  const cibaViewsMembers = features.ciba
+    ? `  /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
+  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
+  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
+  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
+`
+    : '';
+  const cibaDefaultViews = features.ciba
+    ? `function defaultCibaLoginPage(params: CibaLoginPageParams): string {
+  const errorHtml = params.error
+    ? \`<p style="color: red;">\${escapeHtml(params.error)}\${
+        params.remainingAttempts !== undefined
+          ? \`. Attempts remaining: \${params.remainingAttempts}\`
+          : ''
+      }</p>\`
+    : '';
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Sign in</title></head>
+<body>
+  <h1>Sign in</h1>
+  <p>Sign in to review sign-in requests sent to you.</p>
+  \${errorHtml}
+  <form method="POST" action="/ciba/login">
+    <input type="hidden" name="login_transaction_id" value="\${escapeHtml(params.loginTransactionId)}" />
+    <input type="hidden" name="csrf_token" value="\${escapeHtml(params.csrfToken)}" />
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>\`;
+}
+
+function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): string {
+  if (params.requests.length === 0) {
+    return \`<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+  <p>No pending sign-in requests.</p>
+</body>
+</html>\`;
+  }
+
+  // CIBA Core 1.0 §7.1: the binding_message is repeated here on purpose. Ask
+  // the user to check it against the device that started the request before
+  // approving. The Deny button is rendered with the same prominence as Approve.
+  const requestListHtml = params.requests
+    .map((request) => {
+      const scopeListHtml = request.scopes
+        .map((s) => \`      <li>\${escapeHtml(s)}</li>\`)
+        .join('\\n');
+      const bindingMessageHtml = request.bindingMessage
+        ? \`    <p>Confirm that your device is showing this message: <strong>\${escapeHtml(request.bindingMessage)}</strong></p>\\n\`
+        : '';
+      return \`  <section>
+    <p>Client <strong>\${escapeHtml(request.clientId)}</strong> is requesting access to the following scopes:</p>
+    <ul>
+\${scopeListHtml}
+    </ul>
+\${bindingMessageHtml}    <p>This request expires in \${request.expiresInSeconds} seconds.</p>
+    <form method="POST" action="/ciba/approve">
+      <input type="hidden" name="auth_req_id" value="\${escapeHtml(request.authReqId)}" />
+      <input type="hidden" name="csrf_token" value="\${escapeHtml(request.csrfToken)}" />
+      <button type="submit" name="decision" value="approve">Approve</button>
+      <button type="submit" name="decision" value="deny">Deny</button>
+    </form>
+  </section>\`;
+    })
+    .join('\\n');
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+  <p>Only approve a request you started yourself on another device.</p>
+\${requestListHtml}
+</body>
+</html>\`;
+}
+
+function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
+  const outcome = params.approved
+    ? \`<p>You approved <strong>\${escapeHtml(params.clientId)}</strong>.</p>\`
+    : \`<p>You denied <strong>\${escapeHtml(params.clientId)}</strong>.</p>\`;
+
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Sign-in Requests</title></head>
+<body>
+  <h1>Sign-in Requests</h1>
+\${outcome}
+  <p>You can close this page and go back to your device.</p>
+</body>
+</html>\`;
+}
+
+`
+    : '';
+  const cibaDefaultViewsEntries = features.ciba
+    ? `  cibaLoginPage: defaultCibaLoginPage,
+  cibaPendingRequestsPage: defaultCibaPendingRequestsPage,
+  cibaCompletedPage: defaultCibaCompletedPage,
+`
+    : '';
   return `/**
  * UI Views for OpenID Connect Provider.
  *
@@ -6734,7 +8648,7 @@ export interface ErrorPageParams {
   /** HTTP status code */
   statusCode: number;
 }
-${deviceParamTypes}
+${deviceParamTypes}${cibaParamTypes}
 // ============================================================
 // Views Interface
 // ============================================================
@@ -6753,7 +8667,7 @@ export interface Views {
   consentPage(params: ConsentPageParams): ViewResult;
   /** Render a generic error page */
   errorPage(params: ErrorPageParams): ViewResult;
-${deviceViewsMembers}}
+${deviceViewsMembers}${cibaViewsMembers}}
 
 /** Options applied when renderView wraps an HTML string into a Response. */
 export interface RenderViewInit {
@@ -6883,7 +8797,7 @@ function defaultErrorPage(params: ErrorPageParams): string {
 </html>\`;
 }
 
-${deviceDefaultViews}/**
+${deviceDefaultViews}${cibaDefaultViews}/**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
  */
@@ -6891,7 +8805,7 @@ export const defaultViews: Views = {
   loginPage: defaultLoginPage,
   consentPage: defaultConsentPage,
   errorPage: defaultErrorPage,
-${deviceDefaultViewsEntries}};
+${deviceDefaultViewsEntries}${cibaDefaultViewsEntries}};
 
 /**
  * Build a Views instance, overriding any subset of the default views with your
@@ -8132,6 +10046,60 @@ function deviceAuthorizationConformanceClients(features: OidcFeatureConfig): str
 `;
 }
 
+function cibaConformanceClients(features: OidcFeatureConfig): string {
+  if (!features.ciba) return '';
+  const cibaGrantTypes = features.refreshToken
+    ? `['urn:openid:params:grant-type:ciba', 'refresh_token']`
+    : `['urn:openid:params:grant-type:ciba']`;
+  return `  // EXPERIMENTAL (CIBA Core 1.0): a client registered for the CIBA grant, plus
+  // a second one so the contract test can prove an auth_req_id is refused when
+  // it is presented by a client other than the one it was issued to (§11).
+  ['c-ciba', {
+    clientId: 'c-ciba',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ${cibaGrantTypes},
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  ['c-ciba-other', {
+    clientId: 'c-ciba-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  // A client that registered the ping delivery mode, so the contract test can
+  // prove this poll-only provider refuses it (CIBA §4 advertises ['poll']).
+  ['c-ciba-ping', {
+    clientId: 'c-ciba-ping',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    backchannelTokenDeliveryMode: 'ping' as const,
+  }],
+  // A CIBA client that registered id_token_signed_response_alg, so the contract
+  // test can prove the CIBA grant honors it just like the standard grants
+  // (OIDC Dynamic Client Registration 1.0 §2).
+  ['c-ciba-es256', {
+    clientId: 'c-ciba-es256',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:openid:params:grant-type:ciba'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    idTokenSignedResponseAlg: 'ES256' as const,
+  }],
+`;
+}
+
 function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
   if (!features.tokenExchange) return '';
   return `  // EXPERIMENTAL (RFC 8693): a confidential client registered for the exchange
@@ -8152,6 +10120,48 @@ function tokenExchangeConformanceClients(features: OidcFeatureConfig): string {
     clientType: 'public' as const,
     responseTypes: ['code'],
     grantTypes: ['authorization_code', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+    tokenEndpointAuthMethod: 'none',
+  }],
+`;
+}
+
+function idJagConformanceClients(features: OidcFeatureConfig): string {
+  if (!features.idJag) return '';
+  // The refresh_token registration lets the refresh-token-subject contract
+  // (draft §4.3 MAY) obtain a real refresh token through the code flow.
+  const idJagClientGrantTypes = features.refreshToken
+    ? `['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer']`
+    : `['authorization_code', 'urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer']`;
+  return `  // EXPERIMENTAL (ID-JAG draft): the Cross-App Access fixtures. c-idjag plays
+  // the requesting app for both halves (issuance via token exchange, redemption
+  // via jwt-bearer); c-idjag-other holds the jwt-bearer grant so the
+  // client-continuity contract (draft §4.4.1) can present someone else's
+  // ID-JAG; the public fixture pins that registering the URNs does not lift the
+  // confidential-client requirement.
+  ['c-idjag', {
+    clientId: 'c-idjag',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ${idJagClientGrantTypes},
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  ['c-idjag-other', {
+    clientId: 'c-idjag-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+  ['c-public-idjag', {
+    clientId: 'c-public-idjag',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'public' as const,
+    responseTypes: ['code'],
+    grantTypes: ['urn:ietf:params:oauth:grant-type:token-exchange', 'urn:ietf:params:oauth:grant-type:jwt-bearer'],
     tokenEndpointAuthMethod: 'none',
   }],
 `;
@@ -8264,7 +10274,7 @@ export function conformanceTestClientsBlock(features: OidcFeatureConfig): string
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_basic',
   }],
-${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}]);
 `;
   }
   return `const testClients = new Map<string, RegisteredClient>([
@@ -8311,11 +10321,20 @@ ${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClie
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_post',
   }],
-${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}]);
 `;
 }
 
-export function scopesSupportedConformanceTest(features: OidcFeatureConfig): string {
+export function scopesSupportedConformanceTest(
+  features: OidcFeatureConfig,
+  scopes: string[] = [],
+): string {
+  // --scope: the pinned list below is the whole advertisement, so a declared
+  // custom scope has to appear in it or the contract test would fail against the
+  // provider it was generated with.
+  const customScopeEntries = scopes
+    .map((scope) => `        '${singleQuoted(scope)}',\n`)
+    .join('');
   if (!features.refreshToken) {
     return `    // The refresh_token feature is disabled: offline_access must NOT be advertised
     // (OIDC Core 1.0 §11 — it would never be granted). The full list is pinned so
@@ -8331,7 +10350,7 @@ export function scopesSupportedConformanceTest(features: OidcFeatureConfig): str
         'email',
         'address',
         'phone',
-      ]);
+${customScopeEntries}      ]);
     });
 
     // The token endpoint only offers authorization_code (supportedGrantTypes), and
@@ -8361,8 +10380,153 @@ export function scopesSupportedConformanceTest(features: OidcFeatureConfig): str
         'address',
         'phone',
         'offline_access',
-      ]);
+${customScopeEntries}      ]);
     });
+`;
+}
+
+/**
+ * Contract tests for the custom scopes declared with `--scope`. Generated only
+ * when at least one was declared, so a provider without them keeps exactly the
+ * conformance file it had before.
+ */
+export function customScopeConformanceBlock(scopes: string[] = []): string {
+  const declaredScope = scopes[0];
+  if (declaredScope === undefined) return '';
+  // A value the generated provider cannot possibly accept, used to pin the
+  // allow-list rejection. Derived so it can never collide with a declaration.
+  let undeclaredScope = 'undeclared.scope';
+  while (scopes.includes(undeclaredScope)) undeclaredScope += '.x';
+  const scope = singleQuoted(declaredScope);
+
+  return `
+  describe('Custom scopes', () => {
+    // RFC 7636 Appendix B example pair.
+    const CUSTOM_SCOPE_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const CUSTOM_SCOPE_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function csrfTokenFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function relativeLocation(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    /**
+     * Drives authorize -> login -> consent -> token for client 'c-conf' as
+     * \`username\` and returns the scope the token response reports as granted.
+     * Pure data collection: every assertion stays in the it() blocks.
+     */
+    async function grantedScopeFor(scope: string, username: string): Promise<string[]> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(scope) +
+        '&state=custom-scope&prompt=consent' +
+        '&code_challenge=' + CUSTOM_SCOPE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would
+      // (the per-transaction binding secret with --enable transaction-binding,
+      // an empty string otherwise).
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await loginGet.text()),
+          username,
+          password: 'password',
+        }).toString(),
+      });
+
+      const consentPath = relativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost')
+        .searchParams.get('code') ?? '';
+
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-conf',
+          client_secret: 's',
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: CUSTOM_SCOPE_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const tokenBody = await tokenRes.json();
+      return String(tokenBody.scope ?? '').split(' ').filter(Boolean);
+    }
+
+    // RFC 6749 §3.3 / §4.1.2.1: declaring custom scopes makes scopes.ts the OP's
+    // allow list, so a value outside it is a redirectable invalid_scope rather
+    // than something carried into the grant.
+    it('should reject a scope that was never declared with invalid_scope', async () => {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent('openid ${undeclaredScope}') +
+        '&state=custom-scope-reject' +
+        '&code_challenge=' + CUSTOM_SCOPE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+      expect(location.searchParams.get('error')).toBe('invalid_scope');
+      expect(location.searchParams.get('state')).toBe('custom-scope-reject');
+    });
+
+    // The standard scopes stay untouched by the allow list: they are part of it.
+    it('should still accept the standard scopes', async () => {
+      const granted = await grantedScopeFor('openid profile email', 'testuser');
+
+      expect(granted).toEqual(['openid', 'profile', 'email']);
+    });
+
+    // The empty default policy grants every declared scope to everyone.
+    it('should grant the declared scope ${scope} to an authenticated End-User', async () => {
+      const granted = await grantedScopeFor('openid ${scope}', 'testuser');
+
+      expect(granted).toEqual(['openid', '${scope}']);
+    });
+
+    // Pins that per-user filtering is actually wired: the policy edited in
+    // scopes.ts decides the grant of the whole authorize -> token flow, and a
+    // scope the End-User may not have is dropped rather than failing the request
+    // (RFC 6749 §3.3 — the token response reports what was granted). Delete this
+    // test if you replace resolveGrantableScopes() with your own policy.
+    it('should honor a per-End-User restriction written in scopes.ts', async () => {
+      RESTRICTED_SCOPE_SUBJECTS['${scope}'] = ['otheruser'];
+      try {
+        expect(await grantedScopeFor('openid ${scope}', 'testuser')).toEqual(['openid']);
+        expect(await grantedScopeFor('openid ${scope}', 'otheruser')).toEqual([
+          'openid',
+          '${scope}',
+        ]);
+      } finally {
+        delete RESTRICTED_SCOPE_SUBJECTS['${scope}'];
+      }
+    });
+  });
 `;
 }
 
@@ -10898,6 +13062,988 @@ export function tokenExchangeConformanceBlock(features: OidcFeatureConfig): stri
  * Emitted only when the par feature is enabled, so the default conformance
  * output is unchanged.
  */
+/**
+ * Contract tests for the experimental Cross-App Access / ID-JAG feature
+ * (draft-ietf-oauth-identity-assertion-authz-grant-04).
+ *
+ * Emitted only when the id-jag feature is enabled, so the default conformance
+ * output is unchanged. Both halves are pinned: issuing an ID-JAG on the
+ * token-exchange grant (§4.3) and redeeming one on the jwt-bearer grant (§4.4).
+ * The redemption fixtures are signed by a fake external IdP key generated in
+ * the block's own beforeAll and trust-listed inline (no network fetch).
+ */
+export function idJagConformanceBlock(features: OidcFeatureConfig): string {
+  if (!features.idJag) return '';
+  // The supported-subject-type list in the parse error grows when the generated
+  // default config accepts refresh-token subjects (which needs the refresh
+  // feature), so the pinned message varies with the build.
+  const unsupportedSubjectTypeMessage = features.refreshToken
+    ? 'Unsupported subject_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token or urn:ietf:params:oauth:token-type:refresh_token is supported.'
+    : 'Unsupported subject_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token is supported.';
+  const refreshSubjectContract = features.refreshToken
+    ? `
+      // draft §4.3 MAY: a refresh token of this OP may stand in for the ID Token.
+      it('should issue an ID-JAG from a refresh token subject', async () => {
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(body.token_type).toBe('N_A');
+        const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+        // The subject claims come from the refresh token's stored grant context.
+        expect(claims.iss).toBe(XAA_OWN_ISSUER);
+        expect(claims.sub).toBe('testuser');
+        expect(claims.aud).toBe(XAA_PEER_AS_ISSUER);
+        expect(typeof claims.auth_time).toBe('number');
+      });
+
+      it('should not consume the refresh token when issuing an ID-JAG', async () => {
+        // The exchange is not the refresh grant: no rotation happens, so the
+        // same refresh token mints a second ID-JAG (draft §4.4.3's renewal path).
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        const first = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+        const second = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+      });
+
+      it('should reject a rotated refresh token subject with the fixed description', async () => {
+        // OAuth 2.1 §4.3.1: presenting a rotated-out token is validated exactly
+        // like the standard refresh grant would.
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        await postXaaToken({
+          client_id: 'c-idjag',
+          client_secret: 's',
+          grant_type: 'refresh_token',
+          refresh_token: tokens.refresh_token,
+        });
+
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({
+            subject_token: tokens.refresh_token,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+          }),
+        );
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: XAA_SUBJECT_INVALID_DESCRIPTION,
+        });
+      });
+
+      it('should reject a refresh token subject while allowRefreshTokenSubjects is off', async () => {
+        const tokens = await xaaCodeFlowTokens('c-idjag');
+        idJagConfig.allowRefreshTokenSubjects = false;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: tokens.refresh_token,
+              subject_token_type: 'urn:ietf:params:oauth:token-type:refresh_token',
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description:
+              'Unsupported subject_token_type for ID-JAG issuance. Only urn:ietf:params:oauth:token-type:id_token is supported.',
+          });
+        } finally {
+          idJagConfig.allowRefreshTokenSubjects = true;
+        }
+      });
+`
+    : '';
+  const introspectionContract = features.introspection
+    ? `
+      it('should report a redeemed access token active with the ID-JAG subject and client', async () => {
+        const assertion = await mintExternalIdJag({});
+        const redeemed = await withTrustedIdp(() => redeemRequest({ assertion }));
+        const redeemedBody = (await redeemed.json()) as Record<string, string>;
+
+        const res = await postXaaToken({}, '/introspect', {
+          token: redeemedBody.access_token,
+          client_id: 'c-idjag',
+          client_secret: 's',
+        });
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(body.active).toBe(true);
+        // draft §4.4.1: the ID-JAG sub becomes the local subject directly, and
+        // the token is bound to the client that redeemed the grant.
+        expect(body.sub).toBe('testuser');
+        expect(body.client_id).toBe('c-idjag');
+        expect(body.scope).toBe('openid profile');
+      });
+`
+    : '';
+  return `
+  // EXPERIMENTAL — Cross-App Access / ID-JAG
+  // (draft-ietf-oauth-identity-assertion-authz-grant-04). Generated because this
+  // provider was created with --enable id-jag. These tests pin the contract the
+  // repository guarantees for both halves of XAA: issuing an ID-JAG on the
+  // token-exchange grant (draft §4.3) and redeeming one on the jwt-bearer grant
+  // (draft §4.4). Change the behavior and they fail, which is how a customized
+  // OP learns it drifted.
+  describe('Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const XAA_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const XAA_PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const XAA_EXCHANGE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:token-exchange';
+    const XAA_JWT_BEARER_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
+    const XAA_ID_JAG_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id-jag';
+    const XAA_ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
+    // This OP's own issuer (createApp above runs on the default config).
+    const XAA_OWN_ISSUER = 'http://localhost:3000';
+    // The peer resource authorization server ID-JAGs are issued for.
+    const XAA_PEER_AS_ISSUER = 'https://peer-as.conformance.example';
+    // The fake external IdP whose signed ID-JAGs this OP redeems.
+    const XAA_TRUSTED_IDP_ISSUER = 'https://trusted-idp.conformance.example';
+    // Every unusable subject_token is rejected with this one description, and
+    // an untrusted issuer is indistinguishable from a broken signature, so the
+    // responses cannot be used as an existence / trust-list oracle.
+    const XAA_SUBJECT_INVALID_DESCRIPTION = 'The provided subject_token is not valid';
+    const XAA_ASSERTION_UNTRUSTED_DESCRIPTION =
+      'The assertion issuer is not trusted or the assertion signature is invalid';
+
+    let externalIdpPrivateKey: CryptoKey;
+    let externalIdpJwk: Awaited<ReturnType<typeof exportPublicJwk>>;
+
+    beforeAll(async () => {
+      // The fake external IdP: its public JWK is trust-listed inline by the
+      // tests below, so no jwks_uri fetch happens inside this suite.
+      const externalIdpKeyPair = await crypto.subtle.generateKey(
+        { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+        true,
+        ['sign', 'verify'],
+      );
+      externalIdpPrivateKey = externalIdpKeyPair.privateKey;
+      externalIdpJwk = await exportPublicJwk(externalIdpKeyPair.publicKey, 'external-idp-key');
+    });
+
+    // Pure helpers: they fetch, sign and parse only. Every assertion lives in an it().
+    function xaaRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function xaaCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function xaaB64Url(bytes: Uint8Array): string {
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+    }
+
+    function xaaB64UrlJson(value: Record<string, unknown>): string {
+      return xaaB64Url(new TextEncoder().encode(JSON.stringify(value)));
+    }
+
+    function xaaDecodeJwtSegment(segment: string): Record<string, unknown> {
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      return JSON.parse(atob(padded)) as Record<string, unknown>;
+    }
+
+    function postXaaToken(
+      fields: Record<string, string>,
+      path = '/token',
+      base: Record<string, string> = {},
+    ): Promise<Response> {
+      return app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ ...base, ...fields }).toString(),
+      });
+    }
+
+    // Drive authorize -> login -> consent over HTTP and hand back the code. No
+    // assertions and no branching here: the flow contract lives in the it()s.
+    async function xaaAuthorizeFlow(
+      clientId: string,
+      scope: string,
+      username = 'testuser',
+    ): Promise<string> {
+      const authorizeUrl =
+        '/authorize?response_type=code&client_id=' + clientId +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(scope) +
+        '&state=xaa-state&nonce=xaa-nonce' +
+        '&code_challenge=' + XAA_PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+
+      const authorizeRes = await app.request(authorizeUrl);
+      const loginPath = xaaRelativeFrom(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would
+      // (with --enable transaction-binding it is the binding secret).
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: xaaCsrfFrom(await loginGet.text()),
+          username,
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = xaaRelativeFrom(loginRes.headers.get('Location'));
+
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: xaaCsrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      return callback.searchParams.get('code') ?? '';
+    }
+
+    // The identity assertion the issuance half consumes: an ID Token from the
+    // ordinary Authorization Code Flow of the given client.
+    async function xaaCodeFlowTokens(
+      clientId: string,
+      username = 'testuser',
+    ): Promise<Record<string, string>> {
+      const code = await xaaAuthorizeFlow(clientId, 'openid profile', username);
+      const res = await postXaaToken({
+        client_id: clientId,
+        client_secret: 's',
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: XAA_PKCE_VERIFIER,
+      });
+      return (await res.json()) as Record<string, string>;
+    }
+
+    function issuanceRequest(overrides: Record<string, string> = {}): Promise<Response> {
+      return postXaaToken(overrides, '/token', {
+        client_id: 'c-idjag',
+        client_secret: 's',
+        grant_type: XAA_EXCHANGE_GRANT_TYPE,
+        requested_token_type: XAA_ID_JAG_TOKEN_TYPE,
+        subject_token_type: XAA_ID_TOKEN_TYPE,
+        audience: XAA_PEER_AS_ISSUER,
+        scope: 'openid profile',
+      });
+    }
+
+    function redeemRequest(
+      overrides: Record<string, string> = {},
+      clientId = 'c-idjag',
+    ): Promise<Response> {
+      return postXaaToken(overrides, '/token', {
+        client_id: clientId,
+        client_secret: 's',
+        grant_type: XAA_JWT_BEARER_GRANT_TYPE,
+      });
+    }
+
+    // Sign an ID-JAG as the fake external IdP. An override set to undefined
+    // removes the member (JSON.stringify drops undefined values).
+    async function mintExternalIdJag(
+      claims: Record<string, unknown>,
+      header: Record<string, unknown> = {},
+    ): Promise<string> {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const encodedHeader = xaaB64UrlJson({
+        alg: 'RS256',
+        typ: 'oauth-id-jag+jwt',
+        kid: 'external-idp-key',
+        ...header,
+      });
+      const encodedPayload = xaaB64UrlJson({
+        iss: XAA_TRUSTED_IDP_ISSUER,
+        sub: 'testuser',
+        aud: XAA_OWN_ISSUER,
+        client_id: 'c-idjag',
+        jti: 'conformance-jag',
+        exp: nowSeconds + 300,
+        iat: nowSeconds,
+        scope: 'openid profile offline_access',
+        ...claims,
+      });
+      const signingInput = encodedHeader + '.' + encodedPayload;
+      const signature = await crypto.subtle.sign(
+        'RSASSA-PKCS1-v1_5',
+        externalIdpPrivateKey,
+        new TextEncoder().encode(signingInput),
+      );
+      return signingInput + '.' + xaaB64Url(new Uint8Array(signature));
+    }
+
+    // Config helpers: flip the generated allow lists for one call and always
+    // restore them, so the fail-safe empty defaults stay pinned by other tests.
+    async function withIssuanceAudience<T>(fn: () => Promise<T>): Promise<T> {
+      idJagConfig.allowedAudiences = [XAA_PEER_AS_ISSUER];
+      try {
+        return await fn();
+      } finally {
+        idJagConfig.allowedAudiences = [];
+      }
+    }
+
+    async function withTrustedIdp<T>(fn: () => Promise<T>): Promise<T> {
+      idJagConfig.trustedIdentityProviders = [
+        { issuer: XAA_TRUSTED_IDP_ISSUER, jwks: { keys: [externalIdpJwk] } },
+      ];
+      try {
+        return await fn();
+      } finally {
+        idJagConfig.trustedIdentityProviders = [];
+      }
+    }
+
+    describe('ID-JAG issuance (draft §4.3)', () => {
+      it('should issue an ID-JAG with the §3.1 claims and the §4.3.4 response members', async () => {
+        const idToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({ subject_token: idToken }),
+        );
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual([
+          'access_token',
+          'expires_in',
+          'issued_token_type',
+          'scope',
+          'token_type',
+        ]);
+        expect(body.issued_token_type).toBe(XAA_ID_JAG_TOKEN_TYPE);
+        // draft §4.3.4: the issued grant is NOT an access token.
+        expect(body.token_type).toBe('N_A');
+        expect(body.expires_in).toBe(300);
+        expect(body.scope).toBe('openid profile');
+
+        const segments = String(body.access_token).split('.');
+        const header = xaaDecodeJwtSegment(segments[0] ?? '');
+        const claims = xaaDecodeJwtSegment(segments[1] ?? '');
+        // draft §3.1 / RFC 8725 §3.11: explicit typing, RS256, published kid.
+        expect(header.typ).toBe('oauth-id-jag+jwt');
+        expect(header.alg).toBe('RS256');
+        expect(header.kid).toBe('test-key');
+        expect(claims.iss).toBe(XAA_OWN_ISSUER);
+        expect(claims.sub).toBe('testuser');
+        expect(claims.aud).toBe(XAA_PEER_AS_ISSUER);
+        expect(claims.client_id).toBe('c-idjag');
+        expect(claims.scope).toBe('openid profile');
+        expect(typeof claims.jti).toBe('string');
+        expect((claims.exp as number) - (claims.iat as number)).toBe(300);
+      });
+
+      it('should omit the scope claim and return an empty scope when none is requested', async () => {
+        const idToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({ subject_token: idToken, scope: '' }),
+        );
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(body.scope).toBe('');
+        const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+        expect('scope' in claims).toBe(false);
+      });
+
+      it('should reject an audience outside the allow list with invalid_target', async () => {
+        const idToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        // The generated default allow list is empty (fail safe), so the same
+        // audience that succeeds above is rejected without the config flip.
+        const res = await issuanceRequest({ subject_token: idToken });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_target',
+          error_description: 'The requested audience is not allowed for ID-JAG issuance',
+        });
+      });
+
+      it('should reject this issuer itself as audience with invalid_target', async () => {
+        const idToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        // draft §9.3: cross-domain only — even an allow-listed own issuer is refused.
+        idJagConfig.allowedAudiences = [XAA_OWN_ISSUER];
+        try {
+          const res = await issuanceRequest({ subject_token: idToken, audience: XAA_OWN_ISSUER });
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_target',
+            error_description:
+              'The requested audience must belong to a different trust domain than this authorization server',
+          });
+        } finally {
+          idJagConfig.allowedAudiences = [];
+        }
+      });
+
+      it('should reject an ID Token issued to another client with the fixed description', async () => {
+        // draft §4.3.3: the assertion audience must be the authenticated client.
+        const foreignIdToken = (await xaaCodeFlowTokens('c-conf')).id_token;
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({ subject_token: foreignIdToken }),
+        );
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: XAA_SUBJECT_INVALID_DESCRIPTION,
+        });
+      });
+
+      it('should reject an access token presented as the subject with the same fixed description', async () => {
+        const accessToken = (await xaaCodeFlowTokens('c-idjag')).access_token;
+        const res = await withIssuanceAudience(() =>
+          issuanceRequest({ subject_token: accessToken }),
+        );
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: XAA_SUBJECT_INVALID_DESCRIPTION,
+        });
+      });
+
+      it('should reject a saml2 subject_token_type with invalid_request', async () => {
+        const res = await issuanceRequest({
+          subject_token: 'unused',
+          subject_token_type: 'urn:ietf:params:oauth:token-type:saml2',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: '${unsupportedSubjectTypeMessage}',
+        });
+      });
+
+      it('should reject an actor_token with invalid_request', async () => {
+        const res = await issuanceRequest({
+          subject_token: 'unused',
+          actor_token: 'unused',
+          actor_token_type: XAA_ID_TOKEN_TYPE,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'actor_token is not supported for ID-JAG issuance',
+        });
+      });
+
+      it('should reject a client without the token-exchange grant with unauthorized_client', async () => {
+        // c-conf authenticates fine (client_secret_post) but never registered
+        // the exchange URN.
+        const res = await issuanceRequest({
+          subject_token: 'unused',
+          client_id: 'c-conf',
+        });
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as Record<string, unknown>).error).toBe('unauthorized_client');
+      });
+
+      it('should reject a public client with unauthorized_client', async () => {
+        const res = await postXaaToken({
+          client_id: 'c-public-idjag',
+          grant_type: XAA_EXCHANGE_GRANT_TYPE,
+          requested_token_type: XAA_ID_JAG_TOKEN_TYPE,
+          subject_token: 'unused',
+          subject_token_type: XAA_ID_TOKEN_TYPE,
+          audience: XAA_PEER_AS_ISSUER,
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'Public clients are not allowed to request an ID-JAG',
+        });
+      });
+
+      it('should cap the issued scopes at idJagConfig.allowedScopes with invalid_scope', async () => {
+        const idToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        idJagConfig.allowedScopes = ['openid'];
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({ subject_token: idToken, scope: 'openid profile' }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_scope',
+            error_description: 'The requested scope exceeds the scopes allowed for ID-JAG issuance',
+          });
+        } finally {
+          idJagConfig.allowedScopes = undefined;
+        }
+      });
+${refreshSubjectContract}
+      // Extension (draft §9.7): actor tokens are an explicit opt-in; the
+      // generated default keeps them off.
+      it('should record the actor in the act claim when actor tokens are enabled', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const actorIdToken = (await xaaCodeFlowTokens('c-idjag', 'otheruser')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: actorIdToken,
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+          const body = (await res.json()) as Record<string, unknown>;
+
+          expect(res.status).toBe(200);
+          const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+          // RFC 8693 §4.1: sub stays the resource owner; the actor appears only in act.
+          expect(claims.sub).toBe('testuser');
+          expect(claims.act).toEqual({ sub: 'otheruser' });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      it('should reject an actor ID Token issued to another client with the fixed description', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const foreignActorToken = (await xaaCodeFlowTokens('c-conf')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: foreignActorToken,
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      // Every token type identifier RFC 8693 §3 defines is accepted the same
+      // way; idJagConfig.actorTokenResolver decides what is valid. The
+      // generated default resolves this OP's own ID Tokens and nothing else.
+      it('should reject an actor token type the configured resolver does not accept', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'opaque-actor-token',
+              actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      it('should reject an actor_token_type outside the registered identifiers', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        idJagConfig.allowActorTokens = true;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'opaque-actor-token',
+              actor_token_type: 'urn:example:token-type:badge',
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description:
+              'Unsupported actor_token_type for ID-JAG issuance. Supported values are urn:ietf:params:oauth:token-type:access_token, urn:ietf:params:oauth:token-type:refresh_token, urn:ietf:params:oauth:token-type:id_token, urn:ietf:params:oauth:token-type:jwt, urn:ietf:params:oauth:token-type:saml1, urn:ietf:params:oauth:token-type:saml2.',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+        }
+      });
+
+      it('should record the act chain resolved by the deployment actor token resolver', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const defaultResolver = idJagConfig.actorTokenResolver;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = async ({ actorToken, actorTokenType, clientId }) =>
+          actorTokenType === 'urn:ietf:params:oauth:token-type:access_token' &&
+          actorToken === 'badge-7' &&
+          clientId === 'c-idjag'
+            ? { sub: 'badge-actor', act: { sub: 'upstream-actor' } }
+            : null;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'badge-7',
+              actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+            }),
+          );
+          const body = (await res.json()) as Record<string, unknown>;
+
+          expect(res.status).toBe(200);
+          const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+          // The subject stays the resource owner; the resolver's chain lands in act.
+          expect(claims.sub).toBe('testuser');
+          expect(claims.act).toEqual({ sub: 'badge-actor', act: { sub: 'upstream-actor' } });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = defaultResolver;
+        }
+      });
+
+      it('should answer a null from the actor token resolver with the fixed description', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const actorIdToken = (await xaaCodeFlowTokens('c-idjag', 'otheruser')).id_token;
+        const defaultResolver = idJagConfig.actorTokenResolver;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = async () => null;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: actorIdToken,
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = defaultResolver;
+        }
+      });
+
+      // The resolver owns every type, ID Tokens included — there is no
+      // separate built-in lane the deployment cannot reach.
+      it('should route id_token actors through the configured resolver as well', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const seenTypes: string[] = [];
+        const defaultResolver = idJagConfig.actorTokenResolver;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = async ({ actorTokenType }) => {
+          seenTypes.push(actorTokenType);
+          return { sub: 'resolver-decided' };
+        };
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: 'opaque-actor-token',
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+          const body = (await res.json()) as Record<string, unknown>;
+
+          expect(res.status).toBe(200);
+          const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+          expect(claims.act).toEqual({ sub: 'resolver-decided' });
+          expect(seenTypes).toEqual([XAA_ID_TOKEN_TYPE]);
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = defaultResolver;
+        }
+      });
+
+      it('should reject every actor token once the resolver is cleared', async () => {
+        const subjectIdToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const actorIdToken = (await xaaCodeFlowTokens('c-idjag', 'otheruser')).id_token;
+        const defaultResolver = idJagConfig.actorTokenResolver;
+        idJagConfig.allowActorTokens = true;
+        idJagConfig.actorTokenResolver = undefined;
+        try {
+          const res = await withIssuanceAudience(() =>
+            issuanceRequest({
+              subject_token: subjectIdToken,
+              actor_token: actorIdToken,
+              actor_token_type: XAA_ID_TOKEN_TYPE,
+            }),
+          );
+
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({
+            error: 'invalid_request',
+            error_description: 'The provided actor_token is not valid',
+          });
+        } finally {
+          idJagConfig.allowActorTokens = false;
+          idJagConfig.actorTokenResolver = defaultResolver;
+        }
+      });
+    });
+
+    describe('ID-JAG redemption (draft §4.4)', () => {
+      it('should redeem a trusted ID-JAG for an access token of this AS', async () => {
+        const assertion = await mintExternalIdJag({});
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        // draft §4.4.2 / §4.4.3: a plain token response — no refresh_token (the
+        // re-presentable ID-JAG replaces it) and no id_token (this is not an
+        // OIDC authentication flow).
+        expect(Object.keys(body).sort()).toEqual([
+          'access_token',
+          'expires_in',
+          'scope',
+          'token_type',
+        ]);
+        expect(body.token_type).toBe('Bearer');
+        expect(body.expires_in).toBe(3600);
+        // offline_access is always dropped: no refresh token is ever issued here.
+        expect(body.scope).toBe('openid profile');
+
+        const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+        // The access token is this AS's own (draft §1: the IdP never mints
+        // tokens for the resource AS), for the ID-JAG's subject and client.
+        expect(claims.iss).toBe(XAA_OWN_ISSUER);
+        expect(claims.sub).toBe('testuser');
+        expect(claims.client_id).toBe('c-idjag');
+      });
+
+      it('should let the redeemed access token pass the UserInfo endpoint', async () => {
+        const assertion = await mintExternalIdJag({});
+        const redeemed = await withTrustedIdp(() => redeemRequest({ assertion }));
+        const accessToken = ((await redeemed.json()) as Record<string, string>).access_token;
+
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + accessToken },
+        });
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        expect(body.sub).toBe('testuser');
+      });
+${introspectionContract}
+      it('should accept the same ID-JAG again while it is valid', async () => {
+        // draft §4.4.3: re-presenting the still-valid grant replaces the refresh
+        // token, so a second redemption MUST succeed (no jti replay store).
+        const assertion = await mintExternalIdJag({});
+        const first = await withTrustedIdp(() => redeemRequest({ assertion }));
+        const second = await withTrustedIdp(() => redeemRequest({ assertion }));
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+      });
+
+      it('should answer an untrusted issuer and a broken signature identically', async () => {
+        const untrusted = await mintExternalIdJag({ iss: 'https://unknown-idp.example.org' });
+        const [h, p] = (await mintExternalIdJag({})).split('.');
+        const tampered = h + '.' + p + '.AAAA';
+
+        const untrustedRes = await withTrustedIdp(() => redeemRequest({ assertion: untrusted }));
+        const tamperedRes = await withTrustedIdp(() => redeemRequest({ assertion: tampered }));
+        const expected = {
+          error: 'invalid_grant',
+          error_description: XAA_ASSERTION_UNTRUSTED_DESCRIPTION,
+        };
+
+        expect(untrustedRes.status).toBe(400);
+        expect(tamperedRes.status).toBe(400);
+        expect(await untrustedRes.json()).toEqual(expected);
+        expect(await tamperedRes.json()).toEqual(expected);
+      });
+
+      it('should reject every assertion when no identity provider is trusted', async () => {
+        // The generated default trust list is empty (fail safe).
+        const assertion = await mintExternalIdJag({});
+        const res = await redeemRequest({ assertion });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: XAA_ASSERTION_UNTRUSTED_DESCRIPTION,
+        });
+      });
+
+      it('should reject an ID-JAG addressed to another authorization server with invalid_grant', async () => {
+        const assertion = await mintExternalIdJag({ aud: 'https://other-as.example.org' });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The assertion audience does not match this authorization server',
+        });
+      });
+
+      it('should reject an ID-JAG bound to another client with invalid_grant', async () => {
+        // draft §4.4.1 client continuity: c-idjag-other authenticates correctly
+        // but presents a grant that names c-idjag.
+        const assertion = await mintExternalIdJag({});
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }, 'c-idjag-other'));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The assertion client_id does not match the authenticated client',
+        });
+      });
+
+      it('should reject a JWT without the ID-JAG typ with invalid_grant', async () => {
+        // RFC 8725 §3.11 explicit typing: an ID Token (typ JWT) can never be
+        // redeemed as an ID-JAG even with otherwise plausible claims.
+        const assertion = await mintExternalIdJag({}, { typ: 'JWT' });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The assertion typ must be oauth-id-jag+jwt',
+        });
+      });
+
+      it('should reject an expired ID-JAG with invalid_grant', async () => {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const assertion = await mintExternalIdJag({ exp: nowSeconds - 120, iat: nowSeconds - 400 });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The assertion has expired',
+        });
+      });
+
+      it('should reject a client without the jwt-bearer grant with unauthorized_client', async () => {
+        // c-conf authenticates fine (client_secret_post) but never registered
+        // the jwt-bearer URN.
+        const res = await redeemRequest({ assertion: 'unused', client_id: 'c-conf' });
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as Record<string, unknown>).error).toBe('unauthorized_client');
+      });
+
+      it('should reject a public client with unauthorized_client', async () => {
+        const res = await postXaaToken({
+          client_id: 'c-public-idjag',
+          grant_type: XAA_JWT_BEARER_GRANT_TYPE,
+          assertion: 'unused',
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'Public clients are not allowed to use the jwt-bearer grant type',
+        });
+      });
+
+      it('should preserve the act claim of an actor-bearing ID-JAG on the issued access token', async () => {
+        // RFC 8693 §4.1: the actor record survives the redemption, on the JWT
+        // and in the store alike — dropping it would hide who actually acts.
+        const assertion = await mintExternalIdJag({ act: { sub: 'external-actor' } });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+        const body = (await res.json()) as Record<string, unknown>;
+
+        expect(res.status).toBe(200);
+        const claims = xaaDecodeJwtSegment(String(body.access_token).split('.')[1] ?? '');
+        expect(claims.sub).toBe('testuser');
+        expect(claims.act).toEqual({ sub: 'external-actor' });
+      });
+
+      it('should reject a malformed act claim with invalid_grant', async () => {
+        const assertion = await mintExternalIdJag({ act: { role: 'admin' } });
+        const res = await withTrustedIdp(() => redeemRequest({ assertion }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The assertion act claim is malformed',
+        });
+      });
+
+      it('should refuse to redeem an ID-JAG this authorization server issued itself', async () => {
+        // draft §9.3: the full chain — a real ID-JAG issued by this OP (for the
+        // peer AS) must not be exchangeable for this OP's own access token,
+        // whatever the trust list says.
+        const idToken = (await xaaCodeFlowTokens('c-idjag')).id_token;
+        const issued = await withIssuanceAudience(() =>
+          issuanceRequest({ subject_token: idToken }),
+        );
+        const selfIssuedJag = ((await issued.json()) as Record<string, string>).access_token;
+
+        const res = await withTrustedIdp(() => redeemRequest({ assertion: selfIssuedJag }));
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'An assertion issued by this authorization server cannot be redeemed here',
+        });
+      });
+    });
+
+    describe('Discovery advertisement (draft §7)', () => {
+      it('should advertise both XAA grant types and the profile metadata', async () => {
+        const res = await app.request('/.well-known/openid-configuration');
+        const metadata = (await res.json()) as Record<string, unknown>;
+        const grantTypes = metadata.grant_types_supported as string[];
+
+        expect(grantTypes.includes(XAA_EXCHANGE_GRANT_TYPE)).toBe(true);
+        expect(grantTypes.includes(XAA_JWT_BEARER_GRANT_TYPE)).toBe(true);
+        // draft §7.1 / §7.2: profile support only — the trusted-IdP list and the
+        // audience allow list are deliberately NOT disclosed (draft §9.4).
+        expect(metadata.identity_chaining_requested_token_types_supported).toEqual([
+          'urn:ietf:params:oauth:token-type:id-jag',
+        ]);
+        expect(metadata.authorization_grant_profiles_supported).toEqual([
+          'urn:ietf:params:oauth:grant-profile:id-jag',
+        ]);
+      });
+    });
+  });
+`;
+}
+
 export function parConformanceBlock(features: OidcFeatureConfig): string {
   if (!features.par) return '';
   return `
@@ -12313,6 +15459,900 @@ ${refreshTokenExpectation}    });
 `;
 }
 
+export function cibaConformanceBlock(features: OidcFeatureConfig): string {
+  if (!features.ciba) {
+    return `
+  // CIBA is disabled in this generated provider: no backchannel authentication
+  // endpoint, no authentication device UI, no metadata, and the URN stays an
+  // unsupported grant. These pin the default-off contract so enabling the
+  // feature by accident is visible.
+  describe('CIBA disabled (CIBA Core 1.0)', () => {
+    it('should not serve a backchannel authentication endpoint', async () => {
+      const res = await app.request('/backchannel_authentication', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: 'c-conf', scope: 'openid', login_hint: 'testuser' }).toString(),
+      });
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should not serve the authentication device UI', async () => {
+      const res = await app.request('/ciba');
+
+      expect(res.status).toBe(404);
+    });
+
+    it('should reject the CIBA grant with unsupported_grant_type', async () => {
+      const res = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:openid:params:grant-type:ciba',
+          auth_req_id: 'anything',
+          client_id: 'c-conf',
+          client_secret: 's',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('unsupported_grant_type');
+    });
+
+    it('should not advertise CIBA metadata', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+      const metadata = await res.json();
+
+      expect(metadata.backchannel_authentication_endpoint).toBeUndefined();
+      expect(metadata.backchannel_token_delivery_modes_supported).toBeUndefined();
+    });
+
+    it('should not advertise the CIBA grant type', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+      const metadata = await res.json();
+
+      expect(
+        (metadata.grant_types_supported as string[]).includes(
+          'urn:openid:params:grant-type:ciba',
+        ),
+      ).toBe(false);
+    });
+  });
+`;
+  }
+  const refreshTokenExpectation = features.refreshToken
+    ? `
+    it('should issue a refresh token when offline_access was approved', async () => {
+      // OIDC Core 1.0 §11: the approval screen IS the explicit consent, and
+      // c-ciba is registered for the refresh_token grant.
+      const flow = await runCibaFlow({ scope: 'openid offline_access' });
+      const res = await pollCibaToken(flow.auth_req_id);
+      const body = await res.json();
+
+      expect(typeof body.refresh_token).toBe('string');
+    });
+`
+    : `
+    it('should not issue a refresh token when the refresh-token feature is off', async () => {
+      const flow = await runCibaFlow({ scope: 'openid offline_access' });
+      const res = await pollCibaToken(flow.auth_req_id);
+      const body = await res.json();
+
+      expect(body.refresh_token).toBeUndefined();
+    });
+`;
+  return `
+  // EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
+  // (CIBA Core 1.0, poll mode). Generated because this provider was created
+  // with --enable ciba.
+  describe('CIBA (CIBA Core 1.0, poll mode)', () => {
+    const CIBA_URN = 'urn:openid:params:grant-type:ciba';
+
+    // The record store is module-global and outlives each test, while the
+    // backchannel endpoint caps pending requests per subject
+    // (cibaConfig.maxPendingPerSubject). Clearing testuser's leftovers keeps
+    // every test inside the cap and keeps the listing assertions deterministic.
+    afterEach(async () => {
+      for (const record of await cibaAuthenticationRequestStore.listPendingBySubject('testuser')) {
+        await cibaAuthenticationRequestStore.delete(record.authReqId);
+      }
+    });
+
+    /**
+     * The app under test. Defaults to the shared one; the ID Token signing key
+     * selection test passes an app built on a mixed RS256 + ES256 key set.
+     */
+    type CibaTargetApp = { request: (path: string, init?: RequestInit) => Promise<Response> };
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function requestBackchannelAuthentication(
+      overrides: Record<string, string> = {},
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/backchannel_authentication', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-ciba',
+          client_secret: 's',
+          scope: 'openid',
+          login_hint: 'testuser',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function pollCibaToken(
+      authReqId: string,
+      overrides: Record<string, string> = {},
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: CIBA_URN,
+          auth_req_id: authReqId,
+          client_id: 'c-ciba',
+          client_secret: 's',
+          ...overrides,
+        }).toString(),
+      });
+    }
+
+    function cibaCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function loginTransactionIdFrom(html: string): string {
+      return html.match(/name="login_transaction_id" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    /** All Set-Cookie name=value pairs of a response, joined for a Cookie header. */
+    function cibaCookieJar(...responses: Response[]): string {
+      return responses
+        .flatMap((res) => res.headers.getSetCookie())
+        .map((cookie) => cookie.split(';')[0] ?? '')
+        .filter((pair) => pair.length > 0 && !pair.endsWith('='))
+        .join('; ');
+    }
+
+    function cibaLogin(
+      body: Record<string, string>,
+      cookie: string,
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/ciba/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    function cibaDecide(
+      body: Record<string, string>,
+      cookie: string,
+      target: CibaTargetApp = app,
+    ): Promise<Response> {
+      return target.request('/ciba/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    /**
+     * Sign in on the authentication device UI and return the pending-requests
+     * listing plus the session cookie. The login binding cookie is carried
+     * forward exactly as a browser would; without it the OP answers 403.
+     */
+    async function cibaSignIn(
+      target: CibaTargetApp = app,
+    ): Promise<{ listingHtml: string; sessionCookie: string }> {
+      const form = await target.request('/ciba');
+      const formHtml = await form.text();
+      const loginRes = await cibaLogin(
+        {
+          login_transaction_id: loginTransactionIdFrom(formHtml),
+          csrf_token: cibaCsrfFrom(formHtml),
+          username: 'testuser',
+          password: 'password',
+        },
+        cibaCookieJar(form),
+        target,
+      );
+      return {
+        listingHtml: await loginRes.text(),
+        sessionCookie: cibaCookieJar(loginRes),
+      };
+    }
+
+    /**
+     * Drive the whole browser side of the flow: sign in, find the request's
+     * csrf token on the listing, and record the decision.
+     */
+    async function runCibaFlow(
+      overrides: Record<string, string> = {},
+      decision: 'approve' | 'deny' = 'approve',
+      target: CibaTargetApp = app,
+    ): Promise<{ auth_req_id: string; completed: Response }> {
+      const authorization = await (await requestBackchannelAuthentication(overrides, target)).json();
+      const { listingHtml, sessionCookie } = await cibaSignIn(target);
+      const completed = await cibaDecide(
+        {
+          auth_req_id: authorization.auth_req_id,
+          csrf_token: cibaCsrfFrom(listingHtml),
+          decision,
+        },
+        sessionCookie,
+        target,
+      );
+      return { auth_req_id: authorization.auth_req_id, completed };
+    }
+
+    describe('Backchannel authentication endpoint (CIBA Section 7)', () => {
+      it('should return the three response fields with a non-cacheable body', async () => {
+        const res = await requestBackchannelAuthentication();
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+        expect(Object.keys(body).sort()).toEqual(['auth_req_id', 'expires_in', 'interval']);
+      });
+
+      it('should return the configured lifetime and poll interval', async () => {
+        const body = await (await requestBackchannelAuthentication()).json();
+
+        expect([body.expires_in, body.interval]).toEqual([120, 5]);
+      });
+
+      it('should mint a 256-bit auth_req_id in the Base64URL character set', async () => {
+        // CIBA Section 7.3: at least 128 bits of entropy, characters limited to
+        // A-Z a-z 0-9 . - _ (Base64URL is a subset).
+        const body = await (await requestBackchannelAuthentication()).json();
+
+        expect(/^[A-Za-z0-9_-]{43}$/.test(body.auth_req_id)).toBe(true);
+      });
+
+      it('should issue a distinct auth_req_id for every request', async () => {
+        const first = await (await requestBackchannelAuthentication()).json();
+        const second = await (await requestBackchannelAuthentication()).json();
+
+        expect(first.auth_req_id === second.auth_req_id).toBe(false);
+      });
+
+      it('should honor requested_expiry by clamping it into the allowed range', async () => {
+        const body = await (await requestBackchannelAuthentication({ requested_expiry: '60' })).json();
+
+        expect(body.expires_in).toBe(60);
+      });
+
+      it('should reject a body that is not form-urlencoded', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: 'c-ciba', scope: 'openid', login_hint: 'testuser' }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Backchannel authentication requests must use application/x-www-form-urlencoded',
+        });
+      });
+
+      it('should reject an unauthenticated request with 401 invalid_client', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: 'c-ciba', scope: 'openid', login_hint: 'testuser' }).toString(),
+        });
+
+        expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('invalid_client');
+      });
+
+      it('should reject a client that is not registered for the CIBA grant', async () => {
+        const res = await requestBackchannelAuthentication({ client_id: 'c-conf' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'The client is not authorized to use the CIBA grant',
+        });
+      });
+
+      it('should reject a client registered for the ping delivery mode', async () => {
+        // This provider only advertises ['poll'] (CIBA Section 4).
+        const res = await requestBackchannelAuthentication({ client_id: 'c-ciba-ping' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unauthorized_client',
+          error_description: 'This provider only supports the poll token delivery mode',
+        });
+      });
+
+      it('should reject a request with no scope', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-ciba',
+            client_secret: 's',
+            login_hint: 'testuser',
+          }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: scope',
+        });
+      });
+
+      it('should reject a scope without openid', async () => {
+        const res = await requestBackchannelAuthentication({ scope: 'profile' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_scope',
+          error_description: 'The openid scope is required',
+        });
+      });
+
+      it('should reject a request with no hint', async () => {
+        // CIBA Section 7.1: one (and only one) of the hints is REQUIRED.
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-ciba',
+            client_secret: 's',
+            scope: 'openid',
+          }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Exactly one of login_hint, id_token_hint or login_hint_token is required',
+        });
+      });
+
+      it('should reject a request with two hints', async () => {
+        const res = await requestBackchannelAuthentication({ id_token_hint: 'x' });
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe('invalid_request');
+      });
+
+      it('should reject id_token_hint as an unsupported hint type', async () => {
+        const res = await app.request('/backchannel_authentication', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: 'c-ciba',
+            client_secret: 's',
+            scope: 'openid',
+            id_token_hint: 'x',
+          }).toString(),
+        });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Only login_hint is supported by this provider',
+        });
+      });
+
+      it('should answer an unknown login_hint with the fixed unknown_user_id wording', async () => {
+        const res = await requestBackchannelAuthentication({ login_hint: 'nobody' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'unknown_user_id',
+          error_description: 'The login_hint could not be matched to a user',
+        });
+      });
+
+      it('should reject an oversized binding_message', async () => {
+        const res = await requestBackchannelAuthentication({ binding_message: 'a'.repeat(101) });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_binding_message',
+          error_description: 'binding_message must be 1 to 100 characters without control characters',
+        });
+      });
+
+      it('should reject a non-integer requested_expiry', async () => {
+        const res = await requestBackchannelAuthentication({ requested_expiry: 'soon' });
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'requested_expiry must be a positive integer',
+        });
+      });
+    });
+
+    describe('Discovery metadata (CIBA Section 4)', () => {
+      it('should advertise the backchannel authentication endpoint', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.backchannel_authentication_endpoint).toBe(
+          'http://localhost:3000/backchannel_authentication',
+        );
+      });
+
+      it('should advertise only the poll delivery mode', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.backchannel_token_delivery_modes_supported).toEqual(['poll']);
+      });
+
+      it('should advertise the CIBA grant type', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect((metadata.grant_types_supported as string[]).includes(CIBA_URN)).toBe(true);
+      });
+    });
+
+    describe('Authentication device UI', () => {
+      it('should show the sign-in form when no OP session exists', async () => {
+        const res = await app.request('/ciba');
+        const html = await res.text();
+
+        expect(res.status).toBe(200);
+        expect(html.includes('action="/ciba/login"')).toBe(true);
+      });
+
+      it('should set the login binding cookie with the exact hardening attributes', async () => {
+        const res = await app.request('/ciba');
+        const html = await res.text();
+        const cookie = res.headers.getSetCookie()[0] ?? '';
+
+        expect(cookie.startsWith('oidc_ciba_login_' + loginTransactionIdFrom(html) + '=')).toBe(true);
+        expect(cookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+      });
+
+      it('should reject /ciba/login without the binding cookie even with a valid csrf_token', async () => {
+        // The whole point: a valid transaction id + csrf pair is obtainable by
+        // anyone who loads /ciba themselves, so it must NOT suffice on its own.
+        const form = await app.request('/ciba');
+        const html = await form.text();
+
+        const res = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(html),
+            csrf_token: cibaCsrfFrom(html),
+            username: 'testuser',
+            password: 'password',
+          },
+          '',
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should not establish a session when /ciba/login is unbound', async () => {
+        const form = await app.request('/ciba');
+        const html = await form.text();
+
+        const res = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(html),
+            csrf_token: cibaCsrfFrom(html),
+            username: 'testuser',
+            password: 'password',
+          },
+          '',
+        );
+
+        expect(res.headers.getSetCookie()).toEqual([]);
+      });
+
+      it('should reject a wrong csrf_token even with a valid binding cookie', async () => {
+        const form = await app.request('/ciba');
+        const html = await form.text();
+
+        const res = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(html),
+            csrf_token: 'forged',
+            username: 'testuser',
+            password: 'password',
+          },
+          cibaCookieJar(form),
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should discard the login transaction after too many failed attempts', async () => {
+        const form = await app.request('/ciba');
+        const html = await form.text();
+        const cookie = cibaCookieJar(form);
+        const credentials = {
+          login_transaction_id: loginTransactionIdFrom(html),
+          csrf_token: cibaCsrfFrom(html),
+          username: 'testuser',
+          password: 'wrong',
+        };
+
+        let res = await cibaLogin(credentials, cookie);
+        for (let i = 0; i < 4; i++) {
+          res = await cibaLogin(credentials, cookie);
+        }
+        const retry = await cibaLogin({ ...credentials, password: 'password' }, cookie);
+
+        expect(res.status).toBe(429);
+        // The transaction is gone: even the right password cannot use this form.
+        expect(retry.status).toBe(403);
+      });
+
+      it('should list the pending request with its client, scopes and binding message', async () => {
+        await requestBackchannelAuthentication({ binding_message: 'AB-123' });
+        const { listingHtml } = await cibaSignIn();
+
+        expect(listingHtml.includes('<strong>c-ciba</strong>')).toBe(true);
+        expect(listingHtml.includes('<li>openid</li>')).toBe(true);
+        expect(listingHtml.includes('<strong>AB-123</strong>')).toBe(true);
+      });
+
+      it('should HTML-escape the binding message on the approval screen', async () => {
+        await requestBackchannelAuthentication({
+          binding_message: "<img src=x onerror=alert(1)>",
+        });
+        const { listingHtml } = await cibaSignIn();
+
+        expect(listingHtml.includes('<img src=x')).toBe(false);
+        expect(listingHtml.includes('&lt;img src=x onerror=alert(1)&gt;')).toBe(true);
+      });
+
+      it('should show an empty listing to a user with no pending requests', async () => {
+        const { listingHtml } = await cibaSignIn();
+
+        expect(listingHtml.includes('No pending sign-in requests.')).toBe(true);
+      });
+
+      it('should not list requests addressed to another user', async () => {
+        // The pending request names testuser; otheruser signs in and must not
+        // see it (nor its csrf_token).
+        await requestBackchannelAuthentication();
+        const form = await app.request('/ciba');
+        const formHtml = await form.text();
+        const loginRes = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(formHtml),
+            csrf_token: cibaCsrfFrom(formHtml),
+            username: 'otheruser',
+            password: 'password',
+          },
+          cibaCookieJar(form),
+        );
+        const listingHtml = await loginRes.text();
+
+        expect(listingHtml.includes('No pending sign-in requests.')).toBe(true);
+      });
+
+      it('should refuse the decision without an OP session', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { listingHtml } = await cibaSignIn();
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: cibaCsrfFrom(listingHtml),
+            decision: 'approve',
+          },
+          '',
+        );
+
+        expect(res.status).toBe(401);
+      });
+
+      it('should refuse a decision by a session whose subject does not own the record', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { listingHtml } = await cibaSignIn();
+        const csrfToken = cibaCsrfFrom(listingHtml);
+        // otheruser signs in on their own browser and replays testuser's form.
+        const otherForm = await app.request('/ciba');
+        const otherFormHtml = await otherForm.text();
+        const otherLogin = await cibaLogin(
+          {
+            login_transaction_id: loginTransactionIdFrom(otherFormHtml),
+            csrf_token: cibaCsrfFrom(otherFormHtml),
+            username: 'otheruser',
+            password: 'password',
+          },
+          cibaCookieJar(otherForm),
+        );
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: csrfToken,
+            decision: 'approve',
+          },
+          cibaCookieJar(otherLogin),
+        );
+
+        expect(res.status).toBe(403);
+        // The record is untouched: the rightful user can still decide.
+        const poll = await pollCibaToken(authorization.auth_req_id);
+        expect((await poll.json()).error).toBe('authorization_pending');
+      });
+
+      it('should refuse a decision with a wrong csrf_token', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { sessionCookie } = await cibaSignIn();
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: 'forged',
+            decision: 'approve',
+          },
+          sessionCookie,
+        );
+
+        expect(res.status).toBe(403);
+      });
+
+      it('should refuse an unknown decision value', async () => {
+        const authorization = await (await requestBackchannelAuthentication()).json();
+        const { listingHtml, sessionCookie } = await cibaSignIn();
+
+        const res = await cibaDecide(
+          {
+            auth_req_id: authorization.auth_req_id,
+            csrf_token: cibaCsrfFrom(listingHtml),
+            decision: 'maybe',
+          },
+          sessionCookie,
+        );
+
+        expect(res.status).toBe(400);
+      });
+    });
+
+    describe('Token polling (CIBA Section 10.1 / 11)', () => {
+      it('should answer authorization_pending before the user decides', async () => {
+        const body = await (await requestBackchannelAuthentication()).json();
+        const res = await pollCibaToken(body.auth_req_id);
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(await res.json()).toEqual({
+          error: 'authorization_pending',
+          error_description: 'The authentication request is still pending',
+        });
+      });
+
+      it('should answer slow_down when polled again inside the interval', async () => {
+        const body = await (await requestBackchannelAuthentication()).json();
+        await pollCibaToken(body.auth_req_id);
+        const res = await pollCibaToken(body.auth_req_id);
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({
+          error: 'slow_down',
+          error_description: 'Polling too frequently. Increase the interval by 5 seconds.',
+        });
+      });
+
+      it('should reject a missing auth_req_id with invalid_request', async () => {
+        const res = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: CIBA_URN,
+            client_id: 'c-ciba',
+            client_secret: 's',
+          }).toString(),
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_request',
+          error_description: 'Missing required parameter: auth_req_id',
+        });
+      });
+
+      it('should reject an unknown auth_req_id with invalid_grant', async () => {
+        const res = await pollCibaToken('not-a-real-auth-req-id');
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The auth_req_id is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should reject an auth_req_id presented by another client with the same wording', async () => {
+        // CIBA Section 11: the auth_req_id belongs to the client it was issued
+        // to. The wording matches the unknown-id case so existence is not leaked.
+        const body = await (await requestBackchannelAuthentication()).json();
+        const res = await pollCibaToken(body.auth_req_id, {
+          client_id: 'c-ciba-other',
+        });
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The auth_req_id is invalid, expired, or was issued to another client',
+        });
+      });
+
+      it('should answer access_denied after the user denies', async () => {
+        const flow = await runCibaFlow({}, 'deny');
+        const res = await pollCibaToken(flow.auth_req_id);
+
+        expect(await res.json()).toEqual({
+          error: 'access_denied',
+          error_description: 'The end-user denied the authentication request',
+        });
+      });
+    });
+
+    describe('Token issuance (CIBA Section 10.1 → OIDC Core 1.0 Section 3.1.3.3)', () => {
+      it('should issue an access token and an ID Token after approval', async () => {
+        const flow = await runCibaFlow();
+        const res = await pollCibaToken(flow.auth_req_id);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(body.token_type).toBe('Bearer');
+        expect(body.scope).toBe('openid');
+        expect(typeof body.access_token).toBe('string');
+        expect(typeof body.id_token).toBe('string');
+      });
+
+      it('should omit nonce and c_hash from the ID Token', async () => {
+        // CIBA Section 7.1 defines no nonce parameter, and there is no
+        // authorization code, so neither claim has a value to carry
+        // (OIDC Core 1.0 Section 2). Poll mode adds no CIBA-specific claims:
+        // the auth_req_id claim of Section 10.3.1 belongs to push delivery.
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(payload.nonce).toBeUndefined();
+        expect(payload.c_hash).toBeUndefined();
+      });
+
+      it('should carry the auth_time recorded at approval', async () => {
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+        const payload = idTokenPayload(body.id_token);
+
+        expect(typeof payload.auth_time).toBe('number');
+        expect(payload.aud).toBe('c-ciba');
+      });
+
+      it('should let the issued access token reach the UserInfo endpoint', async () => {
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+        const res = await app.request('/userinfo', {
+          headers: { Authorization: 'Bearer ' + body.access_token },
+        });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).sub).toBe('testuser');
+      });
+
+      it('should refuse to redeem the same auth_req_id twice', async () => {
+        const flow = await runCibaFlow();
+        await pollCibaToken(flow.auth_req_id);
+        const res = await pollCibaToken(flow.auth_req_id);
+
+        expect(await res.json()).toEqual({
+          error: 'invalid_grant',
+          error_description: 'The auth_req_id is invalid, expired, or was issued to another client',
+        });
+      });
+${refreshTokenExpectation}    });
+
+    describe('ID Token signing key selection (OIDC Dynamic Client Registration 1.0 Section 2)', () => {
+      /** JOSE header of a compact JWS, decoded. */
+      function cibaJoseHeader(jwt: string): Record<string, unknown> {
+        const segment = jwt.split('.')[0] ?? '';
+        return JSON.parse(
+          new TextDecoder().decode(
+            Uint8Array.from(atob(segment.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)),
+          ),
+        );
+      }
+
+      // A client may register id_token_signed_response_alg, and the standard
+      // grants pick a registered key matching it. The CIBA grant MUST NOT
+      // diverge: signing this client's ID Token with whichever key happens to
+      // be ACTIVE would hand it an RS256 token it rejects, and would compute
+      // at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      it('should sign the CIBA grant ID Token with the alg the client registered', async () => {
+        const rs256Pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const es256Pair = await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        const mixedProvider: SigningKeyProvider = {
+          // Active key is RS256; the registered set also holds an ES256 key.
+          async getSigningKey(): Promise<SigningKey> {
+            return {
+              privateKey: rs256Pair.privateKey,
+              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+              keyId: 'ciba-rs256',
+            };
+          },
+          async getSigningKeys(): Promise<SigningKey[]> {
+            return [
+              {
+                privateKey: rs256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
+                keyId: 'ciba-rs256',
+              },
+              {
+                privateKey: es256Pair.privateKey,
+                publicJwk: await crypto.subtle.exportKey('jwk', es256Pair.publicKey),
+                keyId: 'ciba-es256',
+              },
+            ];
+          },
+        };
+        const mixedApp = createApp({
+          signingKeyProvider: mixedProvider,
+          clientResolver: createInMemoryClientResolver(testClients),
+        });
+        const client = { client_id: 'c-ciba-es256', client_secret: 's' };
+
+        const flow = await runCibaFlow(client, 'approve', mixedApp);
+        const body = await (await pollCibaToken(flow.auth_req_id, client, mixedApp)).json();
+        const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] =
+          (body.id_token as string).split('.');
+        const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const signatureValid = await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          es256Pair.publicKey,
+          Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+          new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+        );
+
+        expect(cibaJoseHeader(body.id_token)).toEqual({
+          alg: 'ES256',
+          typ: 'JWT',
+          kid: 'ciba-es256',
+        });
+        expect(signatureValid).toBe(true);
+      });
+
+      it('should keep signing with RS256 for a client that registered no alg', async () => {
+        const flow = await runCibaFlow();
+        const body = await (await pollCibaToken(flow.auth_req_id)).json();
+
+        expect(cibaJoseHeader(body.id_token)).toEqual({
+          alg: 'RS256',
+          typ: 'JWT',
+          kid: 'test-key',
+        });
+      });
+    });
+  });
+`;
+}
+
 export function jarmConformanceBlock(
   features: OidcFeatureConfig,
   consentResponseMode: JarmConsentResponseMode = 'jwt',
@@ -12827,8 +16867,18 @@ export function consentDecisionConformanceBlock(): string {
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: string[] = [],
 ): string {
-  const exportPublicJwkImport = features.requestObject
+  // --scope: the custom scope block flips the generated policy at runtime to pin
+  // that per-End-User filtering is wired through the whole flow.
+  const customScopeConformanceImport = scopes.length > 0
+    ? `
+import { RESTRICTED_SCOPE_SUBJECTS } from './scopes.js';`
+    : '';
+  // exportPublicJwk is needed by the Request Object fixtures and by the ID-JAG
+  // block (which publishes the fake external IdP key as a JWK). Either feature
+  // pulls the single import in; both together still emit it once.
+  const exportPublicJwkImport = features.requestObject || features.idJag
     ? `import { exportPublicJwk } from '${corePkg}';\n`
     : '';
   const responseModesSupportedExpectation = features.jarm
@@ -12854,7 +16904,23 @@ import { parConfig } from './routes/par.js';`
     ? `
 import { tokenExchangeConfig } from './routes/token.js';`
     : '';
-  return `import { describe, it, expect, beforeAll } from 'vitest';
+  // Experimental (ID-JAG draft): the Cross-App Access contract tests flip the
+  // generated allow lists (audiences / trusted IdPs) to cover both policies.
+  const idJagConformanceImports = features.idJag
+    ? `
+import { idJagConfig } from './routes/token.js';`
+    : '';
+  // Experimental (CIBA Core 1.0): the CIBA contract tests clear testuser's
+  // leftover pending requests after each test — the store is module-global and
+  // the backchannel endpoint caps pending requests per subject.
+  const cibaConformanceImports = features.ciba
+    ? `
+import { cibaAuthenticationRequestStore } from './store.js';`
+    : '';
+  const vitestNames = features.ciba
+    ? 'describe, it, expect, beforeAll, afterEach'
+    : 'describe, it, expect, beforeAll';
+  return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 import { Hono } from 'hono';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
@@ -12863,7 +16929,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -13077,7 +17143,7 @@ ${responseModesSupportedExpectation}
       });
     });
 
-${scopesSupportedConformanceTest(features)}
+${scopesSupportedConformanceTest(features, scopes)}
     // OIDC Core 1.0 §2 / §3.1.3.6 + Discovery 1.0 §3: claims_supported advertises
     // the claims the OP can supply, including the ID Token protocol claims
     // (auth_time/nonce/acr/amr/azp/at_hash). The full list is pinned so dropping
@@ -13342,5 +17408,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${essentialAcrConformanceBlock()}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}});`;
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${essentialAcrConformanceBlock()}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+`;
 }

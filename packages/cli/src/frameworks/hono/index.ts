@@ -4,6 +4,7 @@ import {
   appTemplate,
   applyTemplate,
   configTemplate,
+  customScopesTemplate,
   storeTemplate,
   resolversTemplate,
   viewsTemplate,
@@ -16,6 +17,8 @@ import {
   parRouteTemplate,
   deviceAuthorizationRouteTemplate,
   deviceVerificationRouteTemplate,
+  backchannelAuthenticationRouteTemplate,
+  cibaVerificationRouteTemplate,
   jarmConfigTemplate,
   discoveryRouteTemplate,
   loginRouteTemplate,
@@ -30,15 +33,21 @@ export class HonoGenerator implements FrameworkGenerator {
   generate(options: GeneratorOptions): GeneratedFile[] {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
+    const scopes = options.scopes ?? [];
 
     return [
       { path: 'app.ts', content: appTemplate(pkg, features) },
       { path: 'apply.ts', content: applyTemplate(pkg, features) },
       { path: 'config.ts', content: configTemplate(pkg, features) },
+      // Custom scopes (--scope): the scope policy module is only generated when
+      // at least one was declared.
+      ...(scopes.length > 0
+        ? [{ path: 'scopes.ts', content: customScopesTemplate(scopes, features) }]
+        : []),
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
       { path: 'views.ts', content: viewsTemplate(features) },
-      { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features) },
+      { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features, scopes) },
       { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features) },
       { path: 'routes/userinfo.ts', content: userinfoRouteTemplate(pkg) },
       ...(features.introspection
@@ -56,9 +65,19 @@ export class HonoGenerator implements FrameworkGenerator {
         ? [
           {
             path: 'routes/device-authorization.ts',
-            content: deviceAuthorizationRouteTemplate(pkg, features),
+            content: deviceAuthorizationRouteTemplate(pkg, features, scopes),
           },
-          { path: 'routes/device.ts', content: deviceVerificationRouteTemplate(pkg) },
+          { path: 'routes/device.ts', content: deviceVerificationRouteTemplate(pkg, scopes) },
+        ]
+        : []),
+      // Experimental (CIBA Core 1.0): only generated with --enable ciba.
+      ...(features.ciba
+        ? [
+          {
+            path: 'routes/backchannel-authentication.ts',
+            content: backchannelAuthenticationRouteTemplate(pkg, features, scopes),
+          },
+          { path: 'routes/ciba-verification.ts', content: cibaVerificationRouteTemplate(pkg, scopes) },
         ]
         : []),
       // Experimental (JARM): settings module, only generated with --enable jarm.
@@ -66,10 +85,10 @@ export class HonoGenerator implements FrameworkGenerator {
         ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
         : []),
       { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg) },
-      { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features) },
+      { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features, scopes) },
       { path: 'routes/login.ts', content: loginRouteTemplate(pkg, features) },
-      { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features) },
-      { path: 'conformance.test.ts', content: conformanceTestTemplate(pkg, features) },
+      { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
+      { path: 'conformance.test.ts', content: conformanceTestTemplate(pkg, features, scopes) },
     ];
   }
 }

@@ -34,6 +34,8 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'token-exchange',
       'jarm',
       'device-authorization-grant',
+      'id-jag',
+      'ciba',
     ]);
   });
 });
@@ -54,6 +56,8 @@ describe('resolveFeatures with device-authorization-grant', () => {
       tokenExchange: false,
       jarm: false,
       deviceAuthorizationGrant: true,
+      idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });
@@ -75,7 +79,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
   it('should combine it with every other experimental feature', () => {
     expect(
       resolveFeatures({
-        enable: ['par', 'token-exchange', 'jarm', 'device-authorization-grant'],
+        enable: ['par', 'token-exchange', 'jarm', 'device-authorization-grant', 'id-jag'],
       }),
     ).toEqual({
       pkce: true,
@@ -87,6 +91,8 @@ describe('resolveFeatures with device-authorization-grant', () => {
       tokenExchange: true,
       jarm: true,
       deviceAuthorizationGrant: true,
+      idJag: true,
+      ciba: false,
       transactionBinding: false,
     });
   });
@@ -104,6 +110,8 @@ describe('resolveFeatures with device-authorization-grant', () => {
       tokenExchange: false,
       jarm: false,
       deviceAuthorizationGrant: true,
+      idJag: false,
+      ciba: false,
       transactionBinding: false,
     });
   });

@@ -50,6 +50,7 @@ maronn-oidc setup <framework> [options]
 | `--entry, -e <file>` | setup 時にパッチするエントリファイル（既定: `./src/index.ts`） |
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
+| `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
 | `--help, -h` | ヘルプ表示 |
 
 ## 生成されるもの
@@ -100,6 +101,52 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
+
+## カスタムスコープ（--scope）
+
+標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）以外に受け付けるスコープを、生成時に宣言できる。
+
+```bash
+maronn-oidc generate hono --scope reports.read,reports.write
+```
+
+宣言すると `scopes.ts`（スコープポリシー）が生成され、生成 OP は次のようになる。
+
+- discovery の `scopes_supported` に宣言したスコープが載る
+- **宣言していないスコープ値は `invalid_scope` で拒否される**（RFC 6749 §3.3 / §4.1.2.1）。宣言が 1 つも無ければこのチェック自体を生成しないので、既定の生成物の挙動は変わらない
+- ユーザーごとの絞り込みは、生成された `scopes.ts` に書く
+
+### ユーザーごとの絞り込みは生成コードに書く
+
+「誰にどのスコープを許すか」は CLI のオプションにしていない。運用ごとに条件（ロール、テナント、DB 参照）が違い、生成コードを改造して検証するというこのライブラリの使い方に合わないためである。代わりに、生成される `scopes.ts` に絞り込みの入口を用意し、判断が必要な全ステップから呼び出した状態で生成する。
+
+```typescript
+// scopes.ts
+export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
+  'reports.read': ['alice'],   // ← 手早く絞るならここに書く
+};
+
+export async function resolveGrantableScopes(
+  requested: readonly string[],
+  subject: string,
+): Promise<string[]> {
+  // ← ロール・テナント・DB 参照など、複雑な条件はここに書く（async なので
+  //    DB / KV 参照を入れても呼び出し側の変更は不要）
+  return requested.filter((scope) => { /* ... */ });
+}
+```
+
+`resolveGrantableScopes()` は End-User が確定した後に呼ばれ、生成コードの次の箇所からすでに `await` されている。
+
+| 呼び出し元 | タイミング |
+|---|---|
+| `routes/consent.ts` | 同意画面の表示内容と、承認時の付与スコープ |
+| `routes/authorize.ts` | SSO fast path と `prompt=none`（同意画面を出さずに付与する経路）。どちらも**保存済み同意を引く前**に適用する。絞る前の scope で同意を探すと、そのユーザーが持てないスコープをキーに検索することになり永久に一致しない |
+| `routes/device.ts` / `routes/ciba-verification.ts` | device / CIBA の承認ステップ（該当機能を有効にした場合） |
+
+落としたスコープはリクエストを失敗させず、付与スコープを狭めるだけになる（RFC 6749 §3.3 は要求より狭いスコープの発行を認めており、トークンレスポンスの `scope` に実際の付与内容が載る）。リクエストごと拒否したい場合は、呼び出し元で throw する。
+
+カスタムスコープに対応する UserInfo クレームは無い（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集する。
 
 ### conformance.test.ts との関係
 

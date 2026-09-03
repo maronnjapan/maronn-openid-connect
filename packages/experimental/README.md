@@ -16,6 +16,8 @@
 | `token-exchange` | OAuth 2.0 Token Exchange (impersonation) | RFC 8693 | `@maronn-openid-connect/experimental/token-exchange` |
 | `jarm` | JWT Secured Authorization Response Mode (signed `query.jwt` only) | JARM (OpenID Foundation Final, 2022-11-09) | `@maronn-openid-connect/experimental/jarm` |
 | `device-authorization-grant` | OAuth 2.0 Device Authorization Grant | RFC 8628 | `@maronn-openid-connect/experimental/device-authorization-grant` |
+| `id-jag` | Cross-App Access / Identity Assertion Authorization Grant（発行と受領の両側） | draft-ietf-oauth-identity-assertion-authz-grant-04 | `@maronn-openid-connect/experimental/id-jag` |
+| `ciba` | Client-Initiated Backchannel Authentication（Poll モードのみ） | CIBA Core 1.0 (OpenID Foundation Final, 2021-09-01) | `@maronn-openid-connect/experimental/ciba` |
 
 機能ごとに subpath export で提供します。ルート (`.`) からの再エクスポートは提供しません。機能間でコードを共有しないことで、昇格・削除時に他機能へ影響しない構造を保っています。
 

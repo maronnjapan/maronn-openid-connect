@@ -10,6 +10,7 @@ export class FastifyGenerator implements FrameworkGenerator {
       options.corePackageName,
       fastifyApplyTemplate(options.features),
       options.features,
+      options.scopes,
     );
   }
 }

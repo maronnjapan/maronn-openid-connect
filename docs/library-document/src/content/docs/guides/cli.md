@@ -43,6 +43,8 @@ const app = new Hono();
 | `--entry, -e <file>` | setup 時にパッチするエントリファイル（既定: `./src/index.ts`） |
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
+| `--scope <scopes>` | 全ユーザーに一律許容するカスタムスコープ（カンマ区切り・複数回指定可） |
+| `--user-scope <subject>:<scopes>` | 特定ユーザーにだけ許容するカスタムスコープ（複数回指定可） |
 | `--help, -h` | ヘルプ表示 |
 
 ## Generated Files
@@ -51,6 +53,7 @@ const app = new Hono();
 oidc-provider/
 ├── app.ts / apply.ts     # OP 本体と既存アプリへの組み込み関数
 ├── config.ts             # ProviderConfig・クライアント登録（既定値はローカル検証専用）
+├── scopes.ts             # カスタムスコープのポリシー（--scope / --user-scope 指定時のみ）
 ├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
 ├── resolvers.ts          # セッション・同意状態の resolver
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト UI
@@ -113,6 +116,48 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `par` | 無効 | Pushed Authorization Requests エンドポイント（`/par`）と認可エンドポイントの `request_uri` 解決 | RFC 9126 |
 
 API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](../../experimental/) を参照してください。
+
+## Custom Scopes
+
+標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）は生成 OP 自身が扱います。それ以外に受け付けるスコープは、生成時に宣言します。
+
+```bash
+# 全ユーザーに一律許容するカスタムスコープ
+maronn-oidc generate hono --scope reports.read,reports.write
+
+# alice にだけ許容するカスタムスコープ
+maronn-oidc generate hono --user-scope alice:admin.write
+
+# 併用（同じスコープを両方に宣言するとエラー）
+maronn-oidc generate hono --scope reports.read --user-scope alice:admin.write
+```
+
+| 宣言 | 生成 OP の挙動 |
+|---|---|
+| 宣言なし（既定） | `scopes.ts` を生成しない。生成物は従来どおりで、スコープ値の許容リストも持たない |
+| `--scope <name>` | discovery の `scopes_supported` に載り、認証したどの End-User にも付与される |
+| `--user-scope <sub>:<name>` | discovery の `scopes_supported` には載る（OP としては対応している）が、宣言された subject 以外の付与スコープからは落とされる |
+
+### 宣言すると許容リストになる
+
+カスタムスコープを 1 つでも宣言すると、認可エンドポイントは宣言していないスコープ値を `invalid_scope` で拒否します（RFC 6749 §3.3 / §4.1.2.1）。宣言が無ければこのチェック自体を生成しないため、既定の生成物の挙動は変わりません。
+
+チェックは `applyOfflineAccessPolicy` の**後**に置かれます。付与条件を満たさない `offline_access` は OIDC Core 1.0 §11 に従ってそこで既に落ちているため、「無視する」挙動が `invalid_scope` に変わることはありません。`--enable device-authorization-grant` / `--enable ciba` を有効にした場合は、デバイス認可エンドポイントとバックチャネル認証エンドポイントにも同じ許容リストが適用されます。
+
+### ユーザーごとの許容は「落とす」
+
+`--user-scope` の絞り込みは、End-User が確定した後（consent / SSO / `prompt=none` / device・CIBA の承認）に行われ、そのユーザーが持てないスコープを付与スコープから外します。リクエスト自体は失敗しません。RFC 6749 §3.3 が要求より狭いスコープの発行を認めており、トークンレスポンスの `scope` に実際の付与内容が載ります。同意画面に表示されるスコープも、ログインした End-User が実際に許可できるものだけになります。
+
+### 差し替え点は scopes.ts
+
+生成される `scopes.ts` は何も import しない純粋なポリシーモジュールです。生成 OP がスコープについて問うのは次の 2 つだけなので、この 2 関数を DB / KV 参照に置き換えれば、宣言を生成コードの外へ出せます。
+
+- `findUnsupportedScopes(requested)` — この値をそもそも要求してよいか（認可エンドポイントが使用）
+- `resolveGrantableScopes(requested, subject)` — この End-User に付与してよいか（認証後の各ステップが使用）
+
+なお、カスタムスコープに対応する UserInfo クレームはありません（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集してください。
+
+`--user-scope` は最初の `:` で分割します。スコープ名側にはコロンを含められます（`--user-scope alice:urn:example:reports`）が、subject 側には含められません。コロンを含む subject が必要な場合は、生成された `scopes.ts` を直接編集してください。
 
 ## Contract Test (conformance.test.ts)
 

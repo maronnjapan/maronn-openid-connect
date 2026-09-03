@@ -1,6 +1,8 @@
 import { getGenerator, getAvailableFrameworks } from './frameworks/index.js';
 import { DEFAULT_FEATURES } from './features.js';
 import type { OidcFeatureConfig } from './features.js';
+import { NO_CUSTOM_SCOPES } from './scopes.js';
+import type { CustomScopeConfig } from './scopes.js';
 import type { GeneratedFile } from './frameworks/types.js';
 
 export interface GenerateOptions {
@@ -12,6 +14,11 @@ export interface GenerateOptions {
   corePackageName?: string;
   /** Feature toggles for the generated provider (default: every feature enabled) */
   features?: OidcFeatureConfig;
+  /**
+   * Custom scopes the generated provider accepts (default: none declared, so no
+   * scope policy is generated and the provider keeps accepting any scope value).
+   */
+  scopes?: CustomScopeConfig;
 }
 
 export interface GenerateResult {
@@ -30,6 +37,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     outputDir,
     corePackageName = DEFAULT_CORE_PACKAGE,
     features = { ...DEFAULT_FEATURES },
+    scopes = { ...NO_CUSTOM_SCOPES },
   } = options;
 
   const generator = getGenerator(framework);
@@ -40,7 +48,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     );
   }
 
-  const files = generator.generate({ outputDir, corePackageName, features });
+  const files = generator.generate({ outputDir, corePackageName, features, scopes });
 
   return { files, framework };
 }

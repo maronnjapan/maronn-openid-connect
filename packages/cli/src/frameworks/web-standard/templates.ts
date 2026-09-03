@@ -1,6 +1,8 @@
 import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
+import { NO_CUSTOM_SCOPES, hasCustomScopes, hasPerUserScopes } from '../../scopes.js';
+import type { CustomScopeConfig } from '../../scopes.js';
 import type { JarmConsentResponseMode } from '../hono/templates.js';
 import {
   authorizationCodeConformanceHelper,
@@ -13,6 +15,8 @@ import {
   consentDecisionConformanceBlock,
   consentWithdrawalConformanceBlock,
   consentRouteTemplate,
+  customScopeConformanceBlock,
+  customScopesTemplate,
   customViewConformanceTestBlock,
   deviceAuthorizationConformanceBlock,
   deviceAuthorizationRouteTemplate,
@@ -1632,7 +1636,32 @@ ${bindingCheck}  validateCsrfToken(transaction, csrfToken);
 export function nextJsConsentPageTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
 ): string {
+  // --user-scope: mirror routes/consent.ts and show what THIS End-User can
+  // actually grant. With no per-user scope declared both interpolations below
+  // are empty and the page is unchanged.
+  const perUserScopesDeclared = hasPerUserScopes(scopes);
+  const customScopeImport = perUserScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
+    : '';
+  const consentPageScopes = perUserScopesDeclared
+    ? `  // --user-scope: the subject comes from the auth session that the login step
+  // stored for this transaction; without one there is nothing to narrow by, so
+  // the request is shown as-is and the Server Action stops on the same missing
+  // session.
+  const consentSession = await authSessionStore.get(transactionId);
+  const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+  const scopes = consentSession
+    ? resolveGrantableScopes(requestedScopes, consentSession.subject)
+    : requestedScopes;`
+    : `  const scopes = transaction.scope.split(' ').filter(Boolean);`;
+  const consentPageStores = perUserScopesDeclared
+    ? `
+const authSessionStore =
+  (oidcProviderOptions.storage ?? defaultProviderStores).authSessionStore;`
+    : '';
   const bindingImports = features.transactionBinding
     ? `import { cookies } from 'next/headers';
 import { getAuthTransaction, validateTransactionBinding } from '${corePkg}';`
@@ -1685,10 +1714,10 @@ async function isBoundToThisBrowser(
   return `${bindingImports}
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 ${bindingStoreImport}
-import { consentAction } from './actions';
+import { consentAction } from './actions';${customScopeImport}
 
 const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
+  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;${consentPageStores}
 
 export const dynamic = 'force-dynamic';
 
@@ -1715,7 +1744,7 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
+${bindingCheck}${consentPageScopes}
 
   return (
     <main>
@@ -1755,7 +1784,25 @@ ${bindingCheck}  const scopes = transaction.scope.split(' ').filter(Boolean);
 export function nextJsConsentActionTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
 ): string {
+  // --user-scope: this Server Action is the Next.js counterpart of
+  // routes/consent.ts, so it narrows the grant the same way.
+  const perUserScopesDeclared = hasPerUserScopes(scopes);
+  const customScopeImport = perUserScopesDeclared
+    ? `
+import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
+    : '';
+  const consentGrantedScope = perUserScopesDeclared
+    ? `
+  // --user-scope: scopes reserved for other subjects are dropped from the grant
+  // rather than failing the request (RFC 6749 §3.3 lets the authorization server
+  // issue a narrower scope; the token response reports what was granted).
+  const grantedScope = resolveGrantableScopes(
+    transaction.scope.split(' ').filter(Boolean),
+    session.subject,
+  );`
+    : `  const grantedScope = transaction.scope.split(' ').filter(Boolean);`;
   const bindingCookiesImport = features.transactionBinding
     ? `
 import { cookies } from 'next/headers';`
@@ -1817,7 +1864,7 @@ import {
 } from '${corePkg}';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { createStoreResolvers } from '../_oidc-provider/resolvers';
-${bindingStoreImport}
+${bindingStoreImport}${customScopeImport}
 
 const providerStores = oidcProviderOptions.storage ?? defaultProviderStores;
 const { transactionStore, authCodeStore, authSessionStore } = providerStores;
@@ -1886,7 +1933,7 @@ ${clearBindingCookie}    redirect(denyUrl.toString());
   // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
   // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
   // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
-  const grantedScope = transaction.scope.split(' ').filter(Boolean);
+${consentGrantedScope}
 
   // OIDC Core 1.0 Section 3.1.3.1: TTL is configurable via ProviderConfig.
   const authCodeData = await createAuthorizationCode({
@@ -1927,8 +1974,16 @@ export function webConformanceTestTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
   jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
+  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
 ): string {
   const usesRedirect = errorPageMode === 'redirect';
+  // --user-scope: the per-subject contract test drives the generated policy
+  // module directly, because the HTTP flow can only sign in as a user the
+  // generated store knows while declarations name arbitrary subjects.
+  const customScopeConformanceImport = hasPerUserScopes(scopes)
+    ? `
+import { resolveGrantableScopes } from './scopes.js';`
+    : '';
   // Next.js delegates the non-redirect authorization error to a framework-native
   // error page (app/oidc-error → error.tsx), so its generated provider is wired
   // with authorizationErrorRedirectPath and the conformance test pins the 303.
@@ -2085,7 +2140,7 @@ import { createInMemoryClientResolver, type RegisteredClient } from './config.js
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2261,7 +2316,7 @@ ${responseModesSupportedExpectation}
       });
     });
 
-${scopesSupportedConformanceTest(features)}
+${scopesSupportedConformanceTest(features, scopes)}
     // OIDC Core 1.0 §2 / §3.1.3.6 + Discovery 1.0 §3: claims_supported advertises
     // the claims the OP can supply, including the ID Token protocol claims
     // (auth_time/nonce/acr/amr/azp/at_hash). The full list is pinned so dropping
@@ -2496,7 +2551,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 
@@ -2506,6 +2561,7 @@ function webCoreGeneratedFiles(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   includeNodeAdapterContract = false,
   jarmConsentResponseMode: JarmConsentResponseMode = 'jwt',
+  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
 ): GeneratedFile[] {
   // EXPERIMENTAL (JARM): on a target whose consent step cannot sign a verifiable
   // response JWT (Next.js Server Actions — see nextJsConsentActionTemplate), the
@@ -2518,6 +2574,11 @@ function webCoreGeneratedFiles(
     { path: 'app.ts', content: webAppTemplate(corePkg, features) },
     { path: 'web-router.ts', content: webRouterTemplate() },
     { path: 'config.ts', content: configTemplate(corePkg, features) },
+    // Custom scopes (--scope / --user-scope): the policy module is only
+    // generated when at least one was declared.
+    ...(hasCustomScopes(scopes)
+      ? [{ path: 'scopes.ts', content: customScopesTemplate(scopes, features) }]
+      : []),
     {
       path: 'store.ts',
       content: storeTemplate(corePkg, features),
@@ -2530,7 +2591,7 @@ function webCoreGeneratedFiles(
       ),
     },
     { path: 'views.ts', content: viewsTemplate(features) },
-    { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features)) },
+    { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
     { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },
     ...(features.introspection
@@ -2548,11 +2609,11 @@ function webCoreGeneratedFiles(
       ? [
         {
           path: 'routes/device-authorization.ts',
-          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features)),
+          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features, scopes)),
         },
         {
           path: 'routes/device.ts',
-          content: toWebRouteTemplate(deviceVerificationRouteTemplate(corePkg)),
+          content: toWebRouteTemplate(deviceVerificationRouteTemplate(corePkg, scopes)),
         },
       ]
       : []),
@@ -2561,11 +2622,11 @@ function webCoreGeneratedFiles(
       ? [
         {
           path: 'routes/backchannel-authentication.ts',
-          content: toWebRouteTemplate(backchannelAuthenticationRouteTemplate(corePkg, features)),
+          content: toWebRouteTemplate(backchannelAuthenticationRouteTemplate(corePkg, features, scopes)),
         },
         {
           path: 'routes/ciba-verification.ts',
-          content: toWebRouteTemplate(cibaVerificationRouteTemplate(corePkg)),
+          content: toWebRouteTemplate(cibaVerificationRouteTemplate(corePkg, scopes)),
         },
       ]
       : []),
@@ -2575,9 +2636,9 @@ function webCoreGeneratedFiles(
       ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
       : []),
     { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
-    { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features)) },
+    { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg, features)) },
-    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, consentFeatures)) },
+    { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, consentFeatures, scopes)) },
     {
       path: 'conformance.test.ts',
       content: webConformanceTestTemplate(
@@ -2586,6 +2647,7 @@ function webCoreGeneratedFiles(
         features,
         includeNodeAdapterContract,
         jarmConsentResponseMode,
+        scopes,
       ),
     },
   ];
@@ -2599,9 +2661,10 @@ export function webGeneratedFiles(
   corePkg: string,
   applyTemplate: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
 ): GeneratedFile[] {
   return [
-    ...webCoreGeneratedFiles(corePkg, 'html', features, true),
+    ...webCoreGeneratedFiles(corePkg, 'html', features, true, 'jwt', scopes),
     { path: 'apply.ts', content: applyTemplate },
     { path: 'node-adapter.ts', content: nodeAdapterTemplate() },
   ];
@@ -2610,12 +2673,20 @@ export function webGeneratedFiles(
 export function nextJsGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  scopes: CustomScopeConfig = NO_CUSTOM_SCOPES,
 ): GeneratedFile[] {
   // Next.js drives login / consent through Server Actions, which are bundled
   // apart from the Route Handlers and hold their own signing key provider
   // instance. A JARM response signed there would fail every client's signature
   // check, so this target answers the interactive flow in plain query.
-  const internalFiles = webCoreGeneratedFiles(corePkg, 'redirect', features, false, 'plain').map(
+  const internalFiles = webCoreGeneratedFiles(
+    corePkg,
+    'redirect',
+    features,
+    false,
+    'plain',
+    scopes,
+  ).map(
     (file) => ({
       path: `_oidc-provider/${file.path}`,
       content: toNextJsModuleImports(file.content),
@@ -2739,8 +2810,8 @@ export function nextJsGeneratedFiles(
     // Handlers) so the UI can be customized with JSX and the React ecosystem.
     { path: 'login/page.tsx', content: nextJsLoginPageTemplate(corePkg, features) },
     { path: 'login/actions.ts', content: nextJsLoginActionTemplate(corePkg, features) },
-    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg, features) },
-    { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg, features) },
+    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg, features, scopes) },
+    { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg, features, scopes) },
     // Non-redirect authorization errors (OIDC Core 1.0 §3.1.2.2) land on this
     // page, which throws so the App Router error boundary (error.tsx) renders the
     // OAuth error — keeping error UI framework-native like login / consent.

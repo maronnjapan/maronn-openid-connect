@@ -132,3 +132,7 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` 
 | 機能名 | 内容 | 関連仕様 |
 |---|---|---|
 | `transaction-binding` | 認可トランザクションを、それを開始した User-Agent に HttpOnly Cookie で束縛する。`transaction_id` が漏れても `/login`・`/consent` を進行できなくなる代わりに、ブラウザ以外（curl 等）から触るには Cookie の持ち回りが必要になる | OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 |
+
+## Custom Scopes
+
+生成 OP が受け付けるスコープは、標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）に加えて、CLI の `--scope`（全ユーザーに一律許容）と `--user-scope <subject>:<scope>`（特定ユーザーにだけ許容）で宣言できます。宣言すると `scopes.ts` が生成され、認可エンドポイントは宣言していないスコープを `invalid_scope` で拒否し（RFC 6749 §3.3）、ユーザーごとに許容したスコープは対象外の End-User の付与スコープから落とされます。宣言が無ければ何も生成されず、既定の生成物の挙動は変わりません。詳細は [CLI Guide](../../guides/cli/#custom-scopes) を参照してください。

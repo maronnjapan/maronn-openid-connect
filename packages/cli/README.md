@@ -50,6 +50,8 @@ maronn-oidc setup <framework> [options]
 | `--entry, -e <file>` | setup 時にパッチするエントリファイル（既定: `./src/index.ts`） |
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
+| `--scope <scopes>` | 全ユーザーに一律許容するカスタムスコープ（カンマ区切り・複数回指定可） |
+| `--user-scope <subject>:<scopes>` | 特定ユーザーにだけ許容するカスタムスコープ（複数回指定可） |
 | `--help, -h` | ヘルプ表示 |
 
 ## 生成されるもの
@@ -100,6 +102,36 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
+
+## カスタムスコープ（--scope / --user-scope）
+
+標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）以外に受け付けるスコープを、生成時に宣言できる。
+
+```bash
+# 全ユーザーに一律許容するカスタムスコープ
+maronn-oidc generate hono --scope reports.read,reports.write
+
+# alice にだけ許容するカスタムスコープ
+maronn-oidc generate hono --user-scope alice:admin.write
+
+# 併用も可能（同じスコープを両方に書くとエラー）
+maronn-oidc generate hono --scope reports.read --user-scope alice:admin.write
+```
+
+宣言すると `scopes.ts`（スコープポリシーモジュール）が生成され、生成 OP の挙動が次のように変わる。
+
+| 宣言 | 生成 OP の挙動 |
+|---|---|
+| 宣言なし（既定） | `scopes.ts` は生成されない。生成物は従来どおりで、スコープ値の許容リストも持たない |
+| `--scope <name>` | discovery の `scopes_supported` に載り、認証したどのユーザーにも付与される |
+| `--user-scope <sub>:<name>` | discovery の `scopes_supported` には載る（OP としては対応している）が、宣言されたユーザー以外の付与スコープからは落とされる |
+
+- **宣言した時点で、スコープの扱いが許容リストになる。** 宣言していない値を要求した認可リクエストは `invalid_scope` で拒否される（RFC 6749 §3.3 / §4.1.2.1）。宣言が 1 つも無ければこのチェック自体を生成しないので、既定の生成物の挙動は変わらない。
+- **ユーザーごとの絞り込みは「落とす」であり「失敗させる」ではない。** 認証後（consent / SSO / `prompt=none` / device・CIBA の承認）に、そのユーザーが持てないスコープを付与スコープから外す。RFC 6749 §3.3 が要求より狭いスコープの発行を認めており、トークンレスポンスの `scope` に実際の付与内容が載る。
+- **ポリシーの差し替え点は `scopes.ts` の 2 関数**（`findUnsupportedScopes()` / `resolveGrantableScopes()`）。このモジュールは何も import しないので、DB / KV 参照に置き換えれば宣言を生成コードの外へ出せる。
+- カスタムスコープに対応する UserInfo クレームは無い（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集する。
+
+`--user-scope` は最初の `:` で分割する。スコープ名側にはコロンを含められる（`--user-scope alice:urn:example:reports`）が、subject 側には含められない。
 
 ### conformance.test.ts との関係
 

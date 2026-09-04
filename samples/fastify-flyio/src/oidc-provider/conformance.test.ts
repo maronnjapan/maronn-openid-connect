@@ -1308,6 +1308,131 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
+  describe('Essential acr claim request (OIDC Core 1.0 §5.5.1.1)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const ACR_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const ACR_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+    function acrCsrfToken(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function acrRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    // Drives authorize -> login -> consent with the given claims request and hands
+    // back the authorization code. Pure data collection: no assertions, no
+    // branching, so every contract check stays in the it() blocks.
+    async function acrAuthorizationCode(claims: string, state: string): Promise<string> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=' + state + '&prompt=consent' +
+        '&claims=' + encodeURIComponent(claims) +
+        '&code_challenge=' + ACR_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      // Carry forward whatever cookie /authorize set, exactly as a browser would,
+      // so the flow works with and without --enable transaction-binding.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginPath = acrRelativeFrom(authorizeRes.headers.get('Location'));
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: acrCsrfToken(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      const consentPath = acrRelativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: acrCsrfToken(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+
+      return new URL(consentRes.headers.get('Location') ?? '', 'http://localhost').searchParams.get('code') ?? '';
+    }
+
+    function acrTokenRequest(code: string): Promise<Response> {
+      return app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: ACR_PKCE_VERIFIER,
+          client_id: 'c-conf',
+          client_secret: 's',
+        }).toString(),
+      });
+    }
+
+    // §5.5.1.1: "If this is an Essential Claim and the requirement cannot be met,
+    // then the Authorization Server MUST treat that outcome as a failed
+    // authentication attempt." RFC 6749 §5.2: the token error is invalid_grant and
+    // the response is uncacheable.
+    it('should reject the token request when an essential acr claim request cannot be satisfied', async () => {
+      const code = await acrAuthorizationCode(
+        JSON.stringify({ id_token: { acr: { essential: true, values: ['urn:example:essential-unreachable'] } } }),
+        'acr-essential-unmet',
+      );
+
+      const res = await acrTokenRequest(code);
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      expect(res.headers.get('Pragma')).toBe('no-cache');
+      expect(await res.json()).toEqual({
+        error: 'invalid_grant',
+        error_description: 'The essential acr claim request could not be satisfied',
+      });
+    });
+
+    it('should issue an ID Token whose acr matches the essential request when the resolver satisfies it', async () => {
+      const code = await acrAuthorizationCode(
+        JSON.stringify({ id_token: { acr: { essential: true, values: ['urn:example:loa:2'] } } }),
+        'acr-essential-met',
+      );
+
+      const res = await acrTokenRequest(code);
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(idTokenPayload(body.id_token as string).acr).toBe('urn:example:loa:2');
+      expect(idTokenPayload(body.id_token as string).amr).toEqual(['pwd', 'otp']);
+    });
+
+    // §5.5.1: "the Authorization Server MUST NOT generate an error when Claims are
+    // not returned" — the §5.5.1.1 exception is scoped to Essential requests, so an
+    // unmatched Voluntary request still issues, carrying the session's current acr.
+    it('should issue an ID Token with the session acr when an unmatched acr request is voluntary', async () => {
+      const code = await acrAuthorizationCode(
+        JSON.stringify({ id_token: { acr: { values: ['urn:example:essential-unreachable'] } } }),
+        'acr-voluntary-unmet',
+      );
+
+      const res = await acrTokenRequest(code);
+
+      expect(res.status).toBe(200);
+      expect(idTokenPayload((await res.json()).id_token as string).acr).toBe('urn:example:loa:2');
+    });
+  });
+
   describe('id_token_hint across prompt paths', () => {
     const HINT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
     const HINT_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';

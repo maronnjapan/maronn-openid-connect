@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { generateTokenResponse, buildAccessTokenAudience, buildIdTokenAudience } from './token-response.js';
 import type { TokenResponseOptions, TokenResponse } from './token-response.js';
 import { base64UrlToArrayBuffer, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
 
 // --- Helper: RSA鍵ペアの生成 ---
 let rsaKeyPair: CryptoKeyPair;
@@ -746,6 +747,46 @@ describe('generateTokenResponse', () => {
       });
       await generateTokenResponse(options);
       expect(receivedAcrValues).toBe('urn:from-acr-values');
+    });
+
+    // OIDC Core 1.0 §5.5.1.1: an unmet Essential acr request MUST be treated as a
+    // failed authentication attempt, so no ID Token (and no token response) is issued.
+    it('should reject the token response when an essential acr request is unmet', async () => {
+      const options = createValidOptions({
+        claims: {
+          id_token: { acr: { essential: true, values: ['urn:example:high'] } },
+        },
+        acrResolver: async () => ({ acr: 'urn:example:low', amr: ['pwd'] }),
+      });
+
+      const error = await generateTokenResponse(options).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error).toMatchObject({
+        error: TokenErrorCode.InvalidGrant,
+        errorDescription: 'The essential acr claim request could not be satisfied',
+      });
+    });
+
+    // The essential values are the binding constraint, so they seed the resolver even
+    // when acr_values is present — otherwise the request could never be satisfied.
+    it('should let an essential claims acr request take precedence over acr_values', async () => {
+      let receivedAcrValues: string | undefined;
+      const options = createValidOptions({
+        requestedAcrValues: 'urn:from-acr-values',
+        claims: {
+          id_token: { acr: { essential: true, values: ['urn:from-claims'] } },
+        },
+        acrResolver: async (ctx) => {
+          receivedAcrValues = ctx.requestedAcrValues;
+          return { acr: 'urn:from-claims', amr: ['pwd'] };
+        },
+      });
+
+      const result = await generateTokenResponse(options);
+
+      expect(receivedAcrValues).toBe('urn:from-claims');
+      expect(result.resolvedAcr).toBe('urn:from-claims');
     });
 
     it('should ignore unknown id_token claim members without throwing', async () => {

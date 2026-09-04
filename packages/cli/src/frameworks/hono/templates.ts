@@ -9513,6 +9513,40 @@ function requestObjectValueConformanceBlock(features: OidcFeatureConfig): string
       expect(location.searchParams.get('error')).toBe(null);
     });
 
+    it('should reject a broken request object with a non-redirect invalid_request_object error page', async () => {
+      const url =
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=req-broken' +
+        '&request=not-a-jwt' +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+      const res = await app.request(url);
+
+      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
+      // Object, so the OP reports invalid_request_object (not the generic
+      // invalid_request). A redirect_uri carried inside a broken Request Object
+      // cannot be trusted, so the error stays on the OP: HTTP 400, no redirect,
+      // no state echo. Pinned to the default error page so a change in either
+      // the error code or the non-redirect behavior is caught exactly.
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      const body = await res.text();
+      expect(body).toBe(
+        [
+          '<!DOCTYPE html>',
+          '<html>',
+          '<head><title>Error</title></head>',
+          '<body>',
+          '  <h1>Error</h1>',
+          '  <p>invalid_request_object</p>',
+          '  <p>request object is not a JWS compact serialization</p>',
+          '</body>',
+          '</html>',
+        ].join('\\n'),
+      );
+    });
+
     it('should reject the request_uri parameter with a request_uri_not_supported redirect', async () => {
       const url =
         '/authorize?response_type=code&client_id=c-conf' +

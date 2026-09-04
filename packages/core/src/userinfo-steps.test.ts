@@ -286,4 +286,41 @@ describe('applyRequestedClaims', () => {
 
     expect(response).toEqual({ sub: 'user-123' });
   });
+
+  // OIDC Core 1.0 Section 5.5.1: an unfulfillable requested claim MUST NOT raise an
+  // error, so declining names outside the OP's declared vocabulary is spec compliant.
+  it('should omit a claim name outside the default allowlist', () => {
+    const leakyUserClaims = {
+      ...defaultUserClaims,
+      password_hash: '$2b$12$notarealhash',
+    } as UserClaims;
+
+    const result = applyRequestedClaims({ sub: 'user-123' }, leakyUserClaims, {
+      userinfo: { password_hash: null },
+    });
+
+    expect(result).toEqual({ sub: 'user-123' });
+  });
+
+  it('should omit a claim name outside an explicitly supplied allowlist', () => {
+    const result = applyRequestedClaims(
+      { sub: 'user-123' },
+      defaultUserClaims,
+      { userinfo: { email: null } },
+      new Set(['sub']),
+    );
+
+    expect(result).toEqual({ sub: 'user-123' });
+  });
+
+  it('should add a claim name inside an explicitly supplied allowlist', () => {
+    const result = applyRequestedClaims(
+      { sub: 'user-123' },
+      defaultUserClaims,
+      { userinfo: { email: null } },
+      new Set(['sub', 'email']),
+    );
+
+    expect(result).toEqual({ sub: 'user-123', email: 'taro@example.com' });
+  });
 });

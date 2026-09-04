@@ -8,6 +8,7 @@ import {
   backchannelAuthenticationRouteTemplate,
   cibaVerificationRouteTemplate,
   authorizeRouteTemplate,
+  claimsAllowlistConformanceBlock,
   configTemplate,
   conformanceTestClientsBlock,
   consentDecisionConformanceBlock,
@@ -2135,7 +2136,7 @@ import { cibaAuthenticationRequestStore } from './store.js';`
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, defaultProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
@@ -2520,6 +2521,7 @@ ${featureDisabledDiscoveryConformanceTests(features)}  });
       });
     });
   });
+${claimsAllowlistConformanceBlock()}
 
 ${introspectionConformanceBlock(features)}
   describe('Authorization Endpoint non-redirect errors', () => {

@@ -1,5 +1,9 @@
 import type { webcrypto } from 'node:crypto';
-import { getJwaAlgorithm, rsaModulusBitLength } from './crypto-utils.js';
+import {
+  extractAlgorithmParamsFromJwk,
+  getJwaAlgorithm,
+  rsaModulusBitLength,
+} from './crypto-utils.js';
 
 export interface SigningKey {
   privateKey: CryptoKey;
@@ -177,36 +181,303 @@ export function assertKeyStrength(
   const allowedCurves = policy?.allowedCurves ?? DEFAULT_ALLOWED_CURVES;
 
   for (const key of keys) {
-    const jwk = key.publicJwk;
+    assertJwkStrength(key.publicJwk, key.keyId, minRsaModulusBits, allowedCurves);
+  }
+}
 
-    if (jwk.kty === 'RSA') {
-      if (!jwk.n) {
-        throw new Error(
-          `Signing key "${key.keyId}" is an RSA key but its public JWK has no modulus (n)`,
-        );
-      }
-      const bits = rsaModulusBitLength(jwk.n);
-      if (bits < minRsaModulusBits) {
-        throw new Error(
-          `Signing key "${key.keyId}" has a ${bits}-bit RSA modulus; minimum allowed is ${minRsaModulusBits} bits (NIST SP 800-131A Rev.2)`,
-        );
-      }
-      continue;
+/**
+ * Strength check for a single JWK, shared by {@link assertKeyStrength} and
+ * {@link createJwkSigningKeyProvider}. Kept private so the public API keeps
+ * exposing the key-set-level check only.
+ */
+function assertJwkStrength(
+  jwk: webcrypto.JsonWebKey,
+  keyId: string,
+  minRsaModulusBits: number,
+  allowedCurves: readonly string[],
+): void {
+  if (jwk.kty === 'RSA') {
+    if (!jwk.n) {
+      throw new Error(
+        `Signing key "${keyId}" is an RSA key but its public JWK has no modulus (n)`,
+      );
     }
-
-    if (jwk.kty === 'EC') {
-      if (!jwk.crv || !allowedCurves.includes(jwk.crv)) {
-        throw new Error(
-          `Signing key "${key.keyId}" uses unsupported EC curve "${jwk.crv ?? '(missing)'}"; allowed curves: ${allowedCurves.join(', ')}`,
-        );
-      }
-      continue;
+    const bits = rsaModulusBitLength(jwk.n);
+    if (bits < minRsaModulusBits) {
+      throw new Error(
+        `Signing key "${keyId}" has a ${bits}-bit RSA modulus; minimum allowed is ${minRsaModulusBits} bits (NIST SP 800-131A Rev.2)`,
+      );
     }
+    return;
+  }
 
+  if (jwk.kty === 'EC') {
+    if (!jwk.crv || !allowedCurves.includes(jwk.crv)) {
+      throw new Error(
+        `Signing key "${keyId}" uses unsupported EC curve "${jwk.crv ?? '(missing)'}"; allowed curves: ${allowedCurves.join(', ')}`,
+      );
+    }
+    return;
+  }
+
+  throw new Error(
+    `Signing key "${keyId}" uses unsupported key type "${jwk.kty ?? '(missing)'}"`,
+  );
+}
+
+/**
+ * A JWK as this module handles it. `kid` (RFC 7517 §4.5) is part of every JWK we
+ * publish, but Node's `webcrypto.JsonWebKey` does not declare it.
+ */
+type SigningJwk = webcrypto.JsonWebKey & { kid?: string };
+
+/** JWK members that carry private key material and must never be published. */
+const PRIVATE_JWK_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'] as const;
+/** JWK members that constrain WebCrypto import and are re-derived on our side. */
+const IMPORT_ONLY_JWK_MEMBERS = ['key_ops', 'ext'] as const;
+
+/**
+ * Build a `SigningKeyProvider` from a *persisted* private JWK.
+ *
+ * Generating a key pair at startup gives every process, isolate, or machine its
+ * own key material. When the `kid` is a fixed string, the OP then publishes a
+ * different key under the same name from every instance, and a relying party
+ * that fetched `jwks_uri` from one instance cannot verify an ID Token signed by
+ * another — RFC 7515 §4.1.4 has it select the verification key by `kid`, and
+ * RFC 7517 §4.5 has distinct keys use distinct `kid`s. OIDC Core 1.0 §10.1
+ * assumes the `kid` → key material mapping is stable across the whole OP, and
+ * lets relying parties cache the JWK Set. Loading the key from a secret store
+ * restores that assumption: every instance signs with the same key, and tokens
+ * stay verifiable across restarts and redeploys.
+ *
+ * Validation runs synchronously so a misconfigured key fails at startup rather
+ * than on the first token request. Only the WebCrypto `importKey` call is
+ * deferred, and its result is memoized.
+ *
+ * @param jwk Private JWK, either as a JSON string (e.g. read from an
+ *   environment variable) or as an already-parsed object.
+ * @param keyId Overrides / pins the `kid`. When the JWK also carries a `kid`,
+ *   the two must agree — a silent mismatch would publish the key under a name
+ *   it was not signed with.
+ * @param strengthPolicy Passed to the same strength rules as
+ *   {@link assertKeyStrength}; defaults to RSA >= 2048 bits and P-256/384/521.
+ * @throws when the JSON is malformed, the key type is unsupported, the `kid` is
+ *   missing or conflicting, the private key material is absent, or the key is
+ *   below the strength policy.
+ */
+export function createJwkSigningKeyProvider(
+  jwk: string | webcrypto.JsonWebKey,
+  keyId?: string,
+  strengthPolicy?: KeyStrengthPolicy,
+): SigningKeyProvider {
+  const parsed = parsePrivateJwk(jwk);
+  const resolvedKid = resolveKeyId(parsed, keyId);
+
+  const publicJwk = toPublicJwk(parsed, resolvedKid);
+  assertJwkStrength(
+    publicJwk,
+    resolvedKid,
+    strengthPolicy?.minRsaModulusBits ?? DEFAULT_MIN_RSA_MODULUS_BITS,
+    strengthPolicy?.allowedCurves ?? DEFAULT_ALLOWED_CURVES,
+  );
+
+  // RSA and EC private JWKs both carry the private exponent in `d` (RFC 7518
+  // §6.3.2.1 / §6.2.2.1). Without it the key can only verify, not sign.
+  if (!parsed.d) {
     throw new Error(
-      `Signing key "${key.keyId}" uses unsupported key type "${jwk.kty ?? '(missing)'}"`,
+      `Signing key JWK "${resolvedKid}" has no private key material (d)`,
     );
   }
+
+  const importParams = extractAlgorithmParamsFromJwk(publicJwk);
+  const privateJwk: SigningJwk = { ...parsed, alg: publicJwk.alg, kid: resolvedKid };
+  for (const member of IMPORT_ONLY_JWK_MEMBERS) {
+    delete (privateJwk as Record<string, unknown>)[member];
+  }
+
+  // The key is imported once and reused; `extractable: false` keeps the private
+  // material from being read back out of the CryptoKey.
+  const keyPromise = crypto.subtle
+    .importKey('jwk', privateJwk, importParams, false, ['sign'])
+    .then((privateKey): SigningKey => ({ privateKey, publicJwk, keyId: resolvedKid }));
+  // Mark the rejection as handled so an import failure surfaces on await instead
+  // of as an unhandled rejection at module evaluation time.
+  keyPromise.catch(() => undefined);
+
+  return {
+    async getSigningKey(): Promise<SigningKey> {
+      return keyPromise;
+    },
+    async getSigningKeys(): Promise<SigningKey[]> {
+      return [await keyPromise];
+    },
+  };
+}
+
+/**
+ * Options for {@link resolveSigningKeyProvider}.
+ */
+export interface ResolveSigningKeyProviderOptions {
+  /**
+   * Persisted private JWK, typically read from a secret (e.g. an environment
+   * variable). An empty or absent value selects the ephemeral fallback.
+   */
+  jwk?: string | webcrypto.JsonWebKey;
+  /** Configured `kid`. Pins the persisted key's kid and names the fallback key. */
+  keyId?: string;
+  /** `kid` used for the ephemeral fallback when `keyId` is not configured. */
+  fallbackKeyId: string;
+  /**
+   * Appended to the fallback warning to tell the operator how to configure a
+   * persisted key (the env var name differs per deployment). Kept out of core's
+   * own wording so core stays agnostic of the host application's config names.
+   */
+  persistenceHint?: string;
+  /** Receives the fallback warning. Defaults to `console.warn`. */
+  onEphemeralFallback?: (message: string) => void;
+  /** Strength policy applied to the persisted key; see {@link assertKeyStrength}. */
+  strengthPolicy?: KeyStrengthPolicy;
+}
+
+const EPHEMERAL_FALLBACK_WARNING_SUFFIX =
+  'The key material differs between instances and changes on every restart, so tokens signed here fail verification against another instance’s JWKS.';
+
+/**
+ * Pick the signing key provider for a deployment: the persisted JWK when one is
+ * configured, otherwise a per-process ephemeral RS256 key plus a warning.
+ *
+ * The ephemeral branch exists so a sample or local run works with zero
+ * configuration, but it is only safe for a single process. Once more than one
+ * instance serves the OP — Cloudflare Workers isolates, several Fly machines,
+ * serverless instances — each one generates its own key under the same `kid`,
+ * and RFC 7515 §4.1.4 `kid`-based key selection then hands a relying party the
+ * wrong key. See {@link createJwkSigningKeyProvider} for the persisted path.
+ *
+ * @throws when a persisted JWK is configured but invalid — a misconfigured
+ *   secret must fail at startup rather than at the first token request.
+ */
+export function resolveSigningKeyProvider(
+  options: ResolveSigningKeyProviderOptions,
+): SigningKeyProvider {
+  const { jwk, keyId, fallbackKeyId, persistenceHint, strengthPolicy } = options;
+  const hasPersistedJwk = typeof jwk === 'string' ? jwk.trim().length > 0 : jwk !== undefined;
+
+  if (hasPersistedJwk) {
+    return createJwkSigningKeyProvider(jwk!, keyId, strengthPolicy);
+  }
+
+  const ephemeralKeyId = keyId ?? fallbackKeyId;
+  const warn = options.onEphemeralFallback ?? ((message: string) => console.warn(message));
+  warn(
+    `No persisted signing key is configured, so an ephemeral RS256 key was generated for this process (kid "${ephemeralKeyId}"). ${EPHEMERAL_FALLBACK_WARNING_SUFFIX}${
+      persistenceHint ? ` ${persistenceHint}` : ''
+    }`,
+  );
+  return createEphemeralRs256KeyProvider(ephemeralKeyId);
+}
+
+/**
+ * Generate an RS256 key pair for this process and expose it as a provider.
+ *
+ * Development-only: the key exists for the lifetime of one process/isolate and
+ * is never shared with another instance, so it must not be used anywhere a
+ * relying party can reach a second instance's `jwks_uri`. Kept private to this
+ * module so the ephemeral path is only reachable through the warning in
+ * {@link resolveSigningKeyProvider}.
+ */
+function createEphemeralRs256KeyProvider(keyId: string): SigningKeyProvider {
+  const keyPromise = (async (): Promise<SigningKey> => {
+    const keyPair = await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: DEFAULT_MIN_RSA_MODULUS_BITS,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify'],
+    );
+    const publicJwk = (await crypto.subtle.exportKey(
+      'jwk',
+      keyPair.publicKey,
+    )) as SigningJwk;
+    publicJwk.alg = 'RS256';
+    publicJwk.use = 'sig';
+    publicJwk.kid = keyId;
+    return { privateKey: keyPair.privateKey, publicJwk, keyId };
+  })();
+  keyPromise.catch(() => undefined);
+
+  return {
+    async getSigningKey(): Promise<SigningKey> {
+      return keyPromise;
+    },
+    async getSigningKeys(): Promise<SigningKey[]> {
+      return [await keyPromise];
+    },
+  };
+}
+
+function parsePrivateJwk(jwk: string | webcrypto.JsonWebKey): SigningJwk {
+  if (typeof jwk !== 'string') {
+    return jwk as SigningJwk;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jwk);
+  } catch (cause) {
+    throw new Error('Signing key JWK is not valid JSON', { cause });
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Signing key JWK must be a JSON object');
+  }
+  return parsed as SigningJwk;
+}
+
+function resolveKeyId(jwk: SigningJwk, keyId: string | undefined): string {
+  const jwkKid = jwk.kid;
+  if (keyId && jwkKid && keyId !== jwkKid) {
+    throw new Error(
+      `Signing key JWK kid "${jwkKid}" does not match the configured key id "${keyId}"`,
+    );
+  }
+  const resolved = keyId ?? jwkKid;
+  // RFC 7517 §4.5: a persisted key is identified by its kid, and the whole point
+  // of persisting it is that the kid keeps resolving to the same key material.
+  if (!resolved) {
+    throw new Error('Signing key JWK must carry a kid, or a key id must be supplied');
+  }
+  return resolved;
+}
+
+/**
+ * Derive the JWK published at `jwks_uri` from a private JWK: drop every private
+ * member (RFC 7517 §4 — a JWK Set of public keys) and pin `alg` / `use` / `kid`.
+ */
+function toPublicJwk(jwk: SigningJwk, keyId: string): SigningJwk {
+  const publicJwk: SigningJwk = { ...jwk };
+  for (const member of [...PRIVATE_JWK_MEMBERS, ...IMPORT_ONLY_JWK_MEMBERS]) {
+    delete (publicJwk as Record<string, unknown>)[member];
+  }
+  publicJwk.alg = jwk.alg ?? defaultAlgForJwk(jwk);
+  publicJwk.use = 'sig';
+  publicJwk.kid = keyId;
+  return publicJwk;
+}
+
+/**
+ * Fill in `alg` for JWKs exported without it (WebCrypto's `exportKey` omits it).
+ * OIDC Core 1.0 §15.1 makes RS256 the mandatory RSA algorithm, and RFC 7518 §3.4
+ * pairs each EC curve with exactly one ECDSA algorithm.
+ */
+function defaultAlgForJwk(jwk: webcrypto.JsonWebKey): string | undefined {
+  if (jwk.kty === 'RSA') return 'RS256';
+  if (jwk.kty === 'EC') {
+    if (jwk.crv === 'P-256') return 'ES256';
+    if (jwk.crv === 'P-384') return 'ES384';
+    if (jwk.crv === 'P-521') return 'ES512';
+  }
+  return undefined;
 }
 
 /**

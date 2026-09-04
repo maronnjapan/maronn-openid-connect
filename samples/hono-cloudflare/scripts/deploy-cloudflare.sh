@@ -190,6 +190,27 @@ if [ -z "${ISSUER}" ]; then
   guide_info "ISSUER を固定して再デプロイします。"
   generate_deploy_config "${ISSUER}"
 fi
+
+# ── 署名鍵の固定 ──────────────────────────────────────────────────────
+# OIDC Core 1.0 §10.1 / RFC 7515 §4.1.4: RP は kid で検証鍵を選ぶため、kid から
+# 鍵素材への対応が OP 全体で安定している必要がある。Workers はアイソレート単位で
+# モジュールを評価するので、鍵を secret に置かないとアイソレートごとに別の鍵が
+# 同じ kid で公開され、署名検証が間欠的に失敗する。
+guide_step "署名鍵（OIDC_SIGNING_KEY_JWK）を確認します"
+if wrangler_cmd secret list --config "${DEPLOY_CONFIG}" 2>/dev/null | grep -q 'OIDC_SIGNING_KEY_JWK'; then
+  guide_ok "OIDC_SIGNING_KEY_JWK は設定済みです（アイソレート間で署名鍵が一致します）。"
+else
+  guide_warn "OIDC_SIGNING_KEY_JWK が未設定です。このままだとアイソレートごとに別の署名鍵が生成され、ID Token の検証が間欠的に失敗します。"
+  if guide_confirm "いま RS256 鍵を生成して secret に設定しますか？" y; then
+    guide_info "実行: node scripts/generate-signing-key.mjs --kid hono-cloudflare-rs256-key | wrangler secret put OIDC_SIGNING_KEY_JWK"
+    node "${ROOT_DIR}/scripts/generate-signing-key.mjs" --kid hono-cloudflare-rs256-key \
+      | wrangler_cmd secret put OIDC_SIGNING_KEY_JWK --config "${DEPLOY_CONFIG}"
+    guide_ok "OIDC_SIGNING_KEY_JWK を設定しました。"
+  else
+    guide_warn "起動時生成の鍵のままデプロイします。単一アイソレートに当たっている間しか検証は通りません。"
+  fi
+fi
+
 deploy_once
 mkdir -p "${STATE_DIR}"
 printf '%s\n' "${ISSUER}" > "${ISSUER_FILE}"
@@ -207,5 +228,4 @@ if ! printf '%s' "${discovery}" | ISSUER="${ISSUER}" node -e "let d='';process.s
 fi
 guide_ok "デプロイが完了しました: ${ISSUER}"
 guide_info "動作確認: curl ${ISSUER}/.well-known/openid-configuration"
-guide_warn "サンプルの署名鍵は起動時生成のため、複数インスタンス間で鍵が一致しない可能性があります。本番相当の検証では Cloudflare Secrets 等から固定鍵を読み込んでください。"
 guide_info "後片付けする場合: wrangler delete --config wrangler.deploy.jsonc && wrangler d1 delete ${D1_NAME}"

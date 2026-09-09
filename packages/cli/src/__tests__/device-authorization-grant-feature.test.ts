@@ -36,6 +36,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'device-authorization-grant',
       'id-jag',
       'ciba',
+      'jwt-introspection-response',
     ]);
   });
 });
@@ -58,6 +59,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       deviceAuthorizationGrant: true,
       idJag: false,
       ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });
@@ -93,6 +95,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       deviceAuthorizationGrant: true,
       idJag: true,
       ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });
@@ -112,6 +115,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       deviceAuthorizationGrant: true,
       idJag: false,
       ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });

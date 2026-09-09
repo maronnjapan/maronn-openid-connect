@@ -6866,6 +6866,19 @@ import { parConfig } from './par.js';`
     // local policy and is not disclosed here (draft §9.4).
     authorization_grant_profiles_supported: ['urn:ietf:params:oauth:grant-profile:id-jag'],`
     : '';
+  // EXPERIMENTAL (RFC 9701 §7): introspection_signing_alg_values_supported has
+  // no core DiscoveryConfig field, so it is merged onto the metadata object the
+  // same way the PAR endpoint metadata is. Advertised only when the
+  // introspection endpoint itself is generated (resolveFeatures already rejects
+  // the combination, but a programmatic OidcFeatureConfig bypasses it).
+  const jwtIntrospectionResponseDiscoveryMetadata =
+    features.introspection && features.jwtIntrospectionResponse
+      ? `
+    // EXPERIMENTAL — RFC 9701 §7 metadata. The introspection response JWT is
+    // always signed with RS256 (§6: the default for a client that registered no
+    // introspection_signed_response_alg), so exactly one alg is advertised.
+    introspection_signing_alg_values_supported: ['RS256'],`
+      : '';
   return `import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '${corePkg}';
 import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}${customScopeImport}
@@ -6978,7 +6991,7 @@ ${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
   // not in OIDC Discovery, so it is added separately.
   return c.json({
     ...metadata,
-    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${cibaDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}
+    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${cibaDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}${jwtIntrospectionResponseDiscoveryMetadata}
   });
 });
 `;
@@ -7976,7 +7989,81 @@ async function resolveProviderStores(
 `;
 }
 
-export function introspectionRouteTemplate(corePkg: string): string {
+export function introspectionRouteTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  // EXPERIMENTAL (RFC 9701): the JWT introspection response only changes the
+  // format of the answer to a caller that explicitly asked for it via Accept.
+  // Every interpolation below collapses to the current output when the
+  // jwt-introspection-response feature is off, so the default generation is
+  // unchanged byte for byte.
+  const introspectionJwtCoreImports = features.jwtIntrospectionResponse
+    ? `
+  selectSigningKeyByAlg,
+  type SigningKey,`
+    : '';
+  const introspectionJwtImports = features.jwtIntrospectionResponse
+    ? `
+import {
+  TOKEN_INTROSPECTION_JWT_MEDIA_TYPE,
+  acceptsIntrospectionJwt,
+  createIntrospectionResponseJwt,
+  restrictIntrospectionResponseToCaller,
+} from '${EXPERIMENTAL_PACKAGE}/jwt-introspection-response';`
+    : '';
+  const introspectionJwtResponseBranch = features.jwtIntrospectionResponse
+    ? `    // EXPERIMENTAL — RFC 9701 §4 / §5: a caller whose Accept header names
+    // application/token-introspection+jwt receives the introspection response
+    // as a signed JWT. Any other request (no Accept, application/json, a
+    // wildcard) is answered exactly as before, and the branch sits AFTER client
+    // authentication and token resolution so the Accept header can never
+    // bypass either (§8.2 downgrade prevention).
+    if (acceptsIntrospectionJwt(c.req.header('Accept'))) {
+      // RFC 9701 §3 / §5: before the response leaves as a signed assertion its
+      // members are restricted to what the authenticated caller may see — a
+      // caller that is neither the client the token was issued to nor listed in
+      // its aud gets { active: false }, indistinguishable from an unknown token.
+      const restrictedResponse = restrictIntrospectionResponseToCaller(
+        response,
+        authenticatedClientId,
+      );
+      // RFC 9701 §6: alg is pinned to RS256 (the default for a client that
+      // registered no introspection_signed_response_alg). The general-purpose
+      // ACTIVE key is not guaranteed to be RS256 — SigningKeyProvider may
+      // legitimately return ES256 as active alongside an RS256 + ES256
+      // registered set — so the key is picked by alg from the registered set.
+      // Its public half is published at /.well-known/jwks.json under the same
+      // kid. selectSigningKeyByAlg throws when no RS256 key is registered,
+      // which surfaces as a server_error below (a configuration mistake)
+      // rather than as an unverifiable introspection response.
+      const introspectionSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+      const introspectionSigningKey = introspectionSigningKeys.length > 0
+        ? selectSigningKeyByAlg(introspectionSigningKeys, 'RS256')
+        : {
+            // Falls back to the single-key context so a hand-wired provider
+            // that never populated the key set keeps working; on the default
+            // single RS256 key both branches resolve the same key.
+            privateKey: c.get('privateKey'),
+            publicJwk: c.get('publicJwk'),
+            keyId: c.get('keyId'),
+          };
+      const responseJwt = await createIntrospectionResponseJwt({
+        issuer: c.get('config').issuer,
+        audience: authenticatedClientId,
+        introspection: restrictedResponse,
+        signingKey: introspectionSigningKey,
+      });
+      // RFC 9701 §5: the success response is the compact JWS itself under its
+      // own media type. c.body (unlike c.text, which forces text/plain) keeps
+      // the explicitly set Content-Type, and the cache-busting headers set at
+      // the top of the handler still apply.
+      c.header('Content-Type', TOKEN_INTROSPECTION_JWT_MEDIA_TYPE);
+      return c.body(responseJwt);
+    }
+
+`
+    : '';
   return `import { Hono } from 'hono';
 import {
   extractClientCredentials,
@@ -7990,9 +8077,9 @@ import {
   buildIntrospectionResponse,
   INACTIVE_INTROSPECTION_RESPONSE,
   IntrospectionError,
-  TokenError,
+  TokenError,${introspectionJwtCoreImports}
   type IntrospectionResponse,
-} from '${corePkg}';
+} from '${corePkg}';${introspectionJwtImports}
 import {
   tokenClientResolver as defaultTokenClientResolver,
   introspectionAccessTokenResolver as defaultAccessResolver,
@@ -8085,7 +8172,7 @@ introspectionApp.post('/', async (c) => {
       response = buildIntrospectionResponse(resolved);
     }
 
-    return c.json(response);
+${introspectionJwtResponseBranch}    return c.json(response);
   } catch (error) {
     if (error instanceof TokenError) {
       const status = error.statusCode as 400 | 401;
@@ -10241,6 +10328,271 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
 `;
 }
 
+export function jwtIntrospectionResponseConformanceClients(features: OidcFeatureConfig): string {
+  if (!features.jwtIntrospectionResponse) return '';
+  return `  // EXPERIMENTAL (RFC 9701 §3): a registered confidential client that is
+  // neither the issuee nor an audience of the introspected test tokens, so the
+  // caller restriction on the JWT response path can be pinned.
+  ['c-introspect-other', {
+    clientId: 'c-introspect-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
+`;
+}
+
+export function jwtIntrospectionResponseConformanceBlock(features: OidcFeatureConfig): string {
+  // Without the introspection endpoint there is nothing to answer in either
+  // format — the generic disabled-introspection block already pins the 404.
+  if (!features.introspection) return '';
+  // When the feature is off nothing is emitted, so the default generation
+  // output stays byte-identical to the pre-feature CLI. The disabled contract
+  // (no Accept branch in the route, no RFC 9701 discovery metadata) is pinned
+  // by the CLI generator tests instead.
+  if (!features.jwtIntrospectionResponse) return '';
+  return `
+  // EXPERIMENTAL — JWT Response for OAuth Token Introspection (RFC 9701).
+  // Generated because this provider was created with --enable
+  // jwt-introspection-response. These tests pin the contract the repository
+  // guarantees for the JWT-shaped introspection response: change the behavior
+  // and they fail, which is how a customized OP learns it drifted.
+  describe('JWT introspection response (RFC 9701)', () => {
+    const INTROSPECTION_JWT_MEDIA_TYPE = 'application/token-introspection+jwt';
+
+    function introspectWith(body: Record<string, string>, accept?: string): Promise<Response> {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (accept !== undefined) headers.Accept = accept;
+      return app.request('/introspect', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    // Pure helpers: they fetch, parse and verify only. Every assertion lives in
+    // an it(), and none of them branches on the OP's behavior. The JWKS-based
+    // verifier is deliberately local to this block (features do not share
+    // conformance helpers).
+    function decodeIntrospectionJwtSegment(segment: string): Record<string, unknown> {
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    async function inspectIntrospectionJwt(jwt: string): Promise<{
+      header: Record<string, unknown>;
+      payload: Record<string, unknown>;
+      signatureValid: boolean;
+    }> {
+      const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+      const header = decodeIntrospectionJwtSegment(encodedHeader);
+      const jwks = await (await app.request('/.well-known/jwks.json')).json();
+      const jwk = (jwks.keys as Array<Record<string, unknown>>).find(
+        (candidate) => candidate.kid === header.kid,
+      );
+      const key = await crypto.subtle.importKey(
+        'jwk',
+        { kty: 'RSA', n: jwk?.n as string, e: jwk?.e as string },
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['verify'],
+      );
+      const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const signatureValid = await crypto.subtle.verify(
+        'RSASSA-PKCS1-v1_5',
+        key,
+        Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+        new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+      );
+      return { header, payload: decodeIntrospectionJwtSegment(encodedPayload), signatureValid };
+    }
+
+    describe('Signed JWT response (RFC 9701 §4 / §5)', () => {
+      it('should answer a JWT-accepting caller with a verifiable signed introspection JWT', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-active', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+        });
+        const res = await introspectWith(
+          { client_id: 'c-conf', client_secret: 's', token: 'rfc9701-active' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        // RFC 9701 §5: the compact JWS travels under its own media type, and the
+        // RFC 7662 §2.2 cache-busting headers still apply.
+        expect(res.headers.get('Content-Type')).toBe(INTROSPECTION_JWT_MEDIA_TYPE);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+
+        const { header, payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        // §5 REQUIRED typ (the §8.1 cross-JWT confusion defense) + §6 default alg.
+        expect(header).toEqual({ typ: 'token-introspection+jwt', alg: 'RS256', kid: 'test-key' });
+        expect(signatureValid).toBe(true);
+        // §5: iss / aud / iat at the top level, the RFC 7662 members inside
+        // token_introspection — and nothing else (no top-level sub / exp, which
+        // would let the JWT pass for an access token).
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'iat', 'iss', 'token_introspection']);
+        expect(payload.iss).toBe('http://localhost:3000');
+        expect(payload.aud).toBe('c-conf');
+        expect(payload.token_introspection).toEqual({
+          active: true,
+          scope: 'openid',
+          client_id: 'c-conf',
+          token_type: 'Bearer',
+          sub: 'testuser',
+          exp: now + 3600,
+          iat: now,
+        });
+      });
+
+      it('should wrap an unknown token as token_introspection with active false only', async () => {
+        const res = await introspectWith(
+          { client_id: 'c-conf', client_secret: 's', token: 'rfc9701-unknown' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe(INTROSPECTION_JWT_MEDIA_TYPE);
+        const { payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        expect(signatureValid).toBe(true);
+        expect(payload.token_introspection).toEqual({ active: false });
+      });
+    });
+
+    describe('RFC 7662 JSON path is unchanged', () => {
+      it('should keep answering RFC 7662 JSON when the caller sends no Accept header', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-json', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+        });
+        const res = await introspectWith({
+          client_id: 'c-conf',
+          client_secret: 's',
+          token: 'rfc9701-json',
+        });
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toEqual({
+          active: true,
+          scope: 'openid',
+          client_id: 'c-conf',
+          token_type: 'Bearer',
+          sub: 'testuser',
+          exp: now + 3600,
+          iat: now,
+        });
+      });
+
+      it('should not treat a wildcard Accept as a JWT request', async () => {
+        // A generic HTTP client's default Accept must not flip the response
+        // format — only the explicitly named RFC 9701 media type does.
+        const res = await introspectWith(
+          { client_id: 'c-conf', client_secret: 's', token: 'rfc9701-unknown' },
+          '*/*',
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toEqual({ active: false });
+      });
+    });
+
+    describe('Caller audience restriction (RFC 9701 §3 / §5)', () => {
+      it('should answer a caller that is neither issuee nor audience with active false', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-foreign', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+        });
+        const res = await introspectWith(
+          { client_id: 'c-introspect-other', client_secret: 's', token: 'rfc9701-foreign' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        const { payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        expect(signatureValid).toBe(true);
+        // The withheld response is indistinguishable from an unknown token, and
+        // the JWT is addressed to the caller that asked.
+        expect(payload.aud).toBe('c-introspect-other');
+        expect(payload.token_introspection).toEqual({ active: false });
+      });
+
+      it('should disclose the response to a caller listed in the token audience', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-audience', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+          audience: ['c-introspect-other'],
+        });
+        const res = await introspectWith(
+          { client_id: 'c-introspect-other', client_secret: 's', token: 'rfc9701-audience' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        const { payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        expect(signatureValid).toBe(true);
+        expect(payload.token_introspection).toEqual({
+          active: true,
+          scope: 'openid',
+          client_id: 'c-conf',
+          token_type: 'Bearer',
+          sub: 'testuser',
+          exp: now + 3600,
+          iat: now,
+          aud: ['c-introspect-other'],
+        });
+      });
+    });
+
+    describe('Downgrade prevention (RFC 9701 §8.2)', () => {
+      it('should refuse an unauthenticated request no matter what the Accept header asks for', async () => {
+        const res = await introspectWith({ token: 'rfc9701-active' }, INTROSPECTION_JWT_MEDIA_TYPE);
+
+        // Client authentication runs before the response-format branch, so the
+        // Accept header can never bypass it; the error stays RFC 7662 JSON.
+        expect(res.status).toBe(401);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toMatchObject({ error: 'invalid_client' });
+      });
+    });
+
+    describe('Provider metadata (RFC 9701 §7)', () => {
+      it('should advertise introspection_signing_alg_values_supported as exactly RS256', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.introspection_signing_alg_values_supported).toEqual(['RS256']);
+      });
+    });
+  });
+`;
+}
+
 export function conformanceTestClientsBlock(features: OidcFeatureConfig): string {
   if (!features.refreshToken) {
     return `const testClients = new Map<string, RegisteredClient>([
@@ -10274,7 +10626,7 @@ export function conformanceTestClientsBlock(features: OidcFeatureConfig): string
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_basic',
   }],
-${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}${jwtIntrospectionResponseConformanceClients(features)}]);
 `;
   }
   return `const testClients = new Map<string, RegisteredClient>([
@@ -10321,7 +10673,7 @@ ${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClie
     grantTypes: ['authorization_code'],
     tokenEndpointAuthMethod: 'client_secret_post',
   }],
-${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}]);
+${tokenExchangeConformanceClients(features)}${deviceAuthorizationConformanceClients(features)}${idJagConformanceClients(features)}${cibaConformanceClients(features)}${jwtIntrospectionResponseConformanceClients(features)}]);
 `;
 }
 
@@ -17265,6 +17617,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

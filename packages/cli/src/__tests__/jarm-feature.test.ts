@@ -39,6 +39,7 @@ describe('resolveFeatures with jarm', () => {
       deviceAuthorizationGrant: false,
       idJag: false,
       ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });
@@ -66,6 +67,7 @@ describe('resolveFeatures with jarm', () => {
       deviceAuthorizationGrant: false,
       idJag: false,
       ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });
@@ -83,6 +85,7 @@ describe('resolveFeatures with jarm', () => {
       deviceAuthorizationGrant: false,
       idJag: false,
       ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });

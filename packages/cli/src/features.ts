@@ -65,6 +65,10 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  *   Core 1.0, poll mode only — the client presents a login_hint over the back
  *   channel and polls the token endpoint while the user approves on their own
  *   browser.
+ * - jwt-introspection-response: JWT Response for OAuth Token Introspection
+ *   (RFC 9701) — the introspection endpoint answers a request whose Accept
+ *   header names application/token-introspection+jwt with a signed JWT.
+ *   Requires the introspection feature (its endpoint carries the response).
  */
 export const EXPERIMENTAL_FEATURES = [
   'par',
@@ -73,6 +77,7 @@ export const EXPERIMENTAL_FEATURES = [
   'device-authorization-grant',
   'id-jag',
   'ciba',
+  'jwt-introspection-response',
 ] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
@@ -124,6 +129,13 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   `urn:openid:params:grant-type:ciba` grant (CIBA Core 1.0, poll mode) to
  *   `@maronn-openid-connect/experimental/ciba` before core's grant_type
  *   validation would reject the URN.
+ * - jwtIntrospectionResponse: experimental, disabled by default. When true, the
+ *   introspection route answers a request whose Accept header names
+ *   application/token-introspection+jwt with a signed introspection JWT
+ *   (RFC 9701 §5, typ token-introspection+jwt, RS256) via
+ *   `@maronn-openid-connect/experimental/jwt-introspection-response`, after
+ *   restricting the disclosed members to the authenticated caller (§3). A
+ *   request that does not name that media type is answered exactly as before.
  * - transactionBinding: optional hardening, disabled by default. When true, the
  *   authorize endpoint issues a per-transaction HttpOnly cookie and the
  *   login / consent steps refuse to run for a User-Agent that cannot present
@@ -141,6 +153,7 @@ export interface OidcFeatureConfig {
   deviceAuthorizationGrant: boolean;
   idJag: boolean;
   ciba: boolean;
+  jwtIntrospectionResponse: boolean;
   transactionBinding: boolean;
 }
 
@@ -166,6 +179,7 @@ const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatu
   'device-authorization-grant': 'deviceAuthorizationGrant',
   'id-jag': 'idJag',
   ciba: 'ciba',
+  'jwt-introspection-response': 'jwtIntrospectionResponse',
 };
 
 /**
@@ -184,6 +198,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   deviceAuthorizationGrant: false,
   idJag: false,
   ciba: false,
+  jwtIntrospectionResponse: false,
   transactionBinding: false,
 };
 
@@ -252,6 +267,16 @@ export function resolveFeatures(options: {
   for (const name of disable) {
     assertKnownFeature(name);
     features[featureKey(name)] = false;
+  }
+  // Cross-feature dependency: the RFC 9701 JWT response rides on the RFC 7662
+  // introspection endpoint, which is not generated when introspection is
+  // disabled — there would be nowhere to answer with the JWT.
+  if (features.jwtIntrospectionResponse && !features.introspection) {
+    throw new Error(
+      'Feature "jwt-introspection-response" requires the introspection feature: ' +
+        'the RFC 9701 JWT response is returned by the RFC 7662 introspection endpoint, ' +
+        'which is not generated when introspection is disabled',
+    );
   }
   return features;
 }

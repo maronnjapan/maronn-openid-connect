@@ -33,7 +33,8 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
     !features.jarm &&
     !features.deviceAuthorizationGrant &&
     !features.idJag &&
-    !features.ciba
+    !features.ciba &&
+    !features.jwtIntrospectionResponse
   ) {
     return installCommand;
   }

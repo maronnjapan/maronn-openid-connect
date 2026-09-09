@@ -70,6 +70,7 @@ pnpm add @maronn-openid-connect/experimental
 | `device-authorization-grant` | Device Authorization Grant | RFC 8628 | [Device Authorization Grant](./device-authorization-grant/) |
 | `id-jag` | Cross-App Access / Identity Assertion Authorization Grant | draft-ietf-oauth-identity-assertion-authz-grant-04 | [Cross-App Access / ID-JAG](./id-jag/) |
 | `ciba` | Client-Initiated Backchannel Authentication（Poll モード） | CIBA Core 1.0 (OpenID Foundation Final) | [CIBA](./ciba/) |
+| `jwt-introspection-response` | JWT Response for OAuth Token Introspection | RFC 9701 | [JWT Introspection Response](./jwt-introspection-response/) |
 
 ## 問題の報告
 

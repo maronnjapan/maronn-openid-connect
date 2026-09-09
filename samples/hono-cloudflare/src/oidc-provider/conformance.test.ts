@@ -274,6 +274,18 @@ const testClients = new Map<string, RegisteredClient>([
     tokenEndpointAuthMethod: 'client_secret_post',
     idTokenSignedResponseAlg: 'ES256' as const,
   }],
+  // EXPERIMENTAL (RFC 9701 §3): a registered confidential client that is
+  // neither the issuee nor an audience of the introspected test tokens, so the
+  // caller restriction on the JWT response path can be pinned.
+  ['c-introspect-other', {
+    clientId: 'c-introspect-other',
+    clientSecret: 's',
+    redirectUris: [REDIRECT_URI],
+    clientType: 'confidential' as const,
+    responseTypes: ['code'],
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+  }],
 ]);
 
 // OIDC Core 1.0 §6.1: a signed RS256 Request Object for the conformance flow,
@@ -6907,6 +6919,242 @@ describe('generated provider HTTP conformance', () => {
 
         expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
         expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
+      });
+    });
+  });
+
+  // EXPERIMENTAL — JWT Response for OAuth Token Introspection (RFC 9701).
+  // Generated because this provider was created with --enable
+  // jwt-introspection-response. These tests pin the contract the repository
+  // guarantees for the JWT-shaped introspection response: change the behavior
+  // and they fail, which is how a customized OP learns it drifted.
+  describe('JWT introspection response (RFC 9701)', () => {
+    const INTROSPECTION_JWT_MEDIA_TYPE = 'application/token-introspection+jwt';
+
+    function introspectWith(body: Record<string, string>, accept?: string): Promise<Response> {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (accept !== undefined) headers.Accept = accept;
+      return app.request('/introspect', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams(body).toString(),
+      });
+    }
+
+    // Pure helpers: they fetch, parse and verify only. Every assertion lives in
+    // an it(), and none of them branches on the OP's behavior. The JWKS-based
+    // verifier is deliberately local to this block (features do not share
+    // conformance helpers).
+    function decodeIntrospectionJwtSegment(segment: string): Record<string, unknown> {
+      const base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    async function inspectIntrospectionJwt(jwt: string): Promise<{
+      header: Record<string, unknown>;
+      payload: Record<string, unknown>;
+      signatureValid: boolean;
+    }> {
+      const [encodedHeader = '', encodedPayload = '', encodedSignature = ''] = jwt.split('.');
+      const header = decodeIntrospectionJwtSegment(encodedHeader);
+      const jwks = await (await app.request('/.well-known/jwks.json')).json();
+      const jwk = (jwks.keys as Array<Record<string, unknown>>).find(
+        (candidate) => candidate.kid === header.kid,
+      );
+      const key = await crypto.subtle.importKey(
+        'jwk',
+        { kty: 'RSA', n: jwk?.n as string, e: jwk?.e as string },
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['verify'],
+      );
+      const base64 = encodedSignature.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+      const signatureValid = await crypto.subtle.verify(
+        'RSASSA-PKCS1-v1_5',
+        key,
+        Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)),
+        new TextEncoder().encode(encodedHeader + '.' + encodedPayload),
+      );
+      return { header, payload: decodeIntrospectionJwtSegment(encodedPayload), signatureValid };
+    }
+
+    describe('Signed JWT response (RFC 9701 §4 / §5)', () => {
+      it('should answer a JWT-accepting caller with a verifiable signed introspection JWT', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-active', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+        });
+        const res = await introspectWith(
+          { client_id: 'c-conf', client_secret: 's', token: 'rfc9701-active' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        // RFC 9701 §5: the compact JWS travels under its own media type, and the
+        // RFC 7662 §2.2 cache-busting headers still apply.
+        expect(res.headers.get('Content-Type')).toBe(INTROSPECTION_JWT_MEDIA_TYPE);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Pragma')).toBe('no-cache');
+
+        const { header, payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        // §5 REQUIRED typ (the §8.1 cross-JWT confusion defense) + §6 default alg.
+        expect(header).toEqual({ typ: 'token-introspection+jwt', alg: 'RS256', kid: 'test-key' });
+        expect(signatureValid).toBe(true);
+        // §5: iss / aud / iat at the top level, the RFC 7662 members inside
+        // token_introspection — and nothing else (no top-level sub / exp, which
+        // would let the JWT pass for an access token).
+        expect(Object.keys(payload).sort()).toEqual(['aud', 'iat', 'iss', 'token_introspection']);
+        expect(payload.iss).toBe('http://localhost:3000');
+        expect(payload.aud).toBe('c-conf');
+        expect(payload.token_introspection).toEqual({
+          active: true,
+          scope: 'openid',
+          client_id: 'c-conf',
+          token_type: 'Bearer',
+          sub: 'testuser',
+          exp: now + 3600,
+          iat: now,
+        });
+      });
+
+      it('should wrap an unknown token as token_introspection with active false only', async () => {
+        const res = await introspectWith(
+          { client_id: 'c-conf', client_secret: 's', token: 'rfc9701-unknown' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe(INTROSPECTION_JWT_MEDIA_TYPE);
+        const { payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        expect(signatureValid).toBe(true);
+        expect(payload.token_introspection).toEqual({ active: false });
+      });
+    });
+
+    describe('RFC 7662 JSON path is unchanged', () => {
+      it('should keep answering RFC 7662 JSON when the caller sends no Accept header', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-json', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+        });
+        const res = await introspectWith({
+          client_id: 'c-conf',
+          client_secret: 's',
+          token: 'rfc9701-json',
+        });
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toEqual({
+          active: true,
+          scope: 'openid',
+          client_id: 'c-conf',
+          token_type: 'Bearer',
+          sub: 'testuser',
+          exp: now + 3600,
+          iat: now,
+        });
+      });
+
+      it('should not treat a wildcard Accept as a JWT request', async () => {
+        // A generic HTTP client's default Accept must not flip the response
+        // format — only the explicitly named RFC 9701 media type does.
+        const res = await introspectWith(
+          { client_id: 'c-conf', client_secret: 's', token: 'rfc9701-unknown' },
+          '*/*',
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toEqual({ active: false });
+      });
+    });
+
+    describe('Caller audience restriction (RFC 9701 §3 / §5)', () => {
+      it('should answer a caller that is neither issuee nor audience with active false', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-foreign', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+        });
+        const res = await introspectWith(
+          { client_id: 'c-introspect-other', client_secret: 's', token: 'rfc9701-foreign' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        const { payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        expect(signatureValid).toBe(true);
+        // The withheld response is indistinguishable from an unknown token, and
+        // the JWT is addressed to the caller that asked.
+        expect(payload.aud).toBe('c-introspect-other');
+        expect(payload.token_introspection).toEqual({ active: false });
+      });
+
+      it('should disclose the response to a caller listed in the token audience', async () => {
+        const now = Math.floor(Date.now() / 1000);
+        accessTokenStore.set('rfc9701-audience', {
+          sub: 'testuser',
+          clientId: 'c-conf',
+          scope: ['openid'],
+          expiresAt: now + 3600,
+          iat: now,
+          audience: ['c-introspect-other'],
+        });
+        const res = await introspectWith(
+          { client_id: 'c-introspect-other', client_secret: 's', token: 'rfc9701-audience' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(200);
+        const { payload, signatureValid } = await inspectIntrospectionJwt(await res.text());
+        expect(signatureValid).toBe(true);
+        expect(payload.token_introspection).toEqual({
+          active: true,
+          scope: 'openid',
+          client_id: 'c-conf',
+          token_type: 'Bearer',
+          sub: 'testuser',
+          exp: now + 3600,
+          iat: now,
+          aud: ['c-introspect-other'],
+        });
+      });
+    });
+
+    describe('Downgrade prevention (RFC 9701 §8.2)', () => {
+      it('should refuse an unauthenticated request no matter what the Accept header asks for', async () => {
+        const res = await introspectWith({ token: 'rfc9701-active' }, INTROSPECTION_JWT_MEDIA_TYPE);
+
+        // Client authentication runs before the response-format branch, so the
+        // Accept header can never bypass it; the error stays RFC 7662 JSON.
+        expect(res.status).toBe(401);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toMatchObject({ error: 'invalid_client' });
+      });
+    });
+
+    describe('Provider metadata (RFC 9701 §7)', () => {
+      it('should advertise introspection_signing_alg_values_supported as exactly RS256', async () => {
+        const metadata = await (await app.request('/.well-known/openid-configuration')).json();
+
+        expect(metadata.introspection_signing_alg_values_supported).toEqual(['RS256']);
       });
     });
   });

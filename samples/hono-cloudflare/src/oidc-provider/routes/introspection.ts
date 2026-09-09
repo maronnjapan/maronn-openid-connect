@@ -12,8 +12,16 @@ import {
   INACTIVE_INTROSPECTION_RESPONSE,
   IntrospectionError,
   TokenError,
+  selectSigningKeyByAlg,
+  type SigningKey,
   type IntrospectionResponse,
 } from '@maronn-openid-connect/core';
+import {
+  TOKEN_INTROSPECTION_JWT_MEDIA_TYPE,
+  acceptsIntrospectionJwt,
+  createIntrospectionResponseJwt,
+  restrictIntrospectionResponseToCaller,
+} from '@maronn-openid-connect/experimental/jwt-introspection-response';
 import {
   tokenClientResolver as defaultTokenClientResolver,
   introspectionAccessTokenResolver as defaultAccessResolver,
@@ -104,6 +112,55 @@ introspectionApp.post('/', async (c) => {
     let response: IntrospectionResponse = INACTIVE_INTROSPECTION_RESPONSE;
     if (resolved !== null && isIntrospectionTokenActive(resolved)) {
       response = buildIntrospectionResponse(resolved);
+    }
+
+    // EXPERIMENTAL — RFC 9701 §4 / §5: a caller whose Accept header names
+    // application/token-introspection+jwt receives the introspection response
+    // as a signed JWT. Any other request (no Accept, application/json, a
+    // wildcard) is answered exactly as before, and the branch sits AFTER client
+    // authentication and token resolution so the Accept header can never
+    // bypass either (§8.2 downgrade prevention).
+    if (acceptsIntrospectionJwt(c.req.header('Accept'))) {
+      // RFC 9701 §3 / §5: before the response leaves as a signed assertion its
+      // members are restricted to what the authenticated caller may see — a
+      // caller that is neither the client the token was issued to nor listed in
+      // its aud gets { active: false }, indistinguishable from an unknown token.
+      const restrictedResponse = restrictIntrospectionResponseToCaller(
+        response,
+        authenticatedClientId,
+      );
+      // RFC 9701 §6: alg is pinned to RS256 (the default for a client that
+      // registered no introspection_signed_response_alg). The general-purpose
+      // ACTIVE key is not guaranteed to be RS256 — SigningKeyProvider may
+      // legitimately return ES256 as active alongside an RS256 + ES256
+      // registered set — so the key is picked by alg from the registered set.
+      // Its public half is published at /.well-known/jwks.json under the same
+      // kid. selectSigningKeyByAlg throws when no RS256 key is registered,
+      // which surfaces as a server_error below (a configuration mistake)
+      // rather than as an unverifiable introspection response.
+      const introspectionSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+      const introspectionSigningKey = introspectionSigningKeys.length > 0
+        ? selectSigningKeyByAlg(introspectionSigningKeys, 'RS256')
+        : {
+            // Falls back to the single-key context so a hand-wired provider
+            // that never populated the key set keeps working; on the default
+            // single RS256 key both branches resolve the same key.
+            privateKey: c.get('privateKey'),
+            publicJwk: c.get('publicJwk'),
+            keyId: c.get('keyId'),
+          };
+      const responseJwt = await createIntrospectionResponseJwt({
+        issuer: c.get('config').issuer,
+        audience: authenticatedClientId,
+        introspection: restrictedResponse,
+        signingKey: introspectionSigningKey,
+      });
+      // RFC 9701 §5: the success response is the compact JWS itself under its
+      // own media type. c.body (unlike c.text, which forces text/plain) keeps
+      // the explicitly set Content-Type, and the cache-busting headers set at
+      // the top of the handler still apply.
+      c.header('Content-Type', TOKEN_INTROSPECTION_JWT_MEDIA_TYPE);
+      return c.body(responseJwt);
     }
 
     return c.json(response);

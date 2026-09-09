@@ -51,7 +51,7 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features) },
       { path: 'routes/userinfo.ts', content: userinfoRouteTemplate(pkg) },
       ...(features.introspection
-        ? [{ path: 'routes/introspection.ts', content: introspectionRouteTemplate(pkg) }]
+        ? [{ path: 'routes/introspection.ts', content: introspectionRouteTemplate(pkg, features) }]
         : []),
       ...(features.revocation
         ? [{ path: 'routes/revocation.ts', content: revocationRouteTemplate(pkg) }]

@@ -20,6 +20,10 @@
       "types": "./dist/jarm/index.d.ts",
       "import": "./dist/jarm/index.js"
     },
+    "./jwt-introspection-response": {
+      "types": "./dist/jwt-introspection-response/index.d.ts",
+      "import": "./dist/jwt-introspection-response/index.js"
+    },
     "./par": {
       "types": "./dist/par/index.d.ts",
       "import": "./dist/par/index.js"

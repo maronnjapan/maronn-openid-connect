@@ -169,5 +169,9 @@ discoveryApp.get('/', (c) => {
     // profile on the jwt-bearer grant. Which issuers are actually trusted is
     // local policy and is not disclosed here (draft §9.4).
     authorization_grant_profiles_supported: ['urn:ietf:params:oauth:grant-profile:id-jag'],
+    // EXPERIMENTAL — RFC 9701 §7 metadata. The introspection response JWT is
+    // always signed with RS256 (§6: the default for a client that registered no
+    // introspection_signed_response_alg), so exactly one alg is advertised.
+    introspection_signing_alg_values_supported: ['RS256'],
   });
 });

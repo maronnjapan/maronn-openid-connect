@@ -1399,7 +1399,10 @@ describe('validateAuthorizationRequest', () => {
       expect(result.redirectUri).toBe(registeredRedirect);
     });
 
-    it('should reject a request object with an invalid signature as invalid_request', async () => {
+    // OIDC Core 1.0 §6.3: "invalid_request_object: The request parameter contains an
+    // invalid Request Object." Parse/verification failures use this code, not the
+    // generic invalid_request.
+    it('should reject a request object whose signature does not verify with invalid_request_object', async () => {
       // Signed with a different key than the one published under kid.
       const request = await buildSignedRequestObject(
         {
@@ -1419,11 +1422,11 @@ describe('validateAuthorizationRequest', () => {
 
       expect(error).toBeInstanceOf(AuthorizationError);
       expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
       );
     });
 
-    it('should reject a request object with an unknown kid as invalid_request', async () => {
+    it('should reject a request object with an unknown kid with invalid_request_object', async () => {
       const request = await buildSignedRequestObject(
         {
           response_type: 'code',
@@ -1442,11 +1445,11 @@ describe('validateAuthorizationRequest', () => {
 
       expect(error).toBeInstanceOf(AuthorizationError);
       expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
       );
     });
 
-    it('should reject a request object with an unsupported alg as invalid_request', async () => {
+    it('should reject a request object with an unsupported signing alg with invalid_request_object', async () => {
       const request = buildRequestObjectWithAlg('HS256', {
         response_type: 'code',
         client_id: 'ro-client',
@@ -1461,8 +1464,53 @@ describe('validateAuthorizationRequest', () => {
 
       expect(error).toBeInstanceOf(AuthorizationError);
       expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
       );
+    });
+
+    it('should reject a request object when no client JWKS is registered with invalid_request_object', async () => {
+      const noJwksClient: ClientInfo = {
+        clientId: 'ro-client-nokeys',
+        redirectUris: [registeredRedirect],
+      };
+      const request = await buildSignedRequestObject(
+        {
+          response_type: 'code',
+          client_id: 'ro-client-nokeys',
+          redirect_uri: registeredRedirect,
+          scope: 'openid',
+        },
+        rsaKeyPair.privateKey,
+        kid,
+      );
+
+      const error = await validateAuthorizationRequest(
+        baseParams({ client_id: 'ro-client-nokeys', request }),
+        createClientResolver([noJwksClient]),
+      ).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect((error as AuthorizationError).error).toEqual(
+        AuthorizationErrorCode.InvalidRequestObject,
+      );
+    });
+
+    it('should throw without a redirect uri when the request object cannot be parsed', async () => {
+      // A broken Request Object cannot be trusted, including any redirect_uri it may
+      // carry, so the error must stay on the OP (non-redirectable, no state echo).
+      const error = await validateAuthorizationRequest(
+        baseParams({ request: 'not-a-jwt', state: 'st-broken' }),
+        resolver,
+      ).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      const authError = error as AuthorizationError;
+      expect(authError.error).toEqual(
+        AuthorizationErrorCode.InvalidRequestObject,
+      );
+      expect(authError.redirectable).toBe(false);
+      expect(authError.redirectUri).toBeUndefined();
+      expect(authError.state).toBeUndefined();
     });
 
     it('should reject when the request object response_type does not match the query', async () => {
@@ -1513,7 +1561,7 @@ describe('validateAuthorizationRequest', () => {
       });
     });
 
-    it('should reject an unsigned (alg=none) request object by default', async () => {
+    it('should reject an unsigned request object with invalid_request_object when allowUnsigned is false', async () => {
       const request = buildUnsignedRequestObject({
         response_type: 'code',
         client_id: 'ro-client',
@@ -1528,7 +1576,7 @@ describe('validateAuthorizationRequest', () => {
 
       expect(error).toBeInstanceOf(AuthorizationError);
       expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
       );
     });
 
@@ -1582,7 +1630,7 @@ describe('validateAuthorizationRequest', () => {
       expect(result.responseType).toBe('code');
     });
 
-    it('should reject a malformed request object with invalid_request', async () => {
+    it('should reject a request object with a broken JWS structure with invalid_request_object', async () => {
       const error = await validateAuthorizationRequest(
         baseParams({ request: 'not-a-jwt' }),
         resolver,
@@ -1590,11 +1638,11 @@ describe('validateAuthorizationRequest', () => {
 
       expect(error).toBeInstanceOf(AuthorizationError);
       expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
       );
     });
 
-    it('should reject a JWE (5-segment) request object with invalid_request', async () => {
+    it('should reject a JWE (5-segment) request object with invalid_request_object', async () => {
       const error = await validateAuthorizationRequest(
         baseParams({ request: 'a.b.c.d.e' }),
         resolver,
@@ -1602,7 +1650,7 @@ describe('validateAuthorizationRequest', () => {
 
       expect(error).toBeInstanceOf(AuthorizationError);
       expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
+        AuthorizationErrorCode.InvalidRequestObject,
       );
     });
   });
@@ -2202,7 +2250,7 @@ describe('validateAuthorizationRequest - state echo/non-echo invariant', () => {
       ).catch((e: unknown) => e);
 
       const authError = error as AuthorizationError;
-      expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequest);
+      expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
       expect(authError.redirectable).toBe(false);
       expect(authError.state).toBeUndefined();
     });

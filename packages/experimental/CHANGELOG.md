@@ -1,5 +1,15 @@
 # @maronn-openid-connect/experimental
 
+## 0.0.7
+
+### Patch Changes
+
+- 6f9d886: `--enable ciba` で OpenID Connect Client-Initiated Backchannel Authentication（CIBA Core 1.0、Poll モード）を生成できるようにする。バックチャネル認証エンドポイント（`POST /backchannel_authentication`）、OP がホストする認証デバイス UI（`GET /ciba` / `POST /ciba/login` / `POST /ciba/approve`）、トークンエンドポイントの `urn:openid:params:grant-type:ciba` grant 分岐、discovery の `backchannel_token_delivery_modes_supported: ["poll"]` と `backchannel_authentication_endpoint` を追加する。experimental には subpath export `@maronn-openid-connect/experimental/ciba`（リクエスト処理・認証デバイス UI のステップ関数・ポーリング状態機械・ストア契約）が加わる。未選択時の生成出力は、conformance.test.ts の default-off 契約テストを除き従来と同一。
+- 9f15718: core の minor リリースに合わせて publish し、core peer range の下限を `>=0.3.0` へ上げる
+  
+  experimental 自体の実装は変えていない。`invalid_request_object` の追加で core が 0.3.0 へ上がるため、RELEASE.md「peer range は『下限』を宣言する」に従って下限を追随させた。experimental はモノレポ内の core だけを相手にビルド・テストされるので、それより古い core を下限に残すと一度も試していない組み合わせを「動く」と宣言することになる。あわせて RELEASE.md「core の minor / major では experimental も一緒にリリースする」に従い、広い peer range のまま core だけが先に進む状態を作らないためのペアリングでもある。
+- 2eea313: `--enable jwt-introspection-response` で JWT Response for OAuth Token Introspection（RFC 9701）を生成できるようにする。イントロスペクションエンドポイントは、`Accept: application/token-introspection+jwt` を明示したリクエストに対してのみ、RFC 7662 の応答を `token_introspection` クレームへ封入し `typ: token-introspection+jwt`・RS256 で署名した JWT で返す。JWT 応答の経路には RFC 9701 §3 の呼び出し元 audience 制限（発行先本人または `aud` 記載先以外には `{"active": false}`）を適用し、discovery に `introspection_signing_alg_values_supported: ["RS256"]` を広告する。`Accept` を明示しないリクエストへの JSON 応答と、未選択時の生成出力は従来とバイト同一。`--disable introspection` との併用は生成時にエラーとして拒否する。experimental には subpath export `@maronn-openid-connect/experimental/jwt-introspection-response`（Accept 判定・audience 制限・応答 JWT 生成）が加わる。
+
 ## 0.0.6
 
 ### Patch Changes

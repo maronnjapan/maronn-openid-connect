@@ -1,5 +1,27 @@
 # @maronn-openid-connect/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- 6f9d886: `--enable ciba` で OpenID Connect Client-Initiated Backchannel Authentication（CIBA Core 1.0、Poll モード）を生成できるようにする。バックチャネル認証エンドポイント（`POST /backchannel_authentication`）、OP がホストする認証デバイス UI（`GET /ciba` / `POST /ciba/login` / `POST /ciba/approve`）、トークンエンドポイントの `urn:openid:params:grant-type:ciba` grant 分岐、discovery の `backchannel_token_delivery_modes_supported: ["poll"]` と `backchannel_authentication_endpoint` を追加する。experimental には subpath export `@maronn-openid-connect/experimental/ciba`（リクエスト処理・認証デバイス UI のステップ関数・ポーリング状態機械・ストア契約）が加わる。未選択時の生成出力は、conformance.test.ts の default-off 契約テストを除き従来と同一。
+- 8c043d0: `--scope` で、生成 OP が受け付けるカスタムスコープを生成時に宣言できるようにする。宣言すると `scopes.ts`（スコープポリシー）が生成され、discovery の `scopes_supported` に宣言したスコープが載り、認可エンドポイント（`--enable device-authorization-grant` / `--enable ciba` を併用した場合はデバイス認可・バックチャネル認証エンドポイントも）は宣言していないスコープ値を `invalid_scope` で拒否するようになる。このチェックは `applyOfflineAccessPolicy` の後に置き、付与条件を満たさない `offline_access` を「無視する」挙動（OIDC Core 1.0 §11）を壊さない。
+  
+  「誰にどのスコープを許すか」は CLI のオプションにせず、生成コード側に置いた。`scopes.ts` の `resolveGrantableScopes()`（async。手早く絞るための `RESTRICTED_SCOPE_SUBJECTS` 付き）が絞り込みの入口で、同意画面の表示と承認、SSO fast path と `prompt=none`、device / CIBA の承認からすでに `await` された状態で生成される。SSO と `prompt=none` では保存済み同意を引く前に適用するため、そのユーザーが持てないスコープをキーに同意を探し続けることがない。落としたスコープはリクエストを失敗させず付与スコープを狭める（RFC 6749 §3.3。トークンレスポンスの `scope` に実際の付与内容が載る）。宣言が 1 つも無い場合は何も生成せず、生成出力は従来とバイト同一。
+- 2eea313: `--enable jwt-introspection-response` で JWT Response for OAuth Token Introspection（RFC 9701）を生成できるようにする。イントロスペクションエンドポイントは、`Accept: application/token-introspection+jwt` を明示したリクエストに対してのみ、RFC 7662 の応答を `token_introspection` クレームへ封入し `typ: token-introspection+jwt`・RS256 で署名した JWT で返す。JWT 応答の経路には RFC 9701 §3 の呼び出し元 audience 制限（発行先本人または `aud` 記載先以外には `{"active": false}`）を適用し、discovery に `introspection_signing_alg_values_supported: ["RS256"]` を広告する。`Accept` を明示しないリクエストへの JSON 応答と、未選択時の生成出力は従来とバイト同一。`--disable introspection` との併用は生成時にエラーとして拒否する。experimental には subpath export `@maronn-openid-connect/experimental/jwt-introspection-response`（Accept 判定・audience 制限・応答 JWT 生成）が加わる。
+
+### Patch Changes
+
+- c1911c7: Request Object の検証失敗を `invalid_request_object`（OIDC Core 1.0 §6.3）で返す
+  
+  これまで `request` パラメータの Request Object がパース・署名検証に失敗すると、汎用の `invalid_request` に潰して返していた。OIDC Core 1.0 §6.3 が定義するとおり `invalid_request_object` を返すよう変更し、`request_not_supported`（Request Object の使用をやめるべき）と `invalid_request_object`（Request Object の生成処理を直すべき）をクライアントが区別できるようにした。
+  
+  - `AuthorizationErrorCode` に `InvalidRequestObject`（`invalid_request_object`）と `InvalidRequestUri`（`invalid_request_uri`）を追加した。既存の enum メンバーとシリアライズ値は変えていない
+  - `resolveRequestObjectParams` が `RequestObjectError` を `invalid_request_object` へ変換するようになった。壊れた Request Object 内の redirect_uri を信用しない非リダイレクト挙動（OP 上でのエラー表示、state 非 echo）は従来どおり
+  - CLI 生成の `conformance.test.ts` に、壊れた Request Object が非リダイレクトの `invalid_request_object` エラーページになる契約テストを追加した
+  
+  `invalid_request` の受信を前提にしていたクライアントは、Request Object 起因の失敗で `invalid_request_object` を受け取るようになる。
+
 ## 0.4.0
 
 ### Minor Changes

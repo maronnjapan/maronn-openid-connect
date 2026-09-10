@@ -138,6 +138,7 @@ export function createProviderConfig(
 export type RegisteredClient = ClientInfo & TokenClientInfo & {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
   idTokenSignedResponseAlg?: 'RS256' | 'ES256';
+  backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';
 };
 
 /**
@@ -157,7 +158,11 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
       // tokens at all: an online refresh token (bound to the login session) on every
       // authorization, and an offline one (usable after logout) when offline_access
       // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
-      grantTypes: ['authorization_code', 'refresh_token'],
+      // EXPERIMENTAL (CIBA Core 1.0 §7.1): registering the CIBA URN is what lets
+      // this confidential client POST /backchannel_authentication and poll the
+      // token endpoint with the resulting auth_req_id. Remove it to forbid CIBA
+      // for this client; public clients are rejected either way.
+      grantTypes: ['authorization_code', 'refresh_token', 'urn:openid:params:grant-type:ciba'],
       // RFC 7591 §2: token_endpoint_auth_method default is client_secret_basic.
       // The sample client authenticates with client_secret_post, so register it explicitly.
       tokenEndpointAuthMethod: 'client_secret_post',

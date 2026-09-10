@@ -1,5 +1,13 @@
 # @maronn-openid-connect/experimental
 
+## 0.0.6
+
+### Patch Changes
+
+- 6e2e8a4: core の minor リリースに合わせて publish する
+
+  experimental 自体の実装は変えていない。RELEASE.md「core の minor / major では experimental も一緒にリリースする」に従い、広い peer range のまま core だけが先に進む状態（公開済みの古い experimental が、まだ組み合わせて検証していない core を受け入れる状態）を作らないためのペアリングである。
+
 ## 0.0.5
 
 ### Patch Changes

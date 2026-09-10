@@ -66,6 +66,7 @@ export default defineConfig({
               label: 'Device Authorization Grant (RFC 8628)',
               slug: 'experimental/device-authorization-grant',
             },
+            { label: 'Cross-App Access / ID-JAG', slug: 'experimental/id-jag' },
           ],
         },
       ],

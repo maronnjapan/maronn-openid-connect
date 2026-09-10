@@ -10,6 +10,7 @@ export class ExpressGenerator implements FrameworkGenerator {
       options.corePackageName,
       expressApplyTemplate(options.features),
       options.features,
+      options.scopes,
     );
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@maronn-openid-connect/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "CLI tool to generate OpenID Connect Provider code",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,7 +47,8 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/cli#readme",
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.6"
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }

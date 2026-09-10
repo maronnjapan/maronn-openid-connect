@@ -1,5 +1,46 @@
 # @maronn-openid-connect/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- 189f030: `--enable id-jag` を追加し、生成 OP で Cross-App Access（ID-JAG）を再現できるようにした
+
+  Identity Assertion Authorization Grant（draft-ietf-oauth-identity-assertion-authz-grant-04）の experimental 実装を CLI から有効化できる。生成 OP は 2 つの役割を同時に持つ。
+
+  - **発行側（IdP）**: Token Exchange grant（RFC 8693）で `requested_token_type=urn:ietf:params:oauth:token-type:id-jag` を受け、自 OP 発行の ID トークンを検証して、別トラストドメインのリソース認可サーバー宛ての ID-JAG（`typ: oauth-id-jag+jwt`、RS256 署名）を発行する
+  - **受領側（リソースアプリの AS）**: `urn:ietf:params:oauth:grant-type:jwt-bearer` grant（RFC 7523）で、信頼設定済みの外部 IdP が署名した ID-JAG を検証し、自 OP のアクセストークンを発行する
+
+  subject_token は ID トークンに加え、`idJagConfig.allowRefreshTokenSubjects`（既定 true）で自 OP 発行の refresh token も受けられる（draft §4.3 MAY。検証は通常の refresh grant と同一で、rotation 再利用は token family を失効させる。RT は消費しない）。`idJagConfig.allowActorTokens`（既定 false の opt-in）で actor_token を受けて `act` claim を発行でき、受領側は act を発行アクセストークンへ引き継ぐ。`actor_token_type` は RFC 8693 §3 / RFC 7519 §9 が定義する 6 種（access_token / refresh_token / id_token / jwt / saml1 / saml2）を種別で区別せず受理し、内容検証はすべて `idJagConfig.actorTokenResolver`（デプロイ側の検証フック）が担う。リクエスト構造とリゾルバ戻り値の構造はライブラリが検証し、トークン内容の検証はリゾルバの責務。生成コードは自 OP 発行 ID トークンを検証する既定リゾルバを配線しており、差し替え・拡張で受理範囲を決められる。
+
+  生成コードは `routes/token.ts` の 2 分岐と `idJagConfig`（許可 audience、信頼 IdP、ID-JAG 有効期間、refresh subject と actor の受理設定、actor リゾルバのフック。信頼系はいずれも fail-safe な空デフォルト）、discovery のメタデータ（`grant_types_supported` への両 URN、`identity_chaining_requested_token_types_supported`、`authorization_grant_profiles_supported`）、XAA の契約テストで構成される。既存の `--enable token-exchange` と併用でき、`--enable id-jag` を付けない生成出力は従来とバイト単位で同一。
+
+- 6e2e8a4: online refresh token を追加し、Refresh Token の可否判定を標準の `grant_types` に一本化した
+
+  OIDC Core 1.0 §11 は `offline_access` を「End-User が居ない（not logged in）ときにも使える Refresh Token を要求する scope」と定義したうえで、Refresh Token の利用がその用途に限られないことを明示している（"The Authorization Server MAY grant Refresh Tokens in other contexts that are beyond the scope of this specification."）。この「other contexts」を **online refresh token** として実装した。
+
+  Refresh Token は次の 2 種類になる。
+
+  - **online refresh token**: `offline_access` を伴わない付与で発行する。発行元のログインセッションに束縛され、セッションが終わると `invalid_grant` になる
+  - **offline refresh token**: `offline_access` が付与された場合に発行する（付与には `prompt=consent` が必要）。セッションから独立しており、ログアウト後も使える
+
+  どちらを発行するかにかかわらず、クライアント登録メタデータ `grant_types`（RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2、既定は `["authorization_code"]`）に `refresh_token` が無ければ Refresh Token を発行しない。発行しても `unauthorized_client` で拒否されるだけの長期資格情報を渡さないためである。
+
+  ## 破壊的変更
+
+  - **生成コードの `RegisteredClient.offlineAccessAllowed` を削除した**。Refresh Token の可否は `grantTypes` だけで決まる。CLI で生成したコードを使っている場合、クライアント登録から `offlineAccessAllowed` を消し、`grantTypes` に `refresh_token` が入っていることを確認すること。`grantTypes` を書いていないクライアント（既定 `["authorization_code"]`）には `offline_access` が付与されなくなり、Refresh Token も発行されない
+  - **`applyOfflineAccessPolicy` の引数が変わった**。`(scope, effectiveParams, promptValues, client, isOfflineAccessGranted?)` となり、`client` が第 4 引数に入る
+  - **`OfflineAccessGrantedCallback` の context に `client` が加わった**。既定実装 `defaultIsOfflineAccessGranted` は `prompt=consent` かつ `grant_types` に `refresh_token` を含むことを要求する
+
+  ## 追加
+
+  - `ClientInfo.grantTypes`: 認可エンドポイントもクライアント登録の `grant_types` を参照できるようにした
+  - `AuthenticationSessionResolver` / `AuthenticationSessionInfo`: online refresh token の束縛先セッションを `sessionId` から解決する契約
+  - `validateRefreshTokenSession`: 束縛先セッションの生存を検証するステップ関数。`TokenRequestContext.authenticationSessionResolver` から `validateRefreshTokenGrant` に組み込まれる
+  - `RefreshTokenInfo.sessionId` / `AuthorizationCodeInfo.sessionId` / `SessionInfo.sessionId`: 認可からトークン発行、rotation まで束縛を引き継ぐ
+  - `clientAllowsGrantType` / `clientAllowsRefreshTokenGrant` / `DEFAULT_CLIENT_GRANT_TYPES`: `grant_types` の既定値の解釈を 1 箇所に集約した
+  - 生成コードの `ProviderConfig.onlineRefreshTokenEnabled`（既定 `true`）: `false` にすると Refresh Token は `offline_access` が付与された grant にだけ発行される
+
 ## 0.3.0
 
 ### Minor Changes

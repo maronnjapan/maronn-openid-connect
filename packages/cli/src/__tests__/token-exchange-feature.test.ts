@@ -52,6 +52,9 @@ describe('resolveFeatures with token-exchange', () => {
       tokenExchange: true,
       jarm: false,
       deviceAuthorizationGrant: false,
+      idJag: false,
+      ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });
@@ -67,6 +70,9 @@ describe('resolveFeatures with token-exchange', () => {
       tokenExchange: true,
       jarm: false,
       deviceAuthorizationGrant: false,
+      idJag: false,
+      ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });
@@ -92,6 +98,9 @@ describe('resolveFeatures with token-exchange', () => {
       tokenExchange: true,
       jarm: false,
       deviceAuthorizationGrant: false,
+      idJag: false,
+      ciba: false,
+      jwtIntrospectionResponse: false,
       transactionBinding: false,
     });
   });

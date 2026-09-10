@@ -43,6 +43,7 @@ const app = new Hono();
 | `--entry, -e <file>` | setup 時にパッチするエントリファイル（既定: `./src/index.ts`） |
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
+| `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
 | `--help, -h` | ヘルプ表示 |
 
 ## Generated Files
@@ -51,6 +52,7 @@ const app = new Hono();
 oidc-provider/
 ├── app.ts / apply.ts     # OP 本体と既存アプリへの組み込み関数
 ├── config.ts             # ProviderConfig・クライアント登録（既定値はローカル検証専用）
+├── scopes.ts             # スコープポリシー（--scope 指定時のみ）
 ├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
 ├── resolvers.ts          # セッション・同意状態の resolver
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト UI
@@ -113,6 +115,57 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `par` | 無効 | Pushed Authorization Requests エンドポイント（`/par`）と認可エンドポイントの `request_uri` 解決 | RFC 9126 |
 
 API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](../../experimental/) を参照してください。
+
+## Custom Scopes
+
+標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）は生成 OP 自身が扱います。それ以外に受け付けるスコープは、生成時に `--scope` で宣言します。
+
+```bash
+maronn-oidc generate hono --scope reports.read,reports.write
+```
+
+宣言すると `scopes.ts`（スコープポリシー）が生成され、生成 OP は次のようになります。
+
+- discovery の `scopes_supported` に宣言したスコープが載る
+- 宣言していないスコープ値を要求した認可リクエストは `invalid_scope` で拒否される（RFC 6749 §3.3 / §4.1.2.1）
+- ユーザーごとの絞り込みは、生成された `scopes.ts` に書く
+
+宣言が 1 つも無ければ `scopes.ts` も許容リストのチェックも生成しないため、既定の生成物の挙動は変わりません。
+
+許容リストのチェックは `applyOfflineAccessPolicy` の**後**に置かれます。付与条件を満たさない `offline_access` は OIDC Core 1.0 §11 に従ってそこで既に落ちているため、「無視する」挙動が `invalid_scope` に変わることはありません。`--enable device-authorization-grant` / `--enable ciba` を有効にした場合は、デバイス認可エンドポイントとバックチャネル認証エンドポイントにも同じ許容リストが適用されます。
+
+### ユーザーごとの絞り込みは生成コードに書く
+
+「誰にどのスコープを許すか」は CLI のオプションにしていません。運用ごとに条件（ロール、テナント、DB 参照）が違い、生成コードを改造しながら検証するというこのライブラリの使い方に合わないためです。代わりに、生成される `scopes.ts` に絞り込みの入口を用意し、判断が必要な全ステップから呼び出した状態で生成します。
+
+```typescript
+// scopes.ts（生成物）
+export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
+  'reports.read': ['alice'],   // 手早く絞るならここに書く
+};
+
+export async function resolveGrantableScopes(
+  requested: readonly string[],
+  subject: string,
+): Promise<string[]> {
+  // ロール・テナント・DB 参照など、複雑な条件はここに書く
+  return requested.filter((scope) => { /* ... */ });
+}
+```
+
+`resolveGrantableScopes()` は End-User が確定した後に呼ばれ、次の箇所からすでに `await` されています。async なので、DB / KV 参照へ置き換えても呼び出し側の変更は要りません。
+
+| 呼び出し元 | タイミング |
+|---|---|
+| `routes/consent.ts` | 同意画面の表示内容と、承認時の付与スコープ |
+| `routes/authorize.ts` | SSO fast path と `prompt=none`（同意画面を出さずに付与する経路） |
+| `routes/device.ts` / `routes/ciba-verification.ts` | device / CIBA の承認ステップ（該当機能を有効にした場合） |
+
+SSO と `prompt=none` では、**保存済み同意を引く前**にポリシーを適用します。絞る前の scope で同意を探すと、そのユーザーが持てないスコープをキーに検索することになり、いつまでも一致しないためです。
+
+落としたスコープはリクエストを失敗させず、付与スコープを狭めます。RFC 6749 §3.3 が要求より狭いスコープの発行を認めており、トークンレスポンスの `scope` に実際の付与内容が載ります。リクエストごと拒否したい場合は、呼び出し元で throw してください。
+
+なお、カスタムスコープに対応する UserInfo クレームはありません（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集してください。
 
 ## Contract Test (conformance.test.ts)
 

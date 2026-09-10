@@ -13,6 +13,8 @@ const OIDC_ENDPOINTS = [
   '/revoke',
   '/device_authorization',
   '/device',
+  '/backchannel_authentication',
+  '/ciba',
   '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',

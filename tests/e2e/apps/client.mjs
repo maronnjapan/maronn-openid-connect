@@ -11,6 +11,7 @@ const clientSecret = process.env.CLIENT_SECRET ?? 'e2e-client-secret';
 const redirectUri = new URL('/callback', clientBaseUrl).toString();
 const transactions = new Map();
 const deviceFlows = new Map();
+const cibaFlows = new Map();
 
 const server = createServer(async (req, res) => {
   try {
@@ -57,6 +58,19 @@ const server = createServer(async (req, res) => {
     // wait for the outcome instead of reimplementing the poll loop.
     if (req.method === 'GET' && url.pathname === '/device-result') {
       reportDeviceResult(url, res);
+      return;
+    }
+    // EXPERIMENTAL (CIBA Core 1.0, poll mode): act as the consumption device —
+    // present a login_hint over the back channel and start polling the token
+    // endpoint in the background while the user approves on their own browser.
+    if (req.method === 'GET' && url.pathname === '/start-ciba') {
+      await startCibaAuthentication(url, res);
+      return;
+    }
+    // Report what the background polling has reached so far, so the spec can
+    // wait for the outcome instead of reimplementing the poll loop.
+    if (req.method === 'GET' && url.pathname === '/ciba-result') {
+      reportCibaResult(url, res);
       return;
     }
     if (req.method === 'GET' && url.pathname === '/callback') {
@@ -218,6 +232,101 @@ async function pollDeviceToken(flow, deviceCode, initialInterval) {
 
   flow.status = 'failed';
   flow.error = 'timeout';
+}
+
+/**
+ * EXPERIMENTAL — CIBA Core 1.0 §7.1 / §10.1 (poll mode).
+ *
+ * Plays the consumption device: one back-channel POST naming the user via
+ * login_hint, then a poll loop that honors the interval the OP asked for,
+ * including the +5 seconds a slow_down response demands (§11).
+ */
+async function startCibaAuthentication(requestUrl, res) {
+  const fields = {
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: requestUrl.searchParams.get('scope') ?? 'openid profile email',
+    login_hint: requestUrl.searchParams.get('login_hint') ?? 'testuser',
+  };
+  const bindingMessage = requestUrl.searchParams.get('binding_message');
+  if (bindingMessage !== null) {
+    fields.binding_message = bindingMessage;
+  }
+  const authentication = await formPost(new URL('/backchannel_authentication', issuer), fields);
+
+  const flowId = randomString(16);
+  const flow = {
+    status: 'pending',
+    tokens: null,
+    error: null,
+  };
+  cibaFlows.set(flowId, flow);
+
+  // Deliberately not awaited: the device keeps polling while the spec drives
+  // the browser through the authentication device UI.
+  void pollCibaToken(flow, authentication.auth_req_id, authentication.interval);
+
+  sendJson(res, 200, {
+    flow_id: flowId,
+    auth_req_id: authentication.auth_req_id,
+    expires_in: authentication.expires_in,
+    interval: authentication.interval,
+  });
+}
+
+async function pollCibaToken(flow, authReqId, initialInterval) {
+  let intervalSeconds = initialInterval ?? 5;
+  const deadline = Date.now() + 60_000;
+
+  while (Date.now() < deadline) {
+    await sleep(intervalSeconds * 1000);
+    const response = await fetch(new URL('/token', issuer), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:openid:params:grant-type:ciba',
+        auth_req_id: authReqId,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+    const body = await response.json();
+
+    if (response.ok) {
+      flow.status = 'complete';
+      flow.tokens = body;
+      return;
+    }
+    if (body.error === 'authorization_pending') continue;
+    // CIBA §11: after slow_down the client MUST add 5 seconds.
+    if (body.error === 'slow_down') {
+      intervalSeconds += 5;
+      continue;
+    }
+    flow.status = 'failed';
+    flow.error = body.error;
+    return;
+  }
+
+  flow.status = 'failed';
+  flow.error = 'timeout';
+}
+
+function reportCibaResult(url, res) {
+  const flowId = requireSearchParam(url, 'flow_id');
+  const flow = cibaFlows.get(flowId);
+  if (flow === undefined) {
+    sendJson(res, 404, { error: 'unknown_flow' });
+    return;
+  }
+  sendJson(res, 200, {
+    status: flow.status,
+    error: flow.error,
+    access_token: flow.tokens?.access_token ?? null,
+    id_token: flow.tokens?.id_token ?? null,
+    scope: flow.tokens?.scope ?? null,
+    token_type: flow.tokens?.token_type ?? null,
+  });
 }
 
 function reportDeviceResult(url, res) {

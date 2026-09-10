@@ -20,6 +20,11 @@ export interface GeneratorOptions {
   corePackageName: string;
   /** Resolved feature toggles for the generated provider (default: every feature enabled) */
   features?: OidcFeatureConfig;
+  /**
+   * Custom scopes the generated provider accepts, from `--scope`
+   * (default: none declared, which generates no scope policy at all).
+   */
+  scopes?: string[];
 }
 
 /**

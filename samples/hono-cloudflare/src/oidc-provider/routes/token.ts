@@ -62,11 +62,30 @@ import {
   type ExchangedAccessTokenInfo,
 } from '@maronn-openid-connect/experimental/token-exchange';
 import {
+  IdJagError,
+  JWT_BEARER_GRANT_TYPE,
+  TOKEN_TYPE_ID_TOKEN,
+  matchesIdJagIssuanceRequest,
+  processIdJagIssuanceRequest,
+  processIdJagRedemptionRequest,
+  resolveIdJagActor,
+  type IdJagAccessTokenInfo,
+  type IdJagActorTokenResolver,
+  type IdJagTrustedIdentityProvider,
+} from '@maronn-openid-connect/experimental/id-jag';
+import type { JwkSet } from '@maronn-openid-connect/core';
+import {
   DEVICE_CODE_GRANT_TYPE,
   DeviceAuthorizationError,
   processDeviceCodeGrant,
 } from '@maronn-openid-connect/experimental/device-authorization-grant';
 import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';
+import {
+  CIBA_GRANT_TYPE,
+  CibaGrantError,
+  processCibaGrant,
+} from '@maronn-openid-connect/experimental/ciba';
+import { cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore } from '../store.js';
 
 /**
  * EXPERIMENTAL — OAuth 2.0 Token Exchange settings (RFC 8693).
@@ -80,6 +99,114 @@ import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../
 export const tokenExchangeConfig = {
   allowedTargets: [] as string[],
 };
+
+/**
+ * EXPERIMENTAL — Cross-App Access (XAA) / ID-JAG settings
+ * (draft-ietf-oauth-identity-assertion-authz-grant-04).
+ *
+ * Issuing side (this OP as the IdP, draft §4.3):
+ * - allowedAudiences: resource authorization server issuers this IdP may issue
+ *   an ID-JAG for. Empty by default (fail safe): every issuance request is
+ *   rejected with invalid_target until you list the peer AS issuers here.
+ *   Adding an entry grants that cross-app connection on behalf of every user —
+ *   there is no per-user consent screen in this flow.
+ * - idJagLifetimeSeconds: ID-JAG lifetime. Keep it short (draft example: 300);
+ *   clients are expected to request a fresh one instead of holding it.
+ * - allowedScopes: optional cap on the scopes an ID-JAG may carry. undefined
+ *   passes the requested scopes through (the resource AS applies its own
+ *   policy again on redemption).
+ * - allowRefreshTokenSubjects: whether a refresh token this OP issued may stand
+ *   in for the ID Token as the subject_token (draft §4.3 MAY), so a client can
+ *   request a fresh ID-JAG after its ID Token expired without a new SSO round
+ *   trip. Validated exactly like the standard refresh_token grant (rotation
+ *   reuse revokes the token family; online tokens require the login session to
+ *   be alive); the refresh token is NOT consumed. Grants without the openid
+ *   scope are refused — their refresh token replaces no identity assertion.
+ * - allowActorTokens: whether an actor_token (identifying who acts on the
+ *   subject's behalf) is accepted and recorded as the ID-JAG's act claim
+ *   (RFC 8693 §4.1). The draft defines no normative actor processing (§9.7
+ *   sketches extensions), so this is an opt-in extension and defaults to
+ *   false — an actor_token is rejected until you flip it, whatever else is
+ *   configured. Every token type identifier RFC 8693 §3 defines is accepted
+ *   the same way; the type alone decides nothing.
+ * - actorTokenResolver: validates the actor_token's CONTENT (signature,
+ *   revocation, whose token it is) — for every accepted type, this OP's own
+ *   ID Tokens included. The library only checks the request structure and the
+ *   shape of what you return. Return the act value ({ sub, act? }) for a valid
+ *   token, null for an invalid one (answered with a fixed invalid_request), or
+ *   throw IdJagError to pick the response yourself. The default below handles
+ *   ID Tokens this OP issued to the authenticated client; extend or replace it
+ *   to cover the other types. Clearing it rejects every actor_token.
+ *
+ * Consuming side (this OP as the resource authorization server, draft §4.4):
+ * - trustedIdentityProviders: the IdPs whose ID-JAGs are accepted on the
+ *   jwt-bearer grant. Empty by default (fail safe). Keys come from the inline
+ *   `jwks` when present, otherwise from `jwksUri` (fetched and cached below).
+ *   Never derive the key source from the assertion itself.
+ */
+const defaultIdJagActorTokenResolver: IdJagActorTokenResolver = async ({
+  actorToken,
+  actorTokenType,
+  clientId,
+  issuer,
+  jwks,
+}) =>
+  actorTokenType === TOKEN_TYPE_ID_TOKEN
+    ? resolveIdJagActor({ actorToken, issuer, clientId, jwks })
+    : null;
+
+export const idJagConfig = {
+  allowedAudiences: [] as string[],
+  idJagLifetimeSeconds: 300,
+  allowedScopes: undefined as string[] | undefined,
+  allowRefreshTokenSubjects: true,
+  allowActorTokens: false,
+  actorTokenResolver: defaultIdJagActorTokenResolver as IdJagActorTokenResolver | undefined,
+  trustedIdentityProviders: [] as Array<{ issuer: string; jwksUri?: string; jwks?: JwkSet }>,
+};
+
+/**
+ * EXPERIMENTAL — jwks_uri cache for trusted identity providers.
+ *
+ * A fetched JWKS is reused for 300 seconds, so a signing-key rotation at the
+ * IdP can take up to that long to be picked up (a verification that fails
+ * within the window is answered as an untrusted assertion). The fetch target
+ * comes exclusively from the static idJagConfig above — never from request or
+ * assertion content — which is what keeps this endpoint SSRF-free.
+ */
+const idJagJwksCache = new Map<string, { jwks: JwkSet; expiresAt: number }>();
+const ID_JAG_JWKS_CACHE_TTL_MS = 300_000;
+
+async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIdentityProvider[]> {
+  const resolved: IdJagTrustedIdentityProvider[] = [];
+  for (const entry of idJagConfig.trustedIdentityProviders) {
+    if (entry.jwks !== undefined) {
+      resolved.push({ issuer: entry.issuer, jwks: entry.jwks });
+      continue;
+    }
+    if (entry.jwksUri === undefined) {
+      // An entry with neither jwks nor jwksUri can never verify anything; skip
+      // it so the assertion is answered with the fixed untrusted description.
+      continue;
+    }
+    const cached = idJagJwksCache.get(entry.jwksUri);
+    if (cached !== undefined && cached.expiresAt > Date.now()) {
+      resolved.push({ issuer: entry.issuer, jwks: cached.jwks });
+      continue;
+    }
+    // A failed fetch propagates: the generic catch turns it into server_error,
+    // which is honest — the assertion was never evaluated, so invalid_grant
+    // would wrongly blame the client for an outage on this side.
+    const response = await fetch(entry.jwksUri);
+    if (!response.ok) {
+      throw new Error(`Fetching the JWKS of trusted IdP ${entry.issuer} failed with status ${response.status}`);
+    }
+    const jwks = (await response.json()) as JwkSet;
+    idJagJwksCache.set(entry.jwksUri, { jwks, expiresAt: Date.now() + ID_JAG_JWKS_CACHE_TTL_MS });
+    resolved.push({ issuer: entry.issuer, jwks });
+  }
+  return resolved;
+}
 
 export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -197,6 +324,166 @@ tokenApp.post('/', async (c) => {
     await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
     const authenticatedClientId = presentedCredentials.clientId;
+
+    // --- EXPERIMENTAL: ID-JAG issuance (Cross-App Access, draft §4.3) ------
+    // A token-exchange request whose requested_token_type is the ID-JAG URN.
+    // Dispatched right after client authentication and BEFORE the plain
+    // token-exchange branch (same grant_type URN) and core's
+    // validateGrantTypeSupported. The subject_token must be an ID Token this OP
+    // issued to the authenticated client; the result is a signed grant JWT for
+    // the resource authorization server named by `audience` — not an access
+    // token (the response carries token_type N_A).
+    //
+    // Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
+    // in a breaking way between releases. The underlying specification is an
+    // IETF draft (-04) and may itself change. Do not build production code on
+    // this without pinning versions.
+    if (matchesIdJagIssuanceRequest(params)) {
+      const idJagIssuanceConfig = c.get('config');
+      // The ID-JAG is signed with a registered RS256 key so the peer AS can
+      // verify it against this OP's JWKS endpoint (same key-selection contract
+      // as JARM: RS256 is pinned, the active key may be a different alg).
+      const idJagSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
+      let idJagSigningKey: SigningKey;
+      try {
+        idJagSigningKey = selectSigningKeyByAlg(idJagSigningKeys, 'RS256');
+      } catch {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json(
+          { error: 'server_error', error_description: 'No RS256 signing key registered for ID-JAG issuance' },
+          500,
+        );
+      }
+      // The subject_token is verified against the same JWKS that id_token_hint
+      // uses (the OP's own ID Token signing keys) — draft §4.3.3 requires the
+      // assertion's audience to be the authenticated client, which
+      // processIdJagIssuanceRequest checks.
+      const idJagJwks = await c.get('jwksProvider')();
+
+      const idJagIssuanceResponse = await processIdJagIssuanceRequest({
+        params,
+        client: tokenClient,
+        issuer: idJagIssuanceConfig.issuer,
+        jwks: idJagJwks,
+        signingKey: idJagSigningKey,
+        allowedAudiences: idJagConfig.allowedAudiences,
+        allowedScopes: idJagConfig.allowedScopes,
+        lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
+        // Extension (draft §9.7): when enabled, an actor_token is recorded as
+        // the ID-JAG's act claim. Every accepted token type goes through the
+        // same resolver, which owns the content validation.
+        allowActorTokens: idJagConfig.allowActorTokens,
+        ...(idJagConfig.actorTokenResolver === undefined
+          ? {}
+          : { actorTokenResolver: idJagConfig.actorTokenResolver }),
+        ...(idJagConfig.allowRefreshTokenSubjects
+          ? { refreshTokenResolver, authenticationSessionResolver }
+          : {}),
+      });
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached. The ID-JAG itself is
+      // not persisted — it is a self-contained signed grant the peer AS
+      // verifies by signature and exp.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(idJagIssuanceResponse);
+    }
+
+    // --- EXPERIMENTAL: ID-JAG redemption (Cross-App Access, draft §4.4) ----
+    // The jwt-bearer grant (RFC 7523 §2.1). The assertion must be an ID-JAG
+    // (typ oauth-id-jag+jwt) issued by one of idJagConfig.trustedIdentityProviders
+    // for THIS issuer and for the authenticated client. This OP then issues its
+    // own access token — the IdP never mints tokens for this AS.
+    //
+    // No ID Token is issued (this is not an OIDC authentication flow: the
+    // openid scope only grants UserInfo access) and no refresh token is issued
+    // (draft §4.4.3 SHOULD NOT — re-presenting the still-valid ID-JAG replaces
+    // the refresh token).
+    if (params.grant_type === JWT_BEARER_GRANT_TYPE) {
+      const idJagRedemptionConfig = c.get('config');
+      const idJagIdentityProviders = await resolveTrustedIdentityProviders();
+
+      const idJagGrant = await processIdJagRedemptionRequest({
+        params,
+        client: tokenClient,
+        issuer: idJagRedemptionConfig.issuer,
+        identityProviders: idJagIdentityProviders,
+        configuredExpiresIn: idJagRedemptionConfig.accessTokenExpiresIn,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const idJagTokenIssuer: AccessTokenIssuer =
+        idJagRedemptionConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint
+      // stays a permanent member (RFC 9068 §3); the ID-JAG's resource claim
+      // (RFC 8707) contributes the requested resources.
+      const idJagAudience = buildAccessTokenAudience({
+        userInfoEndpoint: `${idJagRedemptionConfig.issuer}/userinfo`,
+        requested: idJagGrant.requestedResources,
+        issuer: idJagRedemptionConfig.issuer,
+      });
+
+      const idJagIssuedAt = Math.floor(Date.now() / 1000);
+      const idJagAccessTokenPayload = buildAccessTokenPayload({
+        issuer: idJagRedemptionConfig.issuer,
+        subject: idJagGrant.subject,
+        clientId: idJagGrant.clientId,
+        scope: idJagGrant.scope,
+        audience: idJagAudience,
+        expiresIn: idJagGrant.expiresIn,
+        issuedAt: idJagIssuedAt,
+      });
+      const idJagAccessToken = await idJagTokenIssuer.issue({
+        payload: {
+          ...idJagAccessTokenPayload,
+          // RFC 8693 §4.1: an act claim carried by the ID-JAG is preserved on
+          // the issued access token, so downstream services still see WHO acts
+          // on the subject's behalf (dropping it would silently turn the
+          // delegation into impersonation).
+          ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+        },
+        privateKey: c.get('privateKey'),
+        keyId: c.get('keyId'),
+      });
+
+      const idJagAccessTokenMetadata: IdJagAccessTokenInfo = {
+        // draft §4.4.1: the ID-JAG's sub is used as the local subject directly
+        // (subject resolution by identical sub; JIT provisioning is out of scope).
+        sub: idJagGrant.subject,
+        clientId: idJagGrant.clientId,
+        scope: idJagGrant.scope,
+        expiresAt: idJagIssuedAt + idJagGrant.expiresIn,
+        // Each redemption is its own grant: revoking one issued token must not
+        // affect tokens from other redemptions of the same (re-presentable)
+        // ID-JAG, so the payload's own jti doubles as the grant id.
+        grantId: idJagAccessTokenPayload.jti,
+        iat: idJagIssuedAt,
+        nbf: idJagIssuedAt,
+        audience: idJagAudience,
+        issuer: idJagRedemptionConfig.issuer,
+        jti: idJagAccessTokenPayload.jti,
+        // The actor record is persisted too, so opaque-token introspection and
+        // store-based tooling can surface it just like the JWT claim.
+        ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
+      };
+      await accessTokenStore.set(idJagAccessToken, idJagAccessTokenMetadata);
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: idJagAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: idJagGrant.expiresIn,
+        scope: idJagGrant.scope.join(' '),
+      });
+    }
 
     // --- EXPERIMENTAL: OAuth 2.0 Token Exchange (RFC 8693 §2.1) ------------
     // Dispatched right after client authentication and BEFORE core's
@@ -488,6 +775,196 @@ tokenApp.post('/', async (c) => {
         id_token: deviceIdToken,
         scope: deviceGrant.scope.join(' '),
         refresh_token: deviceRefreshToken,
+      });
+    }
+
+    // --- EXPERIMENTAL: CIBA grant (CIBA Core 1.0 §10.1, poll mode) ----------
+    // Dispatched right after client authentication and BEFORE core's
+    // validateGrantTypeSupported, which does not know the URN and would reject
+    // it with unsupported_grant_type. The branch answers the request itself and
+    // never falls through to the standard grants.
+    //
+    // Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
+    // in a breaking way between releases. Do not build production code on it
+    // without pinning the version.
+    if (params.grant_type === CIBA_GRANT_TYPE) {
+      const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+
+      // CIBA §11 state machine. Everything except "approved" throws:
+      // authorization_pending / slow_down / access_denied / expired_token, plus
+      // invalid_request / invalid_grant.
+      const cibaGrant = await processCibaGrant({
+        params,
+        client: tokenClient,
+        store: cibaStore,
+      });
+
+      // config / privateKey / keyId are bound further down for the standard
+      // grants. This branch reads them on its own so the generated output is
+      // unchanged when the feature is off; it returns, so nothing runs twice.
+      const cibaTokenConfig = c.get('config');
+      const cibaPrivateKey = c.get('privateKey');
+      const cibaKeyId = c.get('keyId');
+      // T-022: the ID Token this grant issues follows the SAME key-selection rule
+      // as the standard grants — pick a registered ID Token key whose alg matches
+      // the client's id_token_signed_response_alg (OIDC Dynamic Client
+      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
+      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // it rejects, and would hash at_hash with the wrong algorithm.
+      const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
+      const cibaFallbackIdKey: SigningKey | undefined =
+        c.get('idTokenPrivateKey') !== undefined
+          ? {
+              privateKey: c.get('idTokenPrivateKey'),
+              publicJwk: c.get('idTokenPublicJwk'),
+              keyId: c.get('idTokenKeyId') ?? cibaKeyId,
+            }
+          : undefined;
+      const cibaRegisteredClient = (await tokenClientResolver.findClient(
+        authenticatedClientId,
+      )) as RegisteredClient | null;
+      const cibaRequestedIdTokenAlg = cibaRegisteredClient?.idTokenSignedResponseAlg;
+      let cibaSelectedIdTokenKey: SigningKey;
+      if (cibaIdTokenSigningKeys.length > 0) {
+        try {
+          cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
+        } catch {
+          c.header('Cache-Control', 'no-store');
+          c.header('Pragma', 'no-cache');
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: `No ID Token signing key registered for alg "${cibaRequestedIdTokenAlg ?? 'RS256'}"`,
+            },
+            500,
+          );
+        }
+      } else if (cibaFallbackIdKey) {
+        cibaSelectedIdTokenKey = cibaFallbackIdKey;
+      } else {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+      }
+      const cibaIdTokenPrivateKey = cibaSelectedIdTokenKey.privateKey;
+      const cibaIdTokenKeyId = cibaSelectedIdTokenKey.keyId;
+      const cibaIssuer: AccessTokenIssuer =
+        cibaTokenConfig.accessTokenFormat === 'opaque'
+          ? createOpaqueAccessTokenIssuer()
+          : createJwtAccessTokenIssuer();
+
+      // Same aud policy as the standard token route: the UserInfo endpoint stays
+      // a permanent member (RFC 9068 §3). CIBA §7.1 has no resource parameter,
+      // so nothing else is requested.
+      const cibaAudience = buildAccessTokenAudience({
+        userInfoEndpoint: `${cibaTokenConfig.issuer}/userinfo`,
+        issuer: cibaTokenConfig.issuer,
+      });
+
+      const cibaIssuedAt = Math.floor(Date.now() / 1000);
+      const cibaAccessTokenPayload = buildAccessTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        audience: cibaAudience,
+        expiresIn: cibaTokenConfig.accessTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+      });
+      const cibaAccessToken = await cibaIssuer.issue({
+        payload: cibaAccessTokenPayload,
+        privateKey: cibaPrivateKey,
+        keyId: cibaKeyId,
+      });
+
+      // The backchannel authentication endpoint requires the openid scope, so
+      // an ID Token is always issued. It carries no nonce (CIBA §7.1 defines no
+      // such parameter, and OIDC Core 1.0 §2 only requires nonce when the
+      // authentication request carried one) and no c_hash (there is no code).
+      // Poll mode adds no CIBA-specific claims either — the auth_req_id claim
+      // of §10.3.1 belongs to the push-mode token delivery message.
+      const cibaAtHash = await computeAtHash(cibaAccessToken, cibaIdTokenPrivateKey);
+      const cibaAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
+      const { acr: cibaAcr, amr: cibaAmr } = await resolveAcrAmr({
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        acrResolver: cibaAcrResolver,
+      });
+      const cibaIdTokenPayload = buildIdTokenPayload({
+        issuer: cibaTokenConfig.issuer,
+        subject: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresIn: cibaTokenConfig.idTokenExpiresIn,
+        issuedAt: cibaIssuedAt,
+        atHash: cibaAtHash,
+        authTime: cibaGrant.authTime,
+        acr: cibaAcr,
+        amr: cibaAmr,
+      });
+      const cibaIdToken = await generateIdToken({
+        payload: cibaIdTokenPayload,
+        privateKey: cibaIdTokenPrivateKey,
+        keyId: cibaIdTokenKeyId,
+      });
+
+      await accessTokenStore.set(cibaAccessToken, {
+        sub: cibaGrant.subject,
+        clientId: cibaGrant.clientId,
+        scope: cibaGrant.scope,
+        expiresAt: cibaIssuedAt + cibaTokenConfig.accessTokenExpiresIn,
+        // Inherit the grantId minted at approval so revoking the grant kills
+        // every token issued from this backchannel authentication.
+        grantId: cibaGrant.grantId,
+        iat: cibaIssuedAt,
+        nbf: cibaIssuedAt,
+        audience: cibaAudience,
+        issuer: cibaTokenConfig.issuer,
+        jti: cibaAccessTokenPayload.jti,
+      });
+
+      // OIDC Core 1.0 §11: offline_access survived the backchannel
+      // authentication endpoint's policy check only if this client may hold
+      // refresh tokens, and the approval screen the user just went through IS
+      // the explicit consent that §11 asks for. Nothing further to gate on here.
+      const cibaRefreshToken = cibaGrant.scope.includes('offline_access')
+        ? generateRandomString(32)
+        : undefined;
+      if (cibaRefreshToken) {
+        const cibaRefreshTokenStore = c.get('refreshTokenStore') ?? defaultRefreshTokenStore;
+        await cibaRefreshTokenStore.set(cibaRefreshToken, {
+          subject: cibaGrant.subject,
+          clientId: cibaGrant.clientId,
+          scope: cibaGrant.scope,
+          // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
+          // inherit originalIssuedAt so the deadline never slides forward.
+          expiresAt: cibaIssuedAt + cibaTokenConfig.refreshTokenAbsoluteLifetime,
+          originalIssuedAt: cibaIssuedAt,
+          used: false,
+          grantId: cibaGrant.grantId,
+          iat: cibaIssuedAt,
+          issuer: cibaTokenConfig.issuer,
+          audience: cibaAudience,
+          authTime: cibaGrant.authTime,
+          // CIBA §7.1 defines no nonce parameter, so the re-issued ID Token has
+          // none to preserve either.
+          nonce: undefined,
+          acr: cibaAcr,
+          amr: cibaAmr,
+          azp: undefined,
+        });
+      }
+
+      // RFC 6749 §5.1: token responses MUST NOT be cached.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json({
+        access_token: cibaAccessToken,
+        token_type: 'Bearer' as const,
+        expires_in: cibaTokenConfig.accessTokenExpiresIn,
+        id_token: cibaIdToken,
+        scope: cibaGrant.scope.join(' '),
+        refresh_token: cibaRefreshToken,
       });
     }
 
@@ -911,6 +1388,20 @@ tokenApp.post('/', async (c) => {
     c.header('Pragma', 'no-cache');
     return c.json(tokenResponse);
   } catch (error) {
+    if (error instanceof IdJagError) {
+      // ID-JAG errors use the RFC 6749 §5.2 shape and are always 400 — a 401
+      // can only come from client authentication, which runs before both
+      // branches and throws core's TokenError. Issuance failures map to
+      // invalid_request / invalid_target / invalid_scope / unauthorized_client
+      // (RFC 8693 §2.2.2); assertion failures on redemption map to
+      // invalid_grant (RFC 7521 §4.1).
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
     if (error instanceof TokenExchangeError) {
       // RFC 8693 §2.2.2: the exchange errors use the RFC 6749 §5.2 shape. They
       // are always 400 — a 401 can only come from client authentication, which
@@ -924,6 +1415,18 @@ tokenApp.post('/', async (c) => {
     }
     if (error instanceof DeviceAuthorizationError) {
       // RFC 8628 §3.5: authorization_pending / slow_down / access_denied /
+      // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
+      // only come from client authentication, which runs before the branch and
+      // throws core's TokenError.
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        { error: error.code, error_description: error.errorDescription },
+        error.statusCode,
+      );
+    }
+    if (error instanceof CibaGrantError) {
+      // CIBA §11: authorization_pending / slow_down / access_denied /
       // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
       // only come from client authentication, which runs before the branch and
       // throws core's TokenError.

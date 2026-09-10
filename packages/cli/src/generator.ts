@@ -12,6 +12,11 @@ export interface GenerateOptions {
   corePackageName?: string;
   /** Feature toggles for the generated provider (default: every feature enabled) */
   features?: OidcFeatureConfig;
+  /**
+   * Custom scopes the generated provider accepts (default: none declared, so no
+   * scope policy is generated and the provider keeps accepting any scope value).
+   */
+  scopes?: string[];
 }
 
 export interface GenerateResult {
@@ -30,6 +35,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     outputDir,
     corePackageName = DEFAULT_CORE_PACKAGE,
     features = { ...DEFAULT_FEATURES },
+    scopes = [],
   } = options;
 
   const generator = getGenerator(framework);
@@ -40,7 +46,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     );
   }
 
-  const files = generator.generate({ outputDir, corePackageName, features });
+  const files = generator.generate({ outputDir, corePackageName, features, scopes });
 
   return { files, framework };
 }

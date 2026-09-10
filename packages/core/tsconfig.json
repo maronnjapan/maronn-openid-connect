@@ -5,6 +5,9 @@
     "lib": [
       "ES2022"
     ],
+    // TypeScript 7 は node_modules/@types を自動では読み込まない。Node の
+    // グローバル（console / process / CryptoKey など）を使うので明示する。
+    "types": ["node"],
     // NodeNext は相対 import に拡張子を必須にする。
     // "type": "module" の package なので、拡張子なしで emit すると Node の ESM ローダが
     // 解決できず `import '@maronn-openid-connect/core'` が ERR_MODULE_NOT_FOUND で落ちる

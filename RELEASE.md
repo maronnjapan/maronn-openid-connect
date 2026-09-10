@@ -488,6 +488,18 @@ SLSA provenance v1 attestation が存在することを明示的に検査する�
 version の provenance はまだ確認できない。初回 publish は手動ブートストラップのため
 provenance が付かず、Trusted Publisher を設定した次の CI publish から上記の自動検証を必須とする。
 
+publish 直後は npm registry 側の packument 反映に遅れがあり、この検証用の `npm install` が
+対象バージョンを `ETARGET`（`No matching version found`）で見失うことがある。2026-08-30 の
+run 49 では `@maronn-openid-connect/cli@0.4.0` / `core@0.2.0` / `experimental@0.0.6` の
+3 つとも publish 自体は成功していたが、publish から 8 秒後に走った `npm install` が
+`experimental@0.0.6` だけ見失って release job が失敗した（npm registry を直接照会すると
+3 つとも publish 済みで、tarball にも中身は入っていた）。そこで
+`installAndAuditWithRegistryPropagationRetry`（`.github/scripts/verify-npm-provenance.mjs`）が
+`verify-release-published.mjs` と同じ間隔（5s / 10s / 20s、合計 35 秒）で `npm install` から
+引き直す。**publish 自体は成功しているのに release job だけ赤くなる**ため、この症状を
+「publish が失敗した」と誤解しないこと。全リトライを使い切ってなお失敗する場合は、
+下のトラブルシューティング表にある Trusted Publisher 設定などの本来の原因を疑う。
+
 ### publish に到達したことを検証する
 
 `release.yml` の最後に `.github/scripts/verify-release-published.mjs` を実行し、
@@ -525,7 +537,7 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 |---|---|
 | CI publish が `404` / `403` で失敗 | パッケージ未作成、または Trusted Publisher 未設定。初回手動 publish と npm 側設定を確認 |
 | `Workflow does not match` 系エラー | npm の Trusted Publisher の Workflow filename が `release.yml` と一致しているか確認 |
-| publish 後の `Verify published package provenance` が失敗 | npm の version ページで provenance を確認し、Trusted Publisher の repository/workflow 設定、`id-token: write`、公開リポジトリであることを確認 |
+| publish 後の `Verify published package provenance` が失敗 | まず publish 自体が成功しているか npm registry を直接照会して確認する（`npm view <name>@<version>`）。存在するのに落ちた場合は registry 反映遅延によるリトライ切れ（[provenance の自動検証と手動確認](#provenance-の自動検証と手動確認)）。存在しない場合のみ Trusted Publisher の repository/workflow 設定、`id-token: write`、公開リポジトリであることを確認 |
 | `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli` / `experimental`） |
 | スコープ付きで `402 Payment Required` | `--access public` 指定漏れ。`publishConfig.access: "public"` も併せて確認 |
 | Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |

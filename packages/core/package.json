@@ -1,6 +1,6 @@
 {
   "name": "@maronn-openid-connect/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenID Connect Provider core implementation",
   "type": "module",
   "main": "./dist/index.js",

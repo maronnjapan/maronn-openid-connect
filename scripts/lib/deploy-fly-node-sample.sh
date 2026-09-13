@@ -33,6 +33,9 @@ STATE_DIR="${ROOT_DIR}/${SAMPLE_DIR}/.deploy"
 APP_NAME_FILE="${STATE_DIR}/fly-app-name"
 
 APP_NAME="${FLY_APP_NAME:-}"
+# kid of the signing key. Must match the sample's fallbackKeyId so switching
+# between the ephemeral fallback and the persisted key keeps the same kid.
+SIGNING_KEY_ID="${OIDC_SIGNING_KEY_ID:-e2e-rs256-key}"
 REGION="nrt"
 ORG="personal"
 DRY_RUN=0
@@ -153,6 +156,29 @@ if [ "${volume_exists}" = "1" ]; then
   guide_ok "Volume ${VOLUME_NAME} は既に存在するため再利用します。"
 else
   run "${FLY_BIN}" volumes create "${VOLUME_NAME}" --app "${APP_NAME}" --region "${REGION}" --size 1 --yes
+fi
+
+# ── 署名鍵の固定 ──────────────────────────────────────────────────────
+# OIDC Core 1.0 §10.1 / RFC 7515 §4.1.4: RP は kid で検証鍵を選ぶため、kid から
+# 鍵素材への対応が OP 全体で安定している必要がある。Fly は 1 つのホスト名の裏で
+# 複数マシンを動かせるので、鍵を secret に置かないとマシンごとに別の鍵が同じ kid
+# で公開され、署名検証が間欠的に失敗する。再起動・再デプロイでも同様に壊れる。
+guide_step "署名鍵（OIDC_SIGNING_KEY_JWK）を確認します"
+if [ "${DRY_RUN}" = "1" ]; then
+  guide_info "実行: fly secrets list --app ${APP_NAME}（OIDC_SIGNING_KEY_JWK の有無を確認）"
+elif "${FLY_BIN}" secrets list --app "${APP_NAME}" 2>/dev/null | grep -q 'OIDC_SIGNING_KEY_JWK'; then
+  guide_ok "OIDC_SIGNING_KEY_JWK は設定済みです（マシン間・再起動間で署名鍵が一致します）。"
+else
+  guide_warn "OIDC_SIGNING_KEY_JWK が未設定です。このままだとマシンごと・再起動ごとに別の署名鍵が生成され、発行済みトークンの検証が失敗します。"
+  if guide_confirm "いま RS256 鍵を生成して secret に設定しますか？" y; then
+    guide_info "実行: node scripts/generate-signing-key.mjs --kid ${SIGNING_KEY_ID} | fly secrets import --app ${APP_NAME}"
+    node "${ROOT_DIR}/scripts/generate-signing-key.mjs" --kid "${SIGNING_KEY_ID}" \
+      | sed 's|^|OIDC_SIGNING_KEY_JWK=|' \
+      | "${FLY_BIN}" secrets import --app "${APP_NAME}" --stage
+    guide_ok "OIDC_SIGNING_KEY_JWK を設定しました（次のデプロイで反映されます）。"
+  else
+    guide_warn "起動時生成の鍵のままデプロイします。単一マシンで動いている間しか検証は通りません。"
+  fi
 fi
 
 # ── デプロイ（ビルドは Fly のリモートビルダーで実行、ローカル Docker 不要） ─

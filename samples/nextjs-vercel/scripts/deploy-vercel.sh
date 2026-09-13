@@ -163,6 +163,27 @@ if [ "${#missing[@]}" -gt 0 ]; then
 fi
 guide_ok "ストレージの環境変数が揃っています。"
 
+# ── 署名鍵の固定 ──────────────────────────────────────────────────────
+# OIDC Core 1.0 §10.1 / RFC 7515 §4.1.4: RP は kid で検証鍵を選ぶため、kid から
+# 鍵素材への対応が OP 全体で安定している必要がある。サーバレスはインスタンス
+# ごとにモジュールを評価するので、鍵を環境変数に置かないとインスタンスごとに
+# 別の鍵が同じ kid で公開され、署名検証が間欠的に失敗する。
+guide_step "署名鍵（OIDC_SIGNING_KEY_JWK）を確認します"
+if printf '%s' "${env_list}" | grep -q 'OIDC_SIGNING_KEY_JWK'; then
+  guide_ok "OIDC_SIGNING_KEY_JWK は設定済みです（インスタンス間・再デプロイ間で署名鍵が一致します）。"
+else
+  guide_warn "OIDC_SIGNING_KEY_JWK が未設定です。このままだとインスタンスごとに別の署名鍵が生成され、ID Token の検証が間欠的に失敗します。"
+  if guide_confirm "いま RS256 鍵を生成して production の環境変数に設定しますか？" y; then
+    guide_info "実行: node scripts/generate-signing-key.mjs --kid nextjs-rs256-key | vercel env add OIDC_SIGNING_KEY_JWK production"
+    node "${ROOT_DIR}/scripts/generate-signing-key.mjs" --kid nextjs-rs256-key \
+      | tr -d '\n' \
+      | vercel_cmd env add OIDC_SIGNING_KEY_JWK production >/dev/null
+    guide_ok "OIDC_SIGNING_KEY_JWK を production に設定しました。"
+  else
+    guide_warn "起動時生成の鍵のままデプロイします。単一インスタンスに当たっている間しか検証は通りません。"
+  fi
+fi
+
 # ── ISSUER の解決（前回値 → 初回はデプロイ結果から確定） ───────────────
 if [ -z "${ISSUER}" ] && [ -f "${ISSUER_FILE}" ]; then
   ISSUER="$(head -n 1 "${ISSUER_FILE}" | tr -d '[:space:]')"
@@ -225,5 +246,4 @@ if ! printf '%s' "${discovery}" | ISSUER="${ISSUER}" node -e "let d='';process.s
 fi
 guide_ok "デプロイが完了しました: ${ISSUER}"
 guide_info "動作確認: curl ${ISSUER}/.well-known/openid-configuration"
-guide_warn "サンプルの署名鍵は起動時生成のため、複数インスタンス間で鍵が一致しない可能性があります。本番相当の検証では固定鍵の読み込みに置き換えてください。"
 guide_info "後片付けする場合: Vercel ダッシュボードからプロジェクト ${PROJECT_NAME} を削除してください。"

@@ -23,3 +23,13 @@ flyctl のインストール・`fly auth login`・アプリ名の決定（自動
 オプション: `--app-name` / `--region` / `--org` / `--dry-run`（詳細は `--help`）。
 
 単一Nodeプロセスを永続ボリューム付きでデプロイするPoC向けであり、複数インスタンス構成では共有DB用の `JsonStoreBackend` 実装へ置き換える。署名鍵は起動時生成のため、fly.tomlは単一マシン構成に固定している。
+
+## GCP Cloud Run へのデプロイ（追加の検証先・ガイド付き）
+
+Fly.ioとは別の実インフラでも同じコードを検証するための、任意のデプロイ先です。
+
+```bash
+bash ../../scripts/deploy-gcp-guide.sh fastify-flyio
+```
+
+GCPプロジェクトが未作成の場合の分岐、課金アカウントの確認、ローカルDockerでのビルド・push、Cloud RunのURL判明後のissuer反映まで含めた詳細は [`scripts/README.md`](../../scripts/README.md#deploy-gcp-guidesh--gcp-cloud-run-への検証デプロイ) を参照。こちらもFlyと同様、単一インスタンス固定のPoC向けであり、永続ディスクが無い分Cloud Run側の永続性はFlyより弱い。

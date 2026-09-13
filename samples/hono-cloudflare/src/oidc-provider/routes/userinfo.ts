@@ -140,6 +140,16 @@ const handler = async (c: any) => {
 
     // OIDC Core 1.0 §5.5: overlay the individually requested claims that the
     // token endpoint stored with this access token (claims.userinfo members).
+    // The claims.userinfo key names are RP-controlled, so only names inside the
+    // OP's declared vocabulary are read off userClaims — the default allowlist is
+    // DEFAULT_REQUESTABLE_CLAIMS (sub + every SCOPE_CLAIMS_MAP claim). A surplus
+    // field your userClaimsResolver returns (a DB row, an internal model) is
+    // therefore never disclosed by naming it in claims. Requests outside the
+    // allowlist are dropped silently, never rejected (OIDC Core 1.0 §5.5.1: the OP
+    // MUST NOT return an error for a claim it cannot provide). Pass a fourth
+    // argument to publish your own vocabulary — keep it in sync with the
+    // claims_supported you advertise in Discovery (OIDC Discovery 1.0 §3), and
+    // make findUserClaims return only disclosable claims before widening it.
     const response = applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
 
     const client = (await clientResolver.findClient(

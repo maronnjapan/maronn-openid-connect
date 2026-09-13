@@ -3,7 +3,7 @@ import type { SigningKeyProvider, SigningKey } from '@maronn-openid-connect/core
 import { exportPublicJwk } from '@maronn-openid-connect/core';
 import { createApp, validateSigningKeySet } from './app.js';
 import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
-import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, parseSessionId, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
+import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, defaultProviderStores, parseSessionId, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
 import { renderView } from './views.js';
@@ -735,6 +735,110 @@ describe('generated provider HTTP conformance', () => {
       });
     });
   });
+
+  // OIDC Core 1.0 §5.5 / §5.5.1: the claims parameter lets the RP ask for claims,
+  // but the OP decides what it will hand back. findUserClaims' return value is an
+  // externally disclosed surface, and the allowlist is the OP-side last line of
+  // defense over it.
+  describe('Claims Parameter Claim Name Allowlist (OIDC Core 1.0 §5.5.1)', () => {
+    const USERINFO_AUD = 'http://localhost:3000/userinfo';
+    // A resolver returning its internal user model verbatim — the most natural PoC
+    // implementation, and the one the allowlist has to survive. password_hash is an
+    // own field (a surplus column); phone_number is inherited from the prototype,
+    // as an ORM/class-backed model would expose it.
+    class LeakyUserModel {
+      readonly sub = 'testuser';
+      readonly email = 'test@example.com';
+      readonly password_hash = '$2b$12$notarealhash';
+      get phone_number(): string {
+        return '+81-3-0000-0000';
+      }
+    }
+    const leakyUserRecord = new LeakyUserModel();
+
+    function createLeakyApp(): ReturnType<typeof createApp> {
+      return createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        storage: {
+          ...defaultProviderStores,
+          userStore: {
+            authenticate: () => undefined,
+            getClaims: () => leakyUserRecord,
+          },
+        },
+      });
+    }
+
+    it('should not disclose a surplus resolver field named in the claims parameter', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('conf-claims-surplus', {
+        sub: 'testuser',
+        clientId: 'c-conf',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+        audience: [USERINFO_AUD],
+        issuer: 'http://localhost:3000',
+        claims: { userinfo: { email: null, password_hash: null } },
+      });
+
+      const res = await createLeakyApp().request('/userinfo', {
+        headers: { Authorization: 'Bearer conf-claims-surplus' },
+      });
+
+      // The allowlisted email is returned; password_hash is absent. Pinned as an
+      // exact body so a newly leaked member cannot slip past the assertion.
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ sub: 'testuser', email: 'test@example.com' });
+    });
+
+    // Only own properties are read. phone_number is an allowlisted claim name, but
+    // this model exposes it through a prototype getter rather than as an own field,
+    // so the claims parameter cannot reach it — findUserClaims must place every
+    // disclosable claim on the returned object itself.
+    it('should not disclose a prototype chain property named in the claims parameter', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('conf-claims-prototype', {
+        sub: 'testuser',
+        clientId: 'c-conf',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+        audience: [USERINFO_AUD],
+        issuer: 'http://localhost:3000',
+        claims: { userinfo: { phone_number: null, constructor: null, toString: null } },
+      });
+
+      const res = await createLeakyApp().request('/userinfo', {
+        headers: { Authorization: 'Bearer conf-claims-prototype' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ sub: 'testuser' });
+    });
+
+    // §5.5.1: "the OP MUST NOT return an error" when a requested claim cannot be
+    // provided — declining a name is a 200 with the claim omitted, never a 4xx.
+    it('should answer 200 when every requested claim name is outside the allowlist', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('conf-claims-not-allowed', {
+        sub: 'testuser',
+        clientId: 'c-conf',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+        audience: [USERINFO_AUD],
+        issuer: 'http://localhost:3000',
+        claims: { userinfo: { password_hash: { essential: true } } },
+      });
+
+      const res = await createLeakyApp().request('/userinfo', {
+        headers: { Authorization: 'Bearer conf-claims-not-allowed' },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ sub: 'testuser' });
+    });
+  });
+
 
   // RFC 7519 §4.1.5 / RFC 7662 §2.2: the token endpoint persists nbf (= iat) for both
   // JWT and opaque access tokens, so introspection reports a not-yet-valid token inactive

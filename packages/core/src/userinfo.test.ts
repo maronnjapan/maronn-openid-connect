@@ -6,6 +6,7 @@ import {
   UserInfoErrorCode,
   filterClaimsByScope,
   SCOPE_CLAIMS_MAP,
+  DEFAULT_REQUESTABLE_CLAIMS,
 } from './userinfo.js';
 import type {
   AccessTokenInfo,
@@ -779,6 +780,144 @@ describe('handleUserInfoRequest', () => {
         });
       });
     });
+
+    // OIDC Core 1.0 Section 5.5.1: the OP MUST NOT return an error when a requested
+    // claim cannot be provided, so restricting the readable claim names to the OP's
+    // declared vocabulary is always spec compliant.
+    // The `claims` member names are RP-controlled, so reading them off the resolver's
+    // return value without a check would expose whatever surplus fields the user's
+    // findUserClaims() happens to carry (a DB row, an internal model).
+    describe('Claim Name Allowlist (OIDC Core Section 5.5.1)', () => {
+      it('should return a standard claim requested via the claims parameter', async () => {
+        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
+        const context = createValidContext({
+          accessToken: 'allowlist-standard-token',
+          accessTokenResolver: createAccessTokenResolver({
+            'allowlist-standard-token': tokenInfo,
+          }),
+          claimsParameter: { userinfo: { email: null } },
+        });
+
+        const response = await handleUserInfoRequest(context);
+
+        expect(response).toEqual({
+          sub: 'user-123',
+          email: 'janedoe@example.com',
+        });
+      });
+
+      it('should not return a non-standard property present on the resolved user claims', async () => {
+        // A resolver that returns its internal user model verbatim — the most natural
+        // PoC implementation — must not turn `claims` into an arbitrary field reader.
+        const leakyUserClaims = {
+          sub: 'user-123',
+          email: 'janedoe@example.com',
+          password_hash: '$2b$12$notarealhash',
+        } as UserClaims;
+        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
+        const context = createValidContext({
+          accessToken: 'allowlist-surplus-token',
+          accessTokenResolver: createAccessTokenResolver({
+            'allowlist-surplus-token': tokenInfo,
+          }),
+          userClaimsResolver: createUserClaimsResolver({
+            'user-123': leakyUserClaims,
+          }),
+          claimsParameter: {
+            userinfo: { email: null, password_hash: null },
+          },
+        });
+
+        const response = await handleUserInfoRequest(context);
+
+        expect(response).toEqual({
+          sub: 'user-123',
+          email: 'janedoe@example.com',
+        });
+      });
+
+      it('should not return a prototype chain property when requested as a claim', async () => {
+        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
+        const context = createValidContext({
+          accessToken: 'allowlist-prototype-token',
+          accessTokenResolver: createAccessTokenResolver({
+            'allowlist-prototype-token': tokenInfo,
+          }),
+          claimsParameter: {
+            userinfo: { constructor: null, toString: null },
+          },
+        });
+
+        const response = await handleUserInfoRequest(context);
+
+        expect(response).toEqual({ sub: 'user-123' });
+      });
+
+      it('should not alter the response prototype when __proto__ is requested as a claim', async () => {
+        // `{ __proto__: null }` in an object literal sets the prototype instead of
+        // creating an own key, so define the key explicitly to reproduce what a
+        // JSON-parsed `claims` parameter carrying "__proto__" looks like.
+        const requestedUserinfoClaims: Record<string, null> = {};
+        Object.defineProperty(requestedUserinfoClaims, '__proto__', {
+          value: null,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
+        const context = createValidContext({
+          accessToken: 'allowlist-proto-token',
+          accessTokenResolver: createAccessTokenResolver({
+            'allowlist-proto-token': tokenInfo,
+          }),
+          claimsParameter: { userinfo: requestedUserinfoClaims },
+        });
+
+        const response = await handleUserInfoRequest(context);
+
+        expect(response).toEqual({ sub: 'user-123' });
+        expect(Object.getPrototypeOf(response)).toBe(Object.prototype);
+      });
+
+      it('should return only claims within an explicitly supplied allowlist', async () => {
+        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
+        const context = createValidContext({
+          accessToken: 'allowlist-explicit-token',
+          accessTokenResolver: createAccessTokenResolver({
+            'allowlist-explicit-token': tokenInfo,
+          }),
+          allowedClaimNames: new Set(['sub', 'email']),
+          claimsParameter: { userinfo: { email: null, name: null } },
+        });
+
+        const response = await handleUserInfoRequest(context);
+
+        expect(response).toEqual({
+          sub: 'user-123',
+          email: 'janedoe@example.com',
+        });
+      });
+
+      // OIDC Core 1.0 Section 5.5.1: "the OP MUST NOT return an error" when the
+      // requested Claim cannot be returned — including when the OP declines to.
+      it('should not return an error when a requested claim is not allowed', async () => {
+        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
+        const context = createValidContext({
+          accessToken: 'allowlist-no-error-token',
+          accessTokenResolver: createAccessTokenResolver({
+            'allowlist-no-error-token': tokenInfo,
+          }),
+          allowedClaimNames: new Set(['sub']),
+          claimsParameter: {
+            userinfo: { email: { essential: true } },
+          },
+        });
+
+        await expect(handleUserInfoRequest(context)).resolves.toEqual({
+          sub: 'user-123',
+        });
+      });
+    });
   });
 
   describe('Error Responses', () => {
@@ -897,6 +1036,37 @@ describe('SCOPE_CLAIMS_MAP', () => {
 
   it('should map phone scope to phone_number and phone_number_verified', () => {
     expect(SCOPE_CLAIMS_MAP.phone).toEqual([
+      'phone_number',
+      'phone_number_verified',
+    ]);
+  });
+});
+
+// OIDC Core 1.0 Section 5.1 / 5.1.2: claim names are a vocabulary the OP defines and
+// publishes. The default requestable set is exactly `sub` plus every claim the OP can
+// already return through a scope (SCOPE_CLAIMS_MAP), so enabling the allowlist does not
+// remove any claim that was previously reachable via the `claims` parameter.
+describe('DEFAULT_REQUESTABLE_CLAIMS', () => {
+  it('should contain sub followed by every scope-mapped claim name', () => {
+    expect([...DEFAULT_REQUESTABLE_CLAIMS]).toEqual([
+      'sub',
+      'name',
+      'family_name',
+      'given_name',
+      'middle_name',
+      'nickname',
+      'preferred_username',
+      'profile',
+      'picture',
+      'website',
+      'gender',
+      'birthdate',
+      'zoneinfo',
+      'locale',
+      'updated_at',
+      'email',
+      'email_verified',
+      'address',
       'phone_number',
       'phone_number_verified',
     ]);

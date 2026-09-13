@@ -139,6 +139,20 @@ export interface UserClaims {
  * ユーザークレームを解決するインターフェース
  */
 export interface UserClaimsResolver {
+  /**
+   * subject に対応するクレームを返す。
+   *
+   * **契約: 戻り値は「外部へ開示されうる面」である。**
+   * ここで返したオブジェクトのプロパティは、scope 由来のフィルタ（`filterClaimsByScope`）と
+   * `claims` パラメータ由来のアロウリスト（`DEFAULT_REQUESTABLE_CLAIMS` ないし
+   * `applyRequestedClaims` の `allowedClaimNames`）を通じて UserInfo レスポンスへ現れる。
+   * DB の行オブジェクトや内部ユーザーモデルをそのまま返すと、余剰フィールド
+   * （`password_hash`、内部フラグ等）が同じ面に乗る。
+   *
+   * 現在は OP 側のアロウリストが最終防壁として余剰フィールドを落とすが、
+   * アロウリストを拡張した時点で開示されるため、**`findUserClaims` は
+   * 開示してよいクレームだけを載せて返すこと**（内部フィールドは呼び出し前に除去する）。
+   */
   findUserClaims(sub: string): Promise<UserClaims | null>;
 }
 
@@ -187,6 +201,13 @@ export interface UserInfoRequestContext {
    * （不一致だと自前トークンを誤って弾く事故になる）。
    */
   expectedAudience?: string;
+  /**
+   * `claims.userinfo` で要求できるクレーム名のアロウリスト。
+   * 省略時は `DEFAULT_REQUESTABLE_CLAIMS`（`sub` ＋ `SCOPE_CLAIMS_MAP` の全クレーム）。
+   * OP が独自クレームを公開する場合は、Discovery の `claims_supported` に合わせた
+   * 集合をここへ注入する。
+   */
+  allowedClaimNames?: ReadonlySet<string>;
 }
 
 /**
@@ -252,13 +273,34 @@ export function filterClaimsByScope(
 }
 
 /**
- * claimsパラメータで要求されたクレーム名を取得する
+ * `claims` パラメータで要求できるクレーム名の既定アロウリスト。
+ *
+ * OIDC Core 1.0 Section 5.5.1: 要求クレームを返せない場合に OP はエラーを返してはならない
+ * （MUST NOT return an error）。したがって未知のクレーム名を「黙って返さない」ことは常に仕様適合である。
+ *
+ * `claims` のキー名は RP が任意に指定できるため、これを resolver が返したオブジェクトの
+ * プロパティ名として無検査で読み出すと、利用者が `findUserClaims` から余剰フィールド
+ * （DB の行など）を返した場合に scope を迂回して開示される。読み出せるキーを
+ * OP が宣言した語彙（OIDC Core 1.0 Section 5.1 / 5.1.2）に限定する。
+ *
+ * 既定値は `sub` ＋ `SCOPE_CLAIMS_MAP` の全クレーム、すなわち scope 経由で既に返りうる
+ * クレームと同一集合であり、導入によって従来返っていたクレームが減ることはない。
  */
-function getRequestedClaimNames(
-  claimsParameter?: ClaimsParameter
-): (keyof UserClaims)[] {
+export const DEFAULT_REQUESTABLE_CLAIMS: ReadonlySet<string> = new Set<string>([
+  'sub',
+  ...Object.values(SCOPE_CLAIMS_MAP).flat(),
+]);
+
+/**
+ * claimsパラメータで要求されたクレーム名を取得する
+ *
+ * キー名は RP が任意に指定できるため `keyof UserClaims` へはキャストしない
+ * （実行時には `UserClaims` に無い名前も入りうる）。絞り込みは呼び出し側の
+ * アロウリスト検査で行う。
+ */
+function getRequestedClaimNames(claimsParameter?: ClaimsParameter): string[] {
   if (!claimsParameter?.userinfo) return [];
-  return Object.keys(claimsParameter.userinfo) as (keyof UserClaims)[];
+  return Object.keys(claimsParameter.userinfo);
 }
 
 /**
@@ -469,22 +511,38 @@ export async function resolveUserInfoClaims(
  *
  * 入力のレスポンスは変更せず、新しいオブジェクトを返す。
  *
+ * 読み出せるクレーム名は `allowedClaimNames` に限定する。`claims` のキー名は RP が
+ * 任意に指定できるため、無検査で `userClaims` のプロパティとして読むと、利用者の
+ * `findUserClaims` が返した余剰フィールドが scope を迂回して開示される。
+ * アロウリスト外の要求は黙って無視する（OIDC Core 1.0 Section 5.5.1: 返せない要求クレームに
+ * 対して OP はエラーを返してはならない）。プロトタイプチェーン由来のプロパティも
+ * `hasOwnProperty` 検査で除外する。
+ *
  * @param response スコープでフィルタ済みの UserInfo レスポンス
  * @param userClaims ユーザーの全クレーム
  * @param claimsParameter Authorization Request の claims パラメータ
+ * @param allowedClaimNames 要求を受け付けるクレーム名の集合。既定は `DEFAULT_REQUESTABLE_CLAIMS`。
+ *   OP が独自クレームを公開する場合は Discovery の `claims_supported` に合わせた集合を渡す
  * @returns 要求クレームを追加した UserInfo レスポンス
  */
 export function applyRequestedClaims(
   response: UserInfoResponse,
   userClaims: UserClaims,
-  claimsParameter?: ClaimsParameter
+  claimsParameter?: ClaimsParameter,
+  allowedClaimNames: ReadonlySet<string> = DEFAULT_REQUESTABLE_CLAIMS
 ): UserInfoResponse {
   const result: Record<string, unknown> = { ...response };
 
   const requestedClaims = getRequestedClaimNames(claimsParameter);
   for (const claimName of requestedClaims) {
+    // sub はアクセストークンの subject で確定済み。上書きさせない
     if (claimName === 'sub') continue;
-    const value = userClaims[claimName];
+    // OP が宣言した語彙の外は読み出さない
+    if (!allowedClaimNames.has(claimName)) continue;
+    // プロトタイプチェーン上のプロパティ（constructor / toString / __proto__ 等）を読まない
+    if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;
+
+    const value = userClaims[claimName as keyof UserClaims];
     if (value === undefined || value === null) continue;
 
     const entry = claimsParameter?.userinfo?.[claimName] ?? null;
@@ -525,6 +583,7 @@ export async function handleUserInfoRequest(
     userClaimsResolver,
     claimsParameter,
     expectedAudience,
+    allowedClaimNames,
   } = context;
 
   const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
@@ -535,7 +594,12 @@ export async function handleUserInfoRequest(
   const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
   const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
 
-  return applyRequestedClaims(scopedResponse, userClaims, claimsParameter);
+  return applyRequestedClaims(
+    scopedResponse,
+    userClaims,
+    claimsParameter,
+    allowedClaimNames ?? DEFAULT_REQUESTABLE_CLAIMS
+  );
 }
 
 /**

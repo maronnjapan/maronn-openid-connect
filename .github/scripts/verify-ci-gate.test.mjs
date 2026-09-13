@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   assertEveryPackageIsTypechecked,
   assertLintGateIsBacked,
+  assertSampleContractTestsAreExecuted,
   assertStaticVerificationGate,
   assertWorkflowVerifiesMainPush,
   parseWorkflow,
@@ -332,6 +333,73 @@ describe('assertLintGateIsBacked', () => {
           'lint スクリプトがありません。pnpm --filter は対象が 0 件でも成功するため、' +
           'この Lint ステップは常に緑になり何も検証しません。',
       ),
+    );
+  });
+});
+
+describe('assertSampleContractTestsAreExecuted', () => {
+  const rootPackageJson = {
+    scripts: {
+      'test:ci': 'pnpm --filter "./packages/*" test && pnpm run test:samples && pnpm run test:conformance',
+      'test:samples': 'pnpm --filter "./samples/*" test:conformance',
+    },
+  };
+  const samplePackageJsons = [
+    { name: '@maronn-openid-connect/sample-hono-cloudflare', scripts: { 'test:conformance': 'vitest run' } },
+    { name: '@maronn-openid-connect/sample-express-flyio', scripts: { 'test:conformance': 'vitest run' } },
+  ];
+
+  it('should accept a test:ci that runs test:samples with every sample defining test:conformance', () => {
+    assert.doesNotThrow(() => {
+      assertSampleContractTestsAreExecuted(rootPackageJson, samplePackageJsons);
+    });
+  });
+
+  it('should reject a test:ci that does not run test:samples', () => {
+    assert.throws(
+      () =>
+        assertSampleContractTestsAreExecuted(
+          { scripts: { 'test:ci': 'pnpm --filter "./packages/*" test' } },
+          samplePackageJsons,
+        ),
+      new Error(
+        'root の test:ci スクリプトが `pnpm run test:samples` を実行していません。' +
+          'samples/* の conformance.test.ts はどのランナーにも接続されず、' +
+          '契約テストが 1 件も走らないまま CI が緑になります。',
+      ),
+    );
+  });
+
+  it('should reject a missing test:ci script', () => {
+    assert.throws(
+      () => assertSampleContractTestsAreExecuted({ scripts: {} }, samplePackageJsons),
+      /pnpm run test:samples/,
+    );
+  });
+
+  it('should reject a sample without a test:conformance script', () => {
+    assert.throws(
+      () =>
+        assertSampleContractTestsAreExecuted(rootPackageJson, [
+          { name: '@maronn-openid-connect/sample-hono-cloudflare', scripts: { 'test:conformance': 'vitest run' } },
+          { name: '@maronn-openid-connect/sample-express-flyio', scripts: { typecheck: 'tsc --noEmit' } },
+        ]),
+      new Error(
+        'test:conformance スクリプトを持たない sample があります: @maronn-openid-connect/sample-express-flyio。' +
+          'pnpm --filter は該当スクリプトを持たないパッケージを黙って読み飛ばすため、' +
+          'その sample の契約テストが CI をすり抜けます。',
+      ),
+    );
+  });
+
+  it('should list every sample that is missing a test:conformance script', () => {
+    assert.throws(
+      () =>
+        assertSampleContractTestsAreExecuted(rootPackageJson, [
+          { name: '@maronn-openid-connect/sample-express-flyio', scripts: {} },
+          { name: '@maronn-openid-connect/sample-fastify-flyio' },
+        ]),
+      /@maronn-openid-connect\/sample-express-flyio, @maronn-openid-connect\/sample-fastify-flyio/,
     );
   });
 });

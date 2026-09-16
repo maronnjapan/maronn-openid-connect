@@ -97,7 +97,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # build は typecheck より前に置く。
-      # samples/* と packages/experimental は @maronn-openid-connect/core を workspace 経由の
+      # samples/*・packages/experimental・packages/google-login は @maronn-openid-connect/core を workspace 経由の
       # ビルド成果物（dist の .d.ts）として解決するため、未ビルドだと
       # 「Cannot find module '@maronn-openid-connect/core'」で typecheck が落ちる。
       - name: Build packages

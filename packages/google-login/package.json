@@ -1,0 +1,57 @@
+{
+  "name": "@maronn-openid-connect/google-login",
+  "version": "0.0.0",
+  "description": "Sign in with Google (Google Identity Services, redirect mode) as an upstream login method for maronn-openid-connect providers",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:ci": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "openid-connect",
+    "oauth2.1",
+    "google",
+    "sign-in-with-google",
+    "google-identity-services"
+  ],
+  "author": "maronnjapan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maronnjapan/maronn-openid-connect.git",
+    "directory": "packages/google-login"
+  },
+  "bugs": {
+    "url": "https://github.com/maronnjapan/maronn-openid-connect/issues"
+  },
+  "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/google-login#readme",
+  "peerDependencies": {
+    "@maronn-openid-connect/core": ">=0.3.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@maronn-openid-connect/core": "workspace:*",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

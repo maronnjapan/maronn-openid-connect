@@ -196,6 +196,12 @@ ID Token の生成、認可エンドポイント、トークンエンドポイ�
 OpenID Connect 関連機能をプロジェクトへ導入する CLI ツールです。
 Authorization Code Flow や OpenID Connect の拡張機能を実行するためのコードを生成します。
 
+### packages/google-login
+
+Sign in with Google（Google Identity Services の redirect mode）を、`packages/core` で組んだ OP のログイン手段として使うための拡張パッケージです。
+Google が `login_uri` へ POST する ID トークンの検証（署名・`aud`・`iss`・`exp`・`hd`）、`g_csrf_token` の Double Submit Cookie 検証、ログイン画面に埋め込むボタンの HTML 生成、core の認証トランザクションへの束縛（nonce）を提供します。
+単体で使うものではなく、core と組み合わせて `packages/cli` の生成コードから呼び出す想定です。CLI への組み込み（`--enable google-login`）は未対応で、それまでは生成コードへ手で配線します。
+
 ### samples/*
 
 `packages/core` などの機能を実際に試すための OpenID Provider 専用サンプルです。

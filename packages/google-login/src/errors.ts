@@ -21,24 +21,13 @@ export enum GoogleLoginErrorCode {
   CsrfTokenMismatch = 'csrf_token_mismatch',
 
   // --- ID トークンの検証に関するもの ---
-  /** compact JWS として読めない、または必須クレームが欠けている。 */
-  MalformedIdToken = 'malformed_id_token',
-  /** JOSE ヘッダーの `alg` が RS256 ではない（Google の ID トークンは常に RS256）。 */
-  UnsupportedAlgorithm = 'unsupported_algorithm',
-  /** JOSE ヘッダーの `kid` に一致する Google の公開鍵が無い。 */
-  UnknownSigningKey = 'unknown_signing_key',
-  /** Google の公開鍵を取得できない（ネットワーク障害や想定外の応答）。 */
+  /**
+   * google-auth-library が ID トークンを受け入れなかった（形式・署名・`iss`・`aud`・
+   * `exp` / `iat`）。ライブラリのエラーは `cause` に入れ、`message` はそのまま引き継ぐ。
+   */
+  InvalidIdToken = 'invalid_id_token',
+  /** Google の公開鍵を取得できない（ネットワーク障害など）。ライブラリのエラーは `cause` に入れる。 */
   SigningKeyUnavailable = 'signing_key_unavailable',
-  /** 署名検証に失敗した。 */
-  InvalidSignature = 'invalid_signature',
-  /** `iss` が `accounts.google.com` / `https://accounts.google.com` のどちらでもない。 */
-  InvalidIssuer = 'invalid_issuer',
-  /** `aud` がアプリのクライアント ID と一致しない。 */
-  InvalidAudience = 'invalid_audience',
-  /** `exp` を過ぎている。 */
-  IdTokenExpired = 'id_token_expired',
-  /** `nbf` または `iat` が未来を指している。 */
-  IdTokenNotYetValid = 'id_token_not_yet_valid',
   /** `hd`（ホストされたドメイン）が許可したドメインと一致しない。 */
   InvalidHostedDomain = 'invalid_hosted_domain',
   /** `email_verified` が true ではない（`requireVerifiedEmail` 指定時）。 */
@@ -63,8 +52,8 @@ export enum GoogleLoginErrorCode {
 export class GoogleLoginError extends Error {
   public readonly code: GoogleLoginErrorCode;
 
-  constructor(code: GoogleLoginErrorCode, message: string) {
-    super(message);
+  constructor(code: GoogleLoginErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'GoogleLoginError';
     this.code = code;
   }
@@ -90,14 +79,7 @@ export class GoogleLoginError extends Error {
       case GoogleLoginErrorCode.LoginNonceNotFound:
       case GoogleLoginErrorCode.LoginNonceExpired:
         return 400;
-      case GoogleLoginErrorCode.MalformedIdToken:
-      case GoogleLoginErrorCode.UnsupportedAlgorithm:
-      case GoogleLoginErrorCode.UnknownSigningKey:
-      case GoogleLoginErrorCode.InvalidSignature:
-      case GoogleLoginErrorCode.InvalidIssuer:
-      case GoogleLoginErrorCode.InvalidAudience:
-      case GoogleLoginErrorCode.IdTokenExpired:
-      case GoogleLoginErrorCode.IdTokenNotYetValid:
+      case GoogleLoginErrorCode.InvalidIdToken:
         return 401;
       case GoogleLoginErrorCode.InvalidHostedDomain:
       case GoogleLoginErrorCode.EmailNotVerified:

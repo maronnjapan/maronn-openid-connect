@@ -125,11 +125,15 @@ HEAD の core に対して experimental をビルド・テストするので開�
 そのまま適用し、`verify-release-contract.mjs` の `CORE_DEPENDENT_PACKAGES` に列挙して CI で強制している。
 core を peer 参照するパッケージを増やしたら、この配列に足す。
 
-experimental と違う点は 2 つ。
+experimental と違う点は 3 つ。
 
 - **changeset は手で書く**（core / cli と同じ）。`packages/google-login/src` を変更しても changeset は自動生成されず、
   [changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)が `pnpm changeset` を要求する
 - **bump 種別は patch 固定ではない**。0.x の semver として、互換性の変化に応じて minor / major も使う
+- **production 依存に外部ライブラリ（`google-auth-library`）を持つ**。ID トークンの検証を Google 公式
+  ライブラリに委ねているためで、Google 側の仕様変更にはこのライブラリの bump で追随する。
+  Dependabot がこれを bump したときの扱いは
+  [changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)を参照
 
 ### どのパッケージを単独でリリースできるか
 
@@ -511,7 +515,11 @@ Version Packages PR に現れず、publish されないまま main に埋もれ�
   要求すると「changeset を消す PR が changeset を要求される」デッドロックになる
 - **Dependabot PR**: 更新対象は `packages/*` の devDependencies で出荷物は変わらない
   （本リポジトリの `dependencies` は workspace 内部のみ、という README.md の規約が前提）。
-  publish が必要な bump だと判断したときは、担当者が手動で changeset を足す
+  publish が必要な bump だと判断したときは、担当者が手動で changeset を足す。
+  例外は `packages/google-login` の `google-auth-library`（production 依存）で、Dependabot が
+  これを bump する PR は出荷物（利用者がインストールする依存の range）を変える。
+  Google 側の検証仕様への追随はこの bump で行うので、その PR には google-login の changeset を
+  手で足して publish する
 
 ### provenance の自動検証と手動確認
 

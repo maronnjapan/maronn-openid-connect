@@ -31,6 +31,8 @@ jobs:
     # ここを通すと「changeset を消す PR が changeset を要求される」デッドロックになる。
     # Dependabot は packages/*/package.json の devDependencies を更新するだけで
     # 出荷物は変わらない（本リポジトリの dependencies は workspace 内部のみ）。
+    # 例外は packages/google-login の google-auth-library（production 依存）で、
+    # その bump を publish するときは担当者が changeset を手で足す（RELEASE.md）。
     if: >-
       !startsWith(github.head_ref, 'changeset-release/')
       && github.actor != 'dependabot[bot]'

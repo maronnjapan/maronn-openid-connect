@@ -5,7 +5,7 @@ import { GoogleLoginErrorCode } from './errors.js';
 import type { GoogleIdTokenPayload } from './id-token.js';
 import { captureRejection, createGoogleIdTokenPayload, expectGoogleLoginError } from './test-helpers.js';
 
-const account = createGoogleIdTokenPayload() as unknown as GoogleIdTokenPayload;
+const account = createGoogleIdTokenPayload();
 
 describe('resolveGoogleLoginSubject', () => {
   it('should return the subject resolved from the Google account', async () => {

@@ -14,8 +14,9 @@
  * 検証しなければならない（ドキュメント「サーバーサイドで Google ID トークンを検証する」の
  * CSRF 対策）。
  */
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
-import { timingSafeEqual } from './jws.js';
 
 /** POST 本文で ID トークンが入るパラメータ名。 */
 export const GOOGLE_CREDENTIAL_PARAM = 'credential';
@@ -107,6 +108,18 @@ export function parseGoogleCsrfTokenCookie(cookieHeader: string | null | undefin
 }
 
 /**
+ * 2 つの文字列を constant-time で比較する。
+ *
+ * `crypto.timingSafeEqual` は同じ長さのバッファしか比較できないので、固定長の
+ * SHA-256 ダイジェスト同士を比較する（長さの違いも応答時間に出ない）。
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  const digestA = createHash('sha256').update(a).digest();
+  const digestB = createHash('sha256').update(b).digest();
+  return timingSafeEqual(digestA, digestB);
+}
+
+/**
  * ステップ 3: Double Submit Cookie を検証する。
  *
  * Google のドキュメントのサンプルと同じ順序で判定する。
@@ -119,10 +132,10 @@ export function parseGoogleCsrfTokenCookie(cookieHeader: string | null | undefin
  * @param cookieToken Cookie の `g_csrf_token`
  * @throws {GoogleLoginError} `csrf_token_missing_in_cookie` / `csrf_token_missing_in_body` / `csrf_token_mismatch`
  */
-export async function validateGoogleCsrfToken(
+export function validateGoogleCsrfToken(
   bodyToken: string | undefined,
   cookieToken: string | undefined,
-): Promise<void> {
+): void {
   if (!cookieToken) {
     throw new GoogleLoginError(
       GoogleLoginErrorCode.CsrfTokenMissingInCookie,
@@ -135,7 +148,7 @@ export async function validateGoogleCsrfToken(
       'No CSRF token in post body.',
     );
   }
-  if (!(await timingSafeEqual(bodyToken, cookieToken))) {
+  if (!constantTimeEqual(bodyToken, cookieToken)) {
     throw new GoogleLoginError(
       GoogleLoginErrorCode.CsrfTokenMismatch,
       'Failed to verify double submit cookie.',

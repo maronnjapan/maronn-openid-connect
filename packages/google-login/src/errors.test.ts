@@ -4,17 +4,29 @@ import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
 
 describe('GoogleLoginError', () => {
   it('should set name to GoogleLoginError', () => {
-    const error = new GoogleLoginError(GoogleLoginErrorCode.InvalidSignature, 'bad signature');
+    const error = new GoogleLoginError(GoogleLoginErrorCode.InvalidIdToken, 'bad token');
 
     expect(error.name).toBe('GoogleLoginError');
-    expect(error.message).toBe('bad signature');
+    expect(error.message).toBe('bad token');
     expect(error).toBeInstanceOf(Error);
   });
 
   it('should expose the error code', () => {
-    const error = new GoogleLoginError(GoogleLoginErrorCode.InvalidAudience, 'bad aud');
+    const error = new GoogleLoginError(GoogleLoginErrorCode.InvalidNonce, 'bad nonce');
 
-    expect(error.code).toBe('invalid_audience');
+    expect(error.code).toBe('invalid_nonce');
+  });
+
+  it('should keep the underlying error as cause', () => {
+    const cause = new Error('Invalid token signature');
+
+    const error = new GoogleLoginError(GoogleLoginErrorCode.InvalidIdToken, cause.message, { cause });
+
+    expect(error.cause).toBe(cause);
+  });
+
+  it('should have no cause when none is given', () => {
+    expect(new GoogleLoginError(GoogleLoginErrorCode.MissingCredential, 'x').cause).toBe(undefined);
   });
 
   describe('httpStatusCode', () => {
@@ -28,14 +40,7 @@ describe('GoogleLoginError', () => {
       [GoogleLoginErrorCode.InvalidNonce, 400],
       [GoogleLoginErrorCode.LoginNonceNotFound, 400],
       [GoogleLoginErrorCode.LoginNonceExpired, 400],
-      [GoogleLoginErrorCode.MalformedIdToken, 401],
-      [GoogleLoginErrorCode.UnsupportedAlgorithm, 401],
-      [GoogleLoginErrorCode.UnknownSigningKey, 401],
-      [GoogleLoginErrorCode.InvalidSignature, 401],
-      [GoogleLoginErrorCode.InvalidIssuer, 401],
-      [GoogleLoginErrorCode.InvalidAudience, 401],
-      [GoogleLoginErrorCode.IdTokenExpired, 401],
-      [GoogleLoginErrorCode.IdTokenNotYetValid, 401],
+      [GoogleLoginErrorCode.InvalidIdToken, 401],
       [GoogleLoginErrorCode.InvalidHostedDomain, 403],
       [GoogleLoginErrorCode.EmailNotVerified, 403],
       [GoogleLoginErrorCode.AccountNotLinked, 403],

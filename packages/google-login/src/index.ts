@@ -6,6 +6,10 @@
  * `completeAuthTransaction`）と組み合わせ、CLI 生成コードのログイン画面と login_uri
  * ルートから各ステップ関数を呼び出す想定で API を切っている。
  *
+ * ID トークンの検証は Google 公式の google-auth-library（`OAuth2Client.verifyIdToken`）に
+ * 委ねる。このパッケージは redirect mode の POST の読み取り、Double Submit Cookie の検証、
+ * core の認証トランザクションへの束縛（nonce）、ログイン画面のボタン生成を担う。
+ *
  * 参照ドキュメント:
  *   - Google ログインからの移行（redirect mode）
  *     https://developers.google.com/identity/gsi/web/guides/migration#redirect-mode_1
@@ -59,48 +63,21 @@ export type {
 } from './redirect-credential.js';
 
 export {
-  // login_uri: ID トークン検証のステップ関数（verifyGoogleIdToken はこれらの合成）
+  // login_uri: ID トークン検証（本体は google-auth-library）と、その後の任意ステップ
   verifyGoogleIdToken,
-  decodeGoogleIdToken,
-  resolveGoogleSigningKey,
-  verifyGoogleIdTokenSignature,
-  validateGoogleIdTokenAudience,
-  validateGoogleIdTokenIssuer,
-  validateGoogleIdTokenExpiration,
+  createGoogleIdTokenVerifier,
+  getDefaultGoogleIdTokenVerifier,
   validateGoogleHostedDomain,
   validateGoogleEmailVerified,
   validateGoogleIdTokenNonce,
-  GOOGLE_ID_TOKEN_ISSUERS,
-  GOOGLE_ID_TOKEN_SIGNING_ALG,
-  DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS,
 } from './id-token.js';
 
 export type {
-  DecodedGoogleIdToken,
-  GoogleIdTokenHeader,
   GoogleIdTokenPayload,
-  GoogleIdTokenTimeOptions,
-  VerifiedGoogleIdToken,
+  GoogleIdTokenVerifier,
+  GoogleIdTokenVerifierOptions,
   VerifyGoogleIdTokenOptions,
 } from './id-token.js';
-
-export {
-  // Google の公開鍵（JWK Set）の取得とキャッシュ
-  createGoogleCertsKeyProvider,
-  createStaticGoogleSigningKeyProvider,
-  parseCacheControlMaxAge,
-  parseJwkSet,
-  GOOGLE_CERTS_URL,
-  DEFAULT_CERTS_CACHE_TTL_SECONDS,
-  DEFAULT_CERTS_MIN_REFRESH_INTERVAL_MS,
-} from './certs.js';
-
-export type {
-  GoogleCertsKeyProvider,
-  GoogleCertsKeyProviderOptions,
-  GoogleJwk,
-  GoogleSigningKeyProvider,
-} from './certs.js';
 
 export {
   // OP のユーザーとの対応付け

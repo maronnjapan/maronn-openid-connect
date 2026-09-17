@@ -1,51 +1,42 @@
 /**
  * テスト専用フィクスチャ（tsconfig の exclude で dist には出ない）。
  *
- * Google の代わりに RSA 鍵で ID トークンを署名し、JWK Set のレスポンスを偽装する。
+ * Google の代わりに RSA 鍵で ID トークンを署名し、google-auth-library が公開鍵を取りに行く
+ * エンドポイントをローカルの HTTP サーバーで偽装する。
  */
+import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import type { OAuth2ClientOptions } from 'google-auth-library';
 import { expect } from 'vitest';
 
-import type { GoogleJwk } from './certs.js';
 import { GoogleLoginError, type GoogleLoginErrorCode } from './errors.js';
+import type { GoogleIdTokenPayload, GoogleIdTokenVerifier } from './id-token.js';
 import type { GoogleLoginNonceRecord, GoogleLoginNonceStore } from './nonce.js';
 
 export const TEST_CLIENT_ID = '1234567890-abcdefg.apps.googleusercontent.com';
 
 export interface GoogleTestKey {
   kid: string;
-  privateKey: CryptoKey;
-  jwk: GoogleJwk;
+  privateKey: KeyObject;
+  /** SPKI / PEM。google-auth-library は Node.js では PEM 形式のエンドポイントを使う。 */
+  publicKeyPem: string;
+  jwk: Record<string, unknown>;
 }
 
-export async function generateGoogleTestKey(kid = 'test-kid-1'): Promise<GoogleTestKey> {
-  const pair = await crypto.subtle.generateKey(
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: 'SHA-256',
-    },
-    true,
-    ['sign', 'verify'],
-  );
-  const exported = await crypto.subtle.exportKey('jwk', pair.publicKey);
+export function generateGoogleTestKey(kid = 'test-kid-1'): GoogleTestKey {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   return {
     kid,
-    privateKey: pair.privateKey,
-    jwk: { kid, kty: 'RSA', alg: 'RS256', use: 'sig', n: exported.n!, e: exported.e! },
+    privateKey,
+    publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+    jwk: { ...publicKey.export({ format: 'jwk' }), kid, alg: 'RS256', use: 'sig' },
   };
 }
 
-export function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 export function base64UrlEncodeJson(value: unknown): string {
-  return base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
 export function nowSeconds(): number {
@@ -53,9 +44,7 @@ export function nowSeconds(): number {
 }
 
 /** Google のドキュメントに載っている形のペイロード（値は架空）。 */
-export function createGoogleIdTokenPayload(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+export function createGoogleIdTokenPayload(overrides: Record<string, unknown> = {}): GoogleIdTokenPayload {
   const now = nowSeconds();
   return {
     iss: 'https://accounts.google.com',
@@ -71,53 +60,99 @@ export function createGoogleIdTokenPayload(
     iat: now,
     exp: now + 3600,
     ...overrides,
+  } as GoogleIdTokenPayload;
+}
+
+export function signGoogleIdToken(options: {
+  key: GoogleTestKey;
+  payload: GoogleIdTokenPayload | Record<string, unknown>;
+  header?: Record<string, unknown>;
+}): string {
+  const header = { alg: 'RS256', kid: options.key.kid, typ: 'JWT', ...options.header };
+  const signingInput = `${base64UrlEncodeJson(header)}.${base64UrlEncodeJson(options.payload)}`;
+  const signature = createSign('RSA-SHA256').update(signingInput).sign(options.key.privateKey);
+  return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+export interface CertsServer {
+  baseUrl: string;
+  /** 受け取ったリクエストのパス。 */
+  hits: string[];
+  /** このサーバーを公開鍵の取得先にする `OAuth2Client` のオプション。 */
+  clientOptions: OAuth2ClientOptions;
+  close(): Promise<void>;
+}
+
+/**
+ * Google の公開鍵エンドポイントを偽装するローカル HTTP サーバーを起動する。
+ *
+ * - `/oauth2/v1/certs`: `{ kid: PEM }`（google-auth-library が Node.js で使う形式）
+ * - `/oauth2/v3/certs`: JWK Set
+ * - `status` を指定すると全リクエストにそのステータスを返す
+ */
+export async function startCertsServer(
+  keys: readonly GoogleTestKey[],
+  options: { maxAge?: number; status?: number } = {},
+): Promise<CertsServer> {
+  const hits: string[] = [];
+  const server = createServer((request, response) => {
+    hits.push(request.url ?? '');
+    if (options.status !== undefined) {
+      response.statusCode = options.status;
+      response.end();
+      return;
+    }
+    const headers = {
+      'content-type': 'application/json',
+      'cache-control': `public, max-age=${options.maxAge ?? 3600}, must-revalidate, no-transform`,
+    };
+    if (request.url === '/oauth2/v1/certs') {
+      response.writeHead(200, headers);
+      response.end(JSON.stringify(Object.fromEntries(keys.map((key) => [key.kid, key.publicKeyPem]))));
+      return;
+    }
+    if (request.url === '/oauth2/v3/certs') {
+      response.writeHead(200, headers);
+      response.end(JSON.stringify({ keys: keys.map((key) => key.jwk) }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  return {
+    baseUrl,
+    hits,
+    clientOptions: {
+      endpoints: {
+        oauth2FederatedSignonPemCertsUrl: `${baseUrl}/oauth2/v1/certs`,
+        oauth2FederatedSignonJwkCertsUrl: `${baseUrl}/oauth2/v3/certs`,
+      },
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
   };
 }
 
-export async function signGoogleIdToken(options: {
-  key: GoogleTestKey;
-  payload: Record<string, unknown>;
-  header?: Record<string, unknown>;
-}): Promise<string> {
-  const header = { alg: 'RS256', kid: options.key.kid, typ: 'JWT', ...options.header };
-  const signingInput = `${base64UrlEncodeJson(header)}.${base64UrlEncodeJson(options.payload)}`;
-  const signature = await crypto.subtle.sign(
-    { name: 'RSASSA-PKCS1-v1_5' },
-    options.key.privateKey,
-    new TextEncoder().encode(signingInput),
-  );
-  return `${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
+export interface FakeVerifier extends GoogleIdTokenVerifier {
+  calls: Array<{ idToken: string; clientId: string | readonly string[] }>;
 }
 
-export function createJwksResponse(
-  keys: readonly GoogleJwk[],
-  init: { maxAge?: number; status?: number; cacheControl?: string | null; body?: string } = {},
-): Response {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  const cacheControl =
-    init.cacheControl === undefined
-      ? `public, max-age=${init.maxAge ?? 3600}, must-revalidate, no-transform`
-      : init.cacheControl;
-  if (cacheControl !== null) {
-    headers['cache-control'] = cacheControl;
-  }
-  return new Response(init.body ?? JSON.stringify({ keys }), { status: init.status ?? 200, headers });
-}
-
-export interface FakeFetch {
-  fetch: (input: string, init?: RequestInit) => Promise<Response>;
-  calls: Array<{ input: string; init: RequestInit | undefined }>;
-}
-
-export function createFakeFetch(
-  responder: (call: number) => Response | Promise<Response>,
-): FakeFetch {
-  const calls: FakeFetch['calls'] = [];
+/** 検証本体を差し替えた verifier。合成関数のテストで google-auth-library に触れないために使う。 */
+export function createFakeVerifier(
+  handler: (idToken: string, clientId: string | readonly string[]) => GoogleIdTokenPayload | Promise<GoogleIdTokenPayload>,
+): FakeVerifier {
+  const calls: FakeVerifier['calls'] = [];
   return {
     calls,
-    fetch: async (input, init) => {
-      calls.push({ input, init });
-      return responder(calls.length);
+    async verify(idToken, clientId) {
+      calls.push({ idToken, clientId });
+      return handler(idToken, clientId);
     },
   };
 }

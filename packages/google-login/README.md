@@ -6,15 +6,16 @@ Sign in with Google（Google Identity Services、以下 GIS）の redirect mode 
 
 - **core と組み合わせて使う。単体では使わない。** Google のログイン結果を core の認証トランザクション（`getAuthTransaction` → 認証セッションの確立 → 同意 → `completeAuthTransaction`）へ接続するための部品で、OP 本体の機能は持たない
 - **CLI 生成コードから呼び出す想定で API を切っている。** core と同じく HTTP の配線（ルーティング・本文解析・Cookie の発行）は呼び出し側の責務とし、このパッケージは検証と生成のステップ関数だけを提供する。`@maronn-openid-connect/cli` への組み込み（`--enable google-login`）は未対応で、それまでは生成コードへ手で配線する（[生成コードへの配線](#生成コードへの配線)）
+- **ID トークンの検証は Google 公式の [`google-auth-library`](https://github.com/googleapis/google-auth-library-nodejs) に委ねる。** 公開鍵の取得とローテーション追随、署名・`iss`・`aud`・`exp` の検証はライブラリが行い、Google 側の仕様変更にはライブラリの更新で追随する。このパッケージが自前で持つのは、redirect mode の POST の読み取り、Double Submit Cookie の検証、core の認証トランザクションへの束縛、ログイン画面のボタン生成だけ
+- **Node.js 22 以上限定。** `google-auth-library` が Node.js の API を前提にするため、core / experimental と違い Cloudflare Workers などのエッジランタイムでは動かない。production 依存に外部ライブラリを持つのはモノレポ内でこのパッケージだけ
 - **core は peerDependency**（`>=0.3.0 <1.0.0`）。experimental と同じ理由で `dependencies` には置かない（アプリ内の core のインスタンスを 1 つに保つため。[RELEASE.md](../../RELEASE.md)「バージョニング方針」）
-- Web 標準 API（Web Crypto / Fetch / URL）のみで実装し、production の外部依存は無い
 
 ## 参照ドキュメント
 
 実装は次の 2 つの Google のドキュメントに従う。
 
 - [Google ログインからの移行 — redirect mode](https://developers.google.com/identity/gsi/web/guides/migration?hl=ja#redirect-mode_1): `ux_mode: 'redirect'` では、ユーザーがアカウントを選ぶとブラウザが `login_uri` へ ID トークンを POST する
-- [サーバーサイドで Google ID トークンを検証する](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token?hl=ja): 署名・`aud`・`iss`・`exp`（任意で `hd`）の検証条件と、`g_csrf_token` による Double Submit Cookie の CSRF 対策
+- [サーバーサイドで Google ID トークンを検証する](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token?hl=ja): 検証条件（署名・`aud`・`iss`・`exp`、任意で `hd`）、Node.js では `google-auth-library` の `verifyIdToken` を使うこと、`g_csrf_token` による Double Submit Cookie の CSRF 対策
 
 ## 全体の流れ
 
@@ -30,20 +31,22 @@ RP ──(認可リクエスト)──> OP /authorize        core: validateAutho
 Google ──(POST credential, g_csrf_token, select_by)──> OP login_uri（例: /login/google）
                                 handleGoogleLoginRedirect
                                   1. parseGoogleCsrfTokenCookie / parseGoogleRedirectCredential / validateGoogleCsrfToken
-                                  2. verifyGoogleIdToken（署名 → aud → iss → exp → hd）
+                                  2. verifyGoogleIdToken … google-auth-library（署名 → aud → iss → exp）+ 任意の hd / email_verified
                                   3. consumeGoogleLoginNonce … ID トークンの nonce から transaction_id を復元（単回使用）
                                 core: getAuthTransaction(transactionId)
                                 resolveGoogleLoginSubject … Google アカウント → OP の subject
                                 以降はユーザー名 + パスワードのログインと同じ（セッション確立 → /consent）
 ```
 
-Google の POST には `credential` と `g_csrf_token` しか入らず、`login_uri` は Google Cloud コンソールに登録した URI と完全一致させる必要がある（クエリでトランザクション ID を運べない）。そこで GIS の `data-nonce` に載せた nonce が ID トークンの `nonce` クレームとして返ることを使い、署名検証を通ったトークンの `nonce` で認証トランザクションを引く。nonce は CSPRNG 由来（32 バイト）で、引いた時点で削除する。
+Google の POST には `credential` と `g_csrf_token` しか入らず、`login_uri` は Google Cloud コンソールに登録した URI と完全一致させる必要がある（クエリでトランザクション ID を運べない）。そこで GIS の `data-nonce` に載せた nonce が ID トークンの `nonce` クレームとして返ることを使い、検証を通ったトークンの `nonce` で認証トランザクションを引く。nonce は CSPRNG 由来（32 バイト）で、引いた時点で削除する。
 
 ## インストール
 
 ```bash
 pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 ```
+
+`google-auth-library` は本パッケージの `dependencies` に入っているので、別途追加する必要はない。
 
 ## Google Cloud コンソール側の設定
 
@@ -81,22 +84,14 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 
 | API | 役割 |
 |---|---|
-| `verifyGoogleIdToken` | 下記ステップ関数の合成。`clientId`（複数可）・`keyProvider` に加え、任意で `hostedDomain` / `requireVerifiedEmail` / `expectedNonce` / `now` / `clockSkewSeconds` を受け取る |
-| `decodeGoogleIdToken` | compact JWS を分解し、`alg` が RS256 であること・`kid` があること・必須クレーム（`iss` / `sub` / `aud` / `exp` / `iat`）の形を検証する。base64url は厳密にデコードする（RFC 8725 §3.11） |
-| `resolveGoogleSigningKey` / `verifyGoogleIdTokenSignature` | `kid` に対応する Google の公開鍵を引き、署名を検証する |
-| `validateGoogleIdTokenAudience` | `aud` がアプリのクライアント ID（のいずれか）と一致する |
-| `validateGoogleIdTokenIssuer` | `iss` が `accounts.google.com` または `https://accounts.google.com` |
-| `validateGoogleIdTokenExpiration` | `exp` が経過していない。あわせて `nbf` / `iat` が未来でないことも確認する（クロックスキュー既定 60 秒） |
+| `verifyGoogleIdToken` | verifier で検証（下記）したあと、任意の `hostedDomain` / `requireVerifiedEmail` / `expectedNonce` を確認して `GoogleIdTokenPayload`（`google-auth-library` の `TokenPayload`）を返す |
+| `createGoogleIdTokenVerifier` | `google-auth-library` の `OAuth2Client.verifyIdToken` で検証する verifier を作る。ライブラリが Google の公開鍵を取得して `Cache-Control` の間キャッシュし、署名・`aud`（複数可）・`iss`・`exp` / `iat` を検証する。`OAuth2Client` のオプション（`transporter` / `endpoints` など）や既存のインスタンスを渡せる |
+| `getDefaultGoogleIdTokenVerifier` | プロセスで共有する既定の verifier（初回に生成）。`verifier` を省略したときに使われる。公開鍵のキャッシュは `OAuth2Client` が持つので、検証のたびに作り直さない |
 | `validateGoogleHostedDomain` | 任意。`hd` が許可した Google Workspace のドメイン（のいずれか）と一致する |
 | `validateGoogleEmailVerified` | 任意。`email_verified` が `true`（メールでユーザーを対応付ける構成向け） |
 | `validateGoogleIdTokenNonce` | 任意。`nonce` が期待値と一致する（nonce をストアではなく Cookie やセッションで持つ構成向け） |
 
-### Google の公開鍵
-
-| API | 役割 |
-|---|---|
-| `createGoogleCertsKeyProvider` | `https://www.googleapis.com/oauth2/v3/certs`（JWK Set）を取得し、レスポンスの `Cache-Control: max-age` の間キャッシュする。未知の `kid` は最短間隔（既定 60 秒）を空けて取り直す。取得失敗は `signing_key_unavailable`（古い鍵へのフォールバックはしない）。プロセスごとに 1 つ作って使い回す |
-| `createStaticGoogleSigningKeyProvider` | 固定の JWK 集合から引く。テストや Google へ到達できない環境向け |
+`GoogleIdTokenVerifier` はインターフェースなので、テストや特殊な環境では差し替えられる。
 
 ### エラー
 
@@ -105,9 +100,9 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | `httpStatusCode` | 対象 |
 |---|---|
 | 400 | `credential` 無し、`g_csrf_token` の Cookie 無し / 本文無し / 不一致、`nonce` 無し・未発行・使用済み・期限切れ |
-| 401 | ID トークンを受け入れられない（形式・`alg`・未知の `kid`・署名・`iss`・`aud`・`exp`） |
+| 401 | `invalid_id_token`: `google-auth-library` が ID トークンを受け入れなかった（形式・署名・`iss`・`aud`・`exp` / `iat`）。ライブラリのエラーは `cause` に入り、`message` はそのまま |
 | 403 | トークンは正しいが受け入れない（`hd` 不一致、`email_verified` でない、OP のユーザーに未連携） |
-| 503 | Google の公開鍵を取得できない |
+| 503 | `signing_key_unavailable`: Google の公開鍵を取得できない（ライブラリのエラーは `cause`） |
 
 ## 生成コードへの配線
 
@@ -118,7 +113,6 @@ import { Hono } from 'hono';
 import { getAuthTransaction, generateRandomString } from '@maronn-openid-connect/core';
 import {
   buildGoogleSignInMarkup,
-  createGoogleCertsKeyProvider,
   handleGoogleLoginRedirect,
   issueGoogleLoginNonce,
   resolveGoogleLoginSubject,
@@ -135,9 +129,6 @@ const googleLoginConfig = {
   // Google Cloud コンソールの「承認済みのリダイレクト URI」と完全一致させる
   loginUri: new URL('/login/google', defaultProviderConfig.issuer).toString(),
 };
-
-// プロセスごとに 1 つ。Cache-Control に従って公開鍵をキャッシュする
-const googleKeyProvider = createGoogleCertsKeyProvider();
 
 // nonce → transaction_id の記録。core の AuthTransactionStore と同じ KV 契約
 // （ここではインメモリ。TTL の扱いは consumeGoogleLoginNonce が期限を見るので省いてよい）
@@ -183,11 +174,11 @@ export async function renderGoogleSignInButton(transactionId: string): Promise<s
 googleLoginApp.post('/', async (c) => {
   let login;
   try {
+    // verifier を省略すると、プロセス共有の google-auth-library 版が使われる
     login = await handleGoogleLoginRedirect({
       params: await c.req.parseBody(),
       cookieHeader: c.req.header('Cookie') ?? null,
       clientId: googleLoginConfig.clientId,
-      keyProvider: googleKeyProvider,
       nonceStore: googleLoginNonceStore,
     });
   } catch (error) {
@@ -213,6 +204,8 @@ googleLoginApp.post('/', async (c) => {
 
 `prompt=login` / `select_account` の扱い、`max_age` による再認証、同意ステップは既存のログインルートの実装をそのまま使う。`GoogleLoginError` を `AuthTransactionError` と同じ catch 節で処理する場合は `error.httpStatusCode` をそのまま使える。
 
+プロキシ経由でしか Google に到達できない環境では、`createGoogleIdTokenVerifier({ clientOptions: { transporterOptions: { ... } } })` で作った verifier を `handleGoogleLoginRedirect` の `verifier` に渡す（`OAuth2Client` のオプションはそのまま通る）。
+
 ### `transaction-binding` を有効にした生成コードとの併用
 
 `--enable transaction-binding` の束縛 Cookie は `SameSite=Lax` で発行される。Google からの POST はクロスサイトの遷移なので、ブラウザは Lax の Cookie をこの POST に付けない。`login_uri` のルートで `validateTransactionBinding` を呼ぶ場合は、束縛 Cookie を `SameSite=None; Secure` で発行し直すか、このルートでは束縛検証の代わりに nonce の単回使用を束縛とみなす、のどちらかを選ぶ。
@@ -221,20 +214,24 @@ googleLoginApp.post('/', async (c) => {
 
 | Google のドキュメントの条件 | 実装 |
 |---|---|
-| Google の公開鍵で署名を検証する。鍵はローテーションされるため `Cache-Control` を見て再取得する | `createGoogleCertsKeyProvider`（JWK Set、`max-age` キャッシュ）+ `verifyGoogleIdTokenSignature`（RS256 のみ） |
-| `aud` がアプリのクライアント ID と同じ | `validateGoogleIdTokenAudience` |
-| `iss` が `accounts.google.com` または `https://accounts.google.com` | `validateGoogleIdTokenIssuer` |
-| `exp` が経過していない | `validateGoogleIdTokenExpiration` |
+| Google の公開鍵で署名を検証する。鍵はローテーションされるため `Cache-Control` を見て再取得する | `google-auth-library`（`OAuth2Client.verifyIdToken`） |
+| `aud` がアプリのクライアント ID と同じ | `google-auth-library`（`verifyIdToken` の `audience`） |
+| `iss` が `accounts.google.com` または `https://accounts.google.com` | `google-auth-library` |
+| `exp` が経過していない | `google-auth-library`（`iat` が未来でないことも含む） |
 | （任意）`hd` でホストされたドメインを確認する | `validateGoogleHostedDomain` |
 | `g_csrf_token` の Cookie と POST 本文を突き合わせる（Double Submit Cookie） | `validateGoogleCsrfToken` |
 | ユーザーの識別子には `sub` を使う（`email` は変わりうる） | `GoogleAccountResolver` に `sub` を含む検証済みペイロードを渡す |
 
-tokeninfo エンドポイント（`https://oauth2.googleapis.com/tokeninfo`）は使わない。ドキュメントが本番環境での利用を推奨していない（レイテンシとネットワークエラーの可能性）ため、ローカルで署名を検証する。
+tokeninfo エンドポイント（`https://oauth2.googleapis.com/tokeninfo`）は使わない。ドキュメントが本番環境での利用を推奨していない（レイテンシとネットワークエラーの可能性）ため、ライブラリがローカルで署名を検証する。
+
+## テスト
+
+`google-auth-library` が公開鍵を取りに行くエンドポイント（`OAuth2Client` の `endpoints` オプション）をローカルの HTTP サーバーに向け、テスト用の RSA 鍵で署名した ID トークンをライブラリ本体に検証させる。ライブラリの拒否が `GoogleLoginError` に写ること、検証を通ったペイロードがそのまま返ること、Double Submit Cookie と nonce の束縛が仕様どおりに動くことを確認する。
 
 ## 制限事項
 
+- **Node.js 22 以上のみ。** `google-auth-library` の要件。エッジランタイムで動かしたい場合は `GoogleIdTokenVerifier` を Web 標準 API だけで実装して差し替える必要がある（このパッケージは提供しない）
 - **redirect mode のみ。** popup mode / One Tap の JavaScript コールバック（`callback`）で受け取った credential をブラウザから別途送る構成は対象外。ただし `verifyGoogleIdToken` 単体は、どの経路で受け取った Google の ID トークンにも使える
-- **RS256 のみ。** Google の ID トークンは RS256 で署名されるため、それ以外の `alg`（`none` を含む）は鍵に触れる前に拒否する
 - **CLI 未統合。** `--enable google-login` での生成は今後の対応。それまでは上記の配線を手で行う
 - `login_uri` へ届く POST の本文解析と Cookie の発行は行わない（core と同じく呼び出し側の責務）
 

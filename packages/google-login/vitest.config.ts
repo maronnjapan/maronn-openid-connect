@@ -11,9 +11,10 @@ export default defineConfig({
     },
   },
   test: {
-    // packages/core と同じ Edge Runtime 環境（Web標準APIのみ）でテストする。
-    // Google の ID トークン検証も Portability の方針（どこでも動く）から外れないことを保証する。
-    environment: 'edge-runtime',
+    // core / experimental は Edge Runtime 環境（Web 標準 API のみ）でテストするが、
+    // このパッケージは ID トークンの検証を Google 公式の google-auth-library に委ねており、
+    // 同ライブラリが Node.js の API（http / crypto など）を前提にするため Node 環境でテストする。
+    environment: 'node',
     globals: false,
     coverage: {
       provider: 'v8',

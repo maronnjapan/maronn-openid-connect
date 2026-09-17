@@ -43,7 +43,7 @@ CLI コマンドでフローの実装コードを生成し、利用者はその�
 実装時は次のルールを守ります。
 
 - コマンドには pnpm を使用する
-- `dependencies` にはモノレポ内のライブラリだけを使用し、外部ライブラリを追加しない
+- `dependencies` にはモノレポ内のライブラリだけを使用し、外部ライブラリを追加しない。例外は `packages/google-login` の `google-auth-library` だけで、Google の ID トークン検証（公開鍵の取得・署名検証）の仕様変更へ自前で追随しないために Google 公式ライブラリへ委ねている
 - `devDependencies` には外部ライブラリを使用してよい
 - t_wada が提唱する方法でテスト駆動開発を行う
 - 機能追加または修正を実ブラウザや実 HTTP フローで検証できる場合は、原則として `tests/e2e` に Playwright E2E テストも追加する
@@ -167,7 +167,7 @@ pnpm --filter <package-name> <command>
 
 - **モノレポ構成**：`packages/*` にパッケージを配置する
 - **Web 標準技術のみ**：Node.js 固有の API ではなく、Fetch API や Web Crypto API などの Web 標準 API を使用する
-- **外部依存なし**：production の `dependencies` には外部ライブラリを使用しない
+- **外部依存なし**：production の `dependencies` には外部ライブラリを使用しない（例外は `packages/google-login` の `google-auth-library`。同パッケージのみ Node.js 22 以上限定になる）
 
 ## 準拠仕様
 
@@ -199,8 +199,9 @@ Authorization Code Flow や OpenID Connect の拡張機能を実行するため�
 ### packages/google-login
 
 Sign in with Google（Google Identity Services の redirect mode）を、`packages/core` で組んだ OP のログイン手段として使うための拡張パッケージです。
-Google が `login_uri` へ POST する ID トークンの検証（署名・`aud`・`iss`・`exp`・`hd`）、`g_csrf_token` の Double Submit Cookie 検証、ログイン画面に埋め込むボタンの HTML 生成、core の認証トランザクションへの束縛（nonce）を提供します。
+Google が `login_uri` へ POST する ID トークンの検証は Google 公式の `google-auth-library` に委ね、このパッケージは `g_csrf_token` の Double Submit Cookie 検証、任意の `hd` / `email_verified` の確認、ログイン画面に埋め込むボタンの HTML 生成、core の認証トランザクションへの束縛（nonce）を提供します。
 単体で使うものではなく、core と組み合わせて `packages/cli` の生成コードから呼び出す想定です。CLI への組み込み（`--enable google-login`）は未対応で、それまでは生成コードへ手で配線します。
+`google-auth-library` の要件により Node.js 22 以上限定で、エッジランタイムでは動きません。
 
 ### samples/*
 

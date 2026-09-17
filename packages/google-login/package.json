@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "description": "Sign in with Google (Google Identity Services, redirect mode) as an upstream login method for maronn-openid-connect providers",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -48,10 +51,12 @@
     "@maronn-openid-connect/core": ">=0.3.0 <1.0.0"
   },
   "devDependencies": {
-    "@edge-runtime/vm": "^5.0.0",
     "@maronn-openid-connect/core": "workspace:*",
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "google-auth-library": "^11.1.0"
   }
 }

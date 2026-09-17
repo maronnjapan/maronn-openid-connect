@@ -11,7 +11,7 @@ import {
   readGoogleLoginParam,
   validateGoogleCsrfToken,
 } from './redirect-credential.js';
-import { captureRejection, captureThrow, expectGoogleLoginError } from './test-helpers.js';
+import { captureThrow, expectGoogleLoginError } from './test-helpers.js';
 
 describe('parameter names', () => {
   // GIS の redirect mode が login_uri へ POST するフィールド名と Cookie 名
@@ -117,35 +117,41 @@ describe('parseGoogleCsrfTokenCookie', () => {
 });
 
 describe('validateGoogleCsrfToken', () => {
-  it('should accept equal tokens', async () => {
-    await expect(validateGoogleCsrfToken('abc123', 'abc123')).resolves.toBeUndefined();
+  it('should accept equal tokens', () => {
+    expect(() => validateGoogleCsrfToken('abc123', 'abc123')).not.toThrow();
   });
 
   // Google のドキュメントのサンプルと同じ順序: Cookie 無し → 本文無し → 不一致
-  it('should reject a missing cookie before looking at the body', async () => {
-    const error = await captureRejection(validateGoogleCsrfToken(undefined, undefined));
+  it('should reject a missing cookie before looking at the body', () => {
+    const error = captureThrow(() => validateGoogleCsrfToken(undefined, undefined));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInCookie, 400);
     expect((error as Error).message).toBe('No CSRF token in Cookie.');
   });
 
-  it('should reject a missing body token', async () => {
-    const error = await captureRejection(validateGoogleCsrfToken(undefined, 'abc123'));
+  it('should reject a missing body token', () => {
+    const error = captureThrow(() => validateGoogleCsrfToken(undefined, 'abc123'));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInBody, 400);
     expect((error as Error).message).toBe('No CSRF token in post body.');
   });
 
-  it('should reject an empty body token', async () => {
-    const error = await captureRejection(validateGoogleCsrfToken('', 'abc123'));
+  it('should reject an empty body token', () => {
+    const error = captureThrow(() => validateGoogleCsrfToken('', 'abc123'));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMissingInBody, 400);
   });
 
-  it('should reject tokens that differ', async () => {
-    const error = await captureRejection(validateGoogleCsrfToken('abc123', 'abc124'));
+  it('should reject tokens that differ', () => {
+    const error = captureThrow(() => validateGoogleCsrfToken('abc123', 'abc124'));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMismatch, 400);
     expect((error as Error).message).toBe('Failed to verify double submit cookie.');
+  });
+
+  it('should reject tokens of different length', () => {
+    const error = captureThrow(() => validateGoogleCsrfToken('abc123', 'abc1234'));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.CsrfTokenMismatch, 400);
   });
 });

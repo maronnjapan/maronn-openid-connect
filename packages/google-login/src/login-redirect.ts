@@ -2,7 +2,8 @@
  * login_uri（redirect mode の POST 先）の処理を、Google のドキュメントの順序で合成した関数。
  *
  *   1. `Cookie` / POST 本文から `g_csrf_token` を取り出し Double Submit Cookie を検証する
- *   2. `credential`（ID トークン）を Google の公開鍵で検証する（署名 → aud → iss → exp → hd）
+ *   2. `credential`（ID トークン）を google-auth-library で検証し（署名 → aud → iss → exp）、
+ *      任意の `hd` / `email_verified` を確認する
  *   3. 検証済みトークンの `nonce` からログイン試行の記録を引き、認証トランザクション ID を復元する
  *
  * 返り値の `transactionId` を core の `getAuthTransaction` に渡すと、通常のログイン
@@ -11,10 +12,9 @@
  * 生成コードはこの合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は
  * 検証を削除したり独自処理を差し込んだりできる。
  */
-import type { GoogleSigningKeyProvider } from './certs.js';
 import { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
-import type { GoogleIdTokenPayload, GoogleIdTokenTimeOptions, VerifiedGoogleIdToken } from './id-token.js';
 import { verifyGoogleIdToken } from './id-token.js';
+import type { GoogleIdTokenPayload, GoogleIdTokenVerifier } from './id-token.js';
 import { consumeGoogleLoginNonce } from './nonce.js';
 import type { GoogleLoginNonceStore } from './nonce.js';
 import {
@@ -24,21 +24,23 @@ import {
 } from './redirect-credential.js';
 import type { GoogleLoginParamsSource } from './redirect-credential.js';
 
-export interface GoogleLoginRedirectContext extends GoogleIdTokenTimeOptions {
+export interface GoogleLoginRedirectContext {
   /** POST 本文。 */
   params: GoogleLoginParamsSource;
   /** リクエストの `Cookie` ヘッダー。 */
   cookieHeader: string | null | undefined;
   /** `aud` と突き合わせるクライアント ID。 */
   clientId: string | readonly string[];
-  /** 署名検証に使う Google の公開鍵。 */
-  keyProvider: GoogleSigningKeyProvider;
   /** ログイン画面の描画時に nonce を保存したストア。 */
   nonceStore: GoogleLoginNonceStore;
+  /** ID トークンの verifier。既定はプロセス共有の google-auth-library 版。 */
+  verifier?: GoogleIdTokenVerifier;
   /** 指定すると `hd` の一致を要求する。 */
   hostedDomain?: string | readonly string[];
   /** true なら `email_verified: true` を要求する。 */
   requireVerifiedEmail?: boolean;
+  /** nonce の期限判定に使う現在時刻。既定は現在時刻。テストでの差し替え用。 */
+  now?: Date;
 }
 
 export interface GoogleLoginRedirectResult {
@@ -46,8 +48,6 @@ export interface GoogleLoginRedirectResult {
   transactionId: string;
   /** 検証済みの Google アカウント（ID トークンのペイロード）。 */
   account: GoogleIdTokenPayload;
-  /** 検証済みの ID トークン全体（ヘッダーを含む）。 */
-  idToken: VerifiedGoogleIdToken;
   /** POST 本文の `select_by`。 */
   selectBy?: string;
 }
@@ -62,18 +62,16 @@ export async function handleGoogleLoginRedirect(
 ): Promise<GoogleLoginRedirectResult> {
   const cookieToken = parseGoogleCsrfTokenCookie(context.cookieHeader);
   const credential = parseGoogleRedirectCredential(context.params);
-  await validateGoogleCsrfToken(credential.csrfToken, cookieToken);
+  validateGoogleCsrfToken(credential.csrfToken, cookieToken);
 
-  const idToken = await verifyGoogleIdToken(credential.credential, {
+  const account = await verifyGoogleIdToken(credential.credential, {
     clientId: context.clientId,
-    keyProvider: context.keyProvider,
+    verifier: context.verifier,
     hostedDomain: context.hostedDomain,
     requireVerifiedEmail: context.requireVerifiedEmail,
-    now: context.now,
-    clockSkewSeconds: context.clockSkewSeconds,
   });
 
-  const nonce = idToken.payload.nonce;
+  const nonce = account.nonce;
   if (typeof nonce !== 'string' || nonce.length === 0) {
     throw new GoogleLoginError(
       GoogleLoginErrorCode.InvalidNonce,
@@ -84,8 +82,7 @@ export async function handleGoogleLoginRedirect(
 
   const result: GoogleLoginRedirectResult = {
     transactionId: record.transactionId,
-    account: idToken.payload,
-    idToken,
+    account,
   };
   if (credential.selectBy !== undefined) {
     result.selectBy = credential.selectBy;

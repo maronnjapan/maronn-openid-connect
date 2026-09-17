@@ -1,381 +1,296 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { OAuth2Client } from 'google-auth-library';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createStaticGoogleSigningKeyProvider, type GoogleSigningKeyProvider } from './certs.js';
 import { GoogleLoginErrorCode } from './errors.js';
 import {
-  DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS,
-  decodeGoogleIdToken,
-  resolveGoogleSigningKey,
+  createGoogleIdTokenVerifier,
+  getDefaultGoogleIdTokenVerifier,
   validateGoogleEmailVerified,
   validateGoogleHostedDomain,
-  validateGoogleIdTokenAudience,
-  validateGoogleIdTokenExpiration,
-  validateGoogleIdTokenIssuer,
   validateGoogleIdTokenNonce,
   verifyGoogleIdToken,
-  verifyGoogleIdTokenSignature,
-  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
 } from './id-token.js';
 import {
-  base64UrlEncodeJson,
   captureRejection,
   captureThrow,
+  createFakeVerifier,
   createGoogleIdTokenPayload,
   expectGoogleLoginError,
   generateGoogleTestKey,
   nowSeconds,
   signGoogleIdToken,
+  startCertsServer,
   TEST_CLIENT_ID,
+  type CertsServer,
   type GoogleTestKey,
 } from './test-helpers.js';
 
 let key: GoogleTestKey;
 let otherKey: GoogleTestKey;
-let keyProvider: GoogleSigningKeyProvider;
+let certs: CertsServer;
+let verifier: GoogleIdTokenVerifier;
 
 beforeAll(async () => {
-  key = await generateGoogleTestKey('google-kid-1');
-  otherKey = await generateGoogleTestKey('google-kid-2');
-  keyProvider = createStaticGoogleSigningKeyProvider([key.jwk]);
+  key = generateGoogleTestKey('google-kid-1');
+  otherKey = generateGoogleTestKey('google-kid-2');
+  certs = await startCertsServer([key]);
+  verifier = createGoogleIdTokenVerifier({ clientOptions: certs.clientOptions });
 });
 
-function payloadOf(overrides: Record<string, unknown> = {}): GoogleIdTokenPayload {
-  return createGoogleIdTokenPayload(overrides) as unknown as GoogleIdTokenPayload;
-}
+afterAll(async () => {
+  await certs.close();
+});
 
-describe('decodeGoogleIdToken', () => {
-  it('should return the header and payload of a well-formed token', async () => {
+// google-auth-library の verifyIdToken を、公開鍵の取得先だけローカルサーバーに向けて実行する。
+// 検証ルール（署名 → aud → iss → exp）はライブラリのものなので、ここではライブラリの拒否が
+// GoogleLoginError に写ることと、検証を通ったペイロードがそのまま返ることを確認する。
+describe('createGoogleIdTokenVerifier', () => {
+  it('should return the payload of a token signed with a Google key', async () => {
     const payload = createGoogleIdTokenPayload();
-    const token = await signGoogleIdToken({ key, payload });
+    const idToken = signGoogleIdToken({ key, payload });
 
-    const decoded = decodeGoogleIdToken(token);
-
-    expect(decoded.header).toEqual({ alg: 'RS256', kid: 'google-kid-1', typ: 'JWT' });
-    expect(decoded.payload).toEqual(payload);
-    expect(decoded.signingInput).toBe(token.split('.').slice(0, 2).join('.'));
-    expect(decoded.signature.byteLength).toBe(256);
+    expect(await verifier.verify(idToken, TEST_CLIENT_ID)).toEqual(payload);
   });
 
-  it('should reject an empty string', () => {
-    const error = captureThrow(() => decodeGoogleIdToken(''));
+  it('should fetch the certificates from the configured endpoint', async () => {
+    const server = await startCertsServer([key]);
+    try {
+      const local = createGoogleIdTokenVerifier({ clientOptions: server.clientOptions });
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MalformedIdToken, 401);
+      await local.verify(signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() }), TEST_CLIENT_ID);
+
+      expect(server.hits).toEqual(['/oauth2/v1/certs']);
+    } finally {
+      await server.close();
+    }
   });
 
-  // RFC 8725 §3.1 / §3.2: alg none や HMAC 系へのすり替えは鍵に触れる前に拒否する
-  it('should reject alg none', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(), header: { alg: 'none' } });
+  // Google のドキュメント: 鍵はローテーションされるので Cache-Control を見て再取得する。
+  // その追随はライブラリ側の責務で、ここでは max-age の間は取り直さないことだけを確認する。
+  it('should reuse the cached certificates while max-age has not elapsed', async () => {
+    const server = await startCertsServer([key], { maxAge: 3600 });
+    try {
+      const local = createGoogleIdTokenVerifier({ clientOptions: server.clientOptions });
 
-    const error = captureThrow(() => decodeGoogleIdToken(token));
+      await local.verify(signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() }), TEST_CLIENT_ID);
+      await local.verify(signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() }), TEST_CLIENT_ID);
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.UnsupportedAlgorithm, 401);
+      expect(server.hits.length).toBe(1);
+    } finally {
+      await server.close();
+    }
   });
 
-  it('should reject alg HS256', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(), header: { alg: 'HS256' } });
+  it('should use a provided OAuth2Client', async () => {
+    const server = await startCertsServer([key]);
+    try {
+      const client = new OAuth2Client(server.clientOptions);
+      const local = createGoogleIdTokenVerifier({ client });
 
-    const error = captureThrow(() => decodeGoogleIdToken(token));
+      await local.verify(signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() }), TEST_CLIENT_ID);
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.UnsupportedAlgorithm, 401);
+      expect(server.hits.length).toBe(1);
+    } finally {
+      await server.close();
+    }
   });
 
-  it('should reject a header without kid', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(), header: { kid: undefined } });
+  it('should accept a token whose aud matches one of several client IDs', async () => {
+    const idToken = signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
 
-    const error = captureThrow(() => decodeGoogleIdToken(token));
+    const payload = await verifier.verify(idToken, ['android-client', TEST_CLIENT_ID]);
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MalformedIdToken, 401);
-  });
-
-  it('should reject a typ other than JWT', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(), header: { typ: 'at+jwt' } });
-
-    const error = captureThrow(() => decodeGoogleIdToken(token));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MalformedIdToken, 401);
-  });
-
-  it('should accept a token without typ', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(), header: { typ: undefined } });
-
-    expect(decodeGoogleIdToken(token).header).toEqual({ alg: 'RS256', kid: 'google-kid-1' });
-  });
-
-  it('should accept typ in any letter case', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(), header: { typ: 'jwt' } });
-
-    expect(decodeGoogleIdToken(token).header.typ).toBe('jwt');
-  });
-
-  it.each([
-    ['iss', { iss: undefined }],
-    ['sub', { sub: '' }],
-    ['aud', { aud: [] }],
-    ['exp', { exp: '1700000000' }],
-    ['iat', { iat: undefined }],
-  ])('should reject a payload with a missing or malformed %s claim', async (_claim, overrides) => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload(overrides) });
-
-    const error = captureThrow(() => decodeGoogleIdToken(token));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.MalformedIdToken, 401);
-  });
-
-  it('should accept aud as an array of client IDs', async () => {
-    const token = await signGoogleIdToken({
-      key,
-      payload: createGoogleIdTokenPayload({ aud: [TEST_CLIENT_ID, 'other-client'] }),
-    });
-
-    expect(decodeGoogleIdToken(token).payload.aud).toEqual([TEST_CLIENT_ID, 'other-client']);
-  });
-});
-
-describe('resolveGoogleSigningKey', () => {
-  it('should return the key matching the header kid', async () => {
-    expect(await resolveGoogleSigningKey({ alg: 'RS256', kid: 'google-kid-1' }, keyProvider)).toEqual(key.jwk);
-  });
-
-  it('should throw unknown_signing_key when no key matches', async () => {
-    const error = await captureRejection(
-      resolveGoogleSigningKey({ alg: 'RS256', kid: 'rotated-away' }, keyProvider),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.UnknownSigningKey, 401);
-  });
-});
-
-describe('verifyGoogleIdTokenSignature', () => {
-  it('should accept a token signed with the matching key', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
-
-    await expect(verifyGoogleIdTokenSignature(decodeGoogleIdToken(token), key.jwk)).resolves.toBeUndefined();
-  });
-
-  it('should reject a token whose payload was altered after signing', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
-    const [header, , signature] = token.split('.');
-    const tampered = `${header}.${base64UrlEncodeJson(createGoogleIdTokenPayload({ sub: 'attacker' }))}.${signature}`;
-
-    const error = await captureRejection(verifyGoogleIdTokenSignature(decodeGoogleIdToken(tampered), key.jwk));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidSignature, 401);
-  });
-
-  it('should reject a token signed with a different key that reuses the kid', async () => {
-    const token = await signGoogleIdToken({
-      key: otherKey,
-      payload: createGoogleIdTokenPayload(),
-      header: { kid: key.kid },
-    });
-
-    const error = await captureRejection(verifyGoogleIdTokenSignature(decodeGoogleIdToken(token), key.jwk));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidSignature, 401);
-  });
-
-  it('should reject a public key that is not RSA', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
-
-    const error = await captureRejection(
-      verifyGoogleIdTokenSignature(decodeGoogleIdToken(token), { kid: key.kid, kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.UnsupportedAlgorithm, 401);
-  });
-
-  it('should reject a public key that declares an alg other than RS256', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
-
-    const error = await captureRejection(
-      verifyGoogleIdTokenSignature(decodeGoogleIdToken(token), { ...key.jwk, alg: 'RS512' }),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.UnsupportedAlgorithm, 401);
-  });
-});
-
-describe('validateGoogleIdTokenAudience', () => {
-  it('should accept aud equal to the client ID', () => {
-    expect(() => validateGoogleIdTokenAudience(payloadOf(), TEST_CLIENT_ID)).not.toThrow();
-  });
-
-  it('should accept aud matching one of several client IDs', () => {
-    expect(() =>
-      validateGoogleIdTokenAudience(payloadOf(), ['android-client', TEST_CLIENT_ID]),
-    ).not.toThrow();
-  });
-
-  it('should accept an aud array that contains the client ID', () => {
-    expect(() =>
-      validateGoogleIdTokenAudience(payloadOf({ aud: ['other', TEST_CLIENT_ID] }), TEST_CLIENT_ID),
-    ).not.toThrow();
+    expect(payload.aud).toBe(TEST_CLIENT_ID);
   });
 
   // 攻撃者のアプリに発行された ID トークンで同じユーザーのデータへアクセスされるのを防ぐ
-  it('should reject aud issued to another application', () => {
-    const error = captureThrow(() =>
-      validateGoogleIdTokenAudience(payloadOf({ aud: 'attacker.apps.googleusercontent.com' }), TEST_CLIENT_ID),
-    );
+  it('should reject a token issued to another application', async () => {
+    const idToken = signGoogleIdToken({
+      key,
+      payload: createGoogleIdTokenPayload({ aud: 'attacker.apps.googleusercontent.com' }),
+    });
 
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidAudience, 401);
+    const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('Wrong recipient');
   });
 
-  it('should throw a TypeError when no client ID is configured', () => {
-    expect(() => validateGoogleIdTokenAudience(payloadOf(), [])).toThrow(TypeError);
+  it('should reject a token from another issuer', async () => {
+    const idToken = signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ iss: 'https://accounts.example.com' }) });
+
+    const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('Invalid issuer');
   });
 
-  it('should throw a TypeError when the client ID is an empty string', () => {
-    expect(() => validateGoogleIdTokenAudience(payloadOf(), '')).toThrow(TypeError);
+  it('should accept accounts.google.com without a scheme as issuer', async () => {
+    const idToken = signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ iss: 'accounts.google.com' }) });
+
+    expect((await verifier.verify(idToken, TEST_CLIENT_ID)).iss).toBe('accounts.google.com');
+  });
+
+  it('should reject an expired token', async () => {
+    const idToken = signGoogleIdToken({
+      key,
+      payload: createGoogleIdTokenPayload({ iat: nowSeconds() - 7200, exp: nowSeconds() - 3600 }),
+    });
+
+    const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('Token used too late');
+  });
+
+  it('should reject a token issued in the future', async () => {
+    const idToken = signGoogleIdToken({
+      key,
+      payload: createGoogleIdTokenPayload({ iat: nowSeconds() + 3600, exp: nowSeconds() + 7200 }),
+    });
+
+    const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('Token used too early');
+  });
+
+  it('should reject a token signed with a different key that reuses the kid', async () => {
+    const idToken = signGoogleIdToken({ key: otherKey, payload: createGoogleIdTokenPayload(), header: { kid: key.kid } });
+
+    const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('Invalid token signature');
+  });
+
+  it('should reject a token signed with an unknown key', async () => {
+    const idToken = signGoogleIdToken({ key: otherKey, payload: createGoogleIdTokenPayload() });
+
+    const error = await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('No pem found for envelope');
+  });
+
+  it('should reject a token that is not a JWS', async () => {
+    const error = await captureRejection(verifier.verify('not-a-jwt', TEST_CLIENT_ID));
+
+    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+    expect((error as Error).message).toContain('Wrong number of segments');
+  });
+
+  it('should reject an empty token without calling the library', async () => {
+    const server = await startCertsServer([key]);
+    try {
+      const local = createGoogleIdTokenVerifier({ clientOptions: server.clientOptions });
+
+      const error = await captureRejection(local.verify('', TEST_CLIENT_ID));
+
+      expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIdToken, 401);
+      expect(server.hits).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('should keep the library error as cause', async () => {
+    const idToken = signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ aud: 'wrong' }) });
+
+    const error = (await captureRejection(verifier.verify(idToken, TEST_CLIENT_ID))) as Error;
+
+    expect(error.cause).toBeInstanceOf(Error);
+    expect((error.cause as Error).message).toBe(error.message);
+  });
+
+  it('should throw a TypeError when no client ID is configured', async () => {
+    const idToken = signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
+
+    await expect(verifier.verify(idToken, [])).rejects.toThrow(TypeError);
+  });
+
+  it('should report signing_key_unavailable when the certificates cannot be fetched', async () => {
+    // 404 は gaxios がリトライしないステータスなので、待ち時間なしで失敗する
+    const server = await startCertsServer([key], { status: 404 });
+    try {
+      const local = createGoogleIdTokenVerifier({ clientOptions: server.clientOptions });
+      const idToken = signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
+
+      const error = await captureRejection(local.verify(idToken, TEST_CLIENT_ID));
+
+      expectGoogleLoginError(error, GoogleLoginErrorCode.SigningKeyUnavailable, 503);
+      expect((error as Error).message).toContain('Failed to retrieve verification certificates');
+      expect((error as Error).cause).toBeInstanceOf(Error);
+    } finally {
+      await server.close();
+    }
   });
 });
 
-describe('validateGoogleIdTokenIssuer', () => {
-  it('should accept https://accounts.google.com', () => {
-    expect(() => validateGoogleIdTokenIssuer(payloadOf({ iss: 'https://accounts.google.com' }))).not.toThrow();
-  });
-
-  it('should accept accounts.google.com without a scheme', () => {
-    expect(() => validateGoogleIdTokenIssuer(payloadOf({ iss: 'accounts.google.com' }))).not.toThrow();
-  });
-
-  it('should reject an issuer with a trailing slash', () => {
-    const error = captureThrow(() => validateGoogleIdTokenIssuer(payloadOf({ iss: 'https://accounts.google.com/' })));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIssuer, 401);
-  });
-
-  it('should reject another issuer', () => {
-    const error = captureThrow(() => validateGoogleIdTokenIssuer(payloadOf({ iss: 'https://accounts.example.com' })));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIssuer, 401);
-  });
-});
-
-describe('validateGoogleIdTokenExpiration', () => {
-  const now = new Date(1_700_000_000_000);
-  const nowSec = 1_700_000_000;
-
-  it('should accept a token that expires in the future', () => {
-    expect(() =>
-      validateGoogleIdTokenExpiration(payloadOf({ iat: nowSec - 10, exp: nowSec + 3600 }), { now }),
-    ).not.toThrow();
-  });
-
-  it('should reject a token whose exp has passed by more than the clock skew', () => {
-    const error = captureThrow(() =>
-      validateGoogleIdTokenExpiration(
-        payloadOf({ iat: nowSec - 7200, exp: nowSec - DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS }),
-        { now },
-      ),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.IdTokenExpired, 401);
-  });
-
-  it('should accept a token that expired within the clock skew', () => {
-    expect(() =>
-      validateGoogleIdTokenExpiration(
-        payloadOf({ iat: nowSec - 7200, exp: nowSec - DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS + 1 }),
-        { now },
-      ),
-    ).not.toThrow();
-  });
-
-  it('should honor a custom clock skew', () => {
-    const error = captureThrow(() =>
-      validateGoogleIdTokenExpiration(payloadOf({ iat: nowSec - 10, exp: nowSec }), { now, clockSkewSeconds: 0 }),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.IdTokenExpired, 401);
-  });
-
-  it('should reject a token whose nbf is in the future beyond the clock skew', () => {
-    const error = captureThrow(() =>
-      validateGoogleIdTokenExpiration(
-        payloadOf({ iat: nowSec, exp: nowSec + 3600, nbf: nowSec + DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS + 1 }),
-        { now },
-      ),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.IdTokenNotYetValid, 401);
-  });
-
-  it('should accept a token whose nbf is within the clock skew', () => {
-    expect(() =>
-      validateGoogleIdTokenExpiration(
-        payloadOf({ iat: nowSec, exp: nowSec + 3600, nbf: nowSec + DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS }),
-        { now },
-      ),
-    ).not.toThrow();
-  });
-
-  // google-auth-library の "Token used too early" と同じ判定
-  it('should reject a token issued in the future beyond the clock skew', () => {
-    const error = captureThrow(() =>
-      validateGoogleIdTokenExpiration(
-        payloadOf({ iat: nowSec + DEFAULT_GOOGLE_ID_TOKEN_CLOCK_SKEW_SECONDS + 1, exp: nowSec + 3600 }),
-        { now },
-      ),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.IdTokenNotYetValid, 401);
-  });
-
-  it('should use the current time when now is omitted', () => {
-    expect(() =>
-      validateGoogleIdTokenExpiration(payloadOf({ iat: nowSeconds(), exp: nowSeconds() + 60 })),
-    ).not.toThrow();
+describe('getDefaultGoogleIdTokenVerifier', () => {
+  it('should return the same instance on every call', () => {
+    expect(getDefaultGoogleIdTokenVerifier()).toBe(getDefaultGoogleIdTokenVerifier());
   });
 });
 
 describe('validateGoogleHostedDomain', () => {
   it('should not check hd when no hosted domain is configured', () => {
-    expect(() => validateGoogleHostedDomain(payloadOf({ hd: undefined }))).not.toThrow();
+    expect(() => validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: undefined }))).not.toThrow();
   });
 
   it('should accept hd equal to the configured domain', () => {
-    expect(() => validateGoogleHostedDomain(payloadOf({ hd: 'example.com' }), 'example.com')).not.toThrow();
+    expect(() => validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: 'example.com' }), 'example.com')).not.toThrow();
   });
 
   it('should accept hd matching one of several domains', () => {
     expect(() =>
-      validateGoogleHostedDomain(payloadOf({ hd: 'example.org' }), ['example.com', 'example.org']),
+      validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: 'example.org' }), ['example.com', 'example.org']),
     ).not.toThrow();
   });
 
   it('should reject hd of another domain', () => {
-    const error = captureThrow(() => validateGoogleHostedDomain(payloadOf({ hd: 'evil.example' }), 'example.com'));
+    const error = captureThrow(() =>
+      validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: 'evil.example' }), 'example.com'),
+    );
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
   });
 
   it('should reject a token without hd when a domain is required', () => {
-    const error = captureThrow(() => validateGoogleHostedDomain(payloadOf({ hd: undefined }), 'example.com'));
+    const error = captureThrow(() =>
+      validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: undefined }), 'example.com'),
+    );
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
+  });
+
+  it('should throw a TypeError when the hosted domain list is empty', () => {
+    expect(() => validateGoogleHostedDomain(createGoogleIdTokenPayload({ hd: 'example.com' }), [])).toThrow(TypeError);
   });
 });
 
 describe('validateGoogleEmailVerified', () => {
   it('should accept email_verified true', () => {
-    expect(() => validateGoogleEmailVerified(payloadOf({ email_verified: true }))).not.toThrow();
+    expect(() => validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: true }))).not.toThrow();
   });
 
   it('should reject email_verified false', () => {
-    const error = captureThrow(() => validateGoogleEmailVerified(payloadOf({ email_verified: false })));
+    const error = captureThrow(() => validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: false })));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
   });
 
   it('should reject a token without email_verified', () => {
-    const error = captureThrow(() => validateGoogleEmailVerified(payloadOf({ email_verified: undefined })));
+    const error = captureThrow(() =>
+      validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: undefined })),
+    );
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
   });
 
   it('should reject the string "true"', () => {
-    const error = captureThrow(() => validateGoogleEmailVerified(payloadOf({ email_verified: 'true' })));
+    const error = captureThrow(() => validateGoogleEmailVerified(createGoogleIdTokenPayload({ email_verified: 'true' })));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
   });
@@ -383,139 +298,93 @@ describe('validateGoogleEmailVerified', () => {
 
 describe('validateGoogleIdTokenNonce', () => {
   it('should not check nonce when no expected value is given', () => {
-    expect(() => validateGoogleIdTokenNonce(payloadOf({ nonce: undefined }))).not.toThrow();
+    expect(() => validateGoogleIdTokenNonce(createGoogleIdTokenPayload({ nonce: undefined }))).not.toThrow();
   });
 
   it('should accept a nonce equal to the expected value', () => {
-    expect(() => validateGoogleIdTokenNonce(payloadOf({ nonce: 'n-1' }), 'n-1')).not.toThrow();
+    expect(() => validateGoogleIdTokenNonce(createGoogleIdTokenPayload({ nonce: 'n-1' }), 'n-1')).not.toThrow();
   });
 
   it('should reject a nonce that differs from the expected value', () => {
-    const error = captureThrow(() => validateGoogleIdTokenNonce(payloadOf({ nonce: 'n-2' }), 'n-1'));
+    const error = captureThrow(() => validateGoogleIdTokenNonce(createGoogleIdTokenPayload({ nonce: 'n-2' }), 'n-1'));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
   });
 
   it('should reject a token without nonce when a value is expected', () => {
-    const error = captureThrow(() => validateGoogleIdTokenNonce(payloadOf({ nonce: undefined }), 'n-1'));
+    const error = captureThrow(() => validateGoogleIdTokenNonce(createGoogleIdTokenPayload({ nonce: undefined }), 'n-1'));
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
   });
 });
 
 describe('verifyGoogleIdToken', () => {
-  it('should return the verified header and payload', async () => {
+  it('should return the payload verified by google-auth-library', async () => {
     const payload = createGoogleIdTokenPayload({ nonce: 'n-1', hd: 'example.com' });
-    const token = await signGoogleIdToken({ key, payload });
+    const idToken = signGoogleIdToken({ key, payload });
 
-    const verified = await verifyGoogleIdToken(token, {
+    const verified = await verifyGoogleIdToken(idToken, {
       clientId: TEST_CLIENT_ID,
-      keyProvider,
+      verifier,
       hostedDomain: 'example.com',
       requireVerifiedEmail: true,
       expectedNonce: 'n-1',
     });
 
-    expect(verified).toEqual({
-      header: { alg: 'RS256', kid: 'google-kid-1', typ: 'JWT' },
-      payload,
+    expect(verified).toEqual(payload);
+  });
+
+  it('should pass the token and the client IDs to the verifier', async () => {
+    const fake = createFakeVerifier(() => createGoogleIdTokenPayload());
+
+    await verifyGoogleIdToken('id-token', { clientId: ['a', 'b'], verifier: fake });
+
+    expect(fake.calls).toEqual([{ idToken: 'id-token', clientId: ['a', 'b'] }]);
+  });
+
+  it('should propagate the verifier rejection before the optional checks', async () => {
+    const fake = createFakeVerifier(() => {
+      throw new TypeError('verifier failed');
     });
-  });
 
-  // Google のドキュメントの順序: 署名 → aud → iss → exp → hd
-  it('should verify the signature before reading any claim', async () => {
-    const token = await signGoogleIdToken({
-      key: otherKey,
-      payload: createGoogleIdTokenPayload({ aud: 'wrong', iss: 'wrong', exp: 1 }),
-      header: { kid: key.kid },
-    });
-
-    const error = await captureRejection(verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider }));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidSignature, 401);
-  });
-
-  it('should check aud before iss', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ aud: 'wrong', iss: 'wrong' }) });
-
-    const error = await captureRejection(verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider }));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidAudience, 401);
-  });
-
-  it('should check iss before exp', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ iss: 'wrong', exp: 1 }) });
-
-    const error = await captureRejection(verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider }));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidIssuer, 401);
-  });
-
-  it('should check exp before hd', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ exp: 1, hd: 'wrong' }) });
-
-    const error = await captureRejection(
-      verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider, hostedDomain: 'example.com' }),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.IdTokenExpired, 401);
-  });
-
-  it('should reject a token signed by an unknown key', async () => {
-    const token = await signGoogleIdToken({ key: otherKey, payload: createGoogleIdTokenPayload() });
-
-    const error = await captureRejection(verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider }));
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.UnknownSigningKey, 401);
+    await expect(
+      verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, hostedDomain: 'example.com' }),
+    ).rejects.toThrow('verifier failed');
   });
 
   it('should apply the hosted domain restriction', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ hd: 'other.example' }) });
+    const fake = createFakeVerifier(() => createGoogleIdTokenPayload({ hd: 'other.example' }));
 
     const error = await captureRejection(
-      verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider, hostedDomain: 'example.com' }),
+      verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, hostedDomain: 'example.com' }),
     );
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidHostedDomain, 403);
   });
 
   it('should not require a verified email by default', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ email_verified: false }) });
+    const fake = createFakeVerifier(() => createGoogleIdTokenPayload({ email_verified: false }));
 
-    await expect(verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider })).resolves.toBeDefined();
+    await expect(verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake })).resolves.toBeDefined();
   });
 
   it('should require a verified email when requested', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ email_verified: false }) });
+    const fake = createFakeVerifier(() => createGoogleIdTokenPayload({ email_verified: false }));
 
     const error = await captureRejection(
-      verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider, requireVerifiedEmail: true }),
+      verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, requireVerifiedEmail: true }),
     );
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.EmailNotVerified, 403);
   });
 
   it('should apply the expected nonce', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload({ nonce: 'n-2' }) });
+    const fake = createFakeVerifier(() => createGoogleIdTokenPayload({ nonce: 'n-2' }));
 
     const error = await captureRejection(
-      verifyGoogleIdToken(token, { clientId: TEST_CLIENT_ID, keyProvider, expectedNonce: 'n-1' }),
+      verifyGoogleIdToken('id-token', { clientId: TEST_CLIENT_ID, verifier: fake, expectedNonce: 'n-1' }),
     );
 
     expectGoogleLoginError(error, GoogleLoginErrorCode.InvalidNonce, 400);
-  });
-
-  it('should evaluate expiration against the given now', async () => {
-    const token = await signGoogleIdToken({ key, payload: createGoogleIdTokenPayload() });
-
-    const error = await captureRejection(
-      verifyGoogleIdToken(token, {
-        clientId: TEST_CLIENT_ID,
-        keyProvider,
-        now: new Date(Date.now() + 2 * 3600 * 1000),
-      }),
-    );
-
-    expectGoogleLoginError(error, GoogleLoginErrorCode.IdTokenExpired, 401);
   });
 });

@@ -58,13 +58,16 @@ function generateCodeVerifier(): string {
 }
 
 // --- Helper: 有効なTokenRequestContextを構築 ---
-function createValidContext(overrides?: {
+// PKCE は既定で code_verifier を生成し、対応する code_challenge を認可コードに載せる。
+// authCode.codeChallenge を明示すると（undefined を含めて）その値が優先される。
+async function createValidContext(overrides?: {
   params?: Partial<TokenRequestParams>;
   client?: Partial<TokenClientInfo>;
   authCode?: Partial<AuthorizationCodeInfo>;
   codeVerifier?: string;
-}): { context: TokenRequestContext; codeVerifier: string } {
+}): Promise<{ context: TokenRequestContext; codeVerifier: string }> {
   const codeVerifier = overrides?.codeVerifier ?? generateCodeVerifier();
+  const codeChallenge = await generateCodeChallenge(codeVerifier);
 
   const defaultClient: TokenClientInfo = {
     clientId: 'client-123',
@@ -80,7 +83,7 @@ function createValidContext(overrides?: {
     redirectUri: 'https://client.example.com/cb',
     redirectUriExplicit: false,
     scope: ['openid', 'profile'],
-    codeChallenge: '', // set below
+    codeChallenge,
     codeChallengeMethod: 'S256',
     expiresAt: now + 600,
     used: false,
@@ -123,39 +126,36 @@ function createValidContext(overrides?: {
   };
 }
 
+// --- Helper: validateTokenRequest が TokenError で失敗することを検証する ---
+async function expectTokenError(
+  context: TokenRequestContext,
+  expected: { error: TokenErrorCode; errorDescription?: string },
+): Promise<TokenError> {
+  const error = await validateTokenRequest(context).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(TokenError);
+  expect(error).toMatchObject(expected);
+  return error as TokenError;
+}
+
 describe('validateTokenRequest', () => {
   describe('grant_type validation', () => {
     it('should reject missing grant_type', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { grant_type: undefined as unknown as string },
-        authCode: { codeChallenge },
-        codeVerifier,
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidRequest });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidRequest });
     });
 
     it('should reject unsupported grant_type', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { grant_type: 'client_credentials' },
-        authCode: { codeChallenge },
-        codeVerifier,
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.UnsupportedGrantType });
+      await expectTokenError(context, { error: TokenErrorCode.UnsupportedGrantType });
     });
 
     it('should accept grant_type=authorization_code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { grant_type: 'authorization_code' },
-        authCode: { codeChallenge },
-        codeVerifier,
       });
       const result = await validateTokenRequest(context);
       expect(result.grantType).toBe('authorization_code');
@@ -164,36 +164,19 @@ describe('validateTokenRequest', () => {
 
   describe('Client authentication', () => {
     it('should reject when authenticatedClientId is not provided', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       context.authenticatedClientId = undefined as unknown as string;
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidClient });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidClient });
     });
 
     it('should reject when client is not found', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       context.authenticatedClientId = 'unknown-client';
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidClient });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidClient });
     });
 
     it('should accept valid authenticated client', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       const result = await validateTokenRequest(context);
       expect(result.clientId).toBe('client-123');
     });
@@ -201,89 +184,50 @@ describe('validateTokenRequest', () => {
 
   describe('Authorization code validation', () => {
     it('should reject missing code parameter', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { code: undefined as unknown as string },
-        authCode: { codeChallenge },
-        codeVerifier,
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidRequest });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidRequest });
     });
 
     it('should reject unknown authorization code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        params: { code: 'unknown-code' },
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ params: { code: 'unknown-code' } });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject authorization code issued to different client', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge, clientId: 'other-client' },
-        codeVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ authCode: { clientId: 'other-client' } });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject expired authorization code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
       const now = Math.floor(Date.now() / 1000);
-      const { context } = createValidContext({
-        authCode: { codeChallenge, expiresAt: now - 100 },
-        codeVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ authCode: { expiresAt: now - 100 } });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     // RFC 7519 §4.1.4 (on-or-after): expiresAt === now is expired, identical to the
     // refresh-token boundary so both grants share one expiry convention.
     it('should reject an authorization code whose expiresAt equals now', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
       const now = Math.floor(Date.now() / 1000);
-      const { context } = createValidContext({
-        authCode: { codeChallenge, expiresAt: now },
-        codeVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({
+      const { context } = await createValidContext({ authCode: { expiresAt: now } });
+      await expectTokenError(context, {
         error: TokenErrorCode.InvalidGrant,
       });
     });
 
     it('should reject already used authorization code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge, used: true },
-        codeVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ authCode: { used: true } });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     // OAuth 2.1 Section 4.1.2 / RFC 6749 Section 4.1.2:
     // On reuse, the AS MUST deny AND SHOULD revoke previously issued tokens.
     describe('Code reuse: token revocation (OP-OAuth-2nd-Revokes)', () => {
       it('should call revokeTokensByGrantId with the grantId of the reused code', async () => {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-
         let revokedGrantId: string | undefined;
-        const { context: baseContext } = createValidContext({
-          authCode: { codeChallenge, used: true, grantId: 'grant-abc' },
-          codeVerifier,
+        const { context: baseContext } = await createValidContext({
+          authCode: { used: true, grantId: 'grant-abc' },
         });
 
         const context: TokenRequestContext = {
@@ -301,11 +245,8 @@ describe('validateTokenRequest', () => {
       });
 
       it('should still throw invalid_grant after revoking tokens', async () => {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const { context: baseContext } = createValidContext({
-          authCode: { codeChallenge, used: true, grantId: 'grant-xyz' },
-          codeVerifier,
+        const { context: baseContext } = await createValidContext({
+          authCode: { used: true, grantId: 'grant-xyz' },
         });
         const context: TokenRequestContext = {
           ...baseContext,
@@ -314,32 +255,24 @@ describe('validateTokenRequest', () => {
             revokeTokensByGrantId: async () => {},
           },
         };
-        await expect(validateTokenRequest(context)).rejects.toMatchObject({
+        await expectTokenError(context, {
           error: TokenErrorCode.InvalidGrant,
         });
       });
 
       it('should not error when revokeTokensByGrantId is not provided (backward compat)', async () => {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const { context } = createValidContext({
-          authCode: { codeChallenge, used: true, grantId: 'grant-1' },
-          codeVerifier,
+        const { context } = await createValidContext({
+          authCode: { used: true, grantId: 'grant-1' },
         });
         // Should still throw invalid_grant, not crash on missing optional method
-        await expect(validateTokenRequest(context)).rejects.toMatchObject({
+        await expectTokenError(context, {
           error: TokenErrorCode.InvalidGrant,
         });
       });
     });
 
     it('should accept valid authorization code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       const result = await validateTokenRequest(context);
       expect(result.code).toBe('valid-auth-code');
     });
@@ -347,36 +280,26 @@ describe('validateTokenRequest', () => {
 
   describe('redirect_uri validation', () => {
     it('should reject when redirect_uri does not match original request', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { redirect_uri: 'https://attacker.example.com/cb' },
-        authCode: { codeChallenge, redirectUri: 'https://client.example.com/cb' },
-        codeVerifier,
+        authCode: { redirectUri: 'https://client.example.com/cb' },
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should accept when redirect_uri is missing in token request', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { redirect_uri: undefined },
-        authCode: { codeChallenge, redirectUri: 'https://client.example.com/cb' },
-        codeVerifier,
+        authCode: { redirectUri: 'https://client.example.com/cb' },
       });
       const result = await validateTokenRequest(context);
       expect(result.redirectUri).toBe('https://client.example.com/cb');
     });
 
     it('should accept matching redirect_uri', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { redirect_uri: 'https://client.example.com/cb' },
-        authCode: { codeChallenge, redirectUri: 'https://client.example.com/cb' },
-        codeVerifier,
+        authCode: { redirectUri: 'https://client.example.com/cb' },
       });
       const result = await validateTokenRequest(context);
       expect(result.redirectUri).toBe('https://client.example.com/cb');
@@ -387,48 +310,35 @@ describe('validateTokenRequest', () => {
     // 認可コード発行時に redirectUriExplicit=true を保持し、Token 側で必須化する。
     describe('OIDC Core 3.1.3.2 explicit redirect_uri binding', () => {
       it('should reject token request without redirect_uri when authorization request had explicit redirect_uri', async () => {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const { context } = createValidContext({
+        const { context } = await createValidContext({
           params: { redirect_uri: undefined },
           authCode: {
-            codeChallenge,
             redirectUri: 'https://client.example.com/cb',
             redirectUriExplicit: true,
           },
-          codeVerifier,
         });
-        await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-        await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+        await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
       });
 
       it('should accept token request with matching redirect_uri when authorization request had explicit redirect_uri', async () => {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const { context } = createValidContext({
+        const { context } = await createValidContext({
           params: { redirect_uri: 'https://client.example.com/cb' },
           authCode: {
-            codeChallenge,
             redirectUri: 'https://client.example.com/cb',
             redirectUriExplicit: true,
           },
-          codeVerifier,
         });
         const result = await validateTokenRequest(context);
         expect(result.redirectUri).toBe('https://client.example.com/cb');
       });
 
       it('should accept token request without redirect_uri when authorization request omitted redirect_uri', async () => {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const { context } = createValidContext({
+        const { context } = await createValidContext({
           params: { redirect_uri: undefined },
           authCode: {
-            codeChallenge,
             redirectUri: 'https://client.example.com/cb',
             redirectUriExplicit: false,
           },
-          codeVerifier,
         });
         const result = await validateTokenRequest(context);
         expect(result.redirectUri).toBe('https://client.example.com/cb');
@@ -438,44 +348,29 @@ describe('validateTokenRequest', () => {
 
   describe('PKCE code_verifier validation', () => {
     it('should reject missing code_verifier', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { code_verifier: undefined as unknown as string },
-        authCode: { codeChallenge },
-        codeVerifier,
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject invalid code_verifier (wrong value)', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { code_verifier: 'wrong-code-verifier-that-does-not-match' },
-        authCode: { codeChallenge },
-        codeVerifier,
       });
       // Override params to use wrong verifier
       context.params.code_verifier = 'wrong-code-verifier-that-does-not-match';
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should accept valid code_verifier with S256 method', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge, codeChallengeMethod: 'S256' },
-        codeVerifier,
-      });
+      const { context } = await createValidContext({ authCode: { codeChallengeMethod: 'S256' } });
       const result = await validateTokenRequest(context);
       expect(result.codeVerified).toBe(true);
     });
 
     it('should accept authorization_code grants without code_verifier when the authorization code has no PKCE binding', async () => {
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         params: { code_verifier: undefined },
         authCode: {
           codeChallenge: undefined,
@@ -496,56 +391,33 @@ describe('validateTokenRequest', () => {
     // RFC 7636 Section 4.1: length and character validation
     it('should reject code_verifier shorter than 43 characters', async () => {
       const shortVerifier = 'A'.repeat(42);
-      const codeChallenge = await generateCodeChallenge(shortVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier: shortVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ codeVerifier: shortVerifier });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject code_verifier longer than 128 characters', async () => {
       const longVerifier = 'A'.repeat(129);
-      const codeChallenge = await generateCodeChallenge(longVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier: longVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ codeVerifier: longVerifier });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject code_verifier containing invalid characters', async () => {
       // RFC 7636: only [A-Za-z0-9\-._~] are allowed; '+' is not a valid character
       const invalidVerifier = 'A'.repeat(42) + '+';
-      const codeChallenge = await generateCodeChallenge(invalidVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier: invalidVerifier,
-      });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      const { context } = await createValidContext({ codeVerifier: invalidVerifier });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should accept code_verifier of exactly 43 characters', async () => {
       const verifier43 = 'A'.repeat(43);
-      const codeChallenge = await generateCodeChallenge(verifier43);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier: verifier43,
-      });
+      const { context } = await createValidContext({ codeVerifier: verifier43 });
       const result = await validateTokenRequest(context);
       expect(result.codeVerified).toBe(true);
     });
 
     it('should accept code_verifier of exactly 128 characters', async () => {
       const verifier128 = 'A'.repeat(128);
-      const codeChallenge = await generateCodeChallenge(verifier128);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier: verifier128,
-      });
+      const { context } = await createValidContext({ codeVerifier: verifier128 });
       const result = await validateTokenRequest(context);
       expect(result.codeVerified).toBe(true);
     });
@@ -553,15 +425,8 @@ describe('validateTokenRequest', () => {
 
   describe('Successful validation result', () => {
     it('should return validated token request with all fields', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: {
-          codeChallenge,
-          scope: ['openid', 'profile', 'email'],
-          nonce: 'test-nonce',
-        },
-        codeVerifier,
+      const { context } = await createValidContext({
+        authCode: { scope: ['openid', 'profile', 'email'], nonce: 'test-nonce' },
       });
       const result = await validateTokenRequest(context);
       expect(result.grantType).toBe('authorization_code');
@@ -574,26 +439,17 @@ describe('validateTokenRequest', () => {
     });
 
     it('should include audience from authorization code when provided', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
+      const { context } = await createValidContext({
         authCode: {
-          codeChallenge,
           audience: ['https://api.example.com', 'https://other.example.com'],
         },
-        codeVerifier,
       });
       const result = await validateTokenRequest(context);
       expect(result.audience).toEqual(['https://api.example.com', 'https://other.example.com']);
     });
 
     it('should return undefined audience when not in authorization code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       const result = await validateTokenRequest(context);
       expect(result.audience).toBeUndefined();
     });
@@ -602,12 +458,7 @@ describe('validateTokenRequest', () => {
     // authorization code and must be returned so the token endpoint can pass it to the
     // AcrResolver as requestedAcrValues.
     it('should include acrValues from authorization code when provided', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge, acrValues: 'loa2 loa3' },
-        codeVerifier,
-      });
+      const { context } = await createValidContext({ authCode: { acrValues: 'loa2 loa3' } });
       const result = await validateTokenRequest(context);
       expect(result).toMatchObject({
         grantType: 'authorization_code',
@@ -616,12 +467,7 @@ describe('validateTokenRequest', () => {
     });
 
     it('should return undefined acrValues when not in authorization code', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       const result = await validateTokenRequest(context);
       expect(result).toMatchObject({
         grantType: 'authorization_code',
@@ -630,13 +476,8 @@ describe('validateTokenRequest', () => {
     });
 
     it('should call revokeAuthorizationCode after successful validation', async () => {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
       let revokedCode: string | undefined;
-      const { context } = createValidContext({
-        authCode: { codeChallenge },
-        codeVerifier,
-      });
+      const { context } = await createValidContext();
       context.authCodeResolver.revokeAuthorizationCode = async (code: string) => {
         revokedCode = code;
       };
@@ -652,6 +493,7 @@ function createRefreshTokenContext(overrides?: {
   refreshTokenInfo?: Partial<RefreshTokenInfo>;
   hasResolver?: boolean;
   scope?: string;
+  client?: TokenClientInfo;
 }): TokenRequestContext {
   const now = Math.floor(Date.now() / 1000);
   const defaultRefreshTokenInfo: RefreshTokenInfo = {
@@ -666,19 +508,15 @@ function createRefreshTokenContext(overrides?: {
     ...overrides?.refreshTokenInfo,
   };
 
+  // Refresh-capable client: explicitly registered for both grant types
+  // (RFC 7591 §2 default is authorization_code only). client で登録内容ごと差し替えられる。
+  const client: TokenClientInfo = overrides?.client ?? {
+    clientId: 'client-123',
+    clientSecret: 'secret-456',
+    grantTypes: ['authorization_code', 'refresh_token'],
+  };
   const clientResolver: TokenClientResolver = {
-    findClient: async (clientId: string) => {
-      if (clientId === 'client-123') {
-        // Refresh-capable client: explicitly registered for both grant types
-        // (RFC 7591 §2 default is authorization_code only).
-        return {
-          clientId: 'client-123',
-          clientSecret: 'secret-456',
-          grantTypes: ['authorization_code', 'refresh_token'],
-        };
-      }
-      return null;
-    },
+    findClient: async (clientId: string) => (clientId === 'client-123' ? client : null),
   };
 
   const authCodeResolver: AuthorizationCodeResolver = {
@@ -719,14 +557,12 @@ describe('validateTokenRequest - refresh_token grant', () => {
     it('should reject missing refresh_token parameter', async () => {
       const context = createRefreshTokenContext();
       context.params.refresh_token = undefined;
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidRequest });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidRequest });
     });
 
     it('should reject when refreshTokenResolver is not provided', async () => {
       const context = createRefreshTokenContext({ hasResolver: false });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidRequest });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidRequest });
     });
   });
 
@@ -735,22 +571,19 @@ describe('validateTokenRequest - refresh_token grant', () => {
       const context = createRefreshTokenContext();
       // Override params to use a token the resolver does not recognize
       context.params.refresh_token = 'not-existing-token';
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject when refresh token has already been used', async () => {
       const context = createRefreshTokenContext({ refreshTokenInfo: { used: true } });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject when refresh token was issued to a different client', async () => {
       const context = createRefreshTokenContext({
         refreshTokenInfo: { clientId: 'other-client' },
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     it('should reject when refresh token has expired', async () => {
@@ -758,8 +591,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
       const context = createRefreshTokenContext({
         refreshTokenInfo: { expiresAt: now - 100 },
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidGrant });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidGrant });
     });
 
     // RFC 7519 §4.1.4 (on-or-after): expiresAt === now must be treated as expired,
@@ -769,7 +601,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
       const context = createRefreshTokenContext({
         refreshTokenInfo: { expiresAt: now },
       });
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({
+      await expectTokenError(context, {
         error: TokenErrorCode.InvalidGrant,
       });
     });
@@ -794,7 +626,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { lastUsedAt: now - 1000 },
         });
         context.refreshTokenIdleTimeoutSeconds = 600;
-        await expect(validateTokenRequest(context)).rejects.toMatchObject({
+        await expectTokenError(context, {
           error: TokenErrorCode.InvalidGrant,
           errorDescription: 'Refresh token expired due to inactivity',
         });
@@ -840,9 +672,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
       });
       const result = await validateTokenRequest(context);
       // Narrow the type to access subject
-      if (result.grantType === 'refresh_token') {
-        expect(result.subject).toBe('user-xyz');
-      }
+      expect(result).toMatchObject({ grantType: 'refresh_token', subject: 'user-xyz' });
     });
 
     it('should return scope from refresh token info', async () => {
@@ -897,9 +727,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
         refreshTokenInfo: { grantId: 'grant-propagated' },
       });
       const result = await validateTokenRequest(context);
-      if (result.grantType === 'refresh_token') {
-        expect(result.grantId).toBe('grant-propagated');
-      }
+      expect(result).toMatchObject({ grantType: 'refresh_token', grantId: 'grant-propagated' });
     });
 
     // T-002: 元アクセストークンの audience を新 AT に引き継ぐ
@@ -908,17 +736,14 @@ describe('validateTokenRequest - refresh_token grant', () => {
         refreshTokenInfo: { audience: ['https://api.example.com'] },
       });
       const result = await validateTokenRequest(context);
-      if (result.grantType === 'refresh_token') {
-        expect(result.audience).toEqual(['https://api.example.com']);
-      }
+      expect(result).toMatchObject({ grantType: 'refresh_token', audience: ['https://api.example.com'] });
     });
 
     it('should leave audience undefined when refresh token info has no audience', async () => {
       const context = createRefreshTokenContext();
       const result = await validateTokenRequest(context);
-      if (result.grantType === 'refresh_token') {
-        expect(result.audience).toBeUndefined();
-      }
+      expect(result.grantType).toBe('refresh_token');
+      expect(result.audience).toBeUndefined();
     });
 
     // T-005: OIDC Core 1.0 §12.1 — refresh で再発行する ID Token は初回認証時と同じ
@@ -929,9 +754,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { authTime: 1_700_000_000 },
         });
         const result = await validateTokenRequest(context);
-        if (result.grantType === 'refresh_token') {
-          expect(result.authTime).toBe(1_700_000_000);
-        }
+        expect(result).toMatchObject({ grantType: 'refresh_token', authTime: 1_700_000_000 });
       });
 
       it('should propagate nonce from refresh token info', async () => {
@@ -939,9 +762,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { nonce: 'original-nonce' },
         });
         const result = await validateTokenRequest(context);
-        if (result.grantType === 'refresh_token') {
-          expect(result.nonce).toBe('original-nonce');
-        }
+        expect(result).toMatchObject({ grantType: 'refresh_token', nonce: 'original-nonce' });
       });
 
       it('should propagate acr from refresh token info', async () => {
@@ -949,9 +770,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { acr: 'urn:mace:incommon:iap:silver' },
         });
         const result = await validateTokenRequest(context);
-        if (result.grantType === 'refresh_token') {
-          expect(result.acr).toBe('urn:mace:incommon:iap:silver');
-        }
+        expect(result).toMatchObject({ grantType: 'refresh_token', acr: 'urn:mace:incommon:iap:silver' });
       });
 
       it('should propagate amr from refresh token info', async () => {
@@ -959,9 +778,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { amr: ['pwd', 'mfa'] },
         });
         const result = await validateTokenRequest(context);
-        if (result.grantType === 'refresh_token') {
-          expect(result.amr).toEqual(['pwd', 'mfa']);
-        }
+        expect(result).toMatchObject({ grantType: 'refresh_token', amr: ['pwd', 'mfa'] });
       });
 
       it('should propagate azp from refresh token info', async () => {
@@ -969,9 +786,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { azp: 'client-123' },
         });
         const result = await validateTokenRequest(context);
-        if (result.grantType === 'refresh_token') {
-          expect(result.azp).toBe('client-123');
-        }
+        expect(result).toMatchObject({ grantType: 'refresh_token', azp: 'client-123' });
       });
     });
 
@@ -1022,9 +837,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
           refreshTokenInfo: { originalIssuedAt: 1_700_000_000 },
         });
         const result = await validateTokenRequest(context);
-        if (result.grantType === 'refresh_token') {
-          expect(result.originalIssuedAt).toBe(1_700_000_000);
-        }
+        expect(result).toMatchObject({ grantType: 'refresh_token', originalIssuedAt: 1_700_000_000 });
       });
     });
   });
@@ -1049,7 +862,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
         refreshTokenInfo: { used: true },
       });
       // revokeTokensByGrantId は optional なので未提供でも例外を投げる
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({
+      await expectTokenError(context, {
         error: TokenErrorCode.InvalidGrant,
       });
     });
@@ -1061,8 +874,7 @@ describe('validateTokenRequest - refresh_token grant', () => {
         refreshTokenInfo: { scope: ['openid', 'profile'] },
         scope: 'openid profile admin',
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidScope });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidScope });
     });
 
     it('should reject when requested scope is entirely different from original grant', async () => {
@@ -1070,24 +882,21 @@ describe('validateTokenRequest - refresh_token grant', () => {
         refreshTokenInfo: { scope: ['openid', 'profile'] },
         scope: 'admin write',
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidScope });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidScope });
     });
 
     it('should reject when scope is empty string', async () => {
       const context = createRefreshTokenContext({
         scope: '',
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidScope });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidScope });
     });
 
     it('should reject when scope is only whitespace', async () => {
       const context = createRefreshTokenContext({
         scope: '   ',
       });
-      await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-      await expect(validateTokenRequest(context)).rejects.toMatchObject({ error: TokenErrorCode.InvalidScope });
+      await expectTokenError(context, { error: TokenErrorCode.InvalidScope });
     });
 
     it('should not revoke refresh token when scope validation fails', async () => {
@@ -1176,75 +985,65 @@ describe('validateTokenRequest - client grant_types enforcement', () => {
   // OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: grant_types default is ["authorization_code"].
 
   it('should reject refresh_token grant with unauthorized_client when client grantTypes excludes refresh_token', async () => {
-    const context = createRefreshTokenContext();
     // Client registered for authorization_code only (no refresh_token).
-    context.clientResolver = {
-      findClient: async (clientId: string) =>
-        clientId === 'client-123'
-          ? { clientId: 'client-123', clientSecret: 'secret-456', grantTypes: ['authorization_code'] }
-          : null,
-    };
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    const context = createRefreshTokenContext({
+      client: {
+        clientId: 'client-123',
+        clientSecret: 'secret-456',
+        grantTypes: ['authorization_code'],
+      },
+    });
+    await expectTokenError(context, {
       error: TokenErrorCode.UnauthorizedClient,
     });
   });
 
   it('should reject refresh_token grant with unauthorized_client when grantTypes is unspecified (default authorization_code only)', async () => {
     // Backward-compatible default per RFC 7591: ["authorization_code"] excludes refresh_token.
-    const context = createRefreshTokenContext();
-    context.clientResolver = {
-      findClient: async (clientId: string) =>
-        clientId === 'client-123'
-          ? { clientId: 'client-123', clientSecret: 'secret-456' }
-          : null,
-    };
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    const context = createRefreshTokenContext({
+      client: {
+        clientId: 'client-123',
+        clientSecret: 'secret-456',
+      },
+    });
+    await expectTokenError(context, {
       error: TokenErrorCode.UnauthorizedClient,
     });
   });
 
   it('should allow refresh_token grant when client grantTypes includes refresh_token', async () => {
-    const context = createRefreshTokenContext();
-    context.clientResolver = {
-      findClient: async (clientId: string) =>
-        clientId === 'client-123'
-          ? { clientId: 'client-123', clientSecret: 'secret-456', grantTypes: ['authorization_code', 'refresh_token'] }
-          : null,
-    };
+    const context = createRefreshTokenContext({
+      client: {
+        clientId: 'client-123',
+        clientSecret: 'secret-456',
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+    });
     const result = await validateTokenRequest(context);
     expect(result.grantType).toBe('refresh_token');
   });
 
   it('should allow authorization_code grant when client grantTypes includes authorization_code', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
+    const { context } = await createValidContext({
       client: { grantTypes: ['authorization_code'] },
-      authCode: { codeChallenge },
-      codeVerifier,
     });
     const result = await validateTokenRequest(context);
     expect(result.grantType).toBe('authorization_code');
   });
 
   it('should allow authorization_code grant when grantTypes is unspecified (default)', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
-      authCode: { codeChallenge },
-      codeVerifier,
-    });
+    const { context } = await createValidContext();
     const result = await validateTokenRequest(context);
     expect(result.grantType).toBe('authorization_code');
   });
 
   it('should return unsupported_grant_type (not unauthorized_client) for a globally unsupported grant_type', async () => {
     // Global OP-level rejection MUST be distinguished from per-client authorization.
-    const { context } = createValidContext({
+    const { context } = await createValidContext({
       params: { grant_type: 'client_credentials' },
       client: { grantTypes: ['authorization_code'] },
     });
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    await expectTokenError(context, {
       error: TokenErrorCode.UnsupportedGrantType,
     });
   });
@@ -1255,12 +1054,8 @@ describe('validateTokenRequest - client grant_types enforcement', () => {
 // `none` path) and binds the grant to that client_id just like a confidential client.
 describe('validateTokenRequest - public client', () => {
   it('should exchange authorization code for a public client without client_secret', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
+    const { context } = await createValidContext({
       client: { clientSecret: undefined, tokenEndpointAuthMethod: 'none' },
-      authCode: { codeChallenge },
-      codeVerifier,
     });
     const result = await validateTokenRequest(context);
     expect(result.grantType).toBe('authorization_code');
@@ -1268,17 +1063,13 @@ describe('validateTokenRequest - public client', () => {
   });
 
   it('should refresh tokens for a public client without client_secret', async () => {
-    const context = createRefreshTokenContext();
-    context.clientResolver = {
-      findClient: async (clientId: string) =>
-        clientId === 'client-123'
-          ? {
-              clientId: 'client-123',
-              tokenEndpointAuthMethod: 'none',
-              grantTypes: ['authorization_code', 'refresh_token'],
-            }
-          : null,
-    };
+    const context = createRefreshTokenContext({
+      client: {
+        clientId: 'client-123',
+        tokenEndpointAuthMethod: 'none',
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
+    });
     const result = await validateTokenRequest(context);
     expect(result.grantType).toBe('refresh_token');
     expect(result.clientId).toBe('client-123');
@@ -1288,18 +1079,13 @@ describe('validateTokenRequest - public client', () => {
   it('should reject refresh token bound to a different public client', async () => {
     const context = createRefreshTokenContext({
       refreshTokenInfo: { clientId: 'other-public-client' },
+      client: {
+        clientId: 'client-123',
+        tokenEndpointAuthMethod: 'none',
+        grantTypes: ['authorization_code', 'refresh_token'],
+      },
     });
-    context.clientResolver = {
-      findClient: async (clientId: string) =>
-        clientId === 'client-123'
-          ? {
-              clientId: 'client-123',
-              tokenEndpointAuthMethod: 'none',
-              grantTypes: ['authorization_code', 'refresh_token'],
-            }
-          : null,
-    };
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    await expectTokenError(context, {
       error: TokenErrorCode.InvalidGrant,
     });
   });
@@ -1381,7 +1167,7 @@ describe('revoke* contract: used-mark vs physical delete (reuse cascade)', () =>
   it('should reject reuse with invalid_grant AND revoke the grant when revoke consumes', async () => {
     const { context, revokedGrantIds } = await buildAuthCodeContext('consume');
     await validateTokenRequest(context);
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    await expectTokenError(context, {
       error: TokenErrorCode.InvalidGrant,
     });
     expect(revokedGrantIds).toEqual(['grant-1']);
@@ -1393,7 +1179,7 @@ describe('revoke* contract: used-mark vs physical delete (reuse cascade)', () =>
     const { context, store, revokedGrantIds } = await buildAuthCodeContext('delete');
     await validateTokenRequest(context);
     expect(store.get('code-1')).toBeUndefined();
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    await expectTokenError(context, {
       error: TokenErrorCode.InvalidGrant,
     });
     expect(revokedGrantIds).toEqual([]);
@@ -1407,34 +1193,23 @@ describe('validateTokenRequest - supportedGrantTypes option', () => {
   it('should reject refresh_token grant with unsupported_grant_type when supportedGrantTypes excludes it', async () => {
     const context = createRefreshTokenContext();
     context.supportedGrantTypes = ['authorization_code'];
-    await expect(validateTokenRequest(context)).rejects.toThrow(TokenError);
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    await expectTokenError(context, {
       error: TokenErrorCode.UnsupportedGrantType,
       errorDescription: 'Unsupported grant_type: refresh_token',
     });
   });
 
   it('should reject authorization_code grant with unsupported_grant_type when supportedGrantTypes excludes it', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
-      authCode: { codeChallenge },
-      codeVerifier,
-    });
+    const { context } = await createValidContext();
     context.supportedGrantTypes = ['refresh_token'];
-    await expect(validateTokenRequest(context)).rejects.toMatchObject({
+    await expectTokenError(context, {
       error: TokenErrorCode.UnsupportedGrantType,
       errorDescription: 'Unsupported grant_type: authorization_code',
     });
   });
 
   it('should accept authorization_code grant when supportedGrantTypes is ["authorization_code"]', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
-      authCode: { codeChallenge },
-      codeVerifier,
-    });
+    const { context } = await createValidContext();
     context.supportedGrantTypes = ['authorization_code'];
     const result = await validateTokenRequest(context);
     expect(result).toMatchObject({
@@ -1458,12 +1233,7 @@ describe('validateTokenRequest - supportedGrantTypes option', () => {
 // クライアント認証・クライアント別 grant 認可を含むフル経路は validateTokenRequest。
 describe('validateAuthorizationCodeGrant', () => {
   it('should return the validated authorization_code request', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
-      authCode: { codeChallenge },
-      codeVerifier,
-    });
+    const { context } = await createValidContext();
     const result = await validateAuthorizationCodeGrant(context);
     expect(result).toMatchObject({
       grantType: 'authorization_code',
@@ -1477,12 +1247,7 @@ describe('validateAuthorizationCodeGrant', () => {
   });
 
   it('should reject an unknown authorization code with invalid_grant', async () => {
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = await generateCodeChallenge(codeVerifier);
-    const { context } = createValidContext({
-      authCode: { codeChallenge },
-      codeVerifier,
-    });
+    const { context } = await createValidContext();
     context.params.code = 'unknown-code';
     await expect(validateAuthorizationCodeGrant(context)).rejects.toMatchObject({
       error: TokenErrorCode.InvalidGrant,

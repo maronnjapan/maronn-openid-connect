@@ -45,38 +45,48 @@ describe('generateAccessToken', () => {
     ecKeyPair = await generateEcKeyPair('P-256');
   });
 
+  // Helper: 与えたペイロードを RSA 鍵（options で上書き可）で発行し、デコード結果も返す
+  async function issuePayload(payload: AccessTokenPayload, options?: Partial<GenerateAccessTokenOptions>) {
+    const token = await generateAccessToken({ payload, privateKey: rsaKeyPair.privateKey, ...options });
+    return { token, ...decodeJwt(token) };
+  }
+
+  // Helper: 既定のペイロード（overrides で上書き）で発行する
+  function issue(overrides?: Partial<AccessTokenPayload>, options?: Partial<GenerateAccessTokenOptions>) {
+    return issuePayload(createValidPayload(overrides), options);
+  }
+
+  // Helper: 発行が拒否されることを検証する
+  function expectIssueToReject(payload: AccessTokenPayload) {
+    return expect(generateAccessToken({ payload, privateKey: rsaKeyPair.privateKey })).rejects.toThrow();
+  }
+
+  // Helper: 必須クレームを 1 つ欠いたペイロード
+  function payloadWithout(claim: keyof AccessTokenPayload): AccessTokenPayload {
+    const payload = createValidPayload();
+    delete (payload as Partial<AccessTokenPayload>)[claim];
+    return payload;
+  }
+
   describe('JWT Structure', () => {
     describe('JOSE Header', () => {
       // RS256: Required by OIDC Core specification for ID Token signing
       // ES256: Recommended for new implementations (smaller keys, faster signing)
       it('should set alg claim to RS256 for RSASSA-PKCS1-v1_5 with SHA-256', async () => {
-        const token = await generateAccessToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { header } = await issue();
 
-        const { header } = decodeJwt(token);
         expect(header.alg).toEqual('RS256');
       });
 
       it('should set alg claim to ES256 for ECDSA with P-256 curve', async () => {
-        const token = await generateAccessToken({
-          payload: createValidPayload(),
-          privateKey: ecKeyPair.privateKey,
-        });
+        const { header } = await issue(undefined, { privateKey: ecKeyPair.privateKey });
 
-        const { header } = decodeJwt(token);
         expect(header.alg).toEqual('ES256');
       });
 
       it('should include kid claim when keyId is provided', async () => {
-        const token = await generateAccessToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-          keyId: 'key-1',
-        });
+        const { header } = await issue(undefined, { keyId: 'key-1' });
 
-        const { header } = decodeJwt(token);
         expect(header.kid).toEqual('key-1');
       });
 
@@ -84,22 +94,14 @@ describe('generateAccessToken', () => {
       // mandates typ = "at+jwt" so resource servers can distinguish
       // access tokens from ID tokens (which use typ = "JWT").
       it('should set typ claim to at+jwt per RFC 9068', async () => {
-        const token = await generateAccessToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { header } = await issue();
 
-        const { header } = decodeJwt(token);
         expect(header.typ).toEqual('at+jwt');
       });
     });
 
     it('should encode payload as Base64URL', async () => {
-      const payload = createValidPayload();
-      const token = await generateAccessToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { token } = await issue();
 
       const parts = token.split('.');
       expect(parts.length).toEqual(3);
@@ -111,10 +113,7 @@ describe('generateAccessToken', () => {
 
     describe('Signature Generation', () => {
       it('should generate valid RS256 signature', async () => {
-        const token = await generateAccessToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { token } = await issue();
 
         const [headerB64, payloadB64, signatureB64] = token.split('.');
         const signedData = `${headerB64}.${payloadB64}`;
@@ -125,10 +124,7 @@ describe('generateAccessToken', () => {
       });
 
       it('should generate valid ES256 signature', async () => {
-        const token = await generateAccessToken({
-          payload: createValidPayload(),
-          privateKey: ecKeyPair.privateKey,
-        });
+        const { token } = await issue(undefined, { privateKey: ecKeyPair.privateKey });
 
         const [headerB64, payloadB64, signatureB64] = token.split('.');
         const signedData = `${headerB64}.${payloadB64}`;
@@ -143,94 +139,50 @@ describe('generateAccessToken', () => {
   describe('Required Claims', () => {
     describe('iss (Issuer)', () => {
       it('should set iss to match configured issuer', async () => {
-        const payload = createValidPayload({ iss: 'https://my-issuer.com' });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decodedPayload } = await issue({ iss: 'https://my-issuer.com' });
 
-        const { payload: decodedPayload } = decodeJwt(token);
         expect(decodedPayload.iss).toEqual('https://my-issuer.com');
       });
 
       it('should throw when iss is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<AccessTokenPayload>).iss;
-        await expect(
-          generateAccessToken({
-            payload: payload as AccessTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('iss'));
       });
     });
 
     describe('sub (Subject)', () => {
       it('should include valid subject identifier', async () => {
-        const payload = createValidPayload({ sub: 'user-unique-id' });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ sub: 'user-unique-id' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.sub).toEqual('user-unique-id');
       });
 
       it('should throw when sub is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<AccessTokenPayload>).sub;
-        await expect(
-          generateAccessToken({
-            payload: payload as AccessTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('sub'));
       });
     });
 
     describe('aud (Audience)', () => {
       it('should set aud as array of resource servers', async () => {
-        const payload = createValidPayload({ aud: ['https://api.example.com'] });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ aud: ['https://api.example.com'] });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.aud).toEqual(['https://api.example.com']);
       });
 
       it('should set aud with multiple values', async () => {
-        const payload = createValidPayload({ aud: ['https://api1.example.com', 'https://api2.example.com'] });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
+        const { payload: decoded } = await issue({
+          aud: ['https://api1.example.com', 'https://api2.example.com'],
         });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.aud).toEqual(['https://api1.example.com', 'https://api2.example.com']);
       });
 
       it('should require aud to be an array (validation may be handled upstream)', async () => {
-        const payload = createValidPayload({ aud: ['resource-server'] });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
+        const { payload: decoded } = await issue({ aud: ['resource-server'] });
         expect(Array.isArray(decoded.aud)).toEqual(true);
       });
 
       it('should throw when aud is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<AccessTokenPayload>).aud;
-        await expect(
-          generateAccessToken({
-            payload: payload as AccessTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('aud'));
       });
 
       // RFC 9068 Section 3: a JWT access token's aud identifies the resource
@@ -250,13 +202,8 @@ describe('generateAccessToken', () => {
       it('should set exp to future timestamp', async () => {
         const now = Math.floor(Date.now() / 1000);
         const futureExp = now + 3600;
-        const payload = createValidPayload({ exp: futureExp });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ exp: futureExp });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.exp).toEqual(futureExp);
         expect(decoded.exp as number).toBeGreaterThan(now);
       });
@@ -287,39 +234,20 @@ describe('generateAccessToken', () => {
       });
 
       it('should throw when exp is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<AccessTokenPayload>).exp;
-        await expect(
-          generateAccessToken({
-            payload: payload as AccessTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('exp'));
       });
     });
 
     describe('iat (Issued At)', () => {
       it('should include iat timestamp', async () => {
         const now = Math.floor(Date.now() / 1000);
-        const payload = createValidPayload({ iat: now });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ iat: now });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.iat).toEqual(now);
       });
 
       it('should throw when iat is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<AccessTokenPayload>).iat;
-        await expect(
-          generateAccessToken({
-            payload: payload as AccessTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('iat'));
       });
     });
   });
@@ -327,36 +255,22 @@ describe('generateAccessToken', () => {
   describe('Optional Claims', () => {
     describe('scope', () => {
       it('should include scope claim with granted scopes', async () => {
-        const payload = createValidPayload({ scope: 'openid profile email' });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ scope: 'openid profile email' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.scope).toEqual('openid profile email');
       });
 
       it('should format multiple scopes as space-separated string', async () => {
-        const payload = createValidPayload({ scope: 'read write delete' });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ scope: 'read write delete' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.scope).toEqual('read write delete');
       });
 
       it('should allow omitting scope claim', async () => {
         const payload = createValidPayload();
         delete payload.scope;
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issuePayload(payload);
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.scope).toBeUndefined();
       });
     });
@@ -366,25 +280,16 @@ describe('generateAccessToken', () => {
     // Useful for logging, analytics, and security monitoring
     describe('client_id', () => {
       it('should include client_id claim when provided', async () => {
-        const payload = createValidPayload({ client_id: 'my-client-app' });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ client_id: 'my-client-app' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.client_id).toEqual('my-client-app');
       });
 
       it('should allow omitting client_id claim', async () => {
         const payload = createValidPayload();
         delete payload.client_id;
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issuePayload(payload);
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.client_id).toBeUndefined();
       });
     });
@@ -394,12 +299,8 @@ describe('generateAccessToken', () => {
     it('should allow additional custom claims in payload', async () => {
       const payload = createValidPayload();
       (payload as Record<string, unknown>).custom_claim = 'custom_value';
-      const token = await generateAccessToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { payload: decoded } = await issuePayload(payload);
 
-      const { payload: decoded } = decodeJwt(token);
       expect(decoded.custom_claim).toEqual('custom_value');
     });
 
@@ -407,12 +308,8 @@ describe('generateAccessToken', () => {
       const payload = createValidPayload();
       (payload as Record<string, unknown>).roles = ['admin', 'user'];
       (payload as Record<string, unknown>).permissions = ['read', 'write'];
-      const token = await generateAccessToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { payload: decoded } = await issuePayload(payload);
 
-      const { payload: decoded } = decodeJwt(token);
       expect(decoded.roles).toEqual(['admin', 'user']);
       expect(decoded.permissions).toEqual(['read', 'write']);
     });

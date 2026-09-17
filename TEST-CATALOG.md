@@ -1,0 +1,3090 @@
+# テスト一覧
+
+このファイルは `pnpm test:catalog` が生成する。手では編集せず、テストを追加・変更したら再生成してコミットする。
+CI は `pnpm test:catalog:check` で、この一覧が現在のテストと一致することを検証する。
+
+各テストは `describe` と `it` の階層をそのまま入れ子リストにしている。
+テスト名は「should + 動詞」で、名前だけで何を固定しているかが分かる（`README.md` の「テストコードの書き方」）。
+
+| 区分 | 収集方法 | ファイル数 | テスト数 |
+|---|---|---:|---:|
+| [packages/core](#packagescore) | vitest | 28 | 1168 |
+| [packages/experimental](#packagesexperimental) | vitest | 18 | 588 |
+| [samples/hono-cloudflare](#sampleshono-cloudflare) | vitest | 1 | 305 |
+| [tests/e2e](#testse2e) | Playwright | 11 | 51 |
+| [.github/scripts](#githubscripts) | node:test | 6 | 143 |
+| [tests/conformance](#testsconformance) | node:test | 1 | 7 |
+| 合計 | | 65 | 2262 |
+
+## packages/core
+
+`@maronn-openid-connect/core` の単体テスト。Edge Runtime 環境（Web 標準 API のみ）で実行する。
+
+```bash
+pnpm --filter @maronn-openid-connect/core test
+```
+
+### src/access-token-issuer.test.ts（13）
+
+- createJwtAccessTokenIssuer
+  - should issue a JWT with three dot-separated segments
+  - should embed payload claims (sub, iss) in the JWT body
+  - should set kid in header when keyId is provided
+  - should reject when privateKey is missing
+  - nbf claim (RFC 9068 §2.2 / RFC 7519 §4.1.5)
+    - should include nbf claim in the JWT payload
+    - should set nbf equal to iat
+    - should preserve an explicitly provided nbf
+- createOpaqueAccessTokenIssuer
+  - should return a non-empty random string without dot separators
+  - should produce unique tokens across calls
+  - should respect the configured byteLength
+  - should default to 32 bytes when byteLength is not provided
+  - should reject zero or negative byteLength
+  - should not embed payload claims in the token string
+
+### src/access-token.test.ts（31）
+
+- generateAccessToken
+  - JWT Structure
+    - JOSE Header
+      - should set alg claim to RS256 for RSASSA-PKCS1-v1\_5 with SHA-256
+      - should set alg claim to ES256 for ECDSA with P-256 curve
+      - should include kid claim when keyId is provided
+      - should set typ claim to at+jwt per RFC 9068
+    - should encode payload as Base64URL
+    - Signature Generation
+      - should generate valid RS256 signature
+      - should generate valid ES256 signature
+  - Required Claims
+    - iss (Issuer)
+      - should set iss to match configured issuer
+      - should throw when iss is missing
+    - sub (Subject)
+      - should include valid subject identifier
+      - should throw when sub is missing
+    - aud (Audience)
+      - should set aud as array of resource servers
+      - should set aud with multiple values
+      - should require aud to be an array (validation may be handled upstream)
+      - should throw when aud is missing
+      - should throw when aud is an empty array
+    - exp (Expiration)
+      - should set exp to future timestamp
+      - should allow small clock skew tolerance
+      - should throw when exp is in the past
+      - should throw when exp is missing
+    - iat (Issued At)
+      - should include iat timestamp
+      - should throw when iat is missing
+  - Optional Claims
+    - scope
+      - should include scope claim with granted scopes
+      - should format multiple scopes as space-separated string
+      - should allow omitting scope claim
+    - client\_id
+      - should include client\_id claim when provided
+      - should allow omitting client\_id claim
+  - Custom Claims
+    - should allow additional custom claims in payload
+    - should support permissions or roles claim for authorization
+  - Token Uniqueness
+    - should generate different tokens for different payloads
+    - should generate different tokens for same payload at different times
+
+### src/auth-transaction.test.ts（54）
+
+- checkPromptNone
+  - Session check
+    - should throw login\_required when session is missing
+    - should attach login\_required code to AuthorizationError
+    - should return session when session exists and no consentResolver is provided
+  - Consent check
+    - should throw consent\_required when consentResolver returns false
+    - should return session when both session and consent are valid
+    - should pass scopes split from transaction.scope to consentResolver
+    - should pass session subject and transaction clientId to consentResolver
+    - should not check consent when consentResolver is not provided
+  - id\_token\_hint
+    - should return session when verifiedHintSubject matches session subject
+    - should throw login\_required when verifiedHintSubject differs from session subject
+    - should ignore hint when verifiedHintSubject is undefined
+    - should still throw login\_required when no session even if hint is provided
+    - should prefer login\_required over consent\_required when hint mismatches
+    - should still return consent\_required when hint matches but consent is missing
+- createAuthTransaction
+  - should store idTokenHint when provided in ValidatedAuthorizationRequest
+  - should not set idTokenHint when not provided
+  - should store uiLocales and claimsLocales when provided
+  - should leave uiLocales and claimsLocales undefined when not provided
+  - should set createdAt and expiresAt with provided ttl
+  - should preserve csrf token
+  - should join scope with space
+  - should omit PKCE fields when the validated request has no PKCE binding
+  - User-Agent binding
+    - should store the bindingHash passed through options
+    - should store only the hash and never the raw binding secret in the transaction
+    - should leave bindingHash undefined when no options are given
+    - should apply ttlMs from the options object
+    - should keep the numeric ttlMs argument working for backward compatibility
+- getAuthTransaction
+  - should throw when transaction is missing
+  - should throw when transaction is expired
+- validateCsrfToken
+  - should throw when token is empty
+  - should throw when token does not match
+  - should not throw when token matches
+- validateTransactionBinding
+  - should accept a transaction when the presented binding secret matches the stored hash
+  - should reject a transaction when the presented binding secret does not match
+  - should reject a transaction when no binding secret is presented
+  - should reject a transaction when an empty binding secret is presented
+  - should skip binding validation when the transaction has no bindingHash
+  - should report 400 as the HTTP status code for a binding failure
+- computeTransactionBindingHash
+  - should return the base64url SHA-256 digest of the binding secret
+  - should return different hashes for different secrets
+- handleLoginFailure
+  - should increment failedAttempts and persist when below max
+  - should delete transaction when reaching max attempts
+- completeAuthTransaction
+  - should delete transaction from the store
+  - should return AuthorizationResponseParams with redirectUri and clientId
+  - should omit PKCE fields when the transaction has no PKCE binding
+  - should carry acrValues into AuthorizationResponseParams
+  - should omit acrValues when the transaction has none
+- requiresReauthentication
+  - should return true when session is older than maxAge
+  - should return false when session is fresh enough
+  - should return true when maxAge is 0 and authTime equals now
+  - should return true when maxAge is 0 and authTime is in the past
+  - should return true when maxAge is negative
+  - should return false when maxAge is 10 and only 5 seconds elapsed
+  - should return true when maxAge is 10 and 11 seconds elapsed
+
+### src/authorization-code.test.ts（23）
+
+- createAuthorizationCode
+  - Code generation
+    - should generate a random code as a string
+    - should generate different codes on each call
+  - Required fields
+    - should set used to false
+    - should copy clientId from authorizationResponse
+    - should copy redirectUri from authorizationResponse
+    - should copy scope from authorizationResponse
+    - should copy codeChallenge and codeChallengeMethod
+    - should omit codeChallenge and codeChallengeMethod when authorizationResponse has no PKCE binding
+    - should set subject from options
+    - should set authTime from options
+  - Expiration (TTL)
+    - should default ttlSeconds to 300
+    - should set expiresAt based on provided ttlSeconds
+  - grantId
+    - should generate a grantId as a string
+    - should generate a unique grantId per code
+    - should generate grantId distinct from code
+  - Optional fields
+    - should include nonce when present in authorizationResponse
+    - should not include nonce when absent
+    - should include audience when present
+    - should not include audience when absent
+    - should include acrValues when present
+    - should not include acrValues when absent
+    - should include sessionId when the authorization was issued within a session
+    - should not include sessionId when absent
+
+### src/authorization-request-steps.test.ts（58）
+
+- resolveClientForAuthorization
+  - should return the client resolved from client\_id
+  - should reject missing client\_id with a non-redirectable invalid\_request
+  - should reject unknown client\_id with a non-redirectable invalid\_request
+  - should reject a resolver returning a mismatched clientId with server\_error
+- resolveRequestObjectParams
+  - should return copied params and no claims when request parameter is absent
+  - should overlay request object claims onto the query parameters
+  - should reject a broken request JWT with a non-redirectable invalid\_request\_object
+  - should reject an unsigned request object when allowUnsigned is not enabled
+- resolveAuthorizationRedirectUri
+  - should return the redirect\_uri when it matches a registered URI
+  - should return the single registered URI when redirect\_uri is omitted
+  - should reject an unregistered redirect\_uri with a non-redirectable invalid\_request
+  - should reject an omitted redirect\_uri when multiple URIs are registered
+- rejectUnsupportedRequestParams
+  - should pass when request, request\_uri and registration are all absent
+  - should reject request\_uri with a redirectable request\_uri\_not\_supported
+  - should reject registration with a redirectable registration\_not\_supported
+  - should reject request with request\_not\_supported when requestParameterSupported is false
+  - should not reject request when requestParameterSupported is left default
+- validateRequestObjectConsistency
+  - should pass when requestObjectClaims is undefined
+  - should pass when response\_type and client\_id match the query parameters
+  - should reject a response\_type mismatch with a redirectable invalid\_request
+  - should reject a client\_id mismatch with a redirectable invalid\_request
+- validateResponseType
+  - should return code for response\_type=code
+  - should reject missing response\_type with a redirectable invalid\_request
+  - should reject unsupported response\_type with unsupported\_response\_type
+  - should reject a response\_type the client is not registered for with unauthorized\_client
+- validateAuthorizationScope
+  - should return the deduplicated scope array
+  - should reject missing scope in the query parameters with invalid\_request
+  - should reject scope without openid with invalid\_scope
+  - should use the effective scope when the request object supersedes the query
+- validateAuthorizationCodePkce
+  - should return the code\_challenge and S256 method
+  - should reject missing code\_challenge with a redirectable invalid\_request
+  - should reject unsupported code\_challenge\_method plain
+  - should allow omitted PKCE for a confidential client in compatibility mode
+  - should still require PKCE for a public client in compatibility mode
+- validatePromptParameter
+  - should return undefined when prompt is absent
+  - should return the prompt values as an array
+  - should reject an invalid prompt value with a redirectable invalid\_request
+  - should reject none combined with other prompt values
+- applyOfflineAccessPolicy
+  - should keep offline\_access when prompt includes consent
+  - should drop offline\_access when prompt does not include consent
+  - should drop offline\_access when the client does not register the refresh\_token grant type
+  - should return the scope unchanged when offline\_access is not requested
+  - should honor a custom isOfflineAccessGranted callback
+- validateDisplayParameter
+  - should return undefined when display is absent
+  - should return a valid display value
+  - should reject an unsupported display value with a redirectable invalid\_request
+- resolveMaxAge
+  - should return undefined when neither max\_age nor default\_max\_age is set
+  - should return the parsed max\_age
+  - should reject a non-integer max\_age with a redirectable invalid\_request
+  - should fall back to the registered default\_max\_age when max\_age is absent
+  - should prefer the request max\_age over the registered default\_max\_age
+  - should reject a negative registered default\_max\_age with server\_error
+- parseAudienceParameter
+  - should return undefined when audience is absent
+  - should split the space-delimited audience into an array
+- parseClaimsRequestParameter
+  - should return undefined when claims is absent
+  - should parse userinfo and id\_token members
+  - should reject invalid JSON with a redirectable invalid\_request
+  - should reject claims exceeding the maximum allowed length
+
+### src/authorization-request.test.ts（163）
+
+- validateAuthorizationRequest
+  - ClientResolver integration
+    - should call findClient with the client\_id from the request
+    - should detect clientId mismatch between request and resolver response
+  - client\_id validation
+    - should accept valid client\_id
+    - should reject missing client\_id
+    - should return non-redirectable error for unknown client\_id
+  - redirect\_uri validation
+    - should accept registered redirect\_uri
+    - should return non-redirectable error for unregistered redirect\_uri
+    - should use single registered redirect\_uri when omitted from request
+    - should reject missing redirect\_uri when multiple URIs are registered
+    - should use exact string matching for redirect\_uri
+    - should reject redirect\_uri with fragment
+    - should throw server\_error when registered redirect\_uri contains fragment
+    - should throw server\_error when any registered redirect\_uri contains fragment
+    - should accept redirect\_uri with matching registered query parameters
+    - should reject redirect\_uri with mismatched query parameters
+    - should reject redirect\_uri with added query parameters
+    - should allow different port for loopback redirect\_uri when client is public
+    - should allow different port for localhost redirect\_uri when client is public
+    - should reject different port for loopback redirect\_uri when client is confidential
+    - should reject different port for loopback redirect\_uri when clientType is unspecified (defaults to strict)
+  - response\_type validation
+    - should accept response\_type=code
+    - should reject missing response\_type
+    - should reject unsupported response\_type
+  - scope validation
+    - should accept scope containing openid
+    - should reject missing scope
+    - should reject scope without openid
+    - should parse multiple scopes into array
+    - should deduplicate repeated scope values preserving first-seen order
+  - PKCE validation (OAuth 2.1)
+    - should accept valid code\_challenge with S256 method
+    - should reject code\_challenge\_method=plain
+    - should reject missing code\_challenge\_method
+    - should reject missing code\_challenge
+    - should accept missing PKCE parameters for explicit confidential clients when compatibility mode is enabled
+    - should reject missing PKCE parameters for public clients even when compatibility mode is enabled
+    - should reject empty code\_challenge
+    - should reject invalid code\_challenge values even when compatibility mode is enabled
+    - should reject unsupported code\_challenge\_method
+    - should include state in PKCE error when state was provided
+    - code\_challenge format validation (S256)
+      - should accept a 43-character base64url code\_challenge
+      - should reject a code\_challenge shorter than 43 characters
+      - should reject a code\_challenge longer than 43 characters
+      - should reject a code\_challenge containing non-base64url symbols
+      - should reject a code\_challenge containing punctuation such as ! or ?
+      - should reject a code\_challenge containing whitespace or newline
+      - should describe the base64url and 43-character requirement in error\_description
+  - state parameter
+    - should include state when provided
+    - should not require state
+  - nonce parameter
+    - should include nonce when provided
+    - should not require nonce for code flow
+  - prompt parameter
+    - should accept prompt=none
+    - should accept prompt=login
+    - should accept prompt=consent
+    - should accept prompt=select\_account
+    - should accept multiple prompt values
+    - should reject prompt=none combined with other values
+    - should reject invalid prompt value
+  - display parameter
+    - should accept display=page
+    - should accept display=popup
+    - should accept display=touch
+    - should accept display=wap
+    - should reject unknown display value with invalid\_request
+    - should return a redirectable error with state for an unknown display value
+    - should leave display undefined when the parameter is omitted
+  - max\_age parameter
+    - should accept valid max\_age
+    - should accept max\_age=0
+    - should reject non-numeric max\_age
+    - should reject negative max\_age
+  - default\_max\_age fallback (OIDC DCR 1.0 §2)
+    - should fall back to client defaultMaxAge when max\_age is absent
+    - should prefer request max\_age over client defaultMaxAge
+    - should leave maxAge undefined when neither max\_age nor defaultMaxAge is present
+    - should fall back to defaultMaxAge of 0 when max\_age is absent
+    - should reject negative defaultMaxAge as a non-redirectable server error
+    - should reject non-integer defaultMaxAge as a non-redirectable server error
+    - should prefer request max\_age even when defaultMaxAge is invalid
+  - optional parameters that must not cause errors
+    - should accept ui\_locales
+    - should accept claims\_locales
+    - should accept acr\_values
+    - should accept login\_hint
+    - should accept id\_token\_hint
+  - audience parameter
+    - should accept audience as space-separated string
+    - should accept multiple audience values
+    - should return undefined audience when not provided
+  - unknown parameters
+    - should ignore unknown parameters
+  - Request Object by value (request parameter, OIDC Core 1.0 §6.1)
+    - should use request object parameters as the values driving subsequent processing
+    - should let a request object parameter supersede the same query parameter
+    - should validate a request object parameter the same as a query parameter (invalid prompt)
+    - should reject a request object scope that omits openid (supersedes the query scope)
+    - should prefer a valid redirect\_uri from the request object over an invalid top-level redirect\_uri
+    - should reject a request object whose signature does not verify with invalid\_request\_object
+    - should reject a request object with an unknown kid with invalid\_request\_object
+    - should reject a request object with an unsupported signing alg with invalid\_request\_object
+    - should reject a request object when no client JWKS is registered with invalid\_request\_object
+    - should throw without a redirect uri when the request object cannot be parsed
+    - should reject when the request object response\_type does not match the query
+    - should accept an unsigned (alg=none) request object when allowUnsigned is enabled
+    - should reject an unsigned request object with invalid\_request\_object when allowUnsigned is false
+    - should reject the request\_uri parameter with request\_uri\_not\_supported
+    - should reject the registration parameter with registration\_not\_supported
+    - should process a request without the registration parameter normally
+    - should reject a request object with a broken JWS structure with invalid\_request\_object
+    - should reject a JWE (5-segment) request object with invalid\_request\_object
+  - error redirectability
+    - should return non-redirectable error for invalid client\_id
+    - should return non-redirectable error for invalid redirect\_uri
+    - should return redirectable error for other validation failures
+    - should include state in redirectable errors when state was provided
+  - validation order
+    - should validate client\_id before redirect\_uri
+    - should validate redirect\_uri before response\_type
+  - claims request parameter
+    - should parse JSON claims with id\_token and userinfo members
+    - should ignore unknown top-level members in claims
+    - should ignore non-object entries inside claims members
+    - should reject claims that is not a JSON object
+    - should leave claims undefined when parameter is omitted
+  - claims parameter size limit (untrusted input hardening)
+    - should reject claims longer than the default maximum length with invalid\_request
+    - should return a redirectable error with state when claims exceeds the limit
+    - should not echo the oversized claims value in the error description
+    - should reject oversized claims by size before attempting JSON.parse
+    - should accept claims exactly at the configured limit
+    - should reject claims one character over the configured limit
+    - should still parse a typical small claims payload within the limit
+    - should still reject a JSON array within the limit
+    - should still reject JSON null within the limit
+  - offline\_access scope gating (OIDC Core 1.0 §11)
+    - should drop offline\_access from scope when prompt is missing
+    - should drop offline\_access when prompt does not include consent
+    - should retain offline\_access when prompt=consent is present
+    - should retain offline\_access when prompt includes consent among others
+    - should drop offline\_access when prompt=none and offline\_access is requested
+    - should allow a custom isOfflineAccessGranted callback to override the default
+    - should pass parsed prompt values to the custom callback
+  - offline\_access gating by registered grant\_types
+    - should drop offline\_access when the client omits grant\_types
+    - should drop offline\_access when the client registers only authorization\_code
+    - should retain offline\_access when the client registers the refresh\_token grant type
+    - should pass the resolved client to the custom callback
+    - should let a custom callback grant offline\_access to a client without the refresh\_token grant type
+- validateAuthorizationRequest - client response\_types enforcement
+  - should reject response\_type=code with unauthorized\_client when client responseTypes excludes code
+  - should return a redirectable error preserving state for unauthorized\_client
+  - should allow response\_type=code when client responseTypes includes code
+  - should allow response\_type=code when responseTypes is unspecified (default \["code"\])
+  - should return unsupported\_response\_type (not unauthorized\_client) for a globally unsupported response\_type
+- validateAuthorizationRequest - state echo/non-echo invariant
+  - redirectable errors MUST echo state
+    - should echo state on invalid\_scope (scope without openid)
+    - should echo state on unsupported\_response\_type
+    - should NOT attach state on a redirectable error when the request omits state
+  - non-redirectable errors MUST NOT echo state
+    - should not echo state when client\_id is missing
+    - should not echo state for an unknown client\_id
+    - should not echo state on a clientId mismatch between request and resolver
+    - should not echo state for an unregistered redirect\_uri
+    - should not echo state when the Request Object fails to parse
+- validateRegisteredRedirectUris
+  - Fragment rejection
+    - should throw server\_error when a registered redirect\_uri contains a fragment
+  - Dangerous scheme rejection
+    - should throw server\_error for a javascript: scheme
+    - should throw server\_error for a data: scheme
+    - should throw server\_error for a file: scheme
+    - should throw server\_error for a vbscript: scheme
+    - should throw server\_error for a blob: scheme
+    - should reject dangerous schemes case-insensitively
+  - Plaintext http:// rejection
+    - should throw server\_error for a non-loopback http:// redirect\_uri
+    - should accept http://localhost loopback redirect\_uri
+    - should accept http://127.0.0.1 loopback redirect\_uri
+    - should accept any IPv4 loopback http:// redirect\_uri
+    - should accept http://\[::1\] loopback redirect\_uri
+  - Allowed redirect\_uris
+    - should accept an https redirect\_uri
+    - should accept a custom scheme redirect\_uri
+- validateAuthorizationRequest - requestObject.supported option
+  - should reject the request parameter with request\_not\_supported when requestObject.supported is false
+  - should reject without parsing when requestObject.supported is false and the request object is malformed
+  - should validate normally when requestObject.supported is false and no request parameter is sent
+
+### src/client-auth-steps.test.ts（20）
+
+- extractClientCredentials
+  - should extract credentials from the Authorization Basic header
+  - should form-urldecode the Basic credentials
+  - should match the Basic scheme case-insensitively
+  - should extract credentials from the request body
+  - should report method none when only client\_id is presented
+  - should reject combining the Basic header with body credentials
+  - should reject a malformed Basic header with invalid\_client
+  - should reject a request without any client identifier
+- validateClientAuthMethod
+  - should accept client\_secret\_basic for a client registered with it
+  - should default the registered method to client\_secret\_basic
+  - should reject client\_secret\_post for a client registered with client\_secret\_basic
+  - should accept client\_secret\_post for a client registered with it
+  - should accept a public client that presents only its client\_id
+  - should reject a public client that presents a secret
+  - should reject a confidential client that presents no secret
+  - should reject a confidential client that presents an empty secret
+- verifyClientSecret
+  - should accept the registered secret
+  - should reject a wrong secret with invalid\_client
+  - should skip verification for a public client
+  - should reject a confidential client with no presented secret
+
+### src/client-auth.test.ts（30）
+
+- authenticateClient
+  - client\_secret\_basic
+    - should decode percent-encoded clientId in Basic auth credentials
+    - should decode percent-encoded clientSecret in Basic auth credentials
+    - should decode plus-encoded space in Basic auth credentials
+    - should authenticate client via client\_secret\_basic
+    - should throw invalid\_client when secret does not match in basic auth
+    - should throw invalid\_client when basic auth header is malformed
+    - should throw invalid\_client when basic credentials lack a colon separator
+  - client\_secret\_post
+    - should authenticate client via client\_secret\_post
+    - should throw invalid\_client when post credentials do not match
+  - Validation errors
+    - should throw invalid\_client when credentials are missing
+    - should throw invalid\_client when client is not found
+    - should throw invalid\_request when both basic and post credentials are provided
+    - should authenticate when Basic header is accompanied by a matching body client\_id
+    - should throw invalid\_request when Basic header client\_id and body client\_id disagree
+    - should throw invalid\_request when Basic header is accompanied by a body client\_secret
+    - should accept lowercase basic scheme
+    - should accept uppercase BASIC scheme
+    - should preserve case of base64 credentials when scheme casing varies
+    - should ignore non-Basic Authorization header and fall through to invalid\_client
+  - token\_endpoint\_auth\_method enforcement
+    - should reject client\_secret\_post when client registered client\_secret\_basic
+    - should reject client\_secret\_basic when client registered client\_secret\_post
+    - should authenticate via client\_secret\_basic when client registered client\_secret\_basic
+    - should authenticate via client\_secret\_post when client registered client\_secret\_post
+    - should enforce client\_secret\_basic default when tokenEndpointAuthMethod is unspecified
+    - should reject client\_secret\_post when tokenEndpointAuthMethod is unspecified (default basic)
+  - public client (token\_endpoint\_auth\_method=none)
+    - should authenticate public client with client\_id only in request body
+    - should reject public client when client\_id is missing
+    - should reject public client that presents a client\_secret in the body (method downgrade)
+    - should reject public client that presents Basic credentials
+    - should keep requiring client authentication for confidential clients sending client\_id only
+
+### src/crypto-utils.test.ts（133）
+
+- stringToArrayBuffer
+  - should convert a string to ArrayBuffer
+  - should handle UTF-8 characters correctly
+  - should handle empty string
+- arrayBufferToBase64Url
+  - should convert ArrayBuffer to Base64URL format
+  - Base64URL format compliance
+    - should not contain plus (+) characters
+    - should not contain slash (/) characters
+    - should not contain padding (=) characters
+  - should handle empty buffer
+  - should produce different outputs for different inputs
+- base64UrlToArrayBuffer
+  - should convert Base64URL string to ArrayBuffer
+  - should handle Base64URL characters (- and \_)
+  - should handle empty string
+  - should roundtrip with arrayBufferToBase64Url
+  - should handle strings without padding
+- base64UrlToArrayBufferStrict
+  - should decode a canonical base64url string
+  - should accept the URL-safe alphabet (- and \_)
+  - should reject standard base64 padding character "="
+  - should reject standard base64 characters "+" and "/"
+  - should reject whitespace
+  - should reject an input whose length mod 4 equals 1
+- sha256
+  - should generate a valid SHA-256 hash
+  - should produce consistent output for the same input
+  - should produce different outputs for different inputs
+  - should handle empty string
+  - should handle UTF-8 characters correctly
+- sign
+  - RSA Signatures
+    - should generate a valid signature using RS256 (RSASSA-PKCS1-v1\_5)
+    - should produce verifiable signature with corresponding public key
+  - ECDSA Signatures
+    - should generate a valid signature using ES256 (P-256 curve)
+    - should generate a valid signature using ES384 (P-384 curve)
+    - should generate a valid signature using ES512 (ECDSA with P-521 curve and SHA-512)
+    - should produce verifiable signature with corresponding public key
+  - Edge Cases
+    - should produce different signatures for different data
+    - should handle empty string
+    - should handle UTF-8 characters correctly
+- verify
+  - RSA Verification
+    - should verify valid RS256 signature
+    - should verify valid RS384 signature
+    - should verify valid RS512 signature
+  - ECDSA Verification
+    - should verify valid ES256 signature
+    - should verify valid ES384 signature
+    - should verify valid ES512 signature
+  - Invalid Signature Detection
+    - should reject tampered data
+    - should reject tampered signature
+    - should reject signature from different key
+  - Edge Cases
+    - should verify empty string data
+    - should verify UTF-8 data
+    - should verify long data
+- importPrivateKeyFromJwk
+  - RSA Private Key Import
+    - should import RSA private key from JWK string
+    - should set correct algorithm (RSASSA-PKCS1-v1\_5 with SHA-256)
+    - should set key type to private
+    - should allow key to be extractable by default
+    - should set key usages to sign for private key
+  - RSA Public Key Import
+    - should import RSA public key from JWK string
+    - should set key type to public
+    - should set key usages to verify for public key
+  - ECDSA Private Key Import
+    - should import EC private key from JWK string (P-256)
+    - should import EC private key from JWK string (P-384)
+    - should import EC private key from JWK string (P-521)
+    - should set correct algorithm (ECDSA with named curve)
+    - should set key usages to sign for private key
+  - ECDSA Public Key Import
+    - should import EC public key from JWK string (P-256)
+    - should import EC public key from JWK string (P-384)
+    - should import EC public key from JWK string (P-521)
+    - should set key usages to verify for public key
+  - Key Validation
+    - should reject invalid JSON string
+    - should reject JWK with missing required fields
+    - should reject JWK with invalid key type
+    - should reject weak EC curves (P-192)
+  - Custom Parameters
+    - should accept custom algorithm parameters for RSA
+    - should accept custom algorithm parameters for ECDSA
+    - should accept custom extractable flag
+    - should accept custom key usages
+  - Interoperability
+    - should import RSA key that can be used for signing
+    - should import RSA key that can be used for verification
+    - should import EC key that can be used for signing
+    - should import EC key that can be used for verification
+    - should work with key pairs exported to JWK
+- extractAlgorithmParams
+  - RSASSA-PKCS1-v1\_5 Algorithm
+    - should extract algorithm params from RS256 key (SHA-256)
+    - should extract algorithm params from RS384 key (SHA-384)
+    - should extract algorithm params from RS512 key (SHA-512)
+    - should return correct algorithm name (RSASSA-PKCS1-v1\_5)
+  - ECDSA Algorithm
+    - should extract algorithm params from ES256 key (P-256)
+    - should extract algorithm params from ES384 key (P-384)
+    - should extract algorithm params from ES512 key (P-521)
+    - should return correct algorithm name (ECDSA)
+    - should return correct named curve
+  - Algorithm Validation
+    - should reject unsupported algorithm (RSA-OAEP)
+    - should reject weak hash algorithm (SHA-1)
+    - should reject non-signing key types
+  - Hash/Curve Detection
+    - should correctly identify SHA-256 hash for RSA
+    - should correctly identify SHA-384 hash for RSA
+    - should correctly identify SHA-512 hash for RSA
+    - should correctly identify P-256 curve for ECDSA
+    - should correctly identify P-384 curve for ECDSA
+    - should correctly identify P-521 curve for ECDSA
+  - Return Value Structure
+    - should return RsaHashedImportParams for RSA keys
+    - should return EcKeyImportParams for EC keys
+    - should return object with name property
+    - should return object with hash property for RSA
+    - should return object with namedCurve property for ECDSA
+- extractAlgorithmParamsFromJwk
+  - RSA JWK
+    - should extract RS256 params from RSA jwk with alg=RS256
+    - should extract RS384 params from RSA jwk with alg=RS384
+    - should extract RS512 params from RSA jwk with alg=RS512
+  - EC JWK
+    - should extract ES256 params from EC jwk with crv=P-256
+    - should extract ES384 params from EC jwk with crv=P-384
+    - should extract ES512 params from EC jwk with crv=P-521
+  - Validation
+    - should reject unsupported kty
+    - should reject RSA jwk with unsupported alg
+    - should reject EC jwk with unsupported crv
+- timingSafeEqual
+  - should return true for equal strings
+  - should return false for different strings of same length
+  - should return false for strings of different length
+  - should return true for two empty strings
+  - should return false when one string is empty and the other is not
+  - should handle UTF-8 characters correctly
+  - should distinguish strings that share a prefix
+- generateRandomString
+  - should return a Base64URL encoded string
+  - should return a 43-character string for 32 bytes (256 bits)
+  - should return a 22-character string for 16 bytes (128 bits)
+  - should generate unique values on each call
+- jwaToHashName
+  - SHA-256 algorithms
+    - should return SHA-256 for RS256
+    - should return SHA-256 for ES256
+    - should return SHA-256 for PS256
+  - SHA-384 algorithms
+    - should return SHA-384 for RS384
+    - should return SHA-384 for ES384
+  - SHA-512 algorithms
+    - should return SHA-512 for RS512
+    - should return SHA-512 for ES512
+  - Unsupported algorithms
+    - should throw for an unknown alg
+    - should throw for an empty alg
+- rsaModulusBitLength
+  - should return 2048 for a 2048-bit RSA modulus
+  - should return 1024 for a 1024-bit RSA modulus
+  - should ignore a leading zero padding byte in the modulus
+  - should ignore multiple leading zero padding bytes in the modulus
+  - should return 0 for an all-zero modulus
+
+### src/discovery.test.ts（60）
+
+- buildProviderMetadata
+  - Required Fields
+    - should include issuer in the metadata
+    - should include authorization\_endpoint in the metadata
+    - should include token\_endpoint in the metadata
+    - should include jwks\_uri in the metadata
+    - should include response\_types\_supported in the metadata
+    - should include subject\_types\_supported in the metadata
+    - should derive id\_token\_signing\_alg\_values\_supported from a single RS256 key
+    - should derive both algorithms when RS256 and ES256 keys are provided
+    - should deduplicate algorithms when two RS256 keys are provided
+    - should throw when issuer is missing
+    - should throw when authorization\_endpoint is missing
+    - should throw when token\_endpoint is missing
+    - should throw when jwks\_uri is missing
+    - should throw when response\_types\_supported is empty
+    - should throw when subject\_types\_supported is empty
+    - should throw when idTokenSigningKeys is empty
+    - should throw when key set lacks an RS256 key (ES256 only)
+    - should throw when key set has only RSA keys with non-SHA-256 hash
+  - Issuer Validation
+    - should throw when issuer uses http scheme (non-localhost)
+    - should allow issuer with localhost for development
+    - should allow issuer with any IPv4 loopback address for development
+    - should throw when issuer contains query parameters
+    - should throw when issuer contains fragment
+    - should allow issuer with path component
+  - Recommended Fields
+    - should include userinfo\_endpoint when provided
+    - should omit userinfo\_endpoint when not provided
+    - should include scopes\_supported when provided
+    - should include claims\_supported when provided
+    - should omit claim\_types\_supported when not provided
+    - should include claim\_types\_supported as \["normal"\] when provided
+    - should reject claim\_types\_supported values other than normal
+    - should include registration\_endpoint when provided
+    - should include userinfo\_signing\_alg\_values\_supported when provided
+    - should omit userinfo\_signing\_alg\_values\_supported when not provided
+    - should omit userinfo\_signing\_alg\_values\_supported when empty array
+  - Optional Fields
+    - should include grant\_types\_supported when provided
+    - should include token\_endpoint\_auth\_methods\_supported when provided
+    - should include none in token\_endpoint\_auth\_methods\_supported for public clients
+    - should include response\_modes\_supported when provided
+    - should include claims\_parameter\_supported when true
+    - should include request\_parameter\_supported when true
+    - should include request\_uri\_parameter\_supported when provided
+    - should include request\_object\_signing\_alg\_values\_supported when provided
+    - should omit request\_object\_signing\_alg\_values\_supported when the list is empty
+    - should omit optional boolean fields when not provided
+  - RFC 9207 — Issuer Identification
+    - should include authorization\_response\_iss\_parameter\_supported when true
+    - should include authorization\_response\_iss\_parameter\_supported when false
+    - should omit authorization\_response\_iss\_parameter\_supported when not provided
+  - RFC 8414 Endpoints
+    - should include introspection\_endpoint when provided
+    - should omit introspection\_endpoint when not provided
+    - should include introspection\_endpoint\_auth\_methods\_supported when provided
+    - should omit introspection\_endpoint\_auth\_methods\_supported when empty
+    - should include revocation\_endpoint when provided
+    - should omit revocation\_endpoint when not provided
+    - should include revocation\_endpoint\_auth\_methods\_supported when provided
+    - should omit revocation\_endpoint\_auth\_methods\_supported when empty
+  - Array Handling
+    - should omit optional array fields with zero elements
+    - should omit claims\_supported when empty array
+  - Metadata Serialization
+    - should produce a JSON-serializable object
+    - should not include undefined values when serialized to JSON
+
+### src/error-utils.test.ts（12）
+
+- sanitizeErrorDescription
+  - Allowed Characters (RFC 6749 Section 5.2)
+    - should preserve space (0x20) and exclamation mark (0x21)
+    - should preserve characters in range 0x23-0x5B
+    - should preserve characters in range 0x5D-0x7E
+  - Disallowed Characters
+    - should replace double quote (0x22) with ?
+    - should replace backslash (0x5C) with ?
+    - should replace control characters with ?
+    - should replace DEL (0x7F) with ?
+    - should replace non-ASCII characters with ?
+    - should replace mixed disallowed characters with ?
+  - Edge Cases
+    - should handle empty string
+    - should handle string of only disallowed characters
+    - should preserve fully valid strings unchanged
+
+### src/id-token.test.ts（65）
+
+- generateIdToken
+  - JWT Structure
+    - JOSE Header
+      - should set alg claim to RS256 for RSASSA-PKCS1-v1\_5 with SHA-256
+      - should set alg claim to ES256 for ECDSA with P-256 curve
+      - should include kid claim when keyId is provided
+      - should set typ claim to JWT
+    - should encode payload as Base64URL
+    - Signature Generation
+      - should generate valid RS256 signature
+      - should generate valid ES256 signature
+  - Required Claims
+    - iss (Issuer)
+      - should set iss to match configured issuer
+      - should not allow iss with query parameters
+      - should not allow iss with fragment
+      - should not allow iss with trailing slash mismatch
+      - should not allow iss with scheme mismatch (http vs https)
+      - should allow iss with any IPv4 loopback address for development
+      - should throw when iss is missing
+    - sub (Subject)
+      - should include valid subject identifier
+      - should throw when sub is missing
+      - should not allow sub exceeding 255 ASCII chars
+    - aud (Audience)
+      - should set aud to a string equal to client\_id
+      - should set aud to an array containing client\_id
+      - should throw when aud does not contain client\_id
+      - should throw when aud is missing
+    - exp (Expiration)
+      - should set exp to future timestamp
+      - should allow small clock skew tolerance
+      - should throw when exp is in the past
+      - should throw when exp is missing
+    - iat (Issued At)
+      - should include iat timestamp
+      - should throw when iat is missing
+  - Conditional Claims
+    - nonce
+      - should include nonce matching the authorization request
+      - should throw when nonce is requested but missing in token
+      - should throw when nonce does not match
+    - auth\_time
+      - should include auth\_time when max\_age is requested
+      - should include auth\_time when explicitly requested as essential
+      - should throw when auth\_time is missing but required
+    - azp (Authorized Party)
+      - should omit azp when aud contains single value
+      - should include azp equal to client\_id when aud contains multiple values
+      - should throw when azp is missing but aud has multiple values
+      - should throw when azp does not match client\_id
+    - at\_hash
+      - should include at\_hash when access\_token is issued (optional for code flow)
+      - should calculate at\_hash correctly (left-most half of hash)
+  - Custom Claims
+    - should include name claim when profile scope is requested
+    - should include email claim when email scope is requested
+    - should include email\_verified claim when email scope is requested
+    - should allow additional custom claims in payload
+- validateIdTokenHint
+  - should return the payload including sub when the hint is valid
+  - should reject an expired hint
+  - should reject when iss does not match
+  - should reject when aud does not match
+  - should reject when signature is invalid (signed by another key)
+  - should reject when JWT structure is malformed
+  - should expose login\_required code on the thrown error
+  - should reject when iat is in the future beyond the leeway
+  - should reject when iat claim is missing
+  - should accept a future iat within an overridden larger clock skew tolerance
+  - external key-source header rejection (RFC 8725 §3.1)
+    - should reject a hint whose header contains jku
+    - should reject a hint whose header contains x5u
+    - should reject a hint whose header contains an embedded jwk
+    - should reject a hint whose header contains x5c
+    - should accept a hint whose header has only alg and kid (no regression)
+- validatePayload
+  - should reject exp that is one second in the past when tolerance is zero
+  - should allow exp four minutes in the past when tolerance is 300 seconds
+  - strict time claim typing (RFC 7519 §4.1.4 / §4.1.6)
+    - should reject a non-number exp
+    - should reject a non-number iat
+  - strict aud typing (RFC 7519 §4.1.3)
+    - should reject an aud array containing an empty string
+    - should reject an aud array containing a non-string member
+  - should reject a non-URL issuer with a clear message
+
+### src/index.test.ts（1）
+
+- Core Package
+  - should export version
+
+### src/introspection-steps.test.ts（21）
+
+- requireIntrospectionToken
+  - should return the token parameter when present
+  - should reject a missing token with invalid\_request
+  - should reject an empty token with invalid\_request
+- requireIntrospectionClient
+  - should return the authenticated client id
+  - should reject an unauthenticated caller with invalid\_client
+- resolveIntrospectionToken
+  - should resolve an access token when no hint is given
+  - should fall back to the refresh token store when no access token matches
+  - should search the refresh token store first for token\_type\_hint=refresh\_token
+  - should search the access token store first for an unknown hint
+  - should return null when neither store knows the token
+  - should return null for a refresh token when no refresh token resolver is configured
+- isIntrospectionTokenActive
+  - should report a live access token active
+  - should report an expired access token inactive
+  - should report an access token whose nbf is in the future inactive
+  - should report a live refresh token active
+  - should report a rotated refresh token inactive
+  - should report an expired refresh token inactive
+- buildIntrospectionResponse
+  - should build the RFC 7662 claims of an access token
+  - should build the RFC 7662 claims of a refresh token
+  - should omit optional access token claims that were never stored
+- INACTIVE\_INTROSPECTION\_RESPONSE
+  - should expose only the active member
+
+### src/introspection.test.ts（18）
+
+- handleIntrospectionRequest
+  - Validation
+    - should reject when token parameter is missing
+    - should reject when authenticatedClientId is empty
+  - Active access token
+    - should return active=true with scope, client\_id, sub, exp, iat, aud, iss, token\_type
+    - should echo nbf when the token carries a valid (past) nbf
+    - should return active=false when the token nbf is in the future
+    - should return active=false when access token has expired
+    - should return active=false when access token does not exist
+    - should return active=true even when access token belongs to a different client
+    - should omit optional claims that are not stored
+  - Active refresh token
+    - should return active=true with token\_type=refresh\_token
+    - should return active=false when refresh token has been used (rotated)
+    - should return active=false when refresh token has expired
+    - should return active=true even when refresh token belongs to a different client
+  - Token type hint behavior
+    - should look up access tokens first when hint=access\_token
+    - should look up refresh tokens first when hint=refresh\_token
+    - should ignore unknown token\_type\_hint and fall back to access-first lookup
+    - should return active=false only after both lookups fail
+  - Without refreshTokenResolver
+    - should still work and skip refresh token lookup
+
+### src/jwks.test.ts（24）
+
+- exportPublicJwk
+  - RSA key
+    - should export RSA public key with kty set to RSA
+    - should include n and e parameters for RSA key
+    - should not include private key parameters (d, p, q, dp, dq, qi)
+    - should set use to sig
+    - should set alg to RS256 for RSASSA-PKCS1-v1\_5 with SHA-256
+    - should include kid when provided
+    - should not include kid when not provided
+    - should export public key from private key (extracting public portion)
+  - ECDSA key
+    - should export ECDSA public key with kty set to EC
+    - should include x, y, and crv parameters for EC key
+    - should not include private key parameter (d)
+    - should set alg to ES256 for ECDSA with P-256
+    - should set use to sig
+    - should export public key from EC private key
+  - Unsupported algorithm
+    - should throw error for unsupported algorithm
+- exportJwks
+  - should return object with keys array
+  - should export single key in keys array
+  - should export multiple keys in keys array
+  - should return empty keys array when no keys provided
+  - should export keys without keyId
+- signingKeysToJwkSet
+  - should derive kid, alg and use for an RSA signing key
+  - should preserve order and kid for multiple signing keys
+  - should never leak private key material into the JWK Set
+  - should return an empty keys array when no signing keys are provided
+
+### src/loopback.test.ts（2）
+
+- isLoopbackHostname
+  - should accept localhost, IPv4 127/8, and IPv6 loopback hosts
+  - should reject DNS names that only start with 127
+
+### src/prompt-none-steps.test.ts（10）
+
+- resolvePromptNoneSession
+  - should return the active session
+  - should reject a missing session with login\_required
+  - should carry the redirect\_uri and state of the transaction on the error
+- validatePromptNoneIdTokenHint
+  - should accept a session whose subject matches the verified hint subject
+  - should skip the check when no verified hint subject is given
+  - should reject a session whose subject differs from the hint with login\_required
+- validatePromptNoneConsent
+  - should accept a subject that already consented to the requested scopes
+  - should skip the check when no consent resolver is given
+  - should reject a subject without consent with consent\_required
+  - should ask the consent resolver for the transaction subject, client and scopes
+
+### src/request-object.test.ts（11）
+
+- parseRequestObject
+  - signed request objects (RS256)
+    - should return the payload claims when the signature is valid
+    - should throw RequestObjectError when the signature does not verify
+    - should throw RequestObjectError when no JWK matches the kid
+    - should throw RequestObjectError when the alg is not supported
+    - should throw RequestObjectError when no JWKS is registered
+  - unsigned request objects (alg=none)
+    - should return the payload claims when allowUnsigned is enabled
+    - should throw RequestObjectError when allowUnsigned is disabled
+    - should throw RequestObjectError when an alg=none object carries a signature
+  - malformed request objects
+    - should throw RequestObjectError for a non-JWS string
+    - should throw RequestObjectError for a JWE (5-segment) serialization
+    - should throw RequestObjectError when the payload is not a JSON object
+
+### src/revocation-steps.test.ts（17）
+
+- requireRevocationToken
+  - should return the token parameter when present
+  - should reject a missing token with invalid\_request
+- requireRevocationClient
+  - should return the authenticated client id
+  - should reject an unauthenticated caller with invalid\_client
+- resolveRevocationTarget
+  - should resolve an access token when no hint is given
+  - should fall back to the refresh token store when no access token matches
+  - should search the refresh token store first for token\_type\_hint=refresh\_token
+  - should return null for an unknown token
+  - should return null for a refresh token when the resolvers cannot revoke refresh tokens
+- validateRevocationTokenClient
+  - should accept an access token issued to the authenticated client
+  - should reject an access token issued to another client with invalid\_grant
+  - should reject a refresh token issued to another client with invalid\_grant
+- revokeResolvedToken
+  - should revoke the presented access token
+  - should revoke the presented refresh token
+- revokeGrantAccessTokens
+  - should revoke every access token of the grant when a refresh token was revoked
+  - should not cascade when the revoked token was an access token
+  - should do nothing when the resolvers do not support grant cascade
+
+### src/revocation.test.ts（14）
+
+- handleRevocationRequest
+  - Validation
+    - should reject when token parameter is missing
+    - should reject when authenticatedClientId is empty
+  - Access token revocation
+    - should revoke the access token when found
+    - should NOT revoke associated refresh tokens by default (RFC 7009 MAY, not chosen)
+    - should silently succeed when access token does not exist
+  - Refresh token revocation
+    - should revoke the refresh token when found
+    - should revoke all access tokens sharing the same grantId (RFC 7009 SHOULD)
+    - should silently succeed when refresh token does not exist
+  - Token type hint behavior
+    - should look up access tokens first when hint=access\_token
+    - should fall back to refresh token search when hint=access\_token misses
+    - should ignore unknown hint values without raising unsupported\_token\_type
+  - Cross-client safety
+    - should reject with invalid\_grant when access token belongs to another client
+    - should reject with invalid\_grant when refresh token belongs to another client
+  - Optional resolvers
+    - should work without findRefreshToken when only access tokens are searched
+
+### src/signing-key.test.ts（40）
+
+- createCachedSigningKeyProvider
+  - should return a provider with getSigningKey method
+  - should call the base provider on first call
+  - should return the cached key within TTL without calling base again
+  - should return the key from the base provider
+  - should re-fetch from base provider after TTL expires
+- createCachedSigningKeyProvider with getSigningKeys
+  - should call base getSigningKeys on first call
+  - should return cached registered keys within TTL without calling base again
+  - should re-fetch registered keys after TTL expires
+  - should provide getSigningKeys even when base does not implement it (fallback to \[getSigningKey()\])
+- getRegisteredSigningKeys
+  - should return getSigningKeys() result when implemented
+  - should fall back to \[getSigningKey()\] when getSigningKeys is not implemented
+- selectSigningKeyByAlg
+  - should pick the RS256 key when requestedAlg is undefined (default)
+  - should pick the matching key when requestedAlg is RS256
+  - should pick the matching key when requestedAlg is ES256
+  - should throw when no key matches the requested alg
+  - should throw when keys array is empty
+  - should pick the latest matching key when multiple keys share the same alg (rotation)
+- assertHasRs256Key
+  - should not throw when an RS256 key is included
+  - should not throw when an RS256 key is mixed with an ES256 key
+  - should throw when no RS256 key is included (only ES256)
+  - should throw when an RSA key uses a non-SHA-256 hash (e.g. RS384)
+  - should throw when key set is empty
+- assertKidStrategyConsistent
+  - should accept a single key even when its kid is empty
+  - should accept multiple keys with distinct non-empty kids
+  - should throw when multiple keys include an empty kid
+  - should throw when two keys share the same kid
+  - should accept an empty key set
+- assertKeyStrength
+  - RSA modulus strength
+    - should not throw when an RSA key has a 2048-bit modulus
+    - should throw when an RSA key has a 1024-bit modulus
+    - should include the offending kid in the error message
+    - should reject a weak RSA key even when a strong key is also present
+    - should respect a custom minimum RSA modulus bit length
+    - should throw when an RSA JWK is missing its modulus (n)
+  - EC curve approval
+    - should not throw when an EC key uses the P-256 curve
+    - should not throw when an EC key uses the P-521 curve
+    - should throw when an EC key uses a non-approved curve (P-192)
+    - should respect a custom allowed-curve policy
+  - mixed and edge cases
+    - should not throw for an empty key set
+    - should not throw when a strong RSA key and an approved EC key coexist
+    - should throw for an unsupported key type
+
+### src/token-request-steps.test.ts（47）
+
+- validateGrantTypeSupported
+  - should return authorization\_code for grant\_type=authorization\_code
+  - should return refresh\_token for grant\_type=refresh\_token
+  - should reject missing grant\_type with invalid\_request
+  - should reject an unknown grant\_type with unsupported\_grant\_type
+  - should reject a grant\_type excluded from supportedGrantTypes
+- resolveAuthenticatedTokenClient
+  - should return the client for the authenticated client id
+  - should reject an empty authenticated client id with invalid\_client
+  - should reject an unknown client with invalid\_client
+- validateClientGrantType
+  - should pass when the client grantTypes includes the grant
+  - should default to authorization\_code only when grantTypes is not registered
+  - should reject a grant\_type not registered for the client with unauthorized\_client
+- resolveAuthorizationCode
+  - should return the code value and resolved authorization code
+  - should reject a missing code with invalid\_request
+  - should reject an unknown code with invalid\_grant
+- validateAuthorizationCodeUnused
+  - should pass without revoking a grant when the authorization code is unused
+  - should revoke the grant and reject a reused authorization code
+- validateAuthorizationCodeClient
+  - should pass when the authorization code belongs to the authenticated client
+  - should reject an authorization code issued to another client
+- validateAuthorizationCodeExpiration
+  - should pass when the authorization code expires after the current time
+  - should reject when expiresAt equals the current time
+- validateAuthorizationCodeRedirectUri
+  - should pass when the explicit redirect\_uri matches the authorization request
+  - should reject a missing redirect\_uri when it was explicit at authorization time
+  - should reject a mismatched redirect\_uri
+- verifyAuthorizationCodePkce
+  - should return true for a matching S256 code\_verifier
+  - should return false when the authorization code has no PKCE binding
+  - should reject a mismatched code\_verifier
+- consumeAuthorizationCode
+  - should mark the resolved authorization code as used
+- buildValidatedAuthorizationCodeRequest
+  - should build the validated authorization code request from step results
+  - should carry the authorization sessionId so the token endpoint can bind an online refresh token
+- resolveRefreshToken
+  - should return the token value and resolved refresh token
+  - should reject a missing refresh\_token with invalid\_request
+  - should reject a missing resolver with invalid\_request
+- validateRefreshTokenUnused
+  - should revoke the grant and reject a reused refresh token
+- validateRefreshTokenClient
+  - should reject a refresh token issued to another client
+- validateRefreshTokenExpiration
+  - should reject when expiresAt equals the current time
+- validateRefreshTokenIdleTimeout
+  - should reject when inactivity exceeds the configured timeout
+  - should pass when no idle timeout is configured
+- validateRefreshTokenScope
+  - should return a deduplicated subset requested by the client
+  - should reject a scope outside the original grant
+- validateRefreshTokenSession
+  - should accept an offline refresh token without consulting the session resolver
+  - should accept an offline refresh token when no session resolver is configured
+  - should accept an online refresh token while its authentication session is alive
+  - should reject an online refresh token after its authentication session ended
+  - should reject an online refresh token when the session now belongs to another subject
+  - should reject an online refresh token when no session resolver is configured
+- buildValidatedRefreshTokenRequest
+  - should build the validated refresh token request from step results
+  - should carry the bound sessionId so rotation keeps the online refresh token session-bound
+
+### src/token-request.test.ts（105）
+
+- validateTokenRequest
+  - grant\_type validation
+    - should reject missing grant\_type
+    - should reject unsupported grant\_type
+    - should accept grant\_type=authorization\_code
+  - Client authentication
+    - should reject when authenticatedClientId is not provided
+    - should reject when client is not found
+    - should accept valid authenticated client
+  - Authorization code validation
+    - should reject missing code parameter
+    - should reject unknown authorization code
+    - should reject authorization code issued to different client
+    - should reject expired authorization code
+    - should reject an authorization code whose expiresAt equals now
+    - should reject already used authorization code
+    - Code reuse: token revocation (OP-OAuth-2nd-Revokes)
+      - should call revokeTokensByGrantId with the grantId of the reused code
+      - should still throw invalid\_grant after revoking tokens
+      - should not error when revokeTokensByGrantId is not provided (backward compat)
+    - should accept valid authorization code
+  - redirect\_uri validation
+    - should reject when redirect\_uri does not match original request
+    - should accept when redirect\_uri is missing in token request
+    - should accept matching redirect\_uri
+    - OIDC Core 3.1.3.2 explicit redirect\_uri binding
+      - should reject token request without redirect\_uri when authorization request had explicit redirect\_uri
+      - should accept token request with matching redirect\_uri when authorization request had explicit redirect\_uri
+      - should accept token request without redirect\_uri when authorization request omitted redirect\_uri
+  - PKCE code\_verifier validation
+    - should reject missing code\_verifier
+    - should reject invalid code\_verifier (wrong value)
+    - should accept valid code\_verifier with S256 method
+    - should accept authorization\_code grants without code\_verifier when the authorization code has no PKCE binding
+    - should reject code\_verifier shorter than 43 characters
+    - should reject code\_verifier longer than 128 characters
+    - should reject code\_verifier containing invalid characters
+    - should accept code\_verifier of exactly 43 characters
+    - should accept code\_verifier of exactly 128 characters
+  - Successful validation result
+    - should return validated token request with all fields
+    - should include audience from authorization code when provided
+    - should return undefined audience when not in authorization code
+    - should include acrValues from authorization code when provided
+    - should return undefined acrValues when not in authorization code
+    - should call revokeAuthorizationCode after successful validation
+- validateTokenRequest - refresh\_token grant
+  - refresh\_token parameter validation
+    - should reject missing refresh\_token parameter
+    - should reject when refreshTokenResolver is not provided
+  - Refresh token info validation
+    - should reject when refresh token is not found
+    - should reject when refresh token has already been used
+    - should reject when refresh token was issued to a different client
+    - should reject when refresh token has expired
+    - should reject a refresh token whose expiresAt equals now
+    - idle (inactivity) timeout
+      - should not expire an idle refresh token when no timeout is configured (backward compatible)
+      - should reject when now - lastUsedAt exceeds the idle timeout
+      - should accept when now - lastUsedAt is within the idle timeout
+      - should skip the idle check when lastUsedAt is not stored even if a timeout is set
+  - Successful refresh token validation
+    - should return grantType refresh\_token
+    - should return clientId
+    - should return subject from refresh token info
+    - should return scope from refresh token info
+    - should return requested scope when it is a subset of original scope
+    - should return original scope when requested scope is identical
+    - should handle scope with extra spaces and duplicates
+    - should not revoke refresh token inside validateTokenRequest (rotation handled by caller)
+    - should propagate grantId from refresh token info
+    - should propagate audience from refresh token info
+    - should leave audience undefined when refresh token info has no audience
+    - OIDC Core 1.0 §12.1 ID Token claim preservation
+      - should propagate authTime from refresh token info
+      - should propagate nonce from refresh token info
+      - should propagate acr from refresh token info
+      - should propagate amr from refresh token info
+      - should propagate azp from refresh token info
+    - Refresh token rotation eligibility (hadOfflineAccess)
+      - should set hadOfflineAccess to true when original refresh token scope includes offline\_access
+      - should set hadOfflineAccess to false when original refresh token scope lacks offline\_access
+      - should keep hadOfflineAccess true even when requested scope drops offline\_access
+    - OAuth 2.1 §6.1 absolute lifetime preservation
+      - should propagate originalIssuedAt from refresh token info
+  - Refresh token reuse cascade revocation
+    - should call revokeTokensByGrantId when used refresh token is detected
+    - should still throw invalid\_grant when revokeTokensByGrantId is not provided
+  - Scope validation for refresh token
+    - should reject when requested scope includes scopes not in original grant
+    - should reject when requested scope is entirely different from original grant
+    - should reject when scope is empty string
+    - should reject when scope is only whitespace
+    - should not revoke refresh token when scope validation fails
+    - should not call revokeTokensByGrantId when scope validation fails
+- TokenError
+  - should have correct error code
+  - should have error description
+  - should extend Error
+  - should have correct HTTP status for invalid\_client
+  - should have HTTP status 400 for other errors
+  - WWW-Authenticate header
+    - should return WWW-Authenticate value for invalid\_client error
+    - should return undefined WWW-Authenticate for invalid\_grant
+    - should return undefined WWW-Authenticate for invalid\_request
+    - should return undefined WWW-Authenticate for unsupported\_grant\_type
+- validateTokenRequest - client grant\_types enforcement
+  - should reject refresh\_token grant with unauthorized\_client when client grantTypes excludes refresh\_token
+  - should reject refresh\_token grant with unauthorized\_client when grantTypes is unspecified (default authorization\_code only)
+  - should allow refresh\_token grant when client grantTypes includes refresh\_token
+  - should allow authorization\_code grant when client grantTypes includes authorization\_code
+  - should allow authorization\_code grant when grantTypes is unspecified (default)
+  - should return unsupported\_grant\_type (not unauthorized\_client) for a globally unsupported grant\_type
+- validateTokenRequest - public client
+  - should exchange authorization code for a public client without client\_secret
+  - should refresh tokens for a public client without client\_secret
+  - should reject refresh token bound to a different public client
+- revoke\* contract: used-mark vs physical delete (reuse cascade)
+  - should keep the code as used:true after exchange when revoke consumes (not deletes)
+  - should reject reuse with invalid\_grant AND revoke the grant when revoke consumes
+  - should reject reuse but FAIL to revoke the grant when revoke physically deletes
+- validateTokenRequest - supportedGrantTypes option
+  - should reject refresh\_token grant with unsupported\_grant\_type when supportedGrantTypes excludes it
+  - should reject authorization\_code grant with unsupported\_grant\_type when supportedGrantTypes excludes it
+  - should accept authorization\_code grant when supportedGrantTypes is \["authorization\_code"\]
+  - should accept refresh\_token grant when supportedGrantTypes lists both grant types
+- validateAuthorizationCodeGrant
+  - should return the validated authorization\_code request
+  - should reject an unknown authorization code with invalid\_grant
+- validateRefreshTokenGrant
+  - should return the validated refresh\_token request
+  - should reject an unknown refresh token with invalid\_grant
+
+### src/token-response-steps.test.ts（18）
+
+- buildAccessTokenPayload
+  - should build the RFC 9068 access token payload
+  - should fall back to the issuer when no audience is given
+  - jti claim (RFC 9068 §2.2 / RFC 7519 §4.1.7)
+    - should generate a 128-bit base64url jti by default
+    - should generate a different jti on every call for identical input
+    - should use the caller-supplied jti instead of generating one
+    - should produce different JWT access token strings for identical input issued in the same second
+- computeAtHash
+  - should compute the base64url left half of the SHA-256 digest for an RS256 key
+- resolveAcrAmr
+  - should return the directly supplied acr and amr without calling the resolver
+  - should call the resolver when neither acr nor amr is supplied
+  - should pass the requested acr\_values to the resolver
+  - should seed the resolver with claims.id\_token.acr.values when acr\_values is absent
+  - should return empty values when no resolver is configured
+  - should return empty values when the resolver declines to decide
+- buildIdTokenPayload
+  - should build the required OIDC Core 1.0 claims
+  - should include nonce, auth\_time, acr and amr when supplied
+  - should emit an aud array with azp when additional audiences are supplied
+  - should include scope-allowed user claims
+  - should not let user claims override the required sub claim
+
+### src/token-response.test.ts（94）
+
+- generateTokenResponse
+  - Token Response structure
+    - should return access\_token
+    - should return token\_type as Bearer
+    - should return expires\_in
+    - should return id\_token
+    - should include scope in the token response
+    - should include scope as space-delimited string
+    - should include single scope without trailing space
+  - Access Token (JWT)
+    - should be a valid JWT with three parts
+    - should have iss claim matching issuer
+    - should have sub claim matching subject
+    - should have a 128-bit base64url jti claim
+    - should return the access token jti so the caller can persist it
+    - should issue a different access token for two identical requests
+    - should have client\_id claim
+    - should use provided audience for aud claim
+    - should default aud to issuer when audience is not provided
+    - should default aud to issuer when audience is an empty array
+    - should never issue a JWT access token with an empty aud
+    - should retain the same aud when audience is passed again (refresh case)
+    - should retain the default issuer aud across successive issuances (refresh case)
+    - should have scope claim as space-separated string
+    - should have exp claim
+    - should have iat claim
+    - should include kid in header when keyId is provided
+  - ID Token (JWT)
+    - should be a valid JWT with three parts
+    - should have iss claim matching issuer
+    - should have sub claim matching subject
+    - should have aud claim matching clientId
+    - should have exp claim
+    - should have iat claim
+    - should include nonce when provided
+    - should not include nonce when not provided
+    - should include at\_hash claim
+    - should compute at\_hash as left half of SHA-256 hash of access\_token
+    - at\_hash hash algorithm agility
+      - should compute at\_hash with SHA-256 left half (16 bytes) for RS256 id\_token
+      - should compute at\_hash with SHA-256 left half for ES256 id\_token
+      - should compute at\_hash with SHA-384 left half (24 bytes) for RS384 id\_token
+      - should compute at\_hash with SHA-384 left half for ES384 id\_token
+      - should compute at\_hash with SHA-512 left half (32 bytes) for RS512 id\_token
+      - should compute at\_hash with SHA-512 left half for ES512 id\_token
+      - should base at\_hash on the id\_token signing alg, not the access\_token signing alg
+    - should include kid in header when keyId is provided
+    - should include auth\_time when provided
+  - ID Token issuance control
+    - should include id\_token by default when issueIdToken is not set
+    - should include id\_token when issueIdToken is true
+    - should not include id\_token when issueIdToken is false
+  - Refresh Token
+    - should not include refresh\_token when issueRefreshToken is not set
+    - should not include refresh\_token when issueRefreshToken is false
+    - should include refresh\_token when issueRefreshToken is true
+    - should return a non-empty string for refresh\_token when issued
+    - should generate unique refresh tokens on each call
+  - Separate signing keys for access\_token and id\_token
+    - should sign id\_token with idTokenPrivateKey when provided
+    - should sign access\_token with primary privateKey even when idTokenPrivateKey is provided
+    - should set kid header from idTokenKeyId on id\_token only
+    - should fall back idTokenKeyId to keyId when not provided
+    - should sign both tokens with the same key when idTokenPrivateKey is omitted (backward compat)
+  - acr / amr resolver injection (T-015)
+    - should include acr and amr in the ID Token when the resolver returns values
+    - should pass userId, clientId and requestedAcrValues to the resolver
+    - should omit acr and amr from ID Token when the resolver returns undefined
+    - should omit acr and amr from ID Token when no resolver is provided (T-009 hold behavior)
+    - should use directly-passed acr/amr (refresh case) and skip resolver
+    - should return resolved acr/amr alongside the response when resolver supplies them
+    - should return resolved acr/amr equal to directly-passed values on refresh path
+    - should leave resolvedAcr/resolvedAmr undefined when resolver returns undefined
+    - should pass claims.id\_token.acr.values to the resolver as requestedAcrValues
+    - should let acr\_values request param take precedence over claims.id\_token.acr.values
+    - should ignore unknown id\_token claim members without throwing
+    - should not leak acr/amr into the response body
+  - ID Token claims filtered by scope (T-020)
+    - should omit profile claims when scope is reduced to openid email
+    - should include all matching claims when scope is openid profile email
+    - should always include required claims (sub/iss/aud/exp/iat) regardless of scope reduction
+    - should keep ID Token unchanged when userClaims is not provided
+    - should not let user claims override required ID Token claims
+  - Token signature verification
+    - should produce valid RS256 signature for access\_token
+    - should produce valid RS256 signature for id\_token
+- buildAccessTokenAudience
+  - should fall back to issuer when neither userInfoEndpoint nor requested is provided
+  - should fall back to issuer when requested is an empty array and no userInfoEndpoint
+  - should include only the userInfoEndpoint when no resource is requested
+  - should use requested resources as-is when no userInfoEndpoint is provided
+  - should keep the userInfoEndpoint as the first member and append requested resources
+  - should never remove the userInfoEndpoint when multiple resources are requested
+  - should deduplicate when requested already contains the userInfoEndpoint
+  - should deduplicate repeated requested resources
+  - should be idempotent when re-applied to an already composed audience (refresh case)
+- generateTokenResponse - ID Token aud/azp shape
+  - should issue aud as a single string equal to clientId by default
+  - should not issue aud as an array when no additional audiences are given
+  - should not include an azp claim for a single audience
+  - should issue aud as an array \[clientId, ...additional\] when idTokenAudiences is given
+  - should set azp to clientId when aud contains multiple values
+  - should keep aud a single string and omit azp when additional audiences dedupe to clientId only
+- buildIdTokenAudience
+  - should return aud as a single string and no azp for the client alone
+  - should return aud as an array with azp = clientId for multiple audiences
+  - should place clientId first and dedupe repeated audiences preserving order
+  - should treat additional audiences equal to clientId only as a single audience
+
+### src/userinfo-steps.test.ts（21）
+
+- resolveUserInfoAccessToken
+  - should return the stored access token info for a known token
+  - should reject a missing access token with invalid\_token
+  - should reject an unknown access token with invalid\_token
+- validateUserInfoTokenExpiration
+  - should accept a token whose expiresAt is in the future
+  - should accept a token whose expiresAt equals now
+  - should reject an expired token with invalid\_token
+- validateUserInfoScope
+  - should accept a token that carries the openid scope
+  - should reject a token without the openid scope with insufficient\_scope
+- validateUserInfoAudience
+  - should accept a token whose audience contains the expected audience
+  - should skip validation when no expected audience is given
+  - should reject a token whose audience omits the expected audience
+  - should reject a token that stores no audience at all
+- resolveUserInfoClaims
+  - should return the claims of the token subject
+  - should reject an unknown subject with invalid\_token
+- applyRequestedClaims
+  - should return the response unchanged when no claims parameter is given
+  - should add a claim requested with a null entry
+  - should not overwrite sub with a requested claim
+  - should omit a claim whose requested value does not match
+  - should add a claim whose requested value matches
+  - should ignore id\_token members of the claims parameter
+  - should not mutate the response passed in
+
+### src/userinfo.test.ts（63）
+
+- handleUserInfoRequest
+  - Access Token Validation
+    - should reject when access token is empty
+    - should return invalid\_token error when access token is not found
+    - should return invalid\_token error when access token is expired
+    - should return insufficient\_scope error when openid scope is missing
+  - Access Token Audience Validation (RFC 9068 §4)
+    - should accept a token whose audience includes the UserInfo endpoint
+    - should reject with invalid\_token when audience excludes the UserInfo endpoint
+    - should skip audience validation only when expectedAudience is not provided
+    - should reject with invalid\_token when the token has no stored audience
+  - User Claims Resolution
+    - should return invalid\_token error when user is not found
+  - Required Claims
+    - should always include sub claim
+    - should return sub matching the access token subject
+  - Scope-based Claims Filtering
+    - should include profile claims when profile scope is granted
+    - should include email claims when email scope is granted
+    - should include address claim when address scope is granted
+    - should include phone claims when phone scope is granted
+    - should not include profile claims when profile scope is not granted
+    - should not include email claims when email scope is not granted
+    - should not include address claim when address scope is not granted
+    - should not include phone claims when phone scope is not granted
+    - should include all claims when all scopes are granted
+    - should omit claims that user does not have even when scope is granted
+  - Claims Request Parameter
+    - should include requested claims from claims parameter
+    - should include claims from both scope and claims parameter
+    - should not error when essential claim is not available
+    - should ignore claims parameter when userinfo key is absent
+    - value / values matching (OIDC Core Section 5.5.1)
+      - should return email when requested value matches the actual value
+      - should omit email without error when requested value does not match
+      - should return claim when the actual value is included in requested values
+      - should omit claim without error when the actual value is not included in requested values
+      - should omit essential claim without error when it is not available
+      - should return claim as before when the request entry is null (no constraint)
+      - should not let value constraints affect scope-based claims
+      - object claim matching (e.g. address)
+        - should return address when requested value deeply equals the actual value
+        - should omit address without error when requested value does not deeply equal
+        - should return address when actual value is included in requested values
+        - should omit address without error when actual value is not included in requested values
+  - Error Responses
+    - should return 401 status for invalid\_token errors
+    - should return 403 status for insufficient\_scope errors
+    - should include error code in UserInfoError
+- filterClaimsByScope
+  - should return only sub when only openid scope is present
+  - should include profile claims for profile scope
+  - should include email claims for email scope
+  - should include address claim for address scope
+  - should include phone claims for phone scope
+  - should not include undefined claims in result
+- SCOPE\_CLAIMS\_MAP
+  - should map profile scope to standard profile claims
+  - should map email scope to email and email\_verified
+  - should map address scope to address
+  - should map phone scope to phone\_number and phone\_number\_verified
+- generateUserInfoJwt
+  - JWT structure
+    - should generate a valid JWT with three parts
+    - should set alg claim to RS256 when signing with RSASSA-PKCS1-v1\_5/SHA-256
+    - should set typ claim to JWT
+    - should include kid in header when keyId is provided
+    - should not include kid when keyId is omitted
+  - Required claims
+    - should include iss claim
+    - should include aud claim matching the client\_id
+    - should include sub claim from UserInfoResponse
+    - should include iat and exp claims
+    - should default exp to 1 hour after iat when expiresIn is omitted
+    - should set exp based on expiresIn option
+  - Additional claims
+    - should include additional claims from UserInfoResponse
+    - should preserve nested address claim
+  - Signature
+    - should produce a verifiable RS256 signature
+
+## packages/experimental
+
+`@maronn-openid-connect/experimental` の単体テスト。core と同じ Edge Runtime 環境で実行する。
+
+```bash
+pnpm --filter @maronn-openid-connect/experimental test
+```
+
+### src/ciba/backchannel-authentication-request.test.ts（43）
+
+- processBackchannelAuthenticationRequest
+  - Success response (CIBA Section 7.3)
+    - should return auth\_req\_id, expires\_in and interval for a minimal request
+    - should mint a 256-bit auth\_req\_id in the Base64URL character set
+    - should issue a distinct auth\_req\_id for every request
+    - should save a pending record carrying the resolved subject and scope
+    - should store the validated binding\_message on the record
+    - should store acr\_values as advisory data on the record
+    - should honor a requested\_expiry inside the allowed range
+    - should clamp requested\_expiry below 30 up to 30
+    - should clamp requested\_expiry above the configured lifetime down to it
+    - should set expiresAt from the injected now and the clamped expiry
+    - should ignore client\_notification\_token and user\_code
+    - should ignore unknown parameters
+  - Client validation
+    - should reject a public client (auth method none) with unauthorized\_client
+    - should reject a client that did not register the CIBA grant
+    - should treat missing grantTypes as the authorization\_code default and reject
+    - should reject a client registered for the ping delivery mode
+    - should reject a client registered for the push delivery mode
+    - should accept a client explicitly registered for poll
+  - Hint validation (CIBA Section 7.1 / 7.2)
+    - should reject a request with no hint
+    - should reject a request with two hints
+    - should reject id\_token\_hint alone as an unsupported hint type
+    - should reject login\_hint\_token alone as an unsupported hint type
+    - should treat an empty login\_hint as absent
+    - should reject a request parameter (signed authentication request)
+  - Scope validation
+    - should reject a missing scope
+    - should reject a scope without openid
+    - should normalize whitespace and deduplicate scope values
+    - should drop offline\_access when the refresh-token feature is disabled
+    - should drop offline\_access when the client did not register refresh\_token
+    - should keep offline\_access when the feature and registration both allow it
+  - binding\_message validation (CIBA Section 7.1)
+    - should accept a binding message of exactly the maximum length
+    - should reject a binding message longer than the maximum
+    - should reject an empty binding message
+    - should reject a binding message containing control characters
+  - requested\_expiry validation
+    - should reject a non-integer requested\_expiry
+    - should reject zero
+    - should reject a negative value
+    - should reject a non-numeric value
+  - User resolution (CIBA Section 13 unknown\_user\_id)
+    - should reject an unresolvable login\_hint with unknown\_user\_id
+    - should answer a throwing resolver with the same fixed wording
+    - should accept a resolver returning a promise
+  - Pending request flood control
+    - should reject a request when the subject already has the maximum pending requests
+    - should count only the same subject toward the limit
+
+### src/ciba/ciba-grant.test.ts（16）
+
+- processCibaGrant
+  - Request validation (CIBA Section 10.1)
+    - should reject a missing auth\_req\_id with invalid\_request
+    - should reject an empty auth\_req\_id with invalid\_request
+    - should reject an unknown auth\_req\_id with invalid\_grant
+    - should reject another client's auth\_req\_id with the same wording
+  - State machine (CIBA Section 11)
+    - should answer authorization\_pending for a pending record and stamp lastPolledAt
+    - should answer slow\_down and raise the interval by 5 when polled inside the interval
+    - should keep raising the interval on repeated fast polls
+    - should answer authorization\_pending again once the interval has passed
+    - should answer expired\_token and delete the record when it expired
+    - should prefer expired\_token over slow\_down
+    - should answer access\_denied and delete the record after the user denied
+    - should answer invalid\_grant when polling again after access\_denied
+  - Token issuance data (approved record)
+    - should return the issuance data for an approved record
+    - should consume the record so a second redemption fails with invalid\_grant
+    - should reject an approved record missing its approval context
+    - should fall back to the requested scope when approvedScope is absent
+
+### src/ciba/store.test.ts（6）
+
+- createInMemoryCibaAuthenticationRequestStore
+  - should find a saved record by auth\_req\_id
+  - should return null for an unknown auth\_req\_id
+  - consume (single use, CIBA Section 11)
+    - should return the record exactly once
+    - should hand the record to only one concurrent consumer
+  - listPendingBySubject
+    - should exclude records that are decided or expired
+- createInMemoryCibaLoginTransactionStore
+  - should save, find, update and delete a transaction
+
+### src/ciba/verification.test.ts（25）
+
+- createCibaLoginTransaction
+  - should mint a 256-bit id, csrf token and binding secret
+  - should save the transaction with a 600 second lifetime and zero attempts
+  - should store only the SHA-256 hash of the binding secret
+- validateCibaLoginSubmission
+  - should return the transaction when binding and csrf both match
+  - should reject an unknown transaction id with 403
+  - should reject an expired transaction with 403
+  - should reject a missing binding secret with 403
+  - should reject a wrong binding secret with 403
+  - should reject a wrong csrf token with 403
+  - should use the same message for every failure reason
+- recordCibaLoginFailure
+  - should count a failure and allow retrying below the limit
+  - should delete the transaction when the limit is reached
+- listPendingCibaRequests
+  - should return only pending requests of the given subject
+  - should mint and persist a csrf token for every listed record
+  - should rotate the csrf token on every listing
+- approveCibaRequest
+  - should move the record to approved with authTime, scope and grantId
+  - should reject an unknown auth\_req\_id with 403
+  - should reject a session subject that does not own the record
+  - should reject a wrong csrf token with 403
+  - should reject a record whose csrf token was never issued
+  - should reject an expired record with 403
+  - should reject a record that was already decided
+  - should use one message for unknown, mismatched and decided records
+- denyCibaRequest
+  - should move the record to denied and clear the csrf token
+  - should reject a session subject that does not own the record
+
+### src/device-authorization-grant/device-authorization-request.test.ts（33）
+
+- validateDeviceGrantAllowed
+  - should accept a client registered for the device\_code grant
+  - should reject a client whose grantTypes omit the device\_code URN
+  - should reject a client with no registered grantTypes at all
+  - should set the error code to unauthorized\_client
+- validateDeviceAuthorizationScope
+  - should return the parsed scope values when openid is present
+  - should collapse repeated whitespace between scope values
+  - should remove duplicate scope values
+  - should reject a missing scope with invalid\_request
+  - should reject a blank scope with invalid\_request
+  - should reject a scope without openid with invalid\_scope
+- applyOfflineAccessPolicy
+  - should keep offline\_access when the feature is enabled and the client allows refresh
+  - should drop offline\_access when the refresh-token feature is disabled
+  - should drop offline\_access when the client is not registered for refresh\_token
+  - should leave a scope without offline\_access unchanged
+- createDeviceAuthorizationRecord
+  - should save a pending record under the generated device\_code
+  - should initialize the record with the full pending state
+  - should generate a 256-bit URL-safe device\_code (RFC 8628 §5.2)
+  - should store the normalized user\_code as the lookup key
+  - should keep the display form separate from the lookup key
+- buildDeviceAuthorizationResponse
+  - should build all six response fields from the record and issuer
+  - should derive expires\_in from the record lifetime
+  - should report the record interval, including one raised by slow\_down
+- processDeviceAuthorizationRequest
+  - should return the RFC 8628 §3.2 response for a valid request
+  - should default expires\_in to 600 and interval to 5 seconds
+  - should honor the configured expires\_in and interval
+  - should build verification\_uri\_complete from the display user\_code
+  - should persist the record so it can be found by device\_code
+  - should strip offline\_access from the stored scope when refresh is unavailable
+  - should keep offline\_access in the stored scope when refresh is available
+  - should reject a request from a client without the device\_code grant
+  - should reject a request with no scope before creating a record
+  - should issue a different device\_code for every request
+  - should issue a different user\_code for every request
+
+### src/device-authorization-grant/device-code-grant.test.ts（29）
+
+- validateDeviceCodeGrantAllowed
+  - should accept a client registered for the device\_code grant
+  - should reject a client whose grantTypes omit the device\_code URN
+- resolveDeviceCodeRecord
+  - should resolve the record issued to this client
+  - should reject a missing device\_code with invalid\_request
+  - should reject an empty device\_code with invalid\_request
+  - should reject an unknown device\_code with invalid\_grant
+  - should reject a device\_code issued to another client with the same wording
+- evaluateDeviceCodeState
+  - expired\_token (RFC 8628 §3.5)
+    - should return expired\_token once the lifetime has passed
+    - should return expired\_token exactly at the expiry instant
+    - should delete the expired record
+    - should prefer expired\_token over slow\_down for an expired record
+  - slow\_down (RFC 8628 §3.5)
+    - should return slow\_down when polled inside the interval
+    - should increase the stored interval by 5 seconds on slow\_down
+    - should keep raising the interval on repeated slow\_down responses
+    - should not return slow\_down exactly at the interval boundary
+  - authorization\_pending (RFC 8628 §3.5)
+    - should return authorization\_pending on the first poll
+    - should record the poll timestamp so the next poll can be rate-checked
+    - should keep the record so the device can poll again
+  - access\_denied (RFC 8628 §3.5)
+    - should return access\_denied for a denied record
+    - should delete the denied record
+  - Approved (RFC 8628 §3.5 → RFC 6749 §5.1)
+    - should return the grant context for an approved record
+    - should consume the record so the device\_code cannot be reused
+    - should fall back to the requested scope when approvedScope is absent
+    - should reject a concurrent second redemption with invalid\_grant
+- processDeviceCodeGrant
+  - should issue the grant context for an approved device\_code
+  - should reject a client that is not registered for the device\_code grant
+  - should return invalid\_grant when the same device\_code is redeemed twice
+  - should answer every state error with HTTP 400
+  - should not leak the device\_code into the error description
+
+### src/device-authorization-grant/user-code.test.ts（16）
+
+- generateUserCode
+  - Character set and length (RFC 8628 §6.1)
+    - should return a code of exactly 9 characters including the separator
+    - should format the code as XXXX-XXXX
+    - should only use characters from the RFC 8628 base-20 charset
+    - should produce every charset character across enough samples
+    - should not repeat the same code across consecutive calls
+- formatUserCode
+  - should insert a hyphen between the two 4-character groups
+- normalizeUserCode
+  - should upper-case a lower-case code
+  - should strip the display hyphen
+  - should strip spaces around and inside the code
+  - should strip a full-width space
+  - should leave an already normalized code unchanged
+  - should return an empty string for an empty input
+- generateUniqueUserCode
+  - should return the normalized key alongside the display form
+  - should retry until it finds a code that is not already stored
+  - should throw after the attempt limit when every generated code collides
+  - should not include the generated code in the collision error message
+
+### src/device-authorization-grant/verification.test.ts（37）
+
+- findPendingRecordByUserCode
+  - should find a pending record by its normalized user\_code
+  - should accept the display form with its hyphen
+  - should accept a lower-case code with surrounding spaces
+  - should return null for an unknown code
+  - should return null for an empty input
+  - should return null for an expired record
+  - should return null exactly at the expiry instant
+  - should return null for an already approved record
+  - should return null for an already denied record
+- issueVerificationBinding
+  - should persist the binding hash and the csrf token together
+  - should never store the raw binding secret on the record
+  - should rotate both the binding secret and the csrf token on re-issue
+- validateVerificationBinding
+  - should accept the binding secret that was just issued
+  - should reject a missing cookie with 403
+  - should reject a record that never issued a binding
+  - should reject a binding secret that does not match the stored hash
+  - should reject the binding secret issued before a rotation
+  - should report 403 as the status code for a binding failure
+- validateVerificationCsrfToken
+  - should accept the stored csrf token
+  - should reject a different csrf token with 403
+  - should reject an empty csrf token
+  - should reject when the record has no csrf token yet
+- recordDeviceLoginFailure
+  - should increment the attempt counter and allow a retry below the limit
+  - should keep the record pending while retries remain
+  - should refuse a retry once the attempt limit is reached
+  - should move the record to denied when the attempt limit is exceeded
+- approveDeviceAuthorization
+  - should move the record to approved with the full grant context
+  - should mint a grantId so revocation can kill the grant
+  - should clear the binding hash and csrf token after approval
+  - should persist the approved record through the store
+  - should reject an approval whose csrf token does not match
+  - should leave the record pending when the csrf check fails
+  - should refuse to approve a record that was already denied
+- denyDeviceAuthorization
+  - should move the record to denied
+  - should not record a subject when the user denies
+  - should reject a denial whose csrf token does not match
+  - should refuse to deny a record that was already approved
+
+### src/id-jag/issue-id-jag.test.ts（97）
+
+- id-jag issuance constants
+  - should expose the ID-JAG token type URN
+  - should expose the id\_token subject token type URN
+  - should expose the oauth-id-jag+jwt typ value
+  - should expose the grant profile identifier
+- matchesIdJagIssuanceRequest
+  - should match a token-exchange request that asks for an ID-JAG
+  - should not match a token-exchange request without requested\_token\_type
+  - should not match a token-exchange request for an access token
+  - should not match other grant types
+- authorizeIdJagIssuanceClient
+  - should accept a confidential client registered for the token-exchange grant
+  - should reject a client without registered grantTypes with unauthorized\_client
+  - should reject a client not registered for the token-exchange grant
+  - should reject a public client with unauthorized\_client
+- parseIdJagIssuanceParams
+  - should return the typed parameters
+  - should treat omitted scope and resource as undefined
+  - should reject a missing subject\_token with invalid\_request
+  - should reject a missing subject\_token\_type with invalid\_request
+  - should reject a saml2 subject\_token\_type with invalid\_request
+  - should reject a refresh\_token subject\_token\_type when not enabled
+  - should accept a refresh\_token subject\_token\_type when enabled
+  - should list both supported subject types when refresh subjects are enabled
+  - should reject a missing audience with invalid\_request
+  - should treat a whitespace-only audience as missing
+  - should reject a relative resource with invalid\_request
+  - should reject a resource with a fragment with invalid\_request
+  - should reject an actor\_token when not enabled
+  - should reject an actor\_token\_type when not enabled
+  - should return the actor\_token when actor tokens are enabled
+  - should reject an actor\_token without actor\_token\_type when enabled
+  - should reject an actor\_token\_type without actor\_token when enabled
+  - should return an access\_token actor\_token\_type when actor tokens are enabled
+  - should accept every actor\_token\_type the specifications define
+  - should reject an actor\_token\_type outside the registered identifiers
+  - should reject authorization\_details with invalid\_request
+- resolveIdJagSubject
+  - should return the subject material from a valid ID Token
+  - should omit auth context fields the ID Token does not carry
+  - should reject an ID Token issued to another client with the fixed description
+  - should reject a tampered ID Token with the same fixed description
+  - should reject an expired ID Token with the same fixed description
+  - should reject an ID Token from another issuer with the same fixed description
+- validateIdJagAudience
+  - should accept an allow-listed audience
+  - should reject an audience outside the allow list with invalid\_target
+  - should reject every audience when the allow list is empty
+  - should reject the issuer itself as audience even when allow-listed
+- validateIdJagScope
+  - should pass the requested scope through when no allow list is configured
+  - should return an empty scope when nothing is requested
+  - should deduplicate repeated scope values
+  - should accept a subset of the configured allow list
+  - should reject a scope outside the allow list with invalid\_scope
+- buildIdJagClaims
+  - should build the required claims from the subject and request
+  - should omit the scope claim when no scope was granted
+  - should carry resource and auth context claims when present
+  - should reject a non-positive lifetime with a RangeError
+- createIdJagJwt
+  - should set alg RS256, the ID-JAG typ and the kid in the JOSE header
+  - should produce a verifiable RS256 signature
+- buildIdJagIssuanceResponse
+  - should build the RFC 8693 response with token\_type N\_A
+  - should return an empty scope string when no scope was granted
+- processIdJagIssuanceRequest
+  - should issue an ID-JAG for a valid request
+  - should reject an unauthorized client before validating the subject\_token
+  - should reject an ID Token issued to another client with invalid\_request
+  - should reject an audience outside the allow list with invalid\_target
+  - should reject the issuer itself as audience with invalid\_target
+  - should reject a scope outside the configured allow list with invalid\_scope
+  - should omit the scope claim and return an empty scope when none was requested
+  - should carry the resource parameter into the resource claim
+- resolveIdJagSubjectFromRefreshToken
+  - should return the subject material from a valid refresh token
+  - should reject an unknown refresh token with the fixed description
+  - should reject a rotated refresh token and revoke its token family
+  - should reject a refresh token issued to another client with the fixed description
+  - should reject an expired refresh token with the fixed description
+  - should reject a refresh token whose grant lacks the openid scope
+  - should accept an online refresh token while its session is alive
+  - should reject an online refresh token after its session ended
+  - should reject an online refresh token when no session resolver is provided
+- resolveIdJagActor
+  - should return the actor sub from a valid ID Token
+  - should reject an actor ID Token issued to another client with the fixed description
+  - should reject a tampered actor token with the same fixed description
+- resolveIdJagActorToken
+  - should pass the token, type, client and own OP material to the resolver
+  - should route an id\_token actor through the same resolver
+  - should preserve a nested act chain returned by the resolver
+  - should strip properties other than sub and act from the resolver result
+  - should reject with the fixed description when the resolver returns null
+  - should reject with the fixed description when no resolver is configured
+  - should pass through an IdJagError thrown by the resolver
+  - should propagate an unexpected resolver exception unchanged
+  - should throw an Error when the resolver returns an actor with an empty sub
+  - should throw an Error when a nested act level is missing its sub
+- buildIdJagClaims with an actor
+  - should embed the actor as the act claim
+- processIdJagIssuanceRequest with refresh token subjects and actors
+  - should issue an ID-JAG from a refresh token subject when the resolver is provided
+  - should reject a refresh token subject when no resolver is provided
+  - should embed the act claim when actor tokens are enabled
+  - should reject an actor\_token when actor tokens are not enabled
+  - should reject an invalid actor token with the fixed actor description
+  - should embed the act chain resolved by the actor token resolver
+  - should let the configured resolver decide for id\_token actors too
+  - should reject an actor\_token\_type outside the registered identifiers
+  - should reject an actor\_token with the fixed description when no resolver is configured
+  - should reject actor tokens while disabled even when a resolver is configured
+
+### src/id-jag/redeem-id-jag.test.ts（59）
+
+- id-jag redemption constants
+  - should expose the jwt-bearer grant type URN
+  - should default the clock skew tolerance to 60 seconds
+- authorizeIdJagRedemptionClient
+  - should accept a confidential client registered for the jwt-bearer grant
+  - should reject a client not registered for the jwt-bearer grant with unauthorized\_client
+  - should reject a public client with unauthorized\_client
+- parseIdJagRedemptionParams
+  - should return the typed parameters
+  - should reject a missing assertion with invalid\_request
+  - should reject authorization\_details with invalid\_request
+- verifyIdJagAssertion
+  - acceptance
+    - should return the payload of a valid ID-JAG
+    - should accept an aud claim that is a single-element array
+    - should accept an application/-prefixed typ header
+    - should verify with an alg-matched key when the header has no kid
+    - should pick the trusted IdP by the iss claim when several are configured
+    - should accept an assertion that expired within the clock skew tolerance
+  - structural rejection
+    - should reject a value that is not a compact JWS
+    - should reject a JWS whose segments are not base64url JSON
+    - should reject a JWT typ other than oauth-id-jag+jwt
+    - should reject a missing typ header
+    - should reject alg none
+    - should reject a jku header
+    - should reject an embedded jwk header
+  - issuer and signature rejection
+    - should reject an untrusted issuer with the fixed description
+    - should reject a tampered signature with the same fixed description
+    - should reject a signature by an untrusted key with the same fixed description
+    - should reject an assertion issued by this authorization server itself
+    - should reject the self-issued assertion even when the own issuer is trust-listed
+  - claim rejection
+    - should reject an aud claim for another authorization server
+    - should reject an aud array with more than one element
+    - should reject an expired assertion
+    - should reject a missing exp claim
+    - should reject an iat claim in the future
+    - should reject a missing iat claim
+    - should reject an nbf claim that has not arrived yet
+    - should reject a missing jti claim
+    - should reject a missing sub claim
+    - should reject a missing client\_id claim
+    - should reject a client\_id claim bound to another client
+    - should reject a non-string scope claim
+    - should reject a resource claim that is neither a string nor a string array
+- resolveIdJagGrantScope
+  - should inherit the assertion scope when no scope is requested
+  - should always drop offline\_access from the assertion scope
+  - should narrow to the requested subset
+  - should return an empty scope when the assertion carries none
+  - should reject a requested scope beyond the assertion scope with invalid\_scope
+  - should reject a requested offline\_access with invalid\_scope
+- processIdJagRedemptionRequest
+  - should derive the grant material from a valid assertion
+  - should narrow the scope to the requested subset
+  - should reject an unauthorized client before validating the assertion
+  - should reject an assertion bound to another client with invalid\_grant
+  - should reject every assertion when no identity provider is trusted
+  - should reject a non-positive configuredExpiresIn with a RangeError
+  - should accept the same assertion presented twice
+- verifyIdJagAssertion with an act claim
+  - should return the act claim of an actor-bearing ID-JAG
+  - should accept a nested act chain
+  - should reject a non-object act claim
+  - should reject an act claim without a sub
+  - should reject an act claim with a malformed nested chain
+- processIdJagRedemptionRequest with an act claim
+  - should propagate the act claim into the grant material
+  - should leave the actor undefined for an act-less ID-JAG
+
+### src/jarm/response-jwt.test.ts（23）
+
+- createJarmResponseJwt
+  - JOSE Header
+    - should set alg to RS256 and kid to the signing key id without a typ header
+  - Success response claims
+    - should carry iss, aud, exp, code and state as claims
+    - should omit the state claim entirely when state is undefined
+    - should default the response JWT lifetime to 60 seconds
+    - should set exp to now plus the requested lifetime
+    - should floor exp to whole seconds
+    - should keep iss, aud and exp non-overridable by response parameters
+  - Error response claims
+    - should carry error, error\_description and state as claims
+    - should omit error\_description when it is undefined
+  - Signature
+    - should produce a compact JWS that verifies with the signing key public half
+    - should produce exactly three base64url segments
+    - should reject an ES256 signing key instead of signing under the RS256 header
+    - should encode non-ASCII claim values as UTF-8
+- buildJarmRedirectUrl
+  - should append only the response parameter to the redirect URI
+  - should preserve query parameters already present on the redirect URI
+  - should replace an existing response parameter instead of appending a second one
+- assertJarmLifetimeSeconds
+  - Accepted values
+    - should accept the lower bound of 5 seconds
+    - should accept the upper bound of 600 seconds
+    - should accept the default of 60 seconds
+  - Rejected values
+    - should reject 4 seconds as below the lower bound
+    - should reject 601 seconds as above the upper bound
+    - should reject a non-integer lifetime
+    - should reject NaN
+
+### src/jarm/response-mode.test.ts（15）
+
+- resolveJarmResponseMode
+  - JARM modes
+    - should resolve response\_mode=query.jwt to the query.jwt JARM mode
+    - should resolve the shorthand response\_mode=jwt to the query.jwt JARM mode
+  - Plain (unchanged) modes
+    - should resolve an absent response\_mode to plain
+    - should resolve an explicitly undefined response\_mode to plain
+    - should resolve response\_mode=query to plain
+    - should resolve response\_mode=form\_post to plain
+    - should resolve response\_mode=fragment to plain
+    - should resolve a non-string response\_mode to plain
+    - should resolve an empty response\_mode to plain
+    - should resolve an uppercase QUERY.JWT to plain
+  - Unsupported JWT modes
+    - should report fragment.jwt as an unsupported JWT mode
+    - should report form\_post.jwt as an unsupported JWT mode
+    - should report an unknown .jwt value as an unsupported JWT mode
+    - should report a bare .jwt value as an unsupported JWT mode
+- JARM\_SUPPORTED\_RESPONSE\_MODES
+  - should list exactly the request values that select JARM
+
+### src/jwt-introspection-response/accept.test.ts（13）
+
+- acceptsIntrospectionJwt
+  - Explicit media type (RFC 9701 §4)
+    - should return true for the exact media type
+    - should match the media type case-insensitively
+    - should match the media type inside a multi-element Accept header
+    - should ignore media type parameters such as a q value
+    - should tolerate surrounding whitespace around list elements
+  - Requests that stay on the RFC 7662 JSON path
+    - should return false for a missing header
+    - should return false for a null header
+    - should return false for an empty header
+    - should return false for application/json
+    - should return false for the full wildcard
+    - should return false for the application type wildcard
+    - should return false for an unrelated jwt-suffixed media type
+  - Media type constant
+    - should expose the RFC 9701 media type verbatim
+
+### src/jwt-introspection-response/audience.test.ts（8）
+
+- restrictIntrospectionResponseToCaller
+  - Responses disclosed to the caller (RFC 9701 §3)
+    - should return the response unchanged for the client the token was issued to
+    - should return the response unchanged for a caller listed in a string aud
+    - should return the response unchanged for a caller listed in an array aud
+  - Responses withheld from the caller (RFC 9701 §5 MUST NOT)
+    - should replace the response with active false only for a caller that is neither issuee nor audience
+    - should withhold a response without an aud member from every caller but the issuee
+    - should return the shared inactive response object when withholding
+  - Inactive responses
+    - should pass an inactive response through unchanged
+  - Purity
+    - should not mutate the input response when withholding
+
+### src/jwt-introspection-response/response-jwt.test.ts（7）
+
+- createIntrospectionResponseJwt
+  - JOSE Header
+    - should set typ to token-introspection+jwt, alg to RS256 and kid to the signing key id
+  - Payload claims (RFC 9701 §5)
+    - should carry iss, aud, iat and the token\_introspection claim with the response verbatim
+    - should not put sub or exp on the top level
+    - should wrap an inactive response as token\_introspection with active false only
+    - should derive iat deterministically from the injected now
+  - Signature
+    - should produce a compact JWS whose signature verifies with the public key
+  - typ constant
+    - should expose the RFC 9701 typ value verbatim
+
+### src/par/par-request.test.ts（43）
+
+- rejectForbiddenParParams
+  - should reject a request\_uri parameter in the pushed request body
+  - should reject a request parameter because PAR with a Request Object is out of scope
+  - should accept a body that carries neither request\_uri nor request
+- assertParExpiresInSeconds
+  - should accept the lower bound of 5 seconds
+  - should accept the upper bound of 600 seconds
+  - should reject a value below the RFC 9126 recommended range
+  - should reject a value above the RFC 9126 recommended range
+  - should reject a non-integer value
+- authenticateParClient
+  - should return the authenticated client id for client\_secret\_basic with client\_id in the body
+  - should return the authenticated client id for client\_secret\_post
+  - should return the client id for a public client presenting only client\_id
+  - should reject a body client\_secret combined with an Authorization header
+  - should reject a body client\_id that differs from the Basic-authenticated client
+  - should reject a wrong client\_secret with invalid\_client
+  - should reject an unknown client with invalid\_client
+- ParError
+  - should map invalid\_client to HTTP 401
+  - should map invalid\_request to HTTP 400
+  - should return a Basic challenge for invalid\_client
+  - should not return a challenge for errors other than invalid\_client
+  - should sanitize the error description to the RFC 6749 §5.2 character set
+- validatePushedAuthorizationParams
+  - should return the validated request for a well-formed pushed request
+  - should map an unregistered redirect\_uri to invalid\_request
+  - should map a missing openid scope to invalid\_scope
+  - should map an unsupported response\_type to unsupported\_response\_type
+  - should map an unknown client to invalid\_request
+  - should never redirect: the thrown error carries no redirect target
+- createPushedAuthorizationRecord
+  - should issue a request\_uri using the RFC 9126 §2.2 URN form
+  - should generate a 256-bit base64url reference value
+  - should produce a different reference value on every call
+  - should default the lifetime to 60 seconds
+  - should honor a configured lifetime
+  - should reject a lifetime outside the RFC 9126 recommended range
+  - should persist the pushed parameters with the authenticated client\_id
+  - should normalize client\_id in the stored parameters to the authenticated client
+  - should never persist the client credentials presented for authentication
+  - should not mutate the caller-supplied parameters
+- buildPushedAuthorizationResponse
+  - should return the request\_uri and the lifetime in seconds
+- handlePushedAuthorizationRequest
+  - should store the request and return a 60 second request\_uri for a confidential client
+  - should accept a public client that presents only client\_id
+  - should not store a record when client authentication fails
+  - should not store a record when the pushed parameters are invalid
+  - should reject a request\_uri in the body before authenticating
+  - should reject a PKCE-less request from a public client
+
+### src/par/resolve-request-uri.test.ts（20）
+
+- resolvePushedRequestUri
+  - URN prefix matching
+    - should return null when request\_uri is absent so the normal flow continues
+    - should return null for a URL-form request\_uri so core rejects it with request\_uri\_not\_supported
+    - should not touch the store when the prefix does not match
+  - successful resolution
+    - should expand the pushed parameters and drop request\_uri
+    - should ignore extra query parameters and keep the pushed values authoritative
+    - should pass the request\_uri to the store as an opaque key
+    - should strip a request\_uri that a store implementation left in the record
+  - resolution failures
+    - should reject an unknown request\_uri with invalid\_request\_uri
+    - should reject the second use of the same request\_uri
+    - should reject an expired request\_uri
+    - should accept a request\_uri used exactly at its expiry instant
+    - should reject a request\_uri presented by another client
+    - should reject a request\_uri presented without client\_id
+    - should consume the record even when the client\_id does not match
+    - should report the same error code and description for every failure kind
+- assertPushedRequestUsed
+  - should pass when a URN-form request\_uri is present
+  - should reject a request without request\_uri when PAR is required
+  - should reject a URL-form request\_uri when PAR is required
+- PushedRequestUriError
+  - should sanitize the error description to the RFC 6749 §5.2 character set
+  - should expose the error code used by the authorization endpoint
+
+### src/token-exchange/token-exchange-request.test.ts（98）
+
+- token exchange constants
+  - should expose the RFC 8693 grant type URN
+  - should expose the RFC 8693 access token type URN
+- TokenExchangeError
+  - should expose the error code as given
+  - should always report status code 400
+  - should sanitize control characters out of the error description
+  - should set the error name to TokenExchangeError
+- parseTokenExchangeParams
+  - Valid requests
+    - should return only the subject token when no optional parameter is present
+    - should return every optional parameter when all are present
+    - should treat a blank optional parameter as omitted
+    - should accept a resource with a query component
+    - should accept an omitted requested\_token\_type
+  - Missing required parameters
+    - should reject a missing subject\_token with invalid\_request
+    - should reject a blank subject\_token with invalid\_request
+    - should reject a missing subject\_token\_type with invalid\_request
+  - Unsupported token types
+    - should reject an id\_token subject\_token\_type with invalid\_request
+    - should reject a refresh\_token subject\_token\_type with invalid\_request
+    - should reject an id\_token requested\_token\_type with invalid\_request
+  - Delegation parameters (RFC 8693 §2.1)
+    - should return the actor token when actor\_token and actor\_token\_type are present
+    - should reject actor\_token without actor\_token\_type with invalid\_request
+    - should reject actor\_token\_type without actor\_token with invalid\_request
+    - should treat a blank actor\_token as omitted and reject the remaining actor\_token\_type
+    - should reject an id\_token actor\_token\_type with invalid\_request
+  - resource syntax (RFC 8693 §2.1)
+    - should reject a relative resource with invalid\_request
+    - should reject a resource carrying a fragment with invalid\_request
+    - should reject a resource with an empty fragment with invalid\_request
+- authorizeTokenExchangeClient
+  - should accept a confidential client registered for the exchange grant
+  - should accept a client\_secret\_post client registered for the exchange grant
+  - should reject a client whose grantTypes omit the exchange URN with unauthorized\_client
+  - should reject a client with unspecified grantTypes with unauthorized\_client
+  - should reject a public client with unauthorized\_client
+- resolveSubjectToken
+  - should return the resolved access token info when the token is valid
+  - should accept a token whose nbf is exactly now
+  - should pass the subject token through to the resolver
+  - Invalid subject tokens
+    - should reject an unknown token with the fixed invalid\_request description
+    - should reject an expired token with the fixed invalid\_request description
+    - should reject a token expiring exactly now with the fixed invalid\_request description
+    - should reject a token whose nbf is in the future with the fixed invalid\_request description
+    - should report the same error code for every failure kind
+- resolveActorToken
+  - should return the resolved access token info when the actor token is valid
+  - should pass the actor token through to the resolver
+  - Invalid actor tokens
+    - should reject an unknown actor token with the fixed invalid\_request description
+    - should reject an expired actor token with the fixed invalid\_request description
+    - should reject an actor token whose nbf is in the future with the fixed invalid\_request description
+- composeActClaim
+  - should build a single-level act claim for the first delegation
+  - should nest the subject token act chain under the current actor
+  - should keep a two-level prior chain intact under the current actor
+- validateExchangeScope
+  - should inherit the subject scope when scope is omitted
+  - should inherit the subject scope when scope is blank
+  - should return the requested subset in the requested order
+  - should return the full subject scope when every value is requested
+  - should collapse duplicate requested values
+  - should ignore repeated whitespace between scope values
+  - should reject a scope value outside the subject scope with invalid\_scope
+  - should reject a scope request against an empty subject scope with invalid\_scope
+- resolveExchangeTarget
+  - should inherit the subject audience when neither audience nor resource is given
+  - should return undefined when nothing is requested and the subject has no audience
+  - should return the requested audience when it is allowed
+  - should return the requested resource when it is allowed
+  - should return both targets when audience and resource are used together
+  - should collapse audience and resource when they name the same target
+  - should ignore the subject audience when a target is requested explicitly
+  - Disallowed targets
+    - should reject an audience outside allowedTargets with invalid\_target
+    - should reject a resource outside allowedTargets with invalid\_target
+    - should reject any requested audience when allowedTargets is empty
+    - should reject a target that only partially matches an allowed entry
+- computeExchangedTokenLifetime
+  - should use the configured lifetime when it is shorter than the remaining lifetime
+  - should cap the lifetime to the remaining lifetime of the subject token
+  - should return the shared value when both lifetimes are equal
+  - should return 1 when only one second of the subject lifetime remains
+  - should floor a sub-second current time when computing the remaining lifetime
+  - should reject an already expired subject token with the fixed invalid\_request description
+  - should reject a non-positive configured lifetime with a RangeError
+  - should reject a fractional configured lifetime with a RangeError
+- buildTokenExchangeResponse
+  - should build the full response body with every required member
+  - should join multiple scope values with a single space
+  - should always report Bearer as the token\_type
+  - should not include a refresh\_token member
+- processTokenExchangeRequest
+  - Successful exchanges
+    - should derive the full grant material for a scope-narrowing exchange
+    - should keep the subject of the subject\_token
+    - should set the client id to the requesting client, not the subject token client
+    - should inherit the subject scope when scope is omitted
+    - should return the allowed audience as the requested audience
+    - should inherit the grant id of the subject token
+    - should leave the grant id undefined when the subject token has none
+    - should default the current time to now when it is not injected
+  - Rejected exchanges
+    - should reject an unauthorized client before reading the subject token
+    - should reject a public client with unauthorized\_client
+    - should reject an exchange whose scope exceeds the subject scope with invalid\_scope
+    - should reject an exchange to a disallowed audience with invalid\_target
+    - should reject an expired subject token with invalid\_request
+    - should reject an unknown actor\_token with invalid\_request
+    - should reject an expired actor\_token with invalid\_request
+  - Delegation exchanges (RFC 8693 §1.1 / §4.1)
+    - should record the actor of a delegation exchange in the grant material
+    - should keep the subject unchanged in a delegation exchange
+    - should leave the actor undefined for an impersonation exchange
+    - should chain the prior actor when the subject token already carries an act claim
+    - should not cap the lifetime by the actor token expiry
+    - should inherit the grant id from the subject token, not the actor token
+
+## samples/hono-cloudflare
+
+CLI が生成した OpenID Provider の契約テスト（`conformance.test.ts`）。生成 OP へ実際にリクエストしたときの想定挙動を固定する。hono-cloudflare はすべての experimental 機能を有効にして生成しているので、生成 OP の契約の全体像はここで読める。
+
+```bash
+pnpm --filter @maronn-openid-connect/sample-hono-cloudflare test:conformance
+```
+
+### src/oidc-provider/conformance.test.ts（305）
+
+- generated provider HTTP conformance
+  - Persistent storage contract
+    - should share state across provider store instances backed by the same backend
+  - Generated view rendering
+    - should HTML-escape every login and consent value
+    - should preserve a custom Response returned by a view
+    - should render a custom HTML string returned by the error view
+  - Generated signing-key validation
+    - should reject an RSA signing key below 2048 bits
+    - should reject weak signing keys through createApp and applyOidc
+    - should reject an empty kid in a multiple-key set
+    - should reject duplicate kid values in a multiple-key set
+  - Discovery Endpoint
+    - should return the required OIDC provider metadata fields
+    - should advertise offline\_access in scopes\_supported
+    - should advertise the issuable claims in claims\_supported
+    - should advertise claims\_parameter\_supported as true
+    - should advertise the exact supported token endpoint authentication methods
+    - should return Cache-Control public, max-age=3600 on discovery response
+  - Token Endpoint error response
+    - should return Cache-Control no-store and an OAuth error JSON
+  - UserInfo Endpoint
+    - should return 401 with a WWW-Authenticate Bearer challenge for an invalid token
+    - should return only the UserInfo realm when no access token is provided
+    - Access Token Audience Validation (RFC 9068 §4)
+      - should return 200 for a token whose aud includes the UserInfo endpoint
+      - should accept every supported UserInfo form media type spelling
+      - should return 401 for a token whose aud excludes the UserInfo endpoint
+      - should return 401 for a token with no stored aud (no opaque escape hatch)
+  - Token Introspection nbf validation (RFC 7662 §2.2)
+    - should reject a non-form introspection request before parsing the body
+    - should accept a case-insensitive form media type with a charset
+    - should report active=true and echo nbf for a token with a valid (past) nbf
+    - should report active=false for a token whose nbf is in the future
+    - should echo the jti of an access token issued by the token endpoint
+  - Authorization Endpoint non-redirect errors
+    - should render an HTML error page (not redirect) for an unregistered redirect\_uri
+    - should return OAuth error JSON when the caller requests application/json
+  - Auth transaction User-Agent binding
+    - should set a transaction binding cookie on the redirect to the login page
+    - should not expose the csrf token for GET /login without the transaction binding cookie
+    - should return 400 for GET /consent without the transaction binding cookie
+    - should reject POST /login without the transaction binding cookie
+    - should not issue an authorization code for POST /consent without the transaction binding cookie
+    - should not issue an authorization code for POST /consent with another transactions binding cookie
+    - should reject POST /consent action=deny without the transaction binding cookie
+    - should issue an authorization code for the normal flow with a valid binding cookie
+    - should complete two concurrent authorization flows in the same browser
+  - custom view rendering (ViewResult / renderView)
+    - should wrap a custom HTML string view into a text/html Response
+    - should apply the provided status when wrapping a string view
+    - should pass a Response returned by a custom view through untouched
+    - should deliver the login page through renderView as a text/html Response
+  - Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)
+    - should build the login redirect Location on the configured issuer origin
+    - should ignore the Host header when building the login redirect Location
+    - should build the consent redirect Location on the configured issuer origin
+    - should build the consent redirect Location on the configured issuer origin after login
+    - should keep the login redirect Location on the issuer origin for a subpath issuer
+  - HTTP method enforcement (RFC 9110 §15.5.6)
+    - should return 405 and an exact Allow header for unsupported endpoint methods
+    - should answer HEAD on GET endpoints with 200 and an empty body (RFC 9110 §9.1, §9.3.2)
+    - should answer HEAD on the UserInfo GET endpoint with the auth challenge, not 405
+    - should give createApp and applyOidc the same CORS preflight behavior
+  - Consent denial (RFC 6749 §4.1.2.1)
+    - should return access\_denied and destroy the transaction and auth session
+  - id\_token\_hint across prompt paths
+    - should issue an authorization code for the SSO session when no hint is sent
+    - should issue an authorization code whose ID Token sub matches a hint naming the session user
+    - should redirect to the login screen without a code when the hint names another End-User
+    - should redirect to the login screen when prompt=login is sent with a mismatched hint
+    - should redirect with login\_required when the hint signature is invalid without prompt
+    - should redirect with login\_required when the hint has expired without prompt
+    - should redirect with login\_required when the hint aud names another client
+    - should keep issuing a code for prompt=none with a hint naming the session user
+    - should keep rejecting prompt=none with login\_required when the hint names another End-User
+  - User-initiated consent withdrawal
+    - should revoke the withdrawn client grant while preserving another client grant
+  - Authorization Code & Refresh Token reuse (revoke-cascade contract)
+    - should reject authorization code reuse and revoke every token from that grant
+    - should reject rotated refresh token reuse and revoke every token from that grant
+    - should issue a distinct access token on rotation while keeping the ID Token identity claims
+    - should keep grant-scoped revocation inside one grant when two grants are issued in the same second
+  - Request Object by value (OIDC Core 1.0 §6.1)
+    - should advertise request object support in discovery metadata
+    - should accept a signed RS256 request object and start the login flow
+    - should reject a broken request object with a non-redirect invalid\_request\_object error page
+    - should reject the request\_uri parameter with a request\_uri\_not\_supported redirect
+  - Online and offline refresh tokens (OIDC Core 1.0 §11)
+    - should issue a refresh token without offline\_access when the client registers the refresh\_token grant
+    - should keep the online refresh token usable while the login session is alive
+    - should reject the online refresh token after the login session ended
+    - should keep the online refresh token bound to the session across rotation
+    - should keep the offline refresh token usable after the login session ended
+    - should not issue a refresh token to a client that does not register the refresh\_token grant
+    - should drop offline\_access for a client that does not register the refresh\_token grant
+    - should issue only offline refresh tokens when onlineRefreshTokenEnabled is false
+  - Token Revocation Endpoint (RFC 7009)
+    - should reject a non-form revocation request before parsing the body
+    - should allow a public client to revoke its own token with client\_id only
+    - should preserve a confidential client revocation
+    - should let a public client revoke its refresh token and cascade the grant access tokens
+    - should reject a public revocation request without client\_id
+    - should reject a public client revoking another client token
+  - Token Endpoint client authentication methods
+    - should authenticate a public token request with client\_id only
+    - should authenticate a client\_secret\_basic request that also repeats client\_id in the body
+    - should reject a client\_secret\_basic request whose body client\_id contradicts the header
+  - Pushed Authorization Requests (RFC 9126)
+    - Endpoint response
+      - should return 201 with a URN request\_uri and the configured lifetime
+      - should issue a different request\_uri for every pushed request
+      - should reject a request that is not form-urlencoded
+      - should reject a GET on the PAR endpoint with 405
+    - Client authentication
+      - should reject an unauthenticated pushed request with 401 invalid\_client
+      - should reject a wrong client\_secret with 401 invalid\_client
+    - Pushed parameter validation
+      - should reject a request\_uri inside the pushed body
+      - should reject a request parameter because PAR with a Request Object is unsupported
+      - should reject an unregistered redirect\_uri before the user sees anything
+      - should reject a scope without openid as invalid\_scope
+    - Authorization endpoint resolution
+      - should complete the full PAR to token flow
+      - should keep the pushed parameters authoritative over the query string
+      - should reject the second use of the same request\_uri
+      - should reject an expired request\_uri
+      - should reject a request\_uri presented by a different client
+      - should return the identical response for every resolution failure
+      - should never redirect a resolution failure to the client
+      - should leave a URL-form request\_uri to the core request\_uri\_not\_supported path
+    - Provider metadata and PAR enforcement
+      - should advertise the pushed\_authorization\_request\_endpoint
+      - should not advertise require\_pushed\_authorization\_requests while PAR is optional
+      - should advertise require\_pushed\_authorization\_requests when PAR is enforced
+      - should reject a non-pushed authorization request when PAR is enforced
+      - should still accept a pushed request while PAR is enforced
+  - Token Exchange (RFC 8693)
+    - Successful exchange
+      - should return every RFC 8693 §2.2.1 response member for a scope-narrowing exchange
+      - should inherit the subject scope when scope is omitted
+      - should not issue a refresh token from an exchange
+      - should return a token that the UserInfo endpoint accepts
+      - should bind the exchanged token to the requesting client and the original subject
+      - should leave the subject token valid after an exchange
+      - should not extend the lifetime beyond the subject token
+      - should not inherit the claims parameter of the subject token
+      - should issue a distinct token for each exchange of the same subject token
+    - Client authorization
+      - should reject an unauthenticated exchange with 401 invalid\_client
+      - should reject a client that has not registered the exchange grant
+      - should reject a public client even when it registered the exchange grant
+    - Parameter validation
+      - should reject a missing subject\_token with invalid\_request
+      - should reject an unsupported subject\_token\_type with invalid\_request
+      - should reject an unsupported requested\_token\_type with invalid\_request
+      - should reject actor\_token without actor\_token\_type
+      - should reject actor\_token\_type without actor\_token
+      - should reject an unsupported actor\_token\_type with invalid\_request
+      - should reject an unknown actor\_token with the fixed description
+      - should reject a relative resource with invalid\_request
+      - should reject a resource carrying a fragment with invalid\_request
+      - should reject a repeated resource parameter
+      - should reject an unknown subject\_token with invalid\_request
+      - should report a revoked subject\_token exactly like an unknown one
+    - Scope narrowing
+      - should reject a scope that exceeds the subject token scope
+      - should grant exactly the requested subset
+    - Delegation (RFC 8693 §4.1)
+      - should record the actor in the act claim of the issued token
+      - should not add an act claim to an impersonation exchange
+      - should nest the prior actor when a delegated token is exchanged again
+      - should answer UserInfo for the subject of a delegated token
+    - Target policy (allowedTargets)
+      - should reject an audience that is not in allowedTargets
+      - should reject a resource that is not in allowedTargets
+      - should issue a token for an allowed audience
+      - should add the allowed audience alongside the UserInfo endpoint
+    - Discovery
+      - should advertise the exchange grant in grant\_types\_supported
+  - Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
+    - ID-JAG issuance (draft §4.3)
+      - should issue an ID-JAG with the §3.1 claims and the §4.3.4 response members
+      - should omit the scope claim and return an empty scope when none is requested
+      - should reject an audience outside the allow list with invalid\_target
+      - should reject this issuer itself as audience with invalid\_target
+      - should reject an ID Token issued to another client with the fixed description
+      - should reject an access token presented as the subject with the same fixed description
+      - should reject a saml2 subject\_token\_type with invalid\_request
+      - should reject an actor\_token with invalid\_request
+      - should reject a client without the token-exchange grant with unauthorized\_client
+      - should reject a public client with unauthorized\_client
+      - should cap the issued scopes at idJagConfig.allowedScopes with invalid\_scope
+      - should issue an ID-JAG from a refresh token subject
+      - should not consume the refresh token when issuing an ID-JAG
+      - should reject a rotated refresh token subject with the fixed description
+      - should reject a refresh token subject while allowRefreshTokenSubjects is off
+      - should record the actor in the act claim when actor tokens are enabled
+      - should reject an actor ID Token issued to another client with the fixed description
+      - should reject an actor token type the configured resolver does not accept
+      - should reject an actor\_token\_type outside the registered identifiers
+      - should record the act chain resolved by the deployment actor token resolver
+      - should answer a null from the actor token resolver with the fixed description
+      - should route id\_token actors through the configured resolver as well
+      - should reject every actor token once the resolver is cleared
+    - ID-JAG redemption (draft §4.4)
+      - should redeem a trusted ID-JAG for an access token of this AS
+      - should let the redeemed access token pass the UserInfo endpoint
+      - should report a redeemed access token active with the ID-JAG subject and client
+      - should accept the same ID-JAG again while it is valid
+      - should answer an untrusted issuer and a broken signature identically
+      - should reject every assertion when no identity provider is trusted
+      - should reject an ID-JAG addressed to another authorization server with invalid\_grant
+      - should reject an ID-JAG bound to another client with invalid\_grant
+      - should reject a JWT without the ID-JAG typ with invalid\_grant
+      - should reject an expired ID-JAG with invalid\_grant
+      - should reject a client without the jwt-bearer grant with unauthorized\_client
+      - should reject a public client with unauthorized\_client
+      - should preserve the act claim of an actor-bearing ID-JAG on the issued access token
+      - should reject a malformed act claim with invalid\_grant
+      - should refuse to redeem an ID-JAG this authorization server issued itself
+    - Discovery advertisement (draft §7)
+      - should advertise both XAA grant types and the profile metadata
+  - Device Authorization Grant (RFC 8628)
+    - Device authorization endpoint (RFC 8628 §3.1 / §3.2)
+      - should return the six response fields with a non-cacheable body
+      - should return the configured lifetime and poll interval
+      - should build verification\_uri and verification\_uri\_complete from the issuer
+      - should mint a base-20 user\_code in XXXX-XXXX form (RFC 8628 §6.1)
+      - should mint a 256-bit device\_code (RFC 8628 §5.2)
+      - should issue a distinct device\_code for every request
+      - should reject a body that is not form-urlencoded
+      - should reject an unauthenticated request with 401 invalid\_client
+      - should reject a client that is not registered for the device grant
+      - should reject a request with no scope
+      - should reject a scope without openid
+    - Discovery metadata (RFC 8628 §4)
+      - should advertise the device authorization endpoint
+      - should advertise the device\_code grant type
+    - Verification UI (RFC 8628 §3.3)
+      - should serve the code entry form without authentication
+      - should pre-fill the form from verification\_uri\_complete (§3.3.1)
+      - should not expose a csrf\_token before a code has matched
+      - should answer an unknown user\_code with the same reason-free message
+      - should not set a binding cookie for an unknown user\_code
+      - should accept the user\_code with its hyphen stripped and lower-cased
+      - should set the binding cookie with the exact hardening attributes
+      - should show the login form when no OP session exists
+      - should embed a csrf\_token once the code matched
+    - Browser binding enforcement (RFC 8628 §5.4)
+      - should reject /device/login without the binding cookie even with a valid csrf\_token
+      - should not establish a session when /device/login is unbound
+      - should reject /device/approve without the binding cookie
+      - should leave the record unapproved after an unbound approve attempt
+      - should reject a wrong csrf\_token even with a valid binding cookie
+      - should invalidate the previous binding when the code is submitted again
+      - should clear the binding cookie once the decision is recorded
+    - Token polling (RFC 8628 §3.5)
+      - should answer authorization\_pending before the user decides
+      - should answer slow\_down when polled again inside the interval
+      - should reject a missing device\_code with invalid\_request
+      - should reject an unknown device\_code with invalid\_grant
+      - should reject a device\_code presented by another client with the same wording
+      - should reject a client that is not registered for the device grant
+      - should answer access\_denied after the user denies
+    - Token issuance (RFC 8628 §3.5 → OIDC Core 1.0 §3.1.3.3)
+      - should issue an access token and an ID Token after approval
+      - should omit nonce and c\_hash from the ID Token
+      - should carry the auth\_time recorded at approval
+      - should let the issued access token reach the UserInfo endpoint
+      - should refuse to redeem the same device\_code twice
+      - should issue a refresh token when offline\_access was approved
+    - ID Token signing key selection (OIDC Dynamic Client Registration 1.0 §4.2)
+      - should sign the device grant ID Token with the alg the client registered
+      - should keep signing with RS256 for a client that registered no alg
+  - CIBA (CIBA Core 1.0, poll mode)
+    - Backchannel authentication endpoint (CIBA Section 7)
+      - should return the three response fields with a non-cacheable body
+      - should return the configured lifetime and poll interval
+      - should mint a 256-bit auth\_req\_id in the Base64URL character set
+      - should issue a distinct auth\_req\_id for every request
+      - should honor requested\_expiry by clamping it into the allowed range
+      - should reject a body that is not form-urlencoded
+      - should reject an unauthenticated request with 401 invalid\_client
+      - should reject a client that is not registered for the CIBA grant
+      - should reject a client registered for the ping delivery mode
+      - should reject a request with no scope
+      - should reject a scope without openid
+      - should reject a request with no hint
+      - should reject a request with two hints
+      - should reject id\_token\_hint as an unsupported hint type
+      - should answer an unknown login\_hint with the fixed unknown\_user\_id wording
+      - should reject an oversized binding\_message
+      - should reject a non-integer requested\_expiry
+    - Discovery metadata (CIBA Section 4)
+      - should advertise the backchannel authentication endpoint
+      - should advertise only the poll delivery mode
+      - should advertise the CIBA grant type
+    - Authentication device UI
+      - should show the sign-in form when no OP session exists
+      - should set the login binding cookie with the exact hardening attributes
+      - should reject /ciba/login without the binding cookie even with a valid csrf\_token
+      - should not establish a session when /ciba/login is unbound
+      - should reject a wrong csrf\_token even with a valid binding cookie
+      - should discard the login transaction after too many failed attempts
+      - should list the pending request with its client, scopes and binding message
+      - should HTML-escape the binding message on the approval screen
+      - should show an empty listing to a user with no pending requests
+      - should not list requests addressed to another user
+      - should refuse the decision without an OP session
+      - should refuse a decision by a session whose subject does not own the record
+      - should refuse a decision with a wrong csrf\_token
+      - should refuse an unknown decision value
+    - Token polling (CIBA Section 10.1 / 11)
+      - should answer authorization\_pending before the user decides
+      - should answer slow\_down when polled again inside the interval
+      - should reject a missing auth\_req\_id with invalid\_request
+      - should reject an unknown auth\_req\_id with invalid\_grant
+      - should reject an auth\_req\_id presented by another client with the same wording
+      - should answer access\_denied after the user denies
+    - Token issuance (CIBA Section 10.1 → OIDC Core 1.0 Section 3.1.3.3)
+      - should issue an access token and an ID Token after approval
+      - should omit nonce and c\_hash from the ID Token
+      - should carry the auth\_time recorded at approval
+      - should let the issued access token reach the UserInfo endpoint
+      - should refuse to redeem the same auth\_req\_id twice
+      - should issue a refresh token when offline\_access was approved
+    - ID Token signing key selection (OIDC Dynamic Client Registration 1.0 Section 2)
+      - should sign the CIBA grant ID Token with the alg the client registered
+      - should keep signing with RS256 for a client that registered no alg
+  - JWT Secured Authorization Response Mode (JARM)
+    - Signing key selection (JARM Section 3)
+      - should sign with the registered RS256 key when the active key is ES256
+    - Success response (JARM Section 2.3.1)
+      - should deliver the authorization response as the only response query parameter
+      - should sign the response JWT with RS256 under a kid published in JWKS
+      - should carry exactly iss, aud, exp, code and state as claims
+      - should exchange the code carried by the response JWT for tokens
+      - should treat the jwt shorthand as query.jwt
+    - Error response (JARM Section 2.1)
+      - should return a signed error JWT when the End-User denies consent
+      - should return a signed error JWT for a prompt=none request with no session
+    - Unsupported JWT response modes
+      - should reject fragment.jwt with a plain invalid\_request redirect
+      - should reject form\_post.jwt with a plain invalid\_request redirect
+    - Unchanged behavior without a JWT response mode
+      - should return the plain query response when response\_mode is absent
+      - should keep ignoring a non-JWT response\_mode value
+    - Transaction store round trip
+      - should answer the SSO fast path with a signed JWT
+      - should answer a prompt=none success with a signed JWT
+    - Discovery metadata (JARM Section 4)
+      - should advertise the JWT response modes and the response signing algorithm
+  - JWT introspection response (RFC 9701)
+    - Signed JWT response (RFC 9701 §4 / §5)
+      - should answer a JWT-accepting caller with a verifiable signed introspection JWT
+      - should wrap an unknown token as token\_introspection with active false only
+    - RFC 7662 JSON path is unchanged
+      - should keep answering RFC 7662 JSON when the caller sends no Accept header
+      - should not treat a wildcard Accept as a JWT request
+    - Caller audience restriction (RFC 9701 §3 / §5)
+      - should answer a caller that is neither issuee nor audience with active false
+      - should disclose the response to a caller listed in the token audience
+    - Downgrade prevention (RFC 9701 §8.2)
+      - should refuse an unauthenticated request no matter what the Accept header asks for
+    - Provider metadata (RFC 9701 §7)
+      - should advertise introspection\_signing\_alg\_values\_supported as exactly RS256
+  - Consent decision value (OIDC Core 1.0 §3.1.2.4)
+    - should not issue an authorization code when the consent POST omits the action parameter
+    - should not issue an authorization code when the consent POST sends an empty action value
+    - should not issue an authorization code when the consent POST sends an unknown action value
+    - should return 400 for a consent POST with an unrecognized action value
+    - should issue an authorization code when the consent POST sends action=approve
+    - should redirect with error=access\_denied when the consent POST sends action=deny
+    - should not record consent via recordConsent when the action value is unrecognized
+
+## tests/e2e
+
+CLI 生成 OP を起動し、E2E 専用のクライアントとリソースサーバーを相手に実ブラウザと実 HTTP で検証する E2E テスト。
+
+```bash
+pnpm run test:e2e
+```
+
+### specs/auth-code-flow.spec.ts（1）
+
+- Authorization Code Flow
+  - should complete Authorization Code Flow with separate E2E client and resource server
+
+### specs/authorization-branches.spec.ts（6）
+
+- Authorization endpoint browser branches
+  - should return access\_denied with the exact state and issuer after consent denial
+  - should issue and rotate a refresh token for an offline\_access grant
+  - should stop an online refresh token once re-authentication ends the login session
+  - should keep an offline\_access refresh token usable after re-authentication
+  - should require a matching browser session for prompt none with id\_token\_hint
+  - should not reuse the session of another user when id\_token\_hint names a different user
+
+### specs/ciba.spec.ts（5）
+
+- CIBA (CIBA Core 1.0, poll mode)
+  - should issue tokens after the user approves on their own browser
+  - should report access\_denied to the device when the user denies
+  - should answer authorization\_pending while the user has not decided
+  - should refuse the login form without the browser binding cookie
+  - should reject an auth\_req\_id presented by a different client
+
+### specs/consent-decision.spec.ts（4）
+
+- Consent decision value
+  - should issue an authorization code when the End-User clicks Approve
+  - should not issue an authorization code when the consent form is submitted without the Approve button
+  - should not issue an authorization code when the Approve button carries an unknown value
+  - should redirect with access\_denied when the End-User clicks Deny
+
+### specs/device-authorization-grant.spec.ts（5）
+
+- Device Authorization Grant (RFC 8628)
+  - should issue tokens after the user approves on a second device
+  - should report access\_denied to the device when the user denies
+  - should answer authorization\_pending while the user has not decided
+  - should refuse the verification steps without the browser binding cookie
+  - should reject a device\_code presented by a different client
+
+### specs/jarm.spec.ts（5）
+
+- JWT Secured Authorization Response Mode (JARM)
+  - should return the authorization response as a verifiable signed JWT
+  - should return a signed error JWT when the End-User denies consent
+  - should reject an unsupported JWT response mode with a plain error
+  - should advertise the JWT response modes and signing algorithm in discovery
+  - should keep the plain query response for a request without response\_mode
+
+### specs/jwt-introspection-response.spec.ts（3）
+
+- JWT introspection response (RFC 9701)
+  - should answer the issuing client with a verifiable signed introspection JWT
+  - should withhold the signed response from a caller that is not an audience
+  - should advertise the introspection response signing algorithm in discovery
+
+### specs/pushed-authorization-requests.spec.ts（4）
+
+- Pushed Authorization Requests (RFC 9126)
+  - should complete the full flow with a pushed request\_uri
+  - should return a single-use request\_uri that cannot be replayed
+  - should reject an unauthenticated pushed request
+  - should reject an unknown request\_uri without redirecting
+
+### specs/token-exchange.spec.ts（6）
+
+- Token Exchange (RFC 8693)
+  - should exchange a browser-obtained access token for a narrowed one
+  - should advertise the exchange grant in discovery
+  - should reject an unauthenticated exchange
+  - should reject an unknown subject\_token with invalid\_request
+  - should record the actor in the act claim of a delegated exchange
+  - should reject actor\_token without actor\_token\_type
+
+### specs/transaction-binding.spec.ts（4）
+
+- Auth transaction User-Agent binding
+  - should refuse to show the consent form to a different browser holding the same transaction\_id
+  - should refuse to show the login form to a different browser holding the same transaction\_id
+  - should keep the binding cookie HttpOnly and scoped to its own transaction
+  - should complete two concurrent authorization flows in the same browser
+
+### specs/xaa-id-jag.spec.ts（8）
+
+- Cross-App Access / ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
+  - should walk the full XAA chain: SSO, ID-JAG issuance, redemption, API access
+  - should issue and redeem an ID-JAG from a refresh token subject
+  - should carry the actor through the chain as the act claim
+  - should resolve an access\_token actor through the deployment resolver
+  - should advertise the XAA metadata on both trust domains
+  - should refuse to redeem the ID-JAG at the IdP that issued it
+  - should refuse an ID-JAG presented by a client it does not name
+  - should refuse a tampered ID-JAG with the fixed untrusted description
+
+## .github/scripts
+
+CI ゲート・changeset・リリース契約・npm provenance を検証するスクリプト自身のテスト。
+
+```bash
+pnpm run test:supply-chain
+```
+
+### .github/scripts/ensure-experimental-changeset.test.mjs（33）
+
+- selectExperimentalSourceChanges
+  - should keep implementation files under packages/experimental/src
+  - should drop paths outside packages/experimental/src
+  - should drop test files so that test-only changes do not trigger a release
+  - should drop empty lines produced by git output
+  - should return an empty array when nothing changed
+- hasManualExperimentalChangeset
+  - should return true when a hand-written changeset bumps @maronn-openid-connect/experimental
+  - should return false when only the auto-generated changeset bumps experimental
+  - should return false when only other packages are bumped
+  - should return false when there are no changesets
+- buildExperimentalPatchChangeset
+  - should declare a patch bump for @maronn-openid-connect/experimental and list the changed sources in sorted order
+- decideExperimentalChangeset
+  - should create a patch changeset when experimental sources changed since the last release
+  - should not create a changeset when no experimental source changed
+  - should not create a changeset when only experimental tests changed
+  - should rewrite its own changeset so that every accumulated change is listed in one patch release
+  - should not create a changeset when a hand-written changeset already releases experimental
+- readVersionFromManifest
+  - should read the version field from a package.json content
+  - should return null when the content is not valid JSON
+  - should return null when the manifest has no version field
+- selectLastVersionBump
+  - should select the newest commit whose version differs from its first parent
+  - should select the merge commit that brought the version bump into main
+  - should skip commits that only touched the manifest without changing its version
+  - should treat the commit that introduced the manifest as a version bump
+  - should skip commits whose manifest version cannot be read
+  - should return null when there is no candidate
+- assertBaseIsResolvable
+  - should pass when the version bump commit was found
+  - should pass when no version bump exists in a full clone
+  - should throw when the version bump commit is unreachable because the clone is shallow
+- collectChangedPathsSinceLastRelease
+  - should report no unreleased source change right after the Version Packages PR is merged
+  - should use the merge commit that brought the version bump into main as the comparison base
+  - should report no unreleased source change when a source commit landed after the release branch was cut
+  - should report source changes pushed after the Version Packages PR was merged
+  - should not report released changes again when the publish left no release tag behind
+  - should treat every tracked source as unreleased when the manifest has no history
+
+### .github/scripts/verify-changeset-coverage.test.mjs（24）
+
+- selectPublishablePackages
+  - should keep packages that are not private
+  - should drop packages marked private
+  - should drop packages without a name
+- isReleaseRelevantPath
+  - should treat a source file as release relevant
+  - should treat package.json as release relevant
+  - should treat README.md as release relevant
+  - should treat a file under \_\_tests\_\_ as not release relevant
+  - should treat a colocated test file as not release relevant
+  - should treat CHANGELOG.md as not release relevant
+  - should treat vitest.config.ts as not release relevant
+- findChangedPublishablePackages
+  - should return the package that owns the changed file
+  - should return every changed package sorted by name
+  - should report a package only once when several of its files change
+  - should ignore files outside any publishable package
+  - should ignore test-only changes inside a publishable package
+  - should not match a package whose directory is a name prefix of another
+- assertChangesetCoversChangedPackages
+  - should accept a pull request that changes no publishable package
+  - should accept a changed package covered by an added changeset
+  - should accept every changed package covered across several added changesets
+  - should accept an empty changeset as an explicit opt-out
+  - should reject a changed package with no added changeset
+  - should reject when only some of the changed packages are covered
+  - should reject a changeset that covers a different package than the changed one
+  - should tell the author how to add the missing changeset
+
+### .github/scripts/verify-ci-gate.test.mjs（24）
+
+- parseWorkflow
+  - should parse nested mappings into nested objects
+  - should parse a flow sequence into an array
+  - should parse a block sequence of scalars into an array
+  - should parse a block sequence of mappings into an array of objects
+  - should keep newlines when parsing a block scalar value
+  - should ignore comment lines and blank lines
+  - should strip surrounding quotes from a scalar value
+  - should keep an expression value containing a colon intact
+- assertWorkflowVerifiesMainPush
+  - should accept a workflow triggered by both pull requests and main pushes
+  - should reject a workflow without a push trigger
+  - should reject a push trigger that does not cover main
+  - should reject a workflow without a pull request trigger
+- assertStaticVerificationGate
+  - should accept a job that builds, type checks, then tests in that order
+  - should reject a job that runs tests without building the packages
+  - should reject a job that runs tests without type checking
+  - should reject a job that type checks before building the packages
+  - should reject a workflow that has no job running the test suite
+- assertEveryPackageIsTypechecked
+  - should accept packages that all define a typecheck script
+  - should reject a package without a typecheck script
+  - should list every package that is missing a typecheck script
+  - should reject a package without a scripts field
+- assertLintGateIsBacked
+  - should accept a workflow that does not run lint at all
+  - should accept a lint step backed by a package lint script
+  - should reject a lint step that no package implements
+
+### .github/scripts/verify-npm-provenance.test.mjs（4）
+
+- assertPublishedPackageProvenance
+  - should accept verified SLSA provenance for every published package version
+  - should reject a package that only has a registry signature
+  - should reject provenance attached to a different package version
+  - should reject a non-SLSA attestation for a published package
+
+### .github/scripts/verify-release-contract.test.mjs（43）
+
+- parseChangesetBumps
+  - should read every package bump from the frontmatter
+  - should accept single quotes around the package name
+  - should return an empty object for a file without frontmatter
+  - should ignore bump-like lines that appear after the frontmatter
+- assertCoreBreakingChangeReleasesExperimental
+  - should accept a core patch release without an experimental release
+  - should accept an experimental only release
+  - should accept a core minor release that also releases experimental
+  - should reject a core minor release without an experimental release
+  - should reject a core major release without an experimental release
+  - should list every offending changeset file when several exist
+  - should accept a release that touches neither package
+- assertExperimentalCorePeerDependencyShape
+  - should accept core declared as a peer dependency and linked for local development
+  - should reject core declared as a runtime dependency
+  - should reject a missing core peer dependency
+  - should reject a missing workspace link for local development
+  - should reject a devDependency that does not use the workspace protocol
+- assertExperimentalReleasesAreAlwaysPatch
+  - should accept a patch bump for experimental
+  - should accept changesets that do not release experimental
+  - should accept an empty changeset list
+  - should reject a minor bump for experimental
+  - should reject a major bump for experimental
+- parseMinimumCoreVersion
+  - should read the lower bound from a range with an upper bound
+  - should read the lower bound from a range without an upper bound
+  - should tolerate extra whitespace around the comparator
+  - should return null for a caret range
+  - should return null for a wildcard range
+- computeNextVersion
+  - should raise the patch segment for a patch bump
+  - should raise the minor segment and reset patch for a minor bump
+  - should raise the major segment and reset minor and patch for a major bump
+  - should keep the version unchanged when there is no bump
+- resolveNextCoreVersion
+  - should return the current version when no changeset releases core
+  - should apply the pending core bump
+  - should apply the largest pending core bump when several changesets release core
+- assertExperimentalCorePeerRangeCoversNextCore
+  - should accept a lower bound equal to the next core version
+  - should accept a lower bound above the next core version
+  - should reject a lower bound below the next core version
+  - should compare each version segment numerically rather than as text
+  - should reject a range whose lower bound cannot be read
+- assertPrivatePackagesAreNotVersioned
+  - should accept a config that turns versioning off for private packages
+  - should accept the false shorthand that turns off both versioning and tagging
+  - should reject a config without privatePackages because Changesets versions them by default
+  - should reject a config that keeps versioning private packages
+  - should reject a config that only omits the version key
+
+### .github/scripts/verify-release-published.test.mjs（15）
+
+- selectPendingChangesets
+  - should select changeset markdown files
+  - should select nothing when only the changeset scaffolding is committed
+  - should select nothing when the directory is absent
+- parsePublishedVersions
+  - should list every version key of the registry document
+  - should return an empty list when the package is not on the registry yet
+  - should return an empty list when the document has no versions field
+- selectUnpublishedPackages
+  - should select packages whose main version is missing from the registry
+  - should select nothing when every main version is on the registry
+  - should select nothing when the registry has newer versions than main
+  - should skip packages that have never been published
+  - should skip packages that are missing from the registry lookup
+- assertMainVersionsArePublished
+  - should pass when every publishable package version exists on the registry
+  - should throw naming the package and both versions when a release never reached npm
+  - should list every unpublished package at once
+  - should pass while main still carries an unconsumed changeset
+
+## tests/conformance
+
+OpenID Foundation Conformance Suite ランナーの設定生成スクリプトのテスト。
+
+```bash
+pnpm run test:conformance
+```
+
+### tests/conformance/scripts/create-basic-op-config.test.mjs（7）
+
+- createBasicOpConformanceArtifacts
+  - OIDF Basic OP static client configuration
+    - should generate static clients matching the OIDF callback URI
+    - should register a client JWKS for signed Request Object verification when provided
+    - should wire the default conformance Request Object key on both the OP and the suite
+    - should normalize base URLs before deriving discovery and callbacks
+- Basic OP PKCE compatibility mode
+  - sample OP startup environment
+    - should enable non-PKCE authorization code flow only for conformance runs
+- resolveSampleApp
+  - sample app selection
+    - should resolve supported sample app metadata
+    - should reject unsupported sample app names

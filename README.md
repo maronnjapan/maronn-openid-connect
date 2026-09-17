@@ -138,6 +138,36 @@ expect(metadata.issuer).toBe('http://localhost:3000');
 expect(metadata.response_types_supported).toEqual(['code']);
 ```
 
+### 繰り返しをヘルパーと it.each にまとめる
+
+同じ準備と検証を 3 回以上繰り返す場合は、テストファイル内のヘルパー関数にまとめます。
+`it` には、そのケースで他と異なる入力と期待値だけを書きます。
+エラーを検証するヘルパーは、例外の型を確認したうえでエラーを返し、呼び出し側が具体値を固定できるようにします。
+
+```typescript
+// 悪い例：呼び出しと例外の捕捉を毎回書く
+const error = await validateAuthorizationRequest(
+  validParams({ scope: 'profile' }),
+  createClientResolver([defaultClient])
+).catch((e: unknown) => e);
+expect(error).toBeInstanceOf(AuthorizationError);
+expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidScope);
+
+// 良い例：ヘルパーが例外の型を確認し、テストは差分だけを書く
+const error = await expectAuthorizationError(validParams({ scope: 'profile' }));
+expect(error).toMatchObject({ error: AuthorizationErrorCode.InvalidScope, redirectable: true });
+```
+
+値だけが異なるケースは `it.each` にまとめます。
+テスト名には `%s` または `$name` で値を埋め込み、テスト一覧では従来どおり 1 ケースずつ読めるようにします。
+
+```typescript
+it.each(['page', 'popup', 'touch', 'wap'])('should accept display=%s', async (display) => {
+  const result = await validate(validParams({ display }));
+  expect(result.display).toEqual(display);
+});
+```
+
 ### 実装不可能なテストケースの扱い
 
 外部依存が必要で関数単体では検証できないテストケースは、単体テストに記述しません。
@@ -150,6 +180,34 @@ expect(metadata.response_types_supported).toEqual(['code']);
 OP のリクエスト処理が変わる機能を `packages` 側へ追加した場合は、`conformance.test.ts` も更新します。
 ただし、生成後のファイルを直接変更せず、`packages/cli` にある生成処理を変更します。
 
+### packages/cli には単体テストを置かない
+
+CLI が生成するコードは文字列なので、CLI の単体テストは「生成物に特定の文字列が含まれるか」の照合になります。
+この照合はテンプレートを変えるたびに書き換えが必要で、生成 OP が仕様どおりに動くことは保証しません。
+そのため `packages/cli` には単体テストを置かず、生成コードの挙動は次の 3 つで固定します。
+
+- `samples/*` の `conformance.test.ts`：生成 OP へ実際にリクエストしたときの想定挙動を固定する契約テスト
+- `samples/*` の `check:generated`：コミット済みの生成物が現在の CLI の出力と一致することの確認
+- `tests/e2e`：生成 OP を起動し、実ブラウザと実 HTTP で検証する E2E テスト
+
+CLI のオプション解析や機能トグルの分岐を変更したときは、対応する sample の生成コマンドと `conformance.test.ts` を更新し、E2E で確認します。
+すべての experimental 機能を有効にして生成した `samples/hono-cloudflare` の契約テストは、`pnpm run test:contract` として CI の `pnpm run test:ci` でも実行します。
+
+### テスト一覧（TEST-CATALOG.md）
+
+リポジトリ内のテストは `TEST-CATALOG.md` に一覧化しています。
+`describe` と `it` の階層をそのまま入れ子リストにしたもので、テストを実行しなくても、どの振る舞いをテストで固定しているかを名前で読めます。
+テストを追加または変更したら、次のコマンドで再生成してコミットします。
+
+```bash
+# samples/hono-cloudflare の契約テストが core と experimental の dist を参照するため、先にビルドする
+pnpm run build
+pnpm test:catalog
+```
+
+CI は `pnpm test:catalog:check` で、この一覧が現在のテストと一致することを検証します。
+テストの追加や削除は一覧の差分として PR に現れるので、レビューではそこから検証内容の変化を追えます。
+
 ## コマンド
 
 ```bash
@@ -158,6 +216,9 @@ pnpm install
 
 # テストの実行
 pnpm test
+
+# テスト一覧（TEST-CATALOG.md）の再生成。samples の契約テストを読むため、先に pnpm run build を実行する
+pnpm test:catalog
 
 # 特定のパッケージでコマンドを実行
 pnpm --filter <package-name> <command>

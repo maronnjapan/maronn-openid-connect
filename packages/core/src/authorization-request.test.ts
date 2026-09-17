@@ -10,6 +10,7 @@ import type {
   AuthorizationRequestParams,
   ClientInfo,
   ClientResolver,
+  ValidateAuthorizationRequestOptions,
 } from './authorization-request.js';
 import { exportPublicJwk } from './jwks.js';
 import type { JwkSet } from './jwks.js';
@@ -84,6 +85,28 @@ function validParams(
   };
 }
 
+// Helper: validate with a resolver built from `clients` (default: the default client),
+// or with an explicit ClientResolver
+function validate(
+  params: AuthorizationRequestParams,
+  clients: ClientInfo[] | ClientResolver = [defaultClient],
+  options?: ValidateAuthorizationRequestOptions,
+) {
+  const resolver = Array.isArray(clients) ? createClientResolver(clients) : clients;
+  return validateAuthorizationRequest(params, resolver, options);
+}
+
+// Helper: validate expecting an AuthorizationError, and return it for further assertions
+async function expectAuthorizationError(
+  params: AuthorizationRequestParams,
+  clients: ClientInfo[] | ClientResolver = [defaultClient],
+  options?: ValidateAuthorizationRequestOptions,
+): Promise<AuthorizationError> {
+  const error = await validate(params, clients, options).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(AuthorizationError);
+  return error as AuthorizationError;
+}
+
 describe('validateAuthorizationRequest', () => {
   describe('ClientResolver integration', () => {
     it('should call findClient with the client_id from the request', async () => {
@@ -95,7 +118,7 @@ describe('validateAuthorizationRequest', () => {
         },
       };
 
-      await validateAuthorizationRequest(validParams(), resolver);
+      await validate(validParams(), resolver);
 
       expect(capturedClientId).toEqual('client123');
     });
@@ -110,24 +133,17 @@ describe('validateAuthorizationRequest', () => {
         },
       };
 
-      const error = await validateAuthorizationRequest(
-        validParams(),
-        buggyResolver
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.error).toEqual(AuthorizationErrorCode.ServerError);
+      const error = await expectAuthorizationError(validParams(), buggyResolver);
+      expect(error).toMatchObject({
+        redirectable: false,
+        error: AuthorizationErrorCode.ServerError,
+      });
     });
   });
 
   describe('client_id validation', () => {
     it('should accept valid client_id', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.clientId).toEqual('client123');
     });
@@ -141,79 +157,38 @@ describe('validateAuthorizationRequest', () => {
         code_challenge_method: 'S256',
       };
 
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
-    });
-
-    it('should reject unknown client_id', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ client_id: 'unknown-client' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
+      const error = await expectAuthorizationError(params);
+      expect(error.redirectable).toBe(false);
     });
 
     it('should return non-redirectable error for unknown client_id', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ client_id: 'unknown-client' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.redirectUri).toBeUndefined();
+      const error = await expectAuthorizationError(validParams({ client_id: 'unknown-client' }));
+      expect(error.redirectable).toBe(false);
+      expect(error.redirectUri).toBeUndefined();
     });
   });
 
   describe('redirect_uri validation', () => {
     it('should accept registered redirect_uri', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.redirectUri).toEqual('https://client.example.org/cb');
     });
 
     // OP-redirect_uri-NotReg: Reject unregistered URIs
-    it('should reject unregistered redirect_uri', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ redirect_uri: 'https://evil.example.com/cb' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
-    });
-
     it('should return non-redirectable error for unregistered redirect_uri', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'https://evil.example.com/cb' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.redirectUri).toBeUndefined();
-      expect(authError.error).toEqual(AuthorizationErrorCode.InvalidRequest);
+      );
+      expect(error.redirectable).toBe(false);
+      expect(error.redirectUri).toBeUndefined();
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should use single registered redirect_uri when omitted from request', async () => {
       const params = validParams({ redirect_uri: undefined });
 
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(params);
 
       expect(result.redirectUri).toEqual('https://client.example.org/cb');
     });
@@ -229,34 +204,23 @@ describe('validateAuthorizationRequest', () => {
       };
       const params = validParams({ redirect_uri: undefined });
 
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([client])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
+      const error = await expectAuthorizationError(params, [client]);
+      expect(error.redirectable).toBe(false);
     });
 
     // Exact string matching - RFC 3986 Section 6.2.1
     it('should use exact string matching for redirect_uri', async () => {
-      const error = await validateAuthorizationRequest(
+      await expectAuthorizationError(
         validParams({ redirect_uri: 'https://client.example.org/cb/' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
+      );
     });
 
     // OP-redirect_uri-RegFrag: Reject fragments
     it('should reject redirect_uri with fragment', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'https://client.example.org/cb#fragment' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
+      );
+      expect(error.redirectable).toBe(false);
     });
 
     // OP-redirect_uri-RegFrag: Reject when REGISTERED redirect_uri contains fragment
@@ -267,15 +231,14 @@ describe('validateAuthorizationRequest', () => {
         redirectUris: ['https://client.example.org/cb#bad-fragment'],
       };
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'https://client.example.org/cb#bad-fragment' }),
-        createClientResolver([client])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.error).toEqual(AuthorizationErrorCode.ServerError);
-      expect(authError.redirectable).toBe(false);
+        [client],
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.ServerError,
+        redirectable: false,
+      });
     });
 
     it('should throw server_error when any registered redirect_uri contains fragment', async () => {
@@ -288,15 +251,11 @@ describe('validateAuthorizationRequest', () => {
         ],
       };
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'https://client.example.org/cb' }),
-        createClientResolver([client])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.ServerError
+        [client],
       );
+      expect(error.error).toEqual(AuthorizationErrorCode.ServerError);
     });
 
     // OP-redirect_uri-Query-OK: Preserve registered query parameters
@@ -306,14 +265,12 @@ describe('validateAuthorizationRequest', () => {
         redirectUris: ['https://client.example.org/cb?mode=auth'],
       };
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({ redirect_uri: 'https://client.example.org/cb?mode=auth' }),
-        createClientResolver([client])
+        [client],
       );
 
-      expect(result.redirectUri).toEqual(
-        'https://client.example.org/cb?mode=auth'
-      );
+      expect(result.redirectUri).toEqual('https://client.example.org/cb?mode=auth');
     });
 
     // OP-redirect_uri-Query-Mismatch: Reject mismatched query parameters
@@ -323,22 +280,17 @@ describe('validateAuthorizationRequest', () => {
         redirectUris: ['https://client.example.org/cb?mode=auth'],
       };
 
-      const error = await validateAuthorizationRequest(
+      await expectAuthorizationError(
         validParams({ redirect_uri: 'https://client.example.org/cb?mode=other' }),
-        createClientResolver([client])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
+        [client],
+      );
     });
 
     // OP-redirect_uri-Query-Added: Reject added query parameters
     it('should reject redirect_uri with added query parameters', async () => {
-      const error = await validateAuthorizationRequest(
+      await expectAuthorizationError(
         validParams({ redirect_uri: 'https://client.example.org/cb?extra=param' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
+      );
     });
 
     // Loopback exception: allow variable port numbers (public clients only)
@@ -350,9 +302,9 @@ describe('validateAuthorizationRequest', () => {
         clientType: 'public',
       };
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({ redirect_uri: 'http://127.0.0.1:8080/callback' }),
-        createClientResolver([client])
+        [client],
       );
 
       expect(result.redirectUri).toEqual('http://127.0.0.1:8080/callback');
@@ -365,9 +317,9 @@ describe('validateAuthorizationRequest', () => {
         clientType: 'public',
       };
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({ redirect_uri: 'http://localhost:9000/callback' }),
-        createClientResolver([client])
+        [client],
       );
 
       expect(result.redirectUri).toEqual('http://localhost:9000/callback');
@@ -382,13 +334,11 @@ describe('validateAuthorizationRequest', () => {
         clientType: 'confidential',
       };
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'http://127.0.0.1:8080/callback' }),
-        createClientResolver([client])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
+        [client],
+      );
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should reject different port for loopback redirect_uri when clientType is unspecified (defaults to strict)', async () => {
@@ -397,91 +347,66 @@ describe('validateAuthorizationRequest', () => {
         redirectUris: ['http://127.0.0.1/callback'],
       };
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'http://127.0.0.1:8080/callback' }),
-        createClientResolver([client])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
+        [client],
+      );
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequest);
     });
   });
 
   describe('response_type validation', () => {
     // OP-Response-code: Request with response_type=code
     it('should accept response_type=code', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.responseType).toEqual('code');
     });
 
     // OP-Response-Missing: Reject missing response_type
     it('should reject missing response_type', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ response_type: undefined }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ response_type: undefined }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject unsupported response_type', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ response_type: 'token' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.UnsupportedResponseType
-      );
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ response_type: 'token' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.UnsupportedResponseType,
+        redirectable: true,
+      });
     });
   });
 
   describe('scope validation', () => {
     it('should accept scope containing openid', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ scope: 'openid profile' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ scope: 'openid profile' }));
 
       expect(result.scope).toContain('openid');
       expect(result.scope).toContain('profile');
     });
 
     it('should reject missing scope', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ scope: undefined }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ scope: undefined }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject scope without openid', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ scope: 'profile email' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidScope);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ scope: 'profile email' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidScope,
+        redirectable: true,
+      });
     });
 
     it('should parse multiple scopes into array', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ scope: 'openid profile email address phone' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ scope: 'openid profile email address phone' }));
 
       expect(result.scope).toEqual([
         'openid',
@@ -496,10 +421,7 @@ describe('validateAuthorizationRequest', () => {
     // artifacts are deterministic and match the Token Endpoint (refresh_token grant
     // already dedups via [...new Set(...)]). Insertion order is preserved.
     it('should deduplicate repeated scope values preserving first-seen order', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ scope: 'openid openid profile' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ scope: 'openid openid profile' }));
 
       expect(result.scope).toEqual(['openid', 'profile']);
     });
@@ -508,59 +430,51 @@ describe('validateAuthorizationRequest', () => {
   // OAuth 2.1 Section 4.1.1, 7.5 - PKCE is REQUIRED
   describe('PKCE validation (OAuth 2.1)', () => {
     it('should accept valid code_challenge with S256 method', async () => {
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({
           code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
           code_challenge_method: 'S256',
         }),
-        createClientResolver([defaultClient])
       );
 
-      expect(result.codeChallenge).toEqual(
-        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
-      );
+      expect(result.codeChallenge).toEqual('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
       expect(result.codeChallengeMethod).toEqual('S256');
     });
 
     // Security: plain method is rejected to enforce S256
     it('should reject code_challenge_method=plain', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({
           code_challenge: 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
           code_challenge_method: 'plain',
         }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject missing code_challenge_method', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({
           code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
           code_challenge_method: undefined,
         }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     // OAuth 2.1: PKCE is REQUIRED
     it('should reject missing code_challenge', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ code_challenge: undefined }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ code_challenge: undefined }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should accept missing PKCE parameters for explicit confidential clients when compatibility mode is enabled', async () => {
@@ -569,12 +483,12 @@ describe('validateAuthorizationRequest', () => {
         clientType: 'confidential',
       };
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({
           code_challenge: undefined,
           code_challenge_method: undefined,
         }),
-        createClientResolver([client]),
+        [client],
         { allowNonPkceAuthorizationCodeFlow: true },
       );
 
@@ -590,29 +504,26 @@ describe('validateAuthorizationRequest', () => {
         clientType: 'public',
       };
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({
           code_challenge: undefined,
           code_challenge_method: undefined,
         }),
-        createClientResolver([client]),
+        [client],
         { allowNonPkceAuthorizationCodeFlow: true },
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject empty code_challenge', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ code_challenge: '' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ code_challenge: '' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject invalid code_challenge values even when compatibility mode is enabled', async () => {
@@ -621,41 +532,34 @@ describe('validateAuthorizationRequest', () => {
         clientType: 'confidential',
       };
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({
           code_challenge: 'too-short',
           code_challenge_method: 'S256',
         }),
-        createClientResolver([client]),
+        [client],
         { allowNonPkceAuthorizationCodeFlow: true },
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     // OAuth 2.1 Section 7.5.2: MUST reject unsupported methods
     it('should reject unsupported code_challenge_method', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ code_challenge_method: 'S512' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ code_challenge_method: 'S512' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should include state in PKCE error when state was provided', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ code_challenge: undefined, state: 'my-state' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.state).toEqual('my-state');
+      );
+      expect(error.state).toEqual('my-state');
     });
 
     // RFC 7636 Section 4.2: S256 code_challenge is BASE64URL(SHA256(...)),
@@ -663,103 +567,37 @@ describe('validateAuthorizationRequest', () => {
     describe('code_challenge format validation (S256)', () => {
       it('should accept a 43-character base64url code_challenge', async () => {
         // 43 chars, includes both '-' and '_' base64url symbols
-        const result = await validateAuthorizationRequest(
+        const result = await validate(
           validParams({
             code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
             code_challenge_method: 'S256',
           }),
-          createClientResolver([defaultClient])
         );
 
-        expect(result.codeChallenge).toEqual(
-          'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
+        expect(result.codeChallenge).toEqual('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+      });
+
+      it.each([
+        ['shorter than 43 characters', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-c'], // 42 characters
+        ['longer than 43 characters', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cMa'], // 44 characters
+        ['containing non-base64url symbols', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSst+/=M'], // '+', '/', '=' are standard base64 but invalid for base64url
+        ['containing punctuation such as ! or ?', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSst!?cM'],
+        ['containing whitespace or newline', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSst \ncM'],
+      ])('should reject a code_challenge %s', async (_reason, code_challenge) => {
+        const error = await expectAuthorizationError(
+          validParams({ code_challenge, code_challenge_method: 'S256' }),
         );
-      });
-
-      it('should reject a code_challenge shorter than 43 characters', async () => {
-        const error = await validateAuthorizationRequest(
-          validParams({
-            // 42 characters
-            code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-c',
-            code_challenge_method: 'S256',
-          }),
-          createClientResolver([defaultClient])
-        ).catch((e: unknown) => e);
-
-        expect(error).toBeInstanceOf(AuthorizationError);
-        expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-        expect((error as AuthorizationError).redirectable).toBe(true);
-      });
-
-      it('should reject a code_challenge longer than 43 characters', async () => {
-        const error = await validateAuthorizationRequest(
-          validParams({
-            // 44 characters
-            code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cMa',
-            code_challenge_method: 'S256',
-          }),
-          createClientResolver([defaultClient])
-        ).catch((e: unknown) => e);
-
-        expect(error).toBeInstanceOf(AuthorizationError);
-        expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-        expect((error as AuthorizationError).redirectable).toBe(true);
-      });
-
-      it('should reject a code_challenge containing non-base64url symbols', async () => {
-        // '+', '/', '=' are standard base64 but invalid for base64url
-        const error = await validateAuthorizationRequest(
-          validParams({
-            code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSst+/=M',
-            code_challenge_method: 'S256',
-          }),
-          createClientResolver([defaultClient])
-        ).catch((e: unknown) => e);
-
-        expect(error).toBeInstanceOf(AuthorizationError);
-        expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-        expect((error as AuthorizationError).redirectable).toBe(true);
-      });
-
-      it('should reject a code_challenge containing punctuation such as ! or ?', async () => {
-        const error = await validateAuthorizationRequest(
-          validParams({
-            code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSst!?cM',
-            code_challenge_method: 'S256',
-          }),
-          createClientResolver([defaultClient])
-        ).catch((e: unknown) => e);
-
-        expect(error).toBeInstanceOf(AuthorizationError);
-        expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-        expect((error as AuthorizationError).redirectable).toBe(true);
-      });
-
-      it('should reject a code_challenge containing whitespace or newline', async () => {
-        const error = await validateAuthorizationRequest(
-          validParams({
-            code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSst \ncM',
-            code_challenge_method: 'S256',
-          }),
-          createClientResolver([defaultClient])
-        ).catch((e: unknown) => e);
-
-        expect(error).toBeInstanceOf(AuthorizationError);
-        expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-        expect((error as AuthorizationError).redirectable).toBe(true);
+        expect(error).toMatchObject({ error: AuthorizationErrorCode.InvalidRequest, redirectable: true });
       });
 
       it('should describe the base64url and 43-character requirement in error_description', async () => {
-        const error = await validateAuthorizationRequest(
+        const error = await expectAuthorizationError(
           validParams({
             code_challenge: 'too-short',
             code_challenge_method: 'S256',
           }),
-          createClientResolver([defaultClient])
-        ).catch((e: unknown) => e);
-
-        expect(error).toBeInstanceOf(AuthorizationError);
-        const description = (error as AuthorizationError).errorDescription;
+        );
+        const description = error.errorDescription;
         expect(description).toContain('43');
         expect(description).toContain('base64url');
       });
@@ -768,19 +606,13 @@ describe('validateAuthorizationRequest', () => {
 
   describe('state parameter', () => {
     it('should include state when provided', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ state: 'xyz123' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ state: 'xyz123' }));
 
       expect(result.state).toEqual('xyz123');
     });
 
     it('should not require state', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.state).toBeUndefined();
     });
@@ -789,162 +621,73 @@ describe('validateAuthorizationRequest', () => {
   describe('nonce parameter', () => {
     // OP-nonce-code: nonce is optional for code flow
     it('should include nonce when provided', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ nonce: 'nonce-abc' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ nonce: 'nonce-abc' }));
 
       expect(result.nonce).toEqual('nonce-abc');
     });
 
     // OP-nonce-NoReq-code: nonce is not required for code flow
     it('should not require nonce for code flow', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.nonce).toBeUndefined();
     });
   });
 
   describe('prompt parameter', () => {
-    it('should accept prompt=none', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ prompt: 'none' }),
-        createClientResolver([defaultClient])
-      );
+    it.each(['none', 'login', 'consent', 'select_account'])('should accept prompt=%s', async (prompt) => {
+      const result = await validate(validParams({ prompt }));
 
-      expect(result.prompt).toEqual(['none']);
-    });
-
-    it('should accept prompt=login', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ prompt: 'login' }),
-        createClientResolver([defaultClient])
-      );
-
-      expect(result.prompt).toEqual(['login']);
-    });
-
-    it('should accept prompt=consent', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ prompt: 'consent' }),
-        createClientResolver([defaultClient])
-      );
-
-      expect(result.prompt).toEqual(['consent']);
-    });
-
-    it('should accept prompt=select_account', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ prompt: 'select_account' }),
-        createClientResolver([defaultClient])
-      );
-
-      expect(result.prompt).toEqual(['select_account']);
+      expect(result.prompt).toEqual([prompt]);
     });
 
     it('should accept multiple prompt values', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ prompt: 'login consent' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ prompt: 'login consent' }));
 
       expect(result.prompt).toEqual(['login', 'consent']);
     });
 
     // OIDC Core 1.0 Section 3.1.2.1: none MUST NOT be combined with other values
     it('should reject prompt=none combined with other values', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ prompt: 'none login' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ prompt: 'none login' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject invalid prompt value', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ prompt: 'invalid_value' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ prompt: 'invalid_value' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
   });
 
   describe('display parameter', () => {
-    it('should accept display=page', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ display: 'page' }),
-        createClientResolver([defaultClient])
-      );
+    it.each(['page', 'popup', 'touch', 'wap'])('should accept display=%s', async (display) => {
+      const result = await validate(validParams({ display }));
 
-      expect(result.display).toEqual('page');
-    });
-
-    it('should accept display=popup', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ display: 'popup' }),
-        createClientResolver([defaultClient])
-      );
-
-      expect(result.display).toEqual('popup');
-    });
-
-    it('should accept display=touch', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ display: 'touch' }),
-        createClientResolver([defaultClient])
-      );
-
-      expect(result.display).toEqual('touch');
-    });
-
-    it('should accept display=wap', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ display: 'wap' }),
-        createClientResolver([defaultClient])
-      );
-
-      expect(result.display).toEqual('wap');
+      expect(result.display).toEqual(display);
     });
 
     // OIDC Core 1.0 §3.1.2.1 defines display values as page/popup/touch/wap only.
     // An unrecognized value is a malformed request -> invalid_request (redirectable).
     it('should reject unknown display value with invalid_request', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ display: 'custom_display' }),
-        createClientResolver([defaultClient])
-      ).catch((e) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(
-        AuthorizationErrorCode.InvalidRequest
-      );
+      const error = await expectAuthorizationError(validParams({ display: 'custom_display' }));
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should return a redirectable error with state for an unknown display value', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ display: 'custom_display', state: 'display-state' }),
-        createClientResolver([defaultClient])
-      ).catch((e) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).redirectable).toBe(true);
-      expect((error as AuthorizationError).state).toBe('display-state');
+      );
+      expect(error).toMatchObject({ redirectable: true, state: 'display-state' });
     });
 
     it('should leave display undefined when the parameter is omitted', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.display).toBeUndefined();
     });
@@ -952,43 +695,31 @@ describe('validateAuthorizationRequest', () => {
 
   describe('max_age parameter', () => {
     it('should accept valid max_age', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ max_age: '3600' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ max_age: '3600' }));
 
       expect(result.maxAge).toEqual(3600);
     });
 
     it('should accept max_age=0', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ max_age: '0' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ max_age: '0' }));
 
       expect(result.maxAge).toEqual(0);
     });
 
     it('should reject non-numeric max_age', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ max_age: 'abc' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ max_age: 'abc' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
 
     it('should reject negative max_age', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ max_age: '-1' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.InvalidRequest);
-      expect((error as AuthorizationError).redirectable).toBe(true);
+      const error = await expectAuthorizationError(validParams({ max_age: '-1' }));
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequest,
+        redirectable: true,
+      });
     });
   });
 
@@ -1003,42 +734,33 @@ describe('validateAuthorizationRequest', () => {
     };
 
     it('should fall back to client defaultMaxAge when max_age is absent', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([clientWithDefaultMaxAge])
-      );
+      const result = await validate(validParams(), [clientWithDefaultMaxAge]);
 
       expect(result.maxAge).toBe(600);
     });
 
     it('should prefer request max_age over client defaultMaxAge', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ max_age: '120' }),
-        createClientResolver([clientWithDefaultMaxAge])
-      );
+      const result = await validate(validParams({ max_age: '120' }), [clientWithDefaultMaxAge]);
 
       expect(result.maxAge).toBe(120);
     });
 
     it('should leave maxAge undefined when neither max_age nor defaultMaxAge is present', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.maxAge).toBeUndefined();
     });
 
     it('should fall back to defaultMaxAge of 0 when max_age is absent', async () => {
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams(),
-        createClientResolver([
+        [
           {
             clientId: 'client123',
             redirectUris: ['https://client.example.org/cb'],
             defaultMaxAge: 0,
           },
-        ])
+        ],
       );
 
       expect(result.maxAge).toBe(0);
@@ -1048,49 +770,49 @@ describe('validateAuthorizationRequest', () => {
     // An invalid registered value is a server-side configuration error, not a
     // client request error, so it surfaces as a non-redirectable server_error.
     it('should reject negative defaultMaxAge as a non-redirectable server error', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams(),
-        createClientResolver([
+        [
           {
             clientId: 'client123',
             redirectUris: ['https://client.example.org/cb'],
             defaultMaxAge: -1,
           },
-        ])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.ServerError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
+        ],
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.ServerError,
+        redirectable: false,
+      });
     });
 
     it('should reject non-integer defaultMaxAge as a non-redirectable server error', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams(),
-        createClientResolver([
+        [
           {
             clientId: 'client123',
             redirectUris: ['https://client.example.org/cb'],
             defaultMaxAge: 1.5,
           },
-        ])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(AuthorizationErrorCode.ServerError);
-      expect((error as AuthorizationError).redirectable).toBe(false);
+        ],
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.ServerError,
+        redirectable: false,
+      });
     });
 
     it('should prefer request max_age even when defaultMaxAge is invalid', async () => {
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({ max_age: '120' }),
-        createClientResolver([
+        [
           {
             clientId: 'client123',
             redirectUris: ['https://client.example.org/cb'],
             defaultMaxAge: -1,
           },
-        ])
+        ],
       );
 
       // The request max_age overrides default_max_age, so the invalid
@@ -1101,77 +823,55 @@ describe('validateAuthorizationRequest', () => {
 
   describe('optional parameters that must not cause errors', () => {
     it('should accept ui_locales', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ ui_locales: 'ja en' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ ui_locales: 'ja en' }));
 
       expect(result.uiLocales).toEqual('ja en');
     });
 
     it('should accept claims_locales', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ claims_locales: 'ja en' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ claims_locales: 'ja en' }));
 
       expect(result.claimsLocales).toEqual('ja en');
     });
 
     it('should accept acr_values', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ acr_values: 'urn:mace:incommon:iap:silver' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ acr_values: 'urn:mace:incommon:iap:silver' }));
 
       expect(result.acrValues).toEqual('urn:mace:incommon:iap:silver');
     });
 
     it('should accept login_hint', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ login_hint: 'user@example.com' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ login_hint: 'user@example.com' }));
 
       expect(result.loginHint).toEqual('user@example.com');
     });
 
     it('should accept id_token_hint', async () => {
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({ id_token_hint: 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature' }),
-        createClientResolver([defaultClient])
       );
 
-      expect(result.idTokenHint).toEqual(
-        'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature'
-      );
+      expect(result.idTokenHint).toEqual('eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature');
     });
   });
 
   describe('audience parameter', () => {
     it('should accept audience as space-separated string', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams({ audience: 'https://api.example.com' }),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams({ audience: 'https://api.example.com' }));
 
       expect(result.audience).toEqual(['https://api.example.com']);
     });
 
     it('should accept multiple audience values', async () => {
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         validParams({ audience: 'https://api.example.com https://other.example.com' }),
-        createClientResolver([defaultClient])
       );
 
       expect(result.audience).toEqual(['https://api.example.com', 'https://other.example.com']);
     });
 
     it('should return undefined audience when not provided', async () => {
-      const result = await validateAuthorizationRequest(
-        validParams(),
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(validParams());
 
       expect(result.audience).toBeUndefined();
     });
@@ -1185,10 +885,7 @@ describe('validateAuthorizationRequest', () => {
         another_unknown: 'another_value',
       });
 
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient])
-      );
+      const result = await validate(params);
 
       expect(result.responseType).toEqual('code');
       expect(result.clientId).toEqual('client123');
@@ -1279,10 +976,7 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const result = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      );
+      const result = await validate(baseParams({ request }), resolver);
 
       expect(result).toMatchObject({
         responseType: 'code',
@@ -1315,7 +1009,7 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         baseParams({ request, state: 'query-state', nonce: 'query-nonce' }),
         resolver,
       );
@@ -1341,15 +1035,8 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should reject a request object scope that omits openid (supersedes the query scope)', async () => {
@@ -1366,15 +1053,8 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidScope,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidScope);
     });
 
     it('should prefer a valid redirect_uri from the request object over an invalid top-level redirect_uri', async () => {
@@ -1391,7 +1071,7 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         baseParams({ request, redirect_uri: 'https://evil.example.com/cb' }),
         resolver,
       );
@@ -1415,15 +1095,8 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
 
     it('should reject a request object with an unknown kid with invalid_request_object', async () => {
@@ -1438,15 +1111,8 @@ describe('validateAuthorizationRequest', () => {
         'unknown-kid',
       );
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
 
     it('should reject a request object with an unsupported signing alg with invalid_request_object', async () => {
@@ -1457,15 +1123,8 @@ describe('validateAuthorizationRequest', () => {
         scope: 'openid',
       });
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
 
     it('should reject a request object when no client JWKS is registered with invalid_request_object', async () => {
@@ -1484,33 +1143,26 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         baseParams({ client_id: 'ro-client-nokeys', request }),
-        createClientResolver([noJwksClient]),
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
+        [noJwksClient],
       );
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
 
     it('should throw without a redirect uri when the request object cannot be parsed', async () => {
       // A broken Request Object cannot be trusted, including any redirect_uri it may
       // carry, so the error must stay on the OP (non-redirectable, no state echo).
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         baseParams({ request: 'not-a-jwt', state: 'st-broken' }),
         resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
       );
-      expect(authError.redirectable).toBe(false);
-      expect(authError.redirectUri).toBeUndefined();
-      expect(authError.state).toBeUndefined();
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequestObject,
+        redirectable: false,
+      });
+      expect(error.redirectUri).toBeUndefined();
+      expect(error.state).toBeUndefined();
     });
 
     it('should reject when the request object response_type does not match the query', async () => {
@@ -1525,15 +1177,8 @@ describe('validateAuthorizationRequest', () => {
         kid,
       );
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequest,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should accept an unsigned (alg=none) request object when allowUnsigned is enabled', async () => {
@@ -1548,7 +1193,7 @@ describe('validateAuthorizationRequest', () => {
         nonce: 'u-nonce',
       });
 
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         baseParams({ request }),
         resolver,
         { requestObject: { allowUnsigned: true } },
@@ -1569,139 +1214,90 @@ describe('validateAuthorizationRequest', () => {
         scope: 'openid',
       });
 
-      const error = await validateAuthorizationRequest(
-        baseParams({ request }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
-      );
+      const error = await expectAuthorizationError(baseParams({ request }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
 
     it('should reject the request_uri parameter with request_uri_not_supported', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         baseParams({
           request_uri: 'https://client.example.org/req.jwt',
           redirect_uri: registeredRedirect,
           state: 'st-2',
         }),
         resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.error).toEqual(
-        AuthorizationErrorCode.RequestUriNotSupported,
       );
-      expect(authError.redirectable).toBe(true);
-      expect(authError.redirectUri).toEqual(registeredRedirect);
-      expect(authError.state).toEqual('st-2');
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.RequestUriNotSupported,
+        redirectable: true,
+        redirectUri: registeredRedirect,
+        state: 'st-2',
+      });
     });
 
     // OIDC Core 1.0 §3.1.2.1 / §3.1.2.6: the `registration` parameter is unsupported and
     // must be rejected with registration_not_supported (redirectable, state echoed).
     it('should reject the registration parameter with registration_not_supported', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         baseParams({
           registration: '{"client_name":"x"}',
           redirect_uri: registeredRedirect,
           state: 'st-reg',
         }),
         resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.error).toEqual(
-        AuthorizationErrorCode.RegistrationNotSupported,
       );
-      expect(authError.redirectable).toBe(true);
-      expect(authError.redirectUri).toEqual(registeredRedirect);
-      expect(authError.state).toEqual('st-reg');
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.RegistrationNotSupported,
+        redirectable: true,
+        redirectUri: registeredRedirect,
+        state: 'st-reg',
+      });
     });
 
     it('should process a request without the registration parameter normally', async () => {
-      const result = await validateAuthorizationRequest(
-        baseParams({ redirect_uri: registeredRedirect }),
-        resolver,
-      );
+      const result = await validate(baseParams({ redirect_uri: registeredRedirect }), resolver);
       expect(result.responseType).toBe('code');
     });
 
     it('should reject a request object with a broken JWS structure with invalid_request_object', async () => {
-      const error = await validateAuthorizationRequest(
-        baseParams({ request: 'not-a-jwt' }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
-      );
+      const error = await expectAuthorizationError(baseParams({ request: 'not-a-jwt' }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
 
     it('should reject a JWE (5-segment) request object with invalid_request_object', async () => {
-      const error = await validateAuthorizationRequest(
-        baseParams({ request: 'a.b.c.d.e' }),
-        resolver,
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toEqual(
-        AuthorizationErrorCode.InvalidRequestObject,
-      );
+      const error = await expectAuthorizationError(baseParams({ request: 'a.b.c.d.e' }), resolver);
+      expect(error.error).toEqual(AuthorizationErrorCode.InvalidRequestObject);
     });
   });
 
   describe('error redirectability', () => {
     it('should return non-redirectable error for invalid client_id', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ client_id: 'unknown' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.redirectUri).toBeUndefined();
+      const error = await expectAuthorizationError(validParams({ client_id: 'unknown' }));
+      expect(error.redirectable).toBe(false);
+      expect(error.redirectUri).toBeUndefined();
     });
 
     it('should return non-redirectable error for invalid redirect_uri', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'https://evil.example.com/cb' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.redirectUri).toBeUndefined();
+      );
+      expect(error.redirectable).toBe(false);
+      expect(error.redirectUri).toBeUndefined();
     });
 
     it('should return redirectable error for other validation failures', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ response_type: undefined }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(true);
-      expect(authError.redirectUri).toEqual('https://client.example.org/cb');
+      const error = await expectAuthorizationError(validParams({ response_type: undefined }));
+      expect(error).toMatchObject({
+        redirectable: true,
+        redirectUri: 'https://client.example.org/cb',
+      });
     });
 
     it('should include state in redirectable errors when state was provided', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ response_type: 'token', state: 'my-state-value' }),
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(true);
-      expect(authError.state).toEqual('my-state-value');
+      );
+      expect(error).toMatchObject({ redirectable: true, state: 'my-state-value' });
     });
   });
 
@@ -1716,15 +1312,11 @@ describe('validateAuthorizationRequest', () => {
         code_challenge_method: 'S256',
       };
 
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.error).toEqual(AuthorizationErrorCode.InvalidRequest);
+      const error = await expectAuthorizationError(params);
+      expect(error).toMatchObject({
+        redirectable: false,
+        error: AuthorizationErrorCode.InvalidRequest,
+      });
     });
 
     it('should validate redirect_uri before response_type', async () => {
@@ -1736,14 +1328,8 @@ describe('validateAuthorizationRequest', () => {
         code_challenge_method: 'S256',
       };
 
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient])
-      ).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
+      const error = await expectAuthorizationError(params);
+      expect(error.redirectable).toBe(false);
     });
   });
 
@@ -1755,10 +1341,7 @@ describe('validateAuthorizationRequest', () => {
         userinfo: { email: null },
       });
       const params = validParams({ claims: claimsJson });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      );
+      const result = await validate(params);
       expect(result.claims?.id_token?.acr).toEqual({ essential: true, values: ['1', '2'] });
       expect(result.claims?.userinfo?.email).toBeNull();
     });
@@ -1769,10 +1352,7 @@ describe('validateAuthorizationRequest', () => {
         unknown_member: { foo: 'bar' },
       });
       const params = validParams({ claims: claimsJson });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      );
+      const result = await validate(params);
       expect(result.claims).toBeDefined();
       expect((result.claims as Record<string, unknown>).unknown_member).toBeUndefined();
       expect(result.claims?.id_token?.acr).toBeNull();
@@ -1783,30 +1363,20 @@ describe('validateAuthorizationRequest', () => {
         id_token: { acr: { essential: true }, bogus: 'not-an-object' },
       });
       const params = validParams({ claims: claimsJson });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      );
+      const result = await validate(params);
       expect(result.claims?.id_token?.acr).toEqual({ essential: true });
       expect(result.claims?.id_token?.bogus).toBeUndefined();
     });
 
     it('should reject claims that is not a JSON object', async () => {
       const params = validParams({ claims: 'not-json' });
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e) => e);
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(AuthorizationErrorCode.InvalidRequest);
+      const error = await expectAuthorizationError(params);
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should leave claims undefined when parameter is omitted', async () => {
       const params = validParams();
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      );
+      const result = await validate(params);
       expect(result.claims).toBeUndefined();
     });
   });
@@ -1818,34 +1388,26 @@ describe('validateAuthorizationRequest', () => {
     it('should reject claims longer than the default maximum length with invalid_request', async () => {
       const oversized = 'a'.repeat(DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH + 1);
       const params = validParams({ claims: oversized });
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e) => e);
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(AuthorizationErrorCode.InvalidRequest);
+      const error = await expectAuthorizationError(params);
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should return a redirectable error with state when claims exceeds the limit', async () => {
       const oversized = 'a'.repeat(DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH + 1);
       const params = validParams({ claims: oversized, state: 'xyz-state' });
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e) => e);
-      expect((error as AuthorizationError).redirectable).toBe(true);
-      expect((error as AuthorizationError).redirectUri).toBe('https://client.example.org/cb');
-      expect((error as AuthorizationError).state).toBe('xyz-state');
+      const error = await expectAuthorizationError(params);
+      expect(error).toMatchObject({
+        redirectable: true,
+        redirectUri: 'https://client.example.org/cb',
+        state: 'xyz-state',
+      });
     });
 
     it('should not echo the oversized claims value in the error description', async () => {
       const oversized = 'z'.repeat(DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH + 1);
       const params = validParams({ claims: oversized });
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e) => e);
-      expect((error as AuthorizationError).errorDescription).not.toContain('zzzz');
+      const error = await expectAuthorizationError(params);
+      expect(error.errorDescription).not.toContain('zzzz');
     });
 
     it('should reject oversized claims by size before attempting JSON.parse', async () => {
@@ -1853,13 +1415,12 @@ describe('validateAuthorizationRequest', () => {
       // proving the size guard fires regardless of JSON validity.
       const validButOversized = JSON.stringify({ id_token: { acr: null } });
       const params = validParams({ claims: validButOversized });
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         params,
-        createClientResolver([defaultClient]),
+        [defaultClient],
         { maxClaimsParameterLength: validButOversized.length - 1 },
-      ).catch((e) => e);
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(AuthorizationErrorCode.InvalidRequest);
+      );
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should accept claims exactly at the configured limit', async () => {
@@ -1869,11 +1430,7 @@ describe('validateAuthorizationRequest', () => {
       const atLimit = `{"id_token":{"acr":{"value":"${padding}"}}}`;
       expect(atLimit.length).toBe(limit);
       const params = validParams({ claims: atLimit });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-        { maxClaimsParameterLength: limit },
-      );
+      const result = await validate(params, [defaultClient], { maxClaimsParameterLength: limit });
       expect(result.claims?.id_token?.acr).toEqual({ value: padding });
     });
 
@@ -1884,13 +1441,12 @@ describe('validateAuthorizationRequest', () => {
       const overLimit = `{"id_token":{"acr":{"value":"${padding}"}}}`;
       expect(overLimit.length).toBe(limit + 1);
       const params = validParams({ claims: overLimit });
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         params,
-        createClientResolver([defaultClient]),
+        [defaultClient],
         { maxClaimsParameterLength: limit },
-      ).catch((e) => e);
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(AuthorizationErrorCode.InvalidRequest);
+      );
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should still parse a typical small claims payload within the limit', async () => {
@@ -1899,32 +1455,21 @@ describe('validateAuthorizationRequest', () => {
         userinfo: { email: null },
       });
       const params = validParams({ claims: claimsJson });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      );
+      const result = await validate(params);
       expect(result.claims?.id_token?.acr).toEqual({ essential: true, values: ['1', '2'] });
       expect(result.claims?.userinfo?.email).toBeNull();
     });
 
     it('should still reject a JSON array within the limit', async () => {
       const params = validParams({ claims: '[]' });
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e) => e);
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(AuthorizationErrorCode.InvalidRequest);
+      const error = await expectAuthorizationError(params);
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
 
     it('should still reject JSON null within the limit', async () => {
       const params = validParams({ claims: 'null' });
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e) => e);
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect((error as AuthorizationError).error).toBe(AuthorizationErrorCode.InvalidRequest);
+      const error = await expectAuthorizationError(params);
+      expect(error.error).toBe(AuthorizationErrorCode.InvalidRequest);
     });
   });
 
@@ -1932,54 +1477,39 @@ describe('validateAuthorizationRequest', () => {
   describe('offline_access scope gating (OIDC Core 1.0 §11)', () => {
     it('should drop offline_access from scope when prompt is missing', async () => {
       const params = validParams({ scope: 'openid offline_access' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([refreshGrantClient]),
-      );
+      const result = await validate(params, [refreshGrantClient]);
       expect(result.scope).toEqual(['openid']);
     });
 
     it('should drop offline_access when prompt does not include consent', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'login' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([refreshGrantClient]),
-      );
+      const result = await validate(params, [refreshGrantClient]);
       expect(result.scope).toEqual(['openid']);
     });
 
     it('should retain offline_access when prompt=consent is present', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([refreshGrantClient]),
-      );
+      const result = await validate(params, [refreshGrantClient]);
       expect(result.scope).toEqual(['openid', 'offline_access']);
     });
 
     it('should retain offline_access when prompt includes consent among others', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'login consent' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([refreshGrantClient]),
-      );
+      const result = await validate(params, [refreshGrantClient]);
       expect(result.scope).toEqual(['openid', 'offline_access']);
     });
 
     it('should drop offline_access when prompt=none and offline_access is requested', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'none' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([refreshGrantClient]),
-      );
+      const result = await validate(params, [refreshGrantClient]);
       expect(result.scope).toEqual(['openid']);
     });
 
     it('should allow a custom isOfflineAccessGranted callback to override the default', async () => {
       const params = validParams({ scope: 'openid offline_access' });
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         params,
-        createClientResolver([refreshGrantClient]),
+        [refreshGrantClient],
         { isOfflineAccessGranted: () => true },
       );
       expect(result.scope).toEqual(['openid', 'offline_access']);
@@ -1988,9 +1518,9 @@ describe('validateAuthorizationRequest', () => {
     it('should pass parsed prompt values to the custom callback', async () => {
       let received: string[] | undefined;
       const params = validParams({ scope: 'openid offline_access', prompt: 'login' });
-      await validateAuthorizationRequest(
+      await validate(
         params,
-        createClientResolver([refreshGrantClient]),
+        [refreshGrantClient],
         {
           isOfflineAccessGranted: (_req, ctx) => {
             received = ctx.promptValues;
@@ -2009,43 +1539,37 @@ describe('validateAuthorizationRequest', () => {
   describe('offline_access gating by registered grant_types', () => {
     it('should drop offline_access when the client omits grant_types', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      );
+      const result = await validate(params);
       expect(result.scope).toEqual(['openid']);
     });
 
     it('should drop offline_access when the client registers only authorization_code', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         params,
-        createClientResolver([
+        [
           {
             clientId: 'client123',
             redirectUris: ['https://client.example.org/cb'],
             grantTypes: ['authorization_code'],
           },
-        ]),
+        ],
       );
       expect(result.scope).toEqual(['openid']);
     });
 
     it('should retain offline_access when the client registers the refresh_token grant type', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
-      const result = await validateAuthorizationRequest(
-        params,
-        createClientResolver([refreshGrantClient]),
-      );
+      const result = await validate(params, [refreshGrantClient]);
       expect(result.scope).toEqual(['openid', 'offline_access']);
     });
 
     it('should pass the resolved client to the custom callback', async () => {
       let receivedGrantTypes: string[] | undefined;
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
-      await validateAuthorizationRequest(
+      await validate(
         params,
-        createClientResolver([refreshGrantClient]),
+        [refreshGrantClient],
         {
           isOfflineAccessGranted: (_req, ctx) => {
             receivedGrantTypes = ctx.client.grantTypes;
@@ -2058,9 +1582,9 @@ describe('validateAuthorizationRequest', () => {
 
     it('should let a custom callback grant offline_access to a client without the refresh_token grant type', async () => {
       const params = validParams({ scope: 'openid offline_access', prompt: 'consent' });
-      const result = await validateAuthorizationRequest(
+      const result = await validate(
         params,
-        createClientResolver([defaultClient]),
+        [defaultClient],
         { isOfflineAccessGranted: () => true },
       );
       expect(result.scope).toEqual(['openid', 'offline_access']);
@@ -2078,14 +1602,8 @@ describe('validateAuthorizationRequest - client response_types enforcement', () 
       redirectUris: ['https://client.example.org/cb'],
       responseTypes: [], // explicitly registered without "code"
     };
-    const error = await validateAuthorizationRequest(
-      validParams({ state: 'xyz' }),
-      createClientResolver([client]),
-    ).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(AuthorizationError);
-    const authError = error as AuthorizationError;
-    expect(authError.error).toBe(AuthorizationErrorCode.UnauthorizedClient);
+    const error = await expectAuthorizationError(validParams({ state: 'xyz' }), [client]);
+    expect(error.error).toBe(AuthorizationErrorCode.UnauthorizedClient);
   });
 
   it('should return a redirectable error preserving state for unauthorized_client', async () => {
@@ -2094,15 +1612,12 @@ describe('validateAuthorizationRequest - client response_types enforcement', () 
       redirectUris: ['https://client.example.org/cb'],
       responseTypes: [],
     };
-    const error = await validateAuthorizationRequest(
-      validParams({ state: 'state-abc' }),
-      createClientResolver([client]),
-    ).catch((e: unknown) => e);
-
-    const authError = error as AuthorizationError;
-    expect(authError.redirectable).toBe(true);
-    expect(authError.redirectUri).toBe('https://client.example.org/cb');
-    expect(authError.state).toBe('state-abc');
+    const error = await expectAuthorizationError(validParams({ state: 'state-abc' }), [client]);
+    expect(error).toMatchObject({
+      redirectable: true,
+      redirectUri: 'https://client.example.org/cb',
+      state: 'state-abc',
+    });
   });
 
   it('should allow response_type=code when client responseTypes includes code', async () => {
@@ -2111,31 +1626,20 @@ describe('validateAuthorizationRequest - client response_types enforcement', () 
       redirectUris: ['https://client.example.org/cb'],
       responseTypes: ['code'],
     };
-    const result = await validateAuthorizationRequest(
-      validParams(),
-      createClientResolver([client]),
-    );
+    const result = await validate(validParams(), [client]);
     expect(result.responseType).toBe('code');
   });
 
   it('should allow response_type=code when responseTypes is unspecified (default ["code"])', async () => {
     // Backward compatibility: clients without responseTypes default to ["code"].
-    const result = await validateAuthorizationRequest(
-      validParams(),
-      createClientResolver([defaultClient]),
-    );
+    const result = await validate(validParams());
     expect(result.responseType).toBe('code');
   });
 
   it('should return unsupported_response_type (not unauthorized_client) for a globally unsupported response_type', async () => {
     // Global OP-level rejection MUST be distinguished from per-client authorization.
-    const error = await validateAuthorizationRequest(
-      validParams({ response_type: 'token' }),
-      createClientResolver([defaultClient]),
-    ).catch((e: unknown) => e);
-
-    const authError = error as AuthorizationError;
-    expect(authError.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
+    const error = await expectAuthorizationError(validParams({ response_type: 'token' }));
+    expect(error.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
   });
 });
 
@@ -2149,38 +1653,31 @@ describe('validateAuthorizationRequest - state echo/non-echo invariant', () => {
 
   describe('redirectable errors MUST echo state', () => {
     it('should echo state on invalid_scope (scope without openid)', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ scope: 'profile email', state: STATE }),
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.error).toBe(AuthorizationErrorCode.InvalidScope);
-      expect(authError.redirectable).toBe(true);
-      expect(authError.state).toBe(STATE);
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidScope,
+        redirectable: true,
+        state: STATE,
+      });
     });
 
     it('should echo state on unsupported_response_type', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ response_type: 'token', state: STATE }),
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
-      expect(authError.redirectable).toBe(true);
-      expect(authError.state).toBe(STATE);
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.UnsupportedResponseType,
+        redirectable: true,
+        state: STATE,
+      });
     });
 
     it('should NOT attach state on a redirectable error when the request omits state', async () => {
-      const error = await validateAuthorizationRequest(
-        validParams({ scope: 'profile email' }),
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(true);
-      expect(authError.state).toBeUndefined();
+      const error = await expectAuthorizationError(validParams({ scope: 'profile email' }));
+      expect(error.redirectable).toBe(true);
+      expect(error.state).toBeUndefined();
     });
   });
 
@@ -2194,25 +1691,17 @@ describe('validateAuthorizationRequest - state echo/non-echo invariant', () => {
         code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
         code_challenge_method: 'S256',
       } as AuthorizationRequestParams;
-      const error = await validateAuthorizationRequest(
-        params,
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.state).toBeUndefined();
+      const error = await expectAuthorizationError(params);
+      expect(error.redirectable).toBe(false);
+      expect(error.state).toBeUndefined();
     });
 
     it('should not echo state for an unknown client_id', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ client_id: 'unknown-client', state: STATE }),
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.state).toBeUndefined();
+      );
+      expect(error.redirectable).toBe(false);
+      expect(error.state).toBeUndefined();
     });
 
     it('should not echo state on a clientId mismatch between request and resolver', async () => {
@@ -2222,37 +1711,28 @@ describe('validateAuthorizationRequest - state echo/non-echo invariant', () => {
           redirectUris: ['https://client.example.org/cb'],
         }),
       };
-      const error = await validateAuthorizationRequest(
-        validParams({ state: STATE }),
-        buggyResolver,
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.state).toBeUndefined();
+      const error = await expectAuthorizationError(validParams({ state: STATE }), buggyResolver);
+      expect(error.redirectable).toBe(false);
+      expect(error.state).toBeUndefined();
     });
 
     it('should not echo state for an unregistered redirect_uri', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ redirect_uri: 'https://evil.example.com/cb', state: STATE }),
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.redirectable).toBe(false);
-      expect(authError.state).toBeUndefined();
+      );
+      expect(error.redirectable).toBe(false);
+      expect(error.state).toBeUndefined();
     });
 
     it('should not echo state when the Request Object fails to parse', async () => {
-      const error = await validateAuthorizationRequest(
+      const error = await expectAuthorizationError(
         validParams({ request: 'not.a.valid.jws', state: STATE }),
-        createClientResolver([defaultClient]),
-      ).catch((e: unknown) => e);
-
-      const authError = error as AuthorizationError;
-      expect(authError.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
-      expect(authError.redirectable).toBe(false);
-      expect(authError.state).toBeUndefined();
+      );
+      expect(error).toMatchObject({
+        error: AuthorizationErrorCode.InvalidRequestObject,
+        redirectable: false,
+      });
+      expect(error.state).toBeUndefined();
     });
   });
 });
@@ -2280,34 +1760,16 @@ describe('validateRegisteredRedirectUris', () => {
 
   describe('Dangerous scheme rejection', () => {
     // OAuth 2.0 Security BCP / RFC 8252 Section 8.5: dangerous schemes are XSS/RCE vectors
-    it('should throw server_error for a javascript: scheme', () => {
-      const error = captureError(['javascript:alert(1)']);
+    it.each([
+      ['javascript:', 'javascript:alert(1)'],
+      ['data:', 'data:text/html,<script>alert(1)</script>'],
+      ['file:', 'file:///etc/passwd'],
+      ['vbscript:', 'vbscript:msgbox(1)'],
+      ['blob:', 'blob:https://example.com/uuid'],
+    ])('should throw server_error for a %s scheme', (_scheme, uri) => {
+      const error = captureError([uri]);
 
       expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.error).toBe(AuthorizationErrorCode.ServerError);
-    });
-
-    it('should throw server_error for a data: scheme', () => {
-      const error = captureError(['data:text/html,<script>alert(1)</script>']);
-
-      expect(error?.error).toBe(AuthorizationErrorCode.ServerError);
-    });
-
-    it('should throw server_error for a file: scheme', () => {
-      const error = captureError(['file:///etc/passwd']);
-
-      expect(error?.error).toBe(AuthorizationErrorCode.ServerError);
-    });
-
-    it('should throw server_error for a vbscript: scheme', () => {
-      const error = captureError(['vbscript:msgbox(1)']);
-
-      expect(error?.error).toBe(AuthorizationErrorCode.ServerError);
-    });
-
-    it('should throw server_error for a blob: scheme', () => {
-      const error = captureError(['blob:https://example.com/uuid']);
-
       expect(error?.error).toBe(AuthorizationErrorCode.ServerError);
     });
 
@@ -2374,53 +1836,39 @@ describe('validateRegisteredRedirectUris', () => {
 // requestObject.supported: false で無効化できる（既定は true = 現行挙動）。
 describe('validateAuthorizationRequest - requestObject.supported option', () => {
   it('should reject the request parameter with request_not_supported when requestObject.supported is false', async () => {
-    const resolver = createClientResolver([defaultClient]);
-
-    let error: AuthorizationError | undefined;
-    try {
-      await validateAuthorizationRequest(
-        validParams({ request: 'header.payload.signature', state: 'st-req-ns' }),
-        resolver,
-        { requestObject: { supported: false } },
-      );
-    } catch (e) {
-      error = e as AuthorizationError;
-    }
-
-    expect(error).toBeInstanceOf(AuthorizationError);
-    expect(error?.error).toBe(AuthorizationErrorCode.RequestNotSupported);
+    const error = await expectAuthorizationError(
+      validParams({ request: 'header.payload.signature', state: 'st-req-ns' }),
+      [defaultClient],
+      { requestObject: { supported: false } },
+    );
+    expect(error.error).toBe(AuthorizationErrorCode.RequestNotSupported);
     // redirect 先はクエリパラメータから解決され、state も echo される（redirectable）。
-    expect(error?.redirectUri).toBe('https://client.example.org/cb');
-    expect(error?.state).toBe('st-req-ns');
+    expect(error.redirectUri).toBe('https://client.example.org/cb');
+    expect(error.state).toBe('st-req-ns');
   });
 
   it('should reject without parsing when requestObject.supported is false and the request object is malformed', async () => {
-    const resolver = createClientResolver([defaultClient]);
-
     // サポート時なら parse 失敗で invalid_request（非リダイレクト）になる壊れた値。
     // 非サポート時は parse 前に request_not_supported で拒否されなければならない。
-    let error: AuthorizationError | undefined;
-    try {
-      await validateAuthorizationRequest(
-        validParams({ request: 'not-a-jwt', state: 'st-malformed' }),
-        resolver,
-        { requestObject: { supported: false } },
-      );
-    } catch (e) {
-      error = e as AuthorizationError;
-    }
-
-    expect(error).toBeInstanceOf(AuthorizationError);
-    expect(error?.error).toBe(AuthorizationErrorCode.RequestNotSupported);
-    expect(error?.state).toBe('st-malformed');
+    const error = await expectAuthorizationError(
+      validParams({ request: 'not-a-jwt', state: 'st-malformed' }),
+      [defaultClient],
+      { requestObject: { supported: false } },
+    );
+    expect(error.error).toBe(AuthorizationErrorCode.RequestNotSupported);
+    expect(error.state).toBe('st-malformed');
   });
 
   it('should validate normally when requestObject.supported is false and no request parameter is sent', async () => {
     const resolver = createClientResolver([defaultClient]);
 
-    const result = await validateAuthorizationRequest(validParams(), resolver, {
+    const result = await validate(
+      validParams(),
+      resolver,
+      {
       requestObject: { supported: false },
-    });
+    },
+    );
 
     expect(result).toMatchObject({
       responseType: 'code',

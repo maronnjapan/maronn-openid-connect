@@ -24,9 +24,6 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "test:ci": "vitest run",
-    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -48,7 +45,6 @@
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/cli#readme",
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "typescript": "^7.0.2"
   }
 }

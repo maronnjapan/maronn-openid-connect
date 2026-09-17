@@ -7,13 +7,16 @@ import {
   generateRandomString,
 } from '@maronn-openid-connect/core';
 import {
-  buildGoogleSignInMarkup,
   handleGoogleLoginRedirect,
   issueGoogleLoginNonce,
   resolveGoogleLoginSubject,
   GoogleLoginError,
   type GoogleIdTokenPayload,
 } from '@maronn-openid-connect/google-login';
+import {
+  buildGoogleSignInAttributes,
+  type GoogleSignInAttributes,
+} from '@maronn-openid-connect/google-login/sign-in';
 import {
   transactionStore as defaultTransactionStore,
   authSessionStore as defaultAuthSessionStore,
@@ -29,17 +32,18 @@ import { defaultViews, renderView } from '../views';
 export const loginApp = new WebRouter();
 
 /**
- * EXTENSION (google-login): render the "Sign in with Google" button for this
- * transaction, or undefined when config.googleLogin is not set. Every render
- * issues a fresh nonce bound to the transaction: Google echoes it in the ID
- * token, which is how the callback below finds its way back to this
+ * EXTENSION (google-login): build the GIS configuration (the g_id_onload
+ * attributes) for this transaction, or undefined when config.googleLogin is not
+ * set. Rendering is the view's job (views.ts): the package generates no UI.
+ * Every render issues a fresh nonce bound to the transaction: Google echoes it
+ * in the ID token, which is how the callback below finds its way back to this
  * authorization request (the redirect-mode POST carries nothing else).
  */
-async function renderGoogleSignIn(
+async function buildGoogleSignIn(
   c: any,
   transactionId: string,
   transaction: AuthTransaction,
-): Promise<string | undefined> {
+): Promise<GoogleSignInAttributes | undefined> {
   const config = c.get('config') ?? defaultProviderConfig;
   const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
   if (!googleLogin) return undefined;
@@ -49,7 +53,7 @@ async function renderGoogleSignIn(
     expiresAt: transaction.expiresAt,
     store: nonceStore,
   });
-  return buildGoogleSignInMarkup({
+  return buildGoogleSignInAttributes({
     clientId: googleLogin.clientId,
     // Must equal an authorized redirect URI of the Google OAuth client. Built on
     // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
@@ -122,7 +126,7 @@ loginApp.get('/', async (c) => {
     // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
     loginHint: transaction.loginHint,
     // EXTENSION (google-login): undefined until config.googleLogin is set.
-    googleSignInHtml: await renderGoogleSignIn(c, transactionId, transaction),
+    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
   }));
 });
 
@@ -168,7 +172,7 @@ loginApp.post('/', async (c) => {
       error: 'Invalid credentials',
       remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
       loginHint: transaction.loginHint,
-      googleSignInHtml: await renderGoogleSignIn(c, transactionId, transaction),
+      googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
     }));
   }
 

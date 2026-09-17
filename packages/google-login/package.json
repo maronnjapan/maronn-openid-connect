@@ -12,6 +12,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./sign-in": {
+      "types": "./dist/sign-in.d.ts",
+      "import": "./dist/sign-in.js"
     }
   },
   "files": [

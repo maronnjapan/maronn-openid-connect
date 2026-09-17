@@ -11,6 +11,15 @@
  * rendering, or UI framework of your choice.
  */
 
+// EXTENSION (google-login): the GIS configuration type and the helper that
+// serializes it into this string template. The package generates no UI; the
+// three elements GIS needs are written out in defaultLoginPage below.
+import {
+  googleSignInAttributesToHtml,
+  GOOGLE_GSI_CLIENT_SCRIPT_URL,
+  type GoogleSignInAttributes,
+} from '@maronn-openid-connect/google-login/sign-in';
+
 // ============================================================
 // View Parameter Types
 // ============================================================
@@ -31,12 +40,14 @@ export interface LoginPageParams {
    */
   loginHint?: string;
   /**
-   * EXTENSION (google-login): pre-rendered "Sign in with Google" button (GIS
-   * HTML API, redirect mode) built by buildGoogleSignInMarkup(). Its attribute
-   * values are already escaped, so it is inserted verbatim. Undefined when
-   * Google login is not configured; only the password form is shown then.
+   * EXTENSION (google-login): GIS configuration for "Sign in with Google"
+   * (redirect mode) — the g_id_onload attributes built by
+   * buildGoogleSignInAttributes(): client ID, data-ux_mode="redirect", the
+   * login_uri Google posts the ID token to, and the nonce bound to this
+   * transaction. The view owns the markup (see defaultLoginPage). Undefined
+   * when Google login is not configured; only the password form is shown then.
    */
-  googleSignInHtml?: string;
+  googleSignIn?: GoogleSignInAttributes;
 }
 
 export interface ConsentPageParams {
@@ -239,10 +250,13 @@ function defaultLoginPage(params: LoginPageParams): string {
       }</p>`
     : '';
 
-  // EXTENSION (google-login): markup from buildGoogleSignInMarkup(), already
-  // attribute-escaped, so it is inserted verbatim below the password form.
-  const googleSignInHtml = params.googleSignInHtml
-    ? `  <hr />\n  <section aria-label="Sign in with Google">\n${params.googleSignInHtml}\n  </section>\n`
+  // EXTENSION (google-login): the three elements GIS needs for redirect mode —
+  // its client script, #g_id_onload carrying the configuration (attribute
+  // values escaped by googleSignInAttributesToHtml), and .g_id_signin, which
+  // GIS replaces with the button. Style the button through the GIS button
+  // attributes (data-theme, data-size, data-text, ...) on .g_id_signin.
+  const googleSignInHtml = params.googleSignIn
+    ? `  <hr />\n  <section aria-label="Sign in with Google">\n    <script src="${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>\n    <div ${googleSignInAttributesToHtml(params.googleSignIn)}></div>\n    <div class="g_id_signin" data-type="standard"></div>\n  </section>\n`
     : '';
 
   return `<!DOCTYPE html>

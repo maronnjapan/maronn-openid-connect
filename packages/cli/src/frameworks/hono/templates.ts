@@ -7313,13 +7313,16 @@ async function rejectUnboundTransaction(
   const googleLoginImports = features.googleLogin
     ? `
 import {
-  buildGoogleSignInMarkup,
   handleGoogleLoginRedirect,
   issueGoogleLoginNonce,
   resolveGoogleLoginSubject,
   GoogleLoginError,
   type GoogleIdTokenPayload,
-} from '${GOOGLE_LOGIN_PACKAGE}';`
+} from '${GOOGLE_LOGIN_PACKAGE}';
+import {
+  buildGoogleSignInAttributes,
+  type GoogleSignInAttributes,
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`
     : '';
   const googleStoreImport = features.googleLogin
     ? `
@@ -7329,26 +7332,27 @@ import {
   const googleSignInField = features.googleLogin
     ? `
     // EXTENSION (google-login): undefined until config.googleLogin is set.
-    googleSignInHtml: await renderGoogleSignIn(c, transactionId, transaction),`
+    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),`
     : '';
   const googleSignInFieldOnFailure = features.googleLogin
     ? `
-      googleSignInHtml: await renderGoogleSignIn(c, transactionId, transaction),`
+      googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),`
     : '';
   const googleLoginHelpers = features.googleLogin
     ? `
 /**
- * EXTENSION (google-login): render the "Sign in with Google" button for this
- * transaction, or undefined when config.googleLogin is not set. Every render
- * issues a fresh nonce bound to the transaction: Google echoes it in the ID
- * token, which is how the callback below finds its way back to this
+ * EXTENSION (google-login): build the GIS configuration (the g_id_onload
+ * attributes) for this transaction, or undefined when config.googleLogin is not
+ * set. Rendering is the view's job (views.ts): the package generates no UI.
+ * Every render issues a fresh nonce bound to the transaction: Google echoes it
+ * in the ID token, which is how the callback below finds its way back to this
  * authorization request (the redirect-mode POST carries nothing else).
  */
-async function renderGoogleSignIn(
+async function buildGoogleSignIn(
   c: any,
   transactionId: string,
   transaction: AuthTransaction,
-): Promise<string | undefined> {
+): Promise<GoogleSignInAttributes | undefined> {
   const config = c.get('config') ?? defaultProviderConfig;
   const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
   if (!googleLogin) return undefined;
@@ -7358,7 +7362,7 @@ async function renderGoogleSignIn(
     expiresAt: transaction.expiresAt,
     store: nonceStore,
   });
-  return buildGoogleSignInMarkup({
+  return buildGoogleSignInAttributes({
     clientId: googleLogin.clientId,
     // Must equal an authorized redirect URI of the Google OAuth client. Built on
     // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
@@ -9122,22 +9126,39 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
   // EXTENSION (google-login): the login page gains a pre-rendered "Sign in with
   // Google" button. Every interpolation collapses to '' when the feature is off,
   // so the default views.ts is unchanged byte for byte.
+  const googleViewsImport = features.googleLogin
+    ? `// EXTENSION (google-login): the GIS configuration type and the helper that
+// serializes it into this string template. The package generates no UI; the
+// three elements GIS needs are written out in defaultLoginPage below.
+import {
+  googleSignInAttributesToHtml,
+  GOOGLE_GSI_CLIENT_SCRIPT_URL,
+  type GoogleSignInAttributes,
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';
+
+`
+    : '';
   const googleLoginPageParam = features.googleLogin
     ? `  /**
-   * EXTENSION (google-login): pre-rendered "Sign in with Google" button (GIS
-   * HTML API, redirect mode) built by buildGoogleSignInMarkup(). Its attribute
-   * values are already escaped, so it is inserted verbatim. Undefined when
-   * Google login is not configured; only the password form is shown then.
+   * EXTENSION (google-login): GIS configuration for "Sign in with Google"
+   * (redirect mode) — the g_id_onload attributes built by
+   * buildGoogleSignInAttributes(): client ID, data-ux_mode="redirect", the
+   * login_uri Google posts the ID token to, and the nonce bound to this
+   * transaction. The view owns the markup (see defaultLoginPage). Undefined
+   * when Google login is not configured; only the password form is shown then.
    */
-  googleSignInHtml?: string;
+  googleSignIn?: GoogleSignInAttributes;
 `
     : '';
   const googleSignInSnippet = features.googleLogin
     ? `
-  // EXTENSION (google-login): markup from buildGoogleSignInMarkup(), already
-  // attribute-escaped, so it is inserted verbatim below the password form.
-  const googleSignInHtml = params.googleSignInHtml
-    ? \`  <hr />\\n  <section aria-label="Sign in with Google">\\n\${params.googleSignInHtml}\\n  </section>\\n\`
+  // EXTENSION (google-login): the three elements GIS needs for redirect mode —
+  // its client script, #g_id_onload carrying the configuration (attribute
+  // values escaped by googleSignInAttributesToHtml), and .g_id_signin, which
+  // GIS replaces with the button. Style the button through the GIS button
+  // attributes (data-theme, data-size, data-text, ...) on .g_id_signin.
+  const googleSignInHtml = params.googleSignIn
+    ? \`  <hr />\\n  <section aria-label="Sign in with Google">\\n    <script src="\${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>\\n    <div \${googleSignInAttributesToHtml(params.googleSignIn)}></div>\\n    <div class="g_id_signin" data-type="standard"></div>\\n  </section>\\n\`
     : '';
 `
     : '';
@@ -9155,7 +9176,7 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
  * rendering, or UI framework of your choice.
  */
 
-// ============================================================
+${googleViewsImport}// ============================================================
 // View Parameter Types
 // ============================================================
 

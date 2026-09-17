@@ -64,7 +64,7 @@ export interface IssueGoogleLoginNonceOptions {
 /**
  * ログイン画面の描画時に nonce を発行し、トランザクション ID との対応を保存する。
  *
- * 返した nonce を {@link buildGoogleSignInMarkup} の `nonce` に渡すこと。
+ * 返した nonce をフロント側の設定（`./sign-in` の `buildGoogleSignInAttributes`）の `nonce` に渡すこと。
  *
  * @returns 発行した nonce（base64url, 43 文字）
  */

@@ -5,7 +5,8 @@ Sign in with Google（Google Identity Services、以下 GIS）の redirect mode 
 ## 位置づけ
 
 - **core と組み合わせて使う。単体では使わない。** Google のログイン結果を core の認証トランザクション（`getAuthTransaction` → 認証セッションの確立 → 同意 → `completeAuthTransaction`）へ接続するための部品で、OP 本体の機能は持たない
-- **CLI 生成コードから呼び出す想定で API を切っている。** core と同じく HTTP の配線（ルーティング・本文解析・Cookie の発行）は呼び出し側の責務とし、このパッケージは検証と生成のステップ関数だけを提供する。`@maronn-openid-connect/cli` の `--enable google-login` で生成コードに組み込まれる（[CLI での利用](#cli-での利用)）。CLI を使わない場合の配線例は [生成コードへの配線](#生成コードへの配線)
+- **CLI 生成コードから呼び出す想定で API を切っている。** core と同じく HTTP の配線（ルーティング・本文解析・Cookie の発行）は呼び出し側の責務とし、このパッケージは検証と設定のステップ関数だけを提供する。`@maronn-openid-connect/cli` の `--enable google-login` で生成コードに組み込まれる（[CLI での利用](#cli-での利用)）。CLI を使わない場合の配線例は [生成コードへの配線](#生成コードへの配線)
+- **UI は生成しない。** ログイン画面に何を置くかは [フロント側の設定](#フロント側の設定ログイン画面に置くもの) に書いてあるとおりで、描画はプレーン HTML / React / Vue など利用側の方法で行う。パッケージが提供するのは、忘れると動かない・安全でなくなる設定（`data-ux_mode="redirect"` / `data-login_uri` / `data-nonce`）を必ず含んだ `g_id_onload` の属性オブジェクトを組み立てる `buildGoogleSignInAttributes` だけで、Node 非依存のサブパス `@maronn-openid-connect/google-login/sign-in` から import する（ブラウザ向けバンドルや React の client component に google-auth-library を引き込ませないため）
 - **ID トークンの検証は Google 公式の [`google-auth-library`](https://github.com/googleapis/google-auth-library-nodejs) に委ねる。** 公開鍵の取得とローテーション追随、署名・`iss`・`aud`・`exp` の検証はライブラリが行い、Google 側の仕様変更にはライブラリの更新で追随する。このパッケージが自前で持つのは、redirect mode の POST の読み取り、Double Submit Cookie の検証、core の認証トランザクションへの束縛、ログイン画面のボタン生成だけ
 - **Node.js 22 以上限定。** `google-auth-library` が Node.js の API を前提にするため、core / experimental と違い Cloudflare Workers などのエッジランタイムでは動かない。production 依存に外部ライブラリを持つのはモノレポ内でこのパッケージだけ
 - **core は peerDependency**（`>=0.3.0 <1.0.0`）。experimental と同じ理由で `dependencies` には置かない（アプリ内の core のインスタンスを 1 つに保つため。[RELEASE.md](../../RELEASE.md)「バージョニング方針」）
@@ -23,8 +24,9 @@ Sign in with Google（Google Identity Services、以下 GIS）の redirect mode 
 RP ──(認可リクエスト)──> OP /authorize        core: validateAuthorizationRequest → createAuthTransaction
                           │
                           └─> OP /login?transaction_id=…（GET）
-                                issueGoogleLoginNonce  … nonce → transaction_id をストアに保存
-                                buildGoogleSignInMarkup … data-ux_mode="redirect" / data-login_uri / data-nonce
+                                issueGoogleLoginNonce       … nonce → transaction_id をストアに保存（サーバー側）
+                                buildGoogleSignInAttributes … g_id_onload の属性（data-ux_mode="redirect" / data-login_uri / data-nonce）
+                                画面側がその属性で g_id_onload と g_id_signin を描画（HTML / React / Vue）
                           │
 ユーザーが Google でアカウントを選択（GIS クライアントが g_csrf_token Cookie を設定）
                           │
@@ -48,6 +50,13 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 
 `google-auth-library` は本パッケージの `dependencies` に入っているので、別途追加する必要はない。
 
+エントリポイントは 2 つある。
+
+| import 元 | 役割 | 動く環境 |
+|---|---|---|
+| `@maronn-openid-connect/google-login` | サーバー側: `login_uri` に届いた POST の処理、ID トークン検証、nonce の発行と消費 | Node.js 22 以上 |
+| `@maronn-openid-connect/google-login/sign-in` | フロント側: `g_id_onload` の属性の組み立てと HTML 文字列化、GIS の定数 | どこでも（依存なし。ブラウザ / React / Vue / エッジ可） |
+
 ## Google Cloud コンソール側の設定
 
 1. OAuth 2.0 クライアント ID（種類: ウェブ アプリケーション）を作成する
@@ -56,18 +65,94 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 
 `login_uri` はログイン画面と同一サイトに置く。GIS クライアントが `g_csrf_token` Cookie をログイン画面のドメインに設定し、同じ値を POST 本文にも入れるため、別サイトでは Cookie が届かず Double Submit Cookie の検証に失敗する。
 
+## フロント側の設定（ログイン画面に置くもの）
+
+Google のドキュメント（redirect mode）どおり、ログイン画面には次の 3 つを置く。これだけで、ユーザーがアカウントを選ぶとブラウザが `login_uri` へ ID トークンを POST する。
+
+```html
+<!-- 1. GIS クライアント -->
+<script src="https://accounts.google.com/gsi/client" async></script>
+
+<!-- 2. 設定。id は g_id_onload 固定 -->
+<div id="g_id_onload"
+     data-client_id="<OAuth クライアント ID>"
+     data-ux_mode="redirect"
+     data-login_uri="https://op.example.com/login/google"
+     data-nonce="<サーバーで issueGoogleLoginNonce が発行した nonce>"
+     data-login_hint="<任意: OIDC の login_hint>"
+     data-hd="<任意: Google Workspace のドメイン>"></div>
+
+<!-- 3. ボタン。class は g_id_signin 固定。見た目は GIS のボタン属性で自由に -->
+<div class="g_id_signin" data-type="standard" data-theme="outline" data-size="large"></div>
+```
+
+| 属性 | 値 | 忘れると |
+|---|---|---|
+| `data-ux_mode` | `redirect` 固定 | popup mode になり、ID トークンが `login_uri` に届かない |
+| `data-login_uri` | Google Cloud コンソールに登録したリダイレクト URI と完全一致 | Google が POST を拒否する |
+| `data-nonce` | リクエストごとにサーバーで発行した値 | ID トークンに `nonce` が入らず、`login_uri` 側でどの認証トランザクションか分からない（`consumeGoogleLoginNonce` が 400 にする） |
+
+これらを手で書くと `nonce` の埋め忘れが起きやすいので、`@maronn-openid-connect/google-login/sign-in` の `buildGoogleSignInAttributes` で `g_id_onload` の属性オブジェクトを組み立てる。3 つの必須属性は必ず含まれ、キーは GIS の属性名そのものなので、描画方法を問わずそのまま渡せる。
+
+```typescript
+import { buildGoogleSignInAttributes, GOOGLE_GSI_CLIENT_SCRIPT_URL } from '@maronn-openid-connect/google-login/sign-in';
+
+// サーバー側で nonce を発行してから（issueGoogleLoginNonce）、画面へ渡す
+const googleSignIn = buildGoogleSignInAttributes({
+  clientId: process.env.GOOGLE_CLIENT_ID!,
+  loginUri: 'https://op.example.com/login/google',
+  nonce,
+  loginHint: transaction.loginHint, // 任意
+});
+// => { id: 'g_id_onload', 'data-client_id': '…', 'data-ux_mode': 'redirect', 'data-login_uri': '…', 'data-nonce': '…', 'data-login_hint': '…' }
+```
+
+プレーン HTML（文字列テンプレート）:
+
+```typescript
+import { googleSignInAttributesToHtml } from '@maronn-openid-connect/google-login/sign-in';
+
+const html = `
+  <script src="${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>
+  <div ${googleSignInAttributesToHtml(googleSignIn)}></div>
+  <div class="g_id_signin" data-type="standard"></div>
+`;
+```
+
+React（Next.js の App Router なら `<Script>` は `next/script`）:
+
+```tsx
+<script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} async />
+<div {...googleSignIn} />
+<div className="g_id_signin" data-type="standard" />
+```
+
+Vue:
+
+```vue
+<div v-bind="googleSignIn" />
+<div class="g_id_signin" data-type="standard"></div>
+```
+
+`data-auto_select` / `data-context` などの他の GIS 属性は要素側で足す（`{ ...googleSignIn, 'data-context': 'signin' }`）。ログイン画面に Content-Security-Policy を設定している場合は `GOOGLE_SIGN_IN_CSP_SOURCES` の値を各ディレクティブに追加する。
+
 ## 提供機能（API 概要）
 
-すべて `@maronn-openid-connect/google-login` からエクスポートされる。
-
-### ログイン画面
+### フロント側（`@maronn-openid-connect/google-login/sign-in`）
 
 | API | 役割 |
 |---|---|
-| `issueGoogleLoginNonce` | 認証トランザクション ID に対応する nonce を発行し、`GoogleLoginNonceStore` に保存する（TTL はトランザクションの `expiresAt` まで） |
-| `buildGoogleSignInMarkup` | GIS の「Google でログイン」ボタン（redirect mode）の HTML を生成する。`data-nonce` / `data-login_hint`（OIDC の `login_hint`）/ `data-hd` / ボタンの見た目を指定できる。属性値は HTML エスケープする |
+| `buildGoogleSignInAttributes` | `g_id_onload` 要素の属性オブジェクトを組み立てる。`data-ux_mode="redirect"` / `data-login_uri` / `data-nonce` を必ず含め、`data-login_hint`（OIDC の `login_hint`）/ `data-hd` は指定時のみ |
+| `googleSignInAttributesToHtml` | 属性オブジェクトを HTML 文字列テンプレート用の `name="value"` 列にする（値はエスケープ、`undefined` は省く） |
 | `assertGoogleLoginUri` | `loginUri` が GIS の条件（絶対 URL・HTTPS・fragment 無し。localhost のみ HTTP 可）を満たすことを検証する |
+| `GOOGLE_GSI_CLIENT_SCRIPT_URL` / `GOOGLE_SIGN_IN_ONLOAD_ID` / `GOOGLE_SIGN_IN_BUTTON_CLASS` | GIS のスクリプト URL と、`g_id_onload` / `g_id_signin` の要素名 |
 | `GOOGLE_SIGN_IN_CSP_SOURCES` | ログイン画面に Content-Security-Policy を設定している場合に各ディレクティブへ足す GIS のソース |
+
+### ログイン画面のサーバー側
+
+| API | 役割 |
+|---|---|
+| `issueGoogleLoginNonce` | 認証トランザクション ID に対応する nonce を発行し、`GoogleLoginNonceStore` に保存する（TTL はトランザクションの `expiresAt` まで）。画面を描画するたびに発行し、`buildGoogleSignInAttributes` の `nonce` に渡す |
 
 ### login_uri（redirect mode の POST 先）
 
@@ -116,12 +201,12 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 生成物 | 内容 |
 |---|---|
 | `config.ts` | `ProviderConfig.googleLogin?: GoogleLoginConfig`（`clientId` / 任意の `hostedDomain` / `requireVerifiedEmail`）。未設定ならボタンは出ず、`/login/google` は 404 |
-| `views.ts` | `LoginPageParams.googleSignInHtml`。既定のログイン画面はパスワードフォームの下に `buildGoogleSignInMarkup()` の HTML をそのまま埋め込む |
+| `views.ts` | `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。UI は生成コード側にあるので自由に変えられる |
 | `routes/login.ts` | GET `/login` でトランザクションに束縛した nonce を発行してボタンを描画。`POST /login/google`（`login_uri`）で `handleGoogleLoginRedirect` → `resolveGoogleLoginSubject` → パスワードログインと同じセッション確立 → `/consent` |
 | `store.ts` | `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両方）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）と `googleAccountResolver`（既定は `linkGoogleAccount`）を差し替えられるオプション |
 | `conformance.test.ts` | 偽の `GoogleIdTokenVerifier` を注入してボタン描画・CSRF・nonce・JIT 登録・トークン発行までを固定する契約テスト |
-| Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/runtime.ts` | ページ側でのボタン描画、`login_uri` の Route Handler（Node.js ランタイム）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
+| Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/runtime.ts` | ページ側で `<div {...googleSignIn} />` と `next/script` による描画、`login_uri` の Route Handler（Node.js ランタイム）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
 
 生成コードは `config.googleLogin` が無いときはボタンを描画せず `/login/google` を 404 で閉じるので、まず生成だけしておき、Google Cloud コンソールの準備ができてから `clientId` を渡す、という順でも動く。`login_uri` は `new URL('/login/google', config.issuer)` で組み立てるため、Google 側には `<issuer>/login/google` を登録する。
 
@@ -137,7 +222,6 @@ CLI を使わずに組み込む場合（または `--enable google-login` が `r
 import { Hono } from 'hono';
 import { getAuthTransaction, generateRandomString } from '@maronn-openid-connect/core';
 import {
-  buildGoogleSignInMarkup,
   handleGoogleLoginRedirect,
   issueGoogleLoginNonce,
   resolveGoogleLoginSubject,
@@ -146,6 +230,10 @@ import {
   type GoogleLoginNonceRecord,
   type GoogleLoginNonceStore,
 } from '@maronn-openid-connect/google-login';
+import {
+  buildGoogleSignInAttributes,
+  type GoogleSignInAttributes,
+} from '@maronn-openid-connect/google-login/sign-in';
 import { transactionStore, authSessionStore, browserSessionStore, buildSessionCookie, userStore } from './store.js';
 import { defaultProviderConfig } from './config.js';
 
@@ -180,15 +268,16 @@ const googleAccountResolver: GoogleAccountResolver = {
 
 export const googleLoginApp = new Hono();
 
-// ログイン画面（GET /login）でボタンを描画する部分
-export async function renderGoogleSignInButton(transactionId: string): Promise<string> {
+// ログイン画面（GET /login）の描画に渡す g_id_onload の属性。描画そのもの
+// （HTML / React / Vue）は views 側で行う（「フロント側の設定」を参照）
+export async function googleSignInFor(transactionId: string): Promise<GoogleSignInAttributes> {
   const transaction = await getAuthTransaction(transactionId, transactionStore);
   const nonce = await issueGoogleLoginNonce({
     transactionId,
     expiresAt: transaction.expiresAt,
     store: googleLoginNonceStore,
   });
-  return buildGoogleSignInMarkup({
+  return buildGoogleSignInAttributes({
     ...googleLoginConfig,
     nonce,
     loginHint: transaction.loginHint, // OIDC Core 1.0 §3.1.2.1
@@ -259,6 +348,7 @@ tokeninfo エンドポイント（`https://oauth2.googleapis.com/tokeninfo`）�
 - **redirect mode のみ。** popup mode / One Tap の JavaScript コールバック（`callback`）で受け取った credential をブラウザから別途送る構成は対象外。ただし `verifyGoogleIdToken` 単体は、どの経路で受け取った Google の ID トークンにも使える
 - **エッジ向けの生成コードでは有効化しない。** `--enable google-login` の生成物は Node.js 22 以上を前提にする。`samples/hono-cloudflare`（Cloudflare Workers）で有効にしていないのはこのため
 - `login_uri` へ届く POST の本文解析と Cookie の発行は行わない（core と同じく呼び出し側の責務）
+- **ログイン画面の UI は生成しない。** 置くべき要素と属性は「フロント側の設定」のとおりで、`buildGoogleSignInAttributes` は属性オブジェクトを返すだけ。ボタンの見た目（`g_id_signin` の GIS 属性）も利用側で決める
 
 ## ライセンス
 

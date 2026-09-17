@@ -51,17 +51,48 @@ applyOidc(app, {
 
 生成される Next.js の `_oidc-provider/runtime.ts` と本リポジトリの samples は、`GOOGLE_CLIENT_ID` と `GOOGLE_HOSTED_DOMAIN` からこれを読みます。
 
+## フロント側の設定
+
+パッケージはログイン画面の UI を生成しません。Google のドキュメント（redirect mode）どおり、画面には次の 3 つを置きます。
+
+```html
+<script src="https://accounts.google.com/gsi/client" async></script>
+<div id="g_id_onload"
+     data-client_id="<OAuth クライアント ID>"
+     data-ux_mode="redirect"
+     data-login_uri="https://op.example.com/login/google"
+     data-nonce="<サーバーで発行した nonce>"></div>
+<div class="g_id_signin" data-type="standard"></div>
+```
+
+`data-ux_mode="redirect"`、Google 側の登録値と完全一致する `data-login_uri`、リクエストごとに発行する `data-nonce` を忘れると動かない（または `login_uri` 側でトランザクションを復元できない）ので、`@maronn-openid-connect/google-login/sign-in` の `buildGoogleSignInAttributes` で `g_id_onload` の属性オブジェクトを組み立てます。キーは GIS の属性名そのものなので、描画方法を問わずそのまま渡せます。このサブパスは何にも依存しないので、ブラウザ向けバンドルや React の client component からも import できます。
+
+```typescript
+import { buildGoogleSignInAttributes, googleSignInAttributesToHtml } from '@maronn-openid-connect/google-login/sign-in';
+
+const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, loginHint });
+
+// プレーン HTML（文字列テンプレート）
+`<div ${googleSignInAttributesToHtml(googleSignIn)}></div>`;
+// React
+<div {...googleSignIn} />;
+// Vue
+// <div v-bind="googleSignIn" />
+```
+
+生成コードの既定のログイン画面（`views.ts` / Next.js の `login/page.tsx`）はこの形で 3 要素を書き出しているので、見た目や配置はそこを書き換えます。
+
 ## 生成されるもの
 
 | 生成物 | 内容 |
 |---|---|
 | `config.ts` | `GoogleLoginConfig` と `ProviderConfig.googleLogin` |
-| `views.ts` | `LoginPageParams.googleSignInHtml`。既定のログイン画面はパスワードフォームの下に、`buildGoogleSignInMarkup()` が生成した GIS のボタン HTML（`data-ux_mode="redirect"` / `data-login_uri` / `data-nonce`）をそのまま埋め込む |
+| `views.ts` | `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。UI は生成コード側にあるので、見た目や配置は自由に変えられる |
 | `routes/login.ts` | GET `/login` で認証トランザクションに束縛した nonce を発行してボタンを描画。`POST /login/google` で ID トークンを受け取り、パスワードログインと同じ手順でセッションを確立して `/consent` へ進む |
 | `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier` と `googleAccountResolver` を差し替えるオプション |
 | `conformance.test.ts` | ボタン描画・nonce・CSRF・検証失敗・hosted domain・JIT 登録からトークン発行と UserInfo までを固定する契約テスト |
-| Next.js | `login/page.tsx` でのボタン描画、`login/google/route.ts`（Node.js ランタイム）、`runtime.ts` の環境変数読み取り |
+| Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`runtime.ts` の環境変数読み取り |
 
 Hono のメソッドガードと Fastify アダプタには `POST /login/google` が登録され、それ以外のメソッドは 405 になります。
 
@@ -70,8 +101,8 @@ Hono のメソッドガードと Fastify アダプタには `POST /login/google`
 ```
 RP ──(認可リクエスト)──> /authorize             core: createAuthTransaction
                           └─> GET /login?transaction_id=…
-                                issueGoogleLoginNonce   nonce → transaction_id をストアに保存
-                                buildGoogleSignInMarkup data-nonce にその nonce を載せる
+                                issueGoogleLoginNonce        nonce → transaction_id をストアに保存
+                                buildGoogleSignInAttributes  g_id_onload の属性（data-nonce にその nonce）を組み立て、画面が描画
 ユーザーが Google でアカウントを選択（GIS が g_csrf_token Cookie を設定）
 Google ──(POST credential, g_csrf_token)──> /login/google
                                 1. g_csrf_token の Cookie と本文を突き合わせる（Double Submit Cookie）

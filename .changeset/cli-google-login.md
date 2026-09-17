@@ -7,7 +7,7 @@
 有効時は `@maronn-openid-connect/google-login` を import する次の生成物が加わる。
 
 - `config.ts`: `ProviderConfig.googleLogin?: GoogleLoginConfig`（`clientId` / 任意の `hostedDomain` / `requireVerifiedEmail`）。未設定ならボタンは描画されず `/login/google` は 404
-- `views.ts`: `LoginPageParams.googleSignInHtml`。既定のログイン画面はパスワードフォームの下に `buildGoogleSignInMarkup()` の HTML を埋め込む
+- `views.ts`: `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す（UI は生成コード側にあり、パッケージは属性だけを返す）
 - `routes/login.ts`: GET `/login` で認証トランザクションに束縛した nonce を発行してボタンを描画し、`POST /login/google`（`login_uri`）で `g_csrf_token` の Double Submit Cookie 検証 → `google-auth-library` による ID トークン検証 → nonce の単回消費 → パスワードログインと同じセッション確立 → `/consent` へ進む
 - `store.ts`: `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()`
 - `app.ts`: `googleIdTokenVerifier` / `googleAccountResolver` を差し替えるオプション（契約テストは偽の verifier を注入する）

@@ -127,6 +127,8 @@ describe('generate with --enable google-login', () => {
       );
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
+      expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
+      expect(content.includes('return buildGoogleSignInAttributes({')).toBe(true);
       expect(content.includes("loginApp.post('/google', async (c) => {")).toBe(true);
       expect(content.includes('handleGoogleLoginRedirect({')).toBe(true);
       expect(content.includes('resolveGoogleLoginSubject(login.account, accountResolver)')).toBe(
@@ -143,7 +145,7 @@ describe('generate with --enable google-login', () => {
         providerPath(framework, 'routes/login.ts'),
       );
       const renders = content.split(
-        'googleSignInHtml: await renderGoogleSignIn(c, transactionId, transaction),',
+        'googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),',
       );
 
       expect(renders.length).toBe(3);
@@ -173,13 +175,19 @@ describe('generate with --enable google-login', () => {
       expect(content.includes('export const googleLoginNonceStore')).toBe(true);
     });
 
-    it('should insert the pre-rendered button markup into the default login page when enabled', () => {
+    // The package generates no UI: the view receives the g_id_onload attributes
+    // and writes out the three GIS elements itself, so users can restyle them.
+    it('should render the GIS elements from the attributes in the default login page when enabled', () => {
       const content = fileContent(
         generateFiles(framework, ['google-login']),
         providerPath(framework, 'views.ts'),
       );
 
-      expect(content.includes('  googleSignInHtml?: string;')).toBe(true);
+      expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
+      expect(content.includes('  googleSignIn?: GoogleSignInAttributes;')).toBe(true);
+      expect(content.includes('<div ${googleSignInAttributesToHtml(params.googleSignIn)}></div>')).toBe(true);
+      expect(content.includes('<script src="${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>')).toBe(true);
+      expect(content.includes('<div class="g_id_signin" data-type="standard"></div>')).toBe(true);
       // The interpolation must reach the generated file unescaped, otherwise
       // the page would print the placeholder text instead of the button.
       expect(content.includes('\n${googleSignInHtml}</body>')).toBe(true);
@@ -270,16 +278,20 @@ describe('generate with --enable google-login', () => {
     expect(paths.includes('login/google/route.ts')).toBe(false);
   });
 
-  it('should render the button from the Next.js login page when enabled', () => {
+  // React gets the attributes as props, not as an HTML string: no
+  // dangerouslySetInnerHTML, and the GIS script goes through next/script.
+  it('should render the GIS elements as JSX from the Next.js login page when enabled', () => {
     const content = fileContent(generateFiles('nextjs', ['google-login']), 'login/page.tsx');
 
     expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
+    expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
+    expect(content.includes("import Script from 'next/script';")).toBe(true);
     expect(content.includes('issueGoogleLoginNonce({')).toBe(true);
-    expect(
-      content.includes(
-        '<section aria-label="Sign in with Google" dangerouslySetInnerHTML={{ __html: googleSignInHtml }} />',
-      ),
-    ).toBe(true);
+    expect(content.includes('buildGoogleSignInAttributes({')).toBe(true);
+    expect(content.includes('<Script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} strategy="afterInteractive" />')).toBe(true);
+    expect(content.includes('<div {...googleSignIn} />')).toBe(true);
+    expect(content.includes('<div className="g_id_signin" data-type="standard" />')).toBe(true);
+    expect(content.includes('dangerouslySetInnerHTML')).toBe(false);
   });
 
   it('should read GOOGLE_CLIENT_ID in the Next.js runtime when enabled', () => {

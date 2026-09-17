@@ -1438,7 +1438,12 @@ async function isBoundToThisBrowser(
   // form. Every interpolation collapses to '' when the feature is off.
   const googleLoginImports = features.googleLogin
     ? `
-import { buildGoogleSignInMarkup, issueGoogleLoginNonce } from '${GOOGLE_LOGIN_PACKAGE}';`
+import Script from 'next/script';
+import { issueGoogleLoginNonce } from '${GOOGLE_LOGIN_PACKAGE}';
+import {
+  buildGoogleSignInAttributes,
+  GOOGLE_GSI_CLIENT_SCRIPT_URL,
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`
     : '';
   const loginPageStores = features.googleLogin
     ? `const { transactionStore, googleLoginNonceStore } =
@@ -1447,12 +1452,13 @@ import { buildGoogleSignInMarkup, issueGoogleLoginNonce } from '${GOOGLE_LOGIN_P
   (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;`;
   const googleSignInRender = features.googleLogin
     ? `
-  // EXTENSION (google-login): rendered only when config.googleLogin is set. Each
-  // render issues a fresh nonce bound to this transaction; Google echoes it in
-  // the ID token, which is how login/google/route.ts finds the transaction.
+  // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
+  // built only when config.googleLogin is set. Each render issues a fresh nonce
+  // bound to this transaction; Google echoes it in the ID token, which is how
+  // login/google/route.ts finds the transaction. The JSX below owns the markup.
   const googleLogin = oidcProviderOptions.config?.googleLogin;
-  const googleSignInHtml = googleLogin
-    ? buildGoogleSignInMarkup({
+  const googleSignIn = googleLogin
+    ? buildGoogleSignInAttributes({
         clientId: googleLogin.clientId,
         // Must equal an authorized redirect URI of the Google OAuth client.
         loginUri: new URL(
@@ -1474,12 +1480,18 @@ import { buildGoogleSignInMarkup, issueGoogleLoginNonce } from '${GOOGLE_LOGIN_P
   const googleSignInJsx = features.googleLogin
     ? `
       {/*
-        EXTENSION (google-login): the GIS button markup (attribute-escaped by
-        buildGoogleSignInMarkup) is server-rendered into the page, so the
-        accounts.google.com/gsi/client script it carries runs on load.
+        EXTENSION (google-login): the three elements GIS needs for redirect mode.
+        googleSignIn holds the g_id_onload attributes (data-ux_mode="redirect",
+        data-login_uri, data-nonce, ...) and spreads straight onto the element;
+        GIS replaces .g_id_signin with the button — style it through the GIS
+        button attributes (data-theme, data-size, data-text, ...).
       */}
-      {googleSignInHtml ? (
-        <section aria-label="Sign in with Google" dangerouslySetInnerHTML={{ __html: googleSignInHtml }} />
+      {googleSignIn ? (
+        <section aria-label="Sign in with Google">
+          <Script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} strategy="afterInteractive" />
+          <div {...googleSignIn} />
+          <div className="g_id_signin" data-type="standard" />
+        </section>
       ) : null}`
     : '';
   return `${bindingImports}

@@ -7,8 +7,12 @@
  * ルートから各ステップ関数を呼び出す想定で API を切っている。
  *
  * ID トークンの検証は Google 公式の google-auth-library（`OAuth2Client.verifyIdToken`）に
- * 委ねる。このパッケージは redirect mode の POST の読み取り、Double Submit Cookie の検証、
- * core の認証トランザクションへの束縛（nonce）、ログイン画面のボタン生成を担う。
+ * 委ねる。このエントリポイント（サーバー側）は redirect mode の POST の読み取り、
+ * Double Submit Cookie の検証、core の認証トランザクションへの束縛（nonce）を担う。
+ *
+ * ログイン画面（フロント側）の UI は生成しない。GIS の redirect mode に必要な設定属性は
+ * `@maronn-openid-connect/google-login/sign-in`（Node 非依存のサブパス）が組み立て、
+ * それをどう描くか（プレーン HTML / React / Vue）は利用側が決める。
  *
  * 参照ドキュメント:
  *   - Google ログインからの移行（redirect mode）
@@ -18,20 +22,6 @@
  */
 
 export { GoogleLoginError, GoogleLoginErrorCode } from './errors.js';
-
-export {
-  // ログイン画面: 「Google でログイン」ボタン（redirect mode）
-  buildGoogleSignInMarkup,
-  assertGoogleLoginUri,
-  escapeHtmlAttribute,
-  GOOGLE_GSI_CLIENT_SCRIPT_URL,
-  GOOGLE_SIGN_IN_CSP_SOURCES,
-} from './sign-in-markup.js';
-
-export type {
-  GoogleSignInButtonOptions,
-  GoogleSignInMarkupOptions,
-} from './sign-in-markup.js';
 
 export {
   // ログイン画面: 認証トランザクションへの束縛（nonce の発行と消費）

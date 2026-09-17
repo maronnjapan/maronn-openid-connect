@@ -10,16 +10,11 @@ describe('Google login package', () => {
         'GOOGLE_CREDENTIAL_PARAM',
         'GOOGLE_CSRF_TOKEN_COOKIE',
         'GOOGLE_CSRF_TOKEN_PARAM',
-        'GOOGLE_GSI_CLIENT_SCRIPT_URL',
         'GOOGLE_SELECT_BY_PARAM',
-        'GOOGLE_SIGN_IN_CSP_SOURCES',
         'GoogleLoginError',
         'GoogleLoginErrorCode',
-        'assertGoogleLoginUri',
-        'buildGoogleSignInMarkup',
         'consumeGoogleLoginNonce',
         'createGoogleIdTokenVerifier',
-        'escapeHtmlAttribute',
         'getDefaultGoogleIdTokenVerifier',
         'handleGoogleLoginRedirect',
         'issueGoogleLoginNonce',
@@ -36,7 +31,11 @@ describe('Google login package', () => {
     );
   });
 
-  it('should pin the GIS client script the login page loads', () => {
-    expect(api.GOOGLE_GSI_CLIENT_SCRIPT_URL).toBe('https://accounts.google.com/gsi/client');
+  // フロント側の設定（g_id_onload の属性）は Node 非依存のサブパス ./sign-in にあり、
+  // サーバー側のエントリポイントには含めない（ブラウザ向けバンドルに google-auth-library を
+  // 引き込ませないため）。
+  it('should keep the front-end sign-in helpers out of the server entry point', () => {
+    expect('buildGoogleSignInAttributes' in api).toBe(false);
+    expect('googleSignInAttributesToHtml' in api).toBe(false);
   });
 });

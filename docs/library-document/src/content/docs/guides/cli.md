@@ -44,7 +44,26 @@ const app = new Hono();
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
+| `--force` | 出力先に既にあるファイルを上書きする |
+| `--dry-run` | 書き込みを行わず、出力予定のファイル一覧（新規か上書きか）を表示する |
 | `--help, -h` | ヘルプ表示 |
+
+## Overwrite Protection
+
+出力先に生成対象と同名のファイルが 1 つでもある場合、`generate` / `setup` は**何も書き込まずに**そのファイル一覧を表示し、終了コード 1 で終わります。生成コードは改造して使うことが前提のため、`-o` の指定ミスや機能フラグを変えた再実行が、改造済みの `config.ts` や `store.ts` を無警告で潰さないようにしています。
+
+```
+Error: 2 file(s) already exist in ./oidc-provider:
+  config.ts
+  store.ts
+
+Re-run with --force to overwrite them, or use -o <dir> to generate into a new directory.
+Tip: commit the generated files before overwriting so you can diff your changes.
+```
+
+- 上書きするには `--force` を明示します。ログは新規作成が `Created:`、上書きが `Overwritten:` で区別されます
+- `--dry-run` は何も書き込まず、出力予定の全ファイルを `Would create:` / `Would overwrite:` で表示します。`--force` の前に影響範囲を確認する用途を想定しています
+- 再生成する予定があるなら、**生成直後にコミットしてから改造してください**。`--force` で上書きしても、自分の変更を `git diff` で取り戻せます
 
 ## Generated Files
 
@@ -57,8 +76,24 @@ oidc-provider/
 ├── resolvers.ts          # セッション・同意状態の resolver
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト UI
 ├── routes/               # 各エンドポイントのルート実装
-└── conformance.test.ts   # 生成 OP の想定挙動を固定する契約テスト
+├── conformance.test.ts   # 生成 OP の想定挙動を固定する契約テスト
+└── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
+
+### Generation Manifest (.maronn-openid-connect.json)
+
+生成物には、どの CLI バージョン・どの入力から生成されたかを記録するマニフェストが含まれます。
+
+```json
+{
+  "cliVersion": "0.5.0",
+  "framework": "hono",
+  "features": { "pkce": true, "refreshToken": true, "...": "..." },
+  "scopes": []
+}
+```
+
+このライブラリはテンプレートへ仕様修正（多くはセキュリティ修正）を継続的に入れています。手元の生成コードへ修正を取り込むか判断するときは、`cliVersion` と [リリースノート](https://github.com/maronnjapan/maronn-openid-connect/releases) を突き合わせ、生成元の版と最新版の差分を確認してください。マニフェストは利用者が編集するファイルではないため、上書き保護の対象外として生成のたびに更新されます（生成日時は含めず、同じ入力からは同じ出力になります）。
 
 ## Feature Toggles
 

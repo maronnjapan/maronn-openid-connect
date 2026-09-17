@@ -60,6 +60,7 @@ describe('resolveFeatures with ciba', () => {
       idJag: false,
       ciba: true,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -92,6 +93,7 @@ describe('resolveFeatures with ciba', () => {
       idJag: true,
       ciba: true,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -112,6 +114,7 @@ describe('resolveFeatures with ciba', () => {
       idJag: false,
       ciba: true,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });

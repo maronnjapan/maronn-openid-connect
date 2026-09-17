@@ -1,10 +1,11 @@
 import { getAuthTransaction } from '@maronn-openid-connect/core';
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
 import { defaultProviderStores } from '../_oidc-provider/store';
+import { buildGoogleSignInMarkup, issueGoogleLoginNonce } from '@maronn-openid-connect/google-login';
 import { loginAction } from './actions';
 
-const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
+const { transactionStore, googleLoginNonceStore } =
+  oidcProviderOptions.storage ?? defaultProviderStores;
 
 // Authorization redirects here with a per-request transaction_id, so the page
 // must always render dynamically (never statically cached).
@@ -50,6 +51,29 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
 
+  // EXTENSION (google-login): rendered only when config.googleLogin is set. Each
+  // render issues a fresh nonce bound to this transaction; Google echoes it in
+  // the ID token, which is how login/google/route.ts finds the transaction.
+  const googleLogin = oidcProviderOptions.config?.googleLogin;
+  const googleSignInHtml = googleLogin
+    ? buildGoogleSignInMarkup({
+        clientId: googleLogin.clientId,
+        // Must equal an authorized redirect URI of the Google OAuth client.
+        loginUri: new URL(
+          '/login/google',
+          oidcProviderOptions.config?.issuer ?? 'http://localhost:3000',
+        ).toString(),
+        nonce: await issueGoogleLoginNonce({
+          transactionId,
+          expiresAt: transaction.expiresAt,
+          store: googleLoginNonceStore,
+        }),
+        loginHint: transaction.loginHint,
+        hostedDomain:
+          typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
+      })
+    : undefined;
+
   const errorMessage =
     error === 'invalid_credentials'
       ? `Invalid credentials${remaining ? `. Attempts remaining: ${remaining}` : ''}`
@@ -76,6 +100,14 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </div>
         <button type="submit">Login</button>
       </form>
+      {/*
+        EXTENSION (google-login): the GIS button markup (attribute-escaped by
+        buildGoogleSignInMarkup) is server-rendered into the page, so the
+        accounts.google.com/gsi/client script it carries runs on load.
+      */}
+      {googleSignInHtml ? (
+        <section aria-label="Sign in with Google" dangerouslySetInnerHTML={{ __html: googleSignInHtml }} />
+      ) : null}
     </main>
   );
 }

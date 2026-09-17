@@ -30,6 +30,13 @@ export interface LoginPageParams {
    * HTML-attribute escaped before rendering since it is unauthenticated input.
    */
   loginHint?: string;
+  /**
+   * EXTENSION (google-login): pre-rendered "Sign in with Google" button (GIS
+   * HTML API, redirect mode) built by buildGoogleSignInMarkup(). Its attribute
+   * values are already escaped, so it is inserted verbatim. Undefined when
+   * Google login is not configured; only the password form is shown then.
+   */
+  googleSignInHtml?: string;
 }
 
 export interface ConsentPageParams {
@@ -232,6 +239,12 @@ function defaultLoginPage(params: LoginPageParams): string {
       }</p>`
     : '';
 
+  // EXTENSION (google-login): markup from buildGoogleSignInMarkup(), already
+  // attribute-escaped, so it is inserted verbatim below the password form.
+  const googleSignInHtml = params.googleSignInHtml
+    ? `  <hr />\n  <section aria-label="Sign in with Google">\n${params.googleSignInHtml}\n  </section>\n`
+    : '';
+
   return `<!DOCTYPE html>
 <html>
 <head><title>Login</title></head>
@@ -251,7 +264,7 @@ function defaultLoginPage(params: LoginPageParams): string {
     </div>
     <button type="submit">Login</button>
   </form>
-</body>
+${googleSignInHtml}</body>
 </html>`;
 }
 

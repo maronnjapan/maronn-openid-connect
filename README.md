@@ -200,7 +200,7 @@ Authorization Code Flow や OpenID Connect の拡張機能を実行するため�
 
 Sign in with Google（Google Identity Services の redirect mode）を、`packages/core` で組んだ OP のログイン手段として使うための拡張パッケージです。
 Google が `login_uri` へ POST する ID トークンの検証は Google 公式の `google-auth-library` に委ね、このパッケージは `g_csrf_token` の Double Submit Cookie 検証、任意の `hd` / `email_verified` の確認、ログイン画面に埋め込むボタンの HTML 生成、core の認証トランザクションへの束縛（nonce）を提供します。
-単体で使うものではなく、core と組み合わせて `packages/cli` の生成コードから呼び出す想定です。CLI への組み込み（`--enable google-login`）は未対応で、それまでは生成コードへ手で配線します。
+単体で使うものではなく、core と組み合わせて `packages/cli` の生成コードから呼び出す想定です。`maronn-oidc generate <framework> --enable google-login` で生成コードに組み込まれ（拡張機能。既定では無効）、ログイン画面の「Google でログイン」ボタンと `POST /login/google` の受け口が追加されます。`samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel` は `GOOGLE_CLIENT_ID` を設定すると Google ログインが有効になります。
 `google-auth-library` の要件により Node.js 22 以上限定で、エッジランタイムでは動きません。
 
 ### samples/*

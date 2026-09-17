@@ -57,6 +57,7 @@ describe('resolveFeatures with id-jag', () => {
       idJag: true,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -75,6 +76,7 @@ describe('resolveFeatures with id-jag', () => {
       idJag: true,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });

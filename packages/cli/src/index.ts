@@ -6,6 +6,7 @@ import { generate, getAvailableFrameworks } from './generator.js';
 import {
   AVAILABLE_FEATURES,
   EXPERIMENTAL_FEATURES,
+  EXTENSION_FEATURES,
   OPTIONAL_FEATURES,
   resolveFeatures,
 } from './features.js';
@@ -20,6 +21,7 @@ const INSTALL_COMMANDS: Record<string, string> = {
 };
 
 const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
+const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
 
 /**
  * Insert @maronn-openid-connect/experimental into the install guidance, but only when an
@@ -39,6 +41,18 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
     return installCommand;
   }
   return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${EXPERIMENTAL_PACKAGE}`);
+}
+
+/**
+ * Insert @maronn-openid-connect/google-login into the install guidance, but only
+ * when the google-login extension was selected. Applied before the experimental
+ * insertion so the packages read core, experimental, google-login.
+ */
+function withGoogleLoginPackage(installCommand: string, features: OidcFeatureConfig): string {
+  if (!features.googleLogin) {
+    return installCommand;
+  }
+  return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${GOOGLE_LOGIN_PACKAGE}`);
 }
 
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
@@ -64,6 +78,7 @@ function printUsage(): void {
   const features = AVAILABLE_FEATURES.join(', ');
   const optionalFeatures = OPTIONAL_FEATURES.join(', ');
   const experimentalFeatures = EXPERIMENTAL_FEATURES.join(', ');
+  const extensionFeatures = EXTENSION_FEATURES.join(', ');
   console.log(`
 Usage: maronn-oidc <command> <framework> [options]
 
@@ -91,6 +106,15 @@ Optional features (disabled by default): ${optionalFeatures}
 Experimental features (disabled by default): ${experimentalFeatures}
   Provided by the separate ${EXPERIMENTAL_PACKAGE} package. APIs are unstable
   and may change in a breaking way. Enable one with, e.g.: --enable par
+
+Extension features (disabled by default): ${extensionFeatures}
+  google-login (${GOOGLE_LOGIN_PACKAGE}): adds a "Sign in with Google" button to
+  the login page and a POST /login/google callback that verifies the ID token
+  Google posts there with Google's official google-auth-library. Node.js 22+
+  only. Set config.googleLogin.clientId (the generated Next.js runtime and the
+  samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
+  authorized redirect URI of that Google OAuth client. Enable with:
+  --enable google-login
 
 Custom scopes (none declared by default): the standard scopes (openid, profile,
   email, address, phone, offline_access) are always handled by the generated
@@ -306,6 +330,15 @@ export function run(args: string[]): void {
         `Warning: experimental features are provided by ${EXPERIMENTAL_PACKAGE} and their APIs may change in a breaking way.\n`,
       );
     }
+    const enabledExtensions = EXTENSION_FEATURES.filter((name) => parsed.enable.includes(name));
+    if (enabledExtensions.length > 0) {
+      console.log(`Extension features enabled: ${enabledExtensions.join(', ')}`);
+      console.log(
+        'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
+          'Next.js runtime and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
+          'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
+      );
+    }
     if (scopes.length > 0) {
       console.log(`Custom scopes: ${scopes.join(', ')}`);
       console.log(
@@ -335,25 +368,33 @@ export function run(args: string[]): void {
           ? `  Already patched (no changes): ${parsed.entryFile}`
           : `  Patched: ${parsed.entryFile}`,
       );
-      console.log(`\nNext steps:`);
-      console.log(`  1. Provide runtime config, signing keys, and client resolvers from env/DB/KV`);
-      console.log(`  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract`);
-      console.log(`  3. Use ${parsed.outputDir}/config.ts defaults only for quick local testing`);
-      if (
-        features.par ||
+      const setupSteps = [
+        'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
+        'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
+        `Use ${parsed.outputDir}/config.ts defaults only for quick local testing`,
+        ...(features.par ||
         features.tokenExchange ||
         features.jarm ||
         features.deviceAuthorizationGrant ||
         features.ciba
-      ) {
-        console.log(`  4. Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`);
-        console.log(`  5. Start the server\n`);
-      } else {
-        console.log(`  4. Start the server\n`);
-      }
+          ? [`Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`]
+          : []),
+        ...(features.googleLogin
+          ? [`Install the Google login extension: pnpm add ${GOOGLE_LOGIN_PACKAGE}`]
+          : []),
+        'Start the server',
+      ];
+      console.log(`\nNext steps:`);
+      setupSteps.forEach((step, index) => {
+        const isLast = index === setupSteps.length - 1;
+        console.log(`  ${index + 1}. ${step}${isLast ? '\n' : ''}`);
+      });
     } else {
       const installCommand = withExperimentalPackage(
-        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
+        withGoogleLoginPackage(
+          INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
+          features,
+        ),
         features,
       );
       console.log(`\nNext steps:`);

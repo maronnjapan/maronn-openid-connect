@@ -74,6 +74,7 @@ oidc-provider/
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
 | `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） |
+| `/login/google` | Sign in with Google の `login_uri`（Google が ID トークンを POST する先。`google-login` 有効時） |
 | `/.well-known/openid-configuration` | Discovery メタデータ |
 | `/.well-known/jwks.json` | JWKS（公開鍵） |
 | `/introspect` | RFC 7662 Token Introspection（`introspection` 有効時） |
@@ -101,6 +102,21 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
+
+### 拡張機能（--enable google-login）
+
+拡張機能は、OAuth / OIDC の仕様ではなく**ログイン手段**を生成コードに足すカテゴリで、既定では無効。実装は別 package にあり、有効にしたときだけ import される。
+
+```bash
+maronn-oidc generate express --enable google-login
+pnpm add express @maronn-openid-connect/core @maronn-openid-connect/google-login
+```
+
+| 機能名 | 既定 | 内容 | 実装 package |
+|---|---|---|---|
+| `google-login` | 無効 | ログイン画面に「Google でログイン」（Google Identity Services の redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。ID トークンの検証は Google 公式の `google-auth-library` に委ね、CSRF（`g_csrf_token` の Double Submit Cookie）、nonce による認証トランザクションへの束縛、`google:<sub>` を subject にした Google ユーザーの JIT 登録を生成コードが行う | `@maronn-openid-connect/google-login`（Node.js 22 以上限定。Cloudflare Workers などのエッジでは動かない） |
+
+有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js の `runtime.ts` と本リポジトリの samples は `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
 
 ## カスタムスコープ（--scope）
 
@@ -159,7 +175,7 @@ export async function resolveGrantableScopes(
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. 生成される `JsonStoreBackend` を実装し、`createJsonProviderStores()` の結果を `storage` に渡す
 3. `config.ts` と未指定時のインメモリストアはローカル検証・契約テスト専用として扱う
-4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
+4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`。`--enable google-login` 時は `@maronn-openid-connect/google-login` も）
 
 署名鍵は `SigningKeyProvider` として注入する。`createCachedSigningKeyProvider()`（core 提供）でラップすると、TTL 付きキャッシュで鍵ローテーションに追随できる。
 

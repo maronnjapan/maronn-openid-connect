@@ -55,6 +55,7 @@ describe('resolveFeatures with token-exchange', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -73,6 +74,7 @@ describe('resolveFeatures with token-exchange', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -101,6 +103,7 @@ describe('resolveFeatures with token-exchange', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });

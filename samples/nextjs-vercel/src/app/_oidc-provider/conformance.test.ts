@@ -2,12 +2,18 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '@maronn-openid-connect/core';
 import { exportPublicJwk } from '@maronn-openid-connect/core';
 import { createApp, validateSigningKeySet } from './app';
-import { createInMemoryClientResolver, type RegisteredClient } from './config';
+import { createInMemoryClientResolver, type RegisteredClient, type GoogleLoginConfig } from './config';
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores, parseSessionId, refreshTokenStore, transactionStore, type JsonStoreBackend } from './store';
 import { consentResolver } from './resolvers';
 import { defaultViews } from './views';
 import { renderView } from './views';
 import { cibaAuthenticationRequestStore } from './store';
+import {
+  GoogleLoginError,
+  GoogleLoginErrorCode,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '@maronn-openid-connect/google-login';
 
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -4197,6 +4203,420 @@ describe('generated provider HTTP conformance', () => {
           kid: 'test-key',
         });
       });
+    });
+  });
+
+  // EXTENSION — Sign in with Google (Google Identity Services, redirect mode).
+  // Generated because this provider was created with --enable google-login.
+  // google-auth-library is replaced by a stand-in verifier, so these tests never
+  // reach Google: they pin the OP-side contract around the callback.
+  describe('Google login (Sign in with Google, redirect mode)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const GOOGLE_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const GOOGLE_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const GOOGLE_CLIENT_ID = 'conformance-google-client.apps.googleusercontent.com';
+    const GOOGLE_CSRF = 'conformance-g-csrf-token';
+    const GOOGLE_SUB = '10769150350006150715113082367';
+
+    // Stand-in for google-auth-library: a credential is the JSON payload wrapped
+    // as 'fake:<base64>'; anything else is refused like a bad signature would be.
+    const verifiedClientIds: Array<string | readonly string[]> = [];
+    const fakeGoogleVerifier: GoogleIdTokenVerifier = {
+      async verify(idToken, clientId) {
+        verifiedClientIds.push(clientId);
+        if (!idToken.startsWith('fake:')) {
+          throw new GoogleLoginError(GoogleLoginErrorCode.InvalidIdToken, 'Invalid token signature');
+        }
+        return JSON.parse(atob(idToken.slice('fake:'.length))) as GoogleIdTokenPayload;
+      },
+    };
+
+    function googleCredential(payload: Record<string, unknown>): string {
+      return 'fake:' + btoa(JSON.stringify(payload));
+    }
+
+    function googleAccount(nonce: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        iss: 'https://accounts.google.com',
+        aud: GOOGLE_CLIENT_ID,
+        sub: GOOGLE_SUB,
+        email: 'jsmith@example.com',
+        email_verified: true,
+        name: 'John Smith',
+        given_name: 'John',
+        family_name: 'Smith',
+        picture: 'https://lh3.googleusercontent.com/a/photo',
+        iat: now,
+        exp: now + 3600,
+        nonce,
+        ...overrides,
+      };
+    }
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the
+    // contract stays visible in the it() blocks.
+    function googleRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function googleCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function googleNonceFrom(html: string): string {
+      return html.match(/data-nonce="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function createGoogleApp(
+      googleLogin: GoogleLoginConfig = { clientId: GOOGLE_CLIENT_ID },
+    ): ReturnType<typeof createApp> {
+      return createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        config: { googleLogin },
+        googleIdTokenVerifier: fakeGoogleVerifier,
+      });
+    }
+
+    // Start an authorization request on the given app and fetch its login page.
+    async function startGoogleFlow(
+      targetApp: ReturnType<typeof createApp>,
+      state: string,
+      scope = 'openid',
+    ): Promise<{ transactionId: string; loginHtml: string; nonce: string }> {
+      const authorizeRes = await targetApp.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(scope) + '&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + GOOGLE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = googleRelativeFrom(authorizeRes.headers.get('Location'));
+      const loginRes = await targetApp.request(loginPath);
+      const loginHtml = await loginRes.text();
+      return {
+        transactionId:
+          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '',
+        loginHtml,
+        nonce: googleNonceFrom(loginHtml),
+      };
+    }
+
+    // POST the redirect-mode callback exactly as the browser would after Google's
+    // account chooser: credential + g_csrf_token in the body, g_csrf_token cookie.
+    function googleCallback(
+      targetApp: ReturnType<typeof createApp>,
+      credential: string,
+      init: { bodyCsrf?: string; cookie?: string | null } = {},
+    ): Promise<Response> {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (init.cookie !== null) {
+        headers.Cookie = init.cookie ?? 'g_csrf_token=' + GOOGLE_CSRF;
+      }
+      return targetApp.request('/login/google', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams({
+          credential,
+          g_csrf_token: init.bodyCsrf ?? GOOGLE_CSRF,
+          select_by: 'btn',
+        }).toString(),
+      });
+    }
+
+    let googleApp: ReturnType<typeof createApp>;
+
+    beforeAll(() => {
+      googleApp = createGoogleApp();
+    });
+
+    // GIS HTML API, redirect mode: the g_id_onload element carries the client
+    // ID, data-ux_mode="redirect", the login_uri Google posts to, and the nonce
+    // that ties the click to this authorization transaction.
+    it('should render the Sign in with Google button in redirect mode on the login page', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-button');
+
+      expect(flow.loginHtml.includes('<script src="https://accounts.google.com/gsi/client" async></script>')).toBe(true);
+      expect(flow.loginHtml.includes(
+        '<div id="g_id_onload" data-client_id="' + GOOGLE_CLIENT_ID + '" data-ux_mode="redirect"' +
+        ' data-login_uri="http://localhost:3000/login/google" data-nonce="' + flow.nonce + '"></div>',
+      )).toBe(true);
+      expect(flow.nonce.length).toBe(43);
+      // The password form stays available next to the button.
+      expect(flow.loginHtml.includes('name="password"')).toBe(true);
+    });
+
+    it('should issue a fresh nonce for every login page render', async () => {
+      const first = await startGoogleFlow(googleApp, 'google-nonce-1');
+      const second = await startGoogleFlow(googleApp, 'google-nonce-2');
+
+      expect(first.nonce === second.nonce).toBe(false);
+    });
+
+    it('should not render the button when Google login is not configured', async () => {
+      const flow = await startGoogleFlow(app, 'google-unconfigured');
+
+      expect(flow.loginHtml.includes('g_id_onload')).toBe(false);
+      expect(flow.nonce).toBe('');
+    });
+
+    it('should answer 404 on the Google callback when Google login is not configured', async () => {
+      const res = await googleCallback(app, googleCredential(googleAccount('unused')));
+
+      expect(res.status).toBe(404);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // Google's server-side guide: the double-submit cookie is checked before the
+    // credential is even looked at, in the order cookie -> body -> mismatch.
+    it('should reject the callback without the g_csrf_token cookie', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-no-cookie');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)), { cookie: null });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('csrf_token_missing_in_cookie')).toBe(true);
+    });
+
+    it('should reject the callback whose g_csrf_token cookie and body differ', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-csrf-mismatch');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)), { bodyCsrf: 'other' });
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('csrf_token_mismatch')).toBe(true);
+    });
+
+    it('should reject a credential the verifier does not accept', async () => {
+      await startGoogleFlow(googleApp, 'google-bad-credential');
+
+      const res = await googleCallback(googleApp, 'not-a-google-id-token');
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('invalid_id_token')).toBe(true);
+    });
+
+    it('should hand the configured client ID to the verifier as the expected audience', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-audience');
+      verifiedClientIds.length = 0;
+
+      await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
+
+      expect(verifiedClientIds).toEqual([GOOGLE_CLIENT_ID]);
+    });
+
+    it('should reject a credential whose nonce was not issued for a login page', async () => {
+      await startGoogleFlow(googleApp, 'google-forged-nonce');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount('forged-nonce')));
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('login_nonce_not_found')).toBe(true);
+    });
+
+    it('should reject a credential without a nonce', async () => {
+      await startGoogleFlow(googleApp, 'google-missing-nonce');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount('', { nonce: undefined })));
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('invalid_nonce')).toBe(true);
+    });
+
+    it('should establish the OP session and continue to consent for a valid credential', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-happy');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
+      const setCookie = res.headers.get('Set-Cookie') ?? '';
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(
+        'http://localhost:3000/consent?transaction_id=' + flow.transactionId,
+      );
+      expect(setCookie.startsWith('session_id=')).toBe(true);
+      expect(setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/')).toBe(true);
+    });
+
+    // The nonce is single use: the same credential cannot start a second session.
+    it('should reject a replay of an already used credential', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-replay');
+      const credential = googleCredential(googleAccount(flow.nonce));
+      await googleCallback(googleApp, credential);
+
+      const res = await googleCallback(googleApp, credential);
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('login_nonce_not_found')).toBe(true);
+    });
+
+    // A callback that fails before the credential is verified must not burn the
+    // nonce, or a forged POST could lock the user out of their own login page.
+    it('should keep the nonce usable after a callback that failed before verification', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-nonce-kept');
+      const credential = googleCredential(googleAccount(flow.nonce));
+      await googleCallback(googleApp, credential, { cookie: null });
+
+      const res = await googleCallback(googleApp, credential);
+
+      expect(res.status).toBe(302);
+    });
+
+    it('should issue tokens for the Google user and return the Google profile from UserInfo', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-tokens', 'openid profile email');
+      const callbackRes = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
+      const consentPath = googleRelativeFrom(callbackRes.headers.get('Location'));
+      const consentGet = await googleApp.request(consentPath);
+      const consentRes = await googleApp.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: googleCsrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code =
+        new URL(consentRes.headers.get('Location') ?? '', 'http://localhost').searchParams.get('code') ?? '';
+      const tokenRes = await googleApp.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          client_id: 'c-conf',
+          client_secret: 's',
+          code_verifier: GOOGLE_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const tokens = await tokenRes.json();
+      const userinfoRes = await googleApp.request('/userinfo', {
+        headers: { Authorization: 'Bearer ' + tokens.access_token },
+      });
+
+      expect(tokenRes.status).toBe(200);
+      // Users provisioned from Google are keyed by the Google sub, never the email.
+      expect(idTokenPayload(tokens.id_token as string).sub).toBe('google:' + GOOGLE_SUB);
+      expect(userinfoRes.status).toBe(200);
+      expect(await userinfoRes.json()).toEqual({
+        sub: 'google:' + GOOGLE_SUB,
+        name: 'John Smith',
+        given_name: 'John',
+        family_name: 'Smith',
+        picture: 'https://lh3.googleusercontent.com/a/photo',
+        email: 'jsmith@example.com',
+        email_verified: true,
+      });
+    });
+
+    it('should keep the password login working next to the Google button', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-password');
+
+      const res = await googleApp.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: googleCsrfFrom(flow.loginHtml),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(
+        'http://localhost:3000/consent?transaction_id=' + flow.transactionId,
+      );
+    });
+
+    it('should reject a Google account outside the allowed hosted domain', async () => {
+      const workspaceApp = createGoogleApp({ clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' });
+      const flow = await startGoogleFlow(workspaceApp, 'google-hd');
+
+      const res = await googleCallback(
+        workspaceApp,
+        googleCredential(googleAccount(flow.nonce, { hd: 'other.example' })),
+      );
+
+      expect(res.status).toBe(403);
+      expect((await res.text()).includes('invalid_hosted_domain')).toBe(true);
+    });
+
+    it('should accept a Google account of the allowed hosted domain', async () => {
+      const workspaceApp = createGoogleApp({ clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' });
+      const flow = await startGoogleFlow(workspaceApp, 'google-hd-ok');
+
+      const res = await googleCallback(
+        workspaceApp,
+        googleCredential(googleAccount(flow.nonce, { hd: 'example.com' })),
+      );
+
+      expect(res.status).toBe(302);
+    });
+
+    it('should reject an unverified email when requireVerifiedEmail is set', async () => {
+      const strictApp = createGoogleApp({ clientId: GOOGLE_CLIENT_ID, requireVerifiedEmail: true });
+      const flow = await startGoogleFlow(strictApp, 'google-unverified');
+
+      const res = await googleCallback(
+        strictApp,
+        googleCredential(googleAccount(flow.nonce, { email_verified: false })),
+      );
+
+      expect(res.status).toBe(403);
+      expect((await res.text()).includes('email_not_verified')).toBe(true);
+    });
+
+    // The persistent (JsonStoreBackend) stores carry the same contract as the
+    // in-memory ones: the nonce is stored and consumed there, and the Google
+    // user is provisioned under its own key prefix.
+    it('should provision the Google user through the JSON store backend as well', async () => {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const jsonApp = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        config: { googleLogin: { clientId: GOOGLE_CLIENT_ID } },
+        googleIdTokenVerifier: fakeGoogleVerifier,
+        storage: createJsonProviderStores(backend),
+      });
+      const flow = await startGoogleFlow(jsonApp, 'google-json-store');
+
+      const res = await googleCallback(jsonApp, googleCredential(googleAccount(flow.nonce)));
+      const readerStores = createJsonProviderStores(backend);
+
+      expect(res.status).toBe(302);
+      expect(await readerStores.userStore.getClaims('google:' + GOOGLE_SUB)).toEqual({
+        sub: 'google:' + GOOGLE_SUB,
+        name: 'John Smith',
+        given_name: 'John',
+        family_name: 'Smith',
+        picture: 'https://lh3.googleusercontent.com/a/photo',
+        email: 'jsmith@example.com',
+        email_verified: true,
+      });
+      // The nonce record was consumed on first use.
+      expect([...values.keys()].filter((key) => key.startsWith('google-login-nonce:'))).toEqual([]);
     });
   });
 

@@ -113,6 +113,9 @@ importers:
       '@maronn-openid-connect/experimental':
         specifier: workspace:*
         version: link:../../packages/experimental
+      '@maronn-openid-connect/google-login':
+        specifier: workspace:*
+        version: link:../../packages/google-login
     devDependencies:
       '@maronn-openid-connect/cli':
         specifier: workspace:*
@@ -129,6 +132,9 @@ importers:
       express:
         specifier: ^5.2.1
         version: 5.2.1
+      google-auth-library:
+        specifier: ^11.1.0
+        version: 11.1.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -141,6 +147,9 @@ importers:
       '@maronn-openid-connect/experimental':
         specifier: workspace:*
         version: link:../../packages/experimental
+      '@maronn-openid-connect/google-login':
+        specifier: workspace:*
+        version: link:../../packages/google-login
     devDependencies:
       '@maronn-openid-connect/cli':
         specifier: workspace:*
@@ -154,6 +163,9 @@ importers:
       fastify:
         specifier: ^5.12.1
         version: 5.12.1
+      google-auth-library:
+        specifier: ^11.1.0
+        version: 11.1.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -194,6 +206,9 @@ importers:
       '@maronn-openid-connect/experimental':
         specifier: workspace:*
         version: link:../../packages/experimental
+      '@maronn-openid-connect/google-login':
+        specifier: workspace:*
+        version: link:../../packages/google-login
     devDependencies:
       '@maronn-openid-connect/cli':
         specifier: workspace:*

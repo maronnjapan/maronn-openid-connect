@@ -18,6 +18,10 @@ RUN pnpm --filter @maronn-openid-connect/sample-express-flyio build
 # express is a devDependency of the sample (esbuild externalizes it rather
 # than bundling it), so the runtime stage installs it fresh from a minimal
 # package.json instead of trying to reuse the workspace's node_modules.
+# google-auth-library (pulled in by @maronn-openid-connect/google-login for
+# the Sign in with Google callback) is externalized for the same reason: it
+# is CommonJS and require()s Node built-ins lazily, which esbuild cannot
+# inline into an ESM bundle.
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production

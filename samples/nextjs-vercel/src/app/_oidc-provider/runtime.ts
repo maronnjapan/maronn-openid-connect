@@ -4,7 +4,7 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
-import { createInMemoryClientResolver, type RegisteredClient } from './config';
+import { createInMemoryClientResolver, type GoogleLoginConfig, type RegisteredClient } from './config';
 import { createOidcRouteHandlers } from './next';
 import { createNextJsProviderStores } from './storage-backend';
 import type { OidcProviderOptions } from './app';
@@ -58,6 +58,11 @@ export function createOidcProviderOptions(): OidcProviderOptions {
       // (app/oidc-error/error.tsx) — consistent with login/consent being real
       // pages rather than HTML strings from the route handler.
       authorizationErrorRedirectPath: '/oidc-error',
+      // EXTENSION (google-login): set GOOGLE_CLIENT_ID (the OAuth client ID from
+      // the Google Cloud console) to render the "Sign in with Google" button.
+      // Register <issuer>/login/google as an authorized redirect URI there.
+      // GOOGLE_HOSTED_DOMAIN optionally restricts sign-in to one Workspace domain.
+      googleLogin: readGoogleLoginConfig(),
     },
     signingKeyProvider,
     clientResolver,
@@ -137,6 +142,13 @@ function parseRegisteredClients(encoded: string): ReadonlyMap<string, Registered
 function readEnv(name: string): string | undefined {
   if (typeof process === 'undefined') return undefined;
   return process.env[name];
+}
+
+function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
+  const clientId = readEnv('GOOGLE_CLIENT_ID');
+  if (!clientId) return undefined;
+  const hostedDomain = readEnv('GOOGLE_HOSTED_DOMAIN');
+  return hostedDomain ? { clientId, hostedDomain } : { clientId };
 }
 
 function createEphemeralRs256KeyProvider(): SigningKeyProvider {

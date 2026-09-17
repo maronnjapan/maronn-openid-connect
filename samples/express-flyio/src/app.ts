@@ -8,6 +8,7 @@ import {
 import { applyOidc } from './oidc-provider/apply.js';
 import {
   createInMemoryClientResolver,
+  type GoogleLoginConfig,
   type RegisteredClient,
 } from './oidc-provider/config.js';
 import { providerStores } from './storage.js';
@@ -35,6 +36,13 @@ const allowNonPkceAuthorizationCodeFlow =
 // request_object_signing_alg_values_supported. Default off (signed-only).
 const allowUnsignedRequestObject =
   process.env.OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT === '1';
+
+// EXTENSION (google-login): "Sign in with Google" is enabled only when
+// GOOGLE_CLIENT_ID is set. The login page then renders the Google button next to
+// the password form, and Google posts the ID token to <issuer>/login/google,
+// which must be registered as an authorized redirect URI of that OAuth client.
+// GOOGLE_HOSTED_DOMAIN (optional) restricts sign-in to one Google Workspace domain.
+const googleLogin = readGoogleLoginConfig();
 
 // OIDC Core 1.0 §2 / §3.1.2.1: when a client requests an acr via `acr_values`
 // (or `claims.id_token.acr.values`), echo the most-preferred requested value back
@@ -70,6 +78,7 @@ applyOidc(app, {
     authorizationCodeTtl: 300,
     allowNonPkceAuthorizationCodeFlow,
     allowUnsignedRequestObject,
+    googleLogin,
   },
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
   clientResolver: createInMemoryClientResolver(clients),
@@ -115,6 +124,13 @@ async function generateSigningKey(): Promise<SigningKey> {
     publicJwk,
     keyId: 'e2e-rs256-key',
   };
+}
+
+function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) return undefined;
+  const hostedDomain = process.env.GOOGLE_HOSTED_DOMAIN;
+  return hostedDomain ? { clientId, hostedDomain } : { clientId };
 }
 
 function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {

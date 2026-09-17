@@ -5,7 +5,7 @@ Sign in with Google（Google Identity Services、以下 GIS）の redirect mode 
 ## 位置づけ
 
 - **core と組み合わせて使う。単体では使わない。** Google のログイン結果を core の認証トランザクション（`getAuthTransaction` → 認証セッションの確立 → 同意 → `completeAuthTransaction`）へ接続するための部品で、OP 本体の機能は持たない
-- **CLI 生成コードから呼び出す想定で API を切っている。** core と同じく HTTP の配線（ルーティング・本文解析・Cookie の発行）は呼び出し側の責務とし、このパッケージは検証と生成のステップ関数だけを提供する。`@maronn-openid-connect/cli` への組み込み（`--enable google-login`）は未対応で、それまでは生成コードへ手で配線する（[生成コードへの配線](#生成コードへの配線)）
+- **CLI 生成コードから呼び出す想定で API を切っている。** core と同じく HTTP の配線（ルーティング・本文解析・Cookie の発行）は呼び出し側の責務とし、このパッケージは検証と生成のステップ関数だけを提供する。`@maronn-openid-connect/cli` の `--enable google-login` で生成コードに組み込まれる（[CLI での利用](#cli-での利用)）。CLI を使わない場合の配線例は [生成コードへの配線](#生成コードへの配線)
 - **ID トークンの検証は Google 公式の [`google-auth-library`](https://github.com/googleapis/google-auth-library-nodejs) に委ねる。** 公開鍵の取得とローテーション追随、署名・`iss`・`aud`・`exp` の検証はライブラリが行い、Google 側の仕様変更にはライブラリの更新で追随する。このパッケージが自前で持つのは、redirect mode の POST の読み取り、Double Submit Cookie の検証、core の認証トランザクションへの束縛、ログイン画面のボタン生成だけ
 - **Node.js 22 以上限定。** `google-auth-library` が Node.js の API を前提にするため、core / experimental と違い Cloudflare Workers などのエッジランタイムでは動かない。production 依存に外部ライブラリを持つのはモノレポ内でこのパッケージだけ
 - **core は peerDependency**（`>=0.3.0 <1.0.0`）。experimental と同じ理由で `dependencies` には置かない（アプリ内の core のインスタンスを 1 つに保つため。[RELEASE.md](../../RELEASE.md)「バージョニング方針」）
@@ -104,9 +104,34 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | 403 | トークンは正しいが受け入れない（`hd` 不一致、`email_verified` でない、OP のユーザーに未連携） |
 | 503 | `signing_key_unavailable`: Google の公開鍵を取得できない（ライブラリのエラーは `cause`） |
 
+## CLI での利用
+
+```bash
+maronn-oidc generate <hono|express|fastify|nextjs> --enable google-login
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
+```
+
+`google-login` は CLI の**拡張機能**（Optional / Experimental とは別カテゴリ。既定では無効）で、有効にすると生成コードに次が加わる。それ以外の生成物は無効時と同じ。
+
+| 生成物 | 内容 |
+|---|---|
+| `config.ts` | `ProviderConfig.googleLogin?: GoogleLoginConfig`（`clientId` / 任意の `hostedDomain` / `requireVerifiedEmail`）。未設定ならボタンは出ず、`/login/google` は 404 |
+| `views.ts` | `LoginPageParams.googleSignInHtml`。既定のログイン画面はパスワードフォームの下に `buildGoogleSignInMarkup()` の HTML をそのまま埋め込む |
+| `routes/login.ts` | GET `/login` でトランザクションに束縛した nonce を発行してボタンを描画。`POST /login/google`（`login_uri`）で `handleGoogleLoginRedirect` → `resolveGoogleLoginSubject` → パスワードログインと同じセッション確立 → `/consent` |
+| `store.ts` | `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両方）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()` |
+| `app.ts` | `googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）と `googleAccountResolver`（既定は `linkGoogleAccount`）を差し替えられるオプション |
+| `conformance.test.ts` | 偽の `GoogleIdTokenVerifier` を注入してボタン描画・CSRF・nonce・JIT 登録・トークン発行までを固定する契約テスト |
+| Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/runtime.ts` | ページ側でのボタン描画、`login_uri` の Route Handler（Node.js ランタイム）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
+
+生成コードは `config.googleLogin` が無いときはボタンを描画せず `/login/google` を 404 で閉じるので、まず生成だけしておき、Google Cloud コンソールの準備ができてから `clientId` を渡す、という順でも動く。`login_uri` は `new URL('/login/google', config.issuer)` で組み立てるため、Google 側には `<issuer>/login/google` を登録する。
+
+Google アカウントはパスワードのユーザーとは別に扱われ、subject は `google:<Google の sub>` になる（`email` は変わりうるので識別子にしない）。`name` / `given_name` / `family_name` / `picture` / `locale` / `email` / `email_verified` は ID トークンからそのままクレームに写す。既存ユーザーと紐付けたい場合は `applyOidc(app, { googleAccountResolver })` で差し替える。
+
+配線済みの実例は本リポジトリの `samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel`（いずれも `GOOGLE_CLIENT_ID` を設定すると有効化）を参照。`samples/hono-cloudflare` は Cloudflare Workers 向けで `google-auth-library` が動かないため有効にしていない。
+
 ## 生成コードへの配線
 
-CLI が生成するログインルート（`routes/login.ts`）と同じ材料（`transactionStore` / `authSessionStore` / `browserSessionStore` / `views`）を使って、GET のログイン画面にボタンを足し、`login_uri` のルートを 1 つ追加する。以下は Hono の例。
+CLI を使わずに組み込む場合（または `--enable google-login` が `routes/login.ts` に生成するものを知りたい場合）の例。CLI が生成するログインルートと同じ材料（`transactionStore` / `authSessionStore` / `browserSessionStore` / `views`）を使って、GET のログイン画面にボタンを足し、`login_uri` のルートを 1 つ追加する。以下は Hono の例。
 
 ```typescript
 import { Hono } from 'hono';
@@ -232,7 +257,7 @@ tokeninfo エンドポイント（`https://oauth2.googleapis.com/tokeninfo`）�
 
 - **Node.js 22 以上のみ。** `google-auth-library` の要件。エッジランタイムで動かしたい場合は `GoogleIdTokenVerifier` を Web 標準 API だけで実装して差し替える必要がある（このパッケージは提供しない）
 - **redirect mode のみ。** popup mode / One Tap の JavaScript コールバック（`callback`）で受け取った credential をブラウザから別途送る構成は対象外。ただし `verifyGoogleIdToken` 単体は、どの経路で受け取った Google の ID トークンにも使える
-- **CLI 未統合。** `--enable google-login` での生成は今後の対応。それまでは上記の配線を手で行う
+- **エッジ向けの生成コードでは有効化しない。** `--enable google-login` の生成物は Node.js 22 以上を前提にする。`samples/hono-cloudflare`（Cloudflare Workers）で有効にしていないのはこのため
 - `login_uri` へ届く POST の本文解析と Cookie の発行は行わない（core と同じく呼び出し側の責務）
 
 ## ライセンス

@@ -60,6 +60,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -96,6 +97,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       idJag: true,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -116,6 +118,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });

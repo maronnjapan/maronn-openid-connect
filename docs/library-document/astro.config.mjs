@@ -48,6 +48,7 @@ export default defineConfig({
           items: [
             { label: 'CLI Guide', slug: 'guides/cli' },
             { label: 'Using core', slug: 'guides/core' },
+            { label: 'Google ログイン（拡張）', slug: 'guides/google-login' },
           ],
         },
         {

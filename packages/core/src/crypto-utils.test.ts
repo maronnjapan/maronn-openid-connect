@@ -303,51 +303,26 @@ describe('sign', () => {
 
 describe('verify', () => {
   describe('RSA Verification', () => {
-    it('should verify valid RS256 signature', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-256');
+    it.each([
+      ['RS256', 'SHA-256'],
+      ['RS384', 'SHA-384'],
+      ['RS512', 'SHA-512'],
+    ] as const)('should verify valid %s signature', async (_alg, hash) => {
+      const keyPair = await generateRsaKeyPair(hash);
       const data = 'test data';
       const signature = await sign(data, keyPair.privateKey);
       const isValid = await verify(data, signature, keyPair.publicKey);
       expect(isValid).toEqual(true);
     });
-
-    it('should verify valid RS384 signature', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-384');
-      const data = 'test data';
-      const signature = await sign(data, keyPair.privateKey);
-      const isValid = await verify(data, signature, keyPair.publicKey);
-      expect(isValid).toEqual(true);
-    });
-
-    it('should verify valid RS512 signature', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-512');
-      const data = 'test data';
-      const signature = await sign(data, keyPair.privateKey);
-      const isValid = await verify(data, signature, keyPair.publicKey);
-      expect(isValid).toEqual(true);
-    });
-
   });
 
   describe('ECDSA Verification', () => {
-    it('should verify valid ES256 signature', async () => {
-      const keyPair = await generateEcKeyPair('P-256');
-      const data = 'test data';
-      const signature = await sign(data, keyPair.privateKey);
-      const isValid = await verify(data, signature, keyPair.publicKey);
-      expect(isValid).toEqual(true);
-    });
-
-    it('should verify valid ES384 signature', async () => {
-      const keyPair = await generateEcKeyPair('P-384');
-      const data = 'test data';
-      const signature = await sign(data, keyPair.privateKey);
-      const isValid = await verify(data, signature, keyPair.publicKey);
-      expect(isValid).toEqual(true);
-    });
-
-    it('should verify valid ES512 signature', async () => {
-      const keyPair = await generateEcKeyPair('P-521');
+    it.each([
+      ['ES256', 'P-256'],
+      ['ES384', 'P-384'],
+      ['ES512', 'P-521'],
+    ] as const)('should verify valid %s signature', async (_alg, curve) => {
+      const keyPair = await generateEcKeyPair(curve);
       const data = 'test data';
       const signature = await sign(data, keyPair.privateKey);
       const isValid = await verify(data, signature, keyPair.publicKey);
@@ -479,26 +454,10 @@ describe('importPrivateKeyFromJwk', () => {
   });
 
   describe('ECDSA Private Key Import', () => {
-    it('should import EC private key from JWK string (P-256)', async () => {
-      const keyPair = await generateEcKeyPair('P-256');
+    it.each(['P-256', 'P-384', 'P-521'] as const)('should import EC private key from JWK string (%s)', async (curve) => {
+      const keyPair = await generateEcKeyPair(curve);
       const jwkString = await exportPrivateKeyJwk(keyPair.privateKey);
-      const importedKey = await importPrivateKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: 'P-256' });
-      expect(importedKey).toBeInstanceOf(CryptoKey);
-      expect(importedKey.type).toEqual('private');
-    });
-
-    it('should import EC private key from JWK string (P-384)', async () => {
-      const keyPair = await generateEcKeyPair('P-384');
-      const jwkString = await exportPrivateKeyJwk(keyPair.privateKey);
-      const importedKey = await importPrivateKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: 'P-384' });
-      expect(importedKey).toBeInstanceOf(CryptoKey);
-      expect(importedKey.type).toEqual('private');
-    });
-
-    it('should import EC private key from JWK string (P-521)', async () => {
-      const keyPair = await generateEcKeyPair('P-521');
-      const jwkString = await exportPrivateKeyJwk(keyPair.privateKey);
-      const importedKey = await importPrivateKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: 'P-521' });
+      const importedKey = await importPrivateKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: curve });
       expect(importedKey).toBeInstanceOf(CryptoKey);
       expect(importedKey.type).toEqual('private');
     });
@@ -520,26 +479,10 @@ describe('importPrivateKeyFromJwk', () => {
   });
 
   describe('ECDSA Public Key Import', () => {
-    it('should import EC public key from JWK string (P-256)', async () => {
-      const keyPair = await generateEcKeyPair('P-256');
+    it.each(['P-256', 'P-384', 'P-521'] as const)('should import EC public key from JWK string (%s)', async (curve) => {
+      const keyPair = await generateEcKeyPair(curve);
       const jwkString = await exportPublicKeyJwk(keyPair.publicKey);
-      const importedKey = await importPublicKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: 'P-256' });
-      expect(importedKey).toBeInstanceOf(CryptoKey);
-      expect(importedKey.type).toEqual('public');
-    });
-
-    it('should import EC public key from JWK string (P-384)', async () => {
-      const keyPair = await generateEcKeyPair('P-384');
-      const jwkString = await exportPublicKeyJwk(keyPair.publicKey);
-      const importedKey = await importPublicKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: 'P-384' });
-      expect(importedKey).toBeInstanceOf(CryptoKey);
-      expect(importedKey.type).toEqual('public');
-    });
-
-    it('should import EC public key from JWK string (P-521)', async () => {
-      const keyPair = await generateEcKeyPair('P-521');
-      const jwkString = await exportPublicKeyJwk(keyPair.publicKey);
-      const importedKey = await importPublicKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: 'P-521' });
+      const importedKey = await importPublicKeyFromJwk(jwkString, { name: 'ECDSA', namedCurve: curve });
       expect(importedKey).toBeInstanceOf(CryptoKey);
       expect(importedKey.type).toEqual('public');
     });
@@ -679,22 +622,14 @@ describe('importPrivateKeyFromJwk', () => {
 
 describe('extractAlgorithmParams', () => {
   describe('RSASSA-PKCS1-v1_5 Algorithm', () => {
-    it('should extract algorithm params from RS256 key (SHA-256)', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-256');
+    it.each([
+      ['RS256', 'SHA-256'],
+      ['RS384', 'SHA-384'],
+      ['RS512', 'SHA-512'],
+    ] as const)('should extract algorithm params from %s key (%s)', async (_alg, hash) => {
+      const keyPair = await generateRsaKeyPair(hash);
       const params = extractAlgorithmParams(keyPair.privateKey);
-      expect(params).toEqual({ name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' });
-    });
-
-    it('should extract algorithm params from RS384 key (SHA-384)', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-384');
-      const params = extractAlgorithmParams(keyPair.privateKey);
-      expect(params).toEqual({ name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-384' });
-    });
-
-    it('should extract algorithm params from RS512 key (SHA-512)', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-512');
-      const params = extractAlgorithmParams(keyPair.privateKey);
-      expect(params).toEqual({ name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-512' });
+      expect(params).toEqual({ name: 'RSASSA-PKCS1-v1_5', hash });
     });
 
     it('should return correct algorithm name (RSASSA-PKCS1-v1_5)', async () => {
@@ -705,22 +640,14 @@ describe('extractAlgorithmParams', () => {
   });
 
   describe('ECDSA Algorithm', () => {
-    it('should extract algorithm params from ES256 key (P-256)', async () => {
-      const keyPair = await generateEcKeyPair('P-256');
+    it.each([
+      ['ES256', 'P-256'],
+      ['ES384', 'P-384'],
+      ['ES512', 'P-521'],
+    ] as const)('should extract algorithm params from %s key (%s)', async (_alg, curve) => {
+      const keyPair = await generateEcKeyPair(curve);
       const params = extractAlgorithmParams(keyPair.privateKey);
-      expect(params).toEqual({ name: 'ECDSA', namedCurve: 'P-256' });
-    });
-
-    it('should extract algorithm params from ES384 key (P-384)', async () => {
-      const keyPair = await generateEcKeyPair('P-384');
-      const params = extractAlgorithmParams(keyPair.privateKey);
-      expect(params).toEqual({ name: 'ECDSA', namedCurve: 'P-384' });
-    });
-
-    it('should extract algorithm params from ES512 key (P-521)', async () => {
-      const keyPair = await generateEcKeyPair('P-521');
-      const params = extractAlgorithmParams(keyPair.privateKey);
-      expect(params).toEqual({ name: 'ECDSA', namedCurve: 'P-521' });
+      expect(params).toEqual({ name: 'ECDSA', namedCurve: curve });
     });
 
     it('should return correct algorithm name (ECDSA)', async () => {
@@ -766,40 +693,16 @@ describe('extractAlgorithmParams', () => {
   });
 
   describe('Hash/Curve Detection', () => {
-    it('should correctly identify SHA-256 hash for RSA', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-256');
+    it.each(['SHA-256', 'SHA-384', 'SHA-512'] as const)('should correctly identify %s hash for RSA', async (hash) => {
+      const keyPair = await generateRsaKeyPair(hash);
       const params = extractAlgorithmParams(keyPair.privateKey) as RsaHashedImportParams;
-      expect(params.hash).toEqual('SHA-256');
+      expect(params.hash).toEqual(hash);
     });
 
-    it('should correctly identify SHA-384 hash for RSA', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-384');
-      const params = extractAlgorithmParams(keyPair.privateKey) as RsaHashedImportParams;
-      expect(params.hash).toEqual('SHA-384');
-    });
-
-    it('should correctly identify SHA-512 hash for RSA', async () => {
-      const keyPair = await generateRsaKeyPair('SHA-512');
-      const params = extractAlgorithmParams(keyPair.privateKey) as RsaHashedImportParams;
-      expect(params.hash).toEqual('SHA-512');
-    });
-
-    it('should correctly identify P-256 curve for ECDSA', async () => {
-      const keyPair = await generateEcKeyPair('P-256');
+    it.each(['P-256', 'P-384', 'P-521'] as const)('should correctly identify %s curve for ECDSA', async (curve) => {
+      const keyPair = await generateEcKeyPair(curve);
       const params = extractAlgorithmParams(keyPair.privateKey) as EcKeyImportParams;
-      expect(params.namedCurve).toEqual('P-256');
-    });
-
-    it('should correctly identify P-384 curve for ECDSA', async () => {
-      const keyPair = await generateEcKeyPair('P-384');
-      const params = extractAlgorithmParams(keyPair.privateKey) as EcKeyImportParams;
-      expect(params.namedCurve).toEqual('P-384');
-    });
-
-    it('should correctly identify P-521 curve for ECDSA', async () => {
-      const keyPair = await generateEcKeyPair('P-521');
-      const params = extractAlgorithmParams(keyPair.privateKey) as EcKeyImportParams;
-      expect(params.namedCurve).toEqual('P-521');
+      expect(params.namedCurve).toEqual(curve);
     });
   });
 
@@ -866,25 +769,15 @@ describe('extractAlgorithmParamsFromJwk', () => {
   });
 
   describe('EC JWK', () => {
-    it('should extract ES256 params from EC jwk with crv=P-256', async () => {
-      const keyPair = await generateEcKeyPair('P-256');
+    it.each([
+      ['ES256', 'P-256'],
+      ['ES384', 'P-384'],
+      ['ES512', 'P-521'],
+    ] as const)('should extract %s params from EC jwk with crv=%s', async (_alg, curve) => {
+      const keyPair = await generateEcKeyPair(curve);
       const jwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
       const params = extractAlgorithmParamsFromJwk(jwk);
-      expect(params).toEqual({ name: 'ECDSA', namedCurve: 'P-256' });
-    });
-
-    it('should extract ES384 params from EC jwk with crv=P-384', async () => {
-      const keyPair = await generateEcKeyPair('P-384');
-      const jwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-      const params = extractAlgorithmParamsFromJwk(jwk);
-      expect(params).toEqual({ name: 'ECDSA', namedCurve: 'P-384' });
-    });
-
-    it('should extract ES512 params from EC jwk with crv=P-521', async () => {
-      const keyPair = await generateEcKeyPair('P-521');
-      const jwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-      const params = extractAlgorithmParamsFromJwk(jwk);
-      expect(params).toEqual({ name: 'ECDSA', namedCurve: 'P-521' });
+      expect(params).toEqual({ name: 'ECDSA', namedCurve: curve });
     });
   });
 

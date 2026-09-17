@@ -54,58 +54,60 @@ describe('generateIdToken', () => {
     ecKeyPair = await generateEcKeyPair('P-256');
   });
 
+  // Helper: 与えたペイロードを RSA 鍵（options で上書き可）で発行し、デコード結果も返す
+  async function issuePayload(payload: IdTokenPayload, options?: Partial<GenerateIdTokenOptions>) {
+    const token = await generateIdToken({ payload, privateKey: rsaKeyPair.privateKey, ...options });
+    return { token, ...decodeJwt(token) };
+  }
+
+  // Helper: 既定のペイロード（overrides で上書き）で発行する
+  function issue(overrides?: Partial<IdTokenPayload>, options?: Partial<GenerateIdTokenOptions>) {
+    return issuePayload(createValidPayload(overrides), options);
+  }
+
+  // Helper: 発行が拒否されることを検証する
+  function expectIssueToReject(payload: IdTokenPayload) {
+    return expect(generateIdToken({ payload, privateKey: rsaKeyPair.privateKey })).rejects.toThrow();
+  }
+
+  // Helper: 必須クレームを 1 つ欠いたペイロード
+  function payloadWithout(claim: keyof IdTokenPayload): IdTokenPayload {
+    const payload = createValidPayload();
+    delete (payload as Partial<IdTokenPayload>)[claim];
+    return payload;
+  }
+
   describe('JWT Structure', () => {
     describe('JOSE Header', () => {
       // RS256: Required by OIDC Core specification for ID Token signing
       // ES256: Recommended for new implementations (smaller keys, faster signing)
       it('should set alg claim to RS256 for RSASSA-PKCS1-v1_5 with SHA-256', async () => {
-        const token = await generateIdToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { header } = await issue();
 
-        const { header } = decodeJwt(token);
         expect(header.alg).toEqual('RS256');
       });
 
       it('should set alg claim to ES256 for ECDSA with P-256 curve', async () => {
-        const token = await generateIdToken({
-          payload: createValidPayload(),
-          privateKey: ecKeyPair.privateKey,
-        });
+        const { header } = await issue(undefined, { privateKey: ecKeyPair.privateKey });
 
-        const { header } = decodeJwt(token);
         expect(header.alg).toEqual('ES256');
       });
 
       it('should include kid claim when keyId is provided', async () => {
-        const token = await generateIdToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-          keyId: 'key-1',
-        });
+        const { header } = await issue(undefined, { keyId: 'key-1' });
 
-        const { header } = decodeJwt(token);
         expect(header.kid).toEqual('key-1');
       });
 
       it('should set typ claim to JWT', async () => {
-        const token = await generateIdToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { header } = await issue();
 
-        const { header } = decodeJwt(token);
         expect(header.typ).toEqual('JWT');
       });
     });
 
     it('should encode payload as Base64URL', async () => {
-      const payload = createValidPayload();
-      const token = await generateIdToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { token } = await issue();
 
       const parts = token.split('.');
       expect(parts.length).toEqual(3);
@@ -117,10 +119,7 @@ describe('generateIdToken', () => {
 
     describe('Signature Generation', () => {
       it('should generate valid RS256 signature', async () => {
-        const token = await generateIdToken({
-          payload: createValidPayload(),
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { token } = await issue();
 
         const [headerB64, payloadB64, signatureB64] = token.split('.');
         const signedData = `${headerB64}.${payloadB64}`;
@@ -131,10 +130,7 @@ describe('generateIdToken', () => {
       });
 
       it('should generate valid ES256 signature', async () => {
-        const token = await generateIdToken({
-          payload: createValidPayload(),
-          privateKey: ecKeyPair.privateKey,
-        });
+        const { token } = await issue(undefined, { privateKey: ecKeyPair.privateKey });
 
         const [headerB64, payloadB64, signatureB64] = token.split('.');
         const signedData = `${headerB64}.${payloadB64}`;
@@ -149,13 +145,8 @@ describe('generateIdToken', () => {
   describe('Required Claims', () => {
     describe('iss (Issuer)', () => {
       it('should set iss to match configured issuer', async () => {
-        const payload = createValidPayload({ iss: 'https://my-issuer.com' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decodedPayload } = await issue({ iss: 'https://my-issuer.com' });
 
-        const { payload: decodedPayload } = decodeJwt(token);
         expect(decodedPayload.iss).toEqual('https://my-issuer.com');
       });
 
@@ -181,12 +172,7 @@ describe('generateIdToken', () => {
 
       it('should not allow iss with trailing slash mismatch', async () => {
         // Test case: verify that trailing slash consistency can be enforced
-        const payload = createValidPayload({ iss: 'https://example.com/' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
+        const { payload: decoded } = await issue({ iss: 'https://example.com/' });
         // Just verify it's preserved correctly in the token
         expect(decoded.iss).toEqual('https://example.com/');
       });
@@ -203,49 +189,25 @@ describe('generateIdToken', () => {
       });
 
       it('should allow iss with any IPv4 loopback address for development', async () => {
-        const payload = createValidPayload({ iss: 'http://127.0.0.2:3000' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decodedPayload } = await issue({ iss: 'http://127.0.0.2:3000' });
 
-        const { payload: decodedPayload } = decodeJwt(token);
         expect(decodedPayload.iss).toBe('http://127.0.0.2:3000');
       });
 
       it('should throw when iss is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<IdTokenPayload>).iss;
-        await expect(
-          generateIdToken({
-            payload: payload as IdTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('iss'));
       });
     });
 
     describe('sub (Subject)', () => {
       it('should include valid subject identifier', async () => {
-        const payload = createValidPayload({ sub: 'user-unique-id' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ sub: 'user-unique-id' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.sub).toEqual('user-unique-id');
       });
 
       it('should throw when sub is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<IdTokenPayload>).sub;
-        await expect(
-          generateIdToken({
-            payload: payload as IdTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('sub'));
       });
 
       it('should not allow sub exceeding 255 ASCII chars', async () => {
@@ -262,24 +224,14 @@ describe('generateIdToken', () => {
 
     describe('aud (Audience)', () => {
       it('should set aud to a string equal to client_id', async () => {
-        const payload = createValidPayload({ aud: 'my-client-id' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ aud: 'my-client-id' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.aud).toEqual('my-client-id');
       });
 
       it('should set aud to an array containing client_id', async () => {
-        const payload = createValidPayload({ aud: ['client1', 'client2'], azp: 'client1' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ aud: ['client1', 'client2'], azp: 'client1' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.aud).toEqual(['client1', 'client2']);
       });
 
@@ -295,14 +247,7 @@ describe('generateIdToken', () => {
       });
 
       it('should throw when aud is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<IdTokenPayload>).aud;
-        await expect(
-          generateIdToken({
-            payload: payload as IdTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('aud'));
       });
     });
 
@@ -310,13 +255,8 @@ describe('generateIdToken', () => {
       it('should set exp to future timestamp', async () => {
         const now = Math.floor(Date.now() / 1000);
         const futureExp = now + 3600;
-        const payload = createValidPayload({ exp: futureExp });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ exp: futureExp });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.exp).toEqual(futureExp);
         expect(decoded.exp as number).toBeGreaterThan(now);
       });
@@ -329,13 +269,7 @@ describe('generateIdToken', () => {
         // This should either succeed or fail depending on implementation tolerance
         // We test that very past dates fail
         const veryPast = now - 3600; // 1 hour ago
-        const payload2 = createValidPayload({ exp: veryPast });
-        await expect(
-          generateIdToken({
-            payload: payload2,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(createValidPayload({ exp: veryPast }));
       });
 
       it('should throw when exp is in the past', async () => {
@@ -351,39 +285,20 @@ describe('generateIdToken', () => {
       });
 
       it('should throw when exp is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<IdTokenPayload>).exp;
-        await expect(
-          generateIdToken({
-            payload: payload as IdTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('exp'));
       });
     });
 
     describe('iat (Issued At)', () => {
       it('should include iat timestamp', async () => {
         const now = Math.floor(Date.now() / 1000);
-        const payload = createValidPayload({ iat: now });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ iat: now });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.iat).toEqual(now);
       });
 
       it('should throw when iat is missing', async () => {
-        const payload = createValidPayload();
-        delete (payload as Partial<IdTokenPayload>).iat;
-        await expect(
-          generateIdToken({
-            payload: payload as IdTokenPayload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
+        await expectIssueToReject(payloadWithout('iat'));
       });
     });
   });
@@ -391,13 +306,8 @@ describe('generateIdToken', () => {
   describe('Conditional Claims', () => {
     describe('nonce', () => {
       it('should include nonce matching the authorization request', async () => {
-        const payload = createValidPayload({ nonce: 'request-nonce-123' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ nonce: 'request-nonce-123' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.nonce).toEqual('request-nonce-123');
       });
 
@@ -405,23 +315,13 @@ describe('generateIdToken', () => {
       it('should throw when nonce is requested but missing in token', async () => {
         // This test verifies the function can generate tokens with nonce
         // Actual request matching is an integration concern
-        const payload = createValidPayload({ nonce: undefined });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
+        const { payload: decoded } = await issue({ nonce: undefined });
         expect(decoded.nonce).toBeUndefined();
       });
 
       it('should throw when nonce does not match', async () => {
         // Integration test concern - at unit level we just verify nonce is included
-        const payload = createValidPayload({ nonce: 'my-nonce' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
+        const { payload: decoded } = await issue({ nonce: 'my-nonce' });
         expect(decoded.nonce).toEqual('my-nonce');
       });
     });
@@ -429,64 +329,39 @@ describe('generateIdToken', () => {
     describe('auth_time', () => {
       it('should include auth_time when max_age is requested', async () => {
         const authTime = Math.floor(Date.now() / 1000) - 60;
-        const payload = createValidPayload({ auth_time: authTime });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ auth_time: authTime });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.auth_time).toEqual(authTime);
       });
 
       it('should include auth_time when explicitly requested as essential', async () => {
         const authTime = Math.floor(Date.now() / 1000) - 120;
-        const payload = createValidPayload({ auth_time: authTime });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ auth_time: authTime });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.auth_time).toEqual(authTime);
       });
 
       it('should throw when auth_time is missing but required', async () => {
         // At unit level, we just verify optional claims work
         // Required claim validation is an integration concern
-        const payload = createValidPayload();
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
+        const { payload: decoded } = await issue();
         expect(decoded.auth_time).toBeUndefined();
       });
     });
 
     describe('azp (Authorized Party)', () => {
       it('should omit azp when aud contains single value', async () => {
-        const payload = createValidPayload({ aud: 'single-client' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issue({ aud: 'single-client' });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.azp).toBeUndefined();
       });
 
       it('should include azp equal to client_id when aud contains multiple values', async () => {
-        const payload = createValidPayload({
+        const { payload: decoded } = await issue({
           aud: ['client1', 'client2'],
           azp: 'client1',
         });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.azp).toEqual('client1');
       });
 
@@ -522,12 +397,8 @@ describe('generateIdToken', () => {
         // at_hash is calculated from access token hash
         const payload = createValidPayload();
         (payload as Record<string, unknown>).at_hash = 'calculated-at-hash';
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issuePayload(payload);
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.at_hash).toEqual('calculated-at-hash');
       });
 
@@ -537,12 +408,8 @@ describe('generateIdToken', () => {
         const payload = createValidPayload();
         // Simulate pre-calculated at_hash
         (payload as Record<string, unknown>).at_hash = 'LDktKdoQak3Pk0cnXxCltA';
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
+        const { payload: decoded } = await issuePayload(payload);
 
-        const { payload: decoded } = decodeJwt(token);
         expect(decoded.at_hash).toEqual('LDktKdoQak3Pk0cnXxCltA');
       });
     });
@@ -554,24 +421,16 @@ describe('generateIdToken', () => {
     it('should include name claim when profile scope is requested', async () => {
       const payload = createValidPayload();
       (payload as Record<string, unknown>).name = 'John Doe';
-      const token = await generateIdToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { payload: decoded } = await issuePayload(payload);
 
-      const { payload: decoded } = decodeJwt(token);
       expect(decoded.name).toEqual('John Doe');
     });
 
     it('should include email claim when email scope is requested', async () => {
       const payload = createValidPayload();
       (payload as Record<string, unknown>).email = 'john@example.com';
-      const token = await generateIdToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { payload: decoded } = await issuePayload(payload);
 
-      const { payload: decoded } = decodeJwt(token);
       expect(decoded.email).toEqual('john@example.com');
     });
 
@@ -579,12 +438,8 @@ describe('generateIdToken', () => {
       const payload = createValidPayload();
       (payload as Record<string, unknown>).email = 'john@example.com';
       (payload as Record<string, unknown>).email_verified = true;
-      const token = await generateIdToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { payload: decoded } = await issuePayload(payload);
 
-      const { payload: decoded } = decodeJwt(token);
       expect(decoded.email_verified).toEqual(true);
     });
 
@@ -593,12 +448,8 @@ describe('generateIdToken', () => {
       const payload = createValidPayload();
       (payload as Record<string, unknown>).custom_claim = 'custom_value';
       (payload as Record<string, unknown>).another_claim = { nested: true };
-      const token = await generateIdToken({
-        payload,
-        privateKey: rsaKeyPair.privateKey,
-      });
+      const { payload: decoded } = await issuePayload(payload);
 
-      const { payload: decoded } = decodeJwt(token);
       expect(decoded.custom_claim).toEqual('custom_value');
       expect(decoded.another_claim).toEqual({ nested: true });
     });
@@ -642,6 +493,32 @@ describe('validateIdTokenHint', () => {
     });
   }
 
+  // Helper: generateIdToken が拒否する内容（期限切れ、iat 欠落、外部鍵ヘッダー）も含めて、
+  // 任意のヘッダーとクレームを OP の鍵で署名した JWT を組み立てる
+  async function signRawJwt(
+    header: Record<string, unknown>,
+    claims: Record<string, unknown>,
+  ): Promise<string> {
+    const encode = (value: unknown) =>
+      btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const signingInput = `${encode(header)}.${encode(claims)}`;
+    const signature = await crypto.subtle.sign(
+      { name: 'RSASSA-PKCS1-v1_5' },
+      rsaKeyPair.privateKey,
+      new TextEncoder().encode(signingInput),
+    );
+    const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    return `${signingInput}.${signatureB64}`;
+  }
+
+  // Helper: この OP の issuer / client_id / JWKS で id_token_hint を検証する
+  function verifyHint(hint: string, options?: Parameters<typeof validateIdTokenHint>[2]) {
+    return validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }, options);
+  }
+
   it('should return the payload including sub when the hint is valid', async () => {
     const hint = await issueHint();
     const result = await validateIdTokenHint(hint, {
@@ -656,65 +533,35 @@ describe('validateIdTokenHint', () => {
   it('should reject an expired hint', async () => {
     const now = Math.floor(Date.now() / 1000);
     // generateIdToken refuses to issue past-exp tokens, so build manually with -3600 exp
-    const headerB64 = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: keyId }))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    const payloadB64 = btoa(
-      JSON.stringify({
-        iss: issuer,
-        sub: 'user-42',
-        aud: clientId,
-        exp: now - 3600,
-        iat: now - 7200,
-      }),
-    )
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const sigBuf = await crypto.subtle.sign(
-      { name: 'RSASSA-PKCS1-v1_5' },
-      rsaKeyPair.privateKey,
-      new TextEncoder().encode(signingInput),
-    );
-    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    const expiredHint = `${signingInput}.${sigB64}`;
+    const expiredHint = await issueRawHint({
+      iss: issuer,
+      sub: 'user-42',
+      aud: clientId,
+      exp: now - 3600,
+      iat: now - 7200,
+    });
 
-    await expect(
-      validateIdTokenHint(expiredHint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toBeInstanceOf(IdTokenHintError);
+    await expect(verifyHint(expiredHint)).rejects.toBeInstanceOf(IdTokenHintError);
   });
 
   it('should reject when iss does not match', async () => {
     const hint = await issueHint({ iss: 'https://other.example.com' });
-    await expect(
-      validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toBeInstanceOf(IdTokenHintError);
+    await expect(verifyHint(hint)).rejects.toBeInstanceOf(IdTokenHintError);
   });
 
   it('should reject when aud does not match', async () => {
     const hint = await issueHint({ aud: 'other-client' });
-    await expect(
-      validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toBeInstanceOf(IdTokenHintError);
+    await expect(verifyHint(hint)).rejects.toBeInstanceOf(IdTokenHintError);
   });
 
   it('should reject when signature is invalid (signed by another key)', async () => {
     // Sign with a key not in the jwks → no verifying key matches.
     const hint = await issueHint({}, otherRsaKeyPair.privateKey, undefined);
-    await expect(
-      validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toBeInstanceOf(IdTokenHintError);
+    await expect(verifyHint(hint)).rejects.toBeInstanceOf(IdTokenHintError);
   });
 
   it('should reject when JWT structure is malformed', async () => {
-    await expect(
-      validateIdTokenHint('not.a.jwt', { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toBeInstanceOf(IdTokenHintError);
+    await expect(verifyHint('not.a.jwt')).rejects.toBeInstanceOf(IdTokenHintError);
   });
 
   // OIDC Core 1.0 §3.1.2.6: prompt=none + invalid id_token_hint → login_required.
@@ -722,7 +569,7 @@ describe('validateIdTokenHint', () => {
   it('should expose login_required code on the thrown error', async () => {
     const hint = await issueHint({ aud: 'other-client' });
     try {
-      await validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks });
+      await verifyHint(hint);
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(IdTokenHintError);
@@ -732,26 +579,8 @@ describe('validateIdTokenHint', () => {
 
   // generateIdToken refuses payloads that omit iat, so build the hint manually to
   // exercise the "missing iat" path inside validateIdTokenHint.
-  async function issueRawHint(claims: Record<string, unknown>): Promise<string> {
-    const headerB64 = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: keyId }))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    const payloadB64 = btoa(JSON.stringify(claims))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const sigBuf = await crypto.subtle.sign(
-      { name: 'RSASSA-PKCS1-v1_5' },
-      rsaKeyPair.privateKey,
-      new TextEncoder().encode(signingInput),
-    );
-    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    return `${signingInput}.${sigB64}`;
+  function issueRawHint(claims: Record<string, unknown>): Promise<string> {
+    return signRawJwt({ alg: 'RS256', typ: 'JWT', kid: keyId }, claims);
   }
 
   // RFC 8725 §3.8 / RFC 7519 §4.1.6: reject a forged hint whose iat is implausibly
@@ -759,9 +588,7 @@ describe('validateIdTokenHint', () => {
   it('should reject when iat is in the future beyond the leeway', async () => {
     const now = Math.floor(Date.now() / 1000);
     const hint = await issueHint({ iat: now + 120 }); // 120s > default 60s leeway
-    await expect(
-      validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toThrow('id_token_hint iat is in the future');
+    await expect(verifyHint(hint)).rejects.toThrow('id_token_hint iat is in the future');
   });
 
   it('should reject when iat claim is missing', async () => {
@@ -773,20 +600,14 @@ describe('validateIdTokenHint', () => {
       exp: now + 3600,
       // iat intentionally omitted
     });
-    await expect(
-      validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toThrow('id_token_hint is missing iat claim');
+    await expect(verifyHint(hint)).rejects.toThrow('id_token_hint is missing iat claim');
   });
 
   it('should accept a future iat within an overridden larger clock skew tolerance', async () => {
     const now = Math.floor(Date.now() / 1000);
     const hint = await issueHint({ iat: now + 120 });
     // Default leeway (60s) would reject this; widening to 300s accepts it.
-    const result = await validateIdTokenHint(
-      hint,
-      { expectedIss: issuer, expectedAud: clientId, jwks },
-      { clockSkewToleranceSec: 300 },
-    );
+    const result = await verifyHint(hint, { clockSkewToleranceSec: 300 });
     expect(result.sub).toBe('user-42');
   });
 
@@ -794,59 +615,32 @@ describe('validateIdTokenHint', () => {
   // external key-source fields (jku/x5u/jwk/x5c). The OP only uses pre-registered JWKS,
   // so these must be refused to close SSRF / key-substitution / cross-JWT confusion paths.
   describe('external key-source header rejection (RFC 8725 §3.1)', () => {
-    async function issueHintWithHeader(
-      header: Record<string, unknown>,
-    ): Promise<string> {
+    function issueHintWithHeader(header: Record<string, unknown>): Promise<string> {
       const now = Math.floor(Date.now() / 1000);
-      const headerB64 = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: keyId, ...header }))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-      const payloadB64 = btoa(
-        JSON.stringify({ iss: issuer, sub: 'user-42', aud: clientId, exp: now + 3600, iat: now }),
-      )
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-      const signingInput = `${headerB64}.${payloadB64}`;
-      const sigBuf = await crypto.subtle.sign(
-        { name: 'RSASSA-PKCS1-v1_5' },
-        rsaKeyPair.privateKey,
-        new TextEncoder().encode(signingInput),
+      return signRawJwt(
+        { alg: 'RS256', typ: 'JWT', kid: keyId, ...header },
+        { iss: issuer, sub: 'user-42', aud: clientId, exp: now + 3600, iat: now },
       );
-      const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-      return `${signingInput}.${sigB64}`;
     }
 
     it('should reject a hint whose header contains jku', async () => {
       const hint = await issueHintWithHeader({ jku: 'https://evil.example.com/jwks.json' });
-      await expect(
-        validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-      ).rejects.toThrow('id_token_hint JOSE header contains unsupported field: jku');
+      await expect(verifyHint(hint)).rejects.toThrow('id_token_hint JOSE header contains unsupported field: jku');
     });
 
     it('should reject a hint whose header contains x5u', async () => {
       const hint = await issueHintWithHeader({ x5u: 'https://evil.example.com/cert.pem' });
-      await expect(
-        validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-      ).rejects.toThrow('id_token_hint JOSE header contains unsupported field: x5u');
+      await expect(verifyHint(hint)).rejects.toThrow('id_token_hint JOSE header contains unsupported field: x5u');
     });
 
     it('should reject a hint whose header contains an embedded jwk', async () => {
       const hint = await issueHintWithHeader({ jwk: { kty: 'RSA', n: 'AQAB', e: 'AQAB' } });
-      await expect(
-        validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-      ).rejects.toThrow('id_token_hint JOSE header contains unsupported field: jwk');
+      await expect(verifyHint(hint)).rejects.toThrow('id_token_hint JOSE header contains unsupported field: jwk');
     });
 
     it('should reject a hint whose header contains x5c', async () => {
       const hint = await issueHintWithHeader({ x5c: ['MIIB...'] });
-      await expect(
-        validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-      ).rejects.toThrow('id_token_hint JOSE header contains unsupported field: x5c');
+      await expect(verifyHint(hint)).rejects.toThrow('id_token_hint JOSE header contains unsupported field: x5c');
     });
 
     it('should accept a hint whose header has only alg and kid (no regression)', async () => {

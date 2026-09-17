@@ -43,38 +43,51 @@ function decodeJwt(token: string): { header: Record<string, unknown>; payload: R
   return { header, payload };
 }
 
+/**
+ * 既定オプション（overrides で上書き）で発行し、両トークンをデコードして返すヘルパー。
+ * idToken は発行されていなければ throw するので、省略されるケースは response で検証する。
+ */
+async function issue(overrides?: Partial<TokenResponseOptions>) {
+  const result = await generateTokenResponse(createValidOptions(overrides));
+  return {
+    ...result,
+    get accessToken() {
+      return decodeJwt(result.response.access_token);
+    },
+    get idToken() {
+      if (result.response.id_token === undefined) throw new Error('id_token was not issued');
+      return decodeJwt(result.response.id_token);
+    },
+  };
+}
+
 describe('generateTokenResponse', () => {
   describe('Token Response structure', () => {
     it('should return access_token', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       expect(response.access_token).toBeDefined();
       expect(typeof response.access_token).toBe('string');
       expect(response.access_token.length).toBeGreaterThan(0);
     });
 
     it('should return token_type as Bearer', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       expect(response.token_type).toBe('Bearer');
     });
 
     it('should return expires_in', async () => {
-      const options = createValidOptions({ accessTokenExpiresIn: 7200 });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ accessTokenExpiresIn: 7200 });
       expect(response.expires_in).toBe(7200);
     });
 
     it('should return id_token', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       expect(response.id_token).toBeDefined();
       expect(typeof response.id_token).toBe('string');
     });
 
     it('should include scope in the token response', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       // OAuth 2.1 Section 3.2.3: scope is REQUIRED if different from requested,
       // OPTIONAL otherwise. We always include it for clarity and conformance.
       expect(response.scope).toBeDefined();
@@ -82,55 +95,45 @@ describe('generateTokenResponse', () => {
     });
 
     it('should include scope as space-delimited string', async () => {
-      const options = createValidOptions({ scope: ['openid', 'profile', 'email'] });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ scope: ['openid', 'profile', 'email'] });
       expect(response.scope).toBe('openid profile email');
     });
 
     it('should include single scope without trailing space', async () => {
-      const options = createValidOptions({ scope: ['openid'] });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ scope: ['openid'] });
       expect(response.scope).toBe('openid');
     });
   });
 
   describe('Access Token (JWT)', () => {
     it('should be a valid JWT with three parts', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       const parts = response.access_token.split('.');
       expect(parts).toHaveLength(3);
     });
 
     it('should have iss claim matching issuer', async () => {
-      const options = createValidOptions({ issuer: 'https://op.example.com' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.iss).toBe('https://op.example.com');
+      const { accessToken } = await issue({ issuer: 'https://op.example.com' });
+      expect(accessToken.payload.iss).toBe('https://op.example.com');
     });
 
     it('should have sub claim matching subject', async () => {
-      const options = createValidOptions({ subject: 'user-abc' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.sub).toBe('user-abc');
+      const { accessToken } = await issue({ subject: 'user-abc' });
+      expect(accessToken.payload.sub).toBe('user-abc');
     });
 
     // RFC 9068 §2.2: jti is REQUIRED. RFC 7519 §4.1.7 requires a negligible
     // collision probability, which also keeps two same-second issuances distinct
     // (RS256 is a deterministic signature scheme, RFC 8017 §8.2).
     it('should have a 128-bit base64url jti claim', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(typeof payload.jti).toBe('string');
-      expect(String(payload.jti)).toHaveLength(22);
-      expect(String(payload.jti)).toMatch(/^[A-Za-z0-9_-]+$/);
+      const { accessToken } = await issue();
+      expect(typeof accessToken.payload.jti).toBe('string');
+      expect(String(accessToken.payload.jti)).toHaveLength(22);
+      expect(String(accessToken.payload.jti)).toMatch(/^[A-Za-z0-9_-]+$/);
     });
 
     it('should return the access token jti so the caller can persist it', async () => {
-      const options = createValidOptions();
-      const result = await generateTokenResponse(options);
+      const result = await issue();
       const { payload } = decodeJwt(result.response.access_token);
       expect(result.accessTokenJti).toBe(payload.jti);
     });
@@ -143,44 +146,34 @@ describe('generateTokenResponse', () => {
     });
 
     it('should have client_id claim', async () => {
-      const options = createValidOptions({ clientId: 'client-xyz' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.client_id).toBe('client-xyz');
+      const { accessToken } = await issue({ clientId: 'client-xyz' });
+      expect(accessToken.payload.client_id).toBe('client-xyz');
     });
 
     it('should use provided audience for aud claim', async () => {
-      const options = createValidOptions({
+      const { accessToken } = await issue({
         audience: ['https://api.example.com', 'https://other.example.com'],
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.aud).toEqual(['https://api.example.com', 'https://other.example.com']);
+      expect(accessToken.payload.aud).toEqual(['https://api.example.com', 'https://other.example.com']);
     });
 
     // RFC 9068 Section 3: a JWT access token MUST carry a non-empty aud.
     // When no audience is supplied, the issuer (the OP itself) is used as the
     // default audience so the token is never issued with an empty aud.
     it('should default aud to issuer when audience is not provided', async () => {
-      const options = createValidOptions({ issuer: 'https://op.default-aud.com' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.aud).toEqual(['https://op.default-aud.com']);
+      const { accessToken } = await issue({ issuer: 'https://op.default-aud.com' });
+      expect(accessToken.payload.aud).toEqual(['https://op.default-aud.com']);
     });
 
     it('should default aud to issuer when audience is an empty array', async () => {
-      const options = createValidOptions({ issuer: 'https://op.empty-aud.com', audience: [] });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.aud).toEqual(['https://op.empty-aud.com']);
+      const { accessToken } = await issue({ issuer: 'https://op.empty-aud.com', audience: [] });
+      expect(accessToken.payload.aud).toEqual(['https://op.empty-aud.com']);
     });
 
     it('should never issue a JWT access token with an empty aud', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(Array.isArray(payload.aud)).toBe(true);
-      expect((payload.aud as string[]).length).toBeGreaterThan(0);
+      const { accessToken } = await issue();
+      expect(Array.isArray(accessToken.payload.aud)).toBe(true);
+      expect((accessToken.payload.aud as string[]).length).toBeGreaterThan(0);
     });
 
     // OIDC Core 1.0 Section 12 / RFC 9068: refresh_token grant must preserve the
@@ -188,8 +181,8 @@ describe('generateTokenResponse', () => {
     // so an explicitly-supplied audience is retained across rotations.
     it('should retain the same aud when audience is passed again (refresh case)', async () => {
       const audience = ['https://api.example.com'];
-      const first = await generateTokenResponse(createValidOptions({ audience }));
-      const second = await generateTokenResponse(createValidOptions({ audience }));
+      const first = await issue({ audience });
+      const second = await issue({ audience });
       expect(decodeJwt(first.response.access_token).payload.aud).toEqual(audience);
       expect(decodeJwt(second.response.access_token).payload.aud).toEqual(audience);
     });
@@ -203,113 +196,87 @@ describe('generateTokenResponse', () => {
     });
 
     it('should have scope claim as space-separated string', async () => {
-      const options = createValidOptions({ scope: ['openid', 'profile', 'email'] });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.scope).toBe('openid profile email');
+      const { accessToken } = await issue({ scope: ['openid', 'profile', 'email'] });
+      expect(accessToken.payload.scope).toBe('openid profile email');
     });
 
     it('should have exp claim', async () => {
-      const options = createValidOptions({ accessTokenExpiresIn: 3600 });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.exp).toBeDefined();
+      const { accessToken } = await issue({ accessTokenExpiresIn: 3600 });
+      expect(accessToken.payload.exp).toBeDefined();
       const now = Math.floor(Date.now() / 1000);
-      expect(payload.exp as number).toBeGreaterThanOrEqual(now + 3500);
-      expect(payload.exp as number).toBeLessThanOrEqual(now + 3700);
+      expect(accessToken.payload.exp as number).toBeGreaterThanOrEqual(now + 3500);
+      expect(accessToken.payload.exp as number).toBeLessThanOrEqual(now + 3700);
     });
 
     it('should have iat claim', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.access_token);
-      expect(payload.iat).toBeDefined();
+      const { accessToken } = await issue();
+      expect(accessToken.payload.iat).toBeDefined();
       const now = Math.floor(Date.now() / 1000);
-      expect(payload.iat as number).toBeGreaterThanOrEqual(now - 5);
-      expect(payload.iat as number).toBeLessThanOrEqual(now + 5);
+      expect(accessToken.payload.iat as number).toBeGreaterThanOrEqual(now - 5);
+      expect(accessToken.payload.iat as number).toBeLessThanOrEqual(now + 5);
     });
 
     it('should include kid in header when keyId is provided', async () => {
-      const options = createValidOptions({ keyId: 'my-key-1' });
-      const { response } = await generateTokenResponse(options);
-      const { header } = decodeJwt(response.access_token);
-      expect(header.kid).toBe('my-key-1');
+      const { accessToken } = await issue({ keyId: 'my-key-1' });
+      expect(accessToken.header.kid).toBe('my-key-1');
     });
   });
 
   describe('ID Token (JWT)', () => {
     it('should be a valid JWT with three parts', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       const parts = response.id_token.split('.');
       expect(parts).toHaveLength(3);
     });
 
     it('should have iss claim matching issuer', async () => {
-      const options = createValidOptions({ issuer: 'https://op.example.com' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.iss).toBe('https://op.example.com');
+      const { idToken } = await issue({ issuer: 'https://op.example.com' });
+      expect(idToken.payload.iss).toBe('https://op.example.com');
     });
 
     it('should have sub claim matching subject', async () => {
-      const options = createValidOptions({ subject: 'user-def' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.sub).toBe('user-def');
+      const { idToken } = await issue({ subject: 'user-def' });
+      expect(idToken.payload.sub).toBe('user-def');
     });
 
     it('should have aud claim matching clientId', async () => {
-      const options = createValidOptions({ clientId: 'client-aud' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.aud).toBe('client-aud');
+      const { idToken } = await issue({ clientId: 'client-aud' });
+      expect(idToken.payload.aud).toBe('client-aud');
     });
 
     it('should have exp claim', async () => {
-      const options = createValidOptions({ idTokenExpiresIn: 1800 });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
+      const { idToken } = await issue({ idTokenExpiresIn: 1800 });
       const now = Math.floor(Date.now() / 1000);
-      expect(payload.exp as number).toBeGreaterThanOrEqual(now + 1700);
-      expect(payload.exp as number).toBeLessThanOrEqual(now + 1900);
+      expect(idToken.payload.exp as number).toBeGreaterThanOrEqual(now + 1700);
+      expect(idToken.payload.exp as number).toBeLessThanOrEqual(now + 1900);
     });
 
     it('should have iat claim', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
+      const { idToken } = await issue();
       const now = Math.floor(Date.now() / 1000);
-      expect(payload.iat as number).toBeGreaterThanOrEqual(now - 5);
-      expect(payload.iat as number).toBeLessThanOrEqual(now + 5);
+      expect(idToken.payload.iat as number).toBeGreaterThanOrEqual(now - 5);
+      expect(idToken.payload.iat as number).toBeLessThanOrEqual(now + 5);
     });
 
     it('should include nonce when provided', async () => {
-      const options = createValidOptions({ nonce: 'test-nonce-123' });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.nonce).toBe('test-nonce-123');
+      const { idToken } = await issue({ nonce: 'test-nonce-123' });
+      expect(idToken.payload.nonce).toBe('test-nonce-123');
     });
 
     it('should not include nonce when not provided', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.nonce).toBeUndefined();
+      const { idToken } = await issue();
+      expect(idToken.payload.nonce).toBeUndefined();
     });
 
     // OIDC Core 1.0 Section 3.1.3.6: at_hash
     it('should include at_hash claim', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.at_hash).toBeDefined();
-      expect(typeof payload.at_hash).toBe('string');
+      const { idToken } = await issue();
+      expect(idToken.payload.at_hash).toBeDefined();
+      expect(typeof idToken.payload.at_hash).toBe('string');
     });
 
     it('should compute at_hash as left half of SHA-256 hash of access_token', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       const { payload } = decodeJwt(response.id_token);
 
       // Manually compute at_hash: SHA-256 of access_token, take left 128 bits, base64url encode
@@ -354,8 +321,7 @@ describe('generateTokenResponse', () => {
 
       it('should compute at_hash with SHA-256 left half (16 bytes) for RS256 id_token', async () => {
         const key = await generateRsaKey('SHA-256');
-        const options = createValidOptions({ idTokenPrivateKey: key.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: key.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const expected = await expectedHash(response.access_token, 'SHA-256');
@@ -366,8 +332,7 @@ describe('generateTokenResponse', () => {
 
       it('should compute at_hash with SHA-256 left half for ES256 id_token', async () => {
         const key = await generateEcKey('P-256');
-        const options = createValidOptions({ idTokenPrivateKey: key.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: key.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const expected = await expectedHash(response.access_token, 'SHA-256');
@@ -376,8 +341,7 @@ describe('generateTokenResponse', () => {
 
       it('should compute at_hash with SHA-384 left half (24 bytes) for RS384 id_token', async () => {
         const key = await generateRsaKey('SHA-384');
-        const options = createValidOptions({ idTokenPrivateKey: key.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: key.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const expected = await expectedHash(response.access_token, 'SHA-384');
@@ -388,8 +352,7 @@ describe('generateTokenResponse', () => {
 
       it('should compute at_hash with SHA-384 left half for ES384 id_token', async () => {
         const key = await generateEcKey('P-384');
-        const options = createValidOptions({ idTokenPrivateKey: key.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: key.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const expected = await expectedHash(response.access_token, 'SHA-384');
@@ -398,8 +361,7 @@ describe('generateTokenResponse', () => {
 
       it('should compute at_hash with SHA-512 left half (32 bytes) for RS512 id_token', async () => {
         const key = await generateRsaKey('SHA-512');
-        const options = createValidOptions({ idTokenPrivateKey: key.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: key.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const expected = await expectedHash(response.access_token, 'SHA-512');
@@ -410,8 +372,7 @@ describe('generateTokenResponse', () => {
 
       it('should compute at_hash with SHA-512 left half for ES512 id_token', async () => {
         const key = await generateEcKey('P-521');
-        const options = createValidOptions({ idTokenPrivateKey: key.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: key.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const expected = await expectedHash(response.access_token, 'SHA-512');
@@ -421,8 +382,7 @@ describe('generateTokenResponse', () => {
       it('should base at_hash on the id_token signing alg, not the access_token signing alg', async () => {
         // access_token signed with RS256 (SHA-256), id_token signed with RS512 (SHA-512).
         const idKey = await generateRsaKey('SHA-512');
-        const options = createValidOptions({ idTokenPrivateKey: idKey.privateKey });
-        const { response } = await generateTokenResponse(options);
+        const { response } = await issue({ idTokenPrivateKey: idKey.privateKey });
         const { payload } = decodeJwt(response.id_token);
 
         const sha512Expected = await expectedHash(response.access_token, 'SHA-512');
@@ -433,64 +393,53 @@ describe('generateTokenResponse', () => {
     });
 
     it('should include kid in header when keyId is provided', async () => {
-      const options = createValidOptions({ keyId: 'id-key-1' });
-      const { response } = await generateTokenResponse(options);
-      const { header } = decodeJwt(response.id_token);
-      expect(header.kid).toBe('id-key-1');
+      const { idToken } = await issue({ keyId: 'id-key-1' });
+      expect(idToken.header.kid).toBe('id-key-1');
     });
 
     it('should include auth_time when provided', async () => {
       const authTime = Math.floor(Date.now() / 1000) - 300;
-      const options = createValidOptions({ authTime });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token);
-      expect(payload.auth_time).toBe(authTime);
+      const { idToken } = await issue({ authTime });
+      expect(idToken.payload.auth_time).toBe(authTime);
     });
   });
 
   describe('ID Token issuance control', () => {
     it('should include id_token by default when issueIdToken is not set', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       expect(response.id_token).toBeDefined();
     });
 
     it('should include id_token when issueIdToken is true', async () => {
-      const options = createValidOptions({ issueIdToken: true });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ issueIdToken: true });
       expect(response.id_token).toBeDefined();
     });
 
     it('should not include id_token when issueIdToken is false', async () => {
       // OIDC Core 1.0 Section 12: refresh_token grant MAY omit id_token
-      const options = createValidOptions({ issueIdToken: false });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ issueIdToken: false });
       expect(response.id_token).toBeUndefined();
     });
   });
 
   describe('Refresh Token', () => {
     it('should not include refresh_token when issueRefreshToken is not set', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       expect(response.refresh_token).toBeUndefined();
     });
 
     it('should not include refresh_token when issueRefreshToken is false', async () => {
-      const options = createValidOptions({ issueRefreshToken: false });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ issueRefreshToken: false });
       expect(response.refresh_token).toBeUndefined();
     });
 
     it('should include refresh_token when issueRefreshToken is true', async () => {
-      const options = createValidOptions({ issueRefreshToken: true });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ issueRefreshToken: true });
       expect(response.refresh_token).toBeDefined();
     });
 
     it('should return a non-empty string for refresh_token when issued', async () => {
-      const options = createValidOptions({ issueRefreshToken: true });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ issueRefreshToken: true });
       expect(typeof response.refresh_token).toBe('string');
       expect((response.refresh_token as string).length).toBeGreaterThan(0);
     });
@@ -522,11 +471,10 @@ describe('generateTokenResponse', () => {
     // OIDC Core 1.0 allows id_token_signed_response_alg to be configured per client,
     // so the ID token MAY be signed with a different key than the access token.
     it('should sign id_token with idTokenPrivateKey when provided', async () => {
-      const options = createValidOptions({
+      const { response } = await issue({
         idTokenPrivateKey: secondaryKeyPair.privateKey,
         idTokenKeyId: 'id-key-2',
       });
-      const { response } = await generateTokenResponse(options);
 
       // ID token signature must verify with the secondary public key, not the primary.
       const idParts = response.id_token.split('.');
@@ -550,11 +498,10 @@ describe('generateTokenResponse', () => {
     });
 
     it('should sign access_token with primary privateKey even when idTokenPrivateKey is provided', async () => {
-      const options = createValidOptions({
+      const { response } = await issue({
         idTokenPrivateKey: secondaryKeyPair.privateKey,
         idTokenKeyId: 'id-key-2',
       });
-      const { response } = await generateTokenResponse(options);
 
       const atParts = response.access_token.split('.');
       const atSig = base64UrlToArrayBuffer(atParts[2]!);
@@ -569,36 +516,30 @@ describe('generateTokenResponse', () => {
     });
 
     it('should set kid header from idTokenKeyId on id_token only', async () => {
-      const options = createValidOptions({
+      const { accessToken, idToken } = await issue({
         keyId: 'access-key',
         idTokenPrivateKey: secondaryKeyPair.privateKey,
         idTokenKeyId: 'id-key-2',
       });
-      const { response } = await generateTokenResponse(options);
 
-      const { header: atHeader } = decodeJwt(response.access_token);
-      const { header: idHeader } = decodeJwt(response.id_token);
-      expect(atHeader.kid).toBe('access-key');
-      expect(idHeader.kid).toBe('id-key-2');
+      expect(accessToken.header.kid).toBe('access-key');
+      expect(idToken.header.kid).toBe('id-key-2');
     });
 
     it('should fall back idTokenKeyId to keyId when not provided', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         keyId: 'shared-key',
         idTokenPrivateKey: secondaryKeyPair.privateKey,
       });
-      const { response } = await generateTokenResponse(options);
 
       // idTokenKeyId is undefined → falls back to keyId. Even though the actual signing
       // uses the secondary key, the header still says kid=shared-key (consistent with
       // a deployment that rotates rarely and shares the kid label).
-      const { header: idHeader } = decodeJwt(response.id_token);
-      expect(idHeader.kid).toBe('shared-key');
+      expect(idToken.header.kid).toBe('shared-key');
     });
 
     it('should sign both tokens with the same key when idTokenPrivateKey is omitted (backward compat)', async () => {
-      const options = createValidOptions({ keyId: 'shared-key' });
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue({ keyId: 'shared-key' });
 
       const verify = async (jwt: string) => {
         const parts = jwt.split('.');
@@ -620,18 +561,16 @@ describe('generateTokenResponse', () => {
   // implement (or omit, preserving the T-009 hold "no acr/amr" behavior).
   describe('acr / amr resolver injection (T-015)', () => {
     it('should include acr and amr in the ID Token when the resolver returns values', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         acrResolver: async () => ({ acr: 'urn:mace:incommon:iap:silver', amr: ['pwd', 'mfa'] }),
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.acr).toBe('urn:mace:incommon:iap:silver');
-      expect(payload.amr).toEqual(['pwd', 'mfa']);
+      expect(idToken.payload.acr).toBe('urn:mace:incommon:iap:silver');
+      expect(idToken.payload.amr).toEqual(['pwd', 'mfa']);
     });
 
     it('should pass userId, clientId and requestedAcrValues to the resolver', async () => {
       const calls: Array<{ userId: string; clientId: string; requestedAcrValues?: string }> = [];
-      const options = createValidOptions({
+      await issue({
         subject: 'user-acr',
         clientId: 'client-acr',
         requestedAcrValues: '0 1',
@@ -640,7 +579,6 @@ describe('generateTokenResponse', () => {
           return { acr: '1', amr: ['pwd'] };
         },
       });
-      await generateTokenResponse(options);
       expect(calls).toHaveLength(1);
       expect(calls[0]).toEqual({
         userId: 'user-acr',
@@ -650,28 +588,24 @@ describe('generateTokenResponse', () => {
     });
 
     it('should omit acr and amr from ID Token when the resolver returns undefined', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         acrResolver: async () => undefined,
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.acr).toBeUndefined();
-      expect(payload.amr).toBeUndefined();
+      expect(idToken.payload.acr).toBeUndefined();
+      expect(idToken.payload.amr).toBeUndefined();
     });
 
     it('should omit acr and amr from ID Token when no resolver is provided (T-009 hold behavior)', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.acr).toBeUndefined();
-      expect(payload.amr).toBeUndefined();
+      const { idToken } = await issue();
+      expect(idToken.payload.acr).toBeUndefined();
+      expect(idToken.payload.amr).toBeUndefined();
     });
 
     // OIDC Core 1.0 §12.1 SHOULD: refresh で発行する ID Token は初回認証時の
     // acr / amr を保持する。caller は格納済みの値を直接渡し、resolver は呼び出さない。
     it('should use directly-passed acr/amr (refresh case) and skip resolver', async () => {
       let resolverCalled = false;
-      const options = createValidOptions({
+      const { idToken } = await issue({
         acr: 'urn:initial',
         amr: ['pwd'],
         acrResolver: async () => {
@@ -679,38 +613,33 @@ describe('generateTokenResponse', () => {
           return { acr: 'should-not-be-used', amr: ['x'] };
         },
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.acr).toBe('urn:initial');
-      expect(payload.amr).toEqual(['pwd']);
+      expect(idToken.payload.acr).toBe('urn:initial');
+      expect(idToken.payload.amr).toEqual(['pwd']);
       expect(resolverCalled).toBe(false);
     });
 
     // P0: refresh token への acr / amr 永続化のため、解決値を呼び出し側へ返す。
     it('should return resolved acr/amr alongside the response when resolver supplies them', async () => {
-      const options = createValidOptions({
+      const result = await issue({
         acrResolver: async () => ({ acr: 'urn:resolved', amr: ['pwd', 'mfa'] }),
       });
-      const result = await generateTokenResponse(options);
       expect(result.resolvedAcr).toBe('urn:resolved');
       expect(result.resolvedAmr).toEqual(['pwd', 'mfa']);
     });
 
     it('should return resolved acr/amr equal to directly-passed values on refresh path', async () => {
-      const options = createValidOptions({
+      const result = await issue({
         acr: 'urn:initial',
         amr: ['pwd'],
       });
-      const result = await generateTokenResponse(options);
       expect(result.resolvedAcr).toBe('urn:initial');
       expect(result.resolvedAmr).toEqual(['pwd']);
     });
 
     it('should leave resolvedAcr/resolvedAmr undefined when resolver returns undefined', async () => {
-      const options = createValidOptions({
+      const result = await issue({
         acrResolver: async () => undefined,
       });
-      const result = await generateTokenResponse(options);
       expect(result.resolvedAcr).toBeUndefined();
       expect(result.resolvedAmr).toBeUndefined();
     });
@@ -718,7 +647,7 @@ describe('generateTokenResponse', () => {
     // OIDC Core 1.0 §5.5.1.1: claims.id_token.acr.values drives requested acr_values.
     it('should pass claims.id_token.acr.values to the resolver as requestedAcrValues', async () => {
       let receivedAcrValues: string | undefined;
-      const options = createValidOptions({
+      const result = await issue({
         claims: {
           id_token: { acr: { essential: true, values: ['urn:a', 'urn:b'] } },
         },
@@ -727,14 +656,13 @@ describe('generateTokenResponse', () => {
           return { acr: 'urn:a', amr: ['pwd'] };
         },
       });
-      const result = await generateTokenResponse(options);
       expect(receivedAcrValues).toBe('urn:a urn:b');
       expect(result.resolvedAcr).toBe('urn:a');
     });
 
     it('should let acr_values request param take precedence over claims.id_token.acr.values', async () => {
       let receivedAcrValues: string | undefined;
-      const options = createValidOptions({
+      await issue({
         requestedAcrValues: 'urn:from-acr-values',
         claims: {
           id_token: { acr: { values: ['urn:from-claims'] } },
@@ -744,27 +672,24 @@ describe('generateTokenResponse', () => {
           return { acr: 'urn:from-acr-values', amr: ['pwd'] };
         },
       });
-      await generateTokenResponse(options);
       expect(receivedAcrValues).toBe('urn:from-acr-values');
     });
 
     it('should ignore unknown id_token claim members without throwing', async () => {
-      const options = createValidOptions({
+      const result = await issue({
         claims: {
           id_token: { custom_unknown_claim: { essential: true } },
         },
         acrResolver: async () => ({ acr: 'urn:resolved', amr: ['pwd'] }),
       });
-      const result = await generateTokenResponse(options);
       expect(result.resolvedAcr).toBe('urn:resolved');
     });
 
     // Make sure the public response body never carries acr/amr — those are ID Token only.
     it('should not leak acr/amr into the response body', async () => {
-      const options = createValidOptions({
+      const { response } = await issue({
         acrResolver: async () => ({ acr: 'urn:resolved', amr: ['pwd'] }),
       });
-      const { response } = await generateTokenResponse(options);
       expect((response as Record<string, unknown>).acr).toBeUndefined();
       expect((response as Record<string, unknown>).amr).toBeUndefined();
     });
@@ -784,60 +709,52 @@ describe('generateTokenResponse', () => {
     };
 
     it('should omit profile claims when scope is reduced to openid email', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         scope: ['openid', 'email'],
         userClaims,
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.email).toBe('alice@example.com');
-      expect(payload.email_verified).toBe(true);
-      expect(payload.name).toBeUndefined();
-      expect(payload.family_name).toBeUndefined();
-      expect(payload.phone_number).toBeUndefined();
+      expect(idToken.payload.email).toBe('alice@example.com');
+      expect(idToken.payload.email_verified).toBe(true);
+      expect(idToken.payload.name).toBeUndefined();
+      expect(idToken.payload.family_name).toBeUndefined();
+      expect(idToken.payload.phone_number).toBeUndefined();
     });
 
     it('should include all matching claims when scope is openid profile email', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         scope: ['openid', 'profile', 'email'],
         userClaims,
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.name).toBe('Alice');
-      expect(payload.family_name).toBe('Doe');
-      expect(payload.email).toBe('alice@example.com');
-      expect(payload.email_verified).toBe(true);
+      expect(idToken.payload.name).toBe('Alice');
+      expect(idToken.payload.family_name).toBe('Doe');
+      expect(idToken.payload.email).toBe('alice@example.com');
+      expect(idToken.payload.email_verified).toBe(true);
     });
 
     it('should always include required claims (sub/iss/aud/exp/iat) regardless of scope reduction', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         scope: ['openid'],
         userClaims,
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.sub).toBeDefined();
-      expect(payload.iss).toBeDefined();
-      expect(payload.aud).toBeDefined();
-      expect(payload.exp).toBeDefined();
-      expect(payload.iat).toBeDefined();
+      expect(idToken.payload.sub).toBeDefined();
+      expect(idToken.payload.iss).toBeDefined();
+      expect(idToken.payload.aud).toBeDefined();
+      expect(idToken.payload.exp).toBeDefined();
+      expect(idToken.payload.iat).toBeDefined();
       // openid scope alone should not pull in profile/email/phone claims.
-      expect(payload.name).toBeUndefined();
-      expect(payload.email).toBeUndefined();
-      expect(payload.phone_number).toBeUndefined();
+      expect(idToken.payload.name).toBeUndefined();
+      expect(idToken.payload.email).toBeUndefined();
+      expect(idToken.payload.phone_number).toBeUndefined();
     });
 
     it('should keep ID Token unchanged when userClaims is not provided', async () => {
-      const options = createValidOptions({ scope: ['openid', 'profile'] });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.name).toBeUndefined();
-      expect(payload.email).toBeUndefined();
+      const { idToken } = await issue({ scope: ['openid', 'profile'] });
+      expect(idToken.payload.name).toBeUndefined();
+      expect(idToken.payload.email).toBeUndefined();
     });
 
     it('should not let user claims override required ID Token claims', async () => {
-      const options = createValidOptions({
+      const { idToken } = await issue({
         subject: 'user-required',
         scope: ['openid', 'profile'],
         userClaims: {
@@ -845,17 +762,14 @@ describe('generateTokenResponse', () => {
           name: 'Alice',
         } as never,
       });
-      const { response } = await generateTokenResponse(options);
-      const { payload } = decodeJwt(response.id_token!);
-      expect(payload.sub).toBe('user-required');
-      expect(payload.name).toBe('Alice');
+      expect(idToken.payload.sub).toBe('user-required');
+      expect(idToken.payload.name).toBe('Alice');
     });
   });
 
   describe('Token signature verification', () => {
     it('should produce valid RS256 signature for access_token', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       const parts = response.access_token.split('.');
       const signingInput = `${parts[0]}.${parts[1]}`;
       const signatureBuffer = base64UrlToArrayBuffer(parts[2]!);
@@ -870,8 +784,7 @@ describe('generateTokenResponse', () => {
     });
 
     it('should produce valid RS256 signature for id_token', async () => {
-      const options = createValidOptions();
-      const { response } = await generateTokenResponse(options);
+      const { response } = await issue();
       const parts = response.id_token.split('.');
       const signingInput = `${parts[0]}.${parts[1]}`;
       const signatureBuffer = base64UrlToArrayBuffer(parts[2]!);
@@ -989,34 +902,26 @@ describe('buildAccessTokenAudience', () => {
 // cannot silently drop the required azp or wrongly widen aud.
 describe('generateTokenResponse - ID Token aud/azp shape', () => {
   it('should issue aud as a single string equal to clientId by default', async () => {
-    const options = createValidOptions({ clientId: 'client-single-aud' });
-    const { response } = await generateTokenResponse(options);
-    const { payload } = decodeJwt(response.id_token!);
-    expect(payload.aud).toBe('client-single-aud');
+    const { idToken } = await issue({ clientId: 'client-single-aud' });
+    expect(idToken.payload.aud).toBe('client-single-aud');
   });
 
   it('should not issue aud as an array when no additional audiences are given', async () => {
-    const options = createValidOptions();
-    const { response } = await generateTokenResponse(options);
-    const { payload } = decodeJwt(response.id_token!);
-    expect(Array.isArray(payload.aud)).toBe(false);
+    const { idToken } = await issue();
+    expect(Array.isArray(idToken.payload.aud)).toBe(false);
   });
 
   it('should not include an azp claim for a single audience', async () => {
-    const options = createValidOptions();
-    const { response } = await generateTokenResponse(options);
-    const { payload } = decodeJwt(response.id_token!);
-    expect(Object.prototype.hasOwnProperty.call(payload, 'azp')).toBe(false);
+    const { idToken } = await issue();
+    expect(Object.prototype.hasOwnProperty.call(idToken.payload, 'azp')).toBe(false);
   });
 
   it('should issue aud as an array [clientId, ...additional] when idTokenAudiences is given', async () => {
-    const options = createValidOptions({
+    const { idToken } = await issue({
       clientId: 'client-primary',
       idTokenAudiences: ['https://other.example/rp', 'https://third.example/rp'],
     });
-    const { response } = await generateTokenResponse(options);
-    const { payload } = decodeJwt(response.id_token!);
-    expect(payload.aud).toEqual([
+    expect(idToken.payload.aud).toEqual([
       'client-primary',
       'https://other.example/rp',
       'https://third.example/rp',
@@ -1024,24 +929,20 @@ describe('generateTokenResponse - ID Token aud/azp shape', () => {
   });
 
   it('should set azp to clientId when aud contains multiple values', async () => {
-    const options = createValidOptions({
+    const { idToken } = await issue({
       clientId: 'client-primary',
       idTokenAudiences: ['https://other.example/rp'],
     });
-    const { response } = await generateTokenResponse(options);
-    const { payload } = decodeJwt(response.id_token!);
-    expect(payload.azp).toBe('client-primary');
+    expect(idToken.payload.azp).toBe('client-primary');
   });
 
   it('should keep aud a single string and omit azp when additional audiences dedupe to clientId only', async () => {
-    const options = createValidOptions({
+    const { idToken } = await issue({
       clientId: 'client-primary',
       idTokenAudiences: ['client-primary'],
     });
-    const { response } = await generateTokenResponse(options);
-    const { payload } = decodeJwt(response.id_token!);
-    expect(payload.aud).toBe('client-primary');
-    expect(Object.prototype.hasOwnProperty.call(payload, 'azp')).toBe(false);
+    expect(idToken.payload.aud).toBe('client-primary');
+    expect(Object.prototype.hasOwnProperty.call(idToken.payload, 'azp')).toBe(false);
   });
 });
 

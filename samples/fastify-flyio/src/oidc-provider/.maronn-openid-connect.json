@@ -1,0 +1,20 @@
+{
+  "cliVersion": "0.5.0",
+  "framework": "fastify",
+  "features": {
+    "pkce": true,
+    "refreshToken": true,
+    "introspection": true,
+    "revocation": true,
+    "requestObject": true,
+    "par": false,
+    "tokenExchange": false,
+    "jarm": false,
+    "deviceAuthorizationGrant": true,
+    "idJag": false,
+    "ciba": true,
+    "jwtIntrospectionResponse": false,
+    "transactionBinding": false
+  },
+  "scopes": []
+}

@@ -2,6 +2,7 @@
 
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, relative, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { generate, getAvailableFrameworks } from './generator.js';
 import {
   AVAILABLE_FEATURES,
@@ -57,6 +58,20 @@ function withGoogleLoginPackage(installCommand: string, features: OidcFeatureCon
 
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
 
+/**
+ * Manifest recording which CLI version and which inputs produced the output,
+ * so a user can later diff their code against the release that generated it.
+ * It is machine-written, never user-edited, so it is exempt from the overwrite
+ * guard and refreshed on every (non-dry-run) generation.
+ */
+const MANIFEST_FILENAME = '.maronn-openid-connect.json';
+
+// src/ and dist/ both sit one level below the package root, so ../package.json
+// resolves to this package's own manifest from either build state.
+const CLI_VERSION: string = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version;
+
 const IMPORT_PLACEHOLDER = '// <!-- OIDC_IMPORT_PLACEHOLDER -->';
 const SETUP_PLACEHOLDER = '// <!-- OIDC_SETUP_PLACEHOLDER -->';
 const APPLY_OIDC_CALL = 'applyOidc(app);';
@@ -94,6 +109,8 @@ Options:
   --enable <features>   Comma-separated features to enable (repeatable)
   --disable <features>  Comma-separated features to remove from the default set (repeatable)
   --scope <scopes>      Comma-separated custom scopes the provider accepts (repeatable)
+  --force               Overwrite files that already exist in the output directory
+  --dry-run             Show what would be written without writing anything
   --help, -h            Show this help message
 
 Features (all enabled by default): ${features}
@@ -136,6 +153,8 @@ function parseArgs(args: string[]): {
   enable: string[];
   disable: string[];
   scope: string[];
+  force: boolean;
+  dryRun: boolean;
   help: boolean;
 } {
   let command: string | undefined;
@@ -146,6 +165,8 @@ function parseArgs(args: string[]): {
   const disable: string[] = [];
   // Kept raw here; splitting and validation are resolveCustomScopes()'s job.
   const scope: string[] = [];
+  let force = false;
+  let dryRun = false;
   let help = false;
 
   const splitFeatureList = (value: string | undefined): string[] =>
@@ -171,6 +192,10 @@ function parseArgs(args: string[]): {
       i++;
       const value = args[i];
       if (value !== undefined) scope.push(value);
+    } else if (arg === '--force') {
+      force = true;
+    } else if (arg === '--dry-run') {
+      dryRun = true;
     } else if (!command) {
       command = arg;
     } else if (!framework) {
@@ -178,7 +203,42 @@ function parseArgs(args: string[]): {
     }
   }
 
-  return { command, framework, outputDir, entryFile, enable, disable, scope, help };
+  return { command, framework, outputDir, entryFile, enable, disable, scope, force, dryRun, help };
+}
+
+function buildManifestFile(
+  framework: string,
+  features: OidcFeatureConfig,
+  scopes: string[],
+): { path: string; content: string } {
+  // No timestamp: the same inputs must keep producing byte-identical output.
+  const manifest = { cliVersion: CLI_VERSION, framework, features, scopes };
+  return { path: MANIFEST_FILENAME, content: `${JSON.stringify(manifest, null, 2)}\n` };
+}
+
+/** Planned paths that already exist on disk, in generation order. */
+function findExistingFiles(outputDir: string, files: Array<{ path: string }>): string[] {
+  return files.map((file) => file.path).filter((path) => existsSync(join(outputDir, path)));
+}
+
+function printOverwriteRefusal(outputDir: string, existingPaths: string[]): void {
+  console.error(`Error: ${existingPaths.length} file(s) already exist in ${outputDir}:`);
+  for (const path of existingPaths) {
+    console.error(`  ${path}`);
+  }
+  console.error('');
+  console.error(
+    'Re-run with --force to overwrite them, or use -o <dir> to generate into a new directory.',
+  );
+  console.error('Tip: commit the generated files before overwriting so you can diff your changes.');
+}
+
+function printDryRunPlan(outputDir: string, files: Array<{ path: string }>): void {
+  console.log(`Dry run: nothing was written. Planned output in ${outputDir}:`);
+  for (const file of files) {
+    const label = existsSync(join(outputDir, file.path)) ? 'Would overwrite' : 'Would create';
+    console.log(`  ${label}: ${file.path}`);
+  }
 }
 
 function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; content: string }>): void {
@@ -188,8 +248,9 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
+    const label = existsSync(fullPath) ? 'Overwritten' : 'Created';
     writeFileSync(fullPath, file.content, 'utf-8');
-    console.log(`  Created: ${file.path}`);
+    console.log(`  ${label}: ${file.path}`);
   }
 }
 
@@ -309,6 +370,22 @@ export function run(args: string[]): void {
       features,
       scopes,
     });
+    const manifestFile = buildManifestFile(result.framework, features, scopes);
+    const plannedFiles = [...result.files, manifestFile];
+
+    if (parsed.dryRun) {
+      printDryRunPlan(parsed.outputDir, plannedFiles);
+      return;
+    }
+
+    // Only user-facing files arm the guard: the manifest is machine-written
+    // and is refreshed on every generation, --force or not.
+    const existingPaths = findExistingFiles(parsed.outputDir, result.files);
+    if (existingPaths.length > 0 && !parsed.force) {
+      printOverwriteRefusal(parsed.outputDir, existingPaths);
+      process.exitCode = 1;
+      return;
+    }
 
     console.log(`\nGenerating ${result.framework} OIDC Provider code...\n`);
     const disabledFeatures = AVAILABLE_FEATURES.filter(
@@ -347,8 +424,8 @@ export function run(args: string[]): void {
           'that decides a grant.\n',
       );
     }
-    writeGeneratedFiles(parsed.outputDir, result.files);
-    console.log(`\nDone! Generated ${result.files.length} files in ${parsed.outputDir}`);
+    writeGeneratedFiles(parsed.outputDir, plannedFiles);
+    console.log(`\nDone! Generated ${plannedFiles.length} files in ${parsed.outputDir}`);
 
     if (parsed.command === 'setup') {
       console.log(`\nPatching entry file...`);

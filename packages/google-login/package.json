@@ -1,6 +1,6 @@
 {
   "name": "@maronn-openid-connect/google-login",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Sign in with Google (Google Identity Services, redirect mode) as an upstream login method for maronn-openid-connect providers",
   "type": "module",
   "engines": {

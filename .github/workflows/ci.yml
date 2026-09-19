@@ -31,6 +31,8 @@ jobs:
     # ここを通すと「changeset を消す PR が changeset を要求される」デッドロックになる。
     # Dependabot は packages/*/package.json の devDependencies を更新するだけで
     # 出荷物は変わらない（本リポジトリの dependencies は workspace 内部のみ）。
+    # 例外は packages/google-login の google-auth-library（production 依存）で、
+    # その bump を publish するときは担当者が changeset を手で足す（RELEASE.md）。
     if: >-
       !startsWith(github.head_ref, 'changeset-release/')
       && github.actor != 'dependabot[bot]'
@@ -97,7 +99,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # build は typecheck より前に置く。
-      # samples/* と packages/experimental は @maronn-openid-connect/core を workspace 経由の
+      # samples/*・packages/experimental・packages/google-login は @maronn-openid-connect/core を workspace 経由の
       # ビルド成果物（dist の .d.ts）として解決するため、未ビルドだと
       # 「Cannot find module '@maronn-openid-connect/core'」で typecheck が落ちる。
       - name: Build packages

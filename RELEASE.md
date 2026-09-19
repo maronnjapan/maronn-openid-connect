@@ -8,6 +8,7 @@ publish は **npm Trusted Publishing (OIDC)** を利用し、長期トークン�
 - `@maronn-openid-connect/core`
 - `@maronn-openid-connect/cli`
 - `@maronn-openid-connect/experimental`
+- `@maronn-openid-connect/google-login`
 
 通常のリリース運用（changeset を貯めて Version Packages PR をマージすると publish される二段階フロー）は
 `release.yml` 冒頭のコメントを参照。本ドキュメントは **publish を成立させるための初期セットアップ**を扱う。
@@ -72,7 +73,7 @@ experimental はモノレポ内の core（= 次に publish される core）だ�
 `unmet peer` が出て気づける。
 
 この規則は `pnpm run test:release-contract`
-（`.github/scripts/verify-release-contract.mjs` の `assertExperimentalCorePeerRangeCoversNextCore`）が
+（`.github/scripts/verify-release-contract.mjs` の `assertCorePeerRangeCoversNextCore`）が
 CI で強制する。未消化の changeset から次の core バージョンを計算し、下限がそれを下回っていれば
 上げるべき値を添えて落ちる。
 
@@ -113,19 +114,43 @@ HEAD の core に対して experimental をビルド・テストするので開�
 `test:ci` に組み込み済み）で CI から強制している。同スクリプトは core が experimental の
 `dependencies` に戻っていないかも検査する。
 
+### google-login も core を peer 参照するパッケージとして同じ規則に従う
+
+`@maronn-openid-connect/google-login` は Sign in with Google を core で組んだ OP のログイン手段に
+する拡張パッケージで、experimental と同じく core を `peerDependencies`（`>=0.3.0 <1.0.0`）で
+参照する。core と組み合わせてしか使わない package なので、上の 3 つの規則
+（[peerDependencies で core のインスタンスを 1 つに保つ](#core-のインスタンスを-1-つに保つのは-peerdependencies-の役割)、
+[peer range は「下限」を宣言する](#peer-range-は下限を宣言する)、
+[core の minor / major では同時にリリースする](#core-の-minor--major-では-experimental-も一緒にリリースする)）を
+そのまま適用し、`verify-release-contract.mjs` の `CORE_DEPENDENT_PACKAGES` に列挙して CI で強制している。
+core を peer 参照するパッケージを増やしたら、この配列に足す。
+
+experimental と違う点は 3 つ。
+
+- **changeset は手で書く**（core / cli と同じ）。`packages/google-login/src` を変更しても changeset は自動生成されず、
+  [changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)が `pnpm changeset` を要求する
+- **bump 種別は patch 固定ではない**。0.x の semver として、互換性の変化に応じて minor / major も使う
+- **production 依存に外部ライブラリ（`google-auth-library`）を持つ**。ID トークンの検証を Google 公式
+  ライブラリに委ねているためで、Google 側の仕様変更にはこのライブラリの bump で追随する。
+  Dependabot がこれを bump したときの扱いは
+  [changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)を参照
+
 ### どのパッケージを単独でリリースできるか
 
 | リリース対象 | 単独で出せるか |
 |---|---|
 | `@maronn-openid-connect/cli` のみ | **出せる**。cli は core に依存していない（`dependencies` / `peerDependencies` とも空） |
 | `@maronn-openid-connect/experimental` のみ | **出せる**。自動 changeset の想定運用そのもの |
-| `@maronn-openid-connect/core` のみ | **出せない**。bump 種別によらず experimental が同時リリースになる |
+| `@maronn-openid-connect/google-login` のみ | **出せる**。core を peer 参照するが、core を上げない限り単独で publish できる |
+| `@maronn-openid-connect/core` のみ | **出せない**。bump 種別によらず experimental と google-login が同時リリースになる |
 
 core が単独で出せないのは、[peer range は「下限」を宣言する](#peer-range-は下限を宣言する)の規則が
 **patch にも効く**ため。core を 0.1.0 → 0.1.1 に上げるだけでも下限を `>=0.1.1` へ上げる必要があり、
 その編集は `packages/experimental/package.json`（= experimental の出荷物）の変更なので、
 [changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)が experimental の
 changeset を要求する。結果として core と experimental が必ず同じ Version Packages PR に乗る。
+google-login も同じ規則の対象なので、core を上げるときは `packages/google-login/package.json` の
+下限も同じ値へ上げ、google-login の changeset も添える。
 
 これは規則の帰結であって回避すべき不具合ではない。下限チェックの根拠
 （experimental は HEAD の core としかビルド・テストされていない）は patch でも変わらないので、
@@ -297,7 +322,7 @@ range を `^1.0.0` に切り替え、`onlyUpdatePeerDependentsWhenOutOfRange` �
 | `pnpm run typecheck` | 上記の各実行 | vitest が transform で通してしまう型エラーの素通り |
 | `pnpm run test:ci` | 上記の各実行 | 振る舞いの退行 |
 
-`build` は `typecheck` より **前** に置く。`samples/*` と `packages/experimental` は
+`build` は `typecheck` より **前** に置く。`samples/*`・`packages/experimental`・`packages/google-login` は
 `@maronn-openid-connect/core` をビルド成果物（`dist` の `.d.ts`）として解決するため、
 未ビルドだと `Cannot find module '@maronn-openid-connect/core'` で `typecheck` が落ちる。
 
@@ -363,15 +388,17 @@ npm login
 cat packages/core/package.json   # publishConfig.access = "public" を確認
 cat packages/cli/package.json
 cat packages/experimental/package.json
+cat packages/google-login/package.json
 
 # 3. クリーンな状態でビルド
 pnpm install --frozen-lockfile
 pnpm run build
 
 # 4. 各パッケージを publish（スコープ付きなので public 指定が必須）
-#    experimental は core を peerDependencies で参照するので core を先に publish する
+#    experimental と google-login は core を peerDependencies で参照するので core を先に publish する
 pnpm --filter @maronn-openid-connect/core         publish --access public --no-git-checks
 pnpm --filter @maronn-openid-connect/experimental publish --access public --no-git-checks
+pnpm --filter @maronn-openid-connect/google-login publish --access public --no-git-checks
 pnpm --filter @maronn-openid-connect/cli          publish --access public --no-git-checks
 ```
 
@@ -383,8 +410,29 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
 - https://www.npmjs.com/package/@maronn-openid-connect/core
 - https://www.npmjs.com/package/@maronn-openid-connect/cli
 - https://www.npmjs.com/package/@maronn-openid-connect/experimental
+- https://www.npmjs.com/package/@maronn-openid-connect/google-login
 
 > 初回手動 publish では provenance（来歴証明）は付かない。provenance は CI の OIDC publish で自動付与される。
+
+### 後から追加したパッケージのブートストラップ（google-login の例）
+
+既存パッケージが CI publish で回っている状態でパッケージを追加した場合も、そのパッケージだけは
+同じブートストラップ（手動 publish → Trusted Publisher 設定）が要る。`@maronn-openid-connect/google-login`
+はこの手順のために `package.json` の `version` を **`0.0.0`** で main に入れてあり、
+初回リリース用の changeset（patch）が `0.0.1` へ上げる。
+
+1. main の `0.0.0` をローカルから手動 publish する（上の手順のとおり。`0.0.0` は Trusted Publisher を
+   設定するためのプレースホルダーで、中身はビルド済みの実装そのもの）
+2. npm 側で google-login の Trusted Publisher を設定する（次節）
+3. google-login の changeset を含む Version Packages PR をマージする。CI の OIDC publish が
+   `0.0.1` を provenance 付きで publish する
+
+**1 と 2 を終える前に Version Packages PR をマージしないこと。** `changeset publish` は
+google-login の OIDC トークンを取れず publish が認証エラーで落ち、release job が赤くなる。
+version は確定済みなのでブートストラップ後の次の main への push で publish は再試行される
+（[publish に到達したことを検証する](#publish-に到達したことを検証する)の「registry より main が新しい」状態として
+検出される）が、その間 同じ Version Packages PR に乗った他パッケージの publish 結果と
+混ざって原因を追いにくくなる。
 
 ---
 
@@ -399,6 +447,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
    - `@maronn-openid-connect/core`
    - `@maronn-openid-connect/cli`
    - `@maronn-openid-connect/experimental`
+   - `@maronn-openid-connect/google-login`
 2. **Settings** タブ → **Trusted Publisher**（Publishing access）セクションへ
 3. **GitHub Actions** を選び、以下を登録する
 
@@ -410,7 +459,7 @@ publish 後、npmjs.com に各パッケージのページが作成されてい�
    | Workflow filename | `release.yml` |
    | Environment | （未使用なので空欄） |
 
-4. 保存する。3パッケージとも同じ内容で登録する。
+4. 保存する。4 パッケージとも同じ内容で登録する。
 
 > Workflow filename は **パスではなくファイル名のみ**（`release.yml`）。
 > リポジトリ内の `.github/workflows/release.yml` と一致している必要がある。
@@ -466,7 +515,11 @@ Version Packages PR に現れず、publish されないまま main に埋もれ�
   要求すると「changeset を消す PR が changeset を要求される」デッドロックになる
 - **Dependabot PR**: 更新対象は `packages/*` の devDependencies で出荷物は変わらない
   （本リポジトリの `dependencies` は workspace 内部のみ、という README.md の規約が前提）。
-  publish が必要な bump だと判断したときは、担当者が手動で changeset を足す
+  publish が必要な bump だと判断したときは、担当者が手動で changeset を足す。
+  例外は `packages/google-login` の `google-auth-library`（production 依存）で、Dependabot が
+  これを bump する PR は出荷物（利用者がインストールする依存の range）を変える。
+  Google 側の検証仕様への追随はこの bump で行うので、その PR には google-login の changeset を
+  手で足して publish する
 
 ### provenance の自動検証と手動確認
 
@@ -538,11 +591,11 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 | CI publish が `404` / `403` で失敗 | パッケージ未作成、または Trusted Publisher 未設定。初回手動 publish と npm 側設定を確認 |
 | `Workflow does not match` 系エラー | npm の Trusted Publisher の Workflow filename が `release.yml` と一致しているか確認 |
 | publish 後の `Verify published package provenance` が失敗 | まず publish 自体が成功しているか npm registry を直接照会して確認する（`npm view <name>@<version>`）。存在するのに落ちた場合は registry 反映遅延によるリトライ切れ（[provenance の自動検証と手動確認](#provenance-の自動検証と手動確認)）。存在しない場合のみ Trusted Publisher の repository/workflow 設定、`id-token: write`、公開リポジトリであることを確認 |
-| `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli` / `experimental`） |
+| `npm publish` がローカルで `private` を理由に止まる | ルート以外の対象パッケージで `private: true` になっていないか確認（公開対象は `core` / `cli` / `experimental` / `google-login`） |
 | スコープ付きで `402 Payment Required` | `--access public` 指定漏れ。`publishConfig.access: "public"` も併せて確認 |
 | Version Packages PR で core / experimental が意図せず `1.0.0` になっている | Changesets の `onlyUpdatePeerDependentsWhenOutOfRange` が効いていない。`.changeset/config.json` の設定と Changesets のバージョンを確認する（[バージョニング方針](#バージョニング方針)） |
-| CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では experimental も同時にリリースする（`pnpm changeset` で experimental の changeset を追加する） |
-| core だけ直したのに CI で `peer range … は core X.Y.Z より古い … を下限にしています` で落ちる | 意図した挙動。core は patch でも単独リリースできない。`packages/experimental/package.json` の peer range 下限を指示された値へ上げ、experimental の changeset も追加する（[どのパッケージを単独でリリースできるか](#どのパッケージを単独でリリースできるか)） |
+| CI で `core を minor 以上で上げる changeset がありますが…` で落ちる | 意図した挙動。core の minor / major では core を peer 参照するパッケージ（experimental / google-login）も同時にリリースする（`pnpm changeset` でエラーに列挙されたパッケージの changeset を追加する） |
+| core だけ直したのに CI で `peer range … は core X.Y.Z より古い … を下限にしています` で落ちる | 意図した挙動。core は patch でも単独リリースできない。エラーに出たパッケージ（`packages/experimental/package.json` / `packages/google-login/package.json`）の peer range 下限を指示された値へ上げ、そのパッケージの changeset も追加する（[どのパッケージを単独でリリースできるか](#どのパッケージを単独でリリースできるか)） |
 | core と experimental のバージョン番号がずれている | 正常。番号の一致は要求していない（[バージョニング方針](#バージョニング方針)） |
 | CI の `changeset-coverage` が `対応する changeset がありません` で落ちる | 意図した挙動。`pnpm changeset`（リリースする場合）または `pnpm changeset --empty`（リリース不要の場合）を実行してコミットする（[changeset の書き忘れは CI が止める](#changeset-の書き忘れは-ci-が止める)） |
 | packages を変更していないのに `changeset-coverage` が落ちる | 出荷物判定が想定と違う可能性。`.github/scripts/verify-changeset-coverage.mjs` の `NON_SHIPPED_FILE_PATTERNS` を確認する |

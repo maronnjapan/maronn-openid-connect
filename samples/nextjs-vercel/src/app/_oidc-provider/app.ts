@@ -29,6 +29,12 @@ import {
 } from './store';
 import { createViews, type Views } from './views';
 import {
+  getDefaultGoogleIdTokenVerifier,
+  type GoogleAccountResolver,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '@maronn-openid-connect/google-login';
+import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -69,6 +75,19 @@ export interface OidcProviderOptions {
   cibaUserResolver?: (
     loginHint: string,
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
+  /**
+   * EXTENSION (google-login): verifier for the ID token Google posts to
+   * /login/google. Defaults to google-auth-library (OAuth2Client.verifyIdToken)
+   * with a process-wide certificate cache; inject a custom one for tests or a
+   * proxied environment.
+   */
+  googleIdTokenVerifier?: GoogleIdTokenVerifier;
+  /**
+   * EXTENSION (google-login): map a verified Google account to the OP subject.
+   * Defaults to just-in-time provisioning through the user store
+   * (userStore.linkGoogleAccount), keyed by the Google `sub`.
+   */
+  googleAccountResolver?: GoogleAccountResolver;
   corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
@@ -181,6 +200,12 @@ export function createApp(options: OidcProviderOptions): WebRouter {
       const claims = await stores.userStore.getClaims(loginHint);
       return claims ? { subject: claims.sub } : null;
     }));
+    c.set('googleLoginNonceStore', stores.googleLoginNonceStore);
+    c.set('googleIdTokenVerifier', options.googleIdTokenVerifier ?? getDefaultGoogleIdTokenVerifier());
+    c.set('googleAccountResolver', options.googleAccountResolver ?? {
+      resolveSubject: async (account: GoogleIdTokenPayload) =>
+        (await stores.userStore.linkGoogleAccount(account)).sub,
+    });
 
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);

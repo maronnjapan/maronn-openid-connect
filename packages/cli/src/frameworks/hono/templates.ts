@@ -11,6 +11,7 @@ import type { OidcFeatureConfig } from '../../features.js';
  * `--enable`, so the default output never references it.
  */
 export const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
+export const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
 
 /**
  * Escape a value for embedding in a single-quoted string of the generated code.
@@ -47,6 +48,11 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   '/ciba/login': ['POST'],
   '/ciba/approve': ['POST'],\n`
     : '';
+  // EXTENSION (google-login): the Google login callback (login_uri) receives a
+  // browser form POST from Google's redirect; the login page keeps GET / POST.
+  const googleLoginMethods = features.googleLogin
+    ? `  '/login/google': ['POST'],\n`
+    : '';
   return `const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/authorize': ['GET', 'POST'],
   '/token': ['POST'],
@@ -54,7 +60,7 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
 ${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}  '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
-  '/consent': ['GET', 'POST'],
+${googleLoginMethods}  '/consent': ['GET', 'POST'],
 };
 
 async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Promise<Response | void> {
@@ -176,6 +182,43 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
 `
     : '';
+  // EXTENSION (google-login): the Google login callback needs the nonce store,
+  // the ID token verifier (google-auth-library by default) and the resolver that
+  // maps a verified Google account to an OP subject. The default resolver links
+  // the account through the user store (just-in-time provisioning), so a custom
+  // storage option is honored without extra wiring.
+  const googleLoginImport = features.googleLogin
+    ? `import {
+  getDefaultGoogleIdTokenVerifier,
+  type GoogleAccountResolver,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '${GOOGLE_LOGIN_PACKAGE}';\n`
+    : '';
+  const googleLoginStorageContext = features.googleLogin
+    ? `    c.set('googleLoginNonceStore', stores.googleLoginNonceStore);
+    c.set('googleIdTokenVerifier', options.googleIdTokenVerifier ?? getDefaultGoogleIdTokenVerifier());
+    c.set('googleAccountResolver', options.googleAccountResolver ?? {
+      resolveSubject: async (account: GoogleIdTokenPayload) =>
+        (await stores.userStore.linkGoogleAccount(account)).sub,
+    });\n`
+    : '';
+  const googleLoginOptionsFields = features.googleLogin
+    ? `  /**
+   * EXTENSION (google-login): verifier for the ID token Google posts to
+   * /login/google. Defaults to google-auth-library (OAuth2Client.verifyIdToken)
+   * with a process-wide certificate cache; inject a custom one for tests or a
+   * proxied environment.
+   */
+  googleIdTokenVerifier?: GoogleIdTokenVerifier;
+  /**
+   * EXTENSION (google-login): map a verified Google account to the OP subject.
+   * Defaults to just-in-time provisioning through the user store
+   * (userStore.linkGoogleAccount), keyed by the Google \`sub\`.
+   */
+  googleAccountResolver?: GoogleAccountResolver;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -211,7 +254,7 @@ ${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-import {
+${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -273,7 +316,7 @@ export interface CreateAppOptions {
    * Override only when hints are signed by a different key set.
    */
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-${cibaOptionsField}  corsOrigins?: CorsOrigins;
+${cibaOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
 }
 
 export function validateSigningKeySet(
@@ -370,7 +413,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${googleLoginStorageContext}
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
     c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
@@ -654,13 +697,52 @@ ${exampleClientExchangeComment}${exampleClientIdJagComment}${exampleClientCibaCo
 `
     : `${noRefreshGrantComment}${exampleClientExchangeComment}${exampleClientIdJagComment}${exampleClientCibaComment}      grantTypes: [${exampleClientGrantTypes}],
 `;
+  // EXTENSION (google-login): Sign in with Google settings. Optional, so an OP
+  // generated with the feature still boots without a Google client and simply
+  // renders no button until config.googleLogin is set.
+  const googleLoginConfigTypes = features.googleLogin
+    ? `
+/**
+ * EXTENSION (google-login): Sign in with Google (Google Identity Services,
+ * redirect mode) as a login method. See @maronn-openid-connect/google-login.
+ */
+export interface GoogleLoginConfig {
+  /**
+   * OAuth 2.0 client ID (type: Web application) from the Google Cloud console.
+   * The ID token's \`aud\` must equal it. Register \`<issuer>/login/google\` as an
+   * authorized redirect URI of this client, and the login page origin as an
+   * authorized JavaScript origin.
+   */
+  clientId: string;
+  /**
+   * Optional: only accept Google Workspace accounts of these hosted domains
+   * (\`hd\` claim). A personal Google account has no \`hd\` and is rejected.
+   */
+  hostedDomain?: string | string[];
+  /**
+   * Optional: reject accounts whose email Google has not verified
+   * (\`email_verified !== true\`). Off by default; users are keyed by the Google
+   * \`sub\`, never by email, so an unverified email cannot hijack another user.
+   */
+  requireVerifiedEmail?: boolean;
+}
+`
+    : '';
+  const googleLoginConfigField = features.googleLogin
+    ? `  /**
+   * EXTENSION (google-login): Sign in with Google. Leave undefined to render no
+   * Google button; the login page then only offers the username / password form.
+   */
+  googleLogin?: GoogleLoginConfig;
+`
+    : '';
   return `import type {
   ClientInfo,
   ClientResolver,
   TokenClientInfo,
   TokenClientResolver,
 } from '${corePkg}';
-
+${googleLoginConfigTypes}
 export interface ProviderConfig {
   issuer: string;
   accessTokenExpiresIn: number;
@@ -697,7 +779,7 @@ ${allowUnsignedField}  /**
    * 有無に関わらず常に 400 の OAuth error JSON を返す。
    */
   authorizationErrorRedirectPath?: string;
-}
+${googleLoginConfigField}}
 
 /**
  * Optional defaults for quick local testing.
@@ -1207,6 +1289,155 @@ export const cibaLoginTransactionStore: CibaLoginTransactionStore =
     createInMemoryCibaLoginTransactionStore());
 `
     : '';
+  // EXTENSION (google-login): nonce store contract + verified account payload.
+  const googleLoginStoreTypeImport = features.googleLogin
+    ? `
+import type {
+  GoogleIdTokenPayload,
+  GoogleLoginNonceRecord,
+  GoogleLoginNonceStore,
+} from '${GOOGLE_LOGIN_PACKAGE}';`
+    : '';
+  const googleUsersField = features.googleLogin
+    ? `  // EXTENSION (google-login): users provisioned from a verified Google account,
+  // keyed by their OP subject ('google:' + Google sub). They have no password.
+  private googleUsers = new Map<string, UserClaims>();
+
+`
+    : '';
+  const userStoreGoogleFallback = features.googleLogin ? 'this.googleUsers.get(sub)' : 'undefined';
+  const userStoreGoogleMethods = features.googleLogin
+    ? `
+  /**
+   * EXTENSION (google-login): create or refresh the OP user for a verified Google
+   * account (just-in-time provisioning) and return its claims. The subject is
+   * 'google:' + the Google sub — never the email, which a Google account can
+   * change — so the same person always maps to the same OP user.
+   */
+  linkGoogleAccount(account: GoogleIdTokenPayload): UserClaims {
+    const claims = googleAccountToClaims(account);
+    this.googleUsers.set(claims.sub, claims);
+    return claims;
+  }
+`
+    : '';
+  const googleLoginStoreImplementation = features.googleLogin
+    ? `/**
+ * EXTENSION (google-login): OP subject prefix for users provisioned from Google.
+ */
+export const GOOGLE_SUBJECT_PREFIX = 'google:';
+
+/**
+ * EXTENSION (google-login): the OP user record derived from a verified Google
+ * ID token. Only the profile / email claims Google supplied are copied, so the
+ * UserInfo endpoint returns exactly what Google asserted about the account.
+ */
+export function googleAccountToClaims(account: GoogleIdTokenPayload): UserClaims {
+  const claims: UserClaims = { sub: GOOGLE_SUBJECT_PREFIX + account.sub };
+  if (account.name !== undefined) claims.name = account.name;
+  if (account.given_name !== undefined) claims.given_name = account.given_name;
+  if (account.family_name !== undefined) claims.family_name = account.family_name;
+  if (account.picture !== undefined) claims.picture = account.picture;
+  if (account.locale !== undefined) claims.locale = account.locale;
+  if (account.email !== undefined) claims.email = account.email;
+  if (account.email_verified !== undefined) claims.email_verified = account.email_verified;
+  return claims;
+}
+
+/**
+ * EXTENSION (google-login): in-memory store for the nonce that binds a
+ * "Sign in with Google" click to the authorization transaction it started from
+ * (see @maronn-openid-connect/google-login). An entry lives as long as its
+ * transaction and is consumed on first use by the callback.
+ */
+export class InMemoryGoogleLoginNonceStore implements GoogleLoginNonceStore {
+  private records = new Map<string, { value: GoogleLoginNonceRecord; expiresAt: number }>();
+
+  async get(key: string): Promise<GoogleLoginNonceRecord | null> {
+    const entry = this.records.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.records.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  async put(key: string, value: GoogleLoginNonceRecord, ttlSeconds: number): Promise<void> {
+    this.records.set(key, { value, expiresAt: Date.now() + (ttlSeconds * 1000) });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.records.delete(key);
+  }
+}
+
+`
+    : '';
+  const userStorageGoogleMember = features.googleLogin
+    ? `  /** EXTENSION (google-login): provision / refresh the user for a verified Google account. */
+  linkGoogleAccount(account: GoogleIdTokenPayload): Awaitable<UserClaims>;
+`
+    : '';
+  const providerStoresGoogleMember = features.googleLogin
+    ? `  /** EXTENSION (google-login): nonce -> transaction binding for the Google callback. */
+  googleLoginNonceStore: GoogleLoginNonceStore;
+`
+    : '';
+  const googleLoginPrefixes = features.googleLogin
+    ? `
+const GOOGLE_USER_PREFIX = 'google-user:';
+const GOOGLE_LOGIN_NONCE_PREFIX = 'google-login-nonce:';`
+    : '';
+  const jsonUserStoreGoogleFallback = features.googleLogin ? 'this.findGoogleUser(sub)' : 'undefined';
+  const jsonUserStoreGoogleMethods = features.googleLogin
+    ? `
+  /**
+   * EXTENSION (google-login): provision / refresh the user for a verified Google
+   * account under its own key prefix, so it never collides with a password user.
+   */
+  async linkGoogleAccount(account: GoogleIdTokenPayload): Promise<UserClaims> {
+    const claims = googleAccountToClaims(account);
+    await this.backend.put(GOOGLE_USER_PREFIX + claims.sub, claims);
+    return claims;
+  }
+
+  private async findGoogleUser(sub: string): Promise<UserClaims | undefined> {
+    return (await this.backend.get<UserClaims>(GOOGLE_USER_PREFIX + sub)) ?? undefined;
+  }
+`
+    : '';
+  const jsonGoogleNonceStore = features.googleLogin
+    ? `class JsonGoogleLoginNonceStore implements GoogleLoginNonceStore {
+  constructor(private readonly backend: JsonStoreBackend) {}
+
+  async get(key: string): Promise<GoogleLoginNonceRecord | null> {
+    return this.backend.get<GoogleLoginNonceRecord>(GOOGLE_LOGIN_NONCE_PREFIX + key);
+  }
+
+  async put(key: string, value: GoogleLoginNonceRecord, ttlSeconds: number): Promise<void> {
+    await this.backend.put(GOOGLE_LOGIN_NONCE_PREFIX + key, value, ttlSeconds);
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.backend.delete(GOOGLE_LOGIN_NONCE_PREFIX + key);
+  }
+}
+
+`
+    : '';
+  const jsonStoresGoogleEntry = features.googleLogin
+    ? `    googleLoginNonceStore: new JsonGoogleLoginNonceStore(backend),
+`
+    : '';
+  const defaultStoresGoogleEntry = features.googleLogin
+    ? `  googleLoginNonceStore: new InMemoryGoogleLoginNonceStore(),
+`
+    : '';
+  const googleLoginStoreExport = features.googleLogin
+    ? `
+export const googleLoginNonceStore = defaultProviderStores.googleLoginNonceStore;`
+    : '';
   return `import type {
   AuthTransaction,
   AuthTransactionStore,
@@ -1214,7 +1445,7 @@ export const cibaLoginTransactionStore: CibaLoginTransactionStore =
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}
+} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}${googleLoginStoreTypeImport}
 
 /**
  * In-memory Authorization Transaction Store.
@@ -1535,7 +1766,7 @@ export class ConsentStore {
 export class UserStore {
   private users = new Map<string, UserClaims & { password: string }>();
 
-  constructor() {
+${googleUsersField}  constructor() {
     // Example user for development.
     // Carries the standard claims for every scope advertised in Discovery
     // (profile / email / address / phone — OIDC Core 1.0 §5.4) so the OIDF
@@ -1600,13 +1831,13 @@ export class UserStore {
 
   getClaims(sub: string): UserClaims | undefined {
     const user = this.users.get(sub);
-    if (!user) return undefined;
+    if (!user) return ${userStoreGoogleFallback};
     const { password: _, ...claims } = user;
     return claims;
   }
-}
+${userStoreGoogleMethods}}
 
-export type Awaitable<T> = T | Promise<T>;
+${googleLoginStoreImplementation}export type Awaitable<T> = T | Promise<T>;
 
 export interface JsonStoreEntry<T> {
   key: string;
@@ -1674,7 +1905,7 @@ export interface UserStorage {
     password: string,
   ): Awaitable<(UserClaims & { password: string }) | undefined>;
   getClaims(sub: string): Awaitable<UserClaims | undefined>;
-}
+${userStorageGoogleMember}}
 
 export interface ProviderStores {
   transactionStore: AuthTransactionStore;
@@ -1685,7 +1916,7 @@ export interface ProviderStores {
   browserSessionStore: BrowserSessionStorage;
   consentStore: ConsentStorage;
   userStore: UserStorage;
-}
+${providerStoresGoogleMember}}
 
 export type ProviderStoresFactory = (
   context: any,
@@ -1698,7 +1929,7 @@ const REFRESH_TOKEN_PREFIX = 'refresh-token:';
 const AUTH_SESSION_PREFIX = 'auth-session:';
 const BROWSER_SESSION_PREFIX = 'browser-session:';
 const CONSENT_PREFIX = 'consent:';
-const USER_PREFIX = 'user:';
+const USER_PREFIX = 'user:';${googleLoginPrefixes}
 
 class JsonTransactionStore implements AuthTransactionStore {
   constructor(private readonly backend: JsonStoreBackend) {}
@@ -1911,7 +2142,7 @@ class JsonUserStore implements UserStorage {
 
   async getClaims(sub: string): Promise<UserClaims | undefined> {
     const user = await this.findOrSeed(sub);
-    if (!user) return undefined;
+    if (!user) return ${jsonUserStoreGoogleFallback};
     const { password: _, ...claims } = user;
     return claims;
   }
@@ -1925,9 +2156,9 @@ class JsonUserStore implements UserStorage {
     await this.backend.put(key, fixture);
     return fixture;
   }
-}
+${jsonUserStoreGoogleMethods}}
 
-/** Create all OP stores over one deployment-native JSON backend. */
+${jsonGoogleNonceStore}/** Create all OP stores over one deployment-native JSON backend. */
 export function createJsonProviderStores(backend: JsonStoreBackend): ProviderStores {
   return {
     transactionStore: new JsonTransactionStore(backend),
@@ -1938,7 +2169,7 @@ export function createJsonProviderStores(backend: JsonStoreBackend): ProviderSto
     browserSessionStore: new JsonBrowserSessionStore(backend),
     consentStore: new JsonConsentStore(backend),
     userStore: new JsonUserStore(backend),
-  };
+${jsonStoresGoogleEntry}  };
 }
 
 function epochSeconds(): number {
@@ -2022,7 +2253,7 @@ export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
   browserSessionStore: new BrowserSessionStore(),
   consentStore: new ConsentStore(),
   userStore: new UserStore(),
-});
+${defaultStoresGoogleEntry}});
 
 export const transactionStore = defaultProviderStores.transactionStore;
 export const authCodeStore = defaultProviderStores.authCodeStore;
@@ -2031,7 +2262,7 @@ export const refreshTokenStore = defaultProviderStores.refreshTokenStore;
 export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
-export const userStore = defaultProviderStores.userStore;
+export const userStore = defaultProviderStores.userStore;${googleLoginStoreExport}
 ${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}`;
 }
 
@@ -7073,26 +7304,199 @@ async function rejectUnboundTransaction(
   if (bindingError) return bindingError;
 `
     : '';
+  // EXTENSION (google-login): everything below collapses to '' when the feature
+  // is off, so the default login route is unchanged byte for byte.
+  const googleCoreImports = features.googleLogin && !features.transactionBinding
+    ? `
+  type AuthTransaction,`
+    : '';
+  const googleLoginImports = features.googleLogin
+    ? `
+import {
+  handleGoogleLoginRedirect,
+  issueGoogleLoginNonce,
+  resolveGoogleLoginSubject,
+  GoogleLoginError,
+  type GoogleIdTokenPayload,
+} from '${GOOGLE_LOGIN_PACKAGE}';
+import {
+  buildGoogleSignInAttributes,
+  type GoogleSignInAttributes,
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`
+    : '';
+  const googleStoreImport = features.googleLogin
+    ? `
+  googleLoginNonceStore as defaultGoogleLoginNonceStore,`
+    : '';
+  const googleConfigTypeImport = features.googleLogin ? ', type GoogleLoginConfig' : '';
+  const googleSignInField = features.googleLogin
+    ? `
+    // EXTENSION (google-login): undefined until config.googleLogin is set.
+    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),`
+    : '';
+  const googleSignInFieldOnFailure = features.googleLogin
+    ? `
+      googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),`
+    : '';
+  const googleLoginHelpers = features.googleLogin
+    ? `
+/**
+ * EXTENSION (google-login): build the GIS configuration (the g_id_onload
+ * attributes) for this transaction, or undefined when config.googleLogin is not
+ * set. Rendering is the view's job (views.ts): the package generates no UI.
+ * Every render issues a fresh nonce bound to the transaction: Google echoes it
+ * in the ID token, which is how the callback below finds its way back to this
+ * authorization request (the redirect-mode POST carries nothing else).
+ */
+async function buildGoogleSignIn(
+  c: any,
+  transactionId: string,
+  transaction: AuthTransaction,
+): Promise<GoogleSignInAttributes | undefined> {
+  const config = c.get('config') ?? defaultProviderConfig;
+  const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
+  if (!googleLogin) return undefined;
+  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
+  const nonce = await issueGoogleLoginNonce({
+    transactionId,
+    expiresAt: transaction.expiresAt,
+    store: nonceStore,
+  });
+  return buildGoogleSignInAttributes({
+    clientId: googleLogin.clientId,
+    // Must equal an authorized redirect URI of the Google OAuth client. Built on
+    // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
+    loginUri: new URL('/login/google', config.issuer).toString(),
+    nonce,
+    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
+    loginHint: transaction.loginHint,
+    hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
+  });
+}
+
+/**
+ * EXTENSION (google-login): run the callback checks and map the Google account
+ * to an OP subject. Returns the error page Response on failure so the route
+ * never redirects a failed Google callback to a client — until the nonce is
+ * verified the OP cannot tell whose transaction this is.
+ */
+async function verifyGoogleLoginCallback(
+  c: any,
+  googleLogin: GoogleLoginConfig,
+  views: typeof defaultViews,
+): Promise<{ transactionId: string; subject: string } | Response> {
+  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
+  const verifier = c.get('googleIdTokenVerifier');
+  const accountResolver = c.get('googleAccountResolver') ?? {
+    resolveSubject: async (account: GoogleIdTokenPayload) =>
+      (await userStore.linkGoogleAccount(account)).sub,
+  };
+  try {
+    // Double Submit Cookie -> google-auth-library verification -> nonce lookup,
+    // in the order Google's server-side verification guide prescribes.
+    const login = await handleGoogleLoginRedirect({
+      params: await c.req.parseBody(),
+      cookieHeader: c.req.header('Cookie') ?? null,
+      clientId: googleLogin.clientId,
+      verifier,
+      nonceStore,
+      hostedDomain: googleLogin.hostedDomain,
+      requireVerifiedEmail: googleLogin.requireVerifiedEmail,
+    });
+    const subject = await resolveGoogleLoginSubject(login.account, accountResolver);
+    return { transactionId: login.transactionId, subject };
+  } catch (error) {
+    if (!(error instanceof GoogleLoginError)) throw error;
+    return renderView(views.errorPage({
+      error: error.code,
+      errorDescription: error.message,
+      statusCode: error.httpStatusCode,
+    }), { status: error.httpStatusCode });
+  }
+}
+`
+    : '';
+  const googleBindingNote = features.transactionBinding
+    ? `
+ *
+ * Transaction binding is deliberately NOT checked here: Google's POST is a
+ * cross-site navigation, so the browser withholds the SameSite=Lax binding
+ * cookie. The single-use nonce stands in for it — it was issued to the login
+ * page, which only the bound browser could fetch.`
+    : '';
+  const googleLoginRoute = features.googleLogin
+    ? `
+/**
+ * EXTENSION (google-login) — Google login callback (login_uri) - POST
+ *
+ * Sign in with Google (redirect mode) posts the ID token here once the user
+ * picks an account. After the callback checks, this continues exactly like a
+ * successful password login: same session cookie, same consent hand-off.${googleBindingNote}
+ */
+loginApp.post('/google', async (c) => {
+  const views = c.get('views') ?? defaultViews;
+  const config = c.get('config') ?? defaultProviderConfig;
+  if (!config.googleLogin) {
+    return renderView(views.errorPage({
+      error: 'not_found',
+      errorDescription: 'Google login is not configured',
+      statusCode: 404,
+    }), { status: 404 });
+  }
+
+  const verified = await verifyGoogleLoginCallback(c, config.googleLogin, views);
+  if (verified instanceof Response) return verified;
+  const { transactionId, subject } = verified;
+
+  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
+  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // prompt=login / select_account requires fresh authentication: discard any
+  // existing transaction handoff AND browser session (OIDC Core 1.0 Section 3.1.2.1).
+  const loginPromptValues = transaction.prompt?.trim().split(/\\s+/).filter(Boolean) ?? [];
+  if (loginPromptValues.includes('login') || loginPromptValues.includes('select_account')) {
+    await authSessionStore.delete(transactionId);
+    const existingSessionId = parseSessionId(c.req.header('Cookie') ?? null);
+    if (existingSessionId) await browserSessionStore.delete(existingSessionId);
+  }
+
+  const authTime = Math.floor(Date.now() / 1000);
+
+  // Establish the browser (OP) session and the per-transaction handoff exactly
+  // as the password login does (OIDC Core 1.0 Section 3.1.2.3).
+  const sessionId = await generateRandomString(32);
+  await browserSessionStore.set(sessionId, { subject, authTime });
+  c.header('Set-Cookie', buildSessionCookie(sessionId));
+  await authSessionStore.set(transactionId, { subject, authTime, sessionId });
+
+  const consentUrl = new URL('/consent', config.issuer);
+  consentUrl.searchParams.set('transaction_id', transactionId);
+  return c.redirect(consentUrl.toString());
+});
+`
+    : '';
   return `import { Hono } from 'hono';
 import {
   getAuthTransaction,
-  validateCsrfToken,${bindingImports}
+  validateCsrfToken,${bindingImports}${googleCoreImports}
   handleLoginFailure,
   generateRandomString,
-} from '${corePkg}';
+} from '${corePkg}';${googleLoginImports}
 import {
   transactionStore as defaultTransactionStore,
   authSessionStore as defaultAuthSessionStore,
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
-  parseSessionId,${bindingStoreImport}
+  parseSessionId,${bindingStoreImport}${googleStoreImport}
   userStore,
 } from '../store.js';
-import { defaultProviderConfig } from '../config.js';
+import { defaultProviderConfig${googleConfigTypeImport} } from '../config.js';
 import { defaultViews, renderView } from '../views.js';
 
 export const loginApp = new Hono<{ Variables: Record<string, any> }>();
-${bindingGuard}
+${bindingGuard}${googleLoginHelpers}
 /**
  * Login Page - GET
  * Displays the login form for user authentication.
@@ -7111,7 +7515,7 @@ ${bindingCheckBeforeLoginForm}
     transactionId,
     csrfToken: transaction.csrfToken,
     // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
-    loginHint: transaction.loginHint,
+    loginHint: transaction.loginHint,${googleSignInField}
   }));
 });
 
@@ -7156,7 +7560,7 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
       csrfToken: transaction.csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
-      loginHint: transaction.loginHint,
+      loginHint: transaction.loginHint,${googleSignInFieldOnFailure}
     }));
   }
 
@@ -7197,7 +7601,7 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
   consentUrl.searchParams.set('transaction_id', transactionId);
   return c.redirect(consentUrl.toString());
 });
-`;
+${googleLoginRoute}`;
 }
 
 export function consentRouteTemplate(
@@ -7707,6 +8111,43 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
 `
     : '';
+  // EXTENSION (google-login): the Google login callback needs the nonce store,
+  // the ID token verifier (google-auth-library by default) and the resolver that
+  // maps a verified Google account to an OP subject. The default resolver links
+  // the account through the user store (just-in-time provisioning), so a custom
+  // storage option is honored without extra wiring.
+  const googleLoginImport = features.googleLogin
+    ? `import {
+  getDefaultGoogleIdTokenVerifier,
+  type GoogleAccountResolver,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '${GOOGLE_LOGIN_PACKAGE}';\n`
+    : '';
+  const googleLoginStorageContext = features.googleLogin
+    ? `    c.set('googleLoginNonceStore', stores.googleLoginNonceStore);
+    c.set('googleIdTokenVerifier', options.googleIdTokenVerifier ?? getDefaultGoogleIdTokenVerifier());
+    c.set('googleAccountResolver', options.googleAccountResolver ?? {
+      resolveSubject: async (account: GoogleIdTokenPayload) =>
+        (await stores.userStore.linkGoogleAccount(account)).sub,
+    });\n`
+    : '';
+  const googleLoginOptionsFields = features.googleLogin
+    ? `  /**
+   * EXTENSION (google-login): verifier for the ID token Google posts to
+   * /login/google. Defaults to google-auth-library (OAuth2Client.verifyIdToken)
+   * with a process-wide certificate cache; inject a custom one for tests or a
+   * proxied environment.
+   */
+  googleIdTokenVerifier?: GoogleIdTokenVerifier;
+  /**
+   * EXTENSION (google-login): map a verified Google account to the OP subject.
+   * Defaults to just-in-time provisioning through the user store
+   * (userStore.linkGoogleAccount), keyed by the Google \`sub\`.
+   */
+  googleAccountResolver?: GoogleAccountResolver;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -7742,7 +8183,7 @@ ${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-import {
+${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -7829,7 +8270,7 @@ export interface ApplyOidcOptions {
    * Token / UserInfo / Introspection / Revocation エンドポイントに適用される。
    * Discovery / JWKS は仕様上常に '*' 固定 (OIDC Discovery / RFC 8414 で公開資産扱い)。
    */
-${cibaOptionsField}  corsOrigins?: CorsOrigins;
+${cibaOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -7952,7 +8393,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${googleLoginStorageContext}
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -8682,6 +9123,46 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
   cibaCompletedPage: defaultCibaCompletedPage,
 `
     : '';
+  // EXTENSION (google-login): the login page gains a pre-rendered "Sign in with
+  // Google" button. Every interpolation collapses to '' when the feature is off,
+  // so the default views.ts is unchanged byte for byte.
+  const googleViewsImport = features.googleLogin
+    ? `// EXTENSION (google-login): the GIS configuration type and the helper that
+// serializes it into this string template. The package generates no UI; the
+// three elements GIS needs are written out in defaultLoginPage below.
+import {
+  googleSignInAttributesToHtml,
+  GOOGLE_GSI_CLIENT_SCRIPT_URL,
+  type GoogleSignInAttributes,
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';
+
+`
+    : '';
+  const googleLoginPageParam = features.googleLogin
+    ? `  /**
+   * EXTENSION (google-login): GIS configuration for "Sign in with Google"
+   * (redirect mode) — the g_id_onload attributes built by
+   * buildGoogleSignInAttributes(): client ID, data-ux_mode="redirect", the
+   * login_uri Google posts the ID token to, and the nonce bound to this
+   * transaction. The view owns the markup (see defaultLoginPage). Undefined
+   * when Google login is not configured; only the password form is shown then.
+   */
+  googleSignIn?: GoogleSignInAttributes;
+`
+    : '';
+  const googleSignInSnippet = features.googleLogin
+    ? `
+  // EXTENSION (google-login): the three elements GIS needs for redirect mode —
+  // its client script, #g_id_onload carrying the configuration (attribute
+  // values escaped by googleSignInAttributesToHtml), and .g_id_signin, which
+  // GIS replaces with the button. Style the button through the GIS button
+  // attributes (data-theme, data-size, data-text, ...) on .g_id_signin.
+  const googleSignInHtml = params.googleSignIn
+    ? \`  <hr />\\n  <section aria-label="Sign in with Google">\\n    <script src="\${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>\\n    <div \${googleSignInAttributesToHtml(params.googleSignIn)}></div>\\n    <div class="g_id_signin" data-type="standard"></div>\\n  </section>\\n\`
+    : '';
+`
+    : '';
+  const googleSignInPlaceholder = features.googleLogin ? '${googleSignInHtml}' : '';
   return `/**
  * UI Views for OpenID Connect Provider.
  *
@@ -8695,7 +9176,7 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
  * rendering, or UI framework of your choice.
  */
 
-// ============================================================
+${googleViewsImport}// ============================================================
 // View Parameter Types
 // ============================================================
 
@@ -8714,7 +9195,7 @@ export interface LoginPageParams {
    * HTML-attribute escaped before rendering since it is unauthenticated input.
    */
   loginHint?: string;
-}
+${googleLoginPageParam}}
 
 export interface ConsentPageParams {
   /** Transaction ID for the auth flow */
@@ -8809,7 +9290,7 @@ function defaultLoginPage(params: LoginPageParams): string {
           : ''
       }</p>\`
     : '';
-
+${googleSignInSnippet}
   return \`<!DOCTYPE html>
 <html>
 <head><title>Login</title></head>
@@ -8829,7 +9310,7 @@ function defaultLoginPage(params: LoginPageParams): string {
     </div>
     <button type="submit">Login</button>
   </form>
-</body>
+${googleSignInPlaceholder}</body>
 </html>\`;
 }
 
@@ -17107,6 +17588,448 @@ export function consentDecisionConformanceBlock(): string {
 `;
 }
 
+/**
+ * Imports the Google login contract tests need. Shared by the Hono and the
+ * Web-standard conformance templates; '' when the feature is off.
+ */
+export function googleLoginConformanceImportsBlock(features: OidcFeatureConfig): string {
+  if (!features.googleLogin) return '';
+  return `
+import {
+  GoogleLoginError,
+  GoogleLoginErrorCode,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '${GOOGLE_LOGIN_PACKAGE}';`;
+}
+
+/**
+ * Contract tests for the google-login extension (Sign in with Google, redirect
+ * mode). Emitted only when the feature is enabled, so the default conformance
+ * output is unchanged. The ID token verifier is replaced by a stand-in, so the
+ * tests never call Google: they pin the OP-side contract (button rendering,
+ * double-submit cookie, nonce binding, session hand-off, just-in-time user
+ * provisioning) that the repository guarantees for the generated callback.
+ */
+export function googleLoginConformanceBlock(features: OidcFeatureConfig): string {
+  if (!features.googleLogin) return '';
+  return `
+  // EXTENSION — Sign in with Google (Google Identity Services, redirect mode).
+  // Generated because this provider was created with --enable google-login.
+  // google-auth-library is replaced by a stand-in verifier, so these tests never
+  // reach Google: they pin the OP-side contract around the callback.
+  describe('Google login (Sign in with Google, redirect mode)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const GOOGLE_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const GOOGLE_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const GOOGLE_CLIENT_ID = 'conformance-google-client.apps.googleusercontent.com';
+    const GOOGLE_CSRF = 'conformance-g-csrf-token';
+    const GOOGLE_SUB = '10769150350006150715113082367';
+
+    // Stand-in for google-auth-library: a credential is the JSON payload wrapped
+    // as 'fake:<base64>'; anything else is refused like a bad signature would be.
+    const verifiedClientIds: Array<string | readonly string[]> = [];
+    const fakeGoogleVerifier: GoogleIdTokenVerifier = {
+      async verify(idToken, clientId) {
+        verifiedClientIds.push(clientId);
+        if (!idToken.startsWith('fake:')) {
+          throw new GoogleLoginError(GoogleLoginErrorCode.InvalidIdToken, 'Invalid token signature');
+        }
+        return JSON.parse(atob(idToken.slice('fake:'.length))) as GoogleIdTokenPayload;
+      },
+    };
+
+    function googleCredential(payload: Record<string, unknown>): string {
+      return 'fake:' + btoa(JSON.stringify(payload));
+    }
+
+    function googleAccount(nonce: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        iss: 'https://accounts.google.com',
+        aud: GOOGLE_CLIENT_ID,
+        sub: GOOGLE_SUB,
+        email: 'jsmith@example.com',
+        email_verified: true,
+        name: 'John Smith',
+        given_name: 'John',
+        family_name: 'Smith',
+        picture: 'https://lh3.googleusercontent.com/a/photo',
+        iat: now,
+        exp: now + 3600,
+        nonce,
+        ...overrides,
+      };
+    }
+
+    // Pure fetch + parse helpers: no assertions and no branching, so the
+    // contract stays visible in the it() blocks.
+    function googleRelativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function googleCsrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function googleNonceFrom(html: string): string {
+      return html.match(/data-nonce="([^"]+)"/)?.[1] ?? '';
+    }
+
+    function createGoogleApp(
+      googleLogin: GoogleLoginConfig = { clientId: GOOGLE_CLIENT_ID },
+    ): ReturnType<typeof createApp> {
+      return createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        config: { googleLogin },
+        googleIdTokenVerifier: fakeGoogleVerifier,
+      });
+    }
+
+    // Start an authorization request on the given app and fetch its login page.
+    async function startGoogleFlow(
+      targetApp: ReturnType<typeof createApp>,
+      state: string,
+      scope = 'openid',
+    ): Promise<{ transactionId: string; loginHtml: string; nonce: string }> {
+      const authorizeRes = await targetApp.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent(scope) + '&state=' + state + '&prompt=consent' +
+        '&code_challenge=' + GOOGLE_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = googleRelativeFrom(authorizeRes.headers.get('Location'));
+      const loginRes = await targetApp.request(loginPath);
+      const loginHtml = await loginRes.text();
+      return {
+        transactionId:
+          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '',
+        loginHtml,
+        nonce: googleNonceFrom(loginHtml),
+      };
+    }
+
+    // POST the redirect-mode callback exactly as the browser would after Google's
+    // account chooser: credential + g_csrf_token in the body, g_csrf_token cookie.
+    function googleCallback(
+      targetApp: ReturnType<typeof createApp>,
+      credential: string,
+      init: { bodyCsrf?: string; cookie?: string | null } = {},
+    ): Promise<Response> {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (init.cookie !== null) {
+        headers.Cookie = init.cookie ?? 'g_csrf_token=' + GOOGLE_CSRF;
+      }
+      return targetApp.request('/login/google', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams({
+          credential,
+          g_csrf_token: init.bodyCsrf ?? GOOGLE_CSRF,
+          select_by: 'btn',
+        }).toString(),
+      });
+    }
+
+    let googleApp: ReturnType<typeof createApp>;
+
+    beforeAll(() => {
+      googleApp = createGoogleApp();
+    });
+
+    // GIS HTML API, redirect mode: the g_id_onload element carries the client
+    // ID, data-ux_mode="redirect", the login_uri Google posts to, and the nonce
+    // that ties the click to this authorization transaction.
+    it('should render the Sign in with Google button in redirect mode on the login page', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-button');
+
+      expect(flow.loginHtml.includes('<script src="https://accounts.google.com/gsi/client" async></script>')).toBe(true);
+      expect(flow.loginHtml.includes(
+        '<div id="g_id_onload" data-client_id="' + GOOGLE_CLIENT_ID + '" data-ux_mode="redirect"' +
+        ' data-login_uri="http://localhost:3000/login/google" data-nonce="' + flow.nonce + '"></div>',
+      )).toBe(true);
+      expect(flow.nonce.length).toBe(43);
+      // The password form stays available next to the button.
+      expect(flow.loginHtml.includes('name="password"')).toBe(true);
+    });
+
+    it('should issue a fresh nonce for every login page render', async () => {
+      const first = await startGoogleFlow(googleApp, 'google-nonce-1');
+      const second = await startGoogleFlow(googleApp, 'google-nonce-2');
+
+      expect(first.nonce === second.nonce).toBe(false);
+    });
+
+    it('should not render the button when Google login is not configured', async () => {
+      const flow = await startGoogleFlow(app, 'google-unconfigured');
+
+      expect(flow.loginHtml.includes('g_id_onload')).toBe(false);
+      expect(flow.nonce).toBe('');
+    });
+
+    it('should answer 404 on the Google callback when Google login is not configured', async () => {
+      const res = await googleCallback(app, googleCredential(googleAccount('unused')));
+
+      expect(res.status).toBe(404);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // Google's server-side guide: the double-submit cookie is checked before the
+    // credential is even looked at, in the order cookie -> body -> mismatch.
+    it('should reject the callback without the g_csrf_token cookie', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-no-cookie');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)), { cookie: null });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('csrf_token_missing_in_cookie')).toBe(true);
+    });
+
+    it('should reject the callback whose g_csrf_token cookie and body differ', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-csrf-mismatch');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)), { bodyCsrf: 'other' });
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('csrf_token_mismatch')).toBe(true);
+    });
+
+    it('should reject a credential the verifier does not accept', async () => {
+      await startGoogleFlow(googleApp, 'google-bad-credential');
+
+      const res = await googleCallback(googleApp, 'not-a-google-id-token');
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('invalid_id_token')).toBe(true);
+    });
+
+    it('should hand the configured client ID to the verifier as the expected audience', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-audience');
+      verifiedClientIds.length = 0;
+
+      await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
+
+      expect(verifiedClientIds).toEqual([GOOGLE_CLIENT_ID]);
+    });
+
+    it('should reject a credential whose nonce was not issued for a login page', async () => {
+      await startGoogleFlow(googleApp, 'google-forged-nonce');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount('forged-nonce')));
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('login_nonce_not_found')).toBe(true);
+    });
+
+    it('should reject a credential without a nonce', async () => {
+      await startGoogleFlow(googleApp, 'google-missing-nonce');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount('', { nonce: undefined })));
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('invalid_nonce')).toBe(true);
+    });
+
+    it('should establish the OP session and continue to consent for a valid credential', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-happy');
+
+      const res = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
+      const setCookie = res.headers.get('Set-Cookie') ?? '';
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(
+        'http://localhost:3000/consent?transaction_id=' + flow.transactionId,
+      );
+      expect(setCookie.startsWith('session_id=')).toBe(true);
+      expect(setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/')).toBe(true);
+    });
+
+    // The nonce is single use: the same credential cannot start a second session.
+    it('should reject a replay of an already used credential', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-replay');
+      const credential = googleCredential(googleAccount(flow.nonce));
+      await googleCallback(googleApp, credential);
+
+      const res = await googleCallback(googleApp, credential);
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('login_nonce_not_found')).toBe(true);
+    });
+
+    // A callback that fails before the credential is verified must not burn the
+    // nonce, or a forged POST could lock the user out of their own login page.
+    it('should keep the nonce usable after a callback that failed before verification', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-nonce-kept');
+      const credential = googleCredential(googleAccount(flow.nonce));
+      await googleCallback(googleApp, credential, { cookie: null });
+
+      const res = await googleCallback(googleApp, credential);
+
+      expect(res.status).toBe(302);
+    });
+
+    it('should issue tokens for the Google user and return the Google profile from UserInfo', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-tokens', 'openid profile email');
+      const callbackRes = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
+      const consentPath = googleRelativeFrom(callbackRes.headers.get('Location'));
+      const consentGet = await googleApp.request(consentPath);
+      const consentRes = await googleApp.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: googleCsrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code =
+        new URL(consentRes.headers.get('Location') ?? '', 'http://localhost').searchParams.get('code') ?? '';
+      const tokenRes = await googleApp.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          client_id: 'c-conf',
+          client_secret: 's',
+          code_verifier: GOOGLE_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const tokens = await tokenRes.json();
+      const userinfoRes = await googleApp.request('/userinfo', {
+        headers: { Authorization: 'Bearer ' + tokens.access_token },
+      });
+
+      expect(tokenRes.status).toBe(200);
+      // Users provisioned from Google are keyed by the Google sub, never the email.
+      expect(idTokenPayload(tokens.id_token as string).sub).toBe('google:' + GOOGLE_SUB);
+      expect(userinfoRes.status).toBe(200);
+      expect(await userinfoRes.json()).toEqual({
+        sub: 'google:' + GOOGLE_SUB,
+        name: 'John Smith',
+        given_name: 'John',
+        family_name: 'Smith',
+        picture: 'https://lh3.googleusercontent.com/a/photo',
+        email: 'jsmith@example.com',
+        email_verified: true,
+      });
+    });
+
+    it('should keep the password login working next to the Google button', async () => {
+      const flow = await startGoogleFlow(googleApp, 'google-password');
+
+      const res = await googleApp.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          transaction_id: flow.transactionId,
+          csrf_token: googleCsrfFrom(flow.loginHtml),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(
+        'http://localhost:3000/consent?transaction_id=' + flow.transactionId,
+      );
+    });
+
+    it('should reject a Google account outside the allowed hosted domain', async () => {
+      const workspaceApp = createGoogleApp({ clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' });
+      const flow = await startGoogleFlow(workspaceApp, 'google-hd');
+
+      const res = await googleCallback(
+        workspaceApp,
+        googleCredential(googleAccount(flow.nonce, { hd: 'other.example' })),
+      );
+
+      expect(res.status).toBe(403);
+      expect((await res.text()).includes('invalid_hosted_domain')).toBe(true);
+    });
+
+    it('should accept a Google account of the allowed hosted domain', async () => {
+      const workspaceApp = createGoogleApp({ clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' });
+      const flow = await startGoogleFlow(workspaceApp, 'google-hd-ok');
+
+      const res = await googleCallback(
+        workspaceApp,
+        googleCredential(googleAccount(flow.nonce, { hd: 'example.com' })),
+      );
+
+      expect(res.status).toBe(302);
+    });
+
+    it('should reject an unverified email when requireVerifiedEmail is set', async () => {
+      const strictApp = createGoogleApp({ clientId: GOOGLE_CLIENT_ID, requireVerifiedEmail: true });
+      const flow = await startGoogleFlow(strictApp, 'google-unverified');
+
+      const res = await googleCallback(
+        strictApp,
+        googleCredential(googleAccount(flow.nonce, { email_verified: false })),
+      );
+
+      expect(res.status).toBe(403);
+      expect((await res.text()).includes('email_not_verified')).toBe(true);
+    });
+
+    // The persistent (JsonStoreBackend) stores carry the same contract as the
+    // in-memory ones: the nonce is stored and consumed there, and the Google
+    // user is provisioned under its own key prefix.
+    it('should provision the Google user through the JSON store backend as well', async () => {
+      const values = new Map<string, unknown>();
+      const backend: JsonStoreBackend = {
+        async get<T>(key: string): Promise<T | null> {
+          return (values.get(key) as T | undefined) ?? null;
+        },
+        async put<T>(key: string, value: T): Promise<void> {
+          values.set(key, value);
+        },
+        async delete(key: string): Promise<void> {
+          values.delete(key);
+        },
+        async list<T>(prefix: string): Promise<Array<{ key: string; value: T }>> {
+          return [...values.entries()]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, value]) => ({ key, value: value as T }));
+        },
+      };
+      const jsonApp = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        config: { googleLogin: { clientId: GOOGLE_CLIENT_ID } },
+        googleIdTokenVerifier: fakeGoogleVerifier,
+        storage: createJsonProviderStores(backend),
+      });
+      const flow = await startGoogleFlow(jsonApp, 'google-json-store');
+
+      const res = await googleCallback(jsonApp, googleCredential(googleAccount(flow.nonce)));
+      const readerStores = createJsonProviderStores(backend);
+
+      expect(res.status).toBe(302);
+      expect(await readerStores.userStore.getClaims('google:' + GOOGLE_SUB)).toEqual({
+        sub: 'google:' + GOOGLE_SUB,
+        name: 'John Smith',
+        given_name: 'John',
+        family_name: 'Smith',
+        picture: 'https://lh3.googleusercontent.com/a/photo',
+        email: 'jsmith@example.com',
+        email_verified: true,
+      });
+      // The nonce record was consumed on first use.
+      expect([...values.keys()].filter((key) => key.startsWith('google-login-nonce:'))).toEqual([]);
+    });
+  });
+`;
+}
+
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
@@ -17163,16 +18086,18 @@ import { cibaAuthenticationRequestStore } from './store.js';`
   const vitestNames = features.ciba
     ? 'describe, it, expect, beforeAll, afterEach'
     : 'describe, it, expect, beforeAll';
+  const googleLoginConformanceImports = googleLoginConformanceImportsBlock(features);
+  const googleLoginConfigTypeImport = features.googleLogin ? ', type GoogleLoginConfig' : '';
   return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 import { Hono } from 'hono';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { applyOidc } from './apply.js';
-import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
+import { createInMemoryClientResolver, type RegisteredClient${googleLoginConfigTypeImport} } from './config.js';
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${googleLoginConformanceImports}${customScopeConformanceImport}
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -17651,6 +18576,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

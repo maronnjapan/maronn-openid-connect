@@ -1,11 +1,12 @@
 /**
- * リリース時の「core と experimental の組み合わせ」契約を検証する。
+ * リリース時の「core と、core を peer 参照するパッケージの組み合わせ」契約を検証する。
  *
- * @maronn-openid-connect/experimental は core を peerDependencies で参照し、range は 0.x 系の間
- * 広く取っている（理由は RELEASE.md「バージョニング方針」）。range が広いぶん、
- * core だけが先に進むと「公開済みの古い experimental が、まだ組み合わせて試していない
- * 新しい core をそのまま受け入れる」状態になる。そこで core の minor / major リリース時は
- * experimental も同時にリリースすることを CI で強制する。
+ * @maronn-openid-connect/experimental と @maronn-openid-connect/google-login は core を
+ * peerDependencies で参照し、range は 0.x 系の間広く取っている（理由は RELEASE.md
+ * 「バージョニング方針」）。range が広いぶん、core だけが先に進むと「公開済みの古い
+ * 拡張パッケージが、まだ組み合わせて試していない新しい core をそのまま受け入れる」
+ * 状態になる。そこで core の minor / major リリース時は、core を peer 参照する
+ * パッケージも同時にリリースすることを CI で強制する。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,7 +14,22 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const CORE = '@maronn-openid-connect/core';
 const EXPERIMENTAL = '@maronn-openid-connect/experimental';
+const GOOGLE_LOGIN = '@maronn-openid-connect/google-login';
 const BREAKING_BUMPS = new Set(['minor', 'major']);
+
+/**
+ * core を peerDependencies で参照するパッケージ。
+ *
+ * これらはモノレポ内の core（= 次に publish される core）だけを相手にビルド・テストされる
+ * ため、peer range の下限と core の minor / major との同時リリースを CI で強制する対象になる。
+ * core を peer 参照するパッケージを増やしたらここに足す。
+ */
+export const CORE_DEPENDENT_PACKAGES = [
+  { name: EXPERIMENTAL, manifestPath: 'packages/experimental/package.json' },
+  { name: GOOGLE_LOGIN, manifestPath: 'packages/google-login/package.json' },
+];
+
+const CORE_DEPENDENT_NAMES = CORE_DEPENDENT_PACKAGES.map(({ name }) => name);
 
 /**
  * changeset の frontmatter から `パッケージ名 -> bump 種別` を読み出す。
@@ -32,20 +48,32 @@ export function parseChangesetBumps(content) {
   return bumps;
 }
 
-export function assertCoreBreakingChangeReleasesExperimental(changesets) {
+/**
+ * core を minor / major で上げる changeset があるとき、core を peer 参照するパッケージ
+ * すべてに changeset があることを強制する。
+ *
+ * @param changesets 未消化の changeset（`readChangesets` の結果）
+ * @param dependents 検査対象のパッケージ名。既定は {@link CORE_DEPENDENT_PACKAGES}
+ */
+export function assertCoreBreakingChangeReleasesCoreDependents(
+  changesets,
+  dependents = CORE_DEPENDENT_NAMES,
+) {
   const breaking = changesets.filter(({ bumps }) => BREAKING_BUMPS.has(bumps[CORE]));
   if (breaking.length === 0) return;
 
-  const releasesExperimental = changesets.some(({ bumps }) => bumps[EXPERIMENTAL] !== undefined);
-  if (releasesExperimental) return;
+  const missing = dependents.filter(
+    (name) => !changesets.some(({ bumps }) => bumps[name] !== undefined),
+  );
+  if (missing.length === 0) return;
 
   const files = breaking.map(({ file }) => file).join(', ');
   throw new Error(
     `${CORE} を minor 以上で上げる changeset (${files}) がありますが、` +
-      `${EXPERIMENTAL} の changeset がありません。` +
-      'experimental は core を広い peer range で参照しており、公開済みの古い experimental が' +
+      `${missing.join(', ')} の changeset がありません。` +
+      'これらは core を広い peer range で参照しており、公開済みの古いパッケージが' +
       '新しい core をそのまま受け入れてしまうため、core の minor / major では' +
-      'experimental も同時にリリースして最新 core との組み合わせを保証してください。',
+      '同時にリリースして最新 core との組み合わせを保証してください。',
   );
 }
 
@@ -57,6 +85,8 @@ export function assertCoreBreakingChangeReleasesExperimental(changesets) {
  * 「どんな変更でも patch を 1 つ上げるだけ」に固定することで、Version Packages PR の
  * マージ忘れで複数の変更がたまっても 1 回の patch に吸収されるようにしている。
  * 手書きの changeset が minor / major を指定するとこの前提が崩れるため CI で弾く。
+ *
+ * google-login はこの対象外。手書きの changeset で semver（0.x）を進める。
  */
 export function assertExperimentalReleasesAreAlwaysPatch(changesets) {
   const nonPatch = changesets.filter(
@@ -103,21 +133,34 @@ export function assertPrivatePackagesAreNotVersioned(changesetConfig) {
   );
 }
 
-export function assertExperimentalCorePeerDependencyShape(packageJson) {
+function packageLabel(packageJson) {
+  return packageJson.name ?? '(name 未設定のパッケージ)';
+}
+
+/**
+ * core を peer 参照するパッケージの依存宣言の形を強制する。
+ *
+ * - core を dependencies に持たない（二重インストールで instanceof が静かに false になる）
+ * - core を peerDependencies に宣言する
+ * - ローカル開発とテスト用に devDependencies の workspace:* で参照する
+ */
+export function assertCorePeerDependencyShape(packageJson) {
+  const name = packageLabel(packageJson);
+
   if (packageJson.dependencies?.[CORE] !== undefined) {
     throw new Error(
-      `${EXPERIMENTAL} は ${CORE} を dependencies に持ってはいけません。` +
+      `${name} は ${CORE} を dependencies に持ってはいけません。` +
         'core が二重にインストールされると instanceof 判定が静かに false になります。',
     );
   }
 
   if (packageJson.peerDependencies?.[CORE] === undefined) {
-    throw new Error(`${EXPERIMENTAL} は ${CORE} を peerDependencies に宣言してください。`);
+    throw new Error(`${name} は ${CORE} を peerDependencies に宣言してください。`);
   }
 
   if (packageJson.devDependencies?.[CORE] !== 'workspace:*') {
     throw new Error(
-      `${EXPERIMENTAL} は ${CORE} を devDependencies の workspace:* で参照してください。` +
+      `${name} は ${CORE} を devDependencies の workspace:* で参照してください。` +
         'ローカル開発とテストが registry の core を引いてしまいます。',
     );
   }
@@ -166,11 +209,12 @@ function compareVersions(left, right) {
 }
 
 /**
- * experimental の peer range の下限が「次に publish される core」以上であることを強制する。
+ * core を peer 参照するパッケージの peer range の下限が「次に publish される core」以上で
+ * あることを強制する。
  *
- * experimental はモノレポ内の core（= 次に publish される core）だけを相手にビルド・テスト
- * されるので、それより古い core を下限に据えるのは「試していない組み合わせ」を許可宣言する
- * ことに等しい。実際 experimental 0.0.1 は、core の step 関数
+ * これらのパッケージはモノレポ内の core（= 次に publish される core）だけを相手にビルド・
+ * テストされるので、それより古い core を下限に据えるのは「試していない組み合わせ」を許可
+ * 宣言することに等しい。実際 experimental 0.0.1 は、core の step 関数
  * （extractClientCredentials / resolveAuthenticatedTokenClient / validateClientAuthMethod /
  * verifyClientSecret）を import しながら下限を `>=0.0.1` のままにして publish され、
  * それらを export していない core 0.0.1 と組み合わさって
@@ -178,22 +222,23 @@ function compareVersions(left, right) {
  *
  * RELEASE.md「peer range は『下限』を宣言する」の手運用をここで機械化する。
  */
-export function assertExperimentalCorePeerRangeCoversNextCore(packageJson, nextCoreVersion) {
+export function assertCorePeerRangeCoversNextCore(packageJson, nextCoreVersion) {
+  const name = packageLabel(packageJson);
   const range = packageJson.peerDependencies?.[CORE];
   const minimum = parseMinimumCoreVersion(range);
 
   if (minimum === null) {
     throw new Error(
-      `${EXPERIMENTAL} の ${CORE} peer range "${range}" から下限を読み取れません。` +
+      `${name} の ${CORE} peer range "${range}" から下限を読み取れません。` +
         '`>=X.Y.Z <A.B.C` の形式で宣言してください（caret は Changesets の major 昇格を誘発するため使わない）。',
     );
   }
 
   if (compareVersions(minimum, nextCoreVersion) < 0) {
     throw new Error(
-      `${EXPERIMENTAL} の ${CORE} peer range "${range}" は core ${nextCoreVersion} より古い ` +
-        `${minimum} を下限にしています。experimental はモノレポ内の core だけを相手に` +
-        'ビルド・テストされるため、それより古い core を許可すると、experimental が使う API を' +
+      `${name} の ${CORE} peer range "${range}" は core ${nextCoreVersion} より古い ` +
+        `${minimum} を下限にしています。${name} はモノレポ内の core だけを相手に` +
+        'ビルド・テストされるため、それより古い core を許可すると、このパッケージが使う API を' +
         'まだ export していない core と組み合わさって "No matching export" で落ちます。' +
         `下限を ">=${nextCoreVersion}" へ上げてください（RELEASE.md「peer range は『下限』を宣言する」）。`,
     );
@@ -216,24 +261,24 @@ function verifyReleaseContract() {
   const changesetConfig = JSON.parse(
     readFileSync(join(repositoryRoot, '.changeset/config.json'), 'utf8'),
   );
-  const experimentalPackageJson = JSON.parse(
-    readFileSync(join(repositoryRoot, 'packages/experimental/package.json'), 'utf8'),
-  );
   const corePackageJson = JSON.parse(
     readFileSync(join(repositoryRoot, 'packages/core/package.json'), 'utf8'),
   );
+  const nextCoreVersion = resolveNextCoreVersion(corePackageJson.version, changesets);
 
-  assertCoreBreakingChangeReleasesExperimental(changesets);
+  assertCoreBreakingChangeReleasesCoreDependents(changesets);
   assertExperimentalReleasesAreAlwaysPatch(changesets);
   assertPrivatePackagesAreNotVersioned(changesetConfig);
-  assertExperimentalCorePeerDependencyShape(experimentalPackageJson);
-  assertExperimentalCorePeerRangeCoversNextCore(
-    experimentalPackageJson,
-    resolveNextCoreVersion(corePackageJson.version, changesets),
-  );
+
+  for (const { manifestPath } of CORE_DEPENDENT_PACKAGES) {
+    const packageJson = JSON.parse(readFileSync(join(repositoryRoot, manifestPath), 'utf8'));
+    assertCorePeerDependencyShape(packageJson);
+    assertCorePeerRangeCoversNextCore(packageJson, nextCoreVersion);
+  }
 
   console.log(
-    'Release contract verified: core / experimental peer dependency, peer range lower bound, release pairing, experimental patch-only bumps and private packages excluded from versioning',
+    `Release contract verified: core peer dependency shape and peer range lower bound for ${CORE_DEPENDENT_NAMES.join(', ')}, ` +
+      'release pairing on core minor / major, experimental patch-only bumps and private packages excluded from versioning',
   );
 }
 

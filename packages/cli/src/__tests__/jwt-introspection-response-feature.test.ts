@@ -40,6 +40,7 @@ describe('resolveFeatures with jwt-introspection-response', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: true,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -85,6 +86,7 @@ describe('resolveFeatures with jwt-introspection-response', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: true,
+      googleLogin: false,
       transactionBinding: false,
     });
   });

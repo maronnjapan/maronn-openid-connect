@@ -2,21 +2,109 @@ import { WebRouter } from '../web-router';
 import {
   getAuthTransaction,
   validateCsrfToken,
+  type AuthTransaction,
   handleLoginFailure,
   generateRandomString,
 } from '@maronn-openid-connect/core';
+import {
+  handleGoogleLoginRedirect,
+  issueGoogleLoginNonce,
+  resolveGoogleLoginSubject,
+  GoogleLoginError,
+  type GoogleIdTokenPayload,
+} from '@maronn-openid-connect/google-login';
+import {
+  buildGoogleSignInAttributes,
+  type GoogleSignInAttributes,
+} from '@maronn-openid-connect/google-login/sign-in';
 import {
   transactionStore as defaultTransactionStore,
   authSessionStore as defaultAuthSessionStore,
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
   parseSessionId,
+  googleLoginNonceStore as defaultGoogleLoginNonceStore,
   userStore,
 } from '../store';
-import { defaultProviderConfig } from '../config';
+import { defaultProviderConfig, type GoogleLoginConfig } from '../config';
 import { defaultViews, renderView } from '../views';
 
 export const loginApp = new WebRouter();
+
+/**
+ * EXTENSION (google-login): build the GIS configuration (the g_id_onload
+ * attributes) for this transaction, or undefined when config.googleLogin is not
+ * set. Rendering is the view's job (views.ts): the package generates no UI.
+ * Every render issues a fresh nonce bound to the transaction: Google echoes it
+ * in the ID token, which is how the callback below finds its way back to this
+ * authorization request (the redirect-mode POST carries nothing else).
+ */
+async function buildGoogleSignIn(
+  c: any,
+  transactionId: string,
+  transaction: AuthTransaction,
+): Promise<GoogleSignInAttributes | undefined> {
+  const config = c.get('config') ?? defaultProviderConfig;
+  const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
+  if (!googleLogin) return undefined;
+  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
+  const nonce = await issueGoogleLoginNonce({
+    transactionId,
+    expiresAt: transaction.expiresAt,
+    store: nonceStore,
+  });
+  return buildGoogleSignInAttributes({
+    clientId: googleLogin.clientId,
+    // Must equal an authorized redirect URI of the Google OAuth client. Built on
+    // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
+    loginUri: new URL('/login/google', config.issuer).toString(),
+    nonce,
+    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
+    loginHint: transaction.loginHint,
+    hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
+  });
+}
+
+/**
+ * EXTENSION (google-login): run the callback checks and map the Google account
+ * to an OP subject. Returns the error page Response on failure so the route
+ * never redirects a failed Google callback to a client — until the nonce is
+ * verified the OP cannot tell whose transaction this is.
+ */
+async function verifyGoogleLoginCallback(
+  c: any,
+  googleLogin: GoogleLoginConfig,
+  views: typeof defaultViews,
+): Promise<{ transactionId: string; subject: string } | Response> {
+  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
+  const verifier = c.get('googleIdTokenVerifier');
+  const accountResolver = c.get('googleAccountResolver') ?? {
+    resolveSubject: async (account: GoogleIdTokenPayload) =>
+      (await userStore.linkGoogleAccount(account)).sub,
+  };
+  try {
+    // Double Submit Cookie -> google-auth-library verification -> nonce lookup,
+    // in the order Google's server-side verification guide prescribes.
+    const login = await handleGoogleLoginRedirect({
+      params: await c.req.parseBody(),
+      cookieHeader: c.req.header('Cookie') ?? null,
+      clientId: googleLogin.clientId,
+      verifier,
+      nonceStore,
+      hostedDomain: googleLogin.hostedDomain,
+      requireVerifiedEmail: googleLogin.requireVerifiedEmail,
+    });
+    const subject = await resolveGoogleLoginSubject(login.account, accountResolver);
+    return { transactionId: login.transactionId, subject };
+  } catch (error) {
+    if (!(error instanceof GoogleLoginError)) throw error;
+    return renderView(views.errorPage({
+      error: error.code,
+      errorDescription: error.message,
+      statusCode: error.httpStatusCode,
+    }), { status: error.httpStatusCode });
+  }
+}
 
 /**
  * Login Page - GET
@@ -37,6 +125,8 @@ loginApp.get('/', async (c) => {
     csrfToken: transaction.csrfToken,
     // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
     loginHint: transaction.loginHint,
+    // EXTENSION (google-login): undefined until config.googleLogin is set.
+    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
   }));
 });
 
@@ -82,6 +172,7 @@ loginApp.post('/', async (c) => {
       error: 'Invalid credentials',
       remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
       loginHint: transaction.loginHint,
+      googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
     }));
   }
 
@@ -118,6 +209,56 @@ loginApp.post('/', async (c) => {
   // which would let the sender pick where transaction_id lands (OIDC Discovery
   // 1.0 §3 / RFC 9700 §2.1).
   const config = c.get('config') ?? defaultProviderConfig;
+  const consentUrl = new URL('/consent', config.issuer);
+  consentUrl.searchParams.set('transaction_id', transactionId);
+  return c.redirect(consentUrl.toString());
+});
+
+/**
+ * EXTENSION (google-login) — Google login callback (login_uri) - POST
+ *
+ * Sign in with Google (redirect mode) posts the ID token here once the user
+ * picks an account. After the callback checks, this continues exactly like a
+ * successful password login: same session cookie, same consent hand-off.
+ */
+loginApp.post('/google', async (c) => {
+  const views = c.get('views') ?? defaultViews;
+  const config = c.get('config') ?? defaultProviderConfig;
+  if (!config.googleLogin) {
+    return renderView(views.errorPage({
+      error: 'not_found',
+      errorDescription: 'Google login is not configured',
+      statusCode: 404,
+    }), { status: 404 });
+  }
+
+  const verified = await verifyGoogleLoginCallback(c, config.googleLogin, views);
+  if (verified instanceof Response) return verified;
+  const { transactionId, subject } = verified;
+
+  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
+  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const transaction = await getAuthTransaction(transactionId, transactionStore);
+
+  // prompt=login / select_account requires fresh authentication: discard any
+  // existing transaction handoff AND browser session (OIDC Core 1.0 Section 3.1.2.1).
+  const loginPromptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
+  if (loginPromptValues.includes('login') || loginPromptValues.includes('select_account')) {
+    await authSessionStore.delete(transactionId);
+    const existingSessionId = parseSessionId(c.req.header('Cookie') ?? null);
+    if (existingSessionId) await browserSessionStore.delete(existingSessionId);
+  }
+
+  const authTime = Math.floor(Date.now() / 1000);
+
+  // Establish the browser (OP) session and the per-transaction handoff exactly
+  // as the password login does (OIDC Core 1.0 Section 3.1.2.3).
+  const sessionId = await generateRandomString(32);
+  await browserSessionStore.set(sessionId, { subject, authTime });
+  c.header('Set-Cookie', buildSessionCookie(sessionId));
+  await authSessionStore.set(transactionId, { subject, authTime, sessionId });
+
   const consentUrl = new URL('/consent', config.issuer);
   consentUrl.searchParams.set('transaction_id', transactionId);
   return c.redirect(consentUrl.toString());

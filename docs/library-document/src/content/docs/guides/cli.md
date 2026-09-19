@@ -151,6 +151,21 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 API は安定しておらず、破壊的に変更されることがあります。詳細と注意点は [Experimental機能とは](../../experimental/) を参照してください。
 
+### Extension Features
+
+拡張機能は、OAuth / OIDC の仕様ではなく**ログイン手段**を生成コードに足すカテゴリで、**既定では無効**です。実装は別 package にあり、`--enable` で明示したときだけ生成コードから import されます。
+
+```bash
+maronn-oidc generate express --enable google-login
+pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
+```
+
+| 機能名 | 既定 | 内容 | 実装 package |
+|---|---|---|---|
+| `google-login` | 無効 | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。検証は Google 公式の `google-auth-library` に委ねる | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
+
+有効化しても `config.googleLogin` を渡すまでボタンは表示されません。設定手順・生成物・ユーザーの扱いは [Google ログイン（拡張）](../google-login/) を参照してください。
+
 ## Custom Scopes
 
 標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）は生成 OP 自身が扱います。それ以外に受け付けるスコープは、生成時に `--scope` で宣言します。

@@ -225,5 +225,10 @@ if ! printf '%s' "${discovery}" | ISSUER="${ISSUER}" node -e "let d='';process.s
 fi
 guide_ok "デプロイが完了しました: ${ISSUER}"
 guide_info "動作確認: curl ${ISSUER}/.well-known/openid-configuration"
+if vercel_cmd env ls production 2>/dev/null | grep -q GOOGLE_CLIENT_ID; then
+  guide_info "Google ログインは有効です。Google Cloud コンソールの OAuth クライアントに、承認済みのリダイレクト URI として ${ISSUER}/login/google、JavaScript 生成元として ${ISSUER} が登録されていることを確認してください。"
+else
+  guide_info "Google ログインを有効にするには 'vercel env add GOOGLE_CLIENT_ID production' で OAuth クライアント ID を設定して再デプロイし、Google 側に ${ISSUER}/login/google（リダイレクト URI）と ${ISSUER}（JavaScript 生成元）を登録してください。"
+fi
 guide_warn "サンプルの署名鍵は起動時生成のため、複数インスタンス間で鍵が一致しない可能性があります。本番相当の検証では固定鍵の読み込みに置き換えてください。"
 guide_info "後片付けする場合: Vercel ダッシュボードからプロジェクト ${PROJECT_NAME} を削除してください。"

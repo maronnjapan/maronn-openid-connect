@@ -21,7 +21,7 @@
   "devDependencies": {
     "@maronn-openid-connect/cli": "workspace:*",
     "@types/express": "^5.0.5",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.1",
     "esbuild": "^0.28.2",
     "express": "^5.2.1",
     "google-auth-library": "^11.1.0",

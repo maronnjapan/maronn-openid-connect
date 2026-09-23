@@ -37,7 +37,8 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
     !features.deviceAuthorizationGrant &&
     !features.idJag &&
     !features.ciba &&
-    !features.jwtIntrospectionResponse
+    !features.jwtIntrospectionResponse &&
+    !features.rpInitiatedLogout
   ) {
     return installCommand;
   }

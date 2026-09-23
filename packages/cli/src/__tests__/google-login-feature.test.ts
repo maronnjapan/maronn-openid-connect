@@ -55,6 +55,7 @@ describe('resolveFeatures with google-login', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
       googleLogin: true,
       transactionBinding: false,
     });
@@ -86,6 +87,7 @@ describe('resolveFeatures with google-login', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
       googleLogin: true,
       transactionBinding: true,
     });

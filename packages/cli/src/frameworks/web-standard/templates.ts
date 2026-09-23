@@ -19,6 +19,8 @@ import {
   deviceAuthorizationConformanceBlock,
   deviceAuthorizationRouteTemplate,
   deviceVerificationRouteTemplate,
+  endSessionRouteTemplate,
+  rpInitiatedLogoutConformanceBlock,
   discoveryRouteTemplate,
   endpointBehaviorConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
@@ -501,6 +503,17 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
 `
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0): the end_session_endpoint and its
+  // confirmation screen are reached by direct browser navigation, so they need
+  // no CORS headers — the same treatment as /login and /consent. The feature
+  // adds no store: the session store and the id_token_hint JWKS provider are
+  // already wired for every build.
+  const logoutImport = features.rpInitiatedLogout
+    ? `import { logoutApp } from './routes/logout.js';\n`
+    : '';
+  const logoutMount = features.rpInitiatedLogout
+    ? `  app.route('/logout', logoutApp);\n`
+    : '';
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
   // maps a verified Google account to an OP subject. The default resolver links
@@ -553,7 +566,7 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -717,7 +730,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -2252,6 +2265,12 @@ import { idJagConfig } from './routes/token.js';`
   // Experimental (CIBA Core 1.0): the CIBA contract tests clear testuser's
   // leftover pending requests after each test — the store is module-global and
   // the backchannel endpoint caps pending requests per subject.
+  // Experimental (RP-Initiated Logout 1.0): the logout contract tests register
+  // the post_logout_redirect_uri allow list through the generated settings.
+  const rpInitiatedLogoutConformanceImports = features.rpInitiatedLogout
+    ? `
+import { rpInitiatedLogoutConfig } from './routes/logout.js';`
+    : '';
   const cibaConformanceImports = features.ciba
     ? `
 import { cibaAuthenticationRequestStore } from './store.js';`
@@ -2268,7 +2287,7 @@ import { createInMemoryClientResolver, type RegisteredClient${googleLoginConfigT
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${googleLoginConformanceImports}${customScopeConformanceImport}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${rpInitiatedLogoutConformanceImports}${googleLoginConformanceImports}${customScopeConformanceImport}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2679,7 +2698,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 
@@ -2757,6 +2776,11 @@ function webCoreGeneratedFiles(
           content: toWebRouteTemplate(cibaVerificationRouteTemplate(corePkg, scopes)),
         },
       ]
+      : []),
+    // Experimental (RP-Initiated Logout 1.0): only generated with
+    // --enable rp-initiated-logout.
+    ...(features.rpInitiatedLogout
+      ? [{ path: 'routes/logout.ts', content: toWebRouteTemplate(endSessionRouteTemplate(corePkg)) }]
       : []),
     // Experimental (JARM): settings module, only generated with --enable jarm.
     // Framework-neutral already (no Hono types), so it is emitted as-is.

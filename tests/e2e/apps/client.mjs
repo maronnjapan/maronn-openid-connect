@@ -28,6 +28,16 @@ const server = createServer(async (req, res) => {
       await startAuthorization(url, res);
       return;
     }
+    // EXPERIMENTAL (RP-Initiated Logout 1.0 §3): the registered post-logout
+    // return target. The OP redirects here after ending its session, echoing
+    // the state the RP sent to /logout.
+    if (req.method === 'GET' && url.pathname === '/logged-out') {
+      sendHtml(res, 200, `<!doctype html><html><body>
+        <h1>Logged out of the OP</h1>
+        <dl><dt>state</dt><dd data-testid="logged-out-state">${escapeHtml(url.searchParams.get('state') ?? '')}</dd></dl>
+      </body></html>`);
+      return;
+    }
     // EXPERIMENTAL (RFC 8693): run the ordinary code flow, then exchange the
     // resulting access token for a narrowed one over the back channel.
     if (req.method === 'GET' && url.pathname === '/start-exchange') {

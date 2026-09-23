@@ -69,6 +69,10 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  *   (RFC 9701) — the introspection endpoint answers a request whose Accept
  *   header names application/token-introspection+jwt with a signed JWT.
  *   Requires the introspection feature (its endpoint carries the response).
+ * - rp-initiated-logout: OpenID Connect RP-Initiated Logout 1.0 — the OP serves
+ *   the end_session_endpoint (GET|POST /logout) with a confirmation screen for
+ *   requests without a valid id_token_hint, and redirects to a registered
+ *   post_logout_redirect_uri on an exact match only.
  */
 export const EXPERIMENTAL_FEATURES = [
   'par',
@@ -78,6 +82,7 @@ export const EXPERIMENTAL_FEATURES = [
   'id-jag',
   'ciba',
   'jwt-introspection-response',
+  'rp-initiated-logout',
 ] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
@@ -156,6 +161,14 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   `@maronn-openid-connect/experimental/jwt-introspection-response`, after
  *   restricting the disclosed members to the authenticated caller (§3). A
  *   request that does not name that media type is answered exactly as before.
+ * - rpInitiatedLogout: experimental, disabled by default. When true, the OP
+ *   additionally serves the end_session_endpoint (GET|POST /logout) and the
+ *   confirmation approve route (POST /logout/approve), advertises
+ *   end_session_endpoint in discovery, and resolves the logout decision and the
+ *   post_logout_redirect_uri (exact match against
+ *   rpInitiatedLogoutConfig.postLogoutRedirectUris) via
+ *   `@maronn-openid-connect/experimental/rp-initiated-logout`. Every other
+ *   endpoint is generated exactly as before.
  * - googleLogin: extension, disabled by default. When true, the login page
  *   renders a "Sign in with Google" button (redirect mode) and the OP serves
  *   POST /login/google, which verifies the ID token Google posts there with
@@ -181,6 +194,7 @@ export interface OidcFeatureConfig {
   idJag: boolean;
   ciba: boolean;
   jwtIntrospectionResponse: boolean;
+  rpInitiatedLogout: boolean;
   googleLogin: boolean;
   transactionBinding: boolean;
 }
@@ -208,6 +222,7 @@ const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatu
   'id-jag': 'idJag',
   ciba: 'ciba',
   'jwt-introspection-response': 'jwtIntrospectionResponse',
+  'rp-initiated-logout': 'rpInitiatedLogout',
 };
 
 /** Mapping from CLI extension feature names to OidcFeatureConfig keys. */
@@ -232,6 +247,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   idJag: false,
   ciba: false,
   jwtIntrospectionResponse: false,
+  rpInitiatedLogout: false,
   googleLogin: false,
   transactionBinding: false,
 };

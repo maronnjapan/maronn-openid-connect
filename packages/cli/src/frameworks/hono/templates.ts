@@ -48,6 +48,13 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   '/ciba/login': ['POST'],
   '/ciba/approve': ['POST'],\n`
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0 §2): the end_session_endpoint MUST
+  // accept both GET and POST; the confirmation approve step is a browser form
+  // POST (same naming family as /device/approve and /ciba/approve).
+  const logoutMethods = features.rpInitiatedLogout
+    ? `  '/logout': ['GET', 'POST'],
+  '/logout/approve': ['POST'],\n`
+    : '';
   // EXTENSION (google-login): the Google login callback (login_uri) receives a
   // browser form POST from Google's redirect; the login page keeps GET / POST.
   const googleLoginMethods = features.googleLogin
@@ -57,7 +64,7 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   '/authorize': ['GET', 'POST'],
   '/token': ['POST'],
   '/userinfo': ['GET', 'POST'],
-${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}  '/.well-known/jwks.json': ['GET'],
+${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}${logoutMethods}  '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
 ${googleLoginMethods}  '/consent': ['GET', 'POST'],
@@ -182,6 +189,17 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
 `
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0): the end_session_endpoint and its
+  // confirmation screen are reached by direct browser navigation, so they need
+  // no CORS headers — the same treatment as /login and /consent. The feature
+  // adds no store: the session store and the id_token_hint JWKS provider are
+  // already wired for every build.
+  const logoutImport = features.rpInitiatedLogout
+    ? `import { logoutApp } from './routes/logout.js';\n`
+    : '';
+  const logoutMount = features.rpInitiatedLogout
+    ? `  app.route('/logout', logoutApp);\n`
+    : '';
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
   // maps a verified Google account to an OP subject. The default resolver links
@@ -236,7 +254,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -434,7 +452,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -1438,6 +1456,102 @@ const GOOGLE_LOGIN_NONCE_PREFIX = 'google-login-nonce:';`
     ? `
 export const googleLoginNonceStore = defaultProviderStores.googleLoginNonceStore;`
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0): the logout confirmation cookie
+  // helpers and the session-clearing Set-Cookie builder. Generated only with
+  // --enable rp-initiated-logout so the default store.ts stays byte-identical.
+  const rpInitiatedLogoutHelpers = features.rpInitiatedLogout
+    ? `
+/**
+ * EXPERIMENTAL — RP-Initiated Logout confirmation cookie
+ * (RP-Initiated Logout 1.0 §2).
+ *
+ * Rendering the logout confirmation screen mints a fresh secret and hands it
+ * to that one browser twice: in this HttpOnly cookie and in the form's hidden
+ * csrf_token. POST /logout/approve runs only when both come back carrying the
+ * same secret. An attacker can collect a valid pair in their own browser, but
+ * cannot set this cookie in the victim's browser, so a forged cross-site POST
+ * fails the comparison (and SameSite=Lax drops the cookie from a cross-site
+ * POST to begin with). Neither half alone is ever accepted — the same model
+ * as the device verification binding cookie above.
+ *
+ * The cookie also carries the OP-computed post-logout redirect target
+ * (base64url of the exact registered URL, or empty when there is none), so
+ * the redirect decision survives the confirmation round-trip inside an
+ * HttpOnly channel instead of a tamperable hidden form field — and the
+ * id_token_hint itself is never echoed into the page.
+ */
+export const LOGOUT_CONFIRMATION_COOKIE = 'oidc_logout_confirm';
+
+/** What one rendered confirmation screen carries across to its approve POST. */
+export interface LogoutConfirmation {
+  /** Secret pairing the HttpOnly cookie with the form's hidden csrf_token. */
+  csrfSecret: string;
+  /** Registered redirect URL resolved at render time, or null for the completed page. */
+  redirectTo: string | null;
+}
+
+export function buildLogoutConfirmationCookie(confirmation: LogoutConfirmation): string {
+  const bytes = new TextEncoder().encode(confirmation.redirectTo ?? '');
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
+  const encodedRedirect = btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  return (
+    LOGOUT_CONFIRMATION_COOKIE + '=' + confirmation.csrfSecret + '.' + encodedRedirect +
+    // 10 minutes: enough to read the screen and click, short enough that an
+    // abandoned confirmation does not leave a long-lived pre-auth cookie.
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600'
+  );
+}
+
+/** Clear the confirmation cookie once the approve POST consumed it. */
+export function buildClearedLogoutConfirmationCookie(): string {
+  return LOGOUT_CONFIRMATION_COOKIE + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
+}
+
+/**
+ * Parse the confirmation cookie back. Returns null when the cookie is absent
+ * or malformed in any way, which the approve POST answers with 400 and,
+ * crucially, without deleting anything.
+ */
+export function parseLogoutConfirmation(cookieHeader: string | null): LogoutConfirmation | null {
+  if (!cookieHeader) return null;
+  let value: string | null = null;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === LOGOUT_CONFIRMATION_COOKIE) {
+      value = trimmed.slice(eq + 1);
+      break;
+    }
+  }
+  if (value === null) return null;
+  const dot = value.indexOf('.');
+  if (dot === -1) return null;
+  const csrfSecret = value.slice(0, dot);
+  if (csrfSecret === '') return null;
+  const encodedRedirect = value.slice(dot + 1);
+  if (encodedRedirect === '') return { csrfSecret, redirectTo: null };
+  if (!/^[A-Za-z0-9_-]+$/.test(encodedRedirect)) return null;
+  try {
+    const base64 = encodedRedirect.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+    return { csrfSecret, redirectTo: new TextDecoder().decode(bytes) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the Set-Cookie value that removes the browser session cookie. The
+ * logout routes pair it with browserSessionStore.delete(): the store entry
+ * and the cookie go away together (RP-Initiated Logout 1.0 §2).
+ */
+export function buildClearedSessionCookie(): string {
+  return SESSION_COOKIE_NAME + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
+}
+`
+    : '';
   return `import type {
   AuthTransaction,
   AuthTransactionStore,
@@ -1707,7 +1821,7 @@ export function parseSessionId(cookieHeader: string | null): string | undefined 
 export function buildSessionCookie(sessionId: string): string {
   return SESSION_COOKIE_NAME + '=' + sessionId + '; HttpOnly; Secure; SameSite=Lax; Path=/';
 }
-${transactionBindingHelpers}
+${transactionBindingHelpers}${rpInitiatedLogoutHelpers}
 /**
  * In-memory consent store. Records that a user granted a set of scopes to a
  * client so prompt=none can confirm consent without showing UI
@@ -4282,6 +4396,260 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
   } catch (error) {
     return renderVerificationError(views, error);
   }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — RP-Initiated Logout end_session_endpoint
+ * (OpenID Connect RP-Initiated Logout 1.0), generated only with
+ * `--enable rp-initiated-logout`.
+ *
+ * Three routes hang off one mount point (`GET|POST /logout`,
+ * `POST /logout/approve`) so the whole browser-facing surface of the feature
+ * lives in a single generated file that can be deleted with the feature. The
+ * file also owns the feature's settings object (the post_logout_redirect_uri
+ * registry), like device-authorization.ts owns deviceAuthorizationConfig.
+ */
+export function endSessionRouteTemplate(corePkg: string): string {
+  return `/**
+ * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint.
+ *
+ * This route was generated because the OP was created with
+ * \`--enable rp-initiated-logout\`. It is backed by
+ * ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change in a breaking
+ * way between releases. Do not build production code on it without pinning the
+ * version.
+ *
+ * The RP sends the user agent here (GET or POST, §2 MUST) to end the OP
+ * browser session. A request whose id_token_hint verifies against this OP's
+ * keys AND matches the current session's End-User logs out immediately; every
+ * other request — no hint, an invalid or expired hint, a client_id that
+ * mismatches the hint audience, no session, another user's session — falls to
+ * one shared confirmation screen (§2 MUST; §7: an unauthenticated logout link
+ * would otherwise be a denial-of-service primitive). The failure reason is
+ * never disclosed anywhere: a reason would turn this endpoint into an oracle
+ * for session state.
+ *
+ * ## Why the confirmation approve step demands a cookie + token pair
+ *
+ * The approve POST ends a session, so a forged cross-site POST must not drive
+ * it. When the confirmation screen is rendered the OP mints a fresh secret and
+ * hands it to that one browser twice: in an HttpOnly cookie and in the form's
+ * hidden csrf_token. /logout/approve runs only when both come back equal. An
+ * attacker can obtain a valid pair in their own browser but cannot plant that
+ * cookie into the victim's, so the forged POST fails the comparison — the
+ * same model as the device verification binding cookie (see store.ts).
+ *
+ * The cookie also carries the OP-computed post-logout redirect target, so the
+ * confirmation flow never round-trips the id_token_hint (or any redirect
+ * parameter) through the HTML page: the only value the form submits back is
+ * the csrf_token itself.
+ */
+import { Hono } from 'hono';
+import {
+  decideLogoutFlow,
+  extractIdTokenHintAudience,
+  parseEndSessionRequest,
+  resolvePostLogoutRedirect,
+} from '${EXPERIMENTAL_PACKAGE}/rp-initiated-logout';
+import { IdTokenHintError, generateRandomString, validateIdTokenHint } from '${corePkg}';
+import {
+  browserSessionStore as defaultBrowserSessionStore,
+  buildClearedLogoutConfirmationCookie,
+  buildClearedSessionCookie,
+  buildLogoutConfirmationCookie,
+  parseLogoutConfirmation,
+  parseSessionId,
+} from '../store.js';
+import { defaultProviderConfig } from '../config.js';
+import { defaultViews, renderView } from '../views.js';
+
+/**
+ * EXPERIMENTAL — settings for RP-Initiated Logout.
+ *
+ * postLogoutRedirectUris is the registry §3 checks against: client_id → the
+ * exact post_logout_redirect_uri values that client registered (a registry of
+ * its own — the authorize redirect_uris are NOT reused). A requested URI is
+ * used only on an exact string match for the client the id_token_hint
+ * verified for; everything else falls back to the completed page
+ * (fail-closed). The default is empty, so no logout redirect happens until
+ * you register one here.
+ */
+export const rpInitiatedLogoutConfig = {
+  postLogoutRedirectUris: {} as Record<string, string[]>,
+};
+
+export const logoutApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * Attach Set-Cookie headers to a Response a view already produced.
+ * renderView() builds its own Response, so headers staged on the framework
+ * context never reach it (same helper as the device verification UI).
+ */
+function withCookies(response: Response, cookies: string[]): Response {
+  const headers = new Headers(response.headers);
+  for (const cookie of cookies) {
+    headers.append('Set-Cookie', cookie);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/** 302 to the registered post_logout_redirect_uri, with cookies attached. */
+function redirectResponse(location: string, cookies: string[]): Response {
+  const headers = new Headers({ Location: location });
+  for (const cookie of cookies) {
+    headers.append('Set-Cookie', cookie);
+  }
+  return new Response(null, { status: 302, headers });
+}
+
+/**
+ * Interpret one end_session request (§2) and answer it. GET and POST share
+ * this handler — they differ only in where the parameters come from.
+ */
+async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise<Response> {
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const config = c.get('config') ?? defaultProviderConfig;
+  const request = parseEndSessionRequest(params);
+  // logout_hint and ui_locales are accepted but unused (OPTIONAL, §2): the
+  // hint is not read past parsing and is never logged — it can identify the
+  // End-User. The same goes for the id_token_hint value itself.
+
+  // §2: verify the hint (signature / iss / aud / exp) against the same key
+  // set id_token_hint uses elsewhere (context jwksProvider). The expected
+  // audience is the client_id parameter when present, otherwise it is
+  // extracted — unverified — from the hint payload; trust comes from
+  // validateIdTokenHint afterwards.
+  let verifiedHint: { sub: string; [key: string]: unknown } | null = null;
+  let expectedAudience: string | null = null;
+  if (request.idTokenHint !== undefined) {
+    expectedAudience = request.clientId ?? extractIdTokenHintAudience(request.idTokenHint);
+    if (expectedAudience !== null) {
+      try {
+        const jwks = await c.get('jwksProvider')();
+        verifiedHint = await validateIdTokenHint(request.idTokenHint, {
+          expectedIss: config.issuer,
+          expectedAud: expectedAudience,
+          jwks,
+        });
+      } catch (error) {
+        // An expired, tampered or foreign hint is not an error to report — it
+        // just fails to prove logout authority, so the request falls to the
+        // confirmation path (§2 MUST) with no reason disclosed. Anything that
+        // is not a hint-validation failure (e.g. the JWKS provider itself
+        // failing) is rethrown: masking an outage as \"invalid hint\" would
+        // silently degrade every logout into a confirmation.
+        if (!(error instanceof IdTokenHintError)) throw error;
+        verifiedHint = null;
+      }
+    }
+  }
+
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
+
+  const decision = decideLogoutFlow({
+    verifiedHint,
+    expectedAudience,
+    clientIdParam: request.clientId,
+    sessionSubject: session ? session.subject : null,
+  });
+
+  // §3: redirect only to the verified client's exactly-matching registered
+  // URI, with state appended. Resolved before the branch because the
+  // confirmation flow honors the same result after approval — the redirect
+  // condition is the hint and the exact match, not which path the logout took.
+  const redirectTo = resolvePostLogoutRedirect({
+    postLogoutRedirectUri: request.postLogoutRedirectUri,
+    state: request.state,
+    verifiedClientId: decision.verifiedClientId,
+    registeredUris:
+      decision.verifiedClientId === null
+        ? []
+        : rpInitiatedLogoutConfig.postLogoutRedirectUris[decision.verifiedClientId] ?? [],
+  });
+
+  if (decision.requiresConfirmation) {
+    // §2 MUST. Nothing is deleted here, and the screen's wording never varies
+    // with session state. The minted secret pairs the HttpOnly cookie with the
+    // form's hidden csrf_token; the redirect target rides inside the cookie.
+    const csrfSecret = generateRandomString(32);
+    return withCookies(
+      renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
+      [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
+    );
+  }
+
+  // Immediate logout: a valid hint for the current session's End-User (§2).
+  // Delete the store entry and expire the cookie together.
+  if (sessionId) {
+    await browserSessionStore.delete(sessionId);
+  }
+  const cookies = [buildClearedSessionCookie()];
+  if (redirectTo !== null) {
+    return redirectResponse(redirectTo, cookies);
+  }
+  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+}
+
+/** end_session_endpoint - GET (§2: the OP MUST support GET and POST). */
+logoutApp.get('/', (c) => handleEndSessionRequest(c, new URL(c.req.url).searchParams));
+
+/** end_session_endpoint - POST, application/x-www-form-urlencoded body (§2). */
+logoutApp.post('/', async (c) => {
+  const body = await c.req.parseBody();
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value === 'string') {
+      params.append(key, value);
+    }
+  }
+  return handleEndSessionRequest(c, params);
+});
+
+/**
+ * Confirmation approve - POST
+ *
+ * Runs only for the browser that rendered the confirmation screen: the
+ * HttpOnly cookie and the hidden csrf_token must present the same secret
+ * (neither alone is accepted). On success the session is deleted and the
+ * redirect decision computed at render time — carried in the cookie, never in
+ * the form — is honored (§3).
+ */
+logoutApp.post('/approve', async (c) => {
+  const views = c.get('views') ?? defaultViews;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+
+  const body = await c.req.parseBody();
+  const csrfToken = String(body['csrf_token'] ?? '');
+  const confirmation = parseLogoutConfirmation(c.req.header('Cookie') ?? null);
+  if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
+    // Forged, replayed or expired confirmation: delete nothing. This is a
+    // browser surface, so the answer is the error page, not OAuth error JSON.
+    return renderView(
+      views.errorPage({ error: 'Invalid logout confirmation', statusCode: 400 }),
+      { status: 400 },
+    );
+  }
+
+  // The End-User explicitly approved (§2). When the session is already gone
+  // there is nothing to delete and the response is the same either way — the
+  // confirmation flow is not an oracle for whether a session existed.
+  const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  if (sessionId) {
+    await browserSessionStore.delete(sessionId);
+  }
+  const cookies = [buildClearedSessionCookie(), buildClearedLogoutConfirmationCookie()];
+  if (confirmation.redirectTo !== null) {
+    return redirectResponse(confirmation.redirectTo, cookies);
+  }
+  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
 });
 `;
 }
@@ -7110,6 +7478,14 @@ import { parConfig } from './par.js';`
     // introspection_signed_response_alg), so exactly one alg is advertised.
     introspection_signing_alg_values_supported: ['RS256'],`
       : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0 §2.1): end_session_endpoint has no
+  // core DiscoveryConfig field, so it is merged onto the metadata object the
+  // same way the PAR endpoint metadata is — core needs no change to advertise it.
+  const rpInitiatedLogoutDiscoveryMetadata = features.rpInitiatedLogout
+    ? `
+    // EXPERIMENTAL — RP-Initiated Logout 1.0 §2.1 metadata.
+    end_session_endpoint: \`\${issuer}/logout\`,`
+    : '';
   return `import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '${corePkg}';
 import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}${customScopeImport}
@@ -7222,7 +7598,7 @@ ${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
   // not in OIDC Discovery, so it is added separately.
   return c.json({
     ...metadata,
-    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${cibaDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}${jwtIntrospectionResponseDiscoveryMetadata}
+    code_challenge_methods_supported: ['S256'],${parDiscoveryMetadata}${deviceDiscoveryMetadata}${cibaDiscoveryMetadata}${jarmDiscoveryMetadata}${idJagDiscoveryMetadata}${jwtIntrospectionResponseDiscoveryMetadata}${rpInitiatedLogoutDiscoveryMetadata}
   });
 });
 `;
@@ -8111,6 +8487,17 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
 `
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0): the end_session_endpoint and its
+  // confirmation screen are reached by direct browser navigation, so they need
+  // no CORS headers — the same treatment as /login and /consent. The feature
+  // adds no store: the session store and the id_token_hint JWKS provider are
+  // already wired for every build.
+  const logoutImport = features.rpInitiatedLogout
+    ? `import { logoutApp } from './routes/logout.js';\n`
+    : '';
+  const logoutMount = features.rpInitiatedLogout
+    ? `  app.route('/logout', logoutApp);\n`
+    : '';
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
   // maps a verified Google account to an OP subject. The default resolver links
@@ -8165,7 +8552,7 @@ import { cors } from 'hono/cors';
 import { authorizeApp } from './routes/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
@@ -8414,7 +8801,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizeApp);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);
   app.route('/consent', consentApp);
@@ -9123,6 +9510,73 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
   cibaCompletedPage: defaultCibaCompletedPage,
 `
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0): the two logout pages are generated
+  // only with --enable rp-initiated-logout. Every interpolation below collapses
+  // to '' when the feature is off, so the default views.ts is unchanged byte
+  // for byte.
+  const rpInitiatedLogoutParamTypes = features.rpInitiatedLogout
+    ? `
+export interface LogoutConfirmationPageParams {
+  /** CSRF token (must be included as hidden form field of the approve POST) */
+  csrfToken: string;
+}
+
+/**
+ * Parameters of the logged-out page. Deliberately empty: the completed screen
+ * shows no End-User or client identifier (whoever sees the screen learns
+ * nothing), and its wording never depends on whether anything was actually
+ * deleted — varying it would make the page a session-existence oracle.
+ */
+export interface LogoutCompletedPageParams {}
+`
+    : '';
+  const rpInitiatedLogoutViewsMembers = features.rpInitiatedLogout
+    ? `  /** EXPERIMENTAL (RP-Initiated Logout 1.0 §2): render the logout confirmation screen */
+  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;
+  /** EXPERIMENTAL (RP-Initiated Logout 1.0): render the logged-out screen */
+  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
+`
+    : '';
+  const rpInitiatedLogoutDefaultViews = features.rpInitiatedLogout
+    ? `// RP-Initiated Logout 1.0 §2: the wording is fixed for every path into this
+// screen (no hint, an invalid or expired hint, another user's session, no
+// session at all), so the page cannot be used as an oracle for session state
+// or for why the hint failed.
+function defaultLogoutConfirmationPage(params: LogoutConfirmationPageParams): string {
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Log out</title></head>
+<body>
+  <h1>Log out</h1>
+  <p>Do you want to log out of the OpenID Provider?</p>
+  <p>If you did not request this, close this page.</p>
+  <form method="POST" action="/logout/approve">
+    <input type="hidden" name="csrf_token" value="\${escapeHtml(params.csrfToken)}" />
+    <button type="submit">Log out</button>
+  </form>
+</body>
+</html>\`;
+}
+
+function defaultLogoutCompletedPage(_params: LogoutCompletedPageParams): string {
+  return \`<!DOCTYPE html>
+<html>
+<head><title>Logged out</title></head>
+<body>
+  <h1>Logged out</h1>
+  <p>You have been logged out.</p>
+  <p>You can close this page.</p>
+</body>
+</html>\`;
+}
+
+`
+    : '';
+  const rpInitiatedLogoutDefaultViewsEntries = features.rpInitiatedLogout
+    ? `  logoutConfirmationPage: defaultLogoutConfirmationPage,
+  logoutCompletedPage: defaultLogoutCompletedPage,
+`
+    : '';
   // EXTENSION (google-login): the login page gains a pre-rendered "Sign in with
   // Google" button. Every interpolation collapses to '' when the feature is off,
   // so the default views.ts is unchanged byte for byte.
@@ -9216,7 +9670,7 @@ export interface ErrorPageParams {
   /** HTTP status code */
   statusCode: number;
 }
-${deviceParamTypes}${cibaParamTypes}
+${deviceParamTypes}${cibaParamTypes}${rpInitiatedLogoutParamTypes}
 // ============================================================
 // Views Interface
 // ============================================================
@@ -9235,7 +9689,7 @@ export interface Views {
   consentPage(params: ConsentPageParams): ViewResult;
   /** Render a generic error page */
   errorPage(params: ErrorPageParams): ViewResult;
-${deviceViewsMembers}${cibaViewsMembers}}
+${deviceViewsMembers}${cibaViewsMembers}${rpInitiatedLogoutViewsMembers}}
 
 /** Options applied when renderView wraps an HTML string into a Response. */
 export interface RenderViewInit {
@@ -9365,7 +9819,7 @@ function defaultErrorPage(params: ErrorPageParams): string {
 </html>\`;
 }
 
-${deviceDefaultViews}${cibaDefaultViews}/**
+${deviceDefaultViews}${cibaDefaultViews}${rpInitiatedLogoutDefaultViews}/**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
  */
@@ -9373,7 +9827,7 @@ export const defaultViews: Views = {
   loginPage: defaultLoginPage,
   consentPage: defaultConsentPage,
   errorPage: defaultErrorPage,
-${deviceDefaultViewsEntries}${cibaDefaultViewsEntries}};
+${deviceDefaultViewsEntries}${cibaDefaultViewsEntries}${rpInitiatedLogoutDefaultViewsEntries}};
 
 /**
  * Build a Views instance, overriding any subset of the default views with your
@@ -12170,6 +12624,13 @@ export function endpointBehaviorConformanceBlock(
       { path: '/device/login', method: 'GET', allow: 'POST' },
       { path: '/device/approve', method: 'GET', allow: 'POST' },`
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0 §2): both logout endpoints registered
+  // in OIDC_ENDPOINT_METHODS must enforce their method lists like every other one.
+  const logoutMethodTests = features.rpInitiatedLogout
+    ? `
+      { path: '/logout', method: 'PUT', allow: 'GET, POST' },
+      { path: '/logout/approve', method: 'GET', allow: 'POST' },`
+    : '';
   const corsPreflightTest = includeHonoApplyParity
     ? `    it('should give createApp and applyOidc the same CORS preflight behavior', async () => {
       const responses = await Promise.all(
@@ -12220,7 +12681,7 @@ export function endpointBehaviorConformanceBlock(
     it('should return 405 and an exact Allow header for unsupported endpoint methods', async () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
-        { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },${introspectionMethodTest}${revocationMethodTest}${deviceMethodTests}
+        { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },${introspectionMethodTest}${revocationMethodTest}${deviceMethodTests}${logoutMethodTests}
         { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
         { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
       ];
@@ -18030,6 +18491,273 @@ export function googleLoginConformanceBlock(features: OidcFeatureConfig): string
 `;
 }
 
+export function rpInitiatedLogoutConformanceBlock(features: OidcFeatureConfig): string {
+  // When the feature is off nothing is emitted, so the default generation
+  // output stays byte-identical to the pre-feature CLI. The disabled contract
+  // (no /logout routes, no end_session_endpoint metadata) is pinned by the
+  // CLI generator tests instead.
+  if (!features.rpInitiatedLogout) return '';
+  return `
+  // EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0. Generated because
+  // this provider was created with --enable rp-initiated-logout. These tests
+  // pin the contract the repository guarantees for the generated
+  // end_session_endpoint: change the behavior and they fail, which is how a
+  // customized OP learns it drifted.
+  describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const LOGOUT_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const LOGOUT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    // A logout-specific registered return URI — deliberately NOT the authorize
+    // REDIRECT_URI, because §3 defines post_logout_redirect_uris as its own
+    // registry.
+    const POST_LOGOUT_URI = 'http://localhost:3000/logged-out';
+    const CLEARED_SESSION_COOKIE =
+      'session_id=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
+
+    // The generated settings object is the §3 registry; register the test
+    // client's return URI once for every test in this block.
+    rpInitiatedLogoutConfig.postLogoutRedirectUris = { 'c-conf': [POST_LOGOUT_URI] };
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drive authorize -> login -> consent -> token and hand back the browser
+    // session cookie plus the ID Token (the id_token_hint of the logout tests).
+    async function loginSession(): Promise<{ idToken: string; sessionCookie: string }> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+          '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+          '&scope=openid&state=logout-flow&nonce=logout-nonce&prompt=consent' +
+          '&code_challenge=' + LOGOUT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const sessionCookie =
+        (loginRes.headers.get('Set-Cookie') ?? '').match(/session_id=[^;,]+/)?.[0] ?? '';
+      const cookies = bindingCookie ? bindingCookie + '; ' + sessionCookie : sessionCookie;
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: cookies } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookies },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code =
+        new URL(consentRes.headers.get('Location') ?? '', 'http://localhost')
+          .searchParams.get('code') ?? '';
+
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          client_id: 'c-conf',
+          client_secret: 's',
+          code_verifier: LOGOUT_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const idToken = ((await tokenRes.json()) as { id_token?: string }).id_token ?? '';
+      return { idToken, sessionCookie };
+    }
+
+    // prompt=none is the observable session probe (OIDC Core 1.0 §3.1.2.1): a
+    // live session answers with a code, a dead one with error=login_required.
+    async function promptNoneProbe(
+      sessionCookie: string,
+    ): Promise<{ error: string | null; hasCode: boolean }> {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+          '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+          '&scope=openid&state=logout-probe&prompt=none' +
+          '&code_challenge=' + LOGOUT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+        { headers: { Cookie: sessionCookie } },
+      );
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+      return {
+        error: callback.searchParams.get('error'),
+        hasCode: callback.searchParams.get('code') !== null,
+      };
+    }
+
+    it('should advertise end_session_endpoint in discovery metadata', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+
+      expect(res.status).toBe(200);
+      const metadata = await res.json();
+      expect(metadata.end_session_endpoint).toBe('http://localhost:3000/logout');
+    });
+
+    // §2 + §3: a valid hint for the current session logs out at once, the
+    // session cookie and store entry are destroyed together, and the browser
+    // returns to the registered URI with state appended.
+    it('should log out immediately and redirect with state for a valid hint and registered URI', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request(
+        '/logout?id_token_hint=' + encodeURIComponent(idToken) +
+          '&post_logout_redirect_uri=' + encodeURIComponent(POST_LOGOUT_URI) +
+          '&state=af0ifjsldkj',
+        { headers: { Cookie: sessionCookie } },
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(POST_LOGOUT_URI + '?state=af0ifjsldkj');
+      expect(res.headers.get('Set-Cookie')).toBe(CLEARED_SESSION_COOKIE);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({
+        error: 'login_required',
+        hasCode: false,
+      });
+    });
+
+    // §2 MUST: the end_session_endpoint accepts POST with a form body exactly
+    // like GET with a query.
+    it('should accept the logout request as a form POST', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request('/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: sessionCookie },
+        body: new URLSearchParams({
+          id_token_hint: idToken,
+          post_logout_redirect_uri: POST_LOGOUT_URI,
+          state: 'post-body-state',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(POST_LOGOUT_URI + '?state=post-body-state');
+    });
+
+    // §2 MUST + §7: without a valid hint nothing is deleted — the screen asks
+    // first, so a planted <img src="/logout"> cannot end the victim's session.
+    it('should show the confirmation screen and keep the session when the hint is absent', async () => {
+      const { sessionCookie } = await loginSession();
+
+      const res = await app.request('/logout', { headers: { Cookie: sessionCookie } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      const html = await res.text();
+      expect(html.includes('action="/logout/approve"')).toBe(true);
+      expect((res.headers.get('Set-Cookie') ?? '').startsWith('oidc_logout_confirm=')).toBe(true);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({ error: null, hasCode: true });
+    });
+
+    it('should delete the session when the confirmation is approved with the paired cookie and token', async () => {
+      const { sessionCookie } = await loginSession();
+      const confirmRes = await app.request('/logout', { headers: { Cookie: sessionCookie } });
+      const confirmCookie =
+        (confirmRes.headers.get('Set-Cookie') ?? '').match(/oidc_logout_confirm=[^;,]+/)?.[0] ?? '';
+      const csrfToken = csrfFrom(await confirmRes.text());
+
+      const res = await app.request('/logout/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: sessionCookie + '; ' + confirmCookie,
+        },
+        body: new URLSearchParams({ csrf_token: csrfToken }).toString(),
+      });
+
+      expect(res.status).toBe(200);
+      expect((res.headers.get('Set-Cookie') ?? '').includes(CLEARED_SESSION_COOKIE)).toBe(true);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({
+        error: 'login_required',
+        hasCode: false,
+      });
+    });
+
+    // The hidden token alone is not a defense: without the HttpOnly cookie the
+    // approve POST must refuse to delete anything (forged cross-site POST).
+    it('should reject an approve POST without the confirmation cookie and keep the session', async () => {
+      const { sessionCookie } = await loginSession();
+      const confirmRes = await app.request('/logout', { headers: { Cookie: sessionCookie } });
+      const csrfToken = csrfFrom(await confirmRes.text());
+
+      const res = await app.request('/logout/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: sessionCookie,
+        },
+        body: new URLSearchParams({ csrf_token: csrfToken }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({ error: null, hasCode: true });
+    });
+
+    // §3 MUST NOT: an unregistered URI is never redirected to. The logout
+    // itself still happens (the hint was valid) — the browser just stays on
+    // the completed page and state is not echoed anywhere.
+    it('should show the completed page instead of redirecting to an unregistered URI', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request(
+        '/logout?id_token_hint=' + encodeURIComponent(idToken) +
+          '&post_logout_redirect_uri=' + encodeURIComponent('https://attacker.example/out') +
+          '&state=leak-probe',
+        { headers: { Cookie: sessionCookie } },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('leak-probe')).toBe(false);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({
+        error: 'login_required',
+        hasCode: false,
+      });
+    });
+
+    // §2 MUST: a client_id parameter that mismatches the hint audience voids
+    // the hint — confirmation screen, session intact, no redirect.
+    it('should fall back to the confirmation screen when client_id mismatches the hint audience', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request(
+        '/logout?id_token_hint=' + encodeURIComponent(idToken) +
+          '&client_id=c-public' +
+          '&post_logout_redirect_uri=' + encodeURIComponent(POST_LOGOUT_URI),
+        { headers: { Cookie: sessionCookie } },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('action="/logout/approve"')).toBe(true);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({ error: null, hasCode: true });
+    });
+  });
+`;
+}
+
 export function conformanceTestTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
@@ -18083,6 +18811,12 @@ import { idJagConfig } from './routes/token.js';`
     ? `
 import { cibaAuthenticationRequestStore } from './store.js';`
     : '';
+  // Experimental (RP-Initiated Logout 1.0): the logout contract tests register
+  // the post_logout_redirect_uri allow list through the generated settings.
+  const rpInitiatedLogoutConformanceImports = features.rpInitiatedLogout
+    ? `
+import { rpInitiatedLogoutConfig } from './routes/logout.js';`
+    : '';
   const vitestNames = features.ciba
     ? 'describe, it, expect, beforeAll, afterEach'
     : 'describe, it, expect, beforeAll';
@@ -18097,7 +18831,7 @@ import { createInMemoryClientResolver, type RegisteredClient${googleLoginConfigT
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${googleLoginConformanceImports}${customScopeConformanceImport}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${rpInitiatedLogoutConformanceImports}${googleLoginConformanceImports}${customScopeConformanceImport}
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -18576,6 +19310,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

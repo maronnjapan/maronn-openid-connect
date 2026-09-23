@@ -19,6 +19,7 @@ import {
   deviceVerificationRouteTemplate,
   backchannelAuthenticationRouteTemplate,
   cibaVerificationRouteTemplate,
+  endSessionRouteTemplate,
   jarmConfigTemplate,
   discoveryRouteTemplate,
   loginRouteTemplate,
@@ -79,6 +80,11 @@ export class HonoGenerator implements FrameworkGenerator {
           },
           { path: 'routes/ciba-verification.ts', content: cibaVerificationRouteTemplate(pkg, scopes) },
         ]
+        : []),
+      // Experimental (RP-Initiated Logout 1.0): only generated with
+      // --enable rp-initiated-logout.
+      ...(features.rpInitiatedLogout
+        ? [{ path: 'routes/logout.ts', content: endSessionRouteTemplate(pkg) }]
         : []),
       // Experimental (JARM): settings module, only generated with --enable jarm.
       ...(features.jarm

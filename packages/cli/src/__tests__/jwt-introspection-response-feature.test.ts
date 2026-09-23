@@ -40,6 +40,7 @@ describe('resolveFeatures with jwt-introspection-response', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: true,
+      rpInitiatedLogout: false,
       googleLogin: false,
       transactionBinding: false,
     });
@@ -86,6 +87,7 @@ describe('resolveFeatures with jwt-introspection-response', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: true,
+      rpInitiatedLogout: false,
       googleLogin: false,
       transactionBinding: false,
     });

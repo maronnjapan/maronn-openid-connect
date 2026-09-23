@@ -135,6 +135,12 @@ export default defineConfig({
         RESOURCE_SERVER_CLIENT_ID: 'e2e-resource-server',
         RESOURCE_SERVER_CLIENT_SECRET: 'e2e-resource-server-secret',
         RESOURCE_SERVER_REDIRECT_URI: `${resourceServerURL}/unused-callback`,
+        // EXPERIMENTAL (RP-Initiated Logout 1.0 §3): register the E2E client's
+        // post-logout return page. A sample OP generated without the feature
+        // ignores the variable; the logout spec skips itself via discovery.
+        OIDC_POST_LOGOUT_REDIRECT_URIS_JSON: JSON.stringify({
+          'e2e-client': [`${clientBaseURL}/logged-out`],
+        }),
         // EXPERIMENTAL (ID-JAG draft §4.3): this OP plays the IdP and may issue
         // ID-JAGs for the second OP's trust domain. Actor tokens (an opt-in
         // extension) are enabled so the delegation spec can exercise the act

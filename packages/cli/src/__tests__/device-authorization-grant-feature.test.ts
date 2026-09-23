@@ -37,6 +37,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'id-jag',
       'ciba',
       'jwt-introspection-response',
+      'rp-initiated-logout',
     ]);
   });
 });
@@ -60,6 +61,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
       googleLogin: false,
       transactionBinding: false,
     });
@@ -97,6 +99,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       idJag: true,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
       googleLogin: false,
       transactionBinding: false,
     });
@@ -118,6 +121,7 @@ describe('resolveFeatures with device-authorization-grant', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
       googleLogin: false,
       transactionBinding: false,
     });

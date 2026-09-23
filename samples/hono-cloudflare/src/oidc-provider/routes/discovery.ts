@@ -173,5 +173,7 @@ discoveryApp.get('/', (c) => {
     // always signed with RS256 (§6: the default for a client that registered no
     // introspection_signed_response_alg), so exactly one alg is advertised.
     introspection_signing_alg_values_supported: ['RS256'],
+    // EXPERIMENTAL — RP-Initiated Logout 1.0 §2.1 metadata.
+    end_session_endpoint: `${issuer}/logout`,
   });
 });

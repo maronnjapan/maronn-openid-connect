@@ -10,6 +10,7 @@ import { deviceAuthorizationApp } from './routes/device-authorization.js';
 import { deviceApp } from './routes/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
 import { cibaApp } from './routes/ciba-verification.js';
+import { logoutApp } from './routes/logout.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
@@ -131,6 +132,8 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/ciba': ['GET'],
   '/ciba/login': ['POST'],
   '/ciba/approve': ['POST'],
+  '/logout': ['GET', 'POST'],
+  '/logout/approve': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -279,6 +282,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   app.route('/device', deviceApp);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
   app.route('/ciba', cibaApp);
+  app.route('/logout', logoutApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginApp);

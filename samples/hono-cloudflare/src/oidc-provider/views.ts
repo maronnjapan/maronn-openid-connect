@@ -144,6 +144,19 @@ export interface CibaCompletedPageParams {
   clientId: string;
 }
 
+export interface LogoutConfirmationPageParams {
+  /** CSRF token (must be included as hidden form field of the approve POST) */
+  csrfToken: string;
+}
+
+/**
+ * Parameters of the logged-out page. Deliberately empty: the completed screen
+ * shows no End-User or client identifier (whoever sees the screen learns
+ * nothing), and its wording never depends on whether anything was actually
+ * deleted — varying it would make the page a session-existence oracle.
+ */
+export interface LogoutCompletedPageParams {}
+
 // ============================================================
 // Views Interface
 // ============================================================
@@ -176,6 +189,10 @@ export interface Views {
   cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
   /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
   cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
+  /** EXPERIMENTAL (RP-Initiated Logout 1.0 §2): render the logout confirmation screen */
+  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;
+  /** EXPERIMENTAL (RP-Initiated Logout 1.0): render the logged-out screen */
+  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
 }
 
 /** Options applied when renderView wraps an HTML string into a Response. */
@@ -505,6 +522,38 @@ ${outcome}
 </html>`;
 }
 
+// RP-Initiated Logout 1.0 §2: the wording is fixed for every path into this
+// screen (no hint, an invalid or expired hint, another user's session, no
+// session at all), so the page cannot be used as an oracle for session state
+// or for why the hint failed.
+function defaultLogoutConfirmationPage(params: LogoutConfirmationPageParams): string {
+  return `<!DOCTYPE html>
+<html>
+<head><title>Log out</title></head>
+<body>
+  <h1>Log out</h1>
+  <p>Do you want to log out of the OpenID Provider?</p>
+  <p>If you did not request this, close this page.</p>
+  <form method="POST" action="/logout/approve">
+    <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
+    <button type="submit">Log out</button>
+  </form>
+</body>
+</html>`;
+}
+
+function defaultLogoutCompletedPage(_params: LogoutCompletedPageParams): string {
+  return `<!DOCTYPE html>
+<html>
+<head><title>Logged out</title></head>
+<body>
+  <h1>Logged out</h1>
+  <p>You have been logged out.</p>
+  <p>You can close this page.</p>
+</body>
+</html>`;
+}
+
 /**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
@@ -520,6 +569,8 @@ export const defaultViews: Views = {
   cibaLoginPage: defaultCibaLoginPage,
   cibaPendingRequestsPage: defaultCibaPendingRequestsPage,
   cibaCompletedPage: defaultCibaCompletedPage,
+  logoutConfirmationPage: defaultLogoutConfirmationPage,
+  logoutCompletedPage: defaultLogoutCompletedPage,
 };
 
 /**

@@ -180,7 +180,7 @@ describe('CLI', () => {
         vi.spyOn(console, 'log').mockImplementation(() => {});
         run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
         expect(consoleSpy).toHaveBeenCalledWith(
-          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response. Extension features (disabled by default): google-login',
+          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout. Extension features (disabled by default): google-login',
         );
         expect(process.exitCode).toBe(1);
         vi.restoreAllMocks();
@@ -241,6 +241,22 @@ describe('CLI', () => {
         const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
         expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
         expect(logged.includes('Experimental features enabled: jwt-introspection-response')).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should add the experimental package to the install guidance when rp-initiated-logout is enabled', () => {
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run([
+          'generate',
+          'hono',
+          '-o',
+          join(testDir, 'rp-initiated-logout-install-output'),
+          '--enable',
+          'rp-initiated-logout',
+        ]);
+        const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
+        expect(logged.includes('Experimental features enabled: rp-initiated-logout')).toBe(true);
         vi.restoreAllMocks();
       });
 
@@ -723,6 +739,8 @@ describe('CLI', () => {
             idJag: false,
             ciba: false,
             jwtIntrospectionResponse: false,
+            rpInitiatedLogout: false,
+            googleLogin: false,
             transactionBinding: false,
           },
           scopes: [],
@@ -766,6 +784,8 @@ describe('CLI', () => {
             idJag: false,
             ciba: false,
             jwtIntrospectionResponse: false,
+            rpInitiatedLogout: false,
+            googleLogin: false,
             transactionBinding: false,
           },
           scopes: [],

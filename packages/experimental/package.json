@@ -28,6 +28,10 @@
       "types": "./dist/par/index.d.ts",
       "import": "./dist/par/index.js"
     },
+    "./rp-initiated-logout": {
+      "types": "./dist/rp-initiated-logout/index.d.ts",
+      "import": "./dist/rp-initiated-logout/index.js"
+    },
     "./token-exchange": {
       "types": "./dist/token-exchange/index.d.ts",
       "import": "./dist/token-exchange/index.js"

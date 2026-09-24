@@ -6,6 +6,7 @@ import {
   verifyClientSecret,
   requireIntrospectionToken,
   requireIntrospectionClient,
+  requireConfidentialIntrospectionCaller,
   resolveIntrospectionToken,
   isIntrospectionTokenActive,
   buildIntrospectionResponse,
@@ -30,8 +31,10 @@ function isFormUrlEncoded(contentType: string): boolean {
  * Token Introspection Endpoint
  * RFC 7662 Section 2
  *
- * Confidential client only — public clients are out of scope for this template.
- * Response is always cache-busting per RFC 7662 Section 2.2.
+ * Confidential client only — a caller registered with
+ * token_endpoint_auth_method 'none' is rejected with invalid_client
+ * (RFC 7662 §2.1 / RFC 9701 §5), because a public client_id alone is not
+ * authentication. Response is always cache-busting per RFC 7662 Section 2.2.
  */
 introspectionApp.post('/', async (c) => {
   c.header('Cache-Control', 'no-store');
@@ -73,6 +76,13 @@ introspectionApp.post('/', async (c) => {
     );
     validateClientAuthMethod(introspectingClient, presentedCredentials);
     await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+    // RFC 7662 §2.1 / RFC 9701 §5: the caller must be an authenticated
+    // confidential client. A client registered with token_endpoint_auth_method
+    // 'none' passes the pipeline above by presenting its client_id alone —
+    // public information — so treating it as authenticated would let anyone
+    // scan tokens. Revocation deliberately has no such step: RFC 7009 §2.1
+    // lets a public client revoke its own tokens.
+    requireConfidentialIntrospectionCaller(introspectingClient);
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Introspection pipeline ---------------------------------------------

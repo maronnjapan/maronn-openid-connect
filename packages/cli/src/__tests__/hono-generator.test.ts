@@ -492,6 +492,29 @@ describe('HonoGenerator', () => {
       expect(file?.content).not.toContain('await handleIntrospectionRequest(');
     });
 
+    it('should reject a public client caller in the introspection route', () => {
+      // RFC 7662 §2.1 / RFC 9701 §5: a client registered with
+      // token_endpoint_auth_method 'none' passes the client authentication
+      // pipeline by presenting only its public client_id, so the route must
+      // reject it explicitly, after the secret verification and before any
+      // token handling.
+      const content = files.find((f) => f.path === 'routes/introspection.ts')?.content ?? '';
+      expect(content).toContain('requireConfidentialIntrospectionCaller(introspectingClient);');
+      expect(content.indexOf('await verifyClientSecret(')).toBeLessThan(
+        content.indexOf('requireConfidentialIntrospectionCaller(introspectingClient);'),
+      );
+      expect(content.indexOf('requireConfidentialIntrospectionCaller(introspectingClient);')).toBeLessThan(
+        content.indexOf('requireIntrospectionToken({'),
+      );
+    });
+
+    it('should not require a confidential caller in the revocation route', () => {
+      // RFC 7009 §2.1: a public client legitimately revokes its own tokens, so
+      // the confidential-caller step is introspection-only.
+      const content = files.find((f) => f.path === 'routes/revocation.ts')?.content ?? '';
+      expect(content).not.toContain('requireConfidentialIntrospectionCaller');
+    });
+
     it('should import every revocation step function in revocation route', () => {
       // The generated route calls each core step function individually so users
       // can delete or insert validation steps (project concept: customizable).

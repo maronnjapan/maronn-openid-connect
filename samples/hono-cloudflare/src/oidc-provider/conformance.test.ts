@@ -903,6 +903,35 @@ describe('generated provider HTTP conformance', () => {
       expect(body.active).toBe(true);
       expect(body.jti).toBe(accessTokenJti);
     });
+
+    // RFC 7662 §2.1: the introspection caller must be authorized, and a public
+    // client's client_id is public information, so presenting it alone is not
+    // client authentication. The route rejects the caller before any token
+    // lookup, while revocation keeps accepting the same client (RFC 7009 §2.1).
+    it('should reject an introspection request that presents only a public client_id', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('public-introspect-token', {
+        sub: 'testuser',
+        clientId: 'c-public',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+      });
+      const res = await app.request('/introspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-public',
+          token: 'public-introspect-token',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get('WWW-Authenticate')).toBe('Basic realm="Client Authentication"');
+      expect(await res.json()).toEqual({
+        error: 'invalid_client',
+        error_description: 'Introspection requires an authenticated confidential client',
+      });
+    });
   });
 
   describe('Authorization Endpoint non-redirect errors', () => {
@@ -7184,6 +7213,24 @@ describe('generated provider HTTP conformance', () => {
         expect(res.status).toBe(401);
         expect(res.headers.get('Content-Type')).toBe('application/json');
         expect(await res.json()).toMatchObject({ error: 'invalid_client' });
+      });
+
+      // RFC 9701 §5: an unauthenticated request must be refused, and a public
+      // client_id alone is not authentication. Without this rejection the
+      // signed assertion would vouch for a caller identity that was never
+      // verified.
+      it('should reject a public client introspection request even when it asks for the JWT response', async () => {
+        const res = await introspectWith(
+          { client_id: 'c-public', token: 'rfc9701-active' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(401);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toEqual({
+          error: 'invalid_client',
+          error_description: 'Introspection requires an authenticated confidential client',
+        });
       });
     });
 

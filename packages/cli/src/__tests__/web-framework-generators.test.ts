@@ -45,6 +45,45 @@ describe('Web-standard generated validation pipelines', () => {
   }
 });
 
+describe('Web-standard generated introspection caller restriction', () => {
+  const generators = [
+    { framework: 'express', generator: new ExpressGenerator(), prefix: '' },
+    { framework: 'fastify', generator: new FastifyGenerator(), prefix: '' },
+    { framework: 'nextjs', generator: new NextJsGenerator(), prefix: '_oidc-provider/' },
+  ];
+
+  for (const { framework, generator, prefix } of generators) {
+    const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
+    const introspectionRoute =
+      files.find((file) => file.path === `${prefix}routes/introspection.ts`)?.content ?? '';
+    const revocationRoute =
+      files.find((file) => file.path === `${prefix}routes/revocation.ts`)?.content ?? '';
+
+    it(`should reject a public client caller in the introspection route for ${framework}`, () => {
+      // RFC 7662 §2.1 / RFC 9701 §5: a client registered with
+      // token_endpoint_auth_method 'none' passes the client authentication
+      // pipeline by presenting only its public client_id, so the route must
+      // reject it explicitly, after the secret verification and before any
+      // token handling.
+      expect(introspectionRoute).toContain(
+        'requireConfidentialIntrospectionCaller(introspectingClient);',
+      );
+      expect(introspectionRoute.indexOf('await verifyClientSecret(')).toBeLessThan(
+        introspectionRoute.indexOf('requireConfidentialIntrospectionCaller(introspectingClient);'),
+      );
+      expect(
+        introspectionRoute.indexOf('requireConfidentialIntrospectionCaller(introspectingClient);'),
+      ).toBeLessThan(introspectionRoute.indexOf('requireIntrospectionToken({'));
+    });
+
+    it(`should not require a confidential caller in the revocation route for ${framework}`, () => {
+      // RFC 7009 §2.1: a public client legitimately revokes its own tokens, so
+      // the confidential-caller step is introspection-only.
+      expect(revocationRoute).not.toContain('requireConfidentialIntrospectionCaller');
+    });
+  }
+});
+
 describe('Web-standard generated id_token_hint handling', () => {
   const generatedAuthorizeRoutes = [
     {

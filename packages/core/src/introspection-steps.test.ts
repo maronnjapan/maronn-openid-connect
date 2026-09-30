@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildIntrospectionResponse,
   isIntrospectionTokenActive,
+  requireConfidentialIntrospectionCaller,
   requireIntrospectionClient,
   requireIntrospectionToken,
   resolveIntrospectionToken,
@@ -108,6 +109,61 @@ describe('requireIntrospectionClient', () => {
     expect(error).toBeInstanceOf(IntrospectionError);
     expect(error?.error).toBe(IntrospectionErrorCode.InvalidClient);
     expect(error?.errorDescription).toBe('Client authentication required');
+  });
+});
+
+describe('requireConfidentialIntrospectionCaller', () => {
+  // RFC 7662 §2.1: the introspection caller must be authorized, and RFC 9701 §5
+  // requires an unauthenticated request to be refused. A public client's
+  // client_id is public information, so identification by client_id alone
+  // (token_endpoint_auth_method 'none') is not authentication.
+  it('should reject a client registered with the none method with invalid_client', () => {
+    const error = captureError(() =>
+      requireConfidentialIntrospectionCaller({ tokenEndpointAuthMethod: 'none' }),
+    );
+
+    expect(error).toBeInstanceOf(IntrospectionError);
+    expect(error?.error).toBe(IntrospectionErrorCode.InvalidClient);
+    expect(error?.errorDescription).toBe(
+      'Introspection requires an authenticated confidential client',
+    );
+  });
+
+  it('should answer 401 with the Basic challenge for a public client', () => {
+    const error = captureError(() =>
+      requireConfidentialIntrospectionCaller({ tokenEndpointAuthMethod: 'none' }),
+    );
+
+    expect(error?.statusCode).toBe(401);
+    expect(error?.wwwAuthenticate).toBe('Basic realm="Client Authentication"');
+  });
+
+  it('should accept a client registered with client_secret_basic', () => {
+    expect(
+      captureError(() =>
+        requireConfidentialIntrospectionCaller({
+          tokenEndpointAuthMethod: 'client_secret_basic',
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('should accept a client registered with client_secret_post', () => {
+    expect(
+      captureError(() =>
+        requireConfidentialIntrospectionCaller({
+          tokenEndpointAuthMethod: 'client_secret_post',
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  // OIDC Core 1.0 §9 / RFC 7591 §2: the default token_endpoint_auth_method is
+  // client_secret_basic, so a client registered without one is confidential.
+  it('should accept a client whose registered method is unset', () => {
+    expect(
+      captureError(() => requireConfidentialIntrospectionCaller({})),
+    ).toBeUndefined();
   });
 });
 

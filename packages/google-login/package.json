@@ -52,7 +52,7 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/google-login#readme",
   "peerDependencies": {
-    "@maronn-openid-connect/core": ">=0.3.0 <1.0.0"
+    "@maronn-openid-connect/core": ">=0.4.0 <1.0.0"
   },
   "devDependencies": {
     "@maronn-openid-connect/core": "workspace:*",

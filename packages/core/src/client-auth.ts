@@ -130,15 +130,22 @@ export function extractClientCredentials(
 ): PresentedClientCredentials {
   const { params, authorizationHeader } = context;
 
+  // RFC 6749 §3.2: "Parameters sent without a value MUST be treated as if they
+  // were omitted from the request." 空文字列の client_secret はここで「未提示」に
+  // 正規化し、多重方式判定・method 判定・後段検証の意味論を一箇所で揃える。
+  const postSecret =
+    params.client_secret === '' ? undefined : params.client_secret;
+
   const hasBasicHeader = hasAuthScheme(authorizationHeader, 'Basic');
   const hasPostCredential =
-    params.client_id !== undefined || params.client_secret !== undefined;
+    params.client_id !== undefined || postSecret !== undefined;
 
   // RFC 6749 §2.3 / OAuth 2.1 §2.3: 1リクエストで複数の「認証方式」を併用してはいけない。
   // ただし §3.2.1 の client_id 単独送信は自身を識別するための「識別子」であって認証方式ではない。
   // よって多重認証方式の判定はボディの client_secret（client_secret_post の資格情報）の有無のみで行い、
   // Basic ヘッダ + ボディ client_id（secret なし）という多くのクライアントライブラリの実装を拒否しない。
-  const hasPostSecret = params.client_secret !== undefined;
+  // 空値の client_secret は資格情報を運ばないため「もう一つの認証方式」に数えない（RFC 6749 §2.3）。
+  const hasPostSecret = postSecret !== undefined;
   if (hasBasicHeader && hasPostSecret) {
     throw new TokenError(
       TokenErrorCode.InvalidRequest,
@@ -172,7 +179,7 @@ export function extractClientCredentials(
     clientSecret = basic.clientSecret;
   } else if (hasPostCredential) {
     clientId = params.client_id;
-    clientSecret = params.client_secret;
+    clientSecret = postSecret;
   }
 
   // client_id は public / confidential を問わず必須。

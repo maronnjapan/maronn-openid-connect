@@ -125,6 +125,74 @@ describe('extractClientCredentials', () => {
     });
   });
 
+  // RFC 6749 §3.2: Parameters sent without a value MUST be treated as if they
+  // were omitted from the request. 空文字列の client_secret は未提示として扱う。
+  it('should treat an empty client_secret field as absent for a public client', () => {
+    const result = extractClientCredentials({
+      params: { client_id: 'public-client', client_secret: '' },
+      authorizationHeader: '',
+    });
+
+    expect(result).toEqual({
+      clientId: 'public-client',
+      clientSecret: undefined,
+      method: 'none',
+    });
+  });
+
+  // RFC 6749 §2.3: 空の client_secret は資格情報を運ばないため
+  // 「もう一つの認証方式」に当たらず、多重方式の invalid_request にしない。
+  it('should not reject Basic authentication combined with an empty client_secret field', () => {
+    const result = extractClientCredentials({
+      params: { client_secret: '' },
+      authorizationHeader: basicHeader('client123', 'secret'),
+    });
+
+    expect(result).toEqual({
+      clientId: 'client123',
+      clientSecret: 'secret',
+      method: 'client_secret_basic',
+    });
+  });
+
+  // 空文字列の client_secret 単独（client_id なし）は何も提示していないのと同じ。
+  // RFC 6749 §4.1.3: 未認証クライアントも client_id を送らなければならない。
+  it('should require a client identifier when only an empty client_secret is sent', () => {
+    const error = captureError(() =>
+      extractClientCredentials({
+        params: { client_secret: '' },
+        authorizationHeader: '',
+      }),
+    );
+
+    expect(error).toBeInstanceOf(TokenError);
+    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+    expect(error?.errorDescription).toBe('Client authentication required');
+  });
+
+  // confidential client が空の client_secret を送った場合は method 'none' の未提示となり、
+  // 後段 validateClientAuthMethod が「方式不一致」ではなく「認証必須」で拒否する。
+  it('should still require authentication when a confidential client sends an empty client_secret', () => {
+    const presented = extractClientCredentials({
+      params: { client_id: 'client123', client_secret: '' },
+      authorizationHeader: '',
+    });
+
+    expect(presented).toEqual({
+      clientId: 'client123',
+      clientSecret: undefined,
+      method: 'none',
+    });
+
+    const error = captureError(() =>
+      validateClientAuthMethod(confidentialClient, presented),
+    );
+
+    expect(error).toBeInstanceOf(TokenError);
+    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+    expect(error?.errorDescription).toBe('Client authentication required');
+  });
+
   it('should reject combining the Basic header with body credentials', () => {
     const error = captureError(() =>
       extractClientCredentials({

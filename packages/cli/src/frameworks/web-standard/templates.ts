@@ -58,6 +58,14 @@ import {
   userinfoRouteTemplate,
   viewsTemplate,
 } from '../hono/templates.js';
+import {
+  cibaPageTemplate,
+  consentPageTemplate,
+  devicePageTemplate,
+  errorPageTemplate,
+  loginPageTemplate,
+  logoutPageTemplate,
+} from '../hono/pages.js';
 
 function toWebRouteTemplate(content: string): string {
   return content
@@ -265,31 +273,19 @@ export class WebRouter {
   }
 
   private dispatchRoute(context: WebContext, path: string): Promise<Response> {
-    for (const mount of this.mounts) {
-      const childPath = childPathForMount(path, mount.prefix);
-      if (childPath !== undefined) {
-        return mount.router.dispatch(context, childPath);
-      }
-    }
-
-    const route = this.routes.find(
-      (candidate) =>
-        candidate.method === context.req.method &&
-        candidate.path === path,
-    );
-    if (route) {
-      return Promise.resolve(route.handler(context));
+    const method = context.req.method;
+    const match = this.resolve(method, path);
+    if (match.handler) {
+      return Promise.resolve(match.handler(context));
     }
 
     // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
     // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
     // body. Serve HEAD from the GET handler with the body stripped.
-    if (context.req.method === 'HEAD') {
-      const getRoute = this.routes.find(
-        (candidate) => candidate.method === 'GET' && candidate.path === path,
-      );
-      if (getRoute) {
-        return Promise.resolve(getRoute.handler(context)).then(
+    if (method === 'HEAD') {
+      const getMatch = this.resolve('GET', path);
+      if (getMatch.handler) {
+        return Promise.resolve(getMatch.handler(context)).then(
           (response) =>
             new Response(null, {
               status: response.status,
@@ -300,15 +296,56 @@ export class WebRouter {
       }
     }
 
-    const allowedMethods = this.routes
-      .filter((candidate) => candidate.path === path)
-      .map((candidate) => candidate.method);
-    if (allowedMethods.length > 0) {
-      return Promise.resolve(new Response(null, { status: 405, headers: { Allow: allowedMethods.join(', ') } }));
+    if (match.allowed.length > 0) {
+      return Promise.resolve(new Response(null, { status: 405, headers: { Allow: match.allowed.join(', ') } }));
     }
 
     return Promise.resolve(new Response('Not Found', { status: 404 }));
   }
+
+  /**
+   * Find the handler for a method / path across the mounted routers and this
+   * router's own routes.
+   *
+   * Several routers may be mounted on one prefix: the generated pages/ module
+   * (GET) and routes/ module (POST) of /login, /consent and /device share a
+   * mount point. A mounted router that has no route for the method is skipped
+   * instead of answering 405 for the whole prefix, and the methods it does
+   * serve on that path still count toward the Allow header of a 405 — so the
+   * two routers answer as one endpoint. A match inside a mount re-enters that
+   * router through dispatch() so its own middleware runs in front of the
+   * handler.
+   */
+  private resolve(method: string, path: string): ResolvedRoute {
+    const allowed: string[] = [];
+    for (const mount of this.mounts) {
+      const childPath = childPathForMount(path, mount.prefix);
+      if (childPath === undefined) continue;
+      const found = mount.router.resolve(method, childPath);
+      if (found.handler) {
+        return {
+          handler: (context) => mount.router.dispatch(context, childPath),
+          allowed: [],
+        };
+      }
+      allowed.push(...found.allowed);
+    }
+
+    for (const route of this.routes) {
+      if (route.path !== path) continue;
+      if (route.method === method) {
+        return { handler: route.handler, allowed: [] };
+      }
+      allowed.push(route.method);
+    }
+
+    return { allowed: allowed.filter((candidate, index) => allowed.indexOf(candidate) === index) };
+  }
+}
+
+interface ResolvedRoute {
+  handler?: WebHandler;
+  allowed: string[];
 }
 
 function resolveRequestInput(input: RequestInfo | URL): RequestInfo | URL {
@@ -448,13 +485,15 @@ export function webAppTemplate(
   // the verification UI is browser navigation, so it needs none (like /login).
   const deviceImport = features.deviceAuthorizationGrant
     ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';\n`
+import { deviceApp } from './routes/device.js';
+import { devicePage } from './pages/device.js';\n`
     : '';
   const deviceCors = features.deviceAuthorizationGrant
     ? `  app.use('/device_authorization', protectedCors);\n`
     : '';
   const deviceMount = features.deviceAuthorizationGrant
     ? `  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', devicePage);
   app.route('/device', deviceApp);\n`
     : '';
   const deviceStorageContext = features.deviceAuthorizationGrant
@@ -570,6 +609,8 @@ ${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -732,7 +773,13 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/userinfo', userinfoApp);
 ${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
+  // Screen routes (pages/) answer the browser GETs; the API routes (routes/)
+  // sharing the same path hold the logic behind their POSTs. Pages are mounted
+  // first so the Allow list of a path reads GET, POST (WebRouter merges the
+  // methods of every router mounted on one prefix).
+  app.route('/login', loginPage);
   app.route('/login', loginApp);
+  app.route('/consent', consentPage);
   app.route('/consent', consentApp);
 
   return app;
@@ -2698,7 +2745,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, errorPageMode)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 
@@ -2738,6 +2785,18 @@ function webCoreGeneratedFiles(
       ),
     },
     { path: 'views.ts', content: viewsTemplate(features) },
+    // Screen routing layer: GET /login, /consent (and /device) plus the render
+    // helpers the API routes below answer with. Framework-neutral like routes/.
+    { path: 'pages/errors.ts', content: errorPageTemplate() },
+    { path: 'pages/login.ts', content: toWebRouteTemplate(loginPageTemplate(corePkg, features)) },
+    { path: 'pages/consent.ts', content: toWebRouteTemplate(consentPageTemplate(corePkg, features, scopes)) },
+    ...(features.deviceAuthorizationGrant
+      ? [{ path: 'pages/device.ts', content: toWebRouteTemplate(devicePageTemplate()) }]
+      : []),
+    ...(features.ciba ? [{ path: 'pages/ciba.ts', content: cibaPageTemplate() }] : []),
+    ...(features.rpInitiatedLogout
+      ? [{ path: 'pages/logout.ts', content: logoutPageTemplate() }]
+      : []),
     { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
     { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },

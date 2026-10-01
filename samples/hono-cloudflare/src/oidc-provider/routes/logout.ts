@@ -1,5 +1,6 @@
 /**
- * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint.
+ * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint
+ * (API routing layer).
  *
  * This route was generated because the OP was created with
  * `--enable rp-initiated-logout`. It is backed by
@@ -16,6 +17,9 @@
  * would otherwise be a denial-of-service primitive). The failure reason is
  * never disclosed anywhere: a reason would turn this endpoint into an oracle
  * for session state.
+ *
+ * The two screens (confirmation / logged out) come from pages/logout.ts; this
+ * file only decides which one answers and which cookies travel with it.
  *
  * ## Why the confirmation approve step demands a cookie + token pair
  *
@@ -49,7 +53,8 @@ import {
   parseSessionId,
 } from '../store.js';
 import { defaultProviderConfig } from '../config.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
+import { renderLogoutCompletedPage, renderLogoutConfirmationPage } from '../pages/logout.js';
 
 /**
  * EXPERIMENTAL — settings for RP-Initiated Logout.
@@ -69,8 +74,8 @@ export const rpInitiatedLogoutConfig = {
 export const logoutApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
- * Attach Set-Cookie headers to a Response a view already produced.
- * renderView() builds its own Response, so headers staged on the framework
+ * Attach Set-Cookie headers to a Response a page already produced.
+ * The page helpers build their own Response, so headers staged on the framework
  * context never reach it (same helper as the device verification UI).
  */
 function withCookies(response: Response, cookies: string[]): Response {
@@ -99,7 +104,6 @@ function redirectResponse(location: string, cookies: string[]): Response {
  * this handler — they differ only in where the parameters come from.
  */
 async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise<Response> {
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const config = c.get('config') ?? defaultProviderConfig;
   const request = parseEndSessionRequest(params);
@@ -167,7 +171,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
     // form's hidden csrf_token; the redirect target rides inside the cookie.
     const csrfSecret = generateRandomString(32);
     return withCookies(
-      renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
+      renderLogoutConfirmationPage(c, { csrfToken: csrfSecret }),
       [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
     );
   }
@@ -181,7 +185,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
   if (redirectTo !== null) {
     return redirectResponse(redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(renderLogoutCompletedPage(c, {}), cookies);
 }
 
 /** end_session_endpoint - GET (§2: the OP MUST support GET and POST). */
@@ -209,7 +213,6 @@ logoutApp.post('/', async (c) => {
  * the form — is honored (§3).
  */
 logoutApp.post('/approve', async (c) => {
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
 
   const body = await c.req.parseBody();
@@ -218,10 +221,7 @@ logoutApp.post('/approve', async (c) => {
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
     // Forged, replayed or expired confirmation: delete nothing. This is a
     // browser surface, so the answer is the error page, not OAuth error JSON.
-    return renderView(
-      views.errorPage({ error: 'Invalid logout confirmation', statusCode: 400 }),
-      { status: 400 },
-    );
+    return renderErrorPage(c, { error: 'Invalid logout confirmation', statusCode: 400 });
   }
 
   // The End-User explicitly approved (§2). When the session is already gone
@@ -235,5 +235,5 @@ logoutApp.post('/approve', async (c) => {
   if (confirmation.redirectTo !== null) {
     return redirectResponse(confirmation.redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(renderLogoutCompletedPage(c, {}), cookies);
 });

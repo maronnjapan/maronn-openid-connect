@@ -132,13 +132,15 @@ export function appTemplate(
   // it needs no CORS headers — the same treatment as /login and /consent.
   const deviceImport = features.deviceAuthorizationGrant
     ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';\n`
+import { deviceApp } from './routes/device.js';
+import { devicePage } from './pages/device.js';\n`
     : '';
   const deviceCors = features.deviceAuthorizationGrant
     ? `  app.use('/device_authorization', protectedCors);\n`
     : '';
   const deviceMount = features.deviceAuthorizationGrant
     ? `  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', devicePage);
   app.route('/device', deviceApp);\n`
     : '';
   const deviceStorageContext = features.deviceAuthorizationGrant
@@ -258,6 +260,8 @@ ${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -454,7 +458,12 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/userinfo', userinfoApp);
 ${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
+  // Screen routes (pages/) answer the browser GETs; the API routes (routes/)
+  // sharing the same path hold the logic behind their POSTs. Pages are mounted
+  // first so the Allow list of a path reads GET, POST.
+  app.route('/login', loginPage);
   app.route('/login', loginApp);
+  app.route('/consent', consentPage);
   app.route('/consent', consentApp);
 
   return app;
@@ -2825,23 +2834,12 @@ import { parStore as defaultParStore } from '../store.js';`
       if (acceptsJson) {
         return c.json({ error: error.code, error_description: error.errorDescription }, 400);
       }
-      const parErrorPagePath = c.get('config').authorizationErrorRedirectPath;
-      if (parErrorPagePath && parErrorPagePath.startsWith('/') && !parErrorPagePath.startsWith('//')) {
-        const parErrorParams = new URLSearchParams({
-          error: error.code,
-          error_description: error.errorDescription,
-        });
-        return c.redirect(\`\${parErrorPagePath}?\${parErrorParams.toString()}\`, 303);
-      }
-      const parViews = c.get('views') ?? defaultViews;
-      return renderView(
-        parViews.errorPage({
-          error: error.code,
-          errorDescription: error.errorDescription,
-          statusCode: 400,
-        }),
-        { status: 400 },
-      );
+      // The OP's own error page (pages/errors.ts): an inline HTML 400, or a 303
+      // to config.authorizationErrorRedirectPath for a framework-native page.
+      return renderAuthorizationErrorPage(c, {
+        error: error.code,
+        errorDescription: error.errorDescription,
+      });
     }
 `
     : '';
@@ -3177,7 +3175,7 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${parImports}${jarmImports}${customScopeImports}
+import { renderAuthorizationErrorPage } from '../pages/errors.js';${parImports}${jarmImports}${customScopeImports}
 
 export const authorizeApp = new Hono<{ Variables: Record<string, any> }>();
 
@@ -3602,33 +3600,15 @@ ${catchErrorRedirect}
       if (acceptsJson) {
         return c.json({ error: error.error, error_description: error.errorDescription }, 400);
       }
-      // OP 内部のエラーページパスが設定されている場合（Next.js sample のように
-      // error.tsx などの framework-native なエラー画面へ委ねたいケース）は、HTML を
-      // 直接返さず 303 でそのパスへ遷移する。未登録 redirect_uri へは決して飛ばさず、
-      // OP 自身のパスにのみ遷移する。遷移先ページは 200 を返すため元の HTTP 400 は
-      // 失われるが、ブラウザにエラー画面を見せる（OIDF の screenshot 要件）目的は満たす。
-      // error / error_description は URLSearchParams でエンコードして渡す。
-      // 安全性のため遷移先は OP 内部の root-relative path（'/' 始まりかつ
-      // protocol-relative '//host' でない）に限定する。絶対 URL や '//host' を
-      // 設定された場合は open redirect 化を防ぐため redirect せず、安全側の
-      // HTML error page にフォールバックする。
-      const errorPagePath = c.get('config').authorizationErrorRedirectPath;
-      if (errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')) {
-        const params = new URLSearchParams({ error: error.error });
-        if (error.errorDescription) {
-          params.set('error_description', error.errorDescription);
-        }
-        return c.redirect(\`\${errorPagePath}?\${params.toString()}\`, 303);
-      }
-      const views = c.get('views') ?? defaultViews;
-      return renderView(
-        views.errorPage({
-          error: error.error,
-          errorDescription: error.errorDescription,
-          statusCode: 400,
-        }),
-        { status: 400 },
-      );
+      // The OP's own error page (pages/errors.ts): an inline HTML 400, or a 303
+      // to config.authorizationErrorRedirectPath when a framework-native page
+      // renders the error (the generated Next.js output uses /oidc-error). The
+      // unregistered redirect_uri is never the target either way, and only an
+      // OP-internal root-relative path is honored for the 303.
+      return renderAuthorizationErrorPage(c, {
+        error: error.error,
+        errorDescription: error.errorDescription,
+      });
     }
     return c.json({ error: 'server_error' }, 500);
   }
@@ -4075,7 +4055,7 @@ import { resolveGrantableScopes } from '../scopes.js';`
     : '';
   return `/**
  * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant, verification UI
- * (RFC 8628 §3.3).
+ * (RFC 8628 §3.3), API routing layer.
  *
  * This route was generated because the OP was created with
  * \`--enable device-authorization-grant\`. It is backed by
@@ -4086,6 +4066,11 @@ import { resolveGrantableScopes } from '../scopes.js';`
  * The end user opens /device on a second device, types the user_code the first
  * device is showing, signs in, and approves or denies. The device learns the
  * outcome only by polling the token endpoint — there is no push channel.
+ *
+ * This file holds every step that changes state (the three POSTs below) and
+ * decides which screen answers each one; the screens themselves — and GET
+ * /device, the code entry form — live in pages/device.ts, so the UI can be
+ * changed without touching this file.
  *
  * ## Why every POST here demands a binding cookie
  *
@@ -4102,7 +4087,6 @@ import { Hono } from 'hono';
 import {
   DeviceAuthorizationError,
   DeviceVerificationError,
-  INVALID_USER_CODE_MESSAGE,
   approveDeviceAuthorization,
   denyDeviceAuthorization,
   findPendingRecordByUserCode,
@@ -4122,17 +4106,23 @@ import {
   parseSessionId,
   userStore,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import {
+  renderDeviceApprovalPage,
+  renderDeviceCompletedPage,
+  renderDeviceLoginPage,
+  renderInvalidUserCode,
+} from '../pages/device.js';
+import { renderErrorPage } from '../pages/errors.js';
 import { deviceAuthorizationConfig } from './device-authorization.js';${customScopeImport}
 
 export const deviceApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
- * Attach a Set-Cookie to a Response a view already produced.
+ * Attach a Set-Cookie to a Response a page already produced.
  *
- * renderView() builds its own Response, so headers staged on the framework
+ * The page helpers build their own Response, so headers staged on the framework
  * context never reach it. Rebuilding the Response is the framework-neutral way
- * to add the cookie without making views cookie-aware.
+ * to add the cookie without making the screens cookie-aware.
  */
 function withCookie(response: Response, cookie: string): Response {
   const headers = new Headers(response.headers);
@@ -4154,49 +4144,16 @@ function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
   return Math.max(0, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));
 }
 
-/**
- * Re-render the code entry form with the single, reason-free failure message.
- *
- * RFC 8628 §5.1: unknown, expired and already-used codes must be
- * indistinguishable, otherwise the response itself confirms which codes exist.
- */
-function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Response {
-  return renderView(
-    views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
-    { status: 400 },
-  );
-}
-
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+function renderVerificationError(c: any, error: unknown): Response {
   if (error instanceof DeviceVerificationError) {
-    return renderView(
-      views.errorPage({ error: error.message, statusCode: error.statusCode }),
-      { status: error.statusCode },
-    );
+    return renderErrorPage(c, { error: error.message, statusCode: error.statusCode });
   }
   if (error instanceof DeviceAuthorizationError) {
-    return renderView(
-      views.errorPage({ error: error.errorDescription, statusCode: 400 }),
-      { status: 400 },
-    );
+    return renderErrorPage(c, { error: error.errorDescription, statusCode: 400 });
   }
   throw error;
 }
-
-/**
- * User code entry form - GET
- * RFC 8628 §3.3 / §3.3.1
- *
- * Unauthenticated and side-effect free. A user_code in the query string
- * (verification_uri_complete) only pre-fills the field: nothing is looked up or
- * mutated until the form is submitted, so following the complete URI never
- * consumes or reveals anything.
- */
-deviceApp.get('/', (c) => {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceVerificationPage({ userCode: c.req.query('user_code') ?? '' }));
-});
 
 /**
  * User code submission - POST
@@ -4210,13 +4167,12 @@ deviceApp.post('/', async (c) => {
   const body = await c.req.parseBody();
   const submittedUserCode = String(body['user_code'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
-    return renderInvalidUserCode(views, submittedUserCode);
+    return renderInvalidUserCode(c, submittedUserCode);
   }
 
   // Rotate the binding secret and the csrf token together. A second browser
@@ -4232,18 +4188,18 @@ deviceApp.post('/', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (session) {
-    return withCookie(renderView(views.deviceApprovalPage({
+    return withCookie(renderDeviceApprovalPage(c, {
       userCode: record.userCodeDisplay,
       csrfToken,
       clientId: record.clientId,
       scopes: ${approvalPageScopes('session.subject')},
-    })), cookie);
+    }), cookie);
   }
 
-  return withCookie(renderView(views.deviceLoginPage({
+  return withCookie(renderDeviceLoginPage(c, {
     userCode: record.userCodeDisplay,
     csrfToken,
-  })), cookie);
+  }), cookie);
 });
 
 /**
@@ -4261,7 +4217,6 @@ deviceApp.post('/login', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const authenticateUser =
@@ -4270,7 +4225,7 @@ deviceApp.post('/login', async (c) => {
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
-    return renderInvalidUserCode(views, submittedUserCode);
+    return renderInvalidUserCode(c, submittedUserCode);
   }
 
   try {
@@ -4280,7 +4235,7 @@ deviceApp.post('/login', async (c) => {
     );
     validateVerificationCsrfToken(record, csrfToken);
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 
   // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
@@ -4297,17 +4252,17 @@ deviceApp.post('/login', async (c) => {
     );
     if (!failure.canRetry) {
       // The record is now denied: the device gets access_denied on its next poll.
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.deviceLoginPage({
+    return renderDeviceLoginPage(c, {
       userCode: record.userCodeDisplay,
       csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failure.remainingAttempts,
-    }));
+    });
   }
 
   const authTime = Math.floor(Date.now() / 1000);
@@ -4316,12 +4271,12 @@ deviceApp.post('/login', async (c) => {
 
   // Two cookies on one response: the new OP session, and the binding cookie the
   // approval POST will have to present again.
-  const withSession = withCookie(renderView(views.deviceApprovalPage({
+  const withSession = withCookie(renderDeviceApprovalPage(c, {
     userCode: record.userCodeDisplay,
     csrfToken,
     clientId: record.clientId,
     scopes: ${approvalPageScopes('user.sub')},
-  })), buildSessionCookie(sessionId));
+  }), buildSessionCookie(sessionId));
   return withSession;
 });
 
@@ -4338,23 +4293,22 @@ deviceApp.post('/approve', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const decision = String(body['decision'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const consentResolver = c.get('consentResolver');
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
-    return renderInvalidUserCode(views, submittedUserCode);
+    return renderInvalidUserCode(c, submittedUserCode);
   }
 
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Sign in again to approve this device',
       statusCode: 401,
-    }), { status: 401 });
+    });
   }
 
   const clearCookie = buildClearedDeviceBindingCookie(record.userCode);
@@ -4382,19 +4336,19 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return withCookie(renderView(views.deviceCompletedPage({
+      return withCookie(renderDeviceCompletedPage(c, {
         approved: true,
         clientId: approved.clientId,
-      })), clearCookie);
+      }), clearCookie);
     }
 
     await denyDeviceAuthorization({ record, store: deviceStore, csrfToken });
-    return withCookie(renderView(views.deviceCompletedPage({
+    return withCookie(renderDeviceCompletedPage(c, {
       approved: false,
       clientId: record.clientId,
-    })), clearCookie);
+    }), clearCookie);
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 });
 `;
@@ -4413,7 +4367,8 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
  */
 export function endSessionRouteTemplate(corePkg: string): string {
   return `/**
- * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint.
+ * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint
+ * (API routing layer).
  *
  * This route was generated because the OP was created with
  * \`--enable rp-initiated-logout\`. It is backed by
@@ -4430,6 +4385,9 @@ export function endSessionRouteTemplate(corePkg: string): string {
  * would otherwise be a denial-of-service primitive). The failure reason is
  * never disclosed anywhere: a reason would turn this endpoint into an oracle
  * for session state.
+ *
+ * The two screens (confirmation / logged out) come from pages/logout.ts; this
+ * file only decides which one answers and which cookies travel with it.
  *
  * ## Why the confirmation approve step demands a cookie + token pair
  *
@@ -4463,7 +4421,8 @@ import {
   parseSessionId,
 } from '../store.js';
 import { defaultProviderConfig } from '../config.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
+import { renderLogoutCompletedPage, renderLogoutConfirmationPage } from '../pages/logout.js';
 
 /**
  * EXPERIMENTAL — settings for RP-Initiated Logout.
@@ -4483,8 +4442,8 @@ export const rpInitiatedLogoutConfig = {
 export const logoutApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
- * Attach Set-Cookie headers to a Response a view already produced.
- * renderView() builds its own Response, so headers staged on the framework
+ * Attach Set-Cookie headers to a Response a page already produced.
+ * The page helpers build their own Response, so headers staged on the framework
  * context never reach it (same helper as the device verification UI).
  */
 function withCookies(response: Response, cookies: string[]): Response {
@@ -4513,7 +4472,6 @@ function redirectResponse(location: string, cookies: string[]): Response {
  * this handler — they differ only in where the parameters come from.
  */
 async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise<Response> {
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const config = c.get('config') ?? defaultProviderConfig;
   const request = parseEndSessionRequest(params);
@@ -4581,7 +4539,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
     // form's hidden csrf_token; the redirect target rides inside the cookie.
     const csrfSecret = generateRandomString(32);
     return withCookies(
-      renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
+      renderLogoutConfirmationPage(c, { csrfToken: csrfSecret }),
       [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
     );
   }
@@ -4595,7 +4553,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
   if (redirectTo !== null) {
     return redirectResponse(redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(renderLogoutCompletedPage(c, {}), cookies);
 }
 
 /** end_session_endpoint - GET (§2: the OP MUST support GET and POST). */
@@ -4623,7 +4581,6 @@ logoutApp.post('/', async (c) => {
  * the form — is honored (§3).
  */
 logoutApp.post('/approve', async (c) => {
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
 
   const body = await c.req.parseBody();
@@ -4632,10 +4589,7 @@ logoutApp.post('/approve', async (c) => {
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
     // Forged, replayed or expired confirmation: delete nothing. This is a
     // browser surface, so the answer is the error page, not OAuth error JSON.
-    return renderView(
-      views.errorPage({ error: 'Invalid logout confirmation', statusCode: 400 }),
-      { status: 400 },
-    );
+    return renderErrorPage(c, { error: 'Invalid logout confirmation', statusCode: 400 });
   }
 
   // The End-User explicitly approved (§2). When the session is already gone
@@ -4649,7 +4603,7 @@ logoutApp.post('/approve', async (c) => {
   if (confirmation.redirectTo !== null) {
     return redirectResponse(confirmation.redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(renderLogoutCompletedPage(c, {}), cookies);
 });
 `;
 }
@@ -4929,8 +4883,8 @@ import { resolveGrantableScopes } from '../scopes.js';`
       csrfToken: record.csrfToken ?? '',
     })),
   );
-  return renderView(views.cibaPendingRequestsPage({ requests }));`
-    : `  return renderView(views.cibaPendingRequestsPage({
+  return renderCibaPendingRequestsPage(c, { requests });`
+    : `  return renderCibaPendingRequestsPage(c, {
     requests: pending.map((record) => ({
       authReqId: record.authReqId,
       clientId: record.clientId,
@@ -4939,7 +4893,7 @@ import { resolveGrantableScopes } from '../scopes.js';`
       expiresInSeconds: remainingSeconds(record.expiresAt),
       csrfToken: record.csrfToken ?? '',
     })),
-  }));`;
+  });`;
   const approveNarrowStep = customScopesDeclared
     ? `      // Apply the scope policy to what was approved. approveCibaRequest()
       // copies the requested scope into approvedScope, so the policy is applied
@@ -4956,7 +4910,7 @@ import { resolveGrantableScopes } from '../scopes.js';`
     : '';
   return `/**
  * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
- * (CIBA Core 1.0), authentication device UI.
+ * (CIBA Core 1.0), authentication device UI (API routing layer).
  *
  * This route was generated because the OP was created with \`--enable ciba\`.
  * It is backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may
@@ -4970,6 +4924,11 @@ import { resolveGrantableScopes } from '../scopes.js';`
  * binding_message), and approve or deny. The consumption device learns the
  * outcome only by polling the token endpoint — there is no push channel in
  * poll mode.
+ *
+ * Every step of the UI lives here, GET /ciba included: unlike /login, no
+ * earlier endpoint prepared a transaction for the sign-in form, so GET /ciba
+ * mints the login transaction and its binding cookie itself. The screens come
+ * from pages/ciba.ts, so the UI can be changed without touching this file.
  *
  * ## Why the login form demands a binding cookie
  *
@@ -5010,17 +4969,22 @@ import {
   parseSessionId,
   userStore,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import {
+  renderCibaCompletedPage,
+  renderCibaLoginPage,
+  renderCibaPendingRequestsPage,
+} from '../pages/ciba.js';
+import { renderErrorPage } from '../pages/errors.js';
 import { cibaConfig } from './backchannel-authentication.js';${customScopeImport}
 
 export const cibaApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
- * Attach a Set-Cookie to a Response a view already produced.
+ * Attach a Set-Cookie to a Response a page already produced.
  *
- * renderView() builds its own Response, so headers staged on the framework
+ * The page helpers build their own Response, so headers staged on the framework
  * context never reach it. Rebuilding the Response is the framework-neutral way
- * to add the cookie without making views cookie-aware.
+ * to add the cookie without making the screens cookie-aware.
  */
 function withCookie(response: Response, cookie: string): Response {
   const headers = new Headers(response.headers);
@@ -5033,12 +4997,9 @@ function withCookie(response: Response, cookie: string): Response {
 }
 
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+function renderVerificationError(c: any, error: unknown): Response {
   if (error instanceof CibaVerificationError) {
-    return renderView(
-      views.errorPage({ error: error.message, statusCode: error.statusCode }),
-      { status: error.statusCode },
-    );
+    return renderErrorPage(c, { error: error.message, statusCode: error.statusCode });
   }
   throw error;
 }
@@ -5054,7 +5015,6 @@ function remainingSeconds(expiresAt: Date): number {
  * session-gated).
  */
 async function renderPendingRequests(c: any, subject: string): Promise<Response> {
-  const views = c.get('views') ?? defaultViews;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const pending = await listPendingCibaRequests({ subject, store: cibaStore });
 ${pendingRequestRows}
@@ -5068,7 +5028,6 @@ ${pendingRequestRows}
  * the binding cookie this response sets.
  */
 cibaApp.get('/', async (c) => {
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const loginTransactionStore =
     c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
@@ -5085,10 +5044,10 @@ cibaApp.get('/', async (c) => {
     bindingSecret,
     remainingSeconds(record.expiresAt),
   );
-  return withCookie(renderView(views.cibaLoginPage({
+  return withCookie(renderCibaLoginPage(c, {
     loginTransactionId: record.id,
     csrfToken: record.csrfToken,
-  })), cookie);
+  }), cookie);
 });
 
 /**
@@ -5106,7 +5065,6 @@ cibaApp.post('/login', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const loginTransactionStore =
     c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
@@ -5123,7 +5081,7 @@ cibaApp.post('/login', async (c) => {
       store: loginTransactionStore,
     });
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 
   // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
@@ -5141,17 +5099,17 @@ cibaApp.post('/login', async (c) => {
     );
     if (!failure.canRetry) {
       // The transaction is gone: this form cannot be retried at all.
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.cibaLoginPage({
+    return renderCibaLoginPage(c, {
       loginTransactionId: transaction.id,
       csrfToken: transaction.csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failure.remainingAttempts,
-    }));
+    });
   }
 
   // The transaction is single-use: a successful login consumes it, and the
@@ -5184,7 +5142,6 @@ cibaApp.post('/approve', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const decision = String(body['decision'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const consentResolver = c.get('consentResolver');
@@ -5192,18 +5149,18 @@ cibaApp.post('/approve', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Sign in again to review this request',
       statusCode: 401,
-    }), { status: 401 });
+    });
   }
 
   if (decision !== 'approve' && decision !== 'deny') {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'invalid_request',
       errorDescription: 'decision must be approve or deny',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   try {
@@ -5227,10 +5184,10 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return renderView(views.cibaCompletedPage({
+      return renderCibaCompletedPage(c, {
         approved: true,
         clientId: approved.clientId,
-      }));
+      });
     }
 
     const record = await cibaStore.findByAuthReqId(authReqId);
@@ -5240,12 +5197,12 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
       csrfToken,
       store: cibaStore,
     });
-    return renderView(views.cibaCompletedPage({
+    return renderCibaCompletedPage(c, {
       approved: false,
       clientId: record?.clientId ?? '',
-    }));
+    });
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 });
 `;
@@ -7608,148 +7565,44 @@ export function loginRouteTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
-  const bindingImports = features.transactionBinding
-    ? `
-  validateTransactionBinding,
-  AuthTransactionError,
-  type AuthTransaction,`
-    : '';
-  const bindingStoreImport = features.transactionBinding
-    ? `
-  parseTransactionBindingSecret,`
-    : '';
-  const bindingGuard = features.transactionBinding
-    ? `
-/**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
- * back, or undefined when the binding holds.
- *
- * The failure is rendered by the OP itself and never redirected to the client's
- * redirect_uri: at this point we cannot tell whose transaction this is, so
- * answering the client would leak that a transaction exists — and, in the
- * lured-victim case, would hand the attacker's client a code for the victim.
- * See buildTransactionBindingCookie() in store.ts for the full threat model.
- */
-async function rejectUnboundTransaction(
-  transaction: AuthTransaction,
-  transactionId: string,
-  cookieHeader: string | null,
-  views: typeof defaultViews,
-): Promise<Response | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(cookieHeader, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return renderView(views.errorPage({
-      error: error.message,
-      statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
-  }
-}
-`
-    : '';
-  const bindingCheckBeforeLoginForm = features.transactionBinding
-    ? `
-  // Checked BEFORE rendering: the login page embeds csrf_token, so anyone who
-  // could load this page with a leaked transaction_id would obtain the token
-  // that the POST handlers validate.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
-  if (bindingError) return bindingError;
-`
-    : '';
+  // Optional hardening (--enable transaction-binding): the guard itself lives in
+  // pages/login.ts, where GET /login applies it before rendering; the POST step
+  // imports the same function so both sides enforce one rule.
+  const bindingPageImport = features.transactionBinding ? ', rejectUnboundTransaction' : '';
   const bindingCheckBeforeLoginCsrf = features.transactionBinding
     ? `  // Checked before validateCsrfToken: the CSRF token only proves the request
   // carries a value from the form, and that form is reachable by anyone holding
-  // transaction_id. The binding proves it is the same browser.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
+  // transaction_id. The binding proves it is the same browser (the same guard
+  // GET /login applies before rendering — see pages/login.ts).
+  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
   if (bindingError) return bindingError;
 `
     : '';
   // EXTENSION (google-login): everything below collapses to '' when the feature
   // is off, so the default login route is unchanged byte for byte.
-  const googleCoreImports = features.googleLogin && !features.transactionBinding
-    ? `
-  type AuthTransaction,`
-    : '';
   const googleLoginImports = features.googleLogin
     ? `
 import {
   handleGoogleLoginRedirect,
-  issueGoogleLoginNonce,
   resolveGoogleLoginSubject,
   GoogleLoginError,
   type GoogleIdTokenPayload,
-} from '${GOOGLE_LOGIN_PACKAGE}';
-import {
-  buildGoogleSignInAttributes,
-  type GoogleSignInAttributes,
-} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`
+} from '${GOOGLE_LOGIN_PACKAGE}';`
     : '';
   const googleStoreImport = features.googleLogin
     ? `
   googleLoginNonceStore as defaultGoogleLoginNonceStore,`
     : '';
   const googleConfigTypeImport = features.googleLogin ? ', type GoogleLoginConfig' : '';
-  const googleSignInField = features.googleLogin
-    ? `
-    // EXTENSION (google-login): undefined until config.googleLogin is set.
-    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),`
-    : '';
+  // The GIS button configuration is built by the page module (it is rendering
+  // data); the failed-attempt re-render below needs it too.
+  const googlePageImport = features.googleLogin ? ', buildGoogleSignIn' : '';
   const googleSignInFieldOnFailure = features.googleLogin
     ? `
       googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),`
     : '';
   const googleLoginHelpers = features.googleLogin
     ? `
-/**
- * EXTENSION (google-login): build the GIS configuration (the g_id_onload
- * attributes) for this transaction, or undefined when config.googleLogin is not
- * set. Rendering is the view's job (views.ts): the package generates no UI.
- * Every render issues a fresh nonce bound to the transaction: Google echoes it
- * in the ID token, which is how the callback below finds its way back to this
- * authorization request (the redirect-mode POST carries nothing else).
- */
-async function buildGoogleSignIn(
-  c: any,
-  transactionId: string,
-  transaction: AuthTransaction,
-): Promise<GoogleSignInAttributes | undefined> {
-  const config = c.get('config') ?? defaultProviderConfig;
-  const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
-  if (!googleLogin) return undefined;
-  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
-  const nonce = await issueGoogleLoginNonce({
-    transactionId,
-    expiresAt: transaction.expiresAt,
-    store: nonceStore,
-  });
-  return buildGoogleSignInAttributes({
-    clientId: googleLogin.clientId,
-    // Must equal an authorized redirect URI of the Google OAuth client. Built on
-    // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
-    loginUri: new URL('/login/google', config.issuer).toString(),
-    nonce,
-    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
-    loginHint: transaction.loginHint,
-    hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
-  });
-}
-
 /**
  * EXTENSION (google-login): run the callback checks and map the Google account
  * to an OP subject. Returns the error page Response on failure so the route
@@ -7759,7 +7612,6 @@ async function buildGoogleSignIn(
 async function verifyGoogleLoginCallback(
   c: any,
   googleLogin: GoogleLoginConfig,
-  views: typeof defaultViews,
 ): Promise<{ transactionId: string; subject: string } | Response> {
   const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
   const verifier = c.get('googleIdTokenVerifier');
@@ -7783,11 +7635,11 @@ async function verifyGoogleLoginCallback(
     return { transactionId: login.transactionId, subject };
   } catch (error) {
     if (!(error instanceof GoogleLoginError)) throw error;
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: error.code,
       errorDescription: error.message,
       statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
+    });
   }
 }
 `
@@ -7810,17 +7662,16 @@ async function verifyGoogleLoginCallback(
  * successful password login: same session cookie, same consent hand-off.${googleBindingNote}
  */
 loginApp.post('/google', async (c) => {
-  const views = c.get('views') ?? defaultViews;
   const config = c.get('config') ?? defaultProviderConfig;
   if (!config.googleLogin) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'not_found',
       errorDescription: 'Google login is not configured',
       statusCode: 404,
-    }), { status: 404 });
+    });
   }
 
-  const verified = await verifyGoogleLoginCallback(c, config.googleLogin, views);
+  const verified = await verifyGoogleLoginCallback(c, config.googleLogin);
   if (verified instanceof Response) return verified;
   const { transactionId, subject } = verified;
 
@@ -7853,10 +7704,19 @@ loginApp.post('/google', async (c) => {
 });
 `
     : '';
-  return `import { Hono } from 'hono';
+  return `/**
+ * Login step (API routing layer).
+ *
+ * POST /login holds the logic: CSRF check, credential check, lockout, the OP
+ * session cookie and the hand-off to /consent. It renders nothing itself — the
+ * form it answers with on a failed attempt comes from pages/login.ts and the
+ * error screens from pages/errors.ts — so the UI can be changed without touching
+ * this file. GET /login (the form) lives in pages/login.ts.
+ */
+import { Hono } from 'hono';
 import {
   getAuthTransaction,
-  validateCsrfToken,${bindingImports}${googleCoreImports}
+  validateCsrfToken,
   handleLoginFailure,
   generateRandomString,
 } from '${corePkg}';${googleLoginImports}
@@ -7865,36 +7725,15 @@ import {
   authSessionStore as defaultAuthSessionStore,
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
-  parseSessionId,${bindingStoreImport}${googleStoreImport}
+  parseSessionId,${googleStoreImport}
   userStore,
 } from '../store.js';
 import { defaultProviderConfig${googleConfigTypeImport} } from '../config.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
+import { renderLoginPage${bindingPageImport}${googlePageImport} } from '../pages/login.js';
 
 export const loginApp = new Hono<{ Variables: Record<string, any> }>();
-${bindingGuard}${googleLoginHelpers}
-/**
- * Login Page - GET
- * Displays the login form for user authentication.
- */
-loginApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-${bindingCheckBeforeLoginForm}
-  return renderView(views.loginPage({
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
-    loginHint: transaction.loginHint,${googleSignInField}
-  }));
-});
-
+${googleLoginHelpers}
 /**
  * Login Handler - POST
  * Processes the login form submission.
@@ -7906,7 +7745,6 @@ loginApp.post('/', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
@@ -7926,18 +7764,19 @@ ${bindingCheckBeforeLoginCsrf}  validateCsrfToken(transaction, csrfToken);
       transactionStore,
     );
     if (!failureResult.canRetry) {
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.loginPage({
+    // Same screen as GET /login, with the failure shown (pages/login.ts).
+    return renderLoginPage(c, {
       transactionId,
       csrfToken: transaction.csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
       loginHint: transaction.loginHint,${googleSignInFieldOnFailure}
-    }));
+    });
   }
 
   // prompt=login (and prompt=select_account in Phase 1) requires fresh
@@ -7988,29 +7827,13 @@ export function consentRouteTemplate(
   // The consent step is where the interactive flow turns the requested scope into
   // a granted one, and it is the first step that knows who the End-User is, so it
   // is where the scope policy (scopes.ts) is applied. With no custom scope
-  // declared every interpolation below is empty.
+  // declared every interpolation below is empty. (The consent SCREEN applies the
+  // same policy to what it displays — see pages/consent.ts.)
   const customScopesDeclared = scopes.length > 0;
   const customScopeImports = customScopesDeclared
     ? `
 import { resolveGrantableScopes } from '../scopes.js';`
     : '';
-  const consentGetScopeResolution = customScopesDeclared
-    ? `  // Display only what THIS End-User can actually grant. The subject comes from
-  // the auth session that /login (or the SSO fast path) stored for this
-  // transaction; without one there is nothing to apply the policy to, so the
-  // request is shown as-is and POST /consent stops on the same missing session.
-  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
-  const consentSession = await authSessionStore.get(transactionId);
-  const requestedScopes = transaction.scope.split(' ').filter(Boolean);
-  const displayedScopes = consentSession
-    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
-    : requestedScopes;
-
-`
-    : '';
-  const consentDisplayScopes = customScopesDeclared
-    ? 'displayedScopes'
-    : "transaction.scope.split(' ').filter(Boolean)";
   const consentGrantedScope = customScopesDeclared
     ? `
   // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place to
@@ -8022,75 +7845,23 @@ import { resolveGrantableScopes } from '../scopes.js';`
     session.subject,
   );`
     : `  const grantedScope = transaction.scope.split(' ').filter(Boolean);`;
-  const bindingImports = features.transactionBinding
-    ? `
-  validateTransactionBinding,
-  AuthTransactionError,
-  type AuthTransaction,`
-    : '';
+  // Optional hardening (--enable transaction-binding): the guard itself lives in
+  // pages/consent.ts, where GET /consent applies it before rendering; the POST
+  // step imports the same function so both sides enforce one rule.
   const bindingStoreImport = features.transactionBinding
     ? `
-  buildClearedTransactionBindingCookie,
-  parseTransactionBindingSecret,`
+  buildClearedTransactionBindingCookie,`
     : '';
-  const bindingGuard = features.transactionBinding
+  const bindingPageImport = features.transactionBinding
     ? `
-/**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
- * back, or undefined when the binding holds.
- *
- * The failure is rendered by the OP itself and never redirected to the client's
- * redirect_uri: without a verified owner, answering the client would let an
- * attacker who lured a victim into their own transaction collect a code for the
- * victim's identity. See buildTransactionBindingCookie() in store.ts.
- */
-async function rejectUnboundTransaction(
-  transaction: AuthTransaction,
-  transactionId: string,
-  cookieHeader: string | null,
-  views: typeof defaultViews,
-): Promise<Response | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(cookieHeader, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return renderView(views.errorPage({
-      error: error.message,
-      statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
-  }
-}
-`
-    : '';
-  const bindingCheckBeforeConsentForm = features.transactionBinding
-    ? `
-  // Checked BEFORE rendering: the consent page embeds csrf_token, so a third
-  // party holding a leaked transaction_id must not be able to read it here and
-  // then complete POST /consent on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
-  if (bindingError) return bindingError;
-`
+import { rejectUnboundTransaction } from '../pages/consent.js';`
     : '';
   const bindingCheckBeforeConsentCsrf = features.transactionBinding
     ? `  // Checked before validateCsrfToken and before any decision is acted on: this
   // is the step that mints the authorization code, so an unbound caller must not
-  // reach it — neither to approve nor to deny on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
+  // reach it — neither to approve nor to deny on the End-User's behalf. The
+  // guard is the one GET /consent applies before rendering (pages/consent.ts).
+  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
   if (bindingError) return bindingError;
 `
     : '';
@@ -8120,14 +7891,8 @@ import {
 } from '${EXPERIMENTAL_PACKAGE}/jarm';
 import { jarmConfig } from './jarm.js';`
     : '';
-  // transaction-binding already imports AuthTransaction, so only add it when that
-  // feature is off — a duplicate named import would not compile.
   const jarmConsentCoreImports = features.jarm
-    ? features.transactionBinding
-      ? `
-  selectSigningKeyByAlg,
-  type SigningKey,`
-      : `
+    ? `
   selectSigningKeyByAlg,
   type AuthTransaction,
   type SigningKey,`
@@ -8250,10 +8015,19 @@ ${clearBindingCookieOnDeny}    return c.redirect(redirectUrl.toString());
   }
   redirectUrl.searchParams.set('iss', issuer);
   return c.redirect(redirectUrl.toString());`;
-  return `import { Hono } from 'hono';
+  return `/**
+ * Consent step (API routing layer).
+ *
+ * POST /consent holds the logic: CSRF check, the authorization decision, the
+ * authorization code, the consent record and the redirect back to the client.
+ * It renders nothing itself — its error screens come from pages/errors.ts — so
+ * the UI can be changed without touching this file. GET /consent (the form)
+ * lives in pages/consent.ts.
+ */
+import { Hono } from 'hono';
 import {
   getAuthTransaction,
-  validateCsrfToken,${bindingImports}
+  validateCsrfToken,
   completeAuthTransaction,
   createAuthorizationCode,${jarmConsentCoreImports}
 } from '${corePkg}';
@@ -8265,32 +8039,10 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,${bindingStoreImport}
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';${jarmConsentImports}${customScopeImports}
+import { renderErrorPage } from '../pages/errors.js';${bindingPageImport}${jarmConsentImports}${customScopeImports}
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
-${bindingGuard}${jarmConsentHelpers}
-/**
- * Consent Page - GET
- * Displays the consent form for scope authorization.
- */
-consentApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-${bindingCheckBeforeConsentForm}
-${consentGetScopeResolution}  return renderView(views.consentPage({
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    scopes: ${consentDisplayScopes},
-    clientId: transaction.clientId,
-  }));
-});
-
+${jarmConsentHelpers}
 /**
  * Consent Handler - POST
  * Processes the consent decision.
@@ -8301,7 +8053,6 @@ consentApp.post('/', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const action = String(body['action'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -8331,18 +8082,18 @@ ${consentDenyRedirect}
   // is not the same as no decision at all — an unrecognized value stops here on
   // the OP's own error page instead of being redirected back to the client.
   if (action !== 'approve') {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Invalid consent decision. Please use the Approve or Deny button.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   const session = await authSessionStore.get(transactionId);
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Authentication session not found. Please restart login.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   const responseParams = await completeAuthTransaction(
@@ -8435,13 +8186,15 @@ export function applyTemplate(
   // it needs no CORS headers — the same treatment as /login and /consent.
   const deviceImport = features.deviceAuthorizationGrant
     ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';\n`
+import { deviceApp } from './routes/device.js';
+import { devicePage } from './pages/device.js';\n`
     : '';
   const deviceCors = features.deviceAuthorizationGrant
     ? `  app.use('/device_authorization', protectedCors);\n`
     : '';
   const deviceMount = features.deviceAuthorizationGrant
     ? `  app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', devicePage);
   app.route('/device', deviceApp);\n`
     : '';
   const deviceStorageContext = features.deviceAuthorizationGrant
@@ -8556,6 +8309,8 @@ ${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -8803,7 +8558,12 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/userinfo', userinfoApp);
 ${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
+  // Screen routes (pages/) answer the browser GETs; the API routes (routes/)
+  // sharing the same path hold the logic behind their POSTs. Pages are mounted
+  // first so the Allow list of a path reads GET, POST.
+  app.route('/login', loginPage);
   app.route('/login', loginApp);
+  app.route('/consent', consentPage);
   app.route('/consent', consentApp);
 }
 
@@ -9630,8 +9390,11 @@ import {
   return `/**
  * UI Views for OpenID Connect Provider.
  *
- * This file contains all user-facing HTML rendering.
- * Customize these functions to match your application's design.
+ * This file contains the default HTML of every user-facing screen. The screen
+ * routes in pages/ deliver these views (pages/login.ts renders loginPage, and so
+ * on); the API routes in routes/ never render HTML themselves. Customize these
+ * functions to match your application's design, or change how a screen is
+ * delivered in its pages/ module.
  *
  * Each function receives typed parameters and returns a ViewResult: either an
  * HTML string (wrapped into a text/html Response by renderView) or a
@@ -9961,10 +9724,11 @@ export function requestObjectConformanceBeforeAll(
 
 export function reuseFlowConformanceTestBlock(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  errorPageMode: 'html' | 'redirect' = 'html',
 ): string {
   return (
     reuseCascadeConformanceBlock(features) +
-    requestObjectValueConformanceBlock(features)
+    requestObjectValueConformanceBlock(features, errorPageMode)
   );
 }
 
@@ -10450,7 +10214,49 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
  * signed-RO flow; when disabled it pins the request_not_supported rejection and
  * the discovery advertisement.
  */
-function requestObjectValueConformanceBlock(features: OidcFeatureConfig): string {
+function requestObjectValueConformanceBlock(
+  features: OidcFeatureConfig,
+  errorPageMode: 'html' | 'redirect' = 'html',
+): string {
+  // A redirect_uri carried inside a broken Request Object cannot be trusted, so
+  // the error stays on the OP (OIDC Core 1.0 §6.3): no redirect to the client,
+  // no state echo. How the OP's own error page is delivered depends on the
+  // target — inline HTML 400 by default, or (Next.js) a 303 to the
+  // framework-native error page named by config.authorizationErrorRedirectPath
+  // (see pages/errors.ts). The expectation is pinned per mode so a change in the
+  // error code or in the non-redirect behavior is caught exactly.
+  const brokenRequestObjectExpectation = errorPageMode === 'redirect'
+    ? `      // OIDC Core 1.0 §6.3: invalid_request_object (not the generic
+      // invalid_request). This provider sets authorizationErrorRedirectPath, so
+      // the browser is 303-redirected to the OP's OWN error page — never to the
+      // redirect_uri of the broken Request Object.
+      expect(res.status).toBe(303);
+      expect(res.headers.get('Location')).toBe(
+        '/oidc-error?error=invalid_request_object&error_description=request+object+is+not+a+JWS+compact+serialization',
+      );`
+    : `      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
+      // Object, so the OP reports invalid_request_object (not the generic
+      // invalid_request). A redirect_uri carried inside a broken Request Object
+      // cannot be trusted, so the error stays on the OP: HTTP 400, no redirect,
+      // no state echo. Pinned to the default error page so a change in either
+      // the error code or the non-redirect behavior is caught exactly.
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      const body = await res.text();
+      expect(body).toBe(
+        [
+          '<!DOCTYPE html>',
+          '<html>',
+          '<head><title>Error</title></head>',
+          '<body>',
+          '  <h1>Error</h1>',
+          '  <p>invalid_request_object</p>',
+          '  <p>request object is not a JWS compact serialization</p>',
+          '</body>',
+          '</html>',
+        ].join('\\n'),
+      );`;
   if (!features.requestObject) {
     return `
   // OIDC Core 1.0 §6.3: the request parameter (Request Object by value) is disabled
@@ -10554,29 +10360,7 @@ function requestObjectValueConformanceBlock(features: OidcFeatureConfig): string
         '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
       const res = await app.request(url);
 
-      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
-      // Object, so the OP reports invalid_request_object (not the generic
-      // invalid_request). A redirect_uri carried inside a broken Request Object
-      // cannot be trusted, so the error stays on the OP: HTTP 400, no redirect,
-      // no state echo. Pinned to the default error page so a change in either
-      // the error code or the non-redirect behavior is caught exactly.
-      expect(res.status).toBe(400);
-      expect(res.headers.get('Location')).toBe(null);
-      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
-      const body = await res.text();
-      expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request_object</p>',
-          '  <p>request object is not a JWS compact serialization</p>',
-          '</body>',
-          '</html>',
-        ].join('\\n'),
-      );
+${brokenRequestObjectExpectation}
     });
 
     it('should reject the request_uri parameter with a request_uri_not_supported redirect', async () => {
@@ -11025,8 +10809,9 @@ export function customViewConformanceTestBlock(): string {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
-    // End-to-end: the login route returns its view via renderView, so the login
-    // page is delivered as a text/html Response through the framework at runtime.
+    // End-to-end: the login page (pages/login.ts) returns its view via
+    // renderView, so the login page is delivered as a text/html Response through
+    // the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
       // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
       // transaction (302 -> /login); the verifier is never needed here.
@@ -12738,7 +12523,11 @@ export function endpointBehaviorConformanceBlock(
     it('should return 405 and an exact Allow header for unsupported endpoint methods', async () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
-        { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },${introspectionMethodTest}${revocationMethodTest}${deviceMethodTests}${logoutMethodTests}
+        { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
+        // /login and /consent are each served by two routers (pages/ for GET,
+        // routes/ for POST) and must still answer as one endpoint.
+        { path: '/login', method: 'PUT', allow: 'GET, POST' },
+        { path: '/consent', method: 'PUT', allow: 'GET, POST' },${introspectionMethodTest}${revocationMethodTest}${deviceMethodTests}${logoutMethodTests}
         { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
         { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
       ];

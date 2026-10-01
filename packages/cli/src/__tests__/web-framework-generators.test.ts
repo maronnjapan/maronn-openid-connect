@@ -212,10 +212,10 @@ describe('Web-standard generated consent decision allowlist', () => {
     it(`should approve only the allowlisted action value for ${framework}`, () => {
       expect(
         consentRoute.includes(`  if (action !== 'approve') {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Invalid consent decision. Please use the Approve or Deny button.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }`),
       ).toBe(true);
     });
@@ -326,10 +326,21 @@ describe('ExpressGenerator', () => {
     it('should make WebRouter return 405 with an exact Allow header on method mismatch', () => {
       const file = files.find((f) => f.path === 'web-router.ts');
       const content = file?.content ?? '';
-      expect(content).toContain('const allowedMethods = this.routes');
+      expect(content).toContain('private resolve(method: string, path: string): ResolvedRoute');
       expect(content).toContain(
-        "return Promise.resolve(new Response(null, { status: 405, headers: { Allow: allowedMethods.join(', ') } }))",
+        "return Promise.resolve(new Response(null, { status: 405, headers: { Allow: match.allowed.join(', ') } }))",
       );
+    });
+
+    // pages/ (GET) and routes/ (POST) are mounted on the same prefix for /login,
+    // /consent and /device, so the router must fall through a mount that has no
+    // route for the method and merge every mount's methods into one Allow list.
+    it('should let WebRouter fall through routers mounted on one prefix and merge their Allow lists', () => {
+      const file = files.find((f) => f.path === 'web-router.ts');
+      const content = file?.content ?? '';
+      expect(content).toContain('const found = mount.router.resolve(method, childPath);');
+      expect(content).toContain('allowed.push(...found.allowed);');
+      expect(content).toContain('handler: (context) => mount.router.dispatch(context, childPath),');
     });
 
     // RFC 9110 §9.1: HEAD MUST be supported wherever GET is. RFC 9110 §9.3.2: HEAD
@@ -338,11 +349,9 @@ describe('ExpressGenerator', () => {
     it('should serve HEAD from the GET handler with the body stripped', () => {
       const file = files.find((f) => f.path === 'web-router.ts');
       const content = file?.content ?? '';
-      expect(content).toContain("if (context.req.method === 'HEAD')");
-      expect(content).toContain(
-        "const getRoute = this.routes.find(\n        (candidate) => candidate.method === 'GET' && candidate.path === path,\n      )",
-      );
-      expect(content).toContain('return new Response(null, {');
+      expect(content).toContain("if (method === 'HEAD')");
+      expect(content).toContain("const getMatch = this.resolve('GET', path);");
+      expect(content).toContain('new Response(null, {');
     });
 
     it('should validate every generated Web-standard signing key set', () => {
@@ -590,6 +599,9 @@ describe('NextJsGenerator', () => {
         '_oidc-provider/config.ts',
         '_oidc-provider/conformance.test.ts',
         '_oidc-provider/next.ts',
+        '_oidc-provider/pages/consent.ts',
+        '_oidc-provider/pages/errors.ts',
+        '_oidc-provider/pages/login.ts',
         '_oidc-provider/resolvers.ts',
         '_oidc-provider/routes/authorize.ts',
         '_oidc-provider/routes/consent.ts',
@@ -705,9 +717,12 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       // target, so a misconfigured absolute / protocol-relative value can never
       // turn a non-redirect authorization error into an open redirect.
       const authorize = files.find((f) => f.path === '_oidc-provider/routes/authorize.ts');
-      expect(authorize?.content).toContain(
+      expect(authorize?.content).toContain('return renderAuthorizationErrorPage(c, {');
+      const errorPage = files.find((f) => f.path === '_oidc-provider/pages/errors.ts');
+      expect(errorPage?.content).toContain(
         "errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')",
       );
+      expect(errorPage?.content).toContain("return c.redirect(`${errorPagePath}?${query.toString()}`, 303);");
 
       const page = files.find((f) => f.path === 'oidc-error/page.tsx');
       // The page throws so the App Router error boundary renders the error UI.
@@ -842,14 +857,23 @@ describe('ViewResult / renderView across Web-standard generators', () => {
         expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult;');
       });
 
-      it('should render login and consent through renderView', () => {
-        const login = files.find((f) => f.path === `${prefix}routes/login.ts`);
-        const consent = files.find((f) => f.path === `${prefix}routes/consent.ts`);
+      it('should render login and consent through renderView in the page modules', () => {
+        const login = files.find((f) => f.path === `${prefix}pages/login.ts`);
+        const consent = files.find((f) => f.path === `${prefix}pages/consent.ts`);
         // Next.js strips the .js extension from relative imports, so match the
         // shared prefix instead of pinning the extension.
-        expect(login?.content).toContain("import { defaultViews, renderView } from '../views");
-        expect(login?.content).toContain('return renderView(views.loginPage(');
-        expect(consent?.content).toContain('return renderView(views.consentPage(');
+        expect(login?.content).toContain("import { defaultViews, renderView, type LoginPageParams } from '../views");
+        expect(login?.content).toContain('return renderView(views.loginPage(params));');
+        expect(consent?.content).toContain('return renderView(views.consentPage(params));');
+      });
+
+      it('should keep views out of the login and consent routes', () => {
+        const login = files.find((f) => f.path === `${prefix}routes/login.ts`);
+        const consent = files.find((f) => f.path === `${prefix}routes/consent.ts`);
+        expect(login?.content).not.toContain("from '../views");
+        expect(consent?.content).not.toContain("from '../views");
+        expect(login?.content).toContain("from '../pages/login");
+        expect(consent?.content).toContain("from '../pages/errors");
       });
 
       it('should pin custom string / Response view behavior in the conformance test', () => {

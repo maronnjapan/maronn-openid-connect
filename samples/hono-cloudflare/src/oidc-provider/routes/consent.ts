@@ -1,13 +1,20 @@
+/**
+ * Consent step (API routing layer).
+ *
+ * POST /consent holds the logic: CSRF check, the authorization decision, the
+ * authorization code, the consent record and the redirect back to the client.
+ * It renders nothing itself — its error screens come from pages/errors.ts — so
+ * the UI can be changed without touching this file. GET /consent (the form)
+ * lives in pages/consent.ts.
+ */
 import { Hono } from 'hono';
 import {
   getAuthTransaction,
   validateCsrfToken,
-  validateTransactionBinding,
-  AuthTransactionError,
-  type AuthTransaction,
   completeAuthTransaction,
   createAuthorizationCode,
   selectSigningKeyByAlg,
+  type AuthTransaction,
   type SigningKey,
 } from '@maronn-openid-connect/core';
 import {
@@ -18,9 +25,9 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
   buildClearedTransactionBindingCookie,
-  parseTransactionBindingSecret,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
+import { rejectUnboundTransaction } from '../pages/consent.js';
 import {
   buildJarmRedirectUrl,
   createJarmResponseJwt,
@@ -29,37 +36,6 @@ import {
 import { jarmConfig } from './jarm.js';
 
 export const consentApp = new Hono<{ Variables: Record<string, any> }>();
-
-/**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
- * back, or undefined when the binding holds.
- *
- * The failure is rendered by the OP itself and never redirected to the client's
- * redirect_uri: without a verified owner, answering the client would let an
- * attacker who lured a victim into their own transaction collect a code for the
- * victim's identity. See buildTransactionBindingCookie() in store.ts.
- */
-async function rejectUnboundTransaction(
-  transaction: AuthTransaction,
-  transactionId: string,
-  cookieHeader: string | null,
-  views: typeof defaultViews,
-): Promise<Response | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(cookieHeader, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return renderView(views.errorPage({
-      error: error.message,
-      statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
-  }
-}
 
 /**
  * EXPERIMENTAL — JARM (JWT Secured Authorization Response Mode).
@@ -136,39 +112,6 @@ async function buildConsentRedirect(
 }
 
 /**
- * Consent Page - GET
- * Displays the consent form for scope authorization.
- */
-consentApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // Checked BEFORE rendering: the consent page embeds csrf_token, so a third
-  // party holding a leaked transaction_id must not be able to read it here and
-  // then complete POST /consent on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
-  if (bindingError) return bindingError;
-
-  return renderView(views.consentPage({
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    scopes: transaction.scope.split(' ').filter(Boolean),
-    clientId: transaction.clientId,
-  }));
-});
-
-/**
  * Consent Handler - POST
  * Processes the consent decision.
  */
@@ -178,7 +121,6 @@ consentApp.post('/', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const action = String(body['action'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -186,13 +128,9 @@ consentApp.post('/', async (c) => {
   const transaction = await getAuthTransaction(transactionId, transactionStore);
   // Checked before validateCsrfToken and before any decision is acted on: this
   // is the step that mints the authorization code, so an unbound caller must not
-  // reach it — neither to approve nor to deny on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
+  // reach it — neither to approve nor to deny on the End-User's behalf. The
+  // guard is the one GET /consent applies before rendering (pages/consent.ts).
+  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
   if (bindingError) return bindingError;
   validateCsrfToken(transaction, csrfToken);
 
@@ -233,18 +171,18 @@ consentApp.post('/', async (c) => {
   // is not the same as no decision at all — an unrecognized value stops here on
   // the OP's own error page instead of being redirected back to the client.
   if (action !== 'approve') {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Invalid consent decision. Please use the Approve or Deny button.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   const session = await authSessionStore.get(transactionId);
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Authentication session not found. Please restart login.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   const responseParams = await completeAuthTransaction(

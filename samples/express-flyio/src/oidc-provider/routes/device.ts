@@ -1,6 +1,6 @@
 /**
  * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant, verification UI
- * (RFC 8628 §3.3).
+ * (RFC 8628 §3.3), API routing layer.
  *
  * This route was generated because the OP was created with
  * `--enable device-authorization-grant`. It is backed by
@@ -11,6 +11,11 @@
  * The end user opens /device on a second device, types the user_code the first
  * device is showing, signs in, and approves or denies. The device learns the
  * outcome only by polling the token endpoint — there is no push channel.
+ *
+ * This file holds every step that changes state (the three POSTs below) and
+ * decides which screen answers each one; the screens themselves — and GET
+ * /device, the code entry form — live in pages/device.ts, so the UI can be
+ * changed without touching this file.
  *
  * ## Why every POST here demands a binding cookie
  *
@@ -27,7 +32,6 @@ import { WebRouter } from '../web-router.js';
 import {
   DeviceAuthorizationError,
   DeviceVerificationError,
-  INVALID_USER_CODE_MESSAGE,
   approveDeviceAuthorization,
   denyDeviceAuthorization,
   findPendingRecordByUserCode,
@@ -47,17 +51,23 @@ import {
   parseSessionId,
   userStore,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import {
+  renderDeviceApprovalPage,
+  renderDeviceCompletedPage,
+  renderDeviceLoginPage,
+  renderInvalidUserCode,
+} from '../pages/device.js';
+import { renderErrorPage } from '../pages/errors.js';
 import { deviceAuthorizationConfig } from './device-authorization.js';
 
 export const deviceApp = new WebRouter();
 
 /**
- * Attach a Set-Cookie to a Response a view already produced.
+ * Attach a Set-Cookie to a Response a page already produced.
  *
- * renderView() builds its own Response, so headers staged on the framework
+ * The page helpers build their own Response, so headers staged on the framework
  * context never reach it. Rebuilding the Response is the framework-neutral way
- * to add the cookie without making views cookie-aware.
+ * to add the cookie without making the screens cookie-aware.
  */
 function withCookie(response: Response, cookie: string): Response {
   const headers = new Headers(response.headers);
@@ -79,49 +89,16 @@ function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
   return Math.max(0, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));
 }
 
-/**
- * Re-render the code entry form with the single, reason-free failure message.
- *
- * RFC 8628 §5.1: unknown, expired and already-used codes must be
- * indistinguishable, otherwise the response itself confirms which codes exist.
- */
-function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Response {
-  return renderView(
-    views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
-    { status: 400 },
-  );
-}
-
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+function renderVerificationError(c: any, error: unknown): Response {
   if (error instanceof DeviceVerificationError) {
-    return renderView(
-      views.errorPage({ error: error.message, statusCode: error.statusCode }),
-      { status: error.statusCode },
-    );
+    return renderErrorPage(c, { error: error.message, statusCode: error.statusCode });
   }
   if (error instanceof DeviceAuthorizationError) {
-    return renderView(
-      views.errorPage({ error: error.errorDescription, statusCode: 400 }),
-      { status: 400 },
-    );
+    return renderErrorPage(c, { error: error.errorDescription, statusCode: 400 });
   }
   throw error;
 }
-
-/**
- * User code entry form - GET
- * RFC 8628 §3.3 / §3.3.1
- *
- * Unauthenticated and side-effect free. A user_code in the query string
- * (verification_uri_complete) only pre-fills the field: nothing is looked up or
- * mutated until the form is submitted, so following the complete URI never
- * consumes or reveals anything.
- */
-deviceApp.get('/', (c) => {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceVerificationPage({ userCode: c.req.query('user_code') ?? '' }));
-});
 
 /**
  * User code submission - POST
@@ -135,13 +112,12 @@ deviceApp.post('/', async (c) => {
   const body = await c.req.parseBody();
   const submittedUserCode = String(body['user_code'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
-    return renderInvalidUserCode(views, submittedUserCode);
+    return renderInvalidUserCode(c, submittedUserCode);
   }
 
   // Rotate the binding secret and the csrf token together. A second browser
@@ -157,18 +133,18 @@ deviceApp.post('/', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (session) {
-    return withCookie(renderView(views.deviceApprovalPage({
+    return withCookie(renderDeviceApprovalPage(c, {
       userCode: record.userCodeDisplay,
       csrfToken,
       clientId: record.clientId,
       scopes: record.scope,
-    })), cookie);
+    }), cookie);
   }
 
-  return withCookie(renderView(views.deviceLoginPage({
+  return withCookie(renderDeviceLoginPage(c, {
     userCode: record.userCodeDisplay,
     csrfToken,
-  })), cookie);
+  }), cookie);
 });
 
 /**
@@ -186,7 +162,6 @@ deviceApp.post('/login', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const authenticateUser =
@@ -195,7 +170,7 @@ deviceApp.post('/login', async (c) => {
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
-    return renderInvalidUserCode(views, submittedUserCode);
+    return renderInvalidUserCode(c, submittedUserCode);
   }
 
   try {
@@ -205,7 +180,7 @@ deviceApp.post('/login', async (c) => {
     );
     validateVerificationCsrfToken(record, csrfToken);
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 
   // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
@@ -222,17 +197,17 @@ deviceApp.post('/login', async (c) => {
     );
     if (!failure.canRetry) {
       // The record is now denied: the device gets access_denied on its next poll.
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.deviceLoginPage({
+    return renderDeviceLoginPage(c, {
       userCode: record.userCodeDisplay,
       csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failure.remainingAttempts,
-    }));
+    });
   }
 
   const authTime = Math.floor(Date.now() / 1000);
@@ -241,12 +216,12 @@ deviceApp.post('/login', async (c) => {
 
   // Two cookies on one response: the new OP session, and the binding cookie the
   // approval POST will have to present again.
-  const withSession = withCookie(renderView(views.deviceApprovalPage({
+  const withSession = withCookie(renderDeviceApprovalPage(c, {
     userCode: record.userCodeDisplay,
     csrfToken,
     clientId: record.clientId,
     scopes: record.scope,
-  })), buildSessionCookie(sessionId));
+  }), buildSessionCookie(sessionId));
   return withSession;
 });
 
@@ -263,23 +238,22 @@ deviceApp.post('/approve', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const decision = String(body['decision'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const deviceStore = c.get('deviceAuthorizationStore');
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const consentResolver = c.get('consentResolver');
 
   const record = await findPendingRecordByUserCode(submittedUserCode, deviceStore);
   if (!record) {
-    return renderInvalidUserCode(views, submittedUserCode);
+    return renderInvalidUserCode(c, submittedUserCode);
   }
 
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Sign in again to approve this device',
       statusCode: 401,
-    }), { status: 401 });
+    });
   }
 
   const clearCookie = buildClearedDeviceBindingCookie(record.userCode);
@@ -307,18 +281,18 @@ deviceApp.post('/approve', async (c) => {
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return withCookie(renderView(views.deviceCompletedPage({
+      return withCookie(renderDeviceCompletedPage(c, {
         approved: true,
         clientId: approved.clientId,
-      })), clearCookie);
+      }), clearCookie);
     }
 
     await denyDeviceAuthorization({ record, store: deviceStore, csrfToken });
-    return withCookie(renderView(views.deviceCompletedPage({
+    return withCookie(renderDeviceCompletedPage(c, {
       approved: false,
       clientId: record.clientId,
-    })), clearCookie);
+    }), clearCookie);
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 });

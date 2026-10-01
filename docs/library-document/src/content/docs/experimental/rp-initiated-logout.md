@@ -80,6 +80,7 @@ rpInitiatedLogoutConfig.postLogoutRedirectUris = {
 | ファイル | 内容 |
 |---|---|
 | `routes/logout.ts` | `GET\|POST /logout` と `POST /logout/approve`、設定オブジェクト `rpInitiatedLogoutConfig` |
+| `pages/logout.ts` | 確認画面・完了画面の render ヘルパ（UI カスタマイズはここ） |
 | `store.ts`（追記） | 確認画面の CSRF cookie ヘルパーとセッション Cookie の破棄ヘルパー |
 | `views.ts`（追記） | 確認画面 `logoutConfirmationPage` と完了画面 `logoutCompletedPage`（`views` オプションで差し替え可能） |
 | `routes/discovery.ts`（追記） | `end_session_endpoint` メタデータ |

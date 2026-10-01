@@ -69,7 +69,8 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | ファイル | 内容 |
 |---|---|
 | `routes/backchannel-authentication.ts` | バックチャネル認証エンドポイント（`POST /backchannel_authentication`）と設定値 `cibaConfig` |
-| `routes/ciba-verification.ts` | 認証デバイス UI（`GET /ciba`・`POST /ciba/login`・`POST /ciba/approve`） |
+| `pages/ciba.ts` | 認証デバイス UI の画面層（サインイン・保留一覧・完了画面の render ヘルパ。UI カスタマイズはここ） |
+| `routes/ciba-verification.ts` | 認証デバイス UI の処理層（`GET /ciba`・`POST /ciba/login`・`POST /ciba/approve`。`GET /ciba` はログイントランザクションを発行するためここに置く） |
 | `views.ts` | `cibaLoginPage` / `cibaPendingRequestsPage` / `cibaCompletedPage` の追加 |
 | `store.ts` | CIBA ストアのシングルトン（実体は experimental の in-memory 実装）とログイン用バインディング Cookie ヘルパーの追加 |
 | `config.ts` | `RegisteredClient` への `backchannelTokenDeliveryMode` の追加とサンプルクライアントへの grant URN 登録 |

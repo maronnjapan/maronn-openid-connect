@@ -1,3 +1,12 @@
+/**
+ * Consent step (API routing layer).
+ *
+ * POST /consent holds the logic: CSRF check, the authorization decision, the
+ * authorization code, the consent record and the redirect back to the client.
+ * It renders nothing itself — its error screens come from pages/errors.ts — so
+ * the UI can be changed without touching this file. GET /consent (the form)
+ * lives in pages/consent.ts.
+ */
 import { WebRouter } from '../web-router.js';
 import {
   getAuthTransaction,
@@ -13,31 +22,9 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
 
 export const consentApp = new WebRouter();
-
-/**
- * Consent Page - GET
- * Displays the consent form for scope authorization.
- */
-consentApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  return renderView(views.consentPage({
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    scopes: transaction.scope.split(' ').filter(Boolean),
-    clientId: transaction.clientId,
-  }));
-});
 
 /**
  * Consent Handler - POST
@@ -49,7 +36,6 @@ consentApp.post('/', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const action = String(body['action'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -89,18 +75,18 @@ consentApp.post('/', async (c) => {
   // is not the same as no decision at all — an unrecognized value stops here on
   // the OP's own error page instead of being redirected back to the client.
   if (action !== 'approve') {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Invalid consent decision. Please use the Approve or Deny button.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   const session = await authSessionStore.get(transactionId);
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Authentication session not found. Please restart login.',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   const responseParams = await completeAuthTransaction(

@@ -80,7 +80,7 @@ const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, lo
 // <div v-bind="googleSignIn" />
 ```
 
-生成コードの既定のログイン画面（`views.ts` / Next.js の `login/page.tsx`）はこの形で 3 要素を書き出しているので、見た目や配置はそこを書き換えます。
+生成コードの既定のログイン画面（`views.ts` / Next.js の `login/page.tsx`）はこの形で 3 要素を書き出しているので、見た目や配置はそこを書き換えます。描画の仕方ごと変える（テンプレートエンジンや別 UI へのリダイレクト）なら `pages/login.ts` の `renderLoginPage()` を書き換えます。
 
 ## 生成されるもの
 
@@ -88,7 +88,8 @@ const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, lo
 |---|---|
 | `config.ts` | `GoogleLoginConfig` と `ProviderConfig.googleLogin` |
 | `views.ts` | `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。UI は生成コード側にあるので、見た目や配置は自由に変えられる |
-| `routes/login.ts` | GET `/login` で認証トランザクションに束縛した nonce を発行してボタンを描画。`POST /login/google` で ID トークンを受け取り、パスワードログインと同じ手順でセッションを確立して `/consent` へ進む |
+| `pages/login.ts` | GET `/login` で認証トランザクションに束縛した nonce を発行し（`buildGoogleSignIn()`）、ボタンの設定を view に渡して描画する。ログイン失敗時の再表示も同じ関数を使う |
+| `routes/login.ts` | `POST /login/google` で ID トークンを受け取り、パスワードログインと同じ手順でセッションを確立して `/consent` へ進む |
 | `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier` と `googleAccountResolver` を差し替えるオプション |
 | `conformance.test.ts` | ボタン描画・nonce・CSRF・検証失敗・hosted domain・JIT 登録からトークン発行と UserInfo までを固定する契約テスト |

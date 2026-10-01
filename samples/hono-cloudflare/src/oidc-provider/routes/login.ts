@@ -1,10 +1,16 @@
+/**
+ * Login step (API routing layer).
+ *
+ * POST /login holds the logic: CSRF check, credential check, lockout, the OP
+ * session cookie and the hand-off to /consent. It renders nothing itself — the
+ * form it answers with on a failed attempt comes from pages/login.ts and the
+ * error screens from pages/errors.ts — so the UI can be changed without touching
+ * this file. GET /login (the form) lives in pages/login.ts.
+ */
 import { Hono } from 'hono';
 import {
   getAuthTransaction,
   validateCsrfToken,
-  validateTransactionBinding,
-  AuthTransactionError,
-  type AuthTransaction,
   handleLoginFailure,
   generateRandomString,
 } from '@maronn-openid-connect/core';
@@ -14,78 +20,13 @@ import {
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
   parseSessionId,
-  parseTransactionBindingSecret,
   userStore,
 } from '../store.js';
 import { defaultProviderConfig } from '../config.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
+import { renderLoginPage, rejectUnboundTransaction } from '../pages/login.js';
 
 export const loginApp = new Hono<{ Variables: Record<string, any> }>();
-
-/**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
- * back, or undefined when the binding holds.
- *
- * The failure is rendered by the OP itself and never redirected to the client's
- * redirect_uri: at this point we cannot tell whose transaction this is, so
- * answering the client would leak that a transaction exists — and, in the
- * lured-victim case, would hand the attacker's client a code for the victim.
- * See buildTransactionBindingCookie() in store.ts for the full threat model.
- */
-async function rejectUnboundTransaction(
-  transaction: AuthTransaction,
-  transactionId: string,
-  cookieHeader: string | null,
-  views: typeof defaultViews,
-): Promise<Response | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(cookieHeader, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return renderView(views.errorPage({
-      error: error.message,
-      statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
-  }
-}
-
-/**
- * Login Page - GET
- * Displays the login form for user authentication.
- */
-loginApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // Checked BEFORE rendering: the login page embeds csrf_token, so anyone who
-  // could load this page with a leaked transaction_id would obtain the token
-  // that the POST handlers validate.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
-  if (bindingError) return bindingError;
-
-  return renderView(views.loginPage({
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
-    loginHint: transaction.loginHint,
-  }));
-});
 
 /**
  * Login Handler - POST
@@ -98,7 +39,6 @@ loginApp.post('/', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
@@ -109,13 +49,9 @@ loginApp.post('/', async (c) => {
   const transaction = await getAuthTransaction(transactionId, transactionStore);
   // Checked before validateCsrfToken: the CSRF token only proves the request
   // carries a value from the form, and that form is reachable by anyone holding
-  // transaction_id. The binding proves it is the same browser.
-  const bindingError = await rejectUnboundTransaction(
-    transaction,
-    transactionId,
-    c.req.header('Cookie') ?? null,
-    views,
-  );
+  // transaction_id. The binding proves it is the same browser (the same guard
+  // GET /login applies before rendering — see pages/login.ts).
+  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
   if (bindingError) return bindingError;
   validateCsrfToken(transaction, csrfToken);
 
@@ -128,18 +64,19 @@ loginApp.post('/', async (c) => {
       transactionStore,
     );
     if (!failureResult.canRetry) {
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.loginPage({
+    // Same screen as GET /login, with the failure shown (pages/login.ts).
+    return renderLoginPage(c, {
       transactionId,
       csrfToken: transaction.csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
       loginHint: transaction.loginHint,
-    }));
+    });
   }
 
   // prompt=login (and prompt=select_account in Phase 1) requires fresh

@@ -8,6 +8,7 @@ import { revocationApp } from './routes/revocation.js';
 import { parApp } from './routes/par.js';
 import { deviceAuthorizationApp } from './routes/device-authorization.js';
 import { deviceApp } from './routes/device.js';
+import { devicePage } from './pages/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
 import { cibaApp } from './routes/ciba-verification.js';
 import { logoutApp } from './routes/logout.js';
@@ -15,6 +16,8 @@ import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginApp } from './routes/login.js';
 import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -330,13 +333,19 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.route('/revoke', revocationApp);
   app.route('/par', parApp);
   app.route('/device_authorization', deviceAuthorizationApp);
+  app.route('/device', devicePage);
   app.route('/device', deviceApp);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
   app.route('/ciba', cibaApp);
   app.route('/logout', logoutApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
+  // Screen routes (pages/) answer the browser GETs; the API routes (routes/)
+  // sharing the same path hold the logic behind their POSTs. Pages are mounted
+  // first so the Allow list of a path reads GET, POST.
+  app.route('/login', loginPage);
   app.route('/login', loginApp);
+  app.route('/consent', consentPage);
   app.route('/consent', consentApp);
 }
 

@@ -661,6 +661,9 @@ describe('CLI', () => {
           '  Would create: store.ts',
           '  Would create: resolvers.ts',
           '  Would create: views.ts',
+          '  Would create: pages/errors.ts',
+          '  Would create: pages/login.ts',
+          '  Would create: pages/consent.ts',
           '  Would create: routes/authorize.ts',
           '  Would create: routes/token.ts',
           '  Would create: routes/userinfo.ts',
@@ -698,7 +701,7 @@ describe('CLI', () => {
         run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
         expect(process.exitCode).toBe(1);
         expect(errorSpy.mock.calls.map((c) => String(c[0]))[0]).toBe(
-          `Error: 16 file(s) already exist in ${outputDir}:`,
+          `Error: 19 file(s) already exist in ${outputDir}:`,
         );
         expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
         vi.restoreAllMocks();

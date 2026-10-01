@@ -234,10 +234,12 @@ describe('generated consent step', () => {
     );
   });
 
+  // The consent SCREEN (pages/consent.ts) applies the same policy to what it
+  // shows, so the End-User never sees a scope they cannot be granted.
   it.each(FRAMEWORKS)('should display only the grantable scopes on %s', (framework) => {
     const content = fileContent(
       generateFiles(framework, ['reports.read']),
-      internalPath(framework, 'routes/consent.ts'),
+      internalPath(framework, 'pages/consent.ts'),
     );
 
     expect(content).toContain('const consentSession = await authSessionStore.get(transactionId);');

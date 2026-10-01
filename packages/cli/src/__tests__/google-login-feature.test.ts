@@ -129,28 +129,41 @@ describe('generate with --enable google-login', () => {
       );
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
-      expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
-      expect(content.includes('return buildGoogleSignInAttributes({')).toBe(true);
       expect(content.includes("loginApp.post('/google', async (c) => {")).toBe(true);
       expect(content.includes('handleGoogleLoginRedirect({')).toBe(true);
       expect(content.includes('resolveGoogleLoginSubject(login.account, accountResolver)')).toBe(
         true,
       );
+    });
+
+    // The GIS configuration (the g_id_onload attributes) is rendering data, so
+    // the page module builds it; the callback route only verifies what Google
+    // posts back.
+    it('should build the Sign in with Google configuration in the login page module when enabled', () => {
+      const content = fileContent(
+        generateFiles(framework, ['google-login']),
+        providerPath(framework, 'pages/login.ts'),
+      );
+
+      expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
+      expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
+      expect(content.includes('export async function buildGoogleSignIn(')).toBe(true);
+      expect(content.includes('return buildGoogleSignInAttributes({')).toBe(true);
       expect(content.includes("loginUri: new URL('/login/google', config.issuer).toString(),")).toBe(
         true,
       );
     });
 
     it('should render the Sign in with Google button on both login page renders when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'routes/login.ts'),
-      );
-      const renders = content.split(
-        'googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),',
-      );
+      const files = generateFiles(framework, ['google-login']);
+      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
+      const route = fileContent(files, providerPath(framework, 'routes/login.ts'));
+      const render = 'googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),';
 
-      expect(renders.length).toBe(3);
+      // GET /login (the page) and the failed-attempt re-render of POST /login
+      // (the route) both hand the button configuration to the view.
+      expect(page.split(render).length).toBe(2);
+      expect(route.split(render).length).toBe(2);
     });
 
     it('should add the google-login config type and provider config field when enabled', () => {

@@ -74,11 +74,33 @@ oidc-provider/
 ├── scopes.ts             # スコープポリシー（--scope 指定時のみ）
 ├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
 ├── resolvers.ts          # セッション・同意状態の resolver
-├── views.ts              # ログイン / 同意 / エラー画面のデフォルト UI
-├── routes/               # 各エンドポイントのルート実装
+├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML
+├── pages/                # 画面用ルーティング（GET で画面を描画する薄い層。UI カスタマイズはここ）
+├── routes/               # API ルーティング（各エンドポイントのロジック本体。views を触らない）
 ├── conformance.test.ts   # 生成 OP の想定挙動を固定する契約テスト
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
+
+### Screen Routes (pages/) and API Routes (routes/)
+
+生成されるルーティングは 2 種類に分かれています。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`）だけで、`routes/` のロジックは読まなくて済みます。
+
+| 層 | ファイル | 役割 |
+|---|---|---|
+| 画面用ルーティング | `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts`（機能有効時: `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts`） | ブラウザに見せる画面だけを担当する薄い層。`GET /login` のようにフォームを描画するルートと、`renderLoginPage()` のように view のパラメータから Response を作る render ヘルパを持ちます。認証・コード発行・リダイレクト先の決定は行いません |
+| API ルーティング | `routes/*.ts` | OIDC のロジック本体。`POST /login` / `POST /consent` を含む全エンドポイントの処理を持ち、画面を返す必要がある箇所（ログイン失敗の再表示、ロックアウトの 429、非リダイレクトの認可エラーなど）では `pages/` の render ヘルパを呼びます。`views.ts` を直接 import しません |
+
+`/login` `/consent`（`--enable device-authorization-grant` 時は `/device` も）には、同じパスへ画面側ルーター（GET）と API 側ルーター（POST）の両方をマウントします。HTTP 上は 1 つのエンドポイントとして振る舞い、`PUT /login` は `Allow: GET, POST` の 405 になります。ステータスコード・Cookie・リダイレクト先といった HTTP の契約は `routes/` 側が決め、`conformance.test.ts` が固定します。
+
+UI を変える場所は、変えたい範囲で選びます。
+
+- **HTML だけ変える** → `views.ts` の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
+- **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` を書き換える。API ルートは画面を返すときに必ずここを通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する（Next.js の生成物は `/oidc-error` を使う）
+
+フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）と POST 先のパスは `routes/` との契約なので、画面を差し替えても維持してください。`transaction-binding` を有効にした場合の束縛チェック（`rejectUnboundTransaction()`）は「誰にこの画面を見せてよいか」の判断として `pages/` 側が持ち、`routes/` の POST も同じ関数を import して使います。
+
+Next.js はもともと `login/page.tsx`（画面）と `login/actions.ts`（Server Action = ロジック）に分かれており、この構造に対応します。`_oidc-provider/pages/` も生成されますが、Route Handler 経由で動く device / CIBA の画面と契約テストが使うもので、ログイン・同意画面のカスタマイズは `page.tsx` で行います。
 
 ### Generation Manifest (.maronn-openid-connect.json)
 

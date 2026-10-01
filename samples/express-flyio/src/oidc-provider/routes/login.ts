@@ -1,22 +1,25 @@
+/**
+ * Login step (API routing layer).
+ *
+ * POST /login holds the logic: CSRF check, credential check, lockout, the OP
+ * session cookie and the hand-off to /consent. It renders nothing itself — the
+ * form it answers with on a failed attempt comes from pages/login.ts and the
+ * error screens from pages/errors.ts — so the UI can be changed without touching
+ * this file. GET /login (the form) lives in pages/login.ts.
+ */
 import { WebRouter } from '../web-router.js';
 import {
   getAuthTransaction,
   validateCsrfToken,
-  type AuthTransaction,
   handleLoginFailure,
   generateRandomString,
 } from '@maronn-openid-connect/core';
 import {
   handleGoogleLoginRedirect,
-  issueGoogleLoginNonce,
   resolveGoogleLoginSubject,
   GoogleLoginError,
   type GoogleIdTokenPayload,
 } from '@maronn-openid-connect/google-login';
-import {
-  buildGoogleSignInAttributes,
-  type GoogleSignInAttributes,
-} from '@maronn-openid-connect/google-login/sign-in';
 import {
   transactionStore as defaultTransactionStore,
   authSessionStore as defaultAuthSessionStore,
@@ -27,43 +30,10 @@ import {
   userStore,
 } from '../store.js';
 import { defaultProviderConfig, type GoogleLoginConfig } from '../config.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderErrorPage } from '../pages/errors.js';
+import { renderLoginPage, buildGoogleSignIn } from '../pages/login.js';
 
 export const loginApp = new WebRouter();
-
-/**
- * EXTENSION (google-login): build the GIS configuration (the g_id_onload
- * attributes) for this transaction, or undefined when config.googleLogin is not
- * set. Rendering is the view's job (views.ts): the package generates no UI.
- * Every render issues a fresh nonce bound to the transaction: Google echoes it
- * in the ID token, which is how the callback below finds its way back to this
- * authorization request (the redirect-mode POST carries nothing else).
- */
-async function buildGoogleSignIn(
-  c: any,
-  transactionId: string,
-  transaction: AuthTransaction,
-): Promise<GoogleSignInAttributes | undefined> {
-  const config = c.get('config') ?? defaultProviderConfig;
-  const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
-  if (!googleLogin) return undefined;
-  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
-  const nonce = await issueGoogleLoginNonce({
-    transactionId,
-    expiresAt: transaction.expiresAt,
-    store: nonceStore,
-  });
-  return buildGoogleSignInAttributes({
-    clientId: googleLogin.clientId,
-    // Must equal an authorized redirect URI of the Google OAuth client. Built on
-    // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
-    loginUri: new URL('/login/google', config.issuer).toString(),
-    nonce,
-    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
-    loginHint: transaction.loginHint,
-    hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
-  });
-}
 
 /**
  * EXTENSION (google-login): run the callback checks and map the Google account
@@ -74,7 +44,6 @@ async function buildGoogleSignIn(
 async function verifyGoogleLoginCallback(
   c: any,
   googleLogin: GoogleLoginConfig,
-  views: typeof defaultViews,
 ): Promise<{ transactionId: string; subject: string } | Response> {
   const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
   const verifier = c.get('googleIdTokenVerifier');
@@ -98,37 +67,13 @@ async function verifyGoogleLoginCallback(
     return { transactionId: login.transactionId, subject };
   } catch (error) {
     if (!(error instanceof GoogleLoginError)) throw error;
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: error.code,
       errorDescription: error.message,
       statusCode: error.httpStatusCode,
-    }), { status: error.httpStatusCode });
+    });
   }
 }
-
-/**
- * Login Page - GET
- * Displays the login form for user authentication.
- */
-loginApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  return renderView(views.loginPage({
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
-    loginHint: transaction.loginHint,
-    // EXTENSION (google-login): undefined until config.googleLogin is set.
-    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
-  }));
-});
 
 /**
  * Login Handler - POST
@@ -141,7 +86,6 @@ loginApp.post('/', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
@@ -161,19 +105,20 @@ loginApp.post('/', async (c) => {
       transactionStore,
     );
     if (!failureResult.canRetry) {
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.loginPage({
+    // Same screen as GET /login, with the failure shown (pages/login.ts).
+    return renderLoginPage(c, {
       transactionId,
       csrfToken: transaction.csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
       loginHint: transaction.loginHint,
       googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
-    }));
+    });
   }
 
   // prompt=login (and prompt=select_account in Phase 1) requires fresh
@@ -222,17 +167,16 @@ loginApp.post('/', async (c) => {
  * successful password login: same session cookie, same consent hand-off.
  */
 loginApp.post('/google', async (c) => {
-  const views = c.get('views') ?? defaultViews;
   const config = c.get('config') ?? defaultProviderConfig;
   if (!config.googleLogin) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'not_found',
       errorDescription: 'Google login is not configured',
       statusCode: 404,
-    }), { status: 404 });
+    });
   }
 
-  const verified = await verifyGoogleLoginCallback(c, config.googleLogin, views);
+  const verified = await verifyGoogleLoginCallback(c, config.googleLogin);
   if (verified instanceof Response) return verified;
   const { transactionId, subject } = verified;
 

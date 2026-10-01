@@ -69,8 +69,9 @@ oidc-provider/
 ├── config.ts             # ProviderConfig・クライアント登録（既定値はローカル検証専用）
 ├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
 ├── resolvers.ts          # セッション・同意状態の resolver
-├── views.ts              # ログイン / 同意 / エラー画面のデフォルト UI
-├── routes/               # 各エンドポイントのルート実装
+├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML
+├── pages/                # 画面用ルーティング（GET で画面を描画する薄い層。UI カスタマイズはここ）
+├── routes/               # API ルーティング（各エンドポイントのロジック本体。views を触らない）
 ├── conformance.test.ts   # 生成 OP の想定挙動を固定する契約テスト
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
@@ -84,12 +85,33 @@ oidc-provider/
 | `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / Request Object 対応） |
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
-| `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） |
+| `/login`, `/consent` | ログイン・同意画面。GET（画面）は `pages/`、POST（処理）は `routes/` が担当する（差し替え可能なデフォルト UI 付き） |
 | `/login/google` | Sign in with Google の `login_uri`（Google が ID トークンを POST する先。`google-login` 有効時） |
 | `/.well-known/openid-configuration` | Discovery メタデータ |
 | `/.well-known/jwks.json` | JWKS（公開鍵） |
 | `/introspect` | RFC 7662 Token Introspection（`introspection` 有効時） |
 | `/revoke` | RFC 7009 Token Revocation（`revocation` 有効時） |
+
+## 画面用ルーティング（pages/）と API ルーティング（routes/）
+
+生成されるルーティングは 2 種類に分かれている。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`）だけで、`routes/` のロジックは読まなくてよい。
+
+| 層 | ファイル | 役割 |
+|---|---|---|
+| 画面用ルーティング | `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts`（機能有効時: `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts`） | ブラウザに見せる画面だけを担当する薄い層。`GET /login` のようにフォームを描画するルートと、`renderLoginPage()` のように view のパラメータから Response を作る render ヘルパを持つ。認証・コード発行・リダイレクト先の決定は行わない |
+| API ルーティング | `routes/*.ts` | OIDC のロジック本体。`POST /login` / `POST /consent` を含む全エンドポイントの処理を持ち、画面を返す必要がある箇所（ログイン失敗の再表示、ロックアウトの 429、非リダイレクトの認可エラーなど）では `pages/` の render ヘルパを呼ぶ。`views.ts` を直接 import しない |
+
+`/login` `/consent`（`--enable device-authorization-grant` 時は `/device` も）には、同じパスへ画面側ルーター（GET）と API 側ルーター（POST）の両方をマウントしている。HTTP 上は 1 つのエンドポイントとして振る舞い、`PUT /login` は `Allow: GET, POST` の 405 になる。ステータスコード・Cookie・リダイレクト先といった HTTP の契約は `routes/` 側が決め、`conformance.test.ts` が固定している。
+
+UI を変える場所は、変えたい範囲で選ぶ。
+
+- **HTML だけ変える** → `views.ts` の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
+- **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` を書き換える。API ルートは画面を返すときに必ずここを通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する（Next.js の生成物は `/oidc-error` を使う）
+
+フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）と POST 先のパスは `routes/` との契約なので、画面を差し替えても維持する。transaction-binding を有効にした場合の束縛チェック（`rejectUnboundTransaction()`）は「誰にこの画面を見せてよいか」の判断として `pages/` 側が持ち、`routes/` の POST も同じ関数を import して使う。
+
+Next.js はもともと `login/page.tsx`（画面）と `login/actions.ts`（Server Action = ロジック）に分かれており、この構造に対応する。`_oidc-provider/pages/` も生成されるが、Route Handler 経由で動く device / CIBA の画面と契約テストが使うもので、ログイン・同意画面のカスタマイズは `page.tsx` で行う。
 
 ## 機能トグル（--enable / --disable）
 

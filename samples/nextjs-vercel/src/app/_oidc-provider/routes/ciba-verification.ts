@@ -1,6 +1,6 @@
 /**
  * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
- * (CIBA Core 1.0), authentication device UI.
+ * (CIBA Core 1.0), authentication device UI (API routing layer).
  *
  * This route was generated because the OP was created with `--enable ciba`.
  * It is backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may
@@ -14,6 +14,11 @@
  * binding_message), and approve or deny. The consumption device learns the
  * outcome only by polling the token endpoint — there is no push channel in
  * poll mode.
+ *
+ * Every step of the UI lives here, GET /ciba included: unlike /login, no
+ * earlier endpoint prepared a transaction for the sign-in form, so GET /ciba
+ * mints the login transaction and its binding cookie itself. The screens come
+ * from pages/ciba.ts, so the UI can be changed without touching this file.
  *
  * ## Why the login form demands a binding cookie
  *
@@ -54,17 +59,22 @@ import {
   parseSessionId,
   userStore,
 } from '../store';
-import { defaultViews, renderView } from '../views';
+import {
+  renderCibaCompletedPage,
+  renderCibaLoginPage,
+  renderCibaPendingRequestsPage,
+} from '../pages/ciba';
+import { renderErrorPage } from '../pages/errors';
 import { cibaConfig } from './backchannel-authentication';
 
 export const cibaApp = new WebRouter();
 
 /**
- * Attach a Set-Cookie to a Response a view already produced.
+ * Attach a Set-Cookie to a Response a page already produced.
  *
- * renderView() builds its own Response, so headers staged on the framework
+ * The page helpers build their own Response, so headers staged on the framework
  * context never reach it. Rebuilding the Response is the framework-neutral way
- * to add the cookie without making views cookie-aware.
+ * to add the cookie without making the screens cookie-aware.
  */
 function withCookie(response: Response, cookie: string): Response {
   const headers = new Headers(response.headers);
@@ -77,12 +87,9 @@ function withCookie(response: Response, cookie: string): Response {
 }
 
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+function renderVerificationError(c: any, error: unknown): Response {
   if (error instanceof CibaVerificationError) {
-    return renderView(
-      views.errorPage({ error: error.message, statusCode: error.statusCode }),
-      { status: error.statusCode },
-    );
+    return renderErrorPage(c, { error: error.message, statusCode: error.statusCode });
   }
   throw error;
 }
@@ -98,10 +105,9 @@ function remainingSeconds(expiresAt: Date): number {
  * session-gated).
  */
 async function renderPendingRequests(c: any, subject: string): Promise<Response> {
-  const views = c.get('views') ?? defaultViews;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const pending = await listPendingCibaRequests({ subject, store: cibaStore });
-  return renderView(views.cibaPendingRequestsPage({
+  return renderCibaPendingRequestsPage(c, {
     requests: pending.map((record) => ({
       authReqId: record.authReqId,
       clientId: record.clientId,
@@ -110,7 +116,7 @@ async function renderPendingRequests(c: any, subject: string): Promise<Response>
       expiresInSeconds: remainingSeconds(record.expiresAt),
       csrfToken: record.csrfToken ?? '',
     })),
-  }));
+  });
 }
 
 /**
@@ -121,7 +127,6 @@ async function renderPendingRequests(c: any, subject: string): Promise<Response>
  * the binding cookie this response sets.
  */
 cibaApp.get('/', async (c) => {
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const loginTransactionStore =
     c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
@@ -138,10 +143,10 @@ cibaApp.get('/', async (c) => {
     bindingSecret,
     remainingSeconds(record.expiresAt),
   );
-  return withCookie(renderView(views.cibaLoginPage({
+  return withCookie(renderCibaLoginPage(c, {
     loginTransactionId: record.id,
     csrfToken: record.csrfToken,
-  })), cookie);
+  }), cookie);
 });
 
 /**
@@ -159,7 +164,6 @@ cibaApp.post('/login', async (c) => {
   const username = String(body['username'] ?? '');
   const password = String(body['password'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const loginTransactionStore =
     c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
@@ -176,7 +180,7 @@ cibaApp.post('/login', async (c) => {
       store: loginTransactionStore,
     });
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 
   // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
@@ -194,17 +198,17 @@ cibaApp.post('/login', async (c) => {
     );
     if (!failure.canRetry) {
       // The transaction is gone: this form cannot be retried at all.
-      return renderView(views.errorPage({
+      return renderErrorPage(c, {
         error: 'Too many login attempts',
         statusCode: 429,
-      }), { status: 429 });
+      });
     }
-    return renderView(views.cibaLoginPage({
+    return renderCibaLoginPage(c, {
       loginTransactionId: transaction.id,
       csrfToken: transaction.csrfToken,
       error: 'Invalid credentials',
       remainingAttempts: failure.remainingAttempts,
-    }));
+    });
   }
 
   // The transaction is single-use: a successful login consumes it, and the
@@ -237,7 +241,6 @@ cibaApp.post('/approve', async (c) => {
   const csrfToken = String(body['csrf_token'] ?? '');
   const decision = String(body['decision'] ?? '');
 
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const consentResolver = c.get('consentResolver');
@@ -245,18 +248,18 @@ cibaApp.post('/approve', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (!session) {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'Sign in again to review this request',
       statusCode: 401,
-    }), { status: 401 });
+    });
   }
 
   if (decision !== 'approve' && decision !== 'deny') {
-    return renderView(views.errorPage({
+    return renderErrorPage(c, {
       error: 'invalid_request',
       errorDescription: 'decision must be approve or deny',
       statusCode: 400,
-    }), { status: 400 });
+    });
   }
 
   try {
@@ -280,10 +283,10 @@ cibaApp.post('/approve', async (c) => {
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return renderView(views.cibaCompletedPage({
+      return renderCibaCompletedPage(c, {
         approved: true,
         clientId: approved.clientId,
-      }));
+      });
     }
 
     const record = await cibaStore.findByAuthReqId(authReqId);
@@ -293,11 +296,11 @@ cibaApp.post('/approve', async (c) => {
       csrfToken,
       store: cibaStore,
     });
-    return renderView(views.cibaCompletedPage({
+    return renderCibaCompletedPage(c, {
       approved: false,
       clientId: record?.clientId ?? '',
-    }));
+    });
   } catch (error) {
-    return renderVerificationError(views, error);
+    return renderVerificationError(c, error);
   }
 });

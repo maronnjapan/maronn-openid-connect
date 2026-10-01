@@ -41,7 +41,7 @@ import {
   authSessionStore as defaultAuthSessionStore,
   buildTransactionBindingCookie,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
+import { renderAuthorizationErrorPage } from '../pages/errors.js';
 import {
   PushedRequestUriError,
   assertPushedRequestUsed,
@@ -705,23 +705,12 @@ const handleAuthorizationRequest = async (c: any) => {
       if (acceptsJson) {
         return c.json({ error: error.code, error_description: error.errorDescription }, 400);
       }
-      const parErrorPagePath = c.get('config').authorizationErrorRedirectPath;
-      if (parErrorPagePath && parErrorPagePath.startsWith('/') && !parErrorPagePath.startsWith('//')) {
-        const parErrorParams = new URLSearchParams({
-          error: error.code,
-          error_description: error.errorDescription,
-        });
-        return c.redirect(`${parErrorPagePath}?${parErrorParams.toString()}`, 303);
-      }
-      const parViews = c.get('views') ?? defaultViews;
-      return renderView(
-        parViews.errorPage({
-          error: error.code,
-          errorDescription: error.errorDescription,
-          statusCode: 400,
-        }),
-        { status: 400 },
-      );
+      // The OP's own error page (pages/errors.ts): an inline HTML 400, or a 303
+      // to config.authorizationErrorRedirectPath for a framework-native page.
+      return renderAuthorizationErrorPage(c, {
+        error: error.code,
+        errorDescription: error.errorDescription,
+      });
     }
     if (error instanceof AuthorizationError) {
       if (error.redirectUri) {
@@ -754,33 +743,15 @@ const handleAuthorizationRequest = async (c: any) => {
       if (acceptsJson) {
         return c.json({ error: error.error, error_description: error.errorDescription }, 400);
       }
-      // OP 内部のエラーページパスが設定されている場合（Next.js sample のように
-      // error.tsx などの framework-native なエラー画面へ委ねたいケース）は、HTML を
-      // 直接返さず 303 でそのパスへ遷移する。未登録 redirect_uri へは決して飛ばさず、
-      // OP 自身のパスにのみ遷移する。遷移先ページは 200 を返すため元の HTTP 400 は
-      // 失われるが、ブラウザにエラー画面を見せる（OIDF の screenshot 要件）目的は満たす。
-      // error / error_description は URLSearchParams でエンコードして渡す。
-      // 安全性のため遷移先は OP 内部の root-relative path（'/' 始まりかつ
-      // protocol-relative '//host' でない）に限定する。絶対 URL や '//host' を
-      // 設定された場合は open redirect 化を防ぐため redirect せず、安全側の
-      // HTML error page にフォールバックする。
-      const errorPagePath = c.get('config').authorizationErrorRedirectPath;
-      if (errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')) {
-        const params = new URLSearchParams({ error: error.error });
-        if (error.errorDescription) {
-          params.set('error_description', error.errorDescription);
-        }
-        return c.redirect(`${errorPagePath}?${params.toString()}`, 303);
-      }
-      const views = c.get('views') ?? defaultViews;
-      return renderView(
-        views.errorPage({
-          error: error.error,
-          errorDescription: error.errorDescription,
-          statusCode: 400,
-        }),
-        { status: 400 },
-      );
+      // The OP's own error page (pages/errors.ts): an inline HTML 400, or a 303
+      // to config.authorizationErrorRedirectPath when a framework-native page
+      // renders the error (the generated Next.js output uses /oidc-error). The
+      // unregistered redirect_uri is never the target either way, and only an
+      // OP-internal root-relative path is honored for the 303.
+      return renderAuthorizationErrorPage(c, {
+        error: error.error,
+        errorDescription: error.errorDescription,
+      });
     }
     return c.json({ error: 'server_error' }, 500);
   }

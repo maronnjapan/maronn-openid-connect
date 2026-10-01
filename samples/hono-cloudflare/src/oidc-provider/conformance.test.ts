@@ -1275,8 +1275,9 @@ describe('generated provider HTTP conformance', () => {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
-    // End-to-end: the login route returns its view via renderView, so the login
-    // page is delivered as a text/html Response through the framework at runtime.
+    // End-to-end: the login page (pages/login.ts) returns its view via
+    // renderView, so the login page is delivered as a text/html Response through
+    // the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
       // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
       // transaction (302 -> /login); the verifier is never needed here.
@@ -1449,6 +1450,9 @@ describe('generated provider HTTP conformance', () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
         { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
+        // The browser-facing screens (pages/) enforce their method lists too.
+        { path: '/login', method: 'PUT', allow: 'GET, POST' },
+        { path: '/consent', method: 'PUT', allow: 'GET, POST' },
       { path: '/introspect', method: 'GET', allow: 'POST' },
       { path: '/revoke', method: 'GET', allow: 'POST' },
       { path: '/device_authorization', method: 'GET', allow: 'POST' },

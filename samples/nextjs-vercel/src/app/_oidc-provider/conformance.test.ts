@@ -991,8 +991,9 @@ describe('generated provider HTTP conformance', () => {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
-    // End-to-end: the login route returns its view via renderView, so the login
-    // page is delivered as a text/html Response through the framework at runtime.
+    // End-to-end: the login page (pages/login.ts) returns its view via
+    // renderView, so the login page is delivered as a text/html Response through
+    // the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
       // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
       // transaction (302 -> /login); the verifier is never needed here.
@@ -1165,6 +1166,9 @@ describe('generated provider HTTP conformance', () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
         { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
+        // The browser-facing screens (pages/) enforce their method lists too.
+        { path: '/login', method: 'PUT', allow: 'GET, POST' },
+        { path: '/consent', method: 'PUT', allow: 'GET, POST' },
       { path: '/introspect', method: 'GET', allow: 'POST' },
       { path: '/revoke', method: 'GET', allow: 'POST' },
       { path: '/device_authorization', method: 'GET', allow: 'POST' },
@@ -2028,28 +2032,13 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
       const res = await app.request(url);
 
-      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
-      // Object, so the OP reports invalid_request_object (not the generic
-      // invalid_request). A redirect_uri carried inside a broken Request Object
-      // cannot be trusted, so the error stays on the OP: HTTP 400, no redirect,
-      // no state echo. Pinned to the default error page so a change in either
-      // the error code or the non-redirect behavior is caught exactly.
-      expect(res.status).toBe(400);
-      expect(res.headers.get('Location')).toBe(null);
-      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
-      const body = await res.text();
-      expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request_object</p>',
-          '  <p>request object is not a JWS compact serialization</p>',
-          '</body>',
-          '</html>',
-        ].join('\n'),
+      // OIDC Core 1.0 §6.3: invalid_request_object (not the generic
+      // invalid_request). This provider sets authorizationErrorRedirectPath, so
+      // the browser is 303-redirected to the OP's OWN error page — never to the
+      // redirect_uri of the broken Request Object.
+      expect(res.status).toBe(303);
+      expect(res.headers.get('Location')).toBe(
+        '/oidc-error?error=invalid_request_object&error_description=request+object+is+not+a+JWS+compact+serialization',
       );
     });
 

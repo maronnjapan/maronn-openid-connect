@@ -122,7 +122,29 @@ describe('generate with --enable google-login', () => {
       expect(mentioning).toEqual([]);
     });
 
-    it('should generate the login_uri callback route from the google-login package when enabled', () => {
+    // The callback LOGIC (verify the ID token, map the account, mint the session)
+    // is a function of routes/login.ts; the POST /login/google route that Google
+    // posts to lives in pages/login.ts and only turns its outcome into HTTP.
+    it('should generate the login_uri callback from the google-login package when enabled', () => {
+      const files = generateFiles(framework, ['google-login']);
+      const route = fileContent(files, providerPath(framework, 'routes/login.ts'));
+      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
+
+      expect(route.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
+      expect(route.includes('export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {')).toBe(true);
+      expect(route.includes('handleGoogleLoginRedirect({')).toBe(true);
+      expect(route.includes('resolveGoogleLoginSubject(login.account, accountResolver)')).toBe(
+        true,
+      );
+      expect(page.includes("loginPage.post('/google', async (c) => {")).toBe(true);
+      expect(page.includes('const outcome = await completeGoogleLogin(c);')).toBe(true);
+      expect(page.includes(`from '${GOOGLE_LOGIN_PACKAGE}`)).toBe(false);
+    });
+
+    // The GIS configuration (the g_id_onload attributes) needs the nonce store
+    // and the issuer, so the logic module builds it and hands it to the screen
+    // as plain data; the page never talks to the google-login package.
+    it('should build the Sign in with Google configuration in the login logic module when enabled', () => {
       const content = fileContent(
         generateFiles(framework, ['google-login']),
         providerPath(framework, 'routes/login.ts'),
@@ -130,27 +152,25 @@ describe('generate with --enable google-login', () => {
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
+      expect(content.includes('async function buildGoogleSignIn(')).toBe(true);
       expect(content.includes('return buildGoogleSignInAttributes({')).toBe(true);
-      expect(content.includes("loginApp.post('/google', async (c) => {")).toBe(true);
-      expect(content.includes('handleGoogleLoginRedirect({')).toBe(true);
-      expect(content.includes('resolveGoogleLoginSubject(login.account, accountResolver)')).toBe(
-        true,
-      );
       expect(content.includes("loginUri: new URL('/login/google', config.issuer).toString(),")).toBe(
         true,
       );
+      expect(content.includes('googleSignIn?: GoogleSignInAttributes;')).toBe(true);
     });
 
-    it('should render the Sign in with Google button on both login page renders when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'routes/login.ts'),
-      );
-      const renders = content.split(
-        'googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),',
-      );
+    it('should hand the Sign in with Google button to both login screen renders when enabled', () => {
+      const files = generateFiles(framework, ['google-login']);
+      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
+      const route = fileContent(files, providerPath(framework, 'routes/login.ts'));
 
-      expect(renders.length).toBe(3);
+      // describeLoginScreen() builds the button configuration once and is used
+      // for GET /login and for the failed-attempt re-render of POST /login.
+      expect(route.split('googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),').length).toBe(2);
+      expect(route.split('describeLoginScreen(c, transactionId, transaction)').length).toBe(3);
+      // The page only passes the screen data through to the view.
+      expect(page.includes('googleSignIn: screen.googleSignIn,')).toBe(true);
     });
 
     it('should add the google-login config type and provider config field when enabled', () => {
@@ -239,9 +259,11 @@ describe('generate with --enable google-login', () => {
     it('should generate the Google callback alongside transaction-binding and ciba', () => {
       const files = generateFiles(framework, ['google-login', 'transaction-binding', 'ciba']);
       const login = fileContent(files, providerPath(framework, 'routes/login.ts'));
+      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
       const paths = files.map((file) => file.path);
 
-      expect(login.includes("loginApp.post('/google', async (c) => {")).toBe(true);
+      expect(login.includes('export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {')).toBe(true);
+      expect(page.includes("loginPage.post('/google', async (c) => {")).toBe(true);
       expect(paths.includes(providerPath(framework, 'routes/backchannel-authentication.ts'))).toBe(true);
     });
   });

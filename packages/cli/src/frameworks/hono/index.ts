@@ -26,6 +26,16 @@ import {
   consentRouteTemplate,
   conformanceTestTemplate,
 } from './templates.js';
+import {
+  authorizePageTemplate,
+  cibaPageTemplate,
+  consentPageTemplate,
+  devicePageTemplate,
+  errorPageTemplate,
+  loginPageTemplate,
+  logoutPageTemplate,
+  respondTemplate,
+} from './pages.js';
 
 export class HonoGenerator implements FrameworkGenerator {
   readonly name = 'hono';
@@ -48,6 +58,22 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
       { path: 'views.ts', content: viewsTemplate(features) },
+      // Screen routing layer (pages/): every browser-facing GET / POST
+      // (authorize, login, consent, and the device / CIBA / logout UIs) plus the
+      // render helpers. Each page calls the logic of its routes/ module and only
+      // renders or redirects, so the UI is customized in pages/ and views.ts.
+      { path: 'pages/respond.ts', content: respondTemplate() },
+      { path: 'pages/errors.ts', content: errorPageTemplate() },
+      { path: 'pages/authorize.ts', content: authorizePageTemplate() },
+      { path: 'pages/login.ts', content: loginPageTemplate(features) },
+      { path: 'pages/consent.ts', content: consentPageTemplate() },
+      ...(features.deviceAuthorizationGrant
+        ? [{ path: 'pages/device.ts', content: devicePageTemplate() }]
+        : []),
+      ...(features.ciba ? [{ path: 'pages/ciba.ts', content: cibaPageTemplate() }] : []),
+      ...(features.rpInitiatedLogout
+        ? [{ path: 'pages/logout.ts', content: logoutPageTemplate() }]
+        : []),
       { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features, scopes) },
       { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features) },
       { path: 'routes/userinfo.ts', content: userinfoRouteTemplate(pkg) },

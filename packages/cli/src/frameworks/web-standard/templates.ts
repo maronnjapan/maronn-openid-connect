@@ -58,6 +58,16 @@ import {
   userinfoRouteTemplate,
   viewsTemplate,
 } from '../hono/templates.js';
+import {
+  authorizePageTemplate,
+  cibaPageTemplate,
+  consentPageTemplate,
+  devicePageTemplate,
+  errorPageTemplate,
+  loginPageTemplate,
+  logoutPageTemplate,
+  respondTemplate,
+} from '../hono/pages.js';
 
 function toWebRouteTemplate(content: string): string {
   return content
@@ -448,14 +458,14 @@ export function webAppTemplate(
   // the verification UI is browser navigation, so it needs none (like /login).
   const deviceImport = features.deviceAuthorizationGrant
     ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';\n`
+import { devicePage } from './pages/device.js';\n`
     : '';
   const deviceCors = features.deviceAuthorizationGrant
     ? `  app.use('/device_authorization', protectedCors);\n`
     : '';
   const deviceMount = features.deviceAuthorizationGrant
     ? `  app.route('/device_authorization', deviceAuthorizationApp);
-  app.route('/device', deviceApp);\n`
+  app.route('/device', devicePage);\n`
     : '';
   const deviceStorageContext = features.deviceAuthorizationGrant
     ? `    c.set('deviceAuthorizationStore', deviceAuthorizationStore);\n`
@@ -468,14 +478,14 @@ import { deviceApp } from './routes/device.js';\n`
   // none (like /login).
   const cibaImport = features.ciba
     ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
-import { cibaApp } from './routes/ciba-verification.js';\n`
+import { cibaPage } from './pages/ciba.js';\n`
     : '';
   const cibaCors = features.ciba
     ? `  app.use('/backchannel_authentication', protectedCors);\n`
     : '';
   const cibaMount = features.ciba
     ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
-  app.route('/ciba', cibaApp);\n`
+  app.route('/ciba', cibaPage);\n`
     : '';
   // The default CIBA user resolver treats login_hint as the username of the
   // injected user store, so a custom storage option is honored without extra
@@ -509,10 +519,10 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   // adds no store: the session store and the id_token_hint JWKS provider are
   // already wired for every build.
   const logoutImport = features.rpInitiatedLogout
-    ? `import { logoutApp } from './routes/logout.js';\n`
+    ? `import { logoutPage } from './pages/logout.js';\n`
     : '';
   const logoutMount = features.rpInitiatedLogout
-    ? `  app.route('/logout', logoutApp);\n`
+    ? `  app.route('/logout', logoutPage);\n`
     : '';
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
@@ -563,13 +573,13 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
     ? `    c.set('revocationResolvers', storeResolvers.revocationResolvers);\n`
     : '';
   return `import { WebRouter, type WebMiddleware } from './web-router.js';
-import { authorizeApp } from './routes/authorize.js';
+import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
 ${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
-import { loginApp } from './routes/login.js';
-import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -727,13 +737,15 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
     await next();
   });
 
-  app.route('/authorize', authorizeApp);
+  // Browser-facing surfaces are mounted from pages/: every GET and POST of a
+  // screen lives there, and the logic they call is in routes/.
+  app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
 ${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
-  app.route('/login', loginApp);
-  app.route('/consent', consentApp);
+  app.route('/login', loginPage);
+  app.route('/consent', consentPage);
 
   return app;
 }
@@ -2698,7 +2710,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, errorPageMode)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 
@@ -2738,6 +2750,21 @@ function webCoreGeneratedFiles(
       ),
     },
     { path: 'views.ts', content: viewsTemplate(features) },
+    // Screen routing layer: every browser-facing GET / POST (authorize, login,
+    // consent, and the device / CIBA / logout UIs) plus the render helpers. Each
+    // page calls the logic of its routes/ module and only renders or redirects.
+    { path: 'pages/respond.ts', content: respondTemplate() },
+    { path: 'pages/errors.ts', content: errorPageTemplate() },
+    { path: 'pages/authorize.ts', content: toWebRouteTemplate(authorizePageTemplate()) },
+    { path: 'pages/login.ts', content: toWebRouteTemplate(loginPageTemplate(features)) },
+    { path: 'pages/consent.ts', content: toWebRouteTemplate(consentPageTemplate()) },
+    ...(features.deviceAuthorizationGrant
+      ? [{ path: 'pages/device.ts', content: toWebRouteTemplate(devicePageTemplate()) }]
+      : []),
+    ...(features.ciba ? [{ path: 'pages/ciba.ts', content: toWebRouteTemplate(cibaPageTemplate()) }] : []),
+    ...(features.rpInitiatedLogout
+      ? [{ path: 'pages/logout.ts', content: toWebRouteTemplate(logoutPageTemplate()) }]
+      : []),
     { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
     { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },

@@ -137,13 +137,13 @@ describe('generate with --enable rp-initiated-logout', () => {
       ).toBe(true);
     });
 
-    it('should mount the logout routes only when the feature is enabled', () => {
+    it('should mount the logout page only when the feature is enabled', () => {
       const appPath = providerPath(framework, 'app.ts');
       const defaultApp = fileContent(generateFiles(framework), appPath);
       const enabledApp = fileContent(generateFiles(framework, ['rp-initiated-logout']), appPath);
 
-      expect(defaultApp.includes("app.route('/logout', logoutApp);")).toBe(false);
-      expect(enabledApp.includes("app.route('/logout', logoutApp);")).toBe(true);
+      expect(defaultApp.includes("app.route('/logout', logoutPage);")).toBe(false);
+      expect(enabledApp.includes("app.route('/logout', logoutPage);")).toBe(true);
     });
 
     it('should generate the confirmation cookie helpers in store.ts only when enabled', () => {

@@ -69,8 +69,9 @@ oidc-provider/
 ├── config.ts             # ProviderConfig・クライアント登録（既定値はローカル検証専用）
 ├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
 ├── resolvers.ts          # セッション・同意状態の resolver
-├── views.ts              # ログイン / 同意 / エラー画面のデフォルト UI
-├── routes/               # 各エンドポイントのルート実装
+├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML
+├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
+├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
 ├── conformance.test.ts   # 生成 OP の想定挙動を固定する契約テスト
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
@@ -84,12 +85,34 @@ oidc-provider/
 | `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / Request Object 対応） |
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
-| `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） |
+| `/login`, `/consent` | ログイン・同意画面。ルート（GET / POST）と描画は `pages/`、認証・同意の判断は `routes/` の関数が担当する（差し替え可能なデフォルト UI 付き） |
 | `/login/google` | Sign in with Google の `login_uri`（Google が ID トークンを POST する先。`google-login` 有効時） |
 | `/.well-known/openid-configuration` | Discovery メタデータ |
 | `/.well-known/jwks.json` | JWKS（公開鍵） |
 | `/introspect` | RFC 7662 Token Introspection（`introspection` 有効時） |
 | `/revoke` | RFC 7009 Token Revocation（`revocation` 有効時） |
+
+## 画面用ルーティング（pages/）と API ルーティング（routes/）
+
+生成されるルーティングは 2 種類に分かれている。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて `pages/` が担当し、`routes/` は Response を一切作らない。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`）だけで、`routes/` のロジックは読まなくてよい。
+
+| 層 | ファイル | 役割 |
+|---|---|---|
+| 画面用ルーティング | `pages/authorize.ts` / `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts` / `pages/respond.ts`（機能有効時: `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts`） | ブラウザ向けのルートは **GET も POST も** ここにある（`GET\|POST /authorize`・`GET\|POST /login`・`GET\|POST /consent` など）。リクエストを読み、`routes/` の関数を 1 回呼び、返ってきた結果（outcome）を画面かリダイレクトに変換する。ロジックは持たない |
+| API ルーティング | `routes/*.ts` | OIDC のロジック本体。`token` / `userinfo` などの JSON エンドポイントはルーターのまま。ブラウザ向けの各ステップ（`authorize` / `login` / `consent` / `device` / `ciba-verification` / `logout`）は Response を返さない関数（`processAuthorizationRequest()` / `prepareLogin()` / `submitLogin()` / `submitConsent()` など）で、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返す。描画・リダイレクト・`Set-Cookie`・`c.json()` は一切行わず、`views.ts` も `pages/` も import しない |
+
+たとえば `POST /login` は `pages/login.ts` がフォームを読んで `submitLogin()` を呼び、`{ kind: 'authenticated', cookies }` なら Cookie を付けて `/consent` へ 302、`{ kind: 'invalid_credentials' }` ならフォームを再表示、`{ kind: 'locked_out' }` なら 429 のエラー画面、という変換だけを行う。ステータスコード・Cookie・リダイレクト先といった HTTP の契約は `conformance.test.ts` が固定している。
+
+UI を変える場所は、変えたい範囲で選ぶ。
+
+- **HTML だけ変える** → `views.ts` の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
+- **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` と outcome を変換している箇所を書き換える。画面を返す経路はすべて `pages/` を通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
+- **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `pages/*.ts` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する（Next.js の生成物は `/oidc-error` を使う）
+
+フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持する。transaction-binding の束縛チェック（`rejectUnboundTransaction()`）や google-login のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけでよい。
+
+Next.js はもともと `login/page.tsx`（画面）と `login/actions.ts`（Server Action = ロジック）に分かれており、この構造に対応する。`_oidc-provider/pages/` も生成されるが、Route Handler 経由で動く `/authorize` と device / CIBA の画面、契約テストが使うもので、ログイン・同意画面のカスタマイズは `page.tsx` で行う。
 
 ## 機能トグル（--enable / --disable）
 

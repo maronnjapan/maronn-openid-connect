@@ -259,14 +259,14 @@ describe('generate with --enable device-authorization-grant', () => {
         expect(content.includes('maxLoginAttempts: 5,')).toBe(true);
       });
 
-      it('should mount both device routers', () => {
+      it('should mount the device authorization endpoint and the device page', () => {
         const app = fileContent(
           generateFiles(framework, ['device-authorization-grant']),
           providerPath(framework, 'app.ts'),
         );
 
         expect(app.includes("app.route('/device_authorization', deviceAuthorizationApp);")).toBe(true);
-        expect(app.includes("app.route('/device', deviceApp);")).toBe(true);
+        expect(app.includes("app.route('/device', devicePage);")).toBe(true);
       });
 
       it('should give the back-channel endpoint the protected CORS policy', () => {

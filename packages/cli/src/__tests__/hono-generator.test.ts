@@ -627,9 +627,9 @@ describe('HonoGenerator', () => {
     it('should generate ViewResult and renderView extension points for every HTML route', () => {
       const views = files.find((f) => f.path === 'views.ts')?.content ?? '';
       const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
-      expect(views).toContain('export type ViewResult = string | Response');
-      expect(views).toContain('export function renderView(');
-      expect(views).toContain("if (typeof result === 'string')");
+      expect(views).toContain('export type ViewResult = string | ReadableStream<Uint8Array> | Response;');
+      expect(views).toContain('export async function renderView(');
+      expect(views).toContain("if (typeof resolved === 'string' || resolved instanceof ReadableStream)");
       for (const path of ['routes/authorize.ts', 'routes/login.ts', 'routes/consent.ts']) {
         const content = files.find((f) => f.path === path)?.content ?? '';
         expect(content).toContain('renderView');
@@ -1744,36 +1744,93 @@ describe('HonoGenerator', () => {
     });
   });
 
-  // The generated view API must accept both an HTML string (default) and a
-  // framework-native Response (custom renderer) so callers can return Response
-  // objects without editing views.ts. These tests pin the ViewResult / renderView
-  // extension points so a regression that collapses Views back to a string-only
-  // return type is caught.
+  // The library owns as little UI as possible: views.ts ships minimal default
+  // pages, and an application is expected to replace them with whatever it
+  // renders HTML with (a template string, a template engine, a React or Vue
+  // component rendered on the server, ...). The view API therefore accepts an
+  // HTML string (default), a ReadableStream of HTML (what streaming server
+  // renderers produce) and a Response, either directly or as a Promise
+  // (asynchronous renderers). These tests pin the ViewResult / renderView
+  // extension points so a regression that collapses Views back to a
+  // synchronous, string-only return type is caught.
   describe('ViewResult / renderView extension points', () => {
     const files = generator.generate(options);
 
-    it('should define a ViewResult type accepting string or Response in views.ts', () => {
+    it('should define a ViewResult type accepting an HTML string, a ReadableStream, or a Response', () => {
       const file = files.find((f) => f.path === 'views.ts');
-      expect(file?.content).toContain('export type ViewResult = string | Response;');
+      expect(file?.content).toContain(
+        'export type ViewResult = string | ReadableStream<Uint8Array> | Response;',
+      );
     });
 
-    it('should type every Views method to return ViewResult', () => {
+    it('should let every Views method return a ViewResult directly or as a Promise', () => {
       const file = files.find((f) => f.path === 'views.ts');
       const content = file?.content ?? '';
-      expect(content).toContain('loginPage(params: LoginPageParams): ViewResult;');
-      expect(content).toContain('consentPage(params: ConsentPageParams): ViewResult;');
-      expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult;');
+      expect(content).toContain('loginPage(params: LoginPageParams): ViewResult | Promise<ViewResult>;');
+      expect(content).toContain('consentPage(params: ConsentPageParams): ViewResult | Promise<ViewResult>;');
+      expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult | Promise<ViewResult>;');
     });
 
-    it('should export a renderView helper that normalizes a ViewResult to a Response', () => {
+    it('should export an async renderView helper that normalizes a ViewResult to a Response', () => {
       const file = files.find((f) => f.path === 'views.ts');
       const content = file?.content ?? '';
-      expect(content).toContain('export function renderView(');
+      expect(content).toContain(`export async function renderView(
+  result: ViewResult | Promise<ViewResult>,
+  init?: RenderViewInit,
+): Promise<Response> {`);
       // A Response is passed through untouched so a custom view keeps control of
       // status / headers / body.
-      expect(content).toContain('if (result instanceof Response)');
-      // A string is wrapped as an HTML Response with the pinned content type.
+      expect(content).toContain('if (resolved instanceof Response)');
+      // A string or a stream is wrapped as an HTML Response with the pinned
+      // content type.
+      expect(content).toContain(
+        "if (typeof resolved === 'string' || resolved instanceof ReadableStream)",
+      );
       expect(content).toContain("'Content-Type': 'text/html; charset=UTF-8'");
+    });
+
+    // A component element handed back unrendered (a React element, a Vue VNode)
+    // or a view that forgot to return must fail loudly instead of sending
+    // "[object Object]" as the page. The message names no UI framework.
+    it('should throw a framework-neutral TypeError for a view result that is not rendered HTML', () => {
+      const file = files.find((f) => f.path === 'views.ts');
+      expect(file?.content).toContain(`throw new TypeError(
+    'A view must return an HTML string, a ReadableStream of HTML or a Response. ' +
+      'Render the page to HTML before returning it from the view.',
+  );`);
+    });
+
+    // Rendering technology is the application's choice, so views.ts neither
+    // imports nor documents any particular UI framework.
+    it('should keep views.ts free of any UI framework', () => {
+      const allFeatureFiles = generator.generate({
+        ...options,
+        features: {
+          ...DEFAULT_FEATURES,
+          deviceAuthorizationGrant: true,
+          ciba: true,
+          rpInitiatedLogout: true,
+          googleLogin: true,
+        },
+      });
+      const file = allFeatureFiles.find((f) => f.path === 'views.ts');
+      expect(file?.content).not.toMatch(/\b(react|vue)\b/i);
+    });
+
+    // A replacement view that builds HTML by hand needs the same escaping as the
+    // default views, so the helper they use is exported.
+    it('should export escapeHtml for replacement views that build HTML by hand', () => {
+      const file = files.find((f) => f.path === 'views.ts');
+      expect(file?.content).toContain('export function escapeHtml(value: string): string {');
+    });
+
+    // The form contract a replacement view must keep is documented next to the
+    // default views it replaces.
+    it('should document the form contract a replacement view keeps', () => {
+      const file = files.find((f) => f.path === 'views.ts');
+      expect(file?.content).toContain(
+        '// A view that replaces a default page keeps its form contract: the same method',
+      );
     });
 
     it('should render login and consent pages through renderView', () => {
@@ -1803,14 +1860,20 @@ describe('HonoGenerator', () => {
       }
     });
 
-    it('should pin custom string / Response view behavior in the conformance test', () => {
+    it('should pin custom string / stream / Response / async view behavior in the conformance test', () => {
       const file = files.find((f) => f.path === 'conformance.test.ts');
       const content = file?.content ?? '';
       expect(content).toContain("import { renderView } from './views.js'");
       expect(content).toContain('custom view rendering (ViewResult / renderView)');
       expect(content).toContain('should wrap a custom HTML string view into a text/html Response');
       expect(content).toContain('should pass a Response returned by a custom view through untouched');
+      expect(content).toContain('should wait for a view that renders asynchronously');
+      expect(content).toContain('should stream a ReadableStream view as a text/html Response');
+      expect(content).toContain('should reject a view result that is not rendered HTML');
       expect(content).toContain('should deliver the login page through renderView as a text/html Response');
+      expect(content).toContain(
+        'should deliver an asynchronously streamed login view through the login route',
+      );
     });
   });
 

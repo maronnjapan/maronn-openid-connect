@@ -167,7 +167,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
     // form's hidden csrf_token; the redirect target rides inside the cookie.
     const csrfSecret = generateRandomString(32);
     return withCookies(
-      renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
+      await renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
       [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
     );
   }
@@ -181,7 +181,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
   if (redirectTo !== null) {
     return redirectResponse(redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(await renderView(views.logoutCompletedPage({})), cookies);
 }
 
 /** end_session_endpoint - GET (§2: the OP MUST support GET and POST). */
@@ -235,5 +235,5 @@ logoutApp.post('/approve', async (c) => {
   if (confirmation.redirectTo !== null) {
     return redirectResponse(confirmation.redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(await renderView(views.logoutCompletedPage({})), cookies);
 });

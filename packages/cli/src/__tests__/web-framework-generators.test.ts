@@ -836,10 +836,12 @@ describe('ViewResult / renderView across Web-standard generators', () => {
       it('should define ViewResult and renderView in views.ts', () => {
         const file = files.find((f) => f.path === `${prefix}views.ts`);
         const content = file?.content ?? '';
-        expect(content).toContain('export type ViewResult = string | Response;');
-        expect(content).toContain('export function renderView(');
-        expect(content).toContain('loginPage(params: LoginPageParams): ViewResult;');
-        expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult;');
+        expect(content).toContain(
+          'export type ViewResult = string | ReadableStream<Uint8Array> | Response;',
+        );
+        expect(content).toContain('export async function renderView(');
+        expect(content).toContain('loginPage(params: LoginPageParams): ViewResult | Promise<ViewResult>;');
+        expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult | Promise<ViewResult>;');
       });
 
       it('should render login and consent through renderView', () => {
@@ -852,13 +854,18 @@ describe('ViewResult / renderView across Web-standard generators', () => {
         expect(consent?.content).toContain('return renderView(views.consentPage(');
       });
 
-      it('should pin custom string / Response view behavior in the conformance test', () => {
+      it('should pin custom string / stream / Response / async view behavior in the conformance test', () => {
         const file = files.find((f) => f.path === `${prefix}conformance.test.ts`);
         const content = file?.content ?? '';
         expect(content).toContain("import { renderView } from './views");
         expect(content).toContain('custom view rendering (ViewResult / renderView)');
         expect(content).toContain('should wrap a custom HTML string view into a text/html Response');
         expect(content).toContain('should pass a Response returned by a custom view through untouched');
+        expect(content).toContain('should wait for a view that renders asynchronously');
+        expect(content).toContain('should stream a ReadableStream view as a text/html Response');
+        expect(content).toContain(
+          'should deliver an asynchronously streamed login view through the login route',
+        );
       });
 
       it('should generate each merged conformance block exactly once', () => {

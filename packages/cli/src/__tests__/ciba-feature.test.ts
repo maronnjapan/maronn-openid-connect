@@ -323,6 +323,24 @@ describe('generate with --enable ciba', () => {
         expect(views.includes('escapeHtml(request.bindingMessage)')).toBe(true);
       });
 
+      // A view may render asynchronously (e.g. a React or Vue component rendered
+      // on the server), so the route must wait for the rendered page before it
+      // attaches the login binding cookie to it.
+      it('should await the rendered view before attaching cookies to it', () => {
+        const ciba = fileContent(
+          generateFiles(framework, ['ciba']),
+          providerPath(framework, 'routes/ciba-verification.ts'),
+        );
+
+        expect(ciba.includes('withCookie(renderView(')).toBe(false);
+        expect(ciba.includes('withCookie(await renderView(views.cibaLoginPage({')).toBe(true);
+        expect(
+          ciba.includes(
+            'async function renderVerificationError(views: typeof defaultViews, error: unknown): Promise<Response> {',
+          ),
+        ).toBe(true);
+      });
+
       it('should generate the login binding cookie helpers in the store', () => {
         const store = fileContent(
           generateFiles(framework, ['ciba']),

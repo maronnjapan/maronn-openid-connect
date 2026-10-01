@@ -125,6 +125,24 @@ describe('generate with --enable rp-initiated-logout', () => {
       expect(content.includes('validateIdTokenHint(')).toBe(true);
     });
 
+    // A view may render asynchronously (e.g. a React or Vue component rendered on
+    // the server), so the route must wait for the rendered page before it
+    // attaches the confirmation / cleared-session cookies to it.
+    it('should await the rendered view before attaching cookies to it', () => {
+      const content = fileContent(
+        generateFiles(framework, ['rp-initiated-logout']),
+        providerPath(framework, 'routes/logout.ts'),
+      );
+
+      expect(/withCookies\(\s*renderView\(/.test(content)).toBe(false);
+      expect(
+        content.includes('await renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),'),
+      ).toBe(true);
+      expect(
+        content.includes('return withCookies(await renderView(views.logoutCompletedPage({})), cookies);'),
+      ).toBe(true);
+    });
+
     it('should ship the fail-closed empty redirect registry in the generated settings', () => {
       const content = fileContent(
         generateFiles(framework, ['rp-initiated-logout']),
@@ -165,8 +183,8 @@ describe('generate with --enable rp-initiated-logout', () => {
       const enabledViews = fileContent(generateFiles(framework, ['rp-initiated-logout']), viewsPath);
 
       expect(defaultViews.includes('logoutConfirmationPage')).toBe(false);
-      expect(enabledViews.includes('logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;')).toBe(true);
-      expect(enabledViews.includes('logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;')).toBe(true);
+      expect(enabledViews.includes('logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult | Promise<ViewResult>;')).toBe(true);
+      expect(enabledViews.includes('logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult | Promise<ViewResult>;')).toBe(true);
       // The confirmation form posts to the approve route with the paired token.
       expect(enabledViews.includes('action="/logout/approve"')).toBe(true);
     });

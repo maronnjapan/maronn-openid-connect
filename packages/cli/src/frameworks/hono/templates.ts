@@ -4160,7 +4160,7 @@ function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
  * RFC 8628 §5.1: unknown, expired and already-used codes must be
  * indistinguishable, otherwise the response itself confirms which codes exist.
  */
-function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Response {
+async function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Promise<Response> {
   return renderView(
     views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
     { status: 400 },
@@ -4168,7 +4168,7 @@ function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Re
 }
 
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+async function renderVerificationError(views: typeof defaultViews, error: unknown): Promise<Response> {
   if (error instanceof DeviceVerificationError) {
     return renderView(
       views.errorPage({ error: error.message, statusCode: error.statusCode }),
@@ -4232,7 +4232,7 @@ deviceApp.post('/', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (session) {
-    return withCookie(renderView(views.deviceApprovalPage({
+    return withCookie(await renderView(views.deviceApprovalPage({
       userCode: record.userCodeDisplay,
       csrfToken,
       clientId: record.clientId,
@@ -4240,7 +4240,7 @@ deviceApp.post('/', async (c) => {
     })), cookie);
   }
 
-  return withCookie(renderView(views.deviceLoginPage({
+  return withCookie(await renderView(views.deviceLoginPage({
     userCode: record.userCodeDisplay,
     csrfToken,
   })), cookie);
@@ -4316,7 +4316,7 @@ deviceApp.post('/login', async (c) => {
 
   // Two cookies on one response: the new OP session, and the binding cookie the
   // approval POST will have to present again.
-  const withSession = withCookie(renderView(views.deviceApprovalPage({
+  const withSession = withCookie(await renderView(views.deviceApprovalPage({
     userCode: record.userCodeDisplay,
     csrfToken,
     clientId: record.clientId,
@@ -4382,14 +4382,14 @@ ${approveNarrowStep}      // Record the consent the same way /consent does, so a
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return withCookie(renderView(views.deviceCompletedPage({
+      return withCookie(await renderView(views.deviceCompletedPage({
         approved: true,
         clientId: approved.clientId,
       })), clearCookie);
     }
 
     await denyDeviceAuthorization({ record, store: deviceStore, csrfToken });
-    return withCookie(renderView(views.deviceCompletedPage({
+    return withCookie(await renderView(views.deviceCompletedPage({
       approved: false,
       clientId: record.clientId,
     })), clearCookie);
@@ -4581,7 +4581,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
     // form's hidden csrf_token; the redirect target rides inside the cookie.
     const csrfSecret = generateRandomString(32);
     return withCookies(
-      renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
+      await renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
       [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
     );
   }
@@ -4595,7 +4595,7 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
   if (redirectTo !== null) {
     return redirectResponse(redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(await renderView(views.logoutCompletedPage({})), cookies);
 }
 
 /** end_session_endpoint - GET (§2: the OP MUST support GET and POST). */
@@ -4649,7 +4649,7 @@ logoutApp.post('/approve', async (c) => {
   if (confirmation.redirectTo !== null) {
     return redirectResponse(confirmation.redirectTo, cookies);
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return withCookies(await renderView(views.logoutCompletedPage({})), cookies);
 });
 `;
 }
@@ -5033,7 +5033,7 @@ function withCookie(response: Response, cookie: string): Response {
 }
 
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+async function renderVerificationError(views: typeof defaultViews, error: unknown): Promise<Response> {
   if (error instanceof CibaVerificationError) {
     return renderView(
       views.errorPage({ error: error.message, statusCode: error.statusCode }),
@@ -5085,7 +5085,7 @@ cibaApp.get('/', async (c) => {
     bindingSecret,
     remainingSeconds(record.expiresAt),
   );
-  return withCookie(renderView(views.cibaLoginPage({
+  return withCookie(await renderView(views.cibaLoginPage({
     loginTransactionId: record.id,
     csrfToken: record.csrfToken,
   })), cookie);
@@ -9235,13 +9235,13 @@ export interface DeviceCompletedPageParams {
     : '';
   const deviceViewsMembers = features.deviceAuthorizationGrant
     ? `  /** EXPERIMENTAL (RFC 8628 §3.3): render the user_code entry form */
-  deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult;
+  deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the sign-in form for a device flow */
-  deviceLoginPage(params: DeviceLoginPageParams): ViewResult;
+  deviceLoginPage(params: DeviceLoginPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the approve / deny screen */
-  deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult;
+  deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the "go back to your device" screen */
-  deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult;
+  deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult | Promise<ViewResult>;
 `
     : '';
   const deviceDefaultViews = features.deviceAuthorizationGrant
@@ -9405,11 +9405,11 @@ export interface CibaCompletedPageParams {
     : '';
   const cibaViewsMembers = features.ciba
     ? `  /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
-  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
+  cibaLoginPage(params: CibaLoginPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
-  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
+  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
-  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
+  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult | Promise<ViewResult>;
 `
     : '';
   const cibaDefaultViews = features.ciba
@@ -9542,9 +9542,9 @@ export interface LogoutCompletedPageParams {}
     : '';
   const rpInitiatedLogoutViewsMembers = features.rpInitiatedLogout
     ? `  /** EXPERIMENTAL (RP-Initiated Logout 1.0 §2): render the logout confirmation screen */
-  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;
+  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RP-Initiated Logout 1.0): render the logged-out screen */
-  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
+  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult | Promise<ViewResult>;
 `
     : '';
   const rpInitiatedLogoutDefaultViews = features.rpInitiatedLogout
@@ -9630,14 +9630,17 @@ import {
   return `/**
  * UI Views for OpenID Connect Provider.
  *
- * This file contains all user-facing HTML rendering.
- * Customize these functions to match your application's design.
+ * The default views in this file are deliberately minimal and unstyled: they
+ * exist so every flow works out of the box, and they are meant to be replaced.
+ * Replace any subset of them through the views option of the provider (see
+ * createViews at the bottom of this file) instead of editing this file.
  *
- * Each function receives typed parameters and returns a ViewResult: either an
- * HTML string (wrapped into a text/html Response by renderView) or a
- * framework-native Response when you need full control over status / headers /
- * body. You can replace the default HTML with any templating engine, JSX
- * rendering, or UI framework of your choice.
+ * A view receives the typed parameters of its page and returns a ViewResult —
+ * an HTML string, a ReadableStream of HTML, or a Response when you need full
+ * control over status / headers / body — either directly or as a Promise.
+ * Anything that renders HTML on the server can produce one, so the rendering
+ * technology is yours to choose. renderView turns the result into the Response
+ * the route sends.
  */
 
 ${googleViewsImport}// ============================================================
@@ -9686,22 +9689,27 @@ ${deviceParamTypes}${cibaParamTypes}${rpInitiatedLogoutParamTypes}
 // ============================================================
 
 /**
- * A view may return a plain HTML string (the common case) or a fully formed
- * Response when it needs to control the status code, headers, or stream a
- * framework-native body. renderView() normalizes both into a Response.
+ * What a view returns, either directly or as a Promise:
+ *
+ * - an HTML string (the default views below),
+ * - a ReadableStream of HTML, as streaming server renderers produce it, or
+ * - a fully formed Response, when the view controls the status code or
+ *   headers itself.
+ *
+ * renderView() normalizes all of them into a Response.
  */
-export type ViewResult = string | Response;
+export type ViewResult = string | ReadableStream<Uint8Array> | Response;
 
 export interface Views {
   /** Render the login page (and login error page when error is set) */
-  loginPage(params: LoginPageParams): ViewResult;
+  loginPage(params: LoginPageParams): ViewResult | Promise<ViewResult>;
   /** Render the consent/authorization page */
-  consentPage(params: ConsentPageParams): ViewResult;
+  consentPage(params: ConsentPageParams): ViewResult | Promise<ViewResult>;
   /** Render a generic error page */
-  errorPage(params: ErrorPageParams): ViewResult;
+  errorPage(params: ErrorPageParams): ViewResult | Promise<ViewResult>;
 ${deviceViewsMembers}${cibaViewsMembers}${rpInitiatedLogoutViewsMembers}}
 
-/** Options applied when renderView wraps an HTML string into a Response. */
+/** Options applied when renderView wraps an HTML string or stream into a Response. */
 export interface RenderViewInit {
   /** HTTP status code for the generated Response (defaults to 200). */
   status?: number;
@@ -9710,32 +9718,59 @@ export interface RenderViewInit {
 /**
  * Normalize a ViewResult into a Response.
  *
+ * - A Promise is awaited first, so a view may render asynchronously (a server
+ *   renderer, a template engine that reads files, ...).
  * - A Response is returned untouched, so a custom view keeps full control over
- *   its status, headers, and body (e.g. returning a framework-rendered Response).
- * - A string is wrapped into an HTML Response with the given status.
+ *   its status, headers, and body.
+ * - A string or a ReadableStream is wrapped into an HTML Response with the
+ *   given status.
  *
  * Routes call renderView() instead of hard-coding string handling, so the Views
  * return type can stay ViewResult and never silently collapse back to string.
  */
-export function renderView(result: ViewResult, init?: RenderViewInit): Response {
-  if (typeof result === 'string') {
-    return new Response(result, {
+export async function renderView(
+  result: ViewResult | Promise<ViewResult>,
+  init?: RenderViewInit,
+): Promise<Response> {
+  const resolved: unknown = await result;
+  if (resolved instanceof Response) {
+    return resolved;
+  }
+  if (typeof resolved === 'string' || resolved instanceof ReadableStream) {
+    return new Response(resolved, {
       status: init?.status ?? 200,
       headers: { 'Content-Type': 'text/html; charset=UTF-8' },
     });
   }
-  if (result instanceof Response) {
-    return result;
-  }
-  return result;
+  // Only reachable from untyped code: a view that forgot to return, or one that
+  // handed back a UI component instead of the HTML it renders to. Fail here
+  // rather than send "[object Object]".
+  throw new TypeError(
+    'A view must return an HTML string, a ReadableStream of HTML or a Response. ' +
+      'Render the page to HTML before returning it from the view.',
+  );
 }
 
 // ============================================================
 // Default Views Implementation
-// Replace the functions below to customize the UI.
 // ============================================================
+//
+// A view that replaces a default page keeps its form contract: the same method
+// and action, the hidden fields (transaction_id, csrf_token, ...), the input
+// names and the submit button values, because the routes read exactly those.
+// Some params must stay visible and some pages must keep fixed wording; the
+// comments on those params and default views say which and why. Look and
+// wording are otherwise yours. Treat every param as untrusted text, since some
+// (loginHint, bindingMessage, errorDescription, ...) come from outside the OP:
+// escape them when you build HTML yourself (escapeHtml below), and never pass
+// them to a raw-HTML escape hatch of your renderer.
 
-function escapeHtml(value: string): string {
+/**
+ * Escape a value for an HTML text node or a quoted attribute value. The default
+ * views escape every interpolated value with it; a replacement view that builds
+ * HTML by hand can import it as well.
+ */
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -10599,26 +10634,6 @@ function requestObjectValueConformanceBlock(features: OidcFeatureConfig): string
 }
 
 /**
- * Shared, framework-neutral conformance block proving the view layer honors the
- * ViewResult / renderView contract: a view may return a plain HTML string
- * (wrapped into a text/html Response) OR a framework-native Response that keeps
- * full control of status / headers / body.
- *
- * renderView() is exercised directly (the generated views.ts export) so the
- * string-wrapping and Response-pass-through behavior is pinned per framework. A
- * final end-to-end check drives authorize -> /login over real HTTP to prove the
- * login route actually delivers its view through renderView (not a string-only
- * path) at runtime. If a future edit collapses Views back to a string-only
- * contract, the Response pass-through assertion fails.
- *
- * The generated app's createApp() builds a single shared router instance, so the
- * block reuses the module-level app instead of building a second one.
- *
- * Returned as a string interpolated into each framework's conformance template.
- * Uses only string concatenation (no nested template literals) so it injects
- * cleanly into the outer generated-file template literal.
- */
-/**
  * Auth transaction / User-Agent binding contract.
  *
  * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 assume the End-User who authenticates and
@@ -10989,12 +11004,54 @@ function transactionBindingDisabledConformanceBlock(): string {
 `;
 }
 
+/**
+ * Shared, framework-neutral conformance block proving the view layer honors the
+ * ViewResult / renderView contract: a view may return a plain HTML string or a
+ * ReadableStream of HTML (both wrapped into a text/html Response), OR a
+ * Response that keeps full control of status / headers / body, and it may
+ * return any of them as a Promise. The stream and Promise forms are what server
+ * renderers produce, so they are what lets an application replace a page with
+ * whatever it renders HTML with.
+ *
+ * renderView() is exercised directly (the generated views.ts export) so the
+ * wrapping, awaiting and Response-pass-through behavior is pinned per
+ * framework. Two end-to-end checks drive authorize -> /login over real HTTP:
+ * one proves the login route delivers its default view through renderView, the
+ * other that an asynchronous, streamed login view reaches the browser with the
+ * params the route passed it. If a future edit collapses Views back to a
+ * synchronous string-only contract, these assertions fail.
+ *
+ * Returned as a string interpolated into each framework's conformance template.
+ * Uses only string concatenation (no nested template literals) so it injects
+ * cleanly into the outer generated-file template literal.
+ */
 export function customViewConformanceTestBlock(): string {
   return `
   describe('custom view rendering (ViewResult / renderView)', () => {
+    // Emits HTML the way streaming server renderers do: UTF-8 chunks.
+    function htmlStream(chunks: string[]): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder();
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      });
+    }
+
+    // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
+    // transaction (302 -> /login); the verifier is never needed here.
+    function viewAuthorizeUrl(state: string): string {
+      return '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent('openid') +
+        '&state=' + state +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256';
+    }
+
     // A view returning a plain HTML string is wrapped into a text/html Response.
     it('should wrap a custom HTML string view into a text/html Response', async () => {
-      const res = renderView('<h1>custom-view-string</h1>');
+      const res = await renderView('<h1>custom-view-string</h1>');
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
@@ -11004,7 +11061,7 @@ export function customViewConformanceTestBlock(): string {
     // The caller-provided status is applied to a wrapped string view (e.g. the
     // 429 rate-limit error page).
     it('should apply the provided status when wrapping a string view', async () => {
-      const res = renderView('<h1>too many</h1>', { status: 429 });
+      const res = await renderView('<h1>too many</h1>', { status: 429 });
 
       expect(res.status).toBe(429);
       expect(await res.text()).toBe('<h1>too many</h1>');
@@ -11017,7 +11074,7 @@ export function customViewConformanceTestBlock(): string {
         status: 203,
         headers: { 'Content-Type': 'text/html; charset=UTF-8', 'X-Custom-View': 'on' },
       });
-      const res = renderView(original);
+      const res = await renderView(original);
 
       expect(res).toBe(original);
       expect(res.status).toBe(203);
@@ -11025,18 +11082,43 @@ export function customViewConformanceTestBlock(): string {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
+    // Server renderers and template engines may render asynchronously, so
+    // renderView waits for the view to finish.
+    it('should wait for a view that renders asynchronously', async () => {
+      const res = await renderView(Promise.resolve('<h1>custom-view-async</h1>'), { status: 201 });
+
+      expect(res.status).toBe(201);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe('<h1>custom-view-async</h1>');
+    });
+
+    // Streaming server renderers produce a ReadableStream of HTML, which
+    // becomes the text/html body.
+    it('should stream a ReadableStream view as a text/html Response', async () => {
+      const res = await renderView(htmlStream(['<h1>custom-', 'view-stream</h1>']), { status: 202 });
+
+      expect(res.status).toBe(202);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe('<h1>custom-view-stream</h1>');
+    });
+
+    // A value that is not rendered HTML (e.g. a UI component handed back
+    // unrendered) must fail instead of reaching the browser as "[object Object]".
+    it('should reject a view result that is not rendered HTML', async () => {
+      const unrendered = { type: 'main', props: { children: 'not rendered' } };
+
+      await expect(renderView(unrendered as never)).rejects.toThrow(
+        new TypeError(
+          'A view must return an HTML string, a ReadableStream of HTML or a Response. ' +
+            'Render the page to HTML before returning it from the view.',
+        ),
+      );
+    });
+
     // End-to-end: the login route returns its view via renderView, so the login
     // page is delivered as a text/html Response through the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
-      // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
-      // transaction (302 -> /login); the verifier is never needed here.
-      const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
-      const authorizeUrl =
-        '/authorize?response_type=code&client_id=c-conf' +
-        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
-        '&scope=' + encodeURIComponent('openid') +
-        '&state=view-xyz' +
-        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+      const authorizeUrl = viewAuthorizeUrl('view-xyz');
       const authorizeRes = await app.request(authorizeUrl);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
       // Carry forward whatever cookie /authorize set, exactly as a browser would.
@@ -11052,6 +11134,32 @@ export function customViewConformanceTestBlock(): string {
       // at runtime; the exact-body wrapping is pinned by the renderView unit tests.
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+    });
+
+    // End-to-end with a view shaped like a server-rendered component: it renders
+    // asynchronously and streams its HTML, and it is built from the params the
+    // login route passes it.
+    it('should deliver an asynchronously streamed login view through the login route', async () => {
+      const streamedViewApp = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        views: {
+          loginPage: async (params) =>
+            htmlStream(['<main data-view="streamed">', params.transactionId, '</main>']),
+        },
+      });
+      const authorizeRes = await streamedViewApp.request(viewAuthorizeUrl('view-stream'));
+      const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // Same cookie carry-over as the default-view flow above.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+
+      const res = await streamedViewApp.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe(
+        '<main data-view="streamed">' + (loginUrl.searchParams.get('transaction_id') ?? '') + '</main>',
+      );
     });
   });
 `;
@@ -18949,19 +19057,23 @@ ${requestObjectConformanceBeforeAll(features)}
 describe('generated provider HTTP conformance', () => {
 ${persistentStorageConformanceBlock()}
   describe('Generated view rendering', () => {
-    it('should HTML-escape every login and consent value', () => {
+    // Read through renderView so the check keeps holding when a default page is
+    // replaced by an asynchronous or streamed view.
+    it('should HTML-escape every login and consent value', async () => {
       const hostile = '\"><script>alert(1)</script>';
-      const loginHtml = String(defaultViews.loginPage({
+      const loginRes = await renderView(defaultViews.loginPage({
         transactionId: hostile,
         csrfToken: hostile,
         error: '<img src=x onerror=alert(1)>',
       }));
-      const consentHtml = String(defaultViews.consentPage({
+      const consentRes = await renderView(defaultViews.consentPage({
         transactionId: hostile,
         csrfToken: hostile,
         scopes: ['openid'],
         clientId: 'client',
       }));
+      const loginHtml = await loginRes.text();
+      const consentHtml = await consentRes.text();
 
       expect(loginHtml.includes('<script>')).toBe(false);
       expect(loginHtml.includes('<img src=x onerror=alert(1)>')).toBe(false);
@@ -18971,12 +19083,12 @@ ${persistentStorageConformanceBlock()}
       expect(consentHtml.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(true);
     });
 
-    it('should preserve a custom Response returned by a view', () => {
+    it('should preserve a custom Response returned by a view', async () => {
       const customResponse = new Response('custom view', {
         status: 202,
         headers: { 'X-View-Renderer': 'custom' },
       });
-      const rendered = renderView(customResponse, { status: 400 });
+      const rendered = await renderView(customResponse, { status: 400 });
 
       expect(rendered).toBe(customResponse);
       expect(rendered.status).toBe(202);

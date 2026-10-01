@@ -2325,19 +2325,23 @@ describe('generated provider HTTP conformance', () => {
 ${persistentStorageConformanceBlock()}
 ${nodeAdapterContract}
   describe('Generated view rendering', () => {
-    it('should HTML-escape every login and consent value', () => {
+    // Read through renderView so the check keeps holding when a default page is
+    // replaced by an asynchronous or streamed view.
+    it('should HTML-escape every login and consent value', async () => {
       const hostile = '\"><script>alert(1)</script>';
-      const loginHtml = String(defaultViews.loginPage({
+      const loginRes = await renderView(defaultViews.loginPage({
         transactionId: hostile,
         csrfToken: hostile,
         error: '<img src=x onerror=alert(1)>',
       }));
-      const consentHtml = String(defaultViews.consentPage({
+      const consentRes = await renderView(defaultViews.consentPage({
         transactionId: hostile,
         csrfToken: hostile,
         scopes: ['openid'],
         clientId: 'client',
       }));
+      const loginHtml = await loginRes.text();
+      const consentHtml = await consentRes.text();
 
       expect(loginHtml.includes('<script>')).toBe(false);
       expect(loginHtml.includes('<img src=x onerror=alert(1)>')).toBe(false);
@@ -2347,12 +2351,12 @@ ${nodeAdapterContract}
       expect(consentHtml.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(true);
     });
 
-    it('should preserve a custom Response returned by a view', () => {
+    it('should preserve a custom Response returned by a view', async () => {
       const customResponse = new Response('custom view', {
         status: 202,
         headers: { 'X-View-Renderer': 'custom' },
       });
-      const rendered = renderView(customResponse, { status: 400 });
+      const rendered = await renderView(customResponse, { status: 400 });
 
       expect(rendered).toBe(customResponse);
       expect(rendered.status).toBe(202);

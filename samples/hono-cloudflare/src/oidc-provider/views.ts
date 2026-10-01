@@ -1,14 +1,17 @@
 /**
  * UI Views for OpenID Connect Provider.
  *
- * This file contains all user-facing HTML rendering.
- * Customize these functions to match your application's design.
+ * The default views in this file are deliberately minimal and unstyled: they
+ * exist so every flow works out of the box, and they are meant to be replaced.
+ * Replace any subset of them through the views option of the provider (see
+ * createViews at the bottom of this file) instead of editing this file.
  *
- * Each function receives typed parameters and returns a ViewResult: either an
- * HTML string (wrapped into a text/html Response by renderView) or a
- * framework-native Response when you need full control over status / headers /
- * body. You can replace the default HTML with any templating engine, JSX
- * rendering, or UI framework of your choice.
+ * A view receives the typed parameters of its page and returns a ViewResult —
+ * an HTML string, a ReadableStream of HTML, or a Response when you need full
+ * control over status / headers / body — either directly or as a Promise.
+ * Anything that renders HTML on the server can produce one, so the rendering
+ * technology is yours to choose. renderView turns the result into the Response
+ * the route sends.
  */
 
 // ============================================================
@@ -162,40 +165,45 @@ export interface LogoutCompletedPageParams {}
 // ============================================================
 
 /**
- * A view may return a plain HTML string (the common case) or a fully formed
- * Response when it needs to control the status code, headers, or stream a
- * framework-native body. renderView() normalizes both into a Response.
+ * What a view returns, either directly or as a Promise:
+ *
+ * - an HTML string (the default views below),
+ * - a ReadableStream of HTML, as streaming server renderers produce it, or
+ * - a fully formed Response, when the view controls the status code or
+ *   headers itself.
+ *
+ * renderView() normalizes all of them into a Response.
  */
-export type ViewResult = string | Response;
+export type ViewResult = string | ReadableStream<Uint8Array> | Response;
 
 export interface Views {
   /** Render the login page (and login error page when error is set) */
-  loginPage(params: LoginPageParams): ViewResult;
+  loginPage(params: LoginPageParams): ViewResult | Promise<ViewResult>;
   /** Render the consent/authorization page */
-  consentPage(params: ConsentPageParams): ViewResult;
+  consentPage(params: ConsentPageParams): ViewResult | Promise<ViewResult>;
   /** Render a generic error page */
-  errorPage(params: ErrorPageParams): ViewResult;
+  errorPage(params: ErrorPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the user_code entry form */
-  deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult;
+  deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the sign-in form for a device flow */
-  deviceLoginPage(params: DeviceLoginPageParams): ViewResult;
+  deviceLoginPage(params: DeviceLoginPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the approve / deny screen */
-  deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult;
+  deviceApprovalPage(params: DeviceApprovalPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RFC 8628 §3.3): render the "go back to your device" screen */
-  deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult;
+  deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
-  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
+  cibaLoginPage(params: CibaLoginPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
-  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
+  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
-  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
+  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RP-Initiated Logout 1.0 §2): render the logout confirmation screen */
-  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;
+  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult | Promise<ViewResult>;
   /** EXPERIMENTAL (RP-Initiated Logout 1.0): render the logged-out screen */
-  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
+  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult | Promise<ViewResult>;
 }
 
-/** Options applied when renderView wraps an HTML string into a Response. */
+/** Options applied when renderView wraps an HTML string or stream into a Response. */
 export interface RenderViewInit {
   /** HTTP status code for the generated Response (defaults to 200). */
   status?: number;
@@ -204,32 +212,59 @@ export interface RenderViewInit {
 /**
  * Normalize a ViewResult into a Response.
  *
+ * - A Promise is awaited first, so a view may render asynchronously (a server
+ *   renderer, a template engine that reads files, ...).
  * - A Response is returned untouched, so a custom view keeps full control over
- *   its status, headers, and body (e.g. returning a framework-rendered Response).
- * - A string is wrapped into an HTML Response with the given status.
+ *   its status, headers, and body.
+ * - A string or a ReadableStream is wrapped into an HTML Response with the
+ *   given status.
  *
  * Routes call renderView() instead of hard-coding string handling, so the Views
  * return type can stay ViewResult and never silently collapse back to string.
  */
-export function renderView(result: ViewResult, init?: RenderViewInit): Response {
-  if (typeof result === 'string') {
-    return new Response(result, {
+export async function renderView(
+  result: ViewResult | Promise<ViewResult>,
+  init?: RenderViewInit,
+): Promise<Response> {
+  const resolved: unknown = await result;
+  if (resolved instanceof Response) {
+    return resolved;
+  }
+  if (typeof resolved === 'string' || resolved instanceof ReadableStream) {
+    return new Response(resolved, {
       status: init?.status ?? 200,
       headers: { 'Content-Type': 'text/html; charset=UTF-8' },
     });
   }
-  if (result instanceof Response) {
-    return result;
-  }
-  return result;
+  // Only reachable from untyped code: a view that forgot to return, or one that
+  // handed back a UI component instead of the HTML it renders to. Fail here
+  // rather than send "[object Object]".
+  throw new TypeError(
+    'A view must return an HTML string, a ReadableStream of HTML or a Response. ' +
+      'Render the page to HTML before returning it from the view.',
+  );
 }
 
 // ============================================================
 // Default Views Implementation
-// Replace the functions below to customize the UI.
 // ============================================================
+//
+// A view that replaces a default page keeps its form contract: the same method
+// and action, the hidden fields (transaction_id, csrf_token, ...), the input
+// names and the submit button values, because the routes read exactly those.
+// Some params must stay visible and some pages must keep fixed wording; the
+// comments on those params and default views say which and why. Look and
+// wording are otherwise yours. Treat every param as untrusted text, since some
+// (loginHint, bindingMessage, errorDescription, ...) come from outside the OP:
+// escape them when you build HTML yourself (escapeHtml below), and never pass
+// them to a raw-HTML escape hatch of your renderer.
 
-function escapeHtml(value: string): string {
+/**
+ * Escape a value for an HTML text node or a quoted attribute value. The default
+ * views escape every interpolated value with it; a replacement view that builds
+ * HTML by hand can import it as well.
+ */
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

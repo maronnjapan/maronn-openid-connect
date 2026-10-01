@@ -416,19 +416,23 @@ describe('generated provider HTTP conformance', () => {
 
 
   describe('Generated view rendering', () => {
-    it('should HTML-escape every login and consent value', () => {
+    // Read through renderView so the check keeps holding when a default page is
+    // replaced by an asynchronous or streamed view.
+    it('should HTML-escape every login and consent value', async () => {
       const hostile = '"><script>alert(1)</script>';
-      const loginHtml = String(defaultViews.loginPage({
+      const loginRes = await renderView(defaultViews.loginPage({
         transactionId: hostile,
         csrfToken: hostile,
         error: '<img src=x onerror=alert(1)>',
       }));
-      const consentHtml = String(defaultViews.consentPage({
+      const consentRes = await renderView(defaultViews.consentPage({
         transactionId: hostile,
         csrfToken: hostile,
         scopes: ['openid'],
         clientId: 'client',
       }));
+      const loginHtml = await loginRes.text();
+      const consentHtml = await consentRes.text();
 
       expect(loginHtml.includes('<script>')).toBe(false);
       expect(loginHtml.includes('<img src=x onerror=alert(1)>')).toBe(false);
@@ -438,12 +442,12 @@ describe('generated provider HTTP conformance', () => {
       expect(consentHtml.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(true);
     });
 
-    it('should preserve a custom Response returned by a view', () => {
+    it('should preserve a custom Response returned by a view', async () => {
       const customResponse = new Response('custom view', {
         status: 202,
         headers: { 'X-View-Renderer': 'custom' },
       });
-      const rendered = renderView(customResponse, { status: 400 });
+      const rendered = await renderView(customResponse, { status: 400 });
 
       expect(rendered).toBe(customResponse);
       expect(rendered.status).toBe(202);
@@ -1242,9 +1246,30 @@ describe('generated provider HTTP conformance', () => {
   });
 
   describe('custom view rendering (ViewResult / renderView)', () => {
+    // Emits HTML the way streaming server renderers do: UTF-8 chunks.
+    function htmlStream(chunks: string[]): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder();
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      });
+    }
+
+    // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
+    // transaction (302 -> /login); the verifier is never needed here.
+    function viewAuthorizeUrl(state: string): string {
+      return '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent('openid') +
+        '&state=' + state +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256';
+    }
+
     // A view returning a plain HTML string is wrapped into a text/html Response.
     it('should wrap a custom HTML string view into a text/html Response', async () => {
-      const res = renderView('<h1>custom-view-string</h1>');
+      const res = await renderView('<h1>custom-view-string</h1>');
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
@@ -1254,7 +1279,7 @@ describe('generated provider HTTP conformance', () => {
     // The caller-provided status is applied to a wrapped string view (e.g. the
     // 429 rate-limit error page).
     it('should apply the provided status when wrapping a string view', async () => {
-      const res = renderView('<h1>too many</h1>', { status: 429 });
+      const res = await renderView('<h1>too many</h1>', { status: 429 });
 
       expect(res.status).toBe(429);
       expect(await res.text()).toBe('<h1>too many</h1>');
@@ -1267,7 +1292,7 @@ describe('generated provider HTTP conformance', () => {
         status: 203,
         headers: { 'Content-Type': 'text/html; charset=UTF-8', 'X-Custom-View': 'on' },
       });
-      const res = renderView(original);
+      const res = await renderView(original);
 
       expect(res).toBe(original);
       expect(res.status).toBe(203);
@@ -1275,18 +1300,43 @@ describe('generated provider HTTP conformance', () => {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
+    // Server renderers and template engines may render asynchronously, so
+    // renderView waits for the view to finish.
+    it('should wait for a view that renders asynchronously', async () => {
+      const res = await renderView(Promise.resolve('<h1>custom-view-async</h1>'), { status: 201 });
+
+      expect(res.status).toBe(201);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe('<h1>custom-view-async</h1>');
+    });
+
+    // Streaming server renderers produce a ReadableStream of HTML, which
+    // becomes the text/html body.
+    it('should stream a ReadableStream view as a text/html Response', async () => {
+      const res = await renderView(htmlStream(['<h1>custom-', 'view-stream</h1>']), { status: 202 });
+
+      expect(res.status).toBe(202);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe('<h1>custom-view-stream</h1>');
+    });
+
+    // A value that is not rendered HTML (e.g. a UI component handed back
+    // unrendered) must fail instead of reaching the browser as "[object Object]".
+    it('should reject a view result that is not rendered HTML', async () => {
+      const unrendered = { type: 'main', props: { children: 'not rendered' } };
+
+      await expect(renderView(unrendered as never)).rejects.toThrow(
+        new TypeError(
+          'A view must return an HTML string, a ReadableStream of HTML or a Response. ' +
+            'Render the page to HTML before returning it from the view.',
+        ),
+      );
+    });
+
     // End-to-end: the login route returns its view via renderView, so the login
     // page is delivered as a text/html Response through the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
-      // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
-      // transaction (302 -> /login); the verifier is never needed here.
-      const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
-      const authorizeUrl =
-        '/authorize?response_type=code&client_id=c-conf' +
-        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
-        '&scope=' + encodeURIComponent('openid') +
-        '&state=view-xyz' +
-        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+      const authorizeUrl = viewAuthorizeUrl('view-xyz');
       const authorizeRes = await app.request(authorizeUrl);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
       // Carry forward whatever cookie /authorize set, exactly as a browser would.
@@ -1302,6 +1352,32 @@ describe('generated provider HTTP conformance', () => {
       // at runtime; the exact-body wrapping is pinned by the renderView unit tests.
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+    });
+
+    // End-to-end with a view shaped like a server-rendered component: it renders
+    // asynchronously and streams its HTML, and it is built from the params the
+    // login route passes it.
+    it('should deliver an asynchronously streamed login view through the login route', async () => {
+      const streamedViewApp = createApp({
+        signingKeyProvider,
+        clientResolver: createInMemoryClientResolver(testClients),
+        views: {
+          loginPage: async (params) =>
+            htmlStream(['<main data-view="streamed">', params.transactionId, '</main>']),
+        },
+      });
+      const authorizeRes = await streamedViewApp.request(viewAuthorizeUrl('view-stream'));
+      const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // Same cookie carry-over as the default-view flow above.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+
+      const res = await streamedViewApp.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe(
+        '<main data-view="streamed">' + (loginUrl.searchParams.get('transaction_id') ?? '') + '</main>',
+      );
     });
   });
 

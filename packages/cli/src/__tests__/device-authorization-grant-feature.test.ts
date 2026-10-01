@@ -329,6 +329,31 @@ describe('generate with --enable device-authorization-grant', () => {
         expect(views.includes('Confirm that your device is showing this code')).toBe(true);
       });
 
+      // A view may render asynchronously (e.g. a React or Vue component rendered
+      // on the server), so the route must wait for the rendered page before it
+      // attaches the binding / session cookie to it.
+      it('should await the rendered view before attaching cookies to it', () => {
+        const device = fileContent(
+          generateFiles(framework, ['device-authorization-grant']),
+          providerPath(framework, 'routes/device.ts'),
+        );
+
+        expect(device.includes('withCookie(renderView(')).toBe(false);
+        expect(device.includes('withCookie(await renderView(views.deviceLoginPage({')).toBe(true);
+        expect(device.includes('withCookie(await renderView(views.deviceApprovalPage({')).toBe(true);
+        expect(device.includes('withCookie(await renderView(views.deviceCompletedPage({')).toBe(true);
+        expect(
+          device.includes(
+            'async function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Promise<Response> {',
+          ),
+        ).toBe(true);
+        expect(
+          device.includes(
+            'async function renderVerificationError(views: typeof defaultViews, error: unknown): Promise<Response> {',
+          ),
+        ).toBe(true);
+      });
+
       it('should generate the binding cookie helpers in the store', () => {
         const store = fileContent(
           generateFiles(framework, ['device-authorization-grant']),

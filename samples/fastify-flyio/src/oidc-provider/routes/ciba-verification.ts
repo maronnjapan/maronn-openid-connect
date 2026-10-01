@@ -77,7 +77,7 @@ function withCookie(response: Response, cookie: string): Response {
 }
 
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+async function renderVerificationError(views: typeof defaultViews, error: unknown): Promise<Response> {
   if (error instanceof CibaVerificationError) {
     return renderView(
       views.errorPage({ error: error.message, statusCode: error.statusCode }),
@@ -138,7 +138,7 @@ cibaApp.get('/', async (c) => {
     bindingSecret,
     remainingSeconds(record.expiresAt),
   );
-  return withCookie(renderView(views.cibaLoginPage({
+  return withCookie(await renderView(views.cibaLoginPage({
     loginTransactionId: record.id,
     csrfToken: record.csrfToken,
   })), cookie);

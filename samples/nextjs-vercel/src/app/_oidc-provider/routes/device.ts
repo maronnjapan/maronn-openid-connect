@@ -85,7 +85,7 @@ function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
  * RFC 8628 §5.1: unknown, expired and already-used codes must be
  * indistinguishable, otherwise the response itself confirms which codes exist.
  */
-function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Response {
+async function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Promise<Response> {
   return renderView(
     views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
     { status: 400 },
@@ -93,7 +93,7 @@ function renderInvalidUserCode(views: typeof defaultViews, userCode: string): Re
 }
 
 /** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+async function renderVerificationError(views: typeof defaultViews, error: unknown): Promise<Response> {
   if (error instanceof DeviceVerificationError) {
     return renderView(
       views.errorPage({ error: error.message, statusCode: error.statusCode }),
@@ -157,7 +157,7 @@ deviceApp.post('/', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (session) {
-    return withCookie(renderView(views.deviceApprovalPage({
+    return withCookie(await renderView(views.deviceApprovalPage({
       userCode: record.userCodeDisplay,
       csrfToken,
       clientId: record.clientId,
@@ -165,7 +165,7 @@ deviceApp.post('/', async (c) => {
     })), cookie);
   }
 
-  return withCookie(renderView(views.deviceLoginPage({
+  return withCookie(await renderView(views.deviceLoginPage({
     userCode: record.userCodeDisplay,
     csrfToken,
   })), cookie);
@@ -241,7 +241,7 @@ deviceApp.post('/login', async (c) => {
 
   // Two cookies on one response: the new OP session, and the binding cookie the
   // approval POST will have to present again.
-  const withSession = withCookie(renderView(views.deviceApprovalPage({
+  const withSession = withCookie(await renderView(views.deviceApprovalPage({
     userCode: record.userCodeDisplay,
     csrfToken,
     clientId: record.clientId,
@@ -307,14 +307,14 @@ deviceApp.post('/approve', async (c) => {
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return withCookie(renderView(views.deviceCompletedPage({
+      return withCookie(await renderView(views.deviceCompletedPage({
         approved: true,
         clientId: approved.clientId,
       })), clearCookie);
     }
 
     await denyDeviceAuthorization({ record, store: deviceStore, csrfToken });
-    return withCookie(renderView(views.deviceCompletedPage({
+    return withCookie(await renderView(views.deviceCompletedPage({
       approved: false,
       clientId: record.clientId,
     })), clearCookie);

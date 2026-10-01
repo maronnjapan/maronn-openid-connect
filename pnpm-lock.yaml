@@ -39,10 +39,10 @@ importers:
     dependencies:
       '@astrojs/starlight':
         specifier: ^0.41.7
-        version: 0.41.7(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0))(typescript@7.0.2)
+        version: 0.41.7(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0))(typescript@7.0.2)
       astro:
         specifier: 7.2.8
-        version: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0)
+        version: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0)
 
   packages/cli:
     devDependencies:
@@ -127,8 +127,8 @@ importers:
         specifier: ^5.0.5
         version: 5.0.6
       '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
+        specifier: ^26.6.3
+        version: 26.6.3
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -158,14 +158,14 @@ importers:
         specifier: workspace:*
         version: link:../../packages/cli
       '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
+        specifier: ^26.6.3
+        version: 26.6.3
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
       fastify:
-        specifier: ^5.12.1
-        version: 5.12.1
+        specifier: ^5.12.2
+        version: 5.12.5
       google-auth-library:
         specifier: ^11.1.0
         version: 11.1.0
@@ -196,10 +196,10 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 4.1.11
-        version: 4.1.11(@edge-runtime/vm@5.0.0)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0))
+        version: 4.1.11(@edge-runtime/vm@5.0.0)(@types/node@26.6.3)(vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0))
       wrangler:
         specifier: ^4.113.0
-        version: 4.113.0(@cloudflare/workers-types@5.20260723.1)(@types/node@26.2.0)
+        version: 4.113.0(@cloudflare/workers-types@5.20260723.1)(@types/node@26.6.3)
 
   samples/nextjs-vercel:
     dependencies:
@@ -217,8 +217,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/cli
       '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
+        specifier: ^26.6.3
+        version: 26.6.3
       '@types/react':
         specifier: ^19.2.18
         version: 19.2.18
@@ -227,7 +227,7 @@ importers:
         version: 19.2.4(@types/react@19.2.18)
       next:
         specifier: 16.3.8
-        version: 16.3.8(@playwright/test@1.62.1)(@types/node@26.2.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 16.3.8(@playwright/test@1.62.1)(@types/node@26.6.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -246,8 +246,8 @@ importers:
         specifier: ^1.62.1
         version: 1.62.1
       '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
+        specifier: ^26.6.3
+        version: 26.6.3
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -1448,6 +1448,9 @@ packages:
   '@types/node@26.2.0':
     resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
 
+  '@types/node@26.6.3':
+    resolution: {integrity: sha512-dsqMQQoeTLqu9wynDD00q573mNzso3IdQOAfHRJqLCcmCFPoGo9A1bDpUcv/9tnKpErQWv9uKeGfl37EIS02Yg==}
+
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
 
@@ -2083,8 +2086,8 @@ packages:
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
 
-  fastify@5.12.1:
-    resolution: {integrity: sha512-FWi+tQvwxR/PeRX7Z2mhfEF5ozJ3jn9asiiclzKXNSzJRHAYcU924aIOKAdHFJ+YIKieh3cqr1IwCOvTr41B3Q==}
+  fastify@5.12.5:
+    resolution: {integrity: sha512-OB2k1dlxs5/NAABqeKV2FUHkSD2BbENsCak8yULVcymn3fHIPDVa9TI3SDnJSWYSllZmSYuZXy2gTnsT+Sut1A==}
 
   fastq@1.20.3:
     resolution: {integrity: sha512-XKv5nnLs6nLF71NgiKJLIZFLkPyIEuOselLG7ujZnGrRfQK8HpvY+WqKhAJUAdLomwVHErVS4LfxFlPq0/FTAw==}
@@ -3258,6 +3261,9 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
+
   undici@7.29.1:
     resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
     engines: {node: '>=20.18.1'}
@@ -3668,13 +3674,13 @@ snapshots:
       github-slugger: 2.0.0
       satteri: 0.10.5
 
-  '@astrojs/mdx@7.0.5(@astrojs/markdown-satteri@0.3.5)(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0))':
+  '@astrojs/mdx@7.0.5(@astrojs/markdown-satteri@0.3.5)(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0))':
     dependencies:
       '@astrojs/internal-helpers': 0.10.2
       '@astrojs/markdown-remark': 7.2.2
       '@mdx-js/mdx': 3.1.1
       acorn: 8.17.0
-      astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0)
+      astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0)
       es-module-lexer: 2.3.1
       estree-util-visit: 2.0.0
       hast-util-to-html: 9.0.5
@@ -3700,17 +3706,17 @@ snapshots:
       stream-replace-string: 2.0.0
       zod: 4.4.3
 
-  '@astrojs/starlight@0.41.7(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0))(typescript@7.0.2)':
+  '@astrojs/starlight@0.41.7(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0))(typescript@7.0.2)':
     dependencies:
       '@astrojs/markdown-satteri': 0.3.5
-      '@astrojs/mdx': 7.0.5(@astrojs/markdown-satteri@0.3.5)(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0))
+      '@astrojs/mdx': 7.0.5(@astrojs/markdown-satteri@0.3.5)(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0))
       '@astrojs/sitemap': 3.7.3
       '@pagefind/default-ui': 1.5.2
       '@types/hast': 3.0.5
       '@types/js-yaml': 4.0.9
       '@types/mdast': 4.0.4
-      astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0)
-      astro-expressive-code: 0.44.1(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0))
+      astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0)
+      astro-expressive-code: 0.44.1(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0))
       bcp-47: 2.1.1
       hast-util-from-html: 2.0.3
       hast-util-select: 6.0.4
@@ -4556,7 +4562,7 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
 
   '@types/chai@5.2.3':
     dependencies:
@@ -4565,7 +4571,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
 
   '@types/debug@4.1.13':
     dependencies:
@@ -4583,7 +4589,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -4622,6 +4628,10 @@ snapshots:
     dependencies:
       undici-types: 8.3.0
 
+  '@types/node@26.6.3':
+    dependencies:
+      undici-types: 8.9.0
+
   '@types/qs@6.15.1': {}
 
   '@types/range-parser@1.2.7': {}
@@ -4636,16 +4646,16 @@ snapshots:
 
   '@types/sax@1.2.7':
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
 
   '@types/unist@2.0.11': {}
 
@@ -4730,6 +4740,14 @@ snapshots:
     optionalDependencies:
       vite: 8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)
 
+  '@vitest/mocker@4.1.11(vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0))':
+    dependencies:
+      '@vitest/spy': 4.1.11
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0)
+
   '@vitest/pretty-format@4.1.11':
     dependencies:
       tinyrainbow: 3.1.1
@@ -4801,13 +4819,13 @@ snapshots:
 
   astring@1.9.0: {}
 
-  astro-expressive-code@0.44.1(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0)):
+  astro-expressive-code@0.44.1(astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0)):
     dependencies:
-      astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0)
+      astro: 7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0)
       rehype-expressive-code: 0.44.1
       url-extras: 0.1.0
 
-  astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.2.0)(yaml@2.9.0):
+  astro@7.2.8(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.6.3)(yaml@2.9.0):
     dependencies:
       '@astrojs/compiler-rs': 0.4.0(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)
       '@astrojs/internal-helpers': 0.10.4
@@ -4857,13 +4875,13 @@ snapshots:
       ultrahtml: 1.7.0
       unifont: 0.7.5
       unstorage: 1.17.5
-      vite: 8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)
-      vitefu: 1.1.3(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0))
+      vite: 8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0)
+      vitefu: 1.1.3(vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0))
       xxhash-wasm: 1.1.0
       yargs-parser: 22.0.0
       zod: 4.4.3
     optionalDependencies:
-      sharp: 0.35.4(@types/node@26.2.0)
+      sharp: 0.35.4(@types/node@26.6.3)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -5311,7 +5329,7 @@ snapshots:
     dependencies:
       fast-string-width: 3.0.2
 
-  fastify@5.12.1:
+  fastify@5.12.5:
     dependencies:
       '@fastify/ajv-compiler': 4.0.6
       '@fastify/error': 4.2.0
@@ -6301,10 +6319,10 @@ snapshots:
     dependencies:
       mime-db: 1.54.0
 
-  miniflare@4.20260721.0(@types/node@26.2.0):
+  miniflare@4.20260721.0(@types/node@26.6.3):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
-      sharp: 0.35.4(@types/node@26.2.0)
+      sharp: 0.35.4(@types/node@26.6.3)
       undici: 7.29.1
       workerd: 1.20260721.1
       ws: 8.21.0
@@ -6324,7 +6342,7 @@ snapshots:
 
   neotraverse@1.0.1: {}
 
-  next@16.3.8(@playwright/test@1.62.1)(@types/node@26.2.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  next@16.3.8(@playwright/test@1.62.1)(@types/node@26.6.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@next/env': 16.3.8
       '@swc/helpers': 0.5.23
@@ -6344,7 +6362,7 @@ snapshots:
       '@next/swc-win32-arm64-msvc': 16.3.8
       '@next/swc-win32-x64-msvc': 16.3.8
       '@playwright/test': 1.62.1
-      sharp: 0.35.4(@types/node@26.2.0)
+      sharp: 0.35.4(@types/node@26.6.3)
     transitivePeerDependencies:
       - '@babel/core'
       - '@types/node'
@@ -6848,7 +6866,7 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  sharp@0.35.4(@types/node@26.2.0):
+  sharp@0.35.4(@types/node@26.6.3):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -6879,7 +6897,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.4
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
-      '@types/node': 26.2.0
+      '@types/node': 26.6.3
 
   shell-quote@1.10.0: {}
 
@@ -7055,6 +7073,8 @@ snapshots:
 
   undici-types@8.3.0: {}
 
+  undici-types@8.9.0: {}
+
   undici@7.29.1: {}
 
   undici@8.10.2: {}
@@ -7172,9 +7192,22 @@ snapshots:
       fsevents: 2.3.3
       yaml: 2.9.0
 
-  vitefu@1.1.3(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)):
+  vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0):
+    dependencies:
+      lightningcss: 1.33.0
+      picomatch: 4.0.7
+      postcss: 8.5.26
+      rolldown: 1.2.3
+      tinyglobby: 0.2.17
     optionalDependencies:
-      vite: 8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)
+      '@types/node': 26.6.3
+      esbuild: 0.28.2
+      fsevents: 2.3.3
+      yaml: 2.9.0
+
+  vitefu@1.1.3(vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0)):
+    optionalDependencies:
+      vite: 8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0)
 
   vitest@4.1.11(@edge-runtime/vm@5.0.0)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)):
     dependencies:
@@ -7204,6 +7237,34 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
+  vitest@4.1.11(@edge-runtime/vm@5.0.0)(@types/node@26.6.3)(vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0)):
+    dependencies:
+      '@vitest/expect': 4.1.11
+      '@vitest/mocker': 4.1.11(vite@8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0))
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
+      es-module-lexer: 2.3.2
+      expect-type: 1.4.0
+      magic-string: 0.30.21
+      obug: 2.1.4
+      pathe: 2.0.3
+      picomatch: 4.0.4
+      std-env: 4.2.0
+      tinybench: 2.9.0
+      tinyexec: 1.3.0
+      tinyglobby: 0.2.17
+      tinyrainbow: 3.1.1
+      vite: 8.2.1(@types/node@26.6.3)(esbuild@0.28.2)(yaml@2.9.0)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@edge-runtime/vm': 5.0.0
+      '@types/node': 26.6.3
+    transitivePeerDependencies:
+      - msw
+
   web-namespaces@2.0.1: {}
 
   web-streams-polyfill@3.3.3: {}
@@ -7221,13 +7282,13 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260721.1
       '@cloudflare/workerd-windows-64': 1.20260721.1
 
-  wrangler@4.113.0(@cloudflare/workers-types@5.20260723.1)(@types/node@26.2.0):
+  wrangler@4.113.0(@cloudflare/workers-types@5.20260723.1)(@types/node@26.6.3):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260721.1)
       blake3-wasm: 2.1.5
       esbuild: 0.28.1
-      miniflare: 4.20260721.0(@types/node@26.2.0)
+      miniflare: 4.20260721.0(@types/node@26.6.3)
       path-to-regexp: 6.3.0
       unenv: 2.0.0-rc.24
       workerd: 1.20260721.1

@@ -1,13 +1,14 @@
 /**
- * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint.
+ * EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0, end_session_endpoint
+ * — API layer: logic only.
  *
- * This route was generated because the OP was created with
+ * This module was generated because the OP was created with
  * `--enable rp-initiated-logout`. It is backed by
  * @maronn-openid-connect/experimental, whose API is NOT stable: it may change in a breaking
  * way between releases. Do not build production code on it without pinning the
  * version.
  *
- * The RP sends the user agent here (GET or POST, §2 MUST) to end the OP
+ * The RP sends the user agent to /logout (GET or POST, §2 MUST) to end the OP
  * browser session. A request whose id_token_hint verifies against this OP's
  * keys AND matches the current session's End-User logs out immediately; every
  * other request — no hint, an invalid or expired hint, a client_id that
@@ -17,12 +18,16 @@
  * never disclosed anywhere: a reason would turn this endpoint into an oracle
  * for session state.
  *
+ * Neither function below builds a Response: each returns an outcome (which
+ * screen or redirect comes next, with which cookies), and pages/logout.ts —
+ * which owns the GET and POST routes — turns it into HTTP.
+ *
  * ## Why the confirmation approve step demands a cookie + token pair
  *
  * The approve POST ends a session, so a forged cross-site POST must not drive
- * it. When the confirmation screen is rendered the OP mints a fresh secret and
+ * it. When the confirmation screen is shown the OP mints a fresh secret and
  * hands it to that one browser twice: in an HttpOnly cookie and in the form's
- * hidden csrf_token. /logout/approve runs only when both come back equal. An
+ * hidden csrf_token. approveLogout() runs only when both come back equal. An
  * attacker can obtain a valid pair in their own browser but cannot plant that
  * cookie into the victim's, so the forged POST fails the comparison — the
  * same model as the device verification binding cookie (see store.ts).
@@ -32,7 +37,6 @@
  * parameter) through the HTML page: the only value the form submits back is
  * the csrf_token itself.
  */
-import { Hono } from 'hono';
 import {
   decideLogoutFlow,
   extractIdTokenHintAudience,
@@ -49,7 +53,6 @@ import {
   parseSessionId,
 } from '../store.js';
 import { defaultProviderConfig } from '../config.js';
-import { defaultViews, renderView } from '../views.js';
 
 /**
  * EXPERIMENTAL — settings for RP-Initiated Logout.
@@ -66,40 +69,22 @@ export const rpInitiatedLogoutConfig = {
   postLogoutRedirectUris: {} as Record<string, string[]>,
 };
 
-export const logoutApp = new Hono<{ Variables: Record<string, any> }>();
+/** What a logout step decided; pages/logout.ts turns it into HTTP. */
+export type LogoutOutcome =
+  /** Forged, replayed or expired confirmation: nothing was deleted (400). */
+  | { kind: 'invalid_confirmation' }
+  /** §2 MUST: ask first. cookies pairs the HttpOnly secret with the form's csrf_token. */
+  | { kind: 'confirmation'; csrfToken: string; cookies: string[] }
+  /** Logged out; §3: return to the registered post_logout_redirect_uri (state appended). */
+  | { kind: 'redirect'; location: string; cookies: string[] }
+  /** Logged out; no registered redirect applied, so show the completed screen. */
+  | { kind: 'completed'; cookies: string[] };
 
 /**
- * Attach Set-Cookie headers to a Response a view already produced.
- * renderView() builds its own Response, so headers staged on the framework
- * context never reach it (same helper as the device verification UI).
+ * Interpret one end_session request (§2). GET and POST share this function —
+ * they differ only in where the parameters come from.
  */
-function withCookies(response: Response, cookies: string[]): Response {
-  const headers = new Headers(response.headers);
-  for (const cookie of cookies) {
-    headers.append('Set-Cookie', cookie);
-  }
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
-/** 302 to the registered post_logout_redirect_uri, with cookies attached. */
-function redirectResponse(location: string, cookies: string[]): Response {
-  const headers = new Headers({ Location: location });
-  for (const cookie of cookies) {
-    headers.append('Set-Cookie', cookie);
-  }
-  return new Response(null, { status: 302, headers });
-}
-
-/**
- * Interpret one end_session request (§2) and answer it. GET and POST share
- * this handler — they differ only in where the parameters come from.
- */
-async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise<Response> {
-  const views = c.get('views') ?? defaultViews;
+export async function processEndSessionRequest(c: any, params: URLSearchParams): Promise<LogoutOutcome> {
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const config = c.get('config') ?? defaultProviderConfig;
   const request = parseEndSessionRequest(params);
@@ -166,10 +151,11 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
     // with session state. The minted secret pairs the HttpOnly cookie with the
     // form's hidden csrf_token; the redirect target rides inside the cookie.
     const csrfSecret = generateRandomString(32);
-    return withCookies(
-      renderView(views.logoutConfirmationPage({ csrfToken: csrfSecret })),
-      [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
-    );
+    return {
+      kind: 'confirmation',
+      csrfToken: csrfSecret,
+      cookies: [buildLogoutConfirmationCookie({ csrfSecret, redirectTo })],
+    };
   }
 
   // Immediate logout: a valid hint for the current session's End-User (§2).
@@ -179,53 +165,31 @@ async function handleEndSessionRequest(c: any, params: URLSearchParams): Promise
   }
   const cookies = [buildClearedSessionCookie()];
   if (redirectTo !== null) {
-    return redirectResponse(redirectTo, cookies);
+    return { kind: 'redirect', location: redirectTo, cookies };
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
+  return { kind: 'completed', cookies };
 }
 
-/** end_session_endpoint - GET (§2: the OP MUST support GET and POST). */
-logoutApp.get('/', (c) => handleEndSessionRequest(c, new URL(c.req.url).searchParams));
-
-/** end_session_endpoint - POST, application/x-www-form-urlencoded body (§2). */
-logoutApp.post('/', async (c) => {
-  const body = await c.req.parseBody();
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(body)) {
-    if (typeof value === 'string') {
-      params.append(key, value);
-    }
-  }
-  return handleEndSessionRequest(c, params);
-});
-
 /**
- * Confirmation approve - POST
+ * Confirmation approve (POST /logout/approve)
  *
- * Runs only for the browser that rendered the confirmation screen: the
- * HttpOnly cookie and the hidden csrf_token must present the same secret
- * (neither alone is accepted). On success the session is deleted and the
- * redirect decision computed at render time — carried in the cookie, never in
- * the form — is honored (§3).
+ * Runs only for the browser that saw the confirmation screen: the HttpOnly
+ * cookie and the hidden csrf_token must present the same secret (neither
+ * alone is accepted). On success the session is deleted and the redirect
+ * decision computed when the screen was shown — carried in the cookie, never
+ * in the form — is honored (§3).
  */
-logoutApp.post('/approve', async (c) => {
-  const views = c.get('views') ?? defaultViews;
+export async function approveLogout(c: any, csrfToken: string): Promise<LogoutOutcome> {
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
 
-  const body = await c.req.parseBody();
-  const csrfToken = String(body['csrf_token'] ?? '');
   const confirmation = parseLogoutConfirmation(c.req.header('Cookie') ?? null);
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
-    // Forged, replayed or expired confirmation: delete nothing. This is a
-    // browser surface, so the answer is the error page, not OAuth error JSON.
-    return renderView(
-      views.errorPage({ error: 'Invalid logout confirmation', statusCode: 400 }),
-      { status: 400 },
-    );
+    // Forged, replayed or expired confirmation: delete nothing.
+    return { kind: 'invalid_confirmation' };
   }
 
   // The End-User explicitly approved (§2). When the session is already gone
-  // there is nothing to delete and the response is the same either way — the
+  // there is nothing to delete and the answer is the same either way — the
   // confirmation flow is not an oracle for whether a session existed.
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   if (sessionId) {
@@ -233,7 +197,7 @@ logoutApp.post('/approve', async (c) => {
   }
   const cookies = [buildClearedSessionCookie(), buildClearedLogoutConfirmationCookie()];
   if (confirmation.redirectTo !== null) {
-    return redirectResponse(confirmation.redirectTo, cookies);
+    return { kind: 'redirect', location: confirmation.redirectTo, cookies };
   }
-  return withCookies(renderView(views.logoutCompletedPage({})), cookies);
-});
+  return { kind: 'completed', cookies };
+}

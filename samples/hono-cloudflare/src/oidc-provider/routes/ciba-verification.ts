@@ -1,8 +1,8 @@
 /**
  * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
- * (CIBA Core 1.0), authentication device UI.
+ * (CIBA Core 1.0), authentication device UI — API layer: logic only.
  *
- * This route was generated because the OP was created with `--enable ciba`.
+ * This module was generated because the OP was created with `--enable ciba`.
  * It is backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may
  * change in a breaking way between releases. Do not build production code on it
  * without pinning the version.
@@ -14,6 +14,11 @@
  * binding_message), and approve or deny. The consumption device learns the
  * outcome only by polling the token endpoint — there is no push channel in
  * poll mode.
+ *
+ * The three functions below are the three steps of that UI. None of them
+ * builds a Response: each returns an outcome (which screen comes next, with
+ * which cookies), and pages/ciba.ts — which owns the GET and POST routes —
+ * turns it into HTTP.
  *
  * ## Why the login form demands a binding cookie
  *
@@ -32,7 +37,6 @@
  * ever rendered on the session-gated listing. Knowing an auth_req_id gives an
  * attacker no step to forge.
  */
-import { Hono } from 'hono';
 import {
   CibaVerificationError,
   approveCibaRequest,
@@ -54,35 +58,66 @@ import {
   parseSessionId,
   userStore,
 } from '../store.js';
-import { defaultViews, renderView } from '../views.js';
 import { cibaConfig } from './backchannel-authentication.js';
 
-export const cibaApp = new Hono<{ Variables: Record<string, any> }>();
-
-/**
- * Attach a Set-Cookie to a Response a view already produced.
- *
- * renderView() builds its own Response, so headers staged on the framework
- * context never reach it. Rebuilding the Response is the framework-neutral way
- * to add the cookie without making views cookie-aware.
- */
-function withCookie(response: Response, cookie: string): Response {
-  const headers = new Headers(response.headers);
-  headers.append('Set-Cookie', cookie);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+/** One pending backchannel authentication request, as the approval screen shows it. */
+export interface CibaPendingRequest {
+  /** auth_req_id; posted back by the decision form. */
+  authReqId: string;
+  clientId: string;
+  /** Scopes this End-User is asked to grant (already narrowed by the scope policy). */
+  scopes: string[];
+  /** CIBA Core 1.0 §7.1 binding_message, client-supplied: escape before rendering. */
+  bindingMessage?: string;
+  expiresInSeconds: number;
+  /** Per-record CSRF token; posted back by the decision form. */
+  csrfToken: string;
 }
 
-/** Map a verification failure to its error page; anything else is re-thrown. */
-function renderVerificationError(views: typeof defaultViews, error: unknown): Response {
+/** What a step of the UI decided; pages/ciba.ts turns it into the next screen. */
+export type CibaOutcome =
+  /** A binding or CSRF failure the OP shows on its own error page. */
+  | { kind: 'error'; error: string; statusCode: number }
+  /** The decision step needs an OP session this browser does not have (401). */
+  | { kind: 'session_required' }
+  /** decision was neither approve nor deny (400). */
+  | { kind: 'invalid_decision' }
+  /** recordCibaLoginFailure() discarded the login transaction: no further attempt (429). */
+  | { kind: 'locked_out' }
+  /** Show the sign-in form; cookies carries the binding its submission needs. */
+  | { kind: 'login'; loginTransactionId: string; csrfToken: string; cookies: string[] }
+  /** Wrong credentials: show the sign-in form again with the attempts left. */
+  | {
+      kind: 'invalid_credentials';
+      loginTransactionId: string;
+      csrfToken: string;
+      remainingAttempts: number;
+    }
+  /** Show the signed-in user's pending requests; cookies carries a new OP session, if any. */
+  | { kind: 'pending_requests'; requests: CibaPendingRequest[]; cookies: string[] }
+  /** The decision is recorded. */
+  | { kind: 'completed'; approved: boolean; clientId: string };
+
+/** The fields of the sign-in form. */
+export interface CibaLoginSubmission {
+  loginTransactionId: string;
+  csrfToken: string;
+  username: string;
+  password: string;
+}
+
+/** The fields of the approve / deny form. */
+export interface CibaDecisionSubmission {
+  authReqId: string;
+  csrfToken: string;
+  /** 'approve' or 'deny'. */
+  decision: string;
+}
+
+/** Map a verification failure to the error to show; anything else is re-thrown. */
+function verificationFailure(error: unknown): CibaOutcome {
   if (error instanceof CibaVerificationError) {
-    return renderView(
-      views.errorPage({ error: error.message, statusCode: error.statusCode }),
-      { status: error.statusCode },
-    );
+    return { kind: 'error', error: error.message, statusCode: error.statusCode };
   }
   throw error;
 }
@@ -93,35 +128,30 @@ function remainingSeconds(expiresAt: Date): number {
 }
 
 /**
- * Render the session subject's pending requests with freshly rotated CSRF
- * tokens (the only place those tokens are ever exposed, and it is
- * session-gated).
+ * The session subject's pending requests with freshly rotated CSRF tokens (the
+ * only place those tokens are ever exposed, and it is session-gated).
  */
-async function renderPendingRequests(c: any, subject: string): Promise<Response> {
-  const views = c.get('views') ?? defaultViews;
+async function listPendingRequests(c: any, subject: string): Promise<CibaPendingRequest[]> {
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const pending = await listPendingCibaRequests({ subject, store: cibaStore });
-  return renderView(views.cibaPendingRequestsPage({
-    requests: pending.map((record) => ({
-      authReqId: record.authReqId,
-      clientId: record.clientId,
-      scopes: record.scope,
-      bindingMessage: record.bindingMessage,
-      expiresInSeconds: remainingSeconds(record.expiresAt),
-      csrfToken: record.csrfToken ?? '',
-    })),
+  return pending.map((record) => ({
+    authReqId: record.authReqId,
+    clientId: record.clientId,
+    scopes: record.scope,
+    bindingMessage: record.bindingMessage,
+    expiresInSeconds: remainingSeconds(record.expiresAt),
+    csrfToken: record.csrfToken ?? '',
   }));
 }
 
 /**
- * Listing / login form - GET
+ * Listing / login form (GET /ciba)
  *
- * With an OP session: list the pending requests addressed to the signed-in
- * user. Without one: mint a login transaction and show the sign-in form, with
- * the binding cookie this response sets.
+ * With an OP session: the pending requests addressed to the signed-in user.
+ * Without one: mint a login transaction and describe the sign-in form, with the
+ * binding cookie its submission needs.
  */
-cibaApp.get('/', async (c) => {
-  const views = c.get('views') ?? defaultViews;
+export async function prepareCibaDevice(c: any): Promise<CibaOutcome> {
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const loginTransactionStore =
     c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
@@ -129,7 +159,7 @@ cibaApp.get('/', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (session) {
-    return renderPendingRequests(c, session.subject);
+    return { kind: 'pending_requests', requests: await listPendingRequests(c, session.subject), cookies: [] };
   }
 
   const { record, bindingSecret } = await createCibaLoginTransaction(loginTransactionStore);
@@ -138,28 +168,25 @@ cibaApp.get('/', async (c) => {
     bindingSecret,
     remainingSeconds(record.expiresAt),
   );
-  return withCookie(renderView(views.cibaLoginPage({
+  return {
+    kind: 'login',
     loginTransactionId: record.id,
     csrfToken: record.csrfToken,
-  })), cookie);
-});
+    cookies: [cookie],
+  };
+}
 
 /**
- * Sign in - POST
+ * Sign in (POST /ciba/login)
  *
  * Binding first, then CSRF, then credentials: the binding is what proves this
  * is the browser the login form was issued to, and it must gate the step that
  * would otherwise let a forged POST establish an OP session in the victim's
  * browser.
  */
-cibaApp.post('/login', async (c) => {
-  const body = await c.req.parseBody();
-  const transactionId = String(body['login_transaction_id'] ?? '');
-  const csrfToken = String(body['csrf_token'] ?? '');
-  const username = String(body['username'] ?? '');
-  const password = String(body['password'] ?? '');
+export async function submitCibaLogin(c: any, input: CibaLoginSubmission): Promise<CibaOutcome> {
+  const { loginTransactionId: transactionId, csrfToken, username, password } = input;
 
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const loginTransactionStore =
     c.get('cibaLoginTransactionStore') ?? defaultCibaLoginTransactionStore;
@@ -176,7 +203,7 @@ cibaApp.post('/login', async (c) => {
       store: loginTransactionStore,
     });
   } catch (error) {
-    return renderVerificationError(views, error);
+    return verificationFailure(error);
   }
 
   // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
@@ -194,17 +221,14 @@ cibaApp.post('/login', async (c) => {
     );
     if (!failure.canRetry) {
       // The transaction is gone: this form cannot be retried at all.
-      return renderView(views.errorPage({
-        error: 'Too many login attempts',
-        statusCode: 429,
-      }), { status: 429 });
+      return { kind: 'locked_out' };
     }
-    return renderView(views.cibaLoginPage({
+    return {
+      kind: 'invalid_credentials',
       loginTransactionId: transaction.id,
       csrfToken: transaction.csrfToken,
-      error: 'Invalid credentials',
       remainingAttempts: failure.remainingAttempts,
-    }));
+    };
   }
 
   // The transaction is single-use: a successful login consumes it, and the
@@ -215,29 +239,25 @@ cibaApp.post('/login', async (c) => {
   const sessionId = generateRandomString(32);
   await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
 
-  // Two cookies on one response: the new OP session, and the cleared login
-  // binding (it is single-use and would otherwise linger until Max-Age).
-  const listing = await renderPendingRequests(c, user.sub);
-  return withCookie(
-    withCookie(listing, buildSessionCookie(sessionId)),
-    buildClearedCibaLoginBindingCookie(transaction.id),
-  );
-});
+  // Two cookies travel with the listing: the new OP session, and the cleared
+  // login binding (it is single-use and would otherwise linger until Max-Age).
+  return {
+    kind: 'pending_requests',
+    requests: await listPendingRequests(c, user.sub),
+    cookies: [buildSessionCookie(sessionId), buildClearedCibaLoginBindingCookie(transaction.id)],
+  };
+}
 
 /**
- * Approve or deny - POST
+ * Approve or deny (POST /ciba/approve)
  *
  * The only state-changing step of the UI. It demands an OP session whose
  * subject owns the record, plus the per-record csrf_token from the
  * session-gated listing.
  */
-cibaApp.post('/approve', async (c) => {
-  const body = await c.req.parseBody();
-  const authReqId = String(body['auth_req_id'] ?? '');
-  const csrfToken = String(body['csrf_token'] ?? '');
-  const decision = String(body['decision'] ?? '');
+export async function submitCibaDecision(c: any, input: CibaDecisionSubmission): Promise<CibaOutcome> {
+  const { authReqId, csrfToken, decision } = input;
 
-  const views = c.get('views') ?? defaultViews;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
   const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
   const consentResolver = c.get('consentResolver');
@@ -245,18 +265,11 @@ cibaApp.post('/approve', async (c) => {
   const sessionId = parseSessionId(c.req.header('Cookie') ?? null);
   const session = sessionId ? await browserSessionStore.get(sessionId) : undefined;
   if (!session) {
-    return renderView(views.errorPage({
-      error: 'Sign in again to review this request',
-      statusCode: 401,
-    }), { status: 401 });
+    return { kind: 'session_required' };
   }
 
   if (decision !== 'approve' && decision !== 'deny') {
-    return renderView(views.errorPage({
-      error: 'invalid_request',
-      errorDescription: 'decision must be approve or deny',
-      statusCode: 400,
-    }), { status: 400 });
+    return { kind: 'invalid_decision' };
   }
 
   try {
@@ -280,10 +293,7 @@ cibaApp.post('/approve', async (c) => {
         approved.approvedScope ?? approved.scope,
       );
       await consentResolver?.recordGrant?.(approved.subject, approved.clientId, approved.grantId);
-      return renderView(views.cibaCompletedPage({
-        approved: true,
-        clientId: approved.clientId,
-      }));
+      return { kind: 'completed', approved: true, clientId: approved.clientId };
     }
 
     const record = await cibaStore.findByAuthReqId(authReqId);
@@ -293,11 +303,8 @@ cibaApp.post('/approve', async (c) => {
       csrfToken,
       store: cibaStore,
     });
-    return renderView(views.cibaCompletedPage({
-      approved: false,
-      clientId: record?.clientId ?? '',
-    }));
+    return { kind: 'completed', approved: false, clientId: record?.clientId ?? '' };
   } catch (error) {
-    return renderVerificationError(views, error);
+    return verificationFailure(error);
   }
-});
+}

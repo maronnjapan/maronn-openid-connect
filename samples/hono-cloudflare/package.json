@@ -22,7 +22,7 @@
   "devDependencies": {
     "@maronn-openid-connect/cli": "workspace:*",
     "@cloudflare/workers-types": "^5.20260723.1",
-    "hono": "^4.12.34",
+    "hono": "^4.13.12",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
     "wrangler": "^4.113.0"

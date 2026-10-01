@@ -1,4 +1,13 @@
-import { WebRouter } from '../web-router.js';
+/**
+ * Authorization endpoint (API layer: logic only).
+ *
+ * processAuthorizationRequest() runs the whole OIDC Core 1.0 §3.1.2 pipeline —
+ * request validation, the transaction, id_token_hint, prompt=none, SSO — and
+ * reports what the endpoint decided as an outcome: the authorization response
+ * URL for the client, "continue on the login / consent screen", or an error
+ * that must stay on the OP. It never builds a Response; pages/authorize.ts,
+ * which owns GET|POST /authorize, turns the outcome into HTTP.
+ */
 import {
   resolveClientForAuthorization,
   validateRegisteredRedirectUris,
@@ -36,9 +45,24 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
 } from '../store.js';
-import { renderAuthorizationErrorPage } from '../pages/errors.js';
 
-export const authorizeApp = new WebRouter();
+/** What the authorization endpoint decided; pages/authorize.ts turns it into HTTP. */
+export type AuthorizationOutcome =
+  /** Malformed transport: OAuth error JSON (400), no transaction exists yet. */
+  | { kind: 'bad_request'; error: string; errorDescription: string }
+  /**
+   * The authorization response for the client — code, redirectable error or
+   * (EXPERIMENTAL JARM) signed response JWT — ready in the URL.
+   */
+  | { kind: 'authorization_response'; location: string }
+  /** Interactive authentication is needed: continue on the login screen. */
+  | { kind: 'login'; transactionId: string; cookies: string[] }
+  /** The End-User is signed in but consent is needed: continue on the consent screen. */
+  | { kind: 'consent'; transactionId: string; cookies: string[] }
+  /** OIDC Core 1.0 §3.1.2.2: the error cannot be redirected and stays on the OP. */
+  | { kind: 'error'; error: string; errorDescription?: string }
+  /** An unexpected failure: OAuth error JSON (500). */
+  | { kind: 'server_error' };
 
 /**
  * Narrows raw query-string params to the typed AuthorizationRequestParams.
@@ -126,25 +150,25 @@ async function parseAuthorizationRequestParams(
 }
 
 /**
- * Authorization Endpoint handler shared by GET and POST.
- * OIDC Core 1.0 Section 3.1.2
+ * Process one authorization request (OIDC Core 1.0 Section 3.1.2). Shared by
+ * GET and POST /authorize (pages/authorize.ts).
  */
-const handleAuthorizationRequest = async (c: any) => {
+export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
   const parsed = await parseAuthorizationRequestParams(c);
 
   if (parsed === null) {
-    return c.json({ error: 'invalid_request', error_description: 'Authorization POST requests must use application/x-www-form-urlencoded' }, 400);
+    return { kind: 'bad_request', error: 'invalid_request', errorDescription: 'Authorization POST requests must use application/x-www-form-urlencoded' };
   }
 
   // OIDC Core 1.0 §3.1.2.1 / RFC 6749 §3.1: request parameters MUST NOT be repeated.
   if (parsed.duplicateKey !== undefined) {
-    return c.json({ error: 'invalid_request', error_description: `Parameter "${parsed.duplicateKey}" must not be repeated` }, 400);
+    return { kind: 'bad_request', error: 'invalid_request', errorDescription: `Parameter "${parsed.duplicateKey}" must not be repeated` };
   }
 
   const rawParams = parsed.params;
 
   if (!isAuthorizationRequestParams(rawParams)) {
-    return c.json({ error: 'invalid_request', error_description: 'Missing required parameter: client_id' }, 400);
+    return { kind: 'bad_request', error: 'invalid_request', errorDescription: 'Missing required parameter: client_id' };
   }
 
   const params = rawParams;
@@ -280,7 +304,7 @@ const handleAuthorizationRequest = async (c: any) => {
     // prompt=none must not be combined with other values (OIDC Core 1.0 Section 3.1.2.1)
     if (promptValues.includes('none') && promptValues.length > 1) {
       await transactionStore.delete('auth_txn:' + transactionId);
-      return c.redirect(buildErrorRedirect(transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer));
+      return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer) };
     }
 
     // OIDC Core 1.0 §3.1.2.1: the id_token_hint rule ("if the End-User identified
@@ -296,7 +320,7 @@ const handleAuthorizationRequest = async (c: any) => {
       if (!jwksProvider) {
         // jwksProvider 未提供では hint を検証できない → login_required で拒否
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));
+        return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer) };
       }
       try {
         const jwks = await jwksProvider();
@@ -309,7 +333,7 @@ const handleAuthorizationRequest = async (c: any) => {
       } catch (hintError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer));
+        return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer) };
       }
     }
 
@@ -322,14 +346,14 @@ const handleAuthorizationRequest = async (c: any) => {
       // No sessionResolver configured → cannot verify session → login_required
       if (!sessionResolver) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'sessionResolver is not configured; cannot satisfy prompt=none', issuer));
+        return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'sessionResolver is not configured; cannot satisfy prompt=none', issuer) };
       }
 
       // No consentResolver configured → cannot confirm consent → consent_required
       // (OIDC Core 1.0 Section 3.1.2.1: prompt=none must not display consent screen)
       if (!consentResolver) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer));
+        return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'consent_required', transaction.state, 'consentResolver is not configured; cannot satisfy prompt=none', issuer) };
       }
 
       let session;
@@ -356,20 +380,20 @@ const handleAuthorizationRequest = async (c: any) => {
       } catch (promptError) {
         await transactionStore.delete('auth_txn:' + transactionId);
         if (promptError instanceof AuthorizationError) {
-          return c.redirect(buildErrorRedirect(transaction.redirectUri, promptError.error, transaction.state, promptError.errorDescription, issuer));
+          return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, promptError.error, transaction.state, promptError.errorDescription, issuer) };
         }
         const serverDescription =
           promptError instanceof Error && promptError.message
             ? promptError.message
             : 'Unexpected error while evaluating prompt=none';
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'server_error', transaction.state, serverDescription, issuer));
+        return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'server_error', transaction.state, serverDescription, issuer) };
       }
 
       // Check max_age: if session is too old, prompt=none cannot trigger re-authentication
       // OIDC Core 1.0 Section 3.1.2.1
       if (transaction.maxAge !== undefined && requiresReauthentication(transaction.maxAge, session.authTime)) {
         await transactionStore.delete('auth_txn:' + transactionId);
-        return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer));
+        return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required', issuer) };
       }
 
       // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
@@ -406,7 +430,7 @@ const handleAuthorizationRequest = async (c: any) => {
       if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
       // RFC 9207 §2: include iss in success responses too.
       redirectUrl.searchParams.set('iss', issuer);
-      return c.redirect(redirectUrl.toString());
+      return { kind: 'authorization_response', location: redirectUrl.toString() };
     }
 
     // OIDC Core 1.0 Section 3.1.2.3: an active OP session enables Single Sign-On.
@@ -478,7 +502,7 @@ const handleAuthorizationRequest = async (c: any) => {
             if (transaction.state) redirectUrl.searchParams.set('state', transaction.state);
             // RFC 9207 §2: include iss in success responses.
             redirectUrl.searchParams.set('iss', issuer);
-            return c.redirect(redirectUrl.toString());
+            return { kind: 'authorization_response', location: redirectUrl.toString() };
           }
 
           const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -489,27 +513,17 @@ const handleAuthorizationRequest = async (c: any) => {
             // login → consent の受け渡しに sessionId も載せる。
             sessionId: existingSession.sessionId,
           });
-          // Internal redirects (/login, /consent) are built on config.issuer, never
-          // on the request URL: some runtimes derive the request URL from the Host
-          // header, which would let the sender pick the redirect origin and receive
-          // transaction_id there (RFC 9700 §2.1: redirect only to trusted URIs).
-          // OIDC Discovery 1.0 §3 makes the advertised issuer the source of truth
-          // for URLs that point at the OP itself. A subpath issuer contributes only
-          // its origin here ('/consent' is an absolute path) — subpath mounting is
-          // not supported by the generated routes.
-          const consentUrl = new URL('/consent', config.issuer);
-          consentUrl.searchParams.set('transaction_id', transactionId);
-          return c.redirect(consentUrl.toString());
+          // Continue on the consent screen (pages/consent.ts); the binding
+          // cookie, when enabled, travels with this answer.
+          return { kind: 'consent', transactionId, cookies: [] };
         }
       }
     }
 
-    // Redirect to login page (prompt=login forces re-authentication; handled in login route)
-    // config.issuer, not the request URL, decides the redirect origin — see the
-    // /consent redirect above (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
-    const loginUrl = new URL('/login', config.issuer);
-    loginUrl.searchParams.set('transaction_id', transactionId);
-    return c.redirect(loginUrl.toString());
+    // Interactive authentication: continue on the login screen (pages/login.ts;
+    // prompt=login forces re-authentication there). The binding cookie, when
+    // enabled, travels with this answer.
+    return { kind: 'login', transactionId, cookies: [] };
   } catch (error) {
     if (error instanceof AuthorizationError) {
       if (error.redirectUri) {
@@ -526,32 +540,16 @@ const handleAuthorizationRequest = async (c: any) => {
         // middleware; reread it here because the early-bound issuer is
         // scoped to the try block.
         redirectUrl.searchParams.set('iss', c.get('config').issuer);
-        return c.redirect(redirectUrl.toString());
+        return { kind: 'authorization_response', location: redirectUrl.toString() };
       }
       // OIDC Core 1.0 §3.1.2.2: errors that cannot be redirected (unknown
       // client_id, unregistered redirect_uri, redirect_uri with a fragment) MUST
-      // NOT redirect to the supplied redirect_uri. Browser callers get an HTML
-      // error page (so the OIDF Conformance Suite can submit a screenshot for
-      // oidcc-ensure-registered-redirect-uri); programmatic callers that ask for
-      // JSON via the Accept header still receive the OAuth error JSON.
-      const acceptsJson = (c.req.header('Accept') ?? '').includes('application/json');
-      if (acceptsJson) {
-        return c.json({ error: error.error, error_description: error.errorDescription }, 400);
-      }
-      // The OP's own error page (pages/errors.ts): an inline HTML 400, or a 303
-      // to config.authorizationErrorRedirectPath when a framework-native page
-      // renders the error (the generated Next.js output uses /oidc-error). The
-      // unregistered redirect_uri is never the target either way, and only an
-      // OP-internal root-relative path is honored for the 303.
-      return renderAuthorizationErrorPage(c, {
-        error: error.error,
-        errorDescription: error.errorDescription,
-      });
+      // NOT redirect to the supplied redirect_uri. They stay on the OP:
+      // pages/authorize.ts answers programmatic callers (Accept:
+      // application/json) with the OAuth error JSON and browsers with the OP's
+      // own error page.
+      return { kind: 'error', error: error.error, errorDescription: error.errorDescription };
     }
-    return c.json({ error: 'server_error' }, 500);
+    return { kind: 'server_error' };
   }
-};
-
-// OIDC Core 1.0 Section 3.1.2.1: Authorization Endpoint must support both GET and POST.
-authorizeApp.get('/', handleAuthorizationRequest);
-authorizeApp.post('/', handleAuthorizationRequest);
+}

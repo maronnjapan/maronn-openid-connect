@@ -64,17 +64,19 @@ describe('HonoGenerator', () => {
       expect(files.find((f) => f.path === 'conformance.test.ts')).toBeDefined();
     });
 
-    it('should generate the screen routes under pages/', () => {
+    it('should generate the screen routing under pages/', () => {
       const pageFiles = files.filter((f) => f.path.startsWith('pages/'));
       expect(pageFiles.map((f) => f.path).sort()).toEqual([
+        'pages/authorize.ts',
         'pages/consent.ts',
         'pages/errors.ts',
         'pages/login.ts',
+        'pages/respond.ts',
       ]);
     });
 
-    it('should generate 19 files total', () => {
-      expect(files).toHaveLength(19);
+    it('should generate 21 files total', () => {
+      expect(files).toHaveLength(21);
     });
 
     it('should not expose private working-note paths in generated files', () => {
@@ -314,20 +316,22 @@ describe('HonoGenerator', () => {
   // which runtimes such as @hono/node-server derive from the Host header.
   describe('internal redirect origin derivation', () => {
     const files = generator.generate(options);
-    const authorize = files.find((f) => f.path === 'routes/authorize.ts')?.content ?? '';
-    const login = files.find((f) => f.path === 'routes/login.ts')?.content ?? '';
+    const authorizePage = files.find((f) => f.path === 'pages/authorize.ts')?.content ?? '';
+    const loginPage = files.find((f) => f.path === 'pages/login.ts')?.content ?? '';
     const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
 
-    it('should build the consent and login redirects on config.issuer in the authorize route', () => {
-      expect(authorize.includes("new URL('/consent', config.issuer)")).toBe(true);
-      expect(authorize.includes("new URL('/login', config.issuer)")).toBe(true);
-      expect(authorize.includes("new URL('/consent', c.req.url)")).toBe(false);
-      expect(authorize.includes("new URL('/login', c.req.url)")).toBe(false);
+    // Redirecting is the page layer's job, so the screen URLs are built there.
+    it('should build the consent and login redirects on config.issuer in the authorize page', () => {
+      expect(authorizePage.includes("function screenUrl(c: any, path: '/login' | '/consent', transactionId: string): string {")).toBe(true);
+      expect(authorizePage.includes('const url = new URL(path, config.issuer);')).toBe(true);
+      expect(authorizePage.includes("screenUrl(c, '/login', outcome.transactionId)")).toBe(true);
+      expect(authorizePage.includes("screenUrl(c, '/consent', outcome.transactionId)")).toBe(true);
+      expect(authorizePage.includes('c.req.url')).toBe(false);
     });
 
-    it('should build the consent redirect on config.issuer in the login route', () => {
-      expect(login.includes("new URL('/consent', config.issuer)")).toBe(true);
-      expect(login.includes("new URL('/consent', c.req.url)")).toBe(false);
+    it('should build the consent redirect on config.issuer in the login page', () => {
+      expect(loginPage.includes("new URL('/consent', config.issuer)")).toBe(true);
+      expect(loginPage.includes("new URL('/consent', c.req.url)")).toBe(false);
     });
 
     it('should generate the internal redirect origin conformance contract', () => {
@@ -732,15 +736,19 @@ describe('HonoGenerator', () => {
       }
     });
 
-    it('should import all route handlers in apply.ts', () => {
+    it('should import all endpoint routers and page routers in apply.ts', () => {
       const file = files.find((f) => f.path === 'apply.ts');
-      expect(file?.content).toContain('authorizeApp');
+      expect(file?.content).toContain("import { authorizePage } from './pages/authorize.js';");
       expect(file?.content).toContain('tokenApp');
       expect(file?.content).toContain('userinfoApp');
       expect(file?.content).toContain('jwksApp');
       expect(file?.content).toContain('discoveryApp');
-      expect(file?.content).toContain('loginApp');
-      expect(file?.content).toContain('consentApp');
+      expect(file?.content).toContain("import { loginPage } from './pages/login.js';");
+      expect(file?.content).toContain("import { consentPage } from './pages/consent.js';");
+      // The browser-facing logic modules export functions, not routers.
+      expect(file?.content).not.toContain('authorizeApp');
+      expect(file?.content).not.toContain('loginApp');
+      expect(file?.content).not.toContain('consentApp');
     });
 
     it('should setup runtime dependency middleware in apply.ts', () => {
@@ -998,17 +1006,27 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain("from 'hono'");
     });
 
-    it('should import Hono in all route files', () => {
-      const routeFiles = files.filter((f) => f.path.startsWith('routes/'));
-      for (const file of routeFiles) {
-        expect(file.content).toContain("from 'hono'");
+    // The browser-facing steps are plain logic modules: they build no Response,
+    // so they have no router. Every other route file is a JSON endpoint router.
+    const LOGIC_MODULES = ['routes/authorize.ts', 'routes/login.ts', 'routes/consent.ts'];
+
+    it('should import Hono in every endpoint route file and page file', () => {
+      const routerFiles = files.filter(
+        (f) => (f.path.startsWith('routes/') && !LOGIC_MODULES.includes(f.path)) || f.path.startsWith('pages/'),
+      );
+      expect(routerFiles.length).toBeGreaterThan(0);
+      for (const file of routerFiles) {
+        if (file.path === 'pages/errors.ts' || file.path === 'pages/respond.ts') continue; // helpers, no router
+        expect(file.content, file.path).toContain("from 'hono'");
+        expect(file.content, file.path).toContain('new Hono<{ Variables: Record<string, any> }>()');
       }
     });
 
-    it('should create Hono app instance in route files', () => {
-      const routeFiles = files.filter((f) => f.path.startsWith('routes/'));
-      for (const file of routeFiles) {
-        expect(file.content).toContain('new Hono<{ Variables: Record<string, any> }>()');
+    it('should keep the browser-facing logic modules free of Hono', () => {
+      for (const path of LOGIC_MODULES) {
+        const file = files.find((f) => f.path === path);
+        expect(file?.content, path).not.toContain("from 'hono'");
+        expect(file?.content, path).not.toContain('new Hono');
       }
     });
   });
@@ -1016,21 +1034,28 @@ describe('HonoGenerator', () => {
   describe('OIDC endpoints', () => {
     const files = generator.generate(options);
 
-    it('should implement GET handler in authorize route', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain("authorizeApp.get('/'");
+    // The authorization endpoint answers the browser (redirects, screens), so
+    // its GET/POST routes live in pages/authorize.ts and call the logic.
+    it('should implement GET handler in authorize page', () => {
+      const file = files.find((f) => f.path === 'pages/authorize.ts');
+      expect(file?.content).toContain("authorizePage.get('/'");
     });
 
     // OIDC Core 1.0 Section 3.1.2.1: Authorization Endpoint must support GET and POST.
-    it('should implement POST handler in authorize route', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain("authorizeApp.post('/'");
+    it('should implement POST handler in authorize page', () => {
+      const file = files.find((f) => f.path === 'pages/authorize.ts');
+      expect(file?.content).toContain("authorizePage.post('/'");
     });
 
     it('should share the same handler between authorize GET and POST', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain("authorizeApp.get('/', handleAuthorizationRequest)");
-      expect(file?.content).toContain("authorizeApp.post('/', handleAuthorizationRequest)");
+      const file = files.find((f) => f.path === 'pages/authorize.ts');
+      expect(file?.content).toContain("authorizePage.get('/', handleAuthorizationRequest)");
+      expect(file?.content).toContain("authorizePage.post('/', handleAuthorizationRequest)");
+      expect(file?.content).toContain('respond(c, await processAuthorizationRequest(c));');
+      const route = files.find((f) => f.path === 'routes/authorize.ts');
+      expect(route?.content).toContain(
+        'export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {',
+      );
     });
 
     // OIDC Core 1.0 Section 13.2: POST must use application/x-www-form-urlencoded.
@@ -1213,10 +1238,12 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain('findUserClaims(sub: string)');
     });
 
-    it('should generate transaction id in authorize route', () => {
+    it('should generate transaction id in authorize route and pass it to the login page', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
       expect(file?.content).toContain('const transactionId = await generateRandomString(32);');
-      expect(file?.content).toContain("loginUrl.searchParams.set('transaction_id', transactionId);");
+      expect(file?.content).toContain("return { kind: 'login', transactionId, cookies: [] };");
+      const page = files.find((f) => f.path === 'pages/authorize.ts');
+      expect(page?.content).toContain("url.searchParams.set('transaction_id', transactionId);");
     });
 
     it('should pass authenticated client and authorization code resolver to granular validation', () => {
@@ -1611,7 +1638,7 @@ describe('HonoGenerator', () => {
       expect(hintVerificationIndex < promptNoneBranchIndex).toBe(true);
       expect(content).toContain('let verifiedHintSubject: string | undefined;');
       expect(content).toContain(
-        "return c.redirect(buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer));",
+        "return { kind: 'authorization_response', location: buildErrorRedirect(transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer) };",
       );
       expect(content).toContain(
         "const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';",
@@ -1712,17 +1739,25 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain('return renderView(views.consentPage(params));');
     });
 
-    // The API routes never reach for views.ts: every screen they answer with
-    // comes from a pages/ render helper, so the UI is customized in pages/.
-    it('should render the login and consent screens through the pages/ helpers from the routes', () => {
+    // The logic modules never answer with a screen or a redirect: they return an
+    // outcome and the page module renders it, so the UI is customized in pages/.
+    it('should return login and consent outcomes from the routes and render them in the pages', () => {
       const login = files.find((f) => f.path === 'routes/login.ts')?.content ?? '';
       const consent = files.find((f) => f.path === 'routes/consent.ts')?.content ?? '';
-      expect(login).toContain("import { renderLoginPage } from '../pages/login.js';");
-      expect(login).toContain("import { renderErrorPage } from '../pages/errors.js';");
-      expect(login).toContain('return renderLoginPage(c, {');
-      expect(login).not.toContain('views');
-      expect(consent).toContain("import { renderErrorPage } from '../pages/errors.js';");
-      expect(consent).not.toContain("from '../views.js'");
+      const loginPage = files.find((f) => f.path === 'pages/login.ts')?.content ?? '';
+      for (const [path, content] of [['routes/login.ts', login], ['routes/consent.ts', consent]]) {
+        expect(content, path).not.toContain("from '../pages");
+        expect(content, path).not.toContain("from '../views");
+        expect(content, path).not.toContain('renderView(');
+        expect(content, path).not.toContain('c.redirect(');
+      }
+      expect(login).toContain('export async function prepareLogin(c: any, transactionId: string): Promise<LoginScreen | LoginError> {');
+      expect(login).toContain('export async function submitLogin(c: any, input: LoginSubmission): Promise<LoginOutcome> {');
+      expect(login).toContain("kind: 'invalid_credentials',");
+      expect(consent).toContain('export async function prepareConsent(');
+      expect(consent).toContain('export async function submitConsent(');
+      expect(loginPage).toContain("import { prepareLogin, submitLogin, type LoginScreen } from '../routes/login.js';");
+      expect(loginPage).toContain('return renderLoginPage(c, {');
     });
 
     it('should accept a custom views option in createApp and applyOidc', () => {
@@ -1734,11 +1769,13 @@ describe('HonoGenerator', () => {
       expect(applyFile?.content).toContain("c.set('views', createViews(options.views))");
     });
 
-    it('should use the error page helper for rate limit errors', () => {
-      const file = files.find((f) => f.path === 'routes/login.ts');
-      expect(file?.content).toContain('renderErrorPage(c, {');
-      expect(file?.content).toContain("error: 'Too many login attempts',");
-      expect(file?.content).toContain('statusCode: 429,');
+    it('should report the lockout as an outcome and render it with the error page helper', () => {
+      const route = files.find((f) => f.path === 'routes/login.ts');
+      expect(route?.content).toContain("return { kind: 'locked_out' };");
+      const page = files.find((f) => f.path === 'pages/login.ts');
+      expect(page?.content).toContain('renderErrorPage(c, {');
+      expect(page?.content).toContain("error: 'Too many login attempts',");
+      expect(page?.content).toContain('statusCode: 429,');
       const errorPage = files.find((f) => f.path === 'pages/errors.ts');
       expect(errorPage?.content).toContain('views.errorPage(params)');
     });
@@ -1763,11 +1800,14 @@ describe('HonoGenerator', () => {
     it('should render the error page for non-redirect authorization errors', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
       const content = file?.content ?? '';
-      expect(content).toContain("import { renderAuthorizationErrorPage } from '../pages/errors.js';");
-      expect(content).toContain('return renderAuthorizationErrorPage(c, {');
-      expect(content).toContain('errorDescription: error.errorDescription');
+      // The logic only reports the error; it never builds the page itself.
+      expect(content).toContain("return { kind: 'error', error: error.error, errorDescription: error.errorDescription };");
+      expect(content).not.toContain("from '../pages");
+      const authorizePage = files.find((f) => f.path === 'pages/authorize.ts')?.content ?? '';
+      expect(authorizePage).toContain("import { renderAuthorizationErrorPage } from './errors.js';");
+      expect(authorizePage).toContain('return renderAuthorizationErrorPage(c, outcome);');
       // The delivery (inline HTML 400, or 303 to authorizationErrorRedirectPath)
-      // is the page module's decision.
+      // is the error page module's decision.
       const errorPage = files.find((f) => f.path === 'pages/errors.ts')?.content ?? '';
       expect(errorPage).toContain('export function renderAuthorizationErrorPage(');
       expect(errorPage).toContain(
@@ -1779,7 +1819,7 @@ describe('HonoGenerator', () => {
     // The browser error page is HTML; only explicit JSON callers get JSON so a
     // programmatic client can still parse the OAuth error.
     it('should negotiate JSON for non-redirect authorization errors via Accept header', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
+      const file = files.find((f) => f.path === 'pages/authorize.ts');
       const content = file?.content ?? '';
       expect(content).toContain("c.req.header('Accept')");
     });
@@ -1834,30 +1874,35 @@ describe('HonoGenerator', () => {
       expect(errorPage?.content).toContain(
         'return renderView(views.errorPage(params), { status: params.statusCode });',
       );
-      // The rate-limit lockout answers 429 through that helper.
-      const login = files.find((f) => f.path === 'routes/login.ts');
+      // The rate-limit lockout answers 429 through that helper (from the page).
+      const login = files.find((f) => f.path === 'pages/login.ts');
       expect(login?.content).toContain('statusCode: 429,');
     });
 
     it('should render non-redirect authorization errors through the error page module', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      const content = file?.content ?? '';
-      expect(content).toContain('renderAuthorizationErrorPage(');
-      expect(content).not.toContain('renderView(');
+      const page = files.find((f) => f.path === 'pages/authorize.ts')?.content ?? '';
+      expect(page).toContain('renderAuthorizationErrorPage(');
+      const route = files.find((f) => f.path === 'routes/authorize.ts')?.content ?? '';
+      expect(route).not.toContain('renderAuthorizationErrorPage(');
+      expect(route).not.toContain('renderView(');
       const errorPage = files.find((f) => f.path === 'pages/errors.ts')?.content ?? '';
       expect(errorPage).toContain('statusCode: 400,');
     });
 
-    it('should import the page helpers instead of views in login, consent, and authorize routes', () => {
+    it('should keep views and pages out of the login, consent, and authorize logic modules', () => {
       for (const path of ['routes/login.ts', 'routes/consent.ts', 'routes/authorize.ts']) {
         const file = files.find((f) => f.path === path);
-        expect(file?.content).toContain("from '../pages/");
-        expect(file?.content).not.toContain("from '../views.js'");
+        expect(file?.content, path).not.toContain("from '../pages/");
+        expect(file?.content, path).not.toContain("from '../views.js'");
       }
       for (const path of ['pages/login.ts', 'pages/consent.ts', 'pages/errors.ts']) {
         const file = files.find((f) => f.path === path);
-        expect(file?.content).toContain("from '../views.js'");
+        expect(file?.content, path).toContain("from '../views.js'");
       }
+      // The authorize page only maps outcomes; its screens are the error page.
+      const authorizePage = files.find((f) => f.path === 'pages/authorize.ts');
+      expect(authorizePage?.content).toContain("from '../routes/authorize.js';");
+      expect(authorizePage?.content).toContain("import { renderAuthorizationErrorPage } from './errors.js';");
     });
 
     it('should pin custom string / Response view behavior in the conformance test', () => {
@@ -2182,30 +2227,35 @@ describe('HonoGenerator', () => {
       const content = file?.content ?? '';
       expect(content).toContain('const bindingSecret = await generateRandomString(32);');
       expect(content).toContain('bindingHash: await computeTransactionBindingHash(bindingSecret),');
+      // The cookie is named in the outcome; pages/authorize.ts attaches it.
       expect(content).toContain(
-        'buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds),',
+        "return { kind: 'login', transactionId, cookies: [buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds)] };",
       );
+      expect(content).not.toContain("'Set-Cookie'");
     });
 
-    it('should validate the transaction binding before rendering the login page', () => {
-      const file = boundFiles.find((f) => f.path === 'pages/login.ts');
+    it('should validate the transaction binding before describing the login screen', () => {
+      const file = boundFiles.find((f) => f.path === 'routes/login.ts');
       const content = file?.content ?? '';
       expect(content).toContain('validateTransactionBinding');
       expect(content).toContain('parseTransactionBindingSecret');
-      expect(content).toContain('export async function rejectUnboundTransaction(');
-      // The guard runs before the form (and its csrf_token) is rendered.
+      expect(content).toContain('async function rejectUnboundTransaction(');
+      // The guard runs before the form (and its csrf_token) is described, so the
+      // page never gets a csrf_token to render for an unbound browser.
       expect(content.indexOf('await rejectUnboundTransaction(c, transaction, transactionId)')).toBeLessThan(
-        content.indexOf('return renderLoginPage(c, {'),
+        content.indexOf('return describeLoginScreen('),
       );
+      // The page has no binding logic of its own.
+      const page = boundFiles.find((f) => f.path === 'pages/login.ts')?.content ?? '';
+      expect(page).not.toContain('validateTransactionBinding');
+      expect(page).not.toContain('rejectUnboundTransaction');
     });
 
     it('should validate the transaction binding before the login CSRF check', () => {
       const file = boundFiles.find((f) => f.path === 'routes/login.ts');
       const content = file?.content ?? '';
-      // The route reuses the page's guard so both sides enforce one rule.
-      expect(content).toContain(
-        "import { renderLoginPage, rejectUnboundTransaction } from '../pages/login.js';",
-      );
+      // prepareLogin() and submitLogin() share one guard so both enforce one rule.
+      expect(content.split('await rejectUnboundTransaction(c, transaction, transactionId)').length).toBe(3);
       // The binding guard must precede the CSRF check: the CSRF token is only as
       // secret as the page that carries it.
       expect(content.indexOf('await rejectUnboundTransaction(c, transaction, transactionId)')).toBeLessThan(
@@ -2213,20 +2263,24 @@ describe('HonoGenerator', () => {
       );
     });
 
-    it('should validate the transaction binding before rendering the consent page', () => {
-      const file = boundFiles.find((f) => f.path === 'pages/consent.ts');
+    it('should validate the transaction binding before describing the consent screen', () => {
+      const file = boundFiles.find((f) => f.path === 'routes/consent.ts');
       const content = file?.content ?? '';
       expect(content).toContain('validateTransactionBinding');
       expect(content).toContain('parseTransactionBindingSecret');
       expect(content.indexOf('await rejectUnboundTransaction(c, transaction, transactionId)')).toBeLessThan(
-        content.indexOf('return renderConsentPage(c, {'),
+        content.indexOf("kind: 'screen',"),
       );
+      const page = boundFiles.find((f) => f.path === 'pages/consent.ts')?.content ?? '';
+      expect(page).not.toContain('validateTransactionBinding');
+      expect(page).not.toContain('rejectUnboundTransaction');
     });
 
     it('should validate the transaction binding before acting on the consent decision', () => {
       const file = boundFiles.find((f) => f.path === 'routes/consent.ts');
       const content = file?.content ?? '';
-      expect(content).toContain("import { rejectUnboundTransaction } from '../pages/consent.js';");
+      expect(content).toContain('async function rejectUnboundTransaction(');
+      expect(content).not.toContain("from '../pages/");
       expect(content.indexOf('await rejectUnboundTransaction(c, transaction, transactionId)')).toBeLessThan(
         content.indexOf('validateCsrfToken(transaction, csrfToken);'),
       );
@@ -2467,7 +2521,8 @@ describe('HonoGenerator', () => {
       // The deny branch redirects with `error=access_denied`; iss must be present too.
       const denyBlockStart = content.indexOf("'access_denied'");
       expect(denyBlockStart).toBeGreaterThan(-1);
-      const denyBlockEnd = content.indexOf('return c.redirect', denyBlockStart);
+      // The deny branch no longer redirects itself: it returns the location.
+      const denyBlockEnd = content.indexOf('return {', denyBlockStart);
       expect(denyBlockEnd).toBeGreaterThan(denyBlockStart);
       const denyBlock = content.slice(denyBlockStart, denyBlockEnd);
       expect(denyBlock).toContain("'iss'");
@@ -2564,7 +2619,9 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
   describe('routes/login.ts', () => {
     it('should establish a browser session and set the session cookie on login', () => {
       expect(loginFile?.content).toContain('browserSessionStore.set');
-      expect(loginFile?.content).toContain("c.header('Set-Cookie', buildSessionCookie(");
+      // The cookie is named in the outcome; pages/login.ts attaches it.
+      expect(loginFile?.content).toContain("return { kind: 'authenticated', transactionId, cookies: [buildSessionCookie(sessionId)] };");
+      expect(loginFile?.content).not.toContain("'Set-Cookie'");
       expect(loginFile?.content).toContain('generateRandomString');
     });
 
@@ -2590,11 +2647,13 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
     // (`deny`) would make every other value — missing, empty, unknown — approve.
     it('should approve only the allowlisted action value', () => {
       expect(consentFile?.content).toContain(`  if (action !== 'approve') {
-    return renderErrorPage(c, {
-      error: 'Invalid consent decision. Please use the Approve or Deny button.',
-      statusCode: 400,
-    });
+    return { kind: 'invalid_decision' };
   }`);
+      // The page turns that outcome into the 400 error screen.
+      const consentPage = files.find((f) => f.path === 'pages/consent.ts');
+      expect(consentPage?.content).toContain("if (outcome.kind === 'invalid_decision') {");
+      expect(consentPage?.content).toContain("error: 'Invalid consent decision. Please use the Approve or Deny button.',");
+      expect(consentPage?.content).toContain('statusCode: 400,');
     });
 
     // OIDC Core 1.0 Section 3.1.2.6: access_denied means the resource owner denied

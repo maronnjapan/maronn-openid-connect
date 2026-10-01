@@ -1,10 +1,10 @@
 /**
  * Error screen (screen routing layer).
  *
- * The API routes (routes/*.ts) never build HTML themselves: whenever one has to
- * stop the browser on the OP's own error page it calls renderErrorPage() here.
- * Customize the error UI in views.ts (errorPage), or change how it is delivered
- * in this file — for example by redirecting to a page of your own.
+ * Whenever a page has to stop the browser on the OP's own error page it calls
+ * renderErrorPage() here. Customize the error UI in views.ts (errorPage), or
+ * change how it is delivered in this file — for example by redirecting to a
+ * page of your own.
  */
 import { defaultProviderConfig } from '../config.js';
 import { defaultViews, renderView, type ErrorPageParams } from '../views.js';

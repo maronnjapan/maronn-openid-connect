@@ -1,18 +1,15 @@
 import { WebRouter, type WebMiddleware } from './web-router';
-import { authorizeApp } from './routes/authorize';
+import { authorizePage } from './pages/authorize';
 import { tokenApp } from './routes/token';
 import { userinfoApp } from './routes/userinfo';
 import { introspectionApp } from './routes/introspection';
 import { revocationApp } from './routes/revocation';
 import { deviceAuthorizationApp } from './routes/device-authorization';
-import { deviceApp } from './routes/device';
 import { devicePage } from './pages/device';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication';
-import { cibaApp } from './routes/ciba-verification';
+import { cibaPage } from './pages/ciba';
 import { jwksApp } from './routes/jwks';
 import { discoveryApp } from './routes/discovery';
-import { loginApp } from './routes/login';
-import { consentApp } from './routes/consent';
 import { loginPage } from './pages/login';
 import { consentPage } from './pages/consent';
 import {
@@ -224,26 +221,21 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     await next();
   });
 
-  app.route('/authorize', authorizeApp);
+  // Browser-facing surfaces are mounted from pages/: every GET and POST of a
+  // screen lives there, and the logic they call is in routes/.
+  app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
   app.route('/device_authorization', deviceAuthorizationApp);
   app.route('/device', devicePage);
-  app.route('/device', deviceApp);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
-  app.route('/ciba', cibaApp);
+  app.route('/ciba', cibaPage);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
-  // Screen routes (pages/) answer the browser GETs; the API routes (routes/)
-  // sharing the same path hold the logic behind their POSTs. Pages are mounted
-  // first so the Allow list of a path reads GET, POST (WebRouter merges the
-  // methods of every router mounted on one prefix).
   app.route('/login', loginPage);
-  app.route('/login', loginApp);
   app.route('/consent', consentPage);
-  app.route('/consent', consentApp);
 
   return app;
 }

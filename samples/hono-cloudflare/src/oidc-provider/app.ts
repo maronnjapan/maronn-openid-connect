@@ -1,21 +1,18 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { authorizeApp } from './routes/authorize.js';
+import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
 import { introspectionApp } from './routes/introspection.js';
 import { revocationApp } from './routes/revocation.js';
 import { parApp } from './routes/par.js';
 import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';
 import { devicePage } from './pages/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
-import { cibaApp } from './routes/ciba-verification.js';
-import { logoutApp } from './routes/logout.js';
+import { cibaPage } from './pages/ciba.js';
+import { logoutPage } from './pages/logout.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
-import { loginApp } from './routes/login.js';
-import { consentApp } from './routes/consent.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
@@ -275,7 +272,9 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
     await next();
   });
 
-  app.route('/authorize', authorizeApp);
+  // Browser-facing surfaces are mounted from pages/: every GET and POST of a
+  // screen lives there, and the logic they call is in routes/.
+  app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
   app.route('/introspect', introspectionApp);
@@ -283,19 +282,13 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   app.route('/par', parApp);
   app.route('/device_authorization', deviceAuthorizationApp);
   app.route('/device', devicePage);
-  app.route('/device', deviceApp);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
-  app.route('/ciba', cibaApp);
-  app.route('/logout', logoutApp);
+  app.route('/ciba', cibaPage);
+  app.route('/logout', logoutPage);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
-  // Screen routes (pages/) answer the browser GETs; the API routes (routes/)
-  // sharing the same path hold the logic behind their POSTs. Pages are mounted
-  // first so the Allow list of a path reads GET, POST.
   app.route('/login', loginPage);
-  app.route('/login', loginApp);
   app.route('/consent', consentPage);
-  app.route('/consent', consentApp);
 
   return app;
 }

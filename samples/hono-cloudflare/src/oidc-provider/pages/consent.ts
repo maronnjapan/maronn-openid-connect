@@ -1,26 +1,21 @@
 /**
  * Consent screen (screen routing layer).
  *
- * GET /consent renders the approve / deny form. The decision itself — CSRF
- * check, authorization code, consent record, redirect back to the client — is
- * POST /consent in routes/consent.ts. To customize the consent UI, edit this
+ * GET /consent renders the approve / deny form and POST /consent submits it.
+ * Neither handler holds OIDC logic: prepareConsent() and submitConsent() in
+ * routes/consent.ts load the transaction, check the User-Agent binding, record
+ * the decision, mint the authorization code and build the authorization
+ * response URL, and report what happened as an outcome. This file turns each
+ * outcome into a screen or a redirect. To customize the consent UI, edit this
  * file or the consentPage view in views.ts; routes/consent.ts never has to
  * change. Keep the two button values ('approve' / 'deny') as they are: the
- * POST handler accepts exactly those.
+ * logic accepts exactly those.
  */
 import { Hono } from 'hono';
-import {
-  getAuthTransaction,
-  validateTransactionBinding,
-  AuthTransactionError,
-  type AuthTransaction,
-} from '@maronn-openid-connect/core';
-import {
-  transactionStore as defaultTransactionStore,
-  parseTransactionBindingSecret,
-} from '../store.js';
+import { prepareConsent, submitConsent } from '../routes/consent.js';
 import { defaultViews, renderView, type ConsentPageParams } from '../views.js';
 import { renderErrorPage } from './errors.js';
+import { redirectWithCookies } from './respond.js';
 
 export const consentPage = new Hono<{ Variables: Record<string, any> }>();
 
@@ -34,39 +29,6 @@ export function renderConsentPage(c: any, params: ConsentPageParams): Response {
 }
 
 /**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns an error Response to send
- * back, or undefined when the binding holds.
- *
- * Shared by GET /consent (below) and POST /consent (routes/consent.ts): the
- * page decides who may see the form, and the API applies the same rule before
- * it mints the authorization code. The failure is rendered by the OP itself and
- * never redirected to the client's redirect_uri: without a verified owner,
- * answering the client would let an attacker who lured a victim into their own
- * transaction collect a code for the victim's identity. See
- * buildTransactionBindingCookie() in store.ts.
- */
-export async function rejectUnboundTransaction(
-  c: any,
-  transaction: AuthTransaction,
-  transactionId: string,
-): Promise<Response | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(c.req.header('Cookie') ?? null, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return renderErrorPage(c, {
-      error: error.message,
-      statusCode: error.httpStatusCode,
-    });
-  }
-}
-
-/**
  * Consent Page - GET
  * Displays the consent form for scope authorization.
  */
@@ -76,19 +38,46 @@ consentPage.get('/', async (c) => {
     return c.text('Missing transaction_id', 400);
   }
 
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // Checked BEFORE rendering: the consent page embeds csrf_token, so a third
-  // party holding a leaked transaction_id must not be able to read it here and
-  // then complete POST /consent on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
-  if (bindingError) return bindingError;
-
+  const screen = await prepareConsent(c, transactionId);
+  if (screen.kind === 'error') return renderErrorPage(c, screen);
   return renderConsentPage(c, {
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    scopes: transaction.scope.split(' ').filter(Boolean),
-    clientId: transaction.clientId,
+    transactionId: screen.transactionId,
+    csrfToken: screen.csrfToken,
+    scopes: screen.scopes,
+    clientId: screen.clientId,
   });
+});
+
+/**
+ * Consent Handler - POST
+ * Submits the consent decision and sends the browser on.
+ */
+consentPage.post('/', async (c) => {
+  const body = await c.req.parseBody();
+  const outcome = await submitConsent(c, {
+    transactionId: String(body['transaction_id'] ?? ''),
+    csrfToken: String(body['csrf_token'] ?? ''),
+    action: String(body['action'] ?? ''),
+  });
+
+  if (outcome.kind === 'error') return renderErrorPage(c, outcome);
+  if (outcome.kind === 'invalid_decision') {
+    // OIDC Core 1.0 Section 3.1.2.4 / 3.1.2.6: no decision was obtained, which
+    // is not the same as the End-User denying — so the browser stays on the OP's
+    // own error page instead of being sent back to the client. 'approve' and
+    // 'deny' are the values the logic accepts; the buttons in views.ts
+    // consentPage() must keep sending exactly those.
+    return renderErrorPage(c, {
+      error: 'Invalid consent decision. Please use the Approve or Deny button.',
+      statusCode: 400,
+    });
+  }
+  if (outcome.kind === 'session_missing') {
+    return renderErrorPage(c, {
+      error: 'Authentication session not found. Please restart login.',
+      statusCode: 400,
+    });
+  }
+  // Approved or denied: the authorization response is already in the URL.
+  return redirectWithCookies(outcome.location, outcome.cookies);
 });

@@ -197,19 +197,31 @@ export class WebRouter {
   }
 
   private dispatchRoute(context: WebContext, path: string): Promise<Response> {
-    const method = context.req.method;
-    const match = this.resolve(method, path);
-    if (match.handler) {
-      return Promise.resolve(match.handler(context));
+    for (const mount of this.mounts) {
+      const childPath = childPathForMount(path, mount.prefix);
+      if (childPath !== undefined) {
+        return mount.router.dispatch(context, childPath);
+      }
+    }
+
+    const route = this.routes.find(
+      (candidate) =>
+        candidate.method === context.req.method &&
+        candidate.path === path,
+    );
+    if (route) {
+      return Promise.resolve(route.handler(context));
     }
 
     // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
     // supported. RFC 9110 §9.3.2: HEAD shares GET semantics but MUST NOT return a
     // body. Serve HEAD from the GET handler with the body stripped.
-    if (method === 'HEAD') {
-      const getMatch = this.resolve('GET', path);
-      if (getMatch.handler) {
-        return Promise.resolve(getMatch.handler(context)).then(
+    if (context.req.method === 'HEAD') {
+      const getRoute = this.routes.find(
+        (candidate) => candidate.method === 'GET' && candidate.path === path,
+      );
+      if (getRoute) {
+        return Promise.resolve(getRoute.handler(context)).then(
           (response) =>
             new Response(null, {
               status: response.status,
@@ -220,56 +232,15 @@ export class WebRouter {
       }
     }
 
-    if (match.allowed.length > 0) {
-      return Promise.resolve(new Response(null, { status: 405, headers: { Allow: match.allowed.join(', ') } }));
+    const allowedMethods = this.routes
+      .filter((candidate) => candidate.path === path)
+      .map((candidate) => candidate.method);
+    if (allowedMethods.length > 0) {
+      return Promise.resolve(new Response(null, { status: 405, headers: { Allow: allowedMethods.join(', ') } }));
     }
 
     return Promise.resolve(new Response('Not Found', { status: 404 }));
   }
-
-  /**
-   * Find the handler for a method / path across the mounted routers and this
-   * router's own routes.
-   *
-   * Several routers may be mounted on one prefix: the generated pages/ module
-   * (GET) and routes/ module (POST) of /login, /consent and /device share a
-   * mount point. A mounted router that has no route for the method is skipped
-   * instead of answering 405 for the whole prefix, and the methods it does
-   * serve on that path still count toward the Allow header of a 405 — so the
-   * two routers answer as one endpoint. A match inside a mount re-enters that
-   * router through dispatch() so its own middleware runs in front of the
-   * handler.
-   */
-  private resolve(method: string, path: string): ResolvedRoute {
-    const allowed: string[] = [];
-    for (const mount of this.mounts) {
-      const childPath = childPathForMount(path, mount.prefix);
-      if (childPath === undefined) continue;
-      const found = mount.router.resolve(method, childPath);
-      if (found.handler) {
-        return {
-          handler: (context) => mount.router.dispatch(context, childPath),
-          allowed: [],
-        };
-      }
-      allowed.push(...found.allowed);
-    }
-
-    for (const route of this.routes) {
-      if (route.path !== path) continue;
-      if (route.method === method) {
-        return { handler: route.handler, allowed: [] };
-      }
-      allowed.push(route.method);
-    }
-
-    return { allowed: allowed.filter((candidate, index) => allowed.indexOf(candidate) === index) };
-  }
-}
-
-interface ResolvedRoute {
-  handler?: WebHandler;
-  allowed: string[];
 }
 
 function resolveRequestInput(input: RequestInfo | URL): RequestInfo | URL {

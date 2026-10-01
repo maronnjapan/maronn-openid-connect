@@ -3,9 +3,9 @@
  *
  * This file contains the default HTML of every user-facing screen. The screen
  * routes in pages/ deliver these views (pages/login.ts renders loginPage, and so
- * on); the API routes in routes/ never render HTML themselves. Customize these
- * functions to match your application's design, or change how a screen is
- * delivered in its pages/ module.
+ * on); the logic in routes/ never renders anything — it returns outcomes the
+ * pages turn into HTTP. Customize these functions to match your application's
+ * design, or change how a screen is delivered in its pages/ module.
  *
  * Each function receives typed parameters and returns a ViewResult: either an
  * HTML string (wrapped into a text/html Response by renderView) or a

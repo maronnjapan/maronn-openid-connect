@@ -68,8 +68,8 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | ファイル | 内容 |
 |---|---|
 | `routes/device-authorization.ts` | デバイス認可エンドポイント（`POST /device_authorization`）と設定値 `deviceAuthorizationConfig` |
-| `pages/device.ts` | 検証 UI の画面層（`GET /device` のコード入力フォームと、各画面の render ヘルパ。UI カスタマイズはここ） |
-| `routes/device.ts` | 検証 UI の処理層（`POST /device`・`POST /device/login`・`POST /device/approve`。画面は `pages/device.ts` のヘルパで返す） |
+| `pages/device.ts` | 検証 UI の画面層（`GET /device`・`POST /device`・`POST /device/login`・`POST /device/approve` のルートと各画面の描画。UI カスタマイズはここ） |
+| `routes/device.ts` | 検証 UI の処理層（`submitDeviceUserCode()`・`submitDeviceLogin()`・`submitDeviceDecision()`。user_code の照合・認証・承認を行い、結果を outcome で返す。Response は作らない） |
 | `views.ts` | `deviceVerificationPage` / `deviceLoginPage` / `deviceApprovalPage` / `deviceCompletedPage` の追加 |
 | `store.ts` | `InMemoryDeviceAuthorizationStore`・`deviceAuthorizationStore` シングルトン・バインディング Cookie ヘルパーの追加 |
 | `routes/token.ts` | `device_code` grant の分岐と RFC 8628 §3.5 エラーの catch 分岐の追加 |

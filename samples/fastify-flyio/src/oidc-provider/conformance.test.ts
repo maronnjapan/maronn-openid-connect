@@ -1222,8 +1222,7 @@ describe('generated provider HTTP conformance', () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
         { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
-        // /login and /consent are each served by two routers (pages/ for GET,
-        // routes/ for POST) and must still answer as one endpoint.
+        // The browser-facing screens (pages/) enforce their method lists too.
         { path: '/login', method: 'PUT', allow: 'GET, POST' },
         { path: '/consent', method: 'PUT', allow: 'GET, POST' },
       { path: '/introspect', method: 'GET', allow: 'POST' },

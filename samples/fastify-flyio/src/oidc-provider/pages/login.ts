@@ -1,37 +1,26 @@
 /**
  * Login screen (screen routing layer).
  *
- * GET /login renders the form. The logic behind the form — credential check,
- * lockout, session cookie, hand-off to /consent — is POST /login in
- * routes/login.ts, which comes back to renderLoginPage() whenever it has to
- * show the form again. To customize the login UI, edit this file or the
- * loginPage view in views.ts; routes/login.ts never has to change.
+ * GET /login renders the form and POST /login submits it. Neither handler
+ * holds OIDC logic: prepareLogin() and submitLogin() in routes/login.ts load
+ * the transaction, check the User-Agent binding, verify the credentials and
+ * mint the OP session, and report what happened as an outcome. This file turns
+ * each outcome into a screen or a redirect. To customize the login UI, edit
+ * this file or the loginPage view in views.ts; routes/login.ts never has to
+ * change.
  */
 import { WebRouter } from '../web-router.js';
-import {
-  getAuthTransaction,
-  type AuthTransaction,
-} from '@maronn-openid-connect/core';
-import { issueGoogleLoginNonce } from '@maronn-openid-connect/google-login';
-import {
-  buildGoogleSignInAttributes,
-  type GoogleSignInAttributes,
-} from '@maronn-openid-connect/google-login/sign-in';
-import {
-  transactionStore as defaultTransactionStore,
-  googleLoginNonceStore as defaultGoogleLoginNonceStore,
-} from '../store.js';
-import { defaultProviderConfig, type GoogleLoginConfig } from '../config.js';
+import { defaultProviderConfig } from '../config.js';
+import { prepareLogin, submitLogin, completeGoogleLogin, type LoginScreen } from '../routes/login.js';
 import { defaultViews, renderView, type LoginPageParams } from '../views.js';
+import { renderErrorPage } from './errors.js';
+import { redirectWithCookies } from './respond.js';
 
 export const loginPage = new WebRouter();
 
 /**
- * Render the login form.
- *
- * Shared by GET /login (below) and by the failed-attempt path of POST /login
- * (routes/login.ts), so both come out of one function: swap the view, return a
- * framework-rendered Response, or redirect to a UI of your own — here only.
+ * Render the login form. Swap the view, return a framework-rendered Response,
+ * or redirect to a UI of your own — here only.
  */
 export function renderLoginPage(c: any, params: LoginPageParams): Response {
   const views = c.get('views') ?? defaultViews;
@@ -39,38 +28,31 @@ export function renderLoginPage(c: any, params: LoginPageParams): Response {
 }
 
 /**
- * EXTENSION (google-login): build the GIS configuration (the g_id_onload
- * attributes) for this transaction, or undefined when config.googleLogin is not
- * set. Rendering is the view's job (views.ts): the package generates no UI.
- * Every render issues a fresh nonce bound to the transaction: Google echoes it
- * in the ID token, which is how the callback (routes/login.ts) finds its way
- * back to this authorization request (the redirect-mode POST carries nothing
- * else). Shared by GET /login and the failed-attempt re-render of POST /login.
+ * Map what the logic prepared for the form onto the view's parameters. Extend
+ * this when your login view needs more than the defaults.
  */
-export async function buildGoogleSignIn(
-  c: any,
-  transactionId: string,
-  transaction: AuthTransaction,
-): Promise<GoogleSignInAttributes | undefined> {
+function loginPageParams(screen: LoginScreen): LoginPageParams {
+  return {
+    transactionId: screen.transactionId,
+    csrfToken: screen.csrfToken,
+    // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
+    loginHint: screen.loginHint,
+    // EXTENSION (google-login): undefined until config.googleLogin is set.
+    googleSignIn: screen.googleSignIn,
+  };
+}
+
+/**
+ * Where a signed-in End-User continues: the consent screen. Built on
+ * config.issuer, not the request URL — some runtimes derive the request URL
+ * from the Host header, which would let the sender pick where transaction_id
+ * lands (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+ */
+function consentScreenUrl(c: any, transactionId: string): string {
   const config = c.get('config') ?? defaultProviderConfig;
-  const googleLogin: GoogleLoginConfig | undefined = config.googleLogin;
-  if (!googleLogin) return undefined;
-  const nonceStore = c.get('googleLoginNonceStore') ?? defaultGoogleLoginNonceStore;
-  const nonce = await issueGoogleLoginNonce({
-    transactionId,
-    expiresAt: transaction.expiresAt,
-    store: nonceStore,
-  });
-  return buildGoogleSignInAttributes({
-    clientId: googleLogin.clientId,
-    // Must equal an authorized redirect URI of the Google OAuth client. Built on
-    // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
-    loginUri: new URL('/login/google', config.issuer).toString(),
-    nonce,
-    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
-    loginHint: transaction.loginHint,
-    hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
-  });
+  const url = new URL('/consent', config.issuer);
+  url.searchParams.set('transaction_id', transactionId);
+  return url.toString();
 }
 
 /**
@@ -83,15 +65,60 @@ loginPage.get('/', async (c) => {
     return c.text('Missing transaction_id', 400);
   }
 
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
+  const screen = await prepareLogin(c, transactionId);
+  if (screen.kind === 'error') return renderErrorPage(c, screen);
+  return renderLoginPage(c, loginPageParams(screen));
+});
 
-  return renderLoginPage(c, {
-    transactionId,
-    csrfToken: transaction.csrfToken,
-    // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
-    loginHint: transaction.loginHint,
-    // EXTENSION (google-login): undefined until config.googleLogin is set.
-    googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
+/**
+ * Login Handler - POST
+ * Submits the login form and shows the next screen.
+ */
+loginPage.post('/', async (c) => {
+  const body = await c.req.parseBody();
+  const outcome = await submitLogin(c, {
+    transactionId: String(body['transaction_id'] ?? ''),
+    csrfToken: String(body['csrf_token'] ?? ''),
+    username: String(body['username'] ?? ''),
+    password: String(body['password'] ?? ''),
   });
+
+  if (outcome.kind === 'error') return renderErrorPage(c, outcome);
+  if (outcome.kind === 'locked_out') {
+    return renderErrorPage(c, {
+      error: 'Too many login attempts',
+      statusCode: 429,
+    });
+  }
+  if (outcome.kind === 'invalid_credentials') {
+    // The same form again, with the failure shown.
+    return renderLoginPage(c, {
+      ...loginPageParams(outcome.screen),
+      error: 'Invalid credentials',
+      remainingAttempts: outcome.remainingAttempts,
+    });
+  }
+  // Signed in: set the OP session cookie and continue to the consent step.
+  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
+});
+
+/**
+ * EXTENSION (google-login) — Google login callback (login_uri) - POST
+ *
+ * Sign in with Google (redirect mode) posts the ID token here once the user
+ * picks an account. completeGoogleLogin() (routes/login.ts) verifies it and
+ * establishes the OP session exactly like a password login; this handler only
+ * continues to the consent step or shows the error page.
+ */
+loginPage.post('/google', async (c) => {
+  const outcome = await completeGoogleLogin(c);
+  if (outcome.kind === 'not_configured') {
+    return renderErrorPage(c, {
+      error: 'not_found',
+      errorDescription: 'Google login is not configured',
+      statusCode: 404,
+    });
+  }
+  if (outcome.kind === 'error') return renderErrorPage(c, outcome);
+  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
 });

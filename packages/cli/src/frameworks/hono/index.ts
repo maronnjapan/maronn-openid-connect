@@ -27,12 +27,14 @@ import {
   conformanceTestTemplate,
 } from './templates.js';
 import {
+  authorizePageTemplate,
   cibaPageTemplate,
   consentPageTemplate,
   devicePageTemplate,
   errorPageTemplate,
   loginPageTemplate,
   logoutPageTemplate,
+  respondTemplate,
 } from './pages.js';
 
 export class HonoGenerator implements FrameworkGenerator {
@@ -56,12 +58,15 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
       { path: 'views.ts', content: viewsTemplate(features) },
-      // Screen routing layer (pages/): GET /login, /consent (and /device) plus
-      // the render helpers the API routes (routes/) answer with. The API routes
-      // never import views.ts, so the UI is customized in pages/ and views.ts.
+      // Screen routing layer (pages/): every browser-facing GET / POST
+      // (authorize, login, consent, and the device / CIBA / logout UIs) plus the
+      // render helpers. Each page calls the logic of its routes/ module and only
+      // renders or redirects, so the UI is customized in pages/ and views.ts.
+      { path: 'pages/respond.ts', content: respondTemplate() },
       { path: 'pages/errors.ts', content: errorPageTemplate() },
-      { path: 'pages/login.ts', content: loginPageTemplate(pkg, features) },
-      { path: 'pages/consent.ts', content: consentPageTemplate(pkg, features, scopes) },
+      { path: 'pages/authorize.ts', content: authorizePageTemplate() },
+      { path: 'pages/login.ts', content: loginPageTemplate(features) },
+      { path: 'pages/consent.ts', content: consentPageTemplate() },
       ...(features.deviceAuthorizationGrant
         ? [{ path: 'pages/device.ts', content: devicePageTemplate() }]
         : []),

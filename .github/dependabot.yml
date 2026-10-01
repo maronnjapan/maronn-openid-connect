@@ -1,16 +1,16 @@
 version: 2
 updates:
+  # pnpm ワークスペースはルートからだけ更新させる。
+  # ルートの pnpm-workspace.yaml から packages/* / samples/* / tests/* / docs/* の
+  # package.json をまとめて辿り、pnpm-lock.yaml も同じ PR で更新してくれる。
+  # サブディレクトリ（/packages/* など）を directories に並べると、Dependabot は
+  # 「Updating workspaces from inside a workspace subdirectory is not supported」
+  # で lockfile を更新できず、package.json だけを書き換えた PR を作る。
+  # その PR は CI の `pnpm install --frozen-lockfile` で必ず落ちる。
   - package-ecosystem: npm
-    directories:
-      - "/"
-      - "/packages/*"
-      - "/samples/*"
-      - "/tests/*"
+    directory: "/"
     schedule:
       interval: weekly
-    groups:
-      monorepo-dependencies:
-        group-by: dependency-name
 
   - package-ecosystem: github-actions
     directory: "/"

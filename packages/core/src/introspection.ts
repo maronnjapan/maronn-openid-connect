@@ -17,7 +17,7 @@
  */
 
 import type { AccessTokenInfo } from './userinfo.js';
-import type { RefreshTokenInfo } from './token-request.js';
+import type { RefreshTokenInfo, TokenClientInfo } from './token-request.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 
 /**
@@ -196,6 +196,35 @@ export function requireIntrospectionClient(authenticatedClientId: string): strin
     );
   }
   return authenticatedClientId;
+}
+
+/**
+ * ステップ 2.5: 呼び出し元が confidential client であることを検証する
+ *
+ * RFC 7662 §2.1 は token scanning 防止のため呼び出し元の認可を要求し、
+ * RFC 9701 §5 は未認証のイントロスペクションリクエストの拒否を MUST とする。
+ * `token_endpoint_auth_method: 'none'` で登録された public client は
+ * client_id（公開情報）の提示だけで認証パイプラインを通過するため、
+ * それを「認証済み」として扱うと誰でもトークンを走査できてしまう。
+ * このステップは登録方式が `'none'` の呼び出し元を invalid_client で拒否する。
+ *
+ * revocation エンドポイントには適用しないこと（RFC 7009 §2.1 は public client の
+ * 失効要求を正当に許す）。
+ *
+ * @param client クライアント認証パイプラインが解決した登録済みクライアント
+ * @throws {IntrospectionError} invalid_client（401 + WWW-Authenticate）
+ */
+export function requireConfidentialIntrospectionCaller(
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod'>,
+): void {
+  // OIDC Core 1.0 §9 / RFC 7591 §2: 既定は client_secret_basic（confidential）。
+  const registeredMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
+  if (registeredMethod === 'none') {
+    throw new IntrospectionError(
+      IntrospectionErrorCode.InvalidClient,
+      'Introspection requires an authenticated confidential client',
+    );
+  }
 }
 
 /**

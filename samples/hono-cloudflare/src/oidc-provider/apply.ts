@@ -1,19 +1,20 @@
 import type { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { authorizeApp } from './routes/authorize.js';
+import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
 import { introspectionApp } from './routes/introspection.js';
 import { revocationApp } from './routes/revocation.js';
 import { parApp } from './routes/par.js';
 import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';
+import { devicePage } from './pages/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
-import { cibaApp } from './routes/ciba-verification.js';
+import { cibaPage } from './pages/ciba.js';
+import { logoutPage } from './pages/logout.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
-import { loginApp } from './routes/login.js';
-import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -162,6 +163,8 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/ciba': ['GET'],
   '/ciba/login': ['POST'],
   '/ciba/approve': ['POST'],
+  '/logout': ['GET', 'POST'],
+  '/logout/approve': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -320,20 +323,23 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     await next();
   });
 
-  app.route('/authorize', authorizeApp);
+  // Browser-facing surfaces are mounted from pages/: every GET and POST of a
+  // screen lives there, and the logic they call is in routes/.
+  app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
   app.route('/par', parApp);
   app.route('/device_authorization', deviceAuthorizationApp);
-  app.route('/device', deviceApp);
+  app.route('/device', devicePage);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
-  app.route('/ciba', cibaApp);
+  app.route('/ciba', cibaPage);
+  app.route('/logout', logoutPage);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
-  app.route('/login', loginApp);
-  app.route('/consent', consentApp);
+  app.route('/login', loginPage);
+  app.route('/consent', consentPage);
 }
 
 async function resolveProviderStores(

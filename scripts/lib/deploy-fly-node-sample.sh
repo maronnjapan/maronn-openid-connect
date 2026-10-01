@@ -159,6 +159,18 @@ fi
 guide_step "デプロイします（初回はリモートビルドに数分かかります）"
 guide_info "リポジトリルートを Docker ビルドコンテキストとしてデプロイします（Dockerfile は ${SAMPLE_DIR}/Dockerfile）。"
 guide_info "issuer は ${ISSUER} を使用します（Fly のデフォルトホスト名から決定的に導出）。"
+# Google ログイン（--enable google-login で生成済み）は GOOGLE_CLIENT_ID を渡した
+# ときだけ有効になる。シェルの環境変数をそのままアプリの環境変数に引き継ぐ。
+GOOGLE_ENV_ARGS=()
+if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then
+  GOOGLE_ENV_ARGS+=(--env "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}")
+  if [ -n "${GOOGLE_HOSTED_DOMAIN:-}" ]; then
+    GOOGLE_ENV_ARGS+=(--env "GOOGLE_HOSTED_DOMAIN=${GOOGLE_HOSTED_DOMAIN}")
+  fi
+  guide_info "Google ログインを有効にします（GOOGLE_CLIENT_ID）。Google Cloud コンソールの OAuth クライアントに、承認済みのリダイレクト URI として ${ISSUER}/login/google、JavaScript 生成元として ${ISSUER} を登録してください。"
+else
+  guide_info "Google ログインは無効です（有効にするには GOOGLE_CLIENT_ID を設定して再実行）。"
+fi
 run "${FLY_BIN}" deploy \
   --app "${APP_NAME}" \
   --config "${SAMPLE_DIR}/fly.toml" \
@@ -167,6 +179,7 @@ run "${FLY_BIN}" deploy \
   --region "${REGION}" \
   --env "HOST=0.0.0.0" \
   --env "ISSUER=${ISSUER}" \
+  ${GOOGLE_ENV_ARGS[0]:+"${GOOGLE_ENV_ARGS[@]}"} \
   --remote-only \
   --yes
 

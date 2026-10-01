@@ -1,8 +1,11 @@
 /**
  * UI Views for OpenID Connect Provider.
  *
- * This file contains all user-facing HTML rendering.
- * Customize these functions to match your application's design.
+ * This file contains the default HTML of every user-facing screen. The screen
+ * routes in pages/ deliver these views (pages/login.ts renders loginPage, and so
+ * on); the logic in routes/ never renders anything — it returns outcomes the
+ * pages turn into HTTP. Customize these functions to match your application's
+ * design, or change how a screen is delivered in its pages/ module.
  *
  * Each function receives typed parameters and returns a ViewResult: either an
  * HTML string (wrapped into a text/html Response by renderView) or a
@@ -10,6 +13,15 @@
  * body. You can replace the default HTML with any templating engine, JSX
  * rendering, or UI framework of your choice.
  */
+
+// EXTENSION (google-login): the GIS configuration type and the helper that
+// serializes it into this string template. The package generates no UI; the
+// three elements GIS needs are written out in defaultLoginPage below.
+import {
+  googleSignInAttributesToHtml,
+  GOOGLE_GSI_CLIENT_SCRIPT_URL,
+  type GoogleSignInAttributes,
+} from '@maronn-openid-connect/google-login/sign-in';
 
 // ============================================================
 // View Parameter Types
@@ -30,6 +42,15 @@ export interface LoginPageParams {
    * HTML-attribute escaped before rendering since it is unauthenticated input.
    */
   loginHint?: string;
+  /**
+   * EXTENSION (google-login): GIS configuration for "Sign in with Google"
+   * (redirect mode) — the g_id_onload attributes built by
+   * buildGoogleSignInAttributes(): client ID, data-ux_mode="redirect", the
+   * login_uri Google posts the ID token to, and the nonce bound to this
+   * transaction. The view owns the markup (see defaultLoginPage). Undefined
+   * when Google login is not configured; only the password form is shown then.
+   */
+  googleSignIn?: GoogleSignInAttributes;
 }
 
 export interface ConsentPageParams {
@@ -232,6 +253,15 @@ function defaultLoginPage(params: LoginPageParams): string {
       }</p>`
     : '';
 
+  // EXTENSION (google-login): the three elements GIS needs for redirect mode —
+  // its client script, #g_id_onload carrying the configuration (attribute
+  // values escaped by googleSignInAttributesToHtml), and .g_id_signin, which
+  // GIS replaces with the button. Style the button through the GIS button
+  // attributes (data-theme, data-size, data-text, ...) on .g_id_signin.
+  const googleSignInHtml = params.googleSignIn
+    ? `  <hr />\n  <section aria-label="Sign in with Google">\n    <script src="${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>\n    <div ${googleSignInAttributesToHtml(params.googleSignIn)}></div>\n    <div class="g_id_signin" data-type="standard"></div>\n  </section>\n`
+    : '';
+
   return `<!DOCTYPE html>
 <html>
 <head><title>Login</title></head>
@@ -251,7 +281,7 @@ function defaultLoginPage(params: LoginPageParams): string {
     </div>
     <button type="submit">Login</button>
   </form>
-</body>
+${googleSignInHtml}</body>
 </html>`;
 }
 

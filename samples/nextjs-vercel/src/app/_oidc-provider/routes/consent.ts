@@ -1,4 +1,14 @@
-import { WebRouter } from '../web-router';
+/**
+ * Consent step (API layer: logic only).
+ *
+ * Everything the consent screen has to decide lives here as plain functions:
+ * loading the transaction, the User-Agent binding, the scope policy, the
+ * authorization decision, the authorization code, the consent record and the
+ * authorization response URL (RFC 6749 §4.1.2 / RFC 9207 iss / JARM). None of
+ * them builds a Response — each returns an outcome, and pages/consent.ts turns
+ * that outcome into a screen or a redirect. The UI can therefore be changed
+ * without touching this file.
+ */
 import {
   getAuthTransaction,
   validateCsrfToken,
@@ -13,43 +23,75 @@ import {
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
 } from '../store';
-import { defaultViews, renderView } from '../views';
 
-export const consentApp = new WebRouter();
+/** What the consent form needs, prepared for GET /consent. */
+export interface ConsentScreen {
+  kind: 'screen';
+  transactionId: string;
+  /** Must be posted back as the csrf_token field. */
+  csrfToken: string;
+  /** Scopes this End-User is asked to grant (already narrowed by the scope policy). */
+  scopes: string[];
+  /** Client requesting the authorization. */
+  clientId: string;
+}
+
+/** A failure the OP shows on its own error page (never redirected to the client). */
+export interface ConsentError {
+  kind: 'error';
+  error: string;
+  errorDescription?: string;
+  statusCode: number;
+}
+
+/** What POST /consent decided; pages/consent.ts turns it into HTTP. */
+export type ConsentOutcome =
+  | ConsentError
+  /**
+   * OIDC Core 1.0 Section 3.1.2.4: no decision was obtained — action was
+   * missing, empty or unknown. Not access_denied (Section 3.1.2.6), so the
+   * browser stays on the OP (400).
+   */
+  | { kind: 'invalid_decision' }
+  /** No authenticated subject for this transaction: the login step was skipped or expired (400). */
+  | { kind: 'session_missing' }
+  /** Approved or denied: the authorization response for the client, ready in the URL. */
+  | { kind: 'authorization_response'; location: string; cookies: string[] };
+
+/** The fields of the consent form. */
+export interface ConsentSubmission {
+  transactionId: string;
+  csrfToken: string;
+  /** 'approve' or 'deny' — the submit button values of the consent view. */
+  action: string;
+}
 
 /**
- * Consent Page - GET
- * Displays the consent form for scope authorization.
+ * GET /consent: load the transaction and describe the form, or the error to
+ * show instead when this browser may not see it.
  */
-consentApp.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const views = c.get('views') ?? defaultViews;
+export async function prepareConsent(
+  c: any,
+  transactionId: string,
+): Promise<ConsentScreen | ConsentError> {
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const transaction = await getAuthTransaction(transactionId, transactionStore);
 
-  return renderView(views.consentPage({
+  return {
+    kind: 'screen',
     transactionId,
     csrfToken: transaction.csrfToken,
     scopes: transaction.scope.split(' ').filter(Boolean),
     clientId: transaction.clientId,
-  }));
-});
+  };
+}
 
 /**
- * Consent Handler - POST
- * Processes the consent decision.
+ * POST /consent: record the decision and build the authorization response.
  */
-consentApp.post('/', async (c) => {
-  const body = await c.req.parseBody();
-  const transactionId = String(body['transaction_id'] ?? '');
-  const csrfToken = String(body['csrf_token'] ?? '');
-  const action = String(body['action'] ?? '');
+export async function submitConsent(c: any, input: ConsentSubmission): Promise<ConsentOutcome> {
+  const { transactionId, csrfToken, action } = input;
 
-  const views = c.get('views') ?? defaultViews;
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -71,7 +113,7 @@ consentApp.post('/', async (c) => {
     redirectUrl.searchParams.set('iss', issuer);
     await transactionStore.delete('auth_txn:' + transactionId);
     await authSessionStore.delete(transactionId);
-    return c.redirect(redirectUrl.toString());
+    return { kind: 'authorization_response', location: redirectUrl.toString(), cookies: [] };
   }
 
   // OIDC Core 1.0 Section 3.1.2.4: "the Authorization Server MUST obtain an
@@ -83,24 +125,18 @@ consentApp.post('/', async (c) => {
   // 'approve' is the decision value this provider accepts, and it MUST stay in
   // sync with the Approve button in views.ts consentPage(). Changing it here
   // without changing the button (or the other way round) makes every approval
-  // fail with the 400 below.
+  // fail with the 400 pages/consent.ts shows for this outcome.
   //
   // Section 3.1.2.6: access_denied means the End-User denied the request, which
   // is not the same as no decision at all — an unrecognized value stops here on
   // the OP's own error page instead of being redirected back to the client.
   if (action !== 'approve') {
-    return renderView(views.errorPage({
-      error: 'Invalid consent decision. Please use the Approve or Deny button.',
-      statusCode: 400,
-    }), { status: 400 });
+    return { kind: 'invalid_decision' };
   }
 
   const session = await authSessionStore.get(transactionId);
   if (!session) {
-    return renderView(views.errorPage({
-      error: 'Authentication session not found. Please restart login.',
-      statusCode: 400,
-    }), { status: 400 });
+    return { kind: 'session_missing' };
   }
 
   const responseParams = await completeAuthTransaction(
@@ -121,7 +157,7 @@ consentApp.post('/', async (c) => {
     authorizationResponse: { ...responseParams, scope: grantedScope },
     subject: session.subject,
     authTime: session.authTime,
-    // online refresh token をこのログインセッションへ束縛する（login route が
+    // online refresh token をこのログインセッションへ束縛する（login step が
     // authSessionStore へ載せた値）。ログアウトすれば RT も使えなくなる。
     sessionId: session.sessionId,
     ttlSeconds: config.authorizationCodeTtl,
@@ -143,12 +179,12 @@ consentApp.post('/', async (c) => {
 
   await authSessionStore.delete(transactionId);
 
-  // Redirect back to client with authorization code
+  // Back to the client with the authorization code
   const redirectUrl = new URL(responseParams.redirectUri);
   redirectUrl.searchParams.set('code', authCodeData.code);
   if (responseParams.state) {
     redirectUrl.searchParams.set('state', responseParams.state);
   }
   redirectUrl.searchParams.set('iss', issuer);
-  return c.redirect(redirectUrl.toString());
-});
+  return { kind: 'authorization_response', location: redirectUrl.toString(), cookies: [] };
+}

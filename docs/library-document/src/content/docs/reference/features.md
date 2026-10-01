@@ -15,6 +15,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `/token` | トークンエンドポイント | OIDC Core 1.0 §3.1.3 / OAuth 2.1 §3.2 |
 | `/userinfo` | UserInfo エンドポイント | OIDC Core 1.0 §5.3 |
 | `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） | — |
+| `/login/google` | Sign in with Google の `login_uri`（拡張機能 `google-login` 有効時のみ生成） | Google Identity Services |
 | `/.well-known/openid-configuration` | Provider Metadata | OpenID Connect Discovery 1.0 |
 | `/.well-known/jwks.json` | JWKS（公開鍵） | RFC 7517 |
 | `/introspect` | Token Introspection（トグルで無効化可） | RFC 7662 |
@@ -132,6 +133,12 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` 
 | 機能名 | 内容 | 関連仕様 |
 |---|---|---|
 | `transaction-binding` | 認可トランザクションを、それを開始した User-Agent に HttpOnly Cookie で束縛する。`transaction_id` が漏れても `/login`・`/consent` を進行できなくなる代わりに、ブラウザ以外（curl 等）から触るには Cookie の持ち回りが必要になる | OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 |
+
+さらに、ログイン手段を足す**拡張機能**があります。仕様ではなく認証方式の追加なので Optional / Experimental とは別カテゴリで、実装は別 package（`@maronn-openid-connect/google-login`）にあり、既定では無効です。
+
+| 機能名 | 内容 | 実装 |
+|---|---|---|
+| `google-login` | ログイン画面に「Google でログイン」（Sign in with Google、redirect mode）を追加し、`POST /login/google` で Google の ID トークンを受け取って OP のセッションを確立する。詳細は [Google ログイン（拡張）](../../guides/google-login/) | `@maronn-openid-connect/google-login`（Node.js 22 以上限定） |
 
 ## Custom Scopes
 

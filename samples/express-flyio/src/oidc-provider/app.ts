@@ -1,17 +1,17 @@
 import { WebRouter, type WebMiddleware } from './web-router.js';
-import { authorizeApp } from './routes/authorize.js';
+import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
 import { introspectionApp } from './routes/introspection.js';
 import { revocationApp } from './routes/revocation.js';
 import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';
+import { devicePage } from './pages/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
-import { cibaApp } from './routes/ciba-verification.js';
+import { cibaPage } from './pages/ciba.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
-import { loginApp } from './routes/login.js';
-import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -28,6 +28,12 @@ import {
   type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
+import {
+  getDefaultGoogleIdTokenVerifier,
+  type GoogleAccountResolver,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '@maronn-openid-connect/google-login';
 import {
   assertHasRs256Key,
   assertKeyStrength,
@@ -69,6 +75,19 @@ export interface OidcProviderOptions {
   cibaUserResolver?: (
     loginHint: string,
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
+  /**
+   * EXTENSION (google-login): verifier for the ID token Google posts to
+   * /login/google. Defaults to google-auth-library (OAuth2Client.verifyIdToken)
+   * with a process-wide certificate cache; inject a custom one for tests or a
+   * proxied environment.
+   */
+  googleIdTokenVerifier?: GoogleIdTokenVerifier;
+  /**
+   * EXTENSION (google-login): map a verified Google account to the OP subject.
+   * Defaults to just-in-time provisioning through the user store
+   * (userStore.linkGoogleAccount), keyed by the Google `sub`.
+   */
+  googleAccountResolver?: GoogleAccountResolver;
   corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
@@ -181,6 +200,12 @@ export function createApp(options: OidcProviderOptions): WebRouter {
       const claims = await stores.userStore.getClaims(loginHint);
       return claims ? { subject: claims.sub } : null;
     }));
+    c.set('googleLoginNonceStore', stores.googleLoginNonceStore);
+    c.set('googleIdTokenVerifier', options.googleIdTokenVerifier ?? getDefaultGoogleIdTokenVerifier());
+    c.set('googleAccountResolver', options.googleAccountResolver ?? {
+      resolveSubject: async (account: GoogleIdTokenPayload) =>
+        (await stores.userStore.linkGoogleAccount(account)).sub,
+    });
 
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -196,19 +221,21 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     await next();
   });
 
-  app.route('/authorize', authorizeApp);
+  // Browser-facing surfaces are mounted from pages/: every GET and POST of a
+  // screen lives there, and the logic they call is in routes/.
+  app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
   app.route('/introspect', introspectionApp);
   app.route('/revoke', revocationApp);
   app.route('/device_authorization', deviceAuthorizationApp);
-  app.route('/device', deviceApp);
+  app.route('/device', devicePage);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
-  app.route('/ciba', cibaApp);
+  app.route('/ciba', cibaPage);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
-  app.route('/login', loginApp);
-  app.route('/consent', consentApp);
+  app.route('/login', loginPage);
+  app.route('/consent', consentPage);
 
   return app;
 }

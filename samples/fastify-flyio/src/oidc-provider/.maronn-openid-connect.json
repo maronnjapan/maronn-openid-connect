@@ -1,0 +1,22 @@
+{
+  "cliVersion": "0.6.0",
+  "framework": "fastify",
+  "features": {
+    "pkce": true,
+    "refreshToken": true,
+    "introspection": true,
+    "revocation": true,
+    "requestObject": true,
+    "par": false,
+    "tokenExchange": false,
+    "jarm": false,
+    "deviceAuthorizationGrant": true,
+    "idJag": false,
+    "ciba": true,
+    "jwtIntrospectionResponse": false,
+    "rpInitiatedLogout": false,
+    "googleLogin": true,
+    "transactionBinding": false
+  },
+  "scopes": []
+}

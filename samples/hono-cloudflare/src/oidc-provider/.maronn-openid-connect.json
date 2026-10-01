@@ -1,0 +1,22 @@
+{
+  "cliVersion": "0.6.0",
+  "framework": "hono",
+  "features": {
+    "pkce": true,
+    "refreshToken": true,
+    "introspection": true,
+    "revocation": true,
+    "requestObject": true,
+    "par": true,
+    "tokenExchange": true,
+    "jarm": true,
+    "deviceAuthorizationGrant": true,
+    "idJag": true,
+    "ciba": true,
+    "jwtIntrospectionResponse": true,
+    "rpInitiatedLogout": true,
+    "googleLogin": false,
+    "transactionBinding": true
+  },
+  "scopes": []
+}

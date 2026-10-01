@@ -234,6 +234,9 @@ describe('generated consent step', () => {
     );
   });
 
+  // prepareConsent() (routes/consent.ts) applies the same policy to the scopes
+  // it hands the consent screen, so the End-User never sees a scope they
+  // cannot be granted — and pages/consent.ts only displays what it is given.
   it.each(FRAMEWORKS)('should display only the grantable scopes on %s', (framework) => {
     const content = fileContent(
       generateFiles(framework, ['reports.read']),

@@ -19,6 +19,8 @@ import {
   deviceAuthorizationConformanceBlock,
   deviceAuthorizationRouteTemplate,
   deviceVerificationRouteTemplate,
+  endSessionRouteTemplate,
+  rpInitiatedLogoutConformanceBlock,
   discoveryRouteTemplate,
   endpointBehaviorConformanceBlock,
   featureDisabledDiscoveryConformanceTests,
@@ -33,6 +35,9 @@ import {
   jarmConformanceBlock,
   jarmConfigTemplate,
   jwtIntrospectionResponseConformanceBlock,
+  googleLoginConformanceBlock,
+  googleLoginConformanceImportsBlock,
+  GOOGLE_LOGIN_PACKAGE,
   tokenExchangeConformanceBlock,
   idJagConformanceBlock,
   pkceDisabledConformanceBlock,
@@ -53,6 +58,16 @@ import {
   userinfoRouteTemplate,
   viewsTemplate,
 } from '../hono/templates.js';
+import {
+  authorizePageTemplate,
+  cibaPageTemplate,
+  consentPageTemplate,
+  devicePageTemplate,
+  errorPageTemplate,
+  loginPageTemplate,
+  logoutPageTemplate,
+  respondTemplate,
+} from '../hono/pages.js';
 
 function toWebRouteTemplate(content: string): string {
   return content
@@ -443,14 +458,14 @@ export function webAppTemplate(
   // the verification UI is browser navigation, so it needs none (like /login).
   const deviceImport = features.deviceAuthorizationGrant
     ? `import { deviceAuthorizationApp } from './routes/device-authorization.js';
-import { deviceApp } from './routes/device.js';\n`
+import { devicePage } from './pages/device.js';\n`
     : '';
   const deviceCors = features.deviceAuthorizationGrant
     ? `  app.use('/device_authorization', protectedCors);\n`
     : '';
   const deviceMount = features.deviceAuthorizationGrant
     ? `  app.route('/device_authorization', deviceAuthorizationApp);
-  app.route('/device', deviceApp);\n`
+  app.route('/device', devicePage);\n`
     : '';
   const deviceStorageContext = features.deviceAuthorizationGrant
     ? `    c.set('deviceAuthorizationStore', deviceAuthorizationStore);\n`
@@ -463,14 +478,14 @@ import { deviceApp } from './routes/device.js';\n`
   // none (like /login).
   const cibaImport = features.ciba
     ? `import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
-import { cibaApp } from './routes/ciba-verification.js';\n`
+import { cibaPage } from './pages/ciba.js';\n`
     : '';
   const cibaCors = features.ciba
     ? `  app.use('/backchannel_authentication', protectedCors);\n`
     : '';
   const cibaMount = features.ciba
     ? `  app.route('/backchannel_authentication', backchannelAuthenticationApp);
-  app.route('/ciba', cibaApp);\n`
+  app.route('/ciba', cibaPage);\n`
     : '';
   // The default CIBA user resolver treats login_hint as the username of the
   // injected user store, so a custom storage option is honored without extra
@@ -498,6 +513,54 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
 `
     : '';
+  // EXPERIMENTAL (RP-Initiated Logout 1.0): the end_session_endpoint and its
+  // confirmation screen are reached by direct browser navigation, so they need
+  // no CORS headers — the same treatment as /login and /consent. The feature
+  // adds no store: the session store and the id_token_hint JWKS provider are
+  // already wired for every build.
+  const logoutImport = features.rpInitiatedLogout
+    ? `import { logoutPage } from './pages/logout.js';\n`
+    : '';
+  const logoutMount = features.rpInitiatedLogout
+    ? `  app.route('/logout', logoutPage);\n`
+    : '';
+  // EXTENSION (google-login): the Google login callback needs the nonce store,
+  // the ID token verifier (google-auth-library by default) and the resolver that
+  // maps a verified Google account to an OP subject. The default resolver links
+  // the account through the user store (just-in-time provisioning), so a custom
+  // storage option is honored without extra wiring.
+  const googleLoginImport = features.googleLogin
+    ? `import {
+  getDefaultGoogleIdTokenVerifier,
+  type GoogleAccountResolver,
+  type GoogleIdTokenPayload,
+  type GoogleIdTokenVerifier,
+} from '${GOOGLE_LOGIN_PACKAGE}';\n`
+    : '';
+  const googleLoginStorageContext = features.googleLogin
+    ? `    c.set('googleLoginNonceStore', stores.googleLoginNonceStore);
+    c.set('googleIdTokenVerifier', options.googleIdTokenVerifier ?? getDefaultGoogleIdTokenVerifier());
+    c.set('googleAccountResolver', options.googleAccountResolver ?? {
+      resolveSubject: async (account: GoogleIdTokenPayload) =>
+        (await stores.userStore.linkGoogleAccount(account)).sub,
+    });\n`
+    : '';
+  const googleLoginOptionsFields = features.googleLogin
+    ? `  /**
+   * EXTENSION (google-login): verifier for the ID token Google posts to
+   * /login/google. Defaults to google-auth-library (OAuth2Client.verifyIdToken)
+   * with a process-wide certificate cache; inject a custom one for tests or a
+   * proxied environment.
+   */
+  googleIdTokenVerifier?: GoogleIdTokenVerifier;
+  /**
+   * EXTENSION (google-login): map a verified Google account to the OP subject.
+   * Defaults to just-in-time provisioning through the user store
+   * (userStore.linkGoogleAccount), keyed by the Google \`sub\`.
+   */
+  googleAccountResolver?: GoogleAccountResolver;
+`
+    : '';
   const refreshStorageContext = features.refreshToken
     ? `    c.set('refreshTokenResolver', storeResolvers.refreshTokenResolver);
     c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);\n`
@@ -510,13 +573,13 @@ import { cibaApp } from './routes/ciba-verification.js';\n`
     ? `    c.set('revocationResolvers', storeResolvers.revocationResolvers);\n`
     : '';
   return `import { WebRouter, type WebMiddleware } from './web-router.js';
-import { authorizeApp } from './routes/authorize.js';
+import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
-import { loginApp } from './routes/login.js';
-import { consentApp } from './routes/consent.js';
+import { loginPage } from './pages/login.js';
+import { consentPage } from './pages/consent.js';
 import {
   createInMemoryClientResolver,
   createProviderConfig,
@@ -530,7 +593,7 @@ import {
 ${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-import {
+${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -563,7 +626,7 @@ export interface OidcProviderOptions {
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-${cibaOptionsField}  corsOrigins?: CorsOrigins;
+${cibaOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -659,7 +722,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${googleLoginStorageContext}
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }
@@ -674,13 +737,15 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
     await next();
   });
 
-  app.route('/authorize', authorizeApp);
+  // Browser-facing surfaces are mounted from pages/: every GET and POST of a
+  // screen lives there, and the logic they call is in routes/.
+  app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
-  app.route('/login', loginApp);
-  app.route('/consent', consentApp);
+  app.route('/login', loginPage);
+  app.route('/consent', consentPage);
 
   return app;
 }
@@ -814,6 +879,11 @@ export function fastifyApplyTemplate(
   app.route({ method: ['POST'], url: '/ciba/login', handler: handle });
   app.route({ method: ['POST'], url: '/ciba/approve', handler: handle });\n`
     : '';
+  // EXTENSION (google-login): the Google login callback (login_uri). Fastify
+  // needs it registered explicitly — unlike Express it does not match by prefix.
+  const googleLoginRoute = features.googleLogin
+    ? `  app.route({ method: ['POST'], url: '/login/google', handler: handle });\n`
+    : '';
   return `import type { FastifyInstance } from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createApp, type OidcProviderOptions } from './app.js';
@@ -855,7 +925,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
 ${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}${cibaRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
-  app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
+${googleLoginRoute}  app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
 }
 
 async function toFastifyReply(reply: FastifyReply, response: Response): Promise<void> {
@@ -1114,14 +1184,37 @@ function readEnv(name: string): string | undefined {
 `;
 }
 
-export function nextJsRuntimeTemplate(corePkg: string): string {
+export function nextJsRuntimeTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  // EXTENSION (google-login): Sign in with Google is switched on by GOOGLE_CLIENT_ID.
+  const googleLoginConfigTypeImport = features.googleLogin ? 'type GoogleLoginConfig, ' : '';
+  const googleLoginRuntimeConfig = features.googleLogin
+    ? `
+      // EXTENSION (google-login): set GOOGLE_CLIENT_ID (the OAuth client ID from
+      // the Google Cloud console) to render the "Sign in with Google" button.
+      // Register <issuer>/login/google as an authorized redirect URI there.
+      // GOOGLE_HOSTED_DOMAIN optionally restricts sign-in to one Workspace domain.
+      googleLogin: readGoogleLoginConfig(),`
+    : '';
+  const googleLoginRuntimeReader = features.googleLogin
+    ? `
+function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
+  const clientId = readEnv('GOOGLE_CLIENT_ID');
+  if (!clientId) return undefined;
+  const hostedDomain = readEnv('GOOGLE_HOSTED_DOMAIN');
+  return hostedDomain ? { clientId, hostedDomain } : { clientId };
+}
+`
+    : '';
   return `import {
   createCachedSigningKeyProvider,
   type AcrResolver,
   type SigningKey,
   type SigningKeyProvider,
 } from '${corePkg}';
-import { createInMemoryClientResolver, type RegisteredClient } from './config';
+import { createInMemoryClientResolver, ${googleLoginConfigTypeImport}type RegisteredClient } from './config';
 import { createOidcRouteHandlers } from './next';
 import { createNextJsProviderStores } from './storage-backend';
 import type { OidcProviderOptions } from './app';
@@ -1174,7 +1267,7 @@ export function createOidcProviderOptions(): OidcProviderOptions {
       // /oidc-error, which renders them via the App Router error boundary
       // (app/oidc-error/error.tsx) — consistent with login/consent being real
       // pages rather than HTML strings from the route handler.
-      authorizationErrorRedirectPath: '/oidc-error',
+      authorizationErrorRedirectPath: '/oidc-error',${googleLoginRuntimeConfig}
     },
     signingKeyProvider,
     clientResolver,
@@ -1255,7 +1348,7 @@ function readEnv(name: string): string | undefined {
   if (typeof process === 'undefined') return undefined;
   return process.env[name];
 }
-
+${googleLoginRuntimeReader}
 function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   const keyPromise = generateSigningKey();
   return {
@@ -1366,13 +1459,72 @@ async function isBoundToThisBrowser(
   }
 `
     : '';
+  // EXTENSION (google-login): the page renders the Google button next to the
+  // form. Every interpolation collapses to '' when the feature is off.
+  const googleLoginImports = features.googleLogin
+    ? `
+import Script from 'next/script';
+import { issueGoogleLoginNonce } from '${GOOGLE_LOGIN_PACKAGE}';
+import {
+  buildGoogleSignInAttributes,
+  GOOGLE_GSI_CLIENT_SCRIPT_URL,
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`
+    : '';
+  const loginPageStores = features.googleLogin
+    ? `const { transactionStore, googleLoginNonceStore } =
+  oidcProviderOptions.storage ?? defaultProviderStores;`
+    : `const transactionStore =
+  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;`;
+  const googleSignInRender = features.googleLogin
+    ? `
+  // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
+  // built only when config.googleLogin is set. Each render issues a fresh nonce
+  // bound to this transaction; Google echoes it in the ID token, which is how
+  // login/google/route.ts finds the transaction. The JSX below owns the markup.
+  const googleLogin = oidcProviderOptions.config?.googleLogin;
+  const googleSignIn = googleLogin
+    ? buildGoogleSignInAttributes({
+        clientId: googleLogin.clientId,
+        // Must equal an authorized redirect URI of the Google OAuth client.
+        loginUri: new URL(
+          '/login/google',
+          oidcProviderOptions.config?.issuer ?? 'http://localhost:3000',
+        ).toString(),
+        nonce: await issueGoogleLoginNonce({
+          transactionId,
+          expiresAt: transaction.expiresAt,
+          store: googleLoginNonceStore,
+        }),
+        loginHint: transaction.loginHint,
+        hostedDomain:
+          typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
+      })
+    : undefined;
+`
+    : '';
+  const googleSignInJsx = features.googleLogin
+    ? `
+      {/*
+        EXTENSION (google-login): the three elements GIS needs for redirect mode.
+        googleSignIn holds the g_id_onload attributes (data-ux_mode="redirect",
+        data-login_uri, data-nonce, ...) and spreads straight onto the element;
+        GIS replaces .g_id_signin with the button — style it through the GIS
+        button attributes (data-theme, data-size, data-text, ...).
+      */}
+      {googleSignIn ? (
+        <section aria-label="Sign in with Google">
+          <Script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} strategy="afterInteractive" />
+          <div {...googleSignIn} />
+          <div className="g_id_signin" data-type="standard" />
+        </section>
+      ) : null}`
+    : '';
   return `${bindingImports}
 import { oidcProviderOptions } from '../_oidc-provider/runtime';
-${bindingStoreImport}
+${bindingStoreImport}${googleLoginImports}
 import { loginAction } from './actions';
 
-const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
+${loginPageStores}
 
 // Authorization redirects here with a per-request transaction_id, so the page
 // must always render dynamically (never statically cached).
@@ -1417,7 +1569,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   }
 
   const transaction = await getAuthTransaction(transactionId, transactionStore);
-${bindingCheck}
+${bindingCheck}${googleSignInRender}
   const errorMessage =
     error === 'invalid_credentials'
       ? \`Invalid credentials\${remaining ? \`. Attempts remaining: \${remaining}\` : ''}\`
@@ -1443,7 +1595,7 @@ ${bindingCheck}
           <input type="password" id="password" name="password" required />
         </div>
         <button type="submit">Login</button>
-      </form>
+      </form>${googleSignInJsx}
     </main>
   );
 }
@@ -2125,6 +2277,12 @@ import { idJagConfig } from './routes/token.js';`
   // Experimental (CIBA Core 1.0): the CIBA contract tests clear testuser's
   // leftover pending requests after each test — the store is module-global and
   // the backchannel endpoint caps pending requests per subject.
+  // Experimental (RP-Initiated Logout 1.0): the logout contract tests register
+  // the post_logout_redirect_uri allow list through the generated settings.
+  const rpInitiatedLogoutConformanceImports = features.rpInitiatedLogout
+    ? `
+import { rpInitiatedLogoutConfig } from './routes/logout.js';`
+    : '';
   const cibaConformanceImports = features.ciba
     ? `
 import { cibaAuthenticationRequestStore } from './store.js';`
@@ -2132,14 +2290,16 @@ import { cibaAuthenticationRequestStore } from './store.js';`
   const vitestNames = features.ciba
     ? 'describe, it, expect, beforeAll, afterEach'
     : 'describe, it, expect, beforeAll';
+  const googleLoginConformanceImports = googleLoginConformanceImportsBlock(features);
+  const googleLoginConfigTypeImport = features.googleLogin ? ', type GoogleLoginConfig' : '';
   return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
-import { createInMemoryClientResolver, type RegisteredClient } from './config.js';
+import { createInMemoryClientResolver, type RegisteredClient${googleLoginConfigTypeImport} } from './config.js';
 import { accessTokenStore, authSessionStore, consentStore, createJsonProviderStores,${onlineRefreshTokenConformanceStoreImport(features)} refreshTokenStore, transactionStore, type JsonStoreBackend } from './store.js';
 import { consentResolver } from './resolvers.js';
 import { defaultViews } from './views.js';
-import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${customScopeConformanceImport}
+import { renderView } from './views.js';${parConformanceImports}${tokenExchangeConformanceImports}${idJagConformanceImports}${cibaConformanceImports}${rpInitiatedLogoutConformanceImports}${googleLoginConformanceImports}${customScopeConformanceImport}
 ${nodeAdapterImport}
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -2550,7 +2710,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, errorPageMode)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features, jarmConsentResponseMode)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 
@@ -2590,6 +2750,21 @@ function webCoreGeneratedFiles(
       ),
     },
     { path: 'views.ts', content: viewsTemplate(features) },
+    // Screen routing layer: every browser-facing GET / POST (authorize, login,
+    // consent, and the device / CIBA / logout UIs) plus the render helpers. Each
+    // page calls the logic of its routes/ module and only renders or redirects.
+    { path: 'pages/respond.ts', content: respondTemplate() },
+    { path: 'pages/errors.ts', content: errorPageTemplate() },
+    { path: 'pages/authorize.ts', content: toWebRouteTemplate(authorizePageTemplate()) },
+    { path: 'pages/login.ts', content: toWebRouteTemplate(loginPageTemplate(features)) },
+    { path: 'pages/consent.ts', content: toWebRouteTemplate(consentPageTemplate()) },
+    ...(features.deviceAuthorizationGrant
+      ? [{ path: 'pages/device.ts', content: toWebRouteTemplate(devicePageTemplate()) }]
+      : []),
+    ...(features.ciba ? [{ path: 'pages/ciba.ts', content: toWebRouteTemplate(cibaPageTemplate()) }] : []),
+    ...(features.rpInitiatedLogout
+      ? [{ path: 'pages/logout.ts', content: toWebRouteTemplate(logoutPageTemplate()) }]
+      : []),
     { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes)) },
     { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
     { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },
@@ -2628,6 +2803,11 @@ function webCoreGeneratedFiles(
           content: toWebRouteTemplate(cibaVerificationRouteTemplate(corePkg, scopes)),
         },
       ]
+      : []),
+    // Experimental (RP-Initiated Logout 1.0): only generated with
+    // --enable rp-initiated-logout.
+    ...(features.rpInitiatedLogout
+      ? [{ path: 'routes/logout.ts', content: toWebRouteTemplate(endSessionRouteTemplate(corePkg)) }]
       : []),
     // Experimental (JARM): settings module, only generated with --enable jarm.
     // Framework-neutral already (no Hono types), so it is emitted as-is.
@@ -2696,7 +2876,7 @@ export function nextJsGeneratedFiles(
     ...internalFiles,
     { path: '_oidc-provider/next.ts', content: nextJsRouteHandlerTemplate() },
     { path: '_oidc-provider/storage-backend.ts', content: nextJsStorageBackendTemplate() },
-    { path: '_oidc-provider/runtime.ts', content: nextJsRuntimeTemplate(corePkg) },
+    { path: '_oidc-provider/runtime.ts', content: nextJsRuntimeTemplate(corePkg, features) },
     {
       path: 'authorize/route.ts',
       content: nextJsEndpointRouteTemplate('../_oidc-provider/runtime', [
@@ -2809,6 +2989,18 @@ export function nextJsGeneratedFiles(
     // Handlers) so the UI can be customized with JSX and the React ecosystem.
     { path: 'login/page.tsx', content: nextJsLoginPageTemplate(corePkg, features) },
     { path: 'login/actions.ts', content: nextJsLoginActionTemplate(corePkg, features) },
+    // EXTENSION (google-login): Google posts the ID token here (login_uri). A
+    // Route Handler rather than a Server Action, because the POST comes from
+    // Google's page and cannot carry a Server Action id; it is answered by the
+    // framework-neutral routes/login.ts callback through the shared WebRouter.
+    ...(features.googleLogin
+      ? [
+        {
+          path: 'login/google/route.ts',
+          content: nextJsEndpointRouteTemplate('../../_oidc-provider/runtime', ['POST']),
+        },
+      ]
+      : []),
     { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(corePkg, features, scopes) },
     { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(corePkg, features, scopes) },
     // Non-redirect authorization errors (OIDC Core 1.0 §3.1.2.2) land on this

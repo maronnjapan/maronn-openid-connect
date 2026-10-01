@@ -14,7 +14,7 @@ import type { Jwk, JwkSet } from './jwks.js';
  * Request Object のパース・署名検証に失敗したことを表すエラー。
  *
  * 呼び出し側（`validateAuthorizationRequest`）はこれを捕捉して
- * `invalid_request`（OAuth 2.1 §4.1.2.1）の `AuthorizationError` に変換する。
+ * `invalid_request_object`（OIDC Core 1.0 §6.3）の `AuthorizationError` に変換する。
  */
 export class RequestObjectError extends Error {
   constructor(message: string) {

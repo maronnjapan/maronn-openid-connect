@@ -288,6 +288,7 @@ export {
   // Introspection のステップ関数（handleIntrospectionRequest はこれらの合成）
   requireIntrospectionToken,
   requireIntrospectionClient,
+  requireConfidentialIntrospectionCaller,
   resolveIntrospectionToken,
   isIntrospectionTokenActive,
   buildIntrospectionResponse,

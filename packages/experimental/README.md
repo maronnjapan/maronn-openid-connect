@@ -19,6 +19,7 @@
 | `id-jag` | Cross-App Access / Identity Assertion Authorization Grant（発行と受領の両側） | draft-ietf-oauth-identity-assertion-authz-grant-04 | `@maronn-openid-connect/experimental/id-jag` |
 | `ciba` | Client-Initiated Backchannel Authentication（Poll モードのみ） | CIBA Core 1.0 (OpenID Foundation Final, 2021-09-01) | `@maronn-openid-connect/experimental/ciba` |
 | `jwt-introspection-response` | JWT Response for OAuth Token Introspection（署名付き応答のみ・RS256 固定） | RFC 9701 | `@maronn-openid-connect/experimental/jwt-introspection-response` |
+| `rp-initiated-logout` | RP-Initiated Logout（end_session_endpoint とログアウト確認画面） | RP-Initiated Logout 1.0 (OpenID Foundation Final, 2022-09-12) | `@maronn-openid-connect/experimental/rp-initiated-logout` |
 
 機能ごとに subpath export で提供します。ルート (`.`) からの再エクスポートは提供しません。機能間でコードを共有しないことで、昇格・削除時に他機能へ影響しない構造を保っています。
 

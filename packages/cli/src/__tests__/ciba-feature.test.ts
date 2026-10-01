@@ -37,6 +37,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'id-jag',
       'ciba',
       'jwt-introspection-response',
+      'rp-initiated-logout',
     ]);
   });
 });
@@ -60,6 +61,8 @@ describe('resolveFeatures with ciba', () => {
       idJag: false,
       ciba: true,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -92,6 +95,8 @@ describe('resolveFeatures with ciba', () => {
       idJag: true,
       ciba: true,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -112,6 +117,8 @@ describe('resolveFeatures with ciba', () => {
       idJag: false,
       ciba: true,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -255,14 +262,14 @@ describe('generate with --enable ciba', () => {
         expect(content.includes('cibaConfig.maxPendingPerSubject must be between 1 and 100')).toBe(true);
       });
 
-      it('should mount both CIBA routers', () => {
+      it('should mount the backchannel endpoint and the CIBA page', () => {
         const app = fileContent(
           generateFiles(framework, ['ciba']),
           providerPath(framework, 'app.ts'),
         );
 
         expect(app.includes("app.route('/backchannel_authentication', backchannelAuthenticationApp);")).toBe(true);
-        expect(app.includes("app.route('/ciba', cibaApp);")).toBe(true);
+        expect(app.includes("app.route('/ciba', cibaPage);")).toBe(true);
       });
 
       it('should give the back-channel endpoint the protected CORS policy', () => {

@@ -49,6 +49,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
+  app.route({ method: ['POST'], url: '/login/google', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
 }
 

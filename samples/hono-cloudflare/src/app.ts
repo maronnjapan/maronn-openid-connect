@@ -12,6 +12,7 @@ import {
   type RegisteredClient,
 } from './oidc-provider/config.js';
 import { idJagConfig } from './oidc-provider/routes/token.js';
+import { rpInitiatedLogoutConfig } from './oidc-provider/routes/logout.js';
 import { createD1ProviderStores } from './storage.js';
 
 interface Bindings {
@@ -26,6 +27,7 @@ interface Bindings {
   XAA_TRUSTED_IDP_JWKS_URI?: string;
   XAA_ALLOW_ACTOR_TOKENS?: string;
   XAA_ACTOR_TOKEN_RESOLVER?: string;
+  OIDC_POST_LOGOUT_REDIRECT_URIS_JSON?: string;
 }
 
 const bindings = env as Bindings;
@@ -37,6 +39,16 @@ const clients = readRegisteredClients(bindings.OIDC_CLIENTS_JSON);
 // authorization server against each other (tests/e2e does exactly that).
 // With the vars unset the generated fail-safe defaults stay: no ID-JAG is
 // issued and none is accepted.
+// EXPERIMENTAL (RP-Initiated Logout 1.0 §3): the per-client registry of
+// post_logout_redirect_uri values, as JSON ({ [clientId]: string[] }). With
+// the var unset the generated fail-closed default stays: every logout ends on
+// the OP's completed page and no redirect happens.
+if (bindings.OIDC_POST_LOGOUT_REDIRECT_URIS_JSON) {
+  rpInitiatedLogoutConfig.postLogoutRedirectUris = JSON.parse(
+    bindings.OIDC_POST_LOGOUT_REDIRECT_URIS_JSON,
+  ) as Record<string, string[]>;
+}
+
 const xaaAllowedAudiences = (bindings.XAA_ALLOWED_AUDIENCES ?? '')
   .split(',')
   .map((value) => value.trim())

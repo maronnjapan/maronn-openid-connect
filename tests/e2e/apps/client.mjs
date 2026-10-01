@@ -28,6 +28,16 @@ const server = createServer(async (req, res) => {
       await startAuthorization(url, res);
       return;
     }
+    // EXPERIMENTAL (RP-Initiated Logout 1.0 §3): the registered post-logout
+    // return target. The OP redirects here after ending its session, echoing
+    // the state the RP sent to /logout.
+    if (req.method === 'GET' && url.pathname === '/logged-out') {
+      sendHtml(res, 200, `<!doctype html><html><body>
+        <h1>Logged out of the OP</h1>
+        <dl><dt>state</dt><dd data-testid="logged-out-state">${escapeHtml(url.searchParams.get('state') ?? '')}</dd></dl>
+      </body></html>`);
+      return;
+    }
     // EXPERIMENTAL (RFC 8693): run the ordinary code flow, then exchange the
     // resulting access token for a narrowed one over the back channel.
     if (req.method === 'GET' && url.pathname === '/start-exchange') {
@@ -184,7 +194,8 @@ async function startDeviceAuthorization(requestUrl, res) {
 
   // Deliberately not awaited: the device keeps polling while the spec drives
   // the browser through the verification UI.
-  void pollDeviceToken(flow, authorization.device_code, authorization.interval);
+  void pollDeviceToken(flow, authorization.device_code, authorization.interval)
+    .catch((error) => failFlowOnError(flow, error));
 
   sendJson(res, 200, {
     flow_id: flowId,
@@ -194,6 +205,27 @@ async function startDeviceAuthorization(requestUrl, res) {
     expires_in: authorization.expires_in,
     interval: authorization.interval,
   });
+}
+
+/**
+ * Read a token-endpoint polling answer, tolerating a transient non-JSON body.
+ * Returns null when the body is not JSON so the poller can retry within its
+ * deadline: one malformed interim answer must not take the client process
+ * down through an unhandled rejection.
+ */
+async function readJsonBody(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** Record a detached poll loop's unexpected failure on its flow. */
+function failFlowOnError(flow, error) {
+  flow.status = 'failed';
+  flow.error = `poll_crashed: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 async function pollDeviceToken(flow, deviceCode, initialInterval) {
@@ -212,7 +244,12 @@ async function pollDeviceToken(flow, deviceCode, initialInterval) {
         client_secret: clientSecret,
       }).toString(),
     });
-    const body = await response.json();
+    const body = await readJsonBody(response);
+    // A transient non-JSON answer (wrangler dev prints a plain-text "worker
+    // restarted mid-request" page while reloading) is not a protocol outcome:
+    // poll again instead of crashing the whole client process from this
+    // detached loop.
+    if (body === null) continue;
 
     if (response.ok) {
       flow.status = 'complete';
@@ -264,7 +301,8 @@ async function startCibaAuthentication(requestUrl, res) {
 
   // Deliberately not awaited: the device keeps polling while the spec drives
   // the browser through the authentication device UI.
-  void pollCibaToken(flow, authentication.auth_req_id, authentication.interval);
+  void pollCibaToken(flow, authentication.auth_req_id, authentication.interval)
+    .catch((error) => failFlowOnError(flow, error));
 
   sendJson(res, 200, {
     flow_id: flowId,
@@ -290,7 +328,9 @@ async function pollCibaToken(flow, authReqId, initialInterval) {
         client_secret: clientSecret,
       }).toString(),
     });
-    const body = await response.json();
+    const body = await readJsonBody(response);
+    // Same transient tolerance as the device poll loop above.
+    if (body === null) continue;
 
     if (response.ok) {
       flow.status = 'complete';

@@ -69,6 +69,10 @@ export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
  *   (RFC 9701) — the introspection endpoint answers a request whose Accept
  *   header names application/token-introspection+jwt with a signed JWT.
  *   Requires the introspection feature (its endpoint carries the response).
+ * - rp-initiated-logout: OpenID Connect RP-Initiated Logout 1.0 — the OP serves
+ *   the end_session_endpoint (GET|POST /logout) with a confirmation screen for
+ *   requests without a valid id_token_hint, and redirects to a registered
+ *   post_logout_redirect_uri on an exact match only.
  */
 export const EXPERIMENTAL_FEATURES = [
   'par',
@@ -78,9 +82,30 @@ export const EXPERIMENTAL_FEATURES = [
   'id-jag',
   'ciba',
   'jwt-introspection-response',
+  'rp-initiated-logout',
 ] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
+
+/**
+ * Extension feature names (kebab-case, used with --enable).
+ *
+ * Extensions live in their own package because they pull in something core
+ * deliberately does not: an upstream identity provider and its official client
+ * library. Like the experimental features they are **disabled by default** and
+ * only generated when named explicitly with `--enable`.
+ *
+ * - google-login: Sign in with Google (Google Identity Services, redirect mode)
+ *   as a login method next to the username / password form. The generated
+ *   login page renders the Google button and a new login_uri route
+ *   (POST /login/google) verifies the posted ID token with Google's official
+ *   google-auth-library through `@maronn-openid-connect/google-login`, then
+ *   continues into the same session / consent steps as the password login.
+ *   Node.js 22+ only: the Google library does not run on edge runtimes.
+ */
+export const EXTENSION_FEATURES = ['google-login'] as const;
+
+export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
 
 /**
  * Resolved feature configuration passed through the generator pipeline.
@@ -136,6 +161,21 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *   `@maronn-openid-connect/experimental/jwt-introspection-response`, after
  *   restricting the disclosed members to the authenticated caller (§3). A
  *   request that does not name that media type is answered exactly as before.
+ * - rpInitiatedLogout: experimental, disabled by default. When true, the OP
+ *   additionally serves the end_session_endpoint (GET|POST /logout) and the
+ *   confirmation approve route (POST /logout/approve), advertises
+ *   end_session_endpoint in discovery, and resolves the logout decision and the
+ *   post_logout_redirect_uri (exact match against
+ *   rpInitiatedLogoutConfig.postLogoutRedirectUris) via
+ *   `@maronn-openid-connect/experimental/rp-initiated-logout`. Every other
+ *   endpoint is generated exactly as before.
+ * - googleLogin: extension, disabled by default. When true, the login page
+ *   renders a "Sign in with Google" button (redirect mode) and the OP serves
+ *   POST /login/google, which verifies the ID token Google posts there with
+ *   google-auth-library via `@maronn-openid-connect/google-login`, binds it to
+ *   the authorization transaction through a single-use nonce, provisions the
+ *   user just-in-time (subject `google:<sub>`) and hands off to consent like the
+ *   password login. The button appears only once config.googleLogin is set.
  * - transactionBinding: optional hardening, disabled by default. When true, the
  *   authorize endpoint issues a per-transaction HttpOnly cookie and the
  *   login / consent steps refuse to run for a User-Agent that cannot present
@@ -154,6 +194,8 @@ export interface OidcFeatureConfig {
   idJag: boolean;
   ciba: boolean;
   jwtIntrospectionResponse: boolean;
+  rpInitiatedLogout: boolean;
+  googleLogin: boolean;
   transactionBinding: boolean;
 }
 
@@ -180,11 +222,17 @@ const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatu
   'id-jag': 'idJag',
   ciba: 'ciba',
   'jwt-introspection-response': 'jwtIntrospectionResponse',
+  'rp-initiated-logout': 'rpInitiatedLogout',
+};
+
+/** Mapping from CLI extension feature names to OidcFeatureConfig keys. */
+const EXTENSION_FEATURE_KEYS: Record<ExtensionFeatureName, keyof OidcFeatureConfig> = {
+  'google-login': 'googleLogin',
 };
 
 /**
  * Default: every stable feature enabled (matches the historical generation
- * output), every optional and experimental feature disabled.
+ * output), every optional, experimental and extension feature disabled.
  */
 export const DEFAULT_FEATURES: OidcFeatureConfig = {
   pkce: true,
@@ -199,6 +247,8 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   idJag: false,
   ciba: false,
   jwtIntrospectionResponse: false,
+  rpInitiatedLogout: false,
+  googleLogin: false,
   transactionBinding: false,
 };
 
@@ -210,26 +260,33 @@ function isExperimentalFeature(name: string): name is ExperimentalFeatureName {
   return (EXPERIMENTAL_FEATURES as readonly string[]).includes(name);
 }
 
+function isExtensionFeature(name: string): name is ExtensionFeatureName {
+  return (EXTENSION_FEATURES as readonly string[]).includes(name);
+}
+
 function assertKnownFeature(
   name: string,
-): asserts name is FeatureName | OptionalFeatureName | ExperimentalFeatureName {
+): asserts name is FeatureName | OptionalFeatureName | ExperimentalFeatureName | ExtensionFeatureName {
   if (
     !(AVAILABLE_FEATURES as readonly string[]).includes(name) &&
     !isOptionalFeature(name) &&
-    !isExperimentalFeature(name)
+    !isExperimentalFeature(name) &&
+    !isExtensionFeature(name)
   ) {
     throw new Error(
       `Unknown feature: "${name}". Available features: ${AVAILABLE_FEATURES.join(', ')}. ` +
         `Optional features (disabled by default): ${OPTIONAL_FEATURES.join(', ')}. ` +
-        `Experimental features (disabled by default): ${EXPERIMENTAL_FEATURES.join(', ')}`,
+        `Experimental features (disabled by default): ${EXPERIMENTAL_FEATURES.join(', ')}. ` +
+        `Extension features (disabled by default): ${EXTENSION_FEATURES.join(', ')}`,
     );
   }
 }
 
 function featureKey(
-  name: FeatureName | OptionalFeatureName | ExperimentalFeatureName,
+  name: FeatureName | OptionalFeatureName | ExperimentalFeatureName | ExtensionFeatureName,
 ): keyof OidcFeatureConfig {
   if (isOptionalFeature(name)) return OPTIONAL_FEATURE_KEYS[name];
+  if (isExtensionFeature(name)) return EXTENSION_FEATURE_KEYS[name];
   return isExperimentalFeature(name) ? EXPERIMENTAL_FEATURE_KEYS[name] : FEATURE_KEYS[name];
 }
 
@@ -262,8 +319,9 @@ export function resolveFeatures(options: {
     assertKnownFeature(name);
     features[featureKey(name)] = true;
   }
-  // An optional / experimental feature listed in --disable is already off by
-  // default, so this is a no-op rather than an error (same as omitting it).
+  // An optional / experimental / extension feature listed in --disable is
+  // already off by default, so this is a no-op rather than an error (same as
+  // omitting it).
   for (const name of disable) {
     assertKnownFeature(name);
     features[featureKey(name)] = false;

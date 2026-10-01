@@ -40,6 +40,8 @@ describe('resolveFeatures with jarm', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -68,6 +70,8 @@ describe('resolveFeatures with jarm', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });
@@ -86,6 +90,8 @@ describe('resolveFeatures with jarm', () => {
       idJag: false,
       ciba: false,
       jwtIntrospectionResponse: false,
+      rpInitiatedLogout: false,
+      googleLogin: false,
       transactionBinding: false,
     });
   });

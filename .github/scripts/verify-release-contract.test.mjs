@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  assertCoreBreakingChangeReleasesExperimental,
-  assertExperimentalCorePeerDependencyShape,
-  assertExperimentalCorePeerRangeCoversNextCore,
+  assertCoreBreakingChangeReleasesCoreDependents,
+  assertCorePeerDependencyShape,
+  assertCorePeerRangeCoversNextCore,
   assertExperimentalReleasesAreAlwaysPatch,
   assertPrivatePackagesAreNotVersioned,
+  CORE_DEPENDENT_PACKAGES,
   computeNextVersion,
   parseChangesetBumps,
   parseMinimumCoreVersion,
@@ -55,10 +56,19 @@ describe('parseChangesetBumps', () => {
   });
 });
 
-describe('assertCoreBreakingChangeReleasesExperimental', () => {
-  it('should accept a core patch release without an experimental release', () => {
+describe('CORE_DEPENDENT_PACKAGES', () => {
+  it('should list every package that declares core as a peer dependency', () => {
+    assert.deepEqual(CORE_DEPENDENT_PACKAGES, [
+      { name: '@maronn-openid-connect/experimental', manifestPath: 'packages/experimental/package.json' },
+      { name: '@maronn-openid-connect/google-login', manifestPath: 'packages/google-login/package.json' },
+    ]);
+  });
+});
+
+describe('assertCoreBreakingChangeReleasesCoreDependents', () => {
+  it('should accept a core patch release without releasing the core dependents', () => {
     assert.doesNotThrow(() => {
-      assertCoreBreakingChangeReleasesExperimental([
+      assertCoreBreakingChangeReleasesCoreDependents([
         { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'patch' } },
       ]);
     });
@@ -66,41 +76,87 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
 
   it('should accept an experimental only release', () => {
     assert.doesNotThrow(() => {
-      assertCoreBreakingChangeReleasesExperimental([
+      assertCoreBreakingChangeReleasesCoreDependents([
         { file: 'a.md', bumps: { '@maronn-openid-connect/experimental': 'minor' } },
       ]);
     });
   });
 
-  it('should accept a core minor release that also releases experimental', () => {
+  it('should accept a google-login only release', () => {
     assert.doesNotThrow(() => {
-      assertCoreBreakingChangeReleasesExperimental([
-        { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
-        { file: 'b.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
+      assertCoreBreakingChangeReleasesCoreDependents([
+        { file: 'a.md', bumps: { '@maronn-openid-connect/google-login': 'minor' } },
       ]);
     });
   });
 
-  it('should reject a core minor release without an experimental release', () => {
+  it('should accept a core minor release that also releases every core dependent', () => {
+    assert.doesNotThrow(() => {
+      assertCoreBreakingChangeReleasesCoreDependents([
+        { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+        { file: 'b.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
+        { file: 'c.md', bumps: { '@maronn-openid-connect/google-login': 'patch' } },
+      ]);
+    });
+  });
+
+  it('should accept a single changeset that releases core and every core dependent', () => {
+    assert.doesNotThrow(() => {
+      assertCoreBreakingChangeReleasesCoreDependents([
+        {
+          file: 'a.md',
+          bumps: {
+            '@maronn-openid-connect/core': 'major',
+            '@maronn-openid-connect/experimental': 'patch',
+            '@maronn-openid-connect/google-login': 'minor',
+          },
+        },
+      ]);
+    });
+  });
+
+  it('should reject a core minor release without any core dependent release', () => {
     assert.throws(
       () =>
-        assertCoreBreakingChangeReleasesExperimental([
+        assertCoreBreakingChangeReleasesCoreDependents([
           { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
         ]),
       new Error(
         '@maronn-openid-connect/core を minor 以上で上げる changeset (a.md) がありますが、' +
-          '@maronn-openid-connect/experimental の changeset がありません。' +
-          'experimental は core を広い peer range で参照しており、公開済みの古い experimental が' +
+          '@maronn-openid-connect/experimental, @maronn-openid-connect/google-login の changeset がありません。' +
+          'これらは core を広い peer range で参照しており、公開済みの古いパッケージが' +
           '新しい core をそのまま受け入れてしまうため、core の minor / major では' +
-          'experimental も同時にリリースして最新 core との組み合わせを保証してください。',
+          '同時にリリースして最新 core との組み合わせを保証してください。',
       ),
     );
   });
 
-  it('should reject a core major release without an experimental release', () => {
+  it('should reject a core minor release that releases experimental but not google-login', () => {
     assert.throws(
       () =>
-        assertCoreBreakingChangeReleasesExperimental([
+        assertCoreBreakingChangeReleasesCoreDependents([
+          { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+          { file: 'b.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
+        ]),
+      /がありますが、@maronn-openid-connect\/google-login の changeset がありません/,
+    );
+  });
+
+  it('should reject a core minor release that releases google-login but not experimental', () => {
+    assert.throws(
+      () =>
+        assertCoreBreakingChangeReleasesCoreDependents([
+          { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+          { file: 'b.md', bumps: { '@maronn-openid-connect/google-login': 'patch' } },
+        ]),
+      /がありますが、@maronn-openid-connect\/experimental の changeset がありません/,
+    );
+  });
+
+  it('should reject a core major release without a core dependent release', () => {
+    assert.throws(
+      () =>
+        assertCoreBreakingChangeReleasesCoreDependents([
           { file: 'core-major.md', bumps: { '@maronn-openid-connect/core': 'major' } },
         ]),
       /core-major\.md/,
@@ -110,7 +166,7 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
   it('should list every offending changeset file when several exist', () => {
     assert.throws(
       () =>
-        assertCoreBreakingChangeReleasesExperimental([
+        assertCoreBreakingChangeReleasesCoreDependents([
           { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
           { file: 'b.md', bumps: { '@maronn-openid-connect/core': 'major' } },
         ]),
@@ -118,19 +174,32 @@ describe('assertCoreBreakingChangeReleasesExperimental', () => {
     );
   });
 
-  it('should accept a release that touches neither package', () => {
+  it('should accept a release that touches neither core nor its dependents', () => {
     assert.doesNotThrow(() => {
-      assertCoreBreakingChangeReleasesExperimental([
+      assertCoreBreakingChangeReleasesCoreDependents([
         { file: 'a.md', bumps: { '@maronn-openid-connect/cli': 'minor' } },
       ]);
     });
   });
+
+  it('should check only the dependents that are passed explicitly', () => {
+    assert.doesNotThrow(() => {
+      assertCoreBreakingChangeReleasesCoreDependents(
+        [
+          { file: 'a.md', bumps: { '@maronn-openid-connect/core': 'minor' } },
+          { file: 'b.md', bumps: { '@maronn-openid-connect/experimental': 'patch' } },
+        ],
+        ['@maronn-openid-connect/experimental'],
+      );
+    });
+  });
 });
 
-describe('assertExperimentalCorePeerDependencyShape', () => {
+describe('assertCorePeerDependencyShape', () => {
   it('should accept core declared as a peer dependency and linked for local development', () => {
     assert.doesNotThrow(() => {
-      assertExperimentalCorePeerDependencyShape({
+      assertCorePeerDependencyShape({
+        name: '@maronn-openid-connect/experimental',
         peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
         devDependencies: { '@maronn-openid-connect/core': 'workspace:*' },
       });
@@ -140,13 +209,14 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
   it('should reject core declared as a runtime dependency', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerDependencyShape({
+        assertCorePeerDependencyShape({
+          name: '@maronn-openid-connect/google-login',
           dependencies: { '@maronn-openid-connect/core': '0.0.1' },
           peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
           devDependencies: { '@maronn-openid-connect/core': 'workspace:*' },
         }),
       new Error(
-        '@maronn-openid-connect/experimental は @maronn-openid-connect/core を dependencies に持ってはいけません。' +
+        '@maronn-openid-connect/google-login は @maronn-openid-connect/core を dependencies に持ってはいけません。' +
           'core が二重にインストールされると instanceof 判定が静かに false になります。',
       ),
     );
@@ -155,7 +225,8 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
   it('should reject a missing core peer dependency', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerDependencyShape({
+        assertCorePeerDependencyShape({
+          name: '@maronn-openid-connect/experimental',
           devDependencies: { '@maronn-openid-connect/core': 'workspace:*' },
         }),
       new Error(
@@ -167,11 +238,12 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
   it('should reject a missing workspace link for local development', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerDependencyShape({
+        assertCorePeerDependencyShape({
+          name: '@maronn-openid-connect/google-login',
           peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
         }),
       new Error(
-        '@maronn-openid-connect/experimental は @maronn-openid-connect/core を devDependencies の workspace:* で' +
+        '@maronn-openid-connect/google-login は @maronn-openid-connect/core を devDependencies の workspace:* で' +
           '参照してください。ローカル開発とテストが registry の core を引いてしまいます。',
       ),
     );
@@ -180,11 +252,19 @@ describe('assertExperimentalCorePeerDependencyShape', () => {
   it('should reject a devDependency that does not use the workspace protocol', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerDependencyShape({
+        assertCorePeerDependencyShape({
+          name: '@maronn-openid-connect/experimental',
           peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
           devDependencies: { '@maronn-openid-connect/core': '^0.0.1' },
         }),
       /workspace:\*/,
+    );
+  });
+
+  it('should fall back to a placeholder when the manifest has no name', () => {
+    assert.throws(
+      () => assertCorePeerDependencyShape({ devDependencies: { '@maronn-openid-connect/core': 'workspace:*' } }),
+      /^Error: \(name 未設定のパッケージ\) は @maronn-openid-connect\/core を peerDependencies に宣言してください。$/,
     );
   });
 });
@@ -301,11 +381,14 @@ describe('resolveNextCoreVersion', () => {
   });
 });
 
-describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
+describe('assertCorePeerRangeCoversNextCore', () => {
   it('should accept a lower bound equal to the next core version', () => {
     assert.doesNotThrow(() => {
-      assertExperimentalCorePeerRangeCoversNextCore(
-        { peerDependencies: { '@maronn-openid-connect/core': '>=0.1.0 <1.0.0' } },
+      assertCorePeerRangeCoversNextCore(
+        {
+          name: '@maronn-openid-connect/experimental',
+          peerDependencies: { '@maronn-openid-connect/core': '>=0.1.0 <1.0.0' },
+        },
         '0.1.0',
       );
     });
@@ -313,8 +396,11 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
 
   it('should accept a lower bound above the next core version', () => {
     assert.doesNotThrow(() => {
-      assertExperimentalCorePeerRangeCoversNextCore(
-        { peerDependencies: { '@maronn-openid-connect/core': '>=0.2.0 <1.0.0' } },
+      assertCorePeerRangeCoversNextCore(
+        {
+          name: '@maronn-openid-connect/google-login',
+          peerDependencies: { '@maronn-openid-connect/core': '>=0.2.0 <1.0.0' },
+        },
         '0.1.0',
       );
     });
@@ -323,19 +409,39 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
   it('should reject a lower bound below the next core version', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerRangeCoversNextCore(
-          { peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' } },
+        assertCorePeerRangeCoversNextCore(
+          {
+            name: '@maronn-openid-connect/experimental',
+            peerDependencies: { '@maronn-openid-connect/core': '>=0.0.1 <1.0.0' },
+          },
           '0.1.0',
         ),
       /">=0\.0\.1 <1\.0\.0" は core 0\.1\.0 より古い 0\.0\.1 を下限にしています/,
     );
   });
 
+  it('should name the package whose lower bound is stale', () => {
+    assert.throws(
+      () =>
+        assertCorePeerRangeCoversNextCore(
+          {
+            name: '@maronn-openid-connect/google-login',
+            peerDependencies: { '@maronn-openid-connect/core': '>=0.3.0 <1.0.0' },
+          },
+          '0.4.0',
+        ),
+      /^Error: @maronn-openid-connect\/google-login の @maronn-openid-connect\/core peer range ">=0\.3\.0 <1\.0\.0" は core 0\.4\.0 より古い 0\.3\.0 を下限にしています。@maronn-openid-connect\/google-login はモノレポ内の core だけを相手に/,
+    );
+  });
+
   it('should compare each version segment numerically rather than as text', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerRangeCoversNextCore(
-          { peerDependencies: { '@maronn-openid-connect/core': '>=0.9.0 <1.0.0' } },
+        assertCorePeerRangeCoversNextCore(
+          {
+            name: '@maronn-openid-connect/experimental',
+            peerDependencies: { '@maronn-openid-connect/core': '>=0.9.0 <1.0.0' },
+          },
           '0.10.0',
         ),
       /core 0\.10\.0 より古い 0\.9\.0 を下限にしています/,
@@ -345,8 +451,11 @@ describe('assertExperimentalCorePeerRangeCoversNextCore', () => {
   it('should reject a range whose lower bound cannot be read', () => {
     assert.throws(
       () =>
-        assertExperimentalCorePeerRangeCoversNextCore(
-          { peerDependencies: { '@maronn-openid-connect/core': '^0.1.0' } },
+        assertCorePeerRangeCoversNextCore(
+          {
+            name: '@maronn-openid-connect/experimental',
+            peerDependencies: { '@maronn-openid-connect/core': '^0.1.0' },
+          },
           '0.1.0',
         ),
       /"\^0\.1\.0" から下限を読み取れません/,

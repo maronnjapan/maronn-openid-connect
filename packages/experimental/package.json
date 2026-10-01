@@ -1,6 +1,6 @@
 {
   "name": "@maronn-openid-connect/experimental",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Experimental OAuth/OIDC extensions for maronn-openid-connect (unstable APIs)",
   "type": "module",
   "exports": {
@@ -27,6 +27,10 @@
     "./par": {
       "types": "./dist/par/index.d.ts",
       "import": "./dist/par/index.js"
+    },
+    "./rp-initiated-logout": {
+      "types": "./dist/rp-initiated-logout/index.d.ts",
+      "import": "./dist/rp-initiated-logout/index.js"
     },
     "./token-exchange": {
       "types": "./dist/token-exchange/index.d.ts",
@@ -65,7 +69,7 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/experimental#readme",
   "peerDependencies": {
-    "@maronn-openid-connect/core": ">=0.2.0 <1.0.0"
+    "@maronn-openid-connect/core": ">=0.4.0 <1.0.0"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

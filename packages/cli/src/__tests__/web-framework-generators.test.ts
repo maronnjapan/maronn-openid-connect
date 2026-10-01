@@ -45,6 +45,45 @@ describe('Web-standard generated validation pipelines', () => {
   }
 });
 
+describe('Web-standard generated introspection caller restriction', () => {
+  const generators = [
+    { framework: 'express', generator: new ExpressGenerator(), prefix: '' },
+    { framework: 'fastify', generator: new FastifyGenerator(), prefix: '' },
+    { framework: 'nextjs', generator: new NextJsGenerator(), prefix: '_oidc-provider/' },
+  ];
+
+  for (const { framework, generator, prefix } of generators) {
+    const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
+    const introspectionRoute =
+      files.find((file) => file.path === `${prefix}routes/introspection.ts`)?.content ?? '';
+    const revocationRoute =
+      files.find((file) => file.path === `${prefix}routes/revocation.ts`)?.content ?? '';
+
+    it(`should reject a public client caller in the introspection route for ${framework}`, () => {
+      // RFC 7662 §2.1 / RFC 9701 §5: a client registered with
+      // token_endpoint_auth_method 'none' passes the client authentication
+      // pipeline by presenting only its public client_id, so the route must
+      // reject it explicitly, after the secret verification and before any
+      // token handling.
+      expect(introspectionRoute).toContain(
+        'requireConfidentialIntrospectionCaller(introspectingClient);',
+      );
+      expect(introspectionRoute.indexOf('await verifyClientSecret(')).toBeLessThan(
+        introspectionRoute.indexOf('requireConfidentialIntrospectionCaller(introspectingClient);'),
+      );
+      expect(
+        introspectionRoute.indexOf('requireConfidentialIntrospectionCaller(introspectingClient);'),
+      ).toBeLessThan(introspectionRoute.indexOf('requireIntrospectionToken({'));
+    });
+
+    it(`should not require a confidential caller in the revocation route for ${framework}`, () => {
+      // RFC 7009 §2.1: a public client legitimately revokes its own tokens, so
+      // the confidential-caller step is introspection-only.
+      expect(revocationRoute).not.toContain('requireConfidentialIntrospectionCaller');
+    });
+  }
+});
+
 describe('Web-standard generated id_token_hint handling', () => {
   const generatedAuthorizeRoutes = [
     {
@@ -121,16 +160,17 @@ describe('Web-standard generated internal redirect origin', () => {
   ];
 
   for (const { framework, files, prefix } of generatedInternalRedirects) {
-    const authorize = files.find((f) => f.path === `${prefix}routes/authorize.ts`)?.content ?? '';
-    const login = files.find((f) => f.path === `${prefix}routes/login.ts`)?.content ?? '';
+    // Redirecting is the page layer's job, so the screen URLs are built there.
+    const authorize = files.find((f) => f.path === `${prefix}pages/authorize.ts`)?.content ?? '';
+    const login = files.find((f) => f.path === `${prefix}pages/login.ts`)?.content ?? '';
     const conformance = files.find((f) => f.path === `${prefix}conformance.test.ts`)?.content ?? '';
 
     it(`should build internal redirects on config.issuer for ${framework}`, () => {
-      expect(authorize.includes("new URL('/consent', config.issuer)")).toBe(true);
-      expect(authorize.includes("new URL('/login', config.issuer)")).toBe(true);
+      expect(authorize.includes('const url = new URL(path, config.issuer);')).toBe(true);
+      expect(authorize.includes("screenUrl(c, '/login', outcome.transactionId)")).toBe(true);
+      expect(authorize.includes("screenUrl(c, '/consent', outcome.transactionId)")).toBe(true);
       expect(login.includes("new URL('/consent', config.issuer)")).toBe(true);
-      expect(authorize.includes("new URL('/consent', c.req.url)")).toBe(false);
-      expect(authorize.includes("new URL('/login', c.req.url)")).toBe(false);
+      expect(authorize.includes('c.req.url')).toBe(false);
       expect(login.includes("new URL('/consent', c.req.url)")).toBe(false);
     });
 
@@ -173,11 +213,14 @@ describe('Web-standard generated consent decision allowlist', () => {
     it(`should approve only the allowlisted action value for ${framework}`, () => {
       expect(
         consentRoute.includes(`  if (action !== 'approve') {
-    return renderView(views.errorPage({
-      error: 'Invalid consent decision. Please use the Approve or Deny button.',
-      statusCode: 400,
-    }), { status: 400 });
+    return { kind: 'invalid_decision' };
   }`),
+      ).toBe(true);
+      const consentPage =
+        files.find((file) => file.path === `${prefix}pages/consent.ts`)?.content ?? '';
+      expect(consentPage.includes("if (outcome.kind === 'invalid_decision') {")).toBe(true);
+      expect(
+        consentPage.includes("error: 'Invalid consent decision. Please use the Approve or Deny button.',"),
       ).toBe(true);
     });
 
@@ -258,11 +301,19 @@ describe('ExpressGenerator', () => {
       expect(file?.content).toContain('request(input: RequestInfo | URL, init?: RequestInit)');
     });
 
-    it('should generate framework-neutral OIDC routes', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain("import { WebRouter } from '../web-router.js'");
-      expect(file?.content).not.toContain("from 'hono'");
-      expect(file?.content).toContain('export const authorizeApp = new WebRouter()');
+    it('should generate framework-neutral OIDC routes and pages', () => {
+      const token = files.find((f) => f.path === 'routes/token.ts');
+      expect(token?.content).toContain("import { WebRouter } from '../web-router.js'");
+      expect(token?.content).not.toContain("from 'hono'");
+      expect(token?.content).toContain('export const tokenApp = new WebRouter()');
+      const authorizePage = files.find((f) => f.path === 'pages/authorize.ts');
+      expect(authorizePage?.content).toContain("import { WebRouter } from '../web-router.js'");
+      expect(authorizePage?.content).not.toContain("from 'hono'");
+      expect(authorizePage?.content).toContain('export const authorizePage = new WebRouter()');
+      // The logic module behind it needs no router at all.
+      const authorize = files.find((f) => f.path === 'routes/authorize.ts');
+      expect(authorize?.content).not.toContain("from 'hono'");
+      expect(authorize?.content).not.toContain('WebRouter');
     });
 
     it('should generate an Express adapter that mounts the Web handler', () => {
@@ -551,6 +602,11 @@ describe('NextJsGenerator', () => {
         '_oidc-provider/config.ts',
         '_oidc-provider/conformance.test.ts',
         '_oidc-provider/next.ts',
+        '_oidc-provider/pages/authorize.ts',
+        '_oidc-provider/pages/consent.ts',
+        '_oidc-provider/pages/errors.ts',
+        '_oidc-provider/pages/login.ts',
+        '_oidc-provider/pages/respond.ts',
         '_oidc-provider/resolvers.ts',
         '_oidc-provider/routes/authorize.ts',
         '_oidc-provider/routes/consent.ts',
@@ -665,10 +721,13 @@ export const OPTIONS = oidcHandlers.OPTIONS;
       // Safety: only an OP-internal root-relative path may be used as the redirect
       // target, so a misconfigured absolute / protocol-relative value can never
       // turn a non-redirect authorization error into an open redirect.
-      const authorize = files.find((f) => f.path === '_oidc-provider/routes/authorize.ts');
-      expect(authorize?.content).toContain(
+      const authorize = files.find((f) => f.path === '_oidc-provider/pages/authorize.ts');
+      expect(authorize?.content).toContain('return renderAuthorizationErrorPage(c, outcome);');
+      const errorPage = files.find((f) => f.path === '_oidc-provider/pages/errors.ts');
+      expect(errorPage?.content).toContain(
         "errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')",
       );
+      expect(errorPage?.content).toContain("return c.redirect(`${errorPagePath}?${query.toString()}`, 303);");
 
       const page = files.find((f) => f.path === 'oidc-error/page.tsx');
       // The page throws so the App Router error boundary renders the error UI.
@@ -803,14 +862,26 @@ describe('ViewResult / renderView across Web-standard generators', () => {
         expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult;');
       });
 
-      it('should render login and consent through renderView', () => {
-        const login = files.find((f) => f.path === `${prefix}routes/login.ts`);
-        const consent = files.find((f) => f.path === `${prefix}routes/consent.ts`);
+      it('should render login and consent through renderView in the page modules', () => {
+        const login = files.find((f) => f.path === `${prefix}pages/login.ts`);
+        const consent = files.find((f) => f.path === `${prefix}pages/consent.ts`);
         // Next.js strips the .js extension from relative imports, so match the
         // shared prefix instead of pinning the extension.
-        expect(login?.content).toContain("import { defaultViews, renderView } from '../views");
-        expect(login?.content).toContain('return renderView(views.loginPage(');
-        expect(consent?.content).toContain('return renderView(views.consentPage(');
+        expect(login?.content).toContain("import { defaultViews, renderView, type LoginPageParams } from '../views");
+        expect(login?.content).toContain('return renderView(views.loginPage(params));');
+        expect(consent?.content).toContain('return renderView(views.consentPage(params));');
+      });
+
+      it('should keep views and pages out of the login and consent logic modules', () => {
+        const login = files.find((f) => f.path === `${prefix}routes/login.ts`);
+        const consent = files.find((f) => f.path === `${prefix}routes/consent.ts`);
+        expect(login?.content).not.toContain("from '../views");
+        expect(consent?.content).not.toContain("from '../views");
+        expect(login?.content).not.toContain("from '../pages");
+        expect(consent?.content).not.toContain("from '../pages");
+        const loginPage = files.find((f) => f.path === `${prefix}pages/login.ts`);
+        expect(loginPage?.content).toContain("from '../routes/login");
+        expect(loginPage?.content).toContain("from '../views");
       });
 
       it('should pin custom string / Response view behavior in the conformance test', () => {

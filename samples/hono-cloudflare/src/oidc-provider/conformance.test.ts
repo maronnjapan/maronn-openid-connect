@@ -14,6 +14,7 @@ import { parConfig } from './routes/par.js';
 import { tokenExchangeConfig } from './routes/token.js';
 import { idJagConfig } from './routes/token.js';
 import { cibaAuthenticationRequestStore } from './store.js';
+import { rpInitiatedLogoutConfig } from './routes/logout.js';
 
 /**
  * HTTP conformance smoke tests for the generated OpenID Connect Provider.
@@ -902,6 +903,35 @@ describe('generated provider HTTP conformance', () => {
       expect(body.active).toBe(true);
       expect(body.jti).toBe(accessTokenJti);
     });
+
+    // RFC 7662 §2.1: the introspection caller must be authorized, and a public
+    // client's client_id is public information, so presenting it alone is not
+    // client authentication. The route rejects the caller before any token
+    // lookup, while revocation keeps accepting the same client (RFC 7009 §2.1).
+    it('should reject an introspection request that presents only a public client_id', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      accessTokenStore.set('public-introspect-token', {
+        sub: 'testuser',
+        clientId: 'c-public',
+        scope: ['openid'],
+        expiresAt: now + 3600,
+      });
+      const res = await app.request('/introspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: 'c-public',
+          token: 'public-introspect-token',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get('WWW-Authenticate')).toBe('Basic realm="Client Authentication"');
+      expect(await res.json()).toEqual({
+        error: 'invalid_client',
+        error_description: 'Introspection requires an authenticated confidential client',
+      });
+    });
   });
 
   describe('Authorization Endpoint non-redirect errors', () => {
@@ -1245,8 +1275,9 @@ describe('generated provider HTTP conformance', () => {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
-    // End-to-end: the login route returns its view via renderView, so the login
-    // page is delivered as a text/html Response through the framework at runtime.
+    // End-to-end: the login page (pages/login.ts) returns its view via
+    // renderView, so the login page is delivered as a text/html Response through
+    // the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
       // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
       // transaction (302 -> /login); the verifier is never needed here.
@@ -1419,12 +1450,17 @@ describe('generated provider HTTP conformance', () => {
       const cases = [
         { path: '/token', method: 'GET', allow: 'POST' },
         { path: '/userinfo', method: 'PUT', allow: 'GET, POST' },
+        // The browser-facing screens (pages/) enforce their method lists too.
+        { path: '/login', method: 'PUT', allow: 'GET, POST' },
+        { path: '/consent', method: 'PUT', allow: 'GET, POST' },
       { path: '/introspect', method: 'GET', allow: 'POST' },
       { path: '/revoke', method: 'GET', allow: 'POST' },
       { path: '/device_authorization', method: 'GET', allow: 'POST' },
       { path: '/device', method: 'PUT', allow: 'GET, POST' },
       { path: '/device/login', method: 'GET', allow: 'POST' },
       { path: '/device/approve', method: 'GET', allow: 'POST' },
+      { path: '/logout', method: 'PUT', allow: 'GET, POST' },
+      { path: '/logout/approve', method: 'GET', allow: 'POST' },
         { path: '/.well-known/openid-configuration', method: 'POST', allow: 'GET' },
         { path: '/.well-known/jwks.json', method: 'POST', allow: 'GET' },
       ];
@@ -2289,6 +2325,40 @@ describe('generated provider HTTP conformance', () => {
       const location = new URL(res.headers.get('Location') ?? '', 'http://localhost');
       expect(location.pathname).toBe('/login');
       expect(location.searchParams.get('error')).toBe(null);
+    });
+
+    it('should reject a broken request object with a non-redirect invalid_request_object error page', async () => {
+      const url =
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=req-broken' +
+        '&request=not-a-jwt' +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+      const res = await app.request(url);
+
+      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
+      // Object, so the OP reports invalid_request_object (not the generic
+      // invalid_request). A redirect_uri carried inside a broken Request Object
+      // cannot be trusted, so the error stays on the OP: HTTP 400, no redirect,
+      // no state echo. Pinned to the default error page so a change in either
+      // the error code or the non-redirect behavior is caught exactly.
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      const body = await res.text();
+      expect(body).toBe(
+        [
+          '<!DOCTYPE html>',
+          '<html>',
+          '<head><title>Error</title></head>',
+          '<body>',
+          '  <h1>Error</h1>',
+          '  <p>invalid_request_object</p>',
+          '  <p>request object is not a JWS compact serialization</p>',
+          '</body>',
+          '</html>',
+        ].join('\n'),
+      );
     });
 
     it('should reject the request_uri parameter with a request_uri_not_supported redirect', async () => {
@@ -7148,6 +7218,24 @@ describe('generated provider HTTP conformance', () => {
         expect(res.headers.get('Content-Type')).toBe('application/json');
         expect(await res.json()).toMatchObject({ error: 'invalid_client' });
       });
+
+      // RFC 9701 §5: an unauthenticated request must be refused, and a public
+      // client_id alone is not authentication. Without this rejection the
+      // signed assertion would vouch for a caller identity that was never
+      // verified.
+      it('should reject a public client introspection request even when it asks for the JWT response', async () => {
+        const res = await introspectWith(
+          { client_id: 'c-public', token: 'rfc9701-active' },
+          INTROSPECTION_JWT_MEDIA_TYPE,
+        );
+
+        expect(res.status).toBe(401);
+        expect(res.headers.get('Content-Type')).toBe('application/json');
+        expect(await res.json()).toEqual({
+          error: 'invalid_client',
+          error_description: 'Introspection requires an authenticated confidential client',
+        });
+      });
     });
 
     describe('Provider metadata (RFC 9701 §7)', () => {
@@ -7156,6 +7244,264 @@ describe('generated provider HTTP conformance', () => {
 
         expect(metadata.introspection_signing_alg_values_supported).toEqual(['RS256']);
       });
+    });
+  });
+
+  // EXPERIMENTAL — OpenID Connect RP-Initiated Logout 1.0. Generated because
+  // this provider was created with --enable rp-initiated-logout. These tests
+  // pin the contract the repository guarantees for the generated
+  // end_session_endpoint: change the behavior and they fail, which is how a
+  // customized OP learns it drifted.
+  describe('RP-Initiated Logout (RP-Initiated Logout 1.0)', () => {
+    // RFC 7636 Appendix B example PKCE pair (verifier -> its S256 challenge).
+    const LOGOUT_PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    const LOGOUT_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    // A logout-specific registered return URI — deliberately NOT the authorize
+    // REDIRECT_URI, because §3 defines post_logout_redirect_uris as its own
+    // registry.
+    const POST_LOGOUT_URI = 'http://localhost:3000/logged-out';
+    const CLEARED_SESSION_COOKIE =
+      'session_id=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
+
+    // The generated settings object is the §3 registry; register the test
+    // client's return URI once for every test in this block.
+    rpInitiatedLogoutConfig.postLogoutRedirectUris = { 'c-conf': [POST_LOGOUT_URI] };
+
+    // Pure helpers: they fetch and parse only. Every assertion lives in an it().
+    function relativeFrom(location: string | null): string {
+      const url = new URL(location ?? '', 'http://localhost');
+      return url.pathname + url.search;
+    }
+
+    function csrfFrom(html: string): string {
+      return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    }
+
+    // Drive authorize -> login -> consent -> token and hand back the browser
+    // session cookie plus the ID Token (the id_token_hint of the logout tests).
+    async function loginSession(): Promise<{ idToken: string; sessionCookie: string }> {
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+          '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+          '&scope=openid&state=logout-flow&nonce=logout-nonce&prompt=consent' +
+          '&code_challenge=' + LOGOUT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+      );
+      const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const sessionCookie =
+        (loginRes.headers.get('Set-Cookie') ?? '').match(/session_id=[^;,]+/)?.[0] ?? '';
+      const cookies = bindingCookie ? bindingCookie + '; ' + sessionCookie : sessionCookie;
+
+      const consentPath = relativeFrom(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: cookies } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookies },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const code =
+        new URL(consentRes.headers.get('Location') ?? '', 'http://localhost')
+          .searchParams.get('code') ?? '';
+
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          client_id: 'c-conf',
+          client_secret: 's',
+          code_verifier: LOGOUT_PKCE_VERIFIER,
+        }).toString(),
+      });
+      const idToken = ((await tokenRes.json()) as { id_token?: string }).id_token ?? '';
+      return { idToken, sessionCookie };
+    }
+
+    // prompt=none is the observable session probe (OIDC Core 1.0 §3.1.2.1): a
+    // live session answers with a code, a dead one with error=login_required.
+    async function promptNoneProbe(
+      sessionCookie: string,
+    ): Promise<{ error: string | null; hasCode: boolean }> {
+      const res = await app.request(
+        '/authorize?response_type=code&client_id=c-conf' +
+          '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+          '&scope=openid&state=logout-probe&prompt=none' +
+          '&code_challenge=' + LOGOUT_PKCE_CHALLENGE + '&code_challenge_method=S256',
+        { headers: { Cookie: sessionCookie } },
+      );
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+      return {
+        error: callback.searchParams.get('error'),
+        hasCode: callback.searchParams.get('code') !== null,
+      };
+    }
+
+    it('should advertise end_session_endpoint in discovery metadata', async () => {
+      const res = await app.request('/.well-known/openid-configuration');
+
+      expect(res.status).toBe(200);
+      const metadata = await res.json();
+      expect(metadata.end_session_endpoint).toBe('http://localhost:3000/logout');
+    });
+
+    // §2 + §3: a valid hint for the current session logs out at once, the
+    // session cookie and store entry are destroyed together, and the browser
+    // returns to the registered URI with state appended.
+    it('should log out immediately and redirect with state for a valid hint and registered URI', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request(
+        '/logout?id_token_hint=' + encodeURIComponent(idToken) +
+          '&post_logout_redirect_uri=' + encodeURIComponent(POST_LOGOUT_URI) +
+          '&state=af0ifjsldkj',
+        { headers: { Cookie: sessionCookie } },
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(POST_LOGOUT_URI + '?state=af0ifjsldkj');
+      expect(res.headers.get('Set-Cookie')).toBe(CLEARED_SESSION_COOKIE);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({
+        error: 'login_required',
+        hasCode: false,
+      });
+    });
+
+    // §2 MUST: the end_session_endpoint accepts POST with a form body exactly
+    // like GET with a query.
+    it('should accept the logout request as a form POST', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request('/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: sessionCookie },
+        body: new URLSearchParams({
+          id_token_hint: idToken,
+          post_logout_redirect_uri: POST_LOGOUT_URI,
+          state: 'post-body-state',
+        }).toString(),
+      });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(POST_LOGOUT_URI + '?state=post-body-state');
+    });
+
+    // §2 MUST + §7: without a valid hint nothing is deleted — the screen asks
+    // first, so a planted <img src="/logout"> cannot end the victim's session.
+    it('should show the confirmation screen and keep the session when the hint is absent', async () => {
+      const { sessionCookie } = await loginSession();
+
+      const res = await app.request('/logout', { headers: { Cookie: sessionCookie } });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      const html = await res.text();
+      expect(html.includes('action="/logout/approve"')).toBe(true);
+      expect((res.headers.get('Set-Cookie') ?? '').startsWith('oidc_logout_confirm=')).toBe(true);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({ error: null, hasCode: true });
+    });
+
+    it('should delete the session when the confirmation is approved with the paired cookie and token', async () => {
+      const { sessionCookie } = await loginSession();
+      const confirmRes = await app.request('/logout', { headers: { Cookie: sessionCookie } });
+      const confirmCookie =
+        (confirmRes.headers.get('Set-Cookie') ?? '').match(/oidc_logout_confirm=[^;,]+/)?.[0] ?? '';
+      const csrfToken = csrfFrom(await confirmRes.text());
+
+      const res = await app.request('/logout/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: sessionCookie + '; ' + confirmCookie,
+        },
+        body: new URLSearchParams({ csrf_token: csrfToken }).toString(),
+      });
+
+      expect(res.status).toBe(200);
+      expect((res.headers.get('Set-Cookie') ?? '').includes(CLEARED_SESSION_COOKIE)).toBe(true);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({
+        error: 'login_required',
+        hasCode: false,
+      });
+    });
+
+    // The hidden token alone is not a defense: without the HttpOnly cookie the
+    // approve POST must refuse to delete anything (forged cross-site POST).
+    it('should reject an approve POST without the confirmation cookie and keep the session', async () => {
+      const { sessionCookie } = await loginSession();
+      const confirmRes = await app.request('/logout', { headers: { Cookie: sessionCookie } });
+      const csrfToken = csrfFrom(await confirmRes.text());
+
+      const res = await app.request('/logout/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: sessionCookie,
+        },
+        body: new URLSearchParams({ csrf_token: csrfToken }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({ error: null, hasCode: true });
+    });
+
+    // §3 MUST NOT: an unregistered URI is never redirected to. The logout
+    // itself still happens (the hint was valid) — the browser just stays on
+    // the completed page and state is not echoed anywhere.
+    it('should show the completed page instead of redirecting to an unregistered URI', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request(
+        '/logout?id_token_hint=' + encodeURIComponent(idToken) +
+          '&post_logout_redirect_uri=' + encodeURIComponent('https://attacker.example/out') +
+          '&state=leak-probe',
+        { headers: { Cookie: sessionCookie } },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('leak-probe')).toBe(false);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({
+        error: 'login_required',
+        hasCode: false,
+      });
+    });
+
+    // §2 MUST: a client_id parameter that mismatches the hint audience voids
+    // the hint — confirmation screen, session intact, no redirect.
+    it('should fall back to the confirmation screen when client_id mismatches the hint audience', async () => {
+      const { idToken, sessionCookie } = await loginSession();
+
+      const res = await app.request(
+        '/logout?id_token_hint=' + encodeURIComponent(idToken) +
+          '&client_id=c-public' +
+          '&post_logout_redirect_uri=' + encodeURIComponent(POST_LOGOUT_URI),
+        { headers: { Cookie: sessionCookie } },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBe(null);
+      expect((await res.text()).includes('action="/logout/approve"')).toBe(true);
+      expect(await promptNoneProbe(sessionCookie)).toEqual({ error: null, hasCode: true });
     });
   });
 

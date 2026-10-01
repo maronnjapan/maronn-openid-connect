@@ -16,6 +16,11 @@ import {
   type CibaAuthenticationRequestStore,
   type CibaLoginTransactionStore,
 } from '@maronn-openid-connect/experimental/ciba';
+import type {
+  GoogleIdTokenPayload,
+  GoogleLoginNonceRecord,
+  GoogleLoginNonceStore,
+} from '@maronn-openid-connect/google-login';
 
 /**
  * In-memory Authorization Transaction Store.
@@ -336,6 +341,10 @@ export class ConsentStore {
 export class UserStore {
   private users = new Map<string, UserClaims & { password: string }>();
 
+  // EXTENSION (google-login): users provisioned from a verified Google account,
+  // keyed by their OP subject ('google:' + Google sub). They have no password.
+  private googleUsers = new Map<string, UserClaims>();
+
   constructor() {
     // Example user for development.
     // Carries the standard claims for every scope advertised in Discovery
@@ -401,9 +410,71 @@ export class UserStore {
 
   getClaims(sub: string): UserClaims | undefined {
     const user = this.users.get(sub);
-    if (!user) return undefined;
+    if (!user) return this.googleUsers.get(sub);
     const { password: _, ...claims } = user;
     return claims;
+  }
+
+  /**
+   * EXTENSION (google-login): create or refresh the OP user for a verified Google
+   * account (just-in-time provisioning) and return its claims. The subject is
+   * 'google:' + the Google sub — never the email, which a Google account can
+   * change — so the same person always maps to the same OP user.
+   */
+  linkGoogleAccount(account: GoogleIdTokenPayload): UserClaims {
+    const claims = googleAccountToClaims(account);
+    this.googleUsers.set(claims.sub, claims);
+    return claims;
+  }
+}
+
+/**
+ * EXTENSION (google-login): OP subject prefix for users provisioned from Google.
+ */
+export const GOOGLE_SUBJECT_PREFIX = 'google:';
+
+/**
+ * EXTENSION (google-login): the OP user record derived from a verified Google
+ * ID token. Only the profile / email claims Google supplied are copied, so the
+ * UserInfo endpoint returns exactly what Google asserted about the account.
+ */
+export function googleAccountToClaims(account: GoogleIdTokenPayload): UserClaims {
+  const claims: UserClaims = { sub: GOOGLE_SUBJECT_PREFIX + account.sub };
+  if (account.name !== undefined) claims.name = account.name;
+  if (account.given_name !== undefined) claims.given_name = account.given_name;
+  if (account.family_name !== undefined) claims.family_name = account.family_name;
+  if (account.picture !== undefined) claims.picture = account.picture;
+  if (account.locale !== undefined) claims.locale = account.locale;
+  if (account.email !== undefined) claims.email = account.email;
+  if (account.email_verified !== undefined) claims.email_verified = account.email_verified;
+  return claims;
+}
+
+/**
+ * EXTENSION (google-login): in-memory store for the nonce that binds a
+ * "Sign in with Google" click to the authorization transaction it started from
+ * (see @maronn-openid-connect/google-login). An entry lives as long as its
+ * transaction and is consumed on first use by the callback.
+ */
+export class InMemoryGoogleLoginNonceStore implements GoogleLoginNonceStore {
+  private records = new Map<string, { value: GoogleLoginNonceRecord; expiresAt: number }>();
+
+  async get(key: string): Promise<GoogleLoginNonceRecord | null> {
+    const entry = this.records.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.records.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  async put(key: string, value: GoogleLoginNonceRecord, ttlSeconds: number): Promise<void> {
+    this.records.set(key, { value, expiresAt: Date.now() + (ttlSeconds * 1000) });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.records.delete(key);
   }
 }
 
@@ -475,6 +546,8 @@ export interface UserStorage {
     password: string,
   ): Awaitable<(UserClaims & { password: string }) | undefined>;
   getClaims(sub: string): Awaitable<UserClaims | undefined>;
+  /** EXTENSION (google-login): provision / refresh the user for a verified Google account. */
+  linkGoogleAccount(account: GoogleIdTokenPayload): Awaitable<UserClaims>;
 }
 
 export interface ProviderStores {
@@ -486,6 +559,8 @@ export interface ProviderStores {
   browserSessionStore: BrowserSessionStorage;
   consentStore: ConsentStorage;
   userStore: UserStorage;
+  /** EXTENSION (google-login): nonce -> transaction binding for the Google callback. */
+  googleLoginNonceStore: GoogleLoginNonceStore;
 }
 
 export type ProviderStoresFactory = (
@@ -500,6 +575,8 @@ const AUTH_SESSION_PREFIX = 'auth-session:';
 const BROWSER_SESSION_PREFIX = 'browser-session:';
 const CONSENT_PREFIX = 'consent:';
 const USER_PREFIX = 'user:';
+const GOOGLE_USER_PREFIX = 'google-user:';
+const GOOGLE_LOGIN_NONCE_PREFIX = 'google-login-nonce:';
 
 class JsonTransactionStore implements AuthTransactionStore {
   constructor(private readonly backend: JsonStoreBackend) {}
@@ -712,7 +789,7 @@ class JsonUserStore implements UserStorage {
 
   async getClaims(sub: string): Promise<UserClaims | undefined> {
     const user = await this.findOrSeed(sub);
-    if (!user) return undefined;
+    if (!user) return this.findGoogleUser(sub);
     const { password: _, ...claims } = user;
     return claims;
   }
@@ -725,6 +802,36 @@ class JsonUserStore implements UserStorage {
     if (!fixture) return undefined;
     await this.backend.put(key, fixture);
     return fixture;
+  }
+
+  /**
+   * EXTENSION (google-login): provision / refresh the user for a verified Google
+   * account under its own key prefix, so it never collides with a password user.
+   */
+  async linkGoogleAccount(account: GoogleIdTokenPayload): Promise<UserClaims> {
+    const claims = googleAccountToClaims(account);
+    await this.backend.put(GOOGLE_USER_PREFIX + claims.sub, claims);
+    return claims;
+  }
+
+  private async findGoogleUser(sub: string): Promise<UserClaims | undefined> {
+    return (await this.backend.get<UserClaims>(GOOGLE_USER_PREFIX + sub)) ?? undefined;
+  }
+}
+
+class JsonGoogleLoginNonceStore implements GoogleLoginNonceStore {
+  constructor(private readonly backend: JsonStoreBackend) {}
+
+  async get(key: string): Promise<GoogleLoginNonceRecord | null> {
+    return this.backend.get<GoogleLoginNonceRecord>(GOOGLE_LOGIN_NONCE_PREFIX + key);
+  }
+
+  async put(key: string, value: GoogleLoginNonceRecord, ttlSeconds: number): Promise<void> {
+    await this.backend.put(GOOGLE_LOGIN_NONCE_PREFIX + key, value, ttlSeconds);
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.backend.delete(GOOGLE_LOGIN_NONCE_PREFIX + key);
   }
 }
 
@@ -739,6 +846,7 @@ export function createJsonProviderStores(backend: JsonStoreBackend): ProviderSto
     browserSessionStore: new JsonBrowserSessionStore(backend),
     consentStore: new JsonConsentStore(backend),
     userStore: new JsonUserStore(backend),
+    googleLoginNonceStore: new JsonGoogleLoginNonceStore(backend),
   };
 }
 
@@ -823,6 +931,7 @@ export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
   browserSessionStore: new BrowserSessionStore(),
   consentStore: new ConsentStore(),
   userStore: new UserStore(),
+  googleLoginNonceStore: new InMemoryGoogleLoginNonceStore(),
 });
 
 export const transactionStore = defaultProviderStores.transactionStore;
@@ -833,6 +942,7 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
+export const googleLoginNonceStore = defaultProviderStores.googleLoginNonceStore;
 
 /**
  * EXPERIMENTAL — device verification binding cookie (RFC 8628 §5.4 / §3.3).

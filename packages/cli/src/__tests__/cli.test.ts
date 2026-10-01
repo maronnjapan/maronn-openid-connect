@@ -1,15 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { run } from '../index.js';
-import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+
+// The manifest pins the version of the CLI that generated the output, so the
+// expected value is the package's own version rather than a literal that would
+// go stale on every release.
+const CLI_VERSION = (
+  createRequire(import.meta.url)('../../package.json') as { version: string }
+).version;
 
 describe('CLI', () => {
   let testDir: string;
 
   beforeEach(() => {
-    testDir = join(tmpdir(), `maronn-cli-test-${Date.now()}`);
-    mkdirSync(testDir, { recursive: true });
+    // mkdtempSync guarantees a fresh directory even when two tests start in
+    // the same millisecond; a reused directory would trip the overwrite guard.
+    testDir = mkdtempSync(join(tmpdir(), 'maronn-cli-test-'));
   });
 
   afterEach(() => {
@@ -171,7 +180,7 @@ describe('CLI', () => {
         vi.spyOn(console, 'log').mockImplementation(() => {});
         run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
         expect(consoleSpy).toHaveBeenCalledWith(
-          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response',
+          'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout. Extension features (disabled by default): google-login',
         );
         expect(process.exitCode).toBe(1);
         vi.restoreAllMocks();
@@ -232,6 +241,22 @@ describe('CLI', () => {
         const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
         expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
         expect(logged.includes('Experimental features enabled: jwt-introspection-response')).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should add the experimental package to the install guidance when rp-initiated-logout is enabled', () => {
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run([
+          'generate',
+          'hono',
+          '-o',
+          join(testDir, 'rp-initiated-logout-install-output'),
+          '--enable',
+          'rp-initiated-logout',
+        ]);
+        const logged = consoleSpy.mock.calls.map((call) => String(call[0]));
+        expect(logged.includes('  4. Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental')).toBe(true);
+        expect(logged.includes('Experimental features enabled: rp-initiated-logout')).toBe(true);
         vi.restoreAllMocks();
       });
 
@@ -479,8 +504,10 @@ describe('CLI', () => {
         vi.restoreAllMocks();
         const afterFirstRun = readFileSync(entryFile, 'utf-8');
 
+        // --force: the first run filled outputDir, so a plain re-run would be
+        // refused by the overwrite guard before reaching the patch step.
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile, '--force']);
         expect(logSpy).toHaveBeenCalledWith(`  Already patched (no changes): ${entryFile}`);
         expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
         expect(process.exitCode).toBe(undefined);
@@ -519,6 +546,269 @@ describe('CLI', () => {
         expect(process.exitCode).toBe(1);
         consoleSpy.mockRestore();
         process.exitCode = undefined;
+      });
+    });
+
+    describe('overwrite guard', () => {
+      it('should exit with a non-zero code when the output directory already contains generated files', () => {
+        const outputDir = join(testDir, 'guarded-output');
+        mkdirSync(outputDir, { recursive: true });
+        writeFileSync(join(outputDir, 'config.ts'), 'export const mine = true;\n');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        expect(process.exitCode).toBe(1);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should leave existing files untouched when generate is refused', () => {
+        const outputDir = join(testDir, 'guarded-output');
+        mkdirSync(outputDir, { recursive: true });
+        const customized = 'export const mine = true;\n';
+        writeFileSync(join(outputDir, 'config.ts'), customized);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        expect(readFileSync(join(outputDir, 'config.ts'), 'utf-8')).toBe(customized);
+        expect(existsSync(join(outputDir, 'app.ts'))).toBe(false);
+        expect(existsSync(join(outputDir, '.maronn-openid-connect.json'))).toBe(false);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should list every existing file in the refusal message', () => {
+        const outputDir = join(testDir, 'guarded-output');
+        mkdirSync(join(outputDir, 'routes'), { recursive: true });
+        writeFileSync(join(outputDir, 'config.ts'), '// a\n');
+        writeFileSync(join(outputDir, 'store.ts'), '// b\n');
+        writeFileSync(join(outputDir, 'routes', 'token.ts'), '// c\n');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        const output = errorSpy.mock.calls.map((c) => c[0]).join('\n');
+        expect(output).toBe(
+          [
+            `Error: 3 file(s) already exist in ${outputDir}:`,
+            '  config.ts',
+            '  store.ts',
+            '  routes/token.ts',
+            '',
+            'Re-run with --force to overwrite them, or use -o <dir> to generate into a new directory.',
+            'Tip: commit the generated files before overwriting so you can diff your changes.',
+          ].join('\n'),
+        );
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should overwrite existing files when --force is given', () => {
+        const outputDir = join(testDir, 'forced-output');
+        mkdirSync(outputDir, { recursive: true });
+        writeFileSync(join(outputDir, 'config.ts'), 'export const mine = true;\n');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--force']);
+        expect(process.exitCode).toBe(undefined);
+        expect(readFileSync(join(outputDir, 'config.ts'), 'utf-8')).not.toBe(
+          'export const mine = true;\n',
+        );
+        expect(existsSync(join(outputDir, 'app.ts'))).toBe(true);
+        vi.restoreAllMocks();
+      });
+
+      it('should log Overwritten for an existing file when --force is given', () => {
+        const outputDir = join(testDir, 'forced-output');
+        mkdirSync(outputDir, { recursive: true });
+        writeFileSync(join(outputDir, 'config.ts'), 'export const mine = true;\n');
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--force']);
+        expect(logSpy.mock.calls.map((c) => c[0])).toContain('  Overwritten: config.ts');
+        vi.restoreAllMocks();
+      });
+
+      it('should log Created for a new file when --force is given', () => {
+        const outputDir = join(testDir, 'forced-output');
+        mkdirSync(outputDir, { recursive: true });
+        writeFileSync(join(outputDir, 'config.ts'), 'export const mine = true;\n');
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--force']);
+        expect(logSpy.mock.calls.map((c) => c[0])).toContain('  Created: app.ts');
+        vi.restoreAllMocks();
+      });
+
+      it('should not write any file when --dry-run is given', () => {
+        const outputDir = join(testDir, 'dry-run-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--dry-run']);
+        expect(process.exitCode).toBe(undefined);
+        expect(existsSync(outputDir)).toBe(false);
+        vi.restoreAllMocks();
+      });
+
+      it('should list the files it would write when --dry-run is given', () => {
+        const outputDir = join(testDir, 'dry-run-output');
+        mkdirSync(outputDir, { recursive: true });
+        writeFileSync(join(outputDir, 'config.ts'), 'export const mine = true;\n');
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--dry-run']);
+        const wouldLines = logSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((line) => line.startsWith('  Would '));
+        expect(wouldLines).toEqual([
+          '  Would create: app.ts',
+          '  Would create: apply.ts',
+          '  Would overwrite: config.ts',
+          '  Would create: store.ts',
+          '  Would create: resolvers.ts',
+          '  Would create: views.ts',
+          '  Would create: pages/respond.ts',
+          '  Would create: pages/errors.ts',
+          '  Would create: pages/authorize.ts',
+          '  Would create: pages/login.ts',
+          '  Would create: pages/consent.ts',
+          '  Would create: routes/authorize.ts',
+          '  Would create: routes/token.ts',
+          '  Would create: routes/userinfo.ts',
+          '  Would create: routes/introspection.ts',
+          '  Would create: routes/revocation.ts',
+          '  Would create: routes/jwks.ts',
+          '  Would create: routes/discovery.ts',
+          '  Would create: routes/login.ts',
+          '  Would create: routes/consent.ts',
+          '  Would create: conformance.test.ts',
+          '  Would create: .maronn-openid-connect.json',
+        ]);
+        expect(readFileSync(join(outputDir, 'config.ts'), 'utf-8')).toBe(
+          'export const mine = true;\n',
+        );
+        vi.restoreAllMocks();
+      });
+
+      it('should refuse setup as well when the output directory already contains generated files', () => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const srcDir = join(testDir, 'src');
+        const entryFile = join(srcDir, 'index.ts');
+        mkdirSync(srcDir, { recursive: true });
+        writeFileSync(
+          entryFile,
+          "import { Hono } from 'hono';\n// <!-- OIDC_IMPORT_PLACEHOLDER -->\nconst app = new Hono();\n// <!-- OIDC_SETUP_PLACEHOLDER -->\n",
+        );
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        vi.restoreAllMocks();
+        const afterFirstRun = readFileSync(entryFile, 'utf-8');
+
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy.mock.calls.map((c) => String(c[0]))[0]).toBe(
+          `Error: 21 file(s) already exist in ${outputDir}:`,
+        );
+        expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+      });
+
+      it('should list --force and --dry-run in help output', () => {
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['--help']);
+        const output = consoleSpy.mock.calls.map((c) => c[0]).join('\n');
+        expect(output).toContain('--force');
+        expect(output).toContain('--dry-run');
+        consoleSpy.mockRestore();
+      });
+    });
+
+    describe('generation manifest', () => {
+      it('should write a .maronn-openid-connect.json manifest recording the cli version, framework and features', () => {
+        const outputDir = join(testDir, 'manifest-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--enable', 'par', '--disable', 'revocation']);
+        const manifest = JSON.parse(
+          readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8'),
+        );
+        expect(manifest).toEqual({
+          cliVersion: CLI_VERSION,
+          framework: 'hono',
+          features: {
+            pkce: true,
+            refreshToken: true,
+            introspection: true,
+            revocation: false,
+            requestObject: true,
+            par: true,
+            tokenExchange: false,
+            jarm: false,
+            deviceAuthorizationGrant: false,
+            idJag: false,
+            ciba: false,
+            jwtIntrospectionResponse: false,
+            rpInitiatedLogout: false,
+            googleLogin: false,
+            transactionBinding: false,
+          },
+          scopes: [],
+        });
+        vi.restoreAllMocks();
+      });
+
+      it('should record declared custom scopes in the manifest', () => {
+        const outputDir = join(testDir, 'manifest-scopes-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--scope', 'reports.read,reports.write']);
+        const manifest = JSON.parse(
+          readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8'),
+        );
+        expect(manifest.scopes).toEqual(['reports.read', 'reports.write']);
+        vi.restoreAllMocks();
+      });
+
+      it('should update the manifest even when generate is run with --force', () => {
+        const outputDir = join(testDir, 'manifest-force-output');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        writeFileSync(join(outputDir, '.maronn-openid-connect.json'), '{"stale":true}\n');
+        run(['generate', 'hono', '-o', outputDir, '--force']);
+        const manifest = JSON.parse(
+          readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8'),
+        );
+        expect(manifest).toEqual({
+          cliVersion: CLI_VERSION,
+          framework: 'hono',
+          features: {
+            pkce: true,
+            refreshToken: true,
+            introspection: true,
+            revocation: true,
+            requestObject: true,
+            par: false,
+            tokenExchange: false,
+            jarm: false,
+            deviceAuthorizationGrant: false,
+            idJag: false,
+            ciba: false,
+            jwtIntrospectionResponse: false,
+            rpInitiatedLogout: false,
+            googleLogin: false,
+            transactionBinding: false,
+          },
+          scopes: [],
+        });
+        vi.restoreAllMocks();
+      });
+
+      // The manifest is not a file the user edits, so its presence alone must
+      // not require --force for a re-run into the same directory.
+      it('should not refuse generate when only the manifest exists in the output directory', () => {
+        const outputDir = join(testDir, 'manifest-only-output');
+        mkdirSync(outputDir, { recursive: true });
+        writeFileSync(join(outputDir, '.maronn-openid-connect.json'), '{"stale":true}\n');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir]);
+        expect(process.exitCode).toBe(undefined);
+        expect(existsSync(join(outputDir, 'app.ts'))).toBe(true);
+        vi.restoreAllMocks();
       });
     });
   });

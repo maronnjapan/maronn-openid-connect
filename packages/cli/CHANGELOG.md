@@ -1,5 +1,29 @@
 # @maronn-openid-connect/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- f406de0: 生成コードのルーティングを「画面用（`pages/`）」と「API（`routes/`）」の 2 種類に分け、UI のカスタマイズを `pages/`（と `views.ts`）だけで完結できるようにする。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて `pages/` が担当し、`routes/` はロジックだけを持って Response を一切作らない。
+  
+  - `pages/authorize.ts` / `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts` / `pages/respond.ts` を新たに生成する。ブラウザ向けのルートは GET も POST もここにあり（`GET|POST /authorize`・`GET|POST /login`・`GET|POST /consent`）、リクエストを読んで `routes/` の関数を呼び、返ってきた結果（outcome）を画面かリダイレクトに変換する。`pages/respond.ts` は Cookie を付けて Response / リダイレクトを返すヘルパ（`withCookies()` / `redirectWithCookies()`）。`--enable device-authorization-grant` / `ciba` / `rp-initiated-logout` では `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts` も生成し、各機能のブラウザ向けルートをすべて持つ
+  - `routes/authorize.ts` / `routes/login.ts` / `routes/consent.ts`（機能有効時: `routes/device.ts` / `routes/ciba-verification.ts` / `routes/logout.ts`）はルーターではなく関数を export するロジックモジュールになる（`processAuthorizationRequest()` / `prepareLogin()` / `submitLogin()` / `prepareConsent()` / `submitConsent()` / `submitDevice*()` / `prepareCibaDevice()` / `submitCiba*()` / `processEndSessionRequest()` / `approveLogout()`）。結果は `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）で返し、`c.redirect()` / `c.json()` / `Set-Cookie` / `renderView()` を行わない。`views.ts` も `pages/` も import しない。transaction-binding の `rejectUnboundTransaction()` と google-login の `buildGoogleSignIn()` / `completeGoogleLogin()` もここに置く
+  - `token` / `userinfo` / `introspection` / `revocation` / `par` / `device_authorization` / `backchannel_authentication` / `jwks` / `discovery` の JSON エンドポイントは従来どおり `routes/` のルーターのまま
+  - `app.ts` / `apply.ts` はブラウザ向けパス（`/authorize` `/login` `/consent` `/device` `/ciba` `/logout`）に `pages/` のルーターだけをマウントする
+  - Next.js 向け生成物の契約テストで、壊れた Request Object の非リダイレクトエラーが `authorizationErrorRedirectPath` の 303 になることを期待するよう修正した（従来は HTML 400 を期待しており、生成直後から失敗していた）
+  
+  HTTP 上の挙動（ステータスコード・Cookie・リダイレクト先・画面の HTML）は変わらない。生成済みコードを `--force` で再生成すると `pages/` が追加され、`routes/authorize.ts` `routes/login.ts` `routes/consent.ts` などは Response を返す handler から outcome を返す関数に置き換わる。これらを直接編集していた場合は、描画・リダイレクトに関する変更を `pages/` へ移す。
+- 3c4b423: `--enable rp-initiated-logout` で OpenID Connect RP-Initiated Logout 1.0 の end_session_endpoint を生成できるようにする。生成 OP に `GET|POST /logout` と確認画面の承認先 `POST /logout/approve` が追加され、discovery が `end_session_endpoint` を公表する。有効な `id_token_hint` が現在のセッションの End-User を指す場合は即時ログアウトし、それ以外は確認画面を挟む（RP-Initiated Logout 1.0 §2）。リダイレクトは `rpInitiatedLogoutConfig.postLogoutRedirectUris` に登録した URI との完全一致時のみ行い、`state` をそのまま返す（§3）。experimental には subpath export `@maronn-openid-connect/experimental/rp-initiated-logout`（end_session リクエストの正規化・ヒント audience 抽出・ログアウト分岐判定・リダイレクト解決の純関数群）が加わる。未指定時の生成コードは変更されない。
+- 9df8d94: introspection エンドポイントで public client の client_id 単独提示を拒否する
+  
+  これまで生成 OP の introspection ルートは token エンドポイントと同じクライアント認証パイプラインを使っており、`token_endpoint_auth_method: 'none'` で登録されたクライアントは「資格情報を提示していないこと」の確認だけで通過していた。public client の client_id は公開情報なので、これを認証済み呼び出し元として扱うと誰でもトークンを走査できる（RFC 7662 §2.1 は呼び出し元の認可を要求し、RFC 9701 §5 は未認証リクエストの拒否を MUST とする）。
+  
+  - core に導入ステップ関数 `requireConfidentialIntrospectionCaller` を追加した。登録方式が `'none'` のクライアントを `invalid_client`（401 + `WWW-Authenticate: Basic realm="Client Authentication"`）で拒否し、それ以外（既定の `client_secret_basic` を含む）は通す
+  - CLI が生成する introspection ルートは、クライアント認証パイプラインの直後・トークン解決の前にこのステップを呼ぶ。`--enable jwt-introspection-response` の JWT 経路もこの拒否より後にあるため、Accept ヘッダーで迂回できない
+  - revocation ルートは変更していない（RFC 7009 §2.1 は public client が自分のトークンを失効させることを正当に許す）
+  
+  experimental と google-login は core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+
 ## 0.6.0
 
 ### Minor Changes

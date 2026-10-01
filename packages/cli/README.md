@@ -91,6 +91,25 @@ oidc-provider/
 | `/introspect` | RFC 7662 Token Introspection（`introspection` 有効時） |
 | `/revoke` | RFC 7009 Token Revocation（`revocation` 有効時） |
 
+### 画面の差し替え
+
+`views.ts` の既定の画面は、フローを動かすための最小限の HTML であり、差し替えて使う前提にしている。
+画面は `createApp` / `applyOidc` の `views` オプションで画面単位に差し替えられ、渡さなかった画面は既定のまま残る。
+画面を描画する関数（ビュー）は、HTML 文字列、HTML の `ReadableStream`、`Response` のいずれかを返し、Promise で返してもよい。
+そのため、テンプレート文字列でも、テンプレートエンジンでも、React や Vue のサーバー描画でも画面を作れる。
+`views.ts` は UI フレームワークに依存せず、描画方法ごとのアダプタも持たない。
+
+```typescript
+applyOidc(app, {
+  // config, signingKeyProvider など
+  views: {
+    loginPage: (params) => renderMyLoginPage(params),
+  },
+});
+```
+
+差し替えた画面が守るフォームの項目と、描画方法ごとの書き方は、ライブラリドキュメントの[画面の差し替え](https://maronnjapan.github.io/maronn-openid-connect/guides/custom-views/)にまとめている。
+
 ## 機能トグル（--enable / --disable）
 
 生成されるOPの機能は、既定の全部入り構成から機能単位で増減できる。

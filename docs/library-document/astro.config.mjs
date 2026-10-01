@@ -47,6 +47,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'CLI Guide', slug: 'guides/cli' },
+            { label: '画面の差し替え', slug: 'guides/custom-views' },
             { label: 'Using core', slug: 'guides/core' },
             { label: 'Google ログイン（拡張）', slug: 'guides/google-login' },
           ],

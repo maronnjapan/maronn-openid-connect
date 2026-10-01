@@ -80,6 +80,10 @@ oidc-provider/
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
+`views.ts` の既定の画面は、フローを動かすための最小限の HTML です。
+画面は `createApp` / `applyOidc` の `views` オプションで画面単位に差し替えられ、HTML の組み立て方（テンプレート文字列、React や Vue のサーバー描画など）は問いません。
+書き方と、差し替えた画面が守るフォームの項目は [画面の差し替え](../custom-views/) を参照してください。
+
 ### Generation Manifest (.maronn-openid-connect.json)
 
 生成物には、どの CLI バージョン・どの入力から生成されたかを記録するマニフェストが含まれます。

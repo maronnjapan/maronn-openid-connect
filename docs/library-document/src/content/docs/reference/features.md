@@ -14,7 +14,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `/authorize` | 認可エンドポイント | OIDC Core 1.0 §3.1.2 / OAuth 2.1 §4.1 |
 | `/token` | トークンエンドポイント | OIDC Core 1.0 §3.1.3 / OAuth 2.1 §3.2 |
 | `/userinfo` | UserInfo エンドポイント | OIDC Core 1.0 §5.3 |
-| `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き） | — |
+| `/login`, `/consent` | ログイン・同意画面（差し替え可能なデフォルト UI 付き。[画面の差し替え](../../guides/custom-views/)） | — |
 | `/login/google` | Sign in with Google の `login_uri`（拡張機能 `google-login` 有効時のみ生成） | Google Identity Services |
 | `/.well-known/openid-configuration` | Provider Metadata | OpenID Connect Discovery 1.0 |
 | `/.well-known/jwks.json` | JWKS（公開鍵） | RFC 7517 |

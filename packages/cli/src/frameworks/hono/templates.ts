@@ -12480,6 +12480,161 @@ export function tokenEndpointAuthMethodsConformanceBlock(): string {
       const tokenBody = await tokenRes.json();
       expect(tokenBody.error).toBe('invalid_request');
     });
+
+    // RFC 6749 §3.2: "Parameters sent without a value MUST be treated as if they
+    // were omitted from the request." A public client whose HTTP stack serializes
+    // an unset secret as client_secret= must still authenticate as method 'none'.
+    it('should treat an empty client_secret field as absent for a public client', async () => {
+      const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-public' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=public-empty-secret' +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
+      );
+      const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = relativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: callback.searchParams.get('code') ?? '',
+          redirect_uri: REDIRECT_URI,
+          code_verifier: verifier,
+          client_id: 'c-public',
+          // A valueless form field (client_secret=) carries no credential.
+          client_secret: '',
+        }).toString(),
+      });
+
+      expect(consentRes.status).toBe(302);
+      expect(tokenRes.status).toBe(200);
+      const tokenBody = await tokenRes.json();
+      expect(tokenBody.token_type).toBe('Bearer');
+      expect(tokenBody.scope).toBe('openid');
+      expect((tokenBody.access_token as string).split('.')).toHaveLength(3);
+      expect((tokenBody.id_token as string).split('.')).toHaveLength(3);
+    });
+
+    // RFC 6749 §2.3 / §3.2: an empty client_secret field carries no credential,
+    // so it is not a second authentication method next to Authorization: Basic.
+    it('should authenticate a client_secret_basic request that also sends an empty client_secret field', async () => {
+      const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+      const authorizeRes = await app.request(
+        '/authorize?response_type=code&client_id=c-conf-basic' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=openid&state=basic-empty-secret' +
+        '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
+      );
+      const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const transactionId =
+        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginRes = await app.request('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await loginGet.text()),
+          username: 'testuser',
+          password: 'password',
+        }).toString(),
+      });
+      const consentPath = relativeLocation(loginRes.headers.get('Location'));
+      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentRes = await app.request('/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        body: new URLSearchParams({
+          transaction_id: transactionId,
+          csrf_token: csrfTokenFrom(await consentGet.text()),
+          action: 'approve',
+        }).toString(),
+      });
+      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + btoa('c-conf-basic:s'),
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: callback.searchParams.get('code') ?? '',
+          redirect_uri: REDIRECT_URI,
+          code_verifier: verifier,
+          client_id: 'c-conf-basic',
+          // A valueless form field left behind by the client's HTTP stack.
+          client_secret: '',
+        }).toString(),
+      });
+
+      expect(consentRes.status).toBe(302);
+      expect(tokenRes.status).toBe(200);
+      const tokenBody = await tokenRes.json();
+      expect(tokenBody.token_type).toBe('Bearer');
+      expect(tokenBody.scope).toBe('openid');
+      expect((tokenBody.access_token as string).split('.')).toHaveLength(3);
+      expect((tokenBody.id_token as string).split('.')).toHaveLength(3);
+    });
+
+    // A confidential client sending only an empty client_secret presents no
+    // credential at all, so the rejection reason is 'authentication required',
+    // not a method mismatch. Client authentication runs before code validation,
+    // so no authorization code flow is needed here.
+    it('should still require authentication when a confidential client sends an empty client_secret', async () => {
+      const tokenRes = await app.request('/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: 'irrelevant-code',
+          redirect_uri: REDIRECT_URI,
+          client_id: 'c-conf-basic',
+          client_secret: '',
+        }).toString(),
+      });
+
+      expect(tokenRes.status).toBe(401);
+      const tokenBody = await tokenRes.json();
+      expect(tokenBody.error).toBe('invalid_client');
+      expect(tokenBody.error_description).toBe('Client authentication required');
+    });
   });
 
 `;

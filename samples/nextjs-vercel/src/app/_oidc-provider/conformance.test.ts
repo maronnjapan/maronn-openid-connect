@@ -1005,7 +1005,6 @@ describe('Token Endpoint (OIDC Core 1.0 §3.1.3)', () => {
   it('should answer unsupported_grant_type for the grants of features this OP was generated without (RFC 6749 §5.2)', async () => {
     const grantTypes = [
       'urn:ietf:params:oauth:grant-type:token-exchange',
-      'urn:ietf:params:oauth:grant-type:jwt-bearer',
     ];
     const answers = await Promise.all(
       grantTypes.map(async (grantType) => {

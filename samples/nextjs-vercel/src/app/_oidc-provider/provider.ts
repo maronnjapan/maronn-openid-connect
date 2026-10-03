@@ -148,9 +148,9 @@ const signingKeyRegistry = globalThis as typeof globalThis & {
 };
 
 /**
- * General-purpose signing keys: access tokens and every other JWT the OP signs
- * (JARM responses, introspection responses, ID-JAGs). Kept on globalThis so a
- * Server Action signs with the same key the JWKS Route Handler publishes.
+ * General-purpose signing keys: access tokens, and every other JWT the OP signs
+ * besides ID Tokens and UserInfo responses. Kept on globalThis so a Server
+ * Action signs with the same key the JWKS Route Handler publishes.
  */
 const signingKeyProvider: SigningKeyProvider = (signingKeyRegistry.__oidcSigningKeyProvider ??=
   createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000));

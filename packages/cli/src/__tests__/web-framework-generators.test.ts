@@ -756,6 +756,32 @@ describe('NextJsGenerator', () => {
       );
     });
 
+    // A feature generated off must stay off: discovery advertises none of its
+    // members and the token endpoint refuses its grants.
+    it('should pin the absence of the features the OP was generated without', () => {
+      expect(conformance).toContain(
+        "it('should advertise nothing of the features this OP was generated without', async () => {",
+      );
+      expect(conformance).toContain("      'pushed_authorization_request_endpoint',");
+      expect(conformance).toContain(
+        "it('should answer unsupported_grant_type for the grants of features this OP was generated without (RFC 6749 §5.2)', async () => {",
+      );
+      expect(conformance).toContain("      'urn:openid:params:grant-type:ciba',");
+    });
+
+    it('should leave the absence checks out when every feature is generated', () => {
+      const everyFeature = Object.fromEntries(
+        Object.keys(DEFAULT_FEATURES).map((name) => [name, true]),
+      ) as unknown as typeof DEFAULT_FEATURES;
+      const full =
+        new NextJsGenerator()
+          .generate({ outputDir: './out', corePackageName: CORE_PKG, features: everyFeature })
+          .find((f) => f.path === '_oidc-provider/conformance.test.ts')?.content ?? '';
+
+      expect(full.includes('should advertise nothing of the features this OP was generated without')).toBe(false);
+      expect(full.includes('for the grants of features this OP was generated without')).toBe(false);
+    });
+
     it('should pin the 303 redirect to /oidc-error for an unregistered redirect_uri', () => {
       expect(conformance).toContain(
         "ISSUER + '/oidc-error?error=invalid_request&error_description=redirect_uri+not+registered',",

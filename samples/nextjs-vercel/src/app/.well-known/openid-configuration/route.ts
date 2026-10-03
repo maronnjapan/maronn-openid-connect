@@ -133,11 +133,11 @@ async function providerMetadata(): Promise<Response> {
       ...metadata,
       // RFC 7636 / OAuth 2.1: not an OIDC Discovery field, so added here.
       code_challenge_methods_supported: ['S256'],
-    // EXPERIMENTAL — RFC 8628 §4.
-    device_authorization_endpoint: `${issuer}/device_authorization`,
-    // EXPERIMENTAL — CIBA Core 1.0 §4. Only the poll delivery mode is offered.
-    backchannel_token_delivery_modes_supported: ['poll'],
-    backchannel_authentication_endpoint: `${issuer}/backchannel_authentication`,
+      // EXPERIMENTAL — RFC 8628 §4.
+      device_authorization_endpoint: `${issuer}/device_authorization`,
+      // EXPERIMENTAL — CIBA Core 1.0 §4. Only the poll delivery mode is offered.
+      backchannel_token_delivery_modes_supported: ['poll'],
+      backchannel_authentication_endpoint: `${issuer}/backchannel_authentication`,
     },
     { headers: { 'Cache-Control': 'public, max-age=3600' } },
   );

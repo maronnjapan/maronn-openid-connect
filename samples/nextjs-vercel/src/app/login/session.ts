@@ -1,7 +1,7 @@
 /**
  * Starting the OP browser session once the End-User is authenticated — shared
- * by every login method (the password form's Server Action, and the Google
- * callback when google-login is generated).
+ * by every login method (the password form's Server Action and the Google
+ * callback in login/google/route.ts).
  */
 import { cookies } from 'next/headers';
 import { generateRandomString, type AuthTransaction } from '@maronn-openid-connect/core';

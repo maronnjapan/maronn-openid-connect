@@ -7,7 +7,10 @@ import { generate } from '../generator.js';
 import { run } from '../index.js';
 import { RESERVED_SCOPES, resolveCustomScopes } from '../scopes.js';
 
-const FRAMEWORKS = ['hono', 'express', 'fastify', 'nextjs'] as const;
+// The targets that share the authorize / consent / discovery route templates.
+// Next.js applies the same scope policy from its own Route Handlers, page and
+// Server Action and is covered separately below.
+const FRAMEWORKS = ['hono', 'express', 'fastify'] as const;
 
 function generateFiles(
   framework: string,
@@ -25,16 +28,6 @@ function generateFiles(
 
 function fileContent(files: Array<{ path: string; content: string }>, path: string): string {
   return files.find((file) => file.path === path)?.content ?? '';
-}
-
-/** Next.js keeps the framework-neutral modules under _oidc-provider/. */
-function internalPath(framework: string, path: string): string {
-  return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
-}
-
-/** Next.js modules import without the .js extension (bundler resolution). */
-function scopeModuleSpecifier(framework: string): string {
-  return framework === 'nextjs' ? '../scopes' : '../scopes.js';
 }
 
 describe('resolveCustomScopes', () => {
@@ -118,10 +111,7 @@ describe('generation without custom scopes', () => {
 
 describe('generated scopes.ts', () => {
   it.each(FRAMEWORKS)('should generate the scope policy module for %s', (framework) => {
-    const content = fileContent(
-      generateFiles(framework, ['reports.read']),
-      internalPath(framework, 'scopes.ts'),
-    );
+    const content = fileContent(generateFiles(framework, ['reports.read']), 'scopes.ts');
 
     expect(content).toContain(
       "export const CUSTOM_SCOPES: readonly string[] = ['reports.read'];",
@@ -176,13 +166,10 @@ describe('generated scopes.ts', () => {
 
 describe('generated authorization endpoint', () => {
   it.each(FRAMEWORKS)('should reject an undeclared scope with invalid_scope on %s', (framework) => {
-    const content = fileContent(
-      generateFiles(framework, ['reports.read']),
-      internalPath(framework, 'routes/authorize.ts'),
-    );
+    const content = fileContent(generateFiles(framework, ['reports.read']), 'routes/authorize.ts');
 
     expect(content).toContain(
-      `import { findUnsupportedScopes, resolveGrantableScopes } from '${scopeModuleSpecifier(framework)}';`,
+      "import { findUnsupportedScopes, resolveGrantableScopes } from '../scopes.js';",
     );
     expect(content).toContain('const unsupportedScopes = findUnsupportedScopes(scope);');
     expect(content).toContain('AuthorizationErrorCode.InvalidScope');
@@ -203,10 +190,7 @@ describe('generated authorization endpoint', () => {
   it.each(FRAMEWORKS)(
     'should apply the policy before the consent lookup of prompt=none and SSO on %s',
     (framework) => {
-      const content = fileContent(
-        generateFiles(framework, ['reports.read']),
-        internalPath(framework, 'routes/authorize.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['reports.read']), 'routes/authorize.ts');
 
       expect(content).toContain('transaction.scope = (await resolveGrantableScopes(');
       expect(content.indexOf("session.subject,\n        )).join(' ');")).toBeLessThan(
@@ -221,14 +205,9 @@ describe('generated authorization endpoint', () => {
 
 describe('generated consent step', () => {
   it.each(FRAMEWORKS)('should apply the policy to the granted scope on %s', (framework) => {
-    const content = fileContent(
-      generateFiles(framework, ['reports.read']),
-      internalPath(framework, 'routes/consent.ts'),
-    );
+    const content = fileContent(generateFiles(framework, ['reports.read']), 'routes/consent.ts');
 
-    expect(content).toContain(
-      `import { resolveGrantableScopes } from '${scopeModuleSpecifier(framework)}';`,
-    );
+    expect(content).toContain("import { resolveGrantableScopes } from '../scopes.js';");
     expect(content).toContain(
       "const grantedScope = await resolveGrantableScopes(\n    transaction.scope.split(' ').filter(Boolean),\n    session.subject,\n  );",
     );
@@ -238,39 +217,18 @@ describe('generated consent step', () => {
   // it hands the consent screen, so the End-User never sees a scope they
   // cannot be granted — and pages/consent.ts only displays what it is given.
   it.each(FRAMEWORKS)('should display only the grantable scopes on %s', (framework) => {
-    const content = fileContent(
-      generateFiles(framework, ['reports.read']),
-      internalPath(framework, 'routes/consent.ts'),
-    );
+    const content = fileContent(generateFiles(framework, ['reports.read']), 'routes/consent.ts');
 
     expect(content).toContain('const consentSession = await authSessionStore.get(transactionId);');
     expect(content).toContain('scopes: displayedScopes,');
-  });
-
-  // Next.js drives consent through a page + Server Action instead of the
-  // framework-neutral route, so both need the same policy call.
-  it('should apply the policy in the Next.js consent page and Server Action', () => {
-    const files = generateFiles('nextjs', ['reports.read']);
-
-    expect(fileContent(files, 'consent/page.tsx')).toContain(
-      "import { resolveGrantableScopes } from '../_oidc-provider/scopes';",
-    );
-    expect(fileContent(files, 'consent/actions.ts')).toContain(
-      'const grantedScope = await resolveGrantableScopes(',
-    );
   });
 });
 
 describe('generated discovery metadata', () => {
   it.each(FRAMEWORKS)('should advertise the declared scopes on %s', (framework) => {
-    const content = fileContent(
-      generateFiles(framework, ['reports.read']),
-      internalPath(framework, 'routes/discovery.ts'),
-    );
+    const content = fileContent(generateFiles(framework, ['reports.read']), 'routes/discovery.ts');
 
-    expect(content).toContain(
-      `import { SUPPORTED_SCOPES } from '${scopeModuleSpecifier(framework)}';`,
-    );
+    expect(content).toContain("import { SUPPORTED_SCOPES } from '../scopes.js';");
     expect(content).toContain('scopesSupported: [...SUPPORTED_SCOPES],');
   });
 
@@ -335,7 +293,7 @@ describe('generated conformance test', () => {
   it.each(FRAMEWORKS)('should pin the declared scopes in scopes_supported on %s', (framework) => {
     const content = fileContent(
       generateFiles(framework, ['reports.read', 'reports.write']),
-      internalPath(framework, 'conformance.test.ts'),
+      'conformance.test.ts',
     );
 
     expect(content).toContain(
@@ -359,6 +317,209 @@ describe('generated conformance test', () => {
     const content = fileContent(generateFiles('hono', []), 'conformance.test.ts');
 
     expect(content).not.toContain("describe('Custom scopes'");
+  });
+});
+
+// Next.js applies the same policy module (_oidc-provider/scopes.ts) from its own
+// files: the authorization Route Handler, the consent page and its Server
+// Action, discovery, and the device / CIBA Route Handlers.
+describe('generate nextjs with --scope', () => {
+  const nextJsFile = (path: string, scopes: string[] = ['reports.read'], enable: string[] = []) =>
+    fileContent(generateFiles('nextjs', scopes, enable), path);
+
+  describe('Generation without custom scopes', () => {
+    it('should not generate a scope policy module', () => {
+      const paths = generateFiles('nextjs', []).map((file) => file.path);
+
+      expect(paths.filter((path) => path.endsWith('scopes.ts'))).toEqual([]);
+    });
+
+    // The whole feature is opt-in: without a declaration the provider keeps
+    // accepting arbitrary scope values.
+    it('should not reference the scope policy anywhere', () => {
+      const referencing = generateFiles('nextjs', [], [
+        'par',
+        'device-authorization-grant',
+        'ciba',
+        'jarm',
+        'transaction-binding',
+      ])
+        .filter(
+          (file) =>
+            file.content.includes('findUnsupportedScopes') ||
+            file.content.includes('resolveGrantableScopes') ||
+            file.content.includes("_oidc-provider/scopes'") ||
+            file.content.includes("from './scopes'"),
+        )
+        .map((file) => file.path);
+
+      expect(referencing).toEqual([]);
+    });
+
+    it('should keep the literal scope list in discovery', () => {
+      expect(nextJsFile('.well-known/openid-configuration/route.ts', [])).toContain(
+        "scopesSupported: ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'],",
+      );
+    });
+
+    it('should not generate the custom scope contract block', () => {
+      expect(nextJsFile('_oidc-provider/conformance.test.ts', [])).not.toContain("describe('Custom scopes");
+    });
+  });
+
+  describe('Scope policy module (_oidc-provider/scopes.ts)', () => {
+    it('should generate the allow list and the filtering seam', () => {
+      const content = nextJsFile('_oidc-provider/scopes.ts');
+
+      expect(content).toContain("export const CUSTOM_SCOPES: readonly string[] = ['reports.read'];");
+      expect(content).toContain(
+        'export const SUPPORTED_SCOPES: readonly string[] = [...STANDARD_SCOPES, ...CUSTOM_SCOPES];',
+      );
+      expect(content).toContain('export function findUnsupportedScopes(');
+      expect(content).toContain(
+        'export async function resolveGrantableScopes(\n  requested: readonly string[],\n  subject: string,\n): Promise<string[]> {',
+      );
+    });
+
+    // scopes.ts tells the reader where the policy is called, so it must name the
+    // App Router files, not the routes/ modules of the other targets.
+    it('should point readers to the Next.js files that call the policy', () => {
+      const content = nextJsFile('_oidc-provider/scopes.ts');
+
+      expect(content).toContain(
+        ' * - consent/page.tsx + consent/actions.ts — the consent screen (what is displayed) and the approval',
+      );
+      expect(content).toContain(' * - authorize/route.ts — the SSO fast path and prompt=none, which grant without');
+      expect(content).toContain(
+        ' * - device/approve/route.ts / ciba/approve/route.ts — the device and CIBA approval',
+      );
+      expect(content).toContain(' * ignores them. Return your own claims for a custom scope by editing\n * userinfo/route.ts.');
+      expect(content).not.toContain('routes/');
+    });
+  });
+
+  describe('Authorization endpoint (authorize/route.ts)', () => {
+    it('should reject an undeclared scope with invalid_scope', () => {
+      const content = nextJsFile('authorize/route.ts');
+
+      expect(content).toContain(
+        "import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider/scopes';",
+      );
+      expect(content).toContain('    const unsupportedScopes = findUnsupportedScopes(scope);');
+      expect(content).toContain(
+        "        AuthorizationErrorCode.InvalidScope,\n        'Unsupported scope: ' + unsupportedScopes.join(' '),",
+      );
+    });
+
+    // OIDC Core 1.0 §11 requires ignoring an offline_access that cannot be granted,
+    // so the allow-list check must run after applyOfflineAccessPolicy dropped it.
+    it('should check the allow list after the offline_access policy', () => {
+      const content = nextJsFile('authorize/route.ts');
+      const offlineAccessIndex = content.indexOf(
+        'scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt, client);',
+      );
+
+      expect(offlineAccessIndex > 0).toBe(true);
+      expect(offlineAccessIndex).toBeLessThan(content.indexOf('const unsupportedScopes = findUnsupportedScopes(scope);'));
+    });
+
+    // Both grant without showing consent, and both look consent up by scope, so
+    // each has to apply the policy before that lookup or it could never match.
+    it('should apply the policy before the consent lookup of prompt=none and SSO', () => {
+      const content = nextJsFile('authorize/route.ts');
+      const promptNonePolicy =
+        "        transaction.scope = (await resolveGrantableScopes(\n          transaction.scope.split(' ').filter(Boolean),\n          session.subject,\n        )).join(' ');";
+      const ssoPolicy =
+        "        transaction.scope = (await resolveGrantableScopes(\n          transaction.scope.split(' ').filter(Boolean),\n          existingSession.subject,\n        )).join(' ');";
+      const promptNoneIndex = content.indexOf(promptNonePolicy);
+      const ssoBranchIndex = content.indexOf('if (existingSession && sessionIsFresh && hintMatchesSession) {');
+      const ssoIndex = content.indexOf(ssoPolicy);
+
+      expect(promptNoneIndex > 0).toBe(true);
+      expect(promptNoneIndex).toBeLessThan(content.indexOf('await validatePromptNoneConsent('));
+      expect(ssoBranchIndex > 0).toBe(true);
+      expect(ssoBranchIndex).toBeLessThan(ssoIndex);
+      expect(ssoIndex).toBeLessThan(content.indexOf('await consentResolver.hasConsent('));
+    });
+  });
+
+  describe('Consent page and Server Action', () => {
+    // The page shows the End-User only the scopes they can be granted.
+    it('should display only the grantable scopes on the consent page', () => {
+      const content = nextJsFile('consent/page.tsx');
+
+      expect(content).toContain("import { resolveGrantableScopes } from '../_oidc-provider/scopes';");
+      expect(content).toContain('  const consentSession = await stores.authSessionStore.get(transactionId);');
+      expect(content).toContain(
+        '  const scopes = consentSession\n    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)\n    : requestedScopes;',
+      );
+    });
+
+    // The Server Action mints the code, so the policy result is what is granted
+    // and what is recorded as consent.
+    it('should apply the policy to the scope the consent Server Action grants', () => {
+      const content = nextJsFile('consent/actions.ts');
+
+      expect(content).toContain("import { resolveGrantableScopes } from '../_oidc-provider/scopes';");
+      expect(content).toContain(
+        "  const grantedScope = await resolveGrantableScopes(\n    transaction.scope.split(' ').filter(Boolean),\n    session.subject,\n  );",
+      );
+      expect(content).toContain('    authorizationResponse: { ...responseParams, scope: grantedScope },');
+      expect(content).toContain(
+        'await resolvers.consentResolver.recordConsent?.(session.subject, transaction.clientId, grantedScope);',
+      );
+    });
+  });
+
+  describe('Device and CIBA Route Handlers', () => {
+    it('should apply the allow list to the device and backchannel authentication requests', () => {
+      const enable = ['device-authorization-grant', 'ciba'];
+
+      expect(nextJsFile('device_authorization/route.ts', ['reports.read'], enable)).toContain(
+        '    const unsupportedScopes = findUnsupportedScopes(scope);',
+      );
+      // CIBA §7.1 leaves offline_access to the pipeline's own policy, so the
+      // pre-check must not turn an ignorable offline_access into invalid_scope.
+      expect(nextJsFile('backchannel_authentication/route.ts', ['reports.read'], enable)).toContain(
+        ".filter((scope) => scope.length > 0 && scope !== 'offline_access'),",
+      );
+    });
+
+    it('should apply the policy to the device and CIBA approvals', () => {
+      const enable = ['device-authorization-grant', 'ciba'];
+      const approval =
+        '      approved.approvedScope = await resolveGrantableScopes(\n        approved.approvedScope ?? approved.scope,\n        session.subject,\n      );';
+
+      expect(nextJsFile('device/approve/route.ts', ['reports.read'], enable)).toContain(approval);
+      expect(nextJsFile('ciba/approve/route.ts', ['reports.read'], enable)).toContain(approval);
+    });
+  });
+
+  describe('Discovery and contract test', () => {
+    it('should advertise the declared scopes in discovery', () => {
+      const content = nextJsFile('.well-known/openid-configuration/route.ts');
+
+      expect(content).toContain("import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';");
+      expect(content).toContain('    scopesSupported: [...SUPPORTED_SCOPES],');
+    });
+
+    it('should pin the declared scopes in scopes_supported in the contract test', () => {
+      expect(nextJsFile('_oidc-provider/conformance.test.ts', ['reports.read', 'reports.write'])).toContain(
+        "      scopes_supported: ['openid', 'profile', 'email', 'address', 'phone', 'offline_access', 'reports.read', 'reports.write'],",
+      );
+    });
+
+    it('should pin the allow list and the filtering seam in the contract test', () => {
+      const content = nextJsFile('_oidc-provider/conformance.test.ts');
+
+      expect(content).toContain("import { RESTRICTED_SCOPE_SUBJECTS } from './scopes';");
+      expect(content).toContain("describe('Custom scopes (scopes.ts)', () => {");
+      expect(content).toContain("it('should reject a scope that was not declared (RFC 6749 §3.3)', async () => {");
+      expect(content).toContain(
+        "it('should drop a scope the End-User may not be granted (resolveGrantableScopes)', async () => {",
+      );
+      expect(content).toContain("RESTRICTED_SCOPE_SUBJECTS['reports.read'] = ['otheruser'];");
+    });
   });
 });
 

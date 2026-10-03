@@ -456,6 +456,20 @@ describe('Discovery (OIDC Discovery 1.0 §3 / §4)', () => {
     });
   });
 
+  it('should advertise nothing of the features this OP was generated without', async () => {
+    const { metadata } = await providerMetadata();
+    const absent = [
+      'pushed_authorization_request_endpoint',
+      'end_session_endpoint',
+      'authorization_signing_alg_values_supported',
+      'identity_chaining_requested_token_types_supported',
+      'authorization_grant_profiles_supported',
+      'introspection_signing_alg_values_supported',
+    ];
+
+    expect(absent.filter((name) => name in metadata)).toEqual([]);
+  });
+
   it('should let any origin read and cache the metadata', async () => {
     const { response } = await providerMetadata();
 
@@ -988,6 +1002,21 @@ describe('Token Endpoint (OIDC Core 1.0 §3.1.3)', () => {
     expect(afterReuse.status).toBe(400);
   });
 
+  it('should answer unsupported_grant_type for the grants of features this OP was generated without (RFC 6749 §5.2)', async () => {
+    const grantTypes = [
+      'urn:ietf:params:oauth:grant-type:token-exchange',
+      'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    ];
+    const answers = await Promise.all(
+      grantTypes.map(async (grantType) => {
+        const response = await tokenRequest({ grant_type: grantType });
+        return [response.status, ((await response.json()) as { error: string }).error];
+      }),
+    );
+
+    expect(answers).toEqual(grantTypes.map(() => [400, 'unsupported_grant_type']));
+  });
+
   it('should answer a CORS preflight for the configured origin', async () => {
     const response = await new Browser().request(token.OPTIONS, '/token', {
       method: 'OPTIONS',
@@ -1368,9 +1397,20 @@ describe('CIBA (CIBA Core 1.0, poll mode)', () => {
 
 describe('Sign in with Google (redirect mode)', () => {
   const GOOGLE_CLIENT_ID = 'conformance.apps.googleusercontent.com';
+  const configuredGoogleLogin = config.googleLogin;
+
+  afterEach(() => {
+    config.googleLogin = configuredGoogleLogin;
+  });
+
+  /** Start a transaction and render its login page, which issues the nonce. */
+  async function loginPage(browser: Browser): Promise<{ transactionId: string; html: string }> {
+    const transactionId = await startAuthorization(browser);
+    return { transactionId, html: await browser.render(LoginPage, { transaction_id: transactionId }) };
+  }
 
   /** The ID token payload Google would assert for this login page's nonce. */
-  function googleIdToken(loginPageHtml: string): string {
+  function googleIdToken(loginPageHtml: string, claims: Record<string, unknown> = {}): string {
     const now = Math.floor(Date.now() / 1000);
     return JSON.stringify({
       iss: 'https://accounts.google.com',
@@ -1381,13 +1421,21 @@ describe('Sign in with Google (redirect mode)', () => {
       nonce: loginPageHtml.match(/data-nonce="([^"]+)"/)?.[1] ?? '',
       iat: now,
       exp: now + 300,
+      ...claims,
     });
   }
 
+  /**
+   * POST the callback the way Google Identity Services does: it sets the
+   * g_csrf_token cookie and posts the same value (double-submit).
+   */
+  function postCallback(browser: Browser, credential: string, postedCsrfToken = 'double-submit'): Promise<Response> {
+    browser.cookies.set('g_csrf_token', 'double-submit');
+    return browser.post(googleLogin.POST, '/login/google', { credential, g_csrf_token: postedCsrfToken });
+  }
+
   it('should render the Google button with the login_uri of this OP', async () => {
-    const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    const { html } = await loginPage(new Browser());
 
     expect(html).toContain('data-login_uri="' + ISSUER + '/login/google"');
     expect(html).toContain('data-client_id="' + GOOGLE_CLIENT_ID + '"');
@@ -1395,14 +1443,8 @@ describe('Sign in with Google (redirect mode)', () => {
 
   it('should sign in with the Google account and continue to consent', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
-    // Google Identity Services sets this cookie and posts the same value.
-    browser.cookies.set('g_csrf_token', 'double-submit');
-    const response = await browser.post(googleLogin.POST, '/login/google', {
-      credential: googleIdToken(html),
-      g_csrf_token: 'double-submit',
-    });
+    const { transactionId, html } = await loginPage(browser);
+    const response = await postCallback(browser, googleIdToken(html));
     const callback = new URL(await decide(browser, transactionId, 'approve'));
     const tokens = (await (await exchangeCode(callback.searchParams.get('code') ?? '')).json()) as TokenResponse;
 
@@ -1413,8 +1455,7 @@ describe('Sign in with Google (redirect mode)', () => {
 
   it('should refuse a callback without the double-submit cookie', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    const { html } = await loginPage(browser);
     const response = await browser.post(googleLogin.POST, '/login/google', {
       credential: googleIdToken(html),
       g_csrf_token: 'double-submit',
@@ -1422,5 +1463,41 @@ describe('Sign in with Google (redirect mode)', () => {
 
     expect(response.status).toBe(400);
     expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should refuse a g_csrf_token that does not match its cookie', async () => {
+    const browser = new Browser();
+    const { html } = await loginPage(browser);
+    const response = await postCallback(browser, googleIdToken(html), 'forged');
+
+    expect(response.status).toBe(400);
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should refuse a replayed ID token, whose nonce is single use', async () => {
+    const browser = new Browser();
+    const { html } = await loginPage(browser);
+    const credential = googleIdToken(html);
+    await postCallback(browser, credential);
+    const replay = await postCallback(new Browser(), credential);
+
+    expect(replay.status).toBe(400);
+  });
+
+  it('should refuse an account outside the configured hosted domain', async () => {
+    config.googleLogin = { clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' };
+    const browser = new Browser();
+    const { html } = await loginPage(browser);
+    const response = await postCallback(browser, googleIdToken(html, { hd: 'other.example' }));
+
+    expect(response.status).toBe(403);
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should answer 404 while Google login is not configured', async () => {
+    config.googleLogin = undefined;
+    const response = await postCallback(new Browser(), '{}');
+
+    expect(response.status).toBe(404);
   });
 });

@@ -167,7 +167,7 @@ function nextJsGeneratedFiles(
     { path: 'authorize/route.ts', content: nextJsAuthorizeRouteTemplate(pkg, features, scopes) },
     { path: 'login/page.tsx', content: nextJsLoginPageTemplate(pkg, features) },
     { path: 'login/actions.ts', content: nextJsLoginActionTemplate(pkg, features) },
-    { path: 'login/session.ts', content: nextJsLoginSessionTemplate(pkg) },
+    { path: 'login/session.ts', content: nextJsLoginSessionTemplate(pkg, features) },
     // Extension (google-login): the login_uri Google posts the ID token to.
     ...(features.googleLogin
       ? [{ path: 'login/google/route.ts', content: nextJsGoogleLoginRouteTemplate(pkg) }]

@@ -8,11 +8,19 @@ import type { OidcFeatureConfig } from '../../features.js';
 import { EXPERIMENTAL_PACKAGE, GOOGLE_LOGIN_PACKAGE } from '../hono/templates.js';
 
 /** `login/session.ts` — starting the OP session once the End-User is authenticated. */
-export function nextJsLoginSessionTemplate(corePkg: string): string {
+export function nextJsLoginSessionTemplate(
+  corePkg: string,
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  const loginMethods = features.googleLogin
+    ? `shared
+ * by every login method (the password form's Server Action and the Google
+ * callback in login/google/route.ts).`
+    : `called by
+ * the login Server Action (actions.ts). A login method of your own (WebAuthn,
+ * an upstream IdP) calls it the same way once it has authenticated the user.`;
   return `/**
- * Starting the OP browser session once the End-User is authenticated — shared
- * by every login method (the password form's Server Action, and the Google
- * callback when google-login is generated).
+ * Starting the OP browser session once the End-User is authenticated — ${loginMethods}
  */
 import { cookies } from 'next/headers';
 import { generateRandomString, type AuthTransaction } from '${corePkg}';

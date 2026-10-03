@@ -80,6 +80,11 @@ function harnessSection(features: OidcFeatureConfig, scopes: string[]): string {
   ]
     .map((client) => '\n' + client)
     .join('');
+  const googleEnvNames = features.googleLogin
+    ? `
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_HOSTED_DOMAIN',`
+    : '';
   const googleEnv = features.googleLogin
     ? `
   // EXTENSION (google-login): configures config.googleLogin, so the login page
@@ -103,7 +108,9 @@ vi.mock('@maronn-openid-connect/google-login', async (importOriginal) => ({
   const routeImports = [
     ...(features.introspection ? [`import * as introspect from '../introspect/route';`] : []),
     ...(features.revocation ? [`import * as revoke from '../revoke/route';`] : []),
-    ...(features.par ? [`import * as par from '../par/route';`] : []),
+    ...(features.par
+      ? [`import * as par from '../par/route';`, `import { parConfig } from '../par/config';`]
+      : []),
     ...(features.idJag ? [`import { idJagConfig } from '../token/id-jag';`] : []),
     ...(features.deviceAuthorizationGrant
       ? [
@@ -207,9 +214,7 @@ ${grantTypes}
     'OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT',
     'UPSTASH_REDIS_REST_URL',
     'UPSTASH_REDIS_REST_TOKEN',
-    'VERCEL',
-    'GOOGLE_CLIENT_ID',
-    'GOOGLE_HOSTED_DOMAIN',
+    'VERCEL',${googleEnvNames}
   ]) {
     delete process.env[name];
   }${googleEnv}
@@ -527,6 +532,38 @@ function discoverySection(features: OidcFeatureConfig, scopes: string[]): string
   ].join('\n');
   const list = (values: string[]) => values.map((value) => `'${value}'`).join(', ');
   const responseModes = features.jarm ? `'query', 'query.jwt', 'jwt'` : `'query'`;
+  // Members a feature adds to discovery: generated without that feature, the OP
+  // must not advertise them, or clients would try a capability it lacks.
+  const absentMembers = [
+    ...(features.introspection ? [] : ['introspection_endpoint']),
+    ...(features.revocation ? [] : ['revocation_endpoint']),
+    ...(features.par ? [] : ['pushed_authorization_request_endpoint']),
+    ...(features.deviceAuthorizationGrant ? [] : ['device_authorization_endpoint']),
+    ...(features.ciba
+      ? []
+      : ['backchannel_authentication_endpoint', 'backchannel_token_delivery_modes_supported']),
+    ...(features.rpInitiatedLogout ? [] : ['end_session_endpoint']),
+    ...(features.jarm ? [] : ['authorization_signing_alg_values_supported']),
+    ...(features.idJag
+      ? []
+      : ['identity_chaining_requested_token_types_supported', 'authorization_grant_profiles_supported']),
+    ...(features.introspection && features.jwtIntrospectionResponse
+      ? []
+      : ['introspection_signing_alg_values_supported']),
+  ];
+  const absentMembersTest =
+    absentMembers.length > 0
+      ? `
+  it('should advertise nothing of the features this OP was generated without', async () => {
+    const { metadata } = await providerMetadata();
+    const absent = [
+${absentMembers.map((name) => `      '${name}',`).join('\n')}
+    ];
+
+    expect(absent.filter((name) => name in metadata)).toEqual([]);
+  });
+`
+      : '';
 
   return `describe('Discovery (OIDC Discovery 1.0 §3 / §4)', () => {
   async function providerMetadata(): Promise<{ response: Response; metadata: Record<string, unknown> }> {
@@ -557,7 +594,7 @@ ${endpoints}
       authorization_response_iss_parameter_supported: true,
     });
   });
-
+${absentMembersTest}
   it('should let any origin read and cache the metadata', async () => {
     const { response } = await providerMetadata();
 
@@ -1095,6 +1132,34 @@ function tokenEndpointSection(features: OidcFeatureConfig): string {
   });
 `;
 
+  // Grants a feature adds: generated without that feature, the token endpoint
+  // must refuse them like any grant it does not know.
+  const disabledGrants = [
+    ...(features.tokenExchange || features.idJag
+      ? []
+      : ['urn:ietf:params:oauth:grant-type:token-exchange']),
+    ...(features.deviceAuthorizationGrant ? [] : ['urn:ietf:params:oauth:grant-type:device_code']),
+    ...(features.ciba ? [] : ['urn:openid:params:grant-type:ciba']),
+  ];
+  const disabledGrantsTest =
+    disabledGrants.length > 0
+      ? `
+  it('should answer unsupported_grant_type for the grants of features this OP was generated without (RFC 6749 §5.2)', async () => {
+    const grantTypes = [
+${disabledGrants.map((grantType) => `      '${grantType}',`).join('\n')}
+    ];
+    const answers = await Promise.all(
+      grantTypes.map(async (grantType) => {
+        const response = await tokenRequest({ grant_type: grantType });
+        return [response.status, ((await response.json()) as { error: string }).error];
+      }),
+    );
+
+    expect(answers).toEqual(grantTypes.map(() => [400, 'unsupported_grant_type']));
+  });
+`
+      : '';
+
   return `describe('Token Endpoint (OIDC Core 1.0 §3.1.3)', () => {
   it('should exchange the code for tokens that must not be cached', async () => {
     const callback = await signIn(new Browser());
@@ -1217,7 +1282,7 @@ function tokenEndpointSection(features: OidcFeatureConfig): string {
     expect(((await reuse.json()) as { error: string }).error).toBe('invalid_grant');
     expect(userInfo.status).toBe(401);
   });
-${refreshTests}
+${refreshTests}${disabledGrantsTest}
   it('should answer a CORS preflight for the configured origin', async () => {
     const response = await new Browser().request(token.OPTIONS, '/token', {
       method: 'OPTIONS',
@@ -1490,6 +1555,64 @@ function parSection(): string {
 
     expect(response.status).toBe(401);
     expect(((await response.json()) as { error: string }).error).toBe('invalid_client');
+  });
+
+  it('should refuse a request_uri inside a pushed request (RFC 9126 §2.1)', async () => {
+    const response = await new Browser().post(par.POST, '/par', {
+      ...authorizationRequest(),
+      client_secret: 'conformance-secret',
+      request_uri: 'urn:ietf:params:oauth:request_uri:pushed-elsewhere',
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'request_uri MUST NOT be included in a pushed authorization request',
+    });
+  });
+
+  it('should validate the request like the authorization endpoint before storing it (RFC 9126 §2.1)', async () => {
+    const response = await new Browser().post(par.POST, '/par', {
+      ...authorizationRequest({ redirect_uri: 'https://attacker.example/callback' }),
+      client_secret: 'conformance-secret',
+    });
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toBe('invalid_request');
+  });
+
+  it('should refuse a request_uri presented with another client_id (RFC 9126 §4)', async () => {
+    const response = await new Browser().request(
+      authorize.GET,
+      authorizeUrl({ client_id: 'conformance-basic-client', request_uri: await requestUri() }),
+    );
+    const location = new URL(locationOf(response));
+
+    expect(response.status).toBe(303);
+    expect(location.origin + location.pathname).toBe(ISSUER + '/oidc-error');
+    expect(location.searchParams.get('error')).toBe('invalid_request_uri');
+  });
+
+  describe('Required pushed requests (RFC 9126 §5)', () => {
+    afterEach(() => {
+      parConfig.requirePushedAuthorizationRequests = false;
+    });
+
+    it('should refuse an authorization request that was not pushed', async () => {
+      parConfig.requirePushedAuthorizationRequests = true;
+      const response = await new Browser().request(authorize.GET, authorizeUrl(authorizationRequest()));
+      const location = new URL(locationOf(response));
+
+      expect(location.origin + location.pathname).toBe(ISSUER + '/oidc-error');
+      expect(location.searchParams.get('error')).toBe('invalid_request');
+    });
+
+    it('should advertise require_pushed_authorization_requests in discovery', async () => {
+      parConfig.requirePushedAuthorizationRequests = true;
+      const response = await new Browser().request(discovery.GET, '/.well-known/openid-configuration');
+
+      expect(((await response.json()) as Record<string, unknown>).require_pushed_authorization_requests).toBe(true);
+    });
   });
 });
 `;
@@ -2009,6 +2132,49 @@ function rpInitiatedLogoutSection(): string {
     expect(browser.cookies.has('session_id')).toBe(false);
   });
 
+  it('should accept the logout request as a form POST (§2)', async () => {
+    rpInitiatedLogoutConfig.postLogoutRedirectUris = { 'conformance-client': [POST_LOGOUT_REDIRECT_URI] };
+    const browser = new Browser();
+    const tokens = await issueTokens(browser);
+    const response = await browser.post(logout.POST, '/logout', {
+      id_token_hint: tokens.id_token,
+      post_logout_redirect_uri: POST_LOGOUT_REDIRECT_URI,
+      state: 'logout-state',
+    });
+
+    expect(response.status).toBe(302);
+    expect(locationOf(response)).toBe(POST_LOGOUT_REDIRECT_URI + '?state=logout-state');
+  });
+
+  it('should not redirect to a post_logout_redirect_uri that is not registered (§3)', async () => {
+    const browser = new Browser();
+    const tokens = await issueTokens(browser);
+    const response = await browser.request(
+      logout.GET,
+      '/logout?' +
+        new URLSearchParams({
+          id_token_hint: tokens.id_token,
+          post_logout_redirect_uri: 'https://attacker.example/logged-out',
+        }).toString(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Location')).toBe(null);
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should refuse an approval from a browser without the confirmation cookie', async () => {
+    const browser = new Browser();
+    await signIn(browser);
+    const confirmation = await (await browser.request(logout.GET, '/logout')).text();
+    const response = await new Browser().post(logoutApprove.POST, '/logout/approve', {
+      csrf_token: csrfTokenOf(confirmation),
+    });
+
+    expect(response.status).toBe(400);
+    expect(browser.cookies.has('session_id')).toBe(true);
+  });
+
   it('should refuse a confirmation without the matching csrf_token', async () => {
     const browser = new Browser();
     await signIn(browser);
@@ -2025,9 +2191,20 @@ function rpInitiatedLogoutSection(): string {
 function googleLoginSection(): string {
   return `describe('Sign in with Google (redirect mode)', () => {
   const GOOGLE_CLIENT_ID = 'conformance.apps.googleusercontent.com';
+  const configuredGoogleLogin = config.googleLogin;
+
+  afterEach(() => {
+    config.googleLogin = configuredGoogleLogin;
+  });
+
+  /** Start a transaction and render its login page, which issues the nonce. */
+  async function loginPage(browser: Browser): Promise<{ transactionId: string; html: string }> {
+    const transactionId = await startAuthorization(browser);
+    return { transactionId, html: await browser.render(LoginPage, { transaction_id: transactionId }) };
+  }
 
   /** The ID token payload Google would assert for this login page's nonce. */
-  function googleIdToken(loginPageHtml: string): string {
+  function googleIdToken(loginPageHtml: string, claims: Record<string, unknown> = {}): string {
     const now = Math.floor(Date.now() / 1000);
     return JSON.stringify({
       iss: 'https://accounts.google.com',
@@ -2038,13 +2215,21 @@ function googleLoginSection(): string {
       nonce: loginPageHtml.match(/data-nonce="([^"]+)"/)?.[1] ?? '',
       iat: now,
       exp: now + 300,
+      ...claims,
     });
   }
 
+  /**
+   * POST the callback the way Google Identity Services does: it sets the
+   * g_csrf_token cookie and posts the same value (double-submit).
+   */
+  function postCallback(browser: Browser, credential: string, postedCsrfToken = 'double-submit'): Promise<Response> {
+    browser.cookies.set('g_csrf_token', 'double-submit');
+    return browser.post(googleLogin.POST, '/login/google', { credential, g_csrf_token: postedCsrfToken });
+  }
+
   it('should render the Google button with the login_uri of this OP', async () => {
-    const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    const { html } = await loginPage(new Browser());
 
     expect(html).toContain('data-login_uri="' + ISSUER + '/login/google"');
     expect(html).toContain('data-client_id="' + GOOGLE_CLIENT_ID + '"');
@@ -2052,14 +2237,8 @@ function googleLoginSection(): string {
 
   it('should sign in with the Google account and continue to consent', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
-    // Google Identity Services sets this cookie and posts the same value.
-    browser.cookies.set('g_csrf_token', 'double-submit');
-    const response = await browser.post(googleLogin.POST, '/login/google', {
-      credential: googleIdToken(html),
-      g_csrf_token: 'double-submit',
-    });
+    const { transactionId, html } = await loginPage(browser);
+    const response = await postCallback(browser, googleIdToken(html));
     const callback = new URL(await decide(browser, transactionId, 'approve'));
     const tokens = (await (await exchangeCode(callback.searchParams.get('code') ?? '')).json()) as TokenResponse;
 
@@ -2070,8 +2249,7 @@ function googleLoginSection(): string {
 
   it('should refuse a callback without the double-submit cookie', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    const { html } = await loginPage(browser);
     const response = await browser.post(googleLogin.POST, '/login/google', {
       credential: googleIdToken(html),
       g_csrf_token: 'double-submit',
@@ -2079,6 +2257,42 @@ function googleLoginSection(): string {
 
     expect(response.status).toBe(400);
     expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should refuse a g_csrf_token that does not match its cookie', async () => {
+    const browser = new Browser();
+    const { html } = await loginPage(browser);
+    const response = await postCallback(browser, googleIdToken(html), 'forged');
+
+    expect(response.status).toBe(400);
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should refuse a replayed ID token, whose nonce is single use', async () => {
+    const browser = new Browser();
+    const { html } = await loginPage(browser);
+    const credential = googleIdToken(html);
+    await postCallback(browser, credential);
+    const replay = await postCallback(new Browser(), credential);
+
+    expect(replay.status).toBe(400);
+  });
+
+  it('should refuse an account outside the configured hosted domain', async () => {
+    config.googleLogin = { clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' };
+    const browser = new Browser();
+    const { html } = await loginPage(browser);
+    const response = await postCallback(browser, googleIdToken(html, { hd: 'other.example' }));
+
+    expect(response.status).toBe(403);
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should answer 404 while Google login is not configured', async () => {
+    config.googleLogin = undefined;
+    const response = await postCallback(new Browser(), '{}');
+
+    expect(response.status).toBe(404);
   });
 });
 `;

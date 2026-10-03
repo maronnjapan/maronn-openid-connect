@@ -6,7 +6,10 @@ import {
 } from '../features.js';
 import { generate } from '../generator.js';
 
-const FRAMEWORKS = ['hono', 'express', 'fastify', 'nextjs'] as const;
+// The targets that share the login route / page / view templates. Next.js has
+// its own login page and Google callback Route Handler and is covered
+// separately below.
+const FRAMEWORKS = ['hono', 'express', 'fastify'] as const;
 const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
 
 function generateFiles(framework: string, enable: string[] = []) {
@@ -19,11 +22,6 @@ function generateFiles(framework: string, enable: string[] = []) {
 
 function fileContent(files: Array<{ path: string; content: string }>, path: string): string {
   return files.find((file) => file.path === path)?.content ?? '';
-}
-
-/** Next.js keeps the framework-neutral provider under _oidc-provider/. */
-function providerPath(framework: string, path: string): string {
-  return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
 }
 
 // Extension features live in their own package (here
@@ -127,8 +125,8 @@ describe('generate with --enable google-login', () => {
     // posts to lives in pages/login.ts and only turns its outcome into HTTP.
     it('should generate the login_uri callback from the google-login package when enabled', () => {
       const files = generateFiles(framework, ['google-login']);
-      const route = fileContent(files, providerPath(framework, 'routes/login.ts'));
-      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
+      const route = fileContent(files, 'routes/login.ts');
+      const page = fileContent(files, 'pages/login.ts');
 
       expect(route.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
       expect(route.includes('export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {')).toBe(true);
@@ -145,10 +143,7 @@ describe('generate with --enable google-login', () => {
     // and the issuer, so the logic module builds it and hands it to the screen
     // as plain data; the page never talks to the google-login package.
     it('should build the Sign in with Google configuration in the login logic module when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'routes/login.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['google-login']), 'routes/login.ts');
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
@@ -162,8 +157,8 @@ describe('generate with --enable google-login', () => {
 
     it('should hand the Sign in with Google button to both login screen renders when enabled', () => {
       const files = generateFiles(framework, ['google-login']);
-      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
-      const route = fileContent(files, providerPath(framework, 'routes/login.ts'));
+      const page = fileContent(files, 'pages/login.ts');
+      const route = fileContent(files, 'routes/login.ts');
 
       // describeLoginScreen() builds the button configuration once and is used
       // for GET /login and for the failed-attempt re-render of POST /login.
@@ -174,20 +169,14 @@ describe('generate with --enable google-login', () => {
     });
 
     it('should add the google-login config type and provider config field when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'config.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['google-login']), 'config.ts');
 
       expect(content.includes('export interface GoogleLoginConfig {')).toBe(true);
       expect(content.includes('  googleLogin?: GoogleLoginConfig;')).toBe(true);
     });
 
     it('should provision Google users and the nonce store in both store backends when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'store.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['google-login']), 'store.ts');
 
       expect(content.includes("export const GOOGLE_SUBJECT_PREFIX = 'google:';")).toBe(true);
       expect(content.includes('export class InMemoryGoogleLoginNonceStore')).toBe(true);
@@ -200,10 +189,7 @@ describe('generate with --enable google-login', () => {
     // The package generates no UI: the view receives the g_id_onload attributes
     // and writes out the three GIS elements itself, so users can restyle them.
     it('should render the GIS elements from the attributes in the default login page when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'views.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['google-login']), 'views.ts');
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
       expect(content.includes('  googleSignIn?: GoogleSignInAttributes;')).toBe(true);
@@ -217,10 +203,7 @@ describe('generate with --enable google-login', () => {
     });
 
     it('should wire the verifier, nonce store, and account resolver into the app context when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'app.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['google-login']), 'app.ts');
 
       expect(content.includes("c.set('googleLoginNonceStore', stores.googleLoginNonceStore);")).toBe(
         true,
@@ -235,10 +218,7 @@ describe('generate with --enable google-login', () => {
     });
 
     it('should generate Google login contract tests in conformance.test.ts when enabled', () => {
-      const content = fileContent(
-        generateFiles(framework, ['google-login']),
-        providerPath(framework, 'conformance.test.ts'),
-      );
+      const content = fileContent(generateFiles(framework, ['google-login']), 'conformance.test.ts');
 
       expect(content.includes("describe('Google login (Sign in with Google, redirect mode)'")).toBe(
         true,
@@ -246,10 +226,7 @@ describe('generate with --enable google-login', () => {
     });
 
     it('should keep the Google login contract tests out of the default conformance.test.ts', () => {
-      const content = fileContent(
-        generateFiles(framework),
-        providerPath(framework, 'conformance.test.ts'),
-      );
+      const content = fileContent(generateFiles(framework), 'conformance.test.ts');
 
       expect(content.includes('Sign in with Google')).toBe(false);
       expect(content.includes('/login/google')).toBe(false);
@@ -258,13 +235,13 @@ describe('generate with --enable google-login', () => {
     // Combining with other features must not make either drop out.
     it('should generate the Google callback alongside transaction-binding and ciba', () => {
       const files = generateFiles(framework, ['google-login', 'transaction-binding', 'ciba']);
-      const login = fileContent(files, providerPath(framework, 'routes/login.ts'));
-      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
+      const login = fileContent(files, 'routes/login.ts');
+      const page = fileContent(files, 'pages/login.ts');
       const paths = files.map((file) => file.path);
 
       expect(login.includes('export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {')).toBe(true);
       expect(page.includes("loginPage.post('/google', async (c) => {")).toBe(true);
-      expect(paths.includes(providerPath(framework, 'routes/backchannel-authentication.ts'))).toBe(true);
+      expect(paths.includes('routes/backchannel-authentication.ts')).toBe(true);
     });
   });
 
@@ -285,47 +262,252 @@ describe('generate with --enable google-login', () => {
 
     expect(content.includes('/login/google')).toBe(false);
   });
+});
 
-  it('should generate the Next.js login/google route handler when enabled', () => {
-    const files = generateFiles('nextjs', ['google-login']);
-    const paths = files.map((file) => file.path);
-    const route = fileContent(files, 'login/google/route.ts');
+// Next.js renders the button from the login page itself (login/page.tsx, a
+// Server Component) and takes Google's POST in its own Route Handler
+// (login/google/route.ts), which then starts the session exactly like the
+// password login does (login/session.ts).
+describe('generate nextjs with --enable google-login', () => {
+  const callbackRoute = () => fileContent(generateFiles('nextjs', ['google-login']), 'login/google/route.ts');
+  const loginPage = () => fileContent(generateFiles('nextjs', ['google-login']), 'login/page.tsx');
+  const providerModule = (path: string) =>
+    fileContent(generateFiles('nextjs', ['google-login']), `_oidc-provider/${path}`);
+  const conformance = (enable: string[] = []) =>
+    fileContent(generateFiles('nextjs', enable), '_oidc-provider/conformance.test.ts');
 
-    expect(paths.includes('login/google/route.ts')).toBe(true);
-    expect(route.includes("export const runtime = 'nodejs';")).toBe(true);
-    expect(route.includes('export const POST = oidcHandlers.POST;')).toBe(true);
+  describe('Default generation (feature off)', () => {
+    it('should not reference the google-login package by default', () => {
+      const referencing = generateFiles('nextjs')
+        .filter((file) => file.content.includes(GOOGLE_LOGIN_PACKAGE))
+        .map((file) => file.path);
+
+      expect(referencing).toEqual([]);
+    });
+
+    // The default output still names the extension twice without enabling it:
+    // login/session.ts documents that the Google callback reuses it, and the
+    // contract test deletes GOOGLE_CLIENT_ID / GOOGLE_HOSTED_DOMAIN from the
+    // environment it runs in. Neither is Google login code, so this guard checks
+    // the code markers: no config read, no route, no button, no callback URL.
+    it('should keep every Google login code marker out of the default output', () => {
+      const mentioning = generateFiles('nextjs')
+        .filter(
+          (file) =>
+            file.content.includes('googleLogin') ||
+            file.content.includes('GoogleLogin') ||
+            file.content.includes('/login/google') ||
+            file.content.includes('Sign in with Google') ||
+            file.content.includes('process.env.GOOGLE_'),
+        )
+        .map((file) => file.path);
+
+      expect(mentioning).toEqual([]);
+    });
+
+    it('should not generate the login_uri callback Route Handler or the HTML helper', () => {
+      const paths = generateFiles('nextjs').map((file) => file.path);
+
+      expect(paths.includes('login/google/route.ts')).toBe(false);
+      expect(paths.includes('_oidc-provider/html.ts')).toBe(false);
+    });
+
+    it('should keep the Google login contract tests out of the default conformance.test.ts', () => {
+      expect(conformance().includes('Sign in with Google')).toBe(false);
+      expect(conformance().includes('/login/google')).toBe(false);
+    });
   });
 
-  it('should keep the Next.js login/google route out of the default output', () => {
-    const paths = generateFiles('nextjs').map((file) => file.path);
+  describe('login_uri callback (login/google/route.ts)', () => {
+    // Google posts the ID token here (redirect mode). A Route Handler, not a
+    // Server Action: the POST comes from Google's page and carries no action id.
+    // Next.js answers 405 for every method the handler does not export.
+    it('should generate the callback as a POST-only Route Handler on the Node.js runtime', () => {
+      const paths = generateFiles('nextjs', ['google-login']).map((file) => file.path);
 
-    expect(paths.includes('login/google/route.ts')).toBe(false);
+      expect(paths.includes('login/google/route.ts')).toBe(true);
+      expect(paths.includes('_oidc-provider/html.ts')).toBe(true);
+      expect(callbackRoute().includes("export const runtime = 'nodejs';")).toBe(true);
+      expect(callbackRoute().includes('export async function POST(request: Request): Promise<Response> {')).toBe(true);
+      expect(callbackRoute().includes('export async function GET')).toBe(false);
+    });
+
+    it('should answer 404 while config.googleLogin is not set', () => {
+      expect(
+        callbackRoute().includes(
+          '  const googleLogin = config.googleLogin;\n' +
+            '  if (!googleLogin) {\n' +
+            "    return errorPage('not_found', 404, 'Google login is not configured');\n" +
+            '  }',
+        ),
+      ).toBe(true);
+    });
+
+    // Google's server-side verification order — g_csrf_token double submit, then
+    // the ID token (aud = the configured client ID), then the single-use nonce —
+    // all run inside handleGoogleLoginRedirect.
+    it('should run the double-submit, ID token and nonce checks through handleGoogleLoginRedirect', () => {
+      expect(callbackRoute().includes(`} from '${GOOGLE_LOGIN_PACKAGE}';`)).toBe(true);
+      expect(
+        callbackRoute().includes(
+          '    const login = await handleGoogleLoginRedirect({\n' +
+            '      params: await readFormFields(request),\n' +
+            "      cookieHeader: request.headers.get('Cookie'),\n" +
+            '      clientId: googleLogin.clientId,\n' +
+            '      verifier: googleIdTokenVerifier,\n' +
+            '      nonceStore: stores.googleLoginNonceStore,\n' +
+            '      hostedDomain: googleLogin.hostedDomain,\n' +
+            '      requireVerifiedEmail: googleLogin.requireVerifiedEmail,\n' +
+            '    });',
+        ),
+      ).toBe(true);
+    });
+
+    it('should verify with google-auth-library and provision the Google account just in time', () => {
+      const route = callbackRoute();
+
+      expect(route.includes('const googleIdTokenVerifier: GoogleIdTokenVerifier = getDefaultGoogleIdTokenVerifier();')).toBe(
+        true,
+      );
+      expect(route.includes('(await stores.userStore.linkGoogleAccount(account)).sub,')).toBe(true);
+      expect(route.includes('subject = await resolveGoogleLoginSubject(login.account, googleAccountResolver);')).toBe(
+        true,
+      );
+    });
+
+    // Until the nonce is verified the OP cannot tell whose transaction this is,
+    // so a failed callback stays on the OP's error page and is never redirected.
+    it('should answer a failed callback on the OP error page instead of redirecting to a client', () => {
+      expect(
+        callbackRoute().includes(
+          '    if (!(error instanceof GoogleLoginError)) throw error;\n' +
+            '    return errorPage(error.code, error.httpStatusCode, error.message);',
+        ),
+      ).toBe(true);
+    });
+
+    it('should start the session only after the callback checks and continue to consent', () => {
+      const route = callbackRoute();
+      const verifyIndex = route.indexOf('const login = await handleGoogleLoginRedirect({');
+      const transactionIndex = route.indexOf(
+        'transaction = await getAuthTransaction(transactionId, stores.transactionStore);',
+      );
+      const sessionIndex = route.indexOf('await startSession(transactionId, transaction, subject);');
+
+      expect(verifyIndex > 0).toBe(true);
+      expect(verifyIndex < transactionIndex).toBe(true);
+      expect(transactionIndex < sessionIndex).toBe(true);
+      expect(route.includes("const consentUrl = new URL('/consent', config.issuer);")).toBe(true);
+      expect(route.includes('return NextResponse.redirect(consentUrl, 302);')).toBe(true);
+    });
   });
 
-  // React gets the attributes as props, not as an HTML string: no
-  // dangerouslySetInnerHTML, and the GIS script goes through next/script.
-  it('should render the GIS elements as JSX from the Next.js login page when enabled', () => {
-    const content = fileContent(generateFiles('nextjs', ['google-login']), 'login/page.tsx');
+  describe('Login page (login/page.tsx)', () => {
+    // React gets the attributes as props, not as an HTML string: no
+    // dangerouslySetInnerHTML, and the GIS script goes through next/script.
+    it('should render the GIS elements as JSX', () => {
+      const content = loginPage();
 
-    expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
-    expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
-    expect(content.includes("import Script from 'next/script';")).toBe(true);
-    expect(content.includes('issueGoogleLoginNonce({')).toBe(true);
-    expect(content.includes('buildGoogleSignInAttributes({')).toBe(true);
-    expect(content.includes('<Script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} strategy="afterInteractive" />')).toBe(true);
-    expect(content.includes('<div {...googleSignIn} />')).toBe(true);
-    expect(content.includes('<div className="g_id_signin" data-type="standard" />')).toBe(true);
-    expect(content.includes('dangerouslySetInnerHTML')).toBe(false);
+      expect(content.includes(`} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`)).toBe(true);
+      expect(content.includes("import Script from 'next/script';")).toBe(true);
+      expect(content.includes('<Script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} strategy="afterInteractive" />')).toBe(true);
+      expect(content.includes('<div {...googleSignIn} />')).toBe(true);
+      expect(content.includes('<div className="g_id_signin" data-type="standard" />')).toBe(true);
+      expect(content.includes('dangerouslySetInnerHTML')).toBe(false);
+    });
+
+    // Every render — the first GET and the re-render after a failed password
+    // attempt alike — issues a fresh nonce bound to this transaction; Google
+    // echoes it in the ID token, which is how the callback finds the request.
+    it('should issue a nonce bound to the transaction on every render while config.googleLogin is set', () => {
+      const content = loginPage();
+
+      expect(content.includes(`import { issueGoogleLoginNonce } from '${GOOGLE_LOGIN_PACKAGE}';`)).toBe(true);
+      expect(content.includes('  const googleSignIn = googleLogin\n    ? buildGoogleSignInAttributes({')).toBe(true);
+      expect(
+        content.includes(
+          '        nonce: await issueGoogleLoginNonce({\n' +
+            '          transactionId,\n' +
+            '          expiresAt: transaction.expiresAt,\n' +
+            '          store: stores.googleLoginNonceStore,\n' +
+            '        }),',
+        ),
+      ).toBe(true);
+    });
+
+    // The login_uri must equal an authorized redirect URI of the Google OAuth
+    // client, so it is built on config.issuer, never on the request URL.
+    it('should build the login_uri on config.issuer', () => {
+      expect(loginPage().includes("loginUri: new URL('/login/google', config.issuer).toString(),")).toBe(true);
+    });
   });
 
-  it('should read GOOGLE_CLIENT_ID in the Next.js runtime when enabled', () => {
-    const content = fileContent(
-      generateFiles('nextjs', ['google-login']),
-      '_oidc-provider/runtime.ts',
-    );
+  describe('Configuration and stores', () => {
+    it('should read GOOGLE_CLIENT_ID and GOOGLE_HOSTED_DOMAIN into config.googleLogin in provider.ts', () => {
+      const provider = providerModule('provider.ts');
 
-    expect(content.includes("readEnv('GOOGLE_CLIENT_ID')")).toBe(true);
-    expect(content.includes("readEnv('GOOGLE_HOSTED_DOMAIN')")).toBe(true);
-    expect(content.includes('googleLogin: readGoogleLoginConfig(),')).toBe(true);
+      expect(provider.includes('  googleLogin: readGoogleLoginConfig(),')).toBe(true);
+      expect(provider.includes('  const clientId = process.env.GOOGLE_CLIENT_ID;\n  if (!clientId) return undefined;')).toBe(
+        true,
+      );
+      expect(provider.includes('  const hostedDomain = process.env.GOOGLE_HOSTED_DOMAIN;')).toBe(true);
+      expect(provider.includes('  return hostedDomain ? { clientId, hostedDomain } : { clientId };')).toBe(true);
+    });
+
+    it('should add the google-login config type and provider config field', () => {
+      const content = providerModule('config.ts');
+
+      expect(content.includes('export interface GoogleLoginConfig {')).toBe(true);
+      expect(content.includes('  googleLogin?: GoogleLoginConfig;')).toBe(true);
+    });
+
+    it('should provision Google users and the nonce store in both store backends', () => {
+      const content = providerModule('store.ts');
+
+      expect(content.includes("export const GOOGLE_SUBJECT_PREFIX = 'google:';")).toBe(true);
+      expect(content.includes('export class InMemoryGoogleLoginNonceStore')).toBe(true);
+      expect(content.includes('class JsonGoogleLoginNonceStore')).toBe(true);
+      expect(content.includes('linkGoogleAccount(account: GoogleIdTokenPayload)')).toBe(true);
+      expect(content.includes('  googleLoginNonceStore: GoogleLoginNonceStore;')).toBe(true);
+      expect(content.includes('    googleLoginNonceStore: new JsonGoogleLoginNonceStore(backend),')).toBe(true);
+    });
+  });
+
+  describe('Contract test', () => {
+    it('should generate Google login contract tests in conformance.test.ts', () => {
+      const content = conformance(['google-login']);
+
+      expect(content.includes("import * as googleLogin from '../login/google/route';")).toBe(true);
+      expect(content.includes("describe('Sign in with Google (redirect mode)', () => {")).toBe(true);
+      expect(content.includes("it('should refuse a callback without the double-submit cookie', async () => {")).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('Combination with transaction-binding and ciba', () => {
+    // Combining with other features must not make either drop out.
+    it('should generate the Google callback alongside the CIBA endpoints', () => {
+      const paths = generateFiles('nextjs', ['google-login', 'transaction-binding', 'ciba']).map((file) => file.path);
+
+      expect(paths.includes('login/google/route.ts')).toBe(true);
+      expect(paths.includes('backchannel_authentication/route.ts')).toBe(true);
+    });
+
+    // Google's POST is a cross-site navigation that drops SameSite=Lax cookies,
+    // so the callback cannot check the binding; the single-use nonce stands in
+    // for it, which only holds while the nonce is issued to the bound browser.
+    it('should issue the Google nonce only after the login page checked the transaction binding', () => {
+      const files = generateFiles('nextjs', ['google-login', 'transaction-binding', 'ciba']);
+      const page = fileContent(files, 'login/page.tsx');
+      const callback = fileContent(files, 'login/google/route.ts');
+      const bindingIndex = page.indexOf('await validateTransactionBinding(');
+      const nonceIndex = page.indexOf('nonce: await issueGoogleLoginNonce({');
+
+      expect(bindingIndex > 0).toBe(true);
+      expect(bindingIndex < nonceIndex).toBe(true);
+      expect(callback.includes('const login = await handleGoogleLoginRedirect({')).toBe(true);
+      expect(callback.includes('validateTransactionBinding')).toBe(false);
+    });
   });
 });

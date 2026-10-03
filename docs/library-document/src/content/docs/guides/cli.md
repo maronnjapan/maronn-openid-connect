@@ -81,6 +81,8 @@ oidc-provider/
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
+Next.js は App Router のファイル規約に沿った別の構成になります（[Next.js](#nextjs) を参照）。
+
 ### Screen Routes (pages/) and API Routes (routes/)
 
 生成されるルーティングは 2 種類に分かれています。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて `pages/` が担当し、`routes/` は Response を一切作りません。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`）だけで、`routes/` のロジックは読まなくて済みます。
@@ -97,11 +99,53 @@ UI を変える場所は、変えたい範囲で選びます。
 - **HTML だけ変える** → `views.ts` の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
 - **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` と outcome を変換している箇所を書き換える。画面を返す経路はすべて `pages/` を通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
 - **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `pages/*.ts` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
-- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する（Next.js の生成物は `/oidc-error` を使う）
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する
 
 フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持してください。`transaction-binding` の束縛チェック（`rejectUnboundTransaction()`）や `google-login` のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけで済みます。
 
-Next.js はもともと `login/page.tsx`（画面）と `login/actions.ts`（Server Action = ロジック）に分かれており、この構造に対応します。`_oidc-provider/pages/` も生成されますが、Route Handler 経由で動く `/authorize` と device / CIBA の画面、契約テストが使うもので、ログイン・同意画面のカスタマイズは `page.tsx` で行います。
+### Next.js
+
+Next.js では、App Router の機能をそのまま使ったコードを `--output`（例: `./src/app`）へ生成します。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いています。`/token` の挙動を知りたければ `token/route.ts` だけを読めば済みます。
+
+```
+src/app/
+├── _oidc-provider/           # 全エンドポイントが共有する部品（private folder なのでルーティングされない）
+│   ├── provider.ts           # 設定・クライアント・署名鍵・ストアの組み立て。プロジェクトへ組み込むときに編集する場所
+│   ├── http.ts               # CORS・キャッシュ禁止の JSON 応答・パラメータ重複の検出など、Route Handler 共通の部品
+│   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
+│   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア
+│   └── conformance.test.ts   # 契約テスト
+├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
+├── token/route.ts            # POST /token
+├── userinfo/route.ts         # GET|POST /userinfo
+├── introspect/route.ts       # POST /introspect（introspection 有効時）
+├── revoke/route.ts           # POST /revoke（revocation 有効時）
+├── .well-known/openid-configuration/route.ts
+├── .well-known/jwks.json/route.ts
+├── login/page.tsx            # ログイン画面（React Server Component）
+├── login/actions.ts          # ログインの Server Action
+├── login/session.ts          # OP セッションの開始（パスワードログインと Google ログインで共有）
+├── consent/page.tsx          # 同意画面
+├── consent/actions.ts        # 同意の Server Action（認可コードを発行してクライアントへリダイレクト）
+└── oidc-error/page.tsx       # クライアントへリダイレクトできない認可エラーの表示先
+```
+
+各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export します。ログイン・同意画面は React のページと Server Action なので、見た目は `page.tsx`、判断は `actions.ts` を書き換えます。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要があります。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成します。実験的機能の設定は、それを使うコードの隣に置きます（例: `par/config.ts`、トークンエンドポイントの grant なら `token/token-exchange.ts` の `tokenExchangeConfig`）。認可エンドポイントと同意の両方が読む JARM の設定は `_oidc-provider/jarm.ts` にあります。
+
+Next.js は Route Handler とページ・Server Action を別々のモジュール層にバンドルします。両方から同じインスタンスを参照する必要があるストアと署名鍵は、`globalThis` に保持しています（`provider.ts` / `storage-backend.ts`）。
+
+設定は環境変数から読みます。
+
+| 環境変数 | 用途 |
+|---|---|
+| `OIDC_ISSUER` | issuer。OP 自身の URL はすべてこれを基準に組み立てる |
+| `OIDC_CLIENTS_JSON` | 登録クライアント（`RegisteredClient` の JSON 配列）。未指定なら `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI` の 1 クライアント |
+| `OIDC_SIGNING_KEY_ID` | 起動時に生成する署名鍵の `kid` |
+| `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Vercel で使うストア。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`） |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時） |
+
+契約テスト `_oidc-provider/conformance.test.ts` は、Route Handler・ページ・Server Action を Next.js と同じ形で直接呼び出します。リクエストの中でしか使えない `cookies()`（`next/headers`）と `redirect()`（`next/navigation`）だけを差し替えているので、サーバーを起動せずに `vitest run` で実行できます（`vitest` を devDependencies に追加してください）。
 
 ### Generation Manifest (.maronn-openid-connect.json)
 
@@ -251,5 +295,7 @@ SSO と `prompt=none` では、**保存済み同意を引く前**にポリシー
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. `config.ts` のデフォルト値はローカル検証専用として扱う
 3. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
+
+Next.js では 1 と 2 を `_oidc-provider/provider.ts` で行います（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっています）。
 
 具体的な組み込み手順は [Quick Start](../../quick-start/) を参照してください。

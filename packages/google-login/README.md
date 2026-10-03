@@ -206,7 +206,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | `store.ts` | `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両方）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）と `googleAccountResolver`（既定は `linkGoogleAccount`）を差し替えられるオプション |
 | `conformance.test.ts` | 偽の `GoogleIdTokenVerifier` を注入してボタン描画・CSRF・nonce・JIT 登録・トークン発行までを固定する契約テスト |
-| Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/runtime.ts` | ページ側で `<div {...googleSignIn} />` と `next/script` による描画、`login_uri` の Route Handler（Node.js ランタイム）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
+| Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/provider.ts` | ページ側で `<div {...googleSignIn} />` と `next/script` による描画、`login_uri` の Route Handler（Node.js ランタイム）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
 
 生成コードは `config.googleLogin` が無いときはボタンを描画せず `/login/google` を 404 で閉じるので、まず生成だけしておき、Google Cloud コンソールの準備ができてから `clientId` を渡す、という順でも動く。`login_uri` は `new URL('/login/google', config.issuer)` で組み立てるため、Google 側には `<issuer>/login/google` を登録する。
 

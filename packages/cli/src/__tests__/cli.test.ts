@@ -113,13 +113,13 @@ describe('CLI', () => {
       const outputDir = join(testDir, 'next-output');
       vi.spyOn(console, 'log').mockImplementation(() => {});
       run(['generate', 'nextjs', '-o', outputDir]);
-      expect(existsSync(join(outputDir, '_oidc-provider/app.ts'))).toBe(true);
-      expect(existsSync(join(outputDir, '_oidc-provider/next.ts'))).toBe(true);
-      expect(existsSync(join(outputDir, '_oidc-provider/runtime.ts'))).toBe(true);
-      expect(existsSync(join(outputDir, '_oidc-provider/web-router.ts'))).toBe(true);
+      expect(existsSync(join(outputDir, '_oidc-provider/provider.ts'))).toBe(true);
+      expect(existsSync(join(outputDir, '_oidc-provider/http.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'authorize/route.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'token/route.ts'))).toBe(true);
       expect(existsSync(join(outputDir, '.well-known/openid-configuration/route.ts'))).toBe(true);
+      expect(existsSync(join(outputDir, 'login/page.tsx'))).toBe(true);
+      expect(existsSync(join(outputDir, '_oidc-provider/web-router.ts'))).toBe(false);
       vi.restoreAllMocks();
     });
 
@@ -141,6 +141,28 @@ describe('CLI', () => {
       expect(consoleSpy).toHaveBeenCalledWith(
         '  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract',
       );
+      vi.restoreAllMocks();
+    });
+
+    // The Next.js output wires its stores and clients from the environment in
+    // _oidc-provider/provider.ts, so its next steps name that file and the
+    // variables instead of the JsonStoreBackend injection the others need.
+    it('should point Next.js projects to provider.ts and its environment variables in the next steps', () => {
+      const outputDir = join(testDir, 'next-steps-output');
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      run(['generate', 'nextjs', '-o', outputDir]);
+      const steps = consoleSpy.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => /^  \d\. /.test(line));
+
+      expect(steps).toEqual([
+        '  1. Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
+        '  2. On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',
+        '  3. Load a fixed signing key in _oidc-provider/provider.ts before running more than one instance',
+        '  4. Install dependencies: pnpm add @maronn-openid-connect/core && pnpm add -D next react react-dom',
+        '  5. Start the server: next dev\n',
+      ]);
       vi.restoreAllMocks();
     });
 

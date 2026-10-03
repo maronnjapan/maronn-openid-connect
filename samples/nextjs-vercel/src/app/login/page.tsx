@@ -1,19 +1,15 @@
-import { getAuthTransaction } from '@maronn-openid-connect/core';
-import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import { defaultProviderStores } from '../_oidc-provider/store';
+import { AuthTransactionError, getAuthTransaction } from '@maronn-openid-connect/core';
 import Script from 'next/script';
 import { issueGoogleLoginNonce } from '@maronn-openid-connect/google-login';
 import {
   buildGoogleSignInAttributes,
   GOOGLE_GSI_CLIENT_SCRIPT_URL,
 } from '@maronn-openid-connect/google-login/sign-in';
+import { config, stores } from '../_oidc-provider/provider';
 import { loginAction } from './actions';
 
-const { transactionStore, googleLoginNonceStore } =
-  oidcProviderOptions.storage ?? defaultProviderStores;
-
-// Authorization redirects here with a per-request transaction_id, so the page
-// must always render dynamically (never statically cached).
+// /authorize redirects here with a per-request transaction_id, so the page must
+// always render dynamically (never from a static cache).
 export const dynamic = 'force-dynamic';
 
 interface LoginPageProps {
@@ -27,53 +23,49 @@ interface LoginPageProps {
 /**
  * Login page (React Server Component).
  *
- * This is intentionally a real Next.js `page.tsx` so you can customize the UI
- * with JSX, components, CSS modules, and the rest of the React/Next.js
- * ecosystem. The form posts to a Server Action (./actions.ts) that runs the
- * OpenID Connect login logic on the server.
+ * A real Next.js page, so the UI can be built with JSX, components, CSS modules
+ * and the rest of the React ecosystem. The form posts to the loginAction Server
+ * Action (actions.ts), which checks the credentials and starts the OP session.
+ * Keep the hidden transaction_id / csrf_token fields when customizing it.
  */
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { transaction_id: transactionId, error, remaining } = await searchParams;
 
   if (!transactionId) {
-    return (
-      <main>
-        <h1>Login</h1>
-        <p>Missing transaction_id</p>
-      </main>
-    );
+    return <LoginNotice message="Missing transaction_id" />;
   }
 
-  // Rate limit reached: handleLoginFailure() locked further attempts.
+  // handleLoginFailure() locked further attempts on this transaction.
   if (error === 'too_many_attempts') {
-    return (
-      <main>
-        <h1>Login</h1>
-        <p role="alert">Too many login attempts</p>
-      </main>
-    );
+    return <LoginNotice message="Too many login attempts" />;
   }
 
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
+  let transaction;
+  try {
+    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
+  } catch (transactionError) {
+    if (!(transactionError instanceof AuthTransactionError)) throw transactionError;
+    // Unknown or expired: the End-User has to start over from the client.
+    return <LoginNotice message={transactionError.message} />;
+  }
 
   // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
   // built only when config.googleLogin is set. Each render issues a fresh nonce
   // bound to this transaction; Google echoes it in the ID token, which is how
-  // login/google/route.ts finds the transaction. The JSX below owns the markup.
-  const googleLogin = oidcProviderOptions.config?.googleLogin;
+  // login/google/route.ts finds its way back to this authorization request.
+  const googleLogin = config.googleLogin;
   const googleSignIn = googleLogin
     ? buildGoogleSignInAttributes({
         clientId: googleLogin.clientId,
-        // Must equal an authorized redirect URI of the Google OAuth client.
-        loginUri: new URL(
-          '/login/google',
-          oidcProviderOptions.config?.issuer ?? 'http://localhost:3000',
-        ).toString(),
+        // Must equal an authorized redirect URI of the Google OAuth client. Built
+        // on config.issuer, like every URL the OP builds for itself.
+        loginUri: new URL('/login/google', config.issuer).toString(),
         nonce: await issueGoogleLoginNonce({
           transactionId,
           expiresAt: transaction.expiresAt,
-          store: googleLoginNonceStore,
+          store: stores.googleLoginNonceStore,
         }),
+        // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
         loginHint: transaction.loginHint,
         hostedDomain:
           typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
@@ -98,7 +90,15 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
         <div>
           <label htmlFor="username">Username:</label>
-          <input type="text" id="username" name="username" required />
+          {/* OIDC Core 1.0 §3.1.2.1: login_hint MAY pre-fill the username. It is
+              an untrusted hint, used for the initial value only. */}
+          <input
+            type="text"
+            id="username"
+            name="username"
+            defaultValue={transaction.loginHint}
+            required
+          />
         </div>
         <div>
           <label htmlFor="password">Password:</label>
@@ -120,6 +120,16 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <div className="g_id_signin" data-type="standard" />
         </section>
       ) : null}
+    </main>
+  );
+}
+
+/** Shown instead of the form when this transaction cannot continue here. */
+function LoginNotice({ message }: { message: string }) {
+  return (
+    <main>
+      <h1>Login</h1>
+      <p role="alert">{message}</p>
     </main>
   );
 }

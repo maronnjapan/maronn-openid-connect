@@ -74,21 +74,15 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 |---|---|
 | `routes/jarm.ts` | 設定値 `jarmConfig` と、起動時に範囲を検証する `assertJarmLifetimeSeconds` 呼び出し |
 | `routes/authorize.ts` | `response_mode` の解釈、応答 JWT を組む `buildSuccessRedirect` / `buildErrorRedirect`、トランザクションへのモード記録 |
-| `routes/consent.ts` | 承認 / 拒否の応答を記録済みモードで返す分岐（Next.js を除く。下記「Next.js の制限」参照） |
+| `routes/consent.ts` | 承認 / 拒否の応答を記録済みモードで返す分岐 |
 | `routes/discovery.ts` | `response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
 | `conformance.test.ts` | JARM の契約テストの追加。ターゲットが実際に返す応答形式を固定する |
 
-:::caution[Next.js の制限]
-Next.js ターゲットでは、ログイン・同意画面を経由する応答は **JARM になりません**（平文クエリのままです）。Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` は署名鍵プロバイダの別インスタンスを持ちます。ここで署名すると `/.well-known/jwks.json` と同じ `kid` を名乗りながら鍵素材が異なる JWT ができ、クライアント側の署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全なため、Server Action は JARM 分岐を持ちません。
-
-Next.js で JARM 応答が得られるのは、`prompt=none` と SSO 再利用のように authorize ルート内で完結する経路だけです。詳細は [既知の制約](#既知の制約) を参照してください。
-
-この制限は生成物にも一貫して反映されます。Next.js ターゲットでは `routes/consent.ts` にも JARM 分岐が入らず、生成される `conformance.test.ts` は「ログイン・同意を挟む応答は平文クエリで返る」ことを固定します。契約テストが緑なのに実際の provider は平文を返す、という食い違いは起きません。
-:::
+Next.js では、同じ役割を `_oidc-provider/jarm.ts`（設定）・`authorize/route.ts`・`consent/actions.ts`（同意の Server Action）・`.well-known/openid-configuration/route.ts` が担います。Server Action は Route Handler と別のモジュール層にバンドルされますが、署名鍵プロバイダは `globalThis` で共有しているため、同意画面を経由する応答も `/.well-known/jwks.json` が公開する鍵で署名した JARM 応答になります。
 
 ## 設定
 
-`routes/jarm.ts` の `jarmConfig` を編集します。認可エンドポイントと consent エンドポイントの両方がここを参照します。
+`routes/jarm.ts`（Next.js は `_oidc-provider/jarm.ts`）の `jarmConfig` を編集します。認可エンドポイントと consent エンドポイントの両方がここを参照します。
 
 ```typescript
 export const jarmConfig = {
@@ -241,7 +235,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
   AuthTransaction & JarmAuthTransactionFields;
 ```
 
-**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。生成された `conformance.test.ts` の全フローテストがこの round-trip を検出します（Next.js は consent がそもそも平文なので、この round-trip を使いません）。
+**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。生成された `conformance.test.ts` の全フローテストがこの round-trip を検出します。
 
 なお `prompt=none` と SSO 再利用の応答は authorize ルート内で完結するため、store の往復に依存しません。ストアの取りこぼしが影響するのはログイン・同意画面を挟む経路だけです。
 
@@ -277,7 +271,6 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 - 署名アルゴリズムは RS256 固定です。クライアント別 `authorization_signed_response_alg`（§3）や PS256 / ES256 は非対応です
 - `.jwt` 系以外の `response_mode`（`form_post` / `fragment` など）は従来どおり**無視**します。JARM は `.jwt` 系にだけ意味を足す拡張であり、有効化によって他の値の扱いは変わりません
 - Dynamic Client Registration がないため、クライアントメタデータによる JARM 設定はできません
-- **Next.js ターゲットでは、ログイン・同意画面を経由する応答は平文クエリのままです。** Next.js は Server Action を Route Handler と別バンドルに分けるため、`consent/actions.ts` から署名すると `jwks_uri` が公開する鍵と一致しない JWT ができ、クライアントの署名検証が必ず失敗します。検証できない JWT を返すより平文で返すほうが安全と判断しています。`prompt=none` と SSO 再利用（authorize ルート内で完結する経路）は Next.js でも JARM 応答になります。Next.js 向けに生成される `routes/consent.ts` と `conformance.test.ts` もこの挙動に揃えてあるので、契約テストは実際の応答形式をそのまま固定します。hono / express / fastify / web-standard には、この制限はありません
 
 ## core 機能との違い
 
@@ -295,7 +288,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 | 症状 | 原因 / 対処 |
 |---|---|
 | `response_mode=query.jwt` を付けても平文クエリで返る | `--enable jarm` を付けずに生成しています。discovery の `response_modes_supported` に `query.jwt` があるか確認してください |
-| ログイン・同意を挟むと平文クエリに戻る（`prompt=none` では JWT になる） | auth transaction store が未知フィールドを落としています。オブジェクトを丸ごと保存する実装へ直してください。**Next.js ではこれが仕様どおりの挙動です**（上記「既知の制約」参照） |
+| ログイン・同意を挟むと平文クエリに戻る（`prompt=none` では JWT になる） | auth transaction store が未知フィールドを落としています。オブジェクトを丸ごと保存する実装へ直してください |
 | `Cannot find module '@maronn-openid-connect/experimental/jarm'` | `pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental` を実行してください |
 | 起動時に `jarmConfig.jarmResponseLifetimeSeconds must be an integer between 5 and 600 seconds` | 設定値が JARM §2.1 の推奨レンジ外です |
 | クライアントで `code` が見つからない | JARM モードでは `code` はクエリではなく JWT のクレームです。`response` をデコードしてください |

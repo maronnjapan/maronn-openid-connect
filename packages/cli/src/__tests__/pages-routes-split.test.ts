@@ -14,11 +14,16 @@ import { resolveFeatures } from '../features.js';
  *   logout) are plain functions that return an outcome and never build a
  *   Response: no render, no redirect, no JSON body, no Set-Cookie header.
  *
- * These tests pin that split for every framework and every browser-facing
- * feature, so customizing the UI is a pages/ (or views.ts) edit that never
- * requires touching the logic.
+ * These tests pin that split for every framework that shares these templates
+ * (Hono, Express, Fastify) and every browser-facing feature, so customizing the
+ * UI is a pages/ (or views.ts) edit that never requires touching the logic.
+ *
+ * Next.js has no such split: its output follows the App Router itself — every
+ * endpoint is a Route Handler with its logic inside, and login / consent are
+ * pages with Server Actions — so the last block only pins that none of the
+ * split's modules reach the Next.js output.
  */
-const FRAMEWORKS = ['hono', 'express', 'fastify', 'nextjs'] as const;
+const FRAMEWORKS = ['hono', 'express', 'fastify'] as const;
 
 /** Every feature that adds a browser-facing screen. */
 const SCREEN_FEATURES = [
@@ -74,20 +79,14 @@ function generateFiles(framework: string, enable: string[] = [], scopes: string[
   }).files;
 }
 
-/** Next.js keeps the framework-neutral provider under _oidc-provider/. */
-function providerPath(framework: string, path: string): string {
-  return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
-}
-
 function fileContent(files: GeneratedFile[], path: string): string {
   const file = files.find((candidate) => candidate.path === path);
   if (!file) throw new Error(`Generated file not found: ${path}`);
   return file.content;
 }
 
-function filesUnder(files: GeneratedFile[], framework: string, dir: string): GeneratedFile[] {
-  const prefix = providerPath(framework, `${dir}/`);
-  return files.filter((file) => file.path.startsWith(prefix));
+function filesUnder(files: GeneratedFile[], dir: string): GeneratedFile[] {
+  return files.filter((file) => file.path.startsWith(`${dir}/`));
 }
 
 describe('pages/ (screen routing) and routes/ (API routing)', () => {
@@ -96,19 +95,19 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       const paths = generateFiles(framework).map((file) => file.path);
 
       for (const page of ['respond', 'errors', 'authorize', 'login', 'consent']) {
-        expect(paths.includes(providerPath(framework, `pages/${page}.ts`)), page).toBe(true);
+        expect(paths.includes(`pages/${page}.ts`), page).toBe(true);
       }
       for (const page of ['device', 'ciba', 'logout']) {
-        expect(paths.includes(providerPath(framework, `pages/${page}.ts`)), page).toBe(false);
+        expect(paths.includes(`pages/${page}.ts`), page).toBe(false);
       }
     });
 
     it('should generate a screen module for every enabled browser-facing feature', () => {
       const paths = generateFiles(framework, SCREEN_FEATURES).map((file) => file.path);
 
-      expect(paths.includes(providerPath(framework, 'pages/device.ts'))).toBe(true);
-      expect(paths.includes(providerPath(framework, 'pages/ciba.ts'))).toBe(true);
-      expect(paths.includes(providerPath(framework, 'pages/logout.ts'))).toBe(true);
+      expect(paths.includes('pages/device.ts')).toBe(true);
+      expect(paths.includes('pages/ciba.ts')).toBe(true);
+      expect(paths.includes('pages/logout.ts')).toBe(true);
     });
 
     // The whole point of the split: the logic behind a screen never renders,
@@ -118,7 +117,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       const files = generateFiles(framework, SCREEN_FEATURES, ['reports.read']);
 
       for (const name of LOGIC_MODULES) {
-        const route = fileContent(files, providerPath(framework, `routes/${name}.ts`));
+        const route = fileContent(files, `routes/${name}.ts`);
         expect(route.includes('export async function '), name).toBe(true);
         expect(/\b\w+(App|Page|Router)\.(get|post|all|on)\(/.test(route), `${name} must not register a handler`).toBe(false);
         for (const marker of RESPONSE_MARKERS) {
@@ -128,7 +127,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     });
 
     it('should never import views.ts or a pages/ module from any API route', () => {
-      const routes = filesUnder(generateFiles(framework, SCREEN_FEATURES, ['reports.read']), framework, 'routes');
+      const routes = filesUnder(generateFiles(framework, SCREEN_FEATURES, ['reports.read']), 'routes');
 
       expect(routes.length > 0).toBe(true);
       for (const route of routes) {
@@ -140,7 +139,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     });
 
     it('should render every screen from a pages/ module that holds no logic', () => {
-      const pages = filesUnder(generateFiles(framework, SCREEN_FEATURES, ['reports.read']), framework, 'pages');
+      const pages = filesUnder(generateFiles(framework, SCREEN_FEATURES, ['reports.read']), 'pages');
 
       expect(pages.map((page) => page.path.split('/').pop()).sort()).toEqual([
         'authorize.ts',
@@ -173,10 +172,10 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should own GET and POST of /login and /consent in the page modules', () => {
       const files = generateFiles(framework);
-      const loginPage = fileContent(files, providerPath(framework, 'pages/login.ts'));
-      const consentPage = fileContent(files, providerPath(framework, 'pages/consent.ts'));
-      const loginRoute = fileContent(files, providerPath(framework, 'routes/login.ts'));
-      const consentRoute = fileContent(files, providerPath(framework, 'routes/consent.ts'));
+      const loginPage = fileContent(files, 'pages/login.ts');
+      const consentPage = fileContent(files, 'pages/consent.ts');
+      const loginRoute = fileContent(files, 'routes/login.ts');
+      const consentRoute = fileContent(files, 'routes/consent.ts');
 
       expect(loginPage.includes("loginPage.get('/', async (c) => {")).toBe(true);
       expect(loginPage.includes("loginPage.post('/', async (c) => {")).toBe(true);
@@ -192,8 +191,8 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should map the login outcomes to screens in the page and keep the decisions in the route', () => {
       const files = generateFiles(framework);
-      const page = fileContent(files, providerPath(framework, 'pages/login.ts'));
-      const route = fileContent(files, providerPath(framework, 'routes/login.ts'));
+      const page = fileContent(files, 'pages/login.ts');
+      const route = fileContent(files, 'routes/login.ts');
 
       // The route decides...
       expect(route.includes("return { kind: 'locked_out' };")).toBe(true);
@@ -210,8 +209,8 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should keep the consent decision allowlist in the route and its message in the page', () => {
       const files = generateFiles(framework);
-      const page = fileContent(files, providerPath(framework, 'pages/consent.ts'));
-      const route = fileContent(files, providerPath(framework, 'routes/consent.ts'));
+      const page = fileContent(files, 'pages/consent.ts');
+      const route = fileContent(files, 'routes/consent.ts');
 
       expect(route.includes("if (action !== 'approve') {\n    return { kind: 'invalid_decision' };\n  }")).toBe(true);
       expect(route.includes("return { kind: 'session_missing' };")).toBe(true);
@@ -223,9 +222,9 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     // page attaches them.
     it('should attach cookies in the page layer through pages/respond.ts', () => {
       const files = generateFiles(framework, SCREEN_FEATURES);
-      const respond = fileContent(files, providerPath(framework, 'pages/respond.ts'));
-      const authorizeRoute = fileContent(files, providerPath(framework, 'routes/authorize.ts'));
-      const authorizePage = fileContent(files, providerPath(framework, 'pages/authorize.ts'));
+      const respond = fileContent(files, 'pages/respond.ts');
+      const authorizeRoute = fileContent(files, 'routes/authorize.ts');
+      const authorizePage = fileContent(files, 'pages/authorize.ts');
 
       expect(respond.includes('export function withCookies(response: Response, cookies: readonly string[]): Response {')).toBe(true);
       expect(respond.includes('export function redirectWithCookies(')).toBe(true);
@@ -237,7 +236,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     it('should mount every browser-facing path once, on its page router', () => {
       const app = fileContent(
         generateFiles(framework, ['device-authorization-grant', 'ciba', 'rp-initiated-logout']),
-        providerPath(framework, 'app.ts'),
+        'app.ts',
       );
       const mounts: Array<[string, string]> = [
         ['/authorize', 'authorizePage'],
@@ -259,8 +258,8 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should route every device step through the page and decide it in the route', () => {
       const files = generateFiles(framework, ['device-authorization-grant']);
-      const page = fileContent(files, providerPath(framework, 'pages/device.ts'));
-      const route = fileContent(files, providerPath(framework, 'routes/device.ts'));
+      const page = fileContent(files, 'pages/device.ts');
+      const route = fileContent(files, 'routes/device.ts');
 
       expect(page.includes("devicePage.get('/', (c) =>")).toBe(true);
       expect(page.includes("devicePage.post('/', async (c) => {")).toBe(true);
@@ -275,10 +274,10 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should route the CIBA and logout screens through their page modules', () => {
       const files = generateFiles(framework, ['ciba', 'rp-initiated-logout']);
-      const cibaPage = fileContent(files, providerPath(framework, 'pages/ciba.ts'));
-      const cibaRoute = fileContent(files, providerPath(framework, 'routes/ciba-verification.ts'));
-      const logoutPage = fileContent(files, providerPath(framework, 'pages/logout.ts'));
-      const logoutRoute = fileContent(files, providerPath(framework, 'routes/logout.ts'));
+      const cibaPage = fileContent(files, 'pages/ciba.ts');
+      const cibaRoute = fileContent(files, 'routes/ciba-verification.ts');
+      const logoutPage = fileContent(files, 'pages/logout.ts');
+      const logoutRoute = fileContent(files, 'routes/logout.ts');
 
       expect(cibaPage.includes("cibaPage.get('/', async (c) => respond(c, await prepareCibaDevice(c)));")).toBe(true);
       expect(cibaPage.includes("cibaPage.post('/login', async (c) => {")).toBe(true);
@@ -304,8 +303,8 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       const files = generateFiles(framework, ['transaction-binding']);
 
       for (const screen of ['login', 'consent']) {
-        const page = fileContent(files, providerPath(framework, `pages/${screen}.ts`));
-        const route = fileContent(files, providerPath(framework, `routes/${screen}.ts`));
+        const page = fileContent(files, `pages/${screen}.ts`);
+        const route = fileContent(files, `routes/${screen}.ts`);
         expect(route.includes('async function rejectUnboundTransaction('), screen).toBe(true);
         expect(route.split('await rejectUnboundTransaction(c, transaction, transactionId);').length, screen).toBe(3);
         expect(route.includes('validateTransactionBinding('), screen).toBe(true);
@@ -317,7 +316,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     });
 
     it('should pin /login and /consent as GET+POST endpoints in the conformance test', () => {
-      const conformance = fileContent(generateFiles(framework), providerPath(framework, 'conformance.test.ts'));
+      const conformance = fileContent(generateFiles(framework), 'conformance.test.ts');
 
       expect(conformance.includes("{ path: '/login', method: 'PUT', allow: 'GET, POST' },")).toBe(true);
       expect(conformance.includes("{ path: '/consent', method: 'PUT', allow: 'GET, POST' },")).toBe(true);
@@ -336,40 +335,6 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     expect(apply.includes('authorizeApp')).toBe(false);
   });
 
-  // Next.js reserves these basenames anywhere under app/ (page, layout, error,
-  // route, ...): a generated `pages/error.ts` is taken for an error boundary and
-  // fails the build ("must be a Client Component"), even inside the private
-  // _oidc-provider/ folder. The error screen module is therefore pages/errors.ts,
-  // and no generated provider file may use a reserved name.
-  it('should avoid the App Router reserved file names under the Next.js provider folder', () => {
-    const RESERVED = new Set([
-      'page', 'layout', 'error', 'global-error', 'route', 'loading', 'not-found',
-      'template', 'default', 'middleware', 'instrumentation',
-    ]);
-    const providerFiles = generateFiles('nextjs', SCREEN_FEATURES, ['reports.read'])
-      .map((file) => file.path)
-      .filter((path) => path.startsWith('_oidc-provider/'));
-
-    expect(providerFiles.includes('_oidc-provider/pages/errors.ts')).toBe(true);
-    for (const path of providerFiles) {
-      const basename = path.split('/').pop()?.replace(/\.(ts|tsx)$/, '') ?? '';
-      expect(RESERVED.has(basename), path).toBe(false);
-    }
-  });
-
-  it('should strip the .js extension from the page imports of the Next.js provider', () => {
-    const files = generateFiles('nextjs');
-    const page = fileContent(files, '_oidc-provider/pages/login.ts');
-    const route = fileContent(files, '_oidc-provider/routes/login.ts');
-
-    expect(page.includes("from '../routes/login'")).toBe(true);
-    expect(page.includes("from '../routes/login.js'")).toBe(false);
-    expect(page.includes("from './respond'")).toBe(true);
-    expect(page.includes("from '../web-router'")).toBe(true);
-    expect(page.includes("from 'hono'")).toBe(false);
-    expect(route.includes(".js'")).toBe(false);
-  });
-
   it('should convert the page routers to WebRouter for the Web-standard frameworks', () => {
     for (const framework of ['express', 'fastify'] as const) {
       const files = generateFiles(framework, ['device-authorization-grant', 'ciba', 'rp-initiated-logout']);
@@ -380,5 +345,80 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
         expect(content.includes("from 'hono'"), name).toBe(false);
       }
     }
+  });
+});
+
+// Next.js has no pages/ / routes/ split: every endpoint is a Route Handler with
+// its logic inside, login / consent are pages with Server Actions, and the
+// screens the Route Handlers serve themselves live beside them (screens.ts).
+// _oidc-provider/ only holds what the endpoints share.
+describe('generate nextjs (App Router layout)', () => {
+  const generatedPaths = () =>
+    generateFiles('nextjs', SCREEN_FEATURES, ['reports.read']).map((file) => file.path);
+  const providerFiles = () => generatedPaths().filter((path) => path.startsWith('_oidc-provider/'));
+
+  describe('No pages/ and routes/ split', () => {
+    it('should generate no pages/ or routes/ module and none of the shared router modules', () => {
+      const sharedRouter = ['app.ts', 'web-router.ts', 'next.ts', 'runtime.ts', 'views.ts'].map(
+        (name) => `_oidc-provider/${name}`,
+      );
+
+      expect(providerFiles().includes('_oidc-provider/provider.ts')).toBe(true);
+      expect(
+        providerFiles().filter(
+          (path) => path.startsWith('_oidc-provider/pages/') || path.startsWith('_oidc-provider/routes/'),
+        ),
+      ).toEqual([]);
+      expect(providerFiles().filter((path) => sharedRouter.includes(path))).toEqual([]);
+    });
+
+    // Login and consent are React pages; the device, CIBA and logout screens set
+    // a cookie on the response that renders them, so they are HTML from the
+    // Route Handlers, kept in a screens.ts beside each endpoint.
+    it('should render every screen from a page or a screens module beside its endpoint', () => {
+      expect(
+        generatedPaths()
+          .filter((path) => path.endsWith('/page.tsx') || path.endsWith('/screens.ts'))
+          .sort(),
+      ).toEqual([
+        'ciba/screens.ts',
+        'consent/page.tsx',
+        'device/screens.ts',
+        'login/page.tsx',
+        'logout/screens.ts',
+        'oidc-error/page.tsx',
+      ]);
+    });
+  });
+
+  describe('Provider folder (_oidc-provider/)', () => {
+    // Next.js reserves these basenames anywhere under app/ (page, layout, error,
+    // route, ...): a generated `pages/error.ts` was once taken for an error
+    // boundary and failed the build ("must be a Client Component"), even inside
+    // the private _oidc-provider/ folder. No shared module may use one.
+    it('should avoid the App Router reserved file names', () => {
+      const RESERVED = new Set([
+        'page', 'layout', 'error', 'global-error', 'route', 'loading', 'not-found',
+        'template', 'default', 'middleware', 'instrumentation',
+      ]);
+      const basename = (path: string) => path.split('/').pop()?.replace(/\.(ts|tsx)$/, '') ?? '';
+
+      expect(providerFiles().includes('_oidc-provider/provider.ts')).toBe(true);
+      expect(providerFiles().filter((path) => RESERVED.has(basename(path)))).toEqual([]);
+    });
+
+    // Next.js resolves modules the bundler way, so the modules shared with the
+    // other generators (config, store, resolvers, scopes) drop the .js extension
+    // of their relative imports.
+    it('should strip the .js extension from the relative imports of the shared modules', () => {
+      const files = generateFiles('nextjs', SCREEN_FEATURES, ['reports.read']);
+      const resolvers = fileContent(files, '_oidc-provider/resolvers.ts');
+
+      expect(resolvers.includes("import { createInMemoryClientResolver } from './config';")).toBe(true);
+      expect(resolvers.includes("} from './store';")).toBe(true);
+      expect(
+        files.filter((file) => /from '\.{1,2}\/[^']+\.js'/.test(file.content)).map((file) => file.path),
+      ).toEqual([]);
+    });
   });
 });

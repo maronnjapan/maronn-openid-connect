@@ -1,5 +1,11 @@
 # @maronn-openid-connect/google-login
 
+## 0.0.3
+
+### Patch Changes
+
+- ed8c5a5: core 0.4.1 との同時リリース。core peer range の下限を >=0.4.1 へ更新。
+
 ## 0.0.2
 
 ### Patch Changes

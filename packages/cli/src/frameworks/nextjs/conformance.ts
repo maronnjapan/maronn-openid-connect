@@ -1524,6 +1524,54 @@ function jarmSection(): string {
     });
   });
 
+  it('should answer the single sign-on fast path with a signed JWT whose code is redeemable', async () => {
+    // This path answers inside the authorize Route Handler, not the consent
+    // Server Action, so both places that sign are covered.
+    const browser = new Browser();
+    await signIn(browser);
+    const response = await browser.request(
+      authorize.GET,
+      authorizeUrl(authorizationRequest({ response_mode: 'query.jwt' })),
+    );
+    const location = new URL(locationOf(response));
+    const jwt = location.searchParams.get('response') ?? '';
+    const tokenResponse = await exchangeCode(String(decodeJwt(jwt).payload.code ?? ''));
+
+    expect([...location.searchParams.keys()]).toEqual(['response']);
+    expect(await verifiesWithPublishedKey(jwt)).toBe(true);
+    expect(tokenResponse.status).toBe(200);
+  });
+
+  it('should answer prompt=none without a session with a signed error JWT', async () => {
+    const response = await new Browser().request(
+      authorize.GET,
+      authorizeUrl(authorizationRequest({ response_mode: 'query.jwt', prompt: 'none' })),
+    );
+    const jwt = new URL(locationOf(response)).searchParams.get('response') ?? '';
+
+    expect(decodeJwt(jwt).payload).toMatchObject({
+      iss: ISSUER,
+      aud: 'conformance-client',
+      error: 'login_required',
+      state: 'conformance-state',
+    });
+  });
+
+  it('should accept the jwt shorthand for query.jwt (JARM §2.3.4)', async () => {
+    const callback = await signIn(new Browser(), authorizationRequest({ response_mode: 'jwt' }));
+
+    expect([...callback.searchParams.keys()]).toEqual(['response']);
+  });
+
+  it('should advertise the response modes and the signing algorithm (JARM §4)', async () => {
+    const response = await new Browser().request(discovery.GET, '/.well-known/openid-configuration');
+
+    expect(await response.json()).toMatchObject({
+      response_modes_supported: ['query', 'query.jwt', 'jwt'],
+      authorization_signing_alg_values_supported: ['RS256'],
+    });
+  });
+
   it('should refuse fragment.jwt with a plain query error (JARM §2.3.2)', async () => {
     const response = await new Browser().request(
       authorize.GET,
@@ -1621,6 +1669,28 @@ function idJagSection(): string {
 
     expect(response.status).toBe(400);
     expect(((await response.json()) as { error: string }).error).toBe('invalid_target');
+  });
+
+  it('should refuse to redeem an ID-JAG at the identity provider that issued it (draft §9.3)', async () => {
+    idJagConfig.allowedAudiences = [RESOURCE_AS];
+    const tokens = await issueTokens();
+    const issued = (await (await requestIdJag(tokens.id_token)).json()) as { access_token: string };
+    const response = await tokenRequest({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: issued.access_token,
+    });
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toBe('invalid_grant');
+  });
+
+  it('should advertise the identity chaining metadata', async () => {
+    const response = await new Browser().request(discovery.GET, '/.well-known/openid-configuration');
+
+    expect(await response.json()).toMatchObject({
+      identity_chaining_requested_token_types_supported: [ID_JAG_TYPE],
+      authorization_grant_profiles_supported: ['urn:ietf:params:oauth:grant-profile:id-jag'],
+    });
   });
 });
 `;
@@ -1854,6 +1924,44 @@ function jwtIntrospectionResponseSection(): string {
       token_introspection: { active: true, sub: 'testuser', client_id: 'conformance-client' },
     });
     expect(await verifiesWithPublishedKey(jwt)).toBe(true);
+  });
+
+  it('should disclose nothing about the token to a caller that is not its audience (RFC 9701 §5)', async () => {
+    const tokens = await issueTokens();
+    const response = await new Browser().post(
+      introspect.POST,
+      '/introspect',
+      { token: tokens.access_token },
+      {
+        Accept: 'application/token-introspection+jwt',
+        Authorization: basicAuthorization('conformance-basic-client', 'conformance-basic-secret'),
+      },
+    );
+    const jwt = await response.text();
+
+    expect(decodeJwt(jwt).payload).toMatchObject({ aud: 'conformance-basic-client' });
+    expect(decodeJwt(jwt).payload.token_introspection).toEqual({ active: false });
+  });
+
+  it('should not answer an unauthenticated request with a signed response (RFC 9701 §5)', async () => {
+    const tokens = await issueTokens();
+    const response = await new Browser().post(
+      introspect.POST,
+      '/introspect',
+      { token: tokens.access_token },
+      { Accept: 'application/token-introspection+jwt' },
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('Content-Type')).toBe('application/json');
+  });
+
+  it('should advertise the introspection signing algorithm', async () => {
+    const response = await new Browser().request(discovery.GET, '/.well-known/openid-configuration');
+
+    expect(((await response.json()) as Record<string, unknown>).introspection_signing_alg_values_supported).toEqual([
+      'RS256',
+    ]);
   });
 });
 `;

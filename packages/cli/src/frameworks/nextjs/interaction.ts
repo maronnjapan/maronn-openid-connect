@@ -572,6 +572,7 @@ export function nextJsConsentActionTemplate(
     ...(binding ? ['validateTransactionBinding'] : []),
     ...(jarm ? ['selectSigningKeyByAlg'] : []),
     'type AuthTransaction',
+    ...(jarm ? ['type SigningKey'] : []),
   ];
   const nextImports = binding
     ? `import { cookies } from 'next/headers';
@@ -633,27 +634,38 @@ ${indent}cookieStore.delete(bindingCookieName);
   const grantedScope = transaction.scope.split(' ').filter(Boolean);`;
   const responseUrlHelper = jarm
     ? `/**
+ * EXPERIMENTAL — JARM §3: the key a response JWT is signed with, for a
+ * transaction on which the authorize step recorded response_mode=query.jwt (the
+ * transaction store MUST persist fields it does not know about); undefined for
+ * the plain query response. The JWT declares alg RS256, so the key is picked by
+ * alg from the registered set — the key /.well-known/jwks.json publishes.
+ */
+async function jarmSigningKeyFor(
+  transaction: AuthTransaction & JarmAuthTransactionFields,
+): Promise<SigningKey | undefined> {
+  if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
+  return selectSigningKeyByAlg((await loadSigningKeys()).general.registered, 'RS256');
+}
+
+/**
  * The authorization response URL: the parameters in the query with iss
- * (RFC 9207 §2) — or, EXPERIMENTAL JARM §2.3.1, one signed JWT in the
- * \`response\` parameter when the authorize step recorded response_mode=query.jwt
- * on the transaction (the transaction store MUST persist fields it does not
- * know about). In JARM mode the JWT's iss claim replaces the iss parameter.
+ * (RFC 9207 §2) — or, EXPERIMENTAL JARM §2.3.1, with a JARM signing key, one
+ * signed JWT in the \`response\` parameter. In JARM mode the JWT's iss claim
+ * replaces the iss parameter.
  */
 async function authorizationResponseUrl(
-  transaction: AuthTransaction & JarmAuthTransactionFields,
+  transaction: AuthTransaction,
   parameters: Record<string, string | undefined>,
+  jarmSigningKey: SigningKey | undefined,
 ): Promise<string> {
-  if (transaction.jarmResponseMode === 'query.jwt') {
-    // JARM §3: the response JWT declares alg RS256, so the key is picked by alg
-    // from the registered set — the key /.well-known/jwks.json publishes.
-    const keys = await loadSigningKeys();
+  if (jarmSigningKey) {
     return buildJarmRedirectUrl(
       transaction.redirectUri,
       await createJarmResponseJwt({
         issuer: config.issuer,
         clientId: transaction.clientId,
         parameters,
-        signingKey: selectSigningKeyByAlg(keys.general.registered, 'RS256'),
+        signingKey: jarmSigningKey,
         lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
       }),
     );
@@ -681,6 +693,23 @@ function authorizationResponseUrl(
   return url.toString();
 }`;
   const responseAwait = jarm ? 'await ' : '';
+  const jarmKeyArgument = jarm ? ', jarmSigningKey' : '';
+  const jarmKeyStep = jarm
+    ? `
+  // EXPERIMENTAL — JARM: load the response signing key before anything is
+  // recorded, so a key outage stops here instead of after the code and the
+  // consent were stored.
+  let jarmSigningKey: SigningKey | undefined;
+  try {
+    jarmSigningKey = await jarmSigningKeyFor(transaction);
+  } catch {
+    redirect(
+      '/oidc-error?error=server_error&error_description=' +
+        encodeURIComponent('Failed to load the response signing key'),
+    );
+  }
+`
+    : '';
   return `'use server';
 
 ${nextImports}
@@ -698,7 +727,7 @@ export async function consentAction(formData: FormData): Promise<void> {
   const transactionId = String(formData.get('transaction_id') ?? '');
   const action = String(formData.get('action') ?? '');
 ${bindingSetup}
-  let transaction;
+  let transaction${jarm ? ': AuthTransaction & JarmAuthTransactionFields' : ''};
   try {
     transaction = await getAuthTransaction(transactionId, stores.transactionStore);
 ${bindingCheck}    validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
@@ -710,14 +739,14 @@ ${bindingCheck}    validateCsrfToken(transaction, String(formData.get('csrf_toke
     }
     throw error;
   }
-
+${jarmKeyStep}
   if (action === 'deny') {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
 ${clearBinding('    ')}    redirect(${responseAwait}authorizationResponseUrl(transaction, {
       error: 'access_denied',
       state: transaction.state,
-    }));
+    }${jarmKeyArgument}));
   }
 
   // OIDC Core 1.0 §3.1.2.4: "the Authorization Server MUST obtain an
@@ -775,7 +804,7 @@ ${grantedScope}
 ${clearBinding('  ')}  redirect(${responseAwait}authorizationResponseUrl(transaction, {
     code: authCodeData.code,
     state: responseParams.state,
-  }));
+  }${jarmKeyArgument}));
 }
 
 ${responseUrlHelper}

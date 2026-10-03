@@ -66,6 +66,18 @@ export default app;
 
 `config.ts` のデフォルト値（クライアント登録・issuer 等）はローカル検証専用です。実運用相当の検証では環境変数 / DB / KV から供給してください。
 
+### Next.js の場合
+
+Next.js は `app` ディレクトリへ直接生成します。生成物は App Router の Route Handler・ページ・Server Action そのものなので、組み込みの作業はありません。
+
+```bash
+pnpm dlx @maronn-openid-connect/cli generate nextjs --output ./src/app
+pnpm add @maronn-openid-connect/core
+OIDC_ISSUER=http://localhost:3000 pnpm next dev
+```
+
+issuer・クライアント・署名鍵・ストアは `src/app/_oidc-provider/provider.ts` が組み立てます。既定では環境変数から読むので、ローカル検証なら `OIDC_ISSUER` と `OIDC_CLIENTS_JSON` を渡すだけで動きます（詳細は [CLI Guide](../guides/cli/#nextjs) を参照）。
+
 ## 4. 動作を確認する
 
 起動後、Discovery メタデータで OP の設定を確認できます。
@@ -87,6 +99,8 @@ curl http://localhost:3000/.well-known/openid-configuration
 
 ```bash
 pnpm vitest run oidc-provider/conformance.test.ts
+# Next.js の場合
+pnpm vitest run src/app/_oidc-provider/conformance.test.ts
 ```
 
 ## Next Steps

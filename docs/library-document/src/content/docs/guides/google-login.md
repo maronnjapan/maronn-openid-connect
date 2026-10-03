@@ -49,7 +49,7 @@ applyOidc(app, {
 });
 ```
 
-生成される Next.js の `_oidc-provider/runtime.ts` と本リポジトリの samples は、`GOOGLE_CLIENT_ID` と `GOOGLE_HOSTED_DOMAIN` からこれを読みます。
+生成される Next.js の `_oidc-provider/provider.ts` と本リポジトリの samples は、`GOOGLE_CLIENT_ID` と `GOOGLE_HOSTED_DOMAIN` からこれを読みます。
 
 ## フロント側の設定
 
@@ -93,7 +93,7 @@ const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, lo
 | `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier` と `googleAccountResolver` を差し替えるオプション |
 | `conformance.test.ts` | ボタン描画・nonce・CSRF・検証失敗・hosted domain・JIT 登録からトークン発行と UserInfo までを固定する契約テスト |
-| Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`runtime.ts` の環境変数読み取り |
+| Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`_oidc-provider/provider.ts` の環境変数読み取り |
 
 Hono のメソッドガードと Fastify アダプタには `POST /login/google` が登録され、それ以外のメソッドは 405 になります。
 

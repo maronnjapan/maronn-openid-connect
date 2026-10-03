@@ -164,6 +164,9 @@ test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
     await page.getByRole('button', { name: 'Approve' }).click();
+    // The consent decision may navigate asynchronously (a Next.js Server Action
+    // redirects after its round trip), so wait for the callback before reading it.
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
 
     const callbackUrl = new URL(page.url());
     expect([...callbackUrl.searchParams.keys()].sort()).toEqual(['code', 'iss', 'state']);

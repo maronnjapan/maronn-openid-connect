@@ -27,7 +27,7 @@ import {
 
 /**
  * Default in-memory client resolver for quick local testing.
- * Project integrations should inject a D1/KV/env-backed resolver through the generated request context.
+ * The Next.js endpoints use the client resolver built in provider.ts instead.
  */
 export const clientResolver: ClientResolver & TokenClientResolver =
   createInMemoryClientResolver();

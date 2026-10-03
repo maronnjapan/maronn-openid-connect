@@ -8,8 +8,6 @@ import {
   type ProviderStores,
 } from './store';
 
-declare const process: { env: Record<string, string | undefined> };
-
 interface StoredRow {
   key: string;
   value: string;
@@ -161,25 +159,27 @@ const storageRegistry = globalThis as typeof globalThis & {
   __oidcNextJsProviderStores?: ProviderStores;
 };
 
+/**
+ * The provider stores, created once per process. Kept on globalThis because
+ * Next.js instantiates Route Handlers and Server Actions in separate module
+ * layers: without it, a transaction written by /authorize would be invisible
+ * to the login page. It also survives dev-mode hot reloads.
+ */
 export function createNextJsProviderStores(): ProviderStores {
   return (storageRegistry.__oidcNextJsProviderStores ??= createStores());
 }
 
 function createStores(): ProviderStores {
-  const redisUrl = readEnv('UPSTASH_REDIS_REST_URL');
-  const redisToken = readEnv('UPSTASH_REDIS_REST_TOKEN');
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (redisUrl && redisToken) {
     return createJsonProviderStores(new UpstashRedisJsonStoreBackend(redisUrl, redisToken));
   }
-  if (readEnv('VERCEL')) {
+  if (process.env.VERCEL) {
     throw new Error(
       'UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required on Vercel',
     );
   }
-  const sqlitePath = readEnv('OIDC_SQLITE_PATH') ?? '.data/oidc.sqlite';
+  const sqlitePath = process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite';
   return createJsonProviderStores(new SqliteJsonStoreBackend(sqlitePath));
-}
-
-function readEnv(name: string): string | undefined {
-  return process.env[name];
 }

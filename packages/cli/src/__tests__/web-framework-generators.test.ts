@@ -24,7 +24,7 @@ describe('Web-standard generated validation pipelines', () => {
       framework: 'nextjs',
       tokenRoute: new NextJsGenerator()
         .generate({ outputDir: './out', corePackageName: CORE_PKG })
-        .find((file) => file.path === '_oidc-provider/routes/token.ts')?.content ?? '',
+        .find((file) => file.path === 'token/route.ts')?.content ?? '',
     },
   ];
 
@@ -47,17 +47,31 @@ describe('Web-standard generated validation pipelines', () => {
 
 describe('Web-standard generated introspection caller restriction', () => {
   const generators = [
-    { framework: 'express', generator: new ExpressGenerator(), prefix: '' },
-    { framework: 'fastify', generator: new FastifyGenerator(), prefix: '' },
-    { framework: 'nextjs', generator: new NextJsGenerator(), prefix: '_oidc-provider/' },
+    {
+      framework: 'express',
+      generator: new ExpressGenerator(),
+      introspectionPath: 'routes/introspection.ts',
+      revocationPath: 'routes/revocation.ts',
+    },
+    {
+      framework: 'fastify',
+      generator: new FastifyGenerator(),
+      introspectionPath: 'routes/introspection.ts',
+      revocationPath: 'routes/revocation.ts',
+    },
+    {
+      framework: 'nextjs',
+      generator: new NextJsGenerator(),
+      introspectionPath: 'introspect/route.ts',
+      revocationPath: 'revoke/route.ts',
+    },
   ];
 
-  for (const { framework, generator, prefix } of generators) {
+  for (const { framework, generator, introspectionPath, revocationPath } of generators) {
     const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
     const introspectionRoute =
-      files.find((file) => file.path === `${prefix}routes/introspection.ts`)?.content ?? '';
-    const revocationRoute =
-      files.find((file) => file.path === `${prefix}routes/revocation.ts`)?.content ?? '';
+      files.find((file) => file.path === introspectionPath)?.content ?? '';
+    const revocationRoute = files.find((file) => file.path === revocationPath)?.content ?? '';
 
     it(`should reject a public client caller in the introspection route for ${framework}`, () => {
       // RFC 7662 §2.1 / RFC 9701 §5: a client registered with
@@ -102,7 +116,7 @@ describe('Web-standard generated id_token_hint handling', () => {
       framework: 'nextjs',
       authorizeRoute: new NextJsGenerator()
         .generate({ outputDir: './out', corePackageName: CORE_PKG })
-        .find((file) => file.path === '_oidc-provider/routes/authorize.ts')?.content ?? '',
+        .find((file) => file.path === 'authorize/route.ts')?.content ?? '',
     },
   ];
 
@@ -152,11 +166,6 @@ describe('Web-standard generated internal redirect origin', () => {
       files: new FastifyGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
       prefix: '',
     },
-    {
-      framework: 'nextjs',
-      files: new NextJsGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
-      prefix: '_oidc-provider/',
-    },
   ];
 
   for (const { framework, files, prefix } of generatedInternalRedirects) {
@@ -197,11 +206,6 @@ describe('Web-standard generated consent decision allowlist', () => {
       framework: 'fastify',
       files: new FastifyGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
       prefix: '',
-    },
-    {
-      framework: 'nextjs',
-      files: new NextJsGenerator().generate({ outputDir: './out', corePackageName: CORE_PKG }),
-      prefix: '_oidc-provider/',
     },
   ];
 
@@ -582,6 +586,7 @@ describe('FastifyGenerator', () => {
 describe('NextJsGenerator', () => {
   const generator = new NextJsGenerator();
   const files = generator.generate({ outputDir: './out', corePackageName: CORE_PKG });
+  const fileContent = (path: string): string => files.find((f) => f.path === path)?.content ?? '';
 
   describe('metadata', () => {
     it('should have name "nextjs"', () => {
@@ -594,41 +599,24 @@ describe('NextJsGenerator', () => {
   });
 
   describe('generated files', () => {
-    it('should generate a shared Web standard provider under a private App Router folder', () => {
+    it('should generate a Route Handler per endpoint and pages for the screens', () => {
       expect(files.map((f) => f.path).sort()).toEqual([
         '.well-known/jwks.json/route.ts',
         '.well-known/openid-configuration/route.ts',
-        '_oidc-provider/app.ts',
         '_oidc-provider/config.ts',
         '_oidc-provider/conformance.test.ts',
-        '_oidc-provider/next.ts',
-        '_oidc-provider/pages/authorize.ts',
-        '_oidc-provider/pages/consent.ts',
-        '_oidc-provider/pages/errors.ts',
-        '_oidc-provider/pages/login.ts',
-        '_oidc-provider/pages/respond.ts',
+        '_oidc-provider/http.ts',
+        '_oidc-provider/provider.ts',
         '_oidc-provider/resolvers.ts',
-        '_oidc-provider/routes/authorize.ts',
-        '_oidc-provider/routes/consent.ts',
-        '_oidc-provider/routes/discovery.ts',
-        '_oidc-provider/routes/introspection.ts',
-        '_oidc-provider/routes/jwks.ts',
-        '_oidc-provider/routes/login.ts',
-        '_oidc-provider/routes/revocation.ts',
-        '_oidc-provider/routes/token.ts',
-        '_oidc-provider/routes/userinfo.ts',
-        '_oidc-provider/runtime.ts',
         '_oidc-provider/storage-backend.ts',
         '_oidc-provider/store.ts',
-        '_oidc-provider/views.ts',
-        '_oidc-provider/web-router.ts',
         'authorize/route.ts',
         'consent/actions.ts',
         'consent/page.tsx',
         'introspect/route.ts',
         'login/actions.ts',
         'login/page.tsx',
-        'oidc-error/error.tsx',
+        'login/session.ts',
         'oidc-error/page.tsx',
         'revoke/route.ts',
         'token/route.ts',
@@ -636,120 +624,141 @@ describe('NextJsGenerator', () => {
       ]);
     });
 
-    it('should generate a Next.js Route Handler adapter using Web Request and Response', () => {
-      const file = files.find((f) => f.path === '_oidc-provider/next.ts');
-      expect(file?.content).toContain("import { createApp, type OidcProviderOptions } from './app'");
-      expect(file?.content).toContain('export function createOidcRouteHandlers(options: NextOidcProviderOptions): NextOidcRouteHandlers');
-      expect(file?.content).toContain('const oidc = createApp(options)');
-      expect(file?.content).toContain('oidc.request(rebaseRequestOrigin(request, options.config?.issuer))');
-      expect(file?.content).toContain('function rebaseRequestOrigin(request: Request, issuer: string | undefined): Request');
-      expect(file?.content).not.toContain("from 'next");
+    it('should export the HTTP methods from each Route Handler itself', () => {
+      const authorize = fileContent('authorize/route.ts');
+      const token = fileContent('token/route.ts');
+
+      expect(authorize).toContain('export async function GET(request: NextRequest): Promise<Response> {');
+      expect(authorize).toContain('export async function POST(request: NextRequest): Promise<Response> {');
+      expect(token).toContain('export async function POST(request: Request): Promise<Response> {');
+      expect(token).toContain('export function OPTIONS(request: Request): Response {');
+      expect(token).toContain("export const dynamic = 'force-dynamic';");
+      expect(token).toContain("export const runtime = 'nodejs';");
     });
 
-    it('should generate route files that export only the supported HTTP methods', () => {
-      const authorize = files.find((f) => f.path === 'authorize/route.ts');
-      expect(authorize?.content).toBe(`import { oidcHandlers } from '../_oidc-provider/runtime';
+    it('should read the issuer, clients and signing key id from the environment in provider.ts', () => {
+      const provider = fileContent('_oidc-provider/provider.ts');
 
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
-
-export const GET = oidcHandlers.GET;
-export const POST = oidcHandlers.POST;
-export const OPTIONS = oidcHandlers.OPTIONS;
-`);
-
-      const token = files.find((f) => f.path === 'token/route.ts');
-      expect(token?.content).toBe(`import { oidcHandlers } from '../_oidc-provider/runtime';
-
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
-
-export const POST = oidcHandlers.POST;
-export const OPTIONS = oidcHandlers.OPTIONS;
-`);
+      expect(provider).toContain(
+        "issuer: process.env.OIDC_ISSUER ?? process.env.ISSUER ?? 'http://localhost:3000',",
+      );
+      expect(provider).toContain('const encoded = process.env.OIDC_CLIENTS_JSON;');
+      expect(provider).toContain("publicJwk.kid = process.env.OIDC_SIGNING_KEY_ID ?? 'nextjs-rs256-key';");
+      expect(provider).toContain('export const stores = createNextJsProviderStores();');
     });
 
-    // RFC 8414 §3.2 / RFC 9111 §5.2: the discovery route under the private App
-    // Router folder advertises a 3600s freshness lifetime, symmetric with JWKS.
-    it('should set Cache-Control public, max-age=3600 on discovery response', () => {
-      const file = files.find((f) => f.path === '_oidc-provider/routes/discovery.ts');
-      expect(file?.content).toContain("c.header('Cache-Control', 'public, max-age=3600')");
-    });
-
-    it('should generate a runtime configuration module for quick local testing', () => {
-      const file = files.find((f) => f.path === '_oidc-provider/runtime.ts');
-      expect(file?.content).toContain('createCachedSigningKeyProvider');
-      expect(file?.content).toContain('createInMemoryClientResolver');
-      expect(file?.content).toContain('OIDC_CLIENTS_JSON');
-      expect(file?.content).toContain('OIDC_SIGNING_KEY_ID');
-      expect(file?.content).toContain('createNextJsProviderStores');
-      expect(file?.content).toContain('storage: providerStores');
-      expect(file?.content).toContain('export const oidcProviderOptions = createOidcProviderOptions()');
-      expect(file?.content).toContain('export const oidcHandlers = createOidcRouteHandlers(oidcProviderOptions)');
+    // Route Handlers and Server Actions are bundled into separate module layers,
+    // so the key the JWKS endpoint publishes must be the instance a Server Action
+    // signs with.
+    it('should share the signing key provider between module layers through globalThis', () => {
+      expect(fileContent('_oidc-provider/provider.ts')).toContain(
+        'const signingKeyProvider: SigningKeyProvider = (signingKeyRegistry.__oidcSigningKeyProvider ??=',
+      );
     });
 
     it('should generate Upstash Redis with a local SQLite fallback', () => {
-      const file = files.find((f) => f.path === '_oidc-provider/storage-backend.ts');
-      const content = file?.content ?? '';
+      const content = fileContent('_oidc-provider/storage-backend.ts');
 
       expect(content).toContain("from 'node:sqlite'");
       expect(content).toContain('class UpstashRedisJsonStoreBackend');
-      expect(content).toContain('UPSTASH_REDIS_REST_URL');
-      expect(content).toContain('UPSTASH_REDIS_REST_TOKEN');
-      expect(content).toContain("readEnv('VERCEL')");
-      expect(content).toContain("readEnv('OIDC_SQLITE_PATH') ?? '.data/oidc.sqlite'");
+      expect(content).toContain('const redisUrl = process.env.UPSTASH_REDIS_REST_URL;');
+      expect(content).toContain('const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;');
+      expect(content).toContain('if (process.env.VERCEL) {');
+      expect(content).toContain("const sqlitePath = process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite';");
       expect(content).toContain("private readonly namespace = 'maronn-openid-connect:'");
     });
 
-    // OAuth 2.1 §4.1.2 / §4.3.1: Next.js also uses the Web-standard generated OP,
-    // so the private provider folder must include the same reuse-cascade contract.
-    it('should generate the authorization-code / refresh-token reuse cascade conformance test', () => {
-      const file = files.find((f) => f.path === '_oidc-provider/conformance.test.ts');
-      const content = file?.content ?? '';
-      expect(content).toContain('Authorization Code & Refresh Token reuse (revoke-cascade contract)');
-      expect(content).toContain('should reject authorization code reuse and revoke every token from that grant');
-      expect(content).toContain('should reject rotated refresh token reuse and revoke every token from that grant');
-      expect(content).toContain("expect((await reuse.json()).error).toBe('invalid_grant')");
-    });
-
-    // OIDC Core 1.0 §3.1.2.2: non-redirect authorization errors are handed to a
-    // Next.js-native error page instead of returning HTML from the route handler.
-    it('should wire authorizationErrorRedirectPath to the /oidc-error App Router page', () => {
-      const runtime = files.find((f) => f.path === '_oidc-provider/runtime.ts');
-      expect(runtime?.content).toContain("authorizationErrorRedirectPath: '/oidc-error'");
-
-      // Safety: only an OP-internal root-relative path may be used as the redirect
-      // target, so a misconfigured absolute / protocol-relative value can never
-      // turn a non-redirect authorization error into an open redirect.
-      const authorize = files.find((f) => f.path === '_oidc-provider/pages/authorize.ts');
-      expect(authorize?.content).toContain('return renderAuthorizationErrorPage(c, outcome);');
-      const errorPage = files.find((f) => f.path === '_oidc-provider/pages/errors.ts');
-      expect(errorPage?.content).toContain(
-        "errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')",
+    // RFC 8414 §3.2 / RFC 9111 §5.2: discovery advertises a 3600s freshness
+    // lifetime, symmetric with JWKS.
+    it('should set Cache-Control public, max-age=3600 on discovery response', () => {
+      expect(fileContent('.well-known/openid-configuration/route.ts')).toContain(
+        "{ headers: { 'Cache-Control': 'public, max-age=3600' } },",
       );
-      expect(errorPage?.content).toContain("return c.redirect(`${errorPagePath}?${query.toString()}`, 303);");
-
-      const page = files.find((f) => f.path === 'oidc-error/page.tsx');
-      // The page throws so the App Router error boundary renders the error UI.
-      expect(page?.content).toContain('export const dynamic = \'force-dynamic\'');
-      expect(page?.content).toContain("throw new Error(`Authorization error: ${error ?? 'invalid_request'}`)");
-
-      const boundary = files.find((f) => f.path === 'oidc-error/error.tsx');
-      // error.tsx is a Client Component reading the OAuth error from the URL.
-      expect(boundary?.content).toContain("'use client'");
-      expect(boundary?.content).toContain("import { useSearchParams } from 'next/navigation'");
-      expect(boundary?.content).toContain("searchParams.get('error')");
-      expect(boundary?.content).toContain("searchParams.get('error_description')");
     });
 
-    // The generated conformance test pins the Next.js-specific 303 redirect so a
-    // regression (reverting to HTML, or leaking the unregistered redirect_uri) fails.
-    it('should pin the 303 redirect to /oidc-error in the conformance test', () => {
-      const conformance = files.find((f) => f.path === '_oidc-provider/conformance.test.ts');
-      expect(conformance?.content).toContain("config: { authorizationErrorRedirectPath: '/oidc-error' }");
-      expect(conformance?.content).toContain('expect(res.status).toBe(303)');
-      expect(conformance?.content).toContain(
-        "'/oidc-error?error=invalid_request&error_description=redirect_uri+not+registered'",
+    // OIDC Discovery 1.0 §3 / RFC 9700 §2.1: the OP's own origin comes from
+    // config, never from the request URL some platforms derive from Host.
+    it('should build the login and consent redirects on config.issuer', () => {
+      const authorize = fileContent('authorize/route.ts');
+
+      expect(authorize).toContain('const url = new URL(path, config.issuer);');
+      expect(authorize).toContain("return redirectToScreen('/login', transactionId);");
+      expect(authorize).toContain("return redirectToScreen('/consent', transactionId);");
+      expect(authorize).not.toContain('request.url');
+    });
+
+    // OIDC Core 1.0 §3.1.2.2: an error that must not reach the client is shown
+    // on the OP's own error page.
+    it('should send non-redirectable authorization errors to the /oidc-error page', () => {
+      const authorize = fileContent('authorize/route.ts');
+
+      expect(authorize).toContain("const url = new URL('/oidc-error', config.issuer);");
+      expect(authorize).toContain('return NextResponse.redirect(url, 303);');
+      expect(fileContent('oidc-error/page.tsx')).toContain(
+        'export default async function OidcErrorPage({ searchParams }: OidcErrorPageProps) {',
+      );
+    });
+
+    // The Route Handler answers non-redirectable errors itself, so the shared
+    // page layer's redirect-path hook is not generated.
+    it('should leave authorizationErrorRedirectPath out of the generated config', () => {
+      expect(fileContent('_oidc-provider/config.ts')).not.toContain('authorizationErrorRedirectPath');
+    });
+  });
+
+  describe('contract test', () => {
+    const conformance = fileContent('_oidc-provider/conformance.test.ts');
+
+    it('should drive the Route Handlers, pages and Server Actions with the Next.js request APIs replaced', () => {
+      expect(conformance).toContain("vi.mock('next/headers', () => ({");
+      expect(conformance).toContain("vi.mock('next/navigation', () => ({");
+      expect(conformance).toContain("import * as authorize from '../authorize/route';");
+      expect(conformance).toContain("import LoginPage from '../login/page';");
+      expect(conformance).toContain("import { consentAction } from '../consent/actions';");
+      expect(conformance).toContain("process.env.OIDC_SQLITE_PATH = ':memory:';");
+    });
+
+    it('should generate the internal redirect origin contract', () => {
+      expect(conformance).toContain(
+        "describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)', () => {",
+      );
+      expect(conformance).toContain(
+        "it('should ignore the Host header when building the login redirect Location', async () => {",
+      );
+      expect(conformance).toContain(
+        "it('should keep the login redirect Location on the issuer origin for a subpath issuer', async () => {",
+      );
+    });
+
+    it('should generate the consent decision contract', () => {
+      expect(conformance).toContain("describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {");
+      expect(conformance).toContain(
+        "it('should not issue an authorization code when the consent form omits the action parameter', async () => {",
+      );
+      expect(conformance).toContain(
+        "it('should not issue an authorization code when the consent form sends an empty action value', async () => {",
+      );
+      expect(conformance).toContain(
+        "it('should not issue an authorization code when the consent form sends an unknown action value', async () => {",
+      );
+      expect(conformance).toContain(
+        "it('should not record consent via recordConsent when the action value is unrecognized', async () => {",
+      );
+    });
+
+    // OAuth 2.1 §4.1.2 / §4.3.1: replays revoke the whole grant.
+    it('should generate the authorization code and refresh token reuse contracts', () => {
+      expect(conformance).toContain(
+        "it('should refuse a reused code and revoke the tokens issued from it (OAuth 2.1 §4.1.2)', async () => {",
+      );
+      expect(conformance).toContain(
+        "it('should rotate the refresh token and revoke the family on reuse (OAuth 2.1 §4.3.1)', async () => {",
+      );
+    });
+
+    it('should pin the 303 redirect to /oidc-error for an unregistered redirect_uri', () => {
+      expect(conformance).toContain(
+        "ISSUER + '/oidc-error?error=invalid_request&error_description=redirect_uri+not+registered',",
       );
     });
   });
@@ -761,92 +770,106 @@ export const OPTIONS = oidcHandlers.OPTIONS;
     });
 
     it('should generate a login page as a React Server Component using a Server Action', () => {
-      const page = files.find((f) => f.path === 'login/page.tsx');
-      expect(page?.content).toContain('export default async function LoginPage');
-      expect(page?.content).toContain("import { loginAction } from './actions'");
-      expect(page?.content).toContain('<form action={loginAction}>');
+      const page = fileContent('login/page.tsx');
+
+      expect(page).toContain('export default async function LoginPage({ searchParams }: LoginPageProps) {');
+      expect(page).toContain("import { loginAction } from './actions';");
+      expect(page).toContain('<form action={loginAction}>');
       // E2E selectors must keep working against the rendered React markup.
-      expect(page?.content).toContain('<label htmlFor="username">Username:</label>');
-      expect(page?.content).toContain('<label htmlFor="password">Password:</label>');
-      expect(page?.content).toContain('<button type="submit">Login</button>');
-      expect(page?.content).toContain("export const dynamic = 'force-dynamic'");
+      expect(page).toContain('<label htmlFor="username">Username:</label>');
+      expect(page).toContain('<label htmlFor="password">Password:</label>');
+      expect(page).toContain('<button type="submit">Login</button>');
+      expect(page).toContain("export const dynamic = 'force-dynamic';");
     });
 
-    it('should generate a login Server Action that runs the login logic and sets the session cookie', () => {
-      const actions = files.find((f) => f.path === 'login/actions.ts');
-      expect(actions?.content).toContain("'use server'");
-      expect(actions?.content).toContain("import { redirect } from 'next/navigation'");
-      expect(actions?.content).toContain("import { cookies } from 'next/headers'");
-      expect(actions?.content).toContain('export async function loginAction(formData: FormData): Promise<void>');
-      expect(actions?.content).toContain('validateCsrfToken(transaction, csrfToken)');
-      expect(actions?.content).toContain('userStore.authenticate(username, password)');
-      expect(actions?.content).toContain('handleLoginFailure(');
-      expect(actions?.content).toContain('cookieStore.set(SESSION_COOKIE_NAME, sessionId, {');
-      expect(actions?.content).toContain("redirect(`/consent?transaction_id=${encodeURIComponent(transactionId)}`)");
+    it('should generate a login Server Action that checks the credentials and starts the session', () => {
+      const actions = fileContent('login/actions.ts');
+
+      expect(actions).toContain("'use server';");
+      expect(actions).toContain("import { redirect } from 'next/navigation';");
+      expect(actions).toContain('export async function loginAction(formData: FormData): Promise<void> {');
+      expect(actions).toContain("validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));");
+      expect(actions).toContain('const user = await stores.userStore.authenticate(');
+      expect(actions).toContain(
+        'const failure = await handleLoginFailure(transactionId, transaction, stores.transactionStore);',
+      );
+      expect(actions).toContain('await startSession(transactionId, transaction, user.sub);');
+      expect(actions).toContain("redirect(`/consent?transaction_id=${encodeURIComponent(transactionId)}`);");
+    });
+
+    // OIDC Core 1.0 §3.1.2.3: the OP session cookie is HttpOnly, Secure and
+    // SameSite=Lax (Strict would drop it on the redirect back from the client).
+    it('should set the session cookie through next/headers in login/session.ts', () => {
+      const session = fileContent('login/session.ts');
+
+      expect(session).toContain("import { cookies } from 'next/headers';");
+      expect(session).toContain(`  cookieStore.set(SESSION_COOKIE_NAME, sessionId, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+  });`);
     });
 
     it('should generate a consent page as a React Server Component using a Server Action', () => {
-      const page = files.find((f) => f.path === 'consent/page.tsx');
-      expect(page?.content).toContain('export default async function ConsentPage');
-      expect(page?.content).toContain("import { consentAction } from './actions'");
-      expect(page?.content).toContain('<form action={consentAction}>');
-      expect(page?.content).toContain('<strong>{transaction.clientId}</strong>');
-      expect(page?.content).toContain('<li key={scope}>{scope}</li>');
-      expect(page?.content).toContain('value="approve"');
-      expect(page?.content).toContain('value="deny"');
+      const page = fileContent('consent/page.tsx');
+
+      expect(page).toContain('export default async function ConsentPage({ searchParams }: ConsentPageProps) {');
+      expect(page).toContain("import { consentAction } from './actions';");
+      expect(page).toContain('<form action={consentAction}>');
+      expect(page).toContain('<strong>{transaction.clientId}</strong>');
+      expect(page).toContain('<li key={scope}>{scope}</li>');
+      expect(page).toContain('value="approve"');
+      expect(page).toContain('value="deny"');
     });
 
-    it('should generate a consent Server Action that issues a code and records consent', () => {
-      const actions = files.find((f) => f.path === 'consent/actions.ts');
-      expect(actions?.content).toContain("'use server'");
-      expect(actions?.content).toContain('export async function consentAction(formData: FormData): Promise<void>');
-      expect(actions?.content).toContain("import { oidcProviderOptions } from '../_oidc-provider/runtime'");
-      expect(actions?.content).toContain('completeAuthTransaction(');
-      expect(actions?.content).toContain('createAuthorizationCode({');
-      // offline_access の可否は authorize の applyOfflineAccessPolicy で確定済みなので
-      // Server Action 側で独自フラグを見て再フィルタしない。
-      expect(actions?.content).not.toContain('offlineAccessAllowed');
-      expect(actions?.content).toContain(
-        "const grantedScope = transaction.scope.split(' ').filter(Boolean);",
-      );
+    it('should generate a consent Server Action that issues a code and records consent and the grant', () => {
+      const actions = fileContent('consent/actions.ts');
+
+      expect(actions).toContain("'use server';");
+      expect(actions).toContain('export async function consentAction(formData: FormData): Promise<void> {');
+      expect(actions).toContain("import { config, resolvers, stores } from '../_oidc-provider/provider';");
+      expect(actions).toContain('completeAuthTransaction(');
+      expect(actions).toContain('createAuthorizationCode({');
+      // offline_access was settled by applyOfflineAccessPolicy at /authorize, so the
+      // Server Action grants the transaction's scope as-is.
+      expect(actions).toContain("const grantedScope = transaction.scope.split(' ').filter(Boolean);");
       // online refresh token をこのログインセッションへ束縛するため sessionId を引き継ぐ。
-      expect(actions?.content).toContain('sessionId: session.sessionId,');
-      expect(actions?.content).toContain('consentResolver.recordConsent?.(');
+      expect(actions).toContain('sessionId: session.sessionId,');
+      expect(actions).toContain(
+        'await resolvers.consentResolver.recordConsent?.(session.subject, transaction.clientId, grantedScope);',
+      );
+      expect(actions).toContain(
+        'await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);',
+      );
       // RFC 9207 §2: iss on both success and deny responses.
-      expect(actions?.content).toContain("successUrl.searchParams.set('iss', issuer)");
-      expect(actions?.content).toContain("denyUrl.searchParams.set('iss', issuer)");
+      expect(actions).toContain("url.searchParams.set('iss', config.issuer);");
     });
 
     // OIDC Core 1.0 §3.1.2.4: the Server Action mints the authorization code, so it
-    // must obtain the decision on the same allowlist as the route handlers. §3.1.2.6:
-    // an unrecognized value is not access_denied, so it stops at the OP's own error
-    // page instead of returning to the client.
+    // obtains the decision on an allowlist. §3.1.2.6: an unrecognized value is not
+    // access_denied, so it stops at the OP's own error page instead of returning
+    // to the client.
     it('should approve only the allowlisted action value in the consent Server Action', () => {
-      const actions = files.find((f) => f.path === 'consent/actions.ts');
-      const page = files.find((f) => f.path === 'consent/page.tsx');
+      const actions = fileContent('consent/actions.ts');
 
-      expect(actions?.content).toContain("if (action !== 'approve') {");
-      expect(actions?.content).toContain(
-        "'/oidc-error?error=invalid_request&error_description=' +",
-      );
-      expect(actions?.content).toContain(
+      expect(actions).toContain("if (action !== 'approve') {");
+      expect(actions).toContain("'/oidc-error?error=invalid_request&error_description=' +");
+      expect(actions).toContain(
         "encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.')",
       );
-      expect(page?.content).toContain('<button type="submit" name="action" value="approve">');
+      expect(fileContent('consent/page.tsx')).toContain('<button type="submit" name="action" value="approve">');
     });
   });
 });
 
 // The view API extension (ViewResult / renderView) must reach every Web-standard
 // generator so a custom view can return either an HTML string or a framework-native
-// Response. express/fastify keep the same routes/views.ts paths; Next.js mirrors
-// them under _oidc-provider/ (its login/consent UI is JSX, but the internal router
-// still routes login/consent through views).
+// Response. Next.js is not one of them: its screens are React pages.
 describe('ViewResult / renderView across Web-standard generators', () => {
   const cases = [
     { name: 'express', generator: new ExpressGenerator(), prefix: '' },
     { name: 'fastify', generator: new FastifyGenerator(), prefix: '' },
-    { name: 'nextjs', generator: new NextJsGenerator(), prefix: '_oidc-provider/' },
   ];
 
   for (const { name, generator, prefix } of cases) {

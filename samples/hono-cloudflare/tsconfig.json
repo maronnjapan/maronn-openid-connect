@@ -5,6 +5,8 @@
     "types": ["@cloudflare/workers-types"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "declaration": false,
     "sourceMap": true,
     "outDir": "./dist",

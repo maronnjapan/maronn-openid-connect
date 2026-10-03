@@ -9127,12 +9127,15 @@ revocationApp.post('/', async (c) => {
 `;
 }
 
-export function viewsTemplate(
+/**
+ * The view parameter types (LoginPageParams, ConsentPageParams, ...) every
+ * framework's views module declares. Shared so the Hono JSX views (views.tsx)
+ * and the string views (views.ts) keep one contract. EXPERIMENTAL feature
+ * types collapse to '' when their feature is off.
+ */
+export function viewParamTypesTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
-  // EXPERIMENTAL (RFC 8628 §3.3): the four device pages are generated only with
-  // --enable device-authorization-grant. Every interpolation below collapses to
-  // '' when the feature is off, so the default views.ts is unchanged byte for byte.
   const deviceParamTypes = features.deviceAuthorizationGrant
     ? `
 export interface DeviceVerificationPageParams {
@@ -9185,6 +9188,127 @@ export interface DeviceCompletedPageParams {
 }
 `
     : '';
+  const cibaParamTypes = features.ciba
+    ? `
+export interface CibaLoginPageParams {
+  /** Login transaction id; carried through as a hidden field. */
+  loginTransactionId: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts for this login transaction */
+  remainingAttempts?: number;
+}
+
+export interface CibaPendingRequestParams {
+  /** auth_req_id; carried through as a hidden field of the decision form. */
+  authReqId: string;
+  /** Client that asked for the backchannel authentication */
+  clientId: string;
+  /** Scopes the client asked for */
+  scopes: string[];
+  /**
+   * CIBA Core 1.0 §7.1 binding_message: shown so the user can compare it with
+   * the message on the consumption device — the visual check that they are
+   * approving THEIR transaction and not someone else's. Client-supplied text:
+   * it MUST be escaped before rendering.
+   */
+  bindingMessage?: string;
+  /** Seconds until this request expires */
+  expiresInSeconds: number;
+  /** Per-record CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+}
+
+export interface CibaPendingRequestsPageParams {
+  /** Pending backchannel authentication requests addressed to the signed-in user */
+  requests: CibaPendingRequestParams[];
+}
+
+export interface CibaCompletedPageParams {
+  /** true when the user approved, false when they denied */
+  approved: boolean;
+  /** Client the decision applied to */
+  clientId: string;
+}
+`
+    : '';
+  const rpInitiatedLogoutParamTypes = features.rpInitiatedLogout
+    ? `
+export interface LogoutConfirmationPageParams {
+  /** CSRF token (must be included as hidden form field of the approve POST) */
+  csrfToken: string;
+}
+
+/**
+ * Parameters of the logged-out page. Deliberately empty: the completed screen
+ * shows no End-User or client identifier (whoever sees the screen learns
+ * nothing), and its wording never depends on whether anything was actually
+ * deleted — varying it would make the page a session-existence oracle.
+ */
+export interface LogoutCompletedPageParams {}
+`
+    : '';
+  const googleLoginPageParam = features.googleLogin
+    ? `  /**
+   * EXTENSION (google-login): GIS configuration for "Sign in with Google"
+   * (redirect mode) — the g_id_onload attributes built by
+   * buildGoogleSignInAttributes(): client ID, data-ux_mode="redirect", the
+   * login_uri Google posts the ID token to, and the nonce bound to this
+   * transaction. The view owns the markup (see defaultLoginPage). Undefined
+   * when Google login is not configured; only the password form is shown then.
+   */
+  googleSignIn?: GoogleSignInAttributes;
+`
+    : '';
+  return `export interface LoginPageParams {
+  /** Transaction ID for the auth flow */
+  transactionId: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Error message from a previous failed attempt */
+  error?: string;
+  /** Number of remaining login attempts */
+  remainingAttempts?: number;
+  /**
+   * OIDC Core 1.0 §3.1.2.1 login_hint: untrusted external value the OP MAY use to
+   * pre-fill the login form. Treated as a hint only (initial display); it MUST be
+   * HTML-attribute escaped before rendering since it is unauthenticated input.
+   */
+  loginHint?: string;
+${googleLoginPageParam}}
+
+export interface ConsentPageParams {
+  /** Transaction ID for the auth flow */
+  transactionId: string;
+  /** CSRF token (must be included as hidden form field) */
+  csrfToken: string;
+  /** Scopes requested by the client */
+  scopes: string[];
+  /** Client ID requesting authorization */
+  clientId: string;
+}
+
+export interface ErrorPageParams {
+  /** Error message to display (OAuth error code for authorization errors) */
+  error: string;
+  /** Optional human-readable detail (OAuth error_description) */
+  errorDescription?: string;
+  /** HTTP status code */
+  statusCode: number;
+}
+${deviceParamTypes}${cibaParamTypes}${rpInitiatedLogoutParamTypes}
+`;
+}
+
+/**
+ * The Views interface every framework's views module declares (see
+ * viewParamTypesTemplate). Each member returns the module's own ViewResult.
+ */
+export function viewsInterfaceTemplate(
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
   const deviceViewsMembers = features.deviceAuthorizationGrant
     ? `  /** EXPERIMENTAL (RFC 8628 §3.3): render the user_code entry form */
   deviceVerificationPage(params: DeviceVerificationPageParams): ViewResult;
@@ -9196,6 +9320,39 @@ export interface DeviceCompletedPageParams {
   deviceCompletedPage(params: DeviceCompletedPageParams): ViewResult;
 `
     : '';
+  const cibaViewsMembers = features.ciba
+    ? `  /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
+  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
+  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
+  /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
+  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
+`
+    : '';
+  const rpInitiatedLogoutViewsMembers = features.rpInitiatedLogout
+    ? `  /** EXPERIMENTAL (RP-Initiated Logout 1.0 §2): render the logout confirmation screen */
+  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;
+  /** EXPERIMENTAL (RP-Initiated Logout 1.0): render the logged-out screen */
+  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
+`
+    : '';
+  return `export interface Views {
+  /** Render the login page (and login error page when error is set) */
+  loginPage(params: LoginPageParams): ViewResult;
+  /** Render the consent/authorization page */
+  consentPage(params: ConsentPageParams): ViewResult;
+  /** Render a generic error page */
+  errorPage(params: ErrorPageParams): ViewResult;
+${deviceViewsMembers}${cibaViewsMembers}${rpInitiatedLogoutViewsMembers}}
+`;
+}
+
+export function viewsTemplate(
+  features: OidcFeatureConfig = DEFAULT_FEATURES,
+): string {
+  // EXPERIMENTAL (RFC 8628 §3.3): the four device pages are generated only with
+  // --enable device-authorization-grant. Every interpolation below collapses to
+  // '' when the feature is off, so the default views.ts is unchanged byte for byte.
   const deviceDefaultViews = features.deviceAuthorizationGrant
     ? `function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): string {
   const errorHtml = params.error
@@ -9309,61 +9466,6 @@ function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): string {
   // EXPERIMENTAL (CIBA Core 1.0): the three CIBA pages are generated only with
   // --enable ciba. Every interpolation below collapses to '' when the feature
   // is off, so the default views.ts is unchanged byte for byte.
-  const cibaParamTypes = features.ciba
-    ? `
-export interface CibaLoginPageParams {
-  /** Login transaction id; carried through as a hidden field. */
-  loginTransactionId: string;
-  /** CSRF token (must be included as hidden form field) */
-  csrfToken: string;
-  /** Error message from a previous failed attempt */
-  error?: string;
-  /** Number of remaining login attempts for this login transaction */
-  remainingAttempts?: number;
-}
-
-export interface CibaPendingRequestParams {
-  /** auth_req_id; carried through as a hidden field of the decision form. */
-  authReqId: string;
-  /** Client that asked for the backchannel authentication */
-  clientId: string;
-  /** Scopes the client asked for */
-  scopes: string[];
-  /**
-   * CIBA Core 1.0 §7.1 binding_message: shown so the user can compare it with
-   * the message on the consumption device — the visual check that they are
-   * approving THEIR transaction and not someone else's. Client-supplied text:
-   * it MUST be escaped before rendering.
-   */
-  bindingMessage?: string;
-  /** Seconds until this request expires */
-  expiresInSeconds: number;
-  /** Per-record CSRF token (must be included as hidden form field) */
-  csrfToken: string;
-}
-
-export interface CibaPendingRequestsPageParams {
-  /** Pending backchannel authentication requests addressed to the signed-in user */
-  requests: CibaPendingRequestParams[];
-}
-
-export interface CibaCompletedPageParams {
-  /** true when the user approved, false when they denied */
-  approved: boolean;
-  /** Client the decision applied to */
-  clientId: string;
-}
-`
-    : '';
-  const cibaViewsMembers = features.ciba
-    ? `  /** EXPERIMENTAL (CIBA Core 1.0): render the sign-in form of the authentication device UI */
-  cibaLoginPage(params: CibaLoginPageParams): ViewResult;
-  /** EXPERIMENTAL (CIBA Core 1.0): render the pending-requests approval screen */
-  cibaPendingRequestsPage(params: CibaPendingRequestsPageParams): ViewResult;
-  /** EXPERIMENTAL (CIBA Core 1.0): render the decision-recorded screen */
-  cibaCompletedPage(params: CibaCompletedPageParams): ViewResult;
-`
-    : '';
   const cibaDefaultViews = features.ciba
     ? `function defaultCibaLoginPage(params: CibaLoginPageParams): string {
   const errorHtml = params.error
@@ -9476,29 +9578,6 @@ function defaultCibaCompletedPage(params: CibaCompletedPageParams): string {
   // only with --enable rp-initiated-logout. Every interpolation below collapses
   // to '' when the feature is off, so the default views.ts is unchanged byte
   // for byte.
-  const rpInitiatedLogoutParamTypes = features.rpInitiatedLogout
-    ? `
-export interface LogoutConfirmationPageParams {
-  /** CSRF token (must be included as hidden form field of the approve POST) */
-  csrfToken: string;
-}
-
-/**
- * Parameters of the logged-out page. Deliberately empty: the completed screen
- * shows no End-User or client identifier (whoever sees the screen learns
- * nothing), and its wording never depends on whether anything was actually
- * deleted — varying it would make the page a session-existence oracle.
- */
-export interface LogoutCompletedPageParams {}
-`
-    : '';
-  const rpInitiatedLogoutViewsMembers = features.rpInitiatedLogout
-    ? `  /** EXPERIMENTAL (RP-Initiated Logout 1.0 §2): render the logout confirmation screen */
-  logoutConfirmationPage(params: LogoutConfirmationPageParams): ViewResult;
-  /** EXPERIMENTAL (RP-Initiated Logout 1.0): render the logged-out screen */
-  logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
-`
-    : '';
   const rpInitiatedLogoutDefaultViews = features.rpInitiatedLogout
     ? `// RP-Initiated Logout 1.0 §2: the wording is fixed for every path into this
 // screen (no hint, an invalid or expired hint, another user's session, no
@@ -9554,18 +9633,6 @@ import {
 
 `
     : '';
-  const googleLoginPageParam = features.googleLogin
-    ? `  /**
-   * EXTENSION (google-login): GIS configuration for "Sign in with Google"
-   * (redirect mode) — the g_id_onload attributes built by
-   * buildGoogleSignInAttributes(): client ID, data-ux_mode="redirect", the
-   * login_uri Google posts the ID token to, and the nonce bound to this
-   * transaction. The view owns the markup (see defaultLoginPage). Undefined
-   * when Google login is not configured; only the password form is shown then.
-   */
-  googleSignIn?: GoogleSignInAttributes;
-`
-    : '';
   const googleSignInSnippet = features.googleLogin
     ? `
   // EXTENSION (google-login): the three elements GIS needs for redirect mode —
@@ -9599,44 +9666,7 @@ ${googleViewsImport}// =========================================================
 // View Parameter Types
 // ============================================================
 
-export interface LoginPageParams {
-  /** Transaction ID for the auth flow */
-  transactionId: string;
-  /** CSRF token (must be included as hidden form field) */
-  csrfToken: string;
-  /** Error message from a previous failed attempt */
-  error?: string;
-  /** Number of remaining login attempts */
-  remainingAttempts?: number;
-  /**
-   * OIDC Core 1.0 §3.1.2.1 login_hint: untrusted external value the OP MAY use to
-   * pre-fill the login form. Treated as a hint only (initial display); it MUST be
-   * HTML-attribute escaped before rendering since it is unauthenticated input.
-   */
-  loginHint?: string;
-${googleLoginPageParam}}
-
-export interface ConsentPageParams {
-  /** Transaction ID for the auth flow */
-  transactionId: string;
-  /** CSRF token (must be included as hidden form field) */
-  csrfToken: string;
-  /** Scopes requested by the client */
-  scopes: string[];
-  /** Client ID requesting authorization */
-  clientId: string;
-}
-
-export interface ErrorPageParams {
-  /** Error message to display (OAuth error code for authorization errors) */
-  error: string;
-  /** Optional human-readable detail (OAuth error_description) */
-  errorDescription?: string;
-  /** HTTP status code */
-  statusCode: number;
-}
-${deviceParamTypes}${cibaParamTypes}${rpInitiatedLogoutParamTypes}
-// ============================================================
+${viewParamTypesTemplate(features)}// ============================================================
 // Views Interface
 // ============================================================
 
@@ -9647,15 +9677,7 @@ ${deviceParamTypes}${cibaParamTypes}${rpInitiatedLogoutParamTypes}
  */
 export type ViewResult = string | Response;
 
-export interface Views {
-  /** Render the login page (and login error page when error is set) */
-  loginPage(params: LoginPageParams): ViewResult;
-  /** Render the consent/authorization page */
-  consentPage(params: ConsentPageParams): ViewResult;
-  /** Render a generic error page */
-  errorPage(params: ErrorPageParams): ViewResult;
-${deviceViewsMembers}${cibaViewsMembers}${rpInitiatedLogoutViewsMembers}}
-
+${viewsInterfaceTemplate(features)}
 /** Options applied when renderView wraps an HTML string into a Response. */
 export interface RenderViewInit {
   /** HTTP status code for the generated Response (defaults to 200). */
@@ -9917,11 +9939,46 @@ export function requestObjectConformanceBeforeAll(
 export function reuseFlowConformanceTestBlock(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   errorPageMode: 'html' | 'redirect' = 'html',
+  viewMarkup: ViewMarkup = 'string',
 ): string {
   return (
     reuseCascadeConformanceBlock(features) +
-    requestObjectValueConformanceBlock(features, errorPageMode)
+    requestObjectValueConformanceBlock(features, errorPageMode, viewMarkup)
   );
+}
+
+/**
+ * How the default views are written: HTML template strings (views.ts) or
+ * hono/jsx components (Hono's views.tsx). JSX serializes without the
+ * indentation and line breaks of the string templates, so a test that pins the
+ * exact default markup needs to know which one it runs against.
+ */
+export type ViewMarkup = 'string' | 'jsx';
+
+/**
+ * The exact body of the default error page for error / description, as a
+ * TypeScript expression for a generated conformance test.
+ */
+export function defaultErrorPageBodyExpectation(
+  error: string,
+  description: string,
+  viewMarkup: ViewMarkup,
+): string {
+  if (viewMarkup === 'jsx') {
+    return `        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>${error}</p><p>${description}</p></body></html>'`;
+  }
+  return `        [
+          '<!DOCTYPE html>',
+          '<html>',
+          '<head><title>Error</title></head>',
+          '<body>',
+          '  <h1>Error</h1>',
+          '  <p>${error}</p>',
+          '  <p>${description}</p>',
+          '</body>',
+          '</html>',
+        ].join('\\n')`;
 }
 
 /**
@@ -10409,6 +10466,7 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
 function requestObjectValueConformanceBlock(
   features: OidcFeatureConfig,
   errorPageMode: 'html' | 'redirect' = 'html',
+  viewMarkup: ViewMarkup = 'string',
 ): string {
   // A redirect_uri carried inside a broken Request Object cannot be trusted, so
   // the error stays on the OP (OIDC Core 1.0 §6.3): no redirect to the client,
@@ -10437,17 +10495,7 @@ function requestObjectValueConformanceBlock(
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
       const body = await res.text();
       expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request_object</p>',
-          '  <p>request object is not a JWS compact serialization</p>',
-          '</body>',
-          '</html>',
-        ].join('\\n'),
+${defaultErrorPageBodyExpectation('invalid_request_object', 'request object is not a JWS compact serialization', viewMarkup)},
       );`;
   if (!features.requestObject) {
     return `
@@ -19473,17 +19521,7 @@ ${introspectionConformanceBlock(features)}
       // Pinned to the default error page so a regression in the rendered markup
       // (or a missing error_description) is caught exactly.
       expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request</p>',
-          '  <p>redirect_uri not registered</p>',
-          '</body>',
-          '</html>',
-        ].join('\\n'),
+${defaultErrorPageBodyExpectation('invalid_request', 'redirect_uri not registered', 'jsx')},
       );
     });
 
@@ -19502,6 +19540,6 @@ ${introspectionConformanceBlock(features)}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, 'html', 'jsx')}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

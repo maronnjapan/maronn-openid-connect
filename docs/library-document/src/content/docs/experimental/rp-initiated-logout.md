@@ -82,7 +82,7 @@ rpInitiatedLogoutConfig.postLogoutRedirectUris = {
 | `routes/logout.ts` | `processEndSessionRequest()`（end_session リクエストの検証と、確認画面を出すか直接ログアウトするかの判断）・`approveLogout()`（確認後のセッション破棄）と設定オブジェクト `rpInitiatedLogoutConfig`。Response は作らない |
 | `pages/logout.ts` | `GET\|POST /logout` と `POST /logout/approve` のルート。確認画面・完了画面の描画、RP へのリダイレクト、Cookie の付与（UI カスタマイズはここ） |
 | `store.ts`（追記） | 確認画面の CSRF cookie ヘルパーとセッション Cookie の破棄ヘルパー |
-| `views.ts`（追記） | 確認画面 `logoutConfirmationPage` と完了画面 `logoutCompletedPage`（`views` オプションで差し替え可能） |
+| `views.ts`（Hono は `views.tsx`）（追記） | 確認画面 `logoutConfirmationPage` と完了画面 `logoutCompletedPage`（`views` オプションで差し替え可能） |
 | `routes/discovery.ts`（追記） | `end_session_endpoint` メタデータ |
 | `conformance.test.ts`（追記） | ログアウト経路の契約テスト |
 

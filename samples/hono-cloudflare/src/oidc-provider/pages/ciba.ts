@@ -9,7 +9,7 @@
  * mint the login transaction, check the credentials, list the requests and
  * record the decision, and report what happened as an outcome. This file turns
  * each outcome into a screen, with the cookies the outcome carries. To
- * customize the CIBA UI, edit this file or the ciba* views in views.ts; the
+ * customize the CIBA UI, edit this file or the ciba* views in views.tsx; the
  * route module never has to change.
  *
  * Backed by @maronn-openid-connect/experimental, whose API is NOT stable.

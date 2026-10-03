@@ -18,6 +18,8 @@ function fileContent(files: Array<{ path: string; content: string }>, path: stri
 
 /** Next.js keeps the framework-neutral provider under _oidc-provider/. */
 function providerPath(framework: string, path: string): string {
+  // Hono writes its views as hono/jsx components (views.tsx).
+  if (framework === 'hono' && path === 'views.ts') return 'views.tsx';
   return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
 }
 

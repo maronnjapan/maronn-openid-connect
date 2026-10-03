@@ -23,6 +23,8 @@ function fileContent(files: Array<{ path: string; content: string }>, path: stri
 
 /** Next.js keeps the framework-neutral provider under _oidc-provider/. */
 function providerPath(framework: string, path: string): string {
+  // Hono writes its views as hono/jsx components (views.tsx).
+  if (framework === 'hono' && path === 'views.ts') return 'views.tsx';
   return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
 }
 
@@ -207,6 +209,15 @@ describe('generate with --enable google-login', () => {
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
       expect(content.includes('  googleSignIn?: GoogleSignInAttributes;')).toBe(true);
+      if (framework === 'hono') {
+        // hono/jsx: the attributes are spread onto #g_id_onload, and JSX
+        // escapes each value.
+        expect(content.includes('<div {...params.googleSignIn}></div>')).toBe(true);
+        expect(content.includes('<script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} async></script>')).toBe(true);
+        expect(content.includes('<div class="g_id_signin" data-type="standard"></div>')).toBe(true);
+        expect(content.includes('{params.googleSignIn ? (')).toBe(true);
+        return;
+      }
       expect(content.includes('<div ${googleSignInAttributesToHtml(params.googleSignIn)}></div>')).toBe(true);
       expect(content.includes('<script src="${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>')).toBe(true);
       expect(content.includes('<div class="g_id_signin" data-type="standard"></div>')).toBe(true);

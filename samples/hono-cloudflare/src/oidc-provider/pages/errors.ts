@@ -2,7 +2,7 @@
  * Error screen (screen routing layer).
  *
  * Whenever a page has to stop the browser on the OP's own error page it calls
- * renderErrorPage() here. Customize the error UI in views.ts (errorPage), or
+ * renderErrorPage() here. Customize the error UI in views.tsx (errorPage), or
  * change how it is delivered in this file — for example by redirecting to a
  * page of your own.
  */

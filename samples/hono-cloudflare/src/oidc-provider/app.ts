@@ -85,7 +85,7 @@ export interface CreateAppOptions {
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
-   * Inject your own UI here instead of editing views.ts.
+   * Inject your own UI here instead of editing views.tsx.
    */
   views?: Partial<Views>;
   /**

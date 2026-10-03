@@ -323,7 +323,7 @@ describe('generate with feature toggles', () => {
         'routes/token.ts',
         'routes/userinfo.ts',
         'store.ts',
-        'views.ts',
+        'views.tsx',
       ]);
     });
 

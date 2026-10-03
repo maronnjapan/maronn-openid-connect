@@ -252,7 +252,7 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
   // approve. Deciding by "not deny" would approve every unexpected value instead.
   //
   // 'approve' is the decision value this provider accepts, and it MUST stay in
-  // sync with the Approve button in views.ts consentPage(). Changing it here
+  // sync with the Approve button in views.tsx consentPage(). Changing it here
   // without changing the button (or the other way round) makes every approval
   // fail with the 400 pages/consent.ts shows for this outcome.
   //

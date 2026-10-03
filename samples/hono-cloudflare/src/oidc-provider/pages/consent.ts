@@ -7,7 +7,7 @@
  * the decision, mint the authorization code and build the authorization
  * response URL, and report what happened as an outcome. This file turns each
  * outcome into a screen or a redirect. To customize the consent UI, edit this
- * file or the consentPage view in views.ts; routes/consent.ts never has to
+ * file or the consentPage view in views.tsx; routes/consent.ts never has to
  * change. Keep the two button values ('approve' / 'deny') as they are: the
  * logic accepts exactly those.
  */
@@ -65,7 +65,7 @@ consentPage.post('/', async (c) => {
     // OIDC Core 1.0 Section 3.1.2.4 / 3.1.2.6: no decision was obtained, which
     // is not the same as the End-User denying — so the browser stays on the OP's
     // own error page instead of being sent back to the client. 'approve' and
-    // 'deny' are the values the logic accepts; the buttons in views.ts
+    // 'deny' are the values the logic accepts; the buttons in views.tsx
     // consentPage() must keep sending exactly those.
     return renderErrorPage(c, {
       error: 'Invalid consent decision. Please use the Approve or Deny button.',

@@ -7,7 +7,6 @@ import {
   customScopesTemplate,
   storeTemplate,
   resolversTemplate,
-  viewsTemplate,
   authorizeRouteTemplate,
   tokenRouteTemplate,
   userinfoRouteTemplate,
@@ -36,6 +35,7 @@ import {
   logoutPageTemplate,
   respondTemplate,
 } from './pages.js';
+import { honoViewsTemplate } from './views.js';
 
 export class HonoGenerator implements FrameworkGenerator {
   readonly name = 'hono';
@@ -46,7 +46,7 @@ export class HonoGenerator implements FrameworkGenerator {
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
 
-    return [
+    const files: GeneratedFile[] = [
       { path: 'app.ts', content: appTemplate(pkg, features) },
       { path: 'apply.ts', content: applyTemplate(pkg, features) },
       { path: 'config.ts', content: configTemplate(pkg, features) },
@@ -57,11 +57,13 @@ export class HonoGenerator implements FrameworkGenerator {
         : []),
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
-      { path: 'views.ts', content: viewsTemplate(features) },
+      // The default screens as hono/jsx components (views.tsx); the other
+      // frameworks generate the same contract as HTML strings (views.ts).
+      { path: 'views.tsx', content: honoViewsTemplate(features) },
       // Screen routing layer (pages/): every browser-facing GET / POST
       // (authorize, login, consent, and the device / CIBA / logout UIs) plus the
       // render helpers. Each page calls the logic of its routes/ module and only
-      // renders or redirects, so the UI is customized in pages/ and views.ts.
+      // renders or redirects, so the UI is customized in pages/ and views.tsx.
       { path: 'pages/respond.ts', content: respondTemplate() },
       { path: 'pages/errors.ts', content: errorPageTemplate() },
       { path: 'pages/authorize.ts', content: authorizePageTemplate() },
@@ -122,5 +124,12 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
       { path: 'conformance.test.ts', content: conformanceTestTemplate(pkg, features, scopes) },
     ];
+    // The page, route and app templates are shared with the frameworks whose
+    // views live in views.ts; point their comments at views.tsx here. Imports
+    // are unaffected: '../views.js' resolves to views.tsx.
+    return files.map((file) => ({
+      ...file,
+      content: file.content.replace(/\bviews\.ts\b/g, 'views.tsx'),
+    }));
   }
 }

@@ -957,17 +957,8 @@ describe('generated provider HTTP conformance', () => {
       // Pinned to the default error page so a regression in the rendered markup
       // (or a missing error_description) is caught exactly.
       expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request</p>',
-          '  <p>redirect_uri not registered</p>',
-          '</body>',
-          '</html>',
-        ].join('\n'),
+        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>invalid_request</p><p>redirect_uri not registered</p></body></html>',
       );
     });
 
@@ -2347,17 +2338,8 @@ describe('generated provider HTTP conformance', () => {
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
       const body = await res.text();
       expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request_object</p>',
-          '  <p>request object is not a JWS compact serialization</p>',
-          '</body>',
-          '</html>',
-        ].join('\n'),
+        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>invalid_request_object</p><p>request object is not a JWS compact serialization</p></body></html>',
       );
     });
 
@@ -7749,7 +7731,7 @@ describe('generated provider HTTP conformance', () => {
       expect(res.headers.get('Location')).toBe(null);
     });
 
-    // The realistic regression: the Approve button is renamed in views.ts, so the
+    // The realistic regression: the Approve button is renamed in views.tsx, so the
     // handler receives a value it never agreed to accept.
     it('should not issue an authorization code when the consent POST sends an unknown action value', async () => {
       const flow = await reachConsent('decision-unknown');

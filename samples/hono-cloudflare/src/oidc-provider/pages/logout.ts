@@ -8,7 +8,7 @@
  * verifying id_token_hint, matching the session, resolving the redirect — is
  * processEndSessionRequest() and approveLogout() in routes/logout.ts; this file
  * only turns their outcome into HTTP, with the cookies the outcome carries. To
- * customize the logout UI, edit this file or the logout* views in views.ts;
+ * customize the logout UI, edit this file or the logout* views in views.tsx;
  * the route module never has to change. The confirmation form must keep
  * posting csrf_token to /logout/approve: it is paired with the HttpOnly cookie
  * the logic mints.

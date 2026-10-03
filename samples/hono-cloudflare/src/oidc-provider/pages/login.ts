@@ -6,7 +6,7 @@
  * the transaction, check the User-Agent binding, verify the credentials and
  * mint the OP session, and report what happened as an outcome. This file turns
  * each outcome into a screen or a redirect. To customize the login UI, edit
- * this file or the loginPage view in views.ts; routes/login.ts never has to
+ * this file or the loginPage view in views.tsx; routes/login.ts never has to
  * change.
  */
 import { Hono } from 'hono';

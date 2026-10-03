@@ -37,8 +37,8 @@ describe('HonoGenerator', () => {
       expect(files.find((f) => f.path === 'resolvers.ts')).toBeDefined();
     });
 
-    it('should generate views.ts', () => {
-      expect(files.find((f) => f.path === 'views.ts')).toBeDefined();
+    it('should generate views.tsx', () => {
+      expect(files.find((f) => f.path === 'views.tsx')).toBeDefined();
     });
 
     it('should generate all route files', () => {
@@ -617,30 +617,38 @@ describe('HonoGenerator', () => {
 
     // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint, HTML-escaped.
     it('should pre-fill the login username from login_hint with HTML escaping', () => {
-      const views = files.find((f) => f.path === 'views.ts');
+      const views = files.find((f) => f.path === 'views.tsx');
       const login = files.find((f) => f.path === 'routes/login.ts');
-      // The username input renders the escaped loginHint as its value (XSS-safe).
-      expect(views?.content).toContain(
-        "value=\"${escapeHtml(params.loginHint ?? '')}\"",
-      );
+      // The username input renders loginHint as its value through a JSX
+      // attribute, which hono/jsx escapes (XSS-safe).
+      expect(views?.content).toContain("<CredentialFields username={params.loginHint ?? ''} />");
+      expect(views?.content).toContain('value={props.username}');
       // The route forwards the persisted login_hint from the transaction to the view.
       expect(login?.content).toContain('loginHint: transaction.loginHint');
     });
 
-    it('should escape every untrusted value interpolated by the default HTML views', () => {
-      const views = files.find((f) => f.path === 'views.ts')?.content ?? '';
-      expect(views).toContain('escapeHtml(params.error)');
-      expect(views).toContain('escapeHtml(params.transactionId)');
-      expect(views).toContain('escapeHtml(params.csrfToken)');
-      expect(views).not.toContain('${params.error}${');
-      expect(views).not.toContain('value="${params.transactionId}"');
-      expect(views).not.toContain('value="${params.csrfToken}"');
+    // The Hono views are hono/jsx components: every {...} interpolation is
+    // escaped by JSX, so the views must never build markup from strings or
+    // bypass the escaping. The rendered escaping itself is pinned at runtime
+    // by the generated conformance test ('Generated view rendering').
+    it('should interpolate every untrusted value through escaping JSX expressions', () => {
+      const views = files.find((f) => f.path === 'views.tsx')?.content ?? '';
+      expect(views.startsWith('/** @jsxImportSource hono/jsx */\n')).toBe(true);
+      expect(views).toContain('{props.error}');
+      expect(views).toContain('value={params.transactionId}');
+      expect(views).toContain('value={params.csrfToken}');
+      expect(views).not.toContain('dangerouslySetInnerHTML=');
+      expect(views).not.toContain('escapeHtml');
+      expect(views).not.toContain('${');
+      // raw() is used for the fixed doctype literal only.
+      expect(views.match(/\{raw\(/g)).toEqual(['{raw(']);
+      expect(views).toContain("{raw('<!DOCTYPE html>')}");
     });
 
     it('should generate ViewResult and renderView extension points for every HTML route', () => {
-      const views = files.find((f) => f.path === 'views.ts')?.content ?? '';
+      const views = files.find((f) => f.path === 'views.tsx')?.content ?? '';
       const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
-      expect(views).toContain('export type ViewResult = string | Response');
+      expect(views).toContain('export type ViewResult = JSX.Element | string | Response');
       expect(views).toContain('export function renderView(');
       expect(views).toContain("if (typeof result === 'string')");
       // The screen modules are the only generated code that renders a view; the
@@ -1682,13 +1690,13 @@ describe('HonoGenerator', () => {
   describe('views separation', () => {
     const files = generator.generate(options);
 
-    it('should define Views interface in views.ts', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+    it('should define Views interface in views.tsx', () => {
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('export interface Views');
     });
 
-    it('should define LoginPageParams in views.ts', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+    it('should define LoginPageParams in views.tsx', () => {
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('export interface LoginPageParams');
       expect(file?.content).toContain('transactionId: string');
       expect(file?.content).toContain('csrfToken: string');
@@ -1696,26 +1704,26 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain('remainingAttempts?: number');
     });
 
-    it('should define ConsentPageParams in views.ts', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+    it('should define ConsentPageParams in views.tsx', () => {
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('export interface ConsentPageParams');
       expect(file?.content).toContain('scopes: string[]');
       expect(file?.content).toContain('clientId: string');
     });
 
-    it('should define ErrorPageParams in views.ts', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+    it('should define ErrorPageParams in views.tsx', () => {
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('export interface ErrorPageParams');
     });
 
     it('should export the default views and a createViews helper for customization', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('export const defaultViews: Views');
       expect(file?.content).toContain('export function createViews(overrides?: Partial<Views>): Views');
     });
 
     it('should provide default implementations for all views', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('defaultLoginPage');
       expect(file?.content).toContain('defaultConsentPage');
       expect(file?.content).toContain('defaultErrorPage');
@@ -1838,13 +1846,25 @@ describe('HonoGenerator', () => {
   describe('ViewResult / renderView extension points', () => {
     const files = generator.generate(options);
 
-    it('should define a ViewResult type accepting string or Response in views.ts', () => {
-      const file = files.find((f) => f.path === 'views.ts');
-      expect(file?.content).toContain('export type ViewResult = string | Response;');
+    it('should define a ViewResult type accepting JSX, string or Response in views.tsx', () => {
+      const file = files.find((f) => f.path === 'views.tsx');
+      expect(file?.content).toContain('export type ViewResult = JSX.Element | string | Response;');
+    });
+
+    // A JSX element is an object at runtime, so renderView serializes it; an
+    // element holding an async component serializes to a Promise and is
+    // streamed once it resolves.
+    it('should serialize a JSX view, including an async one, in renderView', () => {
+      const content = files.find((f) => f.path === 'views.tsx')?.content ?? '';
+      expect(content).toContain('const html = serializeView(result);');
+      expect(content).toContain(
+        "return new Response(typeof html === 'string' ? html : streamWhenResolved(html), {",
+      );
+      expect(content).toContain('return (result as { toString(): string | Promise<string> }).toString();');
     });
 
     it('should type every Views method to return ViewResult', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+      const file = files.find((f) => f.path === 'views.tsx');
       const content = file?.content ?? '';
       expect(content).toContain('loginPage(params: LoginPageParams): ViewResult;');
       expect(content).toContain('consentPage(params: ConsentPageParams): ViewResult;');
@@ -1852,7 +1872,7 @@ describe('HonoGenerator', () => {
     });
 
     it('should export a renderView helper that normalizes a ViewResult to a Response', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+      const file = files.find((f) => f.path === 'views.tsx');
       const content = file?.content ?? '';
       expect(content).toContain('export function renderView(');
       // A Response is passed through untouched so a custom view keeps control of
@@ -1922,17 +1942,20 @@ describe('HonoGenerator', () => {
     // ErrorPageParams carries the OAuth error_description so the authorization
     // error page can show both the code and a human-readable reason.
     it('should expose errorDescription on ErrorPageParams', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+      const file = files.find((f) => f.path === 'views.tsx');
       expect(file?.content).toContain('errorDescription?: string');
     });
 
     // The default error page MUST HTML-escape error and error_description so a
     // crafted error_description cannot inject markup (XSS).
     it('should HTML-escape error and errorDescription in defaultErrorPage', () => {
-      const file = files.find((f) => f.path === 'views.ts');
+      const file = files.find((f) => f.path === 'views.tsx');
       const content = file?.content ?? '';
-      expect(content).toContain('escapeHtml(params.error)');
-      expect(content).toContain('escapeHtml(params.errorDescription)');
+      // hono/jsx escapes both interpolations.
+      expect(content).toContain('<p>{params.error}</p>');
+      expect(content).toContain(
+        '{params.errorDescription ? <p>{params.errorDescription}</p> : null}',
+      );
     });
   });
 
@@ -2183,15 +2206,10 @@ describe('HonoGenerator', () => {
     });
 
     it('should escape dynamic values in consent page', () => {
-      const file = files.find((f) => f.path === 'views.ts');
-      expect(file?.content).toContain('function escapeHtml(value: string): string');
-      expect(file?.content).toContain('.replace(/&/g, \'&amp;\')');
-      expect(file?.content).toContain('.replace(/</g, \'&lt;\')');
-      expect(file?.content).toContain('.replace(/>/g, \'&gt;\')');
-      expect(file?.content).toContain(".replace(/\"/g, '&quot;')");
-      expect(file?.content).toContain(".replace(/'/g, '&#39;')");
-      expect(file?.content).toContain('<li>${escapeHtml(s)}</li>');
-      expect(file?.content).toContain('const escapedClientId = escapeHtml(params.clientId);');
+      const file = files.find((f) => f.path === 'views.tsx');
+      // hono/jsx escapes each scope and the client_id.
+      expect(file?.content).toContain('<li>{scope}</li>');
+      expect(file?.content).toContain('<strong>{params.clientId}</strong>');
     });
   });
 
@@ -2669,7 +2687,7 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
     });
 
     it('should submit the same decision value from the consent view that the handler accepts', () => {
-      const views = files.find((f) => f.path === 'views.ts')?.content ?? '';
+      const views = files.find((f) => f.path === 'views.tsx')?.content ?? '';
 
       expect(views).toContain('<button type="submit" name="action" value="approve">Approve</button>');
       expect(views).toContain('<button type="submit" name="action" value="deny">Deny</button>');

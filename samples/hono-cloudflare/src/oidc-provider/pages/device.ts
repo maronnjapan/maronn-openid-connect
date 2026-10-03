@@ -9,7 +9,7 @@
  * code, mint the browser binding, check the credentials and record the
  * decision, and report what happened as an outcome. This file turns each
  * outcome into a screen, with the cookies the outcome carries. To customize
- * the device UI, edit this file or the device* views in views.ts;
+ * the device UI, edit this file or the device* views in views.tsx;
  * routes/device.ts never has to change.
  *
  * Backed by @maronn-openid-connect/experimental, whose API is NOT stable.

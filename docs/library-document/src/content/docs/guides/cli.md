@@ -65,20 +65,6 @@ Tip: commit the generated files before overwriting so you can diff your changes.
 - `--dry-run` は何も書き込まず、出力予定の全ファイルを `Would create:` / `Would overwrite:` で表示します。`--force` の前に影響範囲を確認する用途を想定しています
 - 再生成する予定があるなら、**生成直後にコミットしてから改造してください**。`--force` で上書きしても、自分の変更を `git diff` で取り戻せます
 
-
-Hono の画面（`views.tsx`）は [hono/jsx](https://hono.dev/docs/guides/jsx) のコンポーネントとして生成されます。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できます。ビューは JSX 要素・HTML 文字列・`Response` のどれを返してもよく、`renderView()` がそれぞれを Response に変換します。コンパイルには `tsconfig.json` で JSX を有効にしておく必要があります。
-
-```jsonc
-{
-  "compilerOptions": {
-    "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx"
-  }
-}
-```
-
-以前の CLI で生成した Hono の出力を `--force` で再生成すると、古い `views.ts` が残ります。`views.ts` は `views.tsx` より優先して解決されるため、カスタマイズを `views.tsx` へ移してから `views.ts` を削除してください（CLI も再生成時に警告を出します）。
-
 ## Generated Files
 
 ```
@@ -97,7 +83,7 @@ oidc-provider/
 
 ### Screen Routes (pages/) and API Routes (routes/)
 
-生成されるルーティングは 2 種類に分かれています。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて `pages/` が担当し、`routes/` は Response を一切作りません。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`、Hono は `views.tsx`）だけで、`routes/` のロジックは読まなくて済みます。
+生成されるルーティングは 2 種類に分かれています。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて `pages/` が担当し、`routes/` は Response を一切作りません。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`、Hono は `views.tsx`）だけで、`routes/` のロジックは読まなくて済みます。以下の `pages/login.ts` などのファイル名は、Hono では `authorize.ts` と `respond.ts` を除いて `.tsx` になります（[Hono Screens](#hono-screens-honojsx) を参照）。
 
 | 層 | ファイル | 役割 |
 |---|---|---|
@@ -116,6 +102,35 @@ UI を変える場所は、変えたい範囲で選びます。
 フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持してください。`transaction-binding` の束縛チェック（`rejectUnboundTransaction()`）や `google-login` のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけで済みます。
 
 Next.js はもともと `login/page.tsx`（画面）と `login/actions.ts`（Server Action = ロジック）に分かれており、この構造に対応します。`_oidc-provider/pages/` も生成されますが、Route Handler 経由で動く `/authorize` と device / CIBA の画面、契約テストが使うもので、ログイン・同意画面のカスタマイズは `page.tsx` で行います。
+
+### Hono Screens (hono/jsx)
+
+Hono の出力は TSX 前提で生成されます。画面のマークアップ（`views.tsx`）は [hono/jsx](https://hono.dev/docs/guides/jsx) のコンポーネントで、画面を描く `pages/`（`errors` / `login` / `consent`、機能有効時は `device` / `ciba` / `logout`）も `.tsx` になり、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画します。HTML を返さない `pages/authorize.ts` と `pages/respond.ts` は `.ts` のままです。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できます。
+
+ビューは JSX 要素を返すコンポーネントです。`createApp` / `applyOidc` の `views` オプションで差し替えるときも、JSX で書きます。
+
+```tsx
+const app = createApp({
+  views: {
+    loginPage: (params) => <MyLoginPage {...params} />,
+  },
+});
+```
+
+別の手段で組み立てた HTML を返すときは `hono/html` の `html` タグか `raw()` で包みます（`raw()` は渡した文字列をそのまま信頼するので、エスケープ済みの HTML だけを渡してください）。ステータスやヘッダーなど Response そのものを変えたいときは、`pages/*.tsx` の `render*Page()` を書き換えます。
+
+コンパイルには `tsconfig.json` で JSX を有効にしておく必要があります。
+
+```jsonc
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx"
+  }
+}
+```
+
+以前の CLI で生成した Hono の出力を `--force` で再生成すると、古い `views.ts` や `pages/login.ts` などの `.ts` ファイルが残ります。同名の `.ts` は `.tsx` より優先して解決されるため、カスタマイズを `.tsx` 側へ移してから古い `.ts` を削除してください（CLI も再生成時に残っているファイルを一覧して警告します）。
 
 ### Generation Manifest (.maronn-openid-connect.json)
 

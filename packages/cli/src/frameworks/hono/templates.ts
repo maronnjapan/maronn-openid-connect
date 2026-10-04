@@ -11013,6 +11013,91 @@ function transactionBindingDisabledConformanceBlock(): string {
 `;
 }
 
+/**
+ * End-to-end half of the view conformance blocks: authorize -> /login over
+ * real HTTP, proving the login page delivers its view through renderView as a
+ * text/html Response. Shared by the string and the JSX (Hono) view blocks.
+ */
+function loginPageDeliveryConformanceTest(): string {
+  return `    // End-to-end: the login page (pages/login.ts) returns its view via
+    // renderView, so the login page is delivered as a text/html Response through
+    // the framework at runtime.
+    it('should deliver the login page through renderView as a text/html Response', async () => {
+      // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
+      // transaction (302 -> /login); the verifier is never needed here.
+      const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+      const authorizeUrl =
+        '/authorize?response_type=code&client_id=c-conf' +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
+        '&scope=' + encodeURIComponent('openid') +
+        '&state=view-xyz' +
+        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
+      const authorizeRes = await app.request(authorizeUrl);
+      const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
+      // Carry forward whatever cookie /authorize set, exactly as a browser would.
+      // With --enable transaction-binding this is the per-transaction binding
+      // secret the later steps require; without it this is '' and the OP ignores
+      // it, so the same flow works in both builds.
+      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+
+      const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
+
+      // The login body carries a dynamic transaction_id / csrf_token, so the
+      // status + content type pin that renderView delivered a text/html Response
+      // at runtime; the exact-body wrapping is pinned by the renderView unit tests.
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+    });
+`;
+}
+
+/**
+ * Hono's view conformance block. Hono's views are hono/jsx components, so a
+ * view always returns an element: renderView serializes it (synchronously, or
+ * streamed when it renders asynchronously) into a text/html Response.
+ */
+export function jsxViewConformanceTestBlock(): string {
+  return `
+  describe('JSX view rendering (ViewResult / renderView)', () => {
+    // A view returns a hono/jsx element; renderView serializes it into a
+    // text/html Response.
+    it('should serialize a JSX view into a text/html Response', async () => {
+      const res = renderView(defaultViews.errorPage({ error: 'jsx-view', statusCode: 400 }));
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe(
+        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>jsx-view</p></body></html>',
+      );
+    });
+
+    // The caller-provided status is applied (e.g. the 429 rate-limit error page).
+    it('should apply the provided status to a JSX view', async () => {
+      const res = renderView(
+        defaultViews.errorPage({ error: 'too many', statusCode: 429 }),
+        { status: 429 },
+      );
+
+      expect(res.status).toBe(429);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+    });
+
+    // A view that renders asynchronously (an async component, or hono/html
+    // with a Promise inside) is streamed once its HTML resolves; the Response
+    // itself is built synchronously so a page can still attach cookies to it.
+    it('should stream a view that renders asynchronously', async () => {
+      const res = renderView(html\`<p>\${Promise.resolve('async-view')}</p>\`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe('<p>async-view</p>');
+    });
+
+${loginPageDeliveryConformanceTest()}  });
+`;
+}
+
 export function customViewConformanceTestBlock(): string {
   return `
   describe('custom view rendering (ViewResult / renderView)', () => {
@@ -11049,36 +11134,7 @@ export function customViewConformanceTestBlock(): string {
       expect(await res.text()).toBe('<h1>custom-view-response</h1>');
     });
 
-    // End-to-end: the login page (pages/login.ts) returns its view via
-    // renderView, so the login page is delivered as a text/html Response through
-    // the framework at runtime.
-    it('should deliver the login page through renderView as a text/html Response', async () => {
-      // RFC 7636 Appendix B example challenge so authorize is accepted and mints a
-      // transaction (302 -> /login); the verifier is never needed here.
-      const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
-      const authorizeUrl =
-        '/authorize?response_type=code&client_id=c-conf' +
-        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
-        '&scope=' + encodeURIComponent('openid') +
-        '&state=view-xyz' +
-        '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
-      const authorizeRes = await app.request(authorizeUrl);
-      const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-
-      const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
-
-      // The login body carries a dynamic transaction_id / csrf_token, so the
-      // status + content type pin that renderView delivered a text/html Response
-      // at runtime; the exact-body wrapping is pinned by the renderView unit tests.
-      expect(res.status).toBe(200);
-      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
-    });
-  });
+${loginPageDeliveryConformanceTest()}  });
 `;
 }
 
@@ -19065,6 +19121,7 @@ import { rpInitiatedLogoutConfig } from './routes/logout.js';`
   return `import { ${vitestNames} } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '${corePkg}';
 import { Hono } from 'hono';
+import { html } from 'hono/html';
 ${exportPublicJwkImport}import { createApp, validateSigningKeySet } from './app.js';
 import { applyOidc } from './apply.js';
 import { createInMemoryClientResolver, type RegisteredClient${googleLoginConfigTypeImport} } from './config.js';
@@ -19154,24 +19211,15 @@ ${persistentStorageConformanceBlock()}
       expect(consentHtml.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(true);
     });
 
-    it('should preserve a custom Response returned by a view', () => {
-      const customResponse = new Response('custom view', {
-        status: 202,
-        headers: { 'X-View-Renderer': 'custom' },
-      });
-      const rendered = renderView(customResponse, { status: 400 });
-
-      expect(rendered).toBe(customResponse);
-      expect(rendered.status).toBe(202);
-      expect(rendered.headers.get('X-View-Renderer')).toBe('custom');
-    });
-
-    it('should render a custom HTML string returned by the error view', async () => {
-      const customHtml = '<!DOCTYPE html><p>custom authorization error</p>';
+    // A custom view injected through createApp({ views }) replaces the default
+    // one; hono/html escapes what it interpolates, like JSX does.
+    it('should render a custom error view injected through createApp', async () => {
       const customApp = createApp({
         signingKeyProvider,
         clientResolver: createInMemoryClientResolver(testClients),
-        views: { errorPage: () => customHtml },
+        views: {
+          errorPage: (params) => html\`<!DOCTYPE html><p>custom \${params.error}: \${params.errorDescription}</p>\`,
+        },
       });
       const res = await customApp.request(
         '/authorize?response_type=code&client_id=c-conf' +
@@ -19182,7 +19230,9 @@ ${persistentStorageConformanceBlock()}
 
       expect(res.status).toBe(400);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
-      expect(await res.text()).toBe(customHtml);
+      expect(await res.text()).toBe(
+        '<!DOCTYPE html><p>custom invalid_request: redirect_uri not registered</p>',
+      );
     });
   });
 
@@ -19540,6 +19590,6 @@ ${defaultErrorPageBodyExpectation('invalid_request', 'redirect_uri not registere
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, 'html', 'jsx')}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${jsxViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, 'html', 'jsx')}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

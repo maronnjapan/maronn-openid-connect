@@ -21,11 +21,42 @@
  *
  * Every page module uses the same `c: any` context parameter as the route
  * helpers, so it works unchanged on Hono and on the generated WebRouter.
+ *
+ * The modules that render a view take a ViewMarkup. 'string' (the default,
+ * Express / Fastify / Next.js) calls the view as a function; 'jsx' (Hono,
+ * written to pages/*.tsx) renders it as an element, <views.loginPage
+ * {...params} />, since Hono's views are hono/jsx components (views.tsx).
  */
 
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
-import { EXPERIMENTAL_PACKAGE } from './templates.js';
+import { EXPERIMENTAL_PACKAGE, type ViewMarkup } from './templates.js';
+
+/** First line of a page module that renders JSX: the runtime its elements use. */
+function jsxPragma(markup: ViewMarkup): string {
+  return markup === 'jsx' ? '/** @jsxImportSource hono/jsx */\n' : '';
+}
+
+/**
+ * How a render helper looks up the views. JSX needs the object typed: the
+ * element type of <views.loginPage /> and its props come from Views.
+ */
+function viewsLookup(markup: ViewMarkup): string {
+  return markup === 'jsx'
+    ? "const views: Views = c.get('views') ?? defaultViews;"
+    : "const views = c.get('views') ?? defaultViews;";
+}
+
+/** The Views type import a JSX page module adds to its import from views. */
+function viewsTypeImport(markup: ViewMarkup, multiline = false): string {
+  if (markup !== 'jsx') return '';
+  return multiline ? '  type Views,\n' : ', type Views';
+}
+
+/** One view rendered with the given props object: a call, or a JSX element. */
+function viewElement(markup: ViewMarkup, view: string, props = 'params'): string {
+  return markup === 'jsx' ? `<views.${view} {...${props}} />` : `views.${view}(${props})`;
+}
 
 /**
  * Generated `pages/respond.ts`: the two helpers every page uses to turn an
@@ -86,8 +117,8 @@ export function redirectWithCookies(
  * 303 to `config.authorizationErrorRedirectPath`. Named errors.ts, not
  * error.ts: Next.js reserves `error.*` anywhere under app/.
  */
-export function errorPageTemplate(): string {
-  return `/**
+export function errorPageTemplate(markup: ViewMarkup = 'string'): string {
+  return `${jsxPragma(markup)}/**
  * Error screen (screen routing layer).
  *
  * Whenever a page has to stop the browser on the OP's own error page it calls
@@ -96,7 +127,7 @@ export function errorPageTemplate(): string {
  * page of your own.
  */
 import { defaultProviderConfig } from '../config.js';
-import { defaultViews, renderView, type ErrorPageParams } from '../views.js';
+import { defaultViews, renderView, type ErrorPageParams${viewsTypeImport(markup)} } from '../views.js';
 
 /**
  * Render the OP's error page.
@@ -106,8 +137,8 @@ import { defaultViews, renderView, type ErrorPageParams } from '../views.js';
  * from the message (a 429 lockout page answers 429, a 403 binding failure 403).
  */
 export function renderErrorPage(c: any, params: ErrorPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.errorPage(params), { status: params.statusCode });
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'errorPage')}, { status: params.statusCode });
 }
 
 /**
@@ -246,6 +277,7 @@ authorizePage.post('/', handleAuthorizationRequest);
  */
 export function loginPageTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  markup: ViewMarkup = 'string',
 ): string {
   // EXTENSION (google-login): the GIS button configuration is part of what the
   // logic layer prepares for the form; the page hands it to the view. The
@@ -280,7 +312,7 @@ loginPage.post('/google', async (c) => {
 });
 `
     : '';
-  return `/**
+  return `${jsxPragma(markup)}/**
  * Login screen (screen routing layer).
  *
  * GET /login renders the form and POST /login submits it. Neither handler
@@ -294,7 +326,7 @@ loginPage.post('/google', async (c) => {
 import { Hono } from 'hono';
 import { defaultProviderConfig } from '../config.js';
 import { prepareLogin, submitLogin${googleLoginImport}, type LoginScreen } from '../routes/login.js';
-import { defaultViews, renderView, type LoginPageParams } from '../views.js';
+import { defaultViews, renderView, type LoginPageParams${viewsTypeImport(markup)} } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies } from './respond.js';
 
@@ -305,8 +337,8 @@ export const loginPage = new Hono<{ Variables: Record<string, any> }>();
  * or redirect to a UI of your own — here only.
  */
 export function renderLoginPage(c: any, params: LoginPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.loginPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'loginPage')});
 }
 
 /**
@@ -388,8 +420,8 @@ ${googleLoginRoute}`;
  * Generated `pages/consent.ts`: GET /consent and POST /consent. The logic is
  * routes/consent.ts; this file renders the form or redirects to the client.
  */
-export function consentPageTemplate(): string {
-  return `/**
+export function consentPageTemplate(markup: ViewMarkup = 'string'): string {
+  return `${jsxPragma(markup)}/**
  * Consent screen (screen routing layer).
  *
  * GET /consent renders the approve / deny form and POST /consent submits it.
@@ -404,7 +436,7 @@ export function consentPageTemplate(): string {
  */
 import { Hono } from 'hono';
 import { prepareConsent, submitConsent } from '../routes/consent.js';
-import { defaultViews, renderView, type ConsentPageParams } from '../views.js';
+import { defaultViews, renderView, type ConsentPageParams${viewsTypeImport(markup)} } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies } from './respond.js';
 
@@ -415,8 +447,8 @@ export const consentPage = new Hono<{ Variables: Record<string, any> }>();
  * or redirect to a UI of your own — here only.
  */
 export function renderConsentPage(c: any, params: ConsentPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.consentPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'consentPage')});
 }
 
 /**
@@ -480,8 +512,8 @@ consentPage.post('/', async (c) => {
  * verification UI — GET /device, POST /device, POST /device/login,
  * POST /device/approve. The logic is routes/device.ts.
  */
-export function devicePageTemplate(): string {
-  return `/**
+export function devicePageTemplate(markup: ViewMarkup = 'string'): string {
+  return `${jsxPragma(markup)}/**
  * EXPERIMENTAL — Device Authorization Grant verification screens
  * (RFC 8628 §3.3), screen routing layer.
  *
@@ -512,7 +544,7 @@ import {
   type DeviceCompletedPageParams,
   type DeviceLoginPageParams,
   type DeviceVerificationPageParams,
-} from '../views.js';
+${viewsTypeImport(markup, true)}} from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { withCookies } from './respond.js';
 
@@ -523,8 +555,8 @@ export function renderDeviceVerificationPage(
   c: any,
   params: DeviceVerificationPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceVerificationPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'deviceVerificationPage')});
 }
 
 /**
@@ -534,29 +566,31 @@ export function renderDeviceVerificationPage(
  * indistinguishable, otherwise the response itself confirms which codes exist.
  */
 export function renderInvalidUserCode(c: any, userCode: string): Response {
-  const views = c.get('views') ?? defaultViews;
+  ${viewsLookup(markup)}
   return renderView(
-    views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
+    ${markup === 'jsx'
+    ? '<views.deviceVerificationPage userCode={userCode} error={INVALID_USER_CODE_MESSAGE} />'
+    : 'views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE })'},
     { status: 400 },
   );
 }
 
 /** Render the sign-in form of the device flow. */
 export function renderDeviceLoginPage(c: any, params: DeviceLoginPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceLoginPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'deviceLoginPage')});
 }
 
 /** Render the approve / deny screen (RFC 8628 §5.4: the user_code is repeated). */
 export function renderDeviceApprovalPage(c: any, params: DeviceApprovalPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceApprovalPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'deviceApprovalPage')});
 }
 
 /** Render the "go back to your device" screen. */
 export function renderDeviceCompletedPage(c: any, params: DeviceCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceCompletedPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'deviceCompletedPage')});
 }
 
 /** Turn the outcome of a verification step into the screen that follows it. */
@@ -651,8 +685,8 @@ devicePage.post('/approve', async (c) => {
  * authentication device UI — GET /ciba, POST /ciba/login, POST /ciba/approve.
  * The logic is routes/ciba-verification.ts.
  */
-export function cibaPageTemplate(): string {
-  return `/**
+export function cibaPageTemplate(markup: ViewMarkup = 'string'): string {
+  return `${jsxPragma(markup)}/**
  * EXPERIMENTAL — CIBA authentication device screens (CIBA Core 1.0 §7.1),
  * screen routing layer.
  *
@@ -681,7 +715,7 @@ import {
   type CibaCompletedPageParams,
   type CibaLoginPageParams,
   type CibaPendingRequestsPageParams,
-} from '../views.js';
+${viewsTypeImport(markup, true)}} from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { withCookies } from './respond.js';
 
@@ -689,8 +723,8 @@ export const cibaPage = new Hono<{ Variables: Record<string, any> }>();
 
 /** Render the sign-in form of the authentication device UI. */
 export function renderCibaLoginPage(c: any, params: CibaLoginPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.cibaLoginPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'cibaLoginPage')});
 }
 
 /** Render the pending-requests approval screen (CIBA Core 1.0 §7.1 binding_message). */
@@ -698,14 +732,14 @@ export function renderCibaPendingRequestsPage(
   c: any,
   params: CibaPendingRequestsPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.cibaPendingRequestsPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'cibaPendingRequestsPage')});
 }
 
 /** Render the decision-recorded screen. */
 export function renderCibaCompletedPage(c: any, params: CibaCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.cibaCompletedPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'cibaCompletedPage')});
 }
 
 /** Turn the outcome of a step into the screen that follows it. */
@@ -793,8 +827,8 @@ cibaPage.post('/approve', async (c) => {
  * end_session_endpoint (GET|POST /logout) and the confirmation approve step
  * (POST /logout/approve). The logic is routes/logout.ts.
  */
-export function logoutPageTemplate(): string {
-  return `/**
+export function logoutPageTemplate(markup: ViewMarkup = 'string'): string {
+  return `${jsxPragma(markup)}/**
  * EXPERIMENTAL — RP-Initiated Logout screens (RP-Initiated Logout 1.0 §2),
  * screen routing layer.
  *
@@ -818,7 +852,7 @@ import {
   renderView,
   type LogoutCompletedPageParams,
   type LogoutConfirmationPageParams,
-} from '../views.js';
+${viewsTypeImport(markup, true)}} from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies, withCookies } from './respond.js';
 
@@ -829,14 +863,14 @@ export function renderLogoutConfirmationPage(
   c: any,
   params: LogoutConfirmationPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.logoutConfirmationPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'logoutConfirmationPage')});
 }
 
 /** Render the logged-out screen. */
 export function renderLogoutCompletedPage(c: any, params: LogoutCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.logoutCompletedPage(params));
+  ${viewsLookup(markup)}
+  return renderView(${viewElement(markup, 'logoutCompletedPage')});
 }
 
 /** Turn the outcome of a logout step into the HTTP response. */

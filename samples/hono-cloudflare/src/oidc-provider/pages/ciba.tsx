@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * EXPERIMENTAL — CIBA authentication device screens (CIBA Core 1.0 §7.1),
  * screen routing layer.
@@ -27,6 +28,7 @@ import {
   type CibaCompletedPageParams,
   type CibaLoginPageParams,
   type CibaPendingRequestsPageParams,
+  type Views,
 } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { withCookies } from './respond.js';
@@ -35,8 +37,8 @@ export const cibaPage = new Hono<{ Variables: Record<string, any> }>();
 
 /** Render the sign-in form of the authentication device UI. */
 export function renderCibaLoginPage(c: any, params: CibaLoginPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.cibaLoginPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.cibaLoginPage {...params} />);
 }
 
 /** Render the pending-requests approval screen (CIBA Core 1.0 §7.1 binding_message). */
@@ -44,14 +46,14 @@ export function renderCibaPendingRequestsPage(
   c: any,
   params: CibaPendingRequestsPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.cibaPendingRequestsPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.cibaPendingRequestsPage {...params} />);
 }
 
 /** Render the decision-recorded screen. */
 export function renderCibaCompletedPage(c: any, params: CibaCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.cibaCompletedPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.cibaCompletedPage {...params} />);
 }
 
 /** Turn the outcome of a step into the screen that follows it. */

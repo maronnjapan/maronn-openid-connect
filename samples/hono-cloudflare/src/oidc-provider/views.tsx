@@ -3,16 +3,17 @@
  * UI Views for OpenID Connect Provider (hono/jsx).
  *
  * This file contains the default markup of every user-facing screen, written
- * as JSX. The screen routes in pages/ deliver these views (pages/login.ts
- * renders loginPage, and so on); the logic in routes/ never renders anything —
- * it returns outcomes the pages turn into HTTP. Customize these components to
- * match your application's design, or change how a screen is delivered in its
- * pages/ module.
+ * as JSX. The screen routes in pages/ deliver these views (pages/login.tsx
+ * renders <views.loginPage {...params} />, and so on); the logic in routes/
+ * never renders anything — it returns outcomes the pages turn into HTTP.
+ * Customize these components to match your application's design, or change
+ * how a screen is delivered in its pages/ module.
  *
- * Each view receives typed parameters and returns a ViewResult: a JSX element
- * (the default), an HTML string, or a framework-native Response when you need
- * full control over status / headers / body. renderView turns any of them
- * into the Response the page sends.
+ * Every view is a hono/jsx component: it receives typed parameters as its
+ * props and returns a JSX element (ViewResult), which renderView turns into
+ * the Response the page sends. To control the Response itself (status,
+ * headers, a body from another renderer), change the render*Page() helper of
+ * the screen in pages/ instead.
  *
  * JSX escapes every value interpolated with {...}, in text and in attributes,
  * so untrusted input (login_hint, error_description, binding_message, ...) is
@@ -178,12 +179,12 @@ export interface LogoutCompletedPageParams {}
 // ============================================================
 
 /**
- * A view may return a JSX element (the default views do), a plain HTML string,
- * or a fully formed Response when it needs to control the status code,
- * headers, or stream a framework-native body. renderView() normalizes all
- * three into a Response.
+ * What a view returns: a JSX element. A component may be async, and markup
+ * built elsewhere can be returned through hono/html — html`...` escapes its
+ * interpolations, raw() trusts its string as is, so only hand it HTML that is
+ * already escaped.
  */
-export type ViewResult = JSX.Element | string | Response;
+export type ViewResult = JSX.Element;
 
 export interface Views {
   /** Render the login page (and login error page when error is set) */
@@ -212,30 +213,22 @@ export interface Views {
   logoutCompletedPage(params: LogoutCompletedPageParams): ViewResult;
 }
 
-/** Options applied when renderView wraps HTML into a Response. */
+/** Options applied when renderView turns a view into a Response. */
 export interface RenderViewInit {
   /** HTTP status code for the generated Response (defaults to 200). */
   status?: number;
 }
 
 /**
- * Normalize a ViewResult into a Response.
+ * Turn a rendered view into the text/html Response a page sends.
  *
- * - A Response is returned untouched, so a custom view keeps full control over
- *   its status, headers, and body (e.g. returning a framework-rendered Response).
- * - A string is wrapped into an HTML Response with the given status.
- * - A JSX element is serialized and wrapped the same way. An element that
- *   contains an async component serializes to a Promise; its HTML is streamed
- *   once it resolves.
- *
- * Routes call renderView() instead of hard-coding string handling, so the Views
- * return type can stay ViewResult and never silently collapse back to string.
+ * The element is serialized to HTML here. One that contains an async component
+ * serializes to a Promise; its HTML is streamed once it resolves, so the
+ * Response (and the cookies a page attaches to it) is still built
+ * synchronously.
  */
-export function renderView(result: ViewResult, init?: RenderViewInit): Response {
-  if (result instanceof Response) {
-    return result;
-  }
-  const html = serializeView(result);
+export function renderView(view: ViewResult, init?: RenderViewInit): Response {
+  const html = serializeView(view);
   return new Response(typeof html === 'string' ? html : streamWhenResolved(html), {
     status: init?.status ?? 200,
     headers: { 'Content-Type': 'text/html; charset=UTF-8' },
@@ -243,17 +236,15 @@ export function renderView(result: ViewResult, init?: RenderViewInit): Response 
 }
 
 /**
- * HTML of a string or JSX ViewResult. JSX.Element is typed as a string, but at
- * runtime a hono/jsx element is an object that serializes through toString().
+ * HTML of a view. JSX.Element is typed as a string, but at runtime a hono/jsx
+ * element is an object that serializes through toString(), and an async
+ * view is a Promise of one.
  */
-function serializeView(result: Exclude<ViewResult, Response>): string | Promise<string> {
-  if (typeof result === 'string') {
-    return result;
+function serializeView(view: ViewResult): string | Promise<string> {
+  if (view instanceof Promise) {
+    return view.then(serializeView);
   }
-  if (result instanceof Promise) {
-    return result.then(String);
-  }
-  return (result as { toString(): string | Promise<string> }).toString();
+  return (view as { toString(): string | Promise<string> }).toString();
 }
 
 function streamWhenResolved(html: Promise<string>): ReadableStream<Uint8Array> {

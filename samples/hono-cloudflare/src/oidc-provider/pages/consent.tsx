@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * Consent screen (screen routing layer).
  *
@@ -13,7 +14,7 @@
  */
 import { Hono } from 'hono';
 import { prepareConsent, submitConsent } from '../routes/consent.js';
-import { defaultViews, renderView, type ConsentPageParams } from '../views.js';
+import { defaultViews, renderView, type ConsentPageParams, type Views } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies } from './respond.js';
 
@@ -24,8 +25,8 @@ export const consentPage = new Hono<{ Variables: Record<string, any> }>();
  * or redirect to a UI of your own — here only.
  */
 export function renderConsentPage(c: any, params: ConsentPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.consentPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.consentPage {...params} />);
 }
 
 /**

@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * EXPERIMENTAL — RP-Initiated Logout screens (RP-Initiated Logout 1.0 §2),
  * screen routing layer.
@@ -22,6 +23,7 @@ import {
   renderView,
   type LogoutCompletedPageParams,
   type LogoutConfirmationPageParams,
+  type Views,
 } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies, withCookies } from './respond.js';
@@ -33,14 +35,14 @@ export function renderLogoutConfirmationPage(
   c: any,
   params: LogoutConfirmationPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.logoutConfirmationPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.logoutConfirmationPage {...params} />);
 }
 
 /** Render the logged-out screen. */
 export function renderLogoutCompletedPage(c: any, params: LogoutCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.logoutCompletedPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.logoutCompletedPage {...params} />);
 }
 
 /** Turn the outcome of a logout step into the HTTP response. */

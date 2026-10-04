@@ -68,9 +68,9 @@ describe('HonoGenerator', () => {
       const pageFiles = files.filter((f) => f.path.startsWith('pages/'));
       expect(pageFiles.map((f) => f.path).sort()).toEqual([
         'pages/authorize.ts',
-        'pages/consent.ts',
-        'pages/errors.ts',
-        'pages/login.ts',
+        'pages/consent.tsx',
+        'pages/errors.tsx',
+        'pages/login.tsx',
         'pages/respond.ts',
       ]);
     });
@@ -317,7 +317,7 @@ describe('HonoGenerator', () => {
   describe('internal redirect origin derivation', () => {
     const files = generator.generate(options);
     const authorizePage = files.find((f) => f.path === 'pages/authorize.ts')?.content ?? '';
-    const loginPage = files.find((f) => f.path === 'pages/login.ts')?.content ?? '';
+    const loginPage = files.find((f) => f.path === 'pages/login.tsx')?.content ?? '';
     const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
 
     // Redirecting is the page layer's job, so the screen URLs are built there.
@@ -648,12 +648,11 @@ describe('HonoGenerator', () => {
     it('should generate ViewResult and renderView extension points for every HTML route', () => {
       const views = files.find((f) => f.path === 'views.tsx')?.content ?? '';
       const conformance = files.find((f) => f.path === 'conformance.test.ts')?.content ?? '';
-      expect(views).toContain('export type ViewResult = JSX.Element | string | Response');
-      expect(views).toContain('export function renderView(');
-      expect(views).toContain("if (typeof result === 'string')");
+      expect(views).toContain('export type ViewResult = JSX.Element;');
+      expect(views).toContain('export function renderView(view: ViewResult, init?: RenderViewInit): Response {');
       // The screen modules are the only generated code that renders a view; the
       // API routes answer through their render helpers.
-      for (const path of ['pages/errors.ts', 'pages/login.ts', 'pages/consent.ts']) {
+      for (const path of ['pages/errors.tsx', 'pages/login.tsx', 'pages/consent.tsx']) {
         const content = files.find((f) => f.path === path)?.content ?? '';
         expect(content).toContain('renderView');
       }
@@ -663,7 +662,7 @@ describe('HonoGenerator', () => {
         expect(content).not.toContain("from '../views.js'");
       }
       expect(conformance).toContain(
-        'should render a custom HTML string returned by the error view',
+        'should render a custom error view injected through createApp',
       );
     });
 
@@ -1024,7 +1023,7 @@ describe('HonoGenerator', () => {
       );
       expect(routerFiles.length).toBeGreaterThan(0);
       for (const file of routerFiles) {
-        if (file.path === 'pages/errors.ts' || file.path === 'pages/respond.ts') continue; // helpers, no router
+        if (file.path === 'pages/errors.tsx' || file.path === 'pages/respond.ts') continue; // helpers, no router
         expect(file.content, file.path).toContain("from 'hono'");
         expect(file.content, file.path).toContain('new Hono<{ Variables: Record<string, any> }>()');
       }
@@ -1729,22 +1728,26 @@ describe('HonoGenerator', () => {
       expect(file?.content).toContain('defaultErrorPage');
     });
 
+    // The screen modules render the view with JSX, so they are .tsx and the
+    // views object is typed: <views.loginPage /> takes its props from Views.
     it('should resolve injected views with a default fallback in the login page module', () => {
-      const file = files.find((f) => f.path === 'pages/login.ts');
+      const file = files.find((f) => f.path === 'pages/login.tsx');
+      expect(file?.content.startsWith('/** @jsxImportSource hono/jsx */\n')).toBe(true);
       expect(file?.content).toContain(
-        "import { defaultViews, renderView, type LoginPageParams } from '../views.js'",
+        "import { defaultViews, renderView, type LoginPageParams, type Views } from '../views.js'",
       );
-      expect(file?.content).toContain("const views = c.get('views') ?? defaultViews;");
-      expect(file?.content).toContain('return renderView(views.loginPage(params));');
+      expect(file?.content).toContain("const views: Views = c.get('views') ?? defaultViews;");
+      expect(file?.content).toContain('return renderView(<views.loginPage {...params} />);');
     });
 
     it('should resolve injected views with a default fallback in the consent page module', () => {
-      const file = files.find((f) => f.path === 'pages/consent.ts');
+      const file = files.find((f) => f.path === 'pages/consent.tsx');
+      expect(file?.content.startsWith('/** @jsxImportSource hono/jsx */\n')).toBe(true);
       expect(file?.content).toContain(
-        "import { defaultViews, renderView, type ConsentPageParams } from '../views.js'",
+        "import { defaultViews, renderView, type ConsentPageParams, type Views } from '../views.js'",
       );
-      expect(file?.content).toContain("const views = c.get('views') ?? defaultViews;");
-      expect(file?.content).toContain('return renderView(views.consentPage(params));');
+      expect(file?.content).toContain("const views: Views = c.get('views') ?? defaultViews;");
+      expect(file?.content).toContain('return renderView(<views.consentPage {...params} />);');
     });
 
     // The logic modules never answer with a screen or a redirect: they return an
@@ -1752,7 +1755,7 @@ describe('HonoGenerator', () => {
     it('should return login and consent outcomes from the routes and render them in the pages', () => {
       const login = files.find((f) => f.path === 'routes/login.ts')?.content ?? '';
       const consent = files.find((f) => f.path === 'routes/consent.ts')?.content ?? '';
-      const loginPage = files.find((f) => f.path === 'pages/login.ts')?.content ?? '';
+      const loginPage = files.find((f) => f.path === 'pages/login.tsx')?.content ?? '';
       for (const [path, content] of [['routes/login.ts', login], ['routes/consent.ts', consent]]) {
         expect(content, path).not.toContain("from '../pages");
         expect(content, path).not.toContain("from '../views");
@@ -1780,12 +1783,12 @@ describe('HonoGenerator', () => {
     it('should report the lockout as an outcome and render it with the error page helper', () => {
       const route = files.find((f) => f.path === 'routes/login.ts');
       expect(route?.content).toContain("return { kind: 'locked_out' };");
-      const page = files.find((f) => f.path === 'pages/login.ts');
+      const page = files.find((f) => f.path === 'pages/login.tsx');
       expect(page?.content).toContain('renderErrorPage(c, {');
       expect(page?.content).toContain("error: 'Too many login attempts',");
       expect(page?.content).toContain('statusCode: 429,');
-      const errorPage = files.find((f) => f.path === 'pages/errors.ts');
-      expect(errorPage?.content).toContain('views.errorPage(params)');
+      const errorPage = files.find((f) => f.path === 'pages/errors.tsx');
+      expect(errorPage?.content).toContain('<views.errorPage {...params} />');
     });
 
     it('should not contain inline HTML in login route', () => {
@@ -1816,7 +1819,7 @@ describe('HonoGenerator', () => {
       expect(authorizePage).toContain('return renderAuthorizationErrorPage(c, outcome);');
       // The delivery (inline HTML 400, or 303 to authorizationErrorRedirectPath)
       // is the error page module's decision.
-      const errorPage = files.find((f) => f.path === 'pages/errors.ts')?.content ?? '';
+      const errorPage = files.find((f) => f.path === 'pages/errors.tsx')?.content ?? '';
       expect(errorPage).toContain('export function renderAuthorizationErrorPage(');
       expect(errorPage).toContain(
         "errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')",
@@ -1838,29 +1841,28 @@ describe('HonoGenerator', () => {
     });
   });
 
-  // The generated view API must accept both an HTML string (default) and a
-  // framework-native Response (custom renderer) so callers can return Response
-  // objects without editing views.ts. These tests pin the ViewResult / renderView
-  // extension points so a regression that collapses Views back to a string-only
-  // return type is caught.
+  // Hono's views are hono/jsx components: a view returns a JSX element, the
+  // pages render it as <views.loginPage {...params} />, and renderView turns
+  // the element into the Response. These tests pin that contract.
   describe('ViewResult / renderView extension points', () => {
     const files = generator.generate(options);
 
-    it('should define a ViewResult type accepting JSX, string or Response in views.tsx', () => {
+    it('should define ViewResult as a JSX element in views.tsx', () => {
       const file = files.find((f) => f.path === 'views.tsx');
-      expect(file?.content).toContain('export type ViewResult = JSX.Element | string | Response;');
+      expect(file?.content).toContain('export type ViewResult = JSX.Element;');
     });
 
     // A JSX element is an object at runtime, so renderView serializes it; an
-    // element holding an async component serializes to a Promise and is
-    // streamed once it resolves.
+    // element holding an async component (or an async view) serializes to a
+    // Promise and is streamed once it resolves.
     it('should serialize a JSX view, including an async one, in renderView', () => {
       const content = files.find((f) => f.path === 'views.tsx')?.content ?? '';
-      expect(content).toContain('const html = serializeView(result);');
+      expect(content).toContain('const html = serializeView(view);');
       expect(content).toContain(
         "return new Response(typeof html === 'string' ? html : streamWhenResolved(html), {",
       );
-      expect(content).toContain('return (result as { toString(): string | Promise<string> }).toString();');
+      expect(content).toContain('return view.then(serializeView);');
+      expect(content).toContain('return (view as { toString(): string | Promise<string> }).toString();');
     });
 
     it('should type every Views method to return ViewResult', () => {
@@ -1871,31 +1873,30 @@ describe('HonoGenerator', () => {
       expect(content).toContain('errorPage(params: ErrorPageParams): ViewResult;');
     });
 
-    it('should export a renderView helper that normalizes a ViewResult to a Response', () => {
+    it('should export a renderView helper that turns a view into a text/html Response', () => {
       const file = files.find((f) => f.path === 'views.tsx');
       const content = file?.content ?? '';
       expect(content).toContain('export function renderView(');
-      // A Response is passed through untouched so a custom view keeps control of
-      // status / headers / body.
-      expect(content).toContain('if (result instanceof Response)');
-      // A string is wrapped as an HTML Response with the pinned content type.
+      // Views no longer return a Response or a plain string: a page that needs
+      // the whole Response customizes its render*Page() helper instead.
+      expect(content).not.toContain('instanceof Response');
       expect(content).toContain("'Content-Type': 'text/html; charset=UTF-8'");
     });
 
     it('should render login and consent pages through renderView', () => {
-      const loginFile = files.find((f) => f.path === 'pages/login.ts');
-      const consentFile = files.find((f) => f.path === 'pages/consent.ts');
-      expect(loginFile?.content).toContain('return renderView(views.loginPage(params));');
-      expect(consentFile?.content).toContain('return renderView(views.consentPage(params));');
+      const loginFile = files.find((f) => f.path === 'pages/login.tsx');
+      const consentFile = files.find((f) => f.path === 'pages/consent.tsx');
+      expect(loginFile?.content).toContain('return renderView(<views.loginPage {...params} />);');
+      expect(consentFile?.content).toContain('return renderView(<views.consentPage {...params} />);');
     });
 
     it('should render the error page through renderView with the status it carries', () => {
-      const errorPage = files.find((f) => f.path === 'pages/errors.ts');
+      const errorPage = files.find((f) => f.path === 'pages/errors.tsx');
       expect(errorPage?.content).toContain(
-        'return renderView(views.errorPage(params), { status: params.statusCode });',
+        'return renderView(<views.errorPage {...params} />, { status: params.statusCode });',
       );
       // The rate-limit lockout answers 429 through that helper (from the page).
-      const login = files.find((f) => f.path === 'pages/login.ts');
+      const login = files.find((f) => f.path === 'pages/login.tsx');
       expect(login?.content).toContain('statusCode: 429,');
     });
 
@@ -1905,7 +1906,7 @@ describe('HonoGenerator', () => {
       const route = files.find((f) => f.path === 'routes/authorize.ts')?.content ?? '';
       expect(route).not.toContain('renderAuthorizationErrorPage(');
       expect(route).not.toContain('renderView(');
-      const errorPage = files.find((f) => f.path === 'pages/errors.ts')?.content ?? '';
+      const errorPage = files.find((f) => f.path === 'pages/errors.tsx')?.content ?? '';
       expect(errorPage).toContain('statusCode: 400,');
     });
 
@@ -1915,7 +1916,7 @@ describe('HonoGenerator', () => {
         expect(file?.content, path).not.toContain("from '../pages/");
         expect(file?.content, path).not.toContain("from '../views.js'");
       }
-      for (const path of ['pages/login.ts', 'pages/consent.ts', 'pages/errors.ts']) {
+      for (const path of ['pages/login.tsx', 'pages/consent.tsx', 'pages/errors.tsx']) {
         const file = files.find((f) => f.path === path);
         expect(file?.content, path).toContain("from '../views.js'");
       }
@@ -1925,14 +1926,18 @@ describe('HonoGenerator', () => {
       expect(authorizePage?.content).toContain("import { renderAuthorizationErrorPage } from './errors.js';");
     });
 
-    it('should pin custom string / Response view behavior in the conformance test', () => {
+    it('should pin the JSX view behavior in the conformance test', () => {
       const file = files.find((f) => f.path === 'conformance.test.ts');
       const content = file?.content ?? '';
       expect(content).toContain("import { renderView } from './views.js'");
-      expect(content).toContain('custom view rendering (ViewResult / renderView)');
-      expect(content).toContain('should wrap a custom HTML string view into a text/html Response');
-      expect(content).toContain('should pass a Response returned by a custom view through untouched');
+      expect(content).toContain("import { html } from 'hono/html';");
+      expect(content).toContain('JSX view rendering (ViewResult / renderView)');
+      expect(content).toContain('should serialize a JSX view into a text/html Response');
+      expect(content).toContain('should stream a view that renders asynchronously');
       expect(content).toContain('should deliver the login page through renderView as a text/html Response');
+      // The string / Response view contract belongs to the other frameworks.
+      expect(content).not.toContain('custom view rendering (ViewResult / renderView)');
+      expect(content).not.toContain('should pass a Response returned by a custom view through untouched');
     });
   });
 
@@ -2264,7 +2269,7 @@ describe('HonoGenerator', () => {
         content.indexOf('return describeLoginScreen('),
       );
       // The page has no binding logic of its own.
-      const page = boundFiles.find((f) => f.path === 'pages/login.ts')?.content ?? '';
+      const page = boundFiles.find((f) => f.path === 'pages/login.tsx')?.content ?? '';
       expect(page).not.toContain('validateTransactionBinding');
       expect(page).not.toContain('rejectUnboundTransaction');
     });
@@ -2289,7 +2294,7 @@ describe('HonoGenerator', () => {
       expect(content.indexOf('await rejectUnboundTransaction(c, transaction, transactionId)')).toBeLessThan(
         content.indexOf("kind: 'screen',"),
       );
-      const page = boundFiles.find((f) => f.path === 'pages/consent.ts')?.content ?? '';
+      const page = boundFiles.find((f) => f.path === 'pages/consent.tsx')?.content ?? '';
       expect(page).not.toContain('validateTransactionBinding');
       expect(page).not.toContain('rejectUnboundTransaction');
     });
@@ -2668,7 +2673,7 @@ describe('HonoGenerator browser session and SSO wiring (P1)', () => {
     return { kind: 'invalid_decision' };
   }`);
       // The page turns that outcome into the 400 error screen.
-      const consentPage = files.find((f) => f.path === 'pages/consent.ts');
+      const consentPage = files.find((f) => f.path === 'pages/consent.tsx');
       expect(consentPage?.content).toContain("if (outcome.kind === 'invalid_decision') {");
       expect(consentPage?.content).toContain("error: 'Invalid consent decision. Please use the Approve or Deny button.',");
       expect(consentPage?.content).toContain('statusCode: 400,');

@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * EXPERIMENTAL — Device Authorization Grant verification screens
  * (RFC 8628 §3.3), screen routing layer.
@@ -29,6 +30,7 @@ import {
   type DeviceCompletedPageParams,
   type DeviceLoginPageParams,
   type DeviceVerificationPageParams,
+  type Views,
 } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { withCookies } from './respond.js';
@@ -40,8 +42,8 @@ export function renderDeviceVerificationPage(
   c: any,
   params: DeviceVerificationPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceVerificationPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.deviceVerificationPage {...params} />);
 }
 
 /**
@@ -51,29 +53,29 @@ export function renderDeviceVerificationPage(
  * indistinguishable, otherwise the response itself confirms which codes exist.
  */
 export function renderInvalidUserCode(c: any, userCode: string): Response {
-  const views = c.get('views') ?? defaultViews;
+  const views: Views = c.get('views') ?? defaultViews;
   return renderView(
-    views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),
+    <views.deviceVerificationPage userCode={userCode} error={INVALID_USER_CODE_MESSAGE} />,
     { status: 400 },
   );
 }
 
 /** Render the sign-in form of the device flow. */
 export function renderDeviceLoginPage(c: any, params: DeviceLoginPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceLoginPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.deviceLoginPage {...params} />);
 }
 
 /** Render the approve / deny screen (RFC 8628 §5.4: the user_code is repeated). */
 export function renderDeviceApprovalPage(c: any, params: DeviceApprovalPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceApprovalPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.deviceApprovalPage {...params} />);
 }
 
 /** Render the "go back to your device" screen. */
 export function renderDeviceCompletedPage(c: any, params: DeviceCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.deviceCompletedPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.deviceCompletedPage {...params} />);
 }
 
 /** Turn the outcome of a verification step into the screen that follows it. */

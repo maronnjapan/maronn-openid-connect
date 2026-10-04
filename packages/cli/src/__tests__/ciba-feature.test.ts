@@ -29,6 +29,21 @@ function exportedFunctions(content: string): string[] {
   return [...content.matchAll(/^export (?:async )?function (\w+)\(/gm)].map((match) => match[1] ?? '');
 }
 
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
+function modulePath(framework: string, path: string): string {
+  return framework === 'hono' && HONO_TSX_MODULES.has(path) ? `${path}x` : path;
+}
+
 describe('EXPERIMENTAL_FEATURES', () => {
   it('should list ciba among the experimental features', () => {
     expect(EXPERIMENTAL_FEATURES).toEqual([
@@ -176,7 +191,7 @@ describe('generate with --enable ciba', () => {
       });
 
       it('should not add CIBA pages to the views contract', () => {
-        const views = fileContent(generateFiles(framework), 'views.ts');
+        const views = fileContent(generateFiles(framework), modulePath(framework, 'views.ts'));
 
         expect(views.includes('cibaLoginPage')).toBe(false);
         expect(views.includes('cibaPendingRequestsPage')).toBe(false);
@@ -307,7 +322,7 @@ describe('generate with --enable ciba', () => {
       it('should generate the three CIBA view pages', () => {
         const views = fileContent(
           generateFiles(framework, ['ciba']),
-          'views.ts',
+          modulePath(framework, 'views.ts'),
         );
 
         expect(views.includes('cibaLoginPage: defaultCibaLoginPage,')).toBe(true);
@@ -319,10 +334,17 @@ describe('generate with --enable ciba', () => {
         // The value is client-supplied text shown on the approval screen.
         const views = fileContent(
           generateFiles(framework, ['ciba']),
-          'views.ts',
+          modulePath(framework, 'views.ts'),
         );
 
-        expect(views.includes('escapeHtml(request.bindingMessage)')).toBe(true);
+        // Hono's JSX views escape every {...} interpolation by themselves.
+        expect(
+          views.includes(
+            framework === 'hono'
+              ? '<strong>{request.bindingMessage}</strong>'
+              : 'escapeHtml(request.bindingMessage)',
+          ),
+        ).toBe(true);
       });
 
       it('should generate the login binding cookie helpers in the store', () => {

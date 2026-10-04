@@ -79,6 +79,21 @@ function generateFiles(framework: string, enable: string[] = [], scopes: string[
   }).files;
 }
 
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
+function modulePath(framework: string, path: string): string {
+  return framework === 'hono' && HONO_TSX_MODULES.has(path) ? `${path}x` : path;
+}
+
 function fileContent(files: GeneratedFile[], path: string): string {
   const file = files.find((candidate) => candidate.path === path);
   if (!file) throw new Error(`Generated file not found: ${path}`);
@@ -95,19 +110,19 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       const paths = generateFiles(framework).map((file) => file.path);
 
       for (const page of ['respond', 'errors', 'authorize', 'login', 'consent']) {
-        expect(paths.includes(`pages/${page}.ts`), page).toBe(true);
+        expect(paths.includes(modulePath(framework, `pages/${page}.ts`)), page).toBe(true);
       }
       for (const page of ['device', 'ciba', 'logout']) {
-        expect(paths.includes(`pages/${page}.ts`), page).toBe(false);
+        expect(paths.includes(modulePath(framework, `pages/${page}.ts`)), page).toBe(false);
       }
     });
 
     it('should generate a screen module for every enabled browser-facing feature', () => {
       const paths = generateFiles(framework, SCREEN_FEATURES).map((file) => file.path);
 
-      expect(paths.includes('pages/device.ts')).toBe(true);
-      expect(paths.includes('pages/ciba.ts')).toBe(true);
-      expect(paths.includes('pages/logout.ts')).toBe(true);
+      expect(paths.includes(modulePath(framework, 'pages/device.ts'))).toBe(true);
+      expect(paths.includes(modulePath(framework, 'pages/ciba.ts'))).toBe(true);
+      expect(paths.includes(modulePath(framework, 'pages/logout.ts'))).toBe(true);
     });
 
     // The whole point of the split: the logic behind a screen never renders,
@@ -141,22 +156,17 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     it('should render every screen from a pages/ module that holds no logic', () => {
       const pages = filesUnder(generateFiles(framework, SCREEN_FEATURES, ['reports.read']), 'pages');
 
-      expect(pages.map((page) => page.path.split('/').pop()).sort()).toEqual([
-        'authorize.ts',
-        'ciba.ts',
-        'consent.ts',
-        'device.ts',
-        'errors.ts',
-        'login.ts',
-        'logout.ts',
-        'respond.ts',
-      ]);
+      expect(pages.map((page) => page.path).sort()).toEqual(
+        ['authorize', 'ciba', 'consent', 'device', 'errors', 'login', 'logout', 'respond']
+          .map((name) => modulePath(framework, `pages/${name}.ts`))
+          .sort(),
+      );
       for (const page of pages) {
         for (const marker of LOGIC_MARKERS) {
           expect(page.content.includes(marker), `${page.path} must not contain ${marker}`).toBe(false);
         }
         if (page.path.endsWith('/respond.ts')) continue; // Response helpers only
-        if (page.path.endsWith('/errors.ts')) {
+        if (/\/errors\.tsx?$/.test(page.path)) {
           expect(page.content.includes("from '../views"), page.path).toBe(true);
           continue;
         }
@@ -172,8 +182,8 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should own GET and POST of /login and /consent in the page modules', () => {
       const files = generateFiles(framework);
-      const loginPage = fileContent(files, 'pages/login.ts');
-      const consentPage = fileContent(files, 'pages/consent.ts');
+      const loginPage = fileContent(files, modulePath(framework, 'pages/login.ts'));
+      const consentPage = fileContent(files, modulePath(framework, 'pages/consent.ts'));
       const loginRoute = fileContent(files, 'routes/login.ts');
       const consentRoute = fileContent(files, 'routes/consent.ts');
 
@@ -191,7 +201,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should map the login outcomes to screens in the page and keep the decisions in the route', () => {
       const files = generateFiles(framework);
-      const page = fileContent(files, 'pages/login.ts');
+      const page = fileContent(files, modulePath(framework, 'pages/login.ts'));
       const route = fileContent(files, 'routes/login.ts');
 
       // The route decides...
@@ -209,7 +219,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should keep the consent decision allowlist in the route and its message in the page', () => {
       const files = generateFiles(framework);
-      const page = fileContent(files, 'pages/consent.ts');
+      const page = fileContent(files, modulePath(framework, 'pages/consent.ts'));
       const route = fileContent(files, 'routes/consent.ts');
 
       expect(route.includes("if (action !== 'approve') {\n    return { kind: 'invalid_decision' };\n  }")).toBe(true);
@@ -258,7 +268,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should route every device step through the page and decide it in the route', () => {
       const files = generateFiles(framework, ['device-authorization-grant']);
-      const page = fileContent(files, 'pages/device.ts');
+      const page = fileContent(files, modulePath(framework, 'pages/device.ts'));
       const route = fileContent(files, 'routes/device.ts');
 
       expect(page.includes("devicePage.get('/', (c) =>")).toBe(true);
@@ -266,6 +276,14 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       expect(page.includes("devicePage.post('/login', async (c) => {")).toBe(true);
       expect(page.includes("devicePage.post('/approve', async (c) => {")).toBe(true);
       expect(page.includes('export function renderInvalidUserCode(')).toBe(true);
+      // RFC 8628 §5.1: the single, reason-free failure message re-renders the form.
+      expect(
+        page.includes(
+          framework === 'hono'
+            ? '<views.deviceVerificationPage userCode={userCode} error={INVALID_USER_CODE_MESSAGE} />,'
+            : 'views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),',
+        ),
+      ).toBe(true);
       expect(page.includes("from '../routes/device")).toBe(true);
       expect(route.includes('export async function submitDeviceUserCode(c: any, submittedUserCode: string): Promise<DeviceOutcome> {')).toBe(true);
       expect(route.includes('export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): Promise<DeviceOutcome> {')).toBe(true);
@@ -274,9 +292,9 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
 
     it('should route the CIBA and logout screens through their page modules', () => {
       const files = generateFiles(framework, ['ciba', 'rp-initiated-logout']);
-      const cibaPage = fileContent(files, 'pages/ciba.ts');
+      const cibaPage = fileContent(files, modulePath(framework, 'pages/ciba.ts'));
       const cibaRoute = fileContent(files, 'routes/ciba-verification.ts');
-      const logoutPage = fileContent(files, 'pages/logout.ts');
+      const logoutPage = fileContent(files, modulePath(framework, 'pages/logout.ts'));
       const logoutRoute = fileContent(files, 'routes/logout.ts');
 
       expect(cibaPage.includes("cibaPage.get('/', async (c) => respond(c, await prepareCibaDevice(c)));")).toBe(true);
@@ -303,7 +321,7 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       const files = generateFiles(framework, ['transaction-binding']);
 
       for (const screen of ['login', 'consent']) {
-        const page = fileContent(files, `pages/${screen}.ts`);
+        const page = fileContent(files, modulePath(framework, `pages/${screen}.ts`));
         const route = fileContent(files, `routes/${screen}.ts`);
         expect(route.includes('async function rejectUnboundTransaction('), screen).toBe(true);
         expect(route.split('await rejectUnboundTransaction(c, transaction, transactionId);').length, screen).toBe(3);
@@ -431,5 +449,26 @@ describe('generate nextjs (App Router layout)', () => {
         files.filter((file) => /from '\.{1,2}\/[^']+\.js'/.test(file.content)).map((file) => file.path),
       ).toEqual([]);
     });
+  });
+});
+
+// Hono's views are hono/jsx components, so the page modules that render one do
+// it as an element and are written as .tsx; the ones that only redirect or
+// build Responses stay .ts.
+describe('Hono screen modules (hono/jsx)', () => {
+  it('should render every view with JSX from a .tsx page module', () => {
+    const files = generateFiles('hono', SCREEN_FEATURES);
+
+    for (const name of ['errors', 'login', 'consent', 'device', 'ciba', 'logout']) {
+      const page = fileContent(files, `pages/${name}.tsx`);
+      expect(page.startsWith('/** @jsxImportSource hono/jsx */\n'), name).toBe(true);
+      expect(page.includes("const views: Views = c.get('views') ?? defaultViews;"), name).toBe(true);
+      expect(/<views\.\w+ /.test(page), name).toBe(true);
+      expect(/views\.\w+\(/.test(page), name).toBe(false);
+      expect(files.some((file) => file.path === `pages/${name}.ts`), name).toBe(false);
+    }
+    for (const name of ['authorize', 'respond']) {
+      expect(files.some((file) => file.path === `pages/${name}.ts`), name).toBe(true);
+    }
   });
 });

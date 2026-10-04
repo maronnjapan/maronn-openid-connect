@@ -24,6 +24,21 @@ function fileContent(files: Array<{ path: string; content: string }>, path: stri
   return files.find((file) => file.path === path)?.content ?? '';
 }
 
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
+function modulePath(framework: string, path: string): string {
+  return framework === 'hono' && HONO_TSX_MODULES.has(path) ? `${path}x` : path;
+}
+
 // Extension features live in their own package (here
 // @maronn-openid-connect/google-login), are disabled by default, and add an
 // authentication method (Sign in with Google) rather than an OAuth / OIDC
@@ -126,7 +141,7 @@ describe('generate with --enable google-login', () => {
     it('should generate the login_uri callback from the google-login package when enabled', () => {
       const files = generateFiles(framework, ['google-login']);
       const route = fileContent(files, 'routes/login.ts');
-      const page = fileContent(files, 'pages/login.ts');
+      const page = fileContent(files, modulePath(framework, 'pages/login.ts'));
 
       expect(route.includes(`from '${GOOGLE_LOGIN_PACKAGE}'`)).toBe(true);
       expect(route.includes('export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {')).toBe(true);
@@ -157,7 +172,7 @@ describe('generate with --enable google-login', () => {
 
     it('should hand the Sign in with Google button to both login screen renders when enabled', () => {
       const files = generateFiles(framework, ['google-login']);
-      const page = fileContent(files, 'pages/login.ts');
+      const page = fileContent(files, modulePath(framework, 'pages/login.ts'));
       const route = fileContent(files, 'routes/login.ts');
 
       // describeLoginScreen() builds the button configuration once and is used
@@ -189,10 +204,19 @@ describe('generate with --enable google-login', () => {
     // The package generates no UI: the view receives the g_id_onload attributes
     // and writes out the three GIS elements itself, so users can restyle them.
     it('should render the GIS elements from the attributes in the default login page when enabled', () => {
-      const content = fileContent(generateFiles(framework, ['google-login']), 'views.ts');
+      const content = fileContent(generateFiles(framework, ['google-login']), modulePath(framework, 'views.ts'));
 
       expect(content.includes(`from '${GOOGLE_LOGIN_PACKAGE}/sign-in'`)).toBe(true);
       expect(content.includes('  googleSignIn?: GoogleSignInAttributes;')).toBe(true);
+      if (framework === 'hono') {
+        // hono/jsx: the attributes are spread onto #g_id_onload, and JSX
+        // escapes each value.
+        expect(content.includes('<div {...params.googleSignIn}></div>')).toBe(true);
+        expect(content.includes('<script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} async></script>')).toBe(true);
+        expect(content.includes('<div class="g_id_signin" data-type="standard"></div>')).toBe(true);
+        expect(content.includes('{params.googleSignIn ? (')).toBe(true);
+        return;
+      }
       expect(content.includes('<div ${googleSignInAttributesToHtml(params.googleSignIn)}></div>')).toBe(true);
       expect(content.includes('<script src="${GOOGLE_GSI_CLIENT_SCRIPT_URL}" async></script>')).toBe(true);
       expect(content.includes('<div class="g_id_signin" data-type="standard"></div>')).toBe(true);
@@ -236,7 +260,7 @@ describe('generate with --enable google-login', () => {
     it('should generate the Google callback alongside transaction-binding and ciba', () => {
       const files = generateFiles(framework, ['google-login', 'transaction-binding', 'ciba']);
       const login = fileContent(files, 'routes/login.ts');
-      const page = fileContent(files, 'pages/login.ts');
+      const page = fileContent(files, modulePath(framework, 'pages/login.ts'));
       const paths = files.map((file) => file.path);
 
       expect(login.includes('export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {')).toBe(true);

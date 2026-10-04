@@ -17,7 +17,7 @@
  *
  * The three functions below are the three steps of that UI. None of them
  * builds a Response: each returns an outcome (which screen comes next, with
- * which cookies), and pages/ciba.ts — which owns the GET and POST routes —
+ * which cookies), and pages/ciba.tsx — which owns the GET and POST routes —
  * turns it into HTTP.
  *
  * ## Why the login form demands a binding cookie
@@ -74,7 +74,7 @@ export interface CibaPendingRequest {
   csrfToken: string;
 }
 
-/** What a step of the UI decided; pages/ciba.ts turns it into the next screen. */
+/** What a step of the UI decided; pages/ciba.tsx turns it into the next screen. */
 export type CibaOutcome =
   /** A binding or CSRF failure the OP shows on its own error page. */
   | { kind: 'error'; error: string; statusCode: number }

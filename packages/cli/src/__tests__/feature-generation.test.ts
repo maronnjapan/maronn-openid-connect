@@ -325,9 +325,9 @@ describe('generate with feature toggles', () => {
         'config.ts',
         'conformance.test.ts',
         'pages/authorize.ts',
-        'pages/consent.ts',
-        'pages/errors.ts',
-        'pages/login.ts',
+        'pages/consent.tsx',
+        'pages/errors.tsx',
+        'pages/login.tsx',
         'pages/respond.ts',
         'resolvers.ts',
         'routes/authorize.ts',
@@ -338,7 +338,7 @@ describe('generate with feature toggles', () => {
         'routes/token.ts',
         'routes/userinfo.ts',
         'store.ts',
-        'views.ts',
+        'views.tsx',
       ]);
     });
 

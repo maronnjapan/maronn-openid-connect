@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import type { SigningKeyProvider, SigningKey } from '@maronn-openid-connect/core';
 import { Hono } from 'hono';
+import { html } from 'hono/html';
 import { exportPublicJwk } from '@maronn-openid-connect/core';
 import { createApp, validateSigningKeySet } from './app.js';
 import { applyOidc } from './apply.js';
@@ -438,24 +439,15 @@ describe('generated provider HTTP conformance', () => {
       expect(consentHtml.includes('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(true);
     });
 
-    it('should preserve a custom Response returned by a view', () => {
-      const customResponse = new Response('custom view', {
-        status: 202,
-        headers: { 'X-View-Renderer': 'custom' },
-      });
-      const rendered = renderView(customResponse, { status: 400 });
-
-      expect(rendered).toBe(customResponse);
-      expect(rendered.status).toBe(202);
-      expect(rendered.headers.get('X-View-Renderer')).toBe('custom');
-    });
-
-    it('should render a custom HTML string returned by the error view', async () => {
-      const customHtml = '<!DOCTYPE html><p>custom authorization error</p>';
+    // A custom view injected through createApp({ views }) replaces the default
+    // one; hono/html escapes what it interpolates, like JSX does.
+    it('should render a custom error view injected through createApp', async () => {
       const customApp = createApp({
         signingKeyProvider,
         clientResolver: createInMemoryClientResolver(testClients),
-        views: { errorPage: () => customHtml },
+        views: {
+          errorPage: (params) => html`<!DOCTYPE html><p>custom ${params.error}: ${params.errorDescription}</p>`,
+        },
       });
       const res = await customApp.request(
         '/authorize?response_type=code&client_id=c-conf' +
@@ -466,7 +458,9 @@ describe('generated provider HTTP conformance', () => {
 
       expect(res.status).toBe(400);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
-      expect(await res.text()).toBe(customHtml);
+      expect(await res.text()).toBe(
+        '<!DOCTYPE html><p>custom invalid_request: redirect_uri not registered</p>',
+      );
     });
   });
 
@@ -957,17 +951,8 @@ describe('generated provider HTTP conformance', () => {
       // Pinned to the default error page so a regression in the rendered markup
       // (or a missing error_description) is caught exactly.
       expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request</p>',
-          '  <p>redirect_uri not registered</p>',
-          '</body>',
-          '</html>',
-        ].join('\n'),
+        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>invalid_request</p><p>redirect_uri not registered</p></body></html>',
       );
     });
 
@@ -1241,41 +1226,43 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
-  describe('custom view rendering (ViewResult / renderView)', () => {
-    // A view returning a plain HTML string is wrapped into a text/html Response.
-    it('should wrap a custom HTML string view into a text/html Response', async () => {
-      const res = renderView('<h1>custom-view-string</h1>');
+  describe('JSX view rendering (ViewResult / renderView)', () => {
+    // A view returns a hono/jsx element; renderView serializes it into a
+    // text/html Response.
+    it('should serialize a JSX view into a text/html Response', async () => {
+      const res = renderView(defaultViews.errorPage({ error: 'jsx-view', statusCode: 400 }));
 
       expect(res.status).toBe(200);
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
-      expect(await res.text()).toBe('<h1>custom-view-string</h1>');
+      expect(await res.text()).toBe(
+        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>jsx-view</p></body></html>',
+      );
     });
 
-    // The caller-provided status is applied to a wrapped string view (e.g. the
-    // 429 rate-limit error page).
-    it('should apply the provided status when wrapping a string view', async () => {
-      const res = renderView('<h1>too many</h1>', { status: 429 });
+    // The caller-provided status is applied (e.g. the 429 rate-limit error page).
+    it('should apply the provided status to a JSX view', async () => {
+      const res = renderView(
+        defaultViews.errorPage({ error: 'too many', statusCode: 429 }),
+        { status: 429 },
+      );
 
       expect(res.status).toBe(429);
-      expect(await res.text()).toBe('<h1>too many</h1>');
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
     });
 
-    // A view returning a Response keeps full control of the HTTP response
-    // (status, headers, body) — proving Views is no longer string-fixed.
-    it('should pass a Response returned by a custom view through untouched', async () => {
-      const original = new Response('<h1>custom-view-response</h1>', {
-        status: 203,
-        headers: { 'Content-Type': 'text/html; charset=UTF-8', 'X-Custom-View': 'on' },
-      });
-      const res = renderView(original);
+    // A view that renders asynchronously (an async component, or hono/html
+    // with a Promise inside) is streamed once its HTML resolves; the Response
+    // itself is built synchronously so a page can still attach cookies to it.
+    it('should stream a view that renders asynchronously', async () => {
+      const res = renderView(html`<p>${Promise.resolve('async-view')}</p>`);
 
-      expect(res).toBe(original);
-      expect(res.status).toBe(203);
-      expect(res.headers.get('X-Custom-View')).toBe('on');
-      expect(await res.text()).toBe('<h1>custom-view-response</h1>');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+      expect(await res.text()).toBe('<p>async-view</p>');
     });
 
-    // End-to-end: the login page (pages/login.ts) returns its view via
+    // End-to-end: the login page (pages/login.tsx) returns its view via
     // renderView, so the login page is delivered as a text/html Response through
     // the framework at runtime.
     it('should deliver the login page through renderView as a text/html Response', async () => {
@@ -2347,17 +2334,8 @@ describe('generated provider HTTP conformance', () => {
       expect(res.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
       const body = await res.text();
       expect(body).toBe(
-        [
-          '<!DOCTYPE html>',
-          '<html>',
-          '<head><title>Error</title></head>',
-          '<body>',
-          '  <h1>Error</h1>',
-          '  <p>invalid_request_object</p>',
-          '  <p>request object is not a JWS compact serialization</p>',
-          '</body>',
-          '</html>',
-        ].join('\n'),
+        '<!DOCTYPE html><html><head><title>Error</title></head><body>' +
+          '<h1>Error</h1><p>invalid_request_object</p><p>request object is not a JWS compact serialization</p></body></html>',
       );
     });
 
@@ -7749,7 +7727,7 @@ describe('generated provider HTTP conformance', () => {
       expect(res.headers.get('Location')).toBe(null);
     });
 
-    // The realistic regression: the Approve button is renamed in views.ts, so the
+    // The realistic regression: the Approve button is renamed in views.tsx, so the
     // handler receives a value it never agreed to accept.
     it('should not issue an authorization code when the consent POST sends an unknown action value', async () => {
       const flow = await reachConsent('decision-unknown');

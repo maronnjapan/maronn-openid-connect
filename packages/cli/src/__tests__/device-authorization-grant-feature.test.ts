@@ -29,6 +29,21 @@ function exportedFunctions(content: string): string[] {
   return [...content.matchAll(/^export (?:async )?function (\w+)\(/gm)].map((match) => match[1] ?? '');
 }
 
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
+function modulePath(framework: string, path: string): string {
+  return framework === 'hono' && HONO_TSX_MODULES.has(path) ? `${path}x` : path;
+}
+
 describe('EXPERIMENTAL_FEATURES', () => {
   it('should list device-authorization-grant among the experimental features', () => {
     expect(EXPERIMENTAL_FEATURES).toEqual([
@@ -180,7 +195,7 @@ describe('generate with --enable device-authorization-grant', () => {
       });
 
       it('should not add device pages to the views contract', () => {
-        const views = fileContent(generateFiles(framework), 'views.ts');
+        const views = fileContent(generateFiles(framework), modulePath(framework, 'views.ts'));
 
         expect(views.includes('deviceVerificationPage')).toBe(false);
         expect(views.includes('deviceApprovalPage')).toBe(false);
@@ -303,7 +318,7 @@ describe('generate with --enable device-authorization-grant', () => {
       it('should generate the four device view pages', () => {
         const views = fileContent(
           generateFiles(framework, ['device-authorization-grant']),
-          'views.ts',
+          modulePath(framework, 'views.ts'),
         );
 
         expect(views.includes('deviceVerificationPage: defaultDeviceVerificationPage,')).toBe(true);
@@ -316,16 +331,23 @@ describe('generate with --enable device-authorization-grant', () => {
         // The value comes from the query string of verification_uri_complete.
         const views = fileContent(
           generateFiles(framework, ['device-authorization-grant']),
-          'views.ts',
+          modulePath(framework, 'views.ts'),
         );
 
-        expect(views.includes('value="${escapeHtml(params.userCode ?? \'\')}"')).toBe(true);
+        // Hono's JSX views escape every {...} interpolation by themselves.
+        expect(
+          views.includes(
+            framework === 'hono'
+              ? "value={params.userCode ?? ''}"
+              : 'value="${escapeHtml(params.userCode ?? \'\')}"',
+          ),
+        ).toBe(true);
       });
 
       it('should repeat the user_code on the approval page (RFC 8628 §5.4)', () => {
         const views = fileContent(
           generateFiles(framework, ['device-authorization-grant']),
-          'views.ts',
+          modulePath(framework, 'views.ts'),
         );
 
         expect(views.includes('Confirm that your device is showing this code')).toBe(true);

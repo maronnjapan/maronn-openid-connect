@@ -4,7 +4,7 @@
  * Everything the login screen has to decide lives here as plain functions:
  * loading the transaction, the User-Agent binding, the credential check, the
  * lockout, the OP session cookie and the hand-off to the consent step. None of
- * them builds a Response — each returns an outcome, and pages/login.ts turns
+ * them builds a Response — each returns an outcome, and pages/login.tsx turns
  * that outcome into a screen or a redirect. The UI can therefore be changed
  * without touching this file.
  */
@@ -48,7 +48,7 @@ export interface LoginError {
   statusCode: number;
 }
 
-/** What POST /login decided; pages/login.ts turns it into HTTP. */
+/** What POST /login decided; pages/login.tsx turns it into HTTP. */
 export type LoginOutcome =
   | LoginError
   /** handleLoginFailure() locked the transaction: no further attempt is accepted (429). */

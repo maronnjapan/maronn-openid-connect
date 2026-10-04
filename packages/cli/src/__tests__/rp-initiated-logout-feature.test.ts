@@ -18,6 +18,21 @@ function fileContent(files: Array<{ path: string; content: string }>, path: stri
   return files.find((file) => file.path === path)?.content ?? '';
 }
 
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
+function modulePath(framework: string, path: string): string {
+  return framework === 'hono' && HONO_TSX_MODULES.has(path) ? `${path}x` : path;
+}
+
 describe('resolveFeatures with rp-initiated-logout', () => {
   it('should disable rp-initiated-logout by default', () => {
     expect(DEFAULT_FEATURES.rpInitiatedLogout).toBe(false);
@@ -151,7 +166,7 @@ describe('generate with --enable rp-initiated-logout', () => {
     });
 
     it('should generate the logout views only when the feature is enabled', () => {
-      const viewsPath = 'views.ts';
+      const viewsPath = modulePath(framework, 'views.ts');
       const defaultViews = fileContent(generateFiles(framework), viewsPath);
       const enabledViews = fileContent(generateFiles(framework, ['rp-initiated-logout']), viewsPath);
 

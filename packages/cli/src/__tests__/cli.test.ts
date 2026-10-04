@@ -72,7 +72,7 @@ describe('CLI', () => {
       expect(existsSync(join(outputDir, 'config.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'store.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'resolvers.ts'))).toBe(true);
-      expect(existsSync(join(outputDir, 'views.ts'))).toBe(true);
+      expect(existsSync(join(outputDir, 'views.tsx'))).toBe(true);
       expect(existsSync(join(outputDir, 'routes/authorize.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'routes/token.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'routes/userinfo.ts'))).toBe(true);
@@ -80,6 +80,38 @@ describe('CLI', () => {
       expect(existsSync(join(outputDir, 'routes/discovery.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'routes/login.ts'))).toBe(true);
       expect(existsSync(join(outputDir, 'routes/consent.ts'))).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    // Hono's screens moved from .ts to .tsx (hono/jsx). A views.ts or
+    // pages/*.ts left by an older CLI would shadow the .tsx module, so
+    // regenerating lists them.
+    it('should warn about the .ts screens an older CLI left when regenerating hono', () => {
+      const outputDir = join(testDir, 'stale-views');
+      mkdirSync(join(outputDir, 'pages'), { recursive: true });
+      writeFileSync(join(outputDir, 'views.ts'), 'export const old = true;\n');
+      writeFileSync(join(outputDir, 'pages/login.ts'), 'export const old = true;\n');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir]);
+      expect(existsSync(join(outputDir, 'views.tsx'))).toBe(true);
+      expect(existsSync(join(outputDir, 'pages/login.tsx'))).toBe(true);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const warning = String(warnSpy.mock.calls[0]?.[0]);
+      expect(warning).toContain('they shadow the new .tsx files');
+      expect(warning).toContain('\n  views.ts\n');
+      expect(warning).toContain('\n  pages/login.ts\n');
+      expect(warning).not.toContain('pages/consent.ts');
+      vi.restoreAllMocks();
+    });
+
+    it('should not warn about views.ts when generating express', () => {
+      const outputDir = join(testDir, 'express-views');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      run(['generate', 'express', '-o', outputDir]);
+      expect(existsSync(join(outputDir, 'views.ts'))).toBe(true);
+      expect(warnSpy).not.toHaveBeenCalled();
       vi.restoreAllMocks();
     });
 
@@ -682,12 +714,12 @@ describe('CLI', () => {
           '  Would overwrite: config.ts',
           '  Would create: store.ts',
           '  Would create: resolvers.ts',
-          '  Would create: views.ts',
+          '  Would create: views.tsx',
           '  Would create: pages/respond.ts',
-          '  Would create: pages/errors.ts',
+          '  Would create: pages/errors.tsx',
           '  Would create: pages/authorize.ts',
-          '  Would create: pages/login.ts',
-          '  Would create: pages/consent.ts',
+          '  Would create: pages/login.tsx',
+          '  Would create: pages/consent.tsx',
           '  Would create: routes/authorize.ts',
           '  Would create: routes/token.ts',
           '  Would create: routes/userinfo.ts',

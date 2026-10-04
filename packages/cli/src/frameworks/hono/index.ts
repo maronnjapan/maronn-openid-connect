@@ -7,7 +7,6 @@ import {
   customScopesTemplate,
   storeTemplate,
   resolversTemplate,
-  viewsTemplate,
   authorizeRouteTemplate,
   tokenRouteTemplate,
   userinfoRouteTemplate,
@@ -36,6 +35,7 @@ import {
   logoutPageTemplate,
   respondTemplate,
 } from './pages.js';
+import { honoViewsTemplate } from './views.js';
 
 export class HonoGenerator implements FrameworkGenerator {
   readonly name = 'hono';
@@ -46,7 +46,7 @@ export class HonoGenerator implements FrameworkGenerator {
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
 
-    return [
+    const files: GeneratedFile[] = [
       { path: 'app.ts', content: appTemplate(pkg, features) },
       { path: 'apply.ts', content: applyTemplate(pkg, features) },
       { path: 'config.ts', content: configTemplate(pkg, features) },
@@ -57,22 +57,26 @@ export class HonoGenerator implements FrameworkGenerator {
         : []),
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
-      { path: 'views.ts', content: viewsTemplate(features) },
+      // The default screens as hono/jsx components (views.tsx); the other
+      // frameworks generate the same contract as HTML strings (views.ts).
+      { path: 'views.tsx', content: honoViewsTemplate(features) },
       // Screen routing layer (pages/): every browser-facing GET / POST
       // (authorize, login, consent, and the device / CIBA / logout UIs) plus the
       // render helpers. Each page calls the logic of its routes/ module and only
-      // renders or redirects, so the UI is customized in pages/ and views.ts.
+      // renders or redirects, so the UI is customized in pages/ and views.tsx.
+      // The modules that render a view do it with JSX (<views.loginPage />), so
+      // they are .tsx; authorize and respond only redirect and stay .ts.
       { path: 'pages/respond.ts', content: respondTemplate() },
-      { path: 'pages/errors.ts', content: errorPageTemplate() },
+      { path: 'pages/errors.tsx', content: errorPageTemplate('jsx') },
       { path: 'pages/authorize.ts', content: authorizePageTemplate() },
-      { path: 'pages/login.ts', content: loginPageTemplate(features) },
-      { path: 'pages/consent.ts', content: consentPageTemplate() },
+      { path: 'pages/login.tsx', content: loginPageTemplate(features, 'jsx') },
+      { path: 'pages/consent.tsx', content: consentPageTemplate('jsx') },
       ...(features.deviceAuthorizationGrant
-        ? [{ path: 'pages/device.ts', content: devicePageTemplate() }]
+        ? [{ path: 'pages/device.tsx', content: devicePageTemplate('jsx') }]
         : []),
-      ...(features.ciba ? [{ path: 'pages/ciba.ts', content: cibaPageTemplate() }] : []),
+      ...(features.ciba ? [{ path: 'pages/ciba.tsx', content: cibaPageTemplate('jsx') }] : []),
       ...(features.rpInitiatedLogout
-        ? [{ path: 'pages/logout.ts', content: logoutPageTemplate() }]
+        ? [{ path: 'pages/logout.tsx', content: logoutPageTemplate('jsx') }]
         : []),
       { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features, scopes) },
       { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features) },
@@ -122,5 +126,17 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
       { path: 'conformance.test.ts', content: conformanceTestTemplate(pkg, features, scopes) },
     ];
+    // The templates are shared with the frameworks that write these modules as
+    // .ts; point their comments at the .tsx files here ('views.ts' and
+    // 'pages/login.ts' become 'views.tsx' and 'pages/login.tsx'). Imports are
+    // unaffected: '../views.js' resolves to views.tsx.
+    const tsxModules = files
+      .filter((file) => file.path.endsWith('.tsx'))
+      .map((file) => file.path.slice(0, -'.tsx'.length));
+    const tsReference = new RegExp(`\\b(${tsxModules.join('|')})\\.ts\\b`, 'g');
+    return files.map((file) => ({
+      ...file,
+      content: file.content.replace(tsReference, '$1.tsx'),
+    }));
   }
 }

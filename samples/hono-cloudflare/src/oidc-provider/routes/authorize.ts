@@ -687,14 +687,14 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
             // login → consent の受け渡しに sessionId も載せる。
             sessionId: existingSession.sessionId,
           });
-          // Continue on the consent screen (pages/consent.ts); the binding
+          // Continue on the consent screen (pages/consent.tsx); the binding
           // cookie, when enabled, travels with this answer.
           return { kind: 'consent', transactionId, cookies: [buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds)] };
         }
       }
     }
 
-    // Interactive authentication: continue on the login screen (pages/login.ts;
+    // Interactive authentication: continue on the login screen (pages/login.tsx;
     // prompt=login forces re-authentication there). The binding cookie, when
     // enabled, travels with this answer.
     return { kind: 'login', transactionId, cookies: [buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds)] };

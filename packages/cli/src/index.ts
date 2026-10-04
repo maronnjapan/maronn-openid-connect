@@ -255,6 +255,30 @@ function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; con
   }
 }
 
+/**
+ * Hono's screens are generated as hono/jsx (views.tsx and the pages/*.tsx that
+ * render them). Say which compiler options that needs, and flag the .ts files
+ * an older CLI wrote at those paths: they would shadow the .tsx ones, since an
+ * import of './views.js' resolves to views.ts before views.tsx.
+ */
+function printHonoJsxNotes(outputDir: string, files: Array<{ path: string }>): void {
+  console.log(
+    '\nThe screens (views.tsx, pages/*.tsx) use hono/jsx. Enable JSX in tsconfig.json:\n' +
+      '  "jsx": "react-jsx", "jsxImportSource": "hono/jsx"',
+  );
+  const shadowing = files
+    .filter((file) => file.path.endsWith('.tsx'))
+    .map((file) => file.path.slice(0, -1))
+    .filter((path) => existsSync(join(outputDir, path)));
+  if (shadowing.length > 0) {
+    console.warn(
+      `\nWarning: an older CLI generated these files in ${outputDir}, and they shadow the new .tsx files:\n` +
+        shadowing.map((path) => `  ${path}`).join('\n') +
+        '\nMove your customizations into the .tsx files, then delete these .ts files.',
+    );
+  }
+}
+
 type PatchEntryFileResult =
   | { status: 'patched' }
   | { status: 'already-patched' }
@@ -427,6 +451,9 @@ export function run(args: string[]): void {
     }
     writeGeneratedFiles(parsed.outputDir, plannedFiles);
     console.log(`\nDone! Generated ${plannedFiles.length} files in ${parsed.outputDir}`);
+    if (result.framework === 'hono') {
+      printHonoJsxNotes(parsed.outputDir, result.files);
+    }
 
     if (parsed.command === 'setup') {
       console.log(`\nPatching entry file...`);

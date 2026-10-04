@@ -1,13 +1,14 @@
+/** @jsxImportSource hono/jsx */
 /**
  * Error screen (screen routing layer).
  *
  * Whenever a page has to stop the browser on the OP's own error page it calls
- * renderErrorPage() here. Customize the error UI in views.ts (errorPage), or
+ * renderErrorPage() here. Customize the error UI in views.tsx (errorPage), or
  * change how it is delivered in this file — for example by redirecting to a
  * page of your own.
  */
 import { defaultProviderConfig } from '../config.js';
-import { defaultViews, renderView, type ErrorPageParams } from '../views.js';
+import { defaultViews, renderView, type ErrorPageParams, type Views } from '../views.js';
 
 /**
  * Render the OP's error page.
@@ -17,8 +18,8 @@ import { defaultViews, renderView, type ErrorPageParams } from '../views.js';
  * from the message (a 429 lockout page answers 429, a 403 binding failure 403).
  */
 export function renderErrorPage(c: any, params: ErrorPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.errorPage(params), { status: params.statusCode });
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.errorPage {...params} />, { status: params.statusCode });
 }
 
 /**

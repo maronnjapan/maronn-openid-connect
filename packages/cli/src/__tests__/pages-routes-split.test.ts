@@ -75,7 +75,19 @@ function generateFiles(framework: string, enable: string[] = [], scopes: string[
 }
 
 /** Next.js keeps the framework-neutral provider under _oidc-provider/. */
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
 function providerPath(framework: string, path: string): string {
+  if (framework === 'hono' && HONO_TSX_MODULES.has(path)) return `${path}x`;
   return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
 }
 
@@ -142,22 +154,17 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
     it('should render every screen from a pages/ module that holds no logic', () => {
       const pages = filesUnder(generateFiles(framework, SCREEN_FEATURES, ['reports.read']), framework, 'pages');
 
-      expect(pages.map((page) => page.path.split('/').pop()).sort()).toEqual([
-        'authorize.ts',
-        'ciba.ts',
-        'consent.ts',
-        'device.ts',
-        'errors.ts',
-        'login.ts',
-        'logout.ts',
-        'respond.ts',
-      ]);
+      expect(pages.map((page) => page.path).sort()).toEqual(
+        ['authorize', 'ciba', 'consent', 'device', 'errors', 'login', 'logout', 'respond']
+          .map((name) => providerPath(framework, `pages/${name}.ts`))
+          .sort(),
+      );
       for (const page of pages) {
         for (const marker of LOGIC_MARKERS) {
           expect(page.content.includes(marker), `${page.path} must not contain ${marker}`).toBe(false);
         }
         if (page.path.endsWith('/respond.ts')) continue; // Response helpers only
-        if (page.path.endsWith('/errors.ts')) {
+        if (/\/errors\.tsx?$/.test(page.path)) {
           expect(page.content.includes("from '../views"), page.path).toBe(true);
           continue;
         }
@@ -267,6 +274,14 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
       expect(page.includes("devicePage.post('/login', async (c) => {")).toBe(true);
       expect(page.includes("devicePage.post('/approve', async (c) => {")).toBe(true);
       expect(page.includes('export function renderInvalidUserCode(')).toBe(true);
+      // RFC 8628 §5.1: the single, reason-free failure message re-renders the form.
+      expect(
+        page.includes(
+          framework === 'hono'
+            ? '<views.deviceVerificationPage userCode={userCode} error={INVALID_USER_CODE_MESSAGE} />,'
+            : 'views.deviceVerificationPage({ userCode, error: INVALID_USER_CODE_MESSAGE }),',
+        ),
+      ).toBe(true);
       expect(page.includes("from '../routes/device")).toBe(true);
       expect(route.includes('export async function submitDeviceUserCode(c: any, submittedUserCode: string): Promise<DeviceOutcome> {')).toBe(true);
       expect(route.includes('export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): Promise<DeviceOutcome> {')).toBe(true);
@@ -379,6 +394,27 @@ describe('pages/ (screen routing) and routes/ (API routing)', () => {
         expect(content.includes('new WebRouter()'), name).toBe(true);
         expect(content.includes("from 'hono'"), name).toBe(false);
       }
+    }
+  });
+});
+
+// Hono's views are hono/jsx components, so the page modules that render one do
+// it as an element and are written as .tsx; the ones that only redirect or
+// build Responses stay .ts.
+describe('Hono screen modules (hono/jsx)', () => {
+  it('should render every view with JSX from a .tsx page module', () => {
+    const files = generateFiles('hono', SCREEN_FEATURES);
+
+    for (const name of ['errors', 'login', 'consent', 'device', 'ciba', 'logout']) {
+      const page = fileContent(files, `pages/${name}.tsx`);
+      expect(page.startsWith('/** @jsxImportSource hono/jsx */\n'), name).toBe(true);
+      expect(page.includes("const views: Views = c.get('views') ?? defaultViews;"), name).toBe(true);
+      expect(/<views\.\w+ /.test(page), name).toBe(true);
+      expect(/views\.\w+\(/.test(page), name).toBe(false);
+      expect(files.some((file) => file.path === `pages/${name}.ts`), name).toBe(false);
+    }
+    for (const name of ['authorize', 'respond']) {
+      expect(files.some((file) => file.path === `pages/${name}.ts`), name).toBe(true);
     }
   });
 });

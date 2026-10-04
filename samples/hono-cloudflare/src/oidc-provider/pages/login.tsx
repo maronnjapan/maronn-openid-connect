@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * Login screen (screen routing layer).
  *
@@ -6,13 +7,13 @@
  * the transaction, check the User-Agent binding, verify the credentials and
  * mint the OP session, and report what happened as an outcome. This file turns
  * each outcome into a screen or a redirect. To customize the login UI, edit
- * this file or the loginPage view in views.ts; routes/login.ts never has to
+ * this file or the loginPage view in views.tsx; routes/login.ts never has to
  * change.
  */
 import { Hono } from 'hono';
 import { defaultProviderConfig } from '../config.js';
 import { prepareLogin, submitLogin, type LoginScreen } from '../routes/login.js';
-import { defaultViews, renderView, type LoginPageParams } from '../views.js';
+import { defaultViews, renderView, type LoginPageParams, type Views } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies } from './respond.js';
 
@@ -23,8 +24,8 @@ export const loginPage = new Hono<{ Variables: Record<string, any> }>();
  * or redirect to a UI of your own — here only.
  */
 export function renderLoginPage(c: any, params: LoginPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.loginPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.loginPage {...params} />);
 }
 
 /**

@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * Consent screen (screen routing layer).
  *
@@ -7,13 +8,13 @@
  * the decision, mint the authorization code and build the authorization
  * response URL, and report what happened as an outcome. This file turns each
  * outcome into a screen or a redirect. To customize the consent UI, edit this
- * file or the consentPage view in views.ts; routes/consent.ts never has to
+ * file or the consentPage view in views.tsx; routes/consent.ts never has to
  * change. Keep the two button values ('approve' / 'deny') as they are: the
  * logic accepts exactly those.
  */
 import { Hono } from 'hono';
 import { prepareConsent, submitConsent } from '../routes/consent.js';
-import { defaultViews, renderView, type ConsentPageParams } from '../views.js';
+import { defaultViews, renderView, type ConsentPageParams, type Views } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies } from './respond.js';
 
@@ -24,8 +25,8 @@ export const consentPage = new Hono<{ Variables: Record<string, any> }>();
  * or redirect to a UI of your own — here only.
  */
 export function renderConsentPage(c: any, params: ConsentPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.consentPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.consentPage {...params} />);
 }
 
 /**
@@ -65,7 +66,7 @@ consentPage.post('/', async (c) => {
     // OIDC Core 1.0 Section 3.1.2.4 / 3.1.2.6: no decision was obtained, which
     // is not the same as the End-User denying — so the browser stays on the OP's
     // own error page instead of being sent back to the client. 'approve' and
-    // 'deny' are the values the logic accepts; the buttons in views.ts
+    // 'deny' are the values the logic accepts; the buttons in views.tsx
     // consentPage() must keep sending exactly those.
     return renderErrorPage(c, {
       error: 'Invalid consent decision. Please use the Approve or Deny button.',

@@ -5,7 +5,7 @@
  * loading the transaction, the User-Agent binding, the scope policy, the
  * authorization decision, the authorization code, the consent record and the
  * authorization response URL (RFC 6749 §4.1.2 / RFC 9207 iss / JARM). None of
- * them builds a Response — each returns an outcome, and pages/consent.ts turns
+ * them builds a Response — each returns an outcome, and pages/consent.tsx turns
  * that outcome into a screen or a redirect. The UI can therefore be changed
  * without touching this file.
  */
@@ -57,7 +57,7 @@ export interface ConsentError {
   statusCode: number;
 }
 
-/** What POST /consent decided; pages/consent.ts turns it into HTTP. */
+/** What POST /consent decided; pages/consent.tsx turns it into HTTP. */
 export type ConsentOutcome =
   | ConsentError
   /**
@@ -252,9 +252,9 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
   // approve. Deciding by "not deny" would approve every unexpected value instead.
   //
   // 'approve' is the decision value this provider accepts, and it MUST stay in
-  // sync with the Approve button in views.ts consentPage(). Changing it here
+  // sync with the Approve button in views.tsx consentPage(). Changing it here
   // without changing the button (or the other way round) makes every approval
-  // fail with the 400 pages/consent.ts shows for this outcome.
+  // fail with the 400 pages/consent.tsx shows for this outcome.
   //
   // Section 3.1.2.6: access_denied means the End-User denied the request, which
   // is not the same as no decision at all — an unrecognized value stops here on

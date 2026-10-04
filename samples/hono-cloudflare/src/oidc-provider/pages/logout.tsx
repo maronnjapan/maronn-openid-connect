@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * EXPERIMENTAL — RP-Initiated Logout screens (RP-Initiated Logout 1.0 §2),
  * screen routing layer.
@@ -8,7 +9,7 @@
  * verifying id_token_hint, matching the session, resolving the redirect — is
  * processEndSessionRequest() and approveLogout() in routes/logout.ts; this file
  * only turns their outcome into HTTP, with the cookies the outcome carries. To
- * customize the logout UI, edit this file or the logout* views in views.ts;
+ * customize the logout UI, edit this file or the logout* views in views.tsx;
  * the route module never has to change. The confirmation form must keep
  * posting csrf_token to /logout/approve: it is paired with the HttpOnly cookie
  * the logic mints.
@@ -22,6 +23,7 @@ import {
   renderView,
   type LogoutCompletedPageParams,
   type LogoutConfirmationPageParams,
+  type Views,
 } from '../views.js';
 import { renderErrorPage } from './errors.js';
 import { redirectWithCookies, withCookies } from './respond.js';
@@ -33,14 +35,14 @@ export function renderLogoutConfirmationPage(
   c: any,
   params: LogoutConfirmationPageParams,
 ): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.logoutConfirmationPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.logoutConfirmationPage {...params} />);
 }
 
 /** Render the logged-out screen. */
 export function renderLogoutCompletedPage(c: any, params: LogoutCompletedPageParams): Response {
-  const views = c.get('views') ?? defaultViews;
-  return renderView(views.logoutCompletedPage(params));
+  const views: Views = c.get('views') ?? defaultViews;
+  return renderView(<views.logoutCompletedPage {...params} />);
 }
 
 /** Turn the outcome of a logout step into the HTTP response. */

@@ -14,7 +14,7 @@
  *
  * The three functions below are the three state-changing steps of that UI.
  * None of them builds a Response: each returns an outcome (which screen comes
- * next, with which cookies), and pages/device.ts — which also owns GET /device
+ * next, with which cookies), and pages/device.tsx — which also owns GET /device
  * and the POST routes — turns it into HTTP.
  *
  * ## Why every step here demands a binding cookie
@@ -52,7 +52,7 @@ import {
 } from '../store.js';
 import { deviceAuthorizationConfig } from './device-authorization.js';
 
-/** What a verification step decided; pages/device.ts turns it into the next screen. */
+/** What a verification step decided; pages/device.tsx turns it into the next screen. */
 export type DeviceOutcome =
   /**
    * The code did not match. RFC 8628 §5.1: unknown, expired and already-used

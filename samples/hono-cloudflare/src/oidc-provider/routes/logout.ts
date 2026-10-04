@@ -19,7 +19,7 @@
  * for session state.
  *
  * Neither function below builds a Response: each returns an outcome (which
- * screen or redirect comes next, with which cookies), and pages/logout.ts —
+ * screen or redirect comes next, with which cookies), and pages/logout.tsx —
  * which owns the GET and POST routes — turns it into HTTP.
  *
  * ## Why the confirmation approve step demands a cookie + token pair
@@ -69,7 +69,7 @@ export const rpInitiatedLogoutConfig = {
   postLogoutRedirectUris: {} as Record<string, string[]>,
 };
 
-/** What a logout step decided; pages/logout.ts turns it into HTTP. */
+/** What a logout step decided; pages/logout.tsx turns it into HTTP. */
 export type LogoutOutcome =
   /** Forged, replayed or expired confirmation: nothing was deleted (400). */
   | { kind: 'invalid_confirmation' }

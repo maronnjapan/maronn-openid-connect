@@ -23,7 +23,19 @@ function fileContent(files: Array<{ path: string; content: string }>, path: stri
 }
 
 /** Next.js keeps the framework-neutral provider under _oidc-provider/. */
+/** Hono writes the modules that render JSX (views and the screen pages) as .tsx. */
+const HONO_TSX_MODULES = new Set([
+  'views.ts',
+  'pages/errors.ts',
+  'pages/login.ts',
+  'pages/consent.ts',
+  'pages/device.ts',
+  'pages/ciba.ts',
+  'pages/logout.ts',
+]);
+
 function providerPath(framework: string, path: string): string {
+  if (framework === 'hono' && HONO_TSX_MODULES.has(path)) return `${path}x`;
   return framework === 'nextjs' ? `_oidc-provider/${path}` : path;
 }
 
@@ -317,7 +329,14 @@ describe('generate with --enable device-authorization-grant', () => {
           providerPath(framework, 'views.ts'),
         );
 
-        expect(views.includes('value="${escapeHtml(params.userCode ?? \'\')}"')).toBe(true);
+        // Hono's JSX views escape every {...} interpolation by themselves.
+        expect(
+          views.includes(
+            framework === 'hono'
+              ? "value={params.userCode ?? ''}"
+              : 'value="${escapeHtml(params.userCode ?? \'\')}"',
+          ),
+        ).toBe(true);
       });
 
       it('should repeat the user_code on the approval page (RFC 8628 §5.4)', () => {

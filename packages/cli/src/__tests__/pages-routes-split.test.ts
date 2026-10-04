@@ -389,6 +389,17 @@ describe('generate nextjs (App Router layout)', () => {
         'oidc-error/page.tsx',
       ]);
     });
+
+    // Login and consent end an unknown transaction with notFound() and leave an
+    // exception nobody expected to an error boundary, so each has the two
+    // Next.js error files beside its page.
+    it('should give the login and consent pages their own not-found.tsx and error.tsx', () => {
+      expect(
+        generatedPaths()
+          .filter((path) => path.endsWith('/not-found.tsx') || path.endsWith('/error.tsx'))
+          .sort(),
+      ).toEqual(['consent/error.tsx', 'consent/not-found.tsx', 'login/error.tsx', 'login/not-found.tsx']);
+    });
   });
 
   describe('Provider folder (_oidc-provider/)', () => {

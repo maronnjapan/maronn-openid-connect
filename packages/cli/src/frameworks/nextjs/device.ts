@@ -393,7 +393,7 @@ import {
 } from '${DEVICE_PACKAGE}';
 import { deviceAuthorizationStore, stores } from '../_oidc-provider/provider';
 import { buildDeviceBindingCookie, parseSessionId } from '../_oidc-provider/store';
-import { readFormFields } from '../_oidc-provider/html';${customScopeImport}
+import { readFormFields } from '../_oidc-provider/http';${customScopeImport}
 import {
   approvalScreen,
   invalidUserCodeScreen,
@@ -491,7 +491,8 @@ import {
   validateVerificationCsrfToken,
 } from '${DEVICE_PACKAGE}';
 import { generateRandomString } from '${corePkg}';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { deviceAuthorizationStore, stores } from '../../_oidc-provider/provider';
 import { buildSessionCookie, parseDeviceBindingSecret } from '../../_oidc-provider/store';${customScopeImport}
 import { deviceAuthorizationConfig } from '../../device_authorization/config';
@@ -610,7 +611,8 @@ import {
   findPendingRecordByUserCode,
   validateVerificationBinding,
 } from '${DEVICE_PACKAGE}';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { deviceAuthorizationStore, resolvers, stores } from '../../_oidc-provider/provider';
 import {
   buildClearedDeviceBindingCookie,

@@ -592,13 +592,15 @@ function createStores(): ProviderStores {
 }
 
 /**
- * `_oidc-provider/http.ts`: what the Route Handlers share — CORS for the
- * endpoints client applications call, the no-store JSON responses OAuth
- * requires, and form parsing that notices repeated parameters.
+ * `_oidc-provider/http.ts`: what the Route Handlers and Server Actions share —
+ * CORS for the endpoints client applications call, the no-store JSON responses
+ * OAuth requires, form parsing that notices repeated parameters, and the way to
+ * the OP's error page.
  */
 export function nextJsHttpTemplate(): string {
   return `/**
- * Helpers shared by the OP's Route Handlers.
+ * Request and response helpers shared by the OP's Route Handlers and Server
+ * Actions.
  *
  * - CORS: the back-channel endpoints may be called from client applications in
  *   the browser; discovery and JWKS are public. Each Route Handler exports an
@@ -606,8 +608,11 @@ export function nextJsHttpTemplate(): string {
  * - Responses that carry credentials are never cached (RFC 6749 §5.1 / §5.2).
  * - OAuth request parameters must not be repeated (RFC 6749 §3.1 / §3.2), which
  *   Object.fromEntries(searchParams) would hide by keeping only the last value.
+ * - An error that must not reach the client ends on the OP's error page
+ *   (app/oidc-error): errorPagePath() / redirectToErrorPage().
  */
-import { corsOrigins } from './provider';
+import { NextResponse } from 'next/server';
+import { config, corsOrigins } from './provider';
 
 export interface CorsPolicy {
   origins: string | readonly string[];
@@ -734,25 +739,6 @@ export function uniqueParams(searchParams: URLSearchParams): UniqueParams {
   }
   return { params };
 }
-`;
-}
-
-/**
- * `_oidc-provider/html.ts`: HTML responses for the screens served by Route
- * Handlers (device verification, CIBA, RP-Initiated Logout, the Google login
- * callback). Only generated when one of those features is.
- */
-export function nextJsHtmlTemplate(): string {
-  return `/**
- * HTML responses for the screens that are served by Route Handlers instead of
- * React pages: the device verification UI, the CIBA authentication device UI,
- * the RP-Initiated Logout screens and the Google login callback.
- *
- * Those screens set a cookie on the very response that renders them (a browser
- * binding, or a confirmation secret), and their failures carry a status code
- * (403, 429, ...) that the security model and its tests rely on. A Server
- * Component can do neither, so these stay plain HTML responses.
- */
 
 /**
  * The fields of a form POST (urlencoded or multipart). A body that is neither
@@ -765,6 +751,47 @@ export async function readFormFields(request: Request): Promise<FormData> {
     return new FormData();
   }
 }
+
+/**
+ * The OP's error page (app/oidc-error) for an error that must stay on the OP,
+ * as a path of this app with the error in the query. Pages and Server Actions
+ * redirect() to it.
+ */
+export function errorPagePath(error: string, errorDescription?: string): string {
+  const query = new URLSearchParams({ error });
+  if (errorDescription) query.set('error_description', errorDescription);
+  return '/oidc-error?' + query.toString();
+}
+
+/**
+ * Send the browser to the OP's error page from a Route Handler. 303, so the
+ * page is fetched with GET even after a POST; built on config.issuer, never on
+ * the request URL (OIDC Discovery 1.0 §3).
+ */
+export function redirectToErrorPage(error: string, errorDescription?: string): Response {
+  return NextResponse.redirect(new URL(errorPagePath(error, errorDescription), config.issuer), 303);
+}
+`;
+}
+
+/**
+ * `_oidc-provider/html.ts`: HTML responses for the screens served by Route
+ * Handlers (device verification, CIBA, RP-Initiated Logout). Only generated
+ * when one of those features is.
+ */
+export function nextJsHtmlTemplate(): string {
+  return `/**
+ * HTML responses for the screens that are served by Route Handlers instead of
+ * React pages: the device verification UI, the CIBA authentication device UI
+ * and the RP-Initiated Logout screens.
+ *
+ * Those screens set a cookie on the very response that renders them (a browser
+ * binding, or a confirmation secret), and their failures carry a status code
+ * (403, 429, ...) that the security model and its tests rely on. A Server
+ * Component can do neither, and Next.js does not render React from a Route
+ * Handler, so these stay plain HTML responses. Every other screen of the OP is
+ * a React page (login, consent, oidc-error).
+ */
 
 /** Escape a value for HTML text and double-quoted attribute values. */
 export function escapeHtml(value: string): string {

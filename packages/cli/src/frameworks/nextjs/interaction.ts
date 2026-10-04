@@ -1,7 +1,8 @@
 /**
  * Next.js templates for the interactive steps of the authorization flow: the
  * login and consent pages (React Server Components + Server Actions), the
- * Google login callback, and the OP's error page.
+ * Google login callback, and the OP's error screens (the oidc-error page and
+ * the not-found.tsx / error.tsx of the login and consent pages).
  */
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
@@ -73,33 +74,183 @@ export async function startSession(
 `;
 }
 
-/** The page shown instead of a form when the transaction cannot continue here. */
-function noticeComponent(name: string, heading: string): string {
-  return `/** Shown instead of the form when this transaction cannot continue here. */
-function ${name}({ message }: { message: string }) {
-  return (
-    <main>
-      <h1>${heading}</h1>
-      <p role="alert">{message}</p>
-    </main>
-  );
-}`;
-}
-
-/** `login/page.tsx` — the login form (React Server Component). */
-export function nextJsLoginPageTemplate(
+/** `_oidc-provider/transaction.ts` — the transaction the login and consent steps continue. */
+export function nextJsTransactionTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
 ): string {
   const binding = features.transactionBinding;
-  const google = features.googleLogin;
-  const coreImport = binding
-    ? `import { AuthTransactionError, getAuthTransaction, validateTransactionBinding } from '${corePkg}';`
-    : `import { AuthTransactionError, getAuthTransaction } from '${corePkg}';`;
+  const navigationImport = binding
+    ? `import { notFound, redirect } from 'next/navigation';
+import { cookies } from 'next/headers';`
+    : `import { notFound } from 'next/navigation';`;
+  const coreImports = [
+    'AuthTransactionError',
+    'getAuthTransaction',
+    ...(binding ? ['validateTransactionBinding'] : []),
+    'type AuthTransaction',
+  ];
   const bindingImports = binding
     ? `
-import { cookies } from 'next/headers';`
+import { errorPagePath } from './http';
+import { TRANSACTION_BINDING_COOKIE_PREFIX } from './store';`
     : '';
+  const bindingDoc = binding
+    ? `
+ *
+ * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: transaction_id rides in the URL and can
+ * leak, so it proves nothing about the browser presenting it. Only the browser
+ * holding the transaction's binding cookie may continue it (see
+ * buildTransactionBindingCookie() in store.ts); any other is sent to the OP's
+ * error page before it sees a form or reaches a decision.`
+    : '';
+  // Without binding the lookup is all there is; with it, the transaction is
+  // looked up first and then checked against this browser's binding cookie.
+  const body = binding
+    ? `  let transaction: AuthTransaction;
+  try {
+    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
+  } catch (error) {
+    if (error instanceof AuthTransactionError) notFound();
+    throw error;
+  }
+
+  try {
+    await validateTransactionBinding(
+      transaction,
+      (await cookies()).get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
+    );
+  } catch (error) {
+    if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));
+    throw error;
+  }
+  return transaction;`
+    : `  try {
+    return await getAuthTransaction(transactionId, stores.transactionStore);
+  } catch (error) {
+    if (error instanceof AuthTransactionError) notFound();
+    throw error;
+  }`;
+  return `/**
+ * Looking up the authorization transaction the login and consent steps continue.
+ */
+${navigationImport}
+import {
+${coreImports.map((name) => `  ${name},`).join('\n')}
+} from '${corePkg}';
+import { stores } from './provider';${bindingImports}
+
+/**
+ * The authorization transaction transaction_id names, for the login and consent
+ * pages and their Server Actions. When there is none — unknown, already
+ * finished, or expired — the request ends in notFound(), which renders the
+ * not-found.tsx beside the page: the End-User has to start over from the client
+ * application.${bindingDoc}
+ */
+export async function requireTransaction(transactionId: string): Promise<AuthTransaction> {
+${body}
+}
+`;
+}
+
+/** `_oidc-provider/error-view.tsx` — the layout every OP error screen shares. */
+export function nextJsErrorViewTemplate(): string {
+  return `/**
+ * The layout of the OP's error screens: the error page (oidc-error/page.tsx)
+ * and the not-found.tsx / error.tsx of the login and consent pages all render
+ * it, so every way the browser stops on the OP looks the same. Restyle it here.
+ */
+import type { ReactNode } from 'react';
+
+interface ErrorViewProps {
+  /** The error code: an OAuth error, or one of the OP's own. */
+  error: string;
+  /** Text for the End-User. React escapes it, so it cannot inject markup. */
+  description?: string;
+  /** Anything the screen adds below the message, such as a retry button. */
+  children?: ReactNode;
+}
+
+export function ErrorView({ error, description, children }: ErrorViewProps) {
+  return (
+    <main>
+      <h1>Error</h1>
+      <p>{error}</p>
+      {description ? <p>{description}</p> : null}
+      {children}
+    </main>
+  );
+}
+`;
+}
+
+const PAGE_LABELS = {
+  login: { component: 'Login', action: 'loginAction' },
+  consent: { component: 'Consent', action: 'consentAction' },
+} as const;
+
+/** `<segment>/not-found.tsx` — what notFound() renders for the login or consent page. */
+export function nextJsNotFoundTemplate(page: 'login' | 'consent'): string {
+  const { component, action } = PAGE_LABELS[page];
+  return `import { ErrorView } from '../_oidc-provider/error-view';
+
+/**
+ * Not-found screen of the ${page} page (Next.js not-found.js): rendered when the
+ * page or ${action} calls notFound() because transaction_id names no
+ * authorization request — unknown, already finished, or expired. Next.js
+ * answers it with HTTP 404. The End-User can only start over from the client
+ * application.
+ */
+export default function ${component}NotFound() {
+  return (
+    <ErrorView
+      error="transaction_not_found"
+      description="This sign-in request was not found or has expired. Start again from the application."
+    />
+  );
+}
+`;
+}
+
+/** `<segment>/error.tsx` — the error boundary of the login or consent page. */
+export function nextJsErrorBoundaryTemplate(page: 'login' | 'consent'): string {
+  const { component, action } = PAGE_LABELS[page];
+  return `'use client'; // Error boundaries must be Client Components.
+
+import { ErrorView } from '../_oidc-provider/error-view';
+
+/**
+ * Error boundary of the ${page} page (Next.js error.js): the screen for an
+ * exception nobody expected while rendering the page or running ${action} —
+ * a store outage, a bug. Expected outcomes never land here: they redirect to the
+ * OP's error page or call notFound().
+ *
+ * In production Next.js withholds the error message from the browser and passes
+ * error.digest instead, which matches the entry in the server log. retry()
+ * fetches and renders the page again.
+ */
+export default function ${component}Error({
+  error,
+  retry,
+}: {
+  error: Error & { digest?: string };
+  retry: () => void;
+}) {
+  return (
+    <ErrorView error="server_error" description={error.digest ? 'Reference: ' + error.digest : undefined}>
+      <button type="button" onClick={() => retry()}>
+        Try again
+      </button>
+    </ErrorView>
+  );
+}
+`;
+}
+
+/** `login/page.tsx` — the login form (React Server Component). */
+export function nextJsLoginPageTemplate(features: OidcFeatureConfig = DEFAULT_FEATURES): string {
+  const binding = features.transactionBinding;
+  const google = features.googleLogin;
   const googleImports = google
     ? `
 import Script from 'next/script';
@@ -107,34 +258,12 @@ import { issueGoogleLoginNonce } from '${GOOGLE_LOGIN_PACKAGE}';
 import {
   buildGoogleSignInAttributes,
   GOOGLE_GSI_CLIENT_SCRIPT_URL,
-} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';`
+} from '${GOOGLE_LOGIN_PACKAGE}/sign-in';
+import { config, stores } from '../_oidc-provider/provider';`
     : '';
-  const providerImport = google
-    ? `import { config, stores } from '../_oidc-provider/provider';`
-    : `import { stores } from '../_oidc-provider/provider';`;
-  const bindingStoreImport = binding
-    ? `
-import { TRANSACTION_BINDING_COOKIE_PREFIX } from '../_oidc-provider/store';`
-    : '';
-  // Checked BEFORE the form is rendered: the form embeds csrf_token, so anyone
-  // who could load it with a leaked transaction_id would obtain the token the
-  // Server Action validates.
-  const bindingCheck = binding
-    ? `
-  // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the form embeds csrf_token, so only the
-  // User-Agent that started the transaction may see it — transaction_id alone
-  // is no proof, it rides in the URL and can leak (see store.ts).
-  try {
-    const cookieStore = await cookies();
-    await validateTransactionBinding(
-      transaction,
-      cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
-    );
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return <LoginNotice message="This authorization transaction was not started by this browser." />;
-  }
-`
+  const bindingDoc = binding
+    ? ` A browser that did not
+ * start the transaction never sees the form: it is sent to the OP's error page.`
     : '';
   const googleSignIn = google
     ? `
@@ -179,8 +308,8 @@ import { TRANSACTION_BINDING_COOKIE_PREFIX } from '../_oidc-provider/store';`
         </section>
       ) : null}`
     : '';
-  return `${coreImport}${bindingImports}${googleImports}
-${providerImport}${bindingStoreImport}
+  return `import { notFound } from 'next/navigation';${googleImports}
+import { requireTransaction } from '../_oidc-provider/transaction';
 import { loginAction } from './actions';
 
 // /authorize redirects here with a per-request transaction_id, so the page must
@@ -202,28 +331,15 @@ interface LoginPageProps {
  * and the rest of the React ecosystem. The form posts to the loginAction Server
  * Action (actions.ts), which checks the credentials and starts the OP session.
  * Keep the hidden transaction_id / csrf_token fields when customizing it.
+ *
+ * A transaction_id that names no transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).${bindingDoc}
  */
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { transaction_id: transactionId, error, remaining } = await searchParams;
-
-  if (!transactionId) {
-    return <LoginNotice message="Missing transaction_id" />;
-  }
-
-  // handleLoginFailure() locked further attempts on this transaction.
-  if (error === 'too_many_attempts') {
-    return <LoginNotice message="Too many login attempts" />;
-  }
-
-  let transaction;
-  try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-  } catch (transactionError) {
-    if (!(transactionError instanceof AuthTransactionError)) throw transactionError;
-    // Unknown or expired: the End-User has to start over from the client.
-    return <LoginNotice message={transactionError.message} />;
-  }
-${bindingCheck}${googleSignIn}
+  if (!transactionId) notFound();
+  const transaction = await requireTransaction(transactionId);
+${googleSignIn}
   const errorMessage =
     error === 'invalid_credentials'
       ? \`Invalid credentials\${remaining ? \`. Attempts remaining: \${remaining}\` : ''}\`
@@ -261,67 +377,42 @@ ${bindingCheck}${googleSignIn}
     </main>
   );
 }
-
-${noticeComponent('LoginNotice', 'Login')}
 `;
 }
 
 /** `login/actions.ts` — the login form's Server Action. */
-export function nextJsLoginActionTemplate(
-  corePkg: string,
-  features: OidcFeatureConfig = DEFAULT_FEATURES,
-): string {
-  const binding = features.transactionBinding;
-  const bindingCoreImport = binding ? '\n  validateTransactionBinding,' : '';
-  const bindingImports = binding
-    ? `
-import { cookies } from 'next/headers';
-import { TRANSACTION_BINDING_COOKIE_PREFIX } from '../_oidc-provider/store';`
-    : '';
-  const bindingCheck = binding
-    ? `    // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: checked before validateCsrfToken. The
-    // CSRF token only proves the value came from the form, and that form is
-    // reachable by anyone holding transaction_id; the binding proves it is the
-    // same browser (see store.ts).
-    await validateTransactionBinding(
-      transaction,
-      (await cookies()).get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
-    );
-`
-    : '';
+export function nextJsLoginActionTemplate(corePkg: string): string {
   return `'use server';
 
 import { redirect } from 'next/navigation';
 import {
   AuthTransactionError,
-  getAuthTransaction,
+  AuthTransactionErrorCode,
   handleLoginFailure,
-  validateCsrfToken,${bindingCoreImport}
-} from '${corePkg}';${bindingImports}
+  validateCsrfToken,
+} from '${corePkg}';
+import { errorPagePath } from '../_oidc-provider/http';
 import { stores } from '../_oidc-provider/provider';
+import { requireTransaction } from '../_oidc-provider/transaction';
 import { startSession } from './session';
 
 /**
  * Login Server Action.
  *
  * Checks the credentials, starts the OP session and continues to the consent
- * step. A failed attempt goes back to the login page with the error in the
- * query, so the page renders the message.
+ * step. A wrong password goes back to the form with the error in the query, so
+ * the page renders the message. A submission the OP refuses ends on the OP's
+ * error page (oidc-error/page.tsx), never at the client.
  */
 export async function loginAction(formData: FormData): Promise<void> {
   const transactionId = String(formData.get('transaction_id') ?? '');
-  const loginPage = \`/login?transaction_id=\${encodeURIComponent(transactionId)}\`;
+  const transaction = await requireTransaction(transactionId);
 
-  let transaction;
+  // The CSRF token proves the submission came from the form this browser was shown.
   try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-${bindingCheck}    validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
+    validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
-    if (error instanceof AuthTransactionError) {
-      // The OP's own error page: a transaction this browser may not continue is
-      // never answered toward the client.
-      redirect(\`/oidc-error?\${new URLSearchParams({ error: error.code, error_description: error.message })}\`);
-    }
+    if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));
     throw error;
   }
 
@@ -334,10 +425,18 @@ ${bindingCheck}    validateCsrfToken(transaction, String(formData.get('csrf_toke
   if (!user) {
     const failure = await handleLoginFailure(transactionId, transaction, stores.transactionStore);
     if (!failure.canRetry) {
-      redirect(\`\${loginPage}&error=too_many_attempts\`);
+      // handleLoginFailure() deleted the transaction: this sign-in cannot continue.
+      redirect(
+        errorPagePath(
+          AuthTransactionErrorCode.MaxAttemptsExceeded,
+          'Too many login attempts. Start again from the application.',
+        ),
+      );
     }
     const remaining = failure.maxAttempts - failure.failedAttempts;
-    redirect(\`\${loginPage}&error=invalid_credentials&remaining=\${remaining}\`);
+    redirect(
+      \`/login?transaction_id=\${encodeURIComponent(transactionId)}&error=invalid_credentials&remaining=\${remaining}\`,
+    );
   }
 
   await startSession(transactionId, transaction, user.sub);
@@ -360,7 +459,11 @@ export function nextJsGoogleLoginRouteTemplate(corePkg: string): string {
  * cross-site navigation, so the browser withholds SameSite=Lax cookies. The
  * single-use nonce stands in for it — it was issued to the login page, which
  * only the bound browser could load.
+ *
+ * A failed callback ends on the OP's error page (oidc-error/page.tsx), like
+ * every error that must not reach a client.
  */
+import { notFound } from 'next/navigation';
 import { NextResponse } from 'next/server';
 import { AuthTransactionError, getAuthTransaction } from '${corePkg}';
 import {
@@ -372,7 +475,7 @@ import {
   type GoogleIdTokenPayload,
   type GoogleIdTokenVerifier,
 } from '${GOOGLE_LOGIN_PACKAGE}';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { readFormFields, redirectToErrorPage } from '../../_oidc-provider/http';
 import { config, stores } from '../../_oidc-provider/provider';
 import { startSession } from '../session';
 
@@ -397,9 +500,8 @@ const googleAccountResolver: GoogleAccountResolver = {
 
 export async function POST(request: Request): Promise<Response> {
   const googleLogin = config.googleLogin;
-  if (!googleLogin) {
-    return errorPage('not_found', 404, 'Google login is not configured');
-  }
+  // Without config.googleLogin there is no Google login to call back into.
+  if (!googleLogin) notFound();
 
   let transactionId: string;
   let subject: string;
@@ -419,9 +521,9 @@ export async function POST(request: Request): Promise<Response> {
     subject = await resolveGoogleLoginSubject(login.account, googleAccountResolver);
   } catch (error) {
     // Until the nonce is verified the OP cannot tell whose transaction this is,
-    // so a failed callback is shown here and never redirected to a client.
+    // so a failed callback can only end on the OP.
     if (!(error instanceof GoogleLoginError)) throw error;
-    return errorPage(error.code, error.httpStatusCode, error.message);
+    return redirectToErrorPage(error.code, error.message);
   }
 
   let transaction;
@@ -429,7 +531,7 @@ export async function POST(request: Request): Promise<Response> {
     transaction = await getAuthTransaction(transactionId, stores.transactionStore);
   } catch (error) {
     if (!(error instanceof AuthTransactionError)) throw error;
-    return errorPage(error.message, error.httpStatusCode);
+    return redirectToErrorPage(error.code, error.message);
   }
 
   await startSession(transactionId, transaction, subject);
@@ -442,43 +544,19 @@ export async function POST(request: Request): Promise<Response> {
 
 /** `consent/page.tsx` — the consent form (React Server Component). */
 export function nextJsConsentPageTemplate(
-  corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
 ): string {
   const binding = features.transactionBinding;
   const customScopesDeclared = scopes.length > 0;
-  const coreImport = binding
-    ? `import { AuthTransactionError, getAuthTransaction, validateTransactionBinding } from '${corePkg}';`
-    : `import { AuthTransactionError, getAuthTransaction } from '${corePkg}';`;
-  const bindingImports = binding
+  const scopeImports = customScopesDeclared
     ? `
-import { cookies } from 'next/headers';`
-    : '';
-  const bindingStoreImport = binding
-    ? `
-import { TRANSACTION_BINDING_COOKIE_PREFIX } from '../_oidc-provider/store';`
-    : '';
-  const customScopeImport = customScopesDeclared
-    ? `
+import { stores } from '../_oidc-provider/provider';
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
-  const bindingCheck = binding
-    ? `
-  // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the form embeds csrf_token and its
-  // submission mints the authorization code, so only the User-Agent that started
-  // the transaction may see it (see store.ts).
-  try {
-    const cookieStore = await cookies();
-    await validateTransactionBinding(
-      transaction,
-      cookieStore.get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
-    );
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return <ConsentNotice message="This authorization transaction was not started by this browser." />;
-  }
-`
+  const bindingDoc = binding
+    ? ` A browser that did not
+ * start the transaction never sees the form: it is sent to the OP's error page.`
     : '';
   const displayedScopes = customScopesDeclared
     ? `
@@ -495,8 +573,8 @@ import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : `
   const scopes = transaction.scope.split(' ').filter(Boolean);
 `;
-  return `${coreImport}${bindingImports}
-import { stores } from '../_oidc-provider/provider';${bindingStoreImport}${customScopeImport}
+  return `import { notFound } from 'next/navigation';${scopeImports}
+import { requireTransaction } from '../_oidc-provider/transaction';
 import { consentAction } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -510,22 +588,15 @@ interface ConsentPageProps {
  *
  * A real Next.js page, so the consent UI can be built with JSX and React
  * components. The form posts to the consentAction Server Action (actions.ts).
+ *
+ * A transaction_id that names no transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).${bindingDoc}
  */
 export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   const { transaction_id: transactionId } = await searchParams;
-
-  if (!transactionId) {
-    return <ConsentNotice message="Missing transaction_id" />;
-  }
-
-  let transaction;
-  try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-  } catch (transactionError) {
-    if (!(transactionError instanceof AuthTransactionError)) throw transactionError;
-    return <ConsentNotice message={transactionError.message} />;
-  }
-${bindingCheck}${displayedScopes}
+  if (!transactionId) notFound();
+  const transaction = await requireTransaction(transactionId);
+${displayedScopes}
   return (
     <main>
       <h1>Authorize Application</h1>
@@ -557,8 +628,6 @@ ${bindingCheck}${displayedScopes}
     </main>
   );
 }
-
-${noticeComponent('ConsentNotice', 'Authorize Application')}
 `;
 }
 
@@ -575,9 +644,7 @@ export function nextJsConsentActionTemplate(
     'AuthTransactionError',
     'completeAuthTransaction',
     'createAuthorizationCode',
-    'getAuthTransaction',
     'validateCsrfToken',
-    ...(binding ? ['validateTransactionBinding'] : []),
     ...(jarm ? ['selectSigningKeyByAlg'] : []),
     'type AuthTransaction',
     ...(jarm ? ['type SigningKey'] : []),
@@ -595,8 +662,10 @@ import {
 } from '${EXPERIMENTAL_PACKAGE}/jarm';`
     : '';
   const providerImport = jarm
-    ? `import { config, loadSigningKeys, resolvers, stores } from '../_oidc-provider/provider';`
-    : `import { config, resolvers, stores } from '../_oidc-provider/provider';`;
+    ? `import { errorPagePath } from '../_oidc-provider/http';
+import { config, loadSigningKeys, resolvers, stores } from '../_oidc-provider/provider';`
+    : `import { errorPagePath } from '../_oidc-provider/http';
+import { config, resolvers, stores } from '../_oidc-provider/provider';`;
   const bindingStoreImport = binding
     ? `
 import { TRANSACTION_BINDING_COOKIE_PREFIX } from '../_oidc-provider/store';`
@@ -609,22 +678,10 @@ import { jarmConfig } from '../_oidc-provider/jarm';`
     ? `
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
-  const bindingSetup = binding
-    ? `  const cookieStore = await cookies();
-  const bindingCookieName = TRANSACTION_BINDING_COOKIE_PREFIX + transactionId;
-`
-    : '';
-  const bindingCheck = binding
-    ? `    // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: checked before validateCsrfToken and
-    // before any decision is acted on — this step mints the authorization code,
-    // so an unbound caller must reach it neither to approve nor to deny.
-    await validateTransactionBinding(transaction, cookieStore.get(bindingCookieName)?.value);
-`
-    : '';
   const clearBinding = (indent: string) =>
     binding
       ? `${indent}// The transaction is over; drop its binding cookie.
-${indent}cookieStore.delete(bindingCookieName);
+${indent}(await cookies()).delete(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId);
 `
       : '';
   const grantedScope = customScopesDeclared
@@ -711,10 +768,7 @@ function authorizationResponseUrl(
   try {
     jarmSigningKey = await jarmSigningKeyFor(transaction);
   } catch {
-    redirect(
-      '/oidc-error?error=server_error&error_description=' +
-        encodeURIComponent('Failed to load the response signing key'),
-    );
+    redirect(errorPagePath('server_error', 'Failed to load the response signing key'));
   }
 `
     : '';
@@ -725,6 +779,7 @@ import {
 ${coreImports.map((name) => `  ${name},`).join('\n')}
 } from '${corePkg}';${jarmImports}
 ${providerImport}${bindingStoreImport}${jarmConfigImport}${customScopeImport}
+import { requireTransaction } from '../_oidc-provider/transaction';
 
 /**
  * Consent Server Action: records the End-User's decision and sends the browser
@@ -734,17 +789,15 @@ ${providerImport}${bindingStoreImport}${jarmConfigImport}${customScopeImport}
 export async function consentAction(formData: FormData): Promise<void> {
   const transactionId = String(formData.get('transaction_id') ?? '');
   const action = String(formData.get('action') ?? '');
-${bindingSetup}
-  let transaction${jarm ? ': AuthTransaction & JarmAuthTransactionFields' : ''};
+  const transaction${jarm ? ': AuthTransaction & JarmAuthTransactionFields' : ''} = await requireTransaction(transactionId);
+
+  // The CSRF token proves the decision came from the form this browser was
+  // shown. Checked before any decision is acted on: this step mints the
+  // authorization code.
   try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-${bindingCheck}    validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
+    validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
-    if (error instanceof AuthTransactionError) {
-      // The OP's own error page: a transaction this browser may not continue is
-      // never answered toward the client.
-      redirect(\`/oidc-error?\${new URLSearchParams({ error: error.code, error_description: error.message })}\`);
-    }
+    if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));
     throw error;
   }
 ${jarmKeyStep}
@@ -769,8 +822,7 @@ ${clearBinding('    ')}    redirect(${responseAwait}authorizationResponseUrl(tra
   // OP's own error page instead of back to the client.
   if (action !== 'approve') {
     redirect(
-      '/oidc-error?error=invalid_request&error_description=' +
-        encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.'),
+      errorPagePath('invalid_request', 'Invalid consent decision. Please use the Approve or Deny button.'),
     );
   }
 
@@ -821,9 +873,19 @@ ${responseUrlHelper}
 
 /** `oidc-error/page.tsx` — the OP's own error page. */
 export function nextJsErrorPageTemplate(): string {
-  return `// The Authorization Endpoint and the login / consent steps send the browser here
-// with error / error_description in the query, so the page renders per request.
+  return `import type { Metadata } from 'next';
+import { ErrorView } from '../_oidc-provider/error-view';
+
+// The Authorization Endpoint, the login / consent steps and the Google callback
+// send the browser here with error / error_description in the query, so the
+// page renders per request.
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'Error',
+  // An error screen is never a search result.
+  robots: { index: false },
+};
 
 interface OidcErrorPageProps {
   searchParams: Promise<{ error?: string; error_description?: string }>;
@@ -834,19 +896,14 @@ interface OidcErrorPageProps {
  *
  * Errors that must not be redirected to the client end up here: an unknown
  * client_id, an unregistered redirect_uri, a transaction this browser may not
- * continue, a consent POST without a decision. React escapes the values, so a
- * crafted error_description cannot inject markup. Customize this page freely.
+ * continue, a consent POST without a decision, a failed Google callback. It is
+ * drawn by ErrorView (_oidc-provider/error-view.tsx), like the not-found and
+ * error screens of the login and consent pages.
  */
 export default async function OidcErrorPage({ searchParams }: OidcErrorPageProps) {
   const { error, error_description: errorDescription } = await searchParams;
 
-  return (
-    <main>
-      <h1>Error</h1>
-      <p>{error ?? 'invalid_request'}</p>
-      {errorDescription ? <p>{errorDescription}</p> : null}
-    </main>
-  );
+  return <ErrorView error={error ?? 'invalid_request'} description={errorDescription} />;
 }
 `;
 }

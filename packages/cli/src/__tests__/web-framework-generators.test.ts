@@ -605,16 +605,22 @@ describe('NextJsGenerator', () => {
         '.well-known/openid-configuration/route.ts',
         '_oidc-provider/config.ts',
         '_oidc-provider/conformance.test.ts',
+        '_oidc-provider/error-view.tsx',
         '_oidc-provider/http.ts',
         '_oidc-provider/provider.ts',
         '_oidc-provider/resolvers.ts',
         '_oidc-provider/storage-backend.ts',
         '_oidc-provider/store.ts',
+        '_oidc-provider/transaction.ts',
         'authorize/route.ts',
         'consent/actions.ts',
+        'consent/error.tsx',
+        'consent/not-found.tsx',
         'consent/page.tsx',
         'introspect/route.ts',
         'login/actions.ts',
+        'login/error.tsx',
+        'login/not-found.tsx',
         'login/page.tsx',
         'login/session.ts',
         'oidc-error/page.tsx',
@@ -690,10 +696,10 @@ describe('NextJsGenerator', () => {
     // OIDC Core 1.0 §3.1.2.2: an error that must not reach the client is shown
     // on the OP's own error page.
     it('should send non-redirectable authorization errors to the /oidc-error page', () => {
-      const authorize = fileContent('authorize/route.ts');
-
-      expect(authorize).toContain("const url = new URL('/oidc-error', config.issuer);");
-      expect(authorize).toContain('return NextResponse.redirect(url, 303);');
+      expect(fileContent('authorize/route.ts')).toContain('return redirectToErrorPage(error, errorDescription);');
+      expect(fileContent('_oidc-provider/http.ts')).toContain(
+        'return NextResponse.redirect(new URL(errorPagePath(error, errorDescription), config.issuer), 303);',
+      );
       expect(fileContent('oidc-error/page.tsx')).toContain(
         'export default async function OidcErrorPage({ searchParams }: OidcErrorPageProps) {',
       );
@@ -880,11 +886,112 @@ describe('NextJsGenerator', () => {
       const actions = fileContent('consent/actions.ts');
 
       expect(actions).toContain("if (action !== 'approve') {");
-      expect(actions).toContain("'/oidc-error?error=invalid_request&error_description=' +");
       expect(actions).toContain(
-        "encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.')",
+        "errorPagePath('invalid_request', 'Invalid consent decision. Please use the Approve or Deny button.'),",
       );
       expect(fileContent('consent/page.tsx')).toContain('<button type="submit" name="action" value="approve">');
+    });
+  });
+
+  // Every way the browser stops on the OP is a Next.js feature: notFound() and
+  // not-found.tsx for a transaction that does not exist, error.tsx for an
+  // exception nobody expected, and redirect() to the oidc-error page for an
+  // error that must stay on the OP.
+  describe('error screens (Next.js file conventions)', () => {
+    it('should end an unknown or expired transaction with notFound() in requireTransaction', () => {
+      const transaction = fileContent('_oidc-provider/transaction.ts');
+
+      expect(transaction).toContain(
+        'export async function requireTransaction(transactionId: string): Promise<AuthTransaction> {',
+      );
+      expect(transaction).toContain('    return await getAuthTransaction(transactionId, stores.transactionStore);');
+      expect(transaction).toContain('    if (error instanceof AuthTransactionError) notFound();');
+    });
+
+    it('should look up the transaction through requireTransaction in both pages and both Server Actions', () => {
+      const lookup = '  const transaction = await requireTransaction(transactionId);';
+
+      expect(
+        ['login/page.tsx', 'login/actions.ts', 'consent/page.tsx', 'consent/actions.ts'].filter(
+          (path) => !fileContent(path).includes(lookup),
+        ),
+      ).toEqual([]);
+      expect(fileContent('login/page.tsx')).toContain('  if (!transactionId) notFound();');
+      expect(fileContent('consent/page.tsx')).toContain('  if (!transactionId) notFound();');
+    });
+
+    it('should render not-found.tsx of the login and consent pages with the transaction_not_found screen', () => {
+      const loginNotFound = fileContent('login/not-found.tsx');
+
+      expect(loginNotFound).toContain('export default function LoginNotFound() {');
+      expect(loginNotFound).toContain('      error="transaction_not_found"');
+      expect(fileContent('consent/not-found.tsx')).toContain('export default function ConsentNotFound() {');
+    });
+
+    it('should generate error.tsx as a Client Component that shows the digest and offers retry()', () => {
+      const loginError = fileContent('login/error.tsx');
+
+      expect(loginError.startsWith("'use client';")).toBe(true);
+      expect(loginError).toContain('export default function LoginError({');
+      expect(loginError).toContain('  error: Error & { digest?: string };');
+      expect(loginError).toContain(
+        "    <ErrorView error=\"server_error\" description={error.digest ? 'Reference: ' + error.digest : undefined}>",
+      );
+      expect(loginError).toContain('      <button type="button" onClick={() => retry()}>');
+      expect(fileContent('consent/error.tsx')).toContain('export default function ConsentError({');
+    });
+
+    // In production Next.js replaces a server error's message before it reaches
+    // the browser; the screen must not print it even in development.
+    it('should never print the error message in error.tsx', () => {
+      expect(fileContent('login/error.tsx').includes('error.message')).toBe(false);
+      expect(fileContent('consent/error.tsx').includes('error.message')).toBe(false);
+    });
+
+    it('should draw the oidc-error page, not-found.tsx and error.tsx with the shared ErrorView', () => {
+      const usesErrorView = (path: string) =>
+        fileContent(path).includes("import { ErrorView } from '../_oidc-provider/error-view';");
+
+      expect(
+        ['oidc-error/page.tsx', 'login/not-found.tsx', 'login/error.tsx', 'consent/not-found.tsx', 'consent/error.tsx']
+          .filter((path) => !usesErrorView(path)),
+      ).toEqual([]);
+      expect(fileContent('oidc-error/page.tsx')).toContain(
+        "  return <ErrorView error={error ?? 'invalid_request'} description={errorDescription} />;",
+      );
+    });
+
+    it('should send a refused login to the oidc-error page with redirect()', () => {
+      const actions = fileContent('login/actions.ts');
+
+      expect(actions).toContain('    if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));');
+      expect(actions).toContain('          AuthTransactionErrorCode.MaxAttemptsExceeded,');
+      expect(actions).toContain("          'Too many login attempts. Start again from the application.',");
+    });
+
+    it('should build the oidc-error page path with URLSearchParams in http.ts', () => {
+      expect(fileContent('_oidc-provider/http.ts')).toContain(
+        'export function errorPagePath(error: string, errorDescription?: string): string {',
+      );
+      expect(fileContent('_oidc-provider/http.ts')).toContain('  const query = new URLSearchParams({ error });');
+    });
+
+    // html.ts exists only for the screens Route Handlers serve themselves
+    // (device, CIBA, logout); login, consent and the error page are React.
+    it('should not generate html.ts when no screen is served by a Route Handler', () => {
+      expect(files.some((f) => f.path === '_oidc-provider/html.ts')).toBe(false);
+    });
+
+    it('should generate the error screen contracts', () => {
+      const conformance = fileContent('_oidc-provider/conformance.test.ts');
+
+      expect(conformance).toContain("  describe('Error screens (Next.js not-found.js / error.js)', () => {");
+      expect(conformance).toContain(
+        "    it('should answer 404 with not-found.tsx for an unknown transaction', async () => {",
+      );
+      expect(conformance).toContain(
+        "    it('should show the digest of an unexpected error but never its message (error.tsx)', () => {",
+      );
     });
   });
 });

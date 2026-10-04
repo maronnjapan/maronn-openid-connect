@@ -119,7 +119,7 @@ import {
   resolvePostLogoutRedirect,
 } from '${LOGOUT_PACKAGE}';
 import { IdTokenHintError, generateRandomString, validateIdTokenHint } from '${corePkg}';
-import { readFormFields } from '../_oidc-provider/html';
+import { readFormFields } from '../_oidc-provider/http';
 import { config, idTokenHintJwks, loadSigningKeys, stores } from '../_oidc-provider/provider';
 import {
   buildClearedSessionCookie,
@@ -240,7 +240,8 @@ export function nextJsLogoutApproveRouteTemplate(): string {
  * Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable.
  */
 import { NextResponse } from 'next/server';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { stores } from '../../_oidc-provider/provider';
 import {
   buildClearedLogoutConfirmationCookie,

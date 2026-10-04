@@ -111,7 +111,9 @@ Next.js では、App Router の機能をそのまま使ったコードを `--out
 src/app/
 ├── _oidc-provider/           # 全エンドポイントが共有する部品（private folder なのでルーティングされない）
 │   ├── provider.ts           # 設定・クライアント・署名鍵・ストアの組み立て。プロジェクトへ組み込むときに編集する場所
-│   ├── http.ts               # CORS・キャッシュ禁止の JSON 応答・パラメータ重複の検出など、Route Handler 共通の部品
+│   ├── http.ts               # CORS・キャッシュ禁止の JSON 応答・パラメータ重複の検出・エラーページへのリダイレクトなど、Route Handler と Server Action 共通の部品
+│   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションの取得（無ければ notFound()）
+│   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
 │   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア
 │   └── conformance.test.ts   # 契約テスト
@@ -125,12 +127,23 @@ src/app/
 ├── login/page.tsx            # ログイン画面（React Server Component）
 ├── login/actions.ts          # ログインの Server Action
 ├── login/session.ts          # OP セッションの開始（パスワードログインと Google ログインで共有）
+├── login/not-found.tsx       # トランザクションが無いとき（notFound()）の画面。HTTP 404
+├── login/error.tsx           # 想定外の例外のときの画面（error boundary）
 ├── consent/page.tsx          # 同意画面
 ├── consent/actions.ts        # 同意の Server Action（認可コードを発行してクライアントへリダイレクト）
-└── oidc-error/page.tsx       # クライアントへリダイレクトできない認可エラーの表示先
+├── consent/not-found.tsx / consent/error.tsx  # 同意画面の not-found / error（ログイン画面と同じ役割）
+└── oidc-error/page.tsx       # クライアントへ返してはいけないエラーの表示先
 ```
 
 各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export します。ログイン・同意画面は React のページと Server Action なので、見た目は `page.tsx`、判断は `actions.ts` を書き換えます。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要があります。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成します。実験的機能の設定は、それを使うコードの隣に置きます（例: `par/config.ts`、トークンエンドポイントの grant なら `token/token-exchange.ts` の `tokenExchangeConfig`）。認可エンドポイントと同意の両方が読む JARM の設定は `_oidc-provider/jarm.ts` にあります。
+
+OP がブラウザを止める場面は、Next.js の機能で表します。
+
+- `transaction_id` に対応する認可リクエストが無い（不明・完了済み・期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示します。利用者はクライアントからやり直すしかありません
+- クライアントへ返してはいけないエラー（OIDC Core 1.0 §3.1.2.2。未登録の `redirect_uri`、CSRF トークンの不一致、ログイン試行回数の上限、transaction-binding の不一致、判断を含まない同意の POST、Google ログインのコールバックの失敗など）: `redirect()` で `oidc-error/page.tsx` へ送ります。Route Handler からは 303 でリダイレクトします
+- 想定外の例外（ストアの障害など）: `error.tsx`（error boundary）が表示します。本番の Next.js はエラーメッセージをブラウザへ渡さないので、画面にはサーバーログと突き合わせられる `digest` だけを出します
+
+これらの画面はどれも `_oidc-provider/error-view.tsx` の `ErrorView` で描くので、見た目はそこを書き換えれば揃って変わります。device / CIBA / RP-Initiated Logout の画面のエラーは、ステータスコード（403 / 429 など）を保つため、画面と同じく `_oidc-provider/html.ts` の HTML で返します。
 
 Next.js は Route Handler とページ・Server Action を別々のモジュール層にバンドルします。両方から同じインスタンスを参照する必要があるストアと署名鍵は、`globalThis` に保持しています（`provider.ts` / `storage-backend.ts`）。
 
@@ -145,7 +158,7 @@ Next.js は Route Handler とページ・Server Action を別々のモジュー�
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Vercel で使うストア。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`） |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時） |
 
-契約テスト `_oidc-provider/conformance.test.ts` は、Route Handler・ページ・Server Action を Next.js と同じ形で直接呼び出します。リクエストの中でしか使えない `cookies()`（`next/headers`）と `redirect()`（`next/navigation`）だけを差し替えているので、サーバーを起動せずに `vitest run` で実行できます（`vitest` を devDependencies に追加してください）。
+契約テスト `_oidc-provider/conformance.test.ts` は、Route Handler・ページ・Server Action を Next.js と同じ形で直接呼び出します。リクエストの中でしか使えない `cookies()`（`next/headers`）と `redirect()` / `notFound()`（`next/navigation`）だけを差し替えているので、サーバーを起動せずに `vitest run` で実行できます（`vitest` を devDependencies に追加してください）。
 
 ### Generation Manifest (.maronn-openid-connect.json)
 

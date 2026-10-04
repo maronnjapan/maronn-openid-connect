@@ -560,7 +560,11 @@ describe('generate nextjs with --enable jarm', () => {
     it('should read the recorded JARM mode back from the transaction', () => {
       const content = consentAction(['jarm']);
 
-      expect(content.includes('let transaction: AuthTransaction & JarmAuthTransactionFields;')).toBe(true);
+      expect(
+        content.includes(
+          'const transaction: AuthTransaction & JarmAuthTransactionFields = await requireTransaction(transactionId);',
+        ),
+      ).toBe(true);
       expect(content.includes("if (transaction.jarmResponseMode !== 'query.jwt') return undefined;")).toBe(true);
     });
 
@@ -578,10 +582,7 @@ describe('generate nextjs with --enable jarm', () => {
         content.includes(
           [
             '  } catch {',
-            '    redirect(',
-            "      '/oidc-error?error=server_error&error_description=' +",
-            "        encodeURIComponent('Failed to load the response signing key'),",
-            '    );',
+            "    redirect(errorPagePath('server_error', 'Failed to load the response signing key'));",
             '  }',
           ].join('\n'),
         ),
@@ -768,11 +769,13 @@ describe('generate nextjs with --enable jarm', () => {
       expect(authorize.includes('resolvePushedRequestUri')).toBe(true);
       expect(authorize.includes('resolveJarmResponseMode')).toBe(true);
       expect(authorize.includes('computeTransactionBindingHash')).toBe(true);
-      expect(
-        consent.includes(
-          'await validateTransactionBinding(transaction, cookieStore.get(bindingCookieName)?.value);',
-        ),
-      ).toBe(true);
+      // requireTransaction() (_oidc-provider/transaction.ts) checks the binding.
+      expect(fileContent(files, '_oidc-provider/transaction.ts').includes('await validateTransactionBinding(')).toBe(
+        true,
+      );
+      expect(consent.includes('(await cookies()).delete(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId);')).toBe(
+        true,
+      );
       expect(consent.includes("if (transaction.jarmResponseMode !== 'query.jwt') return undefined;")).toBe(true);
     });
   });

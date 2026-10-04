@@ -435,7 +435,8 @@ export function nextJsCibaLoginRouteTemplate(corePkg: string): string {
  */
 import { recordCibaLoginFailure, validateCibaLoginSubmission } from '${CIBA_PACKAGE}';
 import { generateRandomString } from '${corePkg}';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { cibaLoginTransactionStore, stores } from '../../_oidc-provider/provider';
 import {
   buildClearedCibaLoginBindingCookie,
@@ -545,7 +546,8 @@ import { resolveGrantableScopes } from '../../_oidc-provider/scopes';`
  */
 import { approveCibaRequest, denyCibaRequest } from '${CIBA_PACKAGE}';
 import { generateRandomString } from '${corePkg}';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { cibaAuthenticationRequestStore, resolvers, stores } from '../../_oidc-provider/provider';
 import { parseSessionId } from '../../_oidc-provider/store';${customScopeImport}
 import { completedScreen, verificationFailureScreen } from '../screens';

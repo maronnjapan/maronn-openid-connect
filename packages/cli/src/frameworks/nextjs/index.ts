@@ -55,11 +55,15 @@ import {
 import {
   nextJsConsentActionTemplate,
   nextJsConsentPageTemplate,
+  nextJsErrorBoundaryTemplate,
   nextJsErrorPageTemplate,
+  nextJsErrorViewTemplate,
   nextJsGoogleLoginRouteTemplate,
   nextJsLoginActionTemplate,
   nextJsLoginPageTemplate,
   nextJsLoginSessionTemplate,
+  nextJsNotFoundTemplate,
+  nextJsTransactionTemplate,
 } from './interaction.js';
 import { nextJsConformanceTestTemplate } from './conformance.js';
 
@@ -107,10 +111,11 @@ function nextJsGeneratedFiles(
   features: OidcFeatureConfig,
   scopes: string[],
 ): GeneratedFile[] {
-  // Screens that set a cookie on the response that renders them are Route
-  // Handlers returning HTML (see _oidc-provider/html.ts).
+  // Screens that set a cookie on the response that renders them, and answer
+  // with their own status codes, are Route Handlers returning HTML (see
+  // _oidc-provider/html.ts).
   const servesHtmlFromRouteHandlers =
-    features.deviceAuthorizationGrant || features.ciba || features.rpInitiatedLogout || features.googleLogin;
+    features.deviceAuthorizationGrant || features.ciba || features.rpInitiatedLogout;
 
   return [
     // --- Shared by every endpoint (private folder, never routed) -------------
@@ -136,6 +141,8 @@ function nextJsGeneratedFiles(
     },
     { path: '_oidc-provider/storage-backend.ts', content: nextJsStorageBackendTemplate() },
     { path: '_oidc-provider/http.ts', content: nextJsHttpTemplate() },
+    { path: '_oidc-provider/transaction.ts', content: nextJsTransactionTemplate(pkg, features) },
+    { path: '_oidc-provider/error-view.tsx', content: nextJsErrorViewTemplate() },
     ...(servesHtmlFromRouteHandlers
       ? [{ path: '_oidc-provider/html.ts', content: nextJsHtmlTemplate() }]
       : []),
@@ -165,15 +172,23 @@ function nextJsGeneratedFiles(
 
     // --- Authorization Code Flow ----------------------------------------------
     { path: 'authorize/route.ts', content: nextJsAuthorizeRouteTemplate(pkg, features, scopes) },
-    { path: 'login/page.tsx', content: nextJsLoginPageTemplate(pkg, features) },
-    { path: 'login/actions.ts', content: nextJsLoginActionTemplate(pkg, features) },
+    // Login and consent are pages with Server Actions. Next.js renders their
+    // not-found.tsx for notFound() (an unknown or expired transaction) and their
+    // error.tsx for an exception nobody expected.
+    { path: 'login/page.tsx', content: nextJsLoginPageTemplate(features) },
+    { path: 'login/actions.ts', content: nextJsLoginActionTemplate(pkg) },
     { path: 'login/session.ts', content: nextJsLoginSessionTemplate(pkg, features) },
+    { path: 'login/not-found.tsx', content: nextJsNotFoundTemplate('login') },
+    { path: 'login/error.tsx', content: nextJsErrorBoundaryTemplate('login') },
     // Extension (google-login): the login_uri Google posts the ID token to.
     ...(features.googleLogin
       ? [{ path: 'login/google/route.ts', content: nextJsGoogleLoginRouteTemplate(pkg) }]
       : []),
-    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(pkg, features, scopes) },
+    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(features, scopes) },
     { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(pkg, features, scopes) },
+    { path: 'consent/not-found.tsx', content: nextJsNotFoundTemplate('consent') },
+    { path: 'consent/error.tsx', content: nextJsErrorBoundaryTemplate('consent') },
+    // Errors that must not reach the client, from every step above.
     { path: 'oidc-error/page.tsx', content: nextJsErrorPageTemplate() },
     { path: 'token/route.ts', content: nextJsTokenRouteTemplate(pkg, features) },
     { path: 'userinfo/route.ts', content: nextJsUserinfoRouteTemplate(pkg) },

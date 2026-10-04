@@ -326,19 +326,19 @@ describe('generate nextjs with --enable google-login', () => {
       const paths = generateFiles('nextjs', ['google-login']).map((file) => file.path);
 
       expect(paths.includes('login/google/route.ts')).toBe(true);
-      expect(paths.includes('_oidc-provider/html.ts')).toBe(true);
       expect(callbackRoute().includes("export const runtime = 'nodejs';")).toBe(true);
       expect(callbackRoute().includes('export async function POST(request: Request): Promise<Response> {')).toBe(true);
       expect(callbackRoute().includes('export async function GET')).toBe(false);
     });
 
-    it('should answer 404 while config.googleLogin is not set', () => {
+    // notFound() in a Route Handler: Next.js answers 404.
+    it('should answer 404 with notFound() while config.googleLogin is not set', () => {
+      expect(callbackRoute().includes("import { notFound } from 'next/navigation';")).toBe(true);
       expect(
         callbackRoute().includes(
           '  const googleLogin = config.googleLogin;\n' +
-            '  if (!googleLogin) {\n' +
-            "    return errorPage('not_found', 404, 'Google login is not configured');\n" +
-            '  }',
+            '  // Without config.googleLogin there is no Google login to call back into.\n' +
+            '  if (!googleLogin) notFound();',
         ),
       ).toBe(true);
     });
@@ -376,14 +376,33 @@ describe('generate nextjs with --enable google-login', () => {
     });
 
     // Until the nonce is verified the OP cannot tell whose transaction this is,
-    // so a failed callback stays on the OP's error page and is never redirected.
-    it('should answer a failed callback on the OP error page instead of redirecting to a client', () => {
+    // so a failed callback stays on the OP's error page (oidc-error/page.tsx)
+    // and is never redirected to a client.
+    it('should send a failed callback to the OP error page instead of redirecting to a client', () => {
       expect(
         callbackRoute().includes(
           '    if (!(error instanceof GoogleLoginError)) throw error;\n' +
-            '    return errorPage(error.code, error.httpStatusCode, error.message);',
+            '    return redirectToErrorPage(error.code, error.message);',
         ),
       ).toBe(true);
+    });
+
+    it('should send a callback whose transaction has expired to the OP error page', () => {
+      expect(
+        callbackRoute().includes(
+          '    if (!(error instanceof AuthTransactionError)) throw error;\n' +
+            '    return redirectToErrorPage(error.code, error.message);',
+        ),
+      ).toBe(true);
+    });
+
+    // Every screen of the callback is a React page, so the HTML helper of the
+    // device / CIBA / logout screens is not generated for it.
+    it('should not generate the HTML helper for the Google callback', () => {
+      const paths = generateFiles('nextjs', ['google-login']).map((file) => file.path);
+
+      expect(paths.includes('_oidc-provider/html.ts')).toBe(false);
+      expect(callbackRoute().includes("from '../../_oidc-provider/html'")).toBe(false);
     });
 
     it('should start the session only after the callback checks and continue to consent', () => {
@@ -479,9 +498,11 @@ describe('generate nextjs with --enable google-login', () => {
 
       expect(content.includes("import * as googleLogin from '../login/google/route';")).toBe(true);
       expect(content.includes("describe('Sign in with Google (redirect mode)', () => {")).toBe(true);
-      expect(content.includes("it('should refuse a callback without the double-submit cookie', async () => {")).toBe(
-        true,
-      );
+      expect(
+        content.includes(
+          "it('should send a callback without the double-submit cookie to the OP error page', async () => {",
+        ),
+      ).toBe(true);
     });
   });
 
@@ -501,9 +522,13 @@ describe('generate nextjs with --enable google-login', () => {
       const files = generateFiles('nextjs', ['google-login', 'transaction-binding', 'ciba']);
       const page = fileContent(files, 'login/page.tsx');
       const callback = fileContent(files, 'login/google/route.ts');
-      const bindingIndex = page.indexOf('await validateTransactionBinding(');
+      // requireTransaction() (_oidc-provider/transaction.ts) checks the binding.
+      const bindingIndex = page.indexOf('const transaction = await requireTransaction(transactionId);');
       const nonceIndex = page.indexOf('nonce: await issueGoogleLoginNonce({');
 
+      expect(fileContent(files, '_oidc-provider/transaction.ts').includes('await validateTransactionBinding(')).toBe(
+        true,
+      );
       expect(bindingIndex > 0).toBe(true);
       expect(bindingIndex < nonceIndex).toBe(true);
       expect(callback.includes('const login = await handleGoogleLoginRedirect({')).toBe(true);

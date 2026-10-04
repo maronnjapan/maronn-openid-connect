@@ -117,6 +117,8 @@ Google の POST には `credential` と `g_csrf_token` しか入らず、`login_
 
 失敗は `GoogleLoginError` の `httpStatusCode` でエラーページを返します（CSRF・nonce 不正・`credential` 欠落は 400、ID トークン検証失敗は 401、`hd` / `email_verified` 不一致は 403、Google の公開鍵を取得できない場合は 503）。nonce を検証するまで誰のトランザクションか分からないため、失敗をクライアントへリダイレクトすることはありません。
 
+Next.js の `login/google/route.ts` は、失敗したコールバックを OP のエラーページ（`oidc-error/page.tsx`）へ 303 でリダイレクトし、`GoogleLoginError` の `code` と `message` を表示します。Route Handler からは React のページを描画できないため、ステータスコードではなくエラーページへの遷移で失敗を伝えます。`config.googleLogin` が未設定のときは `notFound()` で 404 を返します。
+
 ## ユーザーの扱い
 
 既定では Google アカウントをその場で登録します（JIT provisioning）。
@@ -144,7 +146,7 @@ applyOidc(app, {
 
 ## 契約テストの扱い
 
-生成される `conformance.test.ts` は本物の Google を呼びません。`fake:` 接頭辞付きの credential を受け付ける偽の `GoogleIdTokenVerifier` を `googleIdTokenVerifier` に注入し、CSRF・nonce・JIT 登録・トークン発行まで、生成コード側の責務だけを固定します。`google-auth-library` に委ねている署名・`aud`・`iss`・`exp` の検証は `@maronn-openid-connect/google-login` 自身のテストがローカルの鍵配信サーバーを使って確認しています。
+生成される `conformance.test.ts` は本物の Google を呼びません。`fake:` 接頭辞付きの credential を受け付ける偽の `GoogleIdTokenVerifier` を `googleIdTokenVerifier` に注入し、CSRF・nonce・JIT 登録・トークン発行まで、生成コード側の責務だけを固定します。Next.js の `_oidc-provider/conformance.test.ts` は、`vi.mock` で `getDefaultGoogleIdTokenVerifier()` を差し替え、テストが送る ID トークンのペイロード（JSON）をそのまま検証済みとして扱います。`google-auth-library` に委ねている署名・`aud`・`iss`・`exp` の検証は `@maronn-openid-connect/google-login` 自身のテストがローカルの鍵配信サーバーを使って確認しています。
 
 ## 注意点
 

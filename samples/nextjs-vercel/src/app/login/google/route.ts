@@ -10,7 +10,11 @@
  * cross-site navigation, so the browser withholds SameSite=Lax cookies. The
  * single-use nonce stands in for it — it was issued to the login page, which
  * only the bound browser could load.
+ *
+ * A failed callback ends on the OP's error page (oidc-error/page.tsx), like
+ * every error that must not reach a client.
  */
+import { notFound } from 'next/navigation';
 import { NextResponse } from 'next/server';
 import { AuthTransactionError, getAuthTransaction } from '@maronn-openid-connect/core';
 import {
@@ -22,7 +26,7 @@ import {
   type GoogleIdTokenPayload,
   type GoogleIdTokenVerifier,
 } from '@maronn-openid-connect/google-login';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { readFormFields, redirectToErrorPage } from '../../_oidc-provider/http';
 import { config, stores } from '../../_oidc-provider/provider';
 import { startSession } from '../session';
 
@@ -47,9 +51,8 @@ const googleAccountResolver: GoogleAccountResolver = {
 
 export async function POST(request: Request): Promise<Response> {
   const googleLogin = config.googleLogin;
-  if (!googleLogin) {
-    return errorPage('not_found', 404, 'Google login is not configured');
-  }
+  // Without config.googleLogin there is no Google login to call back into.
+  if (!googleLogin) notFound();
 
   let transactionId: string;
   let subject: string;
@@ -69,9 +72,9 @@ export async function POST(request: Request): Promise<Response> {
     subject = await resolveGoogleLoginSubject(login.account, googleAccountResolver);
   } catch (error) {
     // Until the nonce is verified the OP cannot tell whose transaction this is,
-    // so a failed callback is shown here and never redirected to a client.
+    // so a failed callback can only end on the OP.
     if (!(error instanceof GoogleLoginError)) throw error;
-    return errorPage(error.code, error.httpStatusCode, error.message);
+    return redirectToErrorPage(error.code, error.message);
   }
 
   let transaction;
@@ -79,7 +82,7 @@ export async function POST(request: Request): Promise<Response> {
     transaction = await getAuthTransaction(transactionId, stores.transactionStore);
   } catch (error) {
     if (!(error instanceof AuthTransactionError)) throw error;
-    return errorPage(error.message, error.httpStatusCode);
+    return redirectToErrorPage(error.code, error.message);
   }
 
   await startSession(transactionId, transaction, subject);

@@ -1,5 +1,6 @@
 /**
- * Helpers shared by the OP's Route Handlers.
+ * Request and response helpers shared by the OP's Route Handlers and Server
+ * Actions.
  *
  * - CORS: the back-channel endpoints may be called from client applications in
  *   the browser; discovery and JWKS are public. Each Route Handler exports an
@@ -7,8 +8,11 @@
  * - Responses that carry credentials are never cached (RFC 6749 §5.1 / §5.2).
  * - OAuth request parameters must not be repeated (RFC 6749 §3.1 / §3.2), which
  *   Object.fromEntries(searchParams) would hide by keeping only the last value.
+ * - An error that must not reach the client ends on the OP's error page
+ *   (app/oidc-error): errorPagePath() / redirectToErrorPage().
  */
-import { corsOrigins } from './provider';
+import { NextResponse } from 'next/server';
+import { config, corsOrigins } from './provider';
 
 export interface CorsPolicy {
   origins: string | readonly string[];
@@ -134,4 +138,36 @@ export function uniqueParams(searchParams: URLSearchParams): UniqueParams {
     params[key] = value;
   }
   return { params };
+}
+
+/**
+ * The fields of a form POST (urlencoded or multipart). A body that is neither
+ * yields no fields, so every field reads as missing.
+ */
+export async function readFormFields(request: Request): Promise<FormData> {
+  try {
+    return await request.formData();
+  } catch {
+    return new FormData();
+  }
+}
+
+/**
+ * The OP's error page (app/oidc-error) for an error that must stay on the OP,
+ * as a path of this app with the error in the query. Pages and Server Actions
+ * redirect() to it.
+ */
+export function errorPagePath(error: string, errorDescription?: string): string {
+  const query = new URLSearchParams({ error });
+  if (errorDescription) query.set('error_description', errorDescription);
+  return '/oidc-error?' + query.toString();
+}
+
+/**
+ * Send the browser to the OP's error page from a Route Handler. 303, so the
+ * page is fetched with GET even after a POST; built on config.issuer, never on
+ * the request URL (OIDC Discovery 1.0 §3).
+ */
+export function redirectToErrorPage(error: string, errorDescription?: string): Response {
+  return NextResponse.redirect(new URL(errorPagePath(error, errorDescription), config.issuer), 303);
 }

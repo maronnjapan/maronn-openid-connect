@@ -47,6 +47,7 @@ import {
 } from '../_oidc-provider/provider';
 import {
   isFormUrlEncoded,
+  redirectToErrorPage,
   signingKeysUnavailable,
   uniqueParams,
   type UniqueParams,
@@ -427,10 +428,7 @@ function nonRedirectableError(request: Request, error: string, errorDescription?
   if ((request.headers.get('Accept') ?? '').includes('application/json')) {
     return Response.json({ error, error_description: errorDescription }, { status: 400 });
   }
-  const url = new URL('/oidc-error', config.issuer);
-  url.searchParams.set('error', error);
-  if (errorDescription) url.searchParams.set('error_description', errorDescription);
-  return NextResponse.redirect(url, 303);
+  return redirectToErrorPage(error, errorDescription);
 }
 
 /**

@@ -1,25 +1,15 @@
 /**
  * HTML responses for the screens that are served by Route Handlers instead of
- * React pages: the device verification UI, the CIBA authentication device UI,
- * the RP-Initiated Logout screens and the Google login callback.
+ * React pages: the device verification UI, the CIBA authentication device UI
+ * and the RP-Initiated Logout screens.
  *
  * Those screens set a cookie on the very response that renders them (a browser
  * binding, or a confirmation secret), and their failures carry a status code
  * (403, 429, ...) that the security model and its tests rely on. A Server
- * Component can do neither, so these stay plain HTML responses.
+ * Component can do neither, and Next.js does not render React from a Route
+ * Handler, so these stay plain HTML responses. Every other screen of the OP is
+ * a React page (login, consent, oidc-error).
  */
-
-/**
- * The fields of a form POST (urlencoded or multipart). A body that is neither
- * yields no fields, so every field reads as missing.
- */
-export async function readFormFields(request: Request): Promise<FormData> {
-  try {
-    return await request.formData();
-  } catch {
-    return new FormData();
-  }
-}
 
 /** Escape a value for HTML text and double-quoted attribute values. */
 export function escapeHtml(value: string): string {

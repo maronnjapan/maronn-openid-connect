@@ -1,4 +1,4 @@
-import { AuthTransactionError, getAuthTransaction } from '@maronn-openid-connect/core';
+import { notFound } from 'next/navigation';
 import Script from 'next/script';
 import { issueGoogleLoginNonce } from '@maronn-openid-connect/google-login';
 import {
@@ -6,6 +6,7 @@ import {
   GOOGLE_GSI_CLIENT_SCRIPT_URL,
 } from '@maronn-openid-connect/google-login/sign-in';
 import { config, stores } from '../_oidc-provider/provider';
+import { requireTransaction } from '../_oidc-provider/transaction';
 import { loginAction } from './actions';
 
 // /authorize redirects here with a per-request transaction_id, so the page must
@@ -27,27 +28,14 @@ interface LoginPageProps {
  * and the rest of the React ecosystem. The form posts to the loginAction Server
  * Action (actions.ts), which checks the credentials and starts the OP session.
  * Keep the hidden transaction_id / csrf_token fields when customizing it.
+ *
+ * A transaction_id that names no transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { transaction_id: transactionId, error, remaining } = await searchParams;
-
-  if (!transactionId) {
-    return <LoginNotice message="Missing transaction_id" />;
-  }
-
-  // handleLoginFailure() locked further attempts on this transaction.
-  if (error === 'too_many_attempts') {
-    return <LoginNotice message="Too many login attempts" />;
-  }
-
-  let transaction;
-  try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-  } catch (transactionError) {
-    if (!(transactionError instanceof AuthTransactionError)) throw transactionError;
-    // Unknown or expired: the End-User has to start over from the client.
-    return <LoginNotice message={transactionError.message} />;
-  }
+  if (!transactionId) notFound();
+  const transaction = await requireTransaction(transactionId);
 
   // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
   // built only when config.googleLogin is set. Each render issues a fresh nonce
@@ -120,16 +108,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <div className="g_id_signin" data-type="standard" />
         </section>
       ) : null}
-    </main>
-  );
-}
-
-/** Shown instead of the form when this transaction cannot continue here. */
-function LoginNotice({ message }: { message: string }) {
-  return (
-    <main>
-      <h1>Login</h1>
-      <p role="alert">{message}</p>
     </main>
   );
 }

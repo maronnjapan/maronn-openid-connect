@@ -15,7 +15,8 @@ import {
   validateVerificationCsrfToken,
 } from '@maronn-openid-connect/experimental/device-authorization-grant';
 import { generateRandomString } from '@maronn-openid-connect/core';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { deviceAuthorizationStore, stores } from '../../_oidc-provider/provider';
 import { buildSessionCookie, parseDeviceBindingSecret } from '../../_oidc-provider/store';
 import { deviceAuthorizationConfig } from '../../device_authorization/config';

@@ -18,7 +18,7 @@ import {
 } from '@maronn-openid-connect/experimental/device-authorization-grant';
 import { deviceAuthorizationStore, stores } from '../_oidc-provider/provider';
 import { buildDeviceBindingCookie, parseSessionId } from '../_oidc-provider/store';
-import { readFormFields } from '../_oidc-provider/html';
+import { readFormFields } from '../_oidc-provider/http';
 import {
   approvalScreen,
   invalidUserCodeScreen,

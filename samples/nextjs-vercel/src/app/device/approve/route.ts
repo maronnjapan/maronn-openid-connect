@@ -14,7 +14,8 @@ import {
   findPendingRecordByUserCode,
   validateVerificationBinding,
 } from '@maronn-openid-connect/experimental/device-authorization-grant';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { deviceAuthorizationStore, resolvers, stores } from '../../_oidc-provider/provider';
 import {
   buildClearedDeviceBindingCookie,

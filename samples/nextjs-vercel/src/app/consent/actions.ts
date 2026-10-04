@@ -5,11 +5,12 @@ import {
   AuthTransactionError,
   completeAuthTransaction,
   createAuthorizationCode,
-  getAuthTransaction,
   validateCsrfToken,
   type AuthTransaction,
 } from '@maronn-openid-connect/core';
+import { errorPagePath } from '../_oidc-provider/http';
 import { config, resolvers, stores } from '../_oidc-provider/provider';
+import { requireTransaction } from '../_oidc-provider/transaction';
 
 /**
  * Consent Server Action: records the End-User's decision and sends the browser
@@ -19,17 +20,15 @@ import { config, resolvers, stores } from '../_oidc-provider/provider';
 export async function consentAction(formData: FormData): Promise<void> {
   const transactionId = String(formData.get('transaction_id') ?? '');
   const action = String(formData.get('action') ?? '');
+  const transaction = await requireTransaction(transactionId);
 
-  let transaction;
+  // The CSRF token proves the decision came from the form this browser was
+  // shown. Checked before any decision is acted on: this step mints the
+  // authorization code.
   try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
     validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
-    if (error instanceof AuthTransactionError) {
-      // The OP's own error page: a transaction this browser may not continue is
-      // never answered toward the client.
-      redirect(`/oidc-error?${new URLSearchParams({ error: error.code, error_description: error.message })}`);
-    }
+    if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));
     throw error;
   }
 
@@ -54,8 +53,7 @@ export async function consentAction(formData: FormData): Promise<void> {
   // OP's own error page instead of back to the client.
   if (action !== 'approve') {
     redirect(
-      '/oidc-error?error=invalid_request&error_description=' +
-        encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.'),
+      errorPagePath('invalid_request', 'Invalid consent decision. Please use the Approve or Deny button.'),
     );
   }
 

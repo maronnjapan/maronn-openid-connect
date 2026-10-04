@@ -11,7 +11,8 @@
  */
 import { approveCibaRequest, denyCibaRequest } from '@maronn-openid-connect/experimental/ciba';
 import { generateRandomString } from '@maronn-openid-connect/core';
-import { errorPage, readFormFields } from '../../_oidc-provider/html';
+import { errorPage } from '../../_oidc-provider/html';
+import { readFormFields } from '../../_oidc-provider/http';
 import { cibaAuthenticationRequestStore, resolvers, stores } from '../../_oidc-provider/provider';
 import { parseSessionId } from '../../_oidc-provider/store';
 import { completedScreen, verificationFailureScreen } from '../screens';

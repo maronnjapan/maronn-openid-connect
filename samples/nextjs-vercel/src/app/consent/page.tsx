@@ -1,5 +1,5 @@
-import { AuthTransactionError, getAuthTransaction } from '@maronn-openid-connect/core';
-import { stores } from '../_oidc-provider/provider';
+import { notFound } from 'next/navigation';
+import { requireTransaction } from '../_oidc-provider/transaction';
 import { consentAction } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -13,21 +13,14 @@ interface ConsentPageProps {
  *
  * A real Next.js page, so the consent UI can be built with JSX and React
  * components. The form posts to the consentAction Server Action (actions.ts).
+ *
+ * A transaction_id that names no transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   const { transaction_id: transactionId } = await searchParams;
-
-  if (!transactionId) {
-    return <ConsentNotice message="Missing transaction_id" />;
-  }
-
-  let transaction;
-  try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-  } catch (transactionError) {
-    if (!(transactionError instanceof AuthTransactionError)) throw transactionError;
-    return <ConsentNotice message={transactionError.message} />;
-  }
+  if (!transactionId) notFound();
+  const transaction = await requireTransaction(transactionId);
 
   const scopes = transaction.scope.split(' ').filter(Boolean);
 
@@ -59,16 +52,6 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
           Deny
         </button>
       </form>
-    </main>
-  );
-}
-
-/** Shown instead of the form when this transaction cannot continue here. */
-function ConsentNotice({ message }: { message: string }) {
-  return (
-    <main>
-      <h1>Authorize Application</h1>
-      <p role="alert">{message}</p>
     </main>
   );
 }

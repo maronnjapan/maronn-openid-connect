@@ -6,20 +6,20 @@
  * submitted FormData — and pins what the specifications require of each
  * answer. No server is started: run it with `vitest run`.
  *
- * Next.js provides two functions only inside a real request, so they are
+ * Next.js provides some functions only inside a real request, so they are
  * replaced here:
  * - cookies() (next/headers) reads and writes the cookie jar of the simulated
  *   browser making the call — the same jar its Route Handler requests send and
  *   update, so pages, Server Actions and Route Handlers see one browser.
- * - redirect() (next/navigation) throws a RedirectSignal carrying the target,
- *   which is where that browser would be sent.
+ * - redirect() and notFound() (next/navigation) throw a signal, which the
+ *   harness turns into what Next.js would answer: a redirect, or a 404.
  *
  * provider.ts reads its configuration from the environment on first import, so
  * the environment is pinned in vi.hoisted(), before any import runs: a fixed
  * issuer, the clients this test registers and an in-memory SQLite store.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ReactElement } from 'react';
+import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NextRequest } from 'next/server';
 
@@ -113,11 +113,19 @@ const { ISSUER, REDIRECT_URI, harness } = vi.hoisted(() => {
     }
   }
 
+  /** What notFound() throws: Next.js answers with the not-found screen (404). */
+  class NotFoundSignal extends Error {
+    constructor() {
+      super('NEXT_HTTP_ERROR_FALLBACK;404');
+    }
+  }
+
   return {
     ISSUER: issuer,
     REDIRECT_URI: redirectUri,
     harness: {
       RedirectSignal,
+      NotFoundSignal,
       /** The cookie jar of the browser whose call is being handled. */
       jar: new Map<string, string>(),
       /** Every cookies().set() call, with the attributes it asked for. */
@@ -146,6 +154,9 @@ vi.mock('next/navigation', () => ({
   redirect: (location: string): never => {
     throw new harness.RedirectSignal(location);
   },
+  notFound: (): never => {
+    throw new harness.NotFoundSignal();
+  },
 }));
 
 // EXTENSION (google-login): stands in for google-auth-library, which would
@@ -163,8 +174,12 @@ import * as jwks from '../.well-known/jwks.json/route';
 import * as authorize from '../authorize/route';
 import LoginPage from '../login/page';
 import { loginAction } from '../login/actions';
+import LoginNotFound from '../login/not-found';
+import LoginError from '../login/error';
 import ConsentPage from '../consent/page';
 import { consentAction } from '../consent/actions';
+import ConsentNotFound from '../consent/not-found';
+import ConsentError from '../consent/error';
 import OidcErrorPage from '../oidc-error/page';
 import * as token from '../token/route';
 import * as userinfo from '../userinfo/route';
@@ -186,6 +201,15 @@ type RequestOptions = { method?: string; headers?: HeadersInit; body?: BodyInit 
 type Page<Query> = (props: { searchParams: Promise<Query> }) => Promise<ReactElement>;
 type ServerAction = (formData: FormData) => Promise<void>;
 
+/** What the browser gets from a page or a Server Action. */
+interface Outcome {
+  status: number;
+  /** Where redirect() sent the browser. */
+  location?: string;
+  /** The rendered page. */
+  html?: string;
+}
+
 /**
  * One User-Agent. Its cookie jar is what Route Handlers receive in the Cookie
  * header and what cookies() reads inside pages and Server Actions; Set-Cookie
@@ -204,9 +228,14 @@ class Browser {
       );
     }
     harness.jar = this.cookies;
-    const response = await handler(
-      new NextRequest(new URL(url, ISSUER), { method: options.method, headers, body: options.body }),
-    );
+    let response: Response;
+    try {
+      response = await handler(
+        new NextRequest(new URL(url, ISSUER), { method: options.method, headers, body: options.body }),
+      );
+    } catch (error) {
+      response = answerSignal(error);
+    }
     for (const setCookie of response.headers.getSetCookie()) {
       this.storeCookie(setCookie);
     }
@@ -218,14 +247,26 @@ class Browser {
     return this.request(handler, url, { method: 'POST', headers, body: new URLSearchParams(fields) });
   }
 
-  /** Render a page as this browser would see it. */
-  async render<Query>(page: Page<Query>, query: Query): Promise<string> {
+  /** Open a page: its HTML, or where it redirects, or a 404 from notFound(). */
+  async open<Query>(page: Page<Query>, query: Query): Promise<Outcome> {
     harness.jar = this.cookies;
-    return renderToStaticMarkup(await page({ searchParams: Promise.resolve(query) }));
+    try {
+      return { status: 200, html: renderToStaticMarkup(await page({ searchParams: Promise.resolve(query) })) };
+    } catch (error) {
+      return outcomeOf(error, 307);
+    }
   }
 
-  /** Submit a form to a Server Action; resolves to where it redirects the browser. */
-  async submit(action: ServerAction, fields: Record<string, string>): Promise<string> {
+  /** Render a page as this browser would see it. */
+  async render<Query>(page: Page<Query>, query: Query): Promise<string> {
+    return (await this.open(page, query)).html ?? '';
+  }
+
+  /**
+   * Submit a form to a Server Action: where it redirects the browser (Next.js
+   * answers a Server Action's redirect with 303), or a 404 from notFound().
+   */
+  async submit(action: ServerAction, fields: Record<string, string>): Promise<Outcome> {
     const formData = new FormData();
     for (const [name, value] of Object.entries(fields)) {
       formData.set(name, value);
@@ -234,8 +275,7 @@ class Browser {
     try {
       await action(formData);
     } catch (error) {
-      if (error instanceof harness.RedirectSignal) return error.location;
-      throw error;
+      return outcomeOf(error, 303);
     }
     throw new Error('The Server Action returned without redirecting');
   }
@@ -251,6 +291,22 @@ class Browser {
       this.cookies.set(name, pair.slice(separator + 1).trim());
     }
   }
+}
+
+/** What Next.js answers when a page or a Server Action calls redirect() or notFound(). */
+function outcomeOf(error: unknown, redirectStatus: number): Outcome {
+  if (error instanceof harness.RedirectSignal) return { status: redirectStatus, location: error.location };
+  if (error instanceof harness.NotFoundSignal) return { status: 404 };
+  throw error;
+}
+
+/** What Next.js answers when a Route Handler calls redirect() or notFound(). */
+function answerSignal(error: unknown): Response {
+  if (error instanceof harness.RedirectSignal) {
+    return new Response(null, { status: 307, headers: { Location: error.location } });
+  }
+  if (error instanceof harness.NotFoundSignal) return new Response(null, { status: 404 });
+  throw error;
 }
 
 /** RFC 7636 Appendix B: the example code_verifier and its S256 code_challenge. */
@@ -304,19 +360,21 @@ async function startAuthorization(
 /** Sign in on the login page of a transaction; resolves to where the browser goes next. */
 async function logIn(browser: Browser, transactionId: string, username = 'testuser'): Promise<string> {
   const html = await browser.render(LoginPage, { transaction_id: transactionId });
-  return browser.submit(loginAction, {
+  const outcome = await browser.submit(loginAction, {
     transaction_id: transactionId,
     csrf_token: csrfTokenOf(html),
     username,
     password: 'password',
   });
+  return outcome.location ?? '';
 }
 
 /** Submit a consent decision from the consent page; undefined omits the action field. */
 async function decide(browser: Browser, transactionId: string, action: string | undefined): Promise<string> {
   const html = await browser.render(ConsentPage, { transaction_id: transactionId });
   const fields: Record<string, string> = { transaction_id: transactionId, csrf_token: csrfTokenOf(html) };
-  return browser.submit(consentAction, action === undefined ? fields : { ...fields, action });
+  const outcome = await browser.submit(consentAction, action === undefined ? fields : { ...fields, action });
+  return outcome.location ?? '';
 }
 
 /**
@@ -672,14 +730,6 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
     expect(html).toContain('<input type="text" id="username" required="" name="username" value="testuser"/>');
   });
 
-  it('should show a notice instead of the form for an unknown transaction', async () => {
-    const html = await new Browser().render(LoginPage, { transaction_id: 'unknown-transaction' });
-
-    expect(html).toBe(
-      '<main><h1>Login</h1><p role="alert">Auth transaction not found. The session may have expired.</p></main>',
-    );
-  });
-
   it('should start the OP session in an HttpOnly, Secure, SameSite=Lax cookie', async () => {
     const browser = new Browser();
     const transactionId = await startAuthorization(browser);
@@ -694,14 +744,17 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
     const browser = new Browser();
     const transactionId = await startAuthorization(browser);
     const html = await browser.render(LoginPage, { transaction_id: transactionId });
-    const location = await browser.submit(loginAction, {
+    const outcome = await browser.submit(loginAction, {
       transaction_id: transactionId,
       csrf_token: csrfTokenOf(html),
       username: 'testuser',
       password: 'wrong-password',
     });
 
-    expect(location).toBe('/login?transaction_id=' + transactionId + '&error=invalid_credentials&remaining=4');
+    expect(outcome).toEqual({
+      status: 303,
+      location: '/login?transaction_id=' + transactionId + '&error=invalid_credentials&remaining=4',
+    });
     expect(browser.cookies.has('session_id')).toBe(false);
   });
 
@@ -717,13 +770,13 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
     expect(html).toContain('<p role="alert" style="color:red">Invalid credentials. Attempts remaining: 4</p>');
   });
 
-  it('should lock the transaction after too many failed attempts', async () => {
+  it('should end the transaction on the OP error page after too many failed attempts', async () => {
     const browser = new Browser();
     const transactionId = await startAuthorization(browser);
     const csrfToken = csrfTokenOf(await browser.render(LoginPage, { transaction_id: transactionId }));
-    const locations: string[] = [];
+    const outcomes: Outcome[] = [];
     for (let attempt = 0; attempt < 5; attempt++) {
-      locations.push(
+      outcomes.push(
         await browser.submit(loginAction, {
           transaction_id: transactionId,
           csrf_token: csrfToken,
@@ -733,21 +786,68 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
       );
     }
 
-    expect(locations.at(-1)).toBe('/login?transaction_id=' + transactionId + '&error=too_many_attempts');
+    expect(outcomes.at(-1)).toEqual({
+      status: 303,
+      location:
+        '/oidc-error?error=max_attempts_exceeded&error_description=' +
+        'Too+many+login+attempts.+Start+again+from+the+application.',
+    });
+    expect(await browser.open(LoginPage, { transaction_id: transactionId })).toEqual({ status: 404 });
   });
 
   it('should send a submission with a wrong csrf_token to the OP error page', async () => {
     const browser = new Browser();
     const transactionId = await startAuthorization(browser);
-    const location = await browser.submit(loginAction, {
+    const outcome = await browser.submit(loginAction, {
       transaction_id: transactionId,
       csrf_token: 'forged',
       username: 'testuser',
       password: 'password',
     });
 
-    expect(location).toBe('/oidc-error?error=invalid_csrf_token&error_description=Invalid+CSRF+token.');
+    expect(outcome).toEqual({
+      status: 303,
+      location: '/oidc-error?error=invalid_csrf_token&error_description=Invalid+CSRF+token.',
+    });
     expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  describe('Error screens (Next.js not-found.js / error.js)', () => {
+    it('should answer 404 with not-found.tsx for an unknown transaction', async () => {
+      expect(await new Browser().open(LoginPage, { transaction_id: 'unknown-transaction' })).toEqual({ status: 404 });
+    });
+
+    it('should answer 404 when transaction_id is missing', async () => {
+      expect(await new Browser().open(LoginPage, {})).toEqual({ status: 404 });
+    });
+
+    it('should answer 404 to a login submitted for an unknown transaction', async () => {
+      const outcome = await new Browser().submit(loginAction, {
+        transaction_id: 'unknown-transaction',
+        csrf_token: 'unknown',
+        username: 'testuser',
+        password: 'password',
+      });
+
+      expect(outcome).toEqual({ status: 404 });
+    });
+
+    it('should tell the End-User to start again from the application (not-found.tsx)', () => {
+      expect(renderToStaticMarkup(createElement(LoginNotFound))).toBe(
+        '<main><h1>Error</h1><p>transaction_not_found</p>' +
+          '<p>This sign-in request was not found or has expired. Start again from the application.</p></main>',
+      );
+    });
+
+    it('should show the digest of an unexpected error but never its message (error.tsx)', () => {
+      const error = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:6379'), { digest: '2938471023' });
+      const html = renderToStaticMarkup(createElement(LoginError, { error, retry: () => undefined }));
+
+      expect(html).toBe(
+        '<main><h1>Error</h1><p>server_error</p><p>Reference: 2938471023</p>' +
+          '<button type="button">Try again</button></main>',
+      );
+    });
   });
 });
 
@@ -769,23 +869,59 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
     expect(await decide(browser, transactionId, 'approve')).toBe('/login?transaction_id=' + transactionId);
   });
 
-  it('should send an unknown transaction to the OP error page', async () => {
-    const location = await new Browser().submit(consentAction, {
-      transaction_id: 'unknown-transaction',
-      csrf_token: 'unknown',
+  it('should send a decision with a wrong csrf_token to the OP error page', async () => {
+    const browser = new Browser();
+    const transactionId = await startAuthorization(browser);
+    await logIn(browser, transactionId);
+    const outcome = await browser.submit(consentAction, {
+      transaction_id: transactionId,
+      csrf_token: 'forged',
       action: 'approve',
     });
 
-    expect(location).toBe(
-      '/oidc-error?error=transaction_not_found&error_description=' +
-        'Auth+transaction+not+found.+The+session+may+have+expired.',
-    );
+    expect(outcome).toEqual({
+      status: 303,
+      location: '/oidc-error?error=invalid_csrf_token&error_description=Invalid+CSRF+token.',
+    });
+  });
+
+  describe('Error screens (Next.js not-found.js / error.js)', () => {
+    it('should answer 404 with not-found.tsx for an unknown transaction', async () => {
+      expect(await new Browser().open(ConsentPage, { transaction_id: 'unknown-transaction' })).toEqual({ status: 404 });
+    });
+
+    it('should answer 404 to a decision submitted for an unknown transaction', async () => {
+      const outcome = await new Browser().submit(consentAction, {
+        transaction_id: 'unknown-transaction',
+        csrf_token: 'unknown',
+        action: 'approve',
+      });
+
+      expect(outcome).toEqual({ status: 404 });
+    });
+
+    it('should tell the End-User to start again from the application (not-found.tsx)', () => {
+      expect(renderToStaticMarkup(createElement(ConsentNotFound))).toBe(
+        '<main><h1>Error</h1><p>transaction_not_found</p>' +
+          '<p>This sign-in request was not found or has expired. Start again from the application.</p></main>',
+      );
+    });
+
+    it('should show the digest of an unexpected error but never its message (error.tsx)', () => {
+      const error = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:6379'), { digest: '2938471023' });
+      const html = renderToStaticMarkup(createElement(ConsentError, { error, retry: () => undefined }));
+
+      expect(html).toBe(
+        '<main><h1>Error</h1><p>server_error</p><p>Reference: 2938471023</p>' +
+          '<button type="button">Try again</button></main>',
+      );
+    });
   });
 
   describe('Consent decision value (OIDC Core 1.0 §3.1.2.4)', () => {
     const invalidDecision =
       '/oidc-error?error=invalid_request&error_description=' +
-      encodeURIComponent('Invalid consent decision. Please use the Approve or Deny button.');
+      'Invalid+consent+decision.+Please+use+the+Approve+or+Deny+button.';
 
     async function signedInTransaction(browser: Browser): Promise<string> {
       const transactionId = await startAuthorization(browser);
@@ -1452,7 +1588,7 @@ describe('Sign in with Google (redirect mode)', () => {
     expect(decodeJwt(tokens.id_token).payload.sub).toBe('google:1234567890');
   });
 
-  it('should refuse a callback without the double-submit cookie', async () => {
+  it('should send a callback without the double-submit cookie to the OP error page', async () => {
     const browser = new Browser();
     const { html } = await loginPage(browser);
     const response = await browser.post(googleLogin.POST, '/login/google', {
@@ -1460,36 +1596,67 @@ describe('Sign in with Google (redirect mode)', () => {
       g_csrf_token: 'double-submit',
     });
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(303);
+    expect(locationOf(response)).toBe(
+      ISSUER + '/oidc-error?error=csrf_token_missing_in_cookie&error_description=No+CSRF+token+in+Cookie.',
+    );
     expect(browser.cookies.has('session_id')).toBe(false);
   });
 
-  it('should refuse a g_csrf_token that does not match its cookie', async () => {
+  it('should send a g_csrf_token that does not match its cookie to the OP error page', async () => {
     const browser = new Browser();
     const { html } = await loginPage(browser);
     const response = await postCallback(browser, googleIdToken(html), 'forged');
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(303);
+    expect(locationOf(response)).toBe(
+      ISSUER + '/oidc-error?error=csrf_token_mismatch&error_description=Failed+to+verify+double+submit+cookie.',
+    );
     expect(browser.cookies.has('session_id')).toBe(false);
   });
 
-  it('should refuse a replayed ID token, whose nonce is single use', async () => {
+  it('should send a replayed ID token, whose nonce is single use, to the OP error page', async () => {
     const browser = new Browser();
     const { html } = await loginPage(browser);
     const credential = googleIdToken(html);
     await postCallback(browser, credential);
     const replay = await postCallback(new Browser(), credential);
 
-    expect(replay.status).toBe(400);
+    expect(replay.status).toBe(303);
+    expect(locationOf(replay)).toBe(
+      ISSUER +
+        '/oidc-error?error=login_nonce_not_found&error_description=' +
+        'Google+login+attempt+not+found.+The+login+page+may+have+expired+or+the+credential+was+already+used.',
+    );
   });
 
-  it('should refuse an account outside the configured hosted domain', async () => {
+  it('should send an account outside the configured hosted domain to the OP error page', async () => {
     config.googleLogin = { clientId: GOOGLE_CLIENT_ID, hostedDomain: 'example.com' };
     const browser = new Browser();
     const { html } = await loginPage(browser);
     const response = await postCallback(browser, googleIdToken(html, { hd: 'other.example' }));
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(303);
+    expect(locationOf(response)).toBe(
+      ISSUER +
+        '/oidc-error?error=invalid_hosted_domain&error_description=' +
+        'ID+token+hd+does+not+match+the+allowed+hosted+domain',
+    );
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should send a callback whose transaction has expired to the OP error page', async () => {
+    const browser = new Browser();
+    const { transactionId, html } = await loginPage(browser);
+    await stores.transactionStore.delete('auth_txn:' + transactionId);
+    const response = await postCallback(browser, googleIdToken(html));
+
+    expect(response.status).toBe(303);
+    expect(locationOf(response)).toBe(
+      ISSUER +
+        '/oidc-error?error=transaction_not_found&error_description=' +
+        'Auth+transaction+not+found.+The+session+may+have+expired.',
+    );
     expect(browser.cookies.has('session_id')).toBe(false);
   });
 

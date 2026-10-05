@@ -1011,6 +1011,48 @@ describe('Auth transaction cookie and csrf_token (OIDC Core 1.0 §3.1.2.3 / §3.
   // The transaction id lives only in the browser's HttpOnly cookie; the forms
   // carry just the csrf_token. Another browser (another cookie jar) therefore
   // has nothing to continue, even when it holds a csrf_token.
+  // A reload is just another render with the same cookie jar: the form comes
+  // back for the same transaction, so the End-User is never stranded even
+  // though the URL names nothing. The cookie lives until the consent decision.
+  it('should render the same login form again when the login page is reloaded', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    const first = csrfTokenOf(await browser.render(LoginPage, {}));
+    const reloaded = csrfTokenOf(await browser.render(LoginPage, {}));
+
+    expect(reloaded).toBe(first);
+    expect(await logIn(browser)).toBe('/consent');
+  });
+
+  it('should render the same consent form again when the consent page is reloaded', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    await logIn(browser);
+    const first = csrfTokenOf(await browser.render(ConsentPage, {}));
+    const reloaded = csrfTokenOf(await browser.render(ConsentPage, {}));
+    const location = new URL(await decide(browser, 'approve'));
+
+    expect(reloaded).toBe(first);
+    expect(location.searchParams.get('code')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  // After a wrong password the browser is redirected back to the form, so a
+  // reload re-renders it instead of re-submitting the failed attempt.
+  it('should render the login form again when the page after a failed attempt is reloaded', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    const outcome = await browser.submit(loginAction, {
+      csrf_token: csrfTokenOf(await browser.render(LoginPage, {})),
+      username: 'testuser',
+      password: 'wrong-password',
+    });
+    const reloaded = await browser.render(LoginPage, { error: 'invalid_credentials', remaining: '4' });
+
+    expect(outcome.status).toBe(303);
+    expect(csrfTokenOf(reloaded)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(await logIn(browser)).toBe('/consent');
+  });
+
   it('should not show the login form to another browser', async () => {
     await startAuthorization(new Browser());
 

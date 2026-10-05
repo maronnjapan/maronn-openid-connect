@@ -99,6 +99,25 @@ test.describe('Auth transaction cookie', () => {
     await expect(page.getByTestId('token-type')).toHaveText('Bearer');
   });
 
+  // The URL names nothing, but the cookie lives until the consent decision, so a
+  // reload re-renders the same transaction's form instead of stranding the
+  // End-User.
+  test('should keep the login and consent pages working across a reload', async ({ page, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    await login(page);
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    await page.reload();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
+    await expect(page.getByTestId('token-type')).toHaveText('Bearer');
+  });
+
   test('should clear the transaction cookie once the flow is finished', async ({ page, baseURL }) => {
     requireBaseUrl(baseURL);
 

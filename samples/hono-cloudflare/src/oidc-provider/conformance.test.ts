@@ -1152,6 +1152,39 @@ describe('generated provider HTTP conformance', () => {
       expect(consent.consentHtml.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
     });
 
+    // A reload is just another GET with the same cookie: the form comes back for
+    // the same transaction, so the End-User is never stranded even though the
+    // URL names nothing. The cookie lives until the consent decision.
+    it('should render the same login form again when the login page is reloaded', async () => {
+      const flow = await startFlow('txn-reload-login');
+
+      const first = await app.request('/login', { headers: { Cookie: flow.cookie } });
+      const firstCsrf = txnCsrfFrom(await first.text());
+      const reloaded = await app.request('/login', { headers: { Cookie: flow.cookie } });
+      const reloadedCsrf = txnCsrfFrom(await reloaded.text());
+      const loginRes = await postForm('/login', flow.cookie, { csrf_token: reloadedCsrf, ...LOGIN_FIELDS });
+
+      expect(reloaded.status).toBe(200);
+      expect(reloadedCsrf).toBe(firstCsrf);
+      expect(loginRes.status).toBe(302);
+      expect(loginRes.headers.get('Location')).toBe('http://localhost:3000/consent');
+    });
+
+    it('should render the same consent form again when the consent page is reloaded', async () => {
+      const flow = await startFlow('txn-reload-consent');
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      const reloaded = await app.request('/consent', { headers: { Cookie: flow.cookie } });
+      const reloadedCsrf = txnCsrfFrom(await reloaded.text());
+      const res = await postForm('/consent', flow.cookie, { csrf_token: reloadedCsrf, action: 'approve' });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(reloaded.status).toBe(200);
+      expect(reloadedCsrf).toBe(txnCsrfFrom(consent.consentHtml));
+      expect(callback.searchParams.get('state')).toBe('txn-reload-consent');
+      expect((callback.searchParams.get('code') ?? '').length).toBe(43);
+    });
+
     it('should not show the consent form to a browser without the transaction cookie', async () => {
       const flow = await startFlow('txn-consent-get');
       await loginAndReachConsent(flow.cookie);

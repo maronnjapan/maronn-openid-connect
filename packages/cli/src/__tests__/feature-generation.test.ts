@@ -61,15 +61,10 @@ describe('generate with feature toggles', () => {
   // alongside the introspection endpoint, and every framework that emits the call
   // must emit the definition too, or the generated test throws a ReferenceError.
   describe('conformance helper emission', () => {
-    const PROVIDER_ROOT: Record<string, string> = { nextjs: '_oidc-provider/' };
-
-    describe.each(['hono', 'express', 'fastify', 'nextjs'])('%s', (framework) => {
+    describe.each(['hono', 'express', 'fastify'])('%s', (framework) => {
       it('should define conformanceAuthorizationCode when the call is generated', () => {
         const result = generate({ framework, outputDir: OUT });
-        const conformance = fileContent(
-          result,
-          `${PROVIDER_ROOT[framework] ?? ''}conformance.test.ts`,
-        );
+        const conformance = fileContent(result, 'conformance.test.ts');
 
         expect(conformance.includes('await conformanceAuthorizationCode(')).toBe(true);
         expect(
@@ -81,12 +76,32 @@ describe('generate with feature toggles', () => {
 
       it('should omit both the helper and its call when introspection is disabled', () => {
         const result = generateWith(framework, ['introspection']);
-        const conformance = fileContent(
-          result,
-          `${PROVIDER_ROOT[framework] ?? ''}conformance.test.ts`,
-        );
+        const conformance = fileContent(result, 'conformance.test.ts');
 
         expect(conformance.includes('conformanceAuthorizationCode')).toBe(false);
+      });
+    });
+
+    // The Next.js contract test mints its tokens through the generated pages and
+    // Server Actions, so its introspection block depends on nothing else.
+    describe('nextjs', () => {
+      it('should generate the introspection contract block with the introspection endpoint', () => {
+        const conformance = fileContent(
+          generate({ framework: 'nextjs', outputDir: OUT }),
+          '_oidc-provider/conformance.test.ts',
+        );
+
+        expect(conformance.includes("describe('Token Introspection (RFC 7662)', () => {")).toBe(true);
+      });
+
+      it('should omit the introspection contract block when introspection is disabled', () => {
+        const conformance = fileContent(
+          generateWith('nextjs', ['introspection']),
+          '_oidc-provider/conformance.test.ts',
+        );
+
+        expect(conformance.includes('Token Introspection')).toBe(false);
+        expect(conformance.includes("from '../introspect/route'")).toBe(false);
       });
     });
   });

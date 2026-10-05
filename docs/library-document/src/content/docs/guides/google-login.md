@@ -49,7 +49,7 @@ applyOidc(app, {
 });
 ```
 
-生成される Next.js の `_oidc-provider/runtime.ts` と本リポジトリの samples は、`GOOGLE_CLIENT_ID` と `GOOGLE_HOSTED_DOMAIN` からこれを読みます。
+生成される Next.js の `_oidc-provider/provider.ts` と本リポジトリの samples は、`GOOGLE_CLIENT_ID` と `GOOGLE_HOSTED_DOMAIN` からこれを読みます。
 
 ## フロント側の設定
 
@@ -93,7 +93,7 @@ const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, lo
 | `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier` と `googleAccountResolver` を差し替えるオプション |
 | `conformance.test.ts` | ボタン描画・nonce・CSRF・検証失敗・hosted domain・JIT 登録からトークン発行と UserInfo までを固定する契約テスト |
-| Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`runtime.ts` の環境変数読み取り |
+| Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`_oidc-provider/provider.ts` の環境変数読み取り |
 
 Hono のメソッドガードと Fastify アダプタには `POST /login/google` が登録され、それ以外のメソッドは 405 になります。
 
@@ -116,6 +116,8 @@ Google ──(POST credential, g_csrf_token)──> /login/google
 Google の POST には `credential` と `g_csrf_token` しか入らず、`login_uri` にクエリを足せないため、認証トランザクションは nonce 経由で引き当てます。nonce は CSPRNG 由来（32 バイト）で、トランザクションと同じ期限を持ち、1 回使ったら削除されます。検証前に失敗した POST（Cookie 不一致など）では nonce は残るので、同じログイン画面からやり直せます。
 
 失敗は `GoogleLoginError` の `httpStatusCode` でエラーページを返します（CSRF・nonce 不正・`credential` 欠落は 400、ID トークン検証失敗は 401、`hd` / `email_verified` 不一致は 403、Google の公開鍵を取得できない場合は 503）。nonce を検証するまで誰のトランザクションか分からないため、失敗をクライアントへリダイレクトすることはありません。
+
+Next.js の `login/google/route.ts` は、失敗したコールバックを OP のエラーページ（`oidc-error/page.tsx`）へ 303 でリダイレクトし、`GoogleLoginError` の `code` と `message` を表示します。Route Handler からは React のページを描画できないため、ステータスコードではなくエラーページへの遷移で失敗を伝えます。`config.googleLogin` が未設定のときは `notFound()` で 404 を返します。
 
 ## ユーザーの扱い
 
@@ -144,7 +146,7 @@ applyOidc(app, {
 
 ## 契約テストの扱い
 
-生成される `conformance.test.ts` は本物の Google を呼びません。`fake:` 接頭辞付きの credential を受け付ける偽の `GoogleIdTokenVerifier` を `googleIdTokenVerifier` に注入し、CSRF・nonce・JIT 登録・トークン発行まで、生成コード側の責務だけを固定します。`google-auth-library` に委ねている署名・`aud`・`iss`・`exp` の検証は `@maronn-openid-connect/google-login` 自身のテストがローカルの鍵配信サーバーを使って確認しています。
+生成される `conformance.test.ts` は本物の Google を呼びません。`fake:` 接頭辞付きの credential を受け付ける偽の `GoogleIdTokenVerifier` を `googleIdTokenVerifier` に注入し、CSRF・nonce・JIT 登録・トークン発行まで、生成コード側の責務だけを固定します。Next.js の `_oidc-provider/conformance.test.ts` は、`vi.mock` で `getDefaultGoogleIdTokenVerifier()` を差し替え、テストが送る ID トークンのペイロード（JSON）をそのまま検証済みとして扱います。`google-auth-library` に委ねている署名・`aud`・`iss`・`exp` の検証は `@maronn-openid-connect/google-login` 自身のテストがローカルの鍵配信サーバーを使って確認しています。
 
 ## 注意点
 

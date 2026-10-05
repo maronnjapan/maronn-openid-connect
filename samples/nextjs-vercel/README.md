@@ -2,6 +2,16 @@
 
 VercelではMarketplaceから接続できるUpstash Redis REST、ローカルではNode.js組み込みSQLiteを使用する。どちらも生成OPの同じ `JsonStoreBackend` 契約へ接続され、外部ランタイムライブラリは不要。
 
+## 構成
+
+`src/app` は CLI（`pnpm run generate`）が生成した App Router のコードで、手では編集しない。エンドポイントごとの Route Handler（`authorize/route.ts`・`token/route.ts` など）、ログイン・同意のページと Server Action（`login/`・`consent/`。トランザクションが無いときの `not-found.tsx` と想定外の例外のときの `error.tsx` を含む）、OP のエラーページ（`oidc-error/page.tsx`）、全エンドポイントが共有する部品（`_oidc-provider/`）から成る。設定・クライアント・署名鍵・ストアの組み立ては `src/app/_oidc-provider/provider.ts` にある。
+
+生成物に含まれる契約テストは、サーバーを起動せずに実行できる。
+
+```bash
+pnpm --filter @maronn-openid-connect/sample-nextjs-vercel test:conformance
+```
+
 ## ローカル起動（一発）
 
 リポジトリルートから:
@@ -27,7 +37,7 @@ Vercel CLIは `pnpm dlx` 経由で使うためグローバルインストール�
 
 issuerは `.deploy/issuer` に保存され、2回目以降は1回のデプロイで完了する。カスタムドメインは `--issuer` で指定できる（詳細は `--help`）。
 
-`VERCEL` が設定された環境でRedis資格情報がない場合は、永続化されない一時ファイルへ誤ってフォールバックしないよう起動を失敗させる。署名鍵は起動時生成のため、複数インスタンスに広がる本番相当の検証では固定鍵の読み込みへ置き換えること。
+`VERCEL` が設定された環境でRedis資格情報がない場合は、永続化されない一時ファイルへ誤ってフォールバックしないよう起動を失敗させる。署名鍵は起動時生成のため、複数インスタンスに広がる本番相当の検証では固定鍵の読み込みへ置き換えること（`src/app/_oidc-provider/provider.ts` の署名鍵の節）。
 
 ## Google ログイン（任意）
 

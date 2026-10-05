@@ -289,7 +289,7 @@ Object 互換モード（`OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT=1`）を sample 起
 OP の挙動自体は正しい。
 
 同じ配線（acr resolver / `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT`）は `samples/express-flyio` /
-`samples/fastify-flyio`（起動側 `app.ts`）と `samples/nextjs-vercel`（CLI生成 `_oidc-provider/runtime.ts`）
+`samples/fastify-flyio`（起動側 `app.ts`）と `samples/nextjs-vercel`（CLI生成 `_oidc-provider/provider.ts`）
 にも適用済み。`CONFORMANCE_SAMPLE_APP=nextjs-vercel` でのCI実行でも **32 passed / 0 warning /
 0 skipped / 0 condition failure**（残り3 module は screenshot 待ちの WAITING）となり、
 hono-cloudflare と同じく screenshot 提出以外の未pass項目は0件であることを確認済み。

@@ -1,10 +1,6 @@
-import { getAuthTransaction } from '@maronn-openid-connect/core';
-import { oidcProviderOptions } from '../_oidc-provider/runtime';
-import { defaultProviderStores } from '../_oidc-provider/store';
+import { notFound } from 'next/navigation';
+import { requireTransaction } from '../_oidc-provider/transaction';
 import { consentAction } from './actions';
-
-const transactionStore =
-  (oidcProviderOptions.storage ?? defaultProviderStores).transactionStore;
 
 export const dynamic = 'force-dynamic';
 
@@ -15,22 +11,17 @@ interface ConsentPageProps {
 /**
  * Consent page (React Server Component).
  *
- * A real Next.js `page.tsx` so the consent UI can be customized with JSX and
- * React components. The form posts to a Server Action (./actions.ts).
+ * A real Next.js page, so the consent UI can be built with JSX and React
+ * components. The form posts to the consentAction Server Action (actions.ts).
+ *
+ * A transaction_id that names no transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function ConsentPage({ searchParams }: ConsentPageProps) {
   const { transaction_id: transactionId } = await searchParams;
+  if (!transactionId) notFound();
+  const transaction = await requireTransaction(transactionId);
 
-  if (!transactionId) {
-    return (
-      <main>
-        <h1>Authorize Application</h1>
-        <p>Missing transaction_id</p>
-      </main>
-    );
-  }
-
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
   const scopes = transaction.scope.split(' ').filter(Boolean);
 
   return (
@@ -47,10 +38,9 @@ export default async function ConsentPage({ searchParams }: ConsentPageProps) {
       </ul>
       {/*
         The submit buttons carry the authorization decision (OIDC Core 1.0
-        Section 3.1.2.4). consentAction accepts exactly two values — 'approve'
-        and 'deny' — and rejects everything else, so customizing this markup must
-        keep both button values as they are: renaming 'approve' makes every
-        approval fail with an error page. See ./actions.ts.
+        §3.1.2.4). consentAction accepts exactly 'approve' and 'deny' and rejects
+        everything else, so keep both values when customizing this markup:
+        renaming 'approve' makes every approval fail with an error page.
       */}
       <form action={consentAction}>
         <input type="hidden" name="transaction_id" value={transactionId} />

@@ -129,8 +129,8 @@ Extension features (disabled by default): ${extensionFeatures}
   google-login (${GOOGLE_LOGIN_PACKAGE}): adds a "Sign in with Google" button to
   the login page and a POST /login/google callback that verifies the ID token
   Google posts there with Google's official google-auth-library. Node.js 22+
-  only. Set config.googleLogin.clientId (the generated Next.js runtime and the
-  samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
+  only. Set config.googleLogin.clientId (the generated Next.js provider.ts and
+  the samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
   authorized redirect URI of that Google OAuth client. Enable with:
   --enable google-login
 
@@ -437,7 +437,7 @@ export function run(args: string[]): void {
       console.log(`Extension features enabled: ${enabledExtensions.join(', ')}`);
       console.log(
         'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
-          'Next.js runtime and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
+          'Next.js provider.ts and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
           'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
       );
     }
@@ -502,12 +502,29 @@ export function run(args: string[]): void {
         ),
         features,
       );
+      // Next.js reads its configuration from the environment in
+      // _oidc-provider/provider.ts, which already wires the persistent stores.
+      const nextSteps =
+        result.framework === 'nextjs'
+          ? [
+              'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
+              'On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',
+              'Load a fixed signing key in _oidc-provider/provider.ts before running more than one instance',
+              `Install dependencies: ${installCommand}`,
+              'Start the server: next dev',
+            ]
+          : [
+              'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
+              'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
+              'Use config.ts defaults only for quick local testing',
+              `Install dependencies: ${installCommand}`,
+              'Start the server',
+            ];
       console.log(`\nNext steps:`);
-      console.log(`  1. Provide runtime config, signing keys, and client resolvers from env/DB/KV`);
-      console.log(`  2. Inject persistent ProviderStores through the generated JsonStoreBackend contract`);
-      console.log(`  3. Use config.ts defaults only for quick local testing`);
-      console.log(`  4. Install dependencies: ${installCommand}`);
-      console.log(`  5. Start the server\n`);
+      nextSteps.forEach((step, index) => {
+        const isLast = index === nextSteps.length - 1;
+        console.log(`  ${index + 1}. ${step}${isLast ? '\n' : ''}`);
+      });
     }
   } catch (error) {
     if (error instanceof Error) {

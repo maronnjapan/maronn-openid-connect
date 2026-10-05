@@ -473,6 +473,28 @@ async function resolveProviderStores(
 }
 
 /**
+ * The modules scopes.ts points readers to. The defaults are the Hono / Express /
+ * Fastify layout; the Next.js generator passes its own App Router paths.
+ */
+export interface ScopePolicyFileRefs {
+  /** Where custom-scope UserInfo claims would be added. */
+  userinfo: string;
+  /** The consent step (screen and approval). */
+  consent: string;
+  /** The authorization endpoint (SSO fast path and prompt=none). */
+  authorize: string;
+  /** The device and CIBA approval steps. */
+  approvals: string;
+}
+
+const DEFAULT_SCOPE_POLICY_FILE_REFS: ScopePolicyFileRefs = {
+  userinfo: 'routes/userinfo.ts',
+  consent: 'routes/consent.ts',
+  authorize: 'routes/authorize.ts',
+  approvals: 'routes/device.ts / routes/ciba-verification.ts',
+};
+
+/**
  * Generated `scopes.ts` — the custom scopes declared with `--scope`, plus the
  * per-End-User filtering seam. Emitted only when at least one custom scope was
  * declared, so an OP generated without them is byte-identical to before this
@@ -481,6 +503,7 @@ async function resolveProviderStores(
 export function customScopesTemplate(
   scopes: string[],
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  fileRefs: ScopePolicyFileRefs = DEFAULT_SCOPE_POLICY_FILE_REFS,
 ): string {
   const toListLiteral = (values: string[]): string =>
     values.length === 0 ? '[]' : `[${values.map((value) => `'${singleQuoted(value)}'`).join(', ')}]`;
@@ -515,7 +538,7 @@ export function customScopesTemplate(
  * Custom scopes carry no UserInfo claims of their own: OIDC Core 1.0 §5.4 defines
  * claims for profile / email / address / phone only, so \`filterClaimsByScope()\`
  * ignores them. Return your own claims for a custom scope by editing
- * routes/userinfo.ts.
+ * ${fileRefs.userinfo}.
  */
 
 /**
@@ -553,12 +576,12 @@ export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
  * **This is the per-user scope filtering seam.** It runs once the End-User is
  * known, and every step that decides a grant already awaits it:
  *
- * - routes/consent.ts — the consent screen (what is displayed) and the approval
+ * - ${fileRefs.consent} — the consent screen (what is displayed) and the approval
  *   (what is granted)
- * - routes/authorize.ts — the SSO fast path and prompt=none, which grant without
+ * - ${fileRefs.authorize} — the SSO fast path and prompt=none, which grant without
  *   showing consent. Both narrow BEFORE looking up stored consent, because a
  *   consent lookup for a scope the subject can never hold would never match.
- * - routes/device.ts / routes/ciba-verification.ts — the device and CIBA approval
+ * - ${fileRefs.approvals} — the device and CIBA approval
  *   steps, when those features are generated
  *
  * It is async so a database / KV lookup can be dropped in without touching any
@@ -590,10 +613,35 @@ export function findUnsupportedScopes(requested: readonly string[]): string[] {
 `;
 }
 
+export interface ConfigTemplateOptions {
+  /**
+   * Emit the optional authorizationErrorRedirectPath field (default true). The
+   * shared page layer reads it; a target with its own error page routing, such
+   * as Next.js, leaves it out.
+   */
+  authorizationErrorRedirectPath?: boolean;
+}
+
 export function configTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  options: ConfigTemplateOptions = {},
 ): string {
+  const authorizationErrorRedirectPathField =
+    options.authorizationErrorRedirectPath === false
+      ? ''
+      : `  /**
+   * 任意。client redirect が禁止される非リダイレクト型の authorization error
+   * （未知 client_id / 未登録 redirect_uri / fragment 付き redirect_uri など、
+   * OIDC Core 1.0 §3.1.2.2）の HTML フォールバックを、views.errorPage() で直接
+   * 返す代わりに OP 内部のエラーページパスへ 303 リダイレクトしたいときに設定する。
+   * Next.js の error.tsx のような framework-native なエラー画面へ委ねるためのフック。
+   * 未設定なら従来どおり views.errorPage() を c.html で返す（express/fastify/hono の
+   * デフォルト）。なお Accept: application/json の programmatic caller には、この設定の
+   * 有無に関わらず常に 400 の OAuth error JSON を返す。
+   */
+  authorizationErrorRedirectPath?: string;
+`;
   const refreshTokenLifetimeField = features.refreshToken
     ? `  /**
    * Refresh token の absolute lifetime（秒）。初回発行時刻からの絶対的な有効期限。
@@ -788,18 +836,7 @@ ${refreshTokenLifetimeField}  /**
    * 不正なPKCE値やpublic clientの非PKCE requestは拒否する。
    */
   allowNonPkceAuthorizationCodeFlow: boolean;
-${allowUnsignedField}  /**
-   * 任意。client redirect が禁止される非リダイレクト型の authorization error
-   * （未知 client_id / 未登録 redirect_uri / fragment 付き redirect_uri など、
-   * OIDC Core 1.0 §3.1.2.2）の HTML フォールバックを、views.errorPage() で直接
-   * 返す代わりに OP 内部のエラーページパスへ 303 リダイレクトしたいときに設定する。
-   * Next.js の error.tsx のような framework-native なエラー画面へ委ねるためのフック。
-   * 未設定なら従来どおり views.errorPage() を c.html で返す（express/fastify/hono の
-   * デフォルト）。なお Accept: application/json の programmatic caller には、この設定の
-   * 有無に関わらず常に 400 の OAuth error JSON を返す。
-   */
-  authorizationErrorRedirectPath?: string;
-${googleLoginConfigField}}
+${allowUnsignedField}${authorizationErrorRedirectPathField}${googleLoginConfigField}}
 
 /**
  * Optional defaults for quick local testing.
@@ -2385,6 +2422,8 @@ ${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}`
 export function resolversTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  /** Where a project wires its own client resolver (framework-specific). */
+  clientResolverInjectionNote = 'Project integrations should inject a D1/KV/env-backed resolver through Hono context.',
 ): string {
   const refreshTypeImports = features.refreshToken
     ? `  RefreshTokenResolver,
@@ -2523,7 +2562,7 @@ import {
 
 /**
  * Default in-memory client resolver for quick local testing.
- * Project integrations should inject a D1/KV/env-backed resolver through Hono context.
+ * ${clientResolverInjectionNote}
  */
 export const clientResolver: ClientResolver & TokenClientResolver =
   createInMemoryClientResolver();
@@ -9938,12 +9977,11 @@ export function requestObjectConformanceBeforeAll(
 
 export function reuseFlowConformanceTestBlock(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  errorPageMode: 'html' | 'redirect' = 'html',
   viewMarkup: ViewMarkup = 'string',
 ): string {
   return (
     reuseCascadeConformanceBlock(features) +
-    requestObjectValueConformanceBlock(features, errorPageMode, viewMarkup)
+    requestObjectValueConformanceBlock(features, viewMarkup)
   );
 }
 
@@ -10465,26 +10503,9 @@ function reuseCascadeConformanceBlock(features: OidcFeatureConfig): string {
  */
 function requestObjectValueConformanceBlock(
   features: OidcFeatureConfig,
-  errorPageMode: 'html' | 'redirect' = 'html',
   viewMarkup: ViewMarkup = 'string',
 ): string {
-  // A redirect_uri carried inside a broken Request Object cannot be trusted, so
-  // the error stays on the OP (OIDC Core 1.0 §6.3): no redirect to the client,
-  // no state echo. How the OP's own error page is delivered depends on the
-  // target — inline HTML 400 by default, or (Next.js) a 303 to the
-  // framework-native error page named by config.authorizationErrorRedirectPath
-  // (see pages/errors.ts). The expectation is pinned per mode so a change in the
-  // error code or in the non-redirect behavior is caught exactly.
-  const brokenRequestObjectExpectation = errorPageMode === 'redirect'
-    ? `      // OIDC Core 1.0 §6.3: invalid_request_object (not the generic
-      // invalid_request). This provider sets authorizationErrorRedirectPath, so
-      // the browser is 303-redirected to the OP's OWN error page — never to the
-      // redirect_uri of the broken Request Object.
-      expect(res.status).toBe(303);
-      expect(res.headers.get('Location')).toBe(
-        '/oidc-error?error=invalid_request_object&error_description=request+object+is+not+a+JWS+compact+serialization',
-      );`
-    : `      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
+  const brokenRequestObjectExpectation = `      // OIDC Core 1.0 §6.3: the request parameter contains an invalid Request
       // Object, so the OP reports invalid_request_object (not the generic
       // invalid_request). A redirect_uri carried inside a broken Request Object
       // cannot be trusted, so the error stays on the OP: HTTP 400, no redirect,
@@ -15941,20 +15962,6 @@ export function parConformanceBlock(features: OidcFeatureConfig): string {
 }
 
 /**
- * How the target framework answers the interactive (login -> consent) flow when
- * JARM is enabled.
- *
- * - 'jwt': the consent route signs the response, so the contract test asserts the
- *   JARM JWT. This is the normal case (hono / express / fastify / web-standard).
- * - 'plain': the consent step cannot produce a verifiable response JWT and stays
- *   on the plain query response. Next.js is the only such target — see
- *   {@link jarmInteractiveConsentPlainBlock} for why — and the contract test must
- *   assert the plain response, or it would be green while the generated provider
- *   does the opposite.
- */
-export type JarmConsentResponseMode = 'jwt' | 'plain';
-
-/**
  * Contract tests for a target whose consent route answers in the recorded JARM
  * mode: the login -> consent flow delivers one signed JWT in `response`.
  */
@@ -16046,71 +16053,6 @@ function jarmInteractiveConsentJwtBlock(): string {
         expect(payload.state).toBe('jarm-state');
       });
 
-${jarmPromptNoneErrorTest()}    });
-`;
-}
-
-/**
- * Contract tests for a target whose consent step cannot answer in JARM mode.
- *
- * Next.js drives consent through a Server Action (app/consent/actions.ts), which
- * is bundled separately from the Route Handlers and therefore holds its own
- * instance of the signing key provider. A response signed there would carry the
- * same `kid` as /.well-known/jwks.json but different key material, so every
- * client would fail signature verification — returning a plain query response is
- * the safer answer. These tests pin that limitation instead of asserting a JARM
- * response the generated provider never produces.
- */
-function jarmInteractiveConsentPlainBlock(): string {
-  return `    describe('Interactive flow response (Next.js Server Action limitation)', () => {
-      // On this target the consent step runs as a Next.js Server Action, which is
-      // bundled apart from the Route Handlers and holds its own signing key
-      // provider instance. A response JWT signed there would carry the same kid as
-      // /.well-known/jwks.json but different key material, so every client would
-      // fail signature verification. The Server Action therefore keeps the plain
-      // query response, and these tests pin that so the limitation stays visible.
-      it('should return the plain query response after login and consent', async () => {
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
-
-        // RFC 9207 Section 2: the plain response carries iss, because no JWT iss
-        // claim is available to identify the issuer here.
-        expect([...queryOf(location).keys()].sort()).toEqual(['code', 'iss', 'state']);
-        expect(queryOf(location).get('state')).toBe('jarm-state');
-        expect(queryOf(location).get('iss')).toBe('http://localhost:3000');
-      });
-
-      it('should return the plain query error when the End-User denies consent', async () => {
-        const { location } = await interactiveFlow(
-          authorizeUrl({ response_mode: 'query.jwt' }),
-          'deny',
-        );
-
-        expect([...queryOf(location).keys()].sort()).toEqual(['error', 'iss', 'state']);
-        expect(queryOf(location).get('error')).toBe('access_denied');
-        expect(queryOf(location).get('state')).toBe('jarm-state');
-      });
-
-      it('should exchange the plainly delivered code for tokens', async () => {
-        const { location } = await interactiveFlow(authorizeUrl({ response_mode: 'query.jwt' }));
-        const res = await app.request('/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'authorization_code',
-            code: queryOf(location).get('code') ?? '',
-            redirect_uri: REDIRECT_URI,
-            client_id: 'c-conf',
-            client_secret: 's',
-            code_verifier: PKCE_VERIFIER,
-          }).toString(),
-        });
-
-        expect(res.status).toBe(200);
-        expect((await res.json()).token_type).toBe('Bearer');
-      });
-    });
-
-    describe('Error response (JARM Section 2.1)', () => {
 ${jarmPromptNoneErrorTest()}    });
 `;
 }
@@ -17834,25 +17776,10 @@ ${refreshTokenExpectation}    });
 `;
 }
 
-export function jarmConformanceBlock(
-  features: OidcFeatureConfig,
-  consentResponseMode: JarmConsentResponseMode = 'jwt',
-): string {
+export function jarmConformanceBlock(features: OidcFeatureConfig): string {
   if (!features.jarm) return '';
-  const interactiveResponseTests =
-    consentResponseMode === 'plain'
-      ? jarmInteractiveConsentPlainBlock()
-      : jarmInteractiveConsentJwtBlock();
-  // The two paths below answer inside the authorize route, so they are genuine
-  // JARM responses on every target. Why that is worth stating differs per mode.
-  const jarmAuthorizeRouteResponsesComment =
-    consentResponseMode === 'plain'
-      ? `      // These paths answer inside the authorize route — a Route Handler, which
-      // shares the signing key provider with /.well-known/jwks.json — so they do
-      // produce a verifiable JARM response even though the consent step above
-      // cannot.
-`
-      : `      // The authorize route records the mode on the transaction and the consent
+  const interactiveResponseTests = jarmInteractiveConsentJwtBlock();
+  const jarmAuthorizeRouteResponsesComment = `      // The authorize route records the mode on the transaction and the consent
       // route reads it back, so a store that drops unknown fields would answer in
       // plain query. These paths, by contrast, answer inside the authorize route
       // itself and never touch the store round trip.
@@ -19590,6 +19517,6 @@ ${defaultErrorPageBodyExpectation('invalid_request', 'redirect_uri not registere
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${jsxViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, 'html', 'jsx')}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionBindingConformanceBlock(features)}${jsxViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features, true)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features, 'jsx')}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }

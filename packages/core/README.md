@@ -127,6 +127,63 @@ core の純関数            ← このパッケージ
 永続化・クライアント管理  ← 利用者が注入（DB / KV / インメモリ）
 ```
 
+### 関数を組み合わせる
+
+検証には、その処理に必要な値だけを渡せる。
+たとえば有効期限の検証には `{ expiresAt: 1700000060 }`、クライアントの照合には `{ clientId: 'client-1' }` を渡す。
+ストアを受け取る関数も、読み取りなら `get`、削除なら `delete` のように使用するメソッドだけを要求する。
+
+```typescript
+import {
+  requireAuthorizationCode,
+  validateAuthorizationCodeExpiration,
+  validateAuthorizationCodeClient,
+  requireCodeVerifier,
+  validateCodeVerifier,
+  verifyPkceCodeVerifier,
+} from '@maronn-openid-connect/core';
+
+const code = requireAuthorizationCode('authorization-code');
+validateAuthorizationCodeExpiration({ expiresAt: 1700000060 }, 1700000000);
+validateAuthorizationCodeClient({ clientId: 'client-1' }, 'client-1');
+const verifier = requireCodeVerifier('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk');
+validateCodeVerifier(verifier);
+await verifyPkceCodeVerifier(
+  verifier,
+  'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+  'S256',
+);
+```
+
+この例は各関数の入力例であり、トークン発行フロー全体ではない。
+実際のフローでは、ストアから取得した認可コードに対して再利用、期限、クライアント、リダイレクト先、PKCE を検証し、コードを消費してからトークンを発行する。
+再利用時のトークン失効を含む `validateAuthorizationCodeUnused` と、使用済みかの判定だけを行う `validateAuthorizationCodeNotUsed` は、ストレージ処理をどこで組み立てるかに応じて選べる。
+
+| 処理 | 個別に呼び出せる関数 |
+|---|---|
+| 認可パラメータの検証 | `validateSupportedResponseType`、`validateClientResponseType`、`requireAuthorizationScope`、`parseScope`、`validateOpenIdScope`、`parsePromptValues`、`validatePromptValues`、`validatePromptNoneNotCombined`、`validateMaxAge`、`validateDefaultMaxAge`、`requireCodeChallenge`、`requireCodeChallengeMethod`、`validateCodeChallengeMethod`、`validateS256CodeChallenge`、`resolveRedirectUri` |
+| Request Object の反映 | `mergeRequestObjectParams`。署名検証済みのクレームを渡す |
+| 同意結果の適用 | `filterOfflineAccessScope`。判定済みの真偽値を渡す |
+| 認可コードの検証 | `requireAuthorizationCode`、`requireStoredAuthorizationCode`、`validateAuthorizationCodeNotUsed`、`requireTokenRequestRedirectUri`、`validateAuthorizationCodeRedirectUriMatch`、`hasPkceBinding`、`requirePkceBinding`、`requireCodeVerifier`、`validateCodeVerifier`、`verifyCodeChallenge`、`verifyPkceCodeVerifier` |
+| リフレッシュトークンの検証 | `requireRefreshToken`、`requireStoredRefreshToken`、`validateRefreshTokenNotUsed`、`requireRefreshTokenSession`、`validateRefreshTokenSessionSubject`、`parseScope`、`validateRefreshTokenScopeNotEmpty`、`validateRefreshTokenScopeWithinGrant`。ストアから読み取った値を渡す |
+| クライアント資格情報の処理 | `parseBasicClientCredentials`、`validateSingleClientAuthMethod`、`validateClientIdConsistency`、`requireClientId`、`selectPresentedClientAuthMethod`、`selectRegisteredClientAuthMethod`、`requireClientSecret`、`validateClientAuthMethodMatch`、`verifyClientSecretValue` |
+| 認証トランザクション | `buildAuthTransaction`、`validateAuthTransactionExpiration`、`evaluateLoginFailure`、`computeAuthTransactionTtlSeconds`、`buildAuthorizationResponseParams`。保存や削除は行わない |
+| prompt=none の判定 | `requirePromptNoneSession`、`validatePromptNoneConsentGranted`。解決済みのセッションと同意の照会結果を渡す |
+| 認可コードの発行 | `buildAuthorizationCodeData`。生成済みの認可コード、grantId、現在時刻を渡す |
+| acr の要求値 | `selectRequestedAcrValues` |
+| Introspection の活性判定 | `isAccessTokenActive`、`isRefreshTokenActive`。有効期限、使用済みフラグ、現在時刻を渡す |
+| クレームの値の照合 | `matchesRequestedClaimValue` |
+| JWT の組み立て | `buildJoseHeader`、`encodeJwtSigningInput`、`signJwt`。クレームの検証と署名鍵に合うアルゴリズムの選択は呼び出し側が行う |
+| ID Token のペイロード検証 | `validateIdTokenIssuer`、`validateIdTokenExpiration`、`validateIdTokenAuthorizedParty` |
+| ID Token hint の検証 | `decodeIdTokenHint`、`validateIdTokenHintHeader`、`selectIdTokenHintKeys`、`verifyIdTokenHintSignature`、`validateIdTokenHintIssuer`、`validateIdTokenHintAudience`、`validateIdTokenHintExpiration`、`validateIdTokenHintIssuedAt`、`requireIdTokenHintSubject` |
+
+ID Token hint の各関数を組み合わせる場合は、上表の順に検証を行い、すべて通過してからクレームを使用する。
+`decodeIdTokenHint` の結果は未検証であり、デコードだけでは署名や発行者を確認していない。
+`validateIdTokenHint` はこれらの検証をまとめて実行する。
+
+時刻を受け取る関数には固定値やアプリケーションの時計を渡せる。
+トークン、認可コード、再認証の時刻は Unix epoch 秒、認証トランザクションの関数（`buildAuthTransaction`、`validateAuthTransactionExpiration`、`computeAuthTransactionTtlSeconds`）はミリ秒で指定する。
+
 注入インターフェースの例: `ClientResolver`（クライアント情報）、`AuthorizationCodeResolver` / `RefreshTokenResolver` / `AccessTokenResolver`（トークン引き当て）、`SessionResolver` / `ConsentResolver`（セッション・同意状態）、`AuthTransactionStore`（認証トランザクション）、`SigningKeyProvider`（署名鍵）。
 
 実際の配線例は [`@maronn-openid-connect/cli`](../cli) が生成するコード、および本リポジトリの `samples/*` を参照。

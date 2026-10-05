@@ -22,9 +22,24 @@ import {
   resolveMaxAge,
   parseAudienceParameter,
   parseClaimsRequestParameter,
+  validateSupportedResponseType,
+  validateClientResponseType,
+  requireAuthorizationScope,
+  validateOpenIdScope,
+  filterOfflineAccessScope,
+  validateMaxAge,
+  validateDefaultMaxAge,
+  parsePromptValues,
+  validatePromptValues,
+  validatePromptNoneNotCombined,
+  requireCodeChallenge,
+  requireCodeChallengeMethod,
+  validateCodeChallengeMethod,
+  validateS256CodeChallenge,
   AuthorizationError,
   AuthorizationErrorCode,
 } from './authorization-request.js';
+import { parseScope } from './scope.js';
 import type {
   AuthorizationRequestParams,
   ClientInfo,
@@ -863,5 +878,237 @@ describe('parseClaimsRequestParameter', () => {
 
     expect(error).toBeInstanceOf(AuthorizationError);
     expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
+  });
+});
+
+describe('validateSupportedResponseType', () => {
+  it('should accept code', () => {
+    expect(validateSupportedResponseType('code', 'https://client.example/cb', 'state-1')).toBe('code');
+  });
+
+  it('should reject a missing response_type with invalid_request', () => {
+    expect(() =>
+      validateSupportedResponseType(undefined, 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_request',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
+  });
+
+  it('should reject token with unsupported_response_type', () => {
+    expect(() =>
+      validateSupportedResponseType('token', 'https://client.example/cb'),
+    ).toThrow(expect.objectContaining({ error: 'unsupported_response_type' }));
+  });
+});
+
+describe('validateClientResponseType', () => {
+  it('should accept a response type registered for the client', () => {
+    expect(
+      validateClientResponseType('code', ['code'], 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should accept code when the client has no registered response types', () => {
+    expect(
+      validateClientResponseType('code', undefined, 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should reject a response type not registered for the client', () => {
+    expect(() =>
+      validateClientResponseType('code', [], 'https://client.example/cb'),
+    ).toThrow(expect.objectContaining({ error: 'unauthorized_client' }));
+  });
+});
+
+describe('requireAuthorizationScope', () => {
+  it('should return the query scope', () => {
+    expect(requireAuthorizationScope('openid email', 'https://client.example/cb')).toBe(
+      'openid email',
+    );
+  });
+
+  it('should reject an empty query scope', () => {
+    expect(() => requireAuthorizationScope('', 'https://client.example/cb')).toThrow(
+      'Missing required parameter: scope',
+    );
+  });
+});
+
+describe('parseScope', () => {
+  // RFC 6749 §3.3: scope is a space-delimited set, so duplicates collapse
+  it('should split on spaces and drop duplicates in insertion order', () => {
+    expect(parseScope('openid  email openid')).toEqual(['openid', 'email']);
+  });
+
+  it('should return an empty array for a blank value', () => {
+    expect(parseScope(' ')).toEqual([]);
+  });
+});
+
+describe('validateOpenIdScope', () => {
+  it('should accept a scope list containing openid', () => {
+    expect(validateOpenIdScope(['email', 'openid'], 'https://client.example/cb')).toBeUndefined();
+  });
+
+  it('should reject a scope list without openid', () => {
+    expect(() => validateOpenIdScope(['email'], 'https://client.example/cb')).toThrow(
+      expect.objectContaining({ error: 'invalid_scope' }),
+    );
+  });
+});
+
+describe('filterOfflineAccessScope', () => {
+  it('should keep offline_access when granted', () => {
+    expect(filterOfflineAccessScope(['openid', 'offline_access'], true)).toEqual([
+      'openid',
+      'offline_access',
+    ]);
+  });
+
+  it('should drop offline_access when not granted', () => {
+    expect(filterOfflineAccessScope(['openid', 'offline_access'], false)).toEqual(['openid']);
+  });
+});
+
+describe('validateMaxAge', () => {
+  it('should accept zero', () => {
+    expect(validateMaxAge('0', 'https://client.example/cb')).toBe(0);
+  });
+
+  it('should reject a negative value', () => {
+    expect(() => validateMaxAge('-1', 'https://client.example/cb')).toThrow(
+      'max_age must be a non-negative integer',
+    );
+  });
+});
+
+describe('validateDefaultMaxAge', () => {
+  it('should accept a non-negative integer', () => {
+    expect(validateDefaultMaxAge(60)).toBe(60);
+  });
+
+  it('should reject a fractional value with server_error', () => {
+    expect(() => validateDefaultMaxAge(0.5)).toThrow(
+      expect.objectContaining({ error: 'server_error' }),
+    );
+  });
+});
+
+describe('parsePromptValues', () => {
+  it('should split prompt values on spaces', () => {
+    expect(parsePromptValues('login  consent')).toEqual(['login', 'consent']);
+  });
+
+  it('should keep unknown values for the caller to validate', () => {
+    expect(parsePromptValues('custom')).toEqual(['custom']);
+  });
+});
+
+describe('validatePromptValues', () => {
+  it('should accept defined prompt values', () => {
+    expect(
+      validatePromptValues(['login', 'consent', 'select_account'], 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should reject an undefined prompt value', () => {
+    expect(() =>
+      validatePromptValues(['custom'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_request',
+        errorDescription: 'Invalid prompt value: custom',
+        state: 'state-1',
+      }),
+    );
+  });
+});
+
+describe('validatePromptNoneNotCombined', () => {
+  it('should accept none alone', () => {
+    expect(validatePromptNoneNotCombined(['none'], 'https://client.example/cb')).toBeUndefined();
+  });
+
+  it('should reject none combined with login', () => {
+    expect(() =>
+      validatePromptNoneNotCombined(['none', 'login'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_request',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
+  });
+});
+
+describe('requireCodeChallenge', () => {
+  it('should return the code_challenge', () => {
+    expect(requireCodeChallenge('challenge', 'https://client.example/cb')).toBe('challenge');
+  });
+
+  it('should reject a missing code_challenge', () => {
+    expect(() => requireCodeChallenge(undefined, 'https://client.example/cb')).toThrow(
+      'Missing required parameter: code_challenge',
+    );
+  });
+});
+
+describe('requireCodeChallengeMethod', () => {
+  it('should return the code_challenge_method', () => {
+    expect(requireCodeChallengeMethod('S256', 'https://client.example/cb')).toBe('S256');
+  });
+
+  it('should reject a missing code_challenge_method', () => {
+    expect(() => requireCodeChallengeMethod(undefined, 'https://client.example/cb')).toThrow(
+      'Missing required parameter: code_challenge_method',
+    );
+  });
+});
+
+describe('validateCodeChallengeMethod', () => {
+  it('should accept S256', () => {
+    expect(validateCodeChallengeMethod('S256', 'https://client.example/cb')).toBe('S256');
+  });
+
+  // OAuth 2.1 §4.1.1: plain is not supported
+  it('should reject plain', () => {
+    expect(() => validateCodeChallengeMethod('plain', 'https://client.example/cb')).toThrow(
+      'Unsupported code_challenge_method: plain',
+    );
+  });
+});
+
+describe('validateS256CodeChallenge', () => {
+  // RFC 7636 §4.2: BASE64URL(SHA256(...)) without padding is 43 characters
+  it('should accept a 43-character base64url value', () => {
+    expect(
+      validateS256CodeChallenge('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should reject a 42-character value', () => {
+    expect(() =>
+      validateS256CodeChallenge('a'.repeat(42), 'https://client.example/cb'),
+    ).toThrow('code_challenge must be a 43-character base64url-encoded SHA-256 hash for S256');
+  });
+
+  it('should reject a 44-character value', () => {
+    expect(() =>
+      validateS256CodeChallenge('a'.repeat(44), 'https://client.example/cb'),
+    ).toThrow('code_challenge must be a 43-character base64url-encoded SHA-256 hash for S256');
+  });
+
+  it('should reject characters outside base64url', () => {
+    expect(() =>
+      validateS256CodeChallenge('+'.repeat(43), 'https://client.example/cb'),
+    ).toThrow(
+      'code_challenge contains invalid characters (must be base64url: [A-Za-z0-9-_], 43 chars)',
+    );
   });
 });

@@ -421,7 +421,7 @@ export async function resolveAuthenticatedTokenClient(
  * 既定 ["authorization_code"]（OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
  */
 export function validateClientGrantType(
-  client: TokenClientInfo,
+  client: Pick<TokenClientInfo, 'grantTypes'>,
   grantType: string,
 ): void {
   if (!clientAllowsGrantType(client, grantType)) {

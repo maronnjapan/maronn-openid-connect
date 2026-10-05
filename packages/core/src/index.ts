@@ -27,7 +27,27 @@ export {
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
   DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
+  validateSupportedResponseType,
+  validateClientResponseType,
+  requireAuthorizationScope,
+  validateOpenIdScope,
+  filterOfflineAccessScope,
+  validateMaxAge,
+  validateDefaultMaxAge,
+  validateCodeChallenge,
+  validatePrompt,
+  parsePromptValues,
+  validatePromptValues,
+  validatePromptNoneNotCombined,
+  requireCodeChallenge,
+  requireCodeChallengeMethod,
+  validateCodeChallengeMethod,
+  validateS256CodeChallenge,
+  resolveRedirectUri,
+  mergeRequestObjectParams,
 } from './authorization-request.js';
+
+export { parseScope } from './scope.js';
 
 export {
   clientAllowsGrantType,
@@ -79,6 +99,17 @@ export {
   verifyAuthorizationCodePkce,
   consumeAuthorizationCode,
   buildValidatedAuthorizationCodeRequest,
+  requireAuthorizationCode,
+  requireStoredAuthorizationCode,
+  validateAuthorizationCodeNotUsed,
+  requireTokenRequestRedirectUri,
+  validateAuthorizationCodeRedirectUriMatch,
+  hasPkceBinding,
+  requirePkceBinding,
+  requireCodeVerifier,
+  validateCodeVerifier,
+  verifyCodeChallenge,
+  verifyPkceCodeVerifier,
 } from './authorization-code-grant.js';
 
 export {
@@ -91,6 +122,13 @@ export {
   validateRefreshTokenScope,
   validateRefreshTokenSession,
   buildValidatedRefreshTokenRequest,
+  requireRefreshToken,
+  requireStoredRefreshToken,
+  validateRefreshTokenNotUsed,
+  requireRefreshTokenSession,
+  validateRefreshTokenSessionSubject,
+  validateRefreshTokenScopeNotEmpty,
+  validateRefreshTokenScopeWithinGrant,
 } from './refresh-token-grant.js';
 
 export type {
@@ -126,6 +164,7 @@ export {
   buildAccessTokenPayload,
   computeAtHash,
   resolveAcrAmr,
+  selectRequestedAcrValues,
   buildIdTokenPayload,
 } from './token-response.js';
 
@@ -150,11 +189,24 @@ export {
   generateIdToken,
   validateIdTokenHint,
   IdTokenHintError,
+  decodeIdTokenHint,
+  validateIdTokenHintHeader,
+  selectIdTokenHintKeys,
+  verifyIdTokenHintSignature,
+  validateIdTokenHintIssuer,
+  validateIdTokenHintAudience,
+  validateIdTokenHintExpiration,
+  validateIdTokenHintIssuedAt,
+  requireIdTokenHintSubject,
+  validateIdTokenIssuer,
+  validateIdTokenExpiration,
+  validateIdTokenAuthorizedParty,
 } from './id-token.js';
 
 export type {
   IdTokenPayload,
   GenerateIdTokenOptions,
+  DecodedIdTokenHint,
 } from './id-token.js';
 
 export type {
@@ -189,6 +241,13 @@ export {
   resolvePromptNoneSession,
   validatePromptNoneIdTokenHint,
   validatePromptNoneConsent,
+  validateAuthTransactionExpiration,
+  evaluateLoginFailure,
+  computeAuthTransactionTtlSeconds,
+  buildAuthTransaction,
+  buildAuthorizationResponseParams,
+  requirePromptNoneSession,
+  validatePromptNoneConsentGranted,
 } from './auth-transaction.js';
 
 export type {
@@ -224,6 +283,7 @@ export {
   validateUserInfoAudience,
   resolveUserInfoClaims,
   applyRequestedClaims,
+  matchesRequestedClaimValue,
 } from './userinfo.js';
 
 export type {
@@ -258,6 +318,15 @@ export {
   extractClientCredentials,
   validateClientAuthMethod,
   verifyClientSecret,
+  parseBasicClientCredentials,
+  validateSingleClientAuthMethod,
+  validateClientIdConsistency,
+  requireClientId,
+  selectPresentedClientAuthMethod,
+  selectRegisteredClientAuthMethod,
+  requireClientSecret,
+  validateClientAuthMethodMatch,
+  verifyClientSecretValue,
 } from './client-auth.js';
 
 export type {
@@ -267,6 +336,7 @@ export type {
 
 export {
   createAuthorizationCode,
+  buildAuthorizationCodeData,
 } from './authorization-code.js';
 
 export type {
@@ -294,6 +364,8 @@ export {
   requireConfidentialIntrospectionCaller,
   resolveIntrospectionToken,
   isIntrospectionTokenActive,
+  isAccessTokenActive,
+  isRefreshTokenActive,
   buildIntrospectionResponse,
   INACTIVE_INTROSPECTION_RESPONSE,
 } from './introspection.js';
@@ -323,3 +395,5 @@ export type {
   ResolvedRevocationToken,
   ResolveRevocationTargetOptions,
 } from './revocation.js';
+
+export { buildJoseHeader, encodeJwtSigningInput, signJwt } from './jwt.js';

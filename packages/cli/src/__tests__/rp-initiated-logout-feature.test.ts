@@ -199,8 +199,8 @@ describe('generate with --enable rp-initiated-logout', () => {
       ).toBe(true);
     });
 
-    // The default output must stay byte-identical to the pre-feature CLI, so
-    // the disabled contract is the complete absence of the feature: no routes,
+    // With the feature off the default output carries nothing of it, so the
+    // disabled contract is the complete absence of the feature: no routes,
     // no contract tests, no discovery metadata (the assertions above pin the
     // rest of the surface).
     it('should keep the logout contract tests out of the default conformance.test.ts', () => {

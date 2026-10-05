@@ -99,7 +99,7 @@ UI を変える場所は、変えたい範囲で選びます。
 - **HTML だけ変える** → `views.ts`（Hono は `views.tsx`）の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
 - **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` と outcome を変換している箇所を書き換える。画面を返す経路はすべて `pages/` を通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
 - **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `pages/*.ts` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
-- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`
 
 フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持してください。`transaction-binding` の束縛チェック（`rejectUnboundTransaction()`）や `google-login` のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけで済みます。
 
@@ -186,8 +186,6 @@ const app = createApp({
   }
 }
 ```
-
-以前の CLI で生成した Hono の出力を `--force` で再生成すると、古い `views.ts` や `pages/login.ts` などの `.ts` ファイルが残ります。同名の `.ts` は `.tsx` より優先して解決されるため、カスタマイズを `.tsx` 側へ移してから古い `.ts` を削除してください（CLI も再生成時に残っているファイルを一覧して警告します）。
 
 ### Generation Manifest (.maronn-openid-connect.json)
 

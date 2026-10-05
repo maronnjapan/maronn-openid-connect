@@ -3,7 +3,6 @@ import type { AuthenticationSessionResolver } from './authentication-session.js'
 import type {
   RefreshTokenInfo,
   RefreshTokenResolver,
-  TokenRequestContext,
   TokenRequestParams,
   ValidatedRefreshTokenRequest,
 } from './token-request.js';
@@ -242,65 +241,4 @@ export function buildValidatedRefreshTokenRequest(
     // 1 回リフレッシュしただけでセッション束縛が外れた offline RT に化ける。
     sessionId: refreshTokenInfo.sessionId,
   };
-}
-
-/**
- * refresh_token グラント固有の検証を行う合成関数。
- *
- * 後方互換の高水準 API として、機能単位のステップ関数を安全な順序で呼び出す。
- * CLI 生成コードはカスタマイズしやすいよう、下記ステップを直接呼び出す。
- *
- * 1. {@link resolveRefreshToken}
- * 2. {@link validateRefreshTokenUnused}
- * 3. {@link validateRefreshTokenClient}
- * 4. {@link validateRefreshTokenExpiration}
- * 5. {@link validateRefreshTokenIdleTimeout}
- * 6. {@link validateRefreshTokenSession}
- * 7. {@link validateRefreshTokenScope}
- * 8. {@link buildValidatedRefreshTokenRequest}
- *
- * grant_type の検証・クライアント認証・クライアント別 grant 認可を含む
- * フルの検証経路は {@link validateTokenRequest} が担う。この関数を直接使う場合、
- * それらの前段検証は呼び出し側の責務となる。
- *
- * @throws {TokenError} バリデーションエラー
- */
-export async function validateRefreshTokenGrant(
-  context: TokenRequestContext
-): Promise<ValidatedRefreshTokenRequest> {
-  const {
-    params,
-    authenticatedClientId,
-    refreshTokenResolver,
-    refreshTokenIdleTimeoutSeconds,
-    authenticationSessionResolver,
-  } = context;
-  const { refreshTokenInfo } = await resolveRefreshToken(
-    params,
-    refreshTokenResolver,
-  );
-
-  // resolveRefreshToken guarantees this before returning.
-  const resolver = refreshTokenResolver as RefreshTokenResolver;
-  await validateRefreshTokenUnused(refreshTokenInfo, resolver);
-  validateRefreshTokenClient(refreshTokenInfo, authenticatedClientId);
-  validateRefreshTokenExpiration(refreshTokenInfo);
-  validateRefreshTokenIdleTimeout(
-    refreshTokenInfo,
-    refreshTokenIdleTimeoutSeconds,
-  );
-  await validateRefreshTokenSession(
-    refreshTokenInfo,
-    authenticationSessionResolver,
-  );
-  const effectiveScope = validateRefreshTokenScope(
-    params.scope,
-    refreshTokenInfo.scope,
-  );
-
-  return buildValidatedRefreshTokenRequest(
-    refreshTokenInfo,
-    authenticatedClientId,
-    effectiveScope,
-  );
 }

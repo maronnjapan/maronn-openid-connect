@@ -77,7 +77,7 @@ export interface AccessTokenInfo {
   jti?: string;
   /**
    * Authorization Request の `claims` parameter（OIDC Core 1.0 §5.5）。
-   * UserInfo route が `handleUserInfoRequest({ claimsParameter })` へ渡せるよう、
+   * UserInfo route が `applyRequestedClaims()` へ渡せるよう、
    * 認可コード発行時に解決した claims をアクセストークン metadata として保存する。
    * UserInfo 検証ロジック自体はこのフィールドを参照せず、生成コードが伝播に使う。
    */
@@ -165,28 +165,6 @@ export type ClaimRequestValue = ClaimRequestEntry | null;
 export interface ClaimsParameter {
   userinfo?: Record<string, ClaimRequestValue>;
   id_token?: Record<string, ClaimRequestValue>;
-}
-
-/**
- * UserInfoリクエストのコンテキスト
- */
-export interface UserInfoRequestContext {
-  accessToken: string;
-  accessTokenResolver: AccessTokenResolver;
-  userClaimsResolver: UserClaimsResolver;
-  claimsParameter?: ClaimsParameter;
-  /**
-   * UserInfo エンドポイント自身を指す audience 識別子（通常は UserInfo エンドポイント URL）。
-   * RFC 9068 §4: アクセストークンの受領側は `aud` に自分を指す識別子が含まれることを検証する。
-   * 指定時は JWT / opaque を問わず `tokenInfo.audience` に当該値が含まれることを検証し、
-   * 含まれない場合・`tokenInfo.audience` が未設定の場合は `invalid_token`（401）で拒否する。
-   * 生成された Provider は本値（UserInfo エンドポイント URL）を常に渡すため、audience 検証は
-   * デフォルトで有効になる（opt-in ではない）。値未指定時のみ、比較対象が無いため検証をスキップする。
-   *
-   * 値は `buildAccessTokenAudience` の `userInfoEndpoint` と同一にすること
-   * （不一致だと自前トークンを誤って弾く事故になる）。
-   */
-  expectedAudience?: string;
 }
 
 /**
@@ -414,10 +392,12 @@ export function validateUserInfoScope(tokenInfo: AccessTokenInfo): void {
  * 発行されたトークンで UserInfo の PII を取得する confused deputy を防ぐ。生成された
  * Provider は JWT / opaque を問わず全アクセストークンに UserInfo エンドポイントを含む aud を
  * 保存するため、aud 未保存のトークンは当 OP が発行したものではない。よって opaque でも
- * 後方互換の緩和はせず、aud 未設定・不一致のいずれも invalid_token で拒否する。
+ * aud 未設定を許容せず、aud 未設定・不一致のいずれも invalid_token で拒否する。
  *
  * @param tokenInfo アクセストークン情報
- * @param expectedAudience UserInfo エンドポイント自身を指す audience 識別子。未指定なら検証しない
+ * @param expectedAudience UserInfo エンドポイント自身を指す audience 識別子。未指定なら検証しない。
+ *   `buildAccessTokenAudience` の `userInfoEndpoint` と同じ値を渡すこと（異なると自 OP が
+ *   発行したトークンを拒否してしまう）
  * @throws {UserInfoError} invalid_token
  */
 export function validateUserInfoAudience(
@@ -497,48 +477,6 @@ export function applyRequestedClaims(
 }
 
 /**
- * UserInfoリクエストを処理する
- *
- * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
- * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
- * 削除したり独自処理を差し込んだりできる。
- *
- * 処理フロー:
- * 1. アクセストークンの解決（`resolveUserInfoAccessToken`）
- * 2. 有効期限の検証（`validateUserInfoTokenExpiration`）
- * 3. openid スコープの確認（`validateUserInfoScope`）
- * 4. audience の検証（`validateUserInfoAudience`）
- * 5. ユーザークレームの取得（`resolveUserInfoClaims`）
- * 6. スコープに基づくクレームフィルタリング（`filterClaimsByScope`）
- * 7. claims パラメータによる追加クレーム（`applyRequestedClaims`）
- *
- * @param context UserInfoリクエストのコンテキスト
- * @returns UserInfoレスポンス
- * @throws {UserInfoError} バリデーションエラー
- */
-export async function handleUserInfoRequest(
-  context: UserInfoRequestContext
-): Promise<UserInfoResponse> {
-  const {
-    accessToken,
-    accessTokenResolver,
-    userClaimsResolver,
-    claimsParameter,
-    expectedAudience,
-  } = context;
-
-  const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
-  validateUserInfoTokenExpiration(tokenInfo);
-  validateUserInfoScope(tokenInfo);
-  validateUserInfoAudience(tokenInfo, expectedAudience);
-
-  const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
-  const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
-
-  return applyRequestedClaims(scopedResponse, userClaims, claimsParameter);
-}
-
-/**
  * UserInfo を JWT 形式で発行するためのオプション
  * OIDC Core 1.0 Section 5.3.2
  */
@@ -572,7 +510,7 @@ function base64UrlEncode(str: string): string {
  * クライアントが署名付きレスポンスを要求するか（`userinfo_signed_response_alg`）の判定は
  * クライアントメタデータ層の責務であり、core はこの関数の呼び出し有無を選択するだけで良い。
  *
- * @param userInfoResponse handleUserInfoRequest() の戻り値
+ * @param userInfoResponse `applyRequestedClaims()` が返した UserInfo レスポンス
  * @param options JWT 生成オプション
  * @returns 署名済み JWT 文字列（content-type: application/jwt として返却する想定）
  */

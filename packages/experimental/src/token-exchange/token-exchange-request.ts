@@ -4,7 +4,7 @@
  * Experimental: このモジュールの API は安定していない。破壊的変更があり得る。
  *
  * トークンエンドポイントの `urn:ietf:params:oauth:grant-type:token-exchange` grant を
- * 処理する。core と同じく「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードは
+ * 処理する。「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードは
  * ステップ関数を順に呼び出して検証を差し替え・削除できるようにする。
  *
  * **impersonation 型**（`actor_token` なし。交換後トークンは subject として振る舞う）と

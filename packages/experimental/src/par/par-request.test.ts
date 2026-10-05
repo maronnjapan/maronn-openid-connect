@@ -245,21 +245,45 @@ describe('ParError', () => {
 });
 
 describe('validatePushedAuthorizationParams', () => {
-  it('should return the validated request for a well-formed pushed request', async () => {
-    const validated = await validatePushedAuthorizationParams(
-      { ...validParams(), client_id: 'web-app' },
-      createClientResolver(),
-    );
+  it('should resolve for a well-formed pushed request', async () => {
+    await expect(
+      validatePushedAuthorizationParams(
+        { ...validParams(), client_id: 'web-app' },
+        createClientResolver(),
+      ),
+    ).resolves.toBeUndefined();
+  });
 
-    expect(validated).toMatchObject({
-      responseType: 'code',
-      clientId: 'web-app',
-      redirectUri: 'https://client.example/cb',
-      scope: ['openid', 'profile'],
-      state: 'af0ifjsldkj',
-      nonce: 'n-0S6_WzA2Mj',
-      codeChallengeMethod: 'S256',
-    });
+  // RFC 9126 §3: PAR combined with a Request Object is not supported, so the
+  // request parameter is rejected without being parsed, even when this step is
+  // called without rejectForbiddenParParams() in front of it.
+  it('should map a request parameter to invalid_request without parsing it', async () => {
+    await expect(
+      validatePushedAuthorizationParams(
+        { ...validParams(), request: 'not-a-jwt' },
+        createClientResolver(),
+      ),
+    ).rejects.toThrowError(
+      new ParError('invalid_request', 'request parameter (Request Object) is not supported'),
+    );
+  });
+
+  it('should map an invalid prompt value to invalid_request', async () => {
+    await expect(
+      validatePushedAuthorizationParams({ ...validParams(), prompt: 'none login' }, createClientResolver()),
+    ).rejects.toMatchObject({ code: 'invalid_request', statusCode: 400 });
+  });
+
+  it('should allow an omitted PKCE for a confidential client when allowNonPkceAuthorizationCodeFlow is enabled', async () => {
+    const params = validParams();
+    delete params['code_challenge'];
+    delete params['code_challenge_method'];
+
+    await expect(
+      validatePushedAuthorizationParams(params, createClientResolver(), {
+        allowNonPkceAuthorizationCodeFlow: true,
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it('should map an unregistered redirect_uri to invalid_request', async () => {

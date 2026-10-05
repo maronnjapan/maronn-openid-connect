@@ -5,9 +5,8 @@
 export const version = '0.0.1';
 
 export {
-  validateAuthorizationRequest,
-  // 機能単位のステップ関数（validateAuthorizationRequest はこれらの合成）。
-  // CLI 生成コードはステップ単位で呼び出し、利用者が消したり足したりできるようにする。
+  // 機能単位のステップ関数。CLI 生成コードはステップ単位で呼び出し、
+  // 利用者が消したり足したりできるようにする。
   resolveClientForAuthorization,
   validateRegisteredRedirectUris,
   resolveRequestObjectParams,
@@ -55,16 +54,23 @@ export type {
   ClientResolver,
   ResolvedRequestObjectParams,
   ValidatedAuthorizationRequest,
-  ValidateAuthorizationRequestOptions,
   OfflineAccessGrantedCallback,
 } from './authorization-request.js';
 
 export {
-  validateTokenRequest,
-  // 機能単位のステップ関数（validateTokenRequest はこれらの合成）。
+  TokenError,
+  TokenErrorCode,
+} from './token-error.js';
+
+export {
+  // トークンリクエスト検証のステップ関数（grant_type 共通）
   validateGrantTypeSupported,
   resolveAuthenticatedTokenClient,
   validateClientGrantType,
+} from './token-request.js';
+
+export {
+  // authorization_code グラントのステップ関数
   resolveAuthorizationCode,
   validateAuthorizationCodeUnused,
   validateAuthorizationCodeClient,
@@ -73,7 +79,10 @@ export {
   verifyAuthorizationCodePkce,
   consumeAuthorizationCode,
   buildValidatedAuthorizationCodeRequest,
-  validateAuthorizationCodeGrant,
+} from './authorization-code-grant.js';
+
+export {
+  // refresh_token グラントのステップ関数
   resolveRefreshToken,
   validateRefreshTokenUnused,
   validateRefreshTokenClient,
@@ -82,14 +91,9 @@ export {
   validateRefreshTokenScope,
   validateRefreshTokenSession,
   buildValidatedRefreshTokenRequest,
-  validateRefreshTokenGrant,
-  TokenError,
-  TokenErrorCode,
-} from './token-request.js';
+} from './refresh-token-grant.js';
 
 export type {
-  AuthenticationSessionInfo,
-  AuthenticationSessionResolver,
   TokenRequestParams,
   TokenClientInfo,
   TokenClientResolver,
@@ -97,19 +101,28 @@ export type {
   AuthorizationCodeResolver,
   RefreshTokenInfo,
   RefreshTokenResolver,
-  TokenRequestContext,
   ValidatedTokenRequest,
   ValidatedAuthorizationCodeRequest,
   ValidatedRefreshTokenRequest,
-  ResolvedAuthorizationCode,
-  ResolvedRefreshToken,
 } from './token-request.js';
 
+export type {
+  ResolvedAuthorizationCode,
+} from './authorization-code-grant.js';
+
+export type {
+  ResolvedRefreshToken,
+} from './refresh-token-grant.js';
+
+export type {
+  AuthenticationSessionInfo,
+  AuthenticationSessionResolver,
+} from './authentication-session.js';
+
 export {
-  generateTokenResponse,
   buildAccessTokenAudience,
   buildIdTokenAudience,
-  // トークンレスポンス生成のステップ関数（generateTokenResponse はこれらの合成）
+  // トークンレスポンス生成のステップ関数
   buildAccessTokenPayload,
   computeAtHash,
   resolveAcrAmr,
@@ -117,9 +130,6 @@ export {
 } from './token-response.js';
 
 export type {
-  TokenResponseOptions,
-  TokenResponse,
-  GenerateTokenResponseResult,
   AccessTokenAudienceInput,
   IdTokenAudienceInput,
   IdTokenAudienceResult,
@@ -172,11 +182,10 @@ export {
   validateTransactionBinding,
   handleLoginFailure,
   completeAuthTransaction,
-  checkPromptNone,
   requiresReauthentication,
   AuthTransactionError,
   AuthTransactionErrorCode,
-  // prompt=none のステップ関数（checkPromptNone はこれらの合成）
+  // prompt=none のステップ関数
   resolvePromptNoneSession,
   validatePromptNoneIdTokenHint,
   validatePromptNoneConsent,
@@ -189,7 +198,6 @@ export type {
   ConsentResolver,
   CreateAuthTransactionOptions,
   LoginFailureResult,
-  PromptNoneOptions,
   SessionInfo,
   SessionResolver,
 } from './auth-transaction.js';
@@ -204,13 +212,12 @@ export type {
 } from './discovery.js';
 
 export {
-  handleUserInfoRequest,
   generateUserInfoJwt,
   filterClaimsByScope,
   UserInfoError,
   UserInfoErrorCode,
   SCOPE_CLAIMS_MAP,
-  // UserInfo リクエスト処理のステップ関数（handleUserInfoRequest はこれらの合成）
+  // UserInfo リクエスト処理のステップ関数
   resolveUserInfoAccessToken,
   validateUserInfoTokenExpiration,
   validateUserInfoScope,
@@ -228,7 +235,6 @@ export type {
   ClaimsParameter,
   ClaimRequestEntry,
   ClaimRequestValue,
-  UserInfoRequestContext,
   UserInfoResponse,
   UserInfoJwtOptions,
 } from './userinfo.js';
@@ -248,8 +254,7 @@ export type {
 } from './signing-key.js';
 
 export {
-  authenticateClient,
-  // クライアント認証のステップ関数（authenticateClient はこれらの合成）
+  // クライアント認証のステップ関数
   extractClientCredentials,
   validateClientAuthMethod,
   verifyClientSecret,
@@ -281,10 +286,9 @@ export type {
 } from './access-token-issuer.js';
 
 export {
-  handleIntrospectionRequest,
   IntrospectionError,
   IntrospectionErrorCode,
-  // Introspection のステップ関数（handleIntrospectionRequest はこれらの合成）
+  // Introspection のステップ関数
   requireIntrospectionToken,
   requireIntrospectionClient,
   requireConfidentialIntrospectionCaller,
@@ -295,7 +299,6 @@ export {
 } from './introspection.js';
 
 export type {
-  IntrospectionRequestContext,
   IntrospectionResponse,
   IntrospectionAccessTokenResolver,
   IntrospectionRefreshTokenResolver,
@@ -304,10 +307,9 @@ export type {
 } from './introspection.js';
 
 export {
-  handleRevocationRequest,
   RevocationError,
   RevocationErrorCode,
-  // Revocation のステップ関数（handleRevocationRequest はこれらの合成）
+  // Revocation のステップ関数
   requireRevocationToken,
   requireRevocationClient,
   resolveRevocationTarget,
@@ -317,7 +319,6 @@ export {
 } from './revocation.js';
 
 export type {
-  RevocationRequestContext,
   RevocationTokenResolvers,
   ResolvedRevocationToken,
   ResolveRevocationTargetOptions,

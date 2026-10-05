@@ -184,9 +184,9 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
     const issuer = config.issuer;
 
     // --- Authorization request validation pipeline ---------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's validateAuthorizationRequest(). Delete a call to drop that
-    // validation, or insert your own logic between steps. Steps that run before
+    // Each step below is an independent core function, called in OIDC Core 1.0
+    // §3.1.2 order. Delete a call to drop that validation, or insert your own
+    // logic between steps. Steps that run before
     // redirectUri is resolved throw non-redirectable errors (shown to the user
     // agent); steps after it throw redirectable errors (sent to the client).
 
@@ -258,9 +258,10 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
     // OIDC Core 1.0 §5.5: parse the claims request parameter (userinfo / id_token).
     const claims = parseClaimsRequestParameter(effectiveParams, redirectUri, state);
 
-    // Assemble the validated request from each step's result. This shape matches
-    // core's validateAuthorizationRequest() so downstream code (transactions,
-    // authorization codes) is unaffected by adding or removing steps above.
+    // Assemble the validated request from each step's result. This is core's
+    // ValidatedAuthorizationRequest (what createAuthTransaction() takes), so
+    // downstream code (transactions, authorization codes) is unaffected by
+    // adding or removing steps above.
     const validatedRequest = {
       responseType,
       clientId: client.clientId,
@@ -359,8 +360,9 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
       let session;
       try {
         // --- prompt=none pipeline ---------------------------------------
-        // Each step below is an independent core function, called in the same
-        // order as core's checkPromptNone(). Delete a call to drop that check,
+        // Each step below is an independent core function: the session, then
+        // id_token_hint (before consent, so consent is never looked up for
+        // another End-User), then consent. Delete a call to drop that check,
         // or insert your own logic between steps. Every step throws
         // AuthorizationError(login_required | consent_required) on failure.
 

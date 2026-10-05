@@ -91,7 +91,8 @@ export function assertHasRs256Key(keys: CryptoKey[]): void {
  * `keyId`; otherwise a relying party cannot unambiguously pick the verifying key and
  * ID Token verification can break silently.
  *
- * A single key is always unambiguous, so an empty kid is allowed there (backward compat).
+ * A single key is always unambiguous, so an empty kid is allowed there (OIDC Core 1.0
+ * §10.1 requires a kid only when the JWK Set holds more than one key).
  *
  * @throws when multiple keys include an empty or duplicate keyId.
  */

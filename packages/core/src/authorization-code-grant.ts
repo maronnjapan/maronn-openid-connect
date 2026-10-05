@@ -3,7 +3,6 @@ import { TokenError, TokenErrorCode } from './token-error.js';
 import type {
   AuthorizationCodeInfo,
   AuthorizationCodeResolver,
-  TokenRequestContext,
   TokenRequestParams,
   ValidatedAuthorizationCodeRequest,
 } from './token-request.js';
@@ -257,55 +256,4 @@ export function buildValidatedAuthorizationCodeRequest(
     sessionId: authorizationCode.sessionId,
     codeVerified,
   };
-}
-
-/**
- * authorization_code グラント固有の検証を行う合成関数。
- *
- * 後方互換の高水準 API として、機能単位のステップ関数を安全な順序で呼び出す。
- * CLI 生成コードはカスタマイズしやすいよう、下記ステップを直接呼び出す。
- *
- * 1. {@link resolveAuthorizationCode}
- * 2. {@link validateAuthorizationCodeUnused}
- * 3. {@link validateAuthorizationCodeClient}
- * 4. {@link validateAuthorizationCodeExpiration}
- * 5. {@link validateAuthorizationCodeRedirectUri}
- * 6. {@link verifyAuthorizationCodePkce}
- * 7. {@link consumeAuthorizationCode}
- * 8. {@link buildValidatedAuthorizationCodeRequest}
- *
- * grant_type の検証・クライアント認証・クライアント別 grant 認可を含む
- * フルの検証経路は {@link validateTokenRequest} が担う。この関数を直接使う場合、
- * それらの前段検証は呼び出し側の責務となる。
- *
- * @throws {TokenError} バリデーションエラー
- */
-export async function validateAuthorizationCodeGrant(
-  context: TokenRequestContext
-): Promise<ValidatedAuthorizationCodeRequest> {
-  const { params, authCodeResolver, authenticatedClientId } = context;
-  const { code, authorizationCode } = await resolveAuthorizationCode(
-    params,
-    authCodeResolver,
-  );
-
-  await validateAuthorizationCodeUnused(authorizationCode, authCodeResolver);
-  validateAuthorizationCodeClient(authorizationCode, authenticatedClientId);
-  validateAuthorizationCodeExpiration(authorizationCode);
-  validateAuthorizationCodeRedirectUri(
-    authorizationCode,
-    params.redirect_uri,
-  );
-  const codeVerified = await verifyAuthorizationCodePkce(
-    authorizationCode,
-    params.code_verifier,
-  );
-  await consumeAuthorizationCode(code, authCodeResolver);
-
-  return buildValidatedAuthorizationCodeRequest(
-    code,
-    authorizationCode,
-    authenticatedClientId,
-    codeVerified,
-  );
 }

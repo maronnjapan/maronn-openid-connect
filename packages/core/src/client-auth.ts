@@ -10,12 +10,8 @@
  */
 
 import { timingSafeEqual } from './crypto-utils.js';
-import {
-  resolveAuthenticatedTokenClient,
-  TokenError,
-  TokenErrorCode,
-} from './token-request.js';
-import type { TokenClientInfo, TokenClientResolver } from './token-request.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
+import type { TokenClientInfo } from './token-request.js';
 
 /**
  * クライアント認証コンテキスト
@@ -25,8 +21,6 @@ export interface ClientAuthContext {
   params: Record<string, string | undefined>;
   /** Authorization ヘッダーの値（無ければ空文字） */
   authorizationHeader: string;
-  /** クライアント情報を解決するリゾルバー */
-  clientResolver: TokenClientResolver;
 }
 
 /**
@@ -126,7 +120,7 @@ export interface PresentedClientCredentials {
  * @throws {TokenError} invalid_request（複数方式）/ invalid_client（形式不正・client_id 欠落）
  */
 export function extractClientCredentials(
-  context: Pick<ClientAuthContext, 'params' | 'authorizationHeader'>,
+  context: ClientAuthContext,
 ): PresentedClientCredentials {
   const { params, authorizationHeader } = context;
 
@@ -276,37 +270,4 @@ export async function verifyClientSecret(
       'Client authentication failed',
     );
   }
-}
-
-/**
- * クライアント認証を行う
- *
- * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
- * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は認証方式を
- * 差し替えたり検証を削除したりできる。
- *
- * 1. 資格情報の抽出（{@link extractClientCredentials}）
- * 2. クライアントの解決（{@link resolveAuthenticatedTokenClient}）
- * 3. 認証方式の一致検証（{@link validateClientAuthMethod}）
- * 4. client_secret の検証（{@link verifyClientSecret}）
- *
- * 認証成功時: 認証済みクライアントID（string）を返す
- * 認証失敗時: TokenError をスロー
- *
- * @param context クライアント認証コンテキスト
- * @returns 認証されたクライアントID
- * @throws {TokenError} 認証失敗時
- */
-export async function authenticateClient(
-  context: ClientAuthContext,
-): Promise<string> {
-  const { params, authorizationHeader, clientResolver } = context;
-
-  const presented = extractClientCredentials({ params, authorizationHeader });
-  const client = await resolveAuthenticatedTokenClient(presented.clientId, clientResolver);
-
-  validateClientAuthMethod(client, presented);
-  await verifyClientSecret(client, presented.clientSecret);
-
-  return presented.clientId;
 }

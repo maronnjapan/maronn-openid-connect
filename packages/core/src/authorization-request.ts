@@ -113,8 +113,7 @@ export interface ClientInfo {
   clientType?: 'confidential' | 'public';
   /**
    * このクライアントが認可エンドポイントで使用してよい response_type の一覧。
-   * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 既定は `["code"]`。
-   * 未指定時は `["code"]` として扱い従来どおり動作する（後方互換）。
+   * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 省略時の既定は `["code"]`。
    * 登録外の response_type は OAuth 2.1 §4.1.2.1 の `unauthorized_client` で拒否される。
    */
   responseTypes?: string[];
@@ -204,58 +203,6 @@ export const defaultIsOfflineAccessGranted: OfflineAccessGrantedCallback = (
   _request,
   { promptValues, client },
 ) => promptValues.includes('consent') && clientAllowsRefreshTokenGrant(client);
-
-/**
- * validateAuthorizationRequest のオプション
- */
-export interface ValidateAuthorizationRequestOptions {
-  /**
-   * `offline_access` を許可するかの判定。未指定なら `defaultIsOfflineAccessGranted`
-   * （= `prompt=consent` を必須とする）が使われる。
-   */
-  isOfflineAccessGranted?: OfflineAccessGrantedCallback;
-  /**
-   * `claims` リクエストパラメータ（OIDC Core 1.0 §5.5）を `JSON.parse` する前に
-   * 課す最大長（文字数）。未指定なら `DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH`。
-   *
-   * 認可エンドポイントは未認証・公開であり、巨大／深ネストの `claims` をパースさせる
-   * ことで CPU・メモリを枯渇させるアプリ層 DoS の余地がある。エッジ環境（Cloudflare
-   * Workers 等）では 1 リクエストの CPU/メモリ制限が厳しいため、最も制約の厳しい実行
-   * 環境を基準に安全側へ倒す。OWASP API4:2023 / RFC 9700 §2.5。
-   */
-  maxClaimsParameterLength?: number;
-  /**
-   * OpenID Foundation Basic OP conformance compatibility.
-   *
-   * OAuth 2.1 requires PKCE for authorization code flow. OIDC Basic OP static-client
-   * tests still exercise confidential-client authorization code flow without PKCE.
-   * Keep this false unless running that compatibility target.
-   */
-  allowNonPkceAuthorizationCodeFlow?: boolean;
-  /**
-   * OIDC Core 1.0 §6.1: signed Request Object (`request` parameter) handling.
-   */
-  requestObject?: {
-    /**
-     * `request` パラメータ（Request Object by value）を OP としてサポートするか（機能トグル）。
-     * 既定は true（従来挙動）。false の場合、`request` パラメータを含むリクエストは
-     * Request Object をパースせず OIDC Core 1.0 §6.3 の `request_not_supported` で拒否する。
-     * false にする構成では discovery の `request_parameter_supported` も false を広告すること。
-     */
-    supported?: boolean;
-    /**
-     * 受理する JWS 署名アルゴリズム。未指定なら {@link DEFAULT_REQUEST_OBJECT_SIGNING_ALGS}（`["RS256"]`）。
-     */
-    supportedSigningAlgs?: string[];
-    /**
-     * 署名無し（`alg: "none"`）Request Object を互換受理するか。
-     *
-     * OIDF Conformance Suite の一部 module は unsigned Request Object を送るため、
-     * Basic OP conformance 互換の場合のみ true にする。既定は false（署名必須）。
-     */
-    allowUnsigned?: boolean;
-  };
-}
 
 /**
  * `claims` リクエストパラメータ（OIDC Core 1.0 §5.5）を `JSON.parse` する前に課す
@@ -1125,143 +1072,6 @@ export function parseAudienceParameter(
     return undefined;
   }
   return audienceValue.split(' ').filter((a) => a.length > 0);
-}
-
-/**
- * Authentication Request（認可リクエスト）のパラメータをバリデーションする
- *
- * 機能単位のステップ関数を順に呼び出す合成関数。カスタマイズや検証のために
- * ステップ単位で処理を消したり足したりしたい場合は、この関数と同じ順序で
- * 各ステップ関数を直接呼び出すこと（CLI 生成コードはその形で出力される）。
- *
- * バリデーション順序:
- * 1. {@link resolveClientForAuthorization}（不正な場合はリダイレクト不可エラー）
- * 2. {@link validateRegisteredRedirectUris}（設定ミスの早期検知）
- * 3. {@link resolveRequestObjectParams}（OIDC Core 1.0 §6.1）
- * 4. {@link resolveAuthorizationRedirectUri}（不正な場合はリダイレクト不可エラー）
- * 5. {@link rejectUnsupportedRequestParams} / {@link validateRequestObjectConsistency}
- * 6. {@link validateResponseType} / {@link validateAuthorizationScope} /
- *    {@link validateAuthorizationCodePkce} / {@link validatePromptParameter} /
- *    {@link applyOfflineAccessPolicy} / {@link validateDisplayParameter} /
- *    {@link resolveMaxAge} / {@link parseAudienceParameter} /
- *    {@link parseClaimsRequestParameter}（不正な場合はリダイレクト可能エラー）
- *
- * @param params 認可リクエストのパラメータ
- * @param clientResolver クライアント情報を解決するインターフェース（外部から注入）
- * @returns バリデーション済みの認可リクエスト
- * @throws {AuthorizationError} バリデーションエラー
- */
-export async function validateAuthorizationRequest(
-  params: AuthorizationRequestParams,
-  clientResolver: ClientResolver,
-  options: ValidateAuthorizationRequestOptions = {}
-): Promise<ValidatedAuthorizationRequest> {
-  // --- Phase 1: client_id の検証（非リダイレクトエラー） ---
-  const client = await resolveClientForAuthorization(params, clientResolver);
-
-  // --- Phase 2: redirect_uri の検証（非リダイレクトエラー） ---
-  // 登録済み URIs にフラグメントが含まれていないことを検証（設定ミスの早期検知）
-  validateRegisteredRedirectUris(client.redirectUris);
-
-  // --- Request Object by value (OIDC Core 1.0 §6.1) ---
-  // 機能トグル（requestObject.supported = false）の場合はパースせず、redirect 先の
-  // 解決後に rejectUnsupportedRequestParams が request_not_supported で拒否する（§6.3）。
-  const requestParameterSupported = options.requestObject?.supported ?? true;
-  const { effectiveParams: effective, requestObjectClaims } =
-    requestParameterSupported
-      ? await resolveRequestObjectParams(params, client, {
-          supportedSigningAlgs: options.requestObject?.supportedSigningAlgs,
-          allowUnsigned: options.requestObject?.allowUnsigned,
-        })
-      : { effectiveParams: { ...params }, requestObjectClaims: undefined };
-
-  // 認可リクエストの redirect_uri 解決は Request Object 由来の値を優先する。
-  // これにより top-level の redirect_uri が無効でも Request Object 内の有効な
-  // redirect_uri を使って処理を継続できる（oidcc-ensure-request-object-with-redirect-uri）。
-  const redirectUri = resolveAuthorizationRedirectUri(effective, client);
-
-  // --- Phase 3 以降はリダイレクト可能エラー ---
-  // RFC 6749 §4.1.2.1 / OIDC Core §3.1.2.6: `state` は redirect 先が確定した後の
-  // リダイレクト可能エラー（invalid_scope / unsupported_response_type 等）でのみ
-  // クライアントへ echo する。client_id 欠落・不明・不一致 / redirect_uri 不正 /
-  // Request Object パース失敗のような非リダイレクトエラーは redirect 先を信頼できない
-  // ため、ここより前で `state` を渡さずに throw し、`state` を echo しない。
-  const state = effective.state;
-
-  // OIDC Core 1.0 §6.3: 未サポートの request（機能トグル無効時）/ request_uri / registration
-  rejectUnsupportedRequestParams(params, redirectUri, state, {
-    requestParameterSupported,
-  });
-
-  // OIDC Core 1.0 §6.1: Request Object 内の response_type / client_id はクエリと一致必須
-  validateRequestObjectConsistency(params, requestObjectClaims, redirectUri, state);
-
-  // response_type の検証（OP 全体・クライアント単位）
-  const responseType = validateResponseType(params, client, redirectUri, state);
-
-  // scope の検証（§6.1: クエリ側に必須。Request Object 側の値が supersede する）
-  let scope = validateAuthorizationScope(params, effective, redirectUri, state);
-
-  // PKCE の検証 (OAuth 2.1: REQUIRED by default).
-  // OIDC Basic OP static-client conformance still includes non-PKCE code flow;
-  // allow it only for explicit confidential clients when compatibility mode is enabled.
-  const pkce = validateAuthorizationCodePkce(effective, client, redirectUri, state, {
-    allowNonPkceAuthorizationCodeFlow: options.allowNonPkceAuthorizationCodeFlow,
-  });
-
-  // prompt の検証
-  const prompt = validatePromptParameter(effective, redirectUri, state);
-
-  // OIDC Core 1.0 §11: `offline_access` の許可条件を満たさない場合は scope から除外する。
-  // 既定では `prompt=consent` が必須。利用者は isOfflineAccessGranted で代替条件を差し込める。
-  scope = await applyOfflineAccessPolicy(
-    scope,
-    effective,
-    prompt,
-    client,
-    options.isOfflineAccessGranted,
-  );
-
-  // display の検証
-  const display = validateDisplayParameter(effective, redirectUri, state);
-
-  // max_age / default_max_age の解決
-  const maxAge = resolveMaxAge(effective, client, redirectUri, state);
-
-  // audience パラメータ（スペース区切りの文字列を配列に変換）
-  const audience = parseAudienceParameter(effective);
-
-  // OIDC Core 1.0 §5.5: parse the claims request parameter (JSON-encoded).
-  // Only the `userinfo` and `id_token` top-level members are recognized;
-  // unknown members are silently ignored per spec guidance.
-  const claims = parseClaimsRequestParameter(
-    effective,
-    redirectUri,
-    state,
-    options.maxClaimsParameterLength,
-  );
-
-  return {
-    responseType,
-    clientId: client.clientId,
-    redirectUri,
-    redirectUriExplicit: effective.redirect_uri !== undefined,
-    scope,
-    codeChallenge: pkce.codeChallenge,
-    codeChallengeMethod: pkce.codeChallengeMethod,
-    state,
-    nonce: effective.nonce,
-    prompt,
-    display,
-    maxAge,
-    uiLocales: effective.ui_locales,
-    claimsLocales: effective.claims_locales,
-    acrValues: effective.acr_values,
-    loginHint: effective.login_hint,
-    idTokenHint: effective.id_token_hint,
-    audience,
-    claims,
-  };
 }
 
 /**

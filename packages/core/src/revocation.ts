@@ -66,12 +66,6 @@ export interface RevocationTokenResolvers {
   revokeAccessTokensByGrantId?(grantId: string): Promise<void>;
 }
 
-export interface RevocationRequestContext {
-  params: { token?: string; token_type_hint?: string };
-  authenticatedClientId: string;
-  resolvers: RevocationTokenResolvers;
-}
-
 /**
  * ストアから解決した失効対象トークン。
  * どちらの種別として解決されたかで、失効方法と cascade の要否が変わる。
@@ -216,35 +210,4 @@ export async function revokeGrantAccessTokens(
 ): Promise<void> {
   if (resolved.tokenType !== 'refresh_token') return;
   await resolvers.revokeAccessTokensByGrantId?.(resolved.refreshToken.grantId);
-}
-
-/**
- * Revocation 本体。成功時は void を返し、呼び出し側が 200 OK 空ボディを返す。
- *
- * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
- * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
- * 削除したり独自処理を差し込んだりできる。
- *
- * 検索順:
- * - hint=refresh_token → refresh → access
- * - それ以外（hint=access_token / 不明 / 無し） → access → refresh
- *
- * トークンが見つからなくてもエラーにしない（RFC 7009 §2.2）。
- */
-export async function handleRevocationRequest(
-  ctx: RevocationRequestContext,
-): Promise<void> {
-  const token = requireRevocationToken(ctx.params);
-  requireRevocationClient(ctx.authenticatedClientId);
-
-  const resolved = await resolveRevocationTarget({
-    token,
-    tokenTypeHint: ctx.params.token_type_hint,
-    resolvers: ctx.resolvers,
-  });
-  if (resolved === null) return;
-
-  validateRevocationTokenClient(resolved, ctx.authenticatedClientId);
-  await revokeResolvedToken(token, resolved, ctx.resolvers);
-  await revokeGrantAccessTokens(resolved, ctx.resolvers);
 }

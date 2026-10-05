@@ -14,7 +14,7 @@
  * RFC 8693 §3 が定義する token type identifier を一律に受け、内容検証はすべて
  * デプロイ側リゾルバ（{@link IdJagActorTokenResolver}）が担う。
  *
- * core と同じ「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードは
+ * 「合成関数＋ステップ関数」の二層構成とし、CLI 生成コードは
  * ステップ関数を順に呼び出して検証を差し替え・削除できるようにする。
  * 既存の token-exchange 機能とは grant_type URN を共有するが、コードは共有
  * しない（experimental 機能同士の独立性優先。重複を許容する方針）。

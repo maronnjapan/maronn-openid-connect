@@ -190,8 +190,8 @@ describe('generate with --enable jwt-introspection-response', () => {
       expect(content.includes("describe('JWT introspection response (RFC 9701)'")).toBe(true);
     });
 
-    // The default output must stay byte-identical to the pre-feature CLI, so
-    // the disabled contract is the complete absence of the feature: no contract
+    // With the feature off the default output carries nothing of it, so the
+    // disabled contract is the complete absence of the feature: no contract
     // tests, no Accept branch, no discovery metadata (the route and discovery
     // assertions above pin the latter two).
     it('should keep RFC 9701 contract tests out of the default conformance.test.ts', () => {
@@ -247,8 +247,8 @@ describe('generate nextjs with --enable jwt-introspection-response', () => {
       expect(discovery().includes('introspection_signing_alg_values_supported')).toBe(false);
     });
 
-    // The default output must stay byte-identical to the pre-feature CLI, so
-    // the disabled contract is the complete absence of the feature.
+    // With the feature off the default output carries nothing of it, so the
+    // disabled contract is the complete absence of the feature.
     it('should keep RFC 9701 contract tests out of the default conformance.test.ts', () => {
       const content = conformance();
 

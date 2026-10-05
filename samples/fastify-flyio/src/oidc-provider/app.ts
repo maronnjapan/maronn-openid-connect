@@ -38,7 +38,6 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  getRegisteredSigningKeys,
   signingKeysToJwkSet,
 } from '@maronn-openid-connect/core';
 import type {
@@ -101,6 +100,10 @@ export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): void {
+  // The first key of a set signs new tokens, so a set needs at least one key.
+  if (keys.length === 0) {
+    throw new Error('Signing key set must contain at least one key');
+  }
   assertKeyStrength(keys);
   assertKidStrategyConsistent(keys);
   if (requireRs256) {
@@ -134,21 +137,17 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
-    let signingKey;
-    let idTokenSigningKey;
-    let userinfoSigningKey;
+    // Each provider returns its registered key set. The first key of a set
+    // signs new tokens, and every key is published at the JWKS endpoint.
     let signingKeys;
     let idTokenSigningKeys;
     let userinfoSigningKeys;
     try {
-      signingKey = await options.signingKeyProvider.getSigningKey();
-      signingKeys = await getRegisteredSigningKeys(options.signingKeyProvider);
+      signingKeys = await options.signingKeyProvider.getSigningKeys();
       const idProvider = options.idTokenSigningKeyProvider ?? options.signingKeyProvider;
-      idTokenSigningKey = await idProvider.getSigningKey();
-      idTokenSigningKeys = await getRegisteredSigningKeys(idProvider);
+      idTokenSigningKeys = await idProvider.getSigningKeys();
       const uiProvider = options.userinfoSigningKeyProvider ?? options.signingKeyProvider;
-      userinfoSigningKey = await uiProvider.getSigningKey();
-      userinfoSigningKeys = await getRegisteredSigningKeys(uiProvider);
+      userinfoSigningKeys = await uiProvider.getSigningKeys();
       validateSigningKeySet(signingKeys);
       validateSigningKeySet(idTokenSigningKeys, true);
       validateSigningKeySet(userinfoSigningKeys);
@@ -156,21 +155,11 @@ export function createApp(options: OidcProviderOptions): WebRouter {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-    const { privateKey, publicJwk, keyId } = signingKey;
     const clientResolver =
       options.clientResolver ?? createInMemoryClientResolver();
     const stores = options.storage ?? defaultProviderStores;
     const storeResolvers = createStoreResolvers(stores);
 
-    c.set('privateKey', privateKey);
-    c.set('publicJwk', publicJwk);
-    c.set('keyId', keyId);
-    c.set('idTokenPrivateKey', idTokenSigningKey.privateKey);
-    c.set('idTokenPublicJwk', idTokenSigningKey.publicJwk);
-    c.set('idTokenKeyId', idTokenSigningKey.keyId);
-    c.set('userinfoPrivateKey', userinfoSigningKey.privateKey);
-    c.set('userinfoPublicJwk', userinfoSigningKey.publicJwk);
-    c.set('userinfoKeyId', userinfoSigningKey.keyId);
     c.set('signingKeys', signingKeys);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
     c.set('userinfoSigningKeys', userinfoSigningKeys);

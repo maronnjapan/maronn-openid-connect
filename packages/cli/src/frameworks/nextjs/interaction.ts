@@ -709,7 +709,7 @@ async function jarmSigningKeyFor(
   transaction: AuthTransaction & JarmAuthTransactionFields,
 ): Promise<SigningKey | undefined> {
   if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
-  return selectSigningKeyByAlg((await loadSigningKeys()).general.registered, 'RS256');
+  return selectSigningKeyByAlg((await loadSigningKeys()).general, 'RS256');
 }
 
 /**

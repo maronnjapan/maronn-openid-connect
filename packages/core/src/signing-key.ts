@@ -8,37 +8,22 @@ export interface SigningKey {
 }
 
 /**
- * Provider that loads signing keys from a secret store.
+ * Provider that loads the OP's signing keys from a secret store.
  *
- * `getSigningKey()` returns the key the OP should currently use to sign new
- * tokens (the "active" key). `getSigningKeys()` is optional and returns every
- * key the OP wants to advertise as verifiable — typically the active key plus
- * any rotated-out keys whose tokens are still in flight, plus alternate-alg
- * keys (e.g. RS256 + ES256) when clients pick `id_token_signed_response_alg`.
+ * `getSigningKeys()` returns every key the OP registers, and the array order
+ * carries the meaning:
  *
- * The array order is "oldest → newest" so callers can treat the last entry as
- * the most recent. Implementations that do not support multiple keys may omit
- * `getSigningKeys`; helpers in this module fall back to `[await getSigningKey()]`.
+ * - The FIRST key signs new tokens, so the array must not be empty.
+ * - The keys after it are published (JWKS / Discovery) so the tokens they
+ *   signed keep verifying — keys rotated out while their tokens are still in
+ *   flight — or are picked by alg for a client that registered a different
+ *   `*_signed_response_alg` (e.g. an ES256 key next to the RS256 one).
+ *
+ * To rotate, put the new key first and keep the previous one after it until
+ * every token it signed has expired.
  */
 export interface SigningKeyProvider {
-  getSigningKey(): Promise<SigningKey>;
-  getSigningKeys?(): Promise<SigningKey[]>;
-}
-
-/**
- * Resolve the registered key set for a provider.
- *
- * If the provider implements `getSigningKeys()`, return that array verbatim.
- * Otherwise, fall back to `[await getSigningKey()]` so older provider
- * implementations keep working without modification.
- */
-export async function getRegisteredSigningKeys(
-  provider: SigningKeyProvider,
-): Promise<SigningKey[]> {
-  if (provider.getSigningKeys) {
-    return provider.getSigningKeys();
-  }
-  return [await provider.getSigningKey()];
+  getSigningKeys(): Promise<SigningKey[]>;
 }
 
 /**
@@ -47,8 +32,9 @@ export async function getRegisteredSigningKeys(
  * - `requestedAlg` is the client's `id_token_signed_response_alg` (or other
  *   `*_signed_response_alg` metadata value). When undefined the OIDC default
  *   `RS256` is used (OIDC Dynamic Client Registration 1.0 §2).
- * - When multiple keys share the same alg (e.g. during rotation), the *last*
- *   one in the array wins because the array is ordered oldest → newest.
+ * - When multiple keys share the same alg (e.g. during rotation), the one
+ *   nearest the front wins, because the set lists the key that signs new
+ *   tokens first (see {@link SigningKeyProvider}).
  * - When no key matches, throws — the caller should map this to a server
  *   configuration error, since advertising an alg we cannot sign with would
  *   produce ID Tokens the client cannot verify.
@@ -61,9 +47,7 @@ export function selectSigningKeyByAlg(
     throw new Error('No signing keys available');
   }
   const alg = requestedAlg ?? 'RS256';
-  // Iterate from newest (end of array) so a rotated key supersedes its predecessor.
-  for (let i = keys.length - 1; i >= 0; i--) {
-    const key = keys[i]!;
+  for (const key of keys) {
     try {
       if (getJwaAlgorithm(key.privateKey) === alg) {
         return key;
@@ -213,34 +197,20 @@ export function assertKeyStrength(
  * Wraps a SigningKeyProvider with a TTL-based cache.
  * Use this to avoid hammering a secret store on every request while still
  * picking up rotated keys after `ttlMs` milliseconds.
- *
- * Both `getSigningKey()` and `getSigningKeys()` are cached independently. The
- * cached provider always exposes `getSigningKeys`, even when the base does
- * not — in that case it falls back to `[await getSigningKey()]`.
  */
 export function createCachedSigningKeyProvider(
   base: SigningKeyProvider,
   ttlMs: number,
 ): SigningKeyProvider {
-  let singleCache: { key: SigningKey; expiresAt: number } | null = null;
-  let multiCache: { keys: SigningKey[]; expiresAt: number } | null = null;
+  let cache: { keys: SigningKey[]; expiresAt: number } | null = null;
 
   return {
-    async getSigningKey(): Promise<SigningKey> {
-      if (!singleCache || Date.now() > singleCache.expiresAt) {
-        const key = await base.getSigningKey();
-        singleCache = { key, expiresAt: Date.now() + ttlMs };
-      }
-      return singleCache.key;
-    },
     async getSigningKeys(): Promise<SigningKey[]> {
-      if (!multiCache || Date.now() > multiCache.expiresAt) {
-        const keys = base.getSigningKeys
-          ? await base.getSigningKeys()
-          : [await base.getSigningKey()];
-        multiCache = { keys, expiresAt: Date.now() + ttlMs };
+      if (!cache || Date.now() > cache.expiresAt) {
+        const keys = await base.getSigningKeys();
+        cache = { keys, expiresAt: Date.now() + ttlMs };
       }
-      return multiCache.keys;
+      return cache.keys;
     },
   };
 }

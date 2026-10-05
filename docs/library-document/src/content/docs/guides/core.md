@@ -77,7 +77,7 @@ core の純関数            ← このパッケージ
 | `buildProviderMetadata` | OpenID Provider Metadata の生成 |
 | `exportPublicJwk` / `exportJwks` / `signingKeysToJwkSet` | 公開鍵の JWK / JWK Set 化 |
 | `createCachedSigningKeyProvider` | 署名鍵プロバイダーの TTL 付きキャッシュラッパー |
-| `getRegisteredSigningKeys` / `selectSigningKeyByAlg` | 登録鍵一覧の取得・アルゴリズム別選択 |
+| `selectSigningKeyByAlg` | 登録鍵セットからのアルゴリズム別選択 |
 | `assertHasRs256Key` / `assertKeyStrength` / `assertKidStrategyConsistent` | 鍵構成の整合性チェック |
 
 ### Introspection / Revocation

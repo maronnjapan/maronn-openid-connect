@@ -50,7 +50,7 @@ export async function redeemDeviceCode(
 
   // T-022: the ID Token follows the same key-selection rule as the standard
   // grants — the registered ID Token key whose alg matches the client's
-  // id_token_signed_response_alg, not the general-purpose active key.
+  // id_token_signed_response_alg, not simply the first key of the set.
   const idTokenAlg = (client as RegisteredClient).idTokenSignedResponseAlg;
   const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);
   if (!idTokenKey) {
@@ -81,8 +81,8 @@ export async function redeemDeviceCode(
   });
   const accessToken = await accessTokenIssuer.issue({
     payload: accessTokenPayload,
-    privateKey: keys.general.active.privateKey,
-    keyId: keys.general.active.keyId,
+    privateKey: keys.general[0].privateKey,
+    keyId: keys.general[0].keyId,
   });
 
   // The device authorization endpoint requires the openid scope, so an ID Token

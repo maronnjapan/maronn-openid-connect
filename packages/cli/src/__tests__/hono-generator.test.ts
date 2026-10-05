@@ -761,8 +761,7 @@ describe('HonoGenerator', () => {
     it('should setup runtime dependency middleware in apply.ts', () => {
       const file = files.find((f) => f.path === 'apply.ts');
       expect(file?.content).toContain('signingKeyProvider');
-      expect(file?.content).toContain("c.set('privateKey', privateKey)");
-      expect(file?.content).toContain("c.set('keyId', keyId)");
+      expect(file?.content).toContain("c.set('signingKeys', signingKeys)");
       expect(file?.content).toContain("c.set('clientResolver', clientResolver)");
     });
 
@@ -864,37 +863,45 @@ describe('HonoGenerator', () => {
       const file = files.find((f) => f.path === 'apply.ts');
       expect(file?.content).toContain('idTokenSigningKeyProvider');
       expect(file?.content).toContain('userinfoSigningKeyProvider');
-      // Fallback chain: missing → reuse primary signingKeyProvider so the active
-      // key and the registered key set both default to the primary provider.
+      // Fallback chain: missing → reuse primary signingKeyProvider so the
+      // purpose-specific key set defaults to the primary provider's set.
       expect(file?.content).toContain('options.idTokenSigningKeyProvider ?? options.signingKeyProvider');
       expect(file?.content).toContain('options.userinfoSigningKeyProvider ?? options.signingKeyProvider');
     });
 
-    it('should set purpose-specific signing keys into the request context', () => {
-      const file = files.find((f) => f.path === 'apply.ts');
-      expect(file?.content).toContain("c.set('idTokenPrivateKey'");
-      expect(file?.content).toContain("c.set('idTokenPublicJwk'");
-      expect(file?.content).toContain("c.set('idTokenKeyId'");
-      expect(file?.content).toContain("c.set('userinfoPrivateKey'");
-      expect(file?.content).toContain("c.set('userinfoPublicJwk'");
-      expect(file?.content).toContain("c.set('userinfoKeyId'");
+    // The per-purpose key sets are the only signing key context: the first key
+    // of a set signs new tokens, so no separate "active key" variables exist.
+    it('should not set single-key context variables next to the key sets', () => {
+      for (const path of ['app.ts', 'apply.ts']) {
+        const content = files.find((f) => f.path === path)?.content ?? '';
+        expect(content).not.toContain("c.set('privateKey'");
+        expect(content).not.toContain("c.set('idTokenPrivateKey'");
+        expect(content).not.toContain("c.set('userinfoPrivateKey'");
+        expect(content).not.toContain('getSigningKey()');
+      }
     });
 
-    it('should pass idTokenPrivateKey/idTokenKeyId into generateTokenResponse', () => {
+    it('should sign the access token with the first key of the general-purpose set', () => {
       const file = files.find((f) => f.path === 'routes/token.ts');
-      // The token route reads the per-purpose key from context and forwards it
-      // so generateTokenResponse signs the ID token with a dedicated key when configured.
-      expect(file?.content).toContain("c.get('idTokenPrivateKey')");
-      expect(file?.content).toContain('idTokenPrivateKey,');
-      expect(file?.content).toContain('idTokenKeyId,');
+      expect(file?.content).toContain("const signingKey: SigningKey = c.get('signingKeys')[0];");
+      expect(file?.content).not.toContain("c.get('privateKey')");
+    });
+
+    it('should pass the selected ID Token key into the ID Token signing step', () => {
+      const file = files.find((f) => f.path === 'routes/token.ts');
+      // The token route picks the per-purpose key from its key set and forwards
+      // it so the ID token is signed with a dedicated key when configured.
+      expect(file?.content).toContain('const idTokenPrivateKey = selectedIdTokenKey.privateKey;');
+      expect(file?.content).toContain('privateKey: idTokenPrivateKey,');
+      expect(file?.content).toContain('keyId: idTokenKeyId,');
     });
 
     it('should publish all distinct purpose-specific keys from the JWKS endpoint', () => {
       const file = files.find((f) => f.path === 'routes/jwks.ts');
       // With separated keys, JWKS must include each unique kid so clients can verify
       // ID tokens and UserInfo JWTs even when they are signed by different keys.
-      expect(file?.content).toContain("c.get('idTokenPublicJwk')");
-      expect(file?.content).toContain("c.get('userinfoPublicJwk')");
+      expect(file?.content).toContain("c.get('idTokenSigningKeys')");
+      expect(file?.content).toContain("c.get('userinfoSigningKeys')");
       // Deduplicate by kid because the optional providers fall back to the primary key.
       expect(file?.content).toContain('seenKids.has');
     });
@@ -906,10 +913,12 @@ describe('HonoGenerator', () => {
       expect(file?.content).not.toContain("'RSASSA-PKCS1-v1_5', hash: 'SHA-256'");
     });
 
-    it('should include the latest kid-undefined key once when kid is missing', () => {
+    it('should include the newest kid-undefined key once when kid is missing', () => {
       const file = files.find((f) => f.path === 'routes/jwks.ts');
-      // ユーザー指示: kid 未指定時は jwks にある一番最新の鍵を用いる。
-      expect(file?.content).toContain('lastUndefinedIndex');
+      // ユーザー指示: kid 未指定時は jwks にある一番最新の鍵を用いる。鍵セットは新しい鍵ほど
+      // 先頭にあるので、kid 未指定の鍵も kid ありの鍵と同じく最初に出現した 1 件だけを採用する。
+      expect(file?.content).toContain('if (seenKids.has(key.keyId)) continue;');
+      expect(file?.content).not.toContain('lastUndefinedIndex');
     });
 
     it('should export createApp as a named export without auto-initialization in app.ts', () => {
@@ -924,11 +933,21 @@ describe('HonoGenerator', () => {
 
     // OIDC Discovery 1.0 §3 / Core 1.0 §10.1: the OP can register multiple
     // signing keys per purpose (rotation + alg variants). The generated apply.ts
-    // must surface every registered key, not just the active one, so JWKS can
-    // expose old kids while signing flips to the new key.
-    it('should load registered signing keys via getRegisteredSigningKeys in apply.ts', () => {
+    // loads each provider's whole key set — the first key signs new tokens and
+    // every key is published — so JWKS can expose old kids while signing flips
+    // to the new key.
+    it('should load each registered signing key set via getSigningKeys in apply.ts', () => {
       const file = files.find((f) => f.path === 'apply.ts');
-      expect(file?.content).toContain('getRegisteredSigningKeys');
+      expect(file?.content).toContain('signingKeys = await options.signingKeyProvider.getSigningKeys();');
+      expect(file?.content).toContain('idTokenSigningKeys = await idProvider.getSigningKeys();');
+      expect(file?.content).toContain('userinfoSigningKeys = await uiProvider.getSigningKeys();');
+    });
+
+    it('should refuse an empty signing key set in validateSigningKeySet', () => {
+      for (const path of ['app.ts', 'apply.ts']) {
+        const content = files.find((f) => f.path === path)?.content ?? '';
+        expect(content).toContain("throw new Error('Signing key set must contain at least one key');");
+      }
     });
 
     it('should set signingKeys / idTokenSigningKeys / userinfoSigningKeys arrays into the request context', () => {

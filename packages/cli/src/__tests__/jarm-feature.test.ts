@@ -202,11 +202,10 @@ describe('generate with --enable jarm', () => {
     });
 
     // JARM Section 3: this OP always declares alg RS256 on the response JWT, so
-    // the key it signs with must be an RS256 key. The general-purpose ACTIVE key
-    // (signingKeyProvider.getSigningKey()) carries no such guarantee — a provider
-    // that returns ES256 as active and [RS256, ES256] as the registered set is
-    // valid under the SigningKeyProvider contract — so the key is selected by alg
-    // from the registered set instead.
+    // the key it signs with must be an RS256 key. The first key of the
+    // general-purpose set (the one that signs new tokens) carries no such
+    // guarantee — a provider returning [ES256, RS256] is valid under the
+    // SigningKeyProvider contract — so the key is selected by alg from the set.
     it('should select the RS256 key from the registered key set in the authorize route', () => {
       const content = fileContent(generateFiles(framework, ['jarm']), 'routes/authorize.ts');
 
@@ -219,17 +218,17 @@ describe('generate with --enable jarm', () => {
       expect(content.includes("selectSigningKeyByAlg(jarmSigningKeys, 'RS256')")).toBe(true);
     });
 
-    // Backward compatibility: a hand-wired provider that never populated the
-    // registered key set (only the single-key context) keeps working, and on the
-    // default single-RS256-key configuration both paths resolve the same key.
-    it('should fall back to the single-key context when no key set is registered', () => {
-      const authorize = fileContent(generateFiles(framework, ['jarm']), 'routes/authorize.ts');
+    // The key set is the only signing key context: there is no separate
+    // single-key context to fall back to, so a set without an RS256 key fails
+    // as a server_error instead of signing with whatever key comes first.
+    it('should not fall back to a single-key context', () => {
+      const files = generateFiles(framework, ['jarm']);
 
-      expect(
-        authorize.includes(
-          "jarmSigningKeys.length > 0\n          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')",
-        ),
-      ).toBe(true);
+      for (const path of ['routes/authorize.ts', 'routes/consent.ts']) {
+        const content = fileContent(files, path);
+        expect(content.includes("signingKey: selectSigningKeyByAlg(jarmSigningKeys, 'RS256'),")).toBe(true);
+        expect(content.includes("c.get('privateKey')")).toBe(false);
+      }
     });
 
     it('should import selectSigningKeyByAlg from core wherever it signs a JARM response', () => {
@@ -628,8 +627,8 @@ describe('generate nextjs with --enable jarm', () => {
 
   // JARM Section 3: this OP always declares alg RS256 on the response JWT, so
   // the key it signs with is selected by alg from the registered set rather
-  // than taken from the general-purpose ACTIVE key, which the
-  // SigningKeyProvider contract does not guarantee to be RS256.
+  // than taken as its first key, which the SigningKeyProvider contract does
+  // not guarantee to be RS256.
   describe('Signing key selection (JARM Section 3)', () => {
     it('should select the RS256 key from the registered key set in the authorize route', () => {
       const content = authorizeRoute(['jarm']);
@@ -640,7 +639,7 @@ describe('generate nextjs with --enable jarm', () => {
             '      jarmResponse = {',
             '        issuer,',
             '        clientId: client.clientId,',
-            "        signingKey: selectSigningKeyByAlg(keys.general.registered, 'RS256'),",
+            "        signingKey: selectSigningKeyByAlg(keys.general, 'RS256'),",
             '      };',
           ].join('\n'),
         ),
@@ -653,7 +652,7 @@ describe('generate nextjs with --enable jarm', () => {
 
       expect(
         content.includes(
-          "  return selectSigningKeyByAlg((await loadSigningKeys()).general.registered, 'RS256');",
+          "  return selectSigningKeyByAlg((await loadSigningKeys()).general, 'RS256');",
         ),
       ).toBe(true);
       expect(content.includes('  selectSigningKeyByAlg,')).toBe(true);
@@ -675,21 +674,18 @@ describe('generate nextjs with --enable jarm', () => {
           'const signingKeyProvider: SigningKeyProvider = (signingKeyRegistry.__oidcSigningKeyProvider ??=',
         ),
       ).toBe(true);
-      expect(fileContent(files, '.well-known/jwks.json/route.ts').includes('...keys.general.registered,')).toBe(
+      expect(fileContent(files, '.well-known/jwks.json/route.ts').includes('...keys.general,')).toBe(
         true,
       );
     });
 
-    // Backward compatibility: core's getRegisteredSigningKeys falls back to the
-    // single active key when a provider implements no getSigningKeys(), so a
-    // hand-wired provider keeps working; on the default single RS256 key both
-    // resolve the same key.
-    it('should fall back to the single active key when the provider registers no key set', () => {
-      expect(
-        fileContent(generateFiles('nextjs', ['jarm']), '_oidc-provider/provider.ts').includes(
-          'registered: await getRegisteredSigningKeys(provider),',
-        ),
-      ).toBe(true);
+    // Each key set is loaded straight from its provider: the first key signs new
+    // tokens, so there is no separate active key to load next to the set.
+    it('should load every signing key set from getSigningKeys alone', () => {
+      const provider = fileContent(generateFiles('nextjs', ['jarm']), '_oidc-provider/provider.ts');
+
+      expect(provider.includes('const general = await signingKeyProvider.getSigningKeys();')).toBe(true);
+      expect(provider.includes('getSigningKey()')).toBe(false);
     });
   });
 

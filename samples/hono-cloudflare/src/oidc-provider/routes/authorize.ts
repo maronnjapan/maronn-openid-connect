@@ -347,27 +347,18 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
       // JARM §3: this OP declares alg RS256 on every response JWT (the default
       // for a client that registered no authorization_signed_response_alg), and
       // discovery advertises authorization_signing_alg_values_supported:
-      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
-      // SigningKeyProvider may legitimately return ES256 as active alongside an
-      // RS256 + ES256 registered set — so the key is picked by alg from the
-      // registered set. Its public half is published at /.well-known/jwks.json
-      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
-      // registered, which surfaces as a server_error here (a configuration
-      // mistake) rather than as an unverifiable authorization response.
+      // ['RS256']. The first key of the general-purpose set is not guaranteed to
+      // be RS256 — a SigningKeyProvider may legitimately put an ES256 key first
+      // in an RS256 + ES256 set — so the key is picked by alg from the set. Its
+      // public half is published at /.well-known/jwks.json under the same kid.
+      // selectSigningKeyByAlg throws when no RS256 key is registered, which
+      // surfaces as a server_error here (a configuration mistake) rather than
+      // as an unverifiable authorization response.
       const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
       jarmResponse = {
         issuer,
         clientId: client.clientId,
-        // Falls back to the single-key context so a hand-wired provider that
-        // never populated the key set keeps working; on the default single
-        // RS256 key both branches resolve the same key.
-        signingKey: jarmSigningKeys.length > 0
-          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
-          : {
-              privateKey: c.get('privateKey'),
-              publicJwk: c.get('publicJwk'),
-              keyId: c.get('keyId'),
-            },
+        signingKey: selectSigningKeyByAlg(jarmSigningKeys, 'RS256'),
       };
     }
 

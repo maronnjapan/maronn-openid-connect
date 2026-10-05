@@ -122,7 +122,6 @@ import {
   createCachedSigningKeyProvider,
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
-  getRegisteredSigningKeys,
   selectSigningKeyByAlg,
   signingKeysToJwkSet,
   type AccessTokenIssuer,
@@ -226,12 +225,12 @@ const idTokenSigningKeyProvider: SigningKeyProvider = signingKeyProvider;
 /** UserInfo response signing keys (OIDC Core 1.0 §5.3.2, userinfo_signed_response_alg). */
 const userinfoSigningKeyProvider: SigningKeyProvider = signingKeyProvider;
 
-/** The key new signatures use, and every key still published for verification. */
-export interface SigningKeySet {
-  active: SigningKey;
-  /** Rotated-out keys stay registered until the tokens signed with them expire. */
-  registered: SigningKey[];
-}
+/**
+ * A registered signing key set. The first key signs new tokens; the keys after
+ * it stay published for verification — rotated-out keys until the tokens they
+ * signed expire, or keys of another alg picked per client.
+ */
+export type SigningKeySet = [SigningKey, ...SigningKey[]];
 
 export interface ProviderSigningKeys {
   general: SigningKeySet;
@@ -240,20 +239,18 @@ export interface ProviderSigningKeys {
 }
 
 /**
- * Load every signing key set and refuse one the OP must not sign with: weak
- * keys, ambiguous kids, or ID Token keys without RS256 (OIDC Core 1.0 §15.1).
- * Endpoints answer 503 when this throws.
+ * Load every signing key set and refuse one the OP must not sign with: an
+ * empty set, weak keys, ambiguous kids, or ID Token keys without RS256 (OIDC
+ * Core 1.0 §15.1). Endpoints answer 503 when this throws.
  */
 export async function loadSigningKeys(): Promise<ProviderSigningKeys> {
-  const keys = {
-    general: await loadSigningKeySet(signingKeyProvider),
-    idToken: await loadSigningKeySet(idTokenSigningKeyProvider),
-    userinfo: await loadSigningKeySet(userinfoSigningKeyProvider),
-  };
-  validateSigningKeySet(keys.general.registered);
-  validateSigningKeySet(keys.idToken.registered, true);
-  validateSigningKeySet(keys.userinfo.registered);
-  return keys;
+  const general = await signingKeyProvider.getSigningKeys();
+  const idToken = await idTokenSigningKeyProvider.getSigningKeys();
+  const userinfo = await userinfoSigningKeyProvider.getSigningKeys();
+  validateSigningKeySet(general);
+  validateSigningKeySet(idToken, true);
+  validateSigningKeySet(userinfo);
+  return { general, idToken, userinfo };
 }
 
 /**
@@ -261,23 +258,23 @@ export async function loadSigningKeys(): Promise<ProviderSigningKeys> {
  * OP's own ID Token keys, so any ID Token it issued is accepted as a hint.
  */
 export function idTokenHintJwks(keys: ProviderSigningKeys): Promise<JwkSet> {
-  return signingKeysToJwkSet(keys.idToken.registered);
+  return signingKeysToJwkSet(keys.idToken);
 }
 
 /**
  * The key a client's ID Tokens are signed with: the registered ID Token key
  * whose alg matches its id_token_signed_response_alg (OIDC Dynamic Client
- * Registration 1.0 §2), RS256 when it registered none. Never simply the active
- * key — that would hand an ES256 client an RS256 ID Token and hash at_hash with
- * the wrong algorithm. undefined when no registered key has that alg, which is
- * a server configuration error.
+ * Registration 1.0 §2), RS256 when it registered none. Never simply the first
+ * key of the set — that would hand an ES256 client an RS256 ID Token and hash
+ * at_hash with the wrong algorithm. undefined when no registered key has that
+ * alg, which is a server configuration error.
  */
 export function selectIdTokenSigningKey(
   keys: ProviderSigningKeys,
   alg: string | undefined,
 ): SigningKey | undefined {
   try {
-    return selectSigningKeyByAlg(keys.idToken.registered, alg);
+    return selectSigningKeyByAlg(keys.idToken, alg);
   } catch {
     return undefined;
   }
@@ -286,7 +283,11 @@ export function selectIdTokenSigningKey(
 export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
-): void {
+): asserts keys is SigningKeySet {
+  // The first key of a set signs new tokens, so a set needs at least one key.
+  if (keys.length === 0) {
+    throw new Error('Signing key set must contain at least one key');
+  }
   assertKeyStrength(keys);
   assertKidStrategyConsistent(keys);
   if (requireRs256) {
@@ -294,19 +295,9 @@ export function validateSigningKeySet(
   }
 }
 
-async function loadSigningKeySet(provider: SigningKeyProvider): Promise<SigningKeySet> {
-  return {
-    active: await provider.getSigningKey(),
-    registered: await getRegisteredSigningKeys(provider),
-  };
-}
-
 function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   const keyPromise = generateSigningKey();
   return {
-    async getSigningKey(): Promise<SigningKey> {
-      return keyPromise;
-    },
     async getSigningKeys(): Promise<SigningKey[]> {
       return [await keyPromise];
     },

@@ -223,7 +223,7 @@ ${responseModesSupportedEntry}
     // OIDC Core 1.0 §15.1: id_token_signing_alg_values_supported is derived from
     // every registered ID Token key, so a mixed RS256 + ES256 set is advertised
     // as such (buildProviderMetadata enforces that RS256 is present).
-    idTokenSigningKeys: keys.idToken.registered.map((key) => key.privateKey),
+    idTokenSigningKeys: keys.idToken.map((key) => key.privateKey),
     userinfoEndpoint: \`\${issuer}/userinfo\`,
 ${scopesSupportedEntry}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP produces Normal Claims only
     // (no _claim_names / _claim_sources).
@@ -273,7 +273,7 @@ ${scopesSupportedEntry}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP p
     // OIDC Core 1.0 §5.3.2: the algs the registered UserInfo keys can sign with,
     // so clients relying on userinfo_signed_response_alg can trust the metadata.
     userinfoSigningAlgValuesSupported: [
-      ...new Set(keys.userinfo.registered.map((key) => getJwaAlgorithm(key.privateKey))),
+      ...new Set(keys.userinfo.map((key) => getJwaAlgorithm(key.privateKey))),
     ],
 ${requestObjectMetadata}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.5: the claims request parameter is
     // implemented for both the ID Token and UserInfo.
@@ -303,8 +303,8 @@ export function nextJsJwksRouteTemplate(corePkg: string): string {
  *
  * All three key sets are published (general, ID Token, UserInfo) including
  * rotated-out keys, so tokens signed before a rotation keep verifying until
- * they expire. A kid appears once; of the keys without a kid only the most
- * recently added one is published.
+ * they expire. A kid appears once; of the keys without a kid only the newest
+ * one (the first, since a set lists its newest key first) is published.
  */
 import { exportJwks, extractAlgorithmParamsFromJwk, type SigningKey } from '${corePkg}';
 import { loadSigningKeys } from '../../_oidc-provider/provider';
@@ -331,9 +331,9 @@ async function jwks(): Promise<Response> {
   if (!keys) return signingKeysUnavailable();
 
   const published = publishedKeys([
-    ...keys.general.registered,
-    ...keys.idToken.registered,
-    ...keys.userinfo.registered,
+    ...keys.general,
+    ...keys.idToken,
+    ...keys.userinfo,
   ]);
   const entries = await Promise.all(
     published.map(async (key) => ({
@@ -354,17 +354,12 @@ async function jwks(): Promise<Response> {
 }
 
 /**
- * The first key of every kid, plus the last key that has no kid (the most
- * recent one wins, since rotation appends).
+ * The first key of every kid; keys without a kid count as one kid, so only the
+ * first of them (the newest, since a set lists its newest key first) is kept.
  */
 function publishedKeys(candidates: readonly SigningKey[]): SigningKey[] {
-  let lastWithoutKid = -1;
-  candidates.forEach((key, index) => {
-    if (key.keyId === undefined) lastWithoutKid = index;
-  });
   const seenKids = new Set<string>();
-  return candidates.filter((key, index) => {
-    if (key.keyId === undefined) return index === lastWithoutKid;
+  return candidates.filter((key) => {
     if (seenKids.has(key.keyId)) return false;
     seenKids.add(key.keyId);
     return true;

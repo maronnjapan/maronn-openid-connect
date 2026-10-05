@@ -151,42 +151,14 @@ const handler = async (c: any) => {
       // OIDC Core 1.0 §5.3.2: when the client registered userinfo_signed_response_alg,
       // the UserInfo Response MUST be a JWS signed with THAT alg (RS256, ES256, ...),
       // not unconditionally RS256. Pick a registered UserInfo signing key whose alg
-      // matches the request — mirroring the ID Token key selection. The per-purpose
-      // userinfoSigningKeys set is preferred; otherwise fall back to a single
-      // configured key kept as ONE unit so its kid stays paired with its private key.
-      // The fallback key is alg-checked too, so a request whose alg has no matching
-      // key is a server configuration error (never silently signed with another alg).
+      // matches the request — mirroring the ID Token key selection. A request whose
+      // alg has no matching key is a server configuration error (never silently
+      // signed with another alg).
       const config = c.get('config');
       const userinfoSigningKeys = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
-      const fallbackUserinfoKey: SigningKey | undefined =
-        c.get('userinfoPrivateKey') !== undefined
-          ? {
-              privateKey: c.get('userinfoPrivateKey'),
-              publicJwk: c.get('userinfoPublicJwk'),
-              keyId: c.get('userinfoKeyId'),
-            }
-          : c.get('privateKey') !== undefined
-            ? {
-                privateKey: c.get('privateKey'),
-                publicJwk: c.get('publicJwk'),
-                keyId: c.get('keyId'),
-              }
-            : undefined;
-      const candidateUserinfoKeys =
-        userinfoSigningKeys.length > 0
-          ? userinfoSigningKeys
-          : fallbackUserinfoKey
-            ? [fallbackUserinfoKey]
-            : [];
-      if (candidateUserinfoKeys.length === 0) {
-        return c.json(
-          { error: 'server_error', error_description: 'No UserInfo signing key registered' },
-          500,
-        );
-      }
       let selectedUserinfoKey: SigningKey;
       try {
-        selectedUserinfoKey = selectSigningKeyByAlg(candidateUserinfoKeys, requestedUserinfoAlg);
+        selectedUserinfoKey = selectSigningKeyByAlg(userinfoSigningKeys, requestedUserinfoAlg);
       } catch {
         return c.json(
           {

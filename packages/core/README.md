@@ -101,10 +101,10 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 | API | 役割 |
 |---|---|
 | `createCachedSigningKeyProvider` | 署名鍵プロバイダーのキャッシュラッパー（TTL 付きで鍵ローテーションに追随） |
-| `getRegisteredSigningKeys` / `selectSigningKeyByAlg` | 登録済み鍵一覧の取得・アルゴリズム別の鍵選択 |
+| `selectSigningKeyByAlg` | 登録済み鍵セットからのアルゴリズム別の鍵選択 |
 | `assertHasRs256Key` / `assertKeyStrength` / `assertKidStrategyConsistent` | RS256 鍵の存在・鍵強度・kid 戦略の整合性チェック |
 
-鍵は `SigningKeyProvider` インターフェース（`getSigningKey` / 任意の `getSigningKeys`）として注入し、ローテーション済み鍵や複数アルゴリズムの鍵も JWKS で広告できる。
+鍵は `SigningKeyProvider` インターフェース（`getSigningKeys(): Promise<SigningKey[]>`）として注入する。配列の先頭の鍵が新しいトークンの署名に使われ、2 本目以降はローテーション済み鍵や別アルゴリズムの鍵として JWKS で公開される。ローテーションでは新しい鍵を先頭に置き、古い鍵はそれで署名したトークンが失効するまで後ろに残す。
 
 ### Introspection / Revocation
 

@@ -140,9 +140,9 @@ describe('generate with --enable jwt-introspection-response', () => {
       expect(content.includes('createIntrospectionResponseJwt({')).toBe(true);
     });
 
-    // RFC 9701 §6: alg is pinned to RS256, and the general-purpose ACTIVE key
-    // carries no RS256 guarantee, so the key is selected by alg from the
-    // registered set (with the single-key context as the hand-wired fallback).
+    // RFC 9701 §6: alg is pinned to RS256, and the first key of the
+    // general-purpose set carries no RS256 guarantee, so the key is selected by
+    // alg from the registered set.
     it('should select the RS256 key from the registered key set', () => {
       const content = fileContent(
         generateFiles(framework, ['jwt-introspection-response']),
@@ -313,14 +313,14 @@ describe('generate nextjs with --enable jwt-introspection-response', () => {
       expect(content.includes('introspection: restrictedResponse,')).toBe(true);
     });
 
-    // RFC 9701 §6: alg is pinned to RS256, and the general-purpose ACTIVE key
-    // carries no RS256 guarantee, so the key is selected by alg from the
-    // registered set — the set /.well-known/jwks.json publishes.
+    // RFC 9701 §6: alg is pinned to RS256, and the first key of the
+    // general-purpose set carries no RS256 guarantee, so the key is selected by
+    // alg from the registered set — the set /.well-known/jwks.json publishes.
     it('should select the RS256 key from the registered key set', () => {
       const content = introspectionRoute(['jwt-introspection-response']);
 
       expect(
-        content.includes("signingKey: selectSigningKeyByAlg(keys.general.registered, 'RS256'),"),
+        content.includes("signingKey: selectSigningKeyByAlg(keys.general, 'RS256'),"),
       ).toBe(true);
       expect(content.includes('  selectSigningKeyByAlg,')).toBe(true);
     });

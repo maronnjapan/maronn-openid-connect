@@ -989,7 +989,7 @@ describe('generate nextjs with --enable ciba', () => {
       expect(grant.includes('const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);')).toBe(true);
       expect(
         enabledFile('_oidc-provider/provider.ts').includes(
-          'return selectSigningKeyByAlg(keys.idToken.registered, alg);',
+          'return selectSigningKeyByAlg(keys.idToken, alg);',
         ),
       ).toBe(true);
     });

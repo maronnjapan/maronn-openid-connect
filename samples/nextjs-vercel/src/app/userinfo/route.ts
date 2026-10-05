@@ -149,7 +149,7 @@ async function signedUserInfo(
 ): Promise<Response> {
   let signingKey: SigningKey;
   try {
-    signingKey = selectSigningKeyByAlg(keys.userinfo.registered, client.userinfoSignedResponseAlg);
+    signingKey = selectSigningKeyByAlg(keys.userinfo, client.userinfoSignedResponseAlg);
   } catch {
     return noStoreJson(
       {

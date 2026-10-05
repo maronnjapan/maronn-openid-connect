@@ -522,10 +522,10 @@ describe('generate nextjs with --enable id-jag', () => {
 
     // draft §4.3: the peer AS verifies the ID-JAG against this OP's JWKS, so it
     // is signed with a registered RS256 key (same key-selection contract as
-    // JARM: the active key may be a different alg).
+    // JARM: the first key of the set may be another alg).
     it('should sign the ID-JAG with the RS256 key from the registered key set', () => {
       const content = idJagModule();
-      expect(content.includes("signingKey = selectSigningKeyByAlg(keys.general.registered, 'RS256');")).toBe(
+      expect(content.includes("signingKey = selectSigningKeyByAlg(keys.general, 'RS256');")).toBe(
         true,
       );
       expect(

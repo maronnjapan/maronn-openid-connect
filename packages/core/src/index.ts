@@ -238,7 +238,6 @@ export {
   assertKeyStrength,
   assertKidStrategyConsistent,
   createCachedSigningKeyProvider,
-  getRegisteredSigningKeys,
   selectSigningKeyByAlg,
 } from './signing-key.js';
 

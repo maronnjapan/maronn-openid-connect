@@ -335,8 +335,8 @@ beforeAll(async () => {
   );
   const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
   signingKeyProvider = {
-    async getSigningKey(): Promise<SigningKey> {
-      return { privateKey: keyPair.privateKey, publicJwk, keyId: 'test-key' };
+    async getSigningKeys(): Promise<SigningKey[]> {
+      return [{ privateKey: keyPair.privateKey, publicJwk, keyId: 'test-key' }];
     },
   };
 
@@ -484,9 +484,6 @@ describe('generated provider HTTP conformance', () => {
         keyId: 'weak-runtime-key',
       };
       const weakProvider: SigningKeyProvider = {
-        async getSigningKey(): Promise<SigningKey> {
-          return weakKey;
-        },
         async getSigningKeys(): Promise<SigningKey[]> {
           return [weakKey];
         },
@@ -540,6 +537,59 @@ describe('generated provider HTTP conformance', () => {
       expect(() => validateSigningKeySet([key, key])).toThrow(
         'Duplicate kid in signing key set: duplicate-key (RFC 7517 §4.5)',
       );
+    });
+
+    // The first key of a set signs new tokens, so a provider that returns no
+    // key leaves nothing to sign with: it is refused when the keys are loaded,
+    // like a weak key, instead of failing later inside an endpoint.
+    it('should reject an empty signing key set', async () => {
+      const emptyProvider: SigningKeyProvider = {
+        async getSigningKeys(): Promise<SigningKey[]> {
+          return [];
+        },
+      };
+      const res = await createApp({ signingKeyProvider: emptyProvider }).request(
+        '/.well-known/openid-configuration',
+      );
+
+      expect(() => validateSigningKeySet([])).toThrow('Signing key set must contain at least one key');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        error: 'server_error',
+        error_description: 'Failed to load signing key',
+      });
+    });
+
+    // A rotation puts the new key first (it signs new tokens) and keeps the
+    // previous key after it, so tokens the previous key signed keep verifying
+    // until they expire: both are published, in the order of the set.
+    it('should publish every key of a rotated key set at the JWKS endpoint', async () => {
+      async function rsaSigningKey(keyId: string): Promise<SigningKey> {
+        const pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        return {
+          privateKey: pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
+          keyId,
+        };
+      }
+      const currentKey = await rsaSigningKey('current-key');
+      const previousKey = await rsaSigningKey('previous-key');
+      const rotatedProvider: SigningKeyProvider = {
+        async getSigningKeys(): Promise<SigningKey[]> {
+          return [currentKey, previousKey];
+        },
+      };
+      const res = await createApp({ signingKeyProvider: rotatedProvider }).request(
+        '/.well-known/jwks.json',
+      );
+      const jwks = (await res.json()) as { keys: { kid?: string }[] };
+
+      expect(res.status).toBe(200);
+      expect(jwks.keys.map((key) => key.kid)).toEqual(['current-key', 'previous-key']);
     });
   });
 
@@ -1611,7 +1661,9 @@ describe('generated provider HTTP conformance', () => {
     // Overrides let a single case break exactly one claim (sub / aud / exp).
     async function buildIdTokenHint(overrides: Record<string, unknown> = {}): Promise<string> {
       const issuedAt = Math.floor(Date.now() / 1000);
-      const signingKey = await signingKeyProvider.getSigningKey();
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const [signingKey] = await signingKeyProvider.getSigningKeys();
+      if (!signingKey) throw new Error('The test signing key provider registers no key');
       const signingInput =
         hintB64UrlJson({ alg: 'RS256', kid: signingKey.keyId, typ: 'JWT' }) +
         '.' +
@@ -5829,8 +5881,8 @@ describe('generated provider HTTP conformance', () => {
       // A client may register id_token_signed_response_alg, and the standard
       // grants pick a registered key matching it. The device grant MUST NOT
       // diverge: signing this client's ID Token with whichever key happens to be
-      // ACTIVE would hand it an RS256 token it rejects, and would compute at_hash
-      // with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      // first in the set would hand it an RS256 token it rejects, and would
+      // compute at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
       it('should sign the device grant ID Token with the alg the client registered', async () => {
         const rs256Pair = await crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
@@ -5843,14 +5895,7 @@ describe('generated provider HTTP conformance', () => {
           ['sign', 'verify'],
         );
         const mixedProvider: SigningKeyProvider = {
-          // Active key is RS256; the registered set also holds an ES256 key.
-          async getSigningKey(): Promise<SigningKey> {
-            return {
-              privateKey: rs256Pair.privateKey,
-              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
-              keyId: 'device-rs256',
-            };
-          },
+          // The RS256 key comes first (it signs new tokens); the set also holds an ES256 key.
           async getSigningKeys(): Promise<SigningKey[]> {
             return [
               {
@@ -6648,8 +6693,8 @@ describe('generated provider HTTP conformance', () => {
       // A client may register id_token_signed_response_alg, and the standard
       // grants pick a registered key matching it. The CIBA grant MUST NOT
       // diverge: signing this client's ID Token with whichever key happens to
-      // be ACTIVE would hand it an RS256 token it rejects, and would compute
-      // at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      // be first in the set would hand it an RS256 token it rejects, and would
+      // compute at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
       it('should sign the CIBA grant ID Token with the alg the client registered', async () => {
         const rs256Pair = await crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
@@ -6662,14 +6707,7 @@ describe('generated provider HTTP conformance', () => {
           ['sign', 'verify'],
         );
         const mixedProvider: SigningKeyProvider = {
-          // Active key is RS256; the registered set also holds an ES256 key.
-          async getSigningKey(): Promise<SigningKey> {
-            return {
-              privateKey: rs256Pair.privateKey,
-              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
-              keyId: 'ciba-rs256',
-            };
-          },
+          // The RS256 key comes first (it signs new tokens); the set also holds an ES256 key.
           async getSigningKeys(): Promise<SigningKey[]> {
             return [
               {
@@ -6856,15 +6894,15 @@ describe('generated provider HTTP conformance', () => {
     }
 
     describe('Signing key selection (JARM Section 3)', () => {
-      // A SigningKeyProvider may legitimately return an ES256 active key next to
-      // a registered set that also holds RS256 — packages/core's
-      // SigningKeyProvider contract documents alternate-alg key sets, and only
-      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
-      // JARM response JWT always declares alg RS256, so it must be signed with
-      // the RS256 key from that set: signing it with whichever key happens to be
-      // active would make Web Crypto refuse and break the authorization response
-      // delivery path for every client that asked for a JWT response mode.
-      it('should sign with the registered RS256 key when the active key is ES256', async () => {
+      // A SigningKeyProvider may legitimately put an ES256 key first in a set
+      // that also holds RS256 — packages/core's SigningKeyProvider contract
+      // documents alternate-alg key sets, and only the SET is required to
+      // contain RS256 (OIDC Core 1.0 Section 15.1). The JARM response JWT always
+      // declares alg RS256, so it must be signed with the RS256 key from that
+      // set: signing it with whichever key happens to be first would make Web
+      // Crypto refuse and break the authorization response delivery path for
+      // every client that asked for a JWT response mode.
+      it('should sign with the registered RS256 key when the first key is ES256', async () => {
         const rs256Pair = await crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
           true,
@@ -6886,12 +6924,9 @@ describe('generated provider HTTP conformance', () => {
           keyId: 'mixed-es256',
         };
         const mixedProvider: SigningKeyProvider = {
-          // Active key is the ES256 one; the registered set holds both.
-          async getSigningKey(): Promise<SigningKey> {
-            return es256Key;
-          },
+          // The ES256 key comes first (it signs new tokens); the set holds both.
           async getSigningKeys(): Promise<SigningKey[]> {
-            return [rs256Key, es256Key];
+            return [es256Key, rs256Key];
           },
         };
         const mixedApp = createApp({

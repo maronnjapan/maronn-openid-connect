@@ -104,8 +104,8 @@ online refresh token を発行せず offline のみに戻すには、`ProviderCo
 ## Signing Keys
 
 - ID Token 署名は RS256（Basic OP 必須アルゴリズム）
-- 署名鍵は `SigningKeyProvider` インターフェースで注入。TTL 付きキャッシュ（`createCachedSigningKeyProvider`）で鍵ローテーションに追随
-- ローテーション済み鍵・複数アルゴリズムの鍵を JWKS / Discovery で広告可能
+- 署名鍵は `SigningKeyProvider` インターフェース（`getSigningKeys()` が鍵の配列を返す）で注入。配列の先頭の鍵で新しいトークンに署名する。TTL 付きキャッシュ（`createCachedSigningKeyProvider`）で鍵ローテーションに追随
+- 配列の 2 本目以降としてローテーション済み鍵・複数アルゴリズムの鍵を JWKS / Discovery で広告可能
 - JWK エクスポートは公開鍵パラメータのみ（秘密鍵パラメータは型レベルで排除）
 
 ## Provider Config

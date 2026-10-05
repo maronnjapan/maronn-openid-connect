@@ -219,15 +219,15 @@ import { jarmConfig } from '../_oidc-provider/jarm';`
     }
     if (jarmResolution.kind === 'jarm') {
       // JARM §3: the response JWT declares alg RS256 (the default for a client
-      // that registered no authorization_signed_response_alg). The active key is
-      // not guaranteed to be RS256, so the key is picked by alg from the
-      // registered set — its public half is published at /.well-known/jwks.json
-      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
+      // that registered no authorization_signed_response_alg). The first key of
+      // the set is not guaranteed to be RS256, so the key is picked by alg from
+      // the set — its public half is published at /.well-known/jwks.json under
+      // the same kid. selectSigningKeyByAlg throws when no RS256 key is
       // registered, which surfaces as a server_error (a configuration mistake).
       jarmResponse = {
         issuer,
         clientId: client.clientId,
-        signingKey: selectSigningKeyByAlg(keys.general.registered, 'RS256'),
+        signingKey: selectSigningKeyByAlg(keys.general, 'RS256'),
       };
     }
 

@@ -134,9 +134,6 @@ export default app;
 function createEphemeralRs256KeyProvider(keyId = 'hono-cloudflare-rs256-key'): SigningKeyProvider {
   const keyPromise = generateSigningKey(keyId);
   return {
-    async getSigningKey(): Promise<SigningKey> {
-      return keyPromise;
-    },
     async getSigningKeys(): Promise<SigningKey[]> {
       return [await keyPromise];
     },

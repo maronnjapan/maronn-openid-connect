@@ -577,8 +577,8 @@ ${refreshIssuanceDecision}    // --- Token response pipeline -------------------
     // JWT or opaque, as chosen by config.accessTokenFormat (provider.ts).
     const accessToken = await accessTokenIssuer.issue({
       payload: accessTokenPayload,
-      privateKey: keys.general.active.privateKey,
-      keyId: keys.general.active.keyId,
+      privateKey: keys.general[0].privateKey,
+      keyId: keys.general[0].keyId,
     });
 
     // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
@@ -783,8 +783,8 @@ export async function exchangeToken(
       // Impersonation exchanges carry no act claim.
       ...(grant.actor === undefined ? {} : { act: grant.actor }),
     },
-    privateKey: keys.general.active.privateKey,
-    keyId: keys.general.active.keyId,
+    privateKey: keys.general[0].privateKey,
+    keyId: keys.general[0].keyId,
   });
 
   const metadata: ExchangedAccessTokenInfo = {
@@ -965,10 +965,10 @@ export async function issueIdJag(
 ): Promise<Response> {
   // Signed with a registered RS256 key so the peer AS can verify it against
   // this OP's JWKS endpoint (same key-selection contract as JARM: RS256 is
-  // pinned, the active key may be a different alg).
+  // pinned, the first key of the set may be another alg).
   let signingKey: SigningKey;
   try {
-    signingKey = selectSigningKeyByAlg(keys.general.registered, 'RS256');
+    signingKey = selectSigningKeyByAlg(keys.general, 'RS256');
   } catch {
     return oauthError('server_error', 'No RS256 signing key registered for ID-JAG issuance', 500);
   }
@@ -1046,8 +1046,8 @@ export async function redeemIdJag(
       // (dropping it would silently turn the delegation into impersonation).
       ...(grant.actor === undefined ? {} : { act: grant.actor }),
     },
-    privateKey: keys.general.active.privateKey,
-    keyId: keys.general.active.keyId,
+    privateKey: keys.general[0].privateKey,
+    keyId: keys.general[0].keyId,
   });
 
   const metadata: IdJagAccessTokenInfo = {
@@ -1138,7 +1138,7 @@ function approvedGrantTokens(input: {
 }): string {
   return `  // T-022: the ID Token follows the same key-selection rule as the standard
   // grants — the registered ID Token key whose alg matches the client's
-  // id_token_signed_response_alg, not the general-purpose active key.
+  // id_token_signed_response_alg, not simply the first key of the set.
   const idTokenAlg = (client as RegisteredClient).idTokenSignedResponseAlg;
   const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);
   if (!idTokenKey) {
@@ -1168,8 +1168,8 @@ function approvedGrantTokens(input: {
   });
   const accessToken = await accessTokenIssuer.issue({
     payload: accessTokenPayload,
-    privateKey: keys.general.active.privateKey,
-    keyId: keys.general.active.keyId,
+    privateKey: keys.general[0].privateKey,
+    keyId: keys.general[0].keyId,
   });
 
   // ${input.idTokenNote}

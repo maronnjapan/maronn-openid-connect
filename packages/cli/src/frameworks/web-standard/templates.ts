@@ -596,7 +596,6 @@ ${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  getRegisteredSigningKeys,
   signingKeysToJwkSet,
 } from '${corePkg}';
 import type {
@@ -638,6 +637,10 @@ export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): void {
+  // The first key of a set signs new tokens, so a set needs at least one key.
+  if (keys.length === 0) {
+    throw new Error('Signing key set must contain at least one key');
+  }
   assertKeyStrength(keys);
   assertKidStrategyConsistent(keys);
   if (requireRs256) {
@@ -667,21 +670,17 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
-    let signingKey;
-    let idTokenSigningKey;
-    let userinfoSigningKey;
+    // Each provider returns its registered key set. The first key of a set
+    // signs new tokens, and every key is published at the JWKS endpoint.
     let signingKeys;
     let idTokenSigningKeys;
     let userinfoSigningKeys;
     try {
-      signingKey = await options.signingKeyProvider.getSigningKey();
-      signingKeys = await getRegisteredSigningKeys(options.signingKeyProvider);
+      signingKeys = await options.signingKeyProvider.getSigningKeys();
       const idProvider = options.idTokenSigningKeyProvider ?? options.signingKeyProvider;
-      idTokenSigningKey = await idProvider.getSigningKey();
-      idTokenSigningKeys = await getRegisteredSigningKeys(idProvider);
+      idTokenSigningKeys = await idProvider.getSigningKeys();
       const uiProvider = options.userinfoSigningKeyProvider ?? options.signingKeyProvider;
-      userinfoSigningKey = await uiProvider.getSigningKey();
-      userinfoSigningKeys = await getRegisteredSigningKeys(uiProvider);
+      userinfoSigningKeys = await uiProvider.getSigningKeys();
       validateSigningKeySet(signingKeys);
       validateSigningKeySet(idTokenSigningKeys, true);
       validateSigningKeySet(userinfoSigningKeys);
@@ -689,21 +688,11 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-    const { privateKey, publicJwk, keyId } = signingKey;
     const clientResolver =
       options.clientResolver ?? createInMemoryClientResolver();
     const stores = options.storage ?? defaultProviderStores;
     const storeResolvers = createStoreResolvers(stores);
 
-    c.set('privateKey', privateKey);
-    c.set('publicJwk', publicJwk);
-    c.set('keyId', keyId);
-    c.set('idTokenPrivateKey', idTokenSigningKey.privateKey);
-    c.set('idTokenPublicJwk', idTokenSigningKey.publicJwk);
-    c.set('idTokenKeyId', idTokenSigningKey.keyId);
-    c.set('userinfoPrivateKey', userinfoSigningKey.privateKey);
-    c.set('userinfoPublicJwk', userinfoSigningKey.publicJwk);
-    c.set('userinfoKeyId', userinfoSigningKey.keyId);
     c.set('signingKeys', signingKeys);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
     c.set('userinfoSigningKeys', userinfoSigningKeys);
@@ -1110,8 +1099,8 @@ beforeAll(async () => {
   );
   const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
   signingKeyProvider = {
-    async getSigningKey(): Promise<SigningKey> {
-      return { privateKey: keyPair.privateKey, publicJwk, keyId: 'test-key' };
+    async getSigningKeys(): Promise<SigningKey[]> {
+      return [{ privateKey: keyPair.privateKey, publicJwk, keyId: 'test-key' }];
     },
   };
 ${requestObjectConformanceBeforeAll(features)}
@@ -1200,9 +1189,6 @@ ${nodeAdapterContract}
         keyId: 'weak-runtime-key',
       };
       const weakProvider: SigningKeyProvider = {
-        async getSigningKey(): Promise<SigningKey> {
-          return weakKey;
-        },
         async getSigningKeys(): Promise<SigningKey[]> {
           return [weakKey];
         },
@@ -1244,6 +1230,59 @@ ${nodeAdapterContract}
       expect(() => validateSigningKeySet([key, key])).toThrow(
         'Duplicate kid in signing key set: duplicate-key (RFC 7517 §4.5)',
       );
+    });
+
+    // The first key of a set signs new tokens, so a provider that returns no
+    // key leaves nothing to sign with: it is refused when the keys are loaded,
+    // like a weak key, instead of failing later inside an endpoint.
+    it('should reject an empty signing key set', async () => {
+      const emptyProvider: SigningKeyProvider = {
+        async getSigningKeys(): Promise<SigningKey[]> {
+          return [];
+        },
+      };
+      const res = await createApp({ signingKeyProvider: emptyProvider }).request(
+        '/.well-known/openid-configuration',
+      );
+
+      expect(() => validateSigningKeySet([])).toThrow('Signing key set must contain at least one key');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        error: 'server_error',
+        error_description: 'Failed to load signing key',
+      });
+    });
+
+    // A rotation puts the new key first (it signs new tokens) and keeps the
+    // previous key after it, so tokens the previous key signed keep verifying
+    // until they expire: both are published, in the order of the set.
+    it('should publish every key of a rotated key set at the JWKS endpoint', async () => {
+      async function rsaSigningKey(keyId: string): Promise<SigningKey> {
+        const pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        return {
+          privateKey: pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
+          keyId,
+        };
+      }
+      const currentKey = await rsaSigningKey('current-key');
+      const previousKey = await rsaSigningKey('previous-key');
+      const rotatedProvider: SigningKeyProvider = {
+        async getSigningKeys(): Promise<SigningKey[]> {
+          return [currentKey, previousKey];
+        },
+      };
+      const res = await createApp({ signingKeyProvider: rotatedProvider }).request(
+        '/.well-known/jwks.json',
+      );
+      const jwks = (await res.json()) as { keys: { kid?: string }[] };
+
+      expect(res.status).toBe(200);
+      expect(jwks.keys.map((key) => key.kid)).toEqual(['current-key', 'previous-key']);
     });
   });
 

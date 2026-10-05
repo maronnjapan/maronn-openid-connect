@@ -276,7 +276,6 @@ ${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  getRegisteredSigningKeys,
   signingKeysToJwkSet,
 } from '${_corePkg}';
 import type {
@@ -295,11 +294,13 @@ export type CorsOrigins = string | string[];
 export interface CreateAppOptions {
   config?: Partial<ProviderConfig>;
   /**
-   * Provider for the RSA signing key pair.
+   * Primary signing key provider. getSigningKeys() returns the registered
+   * keys: the first one signs access tokens (JWT format), and every one is
+   * published at the JWKS endpoint, so keep a rotated-out key after the new one
+   * until the tokens it signed expire. Also used for ID Token / UserInfo
+   * signing when their dedicated providers are not configured.
    * Must load keys from your secret store (env var, KV, D1, etc.).
-   * Use createCachedSigningKeyProvider() to refresh the key periodically.
-   * Note: JWKS serves only the current key. Tokens signed with a rotated-out
-   * key will fail verification after the provider returns a new key.
+   * Use createCachedSigningKeyProvider() to refresh the keys periodically.
    */
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
@@ -341,6 +342,10 @@ export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): void {
+  // The first key of a set signs new tokens, so a set needs at least one key.
+  if (keys.length === 0) {
+    throw new Error('Signing key set must contain at least one key');
+  }
   assertKeyStrength(keys);
   assertKidStrategyConsistent(keys);
   if (requireRs256) {
@@ -376,45 +381,31 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
 
   // Store runtime dependencies for use by routes.
   app.use('*', async (c, next) => {
-    let signingKey;
-    let idTokenSigningKey;
-    let userinfoSigningKey;
+    // T-022: each provider returns its registered key set. The first key of a
+    // set signs new tokens, and every key is published at the JWKS endpoint so
+    // rotated-out and alternate-alg keys stay verifiable.
     let signingKeys;
     let idTokenSigningKeys;
     let userinfoSigningKeys;
     try {
-      signingKey = await options.signingKeyProvider.getSigningKey();
-      // T-022: surface every registered key so JWKS/Discovery can advertise
-      // rotated-out and alternate-alg keys, not just the active signing key.
-      signingKeys = await getRegisteredSigningKeys(options.signingKeyProvider);
+      signingKeys = await options.signingKeyProvider.getSigningKeys();
+      // Each purpose-specific provider falls back to the primary one.
       const idProvider = options.idTokenSigningKeyProvider ?? options.signingKeyProvider;
-      idTokenSigningKey = await idProvider.getSigningKey();
-      idTokenSigningKeys = await getRegisteredSigningKeys(idProvider);
+      idTokenSigningKeys = await idProvider.getSigningKeys();
       const uiProvider = options.userinfoSigningKeyProvider ?? options.signingKeyProvider;
-      userinfoSigningKey = await uiProvider.getSigningKey();
-      userinfoSigningKeys = await getRegisteredSigningKeys(uiProvider);
+      userinfoSigningKeys = await uiProvider.getSigningKeys();
       validateSigningKeySet(signingKeys);
       validateSigningKeySet(idTokenSigningKeys, true);
       validateSigningKeySet(userinfoSigningKeys);
     } catch {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
-    const { privateKey, publicJwk, keyId } = signingKey;
     const clientResolver =
       options.clientResolver ?? createInMemoryClientResolver();
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
-    c.set('privateKey', privateKey);
-    c.set('publicJwk', publicJwk);
-    c.set('keyId', keyId);
     c.set('signingKeys', signingKeys);
-    c.set('idTokenPrivateKey', idTokenSigningKey.privateKey);
-    c.set('idTokenPublicJwk', idTokenSigningKey.publicJwk);
-    c.set('idTokenKeyId', idTokenSigningKey.keyId);
-    c.set('userinfoPrivateKey', userinfoSigningKey.privateKey);
-    c.set('userinfoPublicJwk', userinfoSigningKey.publicJwk);
-    c.set('userinfoKeyId', userinfoSigningKey.keyId);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
     c.set('userinfoSigningKeys', userinfoSigningKeys);
     c.set('config', createProviderConfig(options.config));
@@ -2904,27 +2895,18 @@ import { jarmConfig } from './jarm.js';`
       // JARM §3: this OP declares alg RS256 on every response JWT (the default
       // for a client that registered no authorization_signed_response_alg), and
       // discovery advertises authorization_signing_alg_values_supported:
-      // ['RS256']. The general-purpose ACTIVE key is not guaranteed to be RS256 —
-      // SigningKeyProvider may legitimately return ES256 as active alongside an
-      // RS256 + ES256 registered set — so the key is picked by alg from the
-      // registered set. Its public half is published at /.well-known/jwks.json
-      // under the same kid. selectSigningKeyByAlg throws when no RS256 key is
-      // registered, which surfaces as a server_error here (a configuration
-      // mistake) rather than as an unverifiable authorization response.
+      // ['RS256']. The first key of the general-purpose set is not guaranteed to
+      // be RS256 — a SigningKeyProvider may legitimately put an ES256 key first
+      // in an RS256 + ES256 set — so the key is picked by alg from the set. Its
+      // public half is published at /.well-known/jwks.json under the same kid.
+      // selectSigningKeyByAlg throws when no RS256 key is registered, which
+      // surfaces as a server_error here (a configuration mistake) rather than
+      // as an unverifiable authorization response.
       const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
       jarmResponse = {
         issuer,
         clientId: client.clientId,
-        // Falls back to the single-key context so a hand-wired provider that
-        // never populated the key set keeps working; on the default single
-        // RS256 key both branches resolve the same key.
-        signingKey: jarmSigningKeys.length > 0
-          ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
-          : {
-              privateKey: c.get('privateKey'),
-              publicJwk: c.get('publicJwk'),
-              keyId: c.get('keyId'),
-            },
+        signingKey: selectSigningKeyByAlg(jarmSigningKeys, 'RS256'),
       };
     }
 
@@ -5560,10 +5542,12 @@ export const tokenExchangeConfig = {
     // §3.2), so only a single value of each is supported.
     if (params.grant_type === TOKEN_EXCHANGE_GRANT_TYPE) {
       const accessTokenResolver = c.get('accessTokenResolver') ?? defaultAccessTokenResolver;
-      // config / privateKey / keyId are bound further down for the standard
+      // config and the signing key are bound further down for the standard
       // grants. This branch reads them on its own so the generated output is
       // unchanged when the feature is off; it returns, so nothing runs twice.
       const exchangeConfig = c.get('config');
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const exchangeSigningKey: SigningKey = c.get('signingKeys')[0];
       const exchangeIssuer: AccessTokenIssuer =
         exchangeConfig.accessTokenFormat === 'opaque'
           ? createOpaqueAccessTokenIssuer()
@@ -5607,8 +5591,8 @@ export const tokenExchangeConfig = {
           // Impersonation exchanges carry no act claim.
           ...(grant.actor === undefined ? {} : { act: grant.actor }),
         },
-        privateKey: c.get('privateKey'),
-        keyId: c.get('keyId'),
+        privateKey: exchangeSigningKey.privateKey,
+        keyId: exchangeSigningKey.keyId,
       });
 
       const exchangeMetadata: ExchangedAccessTokenInfo = {
@@ -5730,52 +5714,38 @@ import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../
         store: deviceStore,
       });
 
-      // config / privateKey / keyId are bound further down for the standard
+      // config and the signing keys are bound further down for the standard
       // grants. This branch reads them on its own so the generated output is
       // unchanged when the feature is off; it returns, so nothing runs twice.
       const deviceConfig = c.get('config');
-      const devicePrivateKey = c.get('privateKey');
-      const deviceKeyId = c.get('keyId');
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const deviceSigningKey: SigningKey = c.get('signingKeys')[0];
+      const devicePrivateKey = deviceSigningKey.privateKey;
+      const deviceKeyId = deviceSigningKey.keyId;
       // T-022: the ID Token this grant issues follows the SAME key-selection rule
       // as the standard grants — pick a registered ID Token key whose alg matches
       // the client's id_token_signed_response_alg (OIDC Dynamic Client
-      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
-      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // Registration 1.0 §2), not simply the first key of the set. Using the
+      // first key would hand an ES256-registered client an RS256 ID Token, which
       // it rejects, and would hash at_hash with the wrong algorithm.
       const deviceIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-      const deviceFallbackIdKey: SigningKey | undefined =
-        c.get('idTokenPrivateKey') !== undefined
-          ? {
-              privateKey: c.get('idTokenPrivateKey'),
-              publicJwk: c.get('idTokenPublicJwk'),
-              keyId: c.get('idTokenKeyId') ?? deviceKeyId,
-            }
-          : undefined;
       const deviceRegisteredClient = (await tokenClientResolver.findClient(
         authenticatedClientId,
       )) as RegisteredClient | null;
       const deviceRequestedIdTokenAlg = deviceRegisteredClient?.idTokenSignedResponseAlg;
       let deviceSelectedIdTokenKey: SigningKey;
-      if (deviceIdTokenSigningKeys.length > 0) {
-        try {
-          deviceSelectedIdTokenKey = selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg);
-        } catch {
-          c.header('Cache-Control', 'no-store');
-          c.header('Pragma', 'no-cache');
-          return c.json(
-            {
-              error: 'server_error',
-              error_description: \`No ID Token signing key registered for alg "\${deviceRequestedIdTokenAlg ?? 'RS256'}"\`,
-            },
-            500,
-          );
-        }
-      } else if (deviceFallbackIdKey) {
-        deviceSelectedIdTokenKey = deviceFallbackIdKey;
-      } else {
+      try {
+        deviceSelectedIdTokenKey = selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg);
+      } catch {
         c.header('Cache-Control', 'no-store');
         c.header('Pragma', 'no-cache');
-        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: \`No ID Token signing key registered for alg "\${deviceRequestedIdTokenAlg ?? 'RS256'}"\`,
+          },
+          500,
+        );
       }
       const deviceIdTokenPrivateKey = deviceSelectedIdTokenKey.privateKey;
       const deviceIdTokenKeyId = deviceSelectedIdTokenKey.keyId;
@@ -5944,52 +5914,38 @@ import { cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore
         store: cibaStore,
       });
 
-      // config / privateKey / keyId are bound further down for the standard
+      // config and the signing keys are bound further down for the standard
       // grants. This branch reads them on its own so the generated output is
       // unchanged when the feature is off; it returns, so nothing runs twice.
       const cibaTokenConfig = c.get('config');
-      const cibaPrivateKey = c.get('privateKey');
-      const cibaKeyId = c.get('keyId');
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const cibaSigningKey: SigningKey = c.get('signingKeys')[0];
+      const cibaPrivateKey = cibaSigningKey.privateKey;
+      const cibaKeyId = cibaSigningKey.keyId;
       // T-022: the ID Token this grant issues follows the SAME key-selection rule
       // as the standard grants — pick a registered ID Token key whose alg matches
       // the client's id_token_signed_response_alg (OIDC Dynamic Client
-      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
-      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // Registration 1.0 §2), not simply the first key of the set. Using the
+      // first key would hand an ES256-registered client an RS256 ID Token, which
       // it rejects, and would hash at_hash with the wrong algorithm.
       const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-      const cibaFallbackIdKey: SigningKey | undefined =
-        c.get('idTokenPrivateKey') !== undefined
-          ? {
-              privateKey: c.get('idTokenPrivateKey'),
-              publicJwk: c.get('idTokenPublicJwk'),
-              keyId: c.get('idTokenKeyId') ?? cibaKeyId,
-            }
-          : undefined;
       const cibaRegisteredClient = (await tokenClientResolver.findClient(
         authenticatedClientId,
       )) as RegisteredClient | null;
       const cibaRequestedIdTokenAlg = cibaRegisteredClient?.idTokenSignedResponseAlg;
       let cibaSelectedIdTokenKey: SigningKey;
-      if (cibaIdTokenSigningKeys.length > 0) {
-        try {
-          cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
-        } catch {
-          c.header('Cache-Control', 'no-store');
-          c.header('Pragma', 'no-cache');
-          return c.json(
-            {
-              error: 'server_error',
-              error_description: \`No ID Token signing key registered for alg "\${cibaRequestedIdTokenAlg ?? 'RS256'}"\`,
-            },
-            500,
-          );
-        }
-      } else if (cibaFallbackIdKey) {
-        cibaSelectedIdTokenKey = cibaFallbackIdKey;
-      } else {
+      try {
+        cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
+      } catch {
         c.header('Cache-Control', 'no-store');
         c.header('Pragma', 'no-cache');
-        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: \`No ID Token signing key registered for alg "\${cibaRequestedIdTokenAlg ?? 'RS256'}"\`,
+          },
+          500,
+        );
       }
       const cibaIdTokenPrivateKey = cibaSelectedIdTokenKey.privateKey;
       const cibaIdTokenKeyId = cibaSelectedIdTokenKey.keyId;
@@ -6334,7 +6290,7 @@ async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIdentityPr
       const idJagIssuanceConfig = c.get('config');
       // The ID-JAG is signed with a registered RS256 key so the peer AS can
       // verify it against this OP's JWKS endpoint (same key-selection contract
-      // as JARM: RS256 is pinned, the active key may be a different alg).
+      // as JARM: RS256 is pinned, the first key of the set may be another alg).
       const idJagSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
       let idJagSigningKey: SigningKey;
       try {
@@ -6404,9 +6360,11 @@ ${idJagTokenExchangeFallbackStep}`
         configuredExpiresIn: idJagRedemptionConfig.accessTokenExpiresIn,
       });
 
-      // config / privateKey / keyId are bound further down for the standard
+      // config and the signing key are bound further down for the standard
       // grants. This branch reads them on its own so the generated output is
       // unchanged when the feature is off; it returns, so nothing runs twice.
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const idJagAccessTokenSigningKey: SigningKey = c.get('signingKeys')[0];
       const idJagTokenIssuer: AccessTokenIssuer =
         idJagRedemptionConfig.accessTokenFormat === 'opaque'
           ? createOpaqueAccessTokenIssuer()
@@ -6440,8 +6398,8 @@ ${idJagTokenExchangeFallbackStep}`
           // delegation into impersonation).
           ...(idJagGrant.actor === undefined ? {} : { act: idJagGrant.actor }),
         },
-        privateKey: c.get('privateKey'),
-        keyId: c.get('keyId'),
+        privateKey: idJagAccessTokenSigningKey.privateKey,
+        keyId: idJagAccessTokenSigningKey.keyId,
       });
 
       const idJagAccessTokenMetadata: IdJagAccessTokenInfo = {
@@ -6660,43 +6618,31 @@ ${grantTypeSupportedStep}
 ${grantValidationStep}
 
     const config = c.get('config');
-    const privateKey = c.get('privateKey');
-    const keyId = c.get('keyId');
+    // The first registered key signs new tokens (SigningKeyProvider contract).
+    const signingKey: SigningKey = c.get('signingKeys')[0];
+    const privateKey = signingKey.privateKey;
+    const keyId = signingKey.keyId;
 
     // T-022: pick an ID Token signing key whose alg matches the client's
     // id_token_signed_response_alg (OIDC Dynamic Client Registration §2).
     // - 未指定クライアントは OIDC 仕様デフォルトの RS256 で扱う。
     // - alg に合う鍵が登録されていなければサーバ設定エラー (server_error)。
     const idTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-    const fallbackIdKey: SigningKey | undefined =
-      c.get('idTokenPrivateKey') !== undefined
-        ? {
-            privateKey: c.get('idTokenPrivateKey'),
-            publicJwk: c.get('idTokenPublicJwk'),
-            keyId: c.get('idTokenKeyId') ?? keyId,
-          }
-        : undefined;
     const registeredClient = (await tokenClientResolver.findClient(authenticatedClientId)) as
       | RegisteredClient
       | null;
     const requestedIdTokenAlg = registeredClient?.idTokenSignedResponseAlg;
     let selectedIdTokenKey: SigningKey;
-    if (idTokenSigningKeys.length > 0) {
-      try {
-        selectedIdTokenKey = selectSigningKeyByAlg(idTokenSigningKeys, requestedIdTokenAlg);
-      } catch {
-        return c.json(
-          {
-            error: 'server_error',
-            error_description: \`No ID Token signing key registered for alg "\${requestedIdTokenAlg ?? 'RS256'}"\`,
-          },
-          500,
-        );
-      }
-    } else if (fallbackIdKey) {
-      selectedIdTokenKey = fallbackIdKey;
-    } else {
-      return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+    try {
+      selectedIdTokenKey = selectSigningKeyByAlg(idTokenSigningKeys, requestedIdTokenAlg);
+    } catch {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: \`No ID Token signing key registered for alg "\${requestedIdTokenAlg ?? 'RS256'}"\`,
+        },
+        500,
+      );
     }
     const idTokenPrivateKey = selectedIdTokenKey.privateKey;
     const idTokenKeyId = selectedIdTokenKey.keyId;
@@ -7059,42 +7005,14 @@ const handler = async (c: any) => {
       // OIDC Core 1.0 §5.3.2: when the client registered userinfo_signed_response_alg,
       // the UserInfo Response MUST be a JWS signed with THAT alg (RS256, ES256, ...),
       // not unconditionally RS256. Pick a registered UserInfo signing key whose alg
-      // matches the request — mirroring the ID Token key selection. The per-purpose
-      // userinfoSigningKeys set is preferred; otherwise fall back to a single
-      // configured key kept as ONE unit so its kid stays paired with its private key.
-      // The fallback key is alg-checked too, so a request whose alg has no matching
-      // key is a server configuration error (never silently signed with another alg).
+      // matches the request — mirroring the ID Token key selection. A request whose
+      // alg has no matching key is a server configuration error (never silently
+      // signed with another alg).
       const config = c.get('config');
       const userinfoSigningKeys = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
-      const fallbackUserinfoKey: SigningKey | undefined =
-        c.get('userinfoPrivateKey') !== undefined
-          ? {
-              privateKey: c.get('userinfoPrivateKey'),
-              publicJwk: c.get('userinfoPublicJwk'),
-              keyId: c.get('userinfoKeyId'),
-            }
-          : c.get('privateKey') !== undefined
-            ? {
-                privateKey: c.get('privateKey'),
-                publicJwk: c.get('publicJwk'),
-                keyId: c.get('keyId'),
-              }
-            : undefined;
-      const candidateUserinfoKeys =
-        userinfoSigningKeys.length > 0
-          ? userinfoSigningKeys
-          : fallbackUserinfoKey
-            ? [fallbackUserinfoKey]
-            : [];
-      if (candidateUserinfoKeys.length === 0) {
-        return c.json(
-          { error: 'server_error', error_description: 'No UserInfo signing key registered' },
-          500,
-        );
-      }
       let selectedUserinfoKey: SigningKey;
       try {
-        selectedUserinfoKey = selectSigningKeyByAlg(candidateUserinfoKeys, requestedUserinfoAlg);
+        selectedUserinfoKey = selectSigningKeyByAlg(userinfoSigningKeys, requestedUserinfoAlg);
       } catch {
         return c.json(
           {
@@ -7146,73 +7064,31 @@ export const jwksApp = new Hono<{ Variables: Record<string, any> }>();
  * JWKS Endpoint
  * Serves the public keys used to verify token signatures.
  *
- * T-022: per-purpose key arrays (signingKeys / idTokenSigningKeys / userinfoSigningKeys)
- * are flattened and exposed so rotated-out keys remain verifiable until tokens
- * signed with them expire. kid 指定がある鍵は kid で重複排除し、kid 未指定の
- * 鍵は最新（最後に投入された）1 件のみ採用する。
+ * T-022: every key of the per-purpose key sets (signingKeys / idTokenSigningKeys /
+ * userinfoSigningKeys) is published so rotated-out keys remain verifiable until
+ * tokens signed with them expire. kid 指定がある鍵は kid で重複排除し、kid 未指定の
+ * 鍵は最新の 1 件のみ採用する（鍵セットは新しい鍵ほど先頭にある）。
  */
 jwksApp.get('/', async (c) => {
-  // 旧 single-key context をフォールバックとして温存することで、createApp 経路や
-  // 一部だけ手書きされた route も従来どおり動く。
-  const signingKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
-  const idTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-  const userinfoSigningKeys = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
+  const keys: SigningKey[] = [
+    ...((c.get('signingKeys') as SigningKey[] | undefined) ?? []),
+    ...((c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? []),
+    ...((c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? []),
+  ];
 
-  const candidates: { jwk: JsonWebKey; kid: string | undefined }[] = [];
-  const pushAll = (keys: SigningKey[]) => {
-    for (const k of keys) {
-      candidates.push({ jwk: k.publicJwk as JsonWebKey, kid: k.keyId });
-    }
-  };
-  if (signingKeys.length > 0) {
-    pushAll(signingKeys);
-  } else {
-    const publicJwk = c.get('publicJwk');
-    const keyId = c.get('keyId');
-    if (publicJwk) {
-      candidates.push({ jwk: publicJwk, kid: keyId });
-    }
-  }
-  if (idTokenSigningKeys.length > 0) {
-    pushAll(idTokenSigningKeys);
-  } else {
-    const idTokenPublicJwk = c.get('idTokenPublicJwk');
-    const idTokenKeyId = c.get('idTokenKeyId');
-    if (idTokenPublicJwk) {
-      candidates.push({ jwk: idTokenPublicJwk, kid: idTokenKeyId });
-    }
-  }
-  if (userinfoSigningKeys.length > 0) {
-    pushAll(userinfoSigningKeys);
-  } else {
-    const userinfoPublicJwk = c.get('userinfoPublicJwk');
-    const userinfoKeyId = c.get('userinfoKeyId');
-    if (userinfoPublicJwk) {
-      candidates.push({ jwk: userinfoPublicJwk, kid: userinfoKeyId });
-    }
-  }
-
-  if (candidates.length === 0) {
+  if (keys.length === 0) {
     return c.json({ error: 'server_error' }, 500);
   }
 
-  // kid 指定がある鍵は最初に出現したものを採用（重複排除）。
-  // kid 未指定の鍵は最後に投入された 1 件のみ採用（最新性を優先）。
+  // 同じ kid の鍵は最初に出現したものだけを採用する（ID Token / UserInfo 用の
+  // プロバイダは既定で汎用プロバイダと同じ鍵を返すため）。kid 未指定の鍵も同様に
+  // 最初の 1 件（= 最新）だけを採用する。
   const seenKids = new Set<string>();
-  let lastUndefinedIndex = -1;
-  for (let i = 0; i < candidates.length; i++) {
-    if (candidates[i]!.kid === undefined) lastUndefinedIndex = i;
-  }
-
   const entries: { publicKey: CryptoKey; keyId?: string }[] = [];
-  for (let i = 0; i < candidates.length; i++) {
-    const { jwk, kid } = candidates[i]!;
-    if (kid === undefined) {
-      if (i !== lastUndefinedIndex) continue;
-    } else {
-      if (seenKids.has(kid)) continue;
-      seenKids.add(kid);
-    }
+  for (const key of keys) {
+    if (seenKids.has(key.keyId)) continue;
+    seenKids.add(key.keyId);
+    const jwk = key.publicJwk as JsonWebKey;
     const algParams = extractAlgorithmParamsFromJwk(jwk);
     const publicKey = await crypto.subtle.importKey(
       'jwk',
@@ -7221,7 +7097,7 @@ jwksApp.get('/', async (c) => {
       true,
       ['verify'],
     );
-    entries.push({ publicKey, keyId: kid });
+    entries.push({ publicKey, keyId: key.keyId });
   }
 
   const jwks = await exportJwks(entries);
@@ -7444,22 +7320,17 @@ discoveryApp.get('/', (c) => {
   // Derive id_token_signing_alg_values_supported from the actual key set
   // (OIDC Core 1.0 §15.1 — RS256 presence is enforced by buildProviderMetadata).
   // T-022: 全 registered ID Token 鍵の alg を集約することで RS256+ES256 など
-  // 混在鍵セットも正しく advertise できる。フォールバックは旧 single-key context。
+  // 混在鍵セットも正しく advertise できる。
   const idTokenSigningKeyArr = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-  const idTokenSigningKeys: CryptoKey[] = idTokenSigningKeyArr.length > 0
-    ? idTokenSigningKeyArr.map((k) => k.privateKey)
-    : (c.get('idTokenPrivateKey') ?? c.get('privateKey'))
-      ? [c.get('idTokenPrivateKey') ?? c.get('privateKey')]
-      : [];
+  const idTokenSigningKeys: CryptoKey[] = idTokenSigningKeyArr.map((k) => k.privateKey);
 
   // OIDC Core 1.0 §5.3.2 / §3 discovery: advertise the UserInfo signing algs the OP
   // can actually sign with, derived from the registered UserInfo key set (RS256,
   // ES256, ...), so userinfo_signed_response_alg clients can rely on metadata.
-  // Defaults to ['RS256'] when no per-purpose key set is wired into context.
   const userinfoSigningKeyArr = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
-  const userinfoSigningAlgValues = userinfoSigningKeyArr.length > 0
-    ? [...new Set(userinfoSigningKeyArr.map((k) => getJwaAlgorithm(k.privateKey)))]
-    : ['RS256'];
+  const userinfoSigningAlgValues = [
+    ...new Set(userinfoSigningKeyArr.map((k) => getJwaAlgorithm(k.privateKey))),
+  ];
 
   const metadata = buildProviderMetadata({
     issuer,
@@ -8098,23 +7969,14 @@ function resolveJarmResponse(
 ): JarmResponseContext | undefined {
   if (transaction.jarmResponseMode !== 'query.jwt') return undefined;
   // JARM Section 3: the response JWT always declares alg RS256, so the key is
-  // picked by alg from the registered key set rather than taken from the
-  // general-purpose ACTIVE key, which the SigningKeyProvider contract does not
-  // guarantee to be RS256. Its public half is published at
-  // /.well-known/jwks.json under the same kid. The single-key context is kept as
-  // a fallback for providers that never populated the key set; on the default
-  // single RS256 key both branches resolve the same key.
+  // picked by alg from the registered key set rather than taken as its first
+  // key, which the SigningKeyProvider contract does not guarantee to be RS256.
+  // Its public half is published at /.well-known/jwks.json under the same kid.
   const jarmSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
   return {
     issuer: c.get('config').issuer,
     clientId: transaction.clientId,
-    signingKey: jarmSigningKeys.length > 0
-      ? selectSigningKeyByAlg(jarmSigningKeys, 'RS256')
-      : {
-          privateKey: c.get('privateKey'),
-          publicJwk: c.get('publicJwk'),
-          keyId: c.get('keyId'),
-        },
+    signingKey: selectSigningKeyByAlg(jarmSigningKeys, 'RS256'),
   };
 }
 
@@ -8563,7 +8425,6 @@ ${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  getRegisteredSigningKeys,
   signingKeysToJwkSet,
 } from '${_corePkg}';
 import type {
@@ -8587,11 +8448,13 @@ export type CorsOrigins = string | string[];
 export interface ApplyOidcOptions {
   config?: Partial<ProviderConfig>;
   /**
-   * Primary signing key provider. Used for the access token (JWT format) and
-   * as the fallback for ID Token / UserInfo signing when their dedicated
-   * providers are not configured. Must load keys from your secret store
-   * (env var, KV, D1, etc.).
-   * Use createCachedSigningKeyProvider() to refresh the key periodically.
+   * Primary signing key provider. getSigningKeys() returns the registered
+   * keys: the first one signs access tokens (JWT format), and every one is
+   * published at the JWKS endpoint, so keep a rotated-out key after the new one
+   * until the tokens it signed expire. Also used for ID Token / UserInfo
+   * signing when their dedicated providers are not configured.
+   * Must load keys from your secret store (env var, KV, D1, etc.).
+   * Use createCachedSigningKeyProvider() to refresh the keys periodically.
    */
   signingKeyProvider: SigningKeyProvider;
   /**
@@ -8659,6 +8522,10 @@ export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): void {
+  // The first key of a set signs new tokens, so a set needs at least one key.
+  if (keys.length === 0) {
+    throw new Error('Signing key set must contain at least one key');
+  }
   assertKeyStrength(keys);
   assertKidStrategyConsistent(keys);
   if (requireRs256) {
@@ -8706,50 +8573,30 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
 
   // Store runtime dependencies for use by route handlers.
   app.use('*', async (c, next) => {
-    let signingKey;
-    let idTokenSigningKey;
-    let userinfoSigningKey;
-    // T-022: registered key sets (current + rotated-out + alg variants).
-    // Each provider's getSigningKeys() drives JWKS / Discovery; getSigningKey()
-    // drives "the active key for new signatures." A provider that does not
-    // implement getSigningKeys gets a single-element fallback automatically.
+    // T-022: each provider returns its registered key set. The first key of a
+    // set signs new tokens, and every key is published at the JWKS endpoint so
+    // rotated-out and alternate-alg keys stay verifiable.
     let signingKeys;
     let idTokenSigningKeys;
     let userinfoSigningKeys;
     try {
-      signingKey = await options.signingKeyProvider.getSigningKey();
-      signingKeys = await getRegisteredSigningKeys(options.signingKeyProvider);
-      // Each purpose-specific provider falls back to the primary signing key.
+      signingKeys = await options.signingKeyProvider.getSigningKeys();
+      // Each purpose-specific provider falls back to the primary one.
       const idProvider = options.idTokenSigningKeyProvider ?? options.signingKeyProvider;
-      idTokenSigningKey = await idProvider.getSigningKey();
-      idTokenSigningKeys = await getRegisteredSigningKeys(idProvider);
+      idTokenSigningKeys = await idProvider.getSigningKeys();
       const uiProvider = options.userinfoSigningKeyProvider ?? options.signingKeyProvider;
-      userinfoSigningKey = await uiProvider.getSigningKey();
-      userinfoSigningKeys = await getRegisteredSigningKeys(uiProvider);
+      userinfoSigningKeys = await uiProvider.getSigningKeys();
       validateSigningKeySet(signingKeys);
       validateSigningKeySet(idTokenSigningKeys, true);
       validateSigningKeySet(userinfoSigningKeys);
     } catch {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
-    const { privateKey, publicJwk, keyId } = signingKey;
     const clientResolver =
       options.clientResolver ?? createInMemoryClientResolver();
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
-    // Backward-compatible aliases (primary key) — used by jwks/token routes that
-    // still read these context vars.
-    c.set('privateKey', privateKey);
-    c.set('publicJwk', publicJwk);
-    c.set('keyId', keyId);
-    // Purpose-specific active keys
-    c.set('idTokenPrivateKey', idTokenSigningKey.privateKey);
-    c.set('idTokenPublicJwk', idTokenSigningKey.publicJwk);
-    c.set('idTokenKeyId', idTokenSigningKey.keyId);
-    c.set('userinfoPrivateKey', userinfoSigningKey.privateKey);
-    c.set('userinfoPublicJwk', userinfoSigningKey.publicJwk);
-    c.set('userinfoKeyId', userinfoSigningKey.keyId);
     // T-022: registered key sets per purpose.
     c.set('signingKeys', signingKeys);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
@@ -8848,25 +8695,16 @@ import {
         authenticatedClientId,
       );
       // RFC 9701 §6: alg is pinned to RS256 (the default for a client that
-      // registered no introspection_signed_response_alg). The general-purpose
-      // ACTIVE key is not guaranteed to be RS256 — SigningKeyProvider may
-      // legitimately return ES256 as active alongside an RS256 + ES256
-      // registered set — so the key is picked by alg from the registered set.
-      // Its public half is published at /.well-known/jwks.json under the same
-      // kid. selectSigningKeyByAlg throws when no RS256 key is registered,
-      // which surfaces as a server_error below (a configuration mistake)
-      // rather than as an unverifiable introspection response.
+      // registered no introspection_signed_response_alg). The first key of the
+      // general-purpose set is not guaranteed to be RS256 — a SigningKeyProvider
+      // may legitimately put an ES256 key first in an RS256 + ES256 set — so the
+      // key is picked by alg from the set. Its public half is published at
+      // /.well-known/jwks.json under the same kid. selectSigningKeyByAlg throws
+      // when no RS256 key is registered, which surfaces as a server_error below
+      // (a configuration mistake) rather than as an unverifiable introspection
+      // response.
       const introspectionSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
-      const introspectionSigningKey = introspectionSigningKeys.length > 0
-        ? selectSigningKeyByAlg(introspectionSigningKeys, 'RS256')
-        : {
-            // Falls back to the single-key context so a hand-wired provider
-            // that never populated the key set keeps working; on the default
-            // single RS256 key both branches resolve the same key.
-            privateKey: c.get('privateKey'),
-            publicJwk: c.get('publicJwk'),
-            keyId: c.get('keyId'),
-          };
+      const introspectionSigningKey = selectSigningKeyByAlg(introspectionSigningKeys, 'RS256');
       const responseJwt = await createIntrospectionResponseJwt({
         issuer: c.get('config').issuer,
         audience: authenticatedClientId,
@@ -13147,7 +12985,9 @@ export function idTokenHintConformanceBlock(): string {
     // Overrides let a single case break exactly one claim (sub / aud / exp).
     async function buildIdTokenHint(overrides: Record<string, unknown> = {}): Promise<string> {
       const issuedAt = Math.floor(Date.now() / 1000);
-      const signingKey = await signingKeyProvider.getSigningKey();
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const [signingKey] = await signingKeyProvider.getSigningKeys();
+      if (!signingKey) throw new Error('The test signing key provider registers no key');
       const signingInput =
         hintB64UrlJson({ alg: 'RS256', kid: signingKey.keyId, typ: 'JWT' }) +
         '.' +
@@ -16803,8 +16643,8 @@ ${refreshTokenExpectation}    });
       // A client may register id_token_signed_response_alg, and the standard
       // grants pick a registered key matching it. The device grant MUST NOT
       // diverge: signing this client's ID Token with whichever key happens to be
-      // ACTIVE would hand it an RS256 token it rejects, and would compute at_hash
-      // with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      // first in the set would hand it an RS256 token it rejects, and would
+      // compute at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
       it('should sign the device grant ID Token with the alg the client registered', async () => {
         const rs256Pair = await crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
@@ -16817,14 +16657,7 @@ ${refreshTokenExpectation}    });
           ['sign', 'verify'],
         );
         const mixedProvider: SigningKeyProvider = {
-          // Active key is RS256; the registered set also holds an ES256 key.
-          async getSigningKey(): Promise<SigningKey> {
-            return {
-              privateKey: rs256Pair.privateKey,
-              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
-              keyId: 'device-rs256',
-            };
-          },
+          // The RS256 key comes first (it signs new tokens); the set also holds an ES256 key.
           async getSigningKeys(): Promise<SigningKey[]> {
             return [
               {
@@ -17697,8 +17530,8 @@ ${refreshTokenExpectation}    });
       // A client may register id_token_signed_response_alg, and the standard
       // grants pick a registered key matching it. The CIBA grant MUST NOT
       // diverge: signing this client's ID Token with whichever key happens to
-      // be ACTIVE would hand it an RS256 token it rejects, and would compute
-      // at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
+      // be first in the set would hand it an RS256 token it rejects, and would
+      // compute at_hash with the wrong hash function (OIDC Core 1.0 Section 3.1.3.6).
       it('should sign the CIBA grant ID Token with the alg the client registered', async () => {
         const rs256Pair = await crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
@@ -17711,14 +17544,7 @@ ${refreshTokenExpectation}    });
           ['sign', 'verify'],
         );
         const mixedProvider: SigningKeyProvider = {
-          // Active key is RS256; the registered set also holds an ES256 key.
-          async getSigningKey(): Promise<SigningKey> {
-            return {
-              privateKey: rs256Pair.privateKey,
-              publicJwk: await crypto.subtle.exportKey('jwk', rs256Pair.publicKey),
-              keyId: 'ciba-rs256',
-            };
-          },
+          // The RS256 key comes first (it signs new tokens); the set also holds an ES256 key.
           async getSigningKeys(): Promise<SigningKey[]> {
             return [
               {
@@ -17916,15 +17742,15 @@ export function jarmConformanceBlock(features: OidcFeatureConfig): string {
     }
 
     describe('Signing key selection (JARM Section 3)', () => {
-      // A SigningKeyProvider may legitimately return an ES256 active key next to
-      // a registered set that also holds RS256 — packages/core's
-      // SigningKeyProvider contract documents alternate-alg key sets, and only
-      // the SET is required to contain RS256 (OIDC Core 1.0 Section 15.1). The
-      // JARM response JWT always declares alg RS256, so it must be signed with
-      // the RS256 key from that set: signing it with whichever key happens to be
-      // active would make Web Crypto refuse and break the authorization response
-      // delivery path for every client that asked for a JWT response mode.
-      it('should sign with the registered RS256 key when the active key is ES256', async () => {
+      // A SigningKeyProvider may legitimately put an ES256 key first in a set
+      // that also holds RS256 — packages/core's SigningKeyProvider contract
+      // documents alternate-alg key sets, and only the SET is required to
+      // contain RS256 (OIDC Core 1.0 Section 15.1). The JARM response JWT always
+      // declares alg RS256, so it must be signed with the RS256 key from that
+      // set: signing it with whichever key happens to be first would make Web
+      // Crypto refuse and break the authorization response delivery path for
+      // every client that asked for a JWT response mode.
+      it('should sign with the registered RS256 key when the first key is ES256', async () => {
         const rs256Pair = await crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
           true,
@@ -17946,12 +17772,9 @@ export function jarmConformanceBlock(features: OidcFeatureConfig): string {
           keyId: 'mixed-es256',
         };
         const mixedProvider: SigningKeyProvider = {
-          // Active key is the ES256 one; the registered set holds both.
-          async getSigningKey(): Promise<SigningKey> {
-            return es256Key;
-          },
+          // The ES256 key comes first (it signs new tokens); the set holds both.
           async getSigningKeys(): Promise<SigningKey[]> {
-            return [rs256Key, es256Key];
+            return [es256Key, rs256Key];
           },
         };
         const mixedApp = createApp({
@@ -19093,8 +18916,8 @@ beforeAll(async () => {
   );
   const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
   signingKeyProvider = {
-    async getSigningKey(): Promise<SigningKey> {
-      return { privateKey: keyPair.privateKey, publicJwk, keyId: 'test-key' };
+    async getSigningKeys(): Promise<SigningKey[]> {
+      return [{ privateKey: keyPair.privateKey, publicJwk, keyId: 'test-key' }];
     },
   };
 ${requestObjectConformanceBeforeAll(features)}
@@ -19183,9 +19006,6 @@ ${persistentStorageConformanceBlock()}
         keyId: 'weak-runtime-key',
       };
       const weakProvider: SigningKeyProvider = {
-        async getSigningKey(): Promise<SigningKey> {
-          return weakKey;
-        },
         async getSigningKeys(): Promise<SigningKey[]> {
           return [weakKey];
         },
@@ -19239,6 +19059,59 @@ ${persistentStorageConformanceBlock()}
       expect(() => validateSigningKeySet([key, key])).toThrow(
         'Duplicate kid in signing key set: duplicate-key (RFC 7517 §4.5)',
       );
+    });
+
+    // The first key of a set signs new tokens, so a provider that returns no
+    // key leaves nothing to sign with: it is refused when the keys are loaded,
+    // like a weak key, instead of failing later inside an endpoint.
+    it('should reject an empty signing key set', async () => {
+      const emptyProvider: SigningKeyProvider = {
+        async getSigningKeys(): Promise<SigningKey[]> {
+          return [];
+        },
+      };
+      const res = await createApp({ signingKeyProvider: emptyProvider }).request(
+        '/.well-known/openid-configuration',
+      );
+
+      expect(() => validateSigningKeySet([])).toThrow('Signing key set must contain at least one key');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        error: 'server_error',
+        error_description: 'Failed to load signing key',
+      });
+    });
+
+    // A rotation puts the new key first (it signs new tokens) and keeps the
+    // previous key after it, so tokens the previous key signed keep verifying
+    // until they expire: both are published, in the order of the set.
+    it('should publish every key of a rotated key set at the JWKS endpoint', async () => {
+      async function rsaSigningKey(keyId: string): Promise<SigningKey> {
+        const pair = await crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify'],
+        );
+        return {
+          privateKey: pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
+          keyId,
+        };
+      }
+      const currentKey = await rsaSigningKey('current-key');
+      const previousKey = await rsaSigningKey('previous-key');
+      const rotatedProvider: SigningKeyProvider = {
+        async getSigningKeys(): Promise<SigningKey[]> {
+          return [currentKey, previousKey];
+        },
+      };
+      const res = await createApp({ signingKeyProvider: rotatedProvider }).request(
+        '/.well-known/jwks.json',
+      );
+      const jwks = (await res.json()) as { keys: { kid?: string }[] };
+
+      expect(res.status).toBe(200);
+      expect(jwks.keys.map((key) => key.kid)).toEqual(['current-key', 'previous-key']);
     });
   });
 

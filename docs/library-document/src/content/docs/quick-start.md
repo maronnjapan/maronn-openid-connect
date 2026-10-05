@@ -62,7 +62,7 @@ applyOidc(app, {
 export default app;
 ```
 
-`signingKeyProvider` は `{ getSigningKey(): Promise<SigningKey> }` を実装するオブジェクトで、RS256 の秘密鍵・公開 JWK・kid を返します。実装例はリポジトリの `samples/hono-cloudflare/src/app.ts` を参照してください。
+`signingKeyProvider` は `{ getSigningKeys(): Promise<SigningKey[]> }` を実装するオブジェクトで、秘密鍵・公開 JWK・kid の組を配列で返します。配列の先頭の鍵が新しいトークンの署名に使われ、すべての鍵が JWKS で公開されます。鍵セットには RS256 の鍵を最低 1 本含めてください。実装例はリポジトリの `samples/hono-cloudflare/src/app.ts` を参照してください。
 
 `config.ts` のデフォルト値（クライアント登録・issuer 等）はローカル検証専用です。実運用相当の検証では環境変数 / DB / KV から供給してください。
 

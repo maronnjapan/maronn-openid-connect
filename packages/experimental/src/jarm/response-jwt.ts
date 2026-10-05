@@ -97,7 +97,8 @@ export function assertJarmLifetimeSeconds(value: number): void {
  * @param options.signingKey 応答 JWT の署名鍵。**RS256 鍵であること**（JOSE ヘッダの
  *   `alg` は常に RS256 固定なので、他の alg の鍵を渡すと Web Crypto が署名を拒否して
  *   例外になる）。生成コードは登録鍵セットから `selectSigningKeyByAlg(keys, 'RS256')`
- *   で選ぶこと。active key はこの契約を満たす保証がない。
+ *   で選ぶこと。鍵セットの先頭の鍵（新しいトークンの署名に使う鍵）はこの契約を
+ *   満たす保証がない。
  * @param options.lifetimeSeconds `exp` までの秒数（既定 60）
  * @param options.now 発行時刻（テスト用の注入点。既定は現在時刻）
  */

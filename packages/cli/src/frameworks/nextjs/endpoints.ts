@@ -160,7 +160,7 @@ async function signedUserInfo(
 ): Promise<Response> {
   let signingKey: SigningKey;
   try {
-    signingKey = selectSigningKeyByAlg(keys.userinfo.registered, client.userinfoSignedResponseAlg);
+    signingKey = selectSigningKeyByAlg(keys.userinfo, client.userinfoSignedResponseAlg);
   } catch {
     return noStoreJson(
       {
@@ -274,8 +274,8 @@ import {
         authenticatedClientId,
       );
       // RFC 9701 §6: alg is pinned to RS256 (the default for a client that
-      // registered no introspection_signed_response_alg). The active key is not
-      // guaranteed to be RS256, so the key is picked by alg from the registered
+      // registered no introspection_signed_response_alg). The first key of the
+      // set is not guaranteed to be RS256, so the key is picked by alg from the
       // set; its public half is published at /.well-known/jwks.json under the
       // same kid. No RS256 key surfaces as a server_error (a configuration
       // mistake) rather than as an unverifiable response.
@@ -283,7 +283,7 @@ import {
         issuer: config.issuer,
         audience: authenticatedClientId,
         introspection: restrictedResponse,
-        signingKey: selectSigningKeyByAlg(keys.general.registered, 'RS256'),
+        signingKey: selectSigningKeyByAlg(keys.general, 'RS256'),
       });
       // RFC 9701 §5: the success response is the compact JWS itself, under its
       // own media type.

@@ -4,7 +4,6 @@ import {
   assertKeyStrength,
   assertKidStrategyConsistent,
   createCachedSigningKeyProvider,
-  getRegisteredSigningKeys,
   selectSigningKeyByAlg,
 } from './signing-key.js';
 import type { SigningKeyProvider, SigningKey } from './signing-key.js';
@@ -30,12 +29,12 @@ async function generateEcKeyPair(curve: 'P-256' | 'P-384' | 'P-521' = 'P-256') {
   );
 }
 
-function makeStubProvider(key: SigningKey): SigningKeyProvider & { callCount: number } {
+function makeStubProvider(keys: SigningKey[]): SigningKeyProvider & { callCount: number } {
   const provider = {
     callCount: 0,
-    async getSigningKey(): Promise<SigningKey> {
+    async getSigningKeys(): Promise<SigningKey[]> {
       provider.callCount++;
-      return key;
+      return keys;
     },
   };
   return provider;
@@ -48,122 +47,37 @@ const stubKey: SigningKey = {
 };
 
 describe('createCachedSigningKeyProvider', () => {
-  it('should return a provider with getSigningKey method', () => {
-    const cached = createCachedSigningKeyProvider(makeStubProvider(stubKey), 1000);
-    expect(typeof cached.getSigningKey).toBe('function');
-  });
-
   it('should call the base provider on first call', async () => {
-    const base = makeStubProvider(stubKey);
+    const base = makeStubProvider([stubKey]);
     const cached = createCachedSigningKeyProvider(base, 60000);
     expect(base.callCount).toBe(0);
-    await cached.getSigningKey();
+    await cached.getSigningKeys();
     expect(base.callCount).toBe(1);
   });
 
-  it('should return the cached key within TTL without calling base again', async () => {
-    const base = makeStubProvider(stubKey);
+  it('should return the cached keys within TTL without calling base again', async () => {
+    const base = makeStubProvider([stubKey]);
     const cached = createCachedSigningKeyProvider(base, 60000);
-    await cached.getSigningKey();
-    await cached.getSigningKey();
+    await cached.getSigningKeys();
+    await cached.getSigningKeys();
     expect(base.callCount).toBe(1);
   });
 
-  it('should return the key from the base provider', async () => {
-    const base = makeStubProvider(stubKey);
-    const cached = createCachedSigningKeyProvider(base, 60000);
-    const key = await cached.getSigningKey();
-    expect(key).toBe(stubKey);
+  it('should return the keys from the base provider in the same order', async () => {
+    const current: SigningKey = { ...stubKey, keyId: 'current' };
+    const previous: SigningKey = { ...stubKey, keyId: 'previous' };
+    const cached = createCachedSigningKeyProvider(makeStubProvider([current, previous]), 60000);
+    const keys = await cached.getSigningKeys();
+    expect(keys).toEqual([current, previous]);
   });
 
   it('should re-fetch from base provider after TTL expires', async () => {
-    const base = makeStubProvider(stubKey);
+    const base = makeStubProvider([stubKey]);
     // Negative TTL guarantees the cache is always expired
     const cached = createCachedSigningKeyProvider(base, -1);
-    await cached.getSigningKey();
-    await cached.getSigningKey();
+    await cached.getSigningKeys();
+    await cached.getSigningKeys();
     expect(base.callCount).toBe(2);
-  });
-});
-
-describe('createCachedSigningKeyProvider with getSigningKeys', () => {
-  function makeMultiProvider(
-    current: SigningKey,
-    registered: SigningKey[],
-  ): SigningKeyProvider & { getCalls: number; getKeysCalls: number } {
-    const provider = {
-      getCalls: 0,
-      getKeysCalls: 0,
-      async getSigningKey(): Promise<SigningKey> {
-        provider.getCalls++;
-        return current;
-      },
-      async getSigningKeys(): Promise<SigningKey[]> {
-        provider.getKeysCalls++;
-        return registered;
-      },
-    };
-    return provider;
-  }
-
-  it('should call base getSigningKeys on first call', async () => {
-    const base = makeMultiProvider(stubKey, [stubKey]);
-    const cached = createCachedSigningKeyProvider(base, 60000);
-    expect(cached.getSigningKeys).toBeDefined();
-    await cached.getSigningKeys!();
-    expect(base.getKeysCalls).toBe(1);
-  });
-
-  it('should return cached registered keys within TTL without calling base again', async () => {
-    const base = makeMultiProvider(stubKey, [stubKey]);
-    const cached = createCachedSigningKeyProvider(base, 60000);
-    await cached.getSigningKeys!();
-    await cached.getSigningKeys!();
-    expect(base.getKeysCalls).toBe(1);
-  });
-
-  it('should re-fetch registered keys after TTL expires', async () => {
-    const base = makeMultiProvider(stubKey, [stubKey]);
-    const cached = createCachedSigningKeyProvider(base, -1);
-    await cached.getSigningKeys!();
-    await cached.getSigningKeys!();
-    expect(base.getKeysCalls).toBe(2);
-  });
-
-  it('should provide getSigningKeys even when base does not implement it (fallback to [getSigningKey()])', async () => {
-    const base = makeStubProvider(stubKey);
-    const cached = createCachedSigningKeyProvider(base, 60000);
-    expect(cached.getSigningKeys).toBeDefined();
-    const keys = await cached.getSigningKeys!();
-    expect(keys).toEqual([stubKey]);
-    expect(base.callCount).toBe(1);
-  });
-});
-
-describe('getRegisteredSigningKeys', () => {
-  it('should return getSigningKeys() result when implemented', async () => {
-    const k1: SigningKey = { ...stubKey, keyId: 'k1' };
-    const k2: SigningKey = { ...stubKey, keyId: 'k2' };
-    const provider: SigningKeyProvider = {
-      async getSigningKey() {
-        return k2;
-      },
-      async getSigningKeys() {
-        return [k1, k2];
-      },
-    };
-    const keys = await getRegisteredSigningKeys(provider);
-    expect(keys).toEqual([k1, k2]);
-  });
-
-  it('should fall back to [getSigningKey()] when getSigningKeys is not implemented', async () => {
-    const provider: SigningKeyProvider = {
-      async getSigningKey() {
-        return stubKey;
-      },
-    };
-    const keys = await getRegisteredSigningKeys(provider);
-    expect(keys).toEqual([stubKey]);
   });
 });
 
@@ -207,14 +121,25 @@ describe('selectSigningKeyByAlg', () => {
     expect(() => selectSigningKeyByAlg([], 'RS256')).toThrow();
   });
 
-  it('should pick the latest matching key when multiple keys share the same alg (rotation)', async () => {
-    // 配列順は古い → 新しい。同一 alg の鍵が複数ある場合は最新（末尾）を新規署名に使う。
+  it('should pick the first matching key when multiple keys share the same alg (rotation)', async () => {
+    // 鍵セットの先頭が新規署名に使う鍵。ローテーションでは新しい鍵を先頭に置き、
+    // 古い鍵は検証用に後ろへ残すので、同一 alg の鍵が複数あれば先頭に近いものを選ぶ。
     const rsa1 = await generateRsaKeyPair('SHA-256');
     const rsa2 = await generateRsaKeyPair('SHA-256');
-    const old: SigningKey = { privateKey: rsa1.privateKey, publicJwk: { kty: 'RSA' }, keyId: 'old' };
-    const recent: SigningKey = { privateKey: rsa2.privateKey, publicJwk: { kty: 'RSA' }, keyId: 'recent' };
-    const picked = selectSigningKeyByAlg([old, recent], 'RS256');
-    expect(picked.keyId).toBe('recent');
+    const current: SigningKey = { privateKey: rsa1.privateKey, publicJwk: { kty: 'RSA' }, keyId: 'current' };
+    const previous: SigningKey = { privateKey: rsa2.privateKey, publicJwk: { kty: 'RSA' }, keyId: 'previous' };
+    const picked = selectSigningKeyByAlg([current, previous], 'RS256');
+    expect(picked.keyId).toBe('current');
+  });
+
+  it('should pick a later key when the first key has a different alg', async () => {
+    // 先頭の鍵は RS256 とは限らない（ES256 を先頭に置く構成も契約上正当）。
+    const rsa = await generateRsaKeyPair('SHA-256');
+    const ec = await generateEcKeyPair('P-256');
+    const rsaSigningKey: SigningKey = { privateKey: rsa.privateKey, publicJwk: { kty: 'RSA' }, keyId: 'rsa' };
+    const ecSigningKey: SigningKey = { privateKey: ec.privateKey, publicJwk: { kty: 'EC' }, keyId: 'ec' };
+    const picked = selectSigningKeyByAlg([ecSigningKey, rsaSigningKey], 'RS256');
+    expect(picked.keyId).toBe('rsa');
   });
 });
 

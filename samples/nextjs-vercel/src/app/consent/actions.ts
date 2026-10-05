@@ -12,7 +12,7 @@ import {
 import { errorPagePath } from '../_oidc-provider/http';
 import { config, resolvers, stores } from '../_oidc-provider/provider';
 import { TRANSACTION_COOKIE_NAME } from '../_oidc-provider/store';
-import { requireTransaction } from '../_oidc-provider/transaction';
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 
 /**
  * Consent Server Action: records the End-User's decision and sends the browser
@@ -21,6 +21,11 @@ import { requireTransaction } from '../_oidc-provider/transaction';
  */
 export async function consentAction(formData: FormData): Promise<void> {
   const action = String(formData.get('action') ?? '');
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below. This action mints the
+  // authorization code, so no decision may come from anywhere else.
+  await requireSameOriginFormPost();
+
   // The transaction cookie says which transaction this browser is in ...
   const current = await requireTransaction();
   const transactionId = current.transactionId;
@@ -40,7 +45,13 @@ export async function consentAction(formData: FormData): Promise<void> {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
     // The transaction is over; drop the cookie that named it.
-    (await cookies()).delete(TRANSACTION_COOKIE_NAME);
+    (await cookies()).delete({
+      name: TRANSACTION_COOKIE_NAME,
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'lax',
+    });
     redirect(authorizationResponseUrl(transaction, {
       error: 'access_denied',
       state: transaction.state,
@@ -102,7 +113,13 @@ export async function consentAction(formData: FormData): Promise<void> {
   await stores.authSessionStore.delete(transactionId);
 
   // The transaction is over; drop the cookie that named it.
-  (await cookies()).delete(TRANSACTION_COOKIE_NAME);
+  (await cookies()).delete({
+    name: TRANSACTION_COOKIE_NAME,
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    sameSite: 'lax',
+  });
   redirect(authorizationResponseUrl(transaction, {
     code: authCodeData.code,
     state: responseParams.state,

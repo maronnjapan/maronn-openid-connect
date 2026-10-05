@@ -77,17 +77,23 @@ export async function startSession(
 /** `_oidc-provider/transaction.ts` — the transaction the login and consent steps continue. */
 export function nextJsTransactionTemplate(corePkg: string): string {
   return `/**
- * Looking up the authorization transaction the login and consent steps continue.
+ * Looking up the authorization transaction the login and consent steps
+ * continue, and checking where their forms were submitted from.
  */
-import { cookies } from 'next/headers';
-import { notFound } from 'next/navigation';
+import { cookies, headers } from 'next/headers';
+import { notFound, redirect } from 'next/navigation';
 import {
   AuthTransactionError,
   getAuthTransaction,
   type AuthTransaction,
 } from '${corePkg}';
-import { stores } from './provider';
-import { TRANSACTION_COOKIE_NAME } from './store';
+import { errorPagePath } from './http';
+import { config, stores } from './provider';
+import {
+  CROSS_ORIGIN_FORM_POST_MESSAGE,
+  TRANSACTION_COOKIE_NAME,
+  isSameOriginFormPost,
+} from './store';
 
 /** The transaction a login or consent request continues, and the id it is stored under. */
 export interface CurrentTransaction {
@@ -121,6 +127,26 @@ export async function requireTransaction(): Promise<CurrentTransaction> {
     if (error instanceof AuthTransactionError) notFound();
     throw error;
   }
+}
+
+/**
+ * Stop a login or consent Server Action that the browser says was not
+ * submitted from the OP's own pages (isSameOriginFormPost() in store.ts): the
+ * OP's error page, never the client. It depends on neither the transaction
+ * cookie nor the csrf_token, so it still holds when a sibling subdomain planted
+ * a transaction cookie whose csrf_token it knows.
+ *
+ * Next.js already refuses a Server Action whose Origin differs from the Host
+ * header. This check compares against config.issuer instead and reads Fetch
+ * Metadata as well, so the contract does not depend on the platform's Host.
+ */
+export async function requireSameOriginFormPost(): Promise<void> {
+  const requestHeaders = await headers();
+  const sameOrigin = isSameOriginFormPost(
+    { origin: requestHeaders.get('Origin'), secFetchSite: requestHeaders.get('Sec-Fetch-Site') },
+    config.issuer,
+  );
+  if (!sameOrigin) redirect(errorPagePath('cross_origin_request', CROSS_ORIGIN_FORM_POST_MESSAGE));
 }
 `;
 }
@@ -361,7 +387,7 @@ import {
 } from '${corePkg}';
 import { errorPagePath } from '../_oidc-provider/http';
 import { stores } from '../_oidc-provider/provider';
-import { requireTransaction } from '../_oidc-provider/transaction';
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 import { startSession } from './session';
 
 /**
@@ -373,6 +399,10 @@ import { startSession } from './session';
  * error page (oidc-error/page.tsx), never at the client.
  */
 export async function loginAction(formData: FormData): Promise<void> {
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below.
+  await requireSameOriginFormPost();
+
   // The transaction cookie says which transaction this browser is in ...
   const { transactionId, transaction } = await requireTransaction();
 
@@ -630,9 +660,17 @@ import { jarmConfig } from '../_oidc-provider/jarm';`
     ? `
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
+  // A '__Host-' cookie is only removed by a write that repeats Secure and
+  // Path=/; cookies().delete(name) alone would be ignored by the browser.
   const clearTransactionCookie = (indent: string) =>
     `${indent}// The transaction is over; drop the cookie that named it.
-${indent}(await cookies()).delete(TRANSACTION_COOKIE_NAME);
+${indent}(await cookies()).delete({
+${indent}  name: TRANSACTION_COOKIE_NAME,
+${indent}  path: '/',
+${indent}  secure: true,
+${indent}  httpOnly: true,
+${indent}  sameSite: 'lax',
+${indent}});
 `;
   const grantedScope = customScopesDeclared
     ? `  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place for
@@ -729,7 +767,7 @@ import {
 ${coreImports.map((name) => `  ${name},`).join('\n')}
 } from '${corePkg}';${jarmImports}
 ${providerImport}${transactionCookieImport}${jarmConfigImport}${customScopeImport}
-import { requireTransaction } from '../_oidc-provider/transaction';
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 
 /**
  * Consent Server Action: records the End-User's decision and sends the browser
@@ -738,6 +776,11 @@ import { requireTransaction } from '../_oidc-provider/transaction';
  */
 export async function consentAction(formData: FormData): Promise<void> {
   const action = String(formData.get('action') ?? '');
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below. This action mints the
+  // authorization code, so no decision may come from anywhere else.
+  await requireSameOriginFormPost();
+
   // The transaction cookie says which transaction this browser is in ...
   const current = await requireTransaction();
   const transactionId = current.transactionId;

@@ -1771,17 +1771,24 @@ export function buildSessionCookie(sessionId: string): string {
  * One cookie per browser: a second /authorize (another tab) replaces it, and a
  * form still open in the first tab is then refused - its csrf_token belongs to
  * the replaced transaction - instead of completing the wrong request.
+ *
+ * The '__Host-' prefix makes the browser refuse this cookie unless it comes
+ * from this exact host with Secure, Path=/ and no Domain. Without it a sibling
+ * subdomain (evil.example.com next to op.example.com) could plant its own
+ * transaction in the victim's browser ("cookie tossing") - and the csrf_token
+ * of that planted transaction is one the attacker already knows. Browsers
+ * accept the prefix on http://localhost as well, so local development works.
  */
-export const TRANSACTION_COOKIE_NAME = 'oidc_txn';
+export const TRANSACTION_COOKIE_NAME = '__Host-oidc_txn';
 
 /**
  * Build the Set-Cookie value that hands a transaction to this browser.
  * Same attributes as the session cookie: HttpOnly (no JS access), Secure
  * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
  * SameSite=Lax, because SameSite=Strict would drop the cookie on the
- * cross-site navigation that starts the flow. Max-Age matches the transaction
- * TTL so an abandoned flow does not leave the cookie behind. When the OP is
- * always served over HTTPS, prefixing the name with '__Host-' is recommended.
+ * cross-site navigation that starts the flow. Secure and Path=/ (and no
+ * Domain) are also what the '__Host-' prefix requires. Max-Age matches the
+ * transaction TTL so an abandoned flow does not leave the cookie behind.
  */
 export function buildTransactionCookie(transactionId: string, ttlSeconds: number): string {
   return (
@@ -1792,7 +1799,9 @@ export function buildTransactionCookie(transactionId: string, ttlSeconds: number
 
 /**
  * Build the Set-Cookie value that removes the transaction cookie once the
- * transaction is finished (code issued or access denied).
+ * transaction is finished (code issued or access denied). It repeats Secure
+ * and Path=/: the browser ignores a '__Host-' cookie write without them, the
+ * removal included.
  */
 export function buildClearedTransactionCookie(): string {
   return TRANSACTION_COOKIE_NAME + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
@@ -1814,6 +1823,44 @@ export function parseTransactionId(cookieHeader: string | null): string | undefi
   }
   return undefined;
 }
+
+/**
+ * Whether a form POST to /login or /consent was sent from the OP's own pages.
+ *
+ * A check that depends on neither the transaction cookie nor the csrf_token:
+ * the browser itself states where the request came from, and no page script
+ * can override these headers. It still holds when a sibling subdomain managed
+ * to plant a transaction cookie and therefore knows its csrf_token, and it is
+ * the only check SameSite=Lax leaves to a same-site (sibling subdomain) POST.
+ *
+ * - Sec-Fetch-Site (Fetch Metadata): only 'same-origin' passes, plus 'none' -
+ *   a user-initiated request such as a reload, which no other site can
+ *   trigger. 'same-site' (a sibling subdomain) and 'cross-site' do not.
+ * - Without Fetch Metadata, the Origin header a browser sends on every POST
+ *   must be the issuer's origin. 'null' (an opaque origin) never matches.
+ * - With neither header the request did not come from a browser page (curl, an
+ *   HTTP client) or from a very old browser; the transaction cookie and the
+ *   csrf_token still apply.
+ *
+ * The comparison uses config.issuer, never the request URL: some runtimes
+ * derive the request URL from the Host header, which the sender controls.
+ */
+export function isSameOriginFormPost(
+  headers: { origin: string | null; secFetchSite: string | null },
+  issuer: string,
+): boolean {
+  if (headers.secFetchSite !== null) {
+    return headers.secFetchSite === 'same-origin' || headers.secFetchSite === 'none';
+  }
+  if (headers.origin !== null) {
+    return headers.origin === new URL(issuer).origin;
+  }
+  return true;
+}
+
+/** The message the OP shows when isSameOriginFormPost() refuses a form POST. */
+export const CROSS_ORIGIN_FORM_POST_MESSAGE =
+  'This form can only be submitted from the authorization server itself.';
 ${rpInitiatedLogoutHelpers}
 /**
  * In-memory consent store. Records that a user granted a set of scopes to a
@@ -7579,7 +7626,9 @@ import {
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
   parseSessionId,
-  parseTransactionId,${googleStoreImport}
+  parseTransactionId,
+  isSameOriginFormPost,
+  CROSS_ORIGIN_FORM_POST_MESSAGE,${googleStoreImport}
   userStore,
 } from '../store.js';${googleConfigImport}
 
@@ -7658,6 +7707,18 @@ async function loadTransaction(
     return transactionErrorOutcome(error);
   }
 }
+
+/**
+ * Refuse a login form POST that the browser says came from anywhere but the
+ * OP's own pages (403, never redirected). See isSameOriginFormPost() in store.ts.
+ */
+function rejectCrossOriginFormPost(c: any): LoginError | undefined {
+  const sameOrigin = isSameOriginFormPost(
+    { origin: c.req.header('Origin') ?? null, secFetchSite: c.req.header('Sec-Fetch-Site') ?? null },
+    c.get('config').issuer,
+  );
+  return sameOrigin ? undefined : { kind: 'error', error: CROSS_ORIGIN_FORM_POST_MESSAGE, statusCode: 403 };
+}
 ${googleLoginHelpers}
 /** Describe the form for a transaction (the shared part of GET and a failed POST). */
 async function describeLoginScreen(
@@ -7692,6 +7753,12 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
   const authenticateUser =
     c.get('authenticateUser') ??
     ((u: string, p: string) => userStore.authenticate(u, p));
+
+  // First the browser's own statement of where the form was submitted from
+  // (isSameOriginFormPost() in store.ts): independent of the cookie and the
+  // csrf_token, so a forged POST is stopped even if both were planted.
+  const sameOriginError = rejectCrossOriginFormPost(c);
+  if (sameOriginError) return sameOriginError;
 
   // The cookie says which transaction this browser is in; the csrf_token says
   // the submission came from the form the OP rendered for exactly that one.
@@ -7961,6 +8028,8 @@ import {
   authSessionStore as defaultAuthSessionStore,
   buildClearedTransactionCookie,
   parseTransactionId,
+  isSameOriginFormPost,
+  CROSS_ORIGIN_FORM_POST_MESSAGE,
 } from '../store.js';${jarmConsentImports}${customScopeImports}
 
 /** What the consent form needs, prepared for GET /consent. */
@@ -8042,6 +8111,18 @@ async function loadTransaction(
     return transactionErrorOutcome(error);
   }
 }
+
+/**
+ * Refuse a consent form POST that the browser says came from anywhere but the
+ * OP's own pages (403, never redirected). See isSameOriginFormPost() in store.ts.
+ */
+function rejectCrossOriginFormPost(c: any): ConsentError | undefined {
+  const sameOrigin = isSameOriginFormPost(
+    { origin: c.req.header('Origin') ?? null, secFetchSite: c.req.header('Sec-Fetch-Site') ?? null },
+    c.get('config').issuer,
+  );
+  return sameOrigin ? undefined : { kind: 'error', error: CROSS_ORIGIN_FORM_POST_MESSAGE, statusCode: 403 };
+}
 ${jarmConsentHelpers}
 /**
  * GET /consent: load the transaction this browser's cookie names and describe
@@ -8069,10 +8150,16 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
 
-  // The cookie says which transaction this browser is in; the csrf_token says
-  // the decision came from the form the OP rendered for exactly that one.
   // Checked before any decision is acted on: this step mints the authorization
   // code, so neither an approval nor a denial may come from anywhere else.
+  // First the browser's own statement of where the form was submitted from
+  // (isSameOriginFormPost() in store.ts): independent of the cookie and the
+  // csrf_token, so a forged POST is stopped even if both were planted.
+  const sameOriginError = rejectCrossOriginFormPost(c);
+  if (sameOriginError) return sameOriginError;
+
+  // The cookie says which transaction this browser is in; the csrf_token says
+  // the decision came from the form the OP rendered for exactly that one.
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
@@ -10436,10 +10523,17 @@ export function transactionCookieConformanceBlock(): string {
       return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
     }
 
-    function postForm(path: string, cookie: string, fields: Record<string, string>): Promise<Response> {
+    // headers adds what a browser would send about where the form came from
+    // (Origin / Sec-Fetch-Site); without them the request looks like curl.
+    function postForm(
+      path: string,
+      cookie: string,
+      fields: Record<string, string>,
+      headers: Record<string, string> = {},
+    ): Promise<Response> {
       return app.request(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie, ...headers },
         body: new URLSearchParams(fields).toString(),
       });
     }
@@ -10493,9 +10587,9 @@ export function transactionCookieConformanceBlock(): string {
 
       expect(flow.status).toBe(302);
       expect(flow.location).toBe('http://localhost:3000/login');
-      expect(flow.setCookie.startsWith('oidc_txn=')).toBe(true);
+      expect(flow.setCookie.startsWith('__Host-oidc_txn=')).toBe(true);
       expect(flow.setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
-      expect(flow.cookie.length).toBe('oidc_txn='.length + 43);
+      expect(flow.cookie.length).toBe('__Host-oidc_txn='.length + 43);
     });
 
     it('should embed the csrf_token in the login form but never the transaction id', async () => {
@@ -10506,7 +10600,7 @@ export function transactionCookieConformanceBlock(): string {
 
       expect(res.status).toBe(200);
       expect(txnCsrfFrom(html).length).toBe(43);
-      expect(html.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
+      expect(html.includes(flow.cookie.slice('__Host-oidc_txn='.length))).toBe(false);
       expect(html.includes('transaction_id')).toBe(false);
     });
 
@@ -10522,7 +10616,7 @@ export function transactionCookieConformanceBlock(): string {
     });
 
     it('should answer 400 for a transaction cookie that names no transaction', async () => {
-      const res = await app.request('/login', { headers: { Cookie: 'oidc_txn=no-such-transaction' } });
+      const res = await app.request('/login', { headers: { Cookie: '__Host-oidc_txn=no-such-transaction' } });
 
       expect(res.status).toBe(400);
       expect((await res.text()).includes('csrf_token')).toBe(false);
@@ -10561,7 +10655,7 @@ export function transactionCookieConformanceBlock(): string {
       expect(consent.loginLocation).toBe('http://localhost:3000/consent');
       expect(consent.consentStatus).toBe(200);
       expect(txnCsrfFrom(consent.consentHtml).length).toBe(43);
-      expect(consent.consentHtml.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
+      expect(consent.consentHtml.includes(flow.cookie.slice('__Host-oidc_txn='.length))).toBe(false);
     });
 
     // A reload is just another GET with the same cookie: the form comes back for
@@ -10666,8 +10760,76 @@ export function transactionCookieConformanceBlock(): string {
       expect(callback.searchParams.get('state')).toBe('txn-happy');
       expect((callback.searchParams.get('code') ?? '').length).toBe(43);
       expect(res.headers.get('Set-Cookie')).toBe(
-        'oidc_txn=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+        '__Host-oidc_txn=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
       );
+    });
+
+    // The browser itself states where a form was submitted from, independently
+    // of the cookie and the csrf_token (isSameOriginFormPost() in store.ts).
+    it('should accept POST /login submitted from the OP own page', async () => {
+      const flow = await startFlow('txn-origin-ok');
+      const loginGet = await app.request('/login', { headers: { Cookie: flow.cookie } });
+
+      const res = await postForm(
+        '/login',
+        flow.cookie,
+        { csrf_token: txnCsrfFrom(await loginGet.text()), ...LOGIN_FIELDS },
+        { Origin: 'http://localhost:3000', 'Sec-Fetch-Site': 'same-origin' },
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe('http://localhost:3000/consent');
+    });
+
+    it('should refuse POST /login from another origin even with the cookie and a valid csrf_token', async () => {
+      const flow = await startFlow('txn-origin-login');
+      const loginGet = await app.request('/login', { headers: { Cookie: flow.cookie } });
+
+      // A browser without Fetch Metadata: the Origin header alone decides.
+      const res = await postForm(
+        '/login',
+        flow.cookie,
+        { csrf_token: txnCsrfFrom(await loginGet.text()), ...LOGIN_FIELDS },
+        { Origin: 'https://evil.example' },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Set-Cookie')).toBe(null);
+    });
+
+    // Cookie tossing: a sibling subdomain plants a transaction of its own, so
+    // the cookie and its csrf_token both check out. SameSite=Lax does not help
+    // (the POST is same-site); only the browser's Sec-Fetch-Site gives it away.
+    it('should refuse a same-site POST /login that carries a planted transaction cookie and its csrf_token', async () => {
+      const planted = await startFlow('txn-planted');
+      const plantedForm = await app.request('/login', { headers: { Cookie: planted.cookie } });
+
+      const res = await postForm(
+        '/login',
+        planted.cookie,
+        { csrf_token: txnCsrfFrom(await plantedForm.text()), ...LOGIN_FIELDS },
+        { Origin: 'http://evil.localhost:3000', 'Sec-Fetch-Site': 'same-site' },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Set-Cookie')).toBe(null);
+    });
+
+    it('should not issue an authorization code for a cross-site POST /consent even with the cookie and a valid csrf_token', async () => {
+      const flow = await startFlow('txn-origin-consent');
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      const res = await postForm(
+        '/consent',
+        flow.cookie,
+        { csrf_token: txnCsrfFrom(consent.consentHtml), action: 'approve' },
+        { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
     });
 
     // One cookie per browser: a second authorization request (another tab)
@@ -12675,7 +12837,7 @@ ${corsPreflightTest}
       // would: the login and consent steps find the transaction through it.
       const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       // The cookie value is the transaction id, i.e. the store key suffix.
-      const transactionId = transactionCookie.slice('oidc_txn='.length);
+      const transactionId = transactionCookie.slice('__Host-oidc_txn='.length);
       const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
@@ -12877,7 +13039,7 @@ export function idTokenHintConformanceBlock(): string {
       expect(res.status).toBe(302);
       expect(location.pathname).toBe('/login');
       // A fresh transaction was started for the login screen: its cookie is set.
-      expect((res.headers.get('Set-Cookie') ?? '').startsWith('oidc_txn=')).toBe(true);
+      expect((res.headers.get('Set-Cookie') ?? '').startsWith('__Host-oidc_txn=')).toBe(true);
       expect(location.searchParams.get('code')).toBe(null);
       expect(location.searchParams.get('error')).toBe(null);
     });

@@ -26,6 +26,8 @@ import {
   authSessionStore as defaultAuthSessionStore,
   buildClearedTransactionCookie,
   parseTransactionId,
+  isSameOriginFormPost,
+  CROSS_ORIGIN_FORM_POST_MESSAGE,
 } from '../store.js';
 
 /** What the consent form needs, prepared for GET /consent. */
@@ -109,6 +111,18 @@ async function loadTransaction(
 }
 
 /**
+ * Refuse a consent form POST that the browser says came from anywhere but the
+ * OP's own pages (403, never redirected). See isSameOriginFormPost() in store.ts.
+ */
+function rejectCrossOriginFormPost(c: any): ConsentError | undefined {
+  const sameOrigin = isSameOriginFormPost(
+    { origin: c.req.header('Origin') ?? null, secFetchSite: c.req.header('Sec-Fetch-Site') ?? null },
+    c.get('config').issuer,
+  );
+  return sameOrigin ? undefined : { kind: 'error', error: CROSS_ORIGIN_FORM_POST_MESSAGE, statusCode: 403 };
+}
+
+/**
  * GET /consent: load the transaction this browser's cookie names and describe
  * the form, or the error to show instead when there is none.
  */
@@ -134,10 +148,16 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
 
-  // The cookie says which transaction this browser is in; the csrf_token says
-  // the decision came from the form the OP rendered for exactly that one.
   // Checked before any decision is acted on: this step mints the authorization
   // code, so neither an approval nor a denial may come from anywhere else.
+  // First the browser's own statement of where the form was submitted from
+  // (isSameOriginFormPost() in store.ts): independent of the cookie and the
+  // csrf_token, so a forged POST is stopped even if both were planted.
+  const sameOriginError = rejectCrossOriginFormPost(c);
+  if (sameOriginError) return sameOriginError;
+
+  // The cookie says which transaction this browser is in; the csrf_token says
+  // the decision came from the form the OP rendered for exactly that one.
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;

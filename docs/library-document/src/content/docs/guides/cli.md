@@ -206,12 +206,23 @@ const app = createApp({
 
 `/authorize` から `/login`・`/consent` へ認可リクエストを引き継ぐ認可トランザクションの ID は、URL にも HTML にも載せません。どのフレームワーク・どの機能構成でも同じで、トグルはありません。
 
-- `/authorize` はトランザクションを作ると、その ID を HttpOnly Cookie `oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡し、クエリの無い `/login`（SSO で同意だけが残っている場合は `/consent`）へリダイレクトします
-- `/login`・`/consent` は Cookie からトランザクションを引き、フォームには `csrf_token` だけを埋め込みます
-- `POST /login`・`POST /consent` は、Cookie が指すトランザクションに対して、送られてきた `csrf_token` を照合します。Cookie と `csrf_token` のどちらか一方だけでは進めません
+- `/authorize` はトランザクションを作ると、その ID を HttpOnly Cookie `__Host-oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡し、クエリの無い `/login`（SSO で同意だけが残っている場合は `/consent`）へリダイレクトします
+- `/login`・`/consent` は Cookie からトランザクションを引き、フォームには `csrf_token` だけを埋め込みます。`csrf_token` は Cookie とは別の乱数で、トランザクションに保存してあり、リロードしても変わりません
+- `POST /login`・`POST /consent` は、まずブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたかを確かめ（`store.ts` の `isSameOriginFormPost()`）、次に Cookie が指すトランザクションに対して `csrf_token` を照合します
 - 同意の結果（承認・拒否）をクライアントへ返すときに Cookie を消します
 
-ID が URL に出ないので、ブラウザ履歴・アクセスログ・画面共有から漏れた ID で第三者に同意画面を開かれることはありません。攻撃者が自分のクライアントで始めたトランザクションへ被害者を誘導し、被害者の認可コードを攻撃者のクライアントへ届かせる攻撃（RP の `state` 検証では防げない）も、他のサイトから Cookie を設定できないため成立しません。OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送った User-Agent の End-User」を認証・同意させることを前提にしていますが、その同一性を保証する手段は実装に委ねており、この Cookie がその手段です。
+ID が URL に出ないので、ブラウザ履歴・アクセスログ・画面共有から漏れた ID で第三者に同意画面を開かれることはありません。OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送った User-Agent の End-User」を認証・同意させることを前提にしていますが、その同一性を保証する手段は実装に委ねており、この Cookie がその手段です。
+
+Cookie・`csrf_token`・送信元チェックは、それぞれ別の脅威を受け持つので、1 つが破られても残りが効くように重ねています。
+
+| 脅威 | 効く防御 |
+|---|---|
+| 別サイトからの偽の POST（CSRF） | `SameSite=Lax`（Cookie が付かない）、`csrf_token`（別サイトからは読めない）、送信元チェック |
+| 同じサイトのサブドメインからの偽の POST | `csrf_token`、送信元チェック（`Sec-Fetch-Site: same-site` を拒否） |
+| サブドメインが被害者のブラウザに自分のトランザクションの Cookie を設定する（Cookie tossing） | `__Host-` プレフィックス（ブラウザがサブドメインからの設定を拒否）、送信元チェック（設定できても、その Cookie と `csrf_token` を使った POST を拒否） |
+| Cookie の値そのものの盗難 | HttpOnly・Secure・URL に載せないこと。盗んだ本人が自分のブラウザで OP の画面を使う場合、OP 側だけでは防げない |
+
+送信元チェックは、`Sec-Fetch-Site` があれば `same-origin` と `none`（リロードなど利用者自身の操作）だけを通し、無ければ `Origin` が issuer のオリジンと一致することを求めます。どちらのヘッダーも無いリクエスト（curl などブラウザ以外）は通し、Cookie と `csrf_token` で判定します。Google が送ってくる `POST /login/google` はクロスサイトの POST なので対象外で、Google の `g_csrf_token` と nonce で守っています。Next.js の Server Action は Next.js 自身も `Origin` と `Host` を照合しますが、生成コードは issuer と比べる同じチェックを Server Action の先頭でも行います。
 
 URL にトランザクションを示すものがなくても、ログイン・同意画面はリロードできます。Cookie は同意の結果を返すまで（最長でトランザクションの有効期限の 10 分）残るので、リロードは同じ Cookie を付けた GET になり、同じトランザクションのフォーム（同じ `csrf_token`）がもう一度表示されます。Next.js はパスワードの誤りもフォームへのリダイレクトで返すので、その後のリロードも送信のやり直しになりません。
 
@@ -221,8 +232,9 @@ Cookie はブラウザに 1 つです。同じブラウザの別タブで新し�
 |---|---|---|
 | Cookie が無い、または指すトランザクションが無い（不明・完了済み・期限切れ） | OP のエラー画面（400） | `not-found.tsx`（404） |
 | `csrf_token` が Cookie のトランザクションのものではない | OP のエラー画面（403） | `oidc-error` へリダイレクト |
+| OP 自身の画面以外から送られた（送信元チェックに失敗） | OP のエラー画面（403） | `oidc-error` へリダイレクト |
 
-curl などで手動でフローを進めるときは Cookie を持ち回ってください（Hono / Express / Fastify の例）。
+curl などで手動でフローを進めるときは Cookie を持ち回ってください（Hono / Express / Fastify の例）。curl は `Secure` / `__Host-` の Cookie も `localhost` へは HTTP で送り返し、`Origin` / `Sec-Fetch-Site` は付けないので、送信元チェックでは止まりません。
 
 ```bash
 curl -sS -c jar.txt -o /dev/null 'http://localhost:3000/authorize?response_type=code&client_id=...&redirect_uri=...&scope=openid&code_challenge=...&code_challenge_method=S256'

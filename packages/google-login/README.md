@@ -321,7 +321,7 @@ googleLoginApp.post('/', async (c) => {
 
 ### 生成コードのトランザクション Cookie との関係
 
-CLI の生成コードは、認可トランザクションの ID を HttpOnly Cookie（`oidc_txn`、`SameSite=Lax`）だけでブラウザに渡す。Google からの POST はクロスサイトの遷移なので、ブラウザは Lax の Cookie をこの POST に付けない。そのため `login_uri` のルートではトランザクションを Cookie ではなく nonce から復元し、nonce の単回使用を束縛とみなす（nonce を発行するログイン画面は、Cookie を持つブラウザにしか表示されない）。続く `/consent` への遷移は通常のナビゲーションなので Cookie が付き、同意画面は Cookie からトランザクションを引く。
+CLI の生成コードは、認可トランザクションの ID を HttpOnly Cookie（`__Host-oidc_txn`、`SameSite=Lax`）だけでブラウザに渡す。Google からの POST はクロスサイトの遷移なので、ブラウザは Lax の Cookie をこの POST に付けない。そのため `login_uri` のルートではトランザクションを Cookie ではなく nonce から復元し、nonce の単回使用を束縛とみなす（nonce を発行するログイン画面は、Cookie を持つブラウザにしか表示されない）。続く `/consent` への遷移は通常のナビゲーションなので Cookie が付き、同意画面は Cookie からトランザクションを引く。生成コードが `POST /login`・`POST /consent` に掛ける送信元チェック（`Origin` / `Sec-Fetch-Site`）も、クロスサイトの POST を受ける `login_uri` には掛けない。
 
 ## 検証内容とドキュメントの対応
 

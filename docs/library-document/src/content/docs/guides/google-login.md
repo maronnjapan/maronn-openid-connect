@@ -151,6 +151,6 @@ applyOidc(app, {
 ## 注意点
 
 - **Node.js 22 以上限定。** `samples/hono-cloudflare`（Cloudflare Workers）では有効にしていません
-- **トランザクション Cookie は `/login/google` に届かない。** トランザクション Cookie（`oidc_txn`）は `SameSite=Lax` なので、Google からのクロスサイト POST には付きません。生成コードは `/login/google` ではトランザクションを nonce から復元し、nonce の単回使用を束縛とみなします（nonce を発行するログイン画面は Cookie を持つブラウザにしか表示されません）。その後の `/consent` への遷移は通常のナビゲーションなので、Cookie が付きます
+- **トランザクション Cookie は `/login/google` に届かない。** トランザクション Cookie（`__Host-oidc_txn`）は `SameSite=Lax` なので、Google からのクロスサイト POST には付きません。生成コードは `/login/google` ではトランザクションを nonce から復元し、nonce の単回使用を束縛とみなします（nonce を発行するログイン画面は Cookie を持つブラウザにしか表示されません）。その後の `/consent` への遷移は通常のナビゲーションなので、Cookie が付きます。`POST /login`・`POST /consent` の送信元チェック（`Origin` / `Sec-Fetch-Site`）も、Google からの POST を受ける `/login/google` には掛けません
 - **`login_uri` はログイン画面と同一サイトに置く。** GIS が `g_csrf_token` Cookie をログイン画面のドメインに設定するため、別サイトでは Double Submit Cookie の検証に失敗します
 - 実際の Google アカウントで通す E2E は本リポジトリの CI には含まれません。`samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel` を `GOOGLE_CLIENT_ID` 付きで起動し、ブラウザで確認してください

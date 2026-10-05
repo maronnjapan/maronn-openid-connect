@@ -978,10 +978,17 @@ describe('generated provider HTTP conformance', () => {
       return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
     }
 
-    function postForm(path: string, cookie: string, fields: Record<string, string>): Promise<Response> {
+    // headers adds what a browser would send about where the form came from
+    // (Origin / Sec-Fetch-Site); without them the request looks like curl.
+    function postForm(
+      path: string,
+      cookie: string,
+      fields: Record<string, string>,
+      headers: Record<string, string> = {},
+    ): Promise<Response> {
       return app.request(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie, ...headers },
         body: new URLSearchParams(fields).toString(),
       });
     }
@@ -1035,9 +1042,9 @@ describe('generated provider HTTP conformance', () => {
 
       expect(flow.status).toBe(302);
       expect(flow.location).toBe('http://localhost:3000/login');
-      expect(flow.setCookie.startsWith('oidc_txn=')).toBe(true);
+      expect(flow.setCookie.startsWith('__Host-oidc_txn=')).toBe(true);
       expect(flow.setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
-      expect(flow.cookie.length).toBe('oidc_txn='.length + 43);
+      expect(flow.cookie.length).toBe('__Host-oidc_txn='.length + 43);
     });
 
     it('should embed the csrf_token in the login form but never the transaction id', async () => {
@@ -1048,7 +1055,7 @@ describe('generated provider HTTP conformance', () => {
 
       expect(res.status).toBe(200);
       expect(txnCsrfFrom(html).length).toBe(43);
-      expect(html.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
+      expect(html.includes(flow.cookie.slice('__Host-oidc_txn='.length))).toBe(false);
       expect(html.includes('transaction_id')).toBe(false);
     });
 
@@ -1064,7 +1071,7 @@ describe('generated provider HTTP conformance', () => {
     });
 
     it('should answer 400 for a transaction cookie that names no transaction', async () => {
-      const res = await app.request('/login', { headers: { Cookie: 'oidc_txn=no-such-transaction' } });
+      const res = await app.request('/login', { headers: { Cookie: '__Host-oidc_txn=no-such-transaction' } });
 
       expect(res.status).toBe(400);
       expect((await res.text()).includes('csrf_token')).toBe(false);
@@ -1103,7 +1110,7 @@ describe('generated provider HTTP conformance', () => {
       expect(consent.loginLocation).toBe('http://localhost:3000/consent');
       expect(consent.consentStatus).toBe(200);
       expect(txnCsrfFrom(consent.consentHtml).length).toBe(43);
-      expect(consent.consentHtml.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
+      expect(consent.consentHtml.includes(flow.cookie.slice('__Host-oidc_txn='.length))).toBe(false);
     });
 
     // A reload is just another GET with the same cookie: the form comes back for
@@ -1208,8 +1215,76 @@ describe('generated provider HTTP conformance', () => {
       expect(callback.searchParams.get('state')).toBe('txn-happy');
       expect((callback.searchParams.get('code') ?? '').length).toBe(43);
       expect(res.headers.get('Set-Cookie')).toBe(
-        'oidc_txn=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+        '__Host-oidc_txn=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
       );
+    });
+
+    // The browser itself states where a form was submitted from, independently
+    // of the cookie and the csrf_token (isSameOriginFormPost() in store.ts).
+    it('should accept POST /login submitted from the OP own page', async () => {
+      const flow = await startFlow('txn-origin-ok');
+      const loginGet = await app.request('/login', { headers: { Cookie: flow.cookie } });
+
+      const res = await postForm(
+        '/login',
+        flow.cookie,
+        { csrf_token: txnCsrfFrom(await loginGet.text()), ...LOGIN_FIELDS },
+        { Origin: 'http://localhost:3000', 'Sec-Fetch-Site': 'same-origin' },
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe('http://localhost:3000/consent');
+    });
+
+    it('should refuse POST /login from another origin even with the cookie and a valid csrf_token', async () => {
+      const flow = await startFlow('txn-origin-login');
+      const loginGet = await app.request('/login', { headers: { Cookie: flow.cookie } });
+
+      // A browser without Fetch Metadata: the Origin header alone decides.
+      const res = await postForm(
+        '/login',
+        flow.cookie,
+        { csrf_token: txnCsrfFrom(await loginGet.text()), ...LOGIN_FIELDS },
+        { Origin: 'https://evil.example' },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Set-Cookie')).toBe(null);
+    });
+
+    // Cookie tossing: a sibling subdomain plants a transaction of its own, so
+    // the cookie and its csrf_token both check out. SameSite=Lax does not help
+    // (the POST is same-site); only the browser's Sec-Fetch-Site gives it away.
+    it('should refuse a same-site POST /login that carries a planted transaction cookie and its csrf_token', async () => {
+      const planted = await startFlow('txn-planted');
+      const plantedForm = await app.request('/login', { headers: { Cookie: planted.cookie } });
+
+      const res = await postForm(
+        '/login',
+        planted.cookie,
+        { csrf_token: txnCsrfFrom(await plantedForm.text()), ...LOGIN_FIELDS },
+        { Origin: 'http://evil.localhost:3000', 'Sec-Fetch-Site': 'same-site' },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Set-Cookie')).toBe(null);
+    });
+
+    it('should not issue an authorization code for a cross-site POST /consent even with the cookie and a valid csrf_token', async () => {
+      const flow = await startFlow('txn-origin-consent');
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      const res = await postForm(
+        '/consent',
+        flow.cookie,
+        { csrf_token: txnCsrfFrom(consent.consentHtml), action: 'approve' },
+        { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' },
+      );
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
     });
 
     // One cookie per browser: a second authorization request (another tab)
@@ -1527,7 +1602,7 @@ describe('generated provider HTTP conformance', () => {
       // would: the login and consent steps find the transaction through it.
       const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
       // The cookie value is the transaction id, i.e. the store key suffix.
-      const transactionId = transactionCookie.slice('oidc_txn='.length);
+      const transactionId = transactionCookie.slice('__Host-oidc_txn='.length);
       const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
@@ -1714,7 +1789,7 @@ describe('generated provider HTTP conformance', () => {
       expect(res.status).toBe(302);
       expect(location.pathname).toBe('/login');
       // A fresh transaction was started for the login screen: its cookie is set.
-      expect((res.headers.get('Set-Cookie') ?? '').startsWith('oidc_txn=')).toBe(true);
+      expect((res.headers.get('Set-Cookie') ?? '').startsWith('__Host-oidc_txn=')).toBe(true);
       expect(location.searchParams.get('code')).toBe(null);
       expect(location.searchParams.get('error')).toBe(null);
     });

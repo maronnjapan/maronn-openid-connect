@@ -23,6 +23,8 @@ import {
   buildSessionCookie,
   parseSessionId,
   parseTransactionId,
+  isSameOriginFormPost,
+  CROSS_ORIGIN_FORM_POST_MESSAGE,
   userStore,
 } from '../store.js';
 
@@ -102,6 +104,18 @@ async function loadTransaction(
   }
 }
 
+/**
+ * Refuse a login form POST that the browser says came from anywhere but the
+ * OP's own pages (403, never redirected). See isSameOriginFormPost() in store.ts.
+ */
+function rejectCrossOriginFormPost(c: any): LoginError | undefined {
+  const sameOrigin = isSameOriginFormPost(
+    { origin: c.req.header('Origin') ?? null, secFetchSite: c.req.header('Sec-Fetch-Site') ?? null },
+    c.get('config').issuer,
+  );
+  return sameOrigin ? undefined : { kind: 'error', error: CROSS_ORIGIN_FORM_POST_MESSAGE, statusCode: 403 };
+}
+
 /** Describe the form for a transaction (the shared part of GET and a failed POST). */
 async function describeLoginScreen(
   transaction: AuthTransaction,
@@ -135,6 +149,12 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
   const authenticateUser =
     c.get('authenticateUser') ??
     ((u: string, p: string) => userStore.authenticate(u, p));
+
+  // First the browser's own statement of where the form was submitted from
+  // (isSameOriginFormPost() in store.ts): independent of the cookie and the
+  // csrf_token, so a forged POST is stopped even if both were planted.
+  const sameOriginError = rejectCrossOriginFormPost(c);
+  if (sameOriginError) return sameOriginError;
 
   // The cookie says which transaction this browser is in; the csrf_token says
   // the submission came from the form the OP rendered for exactly that one.

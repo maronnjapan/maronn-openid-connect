@@ -305,17 +305,24 @@ export function buildSessionCookie(sessionId: string): string {
  * One cookie per browser: a second /authorize (another tab) replaces it, and a
  * form still open in the first tab is then refused - its csrf_token belongs to
  * the replaced transaction - instead of completing the wrong request.
+ *
+ * The '__Host-' prefix makes the browser refuse this cookie unless it comes
+ * from this exact host with Secure, Path=/ and no Domain. Without it a sibling
+ * subdomain (evil.example.com next to op.example.com) could plant its own
+ * transaction in the victim's browser ("cookie tossing") - and the csrf_token
+ * of that planted transaction is one the attacker already knows. Browsers
+ * accept the prefix on http://localhost as well, so local development works.
  */
-export const TRANSACTION_COOKIE_NAME = 'oidc_txn';
+export const TRANSACTION_COOKIE_NAME = '__Host-oidc_txn';
 
 /**
  * Build the Set-Cookie value that hands a transaction to this browser.
  * Same attributes as the session cookie: HttpOnly (no JS access), Secure
  * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
  * SameSite=Lax, because SameSite=Strict would drop the cookie on the
- * cross-site navigation that starts the flow. Max-Age matches the transaction
- * TTL so an abandoned flow does not leave the cookie behind. When the OP is
- * always served over HTTPS, prefixing the name with '__Host-' is recommended.
+ * cross-site navigation that starts the flow. Secure and Path=/ (and no
+ * Domain) are also what the '__Host-' prefix requires. Max-Age matches the
+ * transaction TTL so an abandoned flow does not leave the cookie behind.
  */
 export function buildTransactionCookie(transactionId: string, ttlSeconds: number): string {
   return (
@@ -326,7 +333,9 @@ export function buildTransactionCookie(transactionId: string, ttlSeconds: number
 
 /**
  * Build the Set-Cookie value that removes the transaction cookie once the
- * transaction is finished (code issued or access denied).
+ * transaction is finished (code issued or access denied). It repeats Secure
+ * and Path=/: the browser ignores a '__Host-' cookie write without them, the
+ * removal included.
  */
 export function buildClearedTransactionCookie(): string {
   return TRANSACTION_COOKIE_NAME + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
@@ -348,6 +357,44 @@ export function parseTransactionId(cookieHeader: string | null): string | undefi
   }
   return undefined;
 }
+
+/**
+ * Whether a form POST to /login or /consent was sent from the OP's own pages.
+ *
+ * A check that depends on neither the transaction cookie nor the csrf_token:
+ * the browser itself states where the request came from, and no page script
+ * can override these headers. It still holds when a sibling subdomain managed
+ * to plant a transaction cookie and therefore knows its csrf_token, and it is
+ * the only check SameSite=Lax leaves to a same-site (sibling subdomain) POST.
+ *
+ * - Sec-Fetch-Site (Fetch Metadata): only 'same-origin' passes, plus 'none' -
+ *   a user-initiated request such as a reload, which no other site can
+ *   trigger. 'same-site' (a sibling subdomain) and 'cross-site' do not.
+ * - Without Fetch Metadata, the Origin header a browser sends on every POST
+ *   must be the issuer's origin. 'null' (an opaque origin) never matches.
+ * - With neither header the request did not come from a browser page (curl, an
+ *   HTTP client) or from a very old browser; the transaction cookie and the
+ *   csrf_token still apply.
+ *
+ * The comparison uses config.issuer, never the request URL: some runtimes
+ * derive the request URL from the Host header, which the sender controls.
+ */
+export function isSameOriginFormPost(
+  headers: { origin: string | null; secFetchSite: string | null },
+  issuer: string,
+): boolean {
+  if (headers.secFetchSite !== null) {
+    return headers.secFetchSite === 'same-origin' || headers.secFetchSite === 'none';
+  }
+  if (headers.origin !== null) {
+    return headers.origin === new URL(issuer).origin;
+  }
+  return true;
+}
+
+/** The message the OP shows when isSameOriginFormPost() refuses a form POST. */
+export const CROSS_ORIGIN_FORM_POST_MESSAGE =
+  'This form can only be submitted from the authorization server itself.';
 
 /**
  * In-memory consent store. Records that a user granted a set of scopes to a

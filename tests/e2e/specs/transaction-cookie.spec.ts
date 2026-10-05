@@ -34,7 +34,7 @@ test.describe('Auth transaction cookie', () => {
     // Secure, so a URL filter on the plain-HTTP test issuer would exclude it even
     // though the browser stores and replays it for a loopback origin.
     const cookies = await page.context().cookies();
-    const transaction = cookies.find((cookie) => cookie.name === 'oidc_txn');
+    const transaction = cookies.find((cookie) => cookie.name === '__Host-oidc_txn');
 
     // Unreadable from JavaScript, which is what keeps an XSS from lifting it.
     expect(transaction?.httpOnly).toBe(true);
@@ -127,7 +127,71 @@ test.describe('Auth transaction cookie', () => {
     await expect(page.getByTestId('token-type')).toHaveText('Bearer');
 
     const cookies = await page.context().cookies();
-    expect(cookies.some((cookie) => cookie.name === 'oidc_txn')).toBe(false);
+    expect(cookies.some((cookie) => cookie.name === '__Host-oidc_txn')).toBe(false);
+  });
+
+  // The E2E client (another port on the same host) is same-site but
+  // cross-origin, the shape of a sibling subdomain: the browser attaches the
+  // SameSite=Lax transaction cookie to its form POST. The forged form copies
+  // every hidden field of the real one (the csrf_token, and on Next.js the
+  // Server Action id) to model an attacker who knows them all. Only the
+  // browser's own Origin / Sec-Fetch-Site gives the submission away.
+  test('should not sign in through a login form posted from another origin of the same site', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+
+    await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    const hiddenFields = await page
+      .locator('form input[type="hidden"]')
+      .evaluateAll((inputs) =>
+        inputs.map((input): [string, string] => [
+          (input as HTMLInputElement).name,
+          (input as HTMLInputElement).value,
+        ]),
+      );
+    // Same encoding as the real form (Next.js Server Action forms are multipart).
+    const enctype = await page.locator('form').first().evaluate((form) => (form as HTMLFormElement).enctype);
+
+    const attackerPage = await context.newPage();
+    await attackerPage.goto(clientBaseURL);
+    await Promise.all([
+      attackerPage.waitForNavigation(),
+      attackerPage.evaluate(
+        ({ action, encoding, fields }) => {
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.action = action;
+          form.enctype = encoding;
+          for (const [name, value] of fields) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = value;
+            form.append(input);
+          }
+          document.body.append(form);
+          form.submit();
+        },
+        {
+          action: `${issuer}/login`,
+          encoding: enctype,
+          fields: [...hiddenFields, ['username', 'testuser'], ['password', 'password']] as Array<[string, string]>,
+        },
+      ),
+    ]);
+
+    await expect(attackerPage).not.toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    const cookies = await context.cookies();
+    expect(cookies.some((cookie) => cookie.name === 'session_id')).toBe(false);
+    await attackerPage.close();
+
+    // The End-User's own form, submitted from the OP's page, still works.
+    await login(page);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
   });
 
   // One cookie per browser: a second authorization request in another tab

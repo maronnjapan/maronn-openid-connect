@@ -11,6 +11,8 @@
  * - cookies() (next/headers) reads and writes the cookie jar of the simulated
  *   browser making the call — the same jar its Route Handler requests send and
  *   update, so pages, Server Actions and Route Handlers see one browser.
+ * - headers() (next/headers) returns the request headers a Server Action call
+ *   was given (Origin / Sec-Fetch-Site); none by default, like curl.
  * - redirect() and notFound() (next/navigation) throw a signal, which the
  *   harness turns into what Next.js would answer: a redirect, or a 404.
  *
@@ -128,8 +130,10 @@ const { ISSUER, REDIRECT_URI, harness } = vi.hoisted(() => {
       NotFoundSignal,
       /** The cookie jar of the browser whose call is being handled. */
       jar: new Map<string, string>(),
-      /** Every cookies().set() call, with the attributes it asked for. */
+      /** Every cookies().set() / delete() call, with the attributes it asked for. */
       cookieWrites: [] as Array<{ name: string; value: string; options: Record<string, unknown> }>,
+      /** The request headers of the Server Action call being handled. */
+      requestHeaders: new Headers(),
     },
   };
 });
@@ -144,10 +148,14 @@ vi.mock('next/headers', () => ({
       harness.jar.set(name, value);
       harness.cookieWrites.push({ name, value, options });
     },
-    delete: (name: string) => {
+    delete: (nameOrOptions: string | ({ name: string } & Record<string, unknown>)) => {
+      const { name, ...options } =
+        typeof nameOrOptions === 'string' ? { name: nameOrOptions } : nameOrOptions;
       harness.jar.delete(name);
+      harness.cookieWrites.push({ name, value: '', options: { ...options, expires: new Date(0) } });
     },
   }),
+  headers: async () => harness.requestHeaders,
 }));
 
 vi.mock('next/navigation', () => ({
@@ -265,17 +273,26 @@ class Browser {
   /**
    * Submit a form to a Server Action: where it redirects the browser (Next.js
    * answers a Server Action's redirect with 303), or a 404 from notFound().
+   * headers is what the browser would send about where the form came from
+   * (Origin / Sec-Fetch-Site); without it the call looks like curl.
    */
-  async submit(action: ServerAction, fields: Record<string, string>): Promise<Outcome> {
+  async submit(
+    action: ServerAction,
+    fields: Record<string, string>,
+    headers: HeadersInit = {},
+  ): Promise<Outcome> {
     const formData = new FormData();
     for (const [name, value] of Object.entries(fields)) {
       formData.set(name, value);
     }
     harness.jar = this.cookies;
+    harness.requestHeaders = new Headers(headers);
     try {
       await action(formData);
     } catch (error) {
       return outcomeOf(error, 303);
+    } finally {
+      harness.requestHeaders = new Headers();
     }
     throw new Error('The Server Action returned without redirecting');
   }
@@ -346,7 +363,7 @@ function locationOf(response: Response): string {
  * only in the HttpOnly transaction cookie: never in a URL, never in the HTML.
  */
 function transactionIdOf(browser: Browser): string {
-  return browser.cookies.get('oidc_txn') ?? '';
+  return browser.cookies.get('__Host-oidc_txn') ?? '';
 }
 
 function csrfTokenOf(html: string): string {
@@ -562,7 +579,7 @@ describe('Authorization Endpoint (OIDC Core 1.0 §3.1.2)', () => {
     expect(locationOf(response)).toBe(ISSUER + '/login');
     expect(response.headers.getSetCookie()).toEqual([
       expect.stringMatching(
-        new RegExp('^oidc_txn=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600$'),
+        new RegExp('^__Host-oidc_txn=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600$'),
       ),
     ]);
   });
@@ -824,7 +841,7 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
   describe('Error screens (Next.js not-found.js / error.js)', () => {
     it('should answer 404 with not-found.tsx for a transaction cookie naming no transaction', async () => {
       const browser = new Browser();
-      browser.cookies.set('oidc_txn', 'unknown-transaction');
+      browser.cookies.set('__Host-oidc_txn', 'unknown-transaction');
 
       expect(await browser.open(LoginPage, {})).toEqual({ status: 404 });
     });
@@ -898,7 +915,7 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
   describe('Error screens (Next.js not-found.js / error.js)', () => {
     it('should answer 404 with not-found.tsx for a transaction cookie naming no transaction', async () => {
       const browser = new Browser();
-      browser.cookies.set('oidc_txn', 'unknown-transaction');
+      browser.cookies.set('__Host-oidc_txn', 'unknown-transaction');
 
       expect(await browser.open(ConsentPage, {})).toEqual({ status: 404 });
     });
@@ -1141,8 +1158,78 @@ describe('Auth transaction cookie and csrf_token (OIDC Core 1.0 §3.1.2.3 / §3.
     await startAuthorization(browser);
     await logIn(browser);
     await decide(browser, 'approve');
+    const cleared = harness.cookieWrites.filter((write) => write.name === '__Host-oidc_txn').at(-1);
 
-    expect(browser.cookies.has('oidc_txn')).toBe(false);
+    expect(browser.cookies.has('__Host-oidc_txn')).toBe(false);
+    // A browser ignores a __Host- cookie write, the removal included, unless it
+    // repeats Secure and Path=/.
+    expect(cleared?.options).toMatchObject({ path: '/', secure: true });
+  });
+
+  // The browser itself states where a form was submitted from, independently of
+  // the cookie and the csrf_token (isSameOriginFormPost() in store.ts).
+  const crossOrigin =
+    '/oidc-error?error=cross_origin_request&error_description=' +
+    'This+form+can+only+be+submitted+from+the+authorization+server+itself.';
+
+  it('should accept a login submitted from the OP own page', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    const csrfToken = csrfTokenOf(await browser.render(LoginPage, {}));
+    const outcome = await browser.submit(
+      loginAction,
+      { csrf_token: csrfToken, username: 'testuser', password: 'password' },
+      { Origin: ISSUER, 'Sec-Fetch-Site': 'same-origin' },
+    );
+
+    expect(outcome).toEqual({ status: 303, location: '/consent' });
+  });
+
+  it('should refuse a login from another origin even with the cookie and a valid csrf_token', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    const csrfToken = csrfTokenOf(await browser.render(LoginPage, {}));
+    // A browser without Fetch Metadata: the Origin header alone decides.
+    const outcome = await browser.submit(
+      loginAction,
+      { csrf_token: csrfToken, username: 'testuser', password: 'password' },
+      { Origin: 'https://evil.example' },
+    );
+
+    expect(outcome).toEqual({ status: 303, location: crossOrigin });
+    expect(browser.cookies.has('session_id')).toBe(false);
+  });
+
+  // Cookie tossing: a sibling subdomain plants a transaction of its own, so the
+  // cookie and its csrf_token both check out. SameSite=Lax does not help (the
+  // POST is same-site); only the browser's Sec-Fetch-Site gives it away.
+  it('should refuse a same-site login that carries a planted transaction cookie and its csrf_token', async () => {
+    const victim = new Browser();
+    await startAuthorization(victim);
+    const plantedCsrfToken = csrfTokenOf(await victim.render(LoginPage, {}));
+    const outcome = await victim.submit(
+      loginAction,
+      { csrf_token: plantedCsrfToken, username: 'testuser', password: 'password' },
+      { Origin: 'http://evil.localhost:3000', 'Sec-Fetch-Site': 'same-site' },
+    );
+
+    expect(outcome).toEqual({ status: 303, location: crossOrigin });
+    expect(victim.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should refuse a cross-site consent decision even with the cookie and a valid csrf_token', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    await logIn(browser);
+    const csrfToken = csrfTokenOf(await browser.render(ConsentPage, {}));
+    const outcome = await browser.submit(
+      consentAction,
+      { csrf_token: csrfToken, action: 'approve' },
+      { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' },
+    );
+
+    expect(outcome).toEqual({ status: 303, location: crossOrigin });
+    expect(browser.cookies.has('__Host-oidc_txn')).toBe(true);
   });
 });
 

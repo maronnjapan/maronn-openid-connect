@@ -9,7 +9,7 @@ import {
 } from '@maronn-openid-connect/core';
 import { errorPagePath } from '../_oidc-provider/http';
 import { stores } from '../_oidc-provider/provider';
-import { requireTransaction } from '../_oidc-provider/transaction';
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 import { startSession } from './session';
 
 /**
@@ -21,6 +21,10 @@ import { startSession } from './session';
  * error page (oidc-error/page.tsx), never at the client.
  */
 export async function loginAction(formData: FormData): Promise<void> {
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below.
+  await requireSameOriginFormPost();
+
   // The transaction cookie says which transaction this browser is in ...
   const { transactionId, transaction } = await requireTransaction();
 

@@ -132,9 +132,9 @@ UI を変える場所は、変えたい範囲で選ぶ。
 
 ### 認可トランザクションの受け渡し（Cookie + csrf_token）
 
-`/authorize` から `/login`・`/consent` へ引き継ぐ認可トランザクションの ID は、URL にも HTML にも載せない。`/authorize` は ID を HttpOnly Cookie `oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡してクエリの無い `/login`（または `/consent`）へリダイレクトし、ログイン・同意画面は Cookie からトランザクションを引いて、フォームには `csrf_token` だけを埋め込む。`POST /login`・`POST /consent` は Cookie が指すトランザクションに対して `csrf_token` を照合するので、どちらか一方だけでは進めない。同意の結果を返すときに Cookie は消える。
+`/authorize` から `/login`・`/consent` へ引き継ぐ認可トランザクションの ID は、URL にも HTML にも載せない。`/authorize` は ID を HttpOnly Cookie `__Host-oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡してクエリの無い `/login`（または `/consent`）へリダイレクトし、ログイン・同意画面は Cookie からトランザクションを引いて、フォームには `csrf_token`（Cookie とは別の乱数）だけを埋め込む。`POST /login`・`POST /consent` は、まずブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたかを確かめ（`store.ts` の `isSameOriginFormPost()`）、次に Cookie が指すトランザクションに対して `csrf_token` を照合する。同意の結果を返すときに Cookie は消える。
 
-ID が URL から漏れて第三者に同意画面を開かれることも、攻撃者が始めたトランザクションへ被害者を誘導されることもない（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 が実装に委ねている User-Agent の同一性の担保）。Cookie は同意の結果を返すまで残るので、ログイン・同意画面をリロードしても同じトランザクションのフォーム（同じ `csrf_token`）がもう一度表示される。Cookie はブラウザに 1 つなので、同じブラウザの別タブで新しい認可リクエストを始めると、先のタブのフォームは `csrf_token` が一致せず拒否される。curl などで手動で進めるときは Cookie を持ち回る（`curl -c jar.txt -b jar.txt`）。
+ID が URL から漏れて第三者に同意画面を開かれることはない（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 が実装に委ねている User-Agent の同一性の担保）。`__Host-` プレフィックスはサブドメインからの Cookie の設定（Cookie tossing）をブラウザに拒否させ、送信元チェックは Cookie と `csrf_token` の両方を握られた偽の POST でも止める。Cookie は同意の結果を返すまで残るので、ログイン・同意画面をリロードしても同じトランザクションのフォーム（同じ `csrf_token`）がもう一度表示される。Cookie はブラウザに 1 つなので、同じブラウザの別タブで新しい認可リクエストを始めると、先のタブのフォームは `csrf_token` が一致せず拒否される。curl などで手動で進めるときは Cookie を持ち回る（`curl -c jar.txt -b jar.txt`）。
 
 ## Next.js の生成物
 

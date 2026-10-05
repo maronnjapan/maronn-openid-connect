@@ -3,7 +3,7 @@ title: Google ログイン（拡張）
 description: CLI の --enable google-login で Sign in with Google を OP のログイン手段に足す。
 ---
 
-`--enable google-login` は、生成される OP のログイン画面に「Google でログイン」（Sign in with Google、Google Identity Services の redirect mode）を追加する**拡張機能**です。OAuth / OIDC の仕様ではなく**ログイン手段**を足すものなので、Optional / Experimental とは別カテゴリで、既定では無効です。実装は別 package の `@maronn-openid-connect/google-login` にあり、有効にしたときだけ生成コードから import されます。
+`--enable google-login` は、生成される OP のログイン画面に「Google でログイン」（Sign in with Google、Google Identity Services の redirect mode）を追加する**拡張機能**です。OAuth / OIDC の仕様ではなく**ログイン手段**を足すものなので、Experimental とは別カテゴリで、既定では無効です。実装は別 package の `@maronn-openid-connect/google-login` にあり、有効にしたときだけ生成コードから import されます。
 
 Google が `login_uri` へ POST する ID トークンの検証は Google 公式の [`google-auth-library`](https://github.com/googleapis/google-auth-library-nodejs) に委ねます（公開鍵の取得・ローテーション追随、署名・`aud`・`iss`・`exp` の検証）。このため **Node.js 22 以上限定**で、Cloudflare Workers などのエッジランタイムでは動かない可能性があります。
 
@@ -19,7 +19,7 @@ maronn-oidc generate express --enable google-login
 pnpm add express @maronn-openid-connect/core @maronn-openid-connect/google-login
 ```
 
-`hono` / `fastify` / `nextjs` でも同じです。他の機能と組み合わせられます（例: `--enable google-login --enable transaction-binding`）。
+`hono` / `fastify` / `nextjs` でも同じです。他の機能と組み合わせられます（例: `--enable google-login --enable par`）。
 
 有効にしても、`config.googleLogin` を渡すまではボタンは表示されず、`POST /login/google` は 404 を返します。先に生成だけしておき、Google Cloud コンソールの準備ができてから設定を渡す、という順でも動きます。
 
@@ -101,7 +101,7 @@ Hono のメソッドガードと Fastify アダプタには `POST /login/google`
 
 ```
 RP ──(認可リクエスト)──> /authorize             core: createAuthTransaction
-                          └─> GET /login?transaction_id=…
+                          └─> GET /login（トランザクションの ID は HttpOnly Cookie で受け取る）
                                 issueGoogleLoginNonce        nonce → transaction_id をストアに保存
                                 buildGoogleSignInAttributes  g_id_onload の属性（data-nonce にその nonce）を組み立て、画面が描画
 ユーザーが Google でアカウントを選択（GIS が g_csrf_token Cookie を設定）
@@ -151,6 +151,6 @@ applyOidc(app, {
 ## 注意点
 
 - **Node.js 22 以上限定。** `samples/hono-cloudflare`（Cloudflare Workers）では有効にしていません
-- **`transaction-binding` との併用。** 束縛 Cookie は `SameSite=Lax` なので、Google からのクロスサイト POST には付きません。生成コードは `/login/google` では束縛検証を行わず、nonce の単回使用を束縛とみなします
+- **トランザクション Cookie は `/login/google` に届かない。** トランザクション Cookie（`oidc_txn`）は `SameSite=Lax` なので、Google からのクロスサイト POST には付きません。生成コードは `/login/google` ではトランザクションを nonce から復元し、nonce の単回使用を束縛とみなします（nonce を発行するログイン画面は Cookie を持つブラウザにしか表示されません）。その後の `/consent` への遷移は通常のナビゲーションなので、Cookie が付きます
 - **`login_uri` はログイン画面と同一サイトに置く。** GIS が `g_csrf_token` Cookie をログイン画面のドメインに設定するため、別サイトでは Double Submit Cookie の検証に失敗します
 - 実際の Google アカウントで通す E2E は本リポジトリの CI には含まれません。`samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel` を `GOOGLE_CLIENT_ID` 付きで起動し、ブラウザで確認してください

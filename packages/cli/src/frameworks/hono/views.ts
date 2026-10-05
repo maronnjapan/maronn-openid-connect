@@ -414,7 +414,6 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
       <h1>Login</h1>
       <FormError error={params.error} remainingAttempts={params.remainingAttempts} />
       <form method="post" action="/login">
-        <input type="hidden" name="transaction_id" value={params.transactionId} />
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <CredentialFields username={params.loginHint ?? ''} />
         <button type="submit">Login</button>
@@ -436,7 +435,6 @@ function defaultConsentPage(params: ConsentPageParams): JSX.Element {
       <p>Client <strong>{params.clientId}</strong> is requesting access to the following scopes:</p>
       <ScopeList scopes={params.scopes} />
       <form method="post" action="/consent">
-        <input type="hidden" name="transaction_id" value={params.transactionId} />
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <button type="submit" name="action" value="approve">Approve</button>
         <button type="submit" name="action" value="deny">Deny</button>

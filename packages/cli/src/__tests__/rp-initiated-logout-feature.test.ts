@@ -22,7 +22,6 @@ describe('resolveFeatures with rp-initiated-logout', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: true,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -58,7 +57,6 @@ describe('resolveFeatures with rp-initiated-logout', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: true,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 

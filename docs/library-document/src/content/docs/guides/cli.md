@@ -101,7 +101,7 @@ UI を変える場所は、変えたい範囲で選びます。
 - **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `pages/*.ts` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
 - **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`
 
-フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持してください。`transaction-binding` の束縛チェック（`rejectUnboundTransaction()`）や `google-login` のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけで済みます。
+フォームの `name`（`csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持してください。フォームに認可トランザクションの ID は入りません（[Auth Transaction](#auth-transaction-cookie--csrf_token) を参照）。トランザクション Cookie と `csrf_token` の照合や `google-login` のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけで済みます。
 
 ### Next.js
 
@@ -112,7 +112,7 @@ src/app/
 ├── _oidc-provider/           # 全エンドポイントが共有する部品（private folder なのでルーティングされない）
 │   ├── provider.ts           # 設定・クライアント・署名鍵・ストアの組み立て。プロジェクトへ組み込むときに編集する場所
 │   ├── http.ts               # CORS・キャッシュ禁止の JSON 応答・パラメータ重複の検出・エラーページへのリダイレクトなど、Route Handler と Server Action 共通の部品
-│   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションの取得（無ければ notFound()）
+│   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションを Cookie から取得（無ければ notFound()）
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
 │   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア
@@ -139,8 +139,8 @@ src/app/
 
 OP がブラウザを止める場面は、Next.js の機能で表します。
 
-- `transaction_id` に対応する認可リクエストが無い（不明・完了済み・期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示します。利用者はクライアントからやり直すしかありません
-- クライアントへ返してはいけないエラー（OIDC Core 1.0 §3.1.2.2。未登録の `redirect_uri`、CSRF トークンの不一致、ログイン試行回数の上限、transaction-binding の不一致、判断を含まない同意の POST、Google ログインのコールバックの失敗など）: `redirect()` で `oidc-error/page.tsx` へ送ります。Route Handler からは 303 でリダイレクトします
+- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明・完了済み・期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示します。利用者はクライアントからやり直すしかありません
+- クライアントへ返してはいけないエラー（OIDC Core 1.0 §3.1.2.2。未登録の `redirect_uri`、CSRF トークンの不一致、ログイン試行回数の上限、判断を含まない同意の POST、Google ログインのコールバックの失敗など）: `redirect()` で `oidc-error/page.tsx` へ送ります。Route Handler からは 303 でリダイレクトします
 - 想定外の例外（ストアの障害など）: `error.tsx`（error boundary）が表示します。本番の Next.js はエラーメッセージをブラウザへ渡さないので、画面にはサーバーログと突き合わせられる `digest` だけを出します
 
 これらの画面はどれも `_oidc-provider/error-view.tsx` の `ErrorView` で描くので、見た目はそこを書き換えれば揃って変わります。device / CIBA / RP-Initiated Logout の画面のエラーは、ステータスコード（403 / 429 など）を保つため、画面と同じく `_oidc-provider/html.ts` の HTML で返します。
@@ -202,6 +202,34 @@ const app = createApp({
 
 このライブラリはテンプレートへ仕様修正（多くはセキュリティ修正）を継続的に入れています。手元の生成コードへ修正を取り込むか判断するときは、`cliVersion` と [リリースノート](https://github.com/maronnjapan/maronn-openid-connect/releases) を突き合わせ、生成元の版と最新版の差分を確認してください。マニフェストは利用者が編集するファイルではないため、上書き保護の対象外として生成のたびに更新されます（生成日時は含めず、同じ入力からは同じ出力になります）。
 
+## Auth Transaction (Cookie + csrf_token)
+
+`/authorize` から `/login`・`/consent` へ認可リクエストを引き継ぐ認可トランザクションの ID は、URL にも HTML にも載せません。どのフレームワーク・どの機能構成でも同じで、トグルはありません。
+
+- `/authorize` はトランザクションを作ると、その ID を HttpOnly Cookie `oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡し、クエリの無い `/login`（SSO で同意だけが残っている場合は `/consent`）へリダイレクトします
+- `/login`・`/consent` は Cookie からトランザクションを引き、フォームには `csrf_token` だけを埋め込みます
+- `POST /login`・`POST /consent` は、Cookie が指すトランザクションに対して、送られてきた `csrf_token` を照合します。Cookie と `csrf_token` のどちらか一方だけでは進めません
+- 同意の結果（承認・拒否）をクライアントへ返すときに Cookie を消します
+
+ID が URL に出ないので、ブラウザ履歴・アクセスログ・画面共有から漏れた ID で第三者に同意画面を開かれることはありません。攻撃者が自分のクライアントで始めたトランザクションへ被害者を誘導し、被害者の認可コードを攻撃者のクライアントへ届かせる攻撃（RP の `state` 検証では防げない）も、他のサイトから Cookie を設定できないため成立しません。OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送った User-Agent の End-User」を認証・同意させることを前提にしていますが、その同一性を保証する手段は実装に委ねており、この Cookie がその手段です。
+
+Cookie はブラウザに 1 つです。同じブラウザの別タブで新しい認可リクエストを始めると Cookie が置き換わり、先に開いていたタブのフォームは `csrf_token` が一致しないため拒否されます。古いタブから誤ったリクエストを完了させないための挙動です。
+
+| 状況 | Hono / Express / Fastify | Next.js |
+|---|---|---|
+| Cookie が無い、または指すトランザクションが無い（不明・完了済み・期限切れ） | OP のエラー画面（400） | `not-found.tsx`（404） |
+| `csrf_token` が Cookie のトランザクションのものではない | OP のエラー画面（403） | `oidc-error` へリダイレクト |
+
+curl などで手動でフローを進めるときは Cookie を持ち回ってください（Hono / Express / Fastify の例）。
+
+```bash
+curl -sS -c jar.txt -o /dev/null 'http://localhost:3000/authorize?response_type=code&client_id=...&redirect_uri=...&scope=openid&code_challenge=...&code_challenge_method=S256'
+curl -sS -b jar.txt http://localhost:3000/login
+# ↑ 応答 HTML の csrf_token を控える
+curl -sS -b jar.txt -c jar.txt -X POST http://localhost:3000/login \
+  -d csrf_token=<控えた値> -d username=testuser -d password=password
+```
+
 ## Feature Toggles
 
 生成される OP の機能は、既定の全部入り構成から機能単位で増減できます。
@@ -224,22 +252,6 @@ maronn-oidc generate express --disable pkce
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
-
-### Optional Features
-
-Optional 機能は **stable な core の実装** ですが、**既定では無効**です。`--enable` で明示したときだけ生成されます。
-
-Experimental と違い API は安定しています。既定から外している理由は別で、**どの OIDC Core / OAuth 2.1 の条文もこれを要求していない**ためです。このライブラリの既定生成物は「仕様そのもの」に保ち、「この仕様で自分の要件が実現できるか」を確かめている利用者が、ライブラリ独自のハードニングに答えを混ぜられないようにしています。
-
-```bash
-maronn-oidc generate hono --enable transaction-binding
-```
-
-| 機能名 | 既定 | 内容 | 関連仕様 |
-|---|---|---|---|
-| `transaction-binding` | 無効 | 認可トランザクションを、それを開始した User-Agent に HttpOnly Cookie（`oidc_txn_<transaction_id>`）で束縛する。有効時は `/login`・`/consent` の GET / POST が Cookie を提示しない相手を 400 で拒否するため、URL を流れる `transaction_id` が漏れてもフローを進行できない | OIDC Core 1.0 §3.1.2.3 / §3.1.2.4（同一性の保証手段は実装責務）。OWASP CSRF Prevention Cheat Sheet |
-
-**有効化するとブラウザ以外から触りにくくなります。** curl や HTTP クライアントで `/authorize` → `transaction_id` を手で拾って `/login` を叩く、という進め方は Cookie を持ち回らないと 400 になります（`curl -c cookies.txt -b cookies.txt` 相当が必要）。手元で仕様を試す段階では無効のまま、束縛の挙動そのものを検証したいときに有効化する、という使い分けを想定しています。
 
 ### Experimental Features
 

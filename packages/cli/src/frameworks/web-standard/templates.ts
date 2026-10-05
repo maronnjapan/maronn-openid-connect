@@ -53,7 +53,7 @@ import {
   storeTemplate,
   tokenEndpointAuthMethodsConformanceBlock,
   tokenRouteTemplate,
-  transactionBindingConformanceBlock,
+  transactionCookieConformanceBlock,
   userinfoRouteTemplate,
   viewsTemplate,
 } from '../hono/templates.js';
@@ -1118,12 +1118,10 @@ ${nodeAdapterContract}
     it('should HTML-escape every login and consent value', () => {
       const hostile = '\"><script>alert(1)</script>';
       const loginHtml = String(defaultViews.loginPage({
-        transactionId: hostile,
         csrfToken: hostile,
         error: '<img src=x onerror=alert(1)>',
       }));
       const consentHtml = String(defaultViews.consentPage({
-        transactionId: hostile,
         csrfToken: hostile,
         scopes: ['openid'],
         clientId: 'client',
@@ -1538,7 +1536,7 @@ ${nonRedirectErrorTest}
       });
     });
   });
-${transactionBindingConformanceBlock(features)}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
+${transactionCookieConformanceBlock()}${customViewConformanceTestBlock()}${internalRedirectOriginConformanceBlock()}${endpointBehaviorConformanceBlock(features)}${idTokenHintConformanceBlock()}${consentWithdrawalConformanceBlock(features)}${reuseFlowConformanceTestBlock(features)}${onlineRefreshTokenConformanceBlock(features)}${revocationDisabledConformanceBlock(features)}${tokenEndpointAuthMethodsConformanceBlock()}${pkceDisabledConformanceBlock(features)}${parConformanceBlock(features)}${tokenExchangeConformanceBlock(features)}${idJagConformanceBlock(features)}${deviceAuthorizationConformanceBlock(features)}${cibaConformanceBlock(features)}${jarmConformanceBlock(features)}${jwtIntrospectionResponseConformanceBlock(features)}${rpInitiatedLogoutConformanceBlock(features)}${googleLoginConformanceBlock(features)}${consentDecisionConformanceBlock()}${customScopeConformanceBlock(scopes)}});
 `;
 }
 

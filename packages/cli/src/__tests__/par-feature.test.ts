@@ -37,7 +37,6 @@ describe('resolveFeatures with experimental features', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -57,7 +56,6 @@ describe('resolveFeatures with experimental features', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -87,13 +85,12 @@ describe('resolveFeatures with experimental features', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
   it('should name the experimental features in the unknown-feature error', () => {
     expect(() => resolveFeatures({ enable: ['dpop'] })).toThrow(
-      'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba',
+      'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba',
     );
   });
 });

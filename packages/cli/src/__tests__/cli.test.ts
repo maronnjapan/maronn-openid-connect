@@ -71,7 +71,7 @@ describe('run', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
     expect(consoleSpy).toHaveBeenCalledWith(
-      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout. Extension features (disabled by default): google-login',
+      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout. Extension features (disabled by default): google-login',
     );
     expect(process.exitCode).toBe(1);
     vi.restoreAllMocks();

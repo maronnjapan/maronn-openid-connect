@@ -22,7 +22,6 @@ describe('resolveFeatures with jarm', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -52,7 +51,6 @@ describe('resolveFeatures with jarm', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -72,7 +70,6 @@ describe('resolveFeatures with jarm', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 });

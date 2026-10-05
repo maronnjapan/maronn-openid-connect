@@ -141,7 +141,7 @@ function nextJsGeneratedFiles(
     },
     { path: '_oidc-provider/storage-backend.ts', content: nextJsStorageBackendTemplate() },
     { path: '_oidc-provider/http.ts', content: nextJsHttpTemplate() },
-    { path: '_oidc-provider/transaction.ts', content: nextJsTransactionTemplate(pkg, features) },
+    { path: '_oidc-provider/transaction.ts', content: nextJsTransactionTemplate(pkg) },
     { path: '_oidc-provider/error-view.tsx', content: nextJsErrorViewTemplate() },
     ...(servesHtmlFromRouteHandlers
       ? [{ path: '_oidc-provider/html.ts', content: nextJsHtmlTemplate() }]
@@ -184,7 +184,7 @@ function nextJsGeneratedFiles(
     ...(features.googleLogin
       ? [{ path: 'login/google/route.ts', content: nextJsGoogleLoginRouteTemplate(pkg) }]
       : []),
-    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(features, scopes) },
+    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(scopes) },
     { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(pkg, features, scopes) },
     { path: 'consent/not-found.tsx', content: nextJsNotFoundTemplate('consent') },
     { path: 'consent/error.tsx', content: nextJsErrorBoundaryTemplate('consent') },

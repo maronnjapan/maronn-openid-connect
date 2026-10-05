@@ -34,12 +34,12 @@ test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
     const redirectUri = `${clientBaseURL}/callback`;
 
     await page.goto(`${clientBaseURL}/start-jarm`);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
 
     await page.getByLabel('Username:').fill('testuser');
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
 
     await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(redirectUri)}\\?response=`));
@@ -81,7 +81,7 @@ test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
     await page.getByLabel('Username:').fill('testuser');
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
 
     await page.getByRole('button', { name: 'Deny' }).click();
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(redirectUri)}\\?response=`));

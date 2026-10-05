@@ -127,13 +127,9 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 
 CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` を機能単位で増減できます。詳細は [CLI Guide](../../guides/cli/) を参照してください。
 
-これらとは別に、**既定では無効**の Optional 機能があります。stable な core の実装ですが、どの OIDC Core / OAuth 2.1 の条文も要求していないため既定から外しており、`--enable` で明示したときだけ生成されます。
+ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 
-| 機能名 | 内容 | 関連仕様 |
-|---|---|---|
-| `transaction-binding` | 認可トランザクションを、それを開始した User-Agent に HttpOnly Cookie で束縛する。`transaction_id` が漏れても `/login`・`/consent` を進行できなくなる代わりに、ブラウザ以外（curl 等）から触るには Cookie の持ち回りが必要になる | OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 |
-
-さらに、ログイン手段を足す**拡張機能**があります。仕様ではなく認証方式の追加なので Optional / Experimental とは別カテゴリで、実装は別 package（`@maronn-openid-connect/google-login`）にあり、既定では無効です。
+さらに、ログイン手段を足す**拡張機能**があります。仕様ではなく認証方式の追加なので Experimental とは別カテゴリで、実装は別 package（`@maronn-openid-connect/google-login`）にあり、既定では無効です。
 
 | 機能名 | 内容 | 実装 |
 |---|---|---|

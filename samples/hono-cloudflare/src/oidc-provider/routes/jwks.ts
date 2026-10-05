@@ -7,73 +7,31 @@ export const jwksApp = new Hono<{ Variables: Record<string, any> }>();
  * JWKS Endpoint
  * Serves the public keys used to verify token signatures.
  *
- * T-022: per-purpose key arrays (signingKeys / idTokenSigningKeys / userinfoSigningKeys)
- * are flattened and exposed so rotated-out keys remain verifiable until tokens
- * signed with them expire. kid 指定がある鍵は kid で重複排除し、kid 未指定の
- * 鍵は最新（最後に投入された）1 件のみ採用する。
+ * T-022: every key of the per-purpose key sets (signingKeys / idTokenSigningKeys /
+ * userinfoSigningKeys) is published so rotated-out keys remain verifiable until
+ * tokens signed with them expire. kid 指定がある鍵は kid で重複排除し、kid 未指定の
+ * 鍵は最新の 1 件のみ採用する（鍵セットは新しい鍵ほど先頭にある）。
  */
 jwksApp.get('/', async (c) => {
-  // 旧 single-key context をフォールバックとして温存することで、createApp 経路や
-  // 一部だけ手書きされた route も従来どおり動く。
-  const signingKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
-  const idTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-  const userinfoSigningKeys = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
+  const keys: SigningKey[] = [
+    ...((c.get('signingKeys') as SigningKey[] | undefined) ?? []),
+    ...((c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? []),
+    ...((c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? []),
+  ];
 
-  const candidates: { jwk: JsonWebKey; kid: string | undefined }[] = [];
-  const pushAll = (keys: SigningKey[]) => {
-    for (const k of keys) {
-      candidates.push({ jwk: k.publicJwk as JsonWebKey, kid: k.keyId });
-    }
-  };
-  if (signingKeys.length > 0) {
-    pushAll(signingKeys);
-  } else {
-    const publicJwk = c.get('publicJwk');
-    const keyId = c.get('keyId');
-    if (publicJwk) {
-      candidates.push({ jwk: publicJwk, kid: keyId });
-    }
-  }
-  if (idTokenSigningKeys.length > 0) {
-    pushAll(idTokenSigningKeys);
-  } else {
-    const idTokenPublicJwk = c.get('idTokenPublicJwk');
-    const idTokenKeyId = c.get('idTokenKeyId');
-    if (idTokenPublicJwk) {
-      candidates.push({ jwk: idTokenPublicJwk, kid: idTokenKeyId });
-    }
-  }
-  if (userinfoSigningKeys.length > 0) {
-    pushAll(userinfoSigningKeys);
-  } else {
-    const userinfoPublicJwk = c.get('userinfoPublicJwk');
-    const userinfoKeyId = c.get('userinfoKeyId');
-    if (userinfoPublicJwk) {
-      candidates.push({ jwk: userinfoPublicJwk, kid: userinfoKeyId });
-    }
-  }
-
-  if (candidates.length === 0) {
+  if (keys.length === 0) {
     return c.json({ error: 'server_error' }, 500);
   }
 
-  // kid 指定がある鍵は最初に出現したものを採用（重複排除）。
-  // kid 未指定の鍵は最後に投入された 1 件のみ採用（最新性を優先）。
+  // 同じ kid の鍵は最初に出現したものだけを採用する（ID Token / UserInfo 用の
+  // プロバイダは既定で汎用プロバイダと同じ鍵を返すため）。kid 未指定の鍵も同様に
+  // 最初の 1 件（= 最新）だけを採用する。
   const seenKids = new Set<string>();
-  let lastUndefinedIndex = -1;
-  for (let i = 0; i < candidates.length; i++) {
-    if (candidates[i]!.kid === undefined) lastUndefinedIndex = i;
-  }
-
   const entries: { publicKey: CryptoKey; keyId?: string }[] = [];
-  for (let i = 0; i < candidates.length; i++) {
-    const { jwk, kid } = candidates[i]!;
-    if (kid === undefined) {
-      if (i !== lastUndefinedIndex) continue;
-    } else {
-      if (seenKids.has(kid)) continue;
-      seenKids.add(kid);
-    }
+  for (const key of keys) {
+    if (seenKids.has(key.keyId)) continue;
+    seenKids.add(key.keyId);
+    const jwk = key.publicJwk as JsonWebKey;
     const algParams = extractAlgorithmParamsFromJwk(jwk);
     const publicKey = await crypto.subtle.importKey(
       'jwk',
@@ -82,7 +40,7 @@ jwksApp.get('/', async (c) => {
       true,
       ['verify'],
     );
-    entries.push({ publicKey, keyId: kid });
+    entries.push({ publicKey, keyId: key.keyId });
   }
 
   const jwks = await exportJwks(entries);

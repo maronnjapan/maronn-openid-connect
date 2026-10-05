@@ -15,22 +15,17 @@ discoveryApp.get('/', (c) => {
   // Derive id_token_signing_alg_values_supported from the actual key set
   // (OIDC Core 1.0 §15.1 — RS256 presence is enforced by buildProviderMetadata).
   // T-022: 全 registered ID Token 鍵の alg を集約することで RS256+ES256 など
-  // 混在鍵セットも正しく advertise できる。フォールバックは旧 single-key context。
+  // 混在鍵セットも正しく advertise できる。
   const idTokenSigningKeyArr = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-  const idTokenSigningKeys: CryptoKey[] = idTokenSigningKeyArr.length > 0
-    ? idTokenSigningKeyArr.map((k) => k.privateKey)
-    : (c.get('idTokenPrivateKey') ?? c.get('privateKey'))
-      ? [c.get('idTokenPrivateKey') ?? c.get('privateKey')]
-      : [];
+  const idTokenSigningKeys: CryptoKey[] = idTokenSigningKeyArr.map((k) => k.privateKey);
 
   // OIDC Core 1.0 §5.3.2 / §3 discovery: advertise the UserInfo signing algs the OP
   // can actually sign with, derived from the registered UserInfo key set (RS256,
   // ES256, ...), so userinfo_signed_response_alg clients can rely on metadata.
-  // Defaults to ['RS256'] when no per-purpose key set is wired into context.
   const userinfoSigningKeyArr = (c.get('userinfoSigningKeys') as SigningKey[] | undefined) ?? [];
-  const userinfoSigningAlgValues = userinfoSigningKeyArr.length > 0
-    ? [...new Set(userinfoSigningKeyArr.map((k) => getJwaAlgorithm(k.privateKey)))]
-    : ['RS256'];
+  const userinfoSigningAlgValues = [
+    ...new Set(userinfoSigningKeyArr.map((k) => getJwaAlgorithm(k.privateKey))),
+  ];
 
   const metadata = buildProviderMetadata({
     issuer,

@@ -140,25 +140,16 @@ introspectionApp.post('/', async (c) => {
         authenticatedClientId,
       );
       // RFC 9701 §6: alg is pinned to RS256 (the default for a client that
-      // registered no introspection_signed_response_alg). The general-purpose
-      // ACTIVE key is not guaranteed to be RS256 — SigningKeyProvider may
-      // legitimately return ES256 as active alongside an RS256 + ES256
-      // registered set — so the key is picked by alg from the registered set.
-      // Its public half is published at /.well-known/jwks.json under the same
-      // kid. selectSigningKeyByAlg throws when no RS256 key is registered,
-      // which surfaces as a server_error below (a configuration mistake)
-      // rather than as an unverifiable introspection response.
+      // registered no introspection_signed_response_alg). The first key of the
+      // general-purpose set is not guaranteed to be RS256 — a SigningKeyProvider
+      // may legitimately put an ES256 key first in an RS256 + ES256 set — so the
+      // key is picked by alg from the set. Its public half is published at
+      // /.well-known/jwks.json under the same kid. selectSigningKeyByAlg throws
+      // when no RS256 key is registered, which surfaces as a server_error below
+      // (a configuration mistake) rather than as an unverifiable introspection
+      // response.
       const introspectionSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
-      const introspectionSigningKey = introspectionSigningKeys.length > 0
-        ? selectSigningKeyByAlg(introspectionSigningKeys, 'RS256')
-        : {
-            // Falls back to the single-key context so a hand-wired provider
-            // that never populated the key set keeps working; on the default
-            // single RS256 key both branches resolve the same key.
-            privateKey: c.get('privateKey'),
-            publicJwk: c.get('publicJwk'),
-            keyId: c.get('keyId'),
-          };
+      const introspectionSigningKey = selectSigningKeyByAlg(introspectionSigningKeys, 'RS256');
       const responseJwt = await createIntrospectionResponseJwt({
         issuer: c.get('config').issuer,
         audience: authenticatedClientId,

@@ -91,9 +91,6 @@ await applyOidc(app, {
 function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   const keyPromise = generateSigningKey();
   return {
-    async getSigningKey(): Promise<SigningKey> {
-      return keyPromise;
-    },
     async getSigningKeys(): Promise<SigningKey[]> {
       return [await keyPromise];
     },

@@ -204,52 +204,38 @@ tokenApp.post('/', async (c) => {
         store: deviceStore,
       });
 
-      // config / privateKey / keyId are bound further down for the standard
+      // config and the signing keys are bound further down for the standard
       // grants. This branch reads them on its own so the generated output is
       // unchanged when the feature is off; it returns, so nothing runs twice.
       const deviceConfig = c.get('config');
-      const devicePrivateKey = c.get('privateKey');
-      const deviceKeyId = c.get('keyId');
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const deviceSigningKey: SigningKey = c.get('signingKeys')[0];
+      const devicePrivateKey = deviceSigningKey.privateKey;
+      const deviceKeyId = deviceSigningKey.keyId;
       // T-022: the ID Token this grant issues follows the SAME key-selection rule
       // as the standard grants — pick a registered ID Token key whose alg matches
       // the client's id_token_signed_response_alg (OIDC Dynamic Client
-      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
-      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // Registration 1.0 §2), not simply the first key of the set. Using the
+      // first key would hand an ES256-registered client an RS256 ID Token, which
       // it rejects, and would hash at_hash with the wrong algorithm.
       const deviceIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-      const deviceFallbackIdKey: SigningKey | undefined =
-        c.get('idTokenPrivateKey') !== undefined
-          ? {
-              privateKey: c.get('idTokenPrivateKey'),
-              publicJwk: c.get('idTokenPublicJwk'),
-              keyId: c.get('idTokenKeyId') ?? deviceKeyId,
-            }
-          : undefined;
       const deviceRegisteredClient = (await tokenClientResolver.findClient(
         authenticatedClientId,
       )) as RegisteredClient | null;
       const deviceRequestedIdTokenAlg = deviceRegisteredClient?.idTokenSignedResponseAlg;
       let deviceSelectedIdTokenKey: SigningKey;
-      if (deviceIdTokenSigningKeys.length > 0) {
-        try {
-          deviceSelectedIdTokenKey = selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg);
-        } catch {
-          c.header('Cache-Control', 'no-store');
-          c.header('Pragma', 'no-cache');
-          return c.json(
-            {
-              error: 'server_error',
-              error_description: `No ID Token signing key registered for alg "${deviceRequestedIdTokenAlg ?? 'RS256'}"`,
-            },
-            500,
-          );
-        }
-      } else if (deviceFallbackIdKey) {
-        deviceSelectedIdTokenKey = deviceFallbackIdKey;
-      } else {
+      try {
+        deviceSelectedIdTokenKey = selectSigningKeyByAlg(deviceIdTokenSigningKeys, deviceRequestedIdTokenAlg);
+      } catch {
         c.header('Cache-Control', 'no-store');
         c.header('Pragma', 'no-cache');
-        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: `No ID Token signing key registered for alg "${deviceRequestedIdTokenAlg ?? 'RS256'}"`,
+          },
+          500,
+        );
       }
       const deviceIdTokenPrivateKey = deviceSelectedIdTokenKey.privateKey;
       const deviceIdTokenKeyId = deviceSelectedIdTokenKey.keyId;
@@ -392,52 +378,38 @@ tokenApp.post('/', async (c) => {
         store: cibaStore,
       });
 
-      // config / privateKey / keyId are bound further down for the standard
+      // config and the signing keys are bound further down for the standard
       // grants. This branch reads them on its own so the generated output is
       // unchanged when the feature is off; it returns, so nothing runs twice.
       const cibaTokenConfig = c.get('config');
-      const cibaPrivateKey = c.get('privateKey');
-      const cibaKeyId = c.get('keyId');
+      // The first registered key signs new tokens (SigningKeyProvider contract).
+      const cibaSigningKey: SigningKey = c.get('signingKeys')[0];
+      const cibaPrivateKey = cibaSigningKey.privateKey;
+      const cibaKeyId = cibaSigningKey.keyId;
       // T-022: the ID Token this grant issues follows the SAME key-selection rule
       // as the standard grants — pick a registered ID Token key whose alg matches
       // the client's id_token_signed_response_alg (OIDC Dynamic Client
-      // Registration 1.0 §2), not the general-purpose ACTIVE key. Using the
-      // active key would hand an ES256-registered client an RS256 ID Token, which
+      // Registration 1.0 §2), not simply the first key of the set. Using the
+      // first key would hand an ES256-registered client an RS256 ID Token, which
       // it rejects, and would hash at_hash with the wrong algorithm.
       const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-      const cibaFallbackIdKey: SigningKey | undefined =
-        c.get('idTokenPrivateKey') !== undefined
-          ? {
-              privateKey: c.get('idTokenPrivateKey'),
-              publicJwk: c.get('idTokenPublicJwk'),
-              keyId: c.get('idTokenKeyId') ?? cibaKeyId,
-            }
-          : undefined;
       const cibaRegisteredClient = (await tokenClientResolver.findClient(
         authenticatedClientId,
       )) as RegisteredClient | null;
       const cibaRequestedIdTokenAlg = cibaRegisteredClient?.idTokenSignedResponseAlg;
       let cibaSelectedIdTokenKey: SigningKey;
-      if (cibaIdTokenSigningKeys.length > 0) {
-        try {
-          cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
-        } catch {
-          c.header('Cache-Control', 'no-store');
-          c.header('Pragma', 'no-cache');
-          return c.json(
-            {
-              error: 'server_error',
-              error_description: `No ID Token signing key registered for alg "${cibaRequestedIdTokenAlg ?? 'RS256'}"`,
-            },
-            500,
-          );
-        }
-      } else if (cibaFallbackIdKey) {
-        cibaSelectedIdTokenKey = cibaFallbackIdKey;
-      } else {
+      try {
+        cibaSelectedIdTokenKey = selectSigningKeyByAlg(cibaIdTokenSigningKeys, cibaRequestedIdTokenAlg);
+      } catch {
         c.header('Cache-Control', 'no-store');
         c.header('Pragma', 'no-cache');
-        return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: `No ID Token signing key registered for alg "${cibaRequestedIdTokenAlg ?? 'RS256'}"`,
+          },
+          500,
+        );
       }
       const cibaIdTokenPrivateKey = cibaSelectedIdTokenKey.privateKey;
       const cibaIdTokenKeyId = cibaSelectedIdTokenKey.keyId;
@@ -655,43 +627,31 @@ tokenApp.post('/', async (c) => {
 
 
     const config = c.get('config');
-    const privateKey = c.get('privateKey');
-    const keyId = c.get('keyId');
+    // The first registered key signs new tokens (SigningKeyProvider contract).
+    const signingKey: SigningKey = c.get('signingKeys')[0];
+    const privateKey = signingKey.privateKey;
+    const keyId = signingKey.keyId;
 
     // T-022: pick an ID Token signing key whose alg matches the client's
     // id_token_signed_response_alg (OIDC Dynamic Client Registration §2).
     // - 未指定クライアントは OIDC 仕様デフォルトの RS256 で扱う。
     // - alg に合う鍵が登録されていなければサーバ設定エラー (server_error)。
     const idTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
-    const fallbackIdKey: SigningKey | undefined =
-      c.get('idTokenPrivateKey') !== undefined
-        ? {
-            privateKey: c.get('idTokenPrivateKey'),
-            publicJwk: c.get('idTokenPublicJwk'),
-            keyId: c.get('idTokenKeyId') ?? keyId,
-          }
-        : undefined;
     const registeredClient = (await tokenClientResolver.findClient(authenticatedClientId)) as
       | RegisteredClient
       | null;
     const requestedIdTokenAlg = registeredClient?.idTokenSignedResponseAlg;
     let selectedIdTokenKey: SigningKey;
-    if (idTokenSigningKeys.length > 0) {
-      try {
-        selectedIdTokenKey = selectSigningKeyByAlg(idTokenSigningKeys, requestedIdTokenAlg);
-      } catch {
-        return c.json(
-          {
-            error: 'server_error',
-            error_description: `No ID Token signing key registered for alg "${requestedIdTokenAlg ?? 'RS256'}"`,
-          },
-          500,
-        );
-      }
-    } else if (fallbackIdKey) {
-      selectedIdTokenKey = fallbackIdKey;
-    } else {
-      return c.json({ error: 'server_error', error_description: 'No ID Token signing key registered' }, 500);
+    try {
+      selectedIdTokenKey = selectSigningKeyByAlg(idTokenSigningKeys, requestedIdTokenAlg);
+    } catch {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: `No ID Token signing key registered for alg "${requestedIdTokenAlg ?? 'RS256'}"`,
+        },
+        500,
+      );
     }
     const idTokenPrivateKey = selectedIdTokenKey.privateKey;
     const idTokenKeyId = selectedIdTokenKey.keyId;

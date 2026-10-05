@@ -349,8 +349,8 @@ async function token(request: Request): Promise<Response> {
     // JWT or opaque, as chosen by config.accessTokenFormat (provider.ts).
     const accessToken = await accessTokenIssuer.issue({
       payload: accessTokenPayload,
-      privateKey: keys.general.active.privateKey,
-      keyId: keys.general.active.keyId,
+      privateKey: keys.general[0].privateKey,
+      keyId: keys.general[0].keyId,
     });
 
     // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。

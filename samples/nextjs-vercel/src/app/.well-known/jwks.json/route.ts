@@ -3,8 +3,8 @@
  *
  * All three key sets are published (general, ID Token, UserInfo) including
  * rotated-out keys, so tokens signed before a rotation keep verifying until
- * they expire. A kid appears once; of the keys without a kid only the most
- * recently added one is published.
+ * they expire. A kid appears once; of the keys without a kid only the newest
+ * one (the first, since a set lists its newest key first) is published.
  */
 import { exportJwks, extractAlgorithmParamsFromJwk, type SigningKey } from '@maronn-openid-connect/core';
 import { loadSigningKeys } from '../../_oidc-provider/provider';
@@ -31,9 +31,9 @@ async function jwks(): Promise<Response> {
   if (!keys) return signingKeysUnavailable();
 
   const published = publishedKeys([
-    ...keys.general.registered,
-    ...keys.idToken.registered,
-    ...keys.userinfo.registered,
+    ...keys.general,
+    ...keys.idToken,
+    ...keys.userinfo,
   ]);
   const entries = await Promise.all(
     published.map(async (key) => ({
@@ -54,17 +54,12 @@ async function jwks(): Promise<Response> {
 }
 
 /**
- * The first key of every kid, plus the last key that has no kid (the most
- * recent one wins, since rotation appends).
+ * The first key of every kid; keys without a kid count as one kid, so only the
+ * first of them (the newest, since a set lists its newest key first) is kept.
  */
 function publishedKeys(candidates: readonly SigningKey[]): SigningKey[] {
-  let lastWithoutKid = -1;
-  candidates.forEach((key, index) => {
-    if (key.keyId === undefined) lastWithoutKid = index;
-  });
   const seenKids = new Set<string>();
-  return candidates.filter((key, index) => {
-    if (key.keyId === undefined) return index === lastWithoutKid;
+  return candidates.filter((key) => {
     if (seenKids.has(key.keyId)) return false;
     seenKids.add(key.keyId);
     return true;

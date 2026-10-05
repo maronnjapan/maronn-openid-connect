@@ -37,7 +37,6 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  getRegisteredSigningKeys,
   signingKeysToJwkSet,
 } from '@maronn-openid-connect/core';
 import type {
@@ -56,11 +55,13 @@ export type CorsOrigins = string | string[];
 export interface CreateAppOptions {
   config?: Partial<ProviderConfig>;
   /**
-   * Provider for the RSA signing key pair.
+   * Primary signing key provider. getSigningKeys() returns the registered
+   * keys: the first one signs access tokens (JWT format), and every one is
+   * published at the JWKS endpoint, so keep a rotated-out key after the new one
+   * until the tokens it signed expire. Also used for ID Token / UserInfo
+   * signing when their dedicated providers are not configured.
    * Must load keys from your secret store (env var, KV, D1, etc.).
-   * Use createCachedSigningKeyProvider() to refresh the key periodically.
-   * Note: JWKS serves only the current key. Tokens signed with a rotated-out
-   * key will fail verification after the provider returns a new key.
+   * Use createCachedSigningKeyProvider() to refresh the keys periodically.
    */
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
@@ -110,6 +111,10 @@ export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): void {
+  // The first key of a set signs new tokens, so a set needs at least one key.
+  if (keys.length === 0) {
+    throw new Error('Signing key set must contain at least one key');
+  }
   assertKeyStrength(keys);
   assertKidStrategyConsistent(keys);
   if (requireRs256) {
@@ -187,45 +192,31 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
 
   // Store runtime dependencies for use by routes.
   app.use('*', async (c, next) => {
-    let signingKey;
-    let idTokenSigningKey;
-    let userinfoSigningKey;
+    // T-022: each provider returns its registered key set. The first key of a
+    // set signs new tokens, and every key is published at the JWKS endpoint so
+    // rotated-out and alternate-alg keys stay verifiable.
     let signingKeys;
     let idTokenSigningKeys;
     let userinfoSigningKeys;
     try {
-      signingKey = await options.signingKeyProvider.getSigningKey();
-      // T-022: surface every registered key so JWKS/Discovery can advertise
-      // rotated-out and alternate-alg keys, not just the active signing key.
-      signingKeys = await getRegisteredSigningKeys(options.signingKeyProvider);
+      signingKeys = await options.signingKeyProvider.getSigningKeys();
+      // Each purpose-specific provider falls back to the primary one.
       const idProvider = options.idTokenSigningKeyProvider ?? options.signingKeyProvider;
-      idTokenSigningKey = await idProvider.getSigningKey();
-      idTokenSigningKeys = await getRegisteredSigningKeys(idProvider);
+      idTokenSigningKeys = await idProvider.getSigningKeys();
       const uiProvider = options.userinfoSigningKeyProvider ?? options.signingKeyProvider;
-      userinfoSigningKey = await uiProvider.getSigningKey();
-      userinfoSigningKeys = await getRegisteredSigningKeys(uiProvider);
+      userinfoSigningKeys = await uiProvider.getSigningKeys();
       validateSigningKeySet(signingKeys);
       validateSigningKeySet(idTokenSigningKeys, true);
       validateSigningKeySet(userinfoSigningKeys);
     } catch {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
-    const { privateKey, publicJwk, keyId } = signingKey;
     const clientResolver =
       options.clientResolver ?? createInMemoryClientResolver();
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
-    c.set('privateKey', privateKey);
-    c.set('publicJwk', publicJwk);
-    c.set('keyId', keyId);
     c.set('signingKeys', signingKeys);
-    c.set('idTokenPrivateKey', idTokenSigningKey.privateKey);
-    c.set('idTokenPublicJwk', idTokenSigningKey.publicJwk);
-    c.set('idTokenKeyId', idTokenSigningKey.keyId);
-    c.set('userinfoPrivateKey', userinfoSigningKey.privateKey);
-    c.set('userinfoPublicJwk', userinfoSigningKey.publicJwk);
-    c.set('userinfoKeyId', userinfoSigningKey.keyId);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
     c.set('userinfoSigningKeys', userinfoSigningKeys);
     c.set('config', createProviderConfig(options.config));

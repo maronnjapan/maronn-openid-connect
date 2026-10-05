@@ -40,7 +40,7 @@ async function providerMetadata(): Promise<Response> {
     // OIDC Core 1.0 §15.1: id_token_signing_alg_values_supported is derived from
     // every registered ID Token key, so a mixed RS256 + ES256 set is advertised
     // as such (buildProviderMetadata enforces that RS256 is present).
-    idTokenSigningKeys: keys.idToken.registered.map((key) => key.privateKey),
+    idTokenSigningKeys: keys.idToken.map((key) => key.privateKey),
     userinfoEndpoint: `${issuer}/userinfo`,
     // OIDC Core 1.0 §11: offline_access is advertised so relying parties (and the
     // OIDF Conformance Suite's oidcc-refresh-token module) know they may request
@@ -96,7 +96,7 @@ async function providerMetadata(): Promise<Response> {
     // OIDC Core 1.0 §5.3.2: the algs the registered UserInfo keys can sign with,
     // so clients relying on userinfo_signed_response_alg can trust the metadata.
     userinfoSigningAlgValuesSupported: [
-      ...new Set(keys.userinfo.registered.map((key) => getJwaAlgorithm(key.privateKey))),
+      ...new Set(keys.userinfo.map((key) => getJwaAlgorithm(key.privateKey))),
     ],
     // OIDC Core 1.0 §6.1 / OIDC Discovery 1.0 §3: a signed Request Object by value
     // is supported (verified against the client's registered JWKS). request_uri

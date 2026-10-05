@@ -2,10 +2,10 @@
  * クライアント認証（OAuth 2.1 §2.3 / OIDC Core 1.0 §9）の
  * 機能単位ステップ関数のテスト。
  *
- * authenticateClient はこれらのステップ関数の合成であり、CLI 生成コードは各ステップを
- * 個別に呼び出して、利用者が認証方式を差し替えたり検証を消したりできるようにする。
- * 合成後の網羅的な振る舞いは client-auth.test.ts が担保し、本ファイルは
- * 各ステップ関数の入出力契約（成功値と代表的なエラー）を固定する。
+ * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が認証方式を
+ * 差し替えたり検証を消したりできるようにする。ステップごとの網羅的な振る舞いは
+ * client-auth.test.ts が担保し、本ファイルは各ステップ関数の入出力契約
+ * （成功値と代表的なエラー）を固定する。
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -13,7 +13,7 @@ import {
   validateClientAuthMethod,
   verifyClientSecret,
 } from './client-auth.js';
-import { TokenError, TokenErrorCode } from './token-request.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
 import type { TokenClientInfo } from './token-request.js';
 
 const confidentialClient: TokenClientInfo = {

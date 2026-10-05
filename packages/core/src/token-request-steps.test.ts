@@ -1,40 +1,43 @@
 /**
  * トークンリクエスト検証の機能単位ステップ関数のテスト。
  *
- * validateTokenRequest はこれらのステップ関数と grant 別関数
- * （validateAuthorizationCodeGrant / validateRefreshTokenGrant）の合成であり、
- * CLI 生成コードは各ステップを個別に呼び出して、利用者が検証処理を
- * 消したり足したりできるようにする。合成後の網羅的な振る舞いは
+ * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が検証処理を
+ * 消したり足したりできるようにする。ステップごとの網羅的な振る舞いは
  * token-request.test.ts が担保し、本ファイルは各ステップ関数の
  * 入出力契約（成功値と代表的なエラー）を固定する。
  */
 import { describe, it, expect } from 'vitest';
 import {
-  buildValidatedAuthorizationCodeRequest,
-  buildValidatedRefreshTokenRequest,
-  consumeAuthorizationCode,
-  resolveAuthorizationCode,
   validateGrantTypeSupported,
   resolveAuthenticatedTokenClient,
-  resolveRefreshToken,
+  validateClientGrantType,
+} from './token-request.js';
+import {
+  buildValidatedAuthorizationCodeRequest,
+  consumeAuthorizationCode,
+  resolveAuthorizationCode,
   validateAuthorizationCodeClient,
   validateAuthorizationCodeExpiration,
   validateAuthorizationCodeRedirectUri,
   validateAuthorizationCodeUnused,
-  validateClientGrantType,
+  verifyAuthorizationCodePkce,
+} from './authorization-code-grant.js';
+import {
+  buildValidatedRefreshTokenRequest,
+  resolveRefreshToken,
   validateRefreshTokenClient,
   validateRefreshTokenExpiration,
   validateRefreshTokenIdleTimeout,
   validateRefreshTokenSession,
   validateRefreshTokenScope,
   validateRefreshTokenUnused,
-  verifyAuthorizationCodePkce,
-  TokenError,
-  TokenErrorCode,
-} from './token-request.js';
+} from './refresh-token-grant.js';
+import { TokenError, TokenErrorCode } from './token-error.js';
 import type {
   AuthenticationSessionInfo,
   AuthenticationSessionResolver,
+} from './authentication-session.js';
+import type {
   AuthorizationCodeInfo,
   AuthorizationCodeResolver,
   RefreshTokenInfo,

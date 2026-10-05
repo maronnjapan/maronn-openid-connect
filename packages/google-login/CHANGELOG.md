@@ -1,5 +1,11 @@
 # @maronn-openid-connect/google-login
 
+## 0.0.4
+
+### Patch Changes
+
+- f1e9def: README の生成コード対応表で、Hono の既定のログイン画面が `views.tsx`（hono/jsx）にあることを明記する
+
 ## 0.0.3
 
 ### Patch Changes

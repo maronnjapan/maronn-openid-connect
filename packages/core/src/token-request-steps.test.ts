@@ -21,6 +21,17 @@ import {
   validateAuthorizationCodeRedirectUri,
   validateAuthorizationCodeUnused,
   verifyAuthorizationCodePkce,
+  requireAuthorizationCode,
+  requireStoredAuthorizationCode,
+  validateAuthorizationCodeNotUsed,
+  requireTokenRequestRedirectUri,
+  validateAuthorizationCodeRedirectUriMatch,
+  hasPkceBinding,
+  requirePkceBinding,
+  requireCodeVerifier,
+  validateCodeVerifier,
+  verifyCodeChallenge,
+  verifyPkceCodeVerifier,
 } from './authorization-code-grant.js';
 import {
   buildValidatedRefreshTokenRequest,
@@ -31,6 +42,13 @@ import {
   validateRefreshTokenSession,
   validateRefreshTokenScope,
   validateRefreshTokenUnused,
+  requireRefreshToken,
+  requireStoredRefreshToken,
+  validateRefreshTokenNotUsed,
+  requireRefreshTokenSession,
+  validateRefreshTokenSessionSubject,
+  validateRefreshTokenScopeNotEmpty,
+  validateRefreshTokenScopeWithinGrant,
 } from './refresh-token-grant.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
 import type {
@@ -758,5 +776,382 @@ describe('buildValidatedRefreshTokenRequest', () => {
       sessionId: 'session-abc',
       hadOfflineAccess: false,
     });
+  });
+});
+
+describe('requireAuthorizationCode', () => {
+  it('should return the code', () => {
+    expect(requireAuthorizationCode('authorization-code')).toBe('authorization-code');
+  });
+
+  it('should reject a missing code with invalid_request', () => {
+    expect(() => requireAuthorizationCode(undefined)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_request',
+        errorDescription: 'Missing required parameter: code',
+      }),
+    );
+  });
+});
+
+describe('requireStoredAuthorizationCode', () => {
+  it('should return the stored record', () => {
+    expect(requireStoredAuthorizationCode({ clientId: 'client-1' })).toEqual({
+      clientId: 'client-1',
+    });
+  });
+
+  it('should reject a code that the store did not find', () => {
+    expect(() => requireStoredAuthorizationCode(null)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription: 'Authorization code not found',
+      }),
+    );
+  });
+});
+
+describe('validateAuthorizationCodeNotUsed', () => {
+  it('should accept an unused code', () => {
+    expect(validateAuthorizationCodeNotUsed(false)).toBeUndefined();
+  });
+
+  it('should reject a used code', () => {
+    expect(() => validateAuthorizationCodeNotUsed(true)).toThrow(
+      'Authorization code has already been used',
+    );
+  });
+});
+
+describe('validateAuthorizationCodeUnused with a minimal resolver', () => {
+  it('should revoke the grant before rejecting reuse', async () => {
+    const revoked: string[] = [];
+    await expect(
+      validateAuthorizationCodeUnused(
+        { used: true, grantId: 'grant-1' },
+        {
+          async revokeTokensByGrantId(grantId: string) {
+            revoked.push(grantId);
+          },
+        },
+      ),
+    ).rejects.toThrow('Authorization code has already been used');
+    expect(revoked).toEqual(['grant-1']);
+  });
+});
+
+describe('consumeAuthorizationCode with a minimal resolver', () => {
+  it('should call revokeAuthorizationCode with the code', async () => {
+    const revoked: string[] = [];
+    await consumeAuthorizationCode('authorization-code', {
+      async revokeAuthorizationCode(code: string) {
+        revoked.push(code);
+      },
+    });
+    expect(revoked).toEqual(['authorization-code']);
+  });
+});
+
+describe('requireTokenRequestRedirectUri', () => {
+  it('should return the redirect_uri', () => {
+    expect(requireTokenRequestRedirectUri('https://client.example/cb')).toBe(
+      'https://client.example/cb',
+    );
+  });
+
+  // OIDC Core 1.0 §3.1.3.2: required when the authorization request included it
+  it('should reject a missing redirect_uri', () => {
+    expect(() => requireTokenRequestRedirectUri(undefined)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription:
+          'redirect_uri is required because it was included in the authorization request',
+      }),
+    );
+  });
+});
+
+describe('validateAuthorizationCodeRedirectUriMatch', () => {
+  it('should accept an identical redirect_uri', () => {
+    expect(
+      validateAuthorizationCodeRedirectUriMatch(
+        'https://client.example/cb',
+        'https://client.example/cb',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('should accept an omitted redirect_uri', () => {
+    expect(
+      validateAuthorizationCodeRedirectUriMatch(undefined, 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should reject a different redirect_uri', () => {
+    expect(() =>
+      validateAuthorizationCodeRedirectUriMatch(
+        'https://client.example/other',
+        'https://client.example/cb',
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription: 'redirect_uri does not match the authorization request',
+      }),
+    );
+  });
+});
+
+describe('hasPkceBinding', () => {
+  it('should return true when a code_challenge is stored', () => {
+    expect(hasPkceBinding('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256')).toBe(true);
+  });
+
+  it('should return true when only the method is stored', () => {
+    expect(hasPkceBinding(undefined, 'S256')).toBe(true);
+  });
+
+  it('should return false when neither value is stored', () => {
+    expect(hasPkceBinding(undefined, undefined)).toBe(false);
+  });
+});
+
+describe('requirePkceBinding', () => {
+  it('should return the stored challenge and method', () => {
+    expect(
+      requirePkceBinding('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256'),
+    ).toEqual({
+      codeChallenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+      codeChallengeMethod: 'S256',
+    });
+  });
+
+  it('should reject a binding without a method', () => {
+    expect(() =>
+      requirePkceBinding('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', undefined),
+    ).toThrow('Authorization code PKCE binding is incomplete');
+  });
+
+  it('should reject a binding without a challenge', () => {
+    expect(() => requirePkceBinding(undefined, 'S256')).toThrow(
+      'Authorization code PKCE binding is incomplete',
+    );
+  });
+});
+
+describe('requireCodeVerifier', () => {
+  it('should return the code_verifier', () => {
+    expect(requireCodeVerifier('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).toBe(
+      'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+    );
+  });
+
+  it('should reject a missing code_verifier with invalid_grant', () => {
+    expect(() => requireCodeVerifier(undefined)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription: 'Missing required parameter: code_verifier',
+      }),
+    );
+  });
+});
+
+describe('validateCodeVerifier', () => {
+  // RFC 7636 §4.1: code-verifier = 43*128unreserved
+  it('should accept 43 characters', () => {
+    expect(validateCodeVerifier('a'.repeat(43))).toBeUndefined();
+  });
+
+  it('should accept 128 characters', () => {
+    expect(validateCodeVerifier('a'.repeat(128))).toBeUndefined();
+  });
+
+  it('should reject 42 characters', () => {
+    expect(() => validateCodeVerifier('a'.repeat(42))).toThrow(
+      'code_verifier length must be between 43 and 128 characters',
+    );
+  });
+
+  it('should reject 129 characters', () => {
+    expect(() => validateCodeVerifier('a'.repeat(129))).toThrow(
+      'code_verifier length must be between 43 and 128 characters',
+    );
+  });
+
+  it('should reject characters outside unreserved', () => {
+    expect(() => validateCodeVerifier('!'.repeat(43))).toThrow(
+      'code_verifier contains invalid characters',
+    );
+  });
+});
+
+describe('verifyCodeChallenge', () => {
+  // RFC 7636 Appendix B test vector
+  it('should return true for the matching verifier', async () => {
+    expect(
+      await verifyCodeChallenge(
+        'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        'S256',
+      ),
+    ).toBe(true);
+  });
+
+  it('should return false for a different verifier', async () => {
+    expect(
+      await verifyCodeChallenge(
+        'a'.repeat(43),
+        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        'S256',
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('verifyPkceCodeVerifier', () => {
+  // RFC 7636 Appendix B test vector
+  it('should accept the matching verifier', async () => {
+    await expect(
+      verifyPkceCodeVerifier(
+        'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        'S256',
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('should reject a different verifier with invalid_grant', async () => {
+    await expect(
+      verifyPkceCodeVerifier(
+        'a'.repeat(43),
+        'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        'S256',
+      ),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription: 'code_verifier validation failed',
+      }),
+    );
+  });
+});
+
+describe('requireRefreshToken', () => {
+  it('should return the refresh token', () => {
+    expect(requireRefreshToken('refresh-token')).toBe('refresh-token');
+  });
+
+  it('should reject an empty refresh token', () => {
+    expect(() => requireRefreshToken('')).toThrow('Missing required parameter: refresh_token');
+  });
+});
+
+describe('requireStoredRefreshToken', () => {
+  it('should return the stored record', () => {
+    expect(requireStoredRefreshToken({ subject: 'user-1' })).toEqual({ subject: 'user-1' });
+  });
+
+  it('should reject a token that the store did not find', () => {
+    expect(() => requireStoredRefreshToken(null)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription: 'Refresh token not found',
+      }),
+    );
+  });
+});
+
+describe('validateRefreshTokenNotUsed', () => {
+  it('should accept an unused token', () => {
+    expect(validateRefreshTokenNotUsed(false)).toBeUndefined();
+  });
+
+  it('should reject a rotated token', () => {
+    expect(() => validateRefreshTokenNotUsed(true)).toThrow(
+      'Refresh token has already been used',
+    );
+  });
+});
+
+describe('validateRefreshTokenUnused with a minimal resolver', () => {
+  it('should revoke the grant before rejecting reuse', async () => {
+    const revoked: string[] = [];
+    await expect(
+      validateRefreshTokenUnused(
+        { used: true, grantId: 'grant-1' },
+        {
+          async revokeTokensByGrantId(grantId: string) {
+            revoked.push(grantId);
+          },
+        },
+      ),
+    ).rejects.toThrow('Refresh token has already been used');
+    expect(revoked).toEqual(['grant-1']);
+  });
+});
+
+describe('requireRefreshTokenSession', () => {
+  it('should return the session', () => {
+    expect(requireRefreshTokenSession({ subject: 'user-1' })).toEqual({ subject: 'user-1' });
+  });
+
+  it('should reject an ended session', () => {
+    expect(() => requireRefreshTokenSession(null)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription: 'The authentication session bound to this refresh token has ended',
+      }),
+    );
+  });
+});
+
+describe('validateRefreshTokenSessionSubject', () => {
+  it('should accept the same subject', () => {
+    expect(validateRefreshTokenSessionSubject('user-1', 'user-1')).toBeUndefined();
+  });
+
+  it('should reject a different subject', () => {
+    expect(() => validateRefreshTokenSessionSubject('user-2', 'user-1')).toThrow(
+      expect.objectContaining({
+        error: 'invalid_grant',
+        errorDescription:
+          'The authentication session bound to this refresh token belongs to another subject',
+      }),
+    );
+  });
+});
+
+describe('validateRefreshTokenScopeNotEmpty', () => {
+  it('should accept a non-empty scope list', () => {
+    expect(validateRefreshTokenScopeNotEmpty(['openid'])).toBeUndefined();
+  });
+
+  it('should reject an empty scope list', () => {
+    expect(() => validateRefreshTokenScopeNotEmpty([])).toThrow(
+      expect.objectContaining({
+        error: 'invalid_scope',
+        errorDescription: 'Requested scope must not be empty',
+      }),
+    );
+  });
+});
+
+describe('validateRefreshTokenScopeWithinGrant', () => {
+  // RFC 6749 §6: the requested scope must not exceed the original grant
+  it('should accept a subset of the original scope', () => {
+    expect(
+      validateRefreshTokenScopeWithinGrant(['openid'], ['openid', 'email']),
+    ).toBeUndefined();
+  });
+
+  it('should reject a scope outside the original grant', () => {
+    expect(() =>
+      validateRefreshTokenScopeWithinGrant(['openid', 'phone'], ['openid', 'email']),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_scope',
+        errorDescription: 'Requested scope exceeds original grant: phone',
+      }),
+    );
   });
 });

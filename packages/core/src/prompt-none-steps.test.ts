@@ -13,6 +13,8 @@ import {
   resolvePromptNoneSession,
   validatePromptNoneConsent,
   validatePromptNoneIdTokenHint,
+  requirePromptNoneSession,
+  validatePromptNoneConsentGranted,
 } from './auth-transaction.js';
 import type {
   AuthTransaction,
@@ -173,5 +175,43 @@ describe('validatePromptNoneConsent', () => {
     expect(asked).toEqual([
       { subject: 'user-1', clientId: 'client-1', scopes: ['openid', 'profile'] },
     ]);
+  });
+});
+
+describe('requirePromptNoneSession', () => {
+  it('should return the session', () => {
+    expect(requirePromptNoneSession({ subject: 'user-1' }, 'https://client.example/cb')).toEqual({
+      subject: 'user-1',
+    });
+  });
+
+  it('should reject a missing session with login_required', () => {
+    expect(() =>
+      requirePromptNoneSession(null, 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'login_required',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
+  });
+});
+
+describe('validatePromptNoneConsentGranted', () => {
+  it('should accept granted consent', () => {
+    expect(validatePromptNoneConsentGranted(true, 'https://client.example/cb')).toBeUndefined();
+  });
+
+  it('should reject missing consent with consent_required', () => {
+    expect(() =>
+      validatePromptNoneConsentGranted(false, 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'consent_required',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
   });
 });

@@ -10,6 +10,7 @@
 import { AuthorizationError, AuthorizationErrorCode } from './authorization-request.js';
 import type { ValidatedAuthorizationRequest } from './authorization-request.js';
 import { sha256, timingSafeEqual } from './crypto-utils.js';
+import { splitScope } from './scope.js';
 import type { ClaimsParameter } from './userinfo.js';
 
 // --- Session Types ---
@@ -237,8 +238,366 @@ export function createAuthTransaction(
   csrfToken: string,
   options: CreateAuthTransactionOptions = {}
 ): AuthTransaction {
-  const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-  const now = Date.now();
+  return buildAuthTransaction(validatedRequest, {
+    csrfToken,
+    ttlMs: options.ttlMs ?? DEFAULT_TTL_MS,
+    now: Date.now(),
+    bindingHash: options.bindingHash,
+  });
+}
+
+/**
+ * ストアからAuth Transactionを取得する
+ * トランザクションが存在しないまたは期限切れの場合はエラーをスローする
+ *
+ * @param txnId Auth Transaction ID
+ * @param store Auth Transaction Store
+ * @returns AuthTransaction
+ * @throws {AuthTransactionError} トランザクションが存在しないまたは期限切れの場合
+ */
+export async function getAuthTransaction(
+  txnId: string,
+  store: Pick<AuthTransactionStore, 'get'>
+): Promise<AuthTransaction> {
+  const key = `${STORE_KEY_PREFIX}${txnId}`;
+  const transaction = await store.get(key);
+
+  if (!transaction) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.TransactionNotFound,
+      'Auth transaction not found. The session may have expired.'
+    );
+  }
+
+  validateAuthTransactionExpiration(transaction.expiresAt, Date.now());
+
+  return transaction;
+}
+
+/**
+ * CSRFトークンを検証する
+ *
+ * @param transaction Auth Transaction
+ * @param csrfToken 検証するCSRFトークン
+ * @throws {AuthTransactionError} CSRFトークンが不正な場合
+ */
+export function validateCsrfToken(
+  transaction: Pick<AuthTransaction, 'csrfToken'>,
+  csrfToken: string
+): void {
+  if (!csrfToken || csrfToken !== transaction.csrfToken) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.InvalidCsrfToken,
+      'Invalid CSRF token.'
+    );
+  }
+}
+
+/**
+ * User-Agent へ配る秘密値から、トランザクションに保存する束縛ハッシュを求める。
+ *
+ * SHA-256 / base64url。秘密値そのものではなくハッシュを保存することで、
+ * トランザクションストアが漏洩しても、そこから有効な Cookie 値を復元できない。
+ *
+ * @param bindingSecret User-Agent に Cookie で配る秘密値（CSPRNG 由来を想定）
+ * @returns 束縛ハッシュ（base64url）
+ */
+export async function computeTransactionBindingHash(bindingSecret: string): Promise<string> {
+  return sha256(bindingSecret);
+}
+
+/**
+ * トランザクションが、それを開始した User-Agent から提示されたものかを検証する。
+ *
+ * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送ってきた User-Agent の
+ * End-User」を認証し、その End-User から authorization decision を得ることを前提と
+ * するが、同一性の保証手段は規定していない（実装責務）。ここでは認可エンドポイントで
+ * Cookie として配った秘密値のハッシュ一致で担保する。
+ *
+ * これが無いと、`transaction_id` が漏れた場合（ブラウザ履歴・アクセスログ・画面共有
+ * など）に第三者が同意画面から CSRF トークンを取得してフローを完了させられる。また、
+ * 攻撃者が自分のクライアントで開始したトランザクションへ被害者を誘導し、被害者の
+ * identity に対する認可コードを攻撃者のクライアントへ届かせることもできてしまう。
+ * RP 側の `state` 検証では防げない類型であり、OP 側の束縛が唯一の防御になる。
+ *
+ * 比較は {@link timingSafeEqual} を使い、ハッシュの先頭一致長が応答時間に漏れない
+ * ようにする。
+ *
+ * `bindingHash` を持たないトランザクションは、どの User-Agent が開始したかを確認できない
+ * ため拒否する。束縛を使わない構成ではこの関数を呼ばないこと。
+ *
+ * @param transaction Auth Transaction
+ * @param presentedBindingSecret Cookie から取り出した秘密値。未提示なら undefined
+ * @throws {AuthTransactionError} 束縛が一致しない、未提示、またはトランザクションに束縛が無い場合
+ */
+export async function validateTransactionBinding(
+  transaction: Pick<AuthTransaction, 'bindingHash'>,
+  presentedBindingSecret: string | undefined,
+): Promise<void> {
+  if (transaction.bindingHash === undefined || !presentedBindingSecret) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.InvalidTransactionBinding,
+      'This authorization transaction was not started by this browser.',
+    );
+  }
+
+  const presentedHash = await computeTransactionBindingHash(presentedBindingSecret);
+  if (!(await timingSafeEqual(presentedHash, transaction.bindingHash))) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.InvalidTransactionBinding,
+      'This authorization transaction was not started by this browser.',
+    );
+  }
+}
+
+/**
+ * ログイン失敗を処理する
+ * 失敗回数をインクリメントし、最大試行回数に達した場合はトランザクションを削除する
+ *
+ * @param txnId Auth Transaction ID
+ * @param transaction Auth Transaction
+ * @param store Auth Transaction Store
+ * @param maxAttempts 最大試行回数。デフォルト: 5
+ * @returns LoginFailureResult
+ */
+export async function handleLoginFailure(
+  txnId: string,
+  transaction: AuthTransaction,
+  store: Pick<AuthTransactionStore, 'put' | 'delete'>,
+  maxAttempts: number = DEFAULT_MAX_ATTEMPTS
+): Promise<LoginFailureResult> {
+  const key = `${STORE_KEY_PREFIX}${txnId}`;
+  const result = evaluateLoginFailure(transaction.failedAttempts, maxAttempts);
+  transaction.failedAttempts = result.failedAttempts;
+
+  if (!result.canRetry) {
+    await store.delete(key);
+    return result;
+  }
+
+  const remainingTtlSeconds = computeAuthTransactionTtlSeconds(transaction.expiresAt, Date.now());
+  await store.put(key, transaction, remainingTtlSeconds);
+
+  return result;
+}
+
+/**
+ * prompt=none ステップ 1: アクティブなセッションを解決する
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * prompt=none はユーザー操作を一切伴わないため、セッションが無い時点で
+ * login_required を返す（ログイン画面へ遷移してはならない）。
+ *
+ * @param transaction Auth Transaction（エラーのリダイレクト先 / state に使用）
+ * @param sessionResolver セッションを解決するリゾルバ
+ * @param request 元の HTTP リクエスト（cookie/JWT などからセッション解決に使用）
+ * @returns SessionInfo
+ * @throws {AuthorizationError} login_required
+ */
+export async function resolvePromptNoneSession(
+  transaction: Pick<AuthTransaction, 'redirectUri' | 'state'>,
+  sessionResolver: SessionResolver,
+  request: Request,
+): Promise<SessionInfo> {
+  return requirePromptNoneSession(
+    await sessionResolver.resolve(request),
+    transaction.redirectUri,
+    transaction.state,
+  );
+}
+
+/**
+ * prompt=none ステップ 2: id_token_hint の subject とセッションの一致を検証する
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * ID Token の署名・iss・aud・exp 検証は呼び出し側の責務（core を JWT 検証実装から
+ * 疎結合に保つため）。ここでは検証済みの subject だけを受け取り、アクティブな
+ * セッションの subject と一致するかを判定する。
+ *
+ * コンセント確認より前に実行すること: コンセント検索は session.subject をキーに
+ * するため、hint 不一致のまま進むと「別ユーザーのコンセント」を見てしまう。
+ *
+ * @param transaction Auth Transaction
+ * @param session 解決済みセッション
+ * @param verifiedHintSubject 呼び出し側で検証済みの id_token_hint の subject。未指定なら検証しない
+ * @throws {AuthorizationError} login_required
+ */
+export function validatePromptNoneIdTokenHint(
+  transaction: Pick<AuthTransaction, 'redirectUri' | 'state'>,
+  session: Pick<SessionInfo, 'subject'>,
+  verifiedHintSubject: string | undefined,
+): void {
+  if (verifiedHintSubject !== undefined && verifiedHintSubject !== session.subject) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.LoginRequired,
+      'id_token_hint subject does not match the active session.',
+      transaction.redirectUri,
+      transaction.state,
+    );
+  }
+}
+
+/**
+ * prompt=none ステップ 3: 要求スコープが同意済みであることを検証する
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * prompt=none では同意画面を表示できないため、未同意なら consent_required を返す。
+ * consentResolver 未指定時は検証しない（同意を永続化しない構成向け）。
+ *
+ * @param transaction Auth Transaction
+ * @param session 解決済みセッション
+ * @param consentResolver コンセント済みかを判定するリゾルバ（任意）
+ * @throws {AuthorizationError} consent_required
+ */
+export async function validatePromptNoneConsent(
+  transaction: Pick<AuthTransaction, 'redirectUri' | 'state' | 'clientId' | 'scope'>,
+  session: Pick<SessionInfo, 'subject'>,
+  consentResolver?: ConsentResolver,
+): Promise<void> {
+  if (!consentResolver) return;
+
+  const scopes = splitScope(transaction.scope);
+  const hasConsent = await consentResolver.hasConsent(
+    session.subject,
+    transaction.clientId,
+    scopes,
+  );
+  validatePromptNoneConsentGranted(hasConsent, transaction.redirectUri, transaction.state);
+}
+
+/**
+ * 再認証が必要かどうかを判定する（max_age チェック）
+ * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * maxAge=0 は「End-User を必ずアクティブに再認証させる」を意味する。
+ * auth_time は秒精度の NumericDate（Section 2）のため、ログインと認可が同一の
+ * 壁時計秒内で起きると authTime === now となる。strict な `now - authTime > 0`
+ * では 0 > 0 === false となり再認証されないので、maxAge<=0 を特別扱いする。
+ *
+ * @param maxAge 最大認証経過秒数（0 以下は常に再認証を強制）
+ * @param authTime 最終認証時刻（Unix timestamp 秒）
+ * @param now 現在時刻（Unix timestamp 秒）。省略時はシステム時刻
+ * @returns 再認証が必要な場合 true
+ */
+export function requiresReauthentication(
+  maxAge: number,
+  authTime: number,
+  now: number = Math.floor(Date.now() / 1000),
+): boolean {
+  // OIDC Core §3.1.2.1: max_age=0 は必ず再認証。負値も安全側（再認証）へ倒す。
+  if (maxAge <= 0) return true;
+  return now - authTime > maxAge;
+}
+
+/**
+ * 認証成功時にAuth Transactionを完了させる
+ * トランザクションを削除し（ワンタイム性の担保）、認可レスポンスに必要なパラメータを返す
+ *
+ * セキュリティ要件: トランザクション削除は認可コード発行の前に行うこと
+ *
+ * @param txnId Auth Transaction ID
+ * @param transaction Auth Transaction
+ * @param store Auth Transaction Store
+ * @returns AuthorizationResponseParams
+ */
+export async function completeAuthTransaction(
+  txnId: string,
+  transaction: AuthTransaction,
+  store: Pick<AuthTransactionStore, 'delete'>
+): Promise<AuthorizationResponseParams> {
+  const key = `${STORE_KEY_PREFIX}${txnId}`;
+
+  // ワンタイム性の担保: 認可コード発行前にトランザクションを削除
+  await store.delete(key);
+
+  return buildAuthorizationResponseParams(transaction);
+}
+
+/**
+ * Auth Transaction が期限切れでないことを検証する。expiresAt と now は Unix epoch ミリ秒。
+ * expiresAt と now が等しい場合は期限切れとする。
+ */
+export function validateAuthTransactionExpiration(expiresAt: number, now: number): void {
+  if (expiresAt <= now) {
+    throw new AuthTransactionError(
+      AuthTransactionErrorCode.TransactionExpired,
+      'Auth transaction has expired. Please start the authorization flow again.'
+    );
+  }
+}
+
+/**
+ * ログイン失敗後の失敗回数と再試行の可否を求める。トランザクションの書き換えや保存はしない。
+ */
+export function evaluateLoginFailure(
+  failedAttempts: number,
+  maxAttempts: number = DEFAULT_MAX_ATTEMPTS,
+): LoginFailureResult {
+  const nextAttempts = failedAttempts + 1;
+  return {
+    canRetry: !(nextAttempts >= maxAttempts),
+    failedAttempts: nextAttempts,
+    maxAttempts,
+  };
+}
+
+/**
+ * Auth Transaction から認可レスポンスの組み立てに使う値を取り出す。
+ * トランザクションは削除しないため、ワンタイム性は呼び出し側が削除して担保する。
+ */
+export function buildAuthorizationResponseParams(
+  transaction: Pick<AuthTransaction,
+    'redirectUri' | 'redirectUriExplicit' | 'clientId' | 'scope' | 'state' |
+    'codeChallenge' | 'codeChallengeMethod' | 'nonce' | 'audience' | 'acrValues' | 'claims'>,
+): AuthorizationResponseParams {
+  const result: AuthorizationResponseParams = {
+    redirectUri: transaction.redirectUri,
+    redirectUriExplicit: transaction.redirectUriExplicit,
+    clientId: transaction.clientId,
+    scope: transaction.scope.split(' '),
+  };
+
+  if (transaction.state !== undefined) {
+    result.state = transaction.state;
+  }
+  if (transaction.codeChallenge !== undefined) {
+    result.codeChallenge = transaction.codeChallenge;
+  }
+  if (transaction.codeChallengeMethod !== undefined) {
+    result.codeChallengeMethod = transaction.codeChallengeMethod;
+  }
+  if (transaction.nonce !== undefined) {
+    result.nonce = transaction.nonce;
+  }
+  if (transaction.audience !== undefined) {
+    result.audience = transaction.audience;
+  }
+  if (transaction.acrValues !== undefined) {
+    result.acrValues = transaction.acrValues;
+  }
+  if (transaction.claims !== undefined) {
+    result.claims = transaction.claims;
+  }
+
+  return result;
+}
+
+/**
+ * 検証済みの認可リクエストから Auth Transaction を組み立てる。保存はしない。
+ * 時刻と TTL はミリ秒で受け取り、createdAt と expiresAt に使う。
+ */
+export function buildAuthTransaction(
+  validatedRequest: ValidatedAuthorizationRequest,
+  options: {
+    csrfToken: string;
+    ttlMs: number;
+    /** 現在時刻（Unix epoch ミリ秒） */
+    now: number;
+    /** User-Agent 束縛のハッシュ。生の秘密値は渡さない */
+    bindingHash?: string;
+  },
+): AuthTransaction {
+  const { csrfToken, ttlMs, now } = options;
 
   const transaction: AuthTransaction = {
     clientId: validatedRequest.clientId,
@@ -303,318 +662,48 @@ export function createAuthTransaction(
 }
 
 /**
- * ストアからAuth Transactionを取得する
- * トランザクションが存在しないまたは期限切れの場合はエラーをスローする
- *
- * @param txnId Auth Transaction ID
- * @param store Auth Transaction Store
- * @returns AuthTransaction
- * @throws {AuthTransactionError} トランザクションが存在しないまたは期限切れの場合
+ * Auth Transaction の残り有効期間を、ストアの TTL に渡す秒数で返す。
+ * expiresAt と now は Unix epoch ミリ秒。切り上げ、期限切れでも最小 1 秒とする。
  */
-export async function getAuthTransaction(
-  txnId: string,
-  store: AuthTransactionStore
-): Promise<AuthTransaction> {
-  const key = `${STORE_KEY_PREFIX}${txnId}`;
-  const transaction = await store.get(key);
-
-  if (!transaction) {
-    throw new AuthTransactionError(
-      AuthTransactionErrorCode.TransactionNotFound,
-      'Auth transaction not found. The session may have expired.'
-    );
-  }
-
-  if (transaction.expiresAt <= Date.now()) {
-    throw new AuthTransactionError(
-      AuthTransactionErrorCode.TransactionExpired,
-      'Auth transaction has expired. Please start the authorization flow again.'
-    );
-  }
-
-  return transaction;
+export function computeAuthTransactionTtlSeconds(expiresAt: number, now: number): number {
+  return Math.max(1, Math.ceil((expiresAt - now) / 1000));
 }
 
 /**
- * CSRFトークンを検証する
- *
- * @param transaction Auth Transaction
- * @param csrfToken 検証するCSRFトークン
- * @throws {AuthTransactionError} CSRFトークンが不正な場合
+ * OIDC Core 1.0 §3.1.2.1: prompt=none でアクティブなセッションがあることを確かめる。
+ * セッションの解決は呼び出し側が行い、無ければ null を渡す。無い場合は login_required。
  */
-export function validateCsrfToken(
-  transaction: AuthTransaction,
-  csrfToken: string
-): void {
-  if (!csrfToken || csrfToken !== transaction.csrfToken) {
-    throw new AuthTransactionError(
-      AuthTransactionErrorCode.InvalidCsrfToken,
-      'Invalid CSRF token.'
-    );
-  }
-}
-
-/**
- * User-Agent へ配る秘密値から、トランザクションに保存する束縛ハッシュを求める。
- *
- * SHA-256 / base64url。秘密値そのものではなくハッシュを保存することで、
- * トランザクションストアが漏洩しても、そこから有効な Cookie 値を復元できない。
- *
- * @param bindingSecret User-Agent に Cookie で配る秘密値（CSPRNG 由来を想定）
- * @returns 束縛ハッシュ（base64url）
- */
-export async function computeTransactionBindingHash(bindingSecret: string): Promise<string> {
-  return sha256(bindingSecret);
-}
-
-/**
- * トランザクションが、それを開始した User-Agent から提示されたものかを検証する。
- *
- * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送ってきた User-Agent の
- * End-User」を認証し、その End-User から authorization decision を得ることを前提と
- * するが、同一性の保証手段は規定していない（実装責務）。ここでは認可エンドポイントで
- * Cookie として配った秘密値のハッシュ一致で担保する。
- *
- * これが無いと、`transaction_id` が漏れた場合（ブラウザ履歴・アクセスログ・画面共有
- * など）に第三者が同意画面から CSRF トークンを取得してフローを完了させられる。また、
- * 攻撃者が自分のクライアントで開始したトランザクションへ被害者を誘導し、被害者の
- * identity に対する認可コードを攻撃者のクライアントへ届かせることもできてしまう。
- * RP 側の `state` 検証では防げない類型であり、OP 側の束縛が唯一の防御になる。
- *
- * 比較は {@link timingSafeEqual} を使い、ハッシュの先頭一致長が応答時間に漏れない
- * ようにする。
- *
- * `bindingHash` を持たないトランザクションは、どの User-Agent が開始したかを確認できない
- * ため拒否する。束縛を使わない構成ではこの関数を呼ばないこと。
- *
- * @param transaction Auth Transaction
- * @param presentedBindingSecret Cookie から取り出した秘密値。未提示なら undefined
- * @throws {AuthTransactionError} 束縛が一致しない、未提示、またはトランザクションに束縛が無い場合
- */
-export async function validateTransactionBinding(
-  transaction: AuthTransaction,
-  presentedBindingSecret: string | undefined,
-): Promise<void> {
-  if (transaction.bindingHash === undefined || !presentedBindingSecret) {
-    throw new AuthTransactionError(
-      AuthTransactionErrorCode.InvalidTransactionBinding,
-      'This authorization transaction was not started by this browser.',
-    );
-  }
-
-  const presentedHash = await computeTransactionBindingHash(presentedBindingSecret);
-  if (!(await timingSafeEqual(presentedHash, transaction.bindingHash))) {
-    throw new AuthTransactionError(
-      AuthTransactionErrorCode.InvalidTransactionBinding,
-      'This authorization transaction was not started by this browser.',
-    );
-  }
-}
-
-/**
- * ログイン失敗を処理する
- * 失敗回数をインクリメントし、最大試行回数に達した場合はトランザクションを削除する
- *
- * @param txnId Auth Transaction ID
- * @param transaction Auth Transaction
- * @param store Auth Transaction Store
- * @param maxAttempts 最大試行回数。デフォルト: 5
- * @returns LoginFailureResult
- */
-export async function handleLoginFailure(
-  txnId: string,
-  transaction: AuthTransaction,
-  store: AuthTransactionStore,
-  maxAttempts: number = DEFAULT_MAX_ATTEMPTS
-): Promise<LoginFailureResult> {
-  const key = `${STORE_KEY_PREFIX}${txnId}`;
-  transaction.failedAttempts++;
-
-  if (transaction.failedAttempts >= maxAttempts) {
-    await store.delete(key);
-    return {
-      canRetry: false,
-      failedAttempts: transaction.failedAttempts,
-      maxAttempts,
-    };
-  }
-
-  const remainingTtlMs = transaction.expiresAt - Date.now();
-  const remainingTtlSeconds = Math.max(1, Math.ceil(remainingTtlMs / 1000));
-  await store.put(key, transaction, remainingTtlSeconds);
-
-  return {
-    canRetry: true,
-    failedAttempts: transaction.failedAttempts,
-    maxAttempts,
-  };
-}
-
-/**
- * prompt=none ステップ 1: アクティブなセッションを解決する
- * OIDC Core 1.0 Section 3.1.2.1
- *
- * prompt=none はユーザー操作を一切伴わないため、セッションが無い時点で
- * login_required を返す（ログイン画面へ遷移してはならない）。
- *
- * @param transaction Auth Transaction（エラーのリダイレクト先 / state に使用）
- * @param sessionResolver セッションを解決するリゾルバ
- * @param request 元の HTTP リクエスト（cookie/JWT などからセッション解決に使用）
- * @returns SessionInfo
- * @throws {AuthorizationError} login_required
- */
-export async function resolvePromptNoneSession(
-  transaction: AuthTransaction,
-  sessionResolver: SessionResolver,
-  request: Request,
-): Promise<SessionInfo> {
-  const session = await sessionResolver.resolve(request);
+export function requirePromptNoneSession<T>(
+  session: T | null | undefined,
+  redirectUri: string,
+  state?: string,
+): T {
   if (!session) {
     throw new AuthorizationError(
       AuthorizationErrorCode.LoginRequired,
       'No active session found. Silent authentication failed.',
-      transaction.redirectUri,
-      transaction.state
+      redirectUri,
+      state
     );
   }
   return session;
 }
 
 /**
- * prompt=none ステップ 2: id_token_hint の subject とセッションの一致を検証する
- * OIDC Core 1.0 Section 3.1.2.1
- *
- * ID Token の署名・iss・aud・exp 検証は呼び出し側の責務（core を JWT 検証実装から
- * 疎結合に保つため）。ここでは検証済みの subject だけを受け取り、アクティブな
- * セッションの subject と一致するかを判定する。
- *
- * コンセント確認より前に実行すること: コンセント検索は session.subject をキーに
- * するため、hint 不一致のまま進むと「別ユーザーのコンセント」を見てしまう。
- *
- * @param transaction Auth Transaction
- * @param session 解決済みセッション
- * @param verifiedHintSubject 呼び出し側で検証済みの id_token_hint の subject。未指定なら検証しない
- * @throws {AuthorizationError} login_required
+ * OIDC Core 1.0 §3.1.2.1: prompt=none で要求 scope への同意が済んでいることを検証する。
+ * 同意の照会は呼び出し側が行い、結果を渡す。未同意なら consent_required。
  */
-export function validatePromptNoneIdTokenHint(
-  transaction: AuthTransaction,
-  session: SessionInfo,
-  verifiedHintSubject: string | undefined,
+export function validatePromptNoneConsentGranted(
+  hasConsent: boolean,
+  redirectUri: string,
+  state?: string,
 ): void {
-  if (verifiedHintSubject !== undefined && verifiedHintSubject !== session.subject) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.LoginRequired,
-      'id_token_hint subject does not match the active session.',
-      transaction.redirectUri,
-      transaction.state,
-    );
-  }
-}
-
-/**
- * prompt=none ステップ 3: 要求スコープが同意済みであることを検証する
- * OIDC Core 1.0 Section 3.1.2.1
- *
- * prompt=none では同意画面を表示できないため、未同意なら consent_required を返す。
- * consentResolver 未指定時は検証しない（同意を永続化しない構成向け）。
- *
- * @param transaction Auth Transaction
- * @param session 解決済みセッション
- * @param consentResolver コンセント済みかを判定するリゾルバ（任意）
- * @throws {AuthorizationError} consent_required
- */
-export async function validatePromptNoneConsent(
-  transaction: AuthTransaction,
-  session: SessionInfo,
-  consentResolver?: ConsentResolver,
-): Promise<void> {
-  if (!consentResolver) return;
-
-  const scopes = transaction.scope.split(' ').filter(Boolean);
-  const hasConsent = await consentResolver.hasConsent(
-    session.subject,
-    transaction.clientId,
-    scopes,
-  );
   if (!hasConsent) {
     throw new AuthorizationError(
       AuthorizationErrorCode.ConsentRequired,
       'Consent has not been granted. Silent authentication cannot show consent UI.',
-      transaction.redirectUri,
-      transaction.state,
+      redirectUri,
+      state,
     );
   }
-}
-
-/**
- * 再認証が必要かどうかを判定する（max_age チェック）
- * OIDC Core 1.0 Section 3.1.2.1
- *
- * maxAge=0 は「End-User を必ずアクティブに再認証させる」を意味する。
- * auth_time は秒精度の NumericDate（Section 2）のため、ログインと認可が同一の
- * 壁時計秒内で起きると authTime === now となる。strict な `now - authTime > 0`
- * では 0 > 0 === false となり再認証されないので、maxAge<=0 を特別扱いする。
- *
- * @param maxAge 最大認証経過秒数（0 以下は常に再認証を強制）
- * @param authTime 最終認証時刻（Unix timestamp 秒）
- * @returns 再認証が必要な場合 true
- */
-export function requiresReauthentication(maxAge: number, authTime: number): boolean {
-  // OIDC Core §3.1.2.1: max_age=0 は必ず再認証。負値も安全側（再認証）へ倒す。
-  if (maxAge <= 0) return true;
-  const now = Math.floor(Date.now() / 1000);
-  return now - authTime > maxAge;
-}
-
-/**
- * 認証成功時にAuth Transactionを完了させる
- * トランザクションを削除し（ワンタイム性の担保）、認可レスポンスに必要なパラメータを返す
- *
- * セキュリティ要件: トランザクション削除は認可コード発行の前に行うこと
- *
- * @param txnId Auth Transaction ID
- * @param transaction Auth Transaction
- * @param store Auth Transaction Store
- * @returns AuthorizationResponseParams
- */
-export async function completeAuthTransaction(
-  txnId: string,
-  transaction: AuthTransaction,
-  store: AuthTransactionStore
-): Promise<AuthorizationResponseParams> {
-  const key = `${STORE_KEY_PREFIX}${txnId}`;
-
-  // ワンタイム性の担保: 認可コード発行前にトランザクションを削除
-  await store.delete(key);
-
-  const result: AuthorizationResponseParams = {
-    redirectUri: transaction.redirectUri,
-    redirectUriExplicit: transaction.redirectUriExplicit,
-    clientId: transaction.clientId,
-    scope: transaction.scope.split(' '),
-  };
-
-  if (transaction.state !== undefined) {
-    result.state = transaction.state;
-  }
-  if (transaction.codeChallenge !== undefined) {
-    result.codeChallenge = transaction.codeChallenge;
-  }
-  if (transaction.codeChallengeMethod !== undefined) {
-    result.codeChallengeMethod = transaction.codeChallengeMethod;
-  }
-  if (transaction.nonce !== undefined) {
-    result.nonce = transaction.nonce;
-  }
-  if (transaction.audience !== undefined) {
-    result.audience = transaction.audience;
-  }
-  if (transaction.acrValues !== undefined) {
-    result.acrValues = transaction.acrValues;
-  }
-  if (transaction.claims !== undefined) {
-    result.claims = transaction.claims;
-  }
-
-  return result;
 }

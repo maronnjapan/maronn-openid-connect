@@ -19,6 +19,7 @@
 import type { AccessTokenInfo } from './userinfo.js';
 import type { RefreshTokenInfo, TokenClientInfo } from './token-request.js';
 import { sanitizeErrorDescription } from './error-utils.js';
+import { selectRegisteredClientAuthMethod } from './client-auth.js';
 
 /**
  * RFC 7662 で示唆されるエラー。実体は OAuth 2.0 Section 5.2 のエラー。
@@ -103,18 +104,32 @@ export interface ResolveIntrospectionTokenOptions {
   refreshTokenResolver?: IntrospectionRefreshTokenResolver;
 }
 
-function isAccessTokenActive(info: AccessTokenInfo, now: number): boolean {
-  if (info.expiresAt <= now) return false;
+/**
+ * RFC 7662 §2.2: アクセストークンが有効期限内で、nbf を過ぎているかを返す。時刻は Unix epoch 秒。
+ */
+export function isAccessTokenActive(
+  expiresAt: number,
+  notBefore: number | undefined,
+  now: number,
+): boolean {
+  if (expiresAt <= now) return false;
   // RFC 7519 §4.1.5 / RFC 7662 §2.2: a token whose nbf ("not before") is in the
   // future is not yet valid, so it MUST be reported inactive. Applies to both JWT
   // and opaque tokens because the stored token info drives introspection.
-  if (info.nbf !== undefined && info.nbf > now) return false;
+  if (notBefore !== undefined && notBefore > now) return false;
   return true;
 }
 
-function isRefreshTokenActive(info: RefreshTokenInfo, now: number): boolean {
-  if (info.used) return false;
-  if (info.expiresAt <= now) return false;
+/**
+ * RFC 7662 §2.2: リフレッシュトークンがローテーション済みでなく、有効期限内かを返す。時刻は Unix epoch 秒。
+ */
+export function isRefreshTokenActive(
+  expiresAt: number,
+  used: boolean | undefined,
+  now: number,
+): boolean {
+  if (used) return false;
+  if (expiresAt <= now) return false;
   return true;
 }
 
@@ -208,7 +223,7 @@ export function requireConfidentialIntrospectionCaller(
   client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod'>,
 ): void {
   // OIDC Core 1.0 §9 / RFC 7591 §2: 既定は client_secret_basic（confidential）。
-  const registeredMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
+  const registeredMethod = selectRegisteredClientAuthMethod(client.tokenEndpointAuthMethod);
   if (registeredMethod === 'none') {
     throw new IntrospectionError(
       IntrospectionErrorCode.InvalidClient,
@@ -264,8 +279,8 @@ export function isIntrospectionTokenActive(
   now: number = Math.floor(Date.now() / 1000),
 ): boolean {
   return resolved.tokenType === 'access_token'
-    ? isAccessTokenActive(resolved.accessToken, now)
-    : isRefreshTokenActive(resolved.refreshToken, now);
+    ? isAccessTokenActive(resolved.accessToken.expiresAt, resolved.accessToken.nbf, now)
+    : isRefreshTokenActive(resolved.refreshToken.expiresAt, resolved.refreshToken.used, now);
 }
 
 /**

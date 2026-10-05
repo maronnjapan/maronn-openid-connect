@@ -12,6 +12,15 @@ import {
   extractClientCredentials,
   validateClientAuthMethod,
   verifyClientSecret,
+  parseBasicClientCredentials,
+  validateSingleClientAuthMethod,
+  validateClientIdConsistency,
+  requireClientId,
+  selectPresentedClientAuthMethod,
+  selectRegisteredClientAuthMethod,
+  requireClientSecret,
+  validateClientAuthMethodMatch,
+  verifyClientSecretValue,
 } from './client-auth.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
 import type { TokenClientInfo } from './token-request.js';
@@ -367,5 +376,144 @@ describe('verifyClientSecret', () => {
     expect(error).toBeInstanceOf(TokenError);
     expect(error?.error).toBe(TokenErrorCode.InvalidClient);
     expect(error?.errorDescription).toBe('Client authentication failed');
+  });
+});
+
+describe('parseBasicClientCredentials', () => {
+  // RFC 6749 §2.3.1: credentials are form-urlencoded before Base64 encoding
+  it('should decode form-urlencoded credentials', () => {
+    expect(parseBasicClientCredentials(`Basic ${btoa('a%3Ab:c+d')}`)).toEqual({
+      clientId: 'a:b',
+      clientSecret: 'c d',
+    });
+  });
+
+  it('should return null for invalid base64', () => {
+    expect(parseBasicClientCredentials('Basic !!!')).toBeNull();
+  });
+
+  it('should return null for another scheme', () => {
+    expect(parseBasicClientCredentials('Bearer abc')).toBeNull();
+  });
+});
+
+describe('validateSingleClientAuthMethod', () => {
+  it('should accept Basic without a body secret', () => {
+    expect(validateSingleClientAuthMethod(true, undefined)).toBeUndefined();
+  });
+
+  it('should reject Basic combined with a body secret', () => {
+    expect(() => validateSingleClientAuthMethod(true, 'secret')).toThrow(
+      expect.objectContaining({ error: 'invalid_request' }),
+    );
+  });
+});
+
+describe('validateClientIdConsistency', () => {
+  it('should accept an omitted body client_id', () => {
+    expect(validateClientIdConsistency(undefined, 'client-1')).toBeUndefined();
+  });
+
+  it('should reject a body client_id different from Basic', () => {
+    expect(() => validateClientIdConsistency('client-2', 'client-1')).toThrow(
+      'client_id in request body does not match the Authorization header',
+    );
+  });
+});
+
+describe('requireClientId', () => {
+  it('should return the client_id', () => {
+    expect(requireClientId('client-1')).toBe('client-1');
+  });
+
+  // RFC 6749 §4.1.3: an unauthenticated client must still send client_id
+  it('should reject a missing client_id with invalid_client', () => {
+    expect(() => requireClientId(undefined)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_client',
+        errorDescription: 'Client authentication required',
+      }),
+    );
+  });
+});
+
+describe('selectPresentedClientAuthMethod', () => {
+  it('should select client_secret_basic when Basic is used', () => {
+    expect(selectPresentedClientAuthMethod({ hasBasicHeader: true, hasClientSecret: true })).toBe(
+      'client_secret_basic',
+    );
+  });
+
+  it('should select client_secret_post for a body secret', () => {
+    expect(selectPresentedClientAuthMethod({ hasBasicHeader: false, hasClientSecret: true })).toBe(
+      'client_secret_post',
+    );
+  });
+
+  it('should select none without a secret', () => {
+    expect(selectPresentedClientAuthMethod({ hasBasicHeader: false, hasClientSecret: false })).toBe(
+      'none',
+    );
+  });
+});
+
+describe('selectRegisteredClientAuthMethod', () => {
+  // OIDC Core 1.0 §9 / RFC 7591 §2: the default is client_secret_basic
+  it('should default to client_secret_basic', () => {
+    expect(selectRegisteredClientAuthMethod(undefined)).toBe('client_secret_basic');
+  });
+
+  it('should keep a registered method', () => {
+    expect(selectRegisteredClientAuthMethod('none')).toBe('none');
+  });
+});
+
+describe('requireClientSecret', () => {
+  it('should return the client_secret', () => {
+    expect(requireClientSecret('secret')).toBe('secret');
+  });
+
+  it('should reject a missing client_secret with invalid_client', () => {
+    expect(() => requireClientSecret(undefined)).toThrow(
+      expect.objectContaining({
+        error: 'invalid_client',
+        errorDescription: 'Client authentication required',
+      }),
+    );
+  });
+});
+
+describe('validateClientAuthMethodMatch', () => {
+  it('should accept the registered method', () => {
+    expect(
+      validateClientAuthMethodMatch('client_secret_post', 'client_secret_post'),
+    ).toBeUndefined();
+  });
+
+  it('should reject a different method', () => {
+    expect(() =>
+      validateClientAuthMethodMatch('client_secret_post', 'client_secret_basic'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_client',
+        errorDescription:
+          'Client authentication method does not match the registered token_endpoint_auth_method',
+      }),
+    );
+  });
+});
+
+describe('verifyClientSecretValue', () => {
+  it('should accept the registered secret', async () => {
+    await expect(verifyClientSecretValue('secret', 'secret')).resolves.toBeUndefined();
+  });
+
+  it('should reject a different secret', async () => {
+    await expect(verifyClientSecretValue('wrong', 'secret')).rejects.toThrow(
+      expect.objectContaining({
+        error: 'invalid_client',
+        errorDescription: 'Client authentication failed',
+      }),
+    );
   });
 });

@@ -3,7 +3,8 @@
  * OIDC Core 1.0 Section 5.3
  */
 
-import { sign, arrayBufferToBase64Url, stringToArrayBuffer, getJwaAlgorithm } from './crypto-utils.js';
+import { buildJoseHeader, signJwt } from './jwt.js';
+import { getJwaAlgorithm } from './crypto-utils.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 
 /**
@@ -295,7 +296,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * 等価判定は深い等価（`deepEqual`）。`address` のようなオブジェクト型クレームも
  * 構造（メンバーの値）で一致判定する。
  */
-function matchesRequestedValue(
+export function matchesRequestedClaimValue(
   actual: unknown,
   entry: ClaimRequestValue
 ): boolean {
@@ -355,7 +356,7 @@ export async function resolveUserInfoAccessToken(
  * @throws {UserInfoError} invalid_token
  */
 export function validateUserInfoTokenExpiration(
-  tokenInfo: AccessTokenInfo,
+  tokenInfo: Pick<AccessTokenInfo, 'expiresAt'>,
   now: number = Math.floor(Date.now() / 1000)
 ): void {
   if (tokenInfo.expiresAt < now) {
@@ -375,7 +376,7 @@ export function validateUserInfoTokenExpiration(
  * @param tokenInfo アクセストークン情報
  * @throws {UserInfoError} insufficient_scope
  */
-export function validateUserInfoScope(tokenInfo: AccessTokenInfo): void {
+export function validateUserInfoScope(tokenInfo: Pick<AccessTokenInfo, 'scope'>): void {
   if (!tokenInfo.scope.includes('openid')) {
     throw new UserInfoError(
       UserInfoErrorCode.InsufficientScope,
@@ -401,7 +402,7 @@ export function validateUserInfoScope(tokenInfo: AccessTokenInfo): void {
  * @throws {UserInfoError} invalid_token
  */
 export function validateUserInfoAudience(
-  tokenInfo: AccessTokenInfo,
+  tokenInfo: Pick<AccessTokenInfo, 'audience'>,
   expectedAudience: string | undefined
 ): void {
   if (
@@ -424,7 +425,7 @@ export function validateUserInfoAudience(
  * @throws {UserInfoError} invalid_token
  */
 export async function resolveUserInfoClaims(
-  tokenInfo: AccessTokenInfo,
+  tokenInfo: Pick<AccessTokenInfo, 'sub'>,
   userClaimsResolver: UserClaimsResolver
 ): Promise<UserClaims> {
   const userClaims = await userClaimsResolver.findUserClaims(tokenInfo.sub);
@@ -468,7 +469,7 @@ export function applyRequestedClaims(
     if (value === undefined || value === null) continue;
 
     const entry = claimsParameter?.userinfo?.[claimName] ?? null;
-    if (!matchesRequestedValue(value, entry)) continue;
+    if (!matchesRequestedClaimValue(value, entry)) continue;
 
     result[claimName] = value;
   }
@@ -497,13 +498,6 @@ export interface UserInfoJwtOptions {
 const DEFAULT_USERINFO_JWT_EXPIRES_IN = 3600;
 
 /**
- * Base64URL エンコード
- */
-function base64UrlEncode(str: string): string {
-  return arrayBufferToBase64Url(stringToArrayBuffer(str));
-}
-
-/**
  * UserInfo レスポンスを署名済み JWT として生成する
  * OIDC Core 1.0 Section 5.3.2
  *
@@ -523,13 +517,7 @@ export async function generateUserInfoJwt(
   const now = Math.floor(Date.now() / 1000);
   const ttl = expiresIn ?? DEFAULT_USERINFO_JWT_EXPIRES_IN;
 
-  const header: Record<string, string> = {
-    alg: getJwaAlgorithm(privateKey),
-    typ: 'JWT',
-  };
-  if (keyId) {
-    header.kid = keyId;
-  }
+  const header = buildJoseHeader(getJwaAlgorithm(privateKey), 'JWT', keyId);
 
   const payload: Record<string, unknown> = {
     ...userInfoResponse,
@@ -539,10 +527,5 @@ export async function generateUserInfoJwt(
     exp: now + ttl,
   };
 
-  const headerB64 = base64UrlEncode(JSON.stringify(header));
-  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
-  const signingInput = `${headerB64}.${payloadB64}`;
-  const signature = await sign(signingInput, privateKey);
-
-  return `${signingInput}.${signature}`;
+  return signJwt(header, payload, privateKey);
 }

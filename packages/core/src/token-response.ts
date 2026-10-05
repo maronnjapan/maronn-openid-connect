@@ -225,27 +225,33 @@ export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<Resolved
     return { acr: undefined, amr: undefined };
   }
 
-  // OIDC Core 1.0 §5.5.1.1: claims.id_token.acr.values is equivalent to
-  // requesting these acr values. Use it to seed acrResolver when the request
-  // did not provide a separate `acr_values` parameter.
-  let effectiveRequestedAcrValues = requestedAcrValues;
-  if (effectiveRequestedAcrValues === undefined && claims?.id_token) {
-    const acrEntry = claims.id_token['acr'];
-    if (acrEntry && Array.isArray(acrEntry.values)) {
-      const stringValues = acrEntry.values.filter((v): v is string => typeof v === 'string');
-      if (stringValues.length > 0) {
-        effectiveRequestedAcrValues = stringValues.join(' ');
-      }
-    }
-  }
-
   const result = await acrResolver({
     userId: subject,
     clientId,
-    requestedAcrValues: effectiveRequestedAcrValues,
+    requestedAcrValues: selectRequestedAcrValues(requestedAcrValues, claims),
   });
 
   return { acr: result?.acr, amr: result?.amr };
+}
+
+/**
+ * acr resolver へ渡す要求 acr 値を選ぶ。acr_values パラメータがあればそれを使う。
+ * 無ければ OIDC Core 1.0 §5.5.1.1 に従い、`claims.id_token.acr.values` の文字列を空白で連結する。
+ */
+export function selectRequestedAcrValues(
+  requestedAcrValues: string | undefined,
+  claims: ClaimsParameter | undefined,
+): string | undefined {
+  if (requestedAcrValues !== undefined) return requestedAcrValues;
+
+  const acrEntry = claims?.id_token?.['acr'];
+  if (acrEntry && Array.isArray(acrEntry.values)) {
+    const stringValues = acrEntry.values.filter((v): v is string => typeof v === 'string');
+    if (stringValues.length > 0) {
+      return stringValues.join(' ');
+    }
+  }
+  return undefined;
 }
 
 /**

@@ -22,7 +22,7 @@ export interface ResolvedAuthorizationCode {
  * PKCE S256のcode_verifierを検証する
  * code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))
  */
-async function verifyCodeChallenge(
+export async function verifyCodeChallenge(
   codeVerifier: string,
   codeChallenge: string,
   method: 'S256'
@@ -38,25 +38,14 @@ async function verifyCodeChallenge(
  * 必須の code パラメータを検証し、保存済み認可コードを解決する。
  */
 export async function resolveAuthorizationCode(
-  params: TokenRequestParams,
-  authCodeResolver: AuthorizationCodeResolver,
+  params: Pick<TokenRequestParams, 'code'>,
+  authCodeResolver: Pick<AuthorizationCodeResolver, 'findAuthorizationCode'>,
 ): Promise<ResolvedAuthorizationCode> {
-  const code = params.code;
-  if (!code) {
-    throw new TokenError(
-      TokenErrorCode.InvalidRequest,
-      'Missing required parameter: code'
-    );
-  }
+  const code = requireAuthorizationCode(params.code);
 
-  const authorizationCode =
-    await authCodeResolver.findAuthorizationCode(code);
-  if (!authorizationCode) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'Authorization code not found'
-    );
-  }
+  const authorizationCode = requireStoredAuthorizationCode(
+    await authCodeResolver.findAuthorizationCode(code),
+  );
 
   return { code, authorizationCode };
 }
@@ -68,27 +57,25 @@ export async function resolveAuthorizationCode(
  * 同じ grantId から発行済みのトークンも可能なら失効してから invalid_grant を返す。
  */
 export async function validateAuthorizationCodeUnused(
-  authorizationCode: AuthorizationCodeInfo,
-  authCodeResolver: AuthorizationCodeResolver,
+  authorizationCode: Pick<AuthorizationCodeInfo, 'used' | 'grantId'>,
+  authCodeResolver: Pick<AuthorizationCodeResolver, 'revokeTokensByGrantId'>,
 ): Promise<void> {
-  if (!authorizationCode.used) {
+  const used = authorizationCode.used;
+  if (!used) {
     return;
   }
 
   if (authCodeResolver.revokeTokensByGrantId) {
     await authCodeResolver.revokeTokensByGrantId(authorizationCode.grantId);
   }
-  throw new TokenError(
-    TokenErrorCode.InvalidGrant,
-    'Authorization code has already been used'
-  );
+  validateAuthorizationCodeNotUsed(used);
 }
 
 /**
  * 認可コードが認証済みクライアントへ発行されたものか検証する。
  */
 export function validateAuthorizationCodeClient(
-  authorizationCode: AuthorizationCodeInfo,
+  authorizationCode: Pick<AuthorizationCodeInfo, 'clientId'>,
   authenticatedClientId: string,
 ): void {
   if (authorizationCode.clientId !== authenticatedClientId) {
@@ -106,7 +93,7 @@ export function validateAuthorizationCodeClient(
  * currentTime を渡せるため、生成コードで独自クロックを差し込むこともできる。
  */
 export function validateAuthorizationCodeExpiration(
-  authorizationCode: AuthorizationCodeInfo,
+  authorizationCode: Pick<AuthorizationCodeInfo, 'expiresAt'>,
   currentTime: number = Math.floor(Date.now() / 1000),
 ): void {
   if (authorizationCode.expiresAt <= currentTime) {
@@ -125,34 +112,16 @@ export function validateAuthorizationCodeExpiration(
  * 値が送られたなら保存値との一致を要求する。
  */
 export function validateAuthorizationCodeRedirectUri(
-  authorizationCode: AuthorizationCodeInfo,
+  authorizationCode: Pick<AuthorizationCodeInfo, 'redirectUri' | 'redirectUriExplicit'>,
   requestRedirectUri: string | undefined,
 ): void {
   if (authorizationCode.redirectUriExplicit) {
-    if (!requestRedirectUri) {
-      throw new TokenError(
-        TokenErrorCode.InvalidGrant,
-        'redirect_uri is required because it was included in the authorization request'
-      );
-    }
-    if (requestRedirectUri !== authorizationCode.redirectUri) {
-      throw new TokenError(
-        TokenErrorCode.InvalidGrant,
-        'redirect_uri does not match the authorization request'
-      );
-    }
-    return;
+    requireTokenRequestRedirectUri(requestRedirectUri);
   }
-
-  if (
-    requestRedirectUri !== undefined &&
-    requestRedirectUri !== authorizationCode.redirectUri
-  ) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'redirect_uri does not match the authorization request'
-    );
-  }
+  validateAuthorizationCodeRedirectUriMatch(
+    requestRedirectUri,
+    authorizationCode.redirectUri,
+  );
 }
 
 /**
@@ -162,59 +131,29 @@ export function validateAuthorizationCodeRedirectUri(
  * challenge / method の片方だけが保存された不完全な binding も拒否する。
  */
 export async function verifyAuthorizationCodePkce(
-  authorizationCode: AuthorizationCodeInfo,
+  authorizationCode: Pick<AuthorizationCodeInfo, 'codeChallenge' | 'codeChallengeMethod'>,
   codeVerifier: string | undefined,
 ): Promise<boolean> {
-  const hasPkceBinding =
-    authorizationCode.codeChallenge !== undefined ||
-    authorizationCode.codeChallengeMethod !== undefined;
-  if (!hasPkceBinding) {
+  if (
+    !hasPkceBinding(
+      authorizationCode.codeChallenge,
+      authorizationCode.codeChallengeMethod,
+    )
+  ) {
     return false;
   }
 
-  if (
-    authorizationCode.codeChallenge === undefined ||
-    authorizationCode.codeChallengeMethod === undefined
-  ) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'Authorization code PKCE binding is incomplete'
-    );
-  }
-
-  if (!codeVerifier) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'Missing required parameter: code_verifier'
-    );
-  }
-
-  // RFC 7636 §4.1: code_verifier is 43-128 unreserved characters.
-  if (codeVerifier.length < 43 || codeVerifier.length > 128) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'code_verifier length must be between 43 and 128 characters'
-    );
-  }
-
-  if (!/^[A-Za-z0-9\-._~]+$/.test(codeVerifier)) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'code_verifier contains invalid characters'
-    );
-  }
-
-  const isValid = await verifyCodeChallenge(
-    codeVerifier,
+  const binding = requirePkceBinding(
     authorizationCode.codeChallenge,
-    authorizationCode.codeChallengeMethod
+    authorizationCode.codeChallengeMethod,
   );
-  if (!isValid) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'code_verifier validation failed'
-    );
-  }
+  const verifier = requireCodeVerifier(codeVerifier);
+  validateCodeVerifier(verifier);
+  await verifyPkceCodeVerifier(
+    verifier,
+    binding.codeChallenge,
+    binding.codeChallengeMethod,
+  );
 
   return true;
 }
@@ -227,7 +166,7 @@ export async function verifyAuthorizationCodePkce(
  */
 export async function consumeAuthorizationCode(
   code: string,
-  authCodeResolver: AuthorizationCodeResolver,
+  authCodeResolver: Pick<AuthorizationCodeResolver, 'revokeAuthorizationCode'>,
 ): Promise<void> {
   await authCodeResolver.revokeAuthorizationCode(code);
 }
@@ -256,4 +195,157 @@ export function buildValidatedAuthorizationCodeRequest(
     sessionId: authorizationCode.sessionId,
     codeVerified,
   };
+}
+
+/**
+ * Token Request の code パラメータがあることを確かめる。ストアを引く前に呼ぶ。
+ */
+export function requireAuthorizationCode(code: string | undefined): string {
+  if (!code) {
+    throw new TokenError(
+      TokenErrorCode.InvalidRequest,
+      'Missing required parameter: code'
+    );
+  }
+  return code;
+}
+
+/**
+ * ストアから読み取った認可コードがあることを確かめる。見つからなければ invalid_grant。
+ */
+export function requireStoredAuthorizationCode<T>(authorizationCode: T | null | undefined): T {
+  if (!authorizationCode) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'Authorization code not found'
+    );
+  }
+  return authorizationCode;
+}
+
+/**
+ * 認可コードが使用済みでないことを検証する。
+ * 再利用時のトークン失効（OAuth 2.1 §4.1.2）は呼び出し側が先に済ませておく前提。
+ */
+export function validateAuthorizationCodeNotUsed(used: boolean | undefined): void {
+  if (!used) return;
+  throw new TokenError(
+    TokenErrorCode.InvalidGrant,
+    'Authorization code has already been used'
+  );
+}
+
+/**
+ * OIDC Core 1.0 §3.1.3.2: Authorization Request に redirect_uri が明示されていた場合に、
+ * Token Request にも redirect_uri があることを確かめる。明示の有無の判定は呼び出し側が行う。
+ */
+export function requireTokenRequestRedirectUri(redirectUri: string | undefined): string {
+  if (!redirectUri) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'redirect_uri is required because it was included in the authorization request'
+    );
+  }
+  return redirectUri;
+}
+
+/**
+ * OIDC Core 1.0 §3.1.3.2: Token Request の redirect_uri が認可時の値と一致することを検証する。
+ * redirect_uri が省略されていれば検査しない。
+ */
+export function validateAuthorizationCodeRedirectUriMatch(
+  requestRedirectUri: string | undefined,
+  authorizedRedirectUri: string,
+): void {
+  if (
+    requestRedirectUri !== undefined &&
+    requestRedirectUri !== authorizedRedirectUri
+  ) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'redirect_uri does not match the authorization request'
+    );
+  }
+}
+
+/**
+ * 認可コードに PKCE の値が一つでも保存されているかを返す。
+ * false は PKCE を省略した互換フローの認可コードを表す。
+ */
+export function hasPkceBinding(
+  codeChallenge: string | undefined,
+  codeChallengeMethod: 'S256' | undefined,
+): boolean {
+  return codeChallenge !== undefined || codeChallengeMethod !== undefined;
+}
+
+/**
+ * 認可コードに code_challenge と code_challenge_method の両方が保存されていることを確かめる。
+ * 片方だけの不完全な binding は invalid_grant として拒否する。
+ */
+export function requirePkceBinding(
+  codeChallenge: string | undefined,
+  codeChallengeMethod: 'S256' | undefined,
+): { codeChallenge: string; codeChallengeMethod: 'S256' } {
+  if (codeChallenge === undefined || codeChallengeMethod === undefined) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'Authorization code PKCE binding is incomplete'
+    );
+  }
+  return { codeChallenge, codeChallengeMethod };
+}
+
+/**
+ * RFC 7636 §4.5: PKCE を使う認可コードの交換で code_verifier があることを確かめる。
+ */
+export function requireCodeVerifier(codeVerifier: string | undefined): string {
+  if (!codeVerifier) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'Missing required parameter: code_verifier'
+    );
+  }
+  return codeVerifier;
+}
+
+/**
+ * RFC 7636 §4.1: code_verifier が 43〜128 文字の unreserved 文字列であることを検証する。
+ */
+export function validateCodeVerifier(codeVerifier: string): void {
+  if (codeVerifier.length < 43 || codeVerifier.length > 128) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'code_verifier length must be between 43 and 128 characters'
+    );
+  }
+
+  if (!/^[A-Za-z0-9\-._~]+$/.test(codeVerifier)) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'code_verifier contains invalid characters'
+    );
+  }
+}
+
+/**
+ * RFC 7636 §4.6: code_verifier から求めた値が保存済みの code_challenge と一致することを検証する。
+ * 一致しなければ invalid_grant。
+ */
+export async function verifyPkceCodeVerifier(
+  codeVerifier: string,
+  codeChallenge: string,
+  codeChallengeMethod: 'S256',
+): Promise<void> {
+  const isValid = await verifyCodeChallenge(
+    codeVerifier,
+    codeChallenge,
+    codeChallengeMethod
+  );
+  if (!isValid) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'code_verifier validation failed'
+    );
+  }
 }

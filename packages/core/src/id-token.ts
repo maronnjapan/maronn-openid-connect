@@ -1,13 +1,11 @@
+import { buildJoseHeader, signJwt } from './jwt.js';
 import {
-  sign,
   verify,
-  arrayBufferToBase64Url,
   base64UrlToArrayBufferStrict,
-  stringToArrayBuffer,
   getJwaAlgorithm,
   extractAlgorithmParamsFromJwk,
 } from './crypto-utils.js';
-import type { JwkSet } from './jwks.js';
+import type { Jwk, JwkSet } from './jwks.js';
 import { isLoopbackHostname } from './loopback.js';
 
 /**
@@ -89,10 +87,7 @@ export function validatePayload(
   options?: { clockSkewToleranceSec?: number },
 ): void {
   // Required claims validation
-  if (!payload.iss) {
-    throw new Error('Missing required claim: iss');
-  }
-  validateIssuer(payload.iss);
+  validateIdTokenIssuer(payload.iss);
 
   if (!payload.sub) {
     throw new Error('Missing required claim: sub');
@@ -123,22 +118,8 @@ export function validatePayload(
     }
   }
 
-  if (payload.exp === undefined || payload.exp === null) {
-    throw new Error('Missing required claim: exp');
-  }
-
-  // RFC 7519 §4.1.4 (exp is a NumericDate): the issued payload must use a numeric
-  // exp, matching the typeof === 'number' check in validateIdTokenHint.
-  if (typeof payload.exp !== 'number') {
-    throw new Error('exp must be a number (NumericDate)');
-  }
-
-  // Validate exp is not too far in the past (with configurable clock skew tolerance)
   const leeway = options?.clockSkewToleranceSec ?? DEFAULT_CLOCK_SKEW_TOLERANCE_SEC;
-  const now = Math.floor(Date.now() / 1000);
-  if (payload.exp < now - leeway) {
-    throw new Error('Token expiration time is in the past');
-  }
+  validateIdTokenExpiration(payload.exp, Math.floor(Date.now() / 1000), leeway);
 
   if (payload.iat === undefined || payload.iat === null) {
     throw new Error('Missing required claim: iat');
@@ -149,29 +130,63 @@ export function validatePayload(
     throw new Error('iat must be a number (NumericDate)');
   }
 
-  // azp validation: required when aud has multiple values (OIDC Core §3.1.3.7 (4-5)).
+  validateIdTokenAuthorizedParty(payload.aud, payload.azp);
+}
+
+/**
+ * OIDC Core 1.0 §2: iss があり、クエリとフラグメントを含まない https の URL であることを検証する。
+ * ループバックホストに限り http を許す。
+ */
+export function validateIdTokenIssuer(issuer: string | undefined): void {
+  if (!issuer) {
+    throw new Error('Missing required claim: iss');
+  }
+  validateIssuer(issuer);
+}
+
+/**
+ * ID Token の exp があり、数値で、now から leeway を引いた時刻より前でないことを検証する。
+ * RFC 7519 §4.1.4。now と leeway は秒。
+ */
+export function validateIdTokenExpiration(expiration: unknown, now: number, leeway: number): void {
+  if (expiration === undefined || expiration === null) {
+    throw new Error('Missing required claim: exp');
+  }
+
+  // RFC 7519 §4.1.4 (exp is a NumericDate): the issued payload must use a numeric
+  // exp, matching the typeof === 'number' check in validateIdTokenHint.
+  if (typeof expiration !== 'number') {
+    throw new Error('exp must be a number (NumericDate)');
+  }
+
+  if (expiration < now - leeway) {
+    throw new Error('Token expiration time is in the past');
+  }
+}
+
+/**
+ * OIDC Core 1.0 §2 / §3.1.3.7: aud が複数の値を持つ場合に azp があり、aud の一つであることを検証する。
+ * aud が一つなら検査しない。
+ */
+export function validateIdTokenAuthorizedParty(
+  audience: string | readonly string[],
+  authorizedParty: string | undefined,
+): void {
   // The issuing path (token-response.ts / buildIdTokenAudience) emits aud = clientId with
   // no azp for the single-audience default, and aud = [clientId, ...] with azp = clientId
   // when additional audiences are configured. This validator enforces the same rule for
   // both self-issued tokens and ID Tokens received from outside (id_token_hint, federation)
   // that may carry multiple audiences.
-  if (Array.isArray(payload.aud) && payload.aud.length > 1) {
-    if (!payload.azp) {
+  if (Array.isArray(audience) && audience.length > 1) {
+    if (!authorizedParty) {
       throw new Error('azp is required when aud contains multiple values');
     }
 
     // azp must be one of the aud values
-    if (!payload.aud.includes(payload.azp)) {
+    if (!audience.includes(authorizedParty)) {
       throw new Error('azp must be one of the audience values');
     }
   }
-}
-
-/**
- * Base64URL エンコード
- */
-function base64UrlEncode(str: string): string {
-  return arrayBufferToBase64Url(stringToArrayBuffer(str));
 }
 
 /**
@@ -191,26 +206,9 @@ export async function generateIdToken(options: GenerateIdTokenOptions): Promise<
   validatePayload(payload);
 
   // Build JOSE header
-  const header: Record<string, string> = {
-    alg: getJwaAlgorithm(privateKey),
-    typ: 'JWT',
-  };
+  const header = buildJoseHeader(getJwaAlgorithm(privateKey), 'JWT', keyId);
 
-  if (keyId) {
-    header.kid = keyId;
-  }
-
-  // Encode header and payload
-  const headerB64 = base64UrlEncode(JSON.stringify(header));
-  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
-
-  // Create signing input
-  const signingInput = `${headerB64}.${payloadB64}`;
-
-  // Sign
-  const signature = await sign(signingInput, privateKey);
-
-  return `${signingInput}.${signature}`;
+  return signJwt(header, payload, privateKey);
 }
 
 /**
@@ -285,6 +283,34 @@ export async function validateIdTokenHint(
   const { expectedIss, expectedAud, jwks } = options;
   const leeway = verifyOptions?.clockSkewToleranceSec ?? DEFAULT_CLOCK_SKEW_TOLERANCE_SEC;
 
+  const { header, payload, signingInput, signature } = decodeIdTokenHint(hint);
+  const { algorithm, keyId } = validateIdTokenHintHeader(header);
+  const candidates = selectIdTokenHintKeys(jwks.keys, algorithm, keyId);
+  await verifyIdTokenHintSignature(signingInput, signature, candidates, algorithm);
+
+  validateIdTokenHintIssuer(payload['iss'], expectedIss);
+  validateIdTokenHintAudience(payload['aud'], expectedAud);
+  const now = Math.floor(Date.now() / 1000);
+  validateIdTokenHintExpiration(payload['exp'], now, leeway);
+  validateIdTokenHintIssuedAt(payload['iat'], now, leeway);
+  requireIdTokenHintSubject(payload['sub']);
+
+  return payload as { sub: string; [key: string]: unknown };
+}
+
+/** {@link decodeIdTokenHint} の戻り値。署名を検証していないため、どのクレームも信頼できない。 */
+export interface DecodedIdTokenHint {
+  header: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  signingInput: string;
+  signature: string;
+}
+
+/**
+ * id_token_hint の JWS Compact Serialization を分解し、ヘッダーとペイロードを JSON として解析する。
+ * 署名、発行者、有効期限は検証しない。
+ */
+export function decodeIdTokenHint(hint: string): DecodedIdTokenHint {
   if (typeof hint !== 'string' || hint.length === 0) {
     throw new IdTokenHintError('id_token_hint is empty');
   }
@@ -304,6 +330,16 @@ export async function validateIdTokenHint(
     throw new IdTokenHintError('id_token_hint header or payload is not valid base64url JSON');
   }
 
+  return { header, payload, signingInput: `${headerB64}.${payloadB64}`, signature: signatureB64 };
+}
+
+/**
+ * id_token_hint のヘッダーが署名付きで、外部の鍵を参照しないことを検証する（RFC 8725 §3.1）。
+ * alg と kid を返す。
+ */
+export function validateIdTokenHintHeader(
+  header: Record<string, unknown>,
+): { algorithm: string; keyId: string | undefined } {
   const headerAlg = typeof header['alg'] === 'string' ? (header['alg'] as string) : undefined;
   if (!headerAlg || headerAlg === 'none') {
     throw new IdTokenHintError('id_token_hint alg is missing or "none"');
@@ -311,21 +347,40 @@ export async function validateIdTokenHint(
   // RFC 8725 §3.1 / OIDC Core §16.18: 外部から鍵を取得しうるヘッダは明示拒否する。
   assertNoExternalKeyHeaders(header);
   const headerKid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
+  return { algorithm: headerAlg, keyId: headerKid };
+}
 
-  // Pick candidate keys: kid match wins; otherwise fall back to alg match.
-  // Multiple alg-matched keys may be tried in order — the first valid signature wins.
-  const candidates = headerKid
-    ? jwks.keys.filter((k) => k.kid === headerKid)
-    : jwks.keys.filter((k) => k.alg === headerAlg);
+/**
+ * ヘッダーの kid、無ければ alg に合う登録済みの鍵を選ぶ。一つも無ければ拒否する。
+ * 選んだ鍵の alg との一致は {@link verifyIdTokenHintSignature} が確かめる。
+ */
+export function selectIdTokenHintKeys<Key extends Pick<Jwk, 'alg' | 'kid'>>(
+  keys: readonly Key[],
+  algorithm: string,
+  keyId?: string,
+): Key[] {
+  const candidates = keyId
+    ? keys.filter((k) => k.kid === keyId)
+    : keys.filter((k) => k.alg === algorithm);
 
   if (candidates.length === 0) {
     throw new IdTokenHintError('No JWK matched the id_token_hint header');
   }
+  return candidates;
+}
 
-  const signingInput = `${headerB64}.${payloadB64}`;
-  let signatureValid = false;
+/**
+ * 候補の鍵で署名を検証し、どれか一つで成功すれば通す。
+ * alg が一致しない鍵や読み込めない鍵は飛ばす（RFC 7515 §4.1.1）。
+ */
+export async function verifyIdTokenHintSignature(
+  signingInput: string,
+  signature: string,
+  candidates: readonly Jwk[],
+  algorithm: string,
+): Promise<void> {
   for (const jwk of candidates) {
-    if (jwk.alg !== headerAlg) {
+    if (jwk.alg !== algorithm) {
       // alg-claim mismatch with the picked key → reject without verifying
       // (RFC 7515 §4.1.1 — alg pin per key).
       continue;
@@ -338,54 +393,56 @@ export async function validateIdTokenHint(
       continue;
     }
     try {
-      if (await verify(signingInput, signatureB64, publicKey)) {
-        signatureValid = true;
-        break;
+      if (await verify(signingInput, signature, publicKey)) {
+        return;
       }
     } catch {
       // try next candidate
     }
   }
-  if (!signatureValid) {
-    throw new IdTokenHintError('id_token_hint signature verification failed');
-  }
+  throw new IdTokenHintError('id_token_hint signature verification failed');
+}
 
-  if (payload['iss'] !== expectedIss) {
+/** id_token_hint の iss が期待する発行者と一致することを検証する。署名の検証後に呼ぶ。 */
+export function validateIdTokenHintIssuer(issuer: unknown, expectedIssuer: string): void {
+  if (issuer !== expectedIssuer) {
     throw new IdTokenHintError('id_token_hint iss does not match expected issuer');
   }
+}
 
-  // aud may be a string or string[] (OIDC Core 1.0 §2)
-  const aud = payload['aud'];
-  const audMatches =
-    aud === expectedAud || (Array.isArray(aud) && aud.includes(expectedAud));
-  if (!audMatches) {
+/** OIDC Core 1.0 §2: id_token_hint の aud（文字列または配列）が期待する audience を含むことを検証する。 */
+export function validateIdTokenHintAudience(audience: unknown, expectedAudience: string): void {
+  const matches = audience === expectedAudience ||
+    (Array.isArray(audience) && audience.includes(expectedAudience));
+  if (!matches) {
     throw new IdTokenHintError('id_token_hint aud does not match expected audience');
   }
+}
 
-  // exp must be in the future (allow clock skew, mirroring validatePayload)
-  const exp = payload['exp'];
-  if (typeof exp !== 'number') {
+/** id_token_hint の exp が数値で、exp に leeway を足した時刻が now より前でないことを検証する。時刻は秒。 */
+export function validateIdTokenHintExpiration(expiration: unknown, now: number, leeway: number): void {
+  if (typeof expiration !== 'number') {
     throw new IdTokenHintError('id_token_hint is missing exp claim');
   }
-  const now = Math.floor(Date.now() / 1000);
-  if (exp + leeway < now) {
+  if (expiration + leeway < now) {
     throw new IdTokenHintError('id_token_hint has expired');
   }
+}
 
-  // iat must be present and not in the future beyond the allowed leeway.
-  // RFC 8725 §3.8 / RFC 7519 §4.1.6: reject tokens whose iat is implausibly in the
-  // future to limit replay / session-fixation style abuse via a forged id_token_hint.
-  const iat = payload['iat'];
-  if (typeof iat !== 'number') {
+/** RFC 8725 §3.8: id_token_hint の iat が数値で、now に leeway を足した時刻より未来でないことを検証する。 */
+export function validateIdTokenHintIssuedAt(issuedAt: unknown, now: number, leeway: number): void {
+  if (typeof issuedAt !== 'number') {
     throw new IdTokenHintError('id_token_hint is missing iat claim');
   }
-  if (iat > now + leeway) {
+  if (issuedAt > now + leeway) {
     throw new IdTokenHintError('id_token_hint iat is in the future');
   }
+}
 
-  if (typeof payload['sub'] !== 'string' || payload['sub'].length === 0) {
+/** id_token_hint の sub が空でない文字列であることを確かめる。すべての検証を通した後に使う。 */
+export function requireIdTokenHintSubject(subject: unknown): string {
+  if (typeof subject !== 'string' || subject.length === 0) {
     throw new IdTokenHintError('id_token_hint is missing sub claim');
   }
-
-  return payload as { sub: string; [key: string]: unknown };
+  return subject;
 }

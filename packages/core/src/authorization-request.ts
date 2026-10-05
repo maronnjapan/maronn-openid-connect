@@ -6,6 +6,7 @@ import { clientAllowsRefreshTokenGrant } from './client-grant-types.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 import { isLoopbackHostname } from './loopback.js';
 import { parseRequestObject, RequestObjectError } from './request-object.js';
+import { parseScope } from './scope.js';
 import type { JwkSet } from './jwks.js';
 import type { ClaimsParameter, ClaimRequestValue } from './userinfo.js';
 
@@ -418,7 +419,7 @@ export function validateRegisteredRedirectUris(registeredUris: string[]): void {
  * - リクエストに redirect_uri がある場合: 登録済みURIと照合
  * - リクエストに redirect_uri がない場合: 登録済みURIが1つなら使用、複数ならエラー
  */
-function resolveRedirectUri(
+export function resolveRedirectUri(
   requestRedirectUri: string | undefined,
   registeredUris: string[],
   clientType?: 'confidential' | 'public'
@@ -465,8 +466,8 @@ function resolveRedirectUri(
  * このステップで確定した redirectUri を、以降のステップにエラーリダイレクト先として渡す。
  */
 export function resolveAuthorizationRedirectUri(
-  effectiveParams: AuthorizationRequestParams,
-  client: ClientInfo,
+  effectiveParams: Pick<AuthorizationRequestParams, 'redirect_uri'>,
+  client: Pick<ClientInfo, 'redirectUris' | 'clientType'>,
 ): string {
   return resolveRedirectUri(
     effectiveParams.redirect_uri,
@@ -484,7 +485,7 @@ export function resolveAuthorizationRedirectUri(
  * リダイレクト可能な invalid_request として拒否する。
  */
 export function validatePromptParameter(
-  effectiveParams: AuthorizationRequestParams,
+  effectiveParams: Pick<AuthorizationRequestParams, 'prompt'>,
   redirectUri: string,
   state?: string
 ): string[] | undefined {
@@ -498,15 +499,33 @@ export function validatePromptParameter(
  * prompt パラメータをバリデーションする
  * OIDC Core 1.0 Section 3.1.2.1
  */
-function validatePrompt(
+export function validatePrompt(
   promptValue: string,
   redirectUri: string,
   state?: string
 ): string[] {
-  const values = promptValue.split(' ').filter((v) => v.length > 0);
+  const values = parsePromptValues(promptValue);
+  validatePromptValues(values, redirectUri, state);
+  validatePromptNoneNotCombined(values, redirectUri, state);
+  return values;
+}
 
-  // 各値が有効かチェック
-  for (const value of values) {
+/**
+ * prompt の値を空白で区切る。値の妥当性は検査しない。
+ */
+export function parsePromptValues(promptValue: string): string[] {
+  return promptValue.split(' ').filter((value) => value.length > 0);
+}
+
+/**
+ * OIDC Core 1.0 §3.1.2.1: prompt の各値が定義済みの値であることを検証する。
+ */
+export function validatePromptValues(
+  promptValues: readonly string[],
+  redirectUri: string,
+  state?: string
+): void {
+  for (const value of promptValues) {
     if (!(VALID_PROMPT_VALUES as readonly string[]).includes(value)) {
       throw new AuthorizationError(
         AuthorizationErrorCode.InvalidRequest,
@@ -516,9 +535,17 @@ function validatePrompt(
       );
     }
   }
+}
 
-  // none は他の値と組み合わせ不可
-  if (values.includes('none') && values.length > 1) {
+/**
+ * OIDC Core 1.0 §3.1.2.1: none を他の値と併用していないことを検証する。
+ */
+export function validatePromptNoneNotCombined(
+  promptValues: readonly string[],
+  redirectUri: string,
+  state?: string
+): void {
+  if (promptValues.includes('none') && promptValues.length > 1) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
       'prompt value "none" must not be combined with other values',
@@ -526,14 +553,12 @@ function validatePrompt(
       state
     );
   }
-
-  return values;
 }
 
 /**
  * max_age パラメータをバリデーションする
  */
-function validateMaxAge(
+export function validateMaxAge(
   maxAgeValue: string,
   redirectUri: string,
   state?: string
@@ -559,7 +584,7 @@ function validateMaxAge(
  * 非負整数でなければならない。値はリクエストではなく登録メタデータ由来のため、
  * 不正値は設定ミス（サーバ側エラー）として扱い、リダイレクトせず server_error を投げる。
  */
-function validateDefaultMaxAge(defaultMaxAge: number): number {
+export function validateDefaultMaxAge(defaultMaxAge: number): number {
   if (
     !Number.isFinite(defaultMaxAge) ||
     !Number.isInteger(defaultMaxAge) ||
@@ -583,8 +608,8 @@ function validateDefaultMaxAge(defaultMaxAge: number): number {
  * - どちらも無ければ undefined を返す（再認証鮮度の要求なし）。
  */
 export function resolveMaxAge(
-  effectiveParams: AuthorizationRequestParams,
-  client: ClientInfo,
+  effectiveParams: Pick<AuthorizationRequestParams, 'max_age'>,
+  client: Pick<ClientInfo, 'defaultMaxAge'>,
   redirectUri: string,
   state?: string
 ): number | undefined {
@@ -601,13 +626,31 @@ export function resolveMaxAge(
  * PKCE code_challenge / code_challenge_method をバリデーションする
  * OAuth 2.1 Section 4.1.1, 7.5
  */
-function validateCodeChallenge(
+export function validateCodeChallenge(
   codeChallenge: string | undefined,
   codeChallengeMethod: string | undefined,
   redirectUri: string,
   state?: string
 ): { codeChallenge: string; codeChallengeMethod: 'S256' } {
-  // OAuth 2.1: code_challenge は必須
+  const requiredCodeChallenge = requireCodeChallenge(codeChallenge, redirectUri, state);
+  const requiredMethod = requireCodeChallengeMethod(codeChallengeMethod, redirectUri, state);
+  const method = validateCodeChallengeMethod(requiredMethod, redirectUri, state);
+  validateS256CodeChallenge(requiredCodeChallenge, redirectUri, state);
+
+  return {
+    codeChallenge: requiredCodeChallenge,
+    codeChallengeMethod: method,
+  };
+}
+
+/**
+ * OAuth 2.1 §4.1.1: code_challenge があることを確かめる。
+ */
+export function requireCodeChallenge(
+  codeChallenge: string | undefined,
+  redirectUri: string,
+  state?: string
+): string {
   if (!codeChallenge) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -616,8 +659,18 @@ function validateCodeChallenge(
       state
     );
   }
+  return codeChallenge;
+}
 
-  // code_challenge_method は必須
+/**
+ * code_challenge_method があることを確かめる。
+ * RFC 7636 §4.3 の既定値 plain を補完しないため、省略は拒否する。
+ */
+export function requireCodeChallengeMethod(
+  codeChallengeMethod: string | undefined,
+  redirectUri: string,
+  state?: string
+): string {
   if (!codeChallengeMethod) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -626,8 +679,18 @@ function validateCodeChallenge(
       state
     );
   }
+  return codeChallengeMethod;
+}
 
-  // S256 のみサポート（plain はセキュリティ上拒否）
+/**
+ * OAuth 2.1 §4.1.1 / §7.5: code_challenge_method が S256 であることを検証する。
+ * plain はセキュリティ上拒否する。
+ */
+export function validateCodeChallengeMethod(
+  codeChallengeMethod: string,
+  redirectUri: string,
+  state?: string
+): 'S256' {
   if (!(VALID_CODE_CHALLENGE_METHODS as readonly string[]).includes(codeChallengeMethod)) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -636,9 +699,18 @@ function validateCodeChallenge(
       state
     );
   }
+  return codeChallengeMethod as 'S256';
+}
 
-  // RFC 7636 Section 4.2: S256 code_challenge は 43 文字固定の base64url-no-padding 表現。
-  // Token Endpoint の code_verifier 比較まで遅延させず、ここで形式違反を検出する。
+/**
+ * RFC 7636 §4.2: S256 の code_challenge が 43 文字の base64url（パディングなし）であることを検証する。
+ * Token Endpoint の code_verifier 比較まで遅延させず、ここで形式違反を検出する。
+ */
+export function validateS256CodeChallenge(
+  codeChallenge: string,
+  redirectUri: string,
+  state?: string
+): void {
   if (codeChallenge.length !== CODE_CHALLENGE_S256_LENGTH) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -655,11 +727,6 @@ function validateCodeChallenge(
       state
     );
   }
-
-  return {
-    codeChallenge,
-    codeChallengeMethod: codeChallengeMethod as 'S256',
-  };
 }
 
 /**
@@ -671,8 +738,8 @@ function validateCodeChallenge(
  * OIDF Basic OP static-client conformance 互換として省略を許容し空を返す。
  */
 export function validateAuthorizationCodePkce(
-  effectiveParams: AuthorizationRequestParams,
-  client: ClientInfo,
+  effectiveParams: Pick<AuthorizationRequestParams, 'code_challenge' | 'code_challenge_method'>,
+  client: Pick<ClientInfo, 'clientType'>,
   redirectUri: string,
   state?: string,
   options: { allowNonPkceAuthorizationCodeFlow?: boolean } = {},
@@ -703,7 +770,7 @@ export function validateAuthorizationCodePkce(
  * いずれもリダイレクト先が確定する前の検証であり、非リダイレクトエラーとして投げる。
  */
 export async function resolveClientForAuthorization(
-  params: AuthorizationRequestParams,
+  params: Pick<AuthorizationRequestParams, 'client_id'>,
   clientResolver: ClientResolver,
 ): Promise<ClientInfo> {
   const clientId = params.client_id;
@@ -769,7 +836,7 @@ export interface ResolvedRequestObjectParams {
  */
 export async function resolveRequestObjectParams(
   params: AuthorizationRequestParams,
-  client: ClientInfo,
+  client: Pick<ClientInfo, 'jwks'>,
   options: {
     /**
      * 受理する JWS 署名アルゴリズム。
@@ -827,7 +894,7 @@ export async function resolveRequestObjectParams(
  * いずれも redirect 先確定後のリダイレクト可能エラーとして投げる。
  */
 export function rejectUnsupportedRequestParams(
-  params: AuthorizationRequestParams,
+  params: Pick<AuthorizationRequestParams, 'request' | 'request_uri' | 'registration'>,
   redirectUri: string,
   state?: string,
   options: { requestParameterSupported?: boolean } = {},
@@ -873,7 +940,7 @@ export function rejectUnsupportedRequestParams(
  * requestObjectClaims が undefined（`request` パラメータ無し）の場合は何もしない。
  */
 export function validateRequestObjectConsistency(
-  params: AuthorizationRequestParams,
+  params: Pick<AuthorizationRequestParams, 'response_type' | 'client_id'>,
   requestObjectClaims: Record<string, unknown> | undefined,
   redirectUri: string,
   state?: string,
@@ -921,44 +988,13 @@ export function validateRequestObjectConsistency(
  * Request Object 適用前のクエリパラメータ（params）を渡すこと。
  */
 export function validateResponseType(
-  params: AuthorizationRequestParams,
-  client: ClientInfo,
+  params: Pick<AuthorizationRequestParams, 'response_type'>,
+  client: Pick<ClientInfo, 'responseTypes'>,
   redirectUri: string,
   state?: string,
 ): 'code' {
-  const responseType = params.response_type;
-  if (!responseType) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.InvalidRequest,
-      'Missing required parameter: response_type',
-      redirectUri,
-      state
-    );
-  }
-
-  if (responseType !== 'code') {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.UnsupportedResponseType,
-      `Unsupported response_type: ${responseType}`,
-      redirectUri,
-      state
-    );
-  }
-
-  // クライアント単位の response_type 認可
-  // RFC 6749 §4.1.2.1 / OAuth 2.1 §4.1.2.1: "The client is not authorized to request
-  // an authorization code using this method." → unauthorized_client。
-  // OP 全体での未サポート（unsupported_response_type）とは区別する。
-  const allowedResponseTypes = client.responseTypes ?? ['code'];
-  if (!allowedResponseTypes.includes(responseType)) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.UnauthorizedClient,
-      `Client is not authorized to use response_type: ${responseType}`,
-      redirectUri,
-      state
-    );
-  }
-
+  const responseType = validateSupportedResponseType(params.response_type, redirectUri, state);
+  validateClientResponseType(responseType, client.responseTypes, redirectUri, state);
   return responseType;
 }
 
@@ -971,34 +1007,18 @@ export function validateResponseType(
  *   空白区切りで分割・重複除去し、`openid` を含まなければ invalid_scope（§3.1.2.1）。
  */
 export function validateAuthorizationScope(
-  queryParams: AuthorizationRequestParams,
-  effectiveParams: AuthorizationRequestParams,
+  queryParams: Pick<AuthorizationRequestParams, 'scope'>,
+  effectiveParams: Pick<AuthorizationRequestParams, 'scope'>,
   redirectUri: string,
   state?: string,
 ): string[] {
-  const queryScopeValue = queryParams.scope;
-  if (!queryScopeValue) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.InvalidRequest,
-      'Missing required parameter: scope',
-      redirectUri,
-      state
-    );
-  }
+  const queryScopeValue = requireAuthorizationScope(queryParams.scope, redirectUri, state);
 
   const scopeValue = effectiveParams.scope ?? queryScopeValue;
-  // RFC 6749 §3.3: scope は空白区切りの集合。Token Endpoint（refresh_token grant）は
-  // `[...new Set(...)]` で重複除去しているため、Authorization Endpoint でも揃える。
-  // dedup は権限を変えない（同一権限の二重表現を畳むだけ）の非破壊変換で、挿入順は保持する。
-  const scope = [...new Set(scopeValue.split(' ').filter((s) => s.length > 0))];
-  if (!scope.includes('openid')) {
-    throw new AuthorizationError(
-      AuthorizationErrorCode.InvalidScope,
-      'scope must include openid',
-      redirectUri,
-      state
-    );
-  }
+  // RFC 6749 §3.3: scope は空白区切りの集合。Token Endpoint（refresh_token grant）と同じく
+  // 重複を除去する。dedup は権限を変えない非破壊変換で、挿入順は保持する。
+  const scope = parseScope(scopeValue);
+  validateOpenIdScope(scope, redirectUri, state);
 
   return scope;
 }
@@ -1027,11 +1047,7 @@ export async function applyOfflineAccessPolicy(
     promptValues: promptValues ?? [],
     client,
   });
-  if (granted) {
-    return scope;
-  }
-
-  return scope.filter((s) => s !== 'offline_access');
+  return filterOfflineAccessScope(scope, granted);
 }
 
 /**
@@ -1041,7 +1057,7 @@ export async function applyOfflineAccessPolicy(
  * いずれかでなければならない。未定義値は invalid_request（redirectable）とする。
  */
 export function validateDisplayParameter(
-  effectiveParams: AuthorizationRequestParams,
+  effectiveParams: Pick<AuthorizationRequestParams, 'display'>,
   redirectUri: string,
   state?: string,
 ): string | undefined {
@@ -1065,7 +1081,7 @@ export function validateDisplayParameter(
  * スペース区切りの文字列を配列に変換する。無ければ undefined を返す。
  */
 export function parseAudienceParameter(
-  effectiveParams: AuthorizationRequestParams,
+  effectiveParams: Pick<AuthorizationRequestParams, 'audience'>,
 ): string[] | undefined {
   const audienceValue = effectiveParams.audience;
   if (audienceValue === undefined) {
@@ -1108,7 +1124,11 @@ const REQUEST_OBJECT_OVERRIDE_KEYS = [
   'code_challenge_method',
 ] as const;
 
-function mergeRequestObjectParams(
+/**
+ * OIDC Core 1.0 §6.1: Request Object の claim をクエリの値に上書きした有効パラメータを返す。
+ * response_type と client_id は上書きしない。署名は検証しないため、検証済みの claim を渡す。
+ */
+export function mergeRequestObjectParams(
   params: AuthorizationRequestParams,
   roClaims: Record<string, unknown>,
 ): AuthorizationRequestParams {
@@ -1152,7 +1172,7 @@ function mergeRequestObjectParams(
  * 未指定なら {@link DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH}。
  */
 export function parseClaimsRequestParameter(
-  effectiveParams: AuthorizationRequestParams,
+  effectiveParams: Pick<AuthorizationRequestParams, 'claims'>,
   redirectUri: string,
   state?: string,
   maxLength: number = DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
@@ -1219,4 +1239,105 @@ function sanitizeClaimsMember(
     // Other shapes (strings, numbers, arrays) are silently dropped.
   }
   return result;
+}
+
+/**
+ * OAuth 2.1 §4.1.2.1: response_type があり、OP が対応する code であることを検証する。
+ * クライアント登録との照合は {@link validateClientResponseType} が行う。
+ */
+export function validateSupportedResponseType(
+  responseType: string | undefined,
+  redirectUri: string,
+  state?: string,
+): 'code' {
+  if (!responseType) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidRequest,
+      'Missing required parameter: response_type',
+      redirectUri,
+      state
+    );
+  }
+
+  if (responseType !== 'code') {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.UnsupportedResponseType,
+      `Unsupported response_type: ${responseType}`,
+      redirectUri,
+      state
+    );
+  }
+
+  return responseType;
+}
+
+/**
+ * response_type がクライアントに登録されていることを検証する。
+ * 登録が無ければ code だけを許す（OIDC Dynamic Client Registration 1.0 §2）。
+ */
+export function validateClientResponseType(
+  responseType: string,
+  responseTypes: readonly string[] | undefined,
+  redirectUri: string,
+  state?: string,
+): void {
+  // クライアント単位の response_type 認可
+  // RFC 6749 §4.1.2.1 / OAuth 2.1 §4.1.2.1: "The client is not authorized to request
+  // an authorization code using this method." → unauthorized_client。
+  // OP 全体での未サポート（unsupported_response_type）とは区別する。
+  const allowedResponseTypes = responseTypes ?? ['code'];
+  if (!allowedResponseTypes.includes(responseType)) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.UnauthorizedClient,
+      `Client is not authorized to use response_type: ${responseType}`,
+      redirectUri,
+      state
+    );
+  }
+}
+
+/**
+ * OIDC Core 1.0 §6.1: Request Object を使う場合もクエリに scope があることを確かめる。
+ */
+export function requireAuthorizationScope(
+  queryScopeValue: string | undefined,
+  redirectUri: string,
+  state?: string,
+): string {
+  if (!queryScopeValue) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidRequest,
+      'Missing required parameter: scope',
+      redirectUri,
+      state
+    );
+  }
+
+  return queryScopeValue;
+}
+
+/**
+ * OIDC Core 1.0 §3.1.2.1: 解析済みの scope に openid が含まれることを検証する。
+ */
+export function validateOpenIdScope(
+  scope: readonly string[],
+  redirectUri: string,
+  state?: string,
+): void {
+  if (!scope.includes('openid')) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidScope,
+      'scope must include openid',
+      redirectUri,
+      state
+    );
+  }
+}
+
+/**
+ * OIDC Core 1.0 §11: offline_access の許可判定の結果を scope に適用する。
+ * 判定は行わず、引数の配列も書き換えない。
+ */
+export function filterOfflineAccessScope(scope: string[], granted: boolean): string[] {
+  return granted ? scope : scope.filter((value) => value !== 'offline_access');
 }

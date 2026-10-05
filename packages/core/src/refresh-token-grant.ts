@@ -1,4 +1,5 @@
 import { TokenError, TokenErrorCode } from './token-error.js';
+import { parseScope } from './scope.js';
 import type { AuthenticationSessionResolver } from './authentication-session.js';
 import type {
   RefreshTokenInfo,
@@ -19,16 +20,10 @@ export interface ResolvedRefreshToken {
  * 必須の refresh_token パラメータを検証し、保存済みトークンを解決する。
  */
 export async function resolveRefreshToken(
-  params: TokenRequestParams,
-  refreshTokenResolver: RefreshTokenResolver | undefined,
+  params: Pick<TokenRequestParams, 'refresh_token'>,
+  refreshTokenResolver: Pick<RefreshTokenResolver, 'resolve'> | undefined,
 ): Promise<ResolvedRefreshToken> {
-  const refreshToken = params.refresh_token;
-  if (!refreshToken) {
-    throw new TokenError(
-      TokenErrorCode.InvalidRequest,
-      'Missing required parameter: refresh_token'
-    );
-  }
+  const refreshToken = requireRefreshToken(params.refresh_token);
 
   if (!refreshTokenResolver) {
     throw new TokenError(
@@ -37,13 +32,9 @@ export async function resolveRefreshToken(
     );
   }
 
-  const refreshTokenInfo = await refreshTokenResolver.resolve(refreshToken);
-  if (!refreshTokenInfo) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'Refresh token not found'
-    );
-  }
+  const refreshTokenInfo = requireStoredRefreshToken(
+    await refreshTokenResolver.resolve(refreshToken),
+  );
 
   return { refreshToken, refreshTokenInfo };
 }
@@ -55,27 +46,25 @@ export async function resolveRefreshToken(
  * 可能なら失効してから invalid_grant を返す。
  */
 export async function validateRefreshTokenUnused(
-  refreshTokenInfo: RefreshTokenInfo,
-  refreshTokenResolver: RefreshTokenResolver,
+  refreshTokenInfo: Pick<RefreshTokenInfo, 'used' | 'grantId'>,
+  refreshTokenResolver: Pick<RefreshTokenResolver, 'revokeTokensByGrantId'>,
 ): Promise<void> {
-  if (!refreshTokenInfo.used) {
+  const used = refreshTokenInfo.used;
+  if (!used) {
     return;
   }
 
   if (refreshTokenResolver.revokeTokensByGrantId) {
     await refreshTokenResolver.revokeTokensByGrantId(refreshTokenInfo.grantId);
   }
-  throw new TokenError(
-    TokenErrorCode.InvalidGrant,
-    'Refresh token has already been used'
-  );
+  validateRefreshTokenNotUsed(used);
 }
 
 /**
  * refresh token が認証済みクライアントへ発行されたものか検証する。
  */
 export function validateRefreshTokenClient(
-  refreshTokenInfo: RefreshTokenInfo,
+  refreshTokenInfo: Pick<RefreshTokenInfo, 'clientId'>,
   authenticatedClientId: string,
 ): void {
   if (refreshTokenInfo.clientId !== authenticatedClientId) {
@@ -92,7 +81,7 @@ export function validateRefreshTokenClient(
  * RFC 7519 §4.1.4 の exp 慣例と同じく expiresAt <= currentTime を失効済みとする。
  */
 export function validateRefreshTokenExpiration(
-  refreshTokenInfo: RefreshTokenInfo,
+  refreshTokenInfo: Pick<RefreshTokenInfo, 'expiresAt'>,
   currentTime: number = Math.floor(Date.now() / 1000),
 ): void {
   if (refreshTokenInfo.expiresAt <= currentTime) {
@@ -110,7 +99,7 @@ export function validateRefreshTokenExpiration(
  * `currentTime - lastUsedAt > timeout` のとき失効する（境界値と等しい場合は有効）。
  */
 export function validateRefreshTokenIdleTimeout(
-  refreshTokenInfo: RefreshTokenInfo,
+  refreshTokenInfo: Pick<RefreshTokenInfo, 'lastUsedAt'>,
   idleTimeoutSeconds: number | undefined,
   currentTime: number = Math.floor(Date.now() / 1000),
 ): void {
@@ -145,7 +134,7 @@ export function validateRefreshTokenIdleTimeout(
  * 「確認できないので通す」にすると、ログアウト後も使える RT が生まれてしまう。
  */
 export async function validateRefreshTokenSession(
-  refreshTokenInfo: RefreshTokenInfo,
+  refreshTokenInfo: Pick<RefreshTokenInfo, 'sessionId' | 'subject'>,
   sessionResolver: AuthenticationSessionResolver | undefined,
 ): Promise<void> {
   const { sessionId } = refreshTokenInfo;
@@ -160,20 +149,10 @@ export async function validateRefreshTokenSession(
     );
   }
 
-  const session = await sessionResolver.findSession(sessionId);
-  if (!session) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'The authentication session bound to this refresh token has ended'
-    );
-  }
-
-  if (session.subject !== refreshTokenInfo.subject) {
-    throw new TokenError(
-      TokenErrorCode.InvalidGrant,
-      'The authentication session bound to this refresh token belongs to another subject'
-    );
-  }
+  const session = requireRefreshTokenSession(
+    await sessionResolver.findSession(sessionId),
+  );
+  validateRefreshTokenSessionSubject(session.subject, refreshTokenInfo.subject);
 }
 
 /**
@@ -190,27 +169,11 @@ export function validateRefreshTokenScope(
     return originalScope;
   }
 
-  const requestedScopes =
-    requestedScope.split(' ').filter((scope) => scope.length > 0);
-  if (requestedScopes.length === 0) {
-    throw new TokenError(
-      TokenErrorCode.InvalidScope,
-      'Requested scope must not be empty'
-    );
-  }
+  const requestedScopes = parseScope(requestedScope);
+  validateRefreshTokenScopeNotEmpty(requestedScopes);
+  validateRefreshTokenScopeWithinGrant(requestedScopes, originalScope);
 
-  const uniqueRequestedScopes = [...new Set(requestedScopes)];
-  const originalScopeSet = new Set(originalScope);
-  const invalidScopes =
-    uniqueRequestedScopes.filter((scope) => !originalScopeSet.has(scope));
-  if (invalidScopes.length > 0) {
-    throw new TokenError(
-      TokenErrorCode.InvalidScope,
-      `Requested scope exceeds original grant: ${invalidScopes.join(' ')}`
-    );
-  }
-
-  return uniqueRequestedScopes;
+  return requestedScopes;
 }
 
 /**
@@ -241,4 +204,101 @@ export function buildValidatedRefreshTokenRequest(
     // 1 回リフレッシュしただけでセッション束縛が外れた offline RT に化ける。
     sessionId: refreshTokenInfo.sessionId,
   };
+}
+
+/**
+ * Token Request の refresh_token パラメータがあることを確かめる。ストアを引く前に呼ぶ。
+ */
+export function requireRefreshToken(refreshToken: string | undefined): string {
+  if (!refreshToken) {
+    throw new TokenError(
+      TokenErrorCode.InvalidRequest,
+      'Missing required parameter: refresh_token'
+    );
+  }
+  return refreshToken;
+}
+
+/**
+ * ストアから読み取った refresh token があることを確かめる。見つからなければ invalid_grant。
+ */
+export function requireStoredRefreshToken<T>(refreshTokenInfo: T | null | undefined): T {
+  if (!refreshTokenInfo) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'Refresh token not found'
+    );
+  }
+  return refreshTokenInfo;
+}
+
+/**
+ * ローテーション済みの refresh token でないことを検証する。
+ * 再利用時の token family の失効（RFC 9700 §4.14）は呼び出し側が先に済ませておく前提。
+ */
+export function validateRefreshTokenNotUsed(used: boolean | undefined): void {
+  if (!used) return;
+  throw new TokenError(
+    TokenErrorCode.InvalidGrant,
+    'Refresh token has already been used'
+  );
+}
+
+/**
+ * online refresh token の束縛先セッションが存続していることを確かめる。
+ * セッションの読み取りは呼び出し側が行い、見つからなければ null を渡す。
+ */
+export function requireRefreshTokenSession<T>(session: T | null | undefined): T {
+  if (!session) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'The authentication session bound to this refresh token has ended'
+    );
+  }
+  return session;
+}
+
+/**
+ * 束縛先セッションの subject が refresh token の subject と一致することを検証する。
+ */
+export function validateRefreshTokenSessionSubject(
+  sessionSubject: string,
+  refreshTokenSubject: string,
+): void {
+  if (sessionSubject !== refreshTokenSubject) {
+    throw new TokenError(
+      TokenErrorCode.InvalidGrant,
+      'The authentication session bound to this refresh token belongs to another subject'
+    );
+  }
+}
+
+/**
+ * refresh_token grant で指定された scope が空でないことを検証する。
+ */
+export function validateRefreshTokenScopeNotEmpty(requestedScopes: readonly string[]): void {
+  if (requestedScopes.length === 0) {
+    throw new TokenError(
+      TokenErrorCode.InvalidScope,
+      'Requested scope must not be empty'
+    );
+  }
+}
+
+/**
+ * RFC 6749 §6: 要求 scope が元の grant の scope に収まることを検証する。
+ */
+export function validateRefreshTokenScopeWithinGrant(
+  requestedScopes: readonly string[],
+  originalScope: readonly string[],
+): void {
+  const originalScopeSet = new Set(originalScope);
+  const invalidScopes =
+    requestedScopes.filter((scope) => !originalScopeSet.has(scope));
+  if (invalidScopes.length > 0) {
+    throw new TokenError(
+      TokenErrorCode.InvalidScope,
+      `Requested scope exceeds original grant: ${invalidScopes.join(' ')}`
+    );
+  }
 }

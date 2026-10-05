@@ -101,10 +101,37 @@ export async function createAuthorizationCode(
 ): Promise<AuthorizationCodeData> {
   const { authorizationResponse, subject, authTime, ttlSeconds, sessionId } = options;
 
-  const code = generateRandomString(32);
-  const grantId = generateRandomString(32);
-  const now = Math.floor(Date.now() / 1000);
-  const ttl = ttlSeconds ?? DEFAULT_AUTH_CODE_TTL_SECONDS;
+  return buildAuthorizationCodeData(authorizationResponse, {
+    code: generateRandomString(32),
+    grantId: generateRandomString(32),
+    subject,
+    authTime,
+    ttlSeconds: ttlSeconds ?? DEFAULT_AUTH_CODE_TTL_SECONDS,
+    now: Math.floor(Date.now() / 1000),
+    sessionId,
+  });
+}
+
+/**
+ * 認可コードのデータを組み立てる。保存はしない。
+ * 認可コードと grantId は呼び出し側が生成した値を受け取る（OIDC Core 1.0 §3.1.3.1 の推測困難性は
+ * 生成側が担保する）。expiresAt は now（Unix epoch 秒）に ttlSeconds を足した値。
+ */
+export function buildAuthorizationCodeData(
+  authorizationResponse: AuthorizationResponseParams,
+  options: {
+    code: string;
+    grantId: string;
+    subject: string;
+    /** 認証時刻（Unix epoch 秒） */
+    authTime: number;
+    ttlSeconds: number;
+    /** 現在時刻（Unix epoch 秒） */
+    now: number;
+    sessionId?: string;
+  },
+): AuthorizationCodeData {
+  const { code, grantId, subject, authTime, ttlSeconds, now, sessionId } = options;
 
   const data: AuthorizationCodeData = {
     code,
@@ -115,7 +142,7 @@ export async function createAuthorizationCode(
     scope: authorizationResponse.scope,
     subject,
     used: false,
-    expiresAt: now + ttl,
+    expiresAt: now + ttlSeconds,
     authTime,
   };
 

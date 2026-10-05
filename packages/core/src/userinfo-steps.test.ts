@@ -14,6 +14,7 @@ import {
   validateUserInfoAudience,
   validateUserInfoScope,
   validateUserInfoTokenExpiration,
+  matchesRequestedClaimValue,
   UserInfoError,
   UserInfoErrorCode,
 } from './userinfo.js';
@@ -285,5 +286,30 @@ describe('applyRequestedClaims', () => {
     applyRequestedClaims(response, defaultUserClaims, { userinfo: { email: null } });
 
     expect(response).toEqual({ sub: 'user-123' });
+  });
+});
+
+describe('matchesRequestedClaimValue', () => {
+  it('should match any value for a null entry', () => {
+    expect(matchesRequestedClaimValue('alice@example.com', null)).toBe(true);
+  });
+
+  // OIDC Core 1.0 §5.5.1: value constrains the claim to one value
+  it('should match an equal value', () => {
+    expect(matchesRequestedClaimValue('alice', { value: 'alice' })).toBe(true);
+  });
+
+  it('should not match a different value', () => {
+    expect(matchesRequestedClaimValue('bob', { value: 'alice' })).toBe(false);
+  });
+
+  it('should match a value listed in values', () => {
+    expect(matchesRequestedClaimValue('urn:loa:2', { values: ['urn:loa:1', 'urn:loa:2'] })).toBe(true);
+  });
+
+  it('should compare object claims by structure', () => {
+    expect(
+      matchesRequestedClaimValue({ country: 'JP' }, { value: { country: 'JP' } }),
+    ).toBe(true);
   });
 });

@@ -32,10 +32,6 @@ function formUrlDecode(value: string): string {
 }
 
 /**
- * Authorization: Basic ヘッダーから clientId/clientSecret を抽出する。
- * Basic 形式でない、または base64 / フォーマットが不正な場合は null。
- */
-/**
  * RFC 7235 Section 2.1: HTTP authentication scheme は case-insensitive。
  * スキーム名のみを ASCII 小文字化して指定スキームと比較する。
  * 認証情報本体（base64 や bearer token 値）は変換しない。
@@ -59,7 +55,11 @@ function hasAuthScheme(authHeader: string, scheme: string): boolean {
   return matchAuthScheme(authHeader, scheme) !== null;
 }
 
-function parseBasicAuth(
+/**
+ * Authorization: Basic ヘッダーから clientId/clientSecret を抽出する。
+ * Basic 形式でない、または base64 / フォーマットが不正な場合は null。
+ */
+export function parseBasicClientCredentials(
   authHeader: string,
 ): { clientId: string; clientSecret: string } | null {
   const base64Credentials = matchAuthScheme(authHeader, 'Basic');
@@ -139,19 +139,13 @@ export function extractClientCredentials(
   // よって多重認証方式の判定はボディの client_secret（client_secret_post の資格情報）の有無のみで行い、
   // Basic ヘッダ + ボディ client_id（secret なし）という多くのクライアントライブラリの実装を拒否しない。
   // 空値の client_secret は資格情報を運ばないため「もう一つの認証方式」に数えない（RFC 6749 §2.3）。
-  const hasPostSecret = postSecret !== undefined;
-  if (hasBasicHeader && hasPostSecret) {
-    throw new TokenError(
-      TokenErrorCode.InvalidRequest,
-      'Multiple client authentication methods provided. Use either Authorization header or request body, not both.',
-    );
-  }
+  validateSingleClientAuthMethod(hasBasicHeader, postSecret);
 
   let clientId: string | undefined;
   let clientSecret: string | undefined;
 
   if (hasBasicHeader) {
-    const basic = parseBasicAuth(authorizationHeader);
+    const basic = parseBasicClientCredentials(authorizationHeader);
     if (!basic) {
       throw new TokenError(
         TokenErrorCode.InvalidClient,
@@ -160,15 +154,7 @@ export function extractClientCredentials(
     }
     // RFC 6749 §3.2.1: Basic と併送された client_id は識別子として許容するが、
     // Basic 側の client_id と食い違う場合は矛盾（クライアント設定ミス／混同）として拒否する。
-    if (
-      params.client_id !== undefined &&
-      params.client_id !== basic.clientId
-    ) {
-      throw new TokenError(
-        TokenErrorCode.InvalidRequest,
-        'client_id in request body does not match the Authorization header',
-      );
-    }
+    validateClientIdConsistency(params.client_id, basic.clientId);
     clientId = basic.clientId;
     clientSecret = basic.clientSecret;
   } else if (hasPostCredential) {
@@ -178,20 +164,14 @@ export function extractClientCredentials(
 
   // client_id は public / confidential を問わず必須。
   // RFC 6749 §4.1.3: 未認証クライアントは client_id を送らなければならない。
-  if (!clientId) {
-    throw new TokenError(
-      TokenErrorCode.InvalidClient,
-      'Client authentication required',
-    );
-  }
+  const requiredClientId = requireClientId(clientId);
 
-  const method: PresentedClientCredentials['method'] = hasBasicHeader
-    ? 'client_secret_basic'
-    : clientSecret !== undefined
-      ? 'client_secret_post'
-      : 'none';
+  const method = selectPresentedClientAuthMethod({
+    hasBasicHeader,
+    hasClientSecret: clientSecret !== undefined,
+  });
 
-  return { clientId, clientSecret, method };
+  return { clientId: requiredClientId, clientSecret, method };
 }
 
 /**
@@ -207,41 +187,25 @@ export function extractClientCredentials(
  * @throws {TokenError} invalid_client
  */
 export function validateClientAuthMethod(
-  client: TokenClientInfo,
-  presented: PresentedClientCredentials,
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod'>,
+  presented: Pick<PresentedClientCredentials, 'method' | 'clientSecret'>,
 ): void {
-  // OIDC Core 1.0 §9 / RFC 7591 §2: token_endpoint_auth_method の既定は client_secret_basic。
-  const registeredMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
+  const registeredMethod = selectRegisteredClientAuthMethod(client.tokenEndpointAuthMethod);
 
   // RFC 6749 §2.1 / §3.2.1 / OAuth 2.1 §2.4: public client（auth_method = none）は
   // client_id のみで識別し、クライアント認証を行わない。
   // ただし credentials を提示した場合は登録方式（none）と一致しないため拒否し、
   // confidential への昇格／ダウングレードの混同を防ぐ。
   if (registeredMethod === 'none') {
-    if (presented.method !== 'none') {
-      throw new TokenError(
-        TokenErrorCode.InvalidClient,
-        'Client authentication method does not match the registered token_endpoint_auth_method',
-      );
-    }
+    validateClientAuthMethodMatch(presented.method, registeredMethod);
     return;
   }
 
   // confidential client は client_secret 必須。
-  if (!presented.clientSecret) {
-    throw new TokenError(
-      TokenErrorCode.InvalidClient,
-      'Client authentication required',
-    );
-  }
+  requireClientSecret(presented.clientSecret);
 
   // 実際に使われた認証方式が登録方式と一致しなければ認証失敗とし、認証方式ダウングレードを防ぐ。
-  if (presented.method !== registeredMethod) {
-    throw new TokenError(
-      TokenErrorCode.InvalidClient,
-      'Client authentication method does not match the registered token_endpoint_auth_method',
-    );
-  }
+  validateClientAuthMethodMatch(presented.method, registeredMethod);
 }
 
 /**
@@ -253,16 +217,126 @@ export function validateClientAuthMethod(
  * @throws {TokenError} invalid_client
  */
 export async function verifyClientSecret(
-  client: TokenClientInfo,
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod' | 'clientSecret'>,
   clientSecret: string | undefined,
 ): Promise<void> {
-  const registeredMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
+  const registeredMethod = selectRegisteredClientAuthMethod(client.tokenEndpointAuthMethod);
   if (registeredMethod === 'none') return;
 
-  // OAuth 2.1 §7.4.1 / RFC 6749 §10.10: constant-time comparison to thwart timing attacks
+  await verifyClientSecretValue(clientSecret, client.clientSecret);
+}
+
+/**
+ * OAuth 2.1 §2.3: Basic ヘッダーとボディの client_secret を併用していないことを検証する。
+ * 空の client_secret は未提示として扱う（RFC 6749 §3.2）。
+ */
+export function validateSingleClientAuthMethod(
+  hasBasicHeader: boolean,
+  postSecret: string | undefined,
+): void {
+  if (hasBasicHeader && postSecret !== undefined && postSecret !== '') {
+    throw new TokenError(
+      TokenErrorCode.InvalidRequest,
+      'Multiple client authentication methods provided. Use either Authorization header or request body, not both.',
+    );
+  }
+}
+
+/**
+ * RFC 6749 §3.2.1: Basic と併送されたボディの client_id が Basic 側と一致することを検証する。
+ * ボディの client_id が省略されていれば検査しない。
+ */
+export function validateClientIdConsistency(
+  bodyClientId: string | undefined,
+  basicClientId: string,
+): void {
+  if (
+    bodyClientId !== undefined &&
+    bodyClientId !== basicClientId
+  ) {
+    throw new TokenError(
+      TokenErrorCode.InvalidRequest,
+      'client_id in request body does not match the Authorization header',
+    );
+  }
+}
+
+/**
+ * RFC 6749 §4.1.3: client_id があることを確かめる。public client も client_id を送る。
+ */
+export function requireClientId(clientId: string | undefined): string {
+  if (!clientId) {
+    throw new TokenError(
+      TokenErrorCode.InvalidClient,
+      'Client authentication required',
+    );
+  }
+  return clientId;
+}
+
+/**
+ * リクエストが実際に使ったクライアント認証方式を選ぶ。
+ * Basic ヘッダーがあれば client_secret_basic、ボディに secret があれば client_secret_post、
+ * どちらも無ければ none とする。登録方式との照合は行わない。
+ */
+export function selectPresentedClientAuthMethod(presented: {
+  hasBasicHeader: boolean;
+  hasClientSecret: boolean;
+}): PresentedClientCredentials['method'] {
+  if (presented.hasBasicHeader) return 'client_secret_basic';
+  return presented.hasClientSecret ? 'client_secret_post' : 'none';
+}
+
+/**
+ * OIDC Core 1.0 §9 / RFC 7591 §2: 登録された token_endpoint_auth_method を返す。
+ * 未登録なら既定の client_secret_basic を補う。
+ */
+export function selectRegisteredClientAuthMethod(
+  tokenEndpointAuthMethod: TokenClientInfo['tokenEndpointAuthMethod'],
+): NonNullable<TokenClientInfo['tokenEndpointAuthMethod']> {
+  return tokenEndpointAuthMethod ?? 'client_secret_basic';
+}
+
+/**
+ * confidential client が client_secret を提示していることを確かめる。
+ */
+export function requireClientSecret(clientSecret: string | undefined): string {
+  if (!clientSecret) {
+    throw new TokenError(
+      TokenErrorCode.InvalidClient,
+      'Client authentication required',
+    );
+  }
+  return clientSecret;
+}
+
+/**
+ * 実際に使われた認証方式が登録方式と一致することを検証する。
+ * 認証方式のダウングレードや public / confidential の混同を防ぐ（OIDC Core 1.0 §9）。
+ */
+export function validateClientAuthMethodMatch(
+  presentedMethod: PresentedClientCredentials['method'],
+  registeredMethod: NonNullable<TokenClientInfo['tokenEndpointAuthMethod']>,
+): void {
+  if (presentedMethod !== registeredMethod) {
+    throw new TokenError(
+      TokenErrorCode.InvalidClient,
+      'Client authentication method does not match the registered token_endpoint_auth_method',
+    );
+  }
+}
+
+/**
+ * OAuth 2.1 §7.4.1 / RFC 6749 §10.10: 提示された client_secret を登録値と定数時間で比較する。
+ * どちらかが未指定なら空文字として比較し、一致しなければ invalid_client。
+ */
+export async function verifyClientSecretValue(
+  presentedSecret: string | undefined,
+  registeredSecret: string | undefined,
+): Promise<void> {
   const secretMatches = await timingSafeEqual(
-    client.clientSecret ?? '',
-    clientSecret ?? '',
+    registeredSecret ?? '',
+    presentedSecret ?? '',
   );
   if (!secretMatches) {
     throw new TokenError(

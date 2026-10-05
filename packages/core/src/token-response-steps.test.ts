@@ -12,6 +12,7 @@ import {
   buildIdTokenPayload,
   computeAtHash,
   resolveAcrAmr,
+  selectRequestedAcrValues,
 } from './token-response.js';
 import { createJwtAccessTokenIssuer } from './access-token-issuer.js';
 import type { AcrResolver } from './token-response.js';
@@ -330,5 +331,26 @@ describe('buildIdTokenPayload', () => {
     });
 
     expect(result.sub).toBe('user-1');
+  });
+});
+
+describe('selectRequestedAcrValues', () => {
+  it('should prefer the acr_values parameter', () => {
+    expect(
+      selectRequestedAcrValues('urn:loa:1', { id_token: { acr: { values: ['urn:loa:2'] } } }),
+    ).toBe('urn:loa:1');
+  });
+
+  // OIDC Core 1.0 §5.5.1.1: claims.id_token.acr.values is equivalent to acr_values
+  it('should join claims.id_token.acr.values when acr_values is absent', () => {
+    expect(
+      selectRequestedAcrValues(undefined, {
+        id_token: { acr: { values: ['urn:loa:2', 'urn:loa:3'] } },
+      }),
+    ).toBe('urn:loa:2 urn:loa:3');
+  });
+
+  it('should return undefined when neither is present', () => {
+    expect(selectRequestedAcrValues(undefined, undefined)).toBeUndefined();
   });
 });

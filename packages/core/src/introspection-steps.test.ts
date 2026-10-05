@@ -14,6 +14,8 @@ import {
   requireIntrospectionClient,
   requireIntrospectionToken,
   resolveIntrospectionToken,
+  isAccessTokenActive,
+  isRefreshTokenActive,
   INACTIVE_INTROSPECTION_RESPONSE,
   IntrospectionError,
   IntrospectionErrorCode,
@@ -354,5 +356,38 @@ describe('buildIntrospectionResponse', () => {
 describe('INACTIVE_INTROSPECTION_RESPONSE', () => {
   it('should expose only the active member', () => {
     expect(INACTIVE_INTROSPECTION_RESPONSE).toEqual({ active: false });
+  });
+});
+
+describe('isAccessTokenActive', () => {
+  it('should return true before exp', () => {
+    expect(isAccessTokenActive(1_700_000_001, undefined, 1_700_000_000)).toBe(true);
+  });
+
+  it('should return false at exp', () => {
+    expect(isAccessTokenActive(1_700_000_000, undefined, 1_700_000_000)).toBe(false);
+  });
+
+  // RFC 7519 §4.1.5: a token is not valid before nbf
+  it('should return false before nbf', () => {
+    expect(isAccessTokenActive(1_700_000_100, 1_700_000_001, 1_700_000_000)).toBe(false);
+  });
+
+  it('should return true at nbf', () => {
+    expect(isAccessTokenActive(1_700_000_100, 1_700_000_000, 1_700_000_000)).toBe(true);
+  });
+});
+
+describe('isRefreshTokenActive', () => {
+  it('should return true for an unused token before exp', () => {
+    expect(isRefreshTokenActive(1_700_000_001, false, 1_700_000_000)).toBe(true);
+  });
+
+  it('should return false at exp', () => {
+    expect(isRefreshTokenActive(1_700_000_000, false, 1_700_000_000)).toBe(false);
+  });
+
+  it('should return false for a rotated token', () => {
+    expect(isRefreshTokenActive(1_700_000_001, true, 1_700_000_000)).toBe(false);
   });
 });

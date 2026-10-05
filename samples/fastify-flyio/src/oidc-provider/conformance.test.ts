@@ -50,20 +50,15 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
       '&code_challenge=' + CONFORMANCE_PKCE_CHALLENGE + '&code_challenge_method=S256',
   );
   const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-  // Carry forward whatever cookie /authorize set, exactly as a browser would.
-  // With --enable transaction-binding this is the per-transaction binding
-  // secret the later steps require; without it this is '' and the OP ignores
-  // it, so the same flow works in both builds.
-  const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-  const transactionId =
-    new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+  // Carry forward the transaction cookie /authorize set, exactly as a browser
+  // would: the login and consent steps find the transaction through it.
+  const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-  const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+  const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
   const loginRes = await app.request('/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
     body: new URLSearchParams({
-      transaction_id: transactionId,
       csrf_token: csrfFrom(await loginGet.text()),
       username: 'testuser',
       password: 'password',
@@ -71,12 +66,11 @@ async function conformanceAuthorizationCode(scope: string): Promise<string> {
   });
 
   const consentPath = relativeFrom(loginRes.headers.get('Location'));
-  const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+  const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
   const consentRes = await app.request('/consent', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
     body: new URLSearchParams({
-      transaction_id: transactionId,
       csrf_token: csrfFrom(await consentGet.text()),
       action: 'approve',
     }).toString(),
@@ -379,12 +373,10 @@ describe('generated provider HTTP conformance', () => {
     it('should HTML-escape every login and consent value', () => {
       const hostile = '"><script>alert(1)</script>';
       const loginHtml = String(defaultViews.loginPage({
-        transactionId: hostile,
         csrfToken: hostile,
         error: '<img src=x onerror=alert(1)>',
       }));
       const consentHtml = String(defaultViews.consentPage({
-        transactionId: hostile,
         csrfToken: hostile,
         scopes: ['openid'],
         clientId: 'client',
@@ -976,90 +968,240 @@ describe('generated provider HTTP conformance', () => {
     });
   });
 
-  describe('Auth transaction User-Agent binding (disabled by default)', () => {
-    const NO_BINDING_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+  describe('Auth transaction cookie and csrf_token', () => {
+    const TXN_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+    const LOGIN_FIELDS = { username: 'testuser', password: 'password' };
 
-    function noBindingRelativeFrom(location: string | null): string {
-      const url = new URL(location ?? '', 'http://localhost');
-      return url.pathname + url.search;
-    }
-
-    function noBindingCsrfFrom(html: string): string {
+    // Pure fetch + parse helpers: no assertions and no branching, so the contract
+    // stays visible in the it() blocks.
+    function txnCsrfFrom(html: string): string {
       return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
     }
 
-    // Drive the whole flow WITHOUT ever sending a Cookie header, exactly as a
-    // curl session would. No assertions or branching in here.
-    async function flowWithoutCookies(state: string): Promise<{
-      authorizeSetCookie: string | null;
-      loginFormStatus: number;
-      consentFormStatus: number;
-      consentFormHasCsrf: boolean;
-      callbackCode: string;
-      callbackState: string | null;
+    function postForm(path: string, cookie: string, fields: Record<string, string>): Promise<Response> {
+      return app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams(fields).toString(),
+      });
+    }
+
+    // Start one authorization request and return what the browser holds after
+    // it: where the OP sent it, the raw Set-Cookie, and the cookie to send back.
+    async function startFlow(state: string): Promise<{
+      status: number;
+      location: string;
+      setCookie: string;
+      cookie: string;
     }> {
-      const authorizeRes = await app.request(
+      const res = await app.request(
         '/authorize?response_type=code&client_id=c-conf' +
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
         '&scope=openid&state=' + state + '&prompt=consent' +
-        '&code_challenge=' + NO_BINDING_PKCE_CHALLENGE + '&code_challenge_method=S256',
+        '&code_challenge=' + TXN_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
-      const loginPath = noBindingRelativeFrom(authorizeRes.headers.get('Location'));
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-
-      const loginGet = await app.request(loginPath);
-      const loginRes = await app.request('/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          transaction_id: transactionId,
-          csrf_token: noBindingCsrfFrom(await loginGet.text()),
-          username: 'testuser',
-          password: 'password',
-        }).toString(),
-      });
-
-      const consentPath = noBindingRelativeFrom(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath);
-      const consentHtml = await consentGet.text();
-      const consentRes = await app.request('/consent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          transaction_id: transactionId,
-          csrf_token: noBindingCsrfFrom(consentHtml),
-          action: 'approve',
-        }).toString(),
-      });
-      const callback = new URL(consentRes.headers.get('Location') ?? '', 'http://localhost');
-
+      const setCookie = res.headers.get('Set-Cookie') ?? '';
       return {
-        authorizeSetCookie: authorizeRes.headers.get('Set-Cookie'),
-        loginFormStatus: loginGet.status,
-        consentFormStatus: consentGet.status,
-        consentFormHasCsrf: noBindingCsrfFrom(consentHtml).length > 0,
-        callbackCode: callback.searchParams.get('code') ?? '',
-        callbackState: callback.searchParams.get('state'),
+        status: res.status,
+        location: res.headers.get('Location') ?? '',
+        setCookie,
+        cookie: setCookie.split(';')[0] ?? '',
       };
     }
 
-    it('should not set any binding cookie on the redirect to the login page', async () => {
-      const flow = await flowWithoutCookies('no-binding-cookie');
+    // Log in as the browser that holds the cookie and stop on the consent page.
+    async function loginAndReachConsent(cookie: string): Promise<{
+      loginLocation: string;
+      consentStatus: number;
+      consentHtml: string;
+    }> {
+      const loginGet = await app.request('/login', { headers: { Cookie: cookie } });
+      const loginRes = await postForm('/login', cookie, {
+        csrf_token: txnCsrfFrom(await loginGet.text()),
+        ...LOGIN_FIELDS,
+      });
+      const consentGet = await app.request('/consent', { headers: { Cookie: cookie } });
+      return {
+        loginLocation: loginRes.headers.get('Location') ?? '',
+        consentStatus: consentGet.status,
+        consentHtml: await consentGet.text(),
+      };
+    }
 
-      expect(flow.authorizeSetCookie).toBe(null);
+    // The id rides in the cookie alone: nothing in the URL can leak it through
+    // history, access logs or a shared screen.
+    it('should hand the transaction to the browser in an HttpOnly cookie, not in the login URL', async () => {
+      const flow = await startFlow('txn-set');
+
+      expect(flow.status).toBe(302);
+      expect(flow.location).toBe('http://localhost:3000/login');
+      expect(flow.setCookie.startsWith('oidc_txn=')).toBe(true);
+      expect(flow.setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600')).toBe(true);
+      expect(flow.cookie.length).toBe('oidc_txn='.length + 43);
     });
 
-    // The whole point of leaving this off by default: transaction_id alone is
-    // enough to walk the flow, so the OP can be explored by hand.
-    it('should complete the whole flow without sending a single cookie', async () => {
-      const flow = await flowWithoutCookies('no-binding-flow');
+    it('should embed the csrf_token in the login form but never the transaction id', async () => {
+      const flow = await startFlow('txn-login-html');
 
-      expect(flow.loginFormStatus).toBe(200);
-      expect(flow.consentFormStatus).toBe(200);
-      expect(flow.consentFormHasCsrf).toBe(true);
-      expect(flow.callbackState).toBe('no-binding-flow');
-      expect(flow.callbackCode.length).toBe(43);
+      const res = await app.request('/login', { headers: { Cookie: flow.cookie } });
+      const html = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(txnCsrfFrom(html).length).toBe(43);
+      expect(html.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
+      expect(html.includes('transaction_id')).toBe(false);
+    });
+
+    // The csrf_token lives in the HTML, so the form must only reach the browser
+    // that holds the transaction.
+    it('should not show the login form to a browser without the transaction cookie', async () => {
+      await startFlow('txn-login-get');
+
+      const res = await app.request('/login');
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('csrf_token')).toBe(false);
+    });
+
+    it('should answer 400 for a transaction cookie that names no transaction', async () => {
+      const res = await app.request('/login', { headers: { Cookie: 'oidc_txn=no-such-transaction' } });
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('csrf_token')).toBe(false);
+    });
+
+    it('should reject POST /login without the transaction cookie even with a valid csrf_token', async () => {
+      const flow = await startFlow('txn-login-no-cookie');
+      const loginGet = await app.request('/login', { headers: { Cookie: flow.cookie } });
+
+      const res = await postForm('/login', '', {
+        csrf_token: txnCsrfFrom(await loginGet.text()),
+        ...LOGIN_FIELDS,
+      });
+
+      // Stopped by the OP itself, never redirected onward, no session handed out.
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Set-Cookie')).toBe(null);
+    });
+
+    it('should reject POST /login with the transaction cookie but a forged csrf_token', async () => {
+      const flow = await startFlow('txn-login-forged');
+
+      const res = await postForm('/login', flow.cookie, { csrf_token: 'forged', ...LOGIN_FIELDS });
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
+      expect(res.headers.get('Set-Cookie')).toBe(null);
+    });
+
+    it('should continue to a consent URL without a query and keep the id out of the consent form', async () => {
+      const flow = await startFlow('txn-consent-url');
+
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      expect(consent.loginLocation).toBe('http://localhost:3000/consent');
+      expect(consent.consentStatus).toBe(200);
+      expect(txnCsrfFrom(consent.consentHtml).length).toBe(43);
+      expect(consent.consentHtml.includes(flow.cookie.slice('oidc_txn='.length))).toBe(false);
+    });
+
+    it('should not show the consent form to a browser without the transaction cookie', async () => {
+      const flow = await startFlow('txn-consent-get');
+      await loginAndReachConsent(flow.cookie);
+
+      const res = await app.request('/consent');
+
+      expect(res.status).toBe(400);
+      expect((await res.text()).includes('csrf_token')).toBe(false);
+    });
+
+    // Someone who obtained the csrf_token (it is in the HTML) still cannot
+    // complete the grant from a browser that does not hold the transaction.
+    it('should not issue an authorization code for POST /consent without the transaction cookie', async () => {
+      const flow = await startFlow('txn-consent-post');
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      const res = await postForm('/consent', '', {
+        csrf_token: txnCsrfFrom(consent.consentHtml),
+        action: 'approve',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    it('should reject POST /consent action=deny without the transaction cookie', async () => {
+      const flow = await startFlow('txn-deny');
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      const res = await postForm('/consent', '', {
+        csrf_token: txnCsrfFrom(consent.consentHtml),
+        action: 'deny',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // The lured-victim case: the attacker's own transaction cookie is perfectly
+    // valid, just not for the form the csrf_token came from.
+    it('should not issue an authorization code when the csrf_token belongs to another transaction', async () => {
+      const victim = await startFlow('txn-victim');
+      const victimConsent = await loginAndReachConsent(victim.cookie);
+      const attacker = await startFlow('txn-attacker');
+
+      const res = await postForm('/consent', attacker.cookie, {
+        csrf_token: txnCsrfFrom(victimConsent.consentHtml),
+        action: 'approve',
+      });
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Location')).toBe(null);
+    });
+
+    // Regression guard: the cookie must not break the flow it protects.
+    it('should issue an authorization code and clear the transaction cookie for the normal flow', async () => {
+      const flow = await startFlow('txn-happy');
+      const consent = await loginAndReachConsent(flow.cookie);
+
+      const res = await postForm('/consent', flow.cookie, {
+        csrf_token: txnCsrfFrom(consent.consentHtml),
+        action: 'approve',
+      });
+      const callback = new URL(res.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(res.status).toBe(302);
+      expect(callback.searchParams.get('state')).toBe('txn-happy');
+      expect((callback.searchParams.get('code') ?? '').length).toBe(43);
+      expect(res.headers.get('Set-Cookie')).toBe(
+        'oidc_txn=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+      );
+    });
+
+    // One cookie per browser: a second authorization request (another tab)
+    // replaces it. The form still open in the first tab is refused instead of
+    // completing the wrong request, and the newer flow completes.
+    it('should refuse the older tab and complete the newer one when a second flow starts in the same browser', async () => {
+      const first = await startFlow('txn-tab-one');
+      const firstConsent = await loginAndReachConsent(first.cookie);
+      const second = await startFlow('txn-tab-two');
+      const secondConsent = await loginAndReachConsent(second.cookie);
+
+      const firstRes = await postForm('/consent', second.cookie, {
+        csrf_token: txnCsrfFrom(firstConsent.consentHtml),
+        action: 'approve',
+      });
+      const secondRes = await postForm('/consent', second.cookie, {
+        csrf_token: txnCsrfFrom(secondConsent.consentHtml),
+        action: 'approve',
+      });
+      const secondCallback = new URL(secondRes.headers.get('Location') ?? '', 'http://localhost');
+
+      expect(firstRes.status).toBe(403);
+      expect(firstRes.headers.get('Location')).toBe(null);
+      expect(secondCallback.searchParams.get('state')).toBe('txn-tab-two');
+      expect((secondCallback.searchParams.get('code') ?? '').length).toBe(43);
     });
   });
 
@@ -1112,15 +1254,13 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + PKCE_CHALLENGE_S256 + '&code_challenge_method=S256';
       const authorizeRes = await app.request(authorizeUrl);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-      const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
+      const res = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: transactionCookie } });
 
-      // The login body carries a dynamic transaction_id / csrf_token, so the
+      // The login body carries a dynamic csrf_token, so the
       // status + content type pin that renderView delivered a text/html Response
       // at runtime; the exact-body wrapping is pinned by the renderView unit tests.
       expect(res.status).toBe(200);
@@ -1155,9 +1295,8 @@ describe('generated provider HTTP conformance', () => {
 
     // Drives authorize -> login POST from an attacker origin and returns each
     // Location plus the session cookie login handed out. The transaction cookie
-    // is carried forward exactly as a browser would, so this works with or
-    // without --enable transaction-binding. Pure fetch-and-parse: every check
-    // stays in the it() blocks as an expect().
+    // is carried forward exactly as a browser would. Pure fetch-and-parse: every
+    // check stays in the it() blocks as an expect().
     async function loginFromOrigin(origin: string): Promise<{
       loginRedirect: string;
       consentRedirect: string;
@@ -1167,22 +1306,20 @@ describe('generated provider HTTP conformance', () => {
         headers: { Host: 'attacker.example' },
       });
       const loginRedirect = authorizeRes.headers.get('Location') ?? '';
-      const bindingCookie = redirectOriginCookie(authorizeRes);
+      const transactionCookie = redirectOriginCookie(authorizeRes);
       const loginUrl = new URL(loginRedirect, 'http://localhost');
-      const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
 
       const loginGet = await app.request(origin + loginUrl.pathname + loginUrl.search, {
-        headers: { Cookie: bindingCookie },
+        headers: { Cookie: transactionCookie },
       });
       const loginRes = await app.request(origin + '/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          Cookie: bindingCookie,
+          Cookie: transactionCookie,
           Host: 'attacker.example',
         },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: redirectOriginCsrf(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -1203,7 +1340,8 @@ describe('generated provider HTTP conformance', () => {
       expect(res.status).toBe(302);
       expect(location.origin).toBe('http://localhost:3000');
       expect(location.pathname).toBe('/login');
-      expect(location.searchParams.has('transaction_id')).toBe(true);
+      // The transaction travels in the cookie, never in the redirect URL.
+      expect(location.search).toBe('');
     });
 
     it('should ignore the Host header when building the login redirect Location', async () => {
@@ -1352,18 +1490,16 @@ describe('generated provider HTTP conformance', () => {
       );
       expect(authorizeRes.status).toBe(302);
       const loginUrl = new URL(authorizeRes.headers.get('Location') ?? '', 'http://localhost');
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId = loginUrl.searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      // The cookie value is the transaction id, i.e. the store key suffix.
+      const transactionId = transactionCookie.slice('oidc_txn='.length);
+      const loginGet = await app.request(loginUrl.pathname + loginUrl.search, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -1372,13 +1508,12 @@ describe('generated provider HTTP conformance', () => {
       expect(loginRes.status).toBe(302);
       const consentUrl = new URL(loginRes.headers.get('Location') ?? '', 'http://localhost');
       const consentGet = await app.request(consentUrl.pathname + consentUrl.search, {
-        headers: { Cookie: bindingCookie },
+        headers: { Cookie: transactionCookie },
       });
       const denyRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'deny',
         }).toString(),
@@ -1470,19 +1605,14 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + HINT_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
       const loginPath = hintRelativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: hintCsrfToken(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -1490,12 +1620,11 @@ describe('generated provider HTTP conformance', () => {
       });
       hintSessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
       const consentPath = hintRelativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: hintCsrfToken(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -1551,7 +1680,8 @@ describe('generated provider HTTP conformance', () => {
 
       expect(res.status).toBe(302);
       expect(location.pathname).toBe('/login');
-      expect((location.searchParams.get('transaction_id') ?? '').length).toBe(43);
+      // A fresh transaction was started for the login screen: its cookie is set.
+      expect((res.headers.get('Set-Cookie') ?? '').startsWith('oidc_txn=')).toBe(true);
       expect(location.searchParams.get('code')).toBe(null);
       expect(location.searchParams.get('error')).toBe(null);
     });
@@ -1687,20 +1817,15 @@ describe('generated provider HTTP conformance', () => {
       );
       expect(authorizeRes.status).toBe(302);
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -1709,12 +1834,11 @@ describe('generated provider HTTP conformance', () => {
       expect(loginRes.status).toBe(302);
       const sessionCookie = loginRes.headers.get('Set-Cookie') ?? '';
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -1801,9 +1925,9 @@ describe('generated provider HTTP conformance', () => {
     const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
     const PKCE_CHALLENGE_S256 = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
-    // The flow carries forward whatever cookie /authorize set, like a browser
-    // would, so it passes with or without --enable transaction-binding. These
-    // helpers only fetch and parse: they make no assertions and contain no
+    // The flow carries forward the transaction cookie /authorize set, like a
+    // browser would: it is how the login and consent steps find the transaction.
+    // These helpers only fetch and parse: they make no assertions and contain no
     // branching, so every check stays in the it() blocks as an expect(). Test code
     // carries no logic that could drift from the OP's behavior.
     function relativeFrom(location: string | null): string {
@@ -1857,20 +1981,15 @@ describe('generated provider HTTP conformance', () => {
 
       const authorizeRes = await app.request(authorizeUrl);
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -1878,12 +1997,11 @@ describe('generated provider HTTP conformance', () => {
       });
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
 
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -1904,9 +2022,9 @@ describe('generated provider HTTP conformance', () => {
       // authorize -> login -> consent redirects through each OP step and hands back a code.
       const flow = await authorizeFlow('openid offline_access');
       expect(flow.authorizeStatus).toBe(302);
-      expect(flow.loginPath.startsWith('/login?')).toBe(true);
+      expect(flow.loginPath).toBe('/login');
       expect(flow.loginStatus).toBe(302);
-      expect(flow.consentPath.startsWith('/consent?')).toBe(true);
+      expect(flow.consentPath).toBe('/consent');
       expect(flow.consentStatus).toBe(302);
       const code = flow.code;
 
@@ -1953,9 +2071,9 @@ describe('generated provider HTTP conformance', () => {
       // authorize -> login -> consent redirects through each OP step and hands back a code.
       const flow = await authorizeFlow('openid offline_access');
       expect(flow.authorizeStatus).toBe(302);
-      expect(flow.loginPath.startsWith('/login?')).toBe(true);
+      expect(flow.loginPath).toBe('/login');
       expect(flow.loginStatus).toBe(302);
-      expect(flow.consentPath.startsWith('/consent?')).toBe(true);
+      expect(flow.consentPath).toBe('/consent');
       expect(flow.consentStatus).toBe(302);
       const code = flow.code;
 
@@ -2257,16 +2375,13 @@ describe('generated provider HTTP conformance', () => {
       const loginPath = relativeFrom(authorizeRes.headers.get('Location'));
       // Carry forward whatever cookie /authorize set, exactly as a browser would
       // (the per-transaction binding secret when that feature is enabled).
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
 
-      const loginGet = await provider.request(loginPath, { headers: { Cookie: bindingCookie } });
+      const loginGet = await provider.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await provider.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -2277,12 +2392,11 @@ describe('generated provider HTTP conformance', () => {
       const sessionId = parseSessionId(loginRes.headers.get('Set-Cookie')) ?? '';
 
       const consentPath = relativeFrom(loginRes.headers.get('Location'));
-      const consentGet = await provider.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await provider.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await provider.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -2621,31 +2735,25 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -2689,31 +2797,25 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -2755,31 +2857,25 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -2818,31 +2914,25 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -2882,31 +2972,25 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
       );
       const loginPath = relativeLocation(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
-      const bindingCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
-      const loginGet = await app.request(loginPath, { headers: { Cookie: bindingCookie } });
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginGet = await app.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
         }).toString(),
       });
       const consentPath = relativeLocation(loginRes.headers.get('Location'));
-      const consentGet = await app.request(consentPath, { headers: { Cookie: bindingCookie } });
+      const consentGet = await app.request(consentPath, { headers: { Cookie: transactionCookie } });
       const consentRes = await app.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: bindingCookie },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: transactionCookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: csrfTokenFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -4567,7 +4651,7 @@ describe('generated provider HTTP conformance', () => {
       targetApp: ReturnType<typeof createApp>,
       state: string,
       scope = 'openid',
-    ): Promise<{ transactionId: string; loginHtml: string; nonce: string }> {
+    ): Promise<{ transactionCookie: string; loginHtml: string; nonce: string }> {
       const authorizeRes = await targetApp.request(
         '/authorize?response_type=code&client_id=c-conf' +
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
@@ -4575,11 +4659,13 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + GOOGLE_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
       const loginPath = googleRelativeFrom(authorizeRes.headers.get('Location'));
-      const loginRes = await targetApp.request(loginPath);
+      // The browser carries the transaction cookie into the login page and,
+      // after Google's cross-site callback, into the consent page.
+      const transactionCookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
+      const loginRes = await targetApp.request(loginPath, { headers: { Cookie: transactionCookie } });
       const loginHtml = await loginRes.text();
       return {
-        transactionId:
-          new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '',
+        transactionCookie,
         loginHtml,
         nonce: googleNonceFrom(loginHtml),
       };
@@ -4718,7 +4804,7 @@ describe('generated provider HTTP conformance', () => {
 
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe(
-        'http://localhost:3000/consent?transaction_id=' + flow.transactionId,
+        'http://localhost:3000/consent',
       );
       expect(setCookie.startsWith('session_id=')).toBe(true);
       expect(setCookie.endsWith('; HttpOnly; Secure; SameSite=Lax; Path=/')).toBe(true);
@@ -4752,12 +4838,11 @@ describe('generated provider HTTP conformance', () => {
       const flow = await startGoogleFlow(googleApp, 'google-tokens', 'openid profile email');
       const callbackRes = await googleCallback(googleApp, googleCredential(googleAccount(flow.nonce)));
       const consentPath = googleRelativeFrom(callbackRes.headers.get('Location'));
-      const consentGet = await googleApp.request(consentPath);
+      const consentGet = await googleApp.request(consentPath, { headers: { Cookie: flow.transactionCookie } });
       const consentRes = await googleApp.request('/consent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: flow.transactionCookie },
         body: new URLSearchParams({
-          transaction_id: flow.transactionId,
           csrf_token: googleCsrfFrom(await consentGet.text()),
           action: 'approve',
         }).toString(),
@@ -4801,9 +4886,8 @@ describe('generated provider HTTP conformance', () => {
 
       const res = await googleApp.request('/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: flow.transactionCookie },
         body: new URLSearchParams({
-          transaction_id: flow.transactionId,
           csrf_token: googleCsrfFrom(flow.loginHtml),
           username: 'testuser',
           password: 'password',
@@ -4812,7 +4896,7 @@ describe('generated provider HTTP conformance', () => {
 
       expect(res.status).toBe(302);
       expect(res.headers.get('Location')).toBe(
-        'http://localhost:3000/consent?transaction_id=' + flow.transactionId,
+        'http://localhost:3000/consent',
       );
     });
 
@@ -4919,7 +5003,6 @@ describe('generated provider HTTP conformance', () => {
     // Drives authorize -> login -> GET /consent and returns everything the browser
     // holds at the consent screen, so each test only differs in the posted action.
     async function reachConsent(state: string): Promise<{
-      transactionId: string;
       csrfToken: string;
       cookie: string;
     }> {
@@ -4930,20 +5013,15 @@ describe('generated provider HTTP conformance', () => {
         '&code_challenge=' + DECISION_PKCE_CHALLENGE + '&code_challenge_method=S256',
       );
       const loginPath = decisionRelativeFrom(authorizeRes.headers.get('Location'));
-      // Carry forward whatever cookie /authorize set, exactly as a browser would.
-      // With --enable transaction-binding this is the per-transaction binding
-      // secret the later steps require; without it this is '' and the OP ignores
-      // it, so the same flow works in both builds.
+      // Carry forward the transaction cookie /authorize set, exactly as a browser
+      // would: the login and consent steps find the transaction through it.
       const cookie = (authorizeRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '';
-      const transactionId =
-        new URL(loginPath, 'http://localhost').searchParams.get('transaction_id') ?? '';
 
       const loginGet = await app.request(loginPath, { headers: { Cookie: cookie } });
       const loginRes = await app.request('/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
         body: new URLSearchParams({
-          transaction_id: transactionId,
           csrf_token: decisionCsrfFrom(await loginGet.text()),
           username: 'testuser',
           password: 'password',
@@ -4952,7 +5030,7 @@ describe('generated provider HTTP conformance', () => {
       const consentPath = decisionRelativeFrom(loginRes.headers.get('Location'));
       const consentGet = await app.request(consentPath, { headers: { Cookie: cookie } });
 
-      return { transactionId, csrfToken: decisionCsrfFrom(await consentGet.text()), cookie };
+      return { csrfToken: decisionCsrfFrom(await consentGet.text()), cookie };
     }
 
     // The body is passed in whole so a test can leave 'action' out entirely
@@ -4970,7 +5048,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-omitted');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
       });
 
@@ -4982,7 +5059,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-empty');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
         action: '',
       });
@@ -4997,7 +5073,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-unknown');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
         action: 'allow',
       });
@@ -5013,7 +5088,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-400');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
         action: 'accept',
       });
@@ -5028,7 +5102,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-approve');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
         action: 'approve',
       });
@@ -5045,7 +5118,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-deny');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
         action: 'deny',
       });
@@ -5065,7 +5137,6 @@ describe('generated provider HTTP conformance', () => {
       const flow = await reachConsent('decision-no-record');
 
       const res = await postConsent(flow.cookie, {
-        transaction_id: flow.transactionId,
         csrf_token: flow.csrfToken,
         action: 'approved',
       });

@@ -52,6 +52,7 @@ import {
   uniqueParams,
   type UniqueParams,
 } from '../_oidc-provider/http';
+import { buildTransactionCookie } from '../_oidc-provider/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -195,7 +196,10 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
       claims,
     };
 
-    // The authentication transaction carries the request through login and consent.
+    // The authentication transaction carries the request through login and
+    // consent. csrfToken is embedded in their forms; transactionId never leaves
+    // the OP except in the HttpOnly transaction cookie (buildTransactionCookie()
+    // in store.ts).
     const csrfToken = generateRandomString(32);
     const transaction = createAuthTransaction(validatedRequest, csrfToken);
     const transactionId = generateRandomString(32);
@@ -372,12 +376,12 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
           // login → consent の受け渡しに sessionId も載せる。
           sessionId: existingSession.sessionId,
         });
-        return redirectToScreen('/consent', transactionId);
+        return redirectToScreen('/consent', transactionId, transactionTtlSeconds);
       }
     }
 
     // Interactive authentication (prompt=login forces it even with a session).
-    return redirectToScreen('/login', transactionId);
+    return redirectToScreen('/login', transactionId, transactionTtlSeconds);
   } catch (error) {
     if (error instanceof AuthorizationError) {
       if (error.redirectUri) {
@@ -408,15 +412,22 @@ function badRequest(errorDescription: string): Response {
 }
 
 /**
- * Continue on one of the OP's own screens. The URL is built on config.issuer,
- * never on the request URL: some platforms derive the request URL from the Host
- * header, which would let the sender choose where transaction_id lands
- * (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+ * Continue on one of the OP's own screens. The URL carries no query: the
+ * transaction goes to the browser only in the HttpOnly transaction cookie, so
+ * it never shows up in history, logs or a shared screen, and the page finds it
+ * there (requireTransaction() in _oidc-provider/transaction.ts).
+ *
+ * The URL is built on config.issuer, never on the request URL: some platforms
+ * derive the request URL from the Host header, which would let the sender
+ * choose the redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
  */
-function redirectToScreen(path: '/login' | '/consent', transactionId: string): Response {
-  const url = new URL(path, config.issuer);
-  url.searchParams.set('transaction_id', transactionId);
-  const response = NextResponse.redirect(url, 302);
+function redirectToScreen(
+  path: '/login' | '/consent',
+  transactionId: string,
+  ttlSeconds: number,
+): Response {
+  const response = NextResponse.redirect(new URL(path, config.issuer), 302);
+  response.headers.append('Set-Cookie', buildTransactionCookie(transactionId, ttlSeconds));
   return response;
 }
 

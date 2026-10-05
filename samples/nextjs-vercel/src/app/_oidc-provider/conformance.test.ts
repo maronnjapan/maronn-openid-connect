@@ -341,27 +341,34 @@ function locationOf(response: Response): string {
   return response.headers.get('Location') ?? '';
 }
 
-function transactionIdOf(location: string): string {
-  return new URL(location, ISSUER).searchParams.get('transaction_id') ?? '';
+/**
+ * The transaction id the authorization endpoint handed this browser. It lives
+ * only in the HttpOnly transaction cookie: never in a URL, never in the HTML.
+ */
+function transactionIdOf(browser: Browser): string {
+  return browser.cookies.get('oidc_txn') ?? '';
 }
 
 function csrfTokenOf(html: string): string {
   return html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
 }
 
-/** Start an authorization request; resolves to its transaction_id. */
+/** Start an authorization request; resolves to the id in its transaction cookie. */
 async function startAuthorization(
   browser: Browser,
   params: Record<string, string> = authorizationRequest(),
 ): Promise<string> {
-  return transactionIdOf(locationOf(await browser.request(authorize.GET, authorizeUrl(params))));
+  await browser.request(authorize.GET, authorizeUrl(params));
+  return transactionIdOf(browser);
 }
 
-/** Sign in on the login page of a transaction; resolves to where the browser goes next. */
-async function logIn(browser: Browser, transactionId: string, username = 'testuser'): Promise<string> {
-  const html = await browser.render(LoginPage, { transaction_id: transactionId });
+/**
+ * Sign in on the login page of the browser's transaction (the one its cookie
+ * names); resolves to where the browser goes next.
+ */
+async function logIn(browser: Browser, username = 'testuser'): Promise<string> {
+  const html = await browser.render(LoginPage, {});
   const outcome = await browser.submit(loginAction, {
-    transaction_id: transactionId,
     csrf_token: csrfTokenOf(html),
     username,
     password: 'password',
@@ -370,9 +377,9 @@ async function logIn(browser: Browser, transactionId: string, username = 'testus
 }
 
 /** Submit a consent decision from the consent page; undefined omits the action field. */
-async function decide(browser: Browser, transactionId: string, action: string | undefined): Promise<string> {
-  const html = await browser.render(ConsentPage, { transaction_id: transactionId });
-  const fields: Record<string, string> = { transaction_id: transactionId, csrf_token: csrfTokenOf(html) };
+async function decide(browser: Browser, action: string | undefined): Promise<string> {
+  const html = await browser.render(ConsentPage, {});
+  const fields: Record<string, string> = { csrf_token: csrfTokenOf(html) };
   const outcome = await browser.submit(consentAction, action === undefined ? fields : { ...fields, action });
   return outcome.location ?? '';
 }
@@ -387,9 +394,9 @@ async function signIn(
   params: Record<string, string> = authorizationRequest(),
   username = 'testuser',
 ): Promise<URL> {
-  const transactionId = await startAuthorization(browser, params);
-  await logIn(browser, transactionId, username);
-  return new URL(await decide(browser, transactionId, 'approve'), ISSUER);
+  await startAuthorization(browser, params);
+  await logIn(browser, username);
+  return new URL(await decide(browser, 'approve'), ISSUER);
 }
 
 /** POST to the token endpoint as conformance-client (client_secret_post). */
@@ -549,11 +556,15 @@ describe('Discovery (OIDC Discovery 1.0 §3 / §4)', () => {
 describe('Authorization Endpoint (OIDC Core 1.0 §3.1.2)', () => {
   it('should send the browser to the login page on the issuer with a new transaction', async () => {
     const response = await new Browser().request(authorize.GET, authorizeUrl(authorizationRequest()));
-    const location = new URL(locationOf(response));
 
     expect(response.status).toBe(302);
-    expect(location.origin + location.pathname).toBe(ISSUER + '/login');
-    expect(location.searchParams.get('transaction_id')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // The transaction travels in the cookie, never in the URL.
+    expect(locationOf(response)).toBe(ISSUER + '/login');
+    expect(response.headers.getSetCookie()).toEqual([
+      expect.stringMatching(
+        new RegExp('^oidc_txn=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600$'),
+      ),
+    ]);
   });
 
   it('should accept the request as a form POST (OIDC Core 1.0 §3.1.2.1)', async () => {
@@ -679,7 +690,7 @@ describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)', (
   it('should ignore the Host header when building the login redirect Location', async () => {
     // Some platforms build request.url from the Host header, so an
     // attacker-chosen Host arrives as an attacker-origin URL. Both are sent;
-    // neither may decide where transaction_id lands.
+    // neither may decide where the browser is sent.
     const response = await new Browser().request(
       authorize.GET,
       authorizeUrl(authorizationRequest(), 'http://attacker.example'),
@@ -706,34 +717,36 @@ describe('Internal redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1)', (
     // Server Actions redirect within the app, which Next.js resolves against
     // the page the browser is on — never against a request header.
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
+    await startAuthorization(browser);
 
-    expect(await logIn(browser, transactionId)).toBe('/consent?transaction_id=' + transactionId);
+    expect(await logIn(browser)).toBe('/consent');
   });
 });
 
 describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
-  it('should render the login form for the transaction', async () => {
+  it('should render the login form for the transaction in the browser cookie', async () => {
     const browser = new Browser();
     const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    const html = await browser.render(LoginPage, {});
 
-    expect(html).toContain('<input type="hidden" name="transaction_id" value="' + transactionId + '"/>');
+    // The form carries the csrf_token only; the transaction id stays in the cookie.
     expect(csrfTokenOf(html)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(html).not.toContain(transactionId);
+    expect(html).not.toContain('transaction_id');
   });
 
   it('should pre-fill the username from login_hint (OIDC Core 1.0 §3.1.2.1)', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser, authorizationRequest({ login_hint: 'testuser' }));
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    await startAuthorization(browser, authorizationRequest({ login_hint: 'testuser' }));
+    const html = await browser.render(LoginPage, {});
 
     expect(html).toContain('<input type="text" id="username" required="" name="username" value="testuser"/>');
   });
 
   it('should start the OP session in an HttpOnly, Secure, SameSite=Lax cookie', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    await logIn(browser, transactionId);
+    await startAuthorization(browser);
+    await logIn(browser);
     const sessionCookie = harness.cookieWrites.filter((write) => write.name === 'session_id').at(-1);
 
     expect(sessionCookie?.value).toBe(browser.cookies.get('session_id'));
@@ -742,10 +755,9 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
 
   it('should send a failed login back to the form with the attempts remaining', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const html = await browser.render(LoginPage, { transaction_id: transactionId });
+    await startAuthorization(browser);
+    const html = await browser.render(LoginPage, {});
     const outcome = await browser.submit(loginAction, {
-      transaction_id: transactionId,
       csrf_token: csrfTokenOf(html),
       username: 'testuser',
       password: 'wrong-password',
@@ -753,16 +765,15 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
 
     expect(outcome).toEqual({
       status: 303,
-      location: '/login?transaction_id=' + transactionId + '&error=invalid_credentials&remaining=4',
+      location: '/login?error=invalid_credentials&remaining=4',
     });
     expect(browser.cookies.has('session_id')).toBe(false);
   });
 
   it('should render the failed login message', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
+    await startAuthorization(browser);
     const html = await browser.render(LoginPage, {
-      transaction_id: transactionId,
       error: 'invalid_credentials',
       remaining: '4',
     });
@@ -772,13 +783,12 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
 
   it('should end the transaction on the OP error page after too many failed attempts', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    const csrfToken = csrfTokenOf(await browser.render(LoginPage, { transaction_id: transactionId }));
+    await startAuthorization(browser);
+    const csrfToken = csrfTokenOf(await browser.render(LoginPage, {}));
     const outcomes: Outcome[] = [];
     for (let attempt = 0; attempt < 5; attempt++) {
       outcomes.push(
         await browser.submit(loginAction, {
-          transaction_id: transactionId,
           csrf_token: csrfToken,
           username: 'testuser',
           password: 'wrong-password',
@@ -792,14 +802,13 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
         '/oidc-error?error=max_attempts_exceeded&error_description=' +
         'Too+many+login+attempts.+Start+again+from+the+application.',
     });
-    expect(await browser.open(LoginPage, { transaction_id: transactionId })).toEqual({ status: 404 });
+    expect(await browser.open(LoginPage, {})).toEqual({ status: 404 });
   });
 
   it('should send a submission with a wrong csrf_token to the OP error page', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
+    await startAuthorization(browser);
     const outcome = await browser.submit(loginAction, {
-      transaction_id: transactionId,
       csrf_token: 'forged',
       username: 'testuser',
       password: 'password',
@@ -813,17 +822,19 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
   });
 
   describe('Error screens (Next.js not-found.js / error.js)', () => {
-    it('should answer 404 with not-found.tsx for an unknown transaction', async () => {
-      expect(await new Browser().open(LoginPage, { transaction_id: 'unknown-transaction' })).toEqual({ status: 404 });
+    it('should answer 404 with not-found.tsx for a transaction cookie naming no transaction', async () => {
+      const browser = new Browser();
+      browser.cookies.set('oidc_txn', 'unknown-transaction');
+
+      expect(await browser.open(LoginPage, {})).toEqual({ status: 404 });
     });
 
-    it('should answer 404 when transaction_id is missing', async () => {
+    it('should answer 404 when the browser has no transaction cookie', async () => {
       expect(await new Browser().open(LoginPage, {})).toEqual({ status: 404 });
     });
 
-    it('should answer 404 to a login submitted for an unknown transaction', async () => {
+    it('should answer 404 to a login submitted without a transaction cookie', async () => {
       const outcome = await new Browser().submit(loginAction, {
-        transaction_id: 'unknown-transaction',
         csrf_token: 'unknown',
         username: 'testuser',
         password: 'password',
@@ -854,9 +865,9 @@ describe('Login page and loginAction (OIDC Core 1.0 §3.1.2.3)', () => {
 describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
   it('should show the client and the requested scopes', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    await logIn(browser, transactionId);
-    const html = await browser.render(ConsentPage, { transaction_id: transactionId });
+    await startAuthorization(browser);
+    await logIn(browser);
+    const html = await browser.render(ConsentPage, {});
 
     expect(html).toContain('<strong>conformance-client</strong>');
     expect(html).toContain('<ul><li>openid</li><li>profile</li></ul>');
@@ -864,17 +875,16 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
 
   it('should send the browser back to login when the transaction has no signed-in user', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
+    await startAuthorization(browser);
 
-    expect(await decide(browser, transactionId, 'approve')).toBe('/login?transaction_id=' + transactionId);
+    expect(await decide(browser, 'approve')).toBe('/login');
   });
 
   it('should send a decision with a wrong csrf_token to the OP error page', async () => {
     const browser = new Browser();
-    const transactionId = await startAuthorization(browser);
-    await logIn(browser, transactionId);
+    await startAuthorization(browser);
+    await logIn(browser);
     const outcome = await browser.submit(consentAction, {
-      transaction_id: transactionId,
       csrf_token: 'forged',
       action: 'approve',
     });
@@ -886,13 +896,15 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
   });
 
   describe('Error screens (Next.js not-found.js / error.js)', () => {
-    it('should answer 404 with not-found.tsx for an unknown transaction', async () => {
-      expect(await new Browser().open(ConsentPage, { transaction_id: 'unknown-transaction' })).toEqual({ status: 404 });
+    it('should answer 404 with not-found.tsx for a transaction cookie naming no transaction', async () => {
+      const browser = new Browser();
+      browser.cookies.set('oidc_txn', 'unknown-transaction');
+
+      expect(await browser.open(ConsentPage, {})).toEqual({ status: 404 });
     });
 
-    it('should answer 404 to a decision submitted for an unknown transaction', async () => {
+    it('should answer 404 to a decision submitted without a transaction cookie', async () => {
       const outcome = await new Browser().submit(consentAction, {
-        transaction_id: 'unknown-transaction',
         csrf_token: 'unknown',
         action: 'approve',
       });
@@ -925,13 +937,14 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
 
     async function signedInTransaction(browser: Browser): Promise<string> {
       const transactionId = await startAuthorization(browser);
-      await logIn(browser, transactionId);
+      await logIn(browser);
       return transactionId;
     }
 
     it('should issue an authorization code when the consent form sends action=approve', async () => {
       const browser = new Browser();
-      const location = new URL(await decide(browser, await signedInTransaction(browser), 'approve'));
+      await signedInTransaction(browser);
+      const location = new URL(await decide(browser, 'approve'));
 
       expect(location.origin + location.pathname).toBe(REDIRECT_URI);
       expect([...location.searchParams.keys()]).toEqual(['code', 'state', 'iss']);
@@ -942,7 +955,7 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
     it('should redirect with error=access_denied when the consent form sends action=deny', async () => {
       const browser = new Browser();
       const transactionId = await signedInTransaction(browser);
-      const location = new URL(await decide(browser, transactionId, 'deny'));
+      const location = new URL(await decide(browser, 'deny'));
 
       expect(location.origin + location.pathname).toBe(REDIRECT_URI);
       expect(Object.fromEntries(location.searchParams)).toEqual({
@@ -955,48 +968,139 @@ describe('Consent page and consentAction (OIDC Core 1.0 §3.1.2.4)', () => {
 
     it('should not issue an authorization code when the consent form omits the action parameter', async () => {
       const browser = new Browser();
+      await signedInTransaction(browser);
 
-      expect(await decide(browser, await signedInTransaction(browser), undefined)).toBe(invalidDecision);
+      expect(await decide(browser, undefined)).toBe(invalidDecision);
     });
 
     it('should not issue an authorization code when the consent form sends an empty action value', async () => {
       const browser = new Browser();
+      await signedInTransaction(browser);
 
-      expect(await decide(browser, await signedInTransaction(browser), '')).toBe(invalidDecision);
+      expect(await decide(browser, '')).toBe(invalidDecision);
     });
 
     it('should not issue an authorization code when the consent form sends an unknown action value', async () => {
       const browser = new Browser();
+      await signedInTransaction(browser);
 
-      expect(await decide(browser, await signedInTransaction(browser), 'allow')).toBe(invalidDecision);
+      expect(await decide(browser, 'allow')).toBe(invalidDecision);
     });
 
     it('should not record consent via recordConsent when the action value is unrecognized', async () => {
       const recordConsent = vi.spyOn(resolvers.consentResolver, 'recordConsent');
       const browser = new Browser();
-      await decide(browser, await signedInTransaction(browser), 'allow');
+      await signedInTransaction(browser);
+      await decide(browser, 'allow');
 
       expect(recordConsent).not.toHaveBeenCalled();
     });
 
     it('should keep the transaction open after an unrecognized action value', async () => {
       const browser = new Browser();
-      const transactionId = await signedInTransaction(browser);
-      await decide(browser, transactionId, 'allow');
-      const location = new URL(await decide(browser, transactionId, 'approve'));
+      await signedInTransaction(browser);
+      await decide(browser, 'allow');
+      const location = new URL(await decide(browser, 'approve'));
 
       expect(location.searchParams.get('code')).toMatch(/^[A-Za-z0-9_-]{43}$/);
     });
   });
 });
 
-describe('Auth transaction User-Agent binding (disabled by default)', () => {
-  it('should let another browser holding the transaction_id continue the transaction', async () => {
-    // Generate with --enable transaction-binding to refuse this: without it,
-    // transaction_id alone is enough to drive login and consent.
-    const transactionId = await startAuthorization(new Browser());
+describe('Auth transaction cookie and csrf_token (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4)', () => {
+  // The transaction id lives only in the browser's HttpOnly cookie; the forms
+  // carry just the csrf_token. Another browser (another cookie jar) therefore
+  // has nothing to continue, even when it holds a csrf_token.
+  it('should not show the login form to another browser', async () => {
+    await startAuthorization(new Browser());
 
-    expect(await logIn(new Browser(), transactionId)).toBe('/consent?transaction_id=' + transactionId);
+    expect(await new Browser().open(LoginPage, {})).toEqual({ status: 404 });
+  });
+
+  it('should refuse a login with a valid csrf_token from another browser', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    const csrfToken = csrfTokenOf(await browser.render(LoginPage, {}));
+    const attacker = new Browser();
+    const outcome = await attacker.submit(loginAction, {
+      csrf_token: csrfToken,
+      username: 'testuser',
+      password: 'password',
+    });
+
+    expect(outcome).toEqual({ status: 404 });
+    expect(attacker.cookies.has('session_id')).toBe(false);
+  });
+
+  it('should not show the consent form to another browser', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    await logIn(browser);
+
+    expect(await new Browser().open(ConsentPage, {})).toEqual({ status: 404 });
+  });
+
+  it('should refuse a consent decision with a valid csrf_token from another browser', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    await logIn(browser);
+    const csrfToken = csrfTokenOf(await browser.render(ConsentPage, {}));
+    const outcome = await new Browser().submit(consentAction, {
+      csrf_token: csrfToken,
+      action: 'approve',
+    });
+
+    expect(outcome).toEqual({ status: 404 });
+  });
+
+  // The lured-victim case: the attacker's own transaction cookie is valid, just
+  // not for the form the csrf_token came from.
+  it('should refuse a consent decision whose csrf_token belongs to another transaction', async () => {
+    const victim = new Browser();
+    await startAuthorization(victim);
+    await logIn(victim);
+    const csrfToken = csrfTokenOf(await victim.render(ConsentPage, {}));
+    const attacker = new Browser();
+    await startAuthorization(attacker);
+    await logIn(attacker);
+    const outcome = await attacker.submit(consentAction, {
+      csrf_token: csrfToken,
+      action: 'approve',
+    });
+
+    expect(outcome).toEqual({
+      status: 303,
+      location: '/oidc-error?error=invalid_csrf_token&error_description=Invalid+CSRF+token.',
+    });
+  });
+
+  // One cookie per browser: a second authorization request (another tab)
+  // replaces it, so the form still open in the first tab is refused instead of
+  // completing the wrong request.
+  it('should refuse the form of a transaction replaced by a newer one in the same browser', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser, authorizationRequest({ state: 'first-tab' }));
+    const firstCsrfToken = csrfTokenOf(await browser.render(LoginPage, {}));
+    await startAuthorization(browser, authorizationRequest({ state: 'second-tab' }));
+    const outcome = await browser.submit(loginAction, {
+      csrf_token: firstCsrfToken,
+      username: 'testuser',
+      password: 'password',
+    });
+
+    expect(outcome).toEqual({
+      status: 303,
+      location: '/oidc-error?error=invalid_csrf_token&error_description=Invalid+CSRF+token.',
+    });
+  });
+
+  it('should drop the transaction cookie once the decision is made', async () => {
+    const browser = new Browser();
+    await startAuthorization(browser);
+    await logIn(browser);
+    await decide(browser, 'approve');
+
+    expect(browser.cookies.has('oidc_txn')).toBe(false);
   });
 });
 
@@ -1541,7 +1645,7 @@ describe('Sign in with Google (redirect mode)', () => {
   /** Start a transaction and render its login page, which issues the nonce. */
   async function loginPage(browser: Browser): Promise<{ transactionId: string; html: string }> {
     const transactionId = await startAuthorization(browser);
-    return { transactionId, html: await browser.render(LoginPage, { transaction_id: transactionId }) };
+    return { transactionId, html: await browser.render(LoginPage, {}) };
   }
 
   /** The ID token payload Google would assert for this login page's nonce. */
@@ -1578,13 +1682,13 @@ describe('Sign in with Google (redirect mode)', () => {
 
   it('should sign in with the Google account and continue to consent', async () => {
     const browser = new Browser();
-    const { transactionId, html } = await loginPage(browser);
+    const { html } = await loginPage(browser);
     const response = await postCallback(browser, googleIdToken(html));
-    const callback = new URL(await decide(browser, transactionId, 'approve'));
+    const callback = new URL(await decide(browser, 'approve'));
     const tokens = (await (await exchangeCode(callback.searchParams.get('code') ?? '')).json()) as TokenResponse;
 
     expect(response.status).toBe(302);
-    expect(locationOf(response)).toBe(ISSUER + '/consent?transaction_id=' + transactionId);
+    expect(locationOf(response)).toBe(ISSUER + '/consent');
     expect(decodeJwt(tokens.id_token).payload.sub).toBe('google:1234567890');
   });
 

@@ -1,4 +1,3 @@
-import { notFound } from 'next/navigation';
 import Script from 'next/script';
 import { issueGoogleLoginNonce } from '@maronn-openid-connect/google-login';
 import {
@@ -9,13 +8,12 @@ import { config, stores } from '../_oidc-provider/provider';
 import { requireTransaction } from '../_oidc-provider/transaction';
 import { loginAction } from './actions';
 
-// /authorize redirects here with a per-request transaction_id, so the page must
-// always render dynamically (never from a static cache).
+// The page renders the transaction named by this browser's transaction cookie,
+// so it must always render dynamically (never from a static cache).
 export const dynamic = 'force-dynamic';
 
 interface LoginPageProps {
   searchParams: Promise<{
-    transaction_id?: string;
     error?: string;
     remaining?: string;
   }>;
@@ -27,15 +25,16 @@ interface LoginPageProps {
  * A real Next.js page, so the UI can be built with JSX, components, CSS modules
  * and the rest of the React ecosystem. The form posts to the loginAction Server
  * Action (actions.ts), which checks the credentials and starts the OP session.
- * Keep the hidden transaction_id / csrf_token fields when customizing it.
+ * Keep the hidden csrf_token field when customizing it: neither the URL nor the
+ * form names the transaction — the browser's transaction cookie does — and the
+ * action accepts the token only for that transaction.
  *
- * A transaction_id that names no transaction renders not-found.tsx (see
+ * A browser with no live transaction renders not-found.tsx (see
  * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { transaction_id: transactionId, error, remaining } = await searchParams;
-  if (!transactionId) notFound();
-  const transaction = await requireTransaction(transactionId);
+  const { error, remaining } = await searchParams;
+  const { transactionId, transaction } = await requireTransaction();
 
   // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
   // built only when config.googleLogin is set. Each render issues a fresh nonce
@@ -74,7 +73,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </p>
       ) : null}
       <form action={loginAction}>
-        <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
         <div>
           <label htmlFor="username">Username:</label>

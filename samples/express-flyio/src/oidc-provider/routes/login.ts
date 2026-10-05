@@ -2,17 +2,18 @@
  * Login step (API layer: logic only).
  *
  * Everything the login screen has to decide lives here as plain functions:
- * loading the transaction, the User-Agent binding, the credential check, the
- * lockout, the OP session cookie and the hand-off to the consent step. None of
- * them builds a Response — each returns an outcome, and pages/login.ts turns
- * that outcome into a screen or a redirect. The UI can therefore be changed
- * without touching this file.
+ * finding the transaction through the transaction cookie, the csrf_token
+ * check, the credential check, the lockout, the OP session cookie and the
+ * hand-off to the consent step. None of them builds a Response — each returns
+ * an outcome, and pages/login.ts turns that outcome into a screen or a
+ * redirect. The UI can therefore be changed without touching this file.
  */
 import {
   getAuthTransaction,
   validateCsrfToken,
   handleLoginFailure,
   generateRandomString,
+  AuthTransactionError,
   type AuthTransaction,
 } from '@maronn-openid-connect/core';
 import {
@@ -32,6 +33,7 @@ import {
   browserSessionStore as defaultBrowserSessionStore,
   buildSessionCookie,
   parseSessionId,
+  parseTransactionId,
   googleLoginNonceStore as defaultGoogleLoginNonceStore,
   userStore,
 } from '../store.js';
@@ -40,8 +42,11 @@ import { defaultProviderConfig, type GoogleLoginConfig } from '../config.js';
 /** What the login form needs: prepared for GET /login and again after a failed attempt. */
 export interface LoginScreen {
   kind: 'screen';
-  transactionId: string;
-  /** Must be posted back as the csrf_token field. */
+  /**
+   * Must be posted back as the csrf_token field. It is the only value the form
+   * carries about the transaction: the transaction itself travels in the
+   * transaction cookie, and POST /login accepts the token only for that one.
+   */
   csrfToken: string;
   /**
    * OIDC Core 1.0 §3.1.2.1 login_hint: untrusted external value the OP MAY use
@@ -71,7 +76,7 @@ export type LoginOutcome =
   /** Wrong credentials: show the form again with the attempts left. */
   | { kind: 'invalid_credentials'; screen: LoginScreen; remainingAttempts: number }
   /** Signed in: the OP session cookie(s) to set, then continue to the consent step. */
-  | { kind: 'authenticated'; transactionId: string; cookies: string[] };
+  | { kind: 'authenticated'; cookies: string[] };
 
 /** What the Google login callback decided; pages/login.ts turns it into HTTP. */
 export type GoogleLoginOutcome =
@@ -79,14 +84,48 @@ export type GoogleLoginOutcome =
   /** config.googleLogin is not set: the callback does not exist (404). */
   | { kind: 'not_configured' }
   /** Signed in: the OP session cookie(s) to set, then continue to the consent step. */
-  | { kind: 'authenticated'; transactionId: string; cookies: string[] };
+  | { kind: 'authenticated'; cookies: string[] };
 
 /** The fields of the login form. */
 export interface LoginSubmission {
-  transactionId: string;
   csrfToken: string;
   username: string;
   password: string;
+}
+
+/**
+ * The OP's own error page for a transaction that cannot continue: unknown,
+ * finished or expired (400), or a csrf_token that does not belong to it (403).
+ * It is never redirected to the client's redirect_uri: until the transaction
+ * and its csrf_token check out, the OP cannot tell whose request this is.
+ */
+function transactionErrorOutcome(error: unknown): LoginError {
+  if (!(error instanceof AuthTransactionError)) throw error;
+  return { kind: 'error', error: error.message, statusCode: error.httpStatusCode };
+}
+
+/**
+ * The transaction this browser is in the middle of: the id from the transaction
+ * cookie /authorize set (buildTransactionCookie() in store.ts), loaded from the
+ * store. Returns the error to show instead when there is none.
+ */
+async function loadTransaction(
+  c: any,
+): Promise<{ transactionId: string; transaction: AuthTransaction } | LoginError> {
+  const transactionId = parseTransactionId(c.req.header('Cookie') ?? null);
+  if (!transactionId) {
+    return {
+      kind: 'error',
+      error: 'No authorization request is in progress in this browser. Start again from the application.',
+      statusCode: 400,
+    };
+  }
+  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
+  try {
+    return { transactionId, transaction: await getAuthTransaction(transactionId, transactionStore) };
+  } catch (error) {
+    return transactionErrorOutcome(error);
+  }
 }
 
 /**
@@ -173,7 +212,6 @@ async function describeLoginScreen(
 ): Promise<LoginScreen> {
   return {
     kind: 'screen',
-    transactionId,
     csrfToken: transaction.csrfToken,
     loginHint: transaction.loginHint,
     googleSignIn: await buildGoogleSignIn(c, transactionId, transaction),
@@ -181,21 +219,20 @@ async function describeLoginScreen(
 }
 
 /**
- * GET /login: load the transaction and describe the form, or the error to show
- * instead when this browser may not see it.
+ * GET /login: load the transaction this browser's cookie names and describe the
+ * form, or the error to show instead when there is none.
  */
-export async function prepareLogin(c: any, transactionId: string): Promise<LoginScreen | LoginError> {
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  return describeLoginScreen(c, transactionId, transaction);
+export async function prepareLogin(c: any): Promise<LoginScreen | LoginError> {
+  const loaded = await loadTransaction(c);
+  if ('kind' in loaded) return loaded;
+  return describeLoginScreen(c, loaded.transactionId, loaded.transaction);
 }
 
 /**
  * POST /login: check the credentials and, on success, establish the OP session.
  */
 export async function submitLogin(c: any, input: LoginSubmission): Promise<LoginOutcome> {
-  const { transactionId, csrfToken, username, password } = input;
+  const { csrfToken, username, password } = input;
 
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
@@ -204,8 +241,16 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
     c.get('authenticateUser') ??
     ((u: string, p: string) => userStore.authenticate(u, p));
 
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-  validateCsrfToken(transaction, csrfToken);
+  // The cookie says which transaction this browser is in; the csrf_token says
+  // the submission came from the form the OP rendered for exactly that one.
+  const loaded = await loadTransaction(c);
+  if ('kind' in loaded) return loaded;
+  const { transactionId, transaction } = loaded;
+  try {
+    validateCsrfToken(transaction, csrfToken);
+  } catch (error) {
+    return transactionErrorOutcome(error);
+  }
 
   // Authenticate user
   const user = await authenticateUser(username, password);
@@ -252,7 +297,7 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
     sessionId,
   });
 
-  return { kind: 'authenticated', transactionId, cookies: [buildSessionCookie(sessionId)] };
+  return { kind: 'authenticated', cookies: [buildSessionCookie(sessionId)] };
 }
 
 /**
@@ -261,6 +306,12 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
  * Sign in with Google (redirect mode) posts the ID token here once the user
  * picks an account. After the callback checks, this continues exactly like a
  * successful password login: same session cookie, same consent hand-off.
+ *
+ * The transaction cookie does not come along: Google's POST is a cross-site
+ * navigation, so the browser withholds SameSite=Lax cookies. The single-use
+ * nonce stands in for it - it was issued on the login page, which only the
+ * browser holding the cookie could load. The consent step that follows is a
+ * plain navigation again and reads the cookie as usual.
  */
 export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   const config = c.get('config') ?? defaultProviderConfig;
@@ -275,7 +326,12 @@ export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
   const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
+  let transaction: AuthTransaction;
+  try {
+    transaction = await getAuthTransaction(transactionId, transactionStore);
+  } catch (error) {
+    return transactionErrorOutcome(error);
+  }
 
   // prompt=login / select_account requires fresh authentication: discard any
   // existing transaction handoff AND browser session (OIDC Core 1.0 Section 3.1.2.1).
@@ -294,5 +350,5 @@ export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   await browserSessionStore.set(sessionId, { subject, authTime });
   await authSessionStore.set(transactionId, { subject, authTime, sessionId });
 
-  return { kind: 'authenticated', transactionId, cookies: [buildSessionCookie(sessionId)] };
+  return { kind: 'authenticated', cookies: [buildSessionCookie(sessionId)] };
 }

@@ -21,10 +21,11 @@ import { startSession } from './session';
  * error page (oidc-error/page.tsx), never at the client.
  */
 export async function loginAction(formData: FormData): Promise<void> {
-  const transactionId = String(formData.get('transaction_id') ?? '');
-  const transaction = await requireTransaction(transactionId);
+  // The transaction cookie says which transaction this browser is in ...
+  const { transactionId, transaction } = await requireTransaction();
 
-  // The CSRF token proves the submission came from the form this browser was shown.
+  // ... and the CSRF token proves the submission came from the form this browser
+  // was shown for exactly that transaction.
   try {
     validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
@@ -50,11 +51,9 @@ export async function loginAction(formData: FormData): Promise<void> {
       );
     }
     const remaining = failure.maxAttempts - failure.failedAttempts;
-    redirect(
-      `/login?transaction_id=${encodeURIComponent(transactionId)}&error=invalid_credentials&remaining=${remaining}`,
-    );
+    redirect(`/login?error=invalid_credentials&remaining=${remaining}`);
   }
 
   await startSession(transactionId, transaction, user.sub);
-  redirect(`/consent?transaction_id=${encodeURIComponent(transactionId)}`);
+  redirect('/consent');
 }

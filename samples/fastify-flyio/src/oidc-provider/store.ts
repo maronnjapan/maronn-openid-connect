@@ -284,6 +284,72 @@ export function buildSessionCookie(sessionId: string): string {
 }
 
 /**
+ * Auth transaction cookie - which authorization request this browser is in the
+ * middle of (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4).
+ *
+ * /authorize hands the transaction id to the browser in this HttpOnly cookie
+ * and nowhere else: the /login and /consent URLs carry no query, and their
+ * forms embed only csrf_token. Every login / consent step reads the transaction
+ * out of this cookie and accepts a submission only when the posted csrf_token
+ * belongs to that transaction, so the cookie and the HTML have to come
+ * together.
+ *
+ * Why not the URL: an id in the URL leaks through browser history, access logs
+ * or a shared screen. Whoever picks it up could open the consent page, read
+ * csrf_token off it and finish the flow; worse, an attacker could start a flow
+ * with their OWN client and lure the victim to it, so that the victim's
+ * authorization code is delivered to the attacker's client - a case the RP's
+ * state check cannot catch. Neither works when the id only ever lives in a
+ * cookie that page scripts cannot read and other sites cannot set.
+ *
+ * One cookie per browser: a second /authorize (another tab) replaces it, and a
+ * form still open in the first tab is then refused - its csrf_token belongs to
+ * the replaced transaction - instead of completing the wrong request.
+ */
+export const TRANSACTION_COOKIE_NAME = 'oidc_txn';
+
+/**
+ * Build the Set-Cookie value that hands a transaction to this browser.
+ * Same attributes as the session cookie: HttpOnly (no JS access), Secure
+ * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
+ * SameSite=Lax, because SameSite=Strict would drop the cookie on the
+ * cross-site navigation that starts the flow. Max-Age matches the transaction
+ * TTL so an abandoned flow does not leave the cookie behind. When the OP is
+ * always served over HTTPS, prefixing the name with '__Host-' is recommended.
+ */
+export function buildTransactionCookie(transactionId: string, ttlSeconds: number): string {
+  return (
+    TRANSACTION_COOKIE_NAME + '=' + transactionId +
+    '; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=' + String(ttlSeconds)
+  );
+}
+
+/**
+ * Build the Set-Cookie value that removes the transaction cookie once the
+ * transaction is finished (code issued or access denied).
+ */
+export function buildClearedTransactionCookie(): string {
+  return TRANSACTION_COOKIE_NAME + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
+}
+
+/**
+ * Extract the transaction id from a Cookie request header.
+ * Returns undefined when the header is missing or the cookie is absent.
+ */
+export function parseTransactionId(cookieHeader: string | null): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq) === TRANSACTION_COOKIE_NAME) {
+      return trimmed.slice(eq + 1) || undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
  * In-memory consent store. Records that a user granted a set of scopes to a
  * client so prompt=none can confirm consent without showing UI
  * (OIDC Core 1.0 Section 3.1.2.1).
@@ -963,11 +1029,12 @@ export const googleLoginNonceStore = defaultProviderStores.googleLoginNonceStore
  * (SameSite=Lax), and whose victim never held this record's cookie anyway — is
  * rejected without relying on any secret staying secret.
  *
- * Unlike the optional transaction-binding feature this is ALWAYS on: for the
- * authorize flow the transaction_id is normally confidential, so binding is
- * extra hardening, while here the identifier is public to the attacker by
- * construction. The cost is that driving the verification UI by hand with curl
- * needs a cookie jar (-c / -b).
+ * The authorize flow does not need this: its transaction id never leaves the
+ * OP except in the HttpOnly transaction cookie, so the cookie itself is the
+ * binding. Here the identifier is public to the attacker by construction, so a
+ * separate secret has to be handed out once the code matches. Like the authorize
+ * flow, driving the verification UI by hand with curl needs a cookie jar
+ * (-c / -b).
  *
  * The cookie name embeds the normalized user_code so two device flows can run in
  * the same browser without overwriting each other's secret.

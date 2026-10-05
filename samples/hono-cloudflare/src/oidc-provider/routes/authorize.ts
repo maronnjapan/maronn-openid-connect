@@ -26,7 +26,6 @@ import {
   parseClaimsRequestParameter,
   validateIdTokenHint,
   createAuthTransaction,
-  computeTransactionBindingHash,
   createAuthorizationCode,
   completeAuthTransaction,
   generateRandomString,
@@ -48,7 +47,7 @@ import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
-  buildTransactionBindingCookie,
+  buildTransactionCookie,
 } from '../store.js';
 import {
   PushedRequestUriError,
@@ -73,10 +72,13 @@ export type AuthorizationOutcome =
    * (EXPERIMENTAL JARM) signed response JWT — ready in the URL.
    */
   | { kind: 'authorization_response'; location: string }
-  /** Interactive authentication is needed: continue on the login screen. */
-  | { kind: 'login'; transactionId: string; cookies: string[] }
+  /**
+   * Interactive authentication is needed: continue on the login screen. cookies
+   * carries the transaction cookie, the only place the transaction id goes.
+   */
+  | { kind: 'login'; cookies: string[] }
   /** The End-User is signed in but consent is needed: continue on the consent screen. */
-  | { kind: 'consent'; transactionId: string; cookies: string[] }
+  | { kind: 'consent'; cookies: string[] }
   /** OIDC Core 1.0 §3.1.2.2: the error cannot be redirected and stays on the OP. */
   | { kind: 'error'; error: string; errorDescription?: string }
   /** An unexpected failure: OAuth error JSON (500). */
@@ -435,17 +437,11 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
       claims,
     };
 
-    // Create authentication transaction
+    // Create authentication transaction. csrfToken is embedded in the login /
+    // consent forms; transactionId never leaves the OP except in the HttpOnly
+    // transaction cookie (buildTransactionCookie() in store.ts).
     const csrfToken = await generateRandomString(32);
-    // OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4: the End-User who authenticates and
-    // consents must be the one behind THIS User-Agent. transaction_id alone cannot
-    // prove that (it rides in the URL and can leak), so a secret is handed to this
-    // browser in an HttpOnly cookie and only its hash is kept on the transaction.
-    // See buildTransactionBindingCookie() in store.ts for the threat this closes.
-    const bindingSecret = await generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken, {
-      bindingHash: await computeTransactionBindingHash(bindingSecret),
-    });
+    const transaction = createAuthTransaction(validatedRequest, csrfToken);
     const transactionId = await generateRandomString(32);
 
     // Store transaction
@@ -680,17 +676,20 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
             // login → consent の受け渡しに sessionId も載せる。
             sessionId: existingSession.sessionId,
           });
-          // Continue on the consent screen (pages/consent.tsx); the binding
-          // cookie, when enabled, travels with this answer.
-          return { kind: 'consent', transactionId, cookies: [buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds)] };
+          // Continue on the consent screen (pages/consent.tsx), which finds the
+          // transaction through the cookie that travels with this answer.
+          return {
+            kind: 'consent',
+            cookies: [buildTransactionCookie(transactionId, transactionTtlSeconds)],
+          };
         }
       }
     }
 
     // Interactive authentication: continue on the login screen (pages/login.tsx;
-    // prompt=login forces re-authentication there). The binding cookie, when
-    // enabled, travels with this answer.
-    return { kind: 'login', transactionId, cookies: [buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds)] };
+    // prompt=login forces re-authentication there), which finds the transaction
+    // through the cookie that travels with this answer.
+    return { kind: 'login', cookies: [buildTransactionCookie(transactionId, transactionTtlSeconds)] };
   } catch (error) {
     if (error instanceof PushedRequestUriError) {
       // RFC 9126 §4 / OIDC Core 1.0 §3.1.2.6: a request_uri that cannot be

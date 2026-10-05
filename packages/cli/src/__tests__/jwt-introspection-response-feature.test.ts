@@ -22,7 +22,6 @@ describe('resolveFeatures with jwt-introspection-response', () => {
       jwtIntrospectionResponse: true,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -69,7 +68,6 @@ describe('resolveFeatures with jwt-introspection-response', () => {
       jwtIntrospectionResponse: true,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 });

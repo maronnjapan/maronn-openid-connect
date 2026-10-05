@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   AVAILABLE_FEATURES,
   DEFAULT_FEATURES,
-  OPTIONAL_FEATURES,
   resolveFeatures,
 } from '../features.js';
 
@@ -15,15 +14,6 @@ describe('AVAILABLE_FEATURES', () => {
       'revocation',
       'request-object',
     ]);
-  });
-});
-
-// Stable, spec-optional hardening: implemented in core (not the experimental
-// package) but off by default, because it is not required by OIDC Core / OAuth 2.1
-// and the default generation output is meant to be the spec and nothing more.
-describe('OPTIONAL_FEATURES', () => {
-  it('should list the opt-in stable features in a stable order', () => {
-    expect(OPTIONAL_FEATURES).toEqual(['transaction-binding']);
   });
 });
 
@@ -44,7 +34,6 @@ describe('DEFAULT_FEATURES', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 });
@@ -67,7 +56,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         googleLogin: false,
-        transactionBinding: false,
       });
     });
   });
@@ -89,7 +77,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         googleLogin: false,
-        transactionBinding: false,
       });
     });
 
@@ -111,7 +98,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         googleLogin: false,
-        transactionBinding: false,
       });
     });
   });
@@ -133,7 +119,6 @@ describe('resolveFeatures', () => {
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
         googleLogin: false,
-        transactionBinding: false,
       });
     });
   });
@@ -141,13 +126,13 @@ describe('resolveFeatures', () => {
   describe('validation errors', () => {
     it('should reject an unknown feature name in disable', () => {
       expect(() => resolveFeatures({ disable: ['dpop'] })).toThrow(
-        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par',
+        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par',
       );
     });
 
     it('should reject an unknown feature name in enable', () => {
       expect(() => resolveFeatures({ enable: ['implicit'] })).toThrow(
-        'Unknown feature: "implicit". Available features: pkce, refresh-token, introspection, revocation, request-object. Optional features (disabled by default): transaction-binding. Experimental features (disabled by default): par',
+        'Unknown feature: "implicit". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par',
       );
     });
 
@@ -158,33 +143,11 @@ describe('resolveFeatures', () => {
     });
   });
 
-  describe('optional features', () => {
-    it('should leave transaction-binding disabled by default', () => {
-      expect(resolveFeatures({}).transactionBinding).toBe(false);
-    });
-
-    it('should enable transaction-binding when requested', () => {
-      expect(resolveFeatures({ enable: ['transaction-binding'] })).toEqual({
-        pkce: true,
-        refreshToken: true,
-        introspection: true,
-        revocation: true,
-        requestObject: true,
-        par: false,
-        tokenExchange: false,
-        jarm: false,
-        deviceAuthorizationGrant: false,
-        idJag: false,
-        ciba: false,
-        jwtIntrospectionResponse: false,
-        rpInitiatedLogout: false,
-        googleLogin: false,
-        transactionBinding: true,
-      });
-    });
-
-    it('should treat disabling an already-off optional feature as a no-op', () => {
-      expect(resolveFeatures({ disable: ['transaction-binding'] }).transactionBinding).toBe(false);
-    });
+  // The transaction cookie is how every generated OP finds its authorization
+  // transaction, so the opt-in that used to add it on top is gone.
+  it('should reject the removed transaction-binding feature', () => {
+    expect(() => resolveFeatures({ enable: ['transaction-binding'] })).toThrow(
+      'Unknown feature: "transaction-binding".',
+    );
   });
 });

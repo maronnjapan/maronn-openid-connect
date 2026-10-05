@@ -6,13 +6,14 @@
  * `--disable`, and explicitly (re-)enable them with `--enable`.
  *
  * Basic OP mandatory capabilities (authorize / token / userinfo / discovery /
- * jwks / login / consent) are not toggleable and are always generated.
+ * jwks / login / consent) are not toggleable and are always generated. That
+ * includes how the login / consent steps find their authorization transaction:
+ * an HttpOnly transaction cookie set by /authorize, checked together with the
+ * csrf_token embedded in the forms (the transaction id never appears in a URL).
  *
- * Optional features are stable core capabilities that are nonetheless NOT part
- * of the default output, because the spec does not require them. Experimental
- * features are a third category: they live in the separate experimental package
- * and their APIs are unstable. Both must be requested explicitly with
- * `--enable`.
+ * Experimental features live in the separate experimental package and their
+ * APIs are unstable; extension features pull in an upstream identity provider.
+ * Both must be requested explicitly with `--enable`.
  */
 
 /** CLI-facing feature names (kebab-case, used with --enable / --disable). */
@@ -25,25 +26,6 @@ export const AVAILABLE_FEATURES = [
 ] as const;
 
 export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
-
-/**
- * Optional feature names (kebab-case, used with --enable).
- *
- * Stable, implemented in `@maronn-openid-connect/core` — but **disabled by
- * default** because no OIDC Core / OAuth 2.1 clause requires them. The default
- * generation output is meant to be the specification and nothing more, so a
- * user verifying "does the spec allow X?" is never answered by this library's
- * own hardening opinions. Turn one on to study the hardening itself.
- *
- * - transaction-binding: bind the authorization transaction to the User-Agent
- *   that started it, via a per-transaction HttpOnly cookie
- *   (OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 leave the mechanism to the
- *   implementation). Costs a cookie jar: driving login / consent by hand with
- *   curl requires carrying the cookie, which is why it is not the default.
- */
-export const OPTIONAL_FEATURES = ['transaction-binding'] as const;
-
-export type OptionalFeatureName = (typeof OPTIONAL_FEATURES)[number];
 
 /**
  * Experimental feature names (kebab-case, used with --enable).
@@ -176,10 +158,6 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   the authorization transaction through a single-use nonce, provisions the
  *   user just-in-time (subject `google:<sub>`) and hands off to consent like the
  *   password login. The button appears only once config.googleLogin is set.
- * - transactionBinding: optional hardening, disabled by default. When true, the
- *   authorize endpoint issues a per-transaction HttpOnly cookie and the
- *   login / consent steps refuse to run for a User-Agent that cannot present
- *   it, so a leaked `transaction_id` alone drives no step of the flow.
  */
 export interface OidcFeatureConfig {
   pkce: boolean;
@@ -196,7 +174,6 @@ export interface OidcFeatureConfig {
   jwtIntrospectionResponse: boolean;
   rpInitiatedLogout: boolean;
   googleLogin: boolean;
-  transactionBinding: boolean;
 }
 
 /** Mapping from CLI feature names to OidcFeatureConfig keys. */
@@ -206,11 +183,6 @@ const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
   introspection: 'introspection',
   revocation: 'revocation',
   'request-object': 'requestObject',
-};
-
-/** Mapping from CLI optional feature names to OidcFeatureConfig keys. */
-const OPTIONAL_FEATURE_KEYS: Record<OptionalFeatureName, keyof OidcFeatureConfig> = {
-  'transaction-binding': 'transactionBinding',
 };
 
 /** Mapping from CLI experimental feature names to OidcFeatureConfig keys. */
@@ -232,7 +204,7 @@ const EXTENSION_FEATURE_KEYS: Record<ExtensionFeatureName, keyof OidcFeatureConf
 
 /**
  * Default: every stable feature enabled (matches the historical generation
- * output), every optional, experimental and extension feature disabled.
+ * output), every experimental and extension feature disabled.
  */
 export const DEFAULT_FEATURES: OidcFeatureConfig = {
   pkce: true,
@@ -249,12 +221,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   jwtIntrospectionResponse: false,
   rpInitiatedLogout: false,
   googleLogin: false,
-  transactionBinding: false,
 };
-
-function isOptionalFeature(name: string): name is OptionalFeatureName {
-  return (OPTIONAL_FEATURES as readonly string[]).includes(name);
-}
 
 function isExperimentalFeature(name: string): name is ExperimentalFeatureName {
   return (EXPERIMENTAL_FEATURES as readonly string[]).includes(name);
@@ -266,16 +233,14 @@ function isExtensionFeature(name: string): name is ExtensionFeatureName {
 
 function assertKnownFeature(
   name: string,
-): asserts name is FeatureName | OptionalFeatureName | ExperimentalFeatureName | ExtensionFeatureName {
+): asserts name is FeatureName | ExperimentalFeatureName | ExtensionFeatureName {
   if (
     !(AVAILABLE_FEATURES as readonly string[]).includes(name) &&
-    !isOptionalFeature(name) &&
     !isExperimentalFeature(name) &&
     !isExtensionFeature(name)
   ) {
     throw new Error(
       `Unknown feature: "${name}". Available features: ${AVAILABLE_FEATURES.join(', ')}. ` +
-        `Optional features (disabled by default): ${OPTIONAL_FEATURES.join(', ')}. ` +
         `Experimental features (disabled by default): ${EXPERIMENTAL_FEATURES.join(', ')}. ` +
         `Extension features (disabled by default): ${EXTENSION_FEATURES.join(', ')}`,
     );
@@ -283,9 +248,8 @@ function assertKnownFeature(
 }
 
 function featureKey(
-  name: FeatureName | OptionalFeatureName | ExperimentalFeatureName | ExtensionFeatureName,
+  name: FeatureName | ExperimentalFeatureName | ExtensionFeatureName,
 ): keyof OidcFeatureConfig {
-  if (isOptionalFeature(name)) return OPTIONAL_FEATURE_KEYS[name];
   if (isExtensionFeature(name)) return EXTENSION_FEATURE_KEYS[name];
   return isExperimentalFeature(name) ? EXPERIMENTAL_FEATURE_KEYS[name] : FEATURE_KEYS[name];
 }
@@ -319,7 +283,7 @@ export function resolveFeatures(options: {
     assertKnownFeature(name);
     features[featureKey(name)] = true;
   }
-  // An optional / experimental / extension feature listed in --disable is
+  // An experimental / extension feature listed in --disable is
   // already off by default, so this is a no-op rather than an error (same as
   // omitting it).
   for (const name of disable) {

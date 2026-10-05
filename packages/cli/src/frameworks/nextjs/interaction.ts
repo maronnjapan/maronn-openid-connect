@@ -75,80 +75,78 @@ export async function startSession(
 }
 
 /** `_oidc-provider/transaction.ts` — the transaction the login and consent steps continue. */
-export function nextJsTransactionTemplate(
-  corePkg: string,
-  features: OidcFeatureConfig = DEFAULT_FEATURES,
-): string {
-  const binding = features.transactionBinding;
-  const navigationImport = binding
-    ? `import { notFound, redirect } from 'next/navigation';
-import { cookies } from 'next/headers';`
-    : `import { notFound } from 'next/navigation';`;
-  const coreImports = [
-    'AuthTransactionError',
-    'getAuthTransaction',
-    ...(binding ? ['validateTransactionBinding'] : []),
-    'type AuthTransaction',
-  ];
-  const bindingImports = binding
-    ? `
-import { errorPagePath } from './http';
-import { TRANSACTION_BINDING_COOKIE_PREFIX } from './store';`
-    : '';
-  const bindingDoc = binding
-    ? `
- *
- * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: transaction_id rides in the URL and can
- * leak, so it proves nothing about the browser presenting it. Only the browser
- * holding the transaction's binding cookie may continue it (see
- * buildTransactionBindingCookie() in store.ts); any other is sent to the OP's
- * error page before it sees a form or reaches a decision.`
-    : '';
-  // Without binding the lookup is all there is; with it, the transaction is
-  // looked up first and then checked against this browser's binding cookie.
-  const body = binding
-    ? `  let transaction: AuthTransaction;
-  try {
-    transaction = await getAuthTransaction(transactionId, stores.transactionStore);
-  } catch (error) {
-    if (error instanceof AuthTransactionError) notFound();
-    throw error;
-  }
-
-  try {
-    await validateTransactionBinding(
-      transaction,
-      (await cookies()).get(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId)?.value,
-    );
-  } catch (error) {
-    if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));
-    throw error;
-  }
-  return transaction;`
-    : `  try {
-    return await getAuthTransaction(transactionId, stores.transactionStore);
-  } catch (error) {
-    if (error instanceof AuthTransactionError) notFound();
-    throw error;
-  }`;
+export function nextJsTransactionTemplate(corePkg: string): string {
   return `/**
- * Looking up the authorization transaction the login and consent steps continue.
+ * Looking up the authorization transaction the login and consent steps
+ * continue, and checking where their forms were submitted from.
  */
-${navigationImport}
+import { cookies, headers } from 'next/headers';
+import { notFound, redirect } from 'next/navigation';
 import {
-${coreImports.map((name) => `  ${name},`).join('\n')}
+  AuthTransactionError,
+  getAuthTransaction,
+  type AuthTransaction,
 } from '${corePkg}';
-import { stores } from './provider';${bindingImports}
+import { errorPagePath } from './http';
+import { config, stores } from './provider';
+import {
+  CROSS_ORIGIN_FORM_POST_MESSAGE,
+  TRANSACTION_COOKIE_NAME,
+  isSameOriginFormPost,
+} from './store';
+
+/** The transaction a login or consent request continues, and the id it is stored under. */
+export interface CurrentTransaction {
+  transactionId: string;
+  transaction: AuthTransaction;
+}
 
 /**
- * The authorization transaction transaction_id names, for the login and consent
- * pages and their Server Actions. When there is none — unknown, already
+ * The authorization transaction this browser is in the middle of, for the login
+ * and consent pages and their Server Actions.
+ *
+ * /authorize hands the transaction id to the browser only in the HttpOnly
+ * transaction cookie (buildTransactionCookie() in store.ts) — never in a URL or
+ * in the HTML — so this is where it is read from. The forms carry just the
+ * csrf_token, which the Server Actions accept only for this transaction.
+ *
+ * When there is none — no cookie, or a transaction that is unknown, already
  * finished, or expired — the request ends in notFound(), which renders the
  * not-found.tsx beside the page: the End-User has to start over from the client
- * application.${bindingDoc}
+ * application.
  */
-export async function requireTransaction(transactionId: string): Promise<AuthTransaction> {
-${body}
+export async function requireTransaction(): Promise<CurrentTransaction> {
+  const transactionId = (await cookies()).get(TRANSACTION_COOKIE_NAME)?.value;
+  if (!transactionId) notFound();
+  try {
+    return {
+      transactionId,
+      transaction: await getAuthTransaction(transactionId, stores.transactionStore),
+    };
+  } catch (error) {
+    if (error instanceof AuthTransactionError) notFound();
+    throw error;
+  }
+}
+
+/**
+ * Stop a login or consent Server Action that the browser says was not
+ * submitted from the OP's own pages (isSameOriginFormPost() in store.ts): the
+ * OP's error page, never the client. It depends on neither the transaction
+ * cookie nor the csrf_token, so it still holds when a sibling subdomain planted
+ * a transaction cookie whose csrf_token it knows.
+ *
+ * Next.js already refuses a Server Action whose Origin differs from the Host
+ * header. This check compares against config.issuer instead and reads Fetch
+ * Metadata as well, so the contract does not depend on the platform's Host.
+ */
+export async function requireSameOriginFormPost(): Promise<void> {
+  const requestHeaders = await headers();
+  const sameOrigin = isSameOriginFormPost(
+    { origin: requestHeaders.get('Origin'), secFetchSite: requestHeaders.get('Sec-Fetch-Site') },
+    config.issuer,
+  );
+  if (!sameOrigin) redirect(errorPagePath('cross_origin_request', CROSS_ORIGIN_FORM_POST_MESSAGE));
 }
 `;
 }
@@ -196,8 +194,9 @@ export function nextJsNotFoundTemplate(page: 'login' | 'consent'): string {
 
 /**
  * Not-found screen of the ${page} page (Next.js not-found.js): rendered when the
- * page or ${action} calls notFound() because transaction_id names no
- * authorization request — unknown, already finished, or expired. Next.js
+ * page or ${action} calls notFound() because this browser is not in the middle
+ * of an authorization request — there is no transaction cookie, or the
+ * transaction it names is unknown, already finished, or expired. Next.js
  * answers it with HTTP 404. The End-User can only start over from the client
  * application.
  */
@@ -249,7 +248,6 @@ export default function ${component}Error({
 
 /** `login/page.tsx` — the login form (React Server Component). */
 export function nextJsLoginPageTemplate(features: OidcFeatureConfig = DEFAULT_FEATURES): string {
-  const binding = features.transactionBinding;
   const google = features.googleLogin;
   const googleImports = google
     ? `
@@ -261,10 +259,8 @@ import {
 } from '${GOOGLE_LOGIN_PACKAGE}/sign-in';
 import { config, stores } from '../_oidc-provider/provider';`
     : '';
-  const bindingDoc = binding
-    ? ` A browser that did not
- * start the transaction never sees the form: it is sent to the OP's error page.`
-    : '';
+  // Only the Google button needs the transaction id (its nonce is bound to it).
+  const currentTransaction = google ? '{ transactionId, transaction }' : '{ transaction }';
   const googleSignIn = google
     ? `
   // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
@@ -308,17 +304,15 @@ import { config, stores } from '../_oidc-provider/provider';`
         </section>
       ) : null}`
     : '';
-  return `import { notFound } from 'next/navigation';${googleImports}
-import { requireTransaction } from '../_oidc-provider/transaction';
+  return `${googleImports.trimStart()}${google ? '\n' : ''}import { requireTransaction } from '../_oidc-provider/transaction';
 import { loginAction } from './actions';
 
-// /authorize redirects here with a per-request transaction_id, so the page must
-// always render dynamically (never from a static cache).
+// The page renders the transaction named by this browser's transaction cookie,
+// so it must always render dynamically (never from a static cache).
 export const dynamic = 'force-dynamic';
 
 interface LoginPageProps {
   searchParams: Promise<{
-    transaction_id?: string;
     error?: string;
     remaining?: string;
   }>;
@@ -330,15 +324,16 @@ interface LoginPageProps {
  * A real Next.js page, so the UI can be built with JSX, components, CSS modules
  * and the rest of the React ecosystem. The form posts to the loginAction Server
  * Action (actions.ts), which checks the credentials and starts the OP session.
- * Keep the hidden transaction_id / csrf_token fields when customizing it.
+ * Keep the hidden csrf_token field when customizing it: neither the URL nor the
+ * form names the transaction — the browser's transaction cookie does — and the
+ * action accepts the token only for that transaction.
  *
- * A transaction_id that names no transaction renders not-found.tsx (see
- * requireTransaction() in _oidc-provider/transaction.ts).${bindingDoc}
+ * A browser with no live transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const { transaction_id: transactionId, error, remaining } = await searchParams;
-  if (!transactionId) notFound();
-  const transaction = await requireTransaction(transactionId);
+  const { error, remaining } = await searchParams;
+  const ${currentTransaction} = await requireTransaction();
 ${googleSignIn}
   const errorMessage =
     error === 'invalid_credentials'
@@ -354,7 +349,6 @@ ${googleSignIn}
         </p>
       ) : null}
       <form action={loginAction}>
-        <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
         <div>
           <label htmlFor="username">Username:</label>
@@ -393,7 +387,7 @@ import {
 } from '${corePkg}';
 import { errorPagePath } from '../_oidc-provider/http';
 import { stores } from '../_oidc-provider/provider';
-import { requireTransaction } from '../_oidc-provider/transaction';
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 import { startSession } from './session';
 
 /**
@@ -405,10 +399,15 @@ import { startSession } from './session';
  * error page (oidc-error/page.tsx), never at the client.
  */
 export async function loginAction(formData: FormData): Promise<void> {
-  const transactionId = String(formData.get('transaction_id') ?? '');
-  const transaction = await requireTransaction(transactionId);
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below.
+  await requireSameOriginFormPost();
 
-  // The CSRF token proves the submission came from the form this browser was shown.
+  // The transaction cookie says which transaction this browser is in ...
+  const { transactionId, transaction } = await requireTransaction();
+
+  // ... and the CSRF token proves the submission came from the form this browser
+  // was shown for exactly that transaction.
   try {
     validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
@@ -434,13 +433,11 @@ export async function loginAction(formData: FormData): Promise<void> {
       );
     }
     const remaining = failure.maxAttempts - failure.failedAttempts;
-    redirect(
-      \`/login?transaction_id=\${encodeURIComponent(transactionId)}&error=invalid_credentials&remaining=\${remaining}\`,
-    );
+    redirect(\`/login?error=invalid_credentials&remaining=\${remaining}\`);
   }
 
   await startSession(transactionId, transaction, user.sub);
-  redirect(\`/consent?transaction_id=\${encodeURIComponent(transactionId)}\`);
+  redirect('/consent');
 }
 `;
 }
@@ -455,10 +452,11 @@ export function nextJsGoogleLoginRouteTemplate(corePkg: string): string {
  * from Google's page and carries no Server Action id. After the callback checks
  * it continues exactly like a password login: same session, same consent step.
  *
- * Transaction binding is deliberately NOT checked here: Google's POST is a
- * cross-site navigation, so the browser withholds SameSite=Lax cookies. The
- * single-use nonce stands in for it — it was issued to the login page, which
- * only the bound browser could load.
+ * The transaction cookie does not come along: Google's POST is a cross-site
+ * navigation, so the browser withholds SameSite=Lax cookies. The single-use
+ * nonce stands in for it — it was issued on the login page, which only the
+ * browser holding the cookie could load. The consent step that follows is a
+ * plain navigation again and reads the cookie as usual.
  *
  * A failed callback ends on the OP's error page (oidc-error/page.tsx), like
  * every error that must not reach a client.
@@ -535,29 +533,21 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   await startSession(transactionId, transaction, subject);
-  const consentUrl = new URL('/consent', config.issuer);
-  consentUrl.searchParams.set('transaction_id', transactionId);
-  return NextResponse.redirect(consentUrl, 302);
+  return NextResponse.redirect(new URL('/consent', config.issuer), 302);
 }
 `;
 }
 
 /** `consent/page.tsx` — the consent form (React Server Component). */
-export function nextJsConsentPageTemplate(
-  features: OidcFeatureConfig = DEFAULT_FEATURES,
-  scopes: string[] = [],
-): string {
-  const binding = features.transactionBinding;
+export function nextJsConsentPageTemplate(scopes: string[] = []): string {
   const customScopesDeclared = scopes.length > 0;
   const scopeImports = customScopesDeclared
     ? `
 import { stores } from '../_oidc-provider/provider';
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
-  const bindingDoc = binding
-    ? ` A browser that did not
- * start the transaction never sees the form: it is sent to the OP's error page.`
-    : '';
+  // The scope policy needs the login step's hand-off, keyed by the transaction id.
+  const currentTransaction = customScopesDeclared ? '{ transactionId, transaction }' : '{ transaction }';
   const displayedScopes = customScopesDeclared
     ? `
   // Show only what THIS End-User can actually grant (resolveGrantableScopes in
@@ -573,29 +563,27 @@ import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : `
   const scopes = transaction.scope.split(' ').filter(Boolean);
 `;
-  return `import { notFound } from 'next/navigation';${scopeImports}
-import { requireTransaction } from '../_oidc-provider/transaction';
+  return `${scopeImports.trimStart()}${customScopesDeclared ? '\n' : ''}import { requireTransaction } from '../_oidc-provider/transaction';
 import { consentAction } from './actions';
 
+// The page renders the transaction named by this browser's transaction cookie,
+// so it must always render dynamically (never from a static cache).
 export const dynamic = 'force-dynamic';
-
-interface ConsentPageProps {
-  searchParams: Promise<{ transaction_id?: string }>;
-}
 
 /**
  * Consent page (React Server Component).
  *
  * A real Next.js page, so the consent UI can be built with JSX and React
  * components. The form posts to the consentAction Server Action (actions.ts).
+ * Keep the hidden csrf_token field when customizing it: neither the URL nor the
+ * form names the transaction — the browser's transaction cookie does — and the
+ * action accepts the token only for that transaction.
  *
- * A transaction_id that names no transaction renders not-found.tsx (see
- * requireTransaction() in _oidc-provider/transaction.ts).${bindingDoc}
+ * A browser with no live transaction renders not-found.tsx (see
+ * requireTransaction() in _oidc-provider/transaction.ts).
  */
-export default async function ConsentPage({ searchParams }: ConsentPageProps) {
-  const { transaction_id: transactionId } = await searchParams;
-  if (!transactionId) notFound();
-  const transaction = await requireTransaction(transactionId);
+export default async function ConsentPage() {
+  const ${currentTransaction} = await requireTransaction();
 ${displayedScopes}
   return (
     <main>
@@ -616,7 +604,6 @@ ${displayedScopes}
         renaming 'approve' makes every approval fail with an error page.
       */}
       <form action={consentAction}>
-        <input type="hidden" name="transaction_id" value={transactionId} />
         <input type="hidden" name="csrf_token" value={transaction.csrfToken} />
         <button type="submit" name="action" value="approve">
           Approve
@@ -637,7 +624,6 @@ export function nextJsConsentActionTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
 ): string {
-  const binding = features.transactionBinding;
   const jarm = features.jarm;
   const customScopesDeclared = scopes.length > 0;
   const coreImports = [
@@ -649,10 +635,8 @@ export function nextJsConsentActionTemplate(
     'type AuthTransaction',
     ...(jarm ? ['type SigningKey'] : []),
   ];
-  const nextImports = binding
-    ? `import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';`
-    : `import { redirect } from 'next/navigation';`;
+  const nextImports = `import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';`;
   const jarmImports = jarm
     ? `
 import {
@@ -666,10 +650,8 @@ import {
 import { config, loadSigningKeys, resolvers, stores } from '../_oidc-provider/provider';`
     : `import { errorPagePath } from '../_oidc-provider/http';
 import { config, resolvers, stores } from '../_oidc-provider/provider';`;
-  const bindingStoreImport = binding
-    ? `
-import { TRANSACTION_BINDING_COOKIE_PREFIX } from '../_oidc-provider/store';`
-    : '';
+  const transactionCookieImport = `
+import { TRANSACTION_COOKIE_NAME } from '../_oidc-provider/store';`;
   const jarmConfigImport = jarm
     ? `
 import { jarmConfig } from '../_oidc-provider/jarm';`
@@ -678,12 +660,18 @@ import { jarmConfig } from '../_oidc-provider/jarm';`
     ? `
 import { resolveGrantableScopes } from '../_oidc-provider/scopes';`
     : '';
-  const clearBinding = (indent: string) =>
-    binding
-      ? `${indent}// The transaction is over; drop its binding cookie.
-${indent}(await cookies()).delete(TRANSACTION_BINDING_COOKIE_PREFIX + transactionId);
-`
-      : '';
+  // A '__Host-' cookie is only removed by a write that repeats Secure and
+  // Path=/; cookies().delete(name) alone would be ignored by the browser.
+  const clearTransactionCookie = (indent: string) =>
+    `${indent}// The transaction is over; drop the cookie that named it.
+${indent}(await cookies()).delete({
+${indent}  name: TRANSACTION_COOKIE_NAME,
+${indent}  path: '/',
+${indent}  secure: true,
+${indent}  httpOnly: true,
+${indent}  sameSite: 'lax',
+${indent}});
+`;
   const grantedScope = customScopesDeclared
     ? `  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place for
   // per-user filtering). A dropped scope narrows the grant rather than failing
@@ -778,8 +766,8 @@ ${nextImports}
 import {
 ${coreImports.map((name) => `  ${name},`).join('\n')}
 } from '${corePkg}';${jarmImports}
-${providerImport}${bindingStoreImport}${jarmConfigImport}${customScopeImport}
-import { requireTransaction } from '../_oidc-provider/transaction';
+${providerImport}${transactionCookieImport}${jarmConfigImport}${customScopeImport}
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 
 /**
  * Consent Server Action: records the End-User's decision and sends the browser
@@ -787,13 +775,20 @@ import { requireTransaction } from '../_oidc-provider/transaction';
  * §3.1.2.6).
  */
 export async function consentAction(formData: FormData): Promise<void> {
-  const transactionId = String(formData.get('transaction_id') ?? '');
   const action = String(formData.get('action') ?? '');
-  const transaction${jarm ? ': AuthTransaction & JarmAuthTransactionFields' : ''} = await requireTransaction(transactionId);
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below. This action mints the
+  // authorization code, so no decision may come from anywhere else.
+  await requireSameOriginFormPost();
 
-  // The CSRF token proves the decision came from the form this browser was
-  // shown. Checked before any decision is acted on: this step mints the
-  // authorization code.
+  // The transaction cookie says which transaction this browser is in ...
+  const current = await requireTransaction();
+  const transactionId = current.transactionId;
+  const transaction${jarm ? ': AuthTransaction & JarmAuthTransactionFields' : ''} = current.transaction;
+
+  // ... and the CSRF token proves the decision came from the form this browser
+  // was shown for exactly that transaction. Checked before any decision is acted
+  // on: this step mints the authorization code.
   try {
     validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
@@ -804,7 +799,7 @@ ${jarmKeyStep}
   if (action === 'deny') {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
-${clearBinding('    ')}    redirect(${responseAwait}authorizationResponseUrl(transaction, {
+${clearTransactionCookie('    ')}    redirect(${responseAwait}authorizationResponseUrl(transaction, {
       error: 'access_denied',
       state: transaction.state,
     }${jarmKeyArgument}));
@@ -830,7 +825,7 @@ ${clearBinding('    ')}    redirect(${responseAwait}authorizationResponseUrl(tra
   // was skipped or has expired.
   const session = await stores.authSessionStore.get(transactionId);
   if (!session) {
-    redirect(\`/login?transaction_id=\${encodeURIComponent(transactionId)}\`);
+    redirect('/login');
   }
 
   const responseParams = await completeAuthTransaction(
@@ -861,7 +856,7 @@ ${grantedScope}
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
   await stores.authSessionStore.delete(transactionId);
 
-${clearBinding('  ')}  redirect(${responseAwait}authorizationResponseUrl(transaction, {
+${clearTransactionCookie('  ')}  redirect(${responseAwait}authorizationResponseUrl(transaction, {
     code: authCodeData.code,
     state: responseParams.state,
   }${jarmKeyArgument}));

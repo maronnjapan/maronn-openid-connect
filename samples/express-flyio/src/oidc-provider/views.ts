@@ -28,9 +28,11 @@ import {
 // ============================================================
 
 export interface LoginPageParams {
-  /** Transaction ID for the auth flow */
-  transactionId: string;
-  /** CSRF token (must be included as hidden form field) */
+  /**
+   * CSRF token (must be included as the hidden csrf_token form field). The form
+   * carries nothing else about the transaction: the browser's transaction cookie
+   * says which one this is, and the token has to belong to it.
+   */
   csrfToken: string;
   /** Error message from a previous failed attempt */
   error?: string;
@@ -54,9 +56,11 @@ export interface LoginPageParams {
 }
 
 export interface ConsentPageParams {
-  /** Transaction ID for the auth flow */
-  transactionId: string;
-  /** CSRF token (must be included as hidden form field) */
+  /**
+   * CSRF token (must be included as the hidden csrf_token form field). The form
+   * carries nothing else about the transaction: the browser's transaction cookie
+   * says which one this is, and the token has to belong to it.
+   */
   csrfToken: string;
   /** Scopes requested by the client */
   scopes: string[];
@@ -269,7 +273,6 @@ function defaultLoginPage(params: LoginPageParams): string {
   <h1>Login</h1>
   ${errorHtml}
   <form method="POST" action="/login">
-    <input type="hidden" name="transaction_id" value="${escapeHtml(params.transactionId)}" />
     <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
     <div>
       <label for="username">Username:</label>
@@ -310,7 +313,6 @@ function defaultConsentPage(params: ConsentPageParams): string {
 ${scopeListHtml}
   </ul>
   <form method="POST" action="/consent">
-    <input type="hidden" name="transaction_id" value="${escapeHtml(params.transactionId)}" />
     <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
     <button type="submit" name="action" value="approve">Approve</button>
     <button type="submit" name="action" value="deny">Deny</button>

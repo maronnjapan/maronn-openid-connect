@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.9.0",
+  "cliVersion": "0.10.0",
   "framework": "fastify",
   "features": {
     "pkce": true,
@@ -15,8 +15,7 @@
     "ciba": true,
     "jwtIntrospectionResponse": false,
     "rpInitiatedLogout": false,
-    "googleLogin": true,
-    "transactionBinding": false
+    "googleLogin": true
   },
   "scopes": []
 }

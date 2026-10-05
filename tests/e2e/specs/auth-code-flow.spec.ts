@@ -32,12 +32,12 @@ test.describe('Authorization Code Flow', () => {
     await page.goto(
       `${clientBaseURL}/start?acr_values=${encodeURIComponent('urn:example:loa:2')}`,
     );
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
 
     await page.getByLabel('Username:').fill('testuser');
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
     await expect(page.locator('strong')).toHaveText(clientId);
     await expect(page.locator('li')).toHaveText(['openid', 'profile', 'email']);
 

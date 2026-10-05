@@ -22,7 +22,6 @@ describe('resolveFeatures with id-jag', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -42,7 +41,6 @@ describe('resolveFeatures with id-jag', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 

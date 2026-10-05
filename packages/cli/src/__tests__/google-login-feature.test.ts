@@ -28,7 +28,6 @@ describe('resolveFeatures with google-login', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: true,
-      transactionBinding: false,
     });
   });
 
@@ -42,9 +41,9 @@ describe('resolveFeatures with google-login', () => {
     ).toThrow('Feature "google-login" cannot be both enabled and disabled');
   });
 
-  it('should combine google-login with optional and experimental features', () => {
+  it('should combine google-login with experimental features', () => {
     expect(
-      resolveFeatures({ enable: ['google-login', 'transaction-binding', 'par'] }),
+      resolveFeatures({ enable: ['google-login', 'par'] }),
     ).toEqual({
       pkce: true,
       refreshToken: true,
@@ -60,7 +59,6 @@ describe('resolveFeatures with google-login', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: true,
-      transactionBinding: true,
     });
   });
 });

@@ -66,41 +66,6 @@ import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider
 `
     : '';
 
-  // --- Transaction binding (--enable transaction-binding) -------------------
-  const bindingStoreImport = features.transactionBinding
-    ? `
-import { buildTransactionBindingCookie } from '../_oidc-provider/store';`
-    : '';
-  const transactionCreation = features.transactionBinding
-    ? `    // OIDC Core 1.0 §3.1.2.3 / §3.1.2.4: the End-User who authenticates and
-    // consents must be the one behind THIS User-Agent. transaction_id alone cannot
-    // prove that (it rides in the URL and can leak), so a secret is handed to this
-    // browser in an HttpOnly cookie and only its hash is kept on the transaction.
-    // See buildTransactionBindingCookie() in store.ts for the threat this closes.
-    const bindingSecret = generateRandomString(32);
-    const transaction = createAuthTransaction(validatedRequest, csrfToken, {
-      bindingHash: await computeTransactionBindingHash(bindingSecret),
-    });
-`
-    : `    const transaction = createAuthTransaction(validatedRequest, csrfToken);
-`;
-  // The binding cookie travels with the answers that continue in this browser
-  // (login / consent); paths that go straight back to the client need none.
-  const screenCookieArg = features.transactionBinding
-    ? ', buildTransactionBindingCookie(transactionId, bindingSecret, transactionTtlSeconds)'
-    : '';
-  const redirectToScreenSignature = features.transactionBinding
-    ? `function redirectToScreen(
-  path: '/login' | '/consent',
-  transactionId: string,
-  bindingCookie: string,
-): Response {`
-    : `function redirectToScreen(path: '/login' | '/consent', transactionId: string): Response {`;
-  const redirectToScreenCookie = features.transactionBinding
-    ? `
-  response.headers.append('Set-Cookie', bindingCookie);`
-    : '';
-
   // --- Request Object (request-object feature) ------------------------------
   const requestObjectStep = features.requestObject
     ? `    // OIDC Core 1.0 §6.1: verify the signed Request Object (request parameter)
@@ -387,7 +352,6 @@ function successRedirect(redirectUri: string, code: string, state: string | unde
     'parseClaimsRequestParameter',
     'validateIdTokenHint',
     'createAuthTransaction',
-    ...(features.transactionBinding ? ['computeTransactionBindingHash'] : []),
     'createAuthorizationCode',
     'completeAuthTransaction',
     'generateRandomString',
@@ -432,7 +396,8 @@ import {
   signingKeysUnavailable,
   uniqueParams,
   type UniqueParams,
-} from '../_oidc-provider/http';${bindingStoreImport}${customScopeImport}
+} from '../_oidc-provider/http';
+import { buildTransactionCookie } from '../_oidc-provider/store';${customScopeImport}
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -551,9 +516,13 @@ ${offlineAccessStep}${customScopeStep}
       claims,
     };
 
-    // The authentication transaction carries the request through login and consent.
+    // The authentication transaction carries the request through login and
+    // consent. csrfToken is embedded in their forms; transactionId never leaves
+    // the OP except in the HttpOnly transaction cookie (buildTransactionCookie()
+    // in store.ts).
     const csrfToken = generateRandomString(32);
-${transactionCreation}    const transactionId = generateRandomString(32);
+    const transaction = createAuthTransaction(validatedRequest, csrfToken);
+    const transactionId = generateRandomString(32);
     const transactionTtlSeconds = 10 * 60;
 ${transactionStorage}
     // OIDC Core 1.0 §3.1.2.1: prompt is a space-delimited list.
@@ -726,12 +695,12 @@ ${ssoScopeStep}        // OIDC Core 1.0 §3.1.2.1: prompt=consent MUST re-displa
           // login → consent の受け渡しに sessionId も載せる。
           sessionId: existingSession.sessionId,
         });
-        return redirectToScreen('/consent', transactionId${screenCookieArg});
+        return redirectToScreen('/consent', transactionId, transactionTtlSeconds);
       }
     }
 
     // Interactive authentication (prompt=login forces it even with a session).
-    return redirectToScreen('/login', transactionId${screenCookieArg});
+    return redirectToScreen('/login', transactionId, transactionTtlSeconds);
   } catch (error) {
 ${parCatchBranch}    if (error instanceof AuthorizationError) {
       if (error.redirectUri) {
@@ -762,15 +731,22 @@ function badRequest(errorDescription: string): Response {
 }
 
 /**
- * Continue on one of the OP's own screens. The URL is built on config.issuer,
- * never on the request URL: some platforms derive the request URL from the Host
- * header, which would let the sender choose where transaction_id lands
- * (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+ * Continue on one of the OP's own screens. The URL carries no query: the
+ * transaction goes to the browser only in the HttpOnly transaction cookie, so
+ * it never shows up in history, logs or a shared screen, and the page finds it
+ * there (requireTransaction() in _oidc-provider/transaction.ts).
+ *
+ * The URL is built on config.issuer, never on the request URL: some platforms
+ * derive the request URL from the Host header, which would let the sender
+ * choose the redirect origin (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
  */
-${redirectToScreenSignature}
-  const url = new URL(path, config.issuer);
-  url.searchParams.set('transaction_id', transactionId);
-  const response = NextResponse.redirect(url, 302);${redirectToScreenCookie}
+function redirectToScreen(
+  path: '/login' | '/consent',
+  transactionId: string,
+  ttlSeconds: number,
+): Response {
+  const response = NextResponse.redirect(new URL(path, config.issuer), 302);
+  response.headers.append('Set-Cookie', buildTransactionCookie(transactionId, ttlSeconds));
   return response;
 }
 

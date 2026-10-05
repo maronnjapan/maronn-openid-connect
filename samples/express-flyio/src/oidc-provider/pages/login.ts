@@ -2,9 +2,11 @@
  * Login screen (screen routing layer).
  *
  * GET /login renders the form and POST /login submits it. Neither handler
- * holds OIDC logic: prepareLogin() and submitLogin() in routes/login.ts load
- * the transaction, check the User-Agent binding, verify the credentials and
- * mint the OP session, and report what happened as an outcome. This file turns
+ * holds OIDC logic: prepareLogin() and submitLogin() in routes/login.ts find
+ * the transaction through the transaction cookie, check the csrf_token, verify
+ * the credentials and mint the OP session, and report what happened as an
+ * outcome. Neither the URL nor the form names the transaction: the form only
+ * embeds csrf_token, which is accepted together with the cookie. This file turns
  * each outcome into a screen or a redirect. To customize the login UI, edit
  * this file or the loginPage view in views.ts; routes/login.ts never has to
  * change.
@@ -33,7 +35,6 @@ export function renderLoginPage(c: any, params: LoginPageParams): Response {
  */
 function loginPageParams(screen: LoginScreen): LoginPageParams {
   return {
-    transactionId: screen.transactionId,
     csrfToken: screen.csrfToken,
     // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
     loginHint: screen.loginHint,
@@ -43,29 +44,23 @@ function loginPageParams(screen: LoginScreen): LoginPageParams {
 }
 
 /**
- * Where a signed-in End-User continues: the consent screen. Built on
- * config.issuer, not the request URL — some runtimes derive the request URL
- * from the Host header, which would let the sender pick where transaction_id
- * lands (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+ * Where a signed-in End-User continues: the consent screen, which finds the
+ * transaction through the same cookie. Built on config.issuer, not the request
+ * URL — some runtimes derive the request URL from the Host header, which would
+ * let the sender pick the redirect origin (OIDC Discovery 1.0 §3 / RFC 9700
+ * §2.1).
  */
-function consentScreenUrl(c: any, transactionId: string): string {
+function consentScreenUrl(c: any): string {
   const config = c.get('config') ?? defaultProviderConfig;
-  const url = new URL('/consent', config.issuer);
-  url.searchParams.set('transaction_id', transactionId);
-  return url.toString();
+  return new URL('/consent', config.issuer).toString();
 }
 
 /**
  * Login Page - GET
- * Displays the login form for user authentication.
+ * Displays the login form for the transaction in this browser's cookie.
  */
 loginPage.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const screen = await prepareLogin(c, transactionId);
+  const screen = await prepareLogin(c);
   if (screen.kind === 'error') return renderErrorPage(c, screen);
   return renderLoginPage(c, loginPageParams(screen));
 });
@@ -77,7 +72,6 @@ loginPage.get('/', async (c) => {
 loginPage.post('/', async (c) => {
   const body = await c.req.parseBody();
   const outcome = await submitLogin(c, {
-    transactionId: String(body['transaction_id'] ?? ''),
     csrfToken: String(body['csrf_token'] ?? ''),
     username: String(body['username'] ?? ''),
     password: String(body['password'] ?? ''),
@@ -99,7 +93,7 @@ loginPage.post('/', async (c) => {
     });
   }
   // Signed in: set the OP session cookie and continue to the consent step.
-  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
+  return redirectWithCookies(consentScreenUrl(c), outcome.cookies);
 });
 
 /**
@@ -120,5 +114,5 @@ loginPage.post('/google', async (c) => {
     });
   }
   if (outcome.kind === 'error') return renderErrorPage(c, outcome);
-  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
+  return redirectWithCookies(consentScreenUrl(c), outcome.cookies);
 });

@@ -2,21 +2,20 @@
  * Consent step (API layer: logic only).
  *
  * Everything the consent screen has to decide lives here as plain functions:
- * loading the transaction, the User-Agent binding, the scope policy, the
- * authorization decision, the authorization code, the consent record and the
- * authorization response URL (RFC 6749 §4.1.2 / RFC 9207 iss / JARM). None of
- * them builds a Response — each returns an outcome, and pages/consent.tsx turns
- * that outcome into a screen or a redirect. The UI can therefore be changed
- * without touching this file.
+ * finding the transaction through the transaction cookie, the csrf_token
+ * check, the scope policy, the authorization decision, the authorization code,
+ * the consent record and the authorization response URL (RFC 6749 §4.1.2 /
+ * RFC 9207 iss / JARM). None of them builds a Response — each returns an
+ * outcome, and pages/consent.tsx turns that outcome into a screen or a
+ * redirect. The UI can therefore be changed without touching this file.
  */
 import {
   getAuthTransaction,
   validateCsrfToken,
-  validateTransactionBinding,
-  AuthTransactionError,
-  type AuthTransaction,
   completeAuthTransaction,
   createAuthorizationCode,
+  AuthTransactionError,
+  type AuthTransaction,
   selectSigningKeyByAlg,
   type SigningKey,
 } from '@maronn-openid-connect/core';
@@ -27,8 +26,10 @@ import {
   transactionStore as defaultTransactionStore,
   authCodeStore as defaultAuthCodeStore,
   authSessionStore as defaultAuthSessionStore,
-  buildClearedTransactionBindingCookie,
-  parseTransactionBindingSecret,
+  buildClearedTransactionCookie,
+  parseTransactionId,
+  isSameOriginFormPost,
+  CROSS_ORIGIN_FORM_POST_MESSAGE,
 } from '../store.js';
 import {
   buildJarmRedirectUrl,
@@ -40,8 +41,11 @@ import { jarmConfig } from './jarm.js';
 /** What the consent form needs, prepared for GET /consent. */
 export interface ConsentScreen {
   kind: 'screen';
-  transactionId: string;
-  /** Must be posted back as the csrf_token field. */
+  /**
+   * Must be posted back as the csrf_token field. It is the only value the form
+   * carries about the transaction: the transaction itself travels in the
+   * transaction cookie, and POST /consent accepts the token only for that one.
+   */
   csrfToken: string;
   /** Scopes this End-User is asked to grant (already narrowed by the scope policy). */
   scopes: string[];
@@ -73,37 +77,57 @@ export type ConsentOutcome =
 
 /** The fields of the consent form. */
 export interface ConsentSubmission {
-  transactionId: string;
   csrfToken: string;
   /** 'approve' or 'deny' — the submit button values of the consent view. */
   action: string;
 }
 
 /**
- * Enforce that this step comes from the User-Agent that started the transaction
- * (OIDC Core 1.0 Section 3.1.2.3 / 3.1.2.4). Returns the error to show, or
- * undefined when the binding holds.
- *
- * The failure is shown by the OP itself and never redirected to the client's
- * redirect_uri: without a verified owner, answering the client would let an
- * attacker who lured a victim into their own transaction collect a code for the
- * victim's identity. See buildTransactionBindingCookie() in store.ts.
+ * The OP's own error page for a transaction that cannot continue: unknown,
+ * finished or expired (400), or a csrf_token that does not belong to it (403).
+ * It is never redirected to the client's redirect_uri: until the transaction
+ * and its csrf_token check out, the OP cannot tell whose request this is, and
+ * answering the client could hand a code for this End-User to someone else.
  */
-async function rejectUnboundTransaction(
+function transactionErrorOutcome(error: unknown): ConsentError {
+  if (!(error instanceof AuthTransactionError)) throw error;
+  return { kind: 'error', error: error.message, statusCode: error.httpStatusCode };
+}
+
+/**
+ * The transaction this browser is in the middle of: the id from the transaction
+ * cookie /authorize set (buildTransactionCookie() in store.ts), loaded from the
+ * store. Returns the error to show instead when there is none.
+ */
+async function loadTransaction(
   c: any,
-  transaction: AuthTransaction,
-  transactionId: string,
-): Promise<ConsentError | undefined> {
-  try {
-    await validateTransactionBinding(
-      transaction,
-      parseTransactionBindingSecret(c.req.header('Cookie') ?? null, transactionId),
-    );
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof AuthTransactionError)) throw error;
-    return { kind: 'error', error: error.message, statusCode: error.httpStatusCode };
+): Promise<{ transactionId: string; transaction: AuthTransaction } | ConsentError> {
+  const transactionId = parseTransactionId(c.req.header('Cookie') ?? null);
+  if (!transactionId) {
+    return {
+      kind: 'error',
+      error: 'No authorization request is in progress in this browser. Start again from the application.',
+      statusCode: 400,
+    };
   }
+  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
+  try {
+    return { transactionId, transaction: await getAuthTransaction(transactionId, transactionStore) };
+  } catch (error) {
+    return transactionErrorOutcome(error);
+  }
+}
+
+/**
+ * Refuse a consent form POST that the browser says came from anywhere but the
+ * OP's own pages (403, never redirected). See isSameOriginFormPost() in store.ts.
+ */
+function rejectCrossOriginFormPost(c: any): ConsentError | undefined {
+  const sameOrigin = isSameOriginFormPost(
+    { origin: c.req.header('Origin') ?? null, secFetchSite: c.req.header('Sec-Fetch-Site') ?? null },
+    c.get('config').issuer,
+  );
+  return sameOrigin ? undefined : { kind: 'error', error: CROSS_ORIGIN_FORM_POST_MESSAGE, statusCode: 403 };
 }
 
 /**
@@ -172,25 +196,15 @@ async function buildConsentRedirect(
 }
 
 /**
- * GET /consent: load the transaction and describe the form, or the error to
- * show instead when this browser may not see it.
+ * GET /consent: load the transaction this browser's cookie names and describe
+ * the form, or the error to show instead when there is none.
  */
-export async function prepareConsent(
-  c: any,
-  transactionId: string,
-): Promise<ConsentScreen | ConsentError> {
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-
-  // Checked BEFORE the form is described: the consent page embeds csrf_token,
-  // so a third party holding a leaked transaction_id must not be able to read
-  // it and then complete the consent step on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
-  if (bindingError) return bindingError;
-
+export async function prepareConsent(c: any): Promise<ConsentScreen | ConsentError> {
+  const loaded = await loadTransaction(c);
+  if ('kind' in loaded) return loaded;
+  const { transaction } = loaded;
   return {
     kind: 'screen',
-    transactionId,
     csrfToken: transaction.csrfToken,
     scopes: transaction.scope.split(' ').filter(Boolean),
     clientId: transaction.clientId,
@@ -201,19 +215,30 @@ export async function prepareConsent(
  * POST /consent: record the decision and build the authorization response.
  */
 export async function submitConsent(c: any, input: ConsentSubmission): Promise<ConsentOutcome> {
-  const { transactionId, csrfToken, action } = input;
+  const { csrfToken, action } = input;
 
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   const authCodeStore = c.get('authCodeStore') ?? defaultAuthCodeStore;
   const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
 
-  const transaction = await getAuthTransaction(transactionId, transactionStore);
-  // Checked before validateCsrfToken and before any decision is acted on: this
-  // is the step that mints the authorization code, so an unbound caller must not
-  // reach it — neither to approve nor to deny on the End-User's behalf.
-  const bindingError = await rejectUnboundTransaction(c, transaction, transactionId);
-  if (bindingError) return bindingError;
-  validateCsrfToken(transaction, csrfToken);
+  // Checked before any decision is acted on: this step mints the authorization
+  // code, so neither an approval nor a denial may come from anywhere else.
+  // First the browser's own statement of where the form was submitted from
+  // (isSameOriginFormPost() in store.ts): independent of the cookie and the
+  // csrf_token, so a forged POST is stopped even if both were planted.
+  const sameOriginError = rejectCrossOriginFormPost(c);
+  if (sameOriginError) return sameOriginError;
+
+  // The cookie says which transaction this browser is in; the csrf_token says
+  // the decision came from the form the OP rendered for exactly that one.
+  const loaded = await loadTransaction(c);
+  if ('kind' in loaded) return loaded;
+  const { transactionId, transaction } = loaded;
+  try {
+    validateCsrfToken(transaction, csrfToken);
+  } catch (error) {
+    return transactionErrorOutcome(error);
+  }
 
   // RFC 9207 §2: include the issuer identifier on every authorization response
   // (success and error) so clients can pin the issuer that produced the response.
@@ -232,7 +257,7 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
         error: 'access_denied',
         state: transaction.state,
       }, issuer),
-      cookies: [buildClearedTransactionBindingCookie(transactionId)],
+      cookies: [buildClearedTransactionCookie()],
     };
   }
 
@@ -306,6 +331,6 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
       code: authCodeData.code,
       state: responseParams.state,
     }, issuer),
-    cookies: [buildClearedTransactionBindingCookie(transactionId)],
+    cookies: [buildClearedTransactionCookie()],
   };
 }

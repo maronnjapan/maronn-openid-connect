@@ -6,10 +6,11 @@
  * from Google's page and carries no Server Action id. After the callback checks
  * it continues exactly like a password login: same session, same consent step.
  *
- * Transaction binding is deliberately NOT checked here: Google's POST is a
- * cross-site navigation, so the browser withholds SameSite=Lax cookies. The
- * single-use nonce stands in for it — it was issued to the login page, which
- * only the bound browser could load.
+ * The transaction cookie does not come along: Google's POST is a cross-site
+ * navigation, so the browser withholds SameSite=Lax cookies. The single-use
+ * nonce stands in for it — it was issued on the login page, which only the
+ * browser holding the cookie could load. The consent step that follows is a
+ * plain navigation again and reads the cookie as usual.
  *
  * A failed callback ends on the OP's error page (oidc-error/page.tsx), like
  * every error that must not reach a client.
@@ -86,7 +87,5 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   await startSession(transactionId, transaction, subject);
-  const consentUrl = new URL('/consent', config.issuer);
-  consentUrl.searchParams.set('transaction_id', transactionId);
-  return NextResponse.redirect(consentUrl, 302);
+  return NextResponse.redirect(new URL('/consent', config.issuer), 302);
 }

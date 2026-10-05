@@ -30,12 +30,12 @@ test.describe('Pushed Authorization Requests (RFC 9126)', () => {
 
     await page.goto(`${clientBaseURL}/start-par`);
     // The browser only ever carried client_id and request_uri to the OP.
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
 
     await page.getByLabel('Username:').fill('testuser');
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
     await expect(page.locator('strong')).toHaveText(clientId);
     // The consent screen shows the scope that was pushed, not one from the URL.
     await expect(page.locator('li')).toHaveText(['openid', 'profile', 'email']);

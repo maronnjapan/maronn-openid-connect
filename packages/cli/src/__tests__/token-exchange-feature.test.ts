@@ -22,7 +22,6 @@ describe('resolveFeatures with token-exchange', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -42,7 +41,6 @@ describe('resolveFeatures with token-exchange', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 
@@ -72,7 +70,6 @@ describe('resolveFeatures with token-exchange', () => {
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
       googleLogin: false,
-      transactionBinding: false,
     });
   });
 });

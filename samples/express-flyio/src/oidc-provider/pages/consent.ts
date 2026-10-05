@@ -3,9 +3,9 @@
  *
  * GET /consent renders the approve / deny form and POST /consent submits it.
  * Neither handler holds OIDC logic: prepareConsent() and submitConsent() in
- * routes/consent.ts load the transaction, check the User-Agent binding, record
- * the decision, mint the authorization code and build the authorization
- * response URL, and report what happened as an outcome. This file turns each
+ * routes/consent.ts find the transaction through the transaction cookie, check
+ * the csrf_token, record the decision, mint the authorization code and build
+ * the authorization response URL, and report what happened as an outcome. This file turns each
  * outcome into a screen or a redirect. To customize the consent UI, edit this
  * file or the consentPage view in views.ts; routes/consent.ts never has to
  * change. Keep the two button values ('approve' / 'deny') as they are: the
@@ -30,18 +30,12 @@ export function renderConsentPage(c: any, params: ConsentPageParams): Response {
 
 /**
  * Consent Page - GET
- * Displays the consent form for scope authorization.
+ * Displays the consent form for the transaction in this browser's cookie.
  */
 consentPage.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const screen = await prepareConsent(c, transactionId);
+  const screen = await prepareConsent(c);
   if (screen.kind === 'error') return renderErrorPage(c, screen);
   return renderConsentPage(c, {
-    transactionId: screen.transactionId,
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
@@ -55,7 +49,6 @@ consentPage.get('/', async (c) => {
 consentPage.post('/', async (c) => {
   const body = await c.req.parseBody();
   const outcome = await submitConsent(c, {
-    transactionId: String(body['transaction_id'] ?? ''),
     csrfToken: String(body['csrf_token'] ?? ''),
     action: String(body['action'] ?? ''),
   });

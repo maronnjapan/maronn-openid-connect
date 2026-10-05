@@ -1,5 +1,6 @@
 'use server';
 
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import {
   AuthTransactionError,
@@ -10,7 +11,8 @@ import {
 } from '@maronn-openid-connect/core';
 import { errorPagePath } from '../_oidc-provider/http';
 import { config, resolvers, stores } from '../_oidc-provider/provider';
-import { requireTransaction } from '../_oidc-provider/transaction';
+import { TRANSACTION_COOKIE_NAME } from '../_oidc-provider/store';
+import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 
 /**
  * Consent Server Action: records the End-User's decision and sends the browser
@@ -18,13 +20,20 @@ import { requireTransaction } from '../_oidc-provider/transaction';
  * §3.1.2.6).
  */
 export async function consentAction(formData: FormData): Promise<void> {
-  const transactionId = String(formData.get('transaction_id') ?? '');
   const action = String(formData.get('action') ?? '');
-  const transaction = await requireTransaction(transactionId);
+  // First the browser's own statement of where the form was submitted from:
+  // independent of the cookie and the csrf_token below. This action mints the
+  // authorization code, so no decision may come from anywhere else.
+  await requireSameOriginFormPost();
 
-  // The CSRF token proves the decision came from the form this browser was
-  // shown. Checked before any decision is acted on: this step mints the
-  // authorization code.
+  // The transaction cookie says which transaction this browser is in ...
+  const current = await requireTransaction();
+  const transactionId = current.transactionId;
+  const transaction = current.transaction;
+
+  // ... and the CSRF token proves the decision came from the form this browser
+  // was shown for exactly that transaction. Checked before any decision is acted
+  // on: this step mints the authorization code.
   try {
     validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
@@ -35,6 +44,14 @@ export async function consentAction(formData: FormData): Promise<void> {
   if (action === 'deny') {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
+    // The transaction is over; drop the cookie that named it.
+    (await cookies()).delete({
+      name: TRANSACTION_COOKIE_NAME,
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'lax',
+    });
     redirect(authorizationResponseUrl(transaction, {
       error: 'access_denied',
       state: transaction.state,
@@ -61,7 +78,7 @@ export async function consentAction(formData: FormData): Promise<void> {
   // was skipped or has expired.
   const session = await stores.authSessionStore.get(transactionId);
   if (!session) {
-    redirect(`/login?transaction_id=${encodeURIComponent(transactionId)}`);
+    redirect('/login');
   }
 
   const responseParams = await completeAuthTransaction(
@@ -95,6 +112,14 @@ export async function consentAction(formData: FormData): Promise<void> {
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
   await stores.authSessionStore.delete(transactionId);
 
+  // The transaction is over; drop the cookie that named it.
+  (await cookies()).delete({
+    name: TRANSACTION_COOKIE_NAME,
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    sameSite: 'lax',
+  });
   redirect(authorizationResponseUrl(transaction, {
     code: authCodeData.code,
     state: responseParams.state,

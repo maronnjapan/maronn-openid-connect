@@ -31,7 +31,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
 
     await page.getByRole('button', { name: 'Approve' }).click();
 
@@ -42,7 +42,7 @@ test.describe('Consent decision value', () => {
 
   // form.submit() is the shape a script, a bookmarklet or a rebuilt form takes:
   // the browser serializes the form without any submit-button entry, so `action`
-  // never reaches the OP even though transaction_id and csrf_token do.
+  // never reaches the OP even though the transaction cookie and csrf_token do.
   test('should not issue an authorization code when the consent form is submitted without the Approve button', async ({
     page,
     baseURL,
@@ -50,7 +50,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
 
     await page.evaluate(() => {
       document.querySelector('form')?.submit();
@@ -71,7 +71,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
 
     await page.evaluate(() => {
       document.querySelector<HTMLButtonElement>('button[value="approve"]')?.setAttribute(
@@ -94,7 +94,7 @@ test.describe('Consent decision value', () => {
     const issuer = requireBaseUrl(baseURL);
     await page.goto(`${clientBaseURL}/start`);
     await login(page);
-    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent\\?transaction_id=`));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
 
     await page.getByRole('button', { name: 'Deny' }).click();
 

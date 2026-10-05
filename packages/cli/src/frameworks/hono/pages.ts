@@ -189,21 +189,21 @@ import { redirectWithCookies } from './respond.js';
 export const authorizePage = new Hono<{ Variables: Record<string, any> }>();
 
 /**
- * URL of one of the OP's own screens.
+ * URL of one of the OP's own screens. It carries no query: the transaction
+ * travels in the transaction cookie the outcome sets (buildTransactionCookie()
+ * in store.ts), so it never shows up in history, logs or a shared screen.
  *
  * Built on config.issuer, never on the request URL: some runtimes derive the
  * request URL from the Host header, which would let the sender pick the
- * redirect origin and receive transaction_id there (RFC 9700 §2.1: redirect
- * only to trusted URIs). OIDC Discovery 1.0 §3 makes the advertised issuer the
- * source of truth for URLs that point at the OP itself. A subpath issuer
- * contributes only its origin — the screen paths are absolute — so subpath
- * mounting is not supported by the generated routes.
+ * redirect origin (RFC 9700 §2.1: redirect only to trusted URIs). OIDC
+ * Discovery 1.0 §3 makes the advertised issuer the source of truth for URLs
+ * that point at the OP itself. A subpath issuer contributes only its origin —
+ * the screen paths are absolute — so subpath mounting is not supported by the
+ * generated routes.
  */
-function screenUrl(c: any, path: '/login' | '/consent', transactionId: string): string {
+function screenUrl(c: any, path: '/login' | '/consent'): string {
   const config = c.get('config') ?? defaultProviderConfig;
-  const url = new URL(path, config.issuer);
-  url.searchParams.set('transaction_id', transactionId);
-  return url.toString();
+  return new URL(path, config.issuer).toString();
 }
 
 /** Turn the outcome of the authorization request into the HTTP response. */
@@ -219,10 +219,10 @@ function respond(c: any, outcome: AuthorizationOutcome): Response {
     return c.redirect(outcome.location);
   }
   if (outcome.kind === 'login') {
-    return redirectWithCookies(screenUrl(c, '/login', outcome.transactionId), outcome.cookies);
+    return redirectWithCookies(screenUrl(c, '/login'), outcome.cookies);
   }
   if (outcome.kind === 'consent') {
-    return redirectWithCookies(screenUrl(c, '/consent', outcome.transactionId), outcome.cookies);
+    return redirectWithCookies(screenUrl(c, '/consent'), outcome.cookies);
   }
   if (outcome.kind === 'error') {
     // OIDC Core 1.0 §3.1.2.2: an error that cannot be redirected (unknown
@@ -287,7 +287,7 @@ loginPage.post('/google', async (c) => {
     });
   }
   if (outcome.kind === 'error') return renderErrorPage(c, outcome);
-  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
+  return redirectWithCookies(consentScreenUrl(c), outcome.cookies);
 });
 `
     : '';
@@ -295,9 +295,11 @@ loginPage.post('/google', async (c) => {
  * Login screen (screen routing layer).
  *
  * GET /login renders the form and POST /login submits it. Neither handler
- * holds OIDC logic: prepareLogin() and submitLogin() in routes/login.ts load
- * the transaction, check the User-Agent binding, verify the credentials and
- * mint the OP session, and report what happened as an outcome. This file turns
+ * holds OIDC logic: prepareLogin() and submitLogin() in routes/login.ts find
+ * the transaction through the transaction cookie, check the csrf_token, verify
+ * the credentials and mint the OP session, and report what happened as an
+ * outcome. Neither the URL nor the form names the transaction: the form only
+ * embeds csrf_token, which is accepted together with the cookie. This file turns
  * each outcome into a screen or a redirect. To customize the login UI, edit
  * this file or the loginPage view in views.ts; routes/login.ts never has to
  * change.
@@ -326,7 +328,6 @@ export function renderLoginPage(c: any, params: LoginPageParams): Response {
  */
 function loginPageParams(screen: LoginScreen): LoginPageParams {
   return {
-    transactionId: screen.transactionId,
     csrfToken: screen.csrfToken,
     // OIDC Core 1.0 §3.1.2.1: pre-fill the login form with login_hint (RECOMMENDED).
     loginHint: screen.loginHint,${googleSignInParam}
@@ -334,29 +335,23 @@ function loginPageParams(screen: LoginScreen): LoginPageParams {
 }
 
 /**
- * Where a signed-in End-User continues: the consent screen. Built on
- * config.issuer, not the request URL — some runtimes derive the request URL
- * from the Host header, which would let the sender pick where transaction_id
- * lands (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+ * Where a signed-in End-User continues: the consent screen, which finds the
+ * transaction through the same cookie. Built on config.issuer, not the request
+ * URL — some runtimes derive the request URL from the Host header, which would
+ * let the sender pick the redirect origin (OIDC Discovery 1.0 §3 / RFC 9700
+ * §2.1).
  */
-function consentScreenUrl(c: any, transactionId: string): string {
+function consentScreenUrl(c: any): string {
   const config = c.get('config') ?? defaultProviderConfig;
-  const url = new URL('/consent', config.issuer);
-  url.searchParams.set('transaction_id', transactionId);
-  return url.toString();
+  return new URL('/consent', config.issuer).toString();
 }
 
 /**
  * Login Page - GET
- * Displays the login form for user authentication.
+ * Displays the login form for the transaction in this browser's cookie.
  */
 loginPage.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const screen = await prepareLogin(c, transactionId);
+  const screen = await prepareLogin(c);
   if (screen.kind === 'error') return renderErrorPage(c, screen);
   return renderLoginPage(c, loginPageParams(screen));
 });
@@ -368,7 +363,6 @@ loginPage.get('/', async (c) => {
 loginPage.post('/', async (c) => {
   const body = await c.req.parseBody();
   const outcome = await submitLogin(c, {
-    transactionId: String(body['transaction_id'] ?? ''),
     csrfToken: String(body['csrf_token'] ?? ''),
     username: String(body['username'] ?? ''),
     password: String(body['password'] ?? ''),
@@ -390,7 +384,7 @@ loginPage.post('/', async (c) => {
     });
   }
   // Signed in: set the OP session cookie and continue to the consent step.
-  return redirectWithCookies(consentScreenUrl(c, outcome.transactionId), outcome.cookies);
+  return redirectWithCookies(consentScreenUrl(c), outcome.cookies);
 });
 ${googleLoginRoute}`;
 }
@@ -405,9 +399,9 @@ export function consentPageTemplate(markup: ViewMarkup = 'string'): string {
  *
  * GET /consent renders the approve / deny form and POST /consent submits it.
  * Neither handler holds OIDC logic: prepareConsent() and submitConsent() in
- * routes/consent.ts load the transaction, check the User-Agent binding, record
- * the decision, mint the authorization code and build the authorization
- * response URL, and report what happened as an outcome. This file turns each
+ * routes/consent.ts find the transaction through the transaction cookie, check
+ * the csrf_token, record the decision, mint the authorization code and build
+ * the authorization response URL, and report what happened as an outcome. This file turns each
  * outcome into a screen or a redirect. To customize the consent UI, edit this
  * file or the consentPage view in views.ts; routes/consent.ts never has to
  * change. Keep the two button values ('approve' / 'deny') as they are: the
@@ -432,18 +426,12 @@ export function renderConsentPage(c: any, params: ConsentPageParams): Response {
 
 /**
  * Consent Page - GET
- * Displays the consent form for scope authorization.
+ * Displays the consent form for the transaction in this browser's cookie.
  */
 consentPage.get('/', async (c) => {
-  const transactionId = c.req.query('transaction_id');
-  if (!transactionId) {
-    return c.text('Missing transaction_id', 400);
-  }
-
-  const screen = await prepareConsent(c, transactionId);
+  const screen = await prepareConsent(c);
   if (screen.kind === 'error') return renderErrorPage(c, screen);
   return renderConsentPage(c, {
-    transactionId: screen.transactionId,
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
@@ -457,7 +445,6 @@ consentPage.get('/', async (c) => {
 consentPage.post('/', async (c) => {
   const body = await c.req.parseBody();
   const outcome = await submitConsent(c, {
-    transactionId: String(body['transaction_id'] ?? ''),
     csrfToken: String(body['csrf_token'] ?? ''),
     action: String(body['action'] ?? ''),
   });

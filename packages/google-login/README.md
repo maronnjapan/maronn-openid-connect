@@ -23,7 +23,7 @@ Sign in with Google（Google Identity Services、以下 GIS）の redirect mode 
 ```
 RP ──(認可リクエスト)──> OP /authorize        core: 認可リクエスト検証のステップ関数 → createAuthTransaction
                           │
-                          └─> OP /login?transaction_id=…（GET）
+                          └─> OP /login（GET。transaction_id は生成コードの HttpOnly Cookie で届く）
                                 issueGoogleLoginNonce       … nonce → transaction_id をストアに保存（サーバー側）
                                 buildGoogleSignInAttributes … g_id_onload の属性（data-ux_mode="redirect" / data-login_uri / data-nonce）
                                 画面側がその属性で g_id_onload と g_id_signin を描画（HTML / React / Vue）
@@ -310,9 +310,8 @@ googleLoginApp.post('/', async (c) => {
   c.header('Set-Cookie', buildSessionCookie(sessionId));
   await authSessionStore.set(login.transactionId, { subject, authTime, sessionId });
 
-  const consentUrl = new URL('/consent', defaultProviderConfig.issuer);
-  consentUrl.searchParams.set('transaction_id', login.transactionId);
-  return c.redirect(consentUrl.toString());
+  // 同意画面は CLI 生成コードと同じく、トランザクション Cookie からトランザクションを引く
+  return c.redirect(new URL('/consent', defaultProviderConfig.issuer).toString());
 });
 ```
 
@@ -320,9 +319,9 @@ googleLoginApp.post('/', async (c) => {
 
 プロキシ経由でしか Google に到達できない環境では、`createGoogleIdTokenVerifier({ clientOptions: { transporterOptions: { ... } } })` で作った verifier を `handleGoogleLoginRedirect` の `verifier` に渡す（`OAuth2Client` のオプションはそのまま通る）。
 
-### `transaction-binding` を有効にした生成コードとの併用
+### 生成コードのトランザクション Cookie との関係
 
-`--enable transaction-binding` の束縛 Cookie は `SameSite=Lax` で発行される。Google からの POST はクロスサイトの遷移なので、ブラウザは Lax の Cookie をこの POST に付けない。`login_uri` のルートで `validateTransactionBinding` を呼ぶ場合は、束縛 Cookie を `SameSite=None; Secure` で発行し直すか、このルートでは束縛検証の代わりに nonce の単回使用を束縛とみなす、のどちらかを選ぶ。
+CLI の生成コードは、認可トランザクションの ID を HttpOnly Cookie（`__Host-oidc_txn`、`SameSite=Lax`）だけでブラウザに渡す。Google からの POST はクロスサイトの遷移なので、ブラウザは Lax の Cookie をこの POST に付けない。そのため `login_uri` のルートではトランザクションを Cookie ではなく nonce から復元し、nonce の単回使用を束縛とみなす（nonce を発行するログイン画面は、Cookie を持つブラウザにしか表示されない）。続く `/consent` への遷移は通常のナビゲーションなので Cookie が付き、同意画面は Cookie からトランザクションを引く。生成コードが `POST /login`・`POST /consent` に掛ける送信元チェック（`Origin` / `Sec-Fetch-Site`）も、クロスサイトの POST を受ける `login_uri` には掛けない。
 
 ## 検証内容とドキュメントの対応
 

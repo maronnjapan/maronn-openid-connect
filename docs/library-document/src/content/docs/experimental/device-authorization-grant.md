@@ -270,7 +270,7 @@ const redisDeviceStore: DeviceAuthorizationStore = {
 
 そこで `POST /device` の照合成功時に bindingSecret を発行し、**生値はそのブラウザだけが持つ HttpOnly Cookie に、SHA-256 ハッシュのみをレコードに保存**します。`/device/login` と `/device/approve` は Cookie の生値がレコードのハッシュと一致しない限り実行されません。フォージされたクロスサイト POST は被害者ブラウザの Cookie を運べず（`SameSite=Lax`）、そもそも被害者ブラウザはそのレコードの Cookie を持っていないため、遮断されます。ストアが漏洩しても、保存されているのはハッシュだけなので Cookie は再構成できません。
 
-optional 機能の `transaction-binding` が opt-in なのに対し、**このバインディングは常時有効**です。authorize フローの `transaction_id` は通常秘匿されるためバインディングは追加ハードニングで足りますが、device フローの `user_code` は開始者に既知であることが前提のため、これがベースライン要件になります。代償として、curl での手動フロー実行には cookie jar（`-c` / `-b`）が必要です。
+**このバインディングは常時有効**です。authorize フローはトランザクションの ID 自体を HttpOnly Cookie でしか渡さないため、その Cookie がそのままバインディングになりますが、device フローの `user_code` は開始者に既知であることが前提のため、照合成功時に別途秘密値を発行する必要があります。authorize フローと同じく、curl での手動フロー実行には cookie jar（`-c` / `-b`）が必要です。
 
 hidden の `csrf_token` は多層防御として維持していますが、単独の防御としては扱っていません。
 

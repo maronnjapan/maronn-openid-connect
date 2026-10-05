@@ -243,7 +243,7 @@ test.describe('Authorization endpoint browser branches', () => {
 
     await page.goto(`${clientBaseURL}/start?id_token_hint=${encodeURIComponent(testUserIdToken)}`);
 
-    await expect(page).toHaveURL(/\/login\?transaction_id=/);
+    await expect(page).toHaveURL(/\/login$/);
     const stopped = new URL(page.url());
     expect(stopped.pathname).toBe('/login');
     expect(stopped.searchParams.get('code')).toBe(null);
@@ -259,11 +259,11 @@ test.describe('Authorization endpoint browser branches', () => {
 });
 
 async function login(page: Page, username: string): Promise<void> {
-  await expect(page).toHaveURL(/\/login\?transaction_id=/);
+  await expect(page).toHaveURL(/\/login$/);
   await page.getByLabel('Username:').fill(username);
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/consent\?transaction_id=/);
+  await expect(page).toHaveURL(/\/consent$/);
 }
 
 async function loginAndApprove(page: Page, username: string): Promise<void> {

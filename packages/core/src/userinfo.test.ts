@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
-  handleUserInfoRequest,
+  resolveUserInfoAccessToken,
+  validateUserInfoTokenExpiration,
+  validateUserInfoScope,
+  validateUserInfoAudience,
+  resolveUserInfoClaims,
+  filterClaimsByScope,
+  applyRequestedClaims,
   generateUserInfoJwt,
   UserInfoError,
   UserInfoErrorCode,
-  filterClaimsByScope,
   SCOPE_CLAIMS_MAP,
 } from './userinfo.js';
 import type {
@@ -12,7 +17,6 @@ import type {
   AccessTokenResolver,
   UserClaims,
   UserClaimsResolver,
-  UserInfoRequestContext,
   UserInfoResponse,
 } from './userinfo.js';
 import { base64UrlToArrayBuffer, stringToArrayBuffer } from './crypto-utils.js';
@@ -86,731 +90,159 @@ function createFullUserClaims(overrides?: Partial<UserClaims>): UserClaims {
   };
 }
 
-// --- Helper: コンテキスト作成 ---
-function createValidContext(
-  overrides?: Partial<UserInfoRequestContext>
-): UserInfoRequestContext {
-  const tokenInfo = createValidAccessTokenInfo();
-  const userClaims = createFullUserClaims();
-
-  return {
-    accessToken: 'valid-token',
-    accessTokenResolver: createAccessTokenResolver({
-      'valid-token': tokenInfo,
-    }),
-    userClaimsResolver: createUserClaimsResolver({
-      'user-123': userClaims,
-    }),
-    ...overrides,
-  };
+// --- Helper: 同期ステップが投げた例外を取り出す（投げなければ undefined） ---
+function captureError(fn: () => unknown): unknown {
+  try {
+    fn();
+    return undefined;
+  } catch (e) {
+    return e;
+  }
 }
 
-describe('handleUserInfoRequest', () => {
-  describe('Access Token Validation', () => {
-    it('should reject when access token is empty', async () => {
-      const context = createValidContext({ accessToken: '' });
-      await expect(handleUserInfoRequest(context)).rejects.toThrow(
-        UserInfoError
-      );
-      await expect(handleUserInfoRequest(context)).rejects.toThrow(
-        'Access token is required'
-      );
-    });
+// OIDC Core 1.0 Section 5.3.1: the access token is sent to the UserInfo Endpoint as a Bearer token
+describe('resolveUserInfoAccessToken', () => {
+  const accessTokenResolver = createAccessTokenResolver({
+    'valid-token': createValidAccessTokenInfo(),
+  });
 
-    it('should return invalid_token error when access token is not found', async () => {
-      const context = createValidContext({
-        accessToken: 'unknown-token',
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toBeInstanceOf(UserInfoError);
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: UserInfoErrorCode.InvalidToken,
-        statusCode: 401,
-      });
-    });
-
-    it('should return invalid_token error when access token is expired', async () => {
-      const expiredToken = createValidAccessTokenInfo({
-        expiresAt: Math.floor(Date.now() / 1000) - 100,
-      });
-      const context = createValidContext({
-        accessToken: 'expired-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'expired-token': expiredToken,
-        }),
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toBeInstanceOf(UserInfoError);
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: UserInfoErrorCode.InvalidToken,
-        errorDescription: expect.stringContaining('expired'),
-      });
-    });
-
-    it('should return insufficient_scope error when openid scope is missing', async () => {
-      const noOpenidToken = createValidAccessTokenInfo({
-        scope: ['profile', 'email'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-openid-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-openid-token': noOpenidToken,
-        }),
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toBeInstanceOf(UserInfoError);
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: UserInfoErrorCode.InsufficientScope,
-        statusCode: 403,
-      });
+  it('should reject when access token is empty', async () => {
+    await expect(resolveUserInfoAccessToken('', accessTokenResolver)).rejects.toThrow(
+      UserInfoError
+    );
+    await expect(resolveUserInfoAccessToken('', accessTokenResolver)).rejects.toMatchObject({
+      error: UserInfoErrorCode.InvalidToken,
+      errorDescription: 'Access token is required',
     });
   });
 
-  // RFC 9068 §4: the resource server (UserInfo) must validate that the access token's
-  // aud includes an identifier for itself. The generated OP always supplies expectedAudience
-  // (the UserInfo endpoint URL) so validation is on by default for both JWT and opaque tokens.
-  describe('Access Token Audience Validation (RFC 9068 §4)', () => {
-    const USERINFO_AUD = 'https://op.example.com/userinfo';
-
-    function contextWithAudience(audience: string[] | undefined, expectedAudience?: string) {
-      const tokenInfo = createValidAccessTokenInfo({ audience });
-      return createValidContext({
-        accessToken: 'aud-token',
-        accessTokenResolver: createAccessTokenResolver({ 'aud-token': tokenInfo }),
-        expectedAudience,
-      });
-    }
-
-    it('should accept a token whose audience includes the UserInfo endpoint', async () => {
-      const context = contextWithAudience([USERINFO_AUD, 'https://api.example.com'], USERINFO_AUD);
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
+  // RFC 6750 Section 3.1: an unknown access token is invalid_token (HTTP 401)
+  it('should return invalid_token error when access token is not found', async () => {
+    await expect(
+      resolveUserInfoAccessToken('unknown-token', accessTokenResolver)
+    ).rejects.toBeInstanceOf(UserInfoError);
+    await expect(
+      resolveUserInfoAccessToken('unknown-token', accessTokenResolver)
+    ).rejects.toMatchObject({
+      error: UserInfoErrorCode.InvalidToken,
+      errorDescription: 'Access token is invalid',
+      statusCode: 401,
     });
+  });
+});
 
-    it('should reject with invalid_token when audience excludes the UserInfo endpoint', async () => {
-      const context = contextWithAudience(['https://api.example.com'], USERINFO_AUD);
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: UserInfoErrorCode.InvalidToken,
-        statusCode: 401,
-      });
+// RFC 6750 Section 3.1: an expired access token is invalid_token (HTTP 401)
+describe('validateUserInfoTokenExpiration', () => {
+  // When now is omitted, expiresAt is compared with the current Unix time in seconds
+  it('should accept an access token that has not expired', () => {
+    const tokenInfo = createValidAccessTokenInfo({
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
     });
+    expect(() => validateUserInfoTokenExpiration(tokenInfo)).not.toThrow();
+  });
 
-    it('should skip audience validation only when expectedAudience is not provided', async () => {
-      // The check needs the resource server's own identifier to compare against; when the
-      // caller supplies none there is nothing to validate. The generated OP always passes it.
-      const context = contextWithAudience(['https://api.example.com'], undefined);
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
+  it('should return invalid_token error when access token is expired', () => {
+    const expiredToken = createValidAccessTokenInfo({
+      expiresAt: Math.floor(Date.now() / 1000) - 100,
     });
+    const error = captureError(() => validateUserInfoTokenExpiration(expiredToken));
+    expect(error).toBeInstanceOf(UserInfoError);
+    expect(error).toMatchObject({
+      error: UserInfoErrorCode.InvalidToken,
+      errorDescription: 'The access token expired',
+    });
+  });
+});
 
-    it('should reject with invalid_token when the token has no stored audience', async () => {
-      // No lenient opaque escape hatch: this OP stores aud (incl. the UserInfo endpoint) for
-      // both JWT and opaque access tokens, so a token missing aud is not one this OP issued.
-      const context = contextWithAudience(undefined, USERINFO_AUD);
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: UserInfoErrorCode.InvalidToken,
-        statusCode: 401,
-      });
+// OIDC Core 1.0 Section 5.3.1: the access token must be obtained from an OpenID Connect
+// Authentication Request (openid scope). RFC 6750 Section 3.1: insufficient_scope is HTTP 403.
+describe('validateUserInfoScope', () => {
+  it('should return insufficient_scope error when openid scope is missing', () => {
+    const noOpenidToken = createValidAccessTokenInfo({
+      scope: ['profile', 'email'],
+    });
+    const error = captureError(() => validateUserInfoScope(noOpenidToken));
+    expect(error).toBeInstanceOf(UserInfoError);
+    expect(error).toMatchObject({
+      error: UserInfoErrorCode.InsufficientScope,
+      errorDescription: 'The openid scope is required',
+      statusCode: 403,
+    });
+  });
+});
+
+// RFC 9068 §4: the resource server (UserInfo) must validate that the access token's
+// aud includes an identifier for itself. The generated OP always passes expectedAudience
+// (the UserInfo endpoint URL) so validation is on by default for both JWT and opaque tokens.
+describe('validateUserInfoAudience', () => {
+  const USERINFO_AUD = 'https://op.example.com/userinfo';
+
+  it('should accept a token whose audience includes the UserInfo endpoint', () => {
+    const tokenInfo = createValidAccessTokenInfo({
+      audience: [USERINFO_AUD, 'https://api.example.com'],
+    });
+    expect(() => validateUserInfoAudience(tokenInfo, USERINFO_AUD)).not.toThrow();
+  });
+
+  it('should reject with invalid_token when audience excludes the UserInfo endpoint', () => {
+    const tokenInfo = createValidAccessTokenInfo({
+      audience: ['https://api.example.com'],
+    });
+    const error = captureError(() => validateUserInfoAudience(tokenInfo, USERINFO_AUD));
+    expect(error).toBeInstanceOf(UserInfoError);
+    expect(error).toMatchObject({
+      error: UserInfoErrorCode.InvalidToken,
+      errorDescription: 'The access token is not intended for the UserInfo endpoint',
+      statusCode: 401,
     });
   });
 
-  describe('User Claims Resolution', () => {
-    it('should return invalid_token error when user is not found', async () => {
-      const context = createValidContext({
-        userClaimsResolver: createUserClaimsResolver({}),
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toBeInstanceOf(UserInfoError);
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: UserInfoErrorCode.InvalidToken,
-      });
+  it('should skip audience validation only when expectedAudience is not provided', () => {
+    // The check needs the resource server's own identifier to compare against; when the
+    // caller supplies none there is nothing to validate. The generated OP always passes it.
+    const tokenInfo = createValidAccessTokenInfo({
+      audience: ['https://api.example.com'],
+    });
+    expect(() => validateUserInfoAudience(tokenInfo, undefined)).not.toThrow();
+  });
+
+  it('should reject with invalid_token when the token has no stored audience', () => {
+    // No lenient opaque escape hatch: this OP stores aud (incl. the UserInfo endpoint) for
+    // both JWT and opaque access tokens, so a token missing aud is not one this OP issued.
+    const tokenInfo = createValidAccessTokenInfo({ audience: undefined });
+    const error = captureError(() => validateUserInfoAudience(tokenInfo, USERINFO_AUD));
+    expect(error).toBeInstanceOf(UserInfoError);
+    expect(error).toMatchObject({
+      error: UserInfoErrorCode.InvalidToken,
+      errorDescription: 'The access token is not intended for the UserInfo endpoint',
+      statusCode: 401,
+    });
+  });
+});
+
+describe('resolveUserInfoClaims', () => {
+  it('should return invalid_token error when user is not found', async () => {
+    const tokenInfo = createValidAccessTokenInfo();
+    const userClaimsResolver = createUserClaimsResolver({});
+    await expect(
+      resolveUserInfoClaims(tokenInfo, userClaimsResolver)
+    ).rejects.toBeInstanceOf(UserInfoError);
+    await expect(
+      resolveUserInfoClaims(tokenInfo, userClaimsResolver)
+    ).rejects.toMatchObject({
+      error: UserInfoErrorCode.InvalidToken,
+      errorDescription: 'User not found for the given access token',
     });
   });
 
-  describe('Required Claims', () => {
-    // OIDC Core 1.0 Section 5.3: sub claim is REQUIRED
-    it('should always include sub claim', async () => {
-      const context = createValidContext();
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
+  // OIDC Core 1.0 Section 5.3.2: sub in the UserInfo Response MUST exactly match sub in the ID Token
+  it('should return sub matching the access token subject', async () => {
+    const tokenInfo = createValidAccessTokenInfo({ sub: 'user-abc' });
+    const userClaimsResolver = createUserClaimsResolver({
+      'user-abc': createFullUserClaims({ sub: 'user-abc' }),
     });
-
-    // OIDC Core 1.0 Section 5.3.4: sub MUST match ID Token
-    it('should return sub matching the access token subject', async () => {
-      const tokenInfo = createValidAccessTokenInfo({ sub: 'user-abc' });
-      const userClaims = createFullUserClaims({ sub: 'user-abc' });
-      const context = createValidContext({
-        accessToken: 'token-abc',
-        accessTokenResolver: createAccessTokenResolver({
-          'token-abc': tokenInfo,
-        }),
-        userClaimsResolver: createUserClaimsResolver({
-          'user-abc': userClaims,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-abc');
-    });
-  });
-
-  describe('Scope-based Claims Filtering', () => {
-    // OIDC Core 1.0 Section 5.4: profile scope
-    it('should include profile claims when profile scope is granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'profile'],
-      });
-      const context = createValidContext({
-        accessToken: 'profile-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'profile-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.name).toBe('Jane Doe');
-      expect(response.family_name).toBe('Doe');
-      expect(response.given_name).toBe('Jane');
-      expect(response.middle_name).toBe('Marie');
-      expect(response.nickname).toBe('JD');
-      expect(response.preferred_username).toBe('j.doe');
-      expect(response.profile).toBe('https://example.com/janedoe');
-      expect(response.picture).toBe('https://example.com/janedoe/me.jpg');
-      expect(response.website).toBe('https://janedoe.example.com');
-      expect(response.gender).toBe('female');
-      expect(response.birthdate).toBe('1990-10-31');
-      expect(response.zoneinfo).toBe('America/Los_Angeles');
-      expect(response.locale).toBe('en-US');
-      expect(response.updated_at).toBe(1311280970);
-    });
-
-    // OIDC Core 1.0 Section 5.4: email scope
-    it('should include email claims when email scope is granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'email'],
-      });
-      const context = createValidContext({
-        accessToken: 'email-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'email-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.email).toBe('janedoe@example.com');
-      expect(response.email_verified).toBe(true);
-    });
-
-    // OIDC Core 1.0 Section 5.4: address scope
-    it('should include address claim when address scope is granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'address'],
-      });
-      const context = createValidContext({
-        accessToken: 'address-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'address-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.address).toEqual({
-        formatted: '123 Main St\nAnytown, CA 12345\nUSA',
-        street_address: '123 Main St',
-        locality: 'Anytown',
-        region: 'CA',
-        postal_code: '12345',
-        country: 'USA',
-      });
-    });
-
-    // OIDC Core 1.0 Section 5.4: phone scope
-    it('should include phone claims when phone scope is granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'phone'],
-      });
-      const context = createValidContext({
-        accessToken: 'phone-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'phone-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.phone_number).toBe('+1 (555) 555-5555');
-      expect(response.phone_number_verified).toBe(true);
-    });
-
-    it('should not include profile claims when profile scope is not granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid'],
-      });
-      const context = createValidContext({
-        accessToken: 'openid-only-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'openid-only-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
-      expect(response.name).toBeUndefined();
-      expect(response.email).toBeUndefined();
-      expect(response.address).toBeUndefined();
-      expect(response.phone_number).toBeUndefined();
-    });
-
-    it('should not include email claims when email scope is not granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'profile'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-email-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-email-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.email).toBeUndefined();
-      expect(response.email_verified).toBeUndefined();
-    });
-
-    it('should not include address claim when address scope is not granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'profile'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-address-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-address-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.address).toBeUndefined();
-    });
-
-    it('should not include phone claims when phone scope is not granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'profile'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-phone-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-phone-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.phone_number).toBeUndefined();
-      expect(response.phone_number_verified).toBeUndefined();
-    });
-
-    // All scopes combined
-    it('should include all claims when all scopes are granted', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'profile', 'email', 'address', 'phone'],
-      });
-      const context = createValidContext({
-        accessToken: 'all-scopes-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'all-scopes-token': tokenInfo,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
-      expect(response.name).toBe('Jane Doe');
-      expect(response.email).toBe('janedoe@example.com');
-      expect(response.address).toBeDefined();
-      expect(response.phone_number).toBe('+1 (555) 555-5555');
-    });
-
-    // Claims not set on user should not appear even if scope is granted
-    it('should omit claims that user does not have even when scope is granted', async () => {
-      const sparseUser: UserClaims = {
-        sub: 'user-sparse',
-        name: 'Sparse User',
-        // no other claims
-      };
-      const tokenInfo = createValidAccessTokenInfo({
-        sub: 'user-sparse',
-        scope: ['openid', 'profile', 'email', 'phone'],
-      });
-      const context = createValidContext({
-        accessToken: 'sparse-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'sparse-token': tokenInfo,
-        }),
-        userClaimsResolver: createUserClaimsResolver({
-          'user-sparse': sparseUser,
-        }),
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-sparse');
-      expect(response.name).toBe('Sparse User');
-      expect(response.family_name).toBeUndefined();
-      expect(response.email).toBeUndefined();
-      expect(response.phone_number).toBeUndefined();
-    });
-  });
-
-  describe('Claims Request Parameter', () => {
-    // OIDC Core 1.0 Section 5.5: claims request parameter
-    it('should include requested claims from claims parameter', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid'],
-      });
-      const context = createValidContext({
-        accessToken: 'claims-param-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'claims-param-token': tokenInfo,
-        }),
-        claimsParameter: {
-          userinfo: {
-            email: { essential: true },
-            given_name: null,
-          },
-        },
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
-      expect(response.email).toBe('janedoe@example.com');
-      expect(response.given_name).toBe('Jane');
-    });
-
-    it('should include claims from both scope and claims parameter', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid', 'profile'],
-      });
-      const context = createValidContext({
-        accessToken: 'both-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'both-token': tokenInfo,
-        }),
-        claimsParameter: {
-          userinfo: {
-            email: { essential: true },
-          },
-        },
-      });
-      const response = await handleUserInfoRequest(context);
-      // From profile scope
-      expect(response.name).toBe('Jane Doe');
-      // From claims parameter
-      expect(response.email).toBe('janedoe@example.com');
-    });
-
-    it('should not error when essential claim is not available', async () => {
-      const sparseUser: UserClaims = {
-        sub: 'user-no-email',
-      };
-      const tokenInfo = createValidAccessTokenInfo({
-        sub: 'user-no-email',
-        scope: ['openid'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-essential-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-essential-token': tokenInfo,
-        }),
-        userClaimsResolver: createUserClaimsResolver({
-          'user-no-email': sparseUser,
-        }),
-        claimsParameter: {
-          userinfo: {
-            email: { essential: true },
-          },
-        },
-      });
-      // OIDC Core: Not returning essential claim is not an error
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-no-email');
-      expect(response.email).toBeUndefined();
-    });
-
-    it('should ignore claims parameter when userinfo key is absent', async () => {
-      const tokenInfo = createValidAccessTokenInfo({
-        scope: ['openid'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-userinfo-key-token',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-userinfo-key-token': tokenInfo,
-        }),
-        claimsParameter: {},
-      });
-      const response = await handleUserInfoRequest(context);
-      expect(response.sub).toBe('user-123');
-      expect(response.email).toBeUndefined();
-    });
-
-    // OIDC Core 1.0 Section 5.5.1: Individual Claims Requests
-    // `value` / `values` request the claim to be returned with specific value(s).
-    describe('value / values matching (OIDC Core Section 5.5.1)', () => {
-      it('should return email when requested value matches the actual value', async () => {
-        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-        const context = createValidContext({
-          accessToken: 'value-match-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'value-match-token': tokenInfo,
-          }),
-          claimsParameter: {
-            userinfo: {
-              email: { value: 'janedoe@example.com' },
-            },
-          },
-        });
-        const response = await handleUserInfoRequest(context);
-        expect(response.email).toBe('janedoe@example.com');
-      });
-
-      it('should omit email without error when requested value does not match', async () => {
-        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-        const context = createValidContext({
-          accessToken: 'value-mismatch-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'value-mismatch-token': tokenInfo,
-          }),
-          claimsParameter: {
-            userinfo: {
-              email: { value: 'someone-else@example.com' },
-            },
-          },
-        });
-        // OIDC Core Section 5.5.1: not returning a requested claim is not an error
-        const response = await handleUserInfoRequest(context);
-        expect(response.sub).toBe('user-123');
-        expect(response.email).toBeUndefined();
-      });
-
-      it('should return claim when the actual value is included in requested values', async () => {
-        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-        const context = createValidContext({
-          accessToken: 'values-include-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'values-include-token': tokenInfo,
-          }),
-          claimsParameter: {
-            userinfo: {
-              email: { values: ['a@example.com', 'janedoe@example.com'] },
-            },
-          },
-        });
-        const response = await handleUserInfoRequest(context);
-        expect(response.email).toBe('janedoe@example.com');
-      });
-
-      it('should omit claim without error when the actual value is not included in requested values', async () => {
-        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-        const context = createValidContext({
-          accessToken: 'values-exclude-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'values-exclude-token': tokenInfo,
-          }),
-          claimsParameter: {
-            userinfo: {
-              email: { values: ['a@example.com', 'b@example.com'] },
-            },
-          },
-        });
-        // OIDC Core Section 5.5.1: not returning a requested claim is not an error
-        const response = await handleUserInfoRequest(context);
-        expect(response.sub).toBe('user-123');
-        expect(response.email).toBeUndefined();
-      });
-
-      it('should omit essential claim without error when it is not available', async () => {
-        const sparseUser: UserClaims = { sub: 'user-no-email' };
-        const tokenInfo = createValidAccessTokenInfo({
-          sub: 'user-no-email',
-          scope: ['openid'],
-        });
-        const context = createValidContext({
-          accessToken: 'essential-no-value-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'essential-no-value-token': tokenInfo,
-          }),
-          userClaimsResolver: createUserClaimsResolver({
-            'user-no-email': sparseUser,
-          }),
-          claimsParameter: {
-            userinfo: {
-              // essential without value constraint
-              email: { essential: true },
-            },
-          },
-        });
-        // OIDC Core Section 5.5.1: MUST NOT error even for essential claims
-        const response = await handleUserInfoRequest(context);
-        expect(response.sub).toBe('user-no-email');
-        expect(response.email).toBeUndefined();
-      });
-
-      it('should return claim as before when the request entry is null (no constraint)', async () => {
-        const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-        const context = createValidContext({
-          accessToken: 'null-entry-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'null-entry-token': tokenInfo,
-          }),
-          claimsParameter: {
-            userinfo: {
-              email: null,
-            },
-          },
-        });
-        const response = await handleUserInfoRequest(context);
-        expect(response.email).toBe('janedoe@example.com');
-      });
-
-      it('should not let value constraints affect scope-based claims', async () => {
-        const tokenInfo = createValidAccessTokenInfo({
-          scope: ['openid', 'email'],
-        });
-        const context = createValidContext({
-          accessToken: 'scope-not-affected-token',
-          accessTokenResolver: createAccessTokenResolver({
-            'scope-not-affected-token': tokenInfo,
-          }),
-          claimsParameter: {
-            userinfo: {
-              // value constraint on given_name only; email comes from scope
-              given_name: { value: 'Nonexistent' },
-            },
-          },
-        });
-        const response = await handleUserInfoRequest(context);
-        // email is returned from the email scope, unaffected by given_name constraint
-        expect(response.email).toBe('janedoe@example.com');
-        // given_name omitted because value did not match
-        expect(response.given_name).toBeUndefined();
-      });
-
-      // OIDC Core Section 5.5.1: value / values are JSON values, so object
-      // claims like `address` must be compared structurally (deep equality).
-      describe('object claim matching (e.g. address)', () => {
-        const matchingAddress = {
-          formatted: '123 Main St\nAnytown, CA 12345\nUSA',
-          street_address: '123 Main St',
-          locality: 'Anytown',
-          region: 'CA',
-          postal_code: '12345',
-          country: 'USA',
-        };
-
-        it('should return address when requested value deeply equals the actual value', async () => {
-          const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-          const context = createValidContext({
-            accessToken: 'address-value-match-token',
-            accessTokenResolver: createAccessTokenResolver({
-              'address-value-match-token': tokenInfo,
-            }),
-            claimsParameter: {
-              userinfo: {
-                // key order intentionally differs to verify structural compare
-                address: {
-                  value: {
-                    country: 'USA',
-                    region: 'CA',
-                    postal_code: '12345',
-                    locality: 'Anytown',
-                    street_address: '123 Main St',
-                    formatted: '123 Main St\nAnytown, CA 12345\nUSA',
-                  },
-                },
-              },
-            },
-          });
-          const response = await handleUserInfoRequest(context);
-          expect(response.address).toEqual(matchingAddress);
-        });
-
-        it('should omit address without error when requested value does not deeply equal', async () => {
-          const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-          const context = createValidContext({
-            accessToken: 'address-value-mismatch-token',
-            accessTokenResolver: createAccessTokenResolver({
-              'address-value-mismatch-token': tokenInfo,
-            }),
-            claimsParameter: {
-              userinfo: {
-                address: {
-                  value: { ...matchingAddress, locality: 'Othertown' },
-                },
-              },
-            },
-          });
-          const response = await handleUserInfoRequest(context);
-          expect(response.sub).toBe('user-123');
-          expect(response.address).toBeUndefined();
-        });
-
-        it('should return address when actual value is included in requested values', async () => {
-          const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-          const context = createValidContext({
-            accessToken: 'address-values-include-token',
-            accessTokenResolver: createAccessTokenResolver({
-              'address-values-include-token': tokenInfo,
-            }),
-            claimsParameter: {
-              userinfo: {
-                address: {
-                  values: [
-                    { ...matchingAddress, locality: 'Othertown' },
-                    matchingAddress,
-                  ],
-                },
-              },
-            },
-          });
-          const response = await handleUserInfoRequest(context);
-          expect(response.address).toEqual(matchingAddress);
-        });
-
-        it('should omit address without error when actual value is not included in requested values', async () => {
-          const tokenInfo = createValidAccessTokenInfo({ scope: ['openid'] });
-          const context = createValidContext({
-            accessToken: 'address-values-exclude-token',
-            accessTokenResolver: createAccessTokenResolver({
-              'address-values-exclude-token': tokenInfo,
-            }),
-            claimsParameter: {
-              userinfo: {
-                address: {
-                  values: [
-                    { ...matchingAddress, locality: 'Othertown' },
-                    { ...matchingAddress, country: 'JP' },
-                  ],
-                },
-              },
-            },
-          });
-          const response = await handleUserInfoRequest(context);
-          expect(response.sub).toBe('user-123');
-          expect(response.address).toBeUndefined();
-        });
-      });
-    });
-  });
-
-  describe('Error Responses', () => {
-    it('should return 401 status for invalid_token errors', async () => {
-      const context = createValidContext({
-        accessToken: 'unknown-token',
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({ statusCode: 401 });
-    });
-
-    it('should return 403 status for insufficient_scope errors', async () => {
-      const noOpenidToken = createValidAccessTokenInfo({
-        scope: ['profile'],
-      });
-      const context = createValidContext({
-        accessToken: 'no-openid',
-        accessTokenResolver: createAccessTokenResolver({
-          'no-openid': noOpenidToken,
-        }),
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({ statusCode: 403 });
-    });
-
-    it('should include error code in UserInfoError', async () => {
-      const context = createValidContext({
-        accessToken: 'bad-token',
-      });
-      await expect(handleUserInfoRequest(context)).rejects.toMatchObject({
-        error: expect.anything(),
-        errorDescription: expect.anything(),
-      });
-    });
+    const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
+    expect(userClaims.sub).toBe('user-abc');
   });
 });
 
@@ -863,6 +295,373 @@ describe('filterClaimsByScope', () => {
     ]);
     expect(result.sub).toBe('sparse');
     expect(Object.keys(result)).toEqual(['sub']);
+  });
+
+  describe('Required Claims', () => {
+    // OIDC Core 1.0 Section 5.3.2: sub claim MUST always be returned
+    it('should always include sub claim', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'profile', 'email']);
+      expect(result.sub).toBe('user-123');
+    });
+  });
+
+  describe('Scope-based Claims Filtering', () => {
+    // OIDC Core 1.0 Section 5.4: profile scope
+    it('should include profile claims when profile scope is granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'profile']);
+      expect(result.name).toBe('Jane Doe');
+      expect(result.family_name).toBe('Doe');
+      expect(result.given_name).toBe('Jane');
+      expect(result.middle_name).toBe('Marie');
+      expect(result.nickname).toBe('JD');
+      expect(result.preferred_username).toBe('j.doe');
+      expect(result.profile).toBe('https://example.com/janedoe');
+      expect(result.picture).toBe('https://example.com/janedoe/me.jpg');
+      expect(result.website).toBe('https://janedoe.example.com');
+      expect(result.gender).toBe('female');
+      expect(result.birthdate).toBe('1990-10-31');
+      expect(result.zoneinfo).toBe('America/Los_Angeles');
+      expect(result.locale).toBe('en-US');
+      expect(result.updated_at).toBe(1311280970);
+    });
+
+    // OIDC Core 1.0 Section 5.4: email scope
+    it('should include email claims when email scope is granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'email']);
+      expect(result.email).toBe('janedoe@example.com');
+      expect(result.email_verified).toBe(true);
+    });
+
+    // OIDC Core 1.0 Section 5.4: address scope
+    it('should include address claim when address scope is granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'address']);
+      expect(result.address).toEqual({
+        formatted: '123 Main St\nAnytown, CA 12345\nUSA',
+        street_address: '123 Main St',
+        locality: 'Anytown',
+        region: 'CA',
+        postal_code: '12345',
+        country: 'USA',
+      });
+    });
+
+    // OIDC Core 1.0 Section 5.4: phone scope
+    it('should include phone claims when phone scope is granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'phone']);
+      expect(result.phone_number).toBe('+1 (555) 555-5555');
+      expect(result.phone_number_verified).toBe(true);
+    });
+
+    it('should not include profile claims when profile scope is not granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid']);
+      expect(result.sub).toBe('user-123');
+      expect(result.name).toBeUndefined();
+      expect(result.email).toBeUndefined();
+      expect(result.address).toBeUndefined();
+      expect(result.phone_number).toBeUndefined();
+    });
+
+    it('should not include email claims when email scope is not granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'profile']);
+      expect(result.email).toBeUndefined();
+      expect(result.email_verified).toBeUndefined();
+    });
+
+    it('should not include address claim when address scope is not granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'profile']);
+      expect(result.address).toBeUndefined();
+    });
+
+    it('should not include phone claims when phone scope is not granted', () => {
+      const result = filterClaimsByScope(fullClaims, ['openid', 'profile']);
+      expect(result.phone_number).toBeUndefined();
+      expect(result.phone_number_verified).toBeUndefined();
+    });
+
+    // All scopes combined
+    it('should include all claims when all scopes are granted', () => {
+      const result = filterClaimsByScope(fullClaims, [
+        'openid',
+        'profile',
+        'email',
+        'address',
+        'phone',
+      ]);
+      expect(result.sub).toBe('user-123');
+      expect(result.name).toBe('Jane Doe');
+      expect(result.email).toBe('janedoe@example.com');
+      expect(result.address).toEqual({
+        formatted: '123 Main St\nAnytown, CA 12345\nUSA',
+        street_address: '123 Main St',
+        locality: 'Anytown',
+        region: 'CA',
+        postal_code: '12345',
+        country: 'USA',
+      });
+      expect(result.phone_number).toBe('+1 (555) 555-5555');
+    });
+
+    // Claims not set on user should not appear even if scope is granted
+    it('should omit claims that user does not have even when scope is granted', () => {
+      const sparseUser: UserClaims = {
+        sub: 'user-sparse',
+        name: 'Sparse User',
+        // no other claims
+      };
+      const result = filterClaimsByScope(sparseUser, [
+        'openid',
+        'profile',
+        'email',
+        'phone',
+      ]);
+      expect(result.sub).toBe('user-sparse');
+      expect(result.name).toBe('Sparse User');
+      expect(result.family_name).toBeUndefined();
+      expect(result.email).toBeUndefined();
+      expect(result.phone_number).toBeUndefined();
+    });
+  });
+});
+
+// OIDC Core 1.0 Section 5.5: claims request parameter
+// Tests that do not chain filterClaimsByScope pass { sub } as the scoped response,
+// which is what filterClaimsByScope returns when only the openid scope is granted.
+describe('applyRequestedClaims', () => {
+  const fullClaims = createFullUserClaims();
+
+  // The claim is added even though the granted scope (openid only) does not cover it
+  it('should include requested claims from claims parameter', () => {
+    const scopedResponse = filterClaimsByScope(fullClaims, ['openid']);
+    const result = applyRequestedClaims(scopedResponse, fullClaims, {
+      userinfo: {
+        email: { essential: true },
+        given_name: null,
+      },
+    });
+    expect(result.sub).toBe('user-123');
+    expect(result.email).toBe('janedoe@example.com');
+    expect(result.given_name).toBe('Jane');
+  });
+
+  it('should include claims from both scope and claims parameter', () => {
+    const scopedResponse = filterClaimsByScope(fullClaims, ['openid', 'profile']);
+    const result = applyRequestedClaims(scopedResponse, fullClaims, {
+      userinfo: {
+        email: { essential: true },
+      },
+    });
+    // From profile scope
+    expect(result.name).toBe('Jane Doe');
+    // From claims parameter
+    expect(result.email).toBe('janedoe@example.com');
+  });
+
+  it('should not error when essential claim is not available', () => {
+    const sparseUser: UserClaims = {
+      sub: 'user-no-email',
+    };
+    // OIDC Core: Not returning essential claim is not an error
+    const result = applyRequestedClaims({ sub: 'user-no-email' }, sparseUser, {
+      userinfo: {
+        email: { essential: true },
+      },
+    });
+    expect(result.sub).toBe('user-no-email');
+    expect(result.email).toBeUndefined();
+  });
+
+  it('should ignore claims parameter when userinfo key is absent', () => {
+    const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {});
+    expect(result.sub).toBe('user-123');
+    expect(result.email).toBeUndefined();
+  });
+
+  // sub is already fixed by the access token subject, so a claims.userinfo request for sub
+  // must not replace it. userClaims.sub differs from the scoped response on purpose so that
+  // an overwrite would be visible.
+  it('should not overwrite sub even when sub is requested in claims parameter', () => {
+    const result = applyRequestedClaims(
+      { sub: 'user-123' },
+      createFullUserClaims({ sub: 'user-other' }),
+      { userinfo: { sub: null } }
+    );
+    expect(result).toEqual({ sub: 'user-123' });
+  });
+
+  // OIDC Core 1.0 Section 5.5.1: Individual Claims Requests
+  // `value` / `values` request the claim to be returned with specific value(s).
+  describe('value / values matching (OIDC Core Section 5.5.1)', () => {
+    it('should return email when requested value matches the actual value', () => {
+      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+        userinfo: {
+          email: { value: 'janedoe@example.com' },
+        },
+      });
+      expect(result.email).toBe('janedoe@example.com');
+    });
+
+    it('should omit email without error when requested value does not match', () => {
+      // OIDC Core Section 5.5.1: not returning a requested claim is not an error
+      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+        userinfo: {
+          email: { value: 'someone-else@example.com' },
+        },
+      });
+      expect(result.sub).toBe('user-123');
+      expect(result.email).toBeUndefined();
+    });
+
+    it('should return claim when the actual value is included in requested values', () => {
+      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+        userinfo: {
+          email: { values: ['a@example.com', 'janedoe@example.com'] },
+        },
+      });
+      expect(result.email).toBe('janedoe@example.com');
+    });
+
+    it('should omit claim without error when the actual value is not included in requested values', () => {
+      // OIDC Core Section 5.5.1: not returning a requested claim is not an error
+      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+        userinfo: {
+          email: { values: ['a@example.com', 'b@example.com'] },
+        },
+      });
+      expect(result.sub).toBe('user-123');
+      expect(result.email).toBeUndefined();
+    });
+
+    it('should omit essential claim without error when it is not available', () => {
+      const sparseUser: UserClaims = { sub: 'user-no-email' };
+      // OIDC Core Section 5.5.1: MUST NOT error even for essential claims
+      const result = applyRequestedClaims({ sub: 'user-no-email' }, sparseUser, {
+        userinfo: {
+          // essential without value constraint
+          email: { essential: true },
+        },
+      });
+      expect(result.sub).toBe('user-no-email');
+      expect(result.email).toBeUndefined();
+    });
+
+    it('should return claim when the request entry is null (no constraint)', () => {
+      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+        userinfo: {
+          email: null,
+        },
+      });
+      expect(result.email).toBe('janedoe@example.com');
+    });
+
+    it('should not let value constraints affect scope-based claims', () => {
+      const scopedResponse = filterClaimsByScope(fullClaims, ['openid', 'email']);
+      const result = applyRequestedClaims(scopedResponse, fullClaims, {
+        userinfo: {
+          // value constraint on given_name only; email comes from scope
+          given_name: { value: 'Nonexistent' },
+        },
+      });
+      // email is returned from the email scope, unaffected by given_name constraint
+      expect(result.email).toBe('janedoe@example.com');
+      // given_name omitted because value did not match
+      expect(result.given_name).toBeUndefined();
+    });
+
+    // OIDC Core Section 5.5.1: value / values are JSON values, so object
+    // claims like `address` must be compared structurally (deep equality).
+    describe('object claim matching (e.g. address)', () => {
+      const matchingAddress = {
+        formatted: '123 Main St\nAnytown, CA 12345\nUSA',
+        street_address: '123 Main St',
+        locality: 'Anytown',
+        region: 'CA',
+        postal_code: '12345',
+        country: 'USA',
+      };
+
+      it('should return address when requested value deeply equals the actual value', () => {
+        const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+          userinfo: {
+            // key order intentionally differs to verify structural compare
+            address: {
+              value: {
+                country: 'USA',
+                region: 'CA',
+                postal_code: '12345',
+                locality: 'Anytown',
+                street_address: '123 Main St',
+                formatted: '123 Main St\nAnytown, CA 12345\nUSA',
+              },
+            },
+          },
+        });
+        expect(result.address).toEqual(matchingAddress);
+      });
+
+      it('should omit address without error when requested value does not deeply equal', () => {
+        const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+          userinfo: {
+            address: {
+              value: { ...matchingAddress, locality: 'Othertown' },
+            },
+          },
+        });
+        expect(result.sub).toBe('user-123');
+        expect(result.address).toBeUndefined();
+      });
+
+      it('should return address when actual value is included in requested values', () => {
+        const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+          userinfo: {
+            address: {
+              values: [
+                { ...matchingAddress, locality: 'Othertown' },
+                matchingAddress,
+              ],
+            },
+          },
+        });
+        expect(result.address).toEqual(matchingAddress);
+      });
+
+      it('should omit address without error when actual value is not included in requested values', () => {
+        const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
+          userinfo: {
+            address: {
+              values: [
+                { ...matchingAddress, locality: 'Othertown' },
+                { ...matchingAddress, country: 'JP' },
+              ],
+            },
+          },
+        });
+        expect(result.sub).toBe('user-123');
+        expect(result.address).toBeUndefined();
+      });
+    });
+  });
+});
+
+// OIDC Core 1.0 Section 5.3.3: UserInfo errors follow RFC 6750 Section 3.1
+// (invalid_token is HTTP 401, insufficient_scope is HTTP 403)
+describe('UserInfoError', () => {
+  it('should return 401 status for invalid_token errors', () => {
+    const error = new UserInfoError(UserInfoErrorCode.InvalidToken, 'Access token is invalid');
+    expect(error.statusCode).toBe(401);
+  });
+
+  it('should return 403 status for insufficient_scope errors', () => {
+    const error = new UserInfoError(
+      UserInfoErrorCode.InsufficientScope,
+      'The openid scope is required'
+    );
+    expect(error.statusCode).toBe(403);
+  });
+
+  it('should include error code and error description', () => {
+    const error = new UserInfoError(UserInfoErrorCode.InvalidToken, 'Access token is invalid');
+    expect(error.error).toBe('invalid_token');
+    expect(error.errorDescription).toBe('Access token is invalid');
   });
 });
 

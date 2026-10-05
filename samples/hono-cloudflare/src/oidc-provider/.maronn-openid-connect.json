@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.8.0",
+  "cliVersion": "0.9.0",
   "framework": "hono",
   "features": {
     "pkce": true,

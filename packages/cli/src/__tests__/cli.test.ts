@@ -83,35 +83,16 @@ describe('CLI', () => {
       vi.restoreAllMocks();
     });
 
-    // Hono's screens moved from .ts to .tsx (hono/jsx). A views.ts or
-    // pages/*.ts left by an older CLI would shadow the .tsx module, so
-    // regenerating lists them.
-    it('should warn about the .ts screens an older CLI left when regenerating hono', () => {
-      const outputDir = join(testDir, 'stale-views');
-      mkdirSync(join(outputDir, 'pages'), { recursive: true });
-      writeFileSync(join(outputDir, 'views.ts'), 'export const old = true;\n');
-      writeFileSync(join(outputDir, 'pages/login.ts'), 'export const old = true;\n');
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Hono's screens are hono/jsx (views.tsx, pages/*.tsx), which only compile
+    // with JSX enabled in the user's tsconfig.json.
+    it('should print the JSX compiler options after generating hono', () => {
+      const outputDir = join(testDir, 'hono-jsx-notes');
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       run(['generate', 'hono', '-o', outputDir]);
-      expect(existsSync(join(outputDir, 'views.tsx'))).toBe(true);
-      expect(existsSync(join(outputDir, 'pages/login.tsx'))).toBe(true);
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      const warning = String(warnSpy.mock.calls[0]?.[0]);
-      expect(warning).toContain('they shadow the new .tsx files');
-      expect(warning).toContain('\n  views.ts\n');
-      expect(warning).toContain('\n  pages/login.ts\n');
-      expect(warning).not.toContain('pages/consent.ts');
-      vi.restoreAllMocks();
-    });
-
-    it('should not warn about views.ts when generating express', () => {
-      const outputDir = join(testDir, 'express-views');
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      run(['generate', 'express', '-o', outputDir]);
-      expect(existsSync(join(outputDir, 'views.ts'))).toBe(true);
-      expect(warnSpy).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        '\nThe screens (views.tsx, pages/*.tsx) use hono/jsx. Enable JSX in tsconfig.json:\n' +
+          '  "jsx": "react-jsx", "jsxImportSource": "hono/jsx"',
+      );
       vi.restoreAllMocks();
     });
 

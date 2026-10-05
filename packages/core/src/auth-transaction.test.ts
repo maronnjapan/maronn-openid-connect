@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  checkPromptNone,
   computeTransactionBindingHash,
   createAuthTransaction,
   AuthTransactionError,
@@ -16,11 +15,7 @@ import { sha256 } from './crypto-utils.js';
 import type {
   AuthTransaction,
   AuthTransactionStore,
-  ConsentResolver,
-  SessionInfo,
-  SessionResolver,
 } from './auth-transaction.js';
-import { AuthorizationError, AuthorizationErrorCode } from './authorization-request.js';
 import type { ValidatedAuthorizationRequest } from './authorization-request.js';
 
 function createValidatedRequest(
@@ -46,21 +41,6 @@ function createTransaction(overrides?: Partial<AuthTransaction>): AuthTransactio
   };
 }
 
-function createSessionResolver(session: SessionInfo | null): SessionResolver {
-  return {
-    resolve: async () => session,
-  };
-}
-
-function createConsentResolver(value: boolean | ((subject: string, clientId: string, scopes: string[]) => boolean)): ConsentResolver {
-  return {
-    hasConsent: async (subject, clientId, scopes) => {
-      if (typeof value === 'function') return value(subject, clientId, scopes);
-      return value;
-    },
-  };
-}
-
 class InMemoryStore implements AuthTransactionStore {
   private map = new Map<string, { value: AuthTransaction; expiresAt: number }>();
 
@@ -82,238 +62,6 @@ class InMemoryStore implements AuthTransactionStore {
     this.map.delete(key);
   }
 }
-
-describe('checkPromptNone', () => {
-  describe('Session check', () => {
-    it('should throw login_required when session is missing', async () => {
-      const transaction = createTransaction();
-      const sessionResolver = createSessionResolver(null);
-      await expect(
-        checkPromptNone(transaction, sessionResolver, new Request('https://op.example.com/authorize')),
-      ).rejects.toBeInstanceOf(AuthorizationError);
-    });
-
-    it('should attach login_required code to AuthorizationError', async () => {
-      const transaction = createTransaction();
-      const sessionResolver = createSessionResolver(null);
-      try {
-        await checkPromptNone(transaction, sessionResolver, new Request('https://op.example.com/authorize'));
-        throw new Error('expected throw');
-      } catch (e) {
-        expect(e).toBeInstanceOf(AuthorizationError);
-        expect((e as AuthorizationError).error).toBe(AuthorizationErrorCode.LoginRequired);
-      }
-    });
-
-    it('should return session when session exists and no consentResolver is provided', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-      const result = await checkPromptNone(transaction, sessionResolver, new Request('https://op.example.com/authorize'));
-      expect(result).toEqual(session);
-    });
-  });
-
-  describe('Consent check', () => {
-    // OIDC Core 1.0 Section 3.1.2.1: prompt=none requires both authentication AND consent
-    it('should throw consent_required when consentResolver returns false', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-      const consentResolver = createConsentResolver(false);
-
-      try {
-        await checkPromptNone(
-          transaction,
-          sessionResolver,
-          new Request('https://op.example.com/authorize'),
-          consentResolver,
-        );
-        throw new Error('expected throw');
-      } catch (e) {
-        expect(e).toBeInstanceOf(AuthorizationError);
-        expect((e as AuthorizationError).error).toBe(AuthorizationErrorCode.ConsentRequired);
-      }
-    });
-
-    it('should return session when both session and consent are valid', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-      const consentResolver = createConsentResolver(true);
-
-      const result = await checkPromptNone(
-        transaction,
-        sessionResolver,
-        new Request('https://op.example.com/authorize'),
-        consentResolver,
-      );
-      expect(result).toEqual(session);
-    });
-
-    it('should pass scopes split from transaction.scope to consentResolver', async () => {
-      const transaction = createTransaction({ scope: 'openid email profile' });
-      const session: SessionInfo = { subject: 'user-x', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-
-      let receivedScopes: string[] | undefined;
-      const consentResolver: ConsentResolver = {
-        hasConsent: async (_subject, _clientId, scopes) => {
-          receivedScopes = scopes;
-          return true;
-        },
-      };
-
-      await checkPromptNone(transaction, sessionResolver, new Request('https://op.example.com/authorize'), consentResolver);
-      expect(receivedScopes).toEqual(['openid', 'email', 'profile']);
-    });
-
-    it('should pass session subject and transaction clientId to consentResolver', async () => {
-      const transaction = createTransaction({ clientId: 'client-xyz' });
-      const session: SessionInfo = { subject: 'user-abc', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-
-      let receivedSubject: string | undefined;
-      let receivedClientId: string | undefined;
-      const consentResolver: ConsentResolver = {
-        hasConsent: async (subject, clientId) => {
-          receivedSubject = subject;
-          receivedClientId = clientId;
-          return true;
-        },
-      };
-
-      await checkPromptNone(transaction, sessionResolver, new Request('https://op.example.com/authorize'), consentResolver);
-      expect(receivedSubject).toBe('user-abc');
-      expect(receivedClientId).toBe('client-xyz');
-    });
-
-    it('should not check consent when consentResolver is not provided', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-
-      const result = await checkPromptNone(transaction, sessionResolver, new Request('https://op.example.com/authorize'));
-      expect(result).toEqual(session);
-    });
-  });
-
-  // OIDC Core 1.0 Section 3.1.2.1 — id_token_hint:
-  // If the End-User identified by the ID Token is logged in, the Authorization Server returns
-  // a positive response; otherwise it SHOULD return login_required.
-  describe('id_token_hint', () => {
-    it('should return session when verifiedHintSubject matches session subject', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-
-      const result = await checkPromptNone(
-        transaction,
-        sessionResolver,
-        new Request('https://op.example.com/authorize'),
-        undefined,
-        { verifiedHintSubject: 'user-1' },
-      );
-      expect(result).toEqual(session);
-    });
-
-    it('should throw login_required when verifiedHintSubject differs from session subject', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-
-      try {
-        await checkPromptNone(
-          transaction,
-          sessionResolver,
-          new Request('https://op.example.com/authorize'),
-          undefined,
-          { verifiedHintSubject: 'user-2' },
-        );
-        throw new Error('expected throw');
-      } catch (e) {
-        expect(e).toBeInstanceOf(AuthorizationError);
-        expect((e as AuthorizationError).error).toBe(AuthorizationErrorCode.LoginRequired);
-      }
-    });
-
-    it('should ignore hint when verifiedHintSubject is undefined', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-
-      const result = await checkPromptNone(
-        transaction,
-        sessionResolver,
-        new Request('https://op.example.com/authorize'),
-        undefined,
-        {},
-      );
-      expect(result).toEqual(session);
-    });
-
-    it('should still throw login_required when no session even if hint is provided', async () => {
-      const transaction = createTransaction();
-      const sessionResolver = createSessionResolver(null);
-
-      try {
-        await checkPromptNone(
-          transaction,
-          sessionResolver,
-          new Request('https://op.example.com/authorize'),
-          undefined,
-          { verifiedHintSubject: 'user-1' },
-        );
-        throw new Error('expected throw');
-      } catch (e) {
-        expect(e).toBeInstanceOf(AuthorizationError);
-        expect((e as AuthorizationError).error).toBe(AuthorizationErrorCode.LoginRequired);
-      }
-    });
-
-    it('should prefer login_required over consent_required when hint mismatches', async () => {
-      // hint subject 不一致 = 別ユーザがログイン中。consent は別ユーザの記録を見ても無意味なので、
-      // login_required を先に返す（OIDC Core 3.1.2.1）。
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-      const consentResolver = createConsentResolver(false);
-
-      try {
-        await checkPromptNone(
-          transaction,
-          sessionResolver,
-          new Request('https://op.example.com/authorize'),
-          consentResolver,
-          { verifiedHintSubject: 'user-2' },
-        );
-        throw new Error('expected throw');
-      } catch (e) {
-        expect((e as AuthorizationError).error).toBe(AuthorizationErrorCode.LoginRequired);
-      }
-    });
-
-    it('should still return consent_required when hint matches but consent is missing', async () => {
-      const transaction = createTransaction();
-      const session: SessionInfo = { subject: 'user-1', authTime: 1000 };
-      const sessionResolver = createSessionResolver(session);
-      const consentResolver = createConsentResolver(false);
-
-      try {
-        await checkPromptNone(
-          transaction,
-          sessionResolver,
-          new Request('https://op.example.com/authorize'),
-          consentResolver,
-          { verifiedHintSubject: 'user-1' },
-        );
-        throw new Error('expected throw');
-      } catch (e) {
-        expect((e as AuthorizationError).error).toBe(AuthorizationErrorCode.ConsentRequired);
-      }
-    });
-  });
-});
 
 // Quick smoke tests for existing functions that previously had no dedicated test file.
 describe('createAuthTransaction', () => {
@@ -351,7 +99,7 @@ describe('createAuthTransaction', () => {
   it('should set createdAt and expiresAt with provided ttl', () => {
     const validated = createValidatedRequest();
     const before = Date.now();
-    const txn = createAuthTransaction(validated, 'csrf', 1000);
+    const txn = createAuthTransaction(validated, 'csrf', { ttlMs: 1000 });
     expect(txn.createdAt).toBeGreaterThanOrEqual(before);
     expect(txn.expiresAt - txn.createdAt).toBe(1000);
   });
@@ -408,12 +156,6 @@ describe('createAuthTransaction', () => {
       expect(txn.expiresAt - txn.createdAt).toBe(1000);
     });
 
-    it('should keep the numeric ttlMs argument working for backward compatibility', () => {
-      const validated = createValidatedRequest();
-      const txn = createAuthTransaction(validated, 'csrf', 2000);
-      expect(txn.expiresAt - txn.createdAt).toBe(2000);
-      expect(txn.bindingHash).toBeUndefined();
-    });
   });
 });
 
@@ -426,7 +168,7 @@ describe('getAuthTransaction', () => {
   it('should throw when transaction is expired', async () => {
     const store = new InMemoryStore();
     const validated = createValidatedRequest();
-    const txn = createAuthTransaction(validated, 'csrf', 1000);
+    const txn = createAuthTransaction(validated, 'csrf', { ttlMs: 1000 });
     txn.expiresAt = Date.now() - 1;
     await store.put('auth_txn:abc', txn, 60);
     try {
@@ -498,13 +240,15 @@ describe('validateTransactionBinding', () => {
     });
   });
 
-  // Backward compatibility: transactions created before binding was introduced
-  // (or by a generated OP the user stripped the binding out of) carry no
-  // bindingHash and must keep working.
-  it('should skip binding validation when the transaction has no bindingHash', async () => {
+  // A transaction without a bindingHash cannot prove which User-Agent started it,
+  // so it is rejected even when a binding secret is presented.
+  it('should reject a transaction that has no bindingHash', async () => {
     const txn = createTransaction();
     expect(txn.bindingHash).toBeUndefined();
-    await expect(validateTransactionBinding(txn, undefined)).resolves.toBeUndefined();
+    await expect(validateTransactionBinding(txn, 'binding-secret')).rejects.toMatchObject({
+      name: 'AuthTransactionError',
+      code: AuthTransactionErrorCode.InvalidTransactionBinding,
+    });
   });
 
   it('should report 400 as the HTTP status code for a binding failure', async () => {

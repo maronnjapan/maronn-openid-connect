@@ -21,7 +21,7 @@ Sign in with Google（Google Identity Services、以下 GIS）の redirect mode 
 ## 全体の流れ
 
 ```
-RP ──(認可リクエスト)──> OP /authorize        core: validateAuthorizationRequest → createAuthTransaction
+RP ──(認可リクエスト)──> OP /authorize        core: 認可リクエスト検証のステップ関数 → createAuthTransaction
                           │
                           └─> OP /login?transaction_id=…（GET）
                                 issueGoogleLoginNonce       … nonce → transaction_id をストアに保存（サーバー側）

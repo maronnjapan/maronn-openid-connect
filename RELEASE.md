@@ -50,7 +50,7 @@ README に書く。安定性のシグナルは core が担う。
 
 ### core のインスタンスを 1 つに保つのは peerDependencies の役割
 
-experimental は core の内部寄りの関数（`validateAuthorizationRequest`、
+experimental は core の内部寄りの関数（`resolveClientForAuthorization`、
 `resolveAuthenticatedTokenClient` など）を直接使い、core の `AuthorizationError` / `TokenError` を
 `instanceof` で判定する。CLI 生成コードは同じ catch 節で core 由来と experimental 由来のエラーを
 両方扱うため、**アプリ内に core のインスタンスが 1 つしか存在しないこと**が動作の前提になっている。

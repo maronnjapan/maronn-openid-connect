@@ -38,9 +38,6 @@ describe('Web-standard generated validation pipelines', () => {
       expect(tokenRoute.includes('validateRefreshTokenUnused')).toBe(true);
       expect(tokenRoute.includes('validateRefreshTokenScope')).toBe(true);
       expect(tokenRoute.includes('buildValidatedRefreshTokenRequest')).toBe(true);
-      expect(tokenRoute.includes('await validateTokenRequest(')).toBe(false);
-      expect(tokenRoute.includes('await validateAuthorizationCodeGrant(')).toBe(false);
-      expect(tokenRoute.includes('await validateRefreshTokenGrant(')).toBe(false);
     });
   }
 });
@@ -703,12 +700,6 @@ describe('NextJsGenerator', () => {
       expect(fileContent('oidc-error/page.tsx')).toContain(
         'export default async function OidcErrorPage({ searchParams }: OidcErrorPageProps) {',
       );
-    });
-
-    // The Route Handler answers non-redirectable errors itself, so the shared
-    // page layer's redirect-path hook is not generated.
-    it('should leave authorizationErrorRedirectPath out of the generated config', () => {
-      expect(fileContent('_oidc-provider/config.ts')).not.toContain('authorizationErrorRedirectPath');
     });
   });
 

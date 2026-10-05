@@ -370,11 +370,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain(`from '${CORE_PKG}'`);
     });
 
-    it('should not call the composed validateAuthorizationRequest in authorize route', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).not.toContain('await validateAuthorizationRequest(');
-    });
-
     it('should allow the authorize route type guard to pass non-PKCE requests to core validation', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
       const content = file?.content ?? '';
@@ -425,13 +420,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain(`from '${CORE_PKG}'`);
     });
 
-    it('should not call composed token validation functions in token route', () => {
-      const file = files.find((f) => f.path === 'routes/token.ts');
-      expect(file?.content).not.toContain('await validateTokenRequest(');
-      expect(file?.content).not.toContain('await validateAuthorizationCodeGrant(');
-      expect(file?.content).not.toContain('await validateRefreshTokenGrant(');
-    });
-
     it('should import every token response step function in token route', () => {
       // The generated route builds the response from each core step function so
       // users can add ID Token claims or swap an issuer (project concept: customizable).
@@ -443,11 +431,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain('buildIdTokenPayload');
       expect(content).toContain('generateIdToken');
       expect(content).toContain(`from '${CORE_PKG}'`);
-    });
-
-    it('should not call the composed generateTokenResponse in token route', () => {
-      const file = files.find((f) => f.path === 'routes/token.ts');
-      expect(file?.content).not.toContain('await generateTokenResponse(');
     });
 
     // RFC 9068 §2.2 / RFC 7662 §2.2: the token identifier core mints for the
@@ -481,11 +464,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain(`from '${CORE_PKG}'`);
     });
 
-    it('should not call the composed handleUserInfoRequest in userinfo route', () => {
-      const file = files.find((f) => f.path === 'routes/userinfo.ts');
-      expect(file?.content).not.toContain('await handleUserInfoRequest(');
-    });
-
     it('should import every introspection step function in introspection route', () => {
       // The generated route calls each core step function individually so users
       // can delete or insert validation steps (project concept: customizable).
@@ -498,11 +476,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain('buildIntrospectionResponse');
       expect(content).toContain('INACTIVE_INTROSPECTION_RESPONSE');
       expect(content).toContain(`from '${CORE_PKG}'`);
-    });
-
-    it('should not call the composed handleIntrospectionRequest in introspection route', () => {
-      const file = files.find((f) => f.path === 'routes/introspection.ts');
-      expect(file?.content).not.toContain('await handleIntrospectionRequest(');
     });
 
     it('should reject a public client caller in the introspection route', () => {
@@ -540,11 +513,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain('revokeResolvedToken');
       expect(content).toContain('revokeGrantAccessTokens');
       expect(content).toContain(`from '${CORE_PKG}'`);
-    });
-
-    it('should not call the composed handleRevocationRequest in revocation route', () => {
-      const file = files.find((f) => f.path === 'routes/revocation.ts');
-      expect(file?.content).not.toContain('await handleRevocationRequest(');
     });
 
     it('should normalize form media types before reading a UserInfo POST body', () => {
@@ -1281,13 +1249,12 @@ describe('HonoGenerator', () => {
       );
     });
 
-    it('should authenticate client via core authenticateClient helper', () => {
+    it('should authenticate client via core client authentication steps', () => {
       const file = files.find((f) => f.path === 'routes/token.ts');
-      expect(file?.content).toContain('authenticateClient');
+      expect(file?.content).toContain('extractClientCredentials({');
       expect(file?.content).toContain('authorizationHeader: authorization');
       // The inline helpers should not be regenerated: core owns this logic now.
       expect(file?.content).not.toContain('function parseBasicAuth');
-      expect(file?.content).not.toContain('async function authenticateClient');
     });
 
     it('should set WWW-Authenticate header for invalid_client errors in token route', () => {
@@ -1530,8 +1497,8 @@ describe('HonoGenerator', () => {
       expect(content).toMatch(/refreshTokenStore\.set[\s\S]+azp:/);
     });
 
-    // P0 / OIDC Core 1.0 §5.5: forward parsed claims request to generateTokenResponse
-    it('should pass authorization_code claims into generateTokenResponse', () => {
+    // P0 / OIDC Core 1.0 §5.5: forward parsed claims request to resolveAcrAmr
+    it('should pass authorization_code claims into resolveAcrAmr', () => {
       const tokenFile = files.find((f) => f.path === 'routes/token.ts');
       const content = tokenFile?.content ?? '';
       expect(content).toMatch(/claims:[^,]*validatedRequest\.claims/);
@@ -1541,7 +1508,7 @@ describe('HonoGenerator', () => {
     it('should persist resolver-resolved acr/amr from authorization_code grant', () => {
       const tokenFile = files.find((f) => f.path === 'routes/token.ts');
       const content = tokenFile?.content ?? '';
-      // generateTokenResponse の戻り値から resolvedAcr / resolvedAmr を取り出している
+      // resolveAcrAmr の戻り値から resolvedAcr / resolvedAmr を取り出している
       expect(content).toContain('resolvedAcr');
       expect(content).toContain('resolvedAmr');
       // refreshTokenStore.set 時に refresh_token grant 以外（= authorization_code）では resolved 値を使う
@@ -1645,11 +1612,6 @@ describe('HonoGenerator', () => {
       );
     });
 
-    it('should not call the composed checkPromptNone in authorize route', () => {
-      const authorizeFile = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(authorizeFile?.content).not.toContain('await checkPromptNone(');
-    });
-
     // OIDC Core 1.0 §3.1.2.1: the id_token_hint requirement is not conditioned on
     // prompt. Verification (signature / iss / aud / exp / iat) must run once for
     // every prompt path, before the prompt=none branch, so an interactive request
@@ -1697,11 +1659,6 @@ describe('HonoGenerator', () => {
       expect(content).toContain(
         'verifyClientSecret(tokenClient, presentedCredentials.clientSecret)',
       );
-    });
-
-    it('should not call the composed authenticateClient in token route', () => {
-      const file = files.find((f) => f.path === 'routes/token.ts');
-      expect(file?.content).not.toContain('await authenticateClient(');
     });
   });
 
@@ -1836,13 +1793,10 @@ describe('HonoGenerator', () => {
       const authorizePage = files.find((f) => f.path === 'pages/authorize.ts')?.content ?? '';
       expect(authorizePage).toContain("import { renderAuthorizationErrorPage } from './errors.js';");
       expect(authorizePage).toContain('return renderAuthorizationErrorPage(c, outcome);');
-      // The delivery (inline HTML 400, or 303 to authorizationErrorRedirectPath)
-      // is the error page module's decision.
+      // The delivery (the error view as an HTML 400) is the error page module's
+      // decision.
       const errorPage = files.find((f) => f.path === 'pages/errors.tsx')?.content ?? '';
       expect(errorPage).toContain('export function renderAuthorizationErrorPage(');
-      expect(errorPage).toContain(
-        "errorPagePath && errorPagePath.startsWith('/') && !errorPagePath.startsWith('//')",
-      );
       expect(errorPage).toContain('statusCode: 400,');
     });
 
@@ -1986,12 +1940,6 @@ describe('HonoGenerator', () => {
   describe('prompt parameter handling', () => {
     const files = generator.generate(options);
 
-    it('should import checkPromptNone in authorize route', () => {
-      const file = files.find((f) => f.path === 'routes/authorize.ts');
-      expect(file?.content).toContain('checkPromptNone');
-      expect(file?.content).toContain(`from '${CORE_PKG}'`);
-    });
-
     it('should import authCodeStore in authorize route for prompt=none code issuance', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
       expect(file?.content).toContain('authCodeStore');
@@ -2120,7 +2068,7 @@ describe('HonoGenerator', () => {
     it('should pass AuthorizationError errorDescription on prompt=none redirect', () => {
       const file = files.find((f) => f.path === 'routes/authorize.ts');
       const content = file?.content ?? '';
-      // checkPromptNone throws AuthorizationError; promptError.errorDescription must reach the URL.
+      // The prompt=none steps throw AuthorizationError; promptError.errorDescription must reach the URL.
       const promptCatchStart = content.indexOf('promptError instanceof AuthorizationError');
       expect(promptCatchStart).toBeGreaterThan(-1);
       const promptCatchEnd = content.indexOf('return', promptCatchStart + 100);

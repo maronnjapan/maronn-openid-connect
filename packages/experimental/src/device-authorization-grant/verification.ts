@@ -111,8 +111,7 @@ export async function issueVerificationBinding(
  * から保存値の前方一致を積み上げても原像計算が必要になり成立しない。
  *
  * バインディング未発行（`bindingHash === null`）のレコードは、まだ `POST /device` を
- * 通っていないということなので拒否する（transaction-binding の後方互換スキップとは
- * 異なり、ここでは常時必須）。
+ * 通っていないということなので拒否する。
  *
  * @throws {DeviceVerificationError} 403
  */

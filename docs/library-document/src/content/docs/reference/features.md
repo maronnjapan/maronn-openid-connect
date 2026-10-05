@@ -122,7 +122,6 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `authorizationCodeTtl` | `300` | 認可コード有効期間（秒） |
 | `allowNonPkceAuthorizationCodeFlow` | `false` | confidential client の非 PKCE フローを許可（conformance 互換モード） |
 | `allowUnsignedRequestObject` | `false` | 署名なし（`alg: none`）Request Object の互換受理 |
-| `authorizationErrorRedirectPath` | 未設定 | 非リダイレクト型認可エラーを OP 内部のエラーページへ 303 リダイレクトするパス |
 
 ## Feature Toggles
 

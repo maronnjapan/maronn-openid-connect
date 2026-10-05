@@ -149,9 +149,8 @@ export interface AuthTransaction {
   /**
    * トランザクションを開始した User-Agent に配る秘密値のハッシュ（SHA-256, base64url）。
    * Cookie 値そのものを保存しないことで、store 漏洩だけでは横取りできないようにする。
-   * 未設定のトランザクションは束縛検証をスキップする（後方互換）。
-   *
-   * 詳細は {@link validateTransactionBinding}。
+   * User-Agent への束縛を使わない構成では設定しない。設定のないトランザクションは
+   * {@link validateTransactionBinding} が拒否する。
    */
   bindingHash?: string;
 }
@@ -220,7 +219,7 @@ export interface CreateAuthTransactionOptions {
   ttlMs?: number;
   /**
    * User-Agent に配る秘密値のハッシュ。{@link computeTransactionBindingHash} で
-   * 生成した値を渡す。省略時は束縛検証を行わないトランザクションになる。
+   * 生成した値を渡す。User-Agent への束縛を使わない構成では省略する。
    */
   bindingHash?: string;
 }
@@ -230,17 +229,14 @@ export interface CreateAuthTransactionOptions {
  *
  * @param validatedRequest バリデーション済みの認可リクエスト
  * @param csrfToken CSRFトークン
- * @param ttlMsOrOptions TTL（ミリ秒）またはオプション。デフォルト TTL: 600,000（10分）
- *                       数値を渡す旧シグネチャは後方互換のため維持している。
+ * @param options TTL（デフォルト: 600,000 ミリ秒 = 10分）と User-Agent 束縛のハッシュ
  * @returns AuthTransaction
  */
 export function createAuthTransaction(
   validatedRequest: ValidatedAuthorizationRequest,
   csrfToken: string,
-  ttlMsOrOptions: number | CreateAuthTransactionOptions = DEFAULT_TTL_MS
+  options: CreateAuthTransactionOptions = {}
 ): AuthTransaction {
-  const options: CreateAuthTransactionOptions =
-    typeof ttlMsOrOptions === 'number' ? { ttlMs: ttlMsOrOptions } : ttlMsOrOptions;
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const now = Date.now();
 
@@ -388,22 +384,18 @@ export async function computeTransactionBindingHash(bindingSecret: string): Prom
  * 比較は {@link timingSafeEqual} を使い、ハッシュの先頭一致長が応答時間に漏れない
  * ようにする。
  *
- * 後方互換: `bindingHash` を持たないトランザクション（束縛導入前に発行されたもの、
- * または生成コードから束縛を外した構成）は検証をスキップする。
+ * `bindingHash` を持たないトランザクションは、どの User-Agent が開始したかを確認できない
+ * ため拒否する。束縛を使わない構成ではこの関数を呼ばないこと。
  *
  * @param transaction Auth Transaction
  * @param presentedBindingSecret Cookie から取り出した秘密値。未提示なら undefined
- * @throws {AuthTransactionError} 束縛が一致しない、または未提示の場合
+ * @throws {AuthTransactionError} 束縛が一致しない、未提示、またはトランザクションに束縛が無い場合
  */
 export async function validateTransactionBinding(
   transaction: AuthTransaction,
   presentedBindingSecret: string | undefined,
 ): Promise<void> {
-  if (transaction.bindingHash === undefined) {
-    return;
-  }
-
-  if (!presentedBindingSecret) {
+  if (transaction.bindingHash === undefined || !presentedBindingSecret) {
     throw new AuthTransactionError(
       AuthTransactionErrorCode.InvalidTransactionBinding,
       'This authorization transaction was not started by this browser.',
@@ -456,21 +448,6 @@ export async function handleLoginFailure(
     failedAttempts: transaction.failedAttempts,
     maxAttempts,
   };
-}
-
-/**
- * checkPromptNone のオプション
- */
-export interface PromptNoneOptions {
-  /**
-   * id_token_hint を呼び出し側で事前に検証して取り出した subject。
-   * 渡された場合、解決したセッションの subject と一致しなければ login_required。
-   * 未指定なら hint 検証は行わない。
-   *
-   * Why: ID Token の署名・iss・aud・exp 検証は呼び出し側責務とすることで、
-   * core を JWT 検証実装から疎結合に保つ。core は受け取った subject を信頼する。
-   */
-  verifiedHintSubject?: string;
 }
 
 /**
@@ -567,40 +544,6 @@ export async function validatePromptNoneConsent(
       transaction.state,
     );
   }
-}
-
-/**
- * prompt=none 時のサイレント認証チェック
- * OIDC Core 1.0 Section 3.1.2.1
- *
- * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
- * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
- * 削除したり独自処理を差し込んだりできる。
- *
- * セッションなし → login_required をスロー（{@link resolvePromptNoneSession}）
- * hint 不一致 → login_required をスロー（{@link validatePromptNoneIdTokenHint}）
- * コンセント無し → consent_required をスロー（{@link validatePromptNoneConsent}）
- * いずれも通過すればセッション情報を返却する。
- *
- * @param transaction Auth Transaction
- * @param sessionResolver セッションを解決するリゾルバ
- * @param request 元の HTTP リクエスト（cookie/JWT などからセッション解決に使用）
- * @param consentResolver コンセント済みかを判定するリゾルバ（任意）
- * @param options id_token_hint などの追加オプション
- * @returns SessionInfo
- * @throws {AuthorizationError} login_required または consent_required
- */
-export async function checkPromptNone(
-  transaction: AuthTransaction,
-  sessionResolver: SessionResolver,
-  request: Request,
-  consentResolver?: ConsentResolver,
-  options?: PromptNoneOptions,
-): Promise<SessionInfo> {
-  const session = await resolvePromptNoneSession(transaction, sessionResolver, request);
-  validatePromptNoneIdTokenHint(transaction, session, options?.verifiedHintSubject);
-  await validatePromptNoneConsent(transaction, session, consentResolver);
-  return session;
 }
 
 /**

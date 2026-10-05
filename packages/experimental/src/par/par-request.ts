@@ -3,7 +3,7 @@
  *
  * Experimental: このモジュールの API は安定していない。破壊的変更があり得る。
  *
- * PAR エンドポイントの処理。core と同じく「合成関数＋ステップ関数」の二層構成とし、
+ * PAR エンドポイントの処理。「合成関数＋ステップ関数」の二層構成とし、
  * CLI 生成コードはステップ関数を順に呼び出して処理を組み立てられるようにする。
  */
 import {
@@ -13,15 +13,24 @@ import {
   TokenErrorCode,
   extractClientCredentials,
   generateRandomString,
+  parseClaimsRequestParameter,
+  rejectUnsupportedRequestParams,
   resolveAuthenticatedTokenClient,
+  resolveAuthorizationRedirectUri,
+  resolveClientForAuthorization,
+  resolveMaxAge,
   sanitizeErrorDescription,
-  validateAuthorizationRequest,
+  validateAuthorizationCodePkce,
+  validateAuthorizationScope,
   validateClientAuthMethod,
+  validateDisplayParameter,
+  validatePromptParameter,
+  validateRegisteredRedirectUris,
+  validateResponseType,
   verifyClientSecret,
   type AuthorizationRequestParams,
   type ClientResolver,
   type TokenClientResolver,
-  type ValidateAuthorizationRequestOptions,
 } from '@maronn-openid-connect/core';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
 import type {
@@ -78,6 +87,20 @@ export interface PushedAuthorizationResponse {
   expiresIn: number;
 }
 
+/** {@link validatePushedAuthorizationParams} のオプション。 */
+export interface PushedAuthorizationValidationOptions {
+  /**
+   * OIDF Basic OP static-client conformance 互換。true かつ confidential client が
+   * PKCE を完全に省略した場合だけ省略を許容する。認可エンドポイントと同じ値を渡すこと。
+   */
+  allowNonPkceAuthorizationCodeFlow?: boolean;
+  /**
+   * `claims` パラメータ（OIDC Core 1.0 §5.5）を `JSON.parse` する前に課す最大長。
+   * 未指定なら core の `DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH`。
+   */
+  maxClaimsParameterLength?: number;
+}
+
 /** PAR エンドポイント処理のコンテキスト。 */
 export interface PushedAuthorizationRequestContext {
   /** フォームボディのパラメータ（application/x-www-form-urlencoded） */
@@ -87,8 +110,8 @@ export interface PushedAuthorizationRequestContext {
   /** クライアント解決。認可リクエスト検証とクライアント認証の両方に使う */
   clientResolver: ClientResolver & TokenClientResolver;
   store: PushedAuthorizationRequestStore;
-  /** core の認可リクエスト検証へそのまま渡すオプション */
-  validationOptions: ValidateAuthorizationRequestOptions;
+  /** {@link validatePushedAuthorizationParams} へ渡すオプション */
+  validationOptions: PushedAuthorizationValidationOptions;
   /** request_uri の有効期間（秒）。既定 60、許容範囲 5〜600 */
   expiresInSeconds?: number;
   /** 現在時刻。テストと決定的な期限計算のために注入できる */
@@ -232,6 +255,12 @@ async function runClientAuthentication(context: {
  * RFC 9126 §2.1: "The authorization server ... MUST validate the request as it would
  * an authorization request sent to the authorization endpoint."
  *
+ * 認可エンドポイントの生成コードと同じ順序で core のステップ関数を呼び、パラメータを
+ * 拒否するものだけを実行する（scope の絞り込みなど値を組み立てる処理は、request_uri を
+ * 展開した認可エンドポイントが行う）。PAR は Request Object（`request`）と併用しない
+ * （{@link rejectForbiddenParParams}）ため、`request` はパースせず request_not_supported
+ * として拒否する。
+ *
  * 失敗は必ず {@link ParError} になり、リダイレクトはしない（RFC 9126 §2.3）。
  *
  * @throws {ParError}
@@ -239,14 +268,26 @@ async function runClientAuthentication(context: {
 export async function validatePushedAuthorizationParams(
   params: Record<string, string>,
   clientResolver: ClientResolver,
-  options: ValidateAuthorizationRequestOptions = {},
-): Promise<Awaited<ReturnType<typeof validateAuthorizationRequest>>> {
+  options: PushedAuthorizationValidationOptions = {},
+): Promise<void> {
+  const request = params as unknown as AuthorizationRequestParams;
   try {
-    return await validateAuthorizationRequest(
-      params as unknown as AuthorizationRequestParams,
-      clientResolver,
-      options,
-    );
+    const client = await resolveClientForAuthorization(request, clientResolver);
+    validateRegisteredRedirectUris(client.redirectUris);
+    const redirectUri = resolveAuthorizationRedirectUri(request, client);
+    const state = request.state;
+    rejectUnsupportedRequestParams(request, redirectUri, state, {
+      requestParameterSupported: false,
+    });
+    validateResponseType(request, client, redirectUri, state);
+    validateAuthorizationScope(request, request, redirectUri, state);
+    validateAuthorizationCodePkce(request, client, redirectUri, state, {
+      allowNonPkceAuthorizationCodeFlow: options.allowNonPkceAuthorizationCodeFlow,
+    });
+    validatePromptParameter(request, redirectUri, state);
+    validateDisplayParameter(request, redirectUri, state);
+    resolveMaxAge(request, client, redirectUri, state);
+    parseClaimsRequestParameter(request, redirectUri, state, options.maxClaimsParameterLength);
   } catch (error) {
     throw toParError(error);
   }

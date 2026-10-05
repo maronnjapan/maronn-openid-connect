@@ -20,6 +20,7 @@ export {
   type ParErrorCode,
   type PushedAuthorizationRequestContext,
   type PushedAuthorizationResponse,
+  type PushedAuthorizationValidationOptions,
 } from './par-request.js';
 
 export {

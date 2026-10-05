@@ -51,8 +51,8 @@ async function introspect(request: Request): Promise<Response> {
 
   try {
     // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
-    // authenticateClient(). RFC 7662 §2.1 requires the caller to authenticate.
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
+    // RFC 7662 §2.1 requires the caller to authenticate.
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
@@ -73,9 +73,9 @@ async function introspect(request: Request): Promise<Response> {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Introspection pipeline ---------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleIntrospectionRequest(). Delete a call to drop that step,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function, called in RFC 7662 §2
+    // order. Delete a call to drop that step, or insert your own logic between
+    // steps.
 
     // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
     const token = requireIntrospectionToken({ token: params.token });

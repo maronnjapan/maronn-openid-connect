@@ -125,7 +125,7 @@ function nextJsGeneratedFiles(
       // The authorize Route Handler always sends non-redirectable errors to
       // app/oidc-error, so the shared page layer's redirect-path hook is left out.
       content: withBundlerImports(
-        configTemplate(pkg, features, { authorizationErrorRedirectPath: false }),
+        configTemplate(pkg, features),
       ),
     },
     { path: '_oidc-provider/store.ts', content: withBundlerImports(storeTemplate(pkg, features)) },

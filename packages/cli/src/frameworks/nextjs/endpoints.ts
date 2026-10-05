@@ -97,10 +97,10 @@ async function userinfo(request: Request): Promise<Response> {
 
   try {
     // --- UserInfo request pipeline ------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleUserInfoRequest(). Delete a call to drop that validation,
-    // or insert your own logic between steps. Every step throws UserInfoError,
-    // which the catch block below renders as an RFC 6750 Bearer challenge.
+    // Each step below is an independent core function. Delete a call to drop
+    // that validation, or insert your own logic between steps. Every step
+    // throws UserInfoError, which the catch block below renders as an RFC 6750
+    // Bearer challenge.
 
     // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
     const tokenInfo = await resolveUserInfoAccessToken(accessToken, resolvers.accessTokenResolver);
@@ -344,8 +344,8 @@ ${keyLoading}  if (!isFormUrlEncoded(request)) {
 
   try {
     // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
-    // authenticateClient(). RFC 7662 §2.1 requires the caller to authenticate.
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
+    // RFC 7662 §2.1 requires the caller to authenticate.
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
@@ -366,9 +366,9 @@ ${keyLoading}  if (!isFormUrlEncoded(request)) {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Introspection pipeline ---------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleIntrospectionRequest(). Delete a call to drop that step,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function, called in RFC 7662 §2
+    // order. Delete a call to drop that step, or insert your own logic between
+    // steps.
 
     // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
     const token = requireIntrospectionToken({ token: params.token });
@@ -464,9 +464,9 @@ async function revoke(request: Request): Promise<Response> {
 
   try {
     // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
-    // authenticateClient(). Public clients registered with
-    // token_endpoint_auth_method=none pass with client_id only (RFC 7009 §2.1).
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
+    // Public clients registered with token_endpoint_auth_method=none pass with
+    // client_id only (RFC 7009 §2.1).
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
@@ -480,9 +480,9 @@ async function revoke(request: Request): Promise<Response> {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Revocation pipeline ------------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleRevocationRequest(). Delete a call to drop that step,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function, called in RFC 7009 §2
+    // order. Delete a call to drop that step, or insert your own logic between
+    // steps.
 
     // RFC 7009 §2.1: token is REQUIRED (invalid_request when absent).
     const token = requireRevocationToken({ token: params.token });

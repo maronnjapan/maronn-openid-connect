@@ -66,17 +66,6 @@ export interface ProviderConfig {
    * "none" も広告される。
    */
   allowUnsignedRequestObject: boolean;
-  /**
-   * 任意。client redirect が禁止される非リダイレクト型の authorization error
-   * （未知 client_id / 未登録 redirect_uri / fragment 付き redirect_uri など、
-   * OIDC Core 1.0 §3.1.2.2）の HTML フォールバックを、views.errorPage() で直接
-   * 返す代わりに OP 内部のエラーページパスへ 303 リダイレクトしたいときに設定する。
-   * Next.js の error.tsx のような framework-native なエラー画面へ委ねるためのフック。
-   * 未設定なら従来どおり views.errorPage() を c.html で返す（express/fastify/hono の
-   * デフォルト）。なお Accept: application/json の programmatic caller には、この設定の
-   * 有無に関わらず常に 400 の OAuth error JSON を返す。
-   */
-  authorizationErrorRedirectPath?: string;
 }
 
 /**

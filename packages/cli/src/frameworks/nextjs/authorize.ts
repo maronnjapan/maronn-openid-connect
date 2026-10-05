@@ -474,9 +474,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
 
   try {
 ${parResolveStep}    // --- Authorization request validation pipeline ---------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's validateAuthorizationRequest(). Delete a call to drop that
-    // validation, or insert your own logic between steps. Steps that run before
+    // Each step below is an independent core function, called in OIDC Core 1.0
+    // §3.1.2 order. Delete a call to drop that validation, or insert your own
+    // logic between steps. Steps that run before
     // redirectUri is resolved throw non-redirectable errors (shown on the OP);
     // steps after it throw redirectable errors (sent back to the client).
 
@@ -523,9 +523,10 @@ ${offlineAccessStep}${customScopeStep}
     // OIDC Core 1.0 §5.5: parse the claims request parameter (userinfo / id_token).
     const claims = parseClaimsRequestParameter(effectiveParams, redirectUri, state);
 
-    // Assemble the validated request from each step's result. This shape matches
-    // core's validateAuthorizationRequest(), so transactions and authorization
-    // codes are unaffected by adding or removing steps above.
+    // Assemble the validated request from each step's result. This is core's
+    // ValidatedAuthorizationRequest (what createAuthTransaction() takes), so
+    // transactions and authorization codes are unaffected by adding or removing
+    // steps above.
     const validatedRequest = {
       responseType,
       clientId: client.clientId,
@@ -593,8 +594,9 @@ ${transactionStorage}
       let session;
       try {
         // --- prompt=none pipeline -------------------------------------------
-        // Each step below is an independent core function, called in the same
-        // order as core's checkPromptNone(). Every step throws
+        // Each step below is an independent core function: the session, then
+        // id_token_hint (before consent, so consent is never looked up for
+        // another End-User), then consent. Every step throws
         // AuthorizationError(login_required | consent_required) on failure.
 
         // OIDC Core 1.0 §3.1.2.1: no active session → login_required (the OP

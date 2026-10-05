@@ -113,9 +113,9 @@ async function token(request: Request): Promise<Response> {
   try {
     // --- Client authentication pipeline -------------------------------------
     // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
-    // Each step below is an independent core function, called in the same order
-    // as core's authenticateClient(). Replace verifyClientSecret with your own
-    // assertion check (e.g. private_key_jwt) without touching the rest.
+    // Each step below is an independent core function. Replace
+    // verifyClientSecret with your own assertion check (e.g. private_key_jwt)
+    // without touching the rest.
 
     // Read the presented credentials and which method was actually used.
     const presentedCredentials = extractClientCredentials({
@@ -149,9 +149,8 @@ async function token(request: Request): Promise<Response> {
     }
 
     // --- Token request validation pipeline --------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's validateTokenRequest(). Delete a call to drop that validation,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function. Delete a call to drop
+    // that validation, or insert your own logic between steps.
 
     // RFC 6749 §5.2: is the grant_type offered by this OP at all?
     // (defaults to ['authorization_code', 'refresh_token'])
@@ -326,9 +325,8 @@ async function token(request: Request): Promise<Response> {
         (config.onlineRefreshTokenEnabled && boundSessionId !== undefined));
 
     // --- Token response pipeline --------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's generateTokenResponse(). Add your own ID Token claims by editing
-    // idTokenPayload before it is signed.
+    // Each step below is an independent core function. Add your own ID Token
+    // claims by editing idTokenPayload before it is signed.
 
     // One timestamp for the whole response so the issued tokens and the stored
     // token metadata agree on iat / exp.

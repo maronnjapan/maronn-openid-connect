@@ -5,7 +5,8 @@ Hono / Express / Fastify / Next.js 向けに、Authorization Code Flow（OAuth 2
 
 生成コードは [`@maronn-openid-connect/core`](../core) のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら「自分の要件がこの仕様で実現できるか」を検証する。
 
-生成されるエンドポイントは、core の機能単位ステップ関数を 1 ステップ = 1 関数呼び出しの形で並べる。まとめ関数（`validateAuthorizationRequest` / `validateTokenRequest` / `authenticateClient` / `generateTokenResponse` / `handleUserInfoRequest` / `handleIntrospectionRequest` / `handleRevocationRequest` / `checkPromptNone`）を 1 回呼ぶのではなく各ステップを並べているため、不要な検証を消したり、ステップの間に独自処理を足したりして仕様の挙動を検証しやすい。
+生成されるエンドポイントは、core の機能単位ステップ関数を 1 ステップ = 1 関数呼び出しの形で並べる。
+各ステップが生成コード上に見えているため、不要な検証を消したり、ステップの間に独自処理を足したりして仕様の挙動を検証しやすい。
 
 | 生成ファイル | 並べているステップ |
 |---|---|
@@ -93,8 +94,6 @@ Hono の出力は TSX 前提で生成される。画面のマークアップ（`
 }
 ```
 
-以前の CLI で生成した Hono の出力を `--force` で再生成すると、古い `views.ts` や `pages/login.ts` などの `.ts` ファイルが残る。同名の `.ts` は `.tsx` より優先して解決されるため、カスタマイズを `.tsx` 側へ移してから古い `.ts` を削除すること（CLI も再生成時に残っているファイルを一覧して警告する）。
-
 `.maronn-openid-connect.json` は、どの CLI バージョン・どの機能構成（`framework` / `features` / `scopes`）から生成されたかを記録するマニフェスト。テンプレートへ仕様修正が入ったとき、リリースノートと突き合わせて「自分のコードがどの版から生成されたか」を特定する起点になる。利用者が編集するファイルではないため、上書き保護の対象外として毎回更新される（生成日時は含めず、同じ入力からは同じ出力になる）。
 
 生成される OP のエンドポイント:
@@ -127,7 +126,7 @@ UI を変える場所は、変えたい範囲で選ぶ。
 - **HTML だけ変える** → `views.ts`（Hono は `views.tsx`）の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
 - **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` と outcome を変換している箇所を書き換える。画面を返す経路はすべて `pages/` を通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
 - **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `pages/*.ts` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
-- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`。`config.authorizationErrorRedirectPath` に OP 内のパスを設定すると、HTML を直接返す代わりにそのパスへ 303 する
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`
 
 フォームの `name`（`transaction_id` / `csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持する。transaction-binding の束縛チェック（`rejectUnboundTransaction()`）や google-login のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけでよい。
 

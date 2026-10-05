@@ -61,14 +61,6 @@ export interface IntrospectionRefreshTokenResolver {
   resolve(token: string): Promise<RefreshTokenInfo | null>;
 }
 
-export interface IntrospectionRequestContext {
-  params: { token?: string; token_type_hint?: string };
-  /** クライアント認証済みのclientId。空文字なら invalid_client */
-  authenticatedClientId: string;
-  accessTokenResolver: IntrospectionAccessTokenResolver;
-  refreshTokenResolver?: IntrospectionRefreshTokenResolver;
-}
-
 /**
  * RFC 7662 Section 2.2 のレスポンス。
  * active=false のときは active のみ。active=true のときは推奨クレームを optional で含む。
@@ -94,8 +86,6 @@ export type IntrospectionResponse =
  * トークンの存在有無を漏らさないため、他のクレームは一切含めない。
  */
 export const INACTIVE_INTROSPECTION_RESPONSE: IntrospectionResponse = { active: false };
-
-const INACTIVE = INACTIVE_INTROSPECTION_RESPONSE;
 
 /**
  * ストアから解決したイントロスペクション対象トークン。
@@ -290,42 +280,4 @@ export function buildIntrospectionResponse(
   return resolved.tokenType === 'access_token'
     ? buildAccessTokenResponse(resolved.accessToken)
     : buildRefreshTokenResponse(resolved.refreshToken);
-}
-
-/**
- * Token Introspection 本体。
- *
- * 各ステップ関数を仕様順に合成した後方互換 API。CLI が生成する Provider は
- * この合成関数ではなく個々のステップ関数を順に呼び出すため、利用者は検証を
- * 削除したり独自処理を差し込んだりできる。
- *
- * 1. token / authenticatedClientId のバリデーション
- *    （`requireIntrospectionToken` / `requireIntrospectionClient`）
- * 2. token_type_hint に応じて access → refresh または refresh → access の順で検索
- *    （`resolveIntrospectionToken`）
- * 3. 見つかれば exp / nbf / used をチェックして active 判定
- *    （`isIntrospectionTokenActive`）
- * 4. active なら推奨クレームを最大限詰めて返す（`buildIntrospectionResponse`）。
- *    inactive なら `{ active: false }` のみ。
- */
-export async function handleIntrospectionRequest(
-  ctx: IntrospectionRequestContext,
-): Promise<IntrospectionResponse> {
-  const { params, authenticatedClientId, accessTokenResolver, refreshTokenResolver } = ctx;
-
-  const token = requireIntrospectionToken(params);
-  requireIntrospectionClient(authenticatedClientId);
-
-  const resolved = await resolveIntrospectionToken({
-    token,
-    tokenTypeHint: params.token_type_hint,
-    accessTokenResolver,
-    refreshTokenResolver,
-  });
-
-  if (resolved === null || !isIntrospectionTokenActive(resolved)) {
-    return INACTIVE;
-  }
-
-  return buildIntrospectionResponse(resolved);
 }

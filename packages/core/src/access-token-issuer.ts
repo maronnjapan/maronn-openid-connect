@@ -2,7 +2,8 @@
  * Access Token Issuer 抽象化
  *
  * アクセストークンの発行形式（JWT / Opaque）を切替可能にするための抽象。
- * generateTokenResponse から注入して使う。
+ * トークンエンドポイントは `buildAccessTokenPayload` で組み立てた payload を
+ * この issuer に渡して発行する。
  *
  * - JWT 形式: 既存の generateAccessToken を内部で呼ぶ
  * - Opaque 形式: CSPRNG ベースの不透明文字列（base64url）。ペイロードは

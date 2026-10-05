@@ -1,47 +1,5 @@
 import { TokenError, TokenErrorCode } from './token-error.js';
-import type { AuthenticationSessionResolver } from './authentication-session.js';
 import { clientAllowsGrantType } from './client-grant-types.js';
-import { validateAuthorizationCodeGrant } from './authorization-code-grant.js';
-import { validateRefreshTokenGrant } from './refresh-token-grant.js';
-
-// 後方互換: TokenError / TokenErrorCode は歴史的にこのモジュールが公開してきたため、
-// token-error.ts へ分割した後も再exportして既存のimportを壊さない。
-export { TokenError, TokenErrorCode } from './token-error.js';
-// 機能単位のエントリポイントと各ステップもここから利用できるようにする。
-export {
-  buildValidatedAuthorizationCodeRequest,
-  consumeAuthorizationCode,
-  resolveAuthorizationCode,
-  validateAuthorizationCodeClient,
-  validateAuthorizationCodeExpiration,
-  validateAuthorizationCodeGrant,
-  validateAuthorizationCodeRedirectUri,
-  validateAuthorizationCodeUnused,
-  verifyAuthorizationCodePkce,
-} from './authorization-code-grant.js';
-export {
-  buildValidatedRefreshTokenRequest,
-  resolveRefreshToken,
-  validateRefreshTokenClient,
-  validateRefreshTokenExpiration,
-  validateRefreshTokenGrant,
-  validateRefreshTokenIdleTimeout,
-  validateRefreshTokenScope,
-  validateRefreshTokenSession,
-  validateRefreshTokenUnused,
-} from './refresh-token-grant.js';
-// online refresh token のセッション束縛契約。トークンエンドポイントの利用者が
-// token-request からまとめて import できるよう再exportする。
-export type {
-  AuthenticationSessionInfo,
-  AuthenticationSessionResolver,
-} from './authentication-session.js';
-export type {
-  ResolvedAuthorizationCode,
-} from './authorization-code-grant.js';
-export type {
-  ResolvedRefreshToken,
-} from './refresh-token-grant.js';
 
 /**
  * トークンエンドポイントへの生パラメータ（バリデーション前）
@@ -49,7 +7,7 @@ export type {
  * application/x-www-form-urlencoded 形式のリクエストボディから取得した
  * 生の文字列マップを表す。grant_type は仕様上必須だが、
  * 「バリデーション前」のため型上は optional とし、
- * 欠損の検出は validateTokenRequest 内で行う。
+ * 欠損の検出は {@link validateGrantTypeSupported} で行う。
  */
 export interface TokenRequestParams {
   grant_type: string;
@@ -79,8 +37,8 @@ export interface TokenClientInfo {
   clientSecret?: string;
   /**
    * このクライアントが使用してよい grant_type の一覧。
-   * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 既定は `["authorization_code"]`。
-   * 未指定時は `["authorization_code"]` として扱う（後方互換: refresh_token は不許可）。
+   * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 省略時の既定は
+   * `["authorization_code"]`（refresh_token は不許可）。
    * 登録外の grant_type は RFC 6749 §5.2 の `unauthorized_client` で拒否される。
    */
   grantTypes?: string[];
@@ -305,48 +263,6 @@ export interface RefreshTokenResolver {
 const DEFAULT_SUPPORTED_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
 
 /**
- * トークンリクエストのコンテキスト
- * HTTPリクエストのパースとクライアント認証は呼び出し側で実施する
- */
-export interface TokenRequestContext {
-  params: TokenRequestParams;
-  clientResolver: TokenClientResolver;
-  authCodeResolver: AuthorizationCodeResolver;
-  /** クライアント認証済みのclientId（client_secret_basic または client_secret_post で認証済み） */
-  authenticatedClientId: string;
-  /** refresh_token grant で使用するリフレッシュトークンリゾルバー */
-  refreshTokenResolver?: RefreshTokenResolver;
-  /**
-   * OP として提供する grant_type の一覧（機能トグル）。
-   * 未指定時は `['authorization_code', 'refresh_token']`（従来挙動）。
-   * この一覧に無い grant_type は RFC 6749 §5.2 の `unsupported_grant_type` で拒否する。
-   * クライアント別の許可（`TokenClientInfo.grantTypes` → `unauthorized_client`）とは
-   * 別軸の「OP 全体でのサポート有無」を表す。
-   */
-  supportedGrantTypes?: string[];
-  /**
-   * Refresh Token のアイドル（無操作）タイムアウト秒数（任意・オプトイン）。
-   * RFC 9700 §4.14.2 は rotation と限定的な有効期限で RT の露出を抑えることを推奨しており、
-   * 本オプションはその方針を具体化する追加の失効軸として非活動期間での失効を提供する
-   * （inactivity/idle timeout 自体は RFC の規定ではなく Auth0 等で一般的な運用機構）。
-   * 未指定または 0 の場合はアイドル失効なし（従来挙動）。値 > 0 かつ
-   * `RefreshTokenInfo.lastUsedAt` が存在し `now - lastUsedAt > この値` のとき
-   * `invalid_grant` で失効させる。絶対寿命とは独立で、いずれか早い方で失効する。
-   */
-  refreshTokenIdleTimeoutSeconds?: number;
-  /**
-   * online refresh token（{@link RefreshTokenInfo.sessionId} を持つ RT）の束縛先
-   * 認証セッションを解決するリゾルバー。
-   *
-   * 未指定でも offline refresh token（`sessionId` 無し）は従来どおり検証できる。
-   * ただし online refresh token が提示された場合は fail-closed で `invalid_grant` に
-   * なる（セッションの生存を確認できないため）。online refresh token を発行する OP は
-   * 必ず設定すること。
-   */
-  authenticationSessionResolver?: AuthenticationSessionResolver;
-}
-
-/**
  * バリデーション済みの authorization_code グラントリクエスト
  */
 export interface ValidatedAuthorizationCodeRequest {
@@ -361,7 +277,7 @@ export interface ValidatedAuthorizationCodeRequest {
   audience?: string[];
   /**
    * OIDC Core 1.0 §3.1.2.1: requested `acr_values` from the authorization step.
-   * 呼び出し側はこれを generateTokenResponse の `requestedAcrValues` に渡し、AcrResolver が
+   * 呼び出し側はこれを `resolveAcrAmr` の `requestedAcrValues` に渡し、AcrResolver が
    * 要求された acr を満たせるようにする。
    */
   acrValues?: string;
@@ -468,10 +384,10 @@ export function validateGrantTypeSupported(
 }
 
 /**
- * クライアント認証結果からクライアント情報を解決する（機能単位のステップ関数）。
+ * クライアント認証で提示された clientId からクライアント情報を解決する（機能単位のステップ関数）。
  *
- * authenticateClient 等で認証済みの clientId を受け取り、TokenClientResolver から
- * クライアント情報を取得する。認証されていない（空の）clientId、および解決できない
+ * `extractClientCredentials` が抽出した clientId を受け取り、TokenClientResolver から
+ * クライアント情報を取得する。空の clientId（資格情報の提示なし）、および解決できない
  * クライアントは invalid_client として拒否する（RFC 6749 §5.2）。
  */
 export async function resolveAuthenticatedTokenClient(
@@ -514,48 +430,4 @@ export function validateClientGrantType(
       `Client is not authorized to use grant_type: ${grantType}`
     );
   }
-}
-
-/**
- * トークンリクエストをバリデーションする
- *
- * 機能単位のステップ関数を順に呼び出す合成関数。カスタマイズや検証のために
- * ステップ単位で処理を消したり足したりしたい場合は、この関数と同じ順序で
- * 各ステップ関数を直接呼び出すこと（CLI 生成コードはその形で出力される）。
- *
- * バリデーション順序:
- * 1. {@link validateGrantTypeSupported}（OP が提供する grant_type かを判定）
- * 2. {@link resolveAuthenticatedTokenClient} / {@link validateClientGrantType}
- * 3. grant_type に応じた処理（機能単位の関数へディスパッチ）
- *    - authorization_code: {@link validateAuthorizationCodeGrant}
- *    - refresh_token: {@link validateRefreshTokenGrant}
- *
- * @param context トークンリクエストのコンテキスト
- * @returns バリデーション済みのトークンリクエスト
- * @throws {TokenError} バリデーションエラー
- */
-export async function validateTokenRequest(
-  context: TokenRequestContext
-): Promise<ValidatedTokenRequest> {
-  const { params, clientResolver, authenticatedClientId } = context;
-
-  // --- 1. grant_type の検証（OP 全体でのサポート有無） ---
-  const grantType = validateGrantTypeSupported(
-    params.grant_type,
-    context.supportedGrantTypes,
-  );
-
-  // --- 2. クライアント認証の検証とクライアント別 grant_type 認可 ---
-  const client = await resolveAuthenticatedTokenClient(
-    authenticatedClientId,
-    clientResolver,
-  );
-  validateClientGrantType(client, grantType);
-
-  // --- 3. grant_type に応じた処理（機能単位の関数へディスパッチ） ---
-  if (grantType === 'refresh_token') {
-    return validateRefreshTokenGrant(context);
-  }
-
-  return validateAuthorizationCodeGrant(context);
 }

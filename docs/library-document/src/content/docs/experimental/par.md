@@ -144,7 +144,7 @@ const response = await handlePushedAuthorizationRequest({
   authorizationHeader,    // client_secret_basic 用
   clientResolver,         // core の ClientResolver & TokenClientResolver
   store,                  // PushedAuthorizationRequestStore
-  validationOptions: {},  // core の ValidateAuthorizationRequestOptions
+  validationOptions: {},  // PushedAuthorizationValidationOptions
 });
 // => { requestUri: 'urn:ietf:params:oauth:request_uri:...', expiresIn: 60 }
 
@@ -200,7 +200,7 @@ Token Endpoint と同じ JSON エラー形式です。**リダイレクトは発
 
 - **リダイレクトしません。** 検証済みの `redirect_uri` が確立していないため、RFC 6749 §4.1.2.1 の「Redirection URI を検証できない場合は MUST NOT redirect」に従います
 - 失敗の種別によらず、応答は同一です（コード・`error_description` とも）。応答差から「その `request_uri` が存在したか」を判別できないようにするためです
-- 描画は既存の非リダイレクトエラー経路と同じです。`Accept: application/json` なら JSON 400、`authorizationErrorRedirectPath` 設定時は OP 内部パスへ 303、それ以外は HTML エラーページです
+- 描画は既存の非リダイレクトエラー経路と同じです。`Accept: application/json` なら JSON 400、それ以外は HTML エラーページです
 
 ## セキュリティ上の注意
 

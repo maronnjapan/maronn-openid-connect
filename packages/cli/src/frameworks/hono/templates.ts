@@ -604,35 +604,10 @@ export function findUnsupportedScopes(requested: readonly string[]): string[] {
 `;
 }
 
-export interface ConfigTemplateOptions {
-  /**
-   * Emit the optional authorizationErrorRedirectPath field (default true). The
-   * shared page layer reads it; a target with its own error page routing, such
-   * as Next.js, leaves it out.
-   */
-  authorizationErrorRedirectPath?: boolean;
-}
-
 export function configTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  options: ConfigTemplateOptions = {},
 ): string {
-  const authorizationErrorRedirectPathField =
-    options.authorizationErrorRedirectPath === false
-      ? ''
-      : `  /**
-   * 任意。client redirect が禁止される非リダイレクト型の authorization error
-   * （未知 client_id / 未登録 redirect_uri / fragment 付き redirect_uri など、
-   * OIDC Core 1.0 §3.1.2.2）の HTML フォールバックを、views.errorPage() で直接
-   * 返す代わりに OP 内部のエラーページパスへ 303 リダイレクトしたいときに設定する。
-   * Next.js の error.tsx のような framework-native なエラー画面へ委ねるためのフック。
-   * 未設定なら従来どおり views.errorPage() を c.html で返す（express/fastify/hono の
-   * デフォルト）。なお Accept: application/json の programmatic caller には、この設定の
-   * 有無に関わらず常に 400 の OAuth error JSON を返す。
-   */
-  authorizationErrorRedirectPath?: string;
-`;
   const refreshTokenLifetimeField = features.refreshToken
     ? `  /**
    * Refresh token の absolute lifetime（秒）。初回発行時刻からの絶対的な有効期限。
@@ -827,7 +802,7 @@ ${refreshTokenLifetimeField}  /**
    * 不正なPKCE値やpublic clientの非PKCE requestは拒否する。
    */
   allowNonPkceAuthorizationCodeFlow: boolean;
-${allowUnsignedField}${authorizationErrorRedirectPathField}${googleLoginConfigField}}
+${allowUnsignedField}${googleLoginConfigField}}
 
 /**
  * Optional defaults for quick local testing.
@@ -3294,9 +3269,9 @@ ${parResolveStep}    const clientResolver = c.get('clientResolver') ?? defaultCl
     const issuer = config.issuer;
 
     // --- Authorization request validation pipeline ---------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's validateAuthorizationRequest(). Delete a call to drop that
-    // validation, or insert your own logic between steps. Steps that run before
+    // Each step below is an independent core function, called in OIDC Core 1.0
+    // §3.1.2 order. Delete a call to drop that validation, or insert your own
+    // logic between steps. Steps that run before
     // redirectUri is resolved throw non-redirectable errors (shown to the user
     // agent); steps after it throw redirectable errors (sent to the client).
 
@@ -3343,9 +3318,10 @@ ${offlineAccessStep}${customScopeStep}
     // OIDC Core 1.0 §5.5: parse the claims request parameter (userinfo / id_token).
     const claims = parseClaimsRequestParameter(effectiveParams, redirectUri, state);
 
-    // Assemble the validated request from each step's result. This shape matches
-    // core's validateAuthorizationRequest() so downstream code (transactions,
-    // authorization codes) is unaffected by adding or removing steps above.
+    // Assemble the validated request from each step's result. This is core's
+    // ValidatedAuthorizationRequest (what createAuthTransaction() takes), so
+    // downstream code (transactions, authorization codes) is unaffected by
+    // adding or removing steps above.
     const validatedRequest = {
       responseType,
       clientId: client.clientId,
@@ -3443,8 +3419,9 @@ ${bindingSecretStep}    const transactionId = await generateRandomString(32);
       let session;
       try {
         // --- prompt=none pipeline ---------------------------------------
-        // Each step below is an independent core function, called in the same
-        // order as core's checkPromptNone(). Delete a call to drop that check,
+        // Each step below is an independent core function: the session, then
+        // id_token_hint (before consent, so consent is never looked up for
+        // another End-User), then consent. Delete a call to drop that check,
         // or insert your own logic between steps. Every step throws
         // AuthorizationError(login_required | consent_required) on failure.
 
@@ -6581,9 +6558,9 @@ ${refreshResolverConst}    const authCodeStore = c.get('authCodeStore') ?? defau
 ${refreshStoreConst}
     // --- Client authentication pipeline -------------------------------------
     // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
-    // Each step below is an independent core function, called in the same order
-    // as core's authenticateClient(). Replace verifyClientSecret with your own
-    // assertion check (e.g. private_key_jwt) without touching the rest.
+    // Each step below is an independent core function. Replace
+    // verifyClientSecret with your own assertion check (e.g. private_key_jwt)
+    // without touching the rest.
 
     // Read the presented credentials and which method was actually used.
     const presentedCredentials = extractClientCredentials({
@@ -6607,9 +6584,8 @@ ${refreshStoreConst}
     const authenticatedClientId = presentedCredentials.clientId;
 ${idJagIssuanceDispatchStep}${idJagRedemptionDispatchStep}${tokenExchangeDispatchStep}${deviceCodeDispatchStep}${cibaDispatchStep}
     // --- Token request validation pipeline --------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's validateTokenRequest(). Delete a call to drop that validation,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function. Delete a call to drop
+    // that validation, or insert your own logic between steps.
 
 ${grantTypeSupportedStep}
     // RFC 6749 §5.2: per-client grant_type authorization (unauthorized_client).
@@ -6706,9 +6682,9 @@ ${grantValidationStep}
     const directAmr = validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : undefined;
 
 ${grantHasOfflineAccessBlock}    // --- Token response pipeline --------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's generateTokenResponse(). Add your own ID Token claims by editing
-    // idTokenPayload before it is signed, or swap in another issuer.
+    // Each step below is an independent core function. Add your own ID Token
+    // claims by editing idTokenPayload before it is signed, or swap in another
+    // issuer.
 
     // One timestamp for the whole response so the issued tokens and the stored
     // token metadata agree on iat / exp.
@@ -6966,10 +6942,10 @@ const handler = async (c: any) => {
     const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
     // --- UserInfo request pipeline ------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleUserInfoRequest(). Delete a call to drop that validation,
-    // or insert your own logic between steps. Every step throws UserInfoError,
-    // which the catch block below renders as an RFC 6750 Bearer challenge.
+    // Each step below is an independent core function. Delete a call to drop
+    // that validation, or insert your own logic between steps. Every step
+    // throws UserInfoError, which the catch block below renders as an RFC 6750
+    // Bearer challenge.
 
     // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
     const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
@@ -8787,8 +8763,8 @@ introspectionApp.post('/', async (c) => {
       c.get('introspectionRefreshTokenResolver') ?? defaultRefreshResolver;
 
     // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
-    // authenticateClient(). RFC 7662 §2.1 requires the caller to authenticate.
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
+    // RFC 7662 §2.1 requires the caller to authenticate.
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
@@ -8809,9 +8785,9 @@ introspectionApp.post('/', async (c) => {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Introspection pipeline ---------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleIntrospectionRequest(). Delete a call to drop that step,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function, called in RFC 7662 §2
+    // order. Delete a call to drop that step, or insert your own logic between
+    // steps.
 
     // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
     const token = requireIntrospectionToken({
@@ -8928,9 +8904,9 @@ revocationApp.post('/', async (c) => {
     const resolvers = c.get('revocationResolvers') ?? defaultRevocationResolvers;
 
     // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, called in the same order as core's
-    // authenticateClient(). Public clients registered with
-    // token_endpoint_auth_method=none pass with client_id only (RFC 7009 §2.1).
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
+    // Public clients registered with token_endpoint_auth_method=none pass with
+    // client_id only (RFC 7009 §2.1).
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: authorization,
@@ -8944,9 +8920,9 @@ revocationApp.post('/', async (c) => {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Revocation pipeline ------------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleRevocationRequest(). Delete a call to drop that step,
-    // or insert your own logic between steps.
+    // Each step below is an independent core function, called in RFC 7009 §2
+    // order. Delete a call to drop that step, or insert your own logic between
+    // steps.
 
     // RFC 7009 §2.1: token is REQUIRED (invalid_request when absent).
     const token = requireRevocationToken({
@@ -11269,7 +11245,7 @@ export function jwtIntrospectionResponseConformanceBlock(features: OidcFeatureCo
   // format — the generic disabled-introspection block already pins the 404.
   if (!features.introspection) return '';
   // When the feature is off nothing is emitted, so the default generation
-  // output stays byte-identical to the pre-feature CLI. The disabled contract
+  // output carries nothing of the feature. The disabled contract
   // (no Accept branch in the route, no RFC 9701 discovery metadata) is pinned
   // by the CLI generator tests instead.
   if (!features.jwtIntrospectionResponse) return '';
@@ -18539,7 +18515,7 @@ export function googleLoginConformanceBlock(features: OidcFeatureConfig): string
 
 export function rpInitiatedLogoutConformanceBlock(features: OidcFeatureConfig): string {
   // When the feature is off nothing is emitted, so the default generation
-  // output stays byte-identical to the pre-feature CLI. The disabled contract
+  // output carries nothing of the feature. The disabled contract
   // (no /logout routes, no end_session_endpoint metadata) is pinned by the
   // CLI generator tests instead.
   if (!features.rpInitiatedLogout) return '';

@@ -112,10 +112,10 @@ const handler = async (c: any) => {
     const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
 
     // --- UserInfo request pipeline ------------------------------------------
-    // Each step below is an independent core function, called in the same order
-    // as core's handleUserInfoRequest(). Delete a call to drop that validation,
-    // or insert your own logic between steps. Every step throws UserInfoError,
-    // which the catch block below renders as an RFC 6750 Bearer challenge.
+    // Each step below is an independent core function. Delete a call to drop
+    // that validation, or insert your own logic between steps. Every step
+    // throws UserInfoError, which the catch block below renders as an RFC 6750
+    // Bearer challenge.
 
     // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
     const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);

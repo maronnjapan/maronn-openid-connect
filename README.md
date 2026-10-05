@@ -104,19 +104,19 @@ it('should include name claim when profile scope is requested', () => {});
 
 ```typescript
 // 悪い例：if が偽のとき expect が実行されない
-it('should keep hadOfflineAccess true', async () => {
-  const result = await validateTokenRequest(context);
-  if (result.grantType === 'refresh_token') {
-    expect(result.hadOfflineAccess).toBe(true);
+it('should resolve the refresh token first when token_type_hint is refresh_token', async () => {
+  const resolved = await resolveIntrospectionToken(options);
+  if (resolved?.tokenType === 'refresh_token') {
+    expect(resolved.refreshToken.grantId).toBe('grant-1');
   }
 });
 
 // 良い例：判別フィールドを含めて expect で検証する
-it('should keep hadOfflineAccess true', async () => {
-  const result = await validateTokenRequest(context);
-  expect(result).toMatchObject({
-    grantType: 'refresh_token',
-    hadOfflineAccess: true,
+it('should resolve the refresh token first when token_type_hint is refresh_token', async () => {
+  const resolved = await resolveIntrospectionToken(options);
+  expect(resolved).toMatchObject({
+    tokenType: 'refresh_token',
+    refreshToken: { grantId: 'grant-1' },
   });
 });
 ```

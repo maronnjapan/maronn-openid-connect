@@ -109,8 +109,8 @@ describe('resolveFeatures with google-login', () => {
 
 describe('generate with --enable google-login', () => {
   describe.each(FRAMEWORKS)('%s', (framework) => {
-    // The default output must stay byte-identical to the pre-feature CLI: no
-    // import, no route, no store, no view parameter, no contract tests.
+    // With the feature off the output carries nothing of it: no import, no
+    // route, no store, no view parameter, no contract tests.
     it('should not reference the google-login package by default', () => {
       const referencing = generateFiles(framework)
         .filter((file) => file.content.includes(GOOGLE_LOGIN_PACKAGE))

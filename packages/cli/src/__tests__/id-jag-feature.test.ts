@@ -108,7 +108,7 @@ describe('resolveFeatures with id-jag', () => {
 describe('generate with --enable id-jag', () => {
   describe.each(FRAMEWORKS)('%s', (framework) => {
     describe('Default generation (feature off)', () => {
-      // The strongest backward-compatibility guard: with the feature off, no
+      // The strongest isolation guard: with the feature off, no
       // file mentions the feature at all, so the default output cannot have
       // drifted because of it.
       it('should not mention id-jag anywhere in the default output', () => {
@@ -413,7 +413,7 @@ describe('generate nextjs with --enable id-jag', () => {
     fileContent(generateFiles('nextjs', enable), '_oidc-provider/conformance.test.ts');
 
   describe('Default generation (feature off)', () => {
-    // The strongest backward-compatibility guard: with the feature off, no
+    // The strongest isolation guard: with the feature off, no
     // file mentions the feature at all, so the default output cannot have
     // drifted because of it.
     it('should not mention id-jag anywhere in the default output', () => {

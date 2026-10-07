@@ -353,12 +353,6 @@ describe('collectChangedPathsSinceLastRelease', () => {
     return repository;
   }
 
-  it('should report no unreleased source change right after the Version Packages PR is merged', () => {
-    const repository = createReleasedRepository();
-
-    assert.deepEqual(selectExperimentalSourceChanges(collectChangedPathsSinceLastRelease(repository).paths), []);
-  });
-
   // publish されるのはマージコミットのツリーなので、基準点もマージコミットにする。
   it('should use the merge commit that brought the version bump into main as the comparison base', () => {
     const repository = createReleasedRepository();

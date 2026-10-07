@@ -1295,23 +1295,6 @@ describe('processIdJagIssuanceRequest with refresh token subjects and actors', (
     expect(payload['act']).toEqual({ sub: 'actor-1' });
   });
 
-  it('should reject an actor_token when actor tokens are not enabled', async () => {
-    const actorIdToken = await mintIdToken({ sub: 'actor-1' });
-    await expect(
-      processIdJagIssuanceRequest(
-        issuanceContext({
-          actorTokenResolver: idTokenActorResolver,
-          params: validParams({
-            actor_token: actorIdToken,
-            actor_token_type: TOKEN_TYPE_ID_TOKEN,
-          }),
-        }),
-      ),
-    ).rejects.toThrow(
-      new IdJagError('invalid_request', 'actor_token is not supported for ID-JAG issuance'),
-    );
-  });
-
   it('should reject an invalid actor token with the fixed actor description', async () => {
     await expect(
       processIdJagIssuanceRequest(

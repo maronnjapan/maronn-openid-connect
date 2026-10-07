@@ -10,10 +10,6 @@ import { createInMemoryDeviceAuthorizationStore, makeRecord } from './test-helpe
 
 describe('generateUserCode', () => {
   describe('Character set and length (RFC 8628 §6.1)', () => {
-    it('should return a code of exactly 9 characters including the separator', () => {
-      expect(generateUserCode()).toHaveLength(9);
-    });
-
     it('should format the code as XXXX-XXXX', () => {
       expect(/^[A-Z]{4}-[A-Z]{4}$/.test(generateUserCode())).toBe(true);
     });

@@ -23,6 +23,6 @@
     "@cloudflare/workers-types": "^5.20260723.1",
     "hono": "^4.13.12",
     "typescript": "^7.0.2",
-    "wrangler": "^4.113.0"
+    "wrangler": "^4.147.0"
   }
 }

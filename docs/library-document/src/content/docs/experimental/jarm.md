@@ -76,7 +76,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/authorize.ts` | `response_mode` の解釈、応答 JWT を組む `buildSuccessRedirect` / `buildErrorRedirect`、トランザクションへのモード記録 |
 | `routes/consent.ts` | 承認 / 拒否の応答を記録済みモードで返す分岐 |
 | `routes/discovery.ts` | `response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
-| `conformance.test.ts` | JARM の契約テストの追加。ターゲットが実際に返す応答形式を固定する |
 
 Next.js では、同じ役割を `_oidc-provider/jarm.ts`（設定）・`authorize/route.ts`・`consent/actions.ts`（同意の Server Action）・`.well-known/openid-configuration/route.ts` が担います。Server Action は Route Handler と別のモジュール層にバンドルされますが、署名鍵プロバイダは `globalThis` で共有しているため、同意画面を経由する応答も `/.well-known/jwks.json` が公開する鍵で署名した JARM 応答になります。
 
@@ -235,7 +234,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
   AuthTransaction & JarmAuthTransactionFields;
 ```
 
-**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。生成された `conformance.test.ts` の全フローテストがこの round-trip を検出します。
+**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。
 
 なお `prompt=none` と SSO 再利用の応答は authorize ルート内で完結するため、store の往復に依存しません。ストアの取りこぼしが影響するのはログイン・同意画面を挟む経路だけです。
 

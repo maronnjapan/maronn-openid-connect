@@ -68,7 +68,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/authorize.ts` | `request_uri` を展開する前段フックと、解決失敗を描画する catch 分岐の追加 |
 | `routes/discovery.ts` | `pushed_authorization_request_endpoint` の広告 |
 | `app.ts` / `apply.ts` | `/par` のマウント・CORS・許可メソッド（POST のみ）の追加 |
-| `conformance.test.ts` | PAR の契約テストの追加 |
 
 ## 設定
 

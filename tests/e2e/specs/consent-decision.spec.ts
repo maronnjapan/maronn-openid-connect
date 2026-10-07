@@ -16,9 +16,9 @@ const clientBaseURL =
  *
  * These belong in a real browser because the failure modes are browser-shaped:
  * a form submitted programmatically sends no submit-button entry at all, and a
- * customized Approve button sends whatever value the markup carries. The
- * generated conformance tests build the POST body by hand, so they cannot show
- * that the browser really omits / rewrites the field on these paths.
+ * customized Approve button sends whatever value the markup carries. A test
+ * that builds the POST body by hand cannot show that the browser really omits /
+ * rewrites the field on these paths.
  */
 test.describe('Consent decision value', () => {
   const INVALID_DECISION_MESSAGE =

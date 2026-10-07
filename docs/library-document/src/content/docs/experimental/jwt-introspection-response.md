@@ -76,7 +76,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 |---|---|
 | `routes/introspection.ts` | 応答構築後の `Accept` 判定と、JWT 応答への分岐（audience 制限 → RS256 鍵の選択 → 署名） |
 | `routes/discovery.ts` | `introspection_signing_alg_values_supported: ['RS256']` の広告 |
-| `conformance.test.ts` | RFC 9701 の契約テストの追加 |
 
 新しいエンドポイント・画面・ストア契約はありません。
 設定値もありません（署名 alg は RS256 固定、応答 JWT は `exp` を持たないため寿命設定も不要です）。

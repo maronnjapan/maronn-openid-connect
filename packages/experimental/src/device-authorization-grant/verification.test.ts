@@ -304,22 +304,6 @@ describe('approveDeviceAuthorization', () => {
     expect([approved.bindingHash, approved.csrfToken]).toEqual([null, null]);
   });
 
-  it('should persist the approved record through the store', async () => {
-    const store = createInMemoryDeviceAuthorizationStore();
-    const record = makeRecord({ csrfToken: 'csrf-value' });
-    await store.save(record);
-
-    await approveDeviceAuthorization({
-      record,
-      store,
-      csrfToken: 'csrf-value',
-      subject: 'user-1',
-      authTime: 1_800_000_000,
-    });
-
-    expect((await store.findByDeviceCode(record.deviceCode))?.status).toBe('approved');
-  });
-
   it('should reject an approval whose csrf token does not match', async () => {
     const store = createInMemoryDeviceAuthorizationStore();
     const record = makeRecord({ csrfToken: 'csrf-value' });

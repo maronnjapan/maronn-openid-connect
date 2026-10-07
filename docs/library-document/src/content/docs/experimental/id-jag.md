@@ -85,7 +85,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/token.ts` | 発行分岐（Token Exchange 内）、受領分岐（jwt-bearer）、設定値 `idJagConfig`、信頼 IdP の JWKS 取得ヘルパ、`IdJagError` の catch 分岐 |
 | `routes/discovery.ts` | `grant_types_supported` への両 URN の追加、draft §7 の 2 つのメタデータ |
 | `config.ts` | サンプルクライアントの `grantTypes` への両 URN の追加 |
-| `conformance.test.ts` | XAA の契約テスト（発行・受領・discovery） |
 
 **新しいエンドポイントは増えません。** 既存のトークンエンドポイントに分岐が 2 つ加わるだけです。
 

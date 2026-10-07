@@ -137,7 +137,7 @@ function rejectCrossOriginFormPost(c: any): ConsentError | undefined {
  * (jarmResponseMode). This step only ever sees the transaction it read back
  * from the store, so the auth transaction store MUST persist fields it does not
  * know about — otherwise a client that asked for a JWT response silently gets a
- * plain query response instead. conformance.test.ts pins that round trip.
+ * plain query response instead.
  */
 function resolveJarmResponse(
   c: any,

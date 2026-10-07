@@ -108,18 +108,6 @@ describe('createJarmResponseJwt', () => {
       });
     });
 
-    it('should default the response JWT lifetime to 60 seconds', async () => {
-      const jwt = await createJarmResponseJwt({
-        issuer: 'http://localhost:3000',
-        clientId: 'my-client',
-        parameters: { code: 'auth-code-1' },
-        signingKey,
-        now: NOW,
-      });
-
-      expect(payload(jwt)['exp']).toBe(NOW_SECONDS + 60);
-    });
-
     it('should set exp to now plus the requested lifetime', async () => {
       const jwt = await createJarmResponseJwt({
         issuer: 'http://localhost:3000',

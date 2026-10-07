@@ -6,12 +6,6 @@ VercelではMarketplaceから接続できるUpstash Redis REST、ローカルで
 
 `src/app` は CLI（`pnpm run generate`）が生成した App Router のコードで、手では編集しない。エンドポイントごとの Route Handler（`authorize/route.ts`・`token/route.ts` など）、ログイン・同意のページと Server Action（`login/`・`consent/`。トランザクションが無いときの `not-found.tsx` と想定外の例外のときの `error.tsx` を含む）、OP のエラーページ（`oidc-error/page.tsx`）、全エンドポイントが共有する部品（`_oidc-provider/`）から成る。設定・クライアント・署名鍵・ストアの組み立ては `src/app/_oidc-provider/provider.ts` にある。
 
-生成物に含まれる契約テストは、サーバーを起動せずに実行できる。
-
-```bash
-pnpm --filter @maronn-openid-connect/sample-nextjs-vercel test:conformance
-```
-
 ## ローカル起動（一発）
 
 リポジトリルートから:

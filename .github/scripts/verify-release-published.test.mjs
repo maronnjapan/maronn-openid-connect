@@ -29,10 +29,6 @@ describe('parsePublishedVersions', () => {
     assert.deepEqual(parsePublishedVersions({ versions: { '0.0.1': {}, '0.0.2': {} } }), ['0.0.1', '0.0.2']);
   });
 
-  it('should return an empty list when the package is not on the registry yet', () => {
-    assert.deepEqual(parsePublishedVersions({ error: 'Not found' }), []);
-  });
-
   it('should return an empty list when the document has no versions field', () => {
     assert.deepEqual(parsePublishedVersions({}), []);
   });

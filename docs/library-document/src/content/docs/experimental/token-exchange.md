@@ -73,7 +73,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/token.ts` | 交換 grant の分岐、設定値 `tokenExchangeConfig`、`TokenExchangeError` の catch 分岐 |
 | `routes/discovery.ts` | `grant_types_supported` への交換 URN の追加 |
 | `config.ts` | サンプルクライアントの `grantTypes` への交換 URN の追加 |
-| `conformance.test.ts` | Token Exchange の契約テストの追加 |
 
 **新しいエンドポイントは増えません。** 既存のトークンエンドポイントに分岐が 1 つ加わるだけです。
 

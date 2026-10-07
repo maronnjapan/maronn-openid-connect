@@ -16,7 +16,7 @@ Hono / Express / Fastify / Next.js 向けに、Authorization Code Flow（OAuth 2
 | `routes/introspection.ts` | `requireIntrospectionToken` → `requireIntrospectionClient` → `resolveIntrospectionToken` → `isIntrospectionTokenActive` → `buildIntrospectionResponse` |
 | `routes/revocation.ts` | `requireRevocationToken` → `requireRevocationClient` → `resolveRevocationTarget` → `validateRevocationTokenClient` → `revokeResolvedToken` → `revokeGrantAccessTokens` |
 
-ID Token へ独自クレームを足すなら `routes/token.ts` の `buildIdTokenPayload` の戻り値を署名前に書き換える、といった改修が生成コード上で完結する。ただし検証ステップを消した構成は `conformance.test.ts`（契約テスト）が失敗し、Basic OP の想定挙動から外れたことを検知できる。
+ID Token へ独自クレームを足すなら `routes/token.ts` の `buildIdTokenPayload` の戻り値を署名前に書き換える、といった改修が生成コード上で完結する。
 
 ## インストールと実行
 
@@ -73,7 +73,6 @@ oidc-provider/
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
 ├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
-├── conformance.test.ts   # 生成 OP の想定挙動を固定する契約テスト
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
@@ -119,7 +118,7 @@ Hono の出力は TSX 前提で生成される。画面のマークアップ（`
 | 画面用ルーティング | `pages/authorize.ts` / `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts` / `pages/respond.ts`（機能有効時: `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts`） | ブラウザ向けのルートは **GET も POST も** ここにある（`GET\|POST /authorize`・`GET\|POST /login`・`GET\|POST /consent` など）。リクエストを読み、`routes/` の関数を 1 回呼び、返ってきた結果（outcome）を画面かリダイレクトに変換する。ロジックは持たない |
 | API ルーティング | `routes/*.ts` | OIDC のロジック本体。`token` / `userinfo` などの JSON エンドポイントはルーターのまま。ブラウザ向けの各ステップ（`authorize` / `login` / `consent` / `device` / `ciba-verification` / `logout`）は Response を返さない関数（`processAuthorizationRequest()` / `prepareLogin()` / `submitLogin()` / `submitConsent()` など）で、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返す。描画・リダイレクト・`Set-Cookie`・`c.json()` は一切行わず、`views.ts` も `pages/` も import しない |
 
-たとえば `POST /login` は `pages/login.ts` がフォームを読んで `submitLogin()` を呼び、`{ kind: 'authenticated', cookies }` なら Cookie を付けて `/consent` へ 302、`{ kind: 'invalid_credentials' }` ならフォームを再表示、`{ kind: 'locked_out' }` なら 429 のエラー画面、という変換だけを行う。ステータスコード・Cookie・リダイレクト先といった HTTP の契約は `conformance.test.ts` が固定している。
+たとえば `POST /login` は `pages/login.ts` がフォームを読んで `submitLogin()` を呼び、`{ kind: 'authenticated', cookies }` なら Cookie を付けて `/consent` へ 302、`{ kind: 'invalid_credentials' }` ならフォームを再表示、`{ kind: 'locked_out' }` なら 429 のエラー画面、という変換だけを行う。
 
 UI を変える場所は、変えたい範囲で選ぶ。
 
@@ -148,8 +147,7 @@ src/app/
 │   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションを Cookie から取得（無ければ notFound()）
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
-│   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア
-│   └── conformance.test.ts   # 契約テスト
+│   └── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア
 ├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
 ├── token/route.ts            # POST /token
 ├── userinfo/route.ts         # GET|POST /userinfo
@@ -190,8 +188,6 @@ Next.js は Route Handler とページ・Server Action を別々のモジュー�
 | `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Vercel で使うストア。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`） |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時） |
-
-契約テスト `_oidc-provider/conformance.test.ts` は、Route Handler・ページ・Server Action を Next.js と同じ形で直接呼び出す。リクエストの中でしか使えない `cookies()`（`next/headers`）と `redirect()` / `notFound()`（`next/navigation`）だけを差し替えているので、サーバーを起動せずに `vitest run` で実行できる（`vitest` を devDependencies に追加する）。
 
 ## 機能トグル（--enable / --disable）
 
@@ -277,17 +273,11 @@ export async function resolveGrantableScopes(
 
 カスタムスコープに対応する UserInfo クレームは無い（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集する。
 
-### conformance.test.ts との関係
-
-生成物には `conformance.test.ts`（契約テスト）が含まれ、選択した機能構成に合わせた内容で生成される。
-無効化した機能については「無効であること」（404 応答、`unsupported_grant_type` / `request_not_supported` の拒否、discovery メタデータの不在など）をテストで固定する。
-生成コードをカスタマイズした結果このテストが通らなくなった場合、本リポジトリが担保する Basic OP 挙動から外れている可能性がある。
-
 ## 生成後のセットアップ
 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. 生成される `JsonStoreBackend` を実装し、`createJsonProviderStores()` の結果を `storage` に渡す
-3. `config.ts` と未指定時のインメモリストアはローカル検証・契約テスト専用として扱う
+3. `config.ts` と未指定時のインメモリストアはローカル検証専用として扱う
 4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`。`--enable google-login` 時は `@maronn-openid-connect/google-login` も）
 
 Next.js では 1〜3 をすべて `_oidc-provider/provider.ts` で行う（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっている）。

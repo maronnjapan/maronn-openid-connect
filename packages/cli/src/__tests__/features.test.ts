@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   AVAILABLE_FEATURES,
   DEFAULT_FEATURES,
+  EXPERIMENTAL_FEATURES,
+  EXTENSION_FEATURES,
   resolveFeatures,
 } from '../features.js';
 
@@ -14,6 +16,27 @@ describe('AVAILABLE_FEATURES', () => {
       'revocation',
       'request-object',
     ]);
+  });
+});
+
+describe('EXPERIMENTAL_FEATURES', () => {
+  it('should list the experimental features in a stable order', () => {
+    expect(EXPERIMENTAL_FEATURES).toEqual([
+      'par',
+      'token-exchange',
+      'jarm',
+      'device-authorization-grant',
+      'id-jag',
+      'ciba',
+      'jwt-introspection-response',
+      'rp-initiated-logout',
+    ]);
+  });
+});
+
+describe('EXTENSION_FEATURES', () => {
+  it('should list the extension features in a stable order', () => {
+    expect(EXTENSION_FEATURES).toEqual(['google-login']);
   });
 });
 
@@ -100,6 +123,10 @@ describe('resolveFeatures', () => {
         googleLogin: false,
       });
     });
+
+    it('should keep an experimental feature disabled when it is listed in disable', () => {
+      expect(resolveFeatures({ disable: ['par'] }).par).toBe(false);
+    });
   });
 
   describe('enable', () => {
@@ -111,6 +138,77 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         par: false,
+        tokenExchange: false,
+        jarm: false,
+        deviceAuthorizationGrant: false,
+        idJag: false,
+        ciba: false,
+        jwtIntrospectionResponse: false,
+        rpInitiatedLogout: false,
+        googleLogin: false,
+      });
+    });
+
+    it('should enable an experimental feature only when it is named in enable', () => {
+      expect(resolveFeatures({ enable: ['par'] })).toEqual({
+        pkce: true,
+        refreshToken: true,
+        introspection: true,
+        revocation: true,
+        requestObject: true,
+        par: true,
+        tokenExchange: false,
+        jarm: false,
+        deviceAuthorizationGrant: false,
+        idJag: false,
+        ciba: false,
+        jwtIntrospectionResponse: false,
+        rpInitiatedLogout: false,
+        googleLogin: false,
+      });
+    });
+
+    it('should enable every experimental and extension feature named in enable', () => {
+      expect(
+        resolveFeatures({
+          enable: [
+            'par',
+            'token-exchange',
+            'jarm',
+            'device-authorization-grant',
+            'id-jag',
+            'ciba',
+            'jwt-introspection-response',
+            'rp-initiated-logout',
+            'google-login',
+          ],
+        }),
+      ).toEqual({
+        pkce: true,
+        refreshToken: true,
+        introspection: true,
+        revocation: true,
+        requestObject: true,
+        par: true,
+        tokenExchange: true,
+        jarm: true,
+        deviceAuthorizationGrant: true,
+        idJag: true,
+        ciba: true,
+        jwtIntrospectionResponse: true,
+        rpInitiatedLogout: true,
+        googleLogin: true,
+      });
+    });
+
+    it('should keep stable features untouched when an experimental feature is enabled alongside a disable', () => {
+      expect(resolveFeatures({ enable: ['par'], disable: ['revocation'] })).toEqual({
+        pkce: true,
+        refreshToken: true,
+        introspection: true,
+        revocation: false,
+        requestObject: true,
+        par: true,
         tokenExchange: false,
         jarm: false,
         deviceAuthorizationGrant: false,
@@ -140,6 +238,18 @@ describe('resolveFeatures', () => {
       expect(() =>
         resolveFeatures({ enable: ['pkce'], disable: ['pkce'] }),
       ).toThrow('Feature "pkce" cannot be both enabled and disabled');
+    });
+
+    // RFC 9701 rides on the RFC 7662 endpoint: without introspection there is
+    // nowhere to answer with the JWT, so the combination is rejected up front.
+    it('should reject jwt-introspection-response combined with a disabled introspection feature', () => {
+      expect(() =>
+        resolveFeatures({ enable: ['jwt-introspection-response'], disable: ['introspection'] }),
+      ).toThrow(
+        'Feature "jwt-introspection-response" requires the introspection feature: ' +
+          'the RFC 9701 JWT response is returned by the RFC 7662 introspection endpoint, ' +
+          'which is not generated when introspection is disabled',
+      );
     });
   });
 

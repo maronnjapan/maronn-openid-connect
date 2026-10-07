@@ -121,8 +121,7 @@ export interface AuthorizationCodeResolver {
    * 物理削除で実装すると、再提示は `not found`（invalid_grant）にはなるが
    * `revokeTokensByGrantId` が**呼ばれず**、漏洩コードから発行済みのトークンが生き残る
    * （SHOULD 違反）。生成 OP では `store.ts` の `consume()`（used 更新）を使い、
-   * `delete()`（物理削除）は使わないこと。この契約は各 sample の `conformance.test.ts`
-   * で固定している。
+   * `delete()`（物理削除）は使わないこと。
    */
   revokeAuthorizationCode(code: string): Promise<void>;
   /**
@@ -243,7 +242,7 @@ export interface RefreshTokenResolver {
    *
    * 物理削除で実装すると、再提示は `not found`（invalid_grant）にはなるが
    * `revokeTokensByGrantId` が**呼ばれず**、漏洩トークンから派生した token family が
-   * 生き残る（SHOULD 違反）。この契約は各 sample の `conformance.test.ts` で固定している。
+   * 生き残る（SHOULD 違反）。
    */
   revokeRefreshToken(token: string): Promise<void>;
   /**

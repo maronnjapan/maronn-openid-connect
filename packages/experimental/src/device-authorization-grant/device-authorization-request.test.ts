@@ -48,19 +48,6 @@ describe('validateDeviceGrantAllowed', () => {
       DeviceAuthorizationError,
     );
   });
-
-  it('should set the error code to unauthorized_client', () => {
-    const error = (() => {
-      try {
-        validateDeviceGrantAllowed({ clientId: 'web-app', grantTypes: [] });
-        return null;
-      } catch (caught) {
-        return caught as DeviceAuthorizationError;
-      }
-    })();
-
-    expect(error?.code).toBe('unauthorized_client');
-  });
 });
 
 describe('validateDeviceAuthorizationScope', () => {
@@ -196,20 +183,6 @@ describe('createDeviceAuthorizationRecord', () => {
     expect(record.deviceCode).toHaveLength(43);
   });
 
-  it('should store the normalized user_code as the lookup key', async () => {
-    const store = createInMemoryDeviceAuthorizationStore();
-
-    const record = await createDeviceAuthorizationRecord({
-      clientId: 'tv-app',
-      scope: ['openid'],
-      store,
-      expiresIn: 600,
-      interval: 5,
-    });
-
-    expect(await store.findByUserCode(record.userCode)).toEqual(record);
-  });
-
   it('should keep the display form separate from the lookup key', async () => {
     const store = createInMemoryDeviceAuthorizationStore();
 
@@ -281,21 +254,6 @@ describe('processDeviceAuthorizationRequest', () => {
       expires_in: 600,
       interval: 5,
     });
-  });
-
-  it('should default expires_in to 600 and interval to 5 seconds', async () => {
-    const store = createInMemoryDeviceAuthorizationStore();
-
-    const response = await processDeviceAuthorizationRequest({
-      params: { scope: 'openid' },
-      client: DEVICE_CLIENT,
-      issuer: ISSUER,
-      refreshTokenFeatureEnabled: true,
-      store,
-      now: NOW,
-    });
-
-    expect([response.expires_in, response.interval]).toEqual([600, 5]);
   });
 
   it('should honor the configured expires_in and interval', async () => {

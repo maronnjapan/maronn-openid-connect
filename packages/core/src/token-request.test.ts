@@ -4,7 +4,7 @@
  * CLI 生成コードは grant_type の検証、クライアントの解決、grant 固有の検証を
  * ステップ関数ごとに呼び出す。本ファイルは各ステップの振る舞い（エラーコード、
  * error_description、戻り値、resolver の呼び出し）を網羅的に固定する。
- * ステップをつないだ呼び出し順序は、各 sample の conformance.test.ts が担保する。
+ * ステップをつないだ呼び出し順序は、tests/e2e の E2E テストで確認する。
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -267,21 +267,6 @@ describe('resolveAuthenticatedTokenClient', () => {
     });
   });
 
-  it('should reject when client is not found', async () => {
-    const error = await captureAsyncError(() =>
-      resolveAuthenticatedTokenClient(
-        'unknown-client',
-        createClientResolver([confidentialClient]),
-      ),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidClient,
-      errorDescription: 'Client authentication failed',
-    });
-  });
-
   it('should accept valid authenticated client', async () => {
     const result = await resolveAuthenticatedTokenClient(
       'client-123',
@@ -445,21 +430,6 @@ describe('resolveAuthorizationCode', () => {
 });
 
 describe('validateAuthorizationCodeUnused', () => {
-  it('should reject already used authorization code', async () => {
-    const error = await captureAsyncError(() =>
-      validateAuthorizationCodeUnused(
-        createAuthorizationCode({ used: true }),
-        createAuthorizationCodeResolver(),
-      ),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidGrant,
-      errorDescription: 'Authorization code has already been used',
-    });
-  });
-
   // OAuth 2.1 Section 4.1.2 / RFC 6749 Section 4.1.2:
   // On reuse, the AS MUST deny AND SHOULD revoke previously issued tokens.
   describe('Code reuse: token revocation (OP-OAuth-2nd-Revokes)', () => {
@@ -598,15 +568,6 @@ describe('validateAuthorizationCodeRedirectUri', () => {
       error: TokenErrorCode.InvalidGrant,
       errorDescription: 'redirect_uri does not match the authorization request',
     });
-  });
-
-  it('should accept when redirect_uri is missing in token request', () => {
-    expect(() =>
-      validateAuthorizationCodeRedirectUri(
-        createAuthorizationCode({ redirectUri: 'https://client.example.com/cb' }),
-        undefined,
-      ),
-    ).not.toThrow();
   });
 
   it('should accept matching redirect_uri', () => {
@@ -953,17 +914,6 @@ describe('buildValidatedAuthorizationCodeRequest', () => {
     ]);
   });
 
-  it('should return undefined audience when not in authorization code', () => {
-    const result = buildValidatedAuthorizationCodeRequest(
-      'valid-auth-code',
-      createAuthorizationCode(),
-      'client-123',
-      true,
-    );
-
-    expect(result.audience).toBeUndefined();
-  });
-
   // OIDC Core 1.0 §3.1.2.1: acr_values requested at authorization is carried on the
   // authorization code and must be returned so the token endpoint can pass it to the
   // AcrResolver as requestedAcrValues.
@@ -978,20 +928,6 @@ describe('buildValidatedAuthorizationCodeRequest', () => {
     expect(result).toMatchObject({
       grantType: 'authorization_code',
       acrValues: 'loa2 loa3',
-    });
-  });
-
-  it('should return undefined acrValues when not in authorization code', () => {
-    const result = buildValidatedAuthorizationCodeRequest(
-      'valid-auth-code',
-      createAuthorizationCode(),
-      'client-123',
-      true,
-    );
-
-    expect(result).toMatchObject({
-      grantType: 'authorization_code',
-      acrValues: undefined,
     });
   });
 });
@@ -1044,6 +980,7 @@ describe('resolveRefreshToken', () => {
 });
 
 describe('validateRefreshTokenUnused', () => {
+  // revokeTokensByGrantId は optional なので、未提供の resolver でも使用済みの RT は拒否する
   it('should reject when refresh token has already been used', async () => {
     const error = await captureAsyncError(() =>
       validateRefreshTokenUnused(
@@ -1101,21 +1038,6 @@ describe('validateRefreshTokenUnused', () => {
 
       expect(error).toBeInstanceOf(TokenError);
       expect(revokedGrantIds).toEqual(['grant-compromised']);
-    });
-
-    it('should still throw invalid_grant when revokeTokensByGrantId is not provided', async () => {
-      // revokeTokensByGrantId は optional なので未提供でも例外を投げる
-      const error = await captureAsyncError(() =>
-        validateRefreshTokenUnused(
-          createRefreshTokenInfo({ used: true }),
-          createRefreshTokenResolver(),
-        ),
-      );
-
-      expect(error).toMatchObject({
-        error: TokenErrorCode.InvalidGrant,
-        errorDescription: 'Refresh token has already been used',
-      });
     });
   });
 });

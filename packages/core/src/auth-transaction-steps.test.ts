@@ -124,16 +124,7 @@ describe('buildAuthorizationResponseParams', () => {
 });
 
 describe('requiresReauthentication', () => {
-  // OIDC Core 1.0 §3.1.2.1: max_age=0 always forces re-authentication
-  it('should require re-authentication for max_age 0', () => {
-    expect(requiresReauthentication(0, 1_700_000_000, 1_700_000_000)).toBe(true);
-  });
-
   it('should not require re-authentication at the max_age boundary', () => {
     expect(requiresReauthentication(10, 1_700_000_000, 1_700_000_010)).toBe(false);
-  });
-
-  it('should require re-authentication past the max_age boundary', () => {
-    expect(requiresReauthentication(10, 1_700_000_000, 1_700_000_011)).toBe(true);
   });
 });

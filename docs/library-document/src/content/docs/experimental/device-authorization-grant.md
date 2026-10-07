@@ -75,7 +75,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/token.ts` | `device_code` grant の分岐と RFC 8628 §3.5 エラーの catch 分岐の追加 |
 | `routes/discovery.ts` | `device_authorization_endpoint` と grant URN の広告 |
 | `app.ts` / `apply.ts` | 4 エンドポイントのマウント・CORS・許可メソッドの追加 |
-| `conformance.test.ts` | デバイスフローの契約テストの追加 |
 
 ## 設定
 

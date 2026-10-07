@@ -3,24 +3,18 @@
  *
  * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が検証処理を
  * 消したり足したりできるようにする。ステップごとの網羅的な振る舞いは
- * token-request.test.ts が担保し、本ファイルは各ステップ関数の
- * 入出力契約（成功値と代表的なエラー）を固定する。
+ * token-request.test.ts が担保し、本ファイルは token-request.test.ts が
+ * 扱わないステップ関数のケースと、ステップを構成する部品関数の入出力を固定する。
  */
 import { describe, it, expect } from 'vitest';
-import {
-  validateGrantTypeSupported,
-  resolveAuthenticatedTokenClient,
-  validateClientGrantType,
-} from './token-request.js';
+import { validateGrantTypeSupported } from './token-request.js';
 import {
   buildValidatedAuthorizationCodeRequest,
   consumeAuthorizationCode,
-  resolveAuthorizationCode,
   validateAuthorizationCodeClient,
   validateAuthorizationCodeExpiration,
   validateAuthorizationCodeRedirectUri,
   validateAuthorizationCodeUnused,
-  verifyAuthorizationCodePkce,
   requireAuthorizationCode,
   requireStoredAuthorizationCode,
   validateAuthorizationCodeNotUsed,
@@ -36,11 +30,9 @@ import {
 import {
   buildValidatedRefreshTokenRequest,
   resolveRefreshToken,
-  validateRefreshTokenClient,
   validateRefreshTokenExpiration,
   validateRefreshTokenIdleTimeout,
   validateRefreshTokenSession,
-  validateRefreshTokenScope,
   validateRefreshTokenUnused,
   requireRefreshToken,
   requireStoredRefreshToken,
@@ -60,22 +52,7 @@ import type {
   AuthorizationCodeResolver,
   RefreshTokenInfo,
   RefreshTokenResolver,
-  TokenClientInfo,
-  TokenClientResolver,
 } from './token-request.js';
-
-function createClientResolver(clients: TokenClientInfo[]): TokenClientResolver {
-  return {
-    findClient: async (clientId: string): Promise<TokenClientInfo | null> => {
-      return clients.find((c) => c.clientId === clientId) ?? null;
-    },
-  };
-}
-
-const defaultClient: TokenClientInfo = {
-  clientId: 'client123',
-  clientSecret: 'secret',
-};
 
 const defaultAuthorizationCode: AuthorizationCodeInfo = {
   code: 'authorization-code',
@@ -122,166 +99,10 @@ function captureError(fn: () => unknown): TokenError | undefined {
 }
 
 describe('validateGrantTypeSupported', () => {
-  it('should return authorization_code for grant_type=authorization_code', () => {
-    const result = validateGrantTypeSupported('authorization_code');
-
-    expect(result).toBe('authorization_code');
-  });
-
   it('should return refresh_token for grant_type=refresh_token', () => {
     const result = validateGrantTypeSupported('refresh_token');
 
     expect(result).toBe('refresh_token');
-  });
-
-  it('should reject missing grant_type with invalid_request', () => {
-    const error = captureError(() => validateGrantTypeSupported(undefined));
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidRequest);
-  });
-
-  it('should reject an unknown grant_type with unsupported_grant_type', () => {
-    const error = captureError(() =>
-      validateGrantTypeSupported('client_credentials')
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.UnsupportedGrantType);
-  });
-
-  it('should reject a grant_type excluded from supportedGrantTypes', () => {
-    // 機能トグル: OP が refresh_token を提供しない構成では
-    // 実装として扱える grant_type でも unsupported_grant_type で拒否する（RFC 6749 §5.2）
-    const error = captureError(() =>
-      validateGrantTypeSupported('refresh_token', ['authorization_code'])
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.UnsupportedGrantType);
-  });
-});
-
-describe('resolveAuthenticatedTokenClient', () => {
-  it('should return the client for the authenticated client id', async () => {
-    const result = await resolveAuthenticatedTokenClient(
-      'client123',
-      createClientResolver([defaultClient])
-    );
-
-    expect(result).toEqual(defaultClient);
-  });
-
-  it('should reject an empty authenticated client id with invalid_client', async () => {
-    const error = await resolveAuthenticatedTokenClient(
-      '',
-      createClientResolver([defaultClient])
-    ).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(TokenError);
-    const tokenError = error as TokenError;
-    expect(tokenError.error).toBe(TokenErrorCode.InvalidClient);
-    expect(tokenError.errorDescription).toBe('Client authentication required');
-  });
-
-  it('should reject an unknown client with invalid_client', async () => {
-    const error = await resolveAuthenticatedTokenClient(
-      'unknown-client',
-      createClientResolver([defaultClient])
-    ).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(TokenError);
-    const tokenError = error as TokenError;
-    expect(tokenError.error).toBe(TokenErrorCode.InvalidClient);
-    expect(tokenError.errorDescription).toBe('Client authentication failed');
-  });
-});
-
-describe('validateClientGrantType', () => {
-  it('should pass when the client grantTypes includes the grant', () => {
-    const client: TokenClientInfo = {
-      clientId: 'client123',
-      clientSecret: 'secret',
-      grantTypes: ['authorization_code', 'refresh_token'],
-    };
-
-    const error = captureError(() =>
-      validateClientGrantType(client, 'refresh_token')
-    );
-
-    expect(error).toBe(undefined);
-  });
-
-  it('should default to authorization_code only when grantTypes is not registered', () => {
-    // OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 既定は ["authorization_code"]
-    const error = captureError(() =>
-      validateClientGrantType(defaultClient, 'authorization_code')
-    );
-
-    expect(error).toBe(undefined);
-  });
-
-  it('should reject a grant_type not registered for the client with unauthorized_client', () => {
-    const error = captureError(() =>
-      validateClientGrantType(defaultClient, 'refresh_token')
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.UnauthorizedClient);
-  });
-});
-
-describe('resolveAuthorizationCode', () => {
-  it('should return the code value and resolved authorization code', async () => {
-    const resolver: AuthorizationCodeResolver = {
-      findAuthorizationCode: async (code) =>
-        code === 'authorization-code' ? defaultAuthorizationCode : null,
-      revokeAuthorizationCode: async () => {},
-    };
-
-    const result = await resolveAuthorizationCode(
-      { grant_type: 'authorization_code', code: 'authorization-code' },
-      resolver
-    );
-
-    expect(result).toEqual({
-      code: 'authorization-code',
-      authorizationCode: defaultAuthorizationCode,
-    });
-  });
-
-  it('should reject a missing code with invalid_request', async () => {
-    const resolver: AuthorizationCodeResolver = {
-      findAuthorizationCode: async () => defaultAuthorizationCode,
-      revokeAuthorizationCode: async () => {},
-    };
-
-    const error = await resolveAuthorizationCode(
-      { grant_type: 'authorization_code' },
-      resolver
-    ).catch((e: unknown) => e);
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidRequest,
-      errorDescription: 'Missing required parameter: code',
-    });
-  });
-
-  it('should reject an unknown code with invalid_grant', async () => {
-    const resolver: AuthorizationCodeResolver = {
-      findAuthorizationCode: async () => null,
-      revokeAuthorizationCode: async () => {},
-    };
-
-    const error = await resolveAuthorizationCode(
-      { grant_type: 'authorization_code', code: 'unknown-code' },
-      resolver
-    ).catch((e: unknown) => e);
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidGrant,
-      errorDescription: 'Authorization code not found',
-    });
   });
 });
 
@@ -332,17 +153,6 @@ describe('validateAuthorizationCodeClient', () => {
 
     expect(error).toBe(undefined);
   });
-
-  it('should reject an authorization code issued to another client', () => {
-    const error = captureError(() =>
-      validateAuthorizationCodeClient(defaultAuthorizationCode, 'other-client')
-    );
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidGrant,
-      errorDescription: 'Authorization code was issued to a different client',
-    });
-  });
 });
 
 describe('validateAuthorizationCodeExpiration', () => {
@@ -367,29 +177,6 @@ describe('validateAuthorizationCodeExpiration', () => {
 });
 
 describe('validateAuthorizationCodeRedirectUri', () => {
-  it('should pass when the explicit redirect_uri matches the authorization request', () => {
-    const error = captureError(() =>
-      validateAuthorizationCodeRedirectUri(
-        defaultAuthorizationCode,
-        'https://client.example.org/cb'
-      )
-    );
-
-    expect(error).toBe(undefined);
-  });
-
-  it('should reject a missing redirect_uri when it was explicit at authorization time', () => {
-    const error = captureError(() =>
-      validateAuthorizationCodeRedirectUri(defaultAuthorizationCode, undefined)
-    );
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidGrant,
-      errorDescription:
-        'redirect_uri is required because it was included in the authorization request',
-    });
-  });
-
   it('should reject a mismatched redirect_uri', () => {
     const error = captureError(() =>
       validateAuthorizationCodeRedirectUri(
@@ -402,58 +189,6 @@ describe('validateAuthorizationCodeRedirectUri', () => {
       error: TokenErrorCode.InvalidGrant,
       errorDescription: 'redirect_uri does not match the authorization request',
     });
-  });
-});
-
-describe('verifyAuthorizationCodePkce', () => {
-  it('should return true for a matching S256 code_verifier', async () => {
-    const result = await verifyAuthorizationCodePkce(
-      defaultAuthorizationCode,
-      'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
-    );
-
-    expect(result).toBe(true);
-  });
-
-  it('should return false when the authorization code has no PKCE binding', async () => {
-    const result = await verifyAuthorizationCodePkce(
-      {
-        ...defaultAuthorizationCode,
-        codeChallenge: undefined,
-        codeChallengeMethod: undefined,
-      },
-      undefined
-    );
-
-    expect(result).toBe(false);
-  });
-
-  it('should reject a mismatched code_verifier', async () => {
-    const error = await verifyAuthorizationCodePkce(
-      defaultAuthorizationCode,
-      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-    ).catch((e: unknown) => e);
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidGrant,
-      errorDescription: 'code_verifier validation failed',
-    });
-  });
-});
-
-describe('consumeAuthorizationCode', () => {
-  it('should mark the resolved authorization code as used', async () => {
-    let consumedCode: string | undefined;
-    const resolver: AuthorizationCodeResolver = {
-      findAuthorizationCode: async () => defaultAuthorizationCode,
-      revokeAuthorizationCode: async (code) => {
-        consumedCode = code;
-      },
-    };
-
-    await consumeAuthorizationCode('authorization-code', resolver);
-
-    expect(consumedCode).toBe('authorization-code');
   });
 });
 
@@ -515,35 +250,6 @@ describe('resolveRefreshToken', () => {
       refreshTokenInfo: defaultRefreshToken,
     });
   });
-
-  it('should reject a missing refresh_token with invalid_request', async () => {
-    const resolver: RefreshTokenResolver = {
-      resolve: async () => defaultRefreshToken,
-      revokeRefreshToken: async () => {},
-    };
-
-    const error = await resolveRefreshToken(
-      { grant_type: 'refresh_token' },
-      resolver
-    ).catch((e: unknown) => e);
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidRequest,
-      errorDescription: 'Missing required parameter: refresh_token',
-    });
-  });
-
-  it('should reject a missing resolver with invalid_request', async () => {
-    const error = await resolveRefreshToken(
-      { grant_type: 'refresh_token', refresh_token: 'refresh-token' },
-      undefined
-    ).catch((e: unknown) => e);
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidRequest,
-      errorDescription: 'Refresh token resolver not provided',
-    });
-  });
 });
 
 describe('validateRefreshTokenUnused', () => {
@@ -566,19 +272,6 @@ describe('validateRefreshTokenUnused', () => {
     expect(error).toMatchObject({
       error: TokenErrorCode.InvalidGrant,
       errorDescription: 'Refresh token has already been used',
-    });
-  });
-});
-
-describe('validateRefreshTokenClient', () => {
-  it('should reject a refresh token issued to another client', () => {
-    const error = captureError(() =>
-      validateRefreshTokenClient(defaultRefreshToken, 'other-client')
-    );
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidGrant,
-      errorDescription: 'Refresh token was issued to a different client',
     });
   });
 });
@@ -614,28 +307,6 @@ describe('validateRefreshTokenIdleTimeout', () => {
     );
 
     expect(error).toBe(undefined);
-  });
-});
-
-describe('validateRefreshTokenScope', () => {
-  it('should return a deduplicated subset requested by the client', () => {
-    const result = validateRefreshTokenScope(
-      'openid profile openid',
-      defaultRefreshToken.scope
-    );
-
-    expect(result).toEqual(['openid', 'profile']);
-  });
-
-  it('should reject a scope outside the original grant', () => {
-    const error = captureError(() =>
-      validateRefreshTokenScope('openid admin', defaultRefreshToken.scope)
-    );
-
-    expect(error).toMatchObject({
-      error: TokenErrorCode.InvalidScope,
-      errorDescription: 'Requested scope exceeds original grant: admin',
-    });
   });
 });
 

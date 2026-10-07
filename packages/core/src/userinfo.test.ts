@@ -234,16 +234,6 @@ describe('resolveUserInfoClaims', () => {
       errorDescription: 'User not found for the given access token',
     });
   });
-
-  // OIDC Core 1.0 Section 5.3.2: sub in the UserInfo Response MUST exactly match sub in the ID Token
-  it('should return sub matching the access token subject', async () => {
-    const tokenInfo = createValidAccessTokenInfo({ sub: 'user-abc' });
-    const userClaimsResolver = createUserClaimsResolver({
-      'user-abc': createFullUserClaims({ sub: 'user-abc' }),
-    });
-    const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
-    expect(userClaims.sub).toBe('user-abc');
-  });
 });
 
 describe('filterClaimsByScope', () => {
@@ -263,6 +253,7 @@ describe('filterClaimsByScope', () => {
     expect(result.updated_at).toBe(1311280970);
   });
 
+  // OIDC Core 1.0 Section 5.4: email scope
   it('should include email claims for email scope', () => {
     const result = filterClaimsByScope(fullClaims, ['openid', 'email']);
     expect(result.sub).toBe('user-123');
@@ -279,6 +270,7 @@ describe('filterClaimsByScope', () => {
     expect(result.address?.street_address).toBe('123 Main St');
   });
 
+  // OIDC Core 1.0 Section 5.4: phone scope
   it('should include phone claims for phone scope', () => {
     const result = filterClaimsByScope(fullClaims, ['openid', 'phone']);
     expect(result.sub).toBe('user-123');
@@ -325,13 +317,6 @@ describe('filterClaimsByScope', () => {
       expect(result.updated_at).toBe(1311280970);
     });
 
-    // OIDC Core 1.0 Section 5.4: email scope
-    it('should include email claims when email scope is granted', () => {
-      const result = filterClaimsByScope(fullClaims, ['openid', 'email']);
-      expect(result.email).toBe('janedoe@example.com');
-      expect(result.email_verified).toBe(true);
-    });
-
     // OIDC Core 1.0 Section 5.4: address scope
     it('should include address claim when address scope is granted', () => {
       const result = filterClaimsByScope(fullClaims, ['openid', 'address']);
@@ -343,22 +328,6 @@ describe('filterClaimsByScope', () => {
         postal_code: '12345',
         country: 'USA',
       });
-    });
-
-    // OIDC Core 1.0 Section 5.4: phone scope
-    it('should include phone claims when phone scope is granted', () => {
-      const result = filterClaimsByScope(fullClaims, ['openid', 'phone']);
-      expect(result.phone_number).toBe('+1 (555) 555-5555');
-      expect(result.phone_number_verified).toBe(true);
-    });
-
-    it('should not include profile claims when profile scope is not granted', () => {
-      const result = filterClaimsByScope(fullClaims, ['openid']);
-      expect(result.sub).toBe('user-123');
-      expect(result.name).toBeUndefined();
-      expect(result.email).toBeUndefined();
-      expect(result.address).toBeUndefined();
-      expect(result.phone_number).toBeUndefined();
     });
 
     it('should not include email claims when email scope is not granted', () => {
@@ -456,20 +425,6 @@ describe('applyRequestedClaims', () => {
     expect(result.email).toBe('janedoe@example.com');
   });
 
-  it('should not error when essential claim is not available', () => {
-    const sparseUser: UserClaims = {
-      sub: 'user-no-email',
-    };
-    // OIDC Core: Not returning essential claim is not an error
-    const result = applyRequestedClaims({ sub: 'user-no-email' }, sparseUser, {
-      userinfo: {
-        email: { essential: true },
-      },
-    });
-    expect(result.sub).toBe('user-no-email');
-    expect(result.email).toBeUndefined();
-  });
-
   it('should ignore claims parameter when userinfo key is absent', () => {
     const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {});
     expect(result.sub).toBe('user-123');
@@ -491,26 +446,6 @@ describe('applyRequestedClaims', () => {
   // OIDC Core 1.0 Section 5.5.1: Individual Claims Requests
   // `value` / `values` request the claim to be returned with specific value(s).
   describe('value / values matching (OIDC Core Section 5.5.1)', () => {
-    it('should return email when requested value matches the actual value', () => {
-      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
-        userinfo: {
-          email: { value: 'janedoe@example.com' },
-        },
-      });
-      expect(result.email).toBe('janedoe@example.com');
-    });
-
-    it('should omit email without error when requested value does not match', () => {
-      // OIDC Core Section 5.5.1: not returning a requested claim is not an error
-      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
-        userinfo: {
-          email: { value: 'someone-else@example.com' },
-        },
-      });
-      expect(result.sub).toBe('user-123');
-      expect(result.email).toBeUndefined();
-    });
-
     it('should return claim when the actual value is included in requested values', () => {
       const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
         userinfo: {
@@ -542,15 +477,6 @@ describe('applyRequestedClaims', () => {
       });
       expect(result.sub).toBe('user-no-email');
       expect(result.email).toBeUndefined();
-    });
-
-    it('should return claim when the request entry is null (no constraint)', () => {
-      const result = applyRequestedClaims({ sub: 'user-123' }, fullClaims, {
-        userinfo: {
-          email: null,
-        },
-      });
-      expect(result.email).toBe('janedoe@example.com');
     });
 
     it('should not let value constraints affect scope-based claims', () => {

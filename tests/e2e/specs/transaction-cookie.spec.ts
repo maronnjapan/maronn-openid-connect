@@ -17,8 +17,7 @@ const clientBaseURL =
  *
  * These run in a real browser, which is the only place the cookie attributes
  * (HttpOnly / Secure / SameSite=Lax) and the one-cookie-per-browser behavior
- * across tabs are actually exercised: the conformance tests set the Cookie
- * header by hand.
+ * across tabs are actually exercised.
  */
 test.describe('Auth transaction cookie', () => {
   test('should keep the transaction id out of the URL and the HTML, in an HttpOnly cookie', async ({

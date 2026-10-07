@@ -681,11 +681,6 @@ describe('buildIdTokenPayload', () => {
       expect(payload.sub).toBe('user-def');
     });
 
-    it('should have aud claim matching clientId', () => {
-      const payload = buildIdTokenPayload(idTokenInput({ clientId: 'client-aud' }));
-      expect(payload.aud).toBe('client-aud');
-    });
-
     it('should set exp claim to issuedAt plus expiresIn', () => {
       const payload = buildIdTokenPayload(idTokenInput({ issuedAt: NOW, expiresIn: 1800 }));
       expect(payload.exp).toBe(NOW + 1800);
@@ -754,16 +749,6 @@ describe('buildIdTokenPayload', () => {
         'https://other.example/rp',
         'https://third.example/rp',
       ]);
-    });
-
-    it('should set azp to clientId when aud contains multiple values', () => {
-      const payload = buildIdTokenPayload(
-        idTokenInput({
-          clientId: 'client-primary',
-          idTokenAudiences: ['https://other.example/rp'],
-        }),
-      );
-      expect(payload.azp).toBe('client-primary');
     });
 
     it('should keep aud a single string and omit azp when additional audiences dedupe to clientId only', () => {

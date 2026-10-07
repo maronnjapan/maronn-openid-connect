@@ -172,17 +172,18 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
 /**
  * ステップ 2: クライアントを認証する（RFC 9126 §2.1: token endpoint と同一規則）。
  *
- * RFC 9126 §2.1 は「`client_id` は認可リクエストの必須パラメータなので pushed request にも
- * 必須」と定めており、`client_secret_basic` を使う場合でもボディに `client_id` が入る。
- * 一方 core の {@link extractClientCredentials} はボディの `client_id` の存在自体を
- * client_secret_post の使用と見なすため、Authorization ヘッダと併用すると
- * 「複数の認証方式」として拒否される。そこで PAR では、
+ * 資格情報の抽出・多重方式の判定・検証はすべて core の
+ * {@link extractClientCredentials} 以降のステップへ委譲し、token endpoint と
+ * 同一の規則を適用する:
  *
- * - Authorization ヘッダがある場合はヘッダのみを資格情報として扱い（ボディの
- *   `client_secret` があれば OAuth 2.1 §2.3 違反として invalid_request）、
- * - 認証後にボディの `client_id` が認証済みクライアントと一致することを検証する
- *
- * という順序で処理する。core は変更しない。
+ * - ヘッダ認証は `Basic` スキームだけが対象で、他スキームのヘッダ（ゲートウェイが
+ *   注入する `Bearer` など）は無視してボディの資格情報で認証する
+ * - 空文字列の `client_secret` は「未提示」に正規化される（RFC 6749 §3.2）
+ * - `Basic` とボディの `client_secret`（非空）の併用は OAuth 2.1 §2.3 の
+ *   多重方式として invalid_request
+ * - RFC 9126 §2.1 で必須の認可パラメータとしてボディに入る `client_id` は、
+ *   `Basic` 併用時に core が Basic 側の client_id との一致を検証する
+ *   （RFC 9126 §2.2: request_uri は pushed request を送ったクライアントに紐付く）
  *
  * @returns 認証されたクライアントID
  * @throws {ParError} invalid_client / invalid_request
@@ -193,38 +194,11 @@ export async function authenticateParClient(context: {
   clientResolver: TokenClientResolver;
 }): Promise<string> {
   const { params, clientResolver } = context;
-  const authorizationHeader = context.authorizationHeader ?? '';
-  const usesAuthorizationHeader = authorizationHeader.trim().length > 0;
-
-  // OAuth 2.1 §2.3: 1リクエストにつき認証方式は 1 つ。ボディの client_secret と
-  // Authorization ヘッダの併用は本当に「複数方式」なので拒否する。
-  if (usesAuthorizationHeader && params['client_secret'] !== undefined) {
-    throw new ParError(
-      'invalid_request',
-      'Multiple client authentication methods provided. Use either the Authorization header or the request body, not both.',
-    );
-  }
-
-  // client_id は認可リクエストのパラメータとしてボディに存在しうるので、資格情報の
-  // 抽出には Authorization ヘッダ使用時はボディを渡さない。
-  const credentialParams: Record<string, string | undefined> = usesAuthorizationHeader
-    ? {}
-    : { client_id: params['client_id'], client_secret: params['client_secret'] };
-
-  const authenticatedClientId = await runClientAuthentication({
-    params: credentialParams,
-    authorizationHeader,
+  return runClientAuthentication({
+    params: { client_id: params['client_id'], client_secret: params['client_secret'] },
+    authorizationHeader: context.authorizationHeader ?? '',
     clientResolver,
   });
-
-  // RFC 9126 §2.2: request_uri は「pushed request を送ったクライアント」に紐付く。
-  // ボディの client_id が別クライアントを名乗る場合はここで拒否する。
-  const bodyClientId = params['client_id'];
-  if (bodyClientId !== undefined && bodyClientId !== authenticatedClientId) {
-    throw new ParError('invalid_request', 'client_id does not match the authenticated client');
-  }
-
-  return authenticatedClientId;
 }
 
 /**

@@ -9,6 +9,7 @@
  */
 import type { TokenClientInfo } from '@maronn-openid-connect/core';
 import { CibaGrantError } from './errors.js';
+import { CIBA_GRANT_TYPE } from './store.js';
 import type {
   CibaAuthenticationRequestRecord,
   CibaAuthenticationRequestStore,
@@ -41,13 +42,16 @@ export interface CibaGrantResult {
  *
  * 状態機械の判定順序（上から評価し、最初に該当したものを返す）:
  *
- * 1. `auth_req_id` 欠落 → `invalid_request`
- * 2. レコード不存在・クライアント不一致 → `invalid_grant`（同一文言・レコードは残す）
- * 3. 期限切れ → `expired_token`（レコード削除）
- * 4. ポーリング過速 → `slow_down`（interval を +5 して保存）
- * 5. pending → `authorization_pending`（lastPolledAt 更新）
- * 6. denied → `access_denied`（レコード削除。再ポーリングは invalid_grant）
- * 7. approved → 結果を返す（レコードは consume で単回使用にする）
+ * 1. CIBA grant 未登録クライアント → `unauthorized_client`（RFC 6749 §5.2。
+ *    バックチャネル受付後に登録から CIBA が外れたクライアントの償還を拒否する。
+ *    device-authorization-grant の `validateDeviceCodeGrantAllowed` と同順）
+ * 2. `auth_req_id` 欠落 → `invalid_request`
+ * 3. レコード不存在・クライアント不一致 → `invalid_grant`（同一文言・レコードは残す）
+ * 4. 期限切れ → `expired_token`（レコード削除）
+ * 5. ポーリング過速 → `slow_down`（interval を +5 して保存）
+ * 6. pending → `authorization_pending`（lastPolledAt 更新）
+ * 7. denied → `access_denied`（レコード削除。再ポーリングは invalid_grant）
+ * 8. approved → 結果を返す（レコードは consume で単回使用にする）
  *
  * 期限切れをポーリング過速より先に評価するのは、期限切れレコードの interval を
  * 増やしても意味がなく、クライアントへはフロー終了を伝えるべきだから。
@@ -66,8 +70,28 @@ export async function processCibaGrant(input: {
   store: CibaAuthenticationRequestStore;
   now?: Date;
 }): Promise<CibaGrantResult> {
+  validateCibaGrantAllowed(input.client);
   const record = await resolveCibaRecord(input.params, input.client, input.store);
   return evaluateCibaState(record, input.store, input.now ?? new Date());
+}
+
+/**
+ * クライアントが CIBA grant を許可されているかを償還時にも検証する。
+ *
+ * バックチャネルエンドポイントは受付時に同じ検査を行うが、auth_req_id の発行から
+ * 償還までの間に登録から CIBA が外れることがある（RFC 6749 §5.2 の
+ * unauthorized_client）。device-authorization-grant の
+ * `validateDeviceCodeGrantAllowed` と同じ位置づけの検査。
+ *
+ * @throws {CibaGrantError} unauthorized_client
+ */
+export function validateCibaGrantAllowed(client: TokenClientInfo): void {
+  if (!(client.grantTypes ?? []).includes(CIBA_GRANT_TYPE)) {
+    throw new CibaGrantError(
+      'unauthorized_client',
+      'The client is not authorized to use the CIBA grant',
+    );
+  }
 }
 
 /**

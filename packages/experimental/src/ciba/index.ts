@@ -54,5 +54,9 @@ export {
   validateCibaLoginSubmission,
 } from './verification.js';
 
-export { SLOW_DOWN_INTERVAL_INCREMENT, processCibaGrant } from './ciba-grant.js';
+export {
+  SLOW_DOWN_INTERVAL_INCREMENT,
+  processCibaGrant,
+  validateCibaGrantAllowed,
+} from './ciba-grant.js';
 export type { CibaGrantResult } from './ciba-grant.js';

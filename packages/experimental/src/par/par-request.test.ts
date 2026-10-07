@@ -172,7 +172,34 @@ describe('authenticateParClient', () => {
     expect(clientId).toBe('spa-app');
   });
 
-  it('should reject a body client_secret combined with an Authorization header', async () => {
+  it('should authenticate with Basic when the body carries an empty client_secret', async () => {
+    // RFC 6749 §3.2: "Parameters sent without a value MUST be treated as if they
+    // were omitted from the request." — the token endpoint normalizes an empty
+    // client_secret to "not presented", and RFC 9126 §2.1 requires the PAR
+    // endpoint to authenticate the client the same way.
+    const clientId = await authenticateParClient({
+      params: validParams({ client_secret: '' }),
+      authorizationHeader: basicHeader('web-app', 'secret'),
+      clientResolver: createClientResolver(),
+    });
+
+    expect(clientId).toBe('web-app');
+  });
+
+  it('should authenticate via body credentials when a non-Basic Authorization header is present', async () => {
+    // The token endpoint keys header authentication on the Basic scheme and
+    // ignores other schemes (e.g. a Bearer header injected by a gateway), so
+    // the PAR endpoint must do the same (RFC 9126 §2.1).
+    const clientId = await authenticateParClient({
+      params: validParams({ client_id: 'post-app', client_secret: 'secret' }),
+      authorizationHeader: 'Bearer gateway-injected-token',
+      clientResolver: createClientResolver(),
+    });
+
+    expect(clientId).toBe('post-app');
+  });
+
+  it('should reject a body client_secret combined with a Basic Authorization header', async () => {
     // OAuth 2.1 §2.3: a client MUST NOT use more than one authentication method.
     await expect(
       authenticateParClient({
@@ -181,7 +208,7 @@ describe('authenticateParClient', () => {
         clientResolver: createClientResolver(),
       }),
     ).rejects.toThrowError(
-      new ParError('invalid_request', 'Multiple client authentication methods provided. Use either the Authorization header or the request body, not both.'),
+      new ParError('invalid_request', 'Multiple client authentication methods provided. Use either Authorization header or request body, not both.'),
     );
   });
 
@@ -193,7 +220,7 @@ describe('authenticateParClient', () => {
         clientResolver: createClientResolver(),
       }),
     ).rejects.toThrowError(
-      new ParError('invalid_request', 'client_id does not match the authenticated client'),
+      new ParError('invalid_request', 'client_id in request body does not match the Authorization header'),
     );
   });
 

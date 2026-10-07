@@ -1,10 +1,11 @@
 /**
- * トークンレスポンス生成の機能単位ステップ関数のテスト。
+ * トークンレスポンス生成の機能単位ステップ関数と部品関数のテスト。
  *
  * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が ID Token の
  * クレームを足したり発行処理を差し替えたりできるようにする。ステップごとの
  * 網羅的な振る舞いは token-response.test.ts が担保し、本ファイルは
- * 各ステップ関数の入出力契約を固定する。
+ * 部品関数をリテラルの引数で検証するほか、ステップ関数の入出力契約のうち
+ * token-response.test.ts と重複しないもの（payload 全体、仕様例の at_hash など）を固定する。
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
@@ -14,7 +15,6 @@ import {
   resolveAcrAmr,
   selectRequestedAcrValues,
 } from './token-response.js';
-import { createJwtAccessTokenIssuer } from './access-token-issuer.js';
 import type { AcrResolver } from './token-response.js';
 
 const NOW = 1_700_000_000;
@@ -59,19 +59,6 @@ describe('buildAccessTokenPayload', () => {
     });
   });
 
-  it('should fall back to the issuer when no audience is given', () => {
-    const result = buildAccessTokenPayload({
-      issuer: 'https://op.example.com',
-      subject: 'user-1',
-      clientId: 'client-1',
-      scope: ['openid'],
-      expiresIn: 60,
-      issuedAt: NOW,
-    });
-
-    expect(result.aud).toEqual(['https://op.example.com']);
-  });
-
   // RFC 9068 §2.2: jti is REQUIRED for JWT access tokens.
   // RFC 7519 §4.1.7: the value MUST be assigned so that the probability of the
   // same value being assigned to a different token is negligible.
@@ -91,43 +78,11 @@ describe('buildAccessTokenPayload', () => {
       };
     }
 
-    it('should generate a 128-bit base64url jti by default', () => {
-      const result = buildAccessTokenPayload(buildFixedInput());
-
-      // 16 bytes of CSPRNG output, base64url encoded without padding.
-      expect(typeof result.jti).toBe('string');
-      expect(result.jti).toHaveLength(22);
-      expect(result.jti).toMatch(/^[A-Za-z0-9_-]+$/);
-    });
-
     it('should generate a different jti on every call for identical input', () => {
       const first = buildAccessTokenPayload(buildFixedInput());
       const second = buildAccessTokenPayload(buildFixedInput());
 
       expect(first.jti === second.jti).toBe(false);
-    });
-
-    it('should use the caller-supplied jti instead of generating one', () => {
-      const result = buildAccessTokenPayload({ ...buildFixedInput(), jti: 'caller-jti' });
-
-      expect(result.jti).toBe('caller-jti');
-    });
-
-    it('should produce different JWT access token strings for identical input issued in the same second', async () => {
-      // generateAccessToken rejects an exp that is already in the past, so this
-      // case pins issuedAt to the current second rather than the fixture NOW.
-      const input = { ...buildFixedInput(), issuedAt: Math.floor(Date.now() / 1000) };
-      const issuer = createJwtAccessTokenIssuer();
-      const first = await issuer.issue({
-        payload: buildAccessTokenPayload(input),
-        privateKey: rsaKeyPair.privateKey,
-      });
-      const second = await issuer.issue({
-        payload: buildAccessTokenPayload(input),
-        privateKey: rsaKeyPair.privateKey,
-      });
-
-      expect(first === second).toBe(false);
     });
   });
 });
@@ -146,54 +101,6 @@ describe('computeAtHash', () => {
 });
 
 describe('resolveAcrAmr', () => {
-  it('should return the directly supplied acr and amr without calling the resolver', async () => {
-    let resolverCalls = 0;
-    const acrResolver: AcrResolver = async () => {
-      resolverCalls += 1;
-      return { acr: 'from-resolver', amr: ['pwd'] };
-    };
-
-    const result = await resolveAcrAmr({
-      subject: 'user-1',
-      clientId: 'client-1',
-      acr: 'urn:example:loa:2',
-      amr: ['otp'],
-      acrResolver,
-    });
-
-    expect(result).toEqual({ acr: 'urn:example:loa:2', amr: ['otp'] });
-    expect(resolverCalls).toBe(0);
-  });
-
-  it('should call the resolver when neither acr nor amr is supplied', async () => {
-    const acrResolver: AcrResolver = async () => ({ acr: 'urn:example:loa:3', amr: ['pwd', 'otp'] });
-
-    const result = await resolveAcrAmr({
-      subject: 'user-1',
-      clientId: 'client-1',
-      acrResolver,
-    });
-
-    expect(result).toEqual({ acr: 'urn:example:loa:3', amr: ['pwd', 'otp'] });
-  });
-
-  it('should pass the requested acr_values to the resolver', async () => {
-    const seen: (string | undefined)[] = [];
-    const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
-      seen.push(requestedAcrValues);
-      return undefined;
-    };
-
-    await resolveAcrAmr({
-      subject: 'user-1',
-      clientId: 'client-1',
-      requestedAcrValues: 'urn:example:loa:2',
-      acrResolver,
-    });
-
-    expect(seen).toEqual(['urn:example:loa:2']);
-  });
-
   it('should seed the resolver with claims.id_token.acr.values when acr_values is absent', async () => {
     const seen: (string | undefined)[] = [];
     const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
@@ -209,20 +116,6 @@ describe('resolveAcrAmr', () => {
     });
 
     expect(seen).toEqual(['urn:example:loa:2 urn:example:loa:3']);
-  });
-
-  it('should return empty values when no resolver is configured', async () => {
-    const result = await resolveAcrAmr({ subject: 'user-1', clientId: 'client-1' });
-
-    expect(result).toEqual({ acr: undefined, amr: undefined });
-  });
-
-  it('should return empty values when the resolver declines to decide', async () => {
-    const acrResolver: AcrResolver = async () => undefined;
-
-    const result = await resolveAcrAmr({ subject: 'user-1', clientId: 'client-1', acrResolver });
-
-    expect(result).toEqual({ acr: undefined, amr: undefined });
   });
 });
 
@@ -316,21 +209,6 @@ describe('buildIdTokenPayload', () => {
       at_hash: 'at-hash-value',
       email: 'user@example.com',
     });
-  });
-
-  it('should not let user claims override the required sub claim', () => {
-    const result = buildIdTokenPayload({
-      issuer: 'https://op.example.com',
-      subject: 'user-1',
-      clientId: 'client-1',
-      scope: ['openid', 'profile'],
-      expiresIn: 3600,
-      issuedAt: NOW,
-      atHash: 'at-hash-value',
-      userClaims: { sub: 'attacker' },
-    });
-
-    expect(result.sub).toBe('user-1');
   });
 });
 

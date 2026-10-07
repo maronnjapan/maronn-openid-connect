@@ -1,10 +1,11 @@
 /**
- * UserInfo リクエスト処理の機能単位ステップ関数のテスト。
+ * UserInfo リクエスト処理の機能単位ステップ関数と部品関数のテスト。
  *
  * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が検証処理を
  * 消したり足したりできるようにする。ステップごとの網羅的な振る舞いは
- * userinfo.test.ts が担保し、本ファイルは各ステップ関数の入出力契約
- * （成功値と代表的なエラー）を固定する。
+ * userinfo.test.ts が担保し、本ファイルは部品関数をリテラルの引数で
+ * 検証するほか、ステップ関数の入出力契約のうち userinfo.test.ts と
+ * 重複しないもの（成功値、有効期限の境界など）を固定する。
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -68,18 +69,6 @@ function captureError(fn: () => unknown): UserInfoError | undefined {
   }
 }
 
-/** 非同期ステップが投げた UserInfoError を取り出す（投げなければ undefined） */
-async function captureAsyncError(
-  fn: () => Promise<unknown>,
-): Promise<UserInfoError | undefined> {
-  try {
-    await fn();
-    return undefined;
-  } catch (e) {
-    return e as UserInfoError;
-  }
-}
-
 describe('resolveUserInfoAccessToken', () => {
   it('should return the stored access token info for a known token', async () => {
     const resolver = createAccessTokenResolver({ 'token-abc': defaultTokenInfo });
@@ -87,30 +76,6 @@ describe('resolveUserInfoAccessToken', () => {
     const result = await resolveUserInfoAccessToken('token-abc', resolver);
 
     expect(result).toEqual(defaultTokenInfo);
-  });
-
-  it('should reject a missing access token with invalid_token', async () => {
-    const resolver = createAccessTokenResolver({});
-
-    const error = await captureAsyncError(() =>
-      resolveUserInfoAccessToken('', resolver),
-    );
-
-    expect(error).toBeInstanceOf(UserInfoError);
-    expect(error?.error).toBe(UserInfoErrorCode.InvalidToken);
-    expect(error?.errorDescription).toBe('Access token is required');
-  });
-
-  it('should reject an unknown access token with invalid_token', async () => {
-    const resolver = createAccessTokenResolver({ 'token-abc': defaultTokenInfo });
-
-    const error = await captureAsyncError(() =>
-      resolveUserInfoAccessToken('token-unknown', resolver),
-    );
-
-    expect(error).toBeInstanceOf(UserInfoError);
-    expect(error?.error).toBe(UserInfoErrorCode.InvalidToken);
-    expect(error?.errorDescription).toBe('Access token is invalid');
   });
 });
 
@@ -148,27 +113,9 @@ describe('validateUserInfoScope', () => {
 
     expect(error).toBeUndefined();
   });
-
-  it('should reject a token without the openid scope with insufficient_scope', () => {
-    const error = captureError(() =>
-      validateUserInfoScope({ ...defaultTokenInfo, scope: ['profile'] }),
-    );
-
-    expect(error).toBeInstanceOf(UserInfoError);
-    expect(error?.error).toBe(UserInfoErrorCode.InsufficientScope);
-    expect(error?.errorDescription).toBe('The openid scope is required');
-  });
 });
 
 describe('validateUserInfoAudience', () => {
-  it('should accept a token whose audience contains the expected audience', () => {
-    const error = captureError(() =>
-      validateUserInfoAudience(defaultTokenInfo, 'https://op.example.com/userinfo'),
-    );
-
-    expect(error).toBeUndefined();
-  });
-
   it('should skip validation when no expected audience is given', () => {
     const error = captureError(() =>
       validateUserInfoAudience({ ...defaultTokenInfo, audience: undefined }, undefined),
@@ -176,56 +123,16 @@ describe('validateUserInfoAudience', () => {
 
     expect(error).toBeUndefined();
   });
-
-  it('should reject a token whose audience omits the expected audience', () => {
-    const error = captureError(() =>
-      validateUserInfoAudience(
-        { ...defaultTokenInfo, audience: ['https://api.example.org'] },
-        'https://op.example.com/userinfo',
-      ),
-    );
-
-    expect(error).toBeInstanceOf(UserInfoError);
-    expect(error?.error).toBe(UserInfoErrorCode.InvalidToken);
-    expect(error?.errorDescription).toBe(
-      'The access token is not intended for the UserInfo endpoint',
-    );
-  });
-
-  it('should reject a token that stores no audience at all', () => {
-    const error = captureError(() =>
-      validateUserInfoAudience(
-        { ...defaultTokenInfo, audience: undefined },
-        'https://op.example.com/userinfo',
-      ),
-    );
-
-    expect(error).toBeInstanceOf(UserInfoError);
-    expect(error?.error).toBe(UserInfoErrorCode.InvalidToken);
-  });
 });
 
 describe('resolveUserInfoClaims', () => {
+  // OIDC Core 1.0 Section 5.3.2: sub in the UserInfo Response MUST exactly match sub in the ID Token
   it('should return the claims of the token subject', async () => {
     const resolver = createUserClaimsResolver({ 'user-123': defaultUserClaims });
 
     const result = await resolveUserInfoClaims(defaultTokenInfo, resolver);
 
     expect(result).toEqual(defaultUserClaims);
-  });
-
-  it('should reject an unknown subject with invalid_token', async () => {
-    const resolver = createUserClaimsResolver({});
-
-    const error = await captureAsyncError(() =>
-      resolveUserInfoClaims(defaultTokenInfo, resolver),
-    );
-
-    expect(error).toBeInstanceOf(UserInfoError);
-    expect(error?.error).toBe(UserInfoErrorCode.InvalidToken);
-    expect(error?.errorDescription).toBe(
-      'User not found for the given access token',
-    );
   });
 });
 
@@ -248,14 +155,7 @@ describe('applyRequestedClaims', () => {
     expect(result).toEqual({ sub: 'user-123', email: 'taro@example.com' });
   });
 
-  it('should not overwrite sub with a requested claim', () => {
-    const result = applyRequestedClaims({ sub: 'user-123' }, defaultUserClaims, {
-      userinfo: { sub: { value: 'attacker' } },
-    });
-
-    expect(result).toEqual({ sub: 'user-123' });
-  });
-
+  // OIDC Core Section 5.5.1: not returning a requested claim is not an error
   it('should omit a claim whose requested value does not match', () => {
     const result = applyRequestedClaims({ sub: 'user-123' }, defaultUserClaims, {
       userinfo: { email: { value: 'other@example.com' } },

@@ -3,8 +3,8 @@
  *
  * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が検証処理を
  * 消したり足したりできるようにする。ステップごとの網羅的な振る舞いは
- * revocation.test.ts が担保し、本ファイルは各ステップ関数の入出力契約
- * （成功値と代表的なエラー）を固定する。
+ * revocation.test.ts が担保し、本ファイルは各ステップ関数の入出力契約のうち
+ * revocation.test.ts と重複しないもの（成功値、resolver が揃わない場合など）を固定する。
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -12,10 +12,8 @@ import {
   requireRevocationToken,
   resolveRevocationTarget,
   revokeGrantAccessTokens,
-  revokeResolvedToken,
   validateRevocationTokenClient,
   RevocationError,
-  RevocationErrorCode,
 } from './revocation.js';
 import type { RevocationTokenResolvers } from './revocation.js';
 import type { AccessTokenInfo } from './userinfo.js';
@@ -105,14 +103,6 @@ describe('requireRevocationToken', () => {
 
     expect(result).toBe('token-abc');
   });
-
-  it('should reject a missing token with invalid_request', () => {
-    const error = captureError(() => requireRevocationToken({}));
-
-    expect(error).toBeInstanceOf(RevocationError);
-    expect(error?.error).toBe(RevocationErrorCode.InvalidRequest);
-    expect(error?.errorDescription).toBe('Missing required parameter: token');
-  });
 });
 
 describe('requireRevocationClient', () => {
@@ -120,14 +110,6 @@ describe('requireRevocationClient', () => {
     const result = requireRevocationClient('client123');
 
     expect(result).toBe('client123');
-  });
-
-  it('should reject an unauthenticated caller with invalid_client', () => {
-    const error = captureError(() => requireRevocationClient(''));
-
-    expect(error).toBeInstanceOf(RevocationError);
-    expect(error?.error).toBe(RevocationErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe('Client authentication required');
   });
 });
 
@@ -163,15 +145,6 @@ describe('resolveRevocationTarget', () => {
     expect(result).toEqual({ tokenType: 'refresh_token', refreshToken: defaultRefreshToken });
   });
 
-  it('should return null for an unknown token', async () => {
-    const result = await resolveRevocationTarget({
-      token: 'unknown',
-      resolvers: createResolvers({}),
-    });
-
-    expect(result).toBeNull();
-  });
-
   it('should return null for a refresh token when the resolvers cannot revoke refresh tokens', async () => {
     const result = await resolveRevocationTarget({
       token: 'rt-1',
@@ -197,84 +170,9 @@ describe('validateRevocationTokenClient', () => {
 
     expect(error).toBeUndefined();
   });
-
-  it('should reject an access token issued to another client with invalid_grant', () => {
-    const error = captureError(() =>
-      validateRevocationTokenClient(
-        { tokenType: 'access_token', accessToken: defaultAccessToken },
-        'other-client',
-      ),
-    );
-
-    expect(error).toBeInstanceOf(RevocationError);
-    expect(error?.error).toBe(RevocationErrorCode.InvalidGrant);
-    expect(error?.errorDescription).toBe('Token was not issued to the requesting client');
-  });
-
-  it('should reject a refresh token issued to another client with invalid_grant', () => {
-    const error = captureError(() =>
-      validateRevocationTokenClient(
-        { tokenType: 'refresh_token', refreshToken: defaultRefreshToken },
-        'other-client',
-      ),
-    );
-
-    expect(error).toBeInstanceOf(RevocationError);
-    expect(error?.error).toBe(RevocationErrorCode.InvalidGrant);
-  });
-});
-
-describe('revokeResolvedToken', () => {
-  it('should revoke the presented access token', async () => {
-    const resolvers = createResolvers({ accessTokens: { 'at-1': defaultAccessToken } });
-
-    await revokeResolvedToken(
-      'at-1',
-      { tokenType: 'access_token', accessToken: defaultAccessToken },
-      resolvers,
-    );
-
-    expect(resolvers.revokedAccessTokens).toEqual(['at-1']);
-    expect(resolvers.revokedRefreshTokens).toEqual([]);
-  });
-
-  it('should revoke the presented refresh token', async () => {
-    const resolvers = createResolvers({ refreshTokens: { 'rt-1': defaultRefreshToken } });
-
-    await revokeResolvedToken(
-      'rt-1',
-      { tokenType: 'refresh_token', refreshToken: defaultRefreshToken },
-      resolvers,
-    );
-
-    expect(resolvers.revokedRefreshTokens).toEqual(['rt-1']);
-    expect(resolvers.revokedAccessTokens).toEqual([]);
-  });
 });
 
 describe('revokeGrantAccessTokens', () => {
-  it('should revoke every access token of the grant when a refresh token was revoked', async () => {
-    const resolvers = createResolvers({ refreshTokens: { 'rt-1': defaultRefreshToken } });
-
-    await revokeGrantAccessTokens(
-      { tokenType: 'refresh_token', refreshToken: defaultRefreshToken },
-      resolvers,
-    );
-
-    expect(resolvers.revokedGrantIds).toEqual(['grant-123']);
-  });
-
-  it('should not cascade when the revoked token was an access token', async () => {
-    const resolvers = createResolvers({ accessTokens: { 'at-1': defaultAccessToken } });
-
-    await revokeGrantAccessTokens(
-      { tokenType: 'access_token', accessToken: defaultAccessToken },
-      resolvers,
-    );
-
-    expect(resolvers.revokedGrantIds).toEqual([]);
-  });
-
   it('should do nothing when the resolvers do not support grant cascade', async () => {
     const resolvers = createResolvers({
       refreshTokens: { 'rt-1': defaultRefreshToken },

@@ -77,7 +77,6 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `routes/token.ts` | CIBA grant の分岐と CIBA §11 エラーの catch 分岐の追加 |
 | `routes/discovery.ts` | `backchannel_authentication_endpoint` / `backchannel_token_delivery_modes_supported` / grant URN の広告 |
 | `app.ts` / `apply.ts` | 4 エンドポイントのマウント・CORS・許可メソッド・`login_hint` リゾルバの配線 |
-| `conformance.test.ts` | CIBA フローの契約テストの追加 |
 
 ## 設定
 

@@ -17,7 +17,7 @@ pnpm dlx @maronn-openid-connect/cli generate hono
 ```
 
 対応フレームワークは `hono` / `express` / `fastify` / `nextjs` です。
-既定では `./oidc-provider` に、エンドポイント実装・設定・差し替え可能な`JsonStoreBackend`契約（未指定時はローカル検証用インメモリ実装）・ログイン / 同意画面・契約テスト（`conformance.test.ts`）が生成されます。Next.jsではVercel向けUpstash Redis RESTとローカルSQLiteのアダプターも生成されます。
+既定では `./oidc-provider` に、エンドポイント実装・設定・差し替え可能な`JsonStoreBackend`契約（未指定時はローカル検証用インメモリ実装）・ログイン / 同意画面が生成されます。Next.jsではVercel向けUpstash Redis RESTとローカルSQLiteのアダプターも生成されます。
 
 既存アプリに組み込む場合は `setup` コマンドが使えます（Next.js 以外）。エントリファイル内のプレースホルダーコメントを `applyOidc` の import と呼び出しに置換します。
 
@@ -94,14 +94,6 @@ curl http://localhost:3000/.well-known/openid-configuration
 - `/login`, `/consent` — ログイン・同意画面
 - `/.well-known/openid-configuration`, `/.well-known/jwks.json` — Discovery / JWKS
 - `/introspect`, `/revoke` — Introspection / Revocation（既定で有効）
-
-契約テストで生成 OP が想定挙動を満たすことを確認できます。
-
-```bash
-pnpm vitest run oidc-provider/conformance.test.ts
-# Next.js の場合
-pnpm vitest run src/app/_oidc-provider/conformance.test.ts
-```
 
 ## Next Steps
 

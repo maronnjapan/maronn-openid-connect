@@ -84,7 +84,6 @@ rpInitiatedLogoutConfig.postLogoutRedirectUris = {
 | `store.ts`（追記） | 確認画面の CSRF cookie ヘルパーとセッション Cookie の破棄ヘルパー |
 | `views.ts`（Hono は `views.tsx`）（追記） | 確認画面 `logoutConfirmationPage` と完了画面 `logoutCompletedPage`（`views` オプションで差し替え可能） |
 | `routes/discovery.ts`（追記） | `end_session_endpoint` メタデータ |
-| `conformance.test.ts`（追記） | ログアウト経路の契約テスト |
 
 ## 判定規則
 

@@ -92,7 +92,6 @@ const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, lo
 | `routes/login.ts` | `buildGoogleSignIn()` で認証トランザクションに束縛した nonce を発行してボタンの設定を組み立て（`GET /login` とログイン失敗時の再表示の両方で使う）、`completeGoogleLogin()` で ID トークンを検証し、パスワードログインと同じ手順でセッションを確立する。Response は作らない |
 | `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()` |
 | `app.ts` | `googleIdTokenVerifier` と `googleAccountResolver` を差し替えるオプション |
-| `conformance.test.ts` | ボタン描画・nonce・CSRF・検証失敗・hosted domain・JIT 登録からトークン発行と UserInfo までを固定する契約テスト |
 | Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`_oidc-provider/provider.ts` の環境変数読み取り |
 
 Hono のメソッドガードと Fastify アダプタには `POST /login/google` が登録され、それ以外のメソッドは 405 になります。
@@ -142,11 +141,7 @@ applyOidc(app, {
 });
 ```
 
-`googleIdTokenVerifier` を差し替えると、プロキシ経由でしか Google に到達できない環境（`createGoogleIdTokenVerifier({ clientOptions: { transporterOptions } })`）や、契約テストのように Google を使わない検証に対応できます。
-
-## 契約テストの扱い
-
-生成される `conformance.test.ts` は本物の Google を呼びません。`fake:` 接頭辞付きの credential を受け付ける偽の `GoogleIdTokenVerifier` を `googleIdTokenVerifier` に注入し、CSRF・nonce・JIT 登録・トークン発行まで、生成コード側の責務だけを固定します。Next.js の `_oidc-provider/conformance.test.ts` は、`vi.mock` で `getDefaultGoogleIdTokenVerifier()` を差し替え、テストが送る ID トークンのペイロード（JSON）をそのまま検証済みとして扱います。`google-auth-library` に委ねている署名・`aud`・`iss`・`exp` の検証は `@maronn-openid-connect/google-login` 自身のテストがローカルの鍵配信サーバーを使って確認しています。
+`googleIdTokenVerifier` を差し替えると、プロキシ経由でしか Google に到達できない環境（`createGoogleIdTokenVerifier({ clientOptions: { transporterOptions } })`）や、Google を呼ばない自動テストに対応できます。
 
 ## 注意点
 

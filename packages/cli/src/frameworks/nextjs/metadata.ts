@@ -6,10 +6,9 @@ import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
 
 /**
- * The grant types the generated OP supports: what discovery advertises, and
- * what the contract test registers its client for. A disabled feature
- * contributes nothing, so a client detects support through discovery
- * (RFC 8693 §2.1 / RFC 8628 §4 / CIBA Core 1.0 §4).
+ * The grant types the generated OP supports, as discovery advertises them. A
+ * disabled feature contributes nothing, so a client detects support through
+ * discovery (RFC 8693 §2.1 / RFC 8628 §4 / CIBA Core 1.0 §4).
  */
 export function nextJsSupportedGrantTypes(features: OidcFeatureConfig): string[] {
   return [
@@ -27,22 +26,6 @@ export function nextJsSupportedGrantTypes(features: OidcFeatureConfig): string[]
       ? ['urn:ietf:params:oauth:grant-type:device_code']
       : []),
     ...(features.ciba ? ['urn:openid:params:grant-type:ciba'] : []),
-  ];
-}
-
-/**
- * scopes_supported of the generated OP: the standard scopes (offline_access
- * only with refresh tokens, OIDC Core 1.0 §11) followed by the --scope ones.
- */
-export function nextJsSupportedScopes(features: OidcFeatureConfig, scopes: string[]): string[] {
-  return [
-    'openid',
-    'profile',
-    'email',
-    'address',
-    'phone',
-    ...(features.refreshToken ? ['offline_access'] : []),
-    ...scopes,
   ];
 }
 

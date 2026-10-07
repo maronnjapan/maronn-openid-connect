@@ -199,8 +199,8 @@ test.describe('Token Exchange (RFC 8693)', () => {
     });
   });
 
-  // The target policy (allowedTargets, including invalid_target) needs a live
-  // subject token, so it is covered by the generated conformance contract tests
+  // The target policy (allowedTargets, including invalid_target) is pinned by the
+  // resolveExchangeTarget unit tests in @maronn-openid-connect/experimental
   // rather than duplicated here.
 });
 

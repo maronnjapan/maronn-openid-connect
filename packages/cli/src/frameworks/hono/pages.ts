@@ -30,7 +30,13 @@
 
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
-import { EXPERIMENTAL_PACKAGE, type ViewMarkup } from './templates.js';
+import { EXPERIMENTAL_PACKAGE } from './templates.js';
+
+/**
+ * How the default views are written: HTML template strings (views.ts) or
+ * hono/jsx components (Hono's views.tsx).
+ */
+export type ViewMarkup = 'string' | 'jsx';
 
 /** First line of a page module that renders JSX: the runtime its elements use. */
 function jsxPragma(markup: ViewMarkup): string {

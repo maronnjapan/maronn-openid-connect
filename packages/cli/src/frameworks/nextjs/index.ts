@@ -65,7 +65,6 @@ import {
   nextJsNotFoundTemplate,
   nextJsTransactionTemplate,
 } from './interaction.js';
-import { nextJsConformanceTestTemplate } from './conformance.js';
 
 /**
  * Next.js (App Router) generator.
@@ -158,10 +157,6 @@ function nextJsGeneratedFiles(
     ...(features.jarm
       ? [{ path: '_oidc-provider/jarm.ts', content: withBundlerImports(jarmConfigTemplate()) }]
       : []),
-    {
-      path: '_oidc-provider/conformance.test.ts',
-      content: nextJsConformanceTestTemplate(features, scopes),
-    },
 
     // --- Metadata ------------------------------------------------------------
     {

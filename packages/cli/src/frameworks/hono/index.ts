@@ -23,7 +23,6 @@ import {
   discoveryRouteTemplate,
   loginRouteTemplate,
   consentRouteTemplate,
-  conformanceTestTemplate,
 } from './templates.js';
 import {
   authorizePageTemplate,
@@ -124,7 +123,6 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features, scopes) },
       { path: 'routes/login.ts', content: loginRouteTemplate(pkg, features) },
       { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
-      { path: 'conformance.test.ts', content: conformanceTestTemplate(pkg, features, scopes) },
     ];
     // The templates are shared with the frameworks that write these modules as
     // .ts; point their comments at the .tsx files here ('views.ts' and

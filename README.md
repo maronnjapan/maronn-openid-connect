@@ -49,9 +49,7 @@ CLI コマンドでフローの実装コードを生成し、利用者はその�
 - t_wada が提唱する方法でテスト駆動開発を行う
 - 機能追加または修正を実ブラウザや実 HTTP フローで検証できる場合は、原則として `tests/e2e` に Playwright E2E テストも追加する
 - E2E で使う OpenID Provider は `samples/*` 配下の CLI 生成アプリを対象とし、E2E 専用のクライアントとリソースサーバーは `tests/e2e` 配下に置く。`samples/*` には OP 以外の役割を混在させない
-- `samples/*` の `conformance.test.ts` は、CLI 生成 OP が本リポジトリの想定する挙動を満たすことを示す契約テストとして扱う。生成 OP の挙動や resolver/store 契約を変更する場合は、`packages/cli` のテンプレートと各 sample の `conformance.test.ts` を更新する
 - `packages/experimental/src` の変更に対して changeset を手で書かない。main への push で CI が patch の changeset を自動生成する。experimental の bump はどの変更でも patch 固定であり、minor または major を指定すると `pnpm run test:release-contract` が失敗する。詳細は `RELEASE.md` の「experimental の自動 publish」を参照する
-- 利用者は生成コードを変更してよい。ただし、`conformance.test.ts` が通らない状態は、本リポジトリが担保する Basic OP の挙動から外れている可能性がある。この前提が必要な変更では、README、コメント、タスク文書のいずれかに明記する
 - `packages/experimental` の機能を実装し終えたら、作業用 notes リポジトリの `implementation-guides/experimental/` に実装解説の日本語版と英語版を作成する。`packages/experimental/src` または CLI 統合を変更した場合は、該当解説の掲載コードと説明も同じ変更内で更新する
 
 ## ドキュメント作成の規約
@@ -64,8 +62,9 @@ README、実装解説、タスク文書などの Markdown 資料を作成また�
 
 ## テストコードの書き方
 
-CLI の生成コードの文字列やファイル構成を検査するテストは追加しません。
-生成 OP の挙動は `samples/*` の契約テストと `tests/e2e` で検証します。
+CLI が生成するコードのテストは書きません。
+生成コードの文字列やファイル構成を検査する単体テストも、生成物に含めて出力するテストも追加しません。
+生成 OP の挙動は、`tests/e2e` の E2E テストと `tests/conformance` の OpenID Conformance Suite で確認します。
 CLI 自体の入力検証、エラー処理、既存ファイルの保護は `packages/cli` の単体テストで検証します。
 
 ### テストケースの命名規則
@@ -146,14 +145,7 @@ expect(metadata.response_types_supported).toEqual(['code']);
 ### 実装不可能なテストケースの扱い
 
 外部依存が必要で関数単体では検証できないテストケースは、単体テストに記述しません。
-リクエスト情報が必要な検証などは、統合テストに記述します。
-
-### samples配下のconformance.test.ts
-
-各 sample の `conformance.test.ts` は OP の結合テストです。
-実際に OP へリクエストしたときの想定挙動を網羅します。
-OP のリクエスト処理が変わる機能を `packages` 側へ追加した場合は、`conformance.test.ts` も更新します。
-ただし、生成後のファイルを直接変更せず、`packages/cli` にある生成処理を変更します。
+リクエスト情報が必要な検証などは、`tests/e2e` の E2E テストに記述します。
 
 ## コマンド
 

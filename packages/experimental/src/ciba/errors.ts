@@ -78,7 +78,7 @@ export class CibaVerificationError extends Error {
  *
  * - `authorization_pending` / `slow_down` / `access_denied` / `expired_token`:
  *   §11 が Poll モードのポーリング応答用に定める値。
- * - `invalid_grant` / `invalid_request`: RFC 6749 §5.2 の既存値。
+ * - `invalid_grant` / `invalid_request` / `unauthorized_client`: RFC 6749 §5.2 の既存値。
  */
 export type CibaGrantErrorCode =
   | 'authorization_pending'
@@ -86,7 +86,8 @@ export type CibaGrantErrorCode =
   | 'expired_token'
   | 'access_denied'
   | 'invalid_grant'
-  | 'invalid_request';
+  | 'invalid_request'
+  | 'unauthorized_client';
 
 /**
  * トークンエンドポイントの CIBA grant 分岐のエラー。

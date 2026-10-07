@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { processCibaGrant } from './ciba-grant.js';
+import { processCibaGrant, validateCibaGrantAllowed } from './ciba-grant.js';
 import { CibaGrantError } from './errors.js';
 import { createInMemoryCibaAuthenticationRequestStore } from './store.js';
 import { NOW, makeClient, makeRecord } from './test-helpers.js';
@@ -32,8 +32,48 @@ async function expectGrantError(
   throw new Error('expected processCibaGrant to throw');
 }
 
+describe('validateCibaGrantAllowed', () => {
+  it('should accept a client registered for the CIBA grant', () => {
+    expect(() => validateCibaGrantAllowed(makeClient())).not.toThrow();
+  });
+
+  // RFC 6749 §5.2: the authenticated client must be registered for the grant
+  // type it presents. The backchannel endpoint already enforces this at
+  // request time; the token endpoint must enforce it again at redemption time
+  // (the registration can change between the two).
+  it('should reject a client whose grantTypes omit the CIBA URN', () => {
+    expect(() =>
+      validateCibaGrantAllowed(makeClient({ grantTypes: ['authorization_code'] })),
+    ).toThrowError(
+      new CibaGrantError('unauthorized_client', 'The client is not authorized to use the CIBA grant'),
+    );
+  });
+
+  it('should reject a client without grantTypes', () => {
+    expect(() => validateCibaGrantAllowed(makeClient({ grantTypes: undefined }))).toThrowError(
+      new CibaGrantError('unauthorized_client', 'The client is not authorized to use the CIBA grant'),
+    );
+  });
+});
+
 describe('processCibaGrant', () => {
   describe('Request validation (CIBA Section 10.1)', () => {
+    it('should reject a client no longer registered for the CIBA grant before evaluating the record', async () => {
+      const store = createInMemoryCibaAuthenticationRequestStore();
+      await store.save(makeRecord());
+
+      const error = await expectGrantError(
+        makeInput({ store, client: makeClient({ grantTypes: ['authorization_code'] }) }),
+        'unauthorized_client',
+      );
+
+      expect(error.errorDescription).toBe('The client is not authorized to use the CIBA grant');
+      // The record is untouched: no state transition happened for the
+      // deauthorized caller.
+      const record = await store.findByAuthReqId('auth-req-id-value');
+      expect(record).toMatchObject({ status: 'pending', lastPolledAt: null });
+    });
+
     it('should reject a missing auth_req_id with invalid_request', async () => {
       const error = await expectGrantError(makeInput({ params: {} }), 'invalid_request');
 

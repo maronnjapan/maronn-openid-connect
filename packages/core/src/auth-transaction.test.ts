@@ -390,11 +390,6 @@ describe('requiresReauthentication', () => {
   });
 
   // Regression fixes for the existing greater-than boundary (max_age > 0).
-  it('should return false when maxAge is 10 and only 5 seconds elapsed', () => {
-    const authTime = Math.floor(Date.now() / 1000) - 5;
-    expect(requiresReauthentication(10, authTime)).toBe(false);
-  });
-
   it('should return true when maxAge is 10 and 11 seconds elapsed', () => {
     const authTime = Math.floor(Date.now() / 1000) - 11;
     expect(requiresReauthentication(10, authTime)).toBe(true);

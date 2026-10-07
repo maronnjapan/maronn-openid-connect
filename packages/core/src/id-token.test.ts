@@ -321,23 +321,6 @@ describe('generateIdToken', () => {
         expect(decoded.exp as number).toBeGreaterThan(now);
       });
 
-      it('should allow small clock skew tolerance', async () => {
-        // A few seconds in the past should still be allowed (clock skew tolerance)
-        const now = Math.floor(Date.now() / 1000);
-        const slightlyPast = now - 30; // 30 seconds ago (within typical 60s tolerance)
-        const payload = createValidPayload({ exp: slightlyPast });
-        // This should either succeed or fail depending on implementation tolerance
-        // We test that very past dates fail
-        const veryPast = now - 3600; // 1 hour ago
-        const payload2 = createValidPayload({ exp: veryPast });
-        await expect(
-          generateIdToken({
-            payload: payload2,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
-      });
-
       it('should throw when exp is in the past', async () => {
         const now = Math.floor(Date.now() / 1000);
         const pastExp = now - 3600; // 1 hour ago
@@ -413,34 +396,11 @@ describe('generateIdToken', () => {
         const { payload: decoded } = decodeJwt(token);
         expect(decoded.nonce).toBeUndefined();
       });
-
-      it('should throw when nonce does not match', async () => {
-        // Integration test concern - at unit level we just verify nonce is included
-        const payload = createValidPayload({ nonce: 'my-nonce' });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
-        expect(decoded.nonce).toEqual('my-nonce');
-      });
     });
 
     describe('auth_time', () => {
       it('should include auth_time when max_age is requested', async () => {
         const authTime = Math.floor(Date.now() / 1000) - 60;
-        const payload = createValidPayload({ auth_time: authTime });
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-
-        const { payload: decoded } = decodeJwt(token);
-        expect(decoded.auth_time).toEqual(authTime);
-      });
-
-      it('should include auth_time when explicitly requested as essential', async () => {
-        const authTime = Math.floor(Date.now() / 1000) - 120;
         const payload = createValidPayload({ auth_time: authTime });
         const token = await generateIdToken({
           payload,
@@ -529,21 +489,6 @@ describe('generateIdToken', () => {
 
         const { payload: decoded } = decodeJwt(token);
         expect(decoded.at_hash).toEqual('calculated-at-hash');
-      });
-
-      it('should calculate at_hash correctly (left-most half of hash)', async () => {
-        // at_hash = base64url(left-half(sha256(access_token)))
-        // This test verifies at_hash inclusion - actual calculation is done upstream
-        const payload = createValidPayload();
-        // Simulate pre-calculated at_hash
-        (payload as Record<string, unknown>).at_hash = 'LDktKdoQak3Pk0cnXxCltA';
-        const token = await generateIdToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-
-        const { payload: decoded } = decodeJwt(token);
-        expect(decoded.at_hash).toEqual('LDktKdoQak3Pk0cnXxCltA');
       });
     });
   });
@@ -696,13 +641,6 @@ describe('validateIdTokenHint', () => {
     ).rejects.toBeInstanceOf(IdTokenHintError);
   });
 
-  it('should reject when aud does not match', async () => {
-    const hint = await issueHint({ aud: 'other-client' });
-    await expect(
-      validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
-    ).rejects.toBeInstanceOf(IdTokenHintError);
-  });
-
   it('should reject when signature is invalid (signed by another key)', async () => {
     // Sign with a key not in the jwks → no verifying key matches.
     const hint = await issueHint({}, otherRsaKeyPair.privateKey, undefined);
@@ -847,16 +785,6 @@ describe('validateIdTokenHint', () => {
       await expect(
         validateIdTokenHint(hint, { expectedIss: issuer, expectedAud: clientId, jwks }),
       ).rejects.toThrow('id_token_hint JOSE header contains unsupported field: x5c');
-    });
-
-    it('should accept a hint whose header has only alg and kid (no regression)', async () => {
-      const hint = await issueHintWithHeader({});
-      const result = await validateIdTokenHint(hint, {
-        expectedIss: issuer,
-        expectedAud: clientId,
-        jwks,
-      });
-      expect(result.sub).toBe('user-42');
     });
   });
 });

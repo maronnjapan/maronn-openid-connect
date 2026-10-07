@@ -2,8 +2,8 @@
  * 認可リクエスト検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1 §4.1）の機能単位ステップ関数の網羅テスト。
  *
  * トップレベルの describe は各ステップ関数に対応し、その関数が担う振る舞いを直接呼び出して
- * 検証する。ステップの呼び出し順は CLI 生成コードが担い、通しの順序は CLI 生成 OP の
- * conformance.test.ts が担保する。複数ステップにまたがる振る舞い（Request Object の claim が
+ * 検証する。ステップの呼び出し順は CLI 生成コードが担い、通しの動作は tests/e2e の
+ * E2E テストで確認する。複数ステップにまたがる振る舞い（Request Object の claim が
  * クエリ値を supersede し、後段のステップで検証される等）は、必要なステップだけを
  * 生成コードと同じ順序でテスト内に並べて呼ぶ。
  *
@@ -232,15 +232,6 @@ describe('resolveClientForAuthorization', () => {
   });
 
   describe('client_id validation', () => {
-    it('should accept valid client_id', async () => {
-      const client = await resolveClientForAuthorization(
-        validParams(),
-        createClientResolver([defaultClient]),
-      );
-
-      expect(client.clientId).toBe('client123');
-    });
-
     it('should reject missing client_id', async () => {
       const params = {
         response_type: 'code',
@@ -272,19 +263,6 @@ describe('resolveClientForAuthorization', () => {
       expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
       expect(error?.errorDescription).toBe('Unknown client_id');
       expect(error?.redirectable).toBe(false);
-    });
-
-    it('should return non-redirectable error for unknown client_id', async () => {
-      const error = await captureAsyncStepError(() =>
-        resolveClientForAuthorization(
-          validParams({ client_id: 'unknown-client' }),
-          createClientResolver([defaultClient]),
-        ),
-      );
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.redirectable).toBe(false);
-      expect(error?.redirectUri).toBeUndefined();
     });
   });
 
@@ -368,13 +346,6 @@ describe('validateRegisteredRedirectUris', () => {
 
   describe('Fragment rejection', () => {
     // OIDC Core 1.0 Section 3.1.2.1: redirect_uri MUST NOT include a fragment component
-    it('should throw server_error when a registered redirect_uri contains a fragment', () => {
-      const error = captureError(['https://client.example.org/cb#frag']);
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.error).toBe(AuthorizationErrorCode.ServerError);
-    });
-
     // OP-redirect_uri-RegFrag: a fragment in a REGISTERED redirect_uri is a client
     // registration (configuration) error, so it stays on the OP as server_error.
     it('should throw a non-redirectable server_error when the registered redirect_uri contains a fragment', () => {
@@ -756,20 +727,6 @@ describe('resolveRequestObjectParams', () => {
       expect(error?.redirectUri).toBeUndefined();
       expect(error?.state).toBeUndefined();
     });
-
-    it('should not echo state when the Request Object fails to parse', async () => {
-      const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(
-          validParams({ request: 'not.a.valid.jws', state: STATE }),
-          defaultClient,
-        ),
-      );
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
-      expect(error?.redirectable).toBe(false);
-      expect(error?.state).toBeUndefined();
-    });
   });
 });
 
@@ -1017,19 +974,6 @@ describe('resolveAuthorizationRedirectUri', () => {
   // RFC 6749 §4.1.2.1 / OIDC Core 1.0 §3.1.2.6: 登録外の redirect_uri へはリダイレクト
   // できないため、リダイレクト不可とし state も echo しない。
   describe('error redirectability', () => {
-    it('should return non-redirectable error for invalid redirect_uri', () => {
-      const error = captureStepError(() =>
-        resolveAuthorizationRedirectUri(
-          validParams({ redirect_uri: 'https://evil.example.com/cb' }),
-          defaultClient,
-        ),
-      );
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.redirectable).toBe(false);
-      expect(error?.redirectUri).toBeUndefined();
-    });
-
     it('should not echo state for an unregistered redirect_uri', () => {
       const error = captureStepError(() =>
         resolveAuthorizationRedirectUri(
@@ -1213,6 +1157,9 @@ describe('validateResponseType', () => {
       expect(error?.redirectable).toBe(true);
     });
 
+    // Global OP-level rejection MUST be distinguished from per-client authorization:
+    // a response_type the OP does not support is unsupported_response_type, not
+    // unauthorized_client.
     it('should reject unsupported response_type', () => {
       const error = captureStepError(() =>
         validateResponseType(
@@ -1289,20 +1236,6 @@ describe('validateResponseType', () => {
 
       expect(responseType).toBe('code');
     });
-
-    it('should return unsupported_response_type (not unauthorized_client) for a globally unsupported response_type', () => {
-      // Global OP-level rejection MUST be distinguished from per-client authorization.
-      const error = captureStepError(() =>
-        validateResponseType(
-          validParams({ response_type: 'token' }),
-          defaultClient,
-          REDIRECT_URI,
-        ),
-      );
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
-    });
   });
 
   // RFC 6749 §4.1.2.1 / OIDC Core 1.0 §3.1.2.6: redirect 先の確定後に動くステップのため、
@@ -1320,18 +1253,6 @@ describe('validateResponseType', () => {
       expect(error).toBeInstanceOf(AuthorizationError);
       expect(error?.redirectable).toBe(true);
       expect(error?.redirectUri).toBe('https://client.example.org/cb');
-    });
-
-    it('should include state in redirectable errors when state was provided', () => {
-      const params = validParams({ response_type: 'token', state: 'my-state-value' });
-
-      const error = captureStepError(() =>
-        validateResponseType(params, defaultClient, REDIRECT_URI, params.state),
-      );
-
-      expect(error).toBeInstanceOf(AuthorizationError);
-      expect(error?.redirectable).toBe(true);
-      expect(error?.state).toBe('my-state-value');
     });
 
     it('should echo state on unsupported_response_type', () => {

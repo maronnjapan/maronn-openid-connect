@@ -4,8 +4,8 @@
  *
  * CLI 生成コードはこれらのステップを個別に呼び出して、利用者が認証方式を
  * 差し替えたり検証を消したりできるようにする。ステップごとの網羅的な振る舞いは
- * client-auth.test.ts が担保し、本ファイルは各ステップ関数の入出力契約
- * （成功値と代表的なエラー）を固定する。
+ * client-auth.test.ts が担保し、本ファイルは client-auth.test.ts が扱わない
+ * ステップ関数のケースと、ステップを構成する部品関数の入出力を固定する。
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -29,12 +29,6 @@ const confidentialClient: TokenClientInfo = {
   clientId: 'client123',
   clientSecret: 'secret',
   tokenEndpointAuthMethod: 'client_secret_basic',
-};
-
-const postClient: TokenClientInfo = {
-  clientId: 'client123',
-  clientSecret: 'secret',
-  tokenEndpointAuthMethod: 'client_secret_post',
 };
 
 const publicClient: TokenClientInfo = {
@@ -91,19 +85,6 @@ describe('extractClientCredentials', () => {
     expect(result).toEqual({
       clientId: 'client id',
       clientSecret: 'sec+ret',
-      method: 'client_secret_basic',
-    });
-  });
-
-  it('should match the Basic scheme case-insensitively', () => {
-    const result = extractClientCredentials({
-      params: {},
-      authorizationHeader: `basic ${btoa('client123:secret')}`,
-    });
-
-    expect(result).toEqual({
-      clientId: 'client123',
-      clientSecret: 'secret',
       method: 'client_secret_basic',
     });
   });
@@ -201,120 +182,9 @@ describe('extractClientCredentials', () => {
     expect(error?.error).toBe(TokenErrorCode.InvalidClient);
     expect(error?.errorDescription).toBe('Client authentication required');
   });
-
-  it('should reject combining the Basic header with body credentials', () => {
-    const error = captureError(() =>
-      extractClientCredentials({
-        params: { client_id: 'client123', client_secret: 'secret' },
-        authorizationHeader: basicHeader('client123', 'secret'),
-      }),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidRequest);
-  });
-
-  it('should reject a malformed Basic header with invalid_client', () => {
-    const error = captureError(() =>
-      extractClientCredentials({ params: {}, authorizationHeader: 'Basic not-base64!!' }),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe('Invalid Authorization header format');
-  });
-
-  it('should reject a request without any client identifier', () => {
-    const error = captureError(() =>
-      extractClientCredentials({ params: {}, authorizationHeader: '' }),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe('Client authentication required');
-  });
 });
 
 describe('validateClientAuthMethod', () => {
-  it('should accept client_secret_basic for a client registered with it', () => {
-    const error = captureError(() =>
-      validateClientAuthMethod(confidentialClient, {
-        clientId: 'client123',
-        clientSecret: 'secret',
-        method: 'client_secret_basic',
-      }),
-    );
-
-    expect(error).toBeUndefined();
-  });
-
-  it('should default the registered method to client_secret_basic', () => {
-    const error = captureError(() =>
-      validateClientAuthMethod(
-        { clientId: 'client123', clientSecret: 'secret' },
-        { clientId: 'client123', clientSecret: 'secret', method: 'client_secret_basic' },
-      ),
-    );
-
-    expect(error).toBeUndefined();
-  });
-
-  it('should reject client_secret_post for a client registered with client_secret_basic', () => {
-    const error = captureError(() =>
-      validateClientAuthMethod(confidentialClient, {
-        clientId: 'client123',
-        clientSecret: 'secret',
-        method: 'client_secret_post',
-      }),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe(
-      'Client authentication method does not match the registered token_endpoint_auth_method',
-    );
-  });
-
-  it('should accept client_secret_post for a client registered with it', () => {
-    const error = captureError(() =>
-      validateClientAuthMethod(postClient, {
-        clientId: 'client123',
-        clientSecret: 'secret',
-        method: 'client_secret_post',
-      }),
-    );
-
-    expect(error).toBeUndefined();
-  });
-
-  it('should accept a public client that presents only its client_id', () => {
-    const error = captureError(() =>
-      validateClientAuthMethod(publicClient, {
-        clientId: 'public-client',
-        clientSecret: undefined,
-        method: 'none',
-      }),
-    );
-
-    expect(error).toBeUndefined();
-  });
-
-  it('should reject a public client that presents a secret', () => {
-    const error = captureError(() =>
-      validateClientAuthMethod(publicClient, {
-        clientId: 'public-client',
-        clientSecret: 'secret',
-        method: 'client_secret_post',
-      }),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe(
-      'Client authentication method does not match the registered token_endpoint_auth_method',
-    );
-  });
-
   it('should reject a confidential client that presents no secret', () => {
     const error = captureError(() =>
       validateClientAuthMethod(confidentialClient, {
@@ -344,24 +214,6 @@ describe('validateClientAuthMethod', () => {
 });
 
 describe('verifyClientSecret', () => {
-  it('should accept the registered secret', async () => {
-    const error = await captureAsyncError(() =>
-      verifyClientSecret(confidentialClient, 'secret'),
-    );
-
-    expect(error).toBeUndefined();
-  });
-
-  it('should reject a wrong secret with invalid_client', async () => {
-    const error = await captureAsyncError(() =>
-      verifyClientSecret(confidentialClient, 'wrong'),
-    );
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe('Client authentication failed');
-  });
-
   it('should skip verification for a public client', async () => {
     const error = await captureAsyncError(() => verifyClientSecret(publicClient, undefined));
 

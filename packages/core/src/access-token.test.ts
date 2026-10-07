@@ -212,16 +212,6 @@ describe('generateAccessToken', () => {
         expect(decoded.aud).toEqual(['https://api1.example.com', 'https://api2.example.com']);
       });
 
-      it('should require aud to be an array (validation may be handled upstream)', async () => {
-        const payload = createValidPayload({ aud: ['resource-server'] });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-        const { payload: decoded } = decodeJwt(token);
-        expect(Array.isArray(decoded.aud)).toEqual(true);
-      });
-
       it('should throw when aud is missing', async () => {
         const payload = createValidPayload();
         delete (payload as Partial<AccessTokenPayload>).aud;
@@ -259,19 +249,6 @@ describe('generateAccessToken', () => {
         const { payload: decoded } = decodeJwt(token);
         expect(decoded.exp).toEqual(futureExp);
         expect(decoded.exp as number).toBeGreaterThan(now);
-      });
-
-      it('should allow small clock skew tolerance', async () => {
-        // Very past dates should fail
-        const now = Math.floor(Date.now() / 1000);
-        const veryPast = now - 3600; // 1 hour ago
-        const payload = createValidPayload({ exp: veryPast });
-        await expect(
-          generateAccessToken({
-            payload,
-            privateKey: rsaKeyPair.privateKey,
-          })
-        ).rejects.toThrow();
       });
 
       it('should throw when exp is in the past', async () => {
@@ -335,17 +312,6 @@ describe('generateAccessToken', () => {
 
         const { payload: decoded } = decodeJwt(token);
         expect(decoded.scope).toEqual('openid profile email');
-      });
-
-      it('should format multiple scopes as space-separated string', async () => {
-        const payload = createValidPayload({ scope: 'read write delete' });
-        const token = await generateAccessToken({
-          payload,
-          privateKey: rsaKeyPair.privateKey,
-        });
-
-        const { payload: decoded } = decodeJwt(token);
-        expect(decoded.scope).toEqual('read write delete');
       });
 
       it('should allow omitting scope claim', async () => {

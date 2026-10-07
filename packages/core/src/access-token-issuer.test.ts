@@ -90,16 +90,6 @@ describe('createJwtAccessTokenIssuer', () => {
       return JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
     }
 
-    it('should include nbf claim in the JWT payload', async () => {
-      const issuer = createJwtAccessTokenIssuer();
-      const token = await issuer.issue({
-        payload: buildPayload(),
-        privateKey: keyPair.privateKey,
-      });
-      const json = decodePayload(token);
-      expect(typeof json.nbf).toBe('number');
-    });
-
     it('should set nbf equal to iat', async () => {
       const now = Math.floor(Date.now() / 1000);
       const issuer = createJwtAccessTokenIssuer();

@@ -78,6 +78,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 修正版のあるアドバイザリは package.json の pnpm.overrides にセキュリティフロアを足して解消する。
+      # 修正版が無いものだけ pnpm.auditConfig.ignoreGhsas で除外し、理由をここに残す。
+      # 修正版が出たら除外を消してフロアに置き換えること。
+      #
+      # - GHSA-ch52-4w7c-c8xp（http-cache-semantics、修正版なし）
+      #   docs__library-document>astro 経由。脆弱なのは共有キャッシュがクライアントの max-stale
+      #   付きリクエストに応答する経路だが、astro はビルド時にリモート画像の TTL を
+      #   storable() / timeToLive() で求めるだけでその経路を通らない。4.3.0 も max-stale の
+      #   処理は 4.2.0 と同じなので、バージョンを上げても解消しない。
       - name: Audit high-severity vulnerabilities
         run: pnpm audit --audit-level=high
 

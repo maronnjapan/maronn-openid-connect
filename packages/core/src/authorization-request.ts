@@ -143,6 +143,43 @@ export interface ClientInfo {
    * Request Object を受け取った場合は `invalid_request` で拒否される。
    */
   jwks?: JwkSet;
+  /**
+   * クライアント登録メタデータ `client_name`
+   * （OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+   * 同意画面でエンドユーザーに提示するクライアントの名称。
+   * 名称は登録者の自己申告であり詐称し得るため、表示する側は `clientId` を併記して
+   * 名称単独で識別させない（RFC 6749 §10.2 のクライアントなりすまし防御は、
+   * エンドユーザーがクライアントを識別できて初めて機能する）。
+   */
+  clientName?: string;
+  /**
+   * クライアント登録メタデータ `client_uri`
+   * （OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+   * クライアントのホームページ URL。リンクとして描画する前に
+   * {@link isSafeDisplayUri} でスキームを検査する。
+   */
+  clientUri?: string;
+  /**
+   * クライアント登録メタデータ `logo_uri`
+   * （OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+   * エンドユーザーに提示するロゴ画像の URL。生成コードの既定ビューは描画しない
+   * （ロゴ詐称によるフィッシング面が既定で開くため。自前ビューで明示的に選択する）。
+   */
+  logoUri?: string;
+  /**
+   * クライアント登録メタデータ `policy_uri`
+   * （OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+   * クライアントがプロファイルデータをどう扱うかをエンドユーザーが読むための URL。
+   * リンクとして描画する前に {@link isSafeDisplayUri} でスキームを検査する。
+   */
+  policyUri?: string;
+  /**
+   * クライアント登録メタデータ `tos_uri`
+   * （OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+   * 利用規約の URL。リンクとして描画する前に {@link isSafeDisplayUri} で
+   * スキームを検査する。
+   */
+  tosUri?: string;
 }
 
 /**
@@ -412,6 +449,30 @@ export function validateRegisteredRedirectUris(registeredUris: string[]): void {
       }
     }
   }
+}
+
+/**
+ * 表示用クライアントメタデータ URI（`client_uri` / `policy_uri` / `tos_uri`）を
+ * リンクとして描画してよいかを判定する。
+ *
+ * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2 が定義するこれらの URI は
+ * 同意画面でエンドユーザーがクリックする文書リンクになるため、redirect_uri の
+ * 危険スキーム拒否（DANGEROUS_SCHEMES のデナイリスト。RFC 8252 §7.1 のカスタム
+ * スキームは許す）とは逆に、http: / https: だけのアロウリストで判定する。
+ * それ以外のスキーム（javascript: / data: / blob: / カスタムスキーム等）は
+ * エンドユーザーのブラウザ文脈で実行・遷移し得るため、リンクにしない。
+ *
+ * URL として解析できない値（相対パス、スキーム無し文字列を含む）も false を返す。
+ */
+export function isSafeDisplayUri(uri: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return false;
+  }
+  // URL.protocol は ASCII 小文字に正規化された「スキーム + ':'」を返す
+  return parsed.protocol === 'https:' || parsed.protocol === 'http:';
 }
 
 /**

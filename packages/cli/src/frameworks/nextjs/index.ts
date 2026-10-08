@@ -179,7 +179,7 @@ function nextJsGeneratedFiles(
     ...(features.googleLogin
       ? [{ path: 'login/google/route.ts', content: nextJsGoogleLoginRouteTemplate(pkg) }]
       : []),
-    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(scopes) },
+    { path: 'consent/page.tsx', content: nextJsConsentPageTemplate(pkg, scopes) },
     { path: 'consent/actions.ts', content: nextJsConsentActionTemplate(pkg, features, scopes) },
     { path: 'consent/not-found.tsx', content: nextJsNotFoundTemplate('consent') },
     { path: 'consent/error.tsx', content: nextJsErrorBoundaryTemplate('consent') },

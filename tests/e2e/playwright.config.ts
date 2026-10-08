@@ -25,6 +25,15 @@ const oidcClientsJson = JSON.stringify([
     clientSecret: 'e2e-client-secret',
     redirectUris: [`${clientBaseURL}/callback`],
     clientType: 'confidential',
+    // OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: End-User-facing
+    // metadata, asserted by consent-client-identification.spec.ts. logo_uri is
+    // registered although the default consent view must never render it — the
+    // spec pins the <img>-free markup.
+    clientName: 'E2E Test Client',
+    clientUri: `${clientBaseURL}/`,
+    logoUri: `${clientBaseURL}/logo.png`,
+    policyUri: `${clientBaseURL}/privacy-policy`,
+    tosUri: `${clientBaseURL}/terms-of-service`,
     // The token-exchange and device_code URNs are registered so the RFC 8693 and
     // RFC 8628 specs can run against a sample OP generated with the matching
     // --enable flag. Sample OPs generated without it reject the grant with

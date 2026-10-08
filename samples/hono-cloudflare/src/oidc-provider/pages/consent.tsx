@@ -40,6 +40,14 @@ consentPage.get('/', async (c) => {
     csrfToken: screen.csrfToken,
     scopes: screen.scopes,
     clientId: screen.clientId,
+    // Registered display metadata (OIDC Dynamic Client Registration 1.0 §2);
+    // each field is undefined when unregistered, and the URIs were already
+    // scheme-checked in routes/consent.ts.
+    clientName: screen.clientName,
+    clientUri: screen.clientUri,
+    logoUri: screen.logoUri,
+    policyUri: screen.policyUri,
+    tosUri: screen.tosUri,
   });
 });
 

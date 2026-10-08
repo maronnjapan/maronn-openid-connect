@@ -9,6 +9,7 @@ export {
   // 利用者が消したり足したりできるようにする。
   resolveClientForAuthorization,
   validateRegisteredRedirectUris,
+  isSafeDisplayUri,
   resolveRequestObjectParams,
   resolveAuthorizationRedirectUri,
   rejectUnsupportedRequestParams,

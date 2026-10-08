@@ -21,6 +21,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import {
   resolveClientForAuthorization,
   validateRegisteredRedirectUris,
+  isSafeDisplayUri,
   resolveRequestObjectParams,
   resolveAuthorizationRedirectUri,
   rejectUnsupportedRequestParams,
@@ -458,6 +459,77 @@ describe('validateRegisteredRedirectUris', () => {
       const error = captureError(['com.example.app:/oauth2redirect']);
 
       expect(error).toBeUndefined();
+    });
+  });
+});
+
+// OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: client_uri / policy_uri /
+// tos_uri are End-User-facing documents the consent screen may render as links.
+// Unlike redirect_uri (deny-listed schemes, custom schemes allowed for native
+// apps), a clickable link on an OP page is allow-listed to http(s) only: any
+// other scheme executes or navigates in the End-User's browser context.
+describe('isSafeDisplayUri', () => {
+  describe('allowed schemes', () => {
+    it('should accept an https URI', () => {
+      expect(isSafeDisplayUri('https://client.example.com/policy')).toBe(true);
+    });
+
+    it('should accept an https URI with query and fragment', () => {
+      expect(isSafeDisplayUri('https://client.example.com/tos?lang=ja#section-2')).toBe(true);
+    });
+
+    it('should accept an http URI', () => {
+      // Display links are informational; unlike redirect_uri, plaintext http is
+      // not a code-interception channel, so it stays renderable.
+      expect(isSafeDisplayUri('http://client.example.com/policy')).toBe(true);
+    });
+  });
+
+  describe('rejected values', () => {
+    it('should reject a javascript URI', () => {
+      expect(isSafeDisplayUri('javascript:alert(1)')).toBe(false);
+    });
+
+    it('should reject an uppercase-scheme javascript URI', () => {
+      expect(isSafeDisplayUri('JAVASCRIPT:alert(1)')).toBe(false);
+    });
+
+    it('should reject a data URI', () => {
+      expect(isSafeDisplayUri('data:text/html,<script>alert(1)</script>')).toBe(false);
+    });
+
+    it('should reject a vbscript URI', () => {
+      expect(isSafeDisplayUri('vbscript:msgbox(1)')).toBe(false);
+    });
+
+    it('should reject a blob URI', () => {
+      expect(isSafeDisplayUri('blob:https://example.com/uuid')).toBe(false);
+    });
+
+    it('should reject a file URI', () => {
+      expect(isSafeDisplayUri('file:///etc/passwd')).toBe(false);
+    });
+
+    it('should reject a custom scheme URI', () => {
+      // Allowed for redirect_uri (RFC 8252 §7.1) but meaningless as a document
+      // link on the consent screen.
+      expect(isSafeDisplayUri('com.example.app:/policy')).toBe(false);
+    });
+
+    it('should reject a scheme-relative URI', () => {
+      expect(isSafeDisplayUri('//client.example.com/policy')).toBe(false);
+    });
+
+    it('should reject a relative path', () => {
+      expect(isSafeDisplayUri('/policy')).toBe(false);
+    });
+
+    it('should reject an empty string', () => {
+      expect(isSafeDisplayUri('')).toBe(false);
+    });
+
+    it('should reject a string that is not a URI', () => {
+      expect(isSafeDisplayUri('not a uri')).toBe(false);
     });
   });
 });

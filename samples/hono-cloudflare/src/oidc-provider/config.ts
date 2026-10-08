@@ -142,6 +142,14 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
       clientSecret: 'example-secret',
       redirectUris: ['http://localhost:3000/callback'],
       clientType: 'confidential' as const,
+      // OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: End-User-facing
+      // metadata the consent screen renders. client_name is shown next to the
+      // client_id (never instead of it: the name is self-asserted and spoofable);
+      // policy_uri / tos_uri become links after an http(s)-only scheme check
+      // (isSafeDisplayUri in routes/consent.ts).
+      clientName: 'Example Client',
+      policyUri: 'http://localhost:3000/privacy-policy',
+      tosUri: 'http://localhost:3000/terms-of-service',
       // RFC 7591 §2: grant_types default is ["authorization_code"]. Registering
       // refresh_token is the single switch that lets this client receive refresh
       // tokens at all: an online refresh token (bound to the login session) on every

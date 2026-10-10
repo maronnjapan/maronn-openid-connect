@@ -29,6 +29,8 @@ export {
   DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
   validateSupportedResponseType,
   validateClientResponseType,
+  // RFC 7591 §2: クライアントに登録された scope の照合
+  validateClientScope,
   requireAuthorizationScope,
   validateOpenIdScope,
   filterOfflineAccessScope,
@@ -47,7 +49,7 @@ export {
   mergeRequestObjectParams,
 } from './authorization-request.js';
 
-export { parseScope } from './scope.js';
+export { parseScope, findUnregisteredClientScopes } from './scope.js';
 
 export {
   clientAllowsGrantType,

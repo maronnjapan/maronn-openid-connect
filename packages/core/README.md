@@ -37,7 +37,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `prompt` / `display` / `max_age` / `claims` / `request` などのパラメータを、`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` が機能単位で検証する。CLI 生成コードはこれらを個別に呼び出すため、検証ステップを消したり独自処理を足したりできる |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `prompt` / `display` / `max_age` / `claims` / `request` などのパラメータを、`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` が機能単位で検証する。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。CLI 生成コードはこれらを個別に呼び出すため、検証ステップを消したり独自処理を足したりできる |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務。OAuth 2.1 §4.1.2） |
@@ -161,7 +161,7 @@ await verifyPkceCodeVerifier(
 
 | 処理 | 個別に呼び出せる関数 |
 |---|---|
-| 認可パラメータの検証 | `validateSupportedResponseType`、`validateClientResponseType`、`requireAuthorizationScope`、`parseScope`、`validateOpenIdScope`、`parsePromptValues`、`validatePromptValues`、`validatePromptNoneNotCombined`、`validateMaxAge`、`validateDefaultMaxAge`、`requireCodeChallenge`、`requireCodeChallengeMethod`、`validateCodeChallengeMethod`、`validateS256CodeChallenge`、`resolveRedirectUri` |
+| 認可パラメータの検証 | `validateSupportedResponseType`、`validateClientResponseType`、`requireAuthorizationScope`、`parseScope`、`findUnregisteredClientScopes`、`validateOpenIdScope`、`parsePromptValues`、`validatePromptValues`、`validatePromptNoneNotCombined`、`validateMaxAge`、`validateDefaultMaxAge`、`requireCodeChallenge`、`requireCodeChallengeMethod`、`validateCodeChallengeMethod`、`validateS256CodeChallenge`、`resolveRedirectUri` |
 | Request Object の反映 | `mergeRequestObjectParams`。署名検証済みのクレームを渡す |
 | 同意結果の適用 | `filterOfflineAccessScope`。判定済みの真偽値を渡す |
 | 認可コードの検証 | `requireAuthorizationCode`、`requireStoredAuthorizationCode`、`validateAuthorizationCodeNotUsed`、`requireTokenRequestRedirectUri`、`validateAuthorizationCodeRedirectUriMatch`、`hasPkceBinding`、`requirePkceBinding`、`requireCodeVerifier`、`validateCodeVerifier`、`verifyCodeChallenge`、`verifyPkceCodeVerifier` |

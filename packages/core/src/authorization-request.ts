@@ -6,7 +6,7 @@ import { clientAllowsRefreshTokenGrant } from './client-grant-types.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 import { isLoopbackHostname } from './loopback.js';
 import { parseRequestObject, RequestObjectError } from './request-object.js';
-import { parseScope } from './scope.js';
+import { findUnregisteredClientScopes, parseScope } from './scope.js';
 import type { JwkSet } from './jwks.js';
 import type { ClaimsParameter, ClaimRequestValue } from './userinfo.js';
 
@@ -127,6 +127,13 @@ export interface ClientInfo {
    * クライアントレコードを両エンドポイントで共有する場合は 1 箇所に書けばよい。
    */
   grantTypes?: string[];
+  /**
+   * このクライアントが要求してよい scope の一覧（RFC 7591 §2 の `scope`）。
+   * 登録すると、一覧に無い scope の要求は {@link validateClientScope} が `invalid_scope` で拒否する。
+   * 省略時はクライアント単位の制限を掛けない。`openid` や `offline_access` も、要求させるなら一覧に含める。
+   * {@link TokenClientInfo.scope} と同じ値。
+   */
+  scope?: string[];
   /**
    * クライアント登録メタデータ `default_max_age`（秒）。
    * OIDC Dynamic Client Registration 1.0 §2: リクエストに `max_age` が無い場合の
@@ -1290,6 +1297,33 @@ export function validateClientResponseType(
     throw new AuthorizationError(
       AuthorizationErrorCode.UnauthorizedClient,
       `Client is not authorized to use response_type: ${responseType}`,
+      redirectUri,
+      state
+    );
+  }
+}
+
+/**
+ * 要求された scope がクライアントの登録内にあることを検証する（機能単位のステップ関数）。
+ *
+ * RFC 7591 §2: クライアント登録メタデータ `scope` は、クライアントが要求してよい scope の一覧。
+ * 一覧に無い scope の要求は RFC 6749 §4.1.2.1 の invalid_scope で拒否する。
+ * 一覧が登録されていない（undefined）クライアントは検証しない。
+ *
+ * 要求された scope を、offline_access の許可条件（OIDC Core 1.0 §11）を適用する前の値で渡す。
+ * 登録外の scope を要求したこと自体を誤りとして扱うので、後で取り除かれる offline_access も照合する。
+ */
+export function validateClientScope(
+  scope: readonly string[],
+  registeredScope: readonly string[] | undefined,
+  redirectUri: string,
+  state?: string,
+): void {
+  const unregistered = findUnregisteredClientScopes(scope, registeredScope);
+  if (unregistered.length > 0) {
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidScope,
+      `Client is not registered for scope: ${unregistered.join(' ')}`,
       redirectUri,
       state
     );

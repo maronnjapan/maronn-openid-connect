@@ -52,6 +52,12 @@ export interface TokenClientInfo {
    */
   grantTypes?: string[];
   /**
+   * このクライアントが要求してよい scope の一覧（RFC 7591 §2 の `scope`）。省略時は制限しない。
+   * {@link ClientInfo.scope} と同じ値で、Device Authorization Grant や CIBA のように
+   * Token Endpoint 側のクライアント情報で scope を受け付ける経路が照合に使う。
+   */
+  scope?: string[];
+  /**
    * このクライアントに登録された Token Endpoint のクライアント認証方式。
    * OIDC Core 1.0 §9 / RFC 7591 §2: 既定は `client_secret_basic`。
    * 未指定時も既定の `client_secret_basic` を強制し、実際に使われた方式が一致しなければ

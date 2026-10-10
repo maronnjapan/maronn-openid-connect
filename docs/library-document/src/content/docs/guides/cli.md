@@ -44,7 +44,7 @@ const app = new Hono();
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
-| `--db` | 認可コードやトークンなどのデータを SQL のテーブルに保存する（`db/` を生成する。[Database (--db)](#database---db) を参照） |
+| `--db` | クライアント、ユーザー、認可コード、トークンなどのデータを SQL のテーブルに保存する（`db/` を生成する。[Database (--db)](#database---db) を参照） |
 | `--force` | 出力先に既にあるファイルを上書きする |
 | `--dry-run` | 書き込みを行わず、出力予定のファイル一覧（新規か上書きか）を表示する |
 | `--help, -h` | ヘルプ表示 |
@@ -79,7 +79,7 @@ oidc-provider/
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
 ├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
-├── db/                   # --db 指定時のみ。SQL のテーブル定義とストア（instance.ts だけは利用者が書く）
+├── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントの読み書き（instance.ts だけは利用者が書く）
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
@@ -118,7 +118,7 @@ src/app/
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
 │   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア（--db 指定時は生成しない）
-│   └── db/                   # --db 指定時のみ。SQL のテーブル定義とストア（instance.ts だけは利用者が書く）
+│   └── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントの読み書き（instance.ts だけは利用者が書く）
 ├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
 ├── token/route.ts            # POST /token
 ├── userinfo/route.ts         # GET|POST /userinfo
@@ -352,7 +352,7 @@ SSO と `prompt=none` では、**保存済み同意を引く前**にポリシー
 
 ## Database (--db)
 
-`--db` を付けると、生成 OP は認可コード、トークン、セッション、同意を SQL のテーブルに保存します。
+`--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を SQL のテーブルに保存します。
 既定のインメモリストアや、`JsonStoreBackend` で 1 つのテーブルに JSON を入れる方式の代わりになります。
 
 ```bash
@@ -369,6 +369,7 @@ maronn-oidc generate express --db
 | `schema.sql` | テーブル定義。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る |
 | `schema.ts` | `schema.sql` と同じ内容の文字列 `SCHEMA_SQL`。起動時にテーブルを作る DB で使う |
 | `stores.ts` | `store.ts` の `ProviderStores` を SQL で実装したストア |
+| `clients.ts` | クライアントのテーブルを読む `ClientResolver` と、クライアントを登録する `registerClient()` |
 
 `SqlDatabase` は SQL を実行する口を 2 つ持つだけなので、どのドライバーでも実装できます。
 ORM も生の SQL を実行するメソッドを持っているので、CLI は ORM ごとのコードを生成しません。
@@ -397,28 +398,83 @@ export function createDatabase(): SqlDatabase {
 }
 ```
 
-生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使います。
+生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` オプションを渡さなければ `db/` のテーブルからクライアントを読みます。
 `createDatabase()` を呼ぶ時機はフレームワークによって異なります。
 
 - **Hono**：リクエストごとに Hono のコンテキストを渡して呼ぶ。Cloudflare D1 のバインディング（`c.env.DB`）はそこから読める
 - **Express / Fastify**：アプリを作るときに 1 回呼ぶ。`instance.ts` が未実装なら起動時に止まる
 - **Next.js**：`_oidc-provider/provider.ts` が最初のクエリのときに呼ぶので、`next build` の時点では呼ばない（`instance.ts` がモジュールの読み込み時に接続しない限り、ビルドに DB は要らない）
 
+### テーブルの構成
+
+テーブルは、OP が扱うデータをエンティティごとに分けています。
+`schema.sql` の各テーブルのコメントには、そのテーブルが表すエンティティ（Client、Transaction など）の名前を書いています。
+
+| テーブル | 保存するもの |
+|---|---|
+| `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
+| `client_auths`、`client_secrets`、`client_private_key_jwts` | クライアント認証の方式と、方式ごとの秘密情報や公開鍵 |
+| `client_redirect_uris`、`client_grant_types` | リダイレクト URI と、使ってよい grant type |
+| `client_scopes`、`client_authorization_details` | 要求してよいスコープと authorization_details（RFC 9396）。OP はまだ読まない |
+| `users` | ログインしたユーザー。`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
+| `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
+| `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
+| `codes`、`access_tokens`、`refresh_tokens` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュで引く |
+| `id_tokens` | 発行した ID トークン。OP はまだ書き込まないので空のまま |
+| `browser_sessions`、`consent_scopes`、`consent_grants` | SSO、`prompt=none`、`max_age` に使うブラウザセッションと、ユーザーが与えた同意 |
+
+`--enable google-login` と組み合わせたときだけ、Sign in with Google のための 2 つのテーブルが加わります。
+`federated_identities` は Google アカウントとユーザーの対応を、`upstream_auth_requests` はログイン画面の Google ボタンに埋めた nonce を持ちます。
+
+`transactions.status` は、認可リクエストがどこまで進んだかを表します。
+`/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進みます。
+同意の拒否や `prompt=none` のエラーのように、コードを発行せずに終わったトランザクションは `failed` になります。
+OP は終わったトランザクションの行を消さず、`codes` と `access_tokens` から `transaction_id` で参照するので、どの認可リクエストからどのコードとトークンが出たかを後から追えます。
+期限切れの行も OP は消さないので、必要なら定期的に削除してください。
+
+クライアントシークレットは、`hashClientSecret()`（core）で作った SHA-256 のハッシュだけを `client_secrets` に保存します。
+トークンエンドポイントは、提示されたシークレットのハッシュをこの値と比べます。
+SHA-256 は計算が速く、短い値や推測できる値は総当たりで元に戻されるので、シークレットには CSPRNG で作った十分長い値を使ってください。
+private_key_jwt によるクライアント認証は core がまだ対応していないため、`client_private_key_jwts` の `jwks` は署名付き Request Object の検証にだけ使います。
+
+### クライアントとユーザーの登録
+
+クライアントは、`clients.ts` の `registerClient()` でテーブルに入れます。
+同じ client_id で呼び直すと、前の登録を置き換えます。
+Express や Fastify なら、起動時に次のように登録できます。
+
+```typescript
+import { defaultRegisteredClients } from './oidc-provider/config.js';
+import { registerClient } from './oidc-provider/db/clients.js';
+import { createDatabase } from './oidc-provider/db/instance.js';
+
+for (const client of defaultRegisteredClients.values()) {
+  await registerClient(createDatabase(), client);
+}
+```
+
+Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録してください。
+Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読みません。
+テーブルに列の無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
+
+ユーザーは、ログインに成功した時点で `users` に保存されます。
+パスワードでログインするユーザーは `store.ts` の固定ユーザー（testuser / otheruser）のままなので、既存のユーザー管理につなぐ場合は `stores.ts` の `userStore.authenticate()` を書き換えてください。
+Sign in with Google のユーザーは、Google の `sub`（`federated_identities.provider_sub`）で同じ人かを判断し、初めてのログインでランダムな ID のユーザーを作ります。
+メールアドレスは Google アカウント側で変えられるので、同じ人かの判断には使いません。
+
+### stores.ts を書き換えるときに保つ動き
+
 `stores.ts` を ORM のクエリなどで書き直してもかまいませんが、ファイル先頭のコメントに挙げた動きは保つ必要があります。
-たとえば認可コードとリフレッシュトークンの `consume` は、「`used = 0` の行だけを `used = 1` にする」を 1 回の `UPDATE` で行い、変更した行が無ければ `invalid_grant` を投げます。
+たとえば認可コードとリフレッシュトークンの `consume` は、「`is_used` が FALSE の行だけを TRUE にする」を 1 回の `UPDATE` で行い、変更した行が無ければ `invalid_grant` を投げます。
 `SELECT` してから `UPDATE` する 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行されます。
 
-ユーザーとクライアントは `db/` に入れていません。
-パスワードでログインするユーザーは `store.ts` の固定ユーザー（testuser / otheruser）のままで、クライアントは `config.ts` の登録を使います。
-既存のユーザーテーブルにつなぐ場合は、`stores.ts` の `userStore` を書き換えてください。
-`--enable google-login` と組み合わせると、Google アカウントから作ったユーザーと、ログインに使う nonce も `db/` のテーブルに保存します。
 実験的機能（PAR、Device Authorization Grant、CIBA）のストアはインメモリのままです。
 
 ## After Generation
 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. `config.ts` のデフォルト値はローカル検証専用として扱う
-3. `--db` 付きで生成した場合は、`db/instance.ts` の `createDatabase()` を書き、`db/schema.sql` を DB に適用する
+3. `--db` 付きで生成した場合は、`db/instance.ts` の `createDatabase()` を書き、`db/schema.sql` を DB に適用して、`db/clients.ts` の `registerClient()` でクライアントを登録する
 4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
 
 Next.js では 1 と 2 を `_oidc-provider/provider.ts` で行います（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっています）。

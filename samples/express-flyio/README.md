@@ -2,7 +2,9 @@
 
 CLIの `--db` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、OPの状態をNode.js組み込みの `node:sqlite` で永続化する。保存先は `.data/oidc.sqlite`。外部DBライブラリ、DBソフト、Dockerは不要（Node.js 22.13以上）。デプロイ想定環境はFly.io（永続ボリューム + 単一マシン）。
 
-`src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）とストア（`stores.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
+`src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）、ストア（`stores.ts`）、クライアントの読み書き（`clients.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
+
+クライアントもSQLのテーブルから読む。`src/app.ts` が起動時に、E2E用のクライアント（`OIDC_CLIENTS_JSON` があればその内容）を `registerClient()` でテーブルに登録する。client_secret はハッシュだけを保存する。
 
 ## ローカル起動（一発）
 
@@ -38,4 +40,4 @@ flyctl のインストール・`fly auth login`・アプリ名の決定（自動
 GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com HOST=localhost ISSUER=http://localhost:3010 pnpm sample:express-flyio
 ```
 
-`GOOGLE_HOSTED_DOMAIN=example.com` を足すと、その Google Workspace ドメインのアカウントだけを受け付ける。Google アカウントは `google:<sub>` を subject とするユーザーとしてその場で登録され（SQLite に永続化）、`name` / `email` などのクレームは ID トークンから写される。Fly.io へのデプロイ時は `GOOGLE_CLIENT_ID=... pnpm deploy:express-flyio` のように渡すと、そのままアプリの環境変数として設定される（リダイレクト URI は `https://<app-name>.fly.dev/login/google`）。
+`GOOGLE_HOSTED_DOMAIN=example.com` を足すと、その Google Workspace ドメインのアカウントだけを受け付ける。Google アカウントは、初めてのログインでランダムな ID のユーザーとして `users` テーブルにその場で登録され、Google の sub は `federated_identities` テーブルに記録される。`name` / `email` などのクレームは ID トークンから写される。Fly.io へのデプロイ時は `GOOGLE_CLIENT_ID=... pnpm deploy:express-flyio` のように渡すと、そのままアプリの環境変数として設定される（リダイレクト URI は `https://<app-name>.fly.dev/login/google`）。

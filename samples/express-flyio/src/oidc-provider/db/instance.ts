@@ -6,6 +6,10 @@
  * OIDC_SQLITE_PATH names (.data/oidc.sqlite by default), so no database
  * server, native add-on or extra dependency is needed (Node.js 22.13+). The
  * tables of schema.sql are created at startup.
+ *
+ * The database is opened once and shared: app.ts registers the sample clients
+ * through the same connection the generated app reads them from, which also
+ * keeps OIDC_SQLITE_PATH=:memory: working.
  */
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -13,10 +17,19 @@ import { DatabaseSync } from 'node:sqlite';
 import type { SqlDatabase, SqlStatement } from './database.js';
 import { SCHEMA_SQL } from './schema.js';
 
+let database: SqlDatabase | undefined;
+
 export function createDatabase(): SqlDatabase {
-  const databasePath = resolve(process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite');
-  mkdirSync(dirname(databasePath), { recursive: true });
-  const sqlite = new DatabaseSync(databasePath);
+  database ??= openDatabase();
+  return database;
+}
+
+function openDatabase(): SqlDatabase {
+  const databasePath = process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite';
+  if (databasePath !== ':memory:') {
+    mkdirSync(dirname(resolve(databasePath)), { recursive: true });
+  }
+  const sqlite = new DatabaseSync(databasePath === ':memory:' ? databasePath : resolve(databasePath));
   sqlite.exec('PRAGMA journal_mode = WAL');
   sqlite.exec(SCHEMA_SQL);
   return {

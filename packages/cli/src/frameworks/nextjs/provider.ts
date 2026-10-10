@@ -22,15 +22,95 @@ export function nextJsProviderTemplate(
   const storesImport = db
     ? `import type { SqlDatabase, SqlStatement } from './db/database';
 import { createDatabase } from './db/instance';
-import { createSqlProviderStores } from './db/stores';`
+import { createSqlProviderStores } from './db/stores';
+import { createSqlClientResolver } from './db/clients';`
     : `import { createNextJsProviderStores } from './storage-backend';`;
-  const storesDefinition = db
+  // --db: the registered clients come from the client tables of db/ too, so the
+  // environment-variable clients (readRegisteredClients) are not generated.
+  const registeredClientsReader = db
+    ? ''
+    : `
+// --- Registered clients ---------------------------------------------------------
+
+function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
+  const encoded = process.env.OIDC_CLIENTS_JSON;
+  if (encoded) {
+    const clients = JSON.parse(encoded) as RegisteredClient[];
+    return new Map(clients.map((client) => [client.clientId, client]));
+  }
+
+  const clientId = process.env.OIDC_CLIENT_ID ?? process.env.CLIENT_ID ?? 'example-client';
+  const clientSecret =
+    process.env.OIDC_CLIENT_SECRET ?? process.env.CLIENT_SECRET ?? 'example-secret';
+  const clientRedirectUri =
+    process.env.OIDC_CLIENT_REDIRECT_URI ??
+    process.env.CLIENT_REDIRECT_URI ??
+    'http://localhost:3000/callback';
+
+  const clients = new Map<string, RegisteredClient>([
+    [
+      clientId,
+      {
+        clientId,
+        clientSecret,
+        redirectUris: [clientRedirectUri],
+        clientType: 'confidential',
+        grantTypes: ['authorization_code'],
+        tokenEndpointAuthMethod: 'client_secret_post',
+        responseTypes: ['code'],
+      },
+    ],
+  ]);
+
+  const resourceServerClientId =
+    process.env.OIDC_RESOURCE_SERVER_CLIENT_ID ?? process.env.RESOURCE_SERVER_CLIENT_ID;
+  const resourceServerClientSecret =
+    process.env.OIDC_RESOURCE_SERVER_CLIENT_SECRET ?? process.env.RESOURCE_SERVER_CLIENT_SECRET;
+  const resourceServerRedirectUri =
+    process.env.OIDC_RESOURCE_SERVER_REDIRECT_URI ??
+    process.env.RESOURCE_SERVER_REDIRECT_URI ??
+    'http://localhost:3030/unused-callback';
+
+  if (resourceServerClientId && resourceServerClientSecret) {
+    clients.set(resourceServerClientId, {
+      clientId: resourceServerClientId,
+      clientSecret: resourceServerClientSecret,
+      redirectUris: [resourceServerRedirectUri],
+      clientType: 'confidential',
+      grantTypes: ['authorization_code'],
+      tokenEndpointAuthMethod: 'client_secret_basic',
+      responseTypes: ['code'],
+    });
+  }
+
+  return clients;
+}
+`;
+  const configClientImports = db
+    ? { resolver: '', registeredClient: '' }
+    : { resolver: '\n  createInMemoryClientResolver,', registeredClient: '\n  type RegisteredClient,' };
+  const clientsDefinition = db
     ? `/**
- * Persistent provider stores: the SQL tables of db/schema.sql, on the database
- * db/instance.ts creates. createDatabase() runs on the first query rather than
- * at import, so \`next build\` does not call it.
+ * The database of db/instance.ts. createDatabase() runs on the first query
+ * rather than at import, so \`next build\` does not call it.
  */
-export const stores = createSqlProviderStores(deferDatabase(createDatabase));
+const database = deferDatabase(createDatabase);
+
+/**
+ * Registered clients: the client tables of db/schema.sql. Put clients there
+ * with registerClient() (db/clients.ts).
+ */
+export const clientResolver = createSqlClientResolver(database);`
+    : `/**
+ * Registered clients: OIDC_CLIENTS_JSON (a JSON array of RegisteredClient), or a
+ * single confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
+ * OIDC_CLIENT_REDIRECT_URI. Replace this with a database-backed ClientResolver
+ * in a real project.
+ */
+export const clientResolver = createInMemoryClientResolver(readRegisteredClients());`;
+  const storesDefinition = db
+    ? `/** Persistent provider stores: the SQL tables of db/schema.sql, on the same database. */
+export const stores = createSqlProviderStores(database);
 
 /** A SqlDatabase that calls create() on its first query and keeps the result. */
 function deferDatabase(create: () => SqlDatabase): SqlDatabase {
@@ -160,11 +240,9 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '${corePkg}';
-import {
-  createInMemoryClientResolver,
+import {${configClientImports.resolver}
   createProviderConfig,${googleLoginConfigTypeImport}
-  type ProviderConfig,
-  type RegisteredClient,
+  type ProviderConfig,${configClientImports.registeredClient}
 } from './config';
 import { createStoreResolvers } from './resolvers';
 ${storesImport}
@@ -182,13 +260,7 @@ export const config: ProviderConfig = createProviderConfig({
   authorizationCodeTtl: 300,${pkceConfig}${requestObjectConfig}${googleLoginConfig}
 });
 
-/**
- * Registered clients: OIDC_CLIENTS_JSON (a JSON array of RegisteredClient), or a
- * single confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
- * OIDC_CLIENT_REDIRECT_URI. Replace this with a database-backed ClientResolver
- * in a real project.
- */
-export const clientResolver = createInMemoryClientResolver(readRegisteredClients());
+${clientsDefinition}
 
 ${storesDefinition}
 ${experimentalStoreExport}
@@ -356,63 +428,7 @@ async function generateSigningKey(): Promise<SigningKey> {
     keyId: publicJwk.kid,
   };
 }
-
-// --- Registered clients ---------------------------------------------------------
-
-function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
-  const encoded = process.env.OIDC_CLIENTS_JSON;
-  if (encoded) {
-    const clients = JSON.parse(encoded) as RegisteredClient[];
-    return new Map(clients.map((client) => [client.clientId, client]));
-  }
-
-  const clientId = process.env.OIDC_CLIENT_ID ?? process.env.CLIENT_ID ?? 'example-client';
-  const clientSecret =
-    process.env.OIDC_CLIENT_SECRET ?? process.env.CLIENT_SECRET ?? 'example-secret';
-  const clientRedirectUri =
-    process.env.OIDC_CLIENT_REDIRECT_URI ??
-    process.env.CLIENT_REDIRECT_URI ??
-    'http://localhost:3000/callback';
-
-  const clients = new Map<string, RegisteredClient>([
-    [
-      clientId,
-      {
-        clientId,
-        clientSecret,
-        redirectUris: [clientRedirectUri],
-        clientType: 'confidential',
-        grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_post',
-        responseTypes: ['code'],
-      },
-    ],
-  ]);
-
-  const resourceServerClientId =
-    process.env.OIDC_RESOURCE_SERVER_CLIENT_ID ?? process.env.RESOURCE_SERVER_CLIENT_ID;
-  const resourceServerClientSecret =
-    process.env.OIDC_RESOURCE_SERVER_CLIENT_SECRET ?? process.env.RESOURCE_SERVER_CLIENT_SECRET;
-  const resourceServerRedirectUri =
-    process.env.OIDC_RESOURCE_SERVER_REDIRECT_URI ??
-    process.env.RESOURCE_SERVER_REDIRECT_URI ??
-    'http://localhost:3030/unused-callback';
-
-  if (resourceServerClientId && resourceServerClientSecret) {
-    clients.set(resourceServerClientId, {
-      clientId: resourceServerClientId,
-      clientSecret: resourceServerClientSecret,
-      redirectUris: [resourceServerRedirectUri],
-      clientType: 'confidential',
-      grantTypes: ['authorization_code'],
-      tokenEndpointAuthMethod: 'client_secret_basic',
-      responseTypes: ['code'],
-    });
-  }
-
-  return clients;
-}
-${googleLoginReader}`;
+${registeredClientsReader}${googleLoginReader}`;
 }
 
 /**

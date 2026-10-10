@@ -139,12 +139,15 @@ Custom scopes (none declared by default): the standard scopes (openid, profile,
   resolveGrantableScopes(), already wired into consent, SSO, prompt=none and the
   device / CIBA approvals, as the one place to write that filtering.
 
-Database (--db): the provider keeps authorization codes, tokens, sessions and
-  consent in SQL tables instead of memory. db/schema.sql defines the tables
-  (the same SQL runs on SQLite, Cloudflare D1 and PostgreSQL) and db/stores.ts
-  queries them. The one file you write is db/instance.ts: createDatabase()
-  returns your database, wrapping whichever driver or ORM you use. The CLI
-  creates it only when it is missing and never overwrites it, even with --force.
+Database (--db): the provider keeps its clients, users, authorization
+  transactions, codes, tokens, sessions and consent in SQL tables instead of
+  memory. db/schema.sql defines the tables (the same SQL runs on SQLite,
+  Cloudflare D1 and PostgreSQL), and db/stores.ts and db/clients.ts query them.
+  The tables of Sign in with Google come with --enable google-login. Register
+  clients with registerClient() in db/clients.ts. The one file you write is
+  db/instance.ts: createDatabase() returns your database, wrapping whichever
+  driver or ORM you use. The CLI creates it only when it is missing and never
+  overwrites it, even with --force.
 `);
 }
 
@@ -466,7 +469,8 @@ export function run(args: string[]): void {
       console.log(
         `Database (--db): the provider keeps its data in the SQL tables of ${dbDir}/schema.sql.\n` +
           `Write createDatabase() in ${dbDir}/instance.ts (examples inside); that file is yours and is\n` +
-          'never overwritten.\n',
+          'never overwritten. The provider reads its clients from the client tables: register them\n' +
+          `with registerClient() (${dbDir}/clients.ts).\n`,
       );
     }
     // Decided before writing: a user-owned file created by this run is not "kept".
@@ -498,7 +502,7 @@ export function run(args: string[]): void {
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
         parsed.db
-          ? `Write createDatabase() in ${parsed.outputDir}/db/instance.ts and apply ${parsed.outputDir}/db/schema.sql to your database`
+          ? `Write createDatabase() in ${parsed.outputDir}/db/instance.ts, apply ${parsed.outputDir}/db/schema.sql to your database and register clients with registerClient() (${parsed.outputDir}/db/clients.ts)`
           : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
         `Use ${parsed.outputDir}/config.ts defaults only for quick local testing`,
         ...(features.par ||
@@ -526,13 +530,15 @@ export function run(args: string[]): void {
         ),
         features,
       );
-      const dbStep = `Write createDatabase() in ${dbDir}/instance.ts and apply ${dbDir}/schema.sql to your database`;
+      const dbStep = `Write createDatabase() in ${dbDir}/instance.ts, apply ${dbDir}/schema.sql to your database and register clients with registerClient() (${dbDir}/clients.ts)`;
       // Next.js reads its configuration from the environment in
       // _oidc-provider/provider.ts, which already wires the persistent stores.
       const nextSteps =
         result.framework === 'nextjs'
           ? [
-              'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
+              parsed.db
+                ? 'Configure the OP with environment variables: OIDC_ISSUER (see _oidc-provider/provider.ts)'
+                : 'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
               parsed.db
                 ? dbStep
                 : 'On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',

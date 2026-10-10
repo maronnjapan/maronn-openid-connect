@@ -389,29 +389,45 @@ export async function writeWebResponse(
  */
 function webStorageTemplateParts(db: boolean): {
   defaultStoresImport: string;
+  inMemoryClientResolverImport: string;
   dbImports: string;
   storageDoc: string;
+  clientResolverDoc: string;
   appStores: string;
   requestStores: string;
+  requestClientResolver: string;
 } {
   return {
     defaultStoresImport: db ? '' : '  defaultProviderStores,\n',
+    inMemoryClientResolverImport: db ? '' : '  createInMemoryClientResolver,\n',
     dbImports: db
       ? `import { createDatabase } from './db/instance.js';
-import { createSqlProviderStores } from './db/stores.js';\n`
+import type { SqlDatabase } from './db/database.js';
+import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';\n`
       : '',
     storageDoc: db
       ? 'Stores to use instead of db/: the SQL stores on the database db/instance.ts creates.'
       : 'Persistent stores shared by Route Handlers and Server Actions.',
+    clientResolverDoc: db
+      ? '  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */\n'
+      : '',
     appStores: db
       ? `
-  // db/: unless options.storage is given, the stores run on the database that
+  // db/: unless options.storage / options.clientResolver replace them, the
+  // stores and the registered clients come from the database that
   // db/instance.ts creates. It is created once, here, so an unimplemented
   // createDatabase() stops the server at startup instead of failing a request.
-  const stores = options.storage ?? createSqlProviderStores(createDatabase());
+  let database: SqlDatabase | undefined;
+  const openDatabase = (): SqlDatabase => (database ??= createDatabase());
+  const stores = options.storage ?? createSqlProviderStores(openDatabase());
+  const clientResolver = options.clientResolver ?? createSqlClientResolver(openDatabase());
 `
       : '',
     requestStores: db ? '' : '    const stores = options.storage ?? defaultProviderStores;\n',
+    requestClientResolver: db
+      ? ''
+      : '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
   };
 }
 
@@ -583,8 +599,7 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
-  createProviderConfig,
+${storageParts.inMemoryClientResolverImport}  createProviderConfig,
   type ProviderConfig,
 } from './config.js';
 import {
@@ -618,7 +633,7 @@ export interface OidcProviderOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
-  clientResolver?: ClientResolver;
+${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   sessionResolver?: SessionResolver;
   consentResolver?: ConsentResolver;
@@ -690,9 +705,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-    const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
-${storageParts.requestStores}    const storeResolvers = createStoreResolvers(stores);
+${storageParts.requestClientResolver}${storageParts.requestStores}    const storeResolvers = createStoreResolvers(stores);
 
     c.set('signingKeys', signingKeys);
     c.set('idTokenSigningKeys', idTokenSigningKeys);

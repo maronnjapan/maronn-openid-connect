@@ -93,20 +93,31 @@ async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Pro
  */
 function honoStorageTemplateParts(db: boolean): {
   defaultStoresImport: string;
+  inMemoryClientResolverImport: string;
   dbImports: string;
   storageDoc: string;
+  clientResolverDoc: string;
   defaultStores: string;
+  defaultClientResolver: string;
 } {
   return {
     defaultStoresImport: db ? '' : '  defaultProviderStores,\n',
+    inMemoryClientResolverImport: db ? '' : '  createInMemoryClientResolver,\n',
     dbImports: db
       ? `import { createDatabase } from './db/instance.js';
-import { createSqlProviderStores } from './db/stores.js';\n`
+import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';\n`
       : '',
     storageDoc: db
       ? 'Stores to use instead of db/: the SQL stores on the database db/instance.ts creates for each request.'
       : 'Persistent stores, or a request-aware factory for bindings such as Cloudflare D1.',
+    clientResolverDoc: db
+      ? '  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */\n'
+      : '',
     defaultStores: db ? 'createSqlProviderStores(createDatabase(context))' : 'defaultProviderStores',
+    defaultClientResolver: db
+      ? 'createSqlClientResolver(createDatabase(c))'
+      : 'createInMemoryClientResolver()',
   };
 }
 
@@ -284,8 +295,7 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
-  createProviderConfig,
+${storageParts.inMemoryClientResolverImport}  createProviderConfig,
   type ProviderConfig,
 } from './config.js';
 import {
@@ -329,7 +339,7 @@ export interface CreateAppOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
-  clientResolver?: ClientResolver;
+${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
@@ -425,7 +435,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
     const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
+      options.clientResolver ?? ${storageParts.defaultClientResolver};
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -8437,8 +8447,7 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
-  createProviderConfig,
+${storageParts.inMemoryClientResolverImport}  createProviderConfig,
   type ProviderConfig,
 } from './config.js';
 import {
@@ -8499,7 +8508,7 @@ export interface ApplyOidcOptions {
    * (OIDC Core 1.0 Section 5.3.2).
    */
   userinfoSigningKeyProvider?: SigningKeyProvider;
-  clientResolver?: ClientResolver;
+${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
@@ -8621,7 +8630,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
     const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
+      options.clientResolver ?? ${storageParts.defaultClientResolver};
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 

@@ -13,7 +13,6 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
   createProviderConfig,
   type ProviderConfig,
 } from './config.js';
@@ -28,7 +27,9 @@ import {
 } from './store.js';
 import { createViews, type Views } from './views.js';
 import { createDatabase } from './db/instance.js';
+import type { SqlDatabase } from './db/database.js';
 import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';
 import {
   getDefaultGoogleIdTokenVerifier,
   type GoogleAccountResolver,
@@ -59,6 +60,7 @@ export interface OidcProviderOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
+  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */
   clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   sessionResolver?: SessionResolver;
@@ -115,10 +117,14 @@ export function validateSigningKeySet(
 export function createApp(options: OidcProviderOptions): WebRouter {
   const app = new WebRouter();
 
-  // db/: unless options.storage is given, the stores run on the database that
+  // db/: unless options.storage / options.clientResolver replace them, the
+  // stores and the registered clients come from the database that
   // db/instance.ts creates. It is created once, here, so an unimplemented
   // createDatabase() stops the server at startup instead of failing a request.
-  const stores = options.storage ?? createSqlProviderStores(createDatabase());
+  let database: SqlDatabase | undefined;
+  const openDatabase = (): SqlDatabase => (database ??= createDatabase());
+  const stores = options.storage ?? createSqlProviderStores(openDatabase());
+  const clientResolver = options.clientResolver ?? createSqlClientResolver(openDatabase());
 
   const corsOrigins = options.corsOrigins ?? '*';
   const protectedCors = createCorsMiddleware({
@@ -161,8 +167,6 @@ export function createApp(options: OidcProviderOptions): WebRouter {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-    const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
     const storeResolvers = createStoreResolvers(stores);
 
     c.set('signingKeys', signingKeys);

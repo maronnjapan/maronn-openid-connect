@@ -203,13 +203,13 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 | `config.ts` | `ProviderConfig.googleLogin?: GoogleLoginConfig`（`clientId` / 任意の `hostedDomain` / `requireVerifiedEmail`）。未設定ならボタンは出ず、`/login/google` は 404 |
 | `views.ts`（Hono は `views.tsx`） | `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。UI は生成コード側にあるので自由に変えられる |
 | `routes/login.ts` | GET `/login` でトランザクションに束縛した nonce を発行してボタンを描画。`POST /login/google`（`login_uri`）で `handleGoogleLoginRedirect` → `resolveGoogleLoginSubject` → パスワードログインと同じセッション確立 → `/consent` |
-| `store.ts` | `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両方）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()` |
+| `store.ts` | `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両方）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()`。CLI の `--db` 付きでは `db/stores.ts` が同じ 2 つを SQL のテーブル（`upstream_auth_requests`、`users`、`federated_identities`）で実装する |
 | `app.ts` | `googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）と `googleAccountResolver`（既定は `linkGoogleAccount`）を差し替えられるオプション |
 | Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/provider.ts` | ページ側で `<div {...googleSignIn} />` と `next/script` による描画、`login_uri` の Route Handler（Node.js ランタイム。失敗は OP のエラーページ `oidc-error/page.tsx` へ 303 でリダイレクトして表示）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
 
 生成コードは `config.googleLogin` が無いときはボタンを描画せず `/login/google` を 404 で閉じるので、まず生成だけしておき、Google Cloud コンソールの準備ができてから `clientId` を渡す、という順でも動く。`login_uri` は `new URL('/login/google', config.issuer)` で組み立てるため、Google 側には `<issuer>/login/google` を登録する。
 
-Google アカウントはパスワードのユーザーとは別に扱われ、subject は `google:<Google の sub>` になる（`email` は変わりうるので識別子にしない）。`name` / `given_name` / `family_name` / `picture` / `locale` / `email` / `email_verified` は ID トークンからそのままクレームに写す。既存ユーザーと紐付けたい場合は `applyOidc(app, { googleAccountResolver })` で差し替える。
+Google アカウントはパスワードのユーザーとは別に扱われ、subject は `google:<Google の sub>` になる（`email` は変わりうるので識別子にしない）。CLI の `--db` 付きでは、初めてのログインでランダムな ID のユーザーを作ってそれを subject にし、Google の sub は `federated_identities` に記録して同じ人かの判断に使う。`name` / `given_name` / `family_name` / `picture` / `locale` / `email` / `email_verified` は ID トークンからそのままクレームに写す。既存ユーザーと紐付けたい場合は `applyOidc(app, { googleAccountResolver })` で差し替える。
 
 配線済みの実例は本リポジトリの `samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel`（いずれも `GOOGLE_CLIENT_ID` を設定すると有効化）を参照。`samples/hono-cloudflare` は Cloudflare Workers 向けで `google-auth-library` が動かないため有効にしていない。
 

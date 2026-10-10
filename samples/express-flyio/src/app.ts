@@ -6,11 +6,9 @@ import {
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
-import {
-  createInMemoryClientResolver,
-  type GoogleLoginConfig,
-  type RegisteredClient,
-} from './oidc-provider/config.js';
+import type { GoogleLoginConfig, RegisteredClient } from './oidc-provider/config.js';
+import { registerClient } from './oidc-provider/db/clients.js';
+import { createDatabase } from './oidc-provider/db/instance.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? '3010');
@@ -25,7 +23,14 @@ export const resourceServerClientSecret = 'e2e-resource-server-secret';
 export const resourceServerRedirectUri =
   process.env.RESOURCE_SERVER_REDIRECT_URI ?? 'http://127.0.0.1:3030/unused-callback';
 
+// The generated app reads its clients from the client tables of db/ (--db), so
+// the sample clients (OIDC_CLIENTS_JSON, or the E2E defaults below) are
+// registered there at startup. registerClient() replaces an earlier
+// registration of the same client_id, so a restart picks up changed clients.
 const clients = readRegisteredClients();
+for (const client of clients.values()) {
+  await registerClient(createDatabase(), client);
+}
 const allowNonPkceAuthorizationCodeFlow =
   process.env.OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW === '1';
 // OIDC Core 1.0 §6.1 / RFC 9101: accepting unsigned (alg:none) Request Objects is a
@@ -80,10 +85,9 @@ applyOidc(app, {
     googleLogin,
   },
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
-  clientResolver: createInMemoryClientResolver(clients),
-  tokenClientResolver: createInMemoryClientResolver(clients),
-  // No storage option: the generated app keeps its data in the SQL tables of
-  // db/ (--db), on the node:sqlite database of db/instance.ts.
+  // No clientResolver and no storage option: the generated app reads the
+  // clients and keeps its data in the SQL tables of db/ (--db), on the
+  // node:sqlite database of db/instance.ts.
   acrResolver: sampleAcrResolver,
   corsOrigins: issuer,
 });

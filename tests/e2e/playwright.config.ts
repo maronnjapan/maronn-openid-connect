@@ -76,6 +76,23 @@ const oidcClientsJson = JSON.stringify([
     tokenEndpointAuthMethod: 'client_secret_basic',
     responseTypes: ['code'],
   },
+  {
+    // RFC 7591 §2: a client registered with a scope list, so the client-scope
+    // spec can prove that a request for any other scope is invalid_scope at
+    // /authorize, /device_authorization and the CIBA endpoint.
+    clientId: 'e2e-scope-limited',
+    clientSecret: 'e2e-scope-limited-secret',
+    redirectUris: [`${clientBaseURL}/callback`],
+    clientType: 'confidential',
+    grantTypes: [
+      'authorization_code',
+      'urn:ietf:params:oauth:grant-type:device_code',
+      'urn:openid:params:grant-type:ciba',
+    ],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    responseTypes: ['code'],
+    scope: ['openid', 'profile'],
+  },
 ]);
 
 // EXPERIMENTAL (ID-JAG draft §4.4): the client registrations of the SECOND OP

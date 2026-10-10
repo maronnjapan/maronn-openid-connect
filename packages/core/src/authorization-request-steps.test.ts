@@ -24,6 +24,7 @@ import {
   parseClaimsRequestParameter,
   validateSupportedResponseType,
   validateClientResponseType,
+  validateClientScope,
   requireAuthorizationScope,
   validateOpenIdScope,
   filterOfflineAccessScope,
@@ -39,7 +40,7 @@ import {
   AuthorizationError,
   AuthorizationErrorCode,
 } from './authorization-request.js';
-import { parseScope } from './scope.js';
+import { findUnregisteredClientScopes, parseScope } from './scope.js';
 import type {
   AuthorizationRequestParams,
   ClientInfo,
@@ -508,6 +509,58 @@ describe('validateClientResponseType', () => {
     expect(() =>
       validateClientResponseType('code', [], 'https://client.example/cb'),
     ).toThrow(expect.objectContaining({ error: 'unauthorized_client' }));
+  });
+});
+
+// RFC 7591 §2: the scope client metadata lists the scope values the client can
+// request. Requesting a value outside it is invalid_scope (RFC 6749 §4.1.2.1).
+describe('validateClientScope', () => {
+  it('should accept scopes the client is registered for', () => {
+    expect(
+      validateClientScope(['openid', 'profile'], ['openid', 'profile', 'email'], 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should accept any scope when the client has no registered scopes', () => {
+    expect(
+      validateClientScope(['openid', 'email'], undefined, 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should reject a scope the client is not registered for with the request state', () => {
+    expect(() =>
+      validateClientScope(['openid', 'email', 'phone'], ['openid', 'profile'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_scope',
+        errorDescription: 'Client is not registered for scope: email phone',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
+  });
+
+  it('should reject every scope when the client is registered for none', () => {
+    expect(() => validateClientScope(['openid'], [], 'https://client.example/cb')).toThrow(
+      expect.objectContaining({ error: 'invalid_scope' }),
+    );
+  });
+});
+
+describe('findUnregisteredClientScopes', () => {
+  it('should return the requested scopes missing from the registration in request order', () => {
+    expect(findUnregisteredClientScopes(['phone', 'openid', 'email'], ['openid'])).toEqual([
+      'phone',
+      'email',
+    ]);
+  });
+
+  it('should return nothing when every requested scope is registered', () => {
+    expect(findUnregisteredClientScopes(['openid', 'email'], ['email', 'openid'])).toEqual([]);
+  });
+
+  it('should return nothing when the client has no registered scopes', () => {
+    expect(findUnregisteredClientScopes(['openid', 'email'], undefined)).toEqual([]);
   });
 });
 

@@ -79,4 +79,38 @@ describe('buildAuthorizationCodeData', () => {
       sessionId: 'session-1',
     });
   });
+
+  it('should carry the transaction the authorization response came from', () => {
+    expect(
+      buildAuthorizationCodeData(
+        {
+          clientId: 'client-1',
+          redirectUri: 'https://client.example/cb',
+          redirectUriExplicit: true,
+          scope: ['openid'],
+          transactionId: 'txn-1',
+        },
+        {
+          code: 'code-1',
+          grantId: 'grant-1',
+          subject: 'user-1',
+          authTime: 1_699_999_000,
+          ttlSeconds: 300,
+          now: 1_700_000_000,
+        },
+      ),
+    ).toEqual({
+      code: 'code-1',
+      grantId: 'grant-1',
+      clientId: 'client-1',
+      redirectUri: 'https://client.example/cb',
+      redirectUriExplicit: true,
+      scope: ['openid'],
+      subject: 'user-1',
+      used: false,
+      expiresAt: 1_700_000_300,
+      authTime: 1_699_999_000,
+      transactionId: 'txn-1',
+    });
+  });
 });

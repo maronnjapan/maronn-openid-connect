@@ -11,6 +11,7 @@ import {
   resolveFeatures,
 } from './features.js';
 import type { OidcFeatureConfig } from './features.js';
+import type { GeneratedFile } from './frameworks/types.js';
 import { resolveCustomScopes } from './scopes.js';
 
 const INSTALL_COMMANDS: Record<string, string> = {
@@ -108,6 +109,7 @@ Options:
   --enable <features>   Comma-separated features to enable (repeatable)
   --disable <features>  Comma-separated features to remove from the default set (repeatable)
   --scope <scopes>      Comma-separated custom scopes the provider accepts (repeatable)
+  --db                  Keep the provider's data in SQL tables (generates db/; you write db/instance.ts)
   --force               Overwrite files that already exist in the output directory
   --dry-run             Show what would be written without writing anything
   --help, -h            Show this help message
@@ -136,6 +138,17 @@ Custom scopes (none declared by default): the standard scopes (openid, profile,
   may be granted which scope is left to the generated code: scopes.ts holds
   resolveGrantableScopes(), already wired into consent, SSO, prompt=none and the
   device / CIBA approvals, as the one place to write that filtering.
+
+Database (--db): the provider keeps its clients, users, authorization
+  transactions, codes, tokens, sessions and consent in SQL tables instead of
+  memory. db/schema.sql defines the tables (the same SQL runs on SQLite,
+  Cloudflare D1 and PostgreSQL), and db/stores.ts, db/clients.ts and
+  db/users.ts query them. The tables of Sign in with Google come with
+  --enable google-login. Register clients with registerClient() in
+  db/clients.ts and users with registerUser() in db/users.ts. The one file you
+  write is db/instance.ts: createDatabase() returns your database, wrapping
+  whichever driver or ORM you use. The CLI creates it only when it is missing
+  and never overwrites it, even with --force.
 `);
 }
 
@@ -147,6 +160,7 @@ function parseArgs(args: string[]): {
   enable: string[];
   disable: string[];
   scope: string[];
+  db: boolean;
   force: boolean;
   dryRun: boolean;
   help: boolean;
@@ -159,6 +173,7 @@ function parseArgs(args: string[]): {
   const disable: string[] = [];
   // Kept raw here; splitting and validation are resolveCustomScopes()'s job.
   const scope: string[] = [];
+  let db = false;
   let force = false;
   let dryRun = false;
   let help = false;
@@ -186,6 +201,8 @@ function parseArgs(args: string[]): {
       i++;
       const value = args[i];
       if (value !== undefined) scope.push(value);
+    } else if (arg === '--db') {
+      db = true;
     } else if (arg === '--force') {
       force = true;
     } else if (arg === '--dry-run') {
@@ -197,22 +214,36 @@ function parseArgs(args: string[]): {
     }
   }
 
-  return { command, framework, outputDir, entryFile, enable, disable, scope, force, dryRun, help };
+  return { command, framework, outputDir, entryFile, enable, disable, scope, db, force, dryRun, help };
 }
 
 function buildManifestFile(
   framework: string,
   features: OidcFeatureConfig,
   scopes: string[],
-): { path: string; content: string } {
+  db: boolean,
+): GeneratedFile {
   // No timestamp: the same inputs must keep producing byte-identical output.
-  const manifest = { cliVersion: CLI_VERSION, framework, features, scopes };
+  const manifest = { cliVersion: CLI_VERSION, framework, features, scopes, db };
   return { path: MANIFEST_FILENAME, content: `${JSON.stringify(manifest, null, 2)}\n` };
 }
 
-/** Planned paths that already exist on disk, in generation order. */
-function findExistingFiles(outputDir: string, files: Array<{ path: string }>): string[] {
-  return files.map((file) => file.path).filter((path) => existsSync(join(outputDir, path)));
+const USER_OWNED_NOTE = '(yours; never overwritten)';
+
+/** A file the user writes that is already there: generation leaves it alone. */
+function isKeptUserFile(outputDir: string, file: GeneratedFile): boolean {
+  return file.userOwned === true && existsSync(join(outputDir, file.path));
+}
+
+/**
+ * Planned paths that already exist on disk, in generation order. A user-owned
+ * file is never overwritten, so it never counts as one.
+ */
+function findExistingFiles(outputDir: string, files: GeneratedFile[]): string[] {
+  return files
+    .filter((file) => file.userOwned !== true)
+    .map((file) => file.path)
+    .filter((path) => existsSync(join(outputDir, path)));
 }
 
 function printOverwriteRefusal(outputDir: string, existingPaths: string[]): void {
@@ -227,16 +258,24 @@ function printOverwriteRefusal(outputDir: string, existingPaths: string[]): void
   console.error('Tip: commit the generated files before overwriting so you can diff your changes.');
 }
 
-function printDryRunPlan(outputDir: string, files: Array<{ path: string }>): void {
+function printDryRunPlan(outputDir: string, files: GeneratedFile[]): void {
   console.log(`Dry run: nothing was written. Planned output in ${outputDir}:`);
   for (const file of files) {
+    if (isKeptUserFile(outputDir, file)) {
+      console.log(`  Would keep: ${file.path} ${USER_OWNED_NOTE}`);
+      continue;
+    }
     const label = existsSync(join(outputDir, file.path)) ? 'Would overwrite' : 'Would create';
     console.log(`  ${label}: ${file.path}`);
   }
 }
 
-function writeGeneratedFiles(outputDir: string, files: Array<{ path: string; content: string }>): void {
+function writeGeneratedFiles(outputDir: string, files: GeneratedFile[]): void {
   for (const file of files) {
+    if (isKeptUserFile(outputDir, file)) {
+      console.log(`  Kept: ${file.path} ${USER_OWNED_NOTE}`);
+      continue;
+    }
     const fullPath = join(outputDir, file.path);
     const dir = dirname(fullPath);
     if (!existsSync(dir)) {
@@ -374,8 +413,9 @@ export function run(args: string[]): void {
       outputDir: parsed.outputDir,
       features,
       scopes,
+      db: parsed.db,
     });
-    const manifestFile = buildManifestFile(result.framework, features, scopes);
+    const manifestFile = buildManifestFile(result.framework, features, scopes, parsed.db);
     const plannedFiles = [...result.files, manifestFile];
 
     if (parsed.dryRun) {
@@ -425,8 +465,19 @@ export function run(args: string[]): void {
           'that decides a grant.\n',
       );
     }
+    const dbDir = result.framework === 'nextjs' ? '_oidc-provider/db' : 'db';
+    if (parsed.db) {
+      console.log(
+        `Database (--db): the provider keeps its data in the SQL tables of ${dbDir}/schema.sql.\n` +
+          `Write createDatabase() in ${dbDir}/instance.ts (examples inside); that file is yours and is\n` +
+          'never overwritten. The provider reads its clients and users from the tables: register them\n' +
+          `with registerClient() (${dbDir}/clients.ts) and registerUser() (${dbDir}/users.ts).\n`,
+      );
+    }
+    // Decided before writing: a user-owned file created by this run is not "kept".
+    const keptCount = plannedFiles.filter((file) => isKeptUserFile(parsed.outputDir, file)).length;
     writeGeneratedFiles(parsed.outputDir, plannedFiles);
-    console.log(`\nDone! Generated ${plannedFiles.length} files in ${parsed.outputDir}`);
+    console.log(`\nDone! Generated ${plannedFiles.length - keptCount} files in ${parsed.outputDir}`);
     if (result.framework === 'hono') {
       printHonoJsxNotes();
     }
@@ -451,7 +502,9 @@ export function run(args: string[]): void {
       );
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
-        'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
+        parsed.db
+          ? `Write createDatabase() in ${parsed.outputDir}/db/instance.ts, apply ${parsed.outputDir}/db/schema.sql to your database and register clients and users with registerClient() (${parsed.outputDir}/db/clients.ts) and registerUser() (${parsed.outputDir}/db/users.ts)`
+          : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
         `Use ${parsed.outputDir}/config.ts defaults only for quick local testing`,
         ...(features.par ||
         features.tokenExchange ||
@@ -478,20 +531,27 @@ export function run(args: string[]): void {
         ),
         features,
       );
+      const dbStep = `Write createDatabase() in ${dbDir}/instance.ts, apply ${dbDir}/schema.sql to your database and register clients and users with registerClient() (${dbDir}/clients.ts) and registerUser() (${dbDir}/users.ts)`;
       // Next.js reads its configuration from the environment in
       // _oidc-provider/provider.ts, which already wires the persistent stores.
       const nextSteps =
         result.framework === 'nextjs'
           ? [
-              'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
-              'On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',
+              parsed.db
+                ? 'Configure the OP with environment variables: OIDC_ISSUER (see _oidc-provider/provider.ts)'
+                : 'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
+              parsed.db
+                ? dbStep
+                : 'On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',
               'Load a fixed signing key in _oidc-provider/provider.ts before running more than one instance',
               `Install dependencies: ${installCommand}`,
               'Start the server: next dev',
             ]
           : [
               'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
-              'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
+              parsed.db
+                ? dbStep
+                : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
               'Use config.ts defaults only for quick local testing',
               `Install dependencies: ${installCommand}`,
               'Start the server',

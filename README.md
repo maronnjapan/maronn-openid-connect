@@ -206,6 +206,7 @@ Google が `login_uri` へ POST する ID トークンの検証は Google 公式
 OpenID Connect 機能は、原則として `packages/cli` のコード生成処理で実装します。
 ストア処理や環境変数などの設定は、各 sample で設定します。
 `samples/*/src/oidc-provider` は CLI の生成物なので、変更が必要な場合は `packages/cli` を修正します。
+ただし、`--db` で生成した `db/instance.ts` は各 sample が書く DB インスタンスで、CLI は上書きしません（`samples/express-flyio` が該当します）。
 クライアントやリソースサーバーは sample に同居させず、E2E 専用のものは `tests/e2e` 配下に置きます。
 
 sample のディレクトリ名は、デプロイ先が分かる「フレームワーク-デプロイ想定環境」形式にします（例：`hono-cloudflare`、`express-flyio`、`fastify-flyio`、`nextjs-vercel`）。

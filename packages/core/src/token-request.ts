@@ -36,12 +36,27 @@ export interface TokenClientInfo {
    */
   clientSecret?: string;
   /**
+   * client_secret を平文で持たないときに登録する、client_secret の SHA-256 ハッシュ
+   * （base64url、パディング無し）。{@link hashClientSecret} で作る。
+   * 設定すると {@link verifyClientSecret} は clientSecret を使わず、この値と照合する。
+   *
+   * SHA-256 は速いハッシュなので、短い値や推測できる値は総当たりで元に戻される。
+   * client_secret は CSPRNG で作った十分長い値（例: 32 バイト）にすること。
+   */
+  clientSecretHash?: string;
+  /**
    * このクライアントが使用してよい grant_type の一覧。
    * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 省略時の既定は
    * `["authorization_code"]`（refresh_token は不許可）。
    * 登録外の grant_type は RFC 6749 §5.2 の `unauthorized_client` で拒否される。
    */
   grantTypes?: string[];
+  /**
+   * このクライアントが要求してよい scope の一覧（RFC 7591 §2 の `scope`）。省略時は制限しない。
+   * {@link ClientInfo.scope} と同じ値で、Device Authorization Grant や CIBA のように
+   * Token Endpoint 側のクライアント情報で scope を受け付ける経路が照合に使う。
+   */
+  scope?: string[];
   /**
    * このクライアントに登録された Token Endpoint のクライアント認証方式。
    * OIDC Core 1.0 §9 / RFC 7591 §2: 既定は `client_secret_basic`。

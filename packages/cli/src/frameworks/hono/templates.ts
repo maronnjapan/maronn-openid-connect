@@ -87,10 +87,46 @@ async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Pro
 `;
 }
 
+/**
+ * --db: the app.ts / apply.ts pieces that make db/ the default storage. Without
+ * --db every piece is the regular output, byte for byte.
+ */
+function honoStorageTemplateParts(db: boolean): {
+  defaultStoresImport: string;
+  inMemoryClientResolverImport: string;
+  dbImports: string;
+  storageDoc: string;
+  clientResolverDoc: string;
+  defaultStores: string;
+  defaultClientResolver: string;
+} {
+  return {
+    defaultStoresImport: db ? '' : '  defaultProviderStores,\n',
+    inMemoryClientResolverImport: db ? '' : '  createInMemoryClientResolver,\n',
+    dbImports: db
+      ? `import { createDatabase } from './db/instance.js';
+import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';\n`
+      : '',
+    storageDoc: db
+      ? 'Stores to use instead of db/: the SQL stores on the database db/instance.ts creates for each request.'
+      : 'Persistent stores, or a request-aware factory for bindings such as Cloudflare D1.',
+    clientResolverDoc: db
+      ? '  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */\n'
+      : '',
+    defaultStores: db ? 'createSqlProviderStores(createDatabase(context))' : 'defaultProviderStores',
+    defaultClientResolver: db
+      ? 'createSqlClientResolver(createDatabase(c))'
+      : 'createInMemoryClientResolver()',
+  };
+}
+
 export function appTemplate(
   _corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  db = false,
 ): string {
+  const storageParts = honoStorageTemplateParts(db);
   const introspectionImport = features.introspection
     ? `import { introspectionApp } from './routes/introspection.js';\n`
     : '';
@@ -259,20 +295,18 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
-  createProviderConfig,
+${storageParts.inMemoryClientResolverImport}  createProviderConfig,
   type ProviderConfig,
 } from './config.js';
 import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
-${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-${googleLoginImport}import {
+${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -305,7 +339,7 @@ export interface CreateAppOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
-  clientResolver?: ClientResolver;
+${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
@@ -319,7 +353,7 @@ export interface CreateAppOptions {
    * Defaults to the in-memory consent store resolver in resolvers.ts.
    */
   consentResolver?: ConsentResolver;
-  /** Persistent stores, or a request-aware factory for bindings such as Cloudflare D1. */
+  /** ${storageParts.storageDoc} */
   storage?: ProviderStores | ProviderStoresFactory;
   acrResolver?: AcrResolver;
   /**
@@ -401,7 +435,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
     const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
+      options.clientResolver ?? ${storageParts.defaultClientResolver};
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -457,7 +491,7 @@ async function resolveProviderStores(
   storage: CreateAppOptions['storage'],
   context: any,
 ): Promise<ProviderStores> {
-  if (!storage) return defaultProviderStores;
+  if (!storage) return ${storageParts.defaultStores};
   return typeof storage === 'function' ? storage(context) : storage;
 }
 `;
@@ -836,6 +870,12 @@ export function createProviderConfig(
  * separate provider-specific switch. \`grantTypes\` containing \`refresh_token\`
  * gates both refresh token flavors; OIDC Core 1.0 §11 (prompt=consent) decides
  * which flavor the authorization produces.
+ *
+ * scope (RFC 7591 §2 \`scope\`, from ClientInfo / TokenClientInfo): the scope
+ * values this client may request. When set, a request for any other scope is
+ * rejected with invalid_scope at /authorize (and at the device and CIBA
+ * endpoints when they are generated). Leave it out to let the client request
+ * every scope the provider accepts.
  *
  * userinfoSignedResponseAlg: when set, the UserInfo endpoint returns a signed JWT
  * with content-type \`application/jwt\` (OIDC Core 1.0 Section 5.3.2 — client metadata
@@ -3136,6 +3176,7 @@ import {
   validateAuthorizationCodePkce,
   validatePromptParameter,
   applyOfflineAccessPolicy,
+  validateClientScope,
   validateDisplayParameter,
   resolveMaxAge,
   parseAudienceParameter,
@@ -3303,6 +3344,10 @@ ${jarmResolveStep}${rejectUnsupportedStep}
 
     // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
     let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes. Any other one, offline_access included, is invalid_scope.
+    validateClientScope(scope, client.scope, redirectUri, state);
 
     // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
     // exists only for the OIDF Basic OP static-client compatibility target).
@@ -3844,6 +3889,7 @@ import {
 import {
   TokenError,
   extractClientCredentials,
+  findUnregisteredClientScopes,
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
@@ -3959,6 +4005,16 @@ deviceAuthorizationApp.post('/', async (c) => {
     // everywhere (same rule as /authorize). Requests that omit scope — legal per
     // RFC 8628 — are therefore rejected: a known, deliberate profile restriction.
     const requestedScope = validateDeviceAuthorizationScope(params['scope']);
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes, the same rule as /authorize.
+    const unregisteredScopes = findUnregisteredClientScopes(requestedScope, client.scope);
+    if (unregisteredScopes.length > 0) {
+      throw new DeviceAuthorizationError(
+        'invalid_scope',
+        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+      );
+    }
 
     // OIDC Core 1.0 §11: drop offline_access when it could never be granted.
     const scope = applyOfflineAccessPolicy(requestedScope, {
@@ -4638,6 +4694,7 @@ import {
 import {
   TokenError,
   extractClientCredentials,
+  findUnregisteredClientScopes,
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
@@ -4766,7 +4823,20 @@ backchannelAuthenticationApp.post('/', async (c) => {
         return claims ? { subject: claims.sub } : null;
       });
 
-${customScopeStep}    // --- Backchannel authentication pipeline --------------------------------
+${customScopeStep}    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes, the same rule as /authorize.
+    const unregisteredScopes = findUnregisteredClientScopes(
+      (params['scope'] ?? '').split(' ').filter((scope) => scope.length > 0),
+      client.scope,
+    );
+    if (unregisteredScopes.length > 0) {
+      throw new BackchannelAuthenticationError(
+        'invalid_scope',
+        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+      );
+    }
+
+    // --- Backchannel authentication pipeline --------------------------------
     // Validation runs in CIBA §7.1 order inside the experimental package:
     // client checks (public client / grant registration / delivery mode) →
     // request parameter rejection → the one-and-only-one hint rule → scope →
@@ -8247,7 +8317,9 @@ ${consentSuccessResponse}
 export function applyTemplate(
   _corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  db = false,
 ): string {
+  const storageParts = honoStorageTemplateParts(db);
   const introspectionImport = features.introspection
     ? `import { introspectionApp } from './routes/introspection.js';\n`
     : '';
@@ -8411,20 +8483,18 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
-  createProviderConfig,
+${storageParts.inMemoryClientResolverImport}  createProviderConfig,
   type ProviderConfig,
 } from './config.js';
 import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
-${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-${googleLoginImport}import {
+${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -8474,7 +8544,7 @@ export interface ApplyOidcOptions {
    * (OIDC Core 1.0 Section 5.3.2).
    */
   userinfoSigningKeyProvider?: SigningKeyProvider;
-  clientResolver?: ClientResolver;
+${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
@@ -8488,7 +8558,7 @@ export interface ApplyOidcOptions {
    * Defaults to the in-memory consent store resolver in resolvers.ts.
    */
   consentResolver?: ConsentResolver;
-  /** Persistent stores, or a request-aware factory for bindings such as Cloudflare D1. */
+  /** ${storageParts.storageDoc} */
   storage?: ProviderStores | ProviderStoresFactory;
   /**
    * acr / amr resolver (OIDC Core 1.0 §2 / §12.1).
@@ -8596,7 +8666,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
     const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
+      options.clientResolver ?? ${storageParts.defaultClientResolver};
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -8652,7 +8722,7 @@ async function resolveProviderStores(
   storage: ApplyOidcOptions['storage'],
   context: any,
 ): Promise<ProviderStores> {
-  if (!storage) return defaultProviderStores;
+  if (!storage) return ${storageParts.defaultStores};
   return typeof storage === 'function' ? storage(context) : storage;
 }
 `;

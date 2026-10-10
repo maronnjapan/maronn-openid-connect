@@ -21,6 +21,8 @@ import {
   requireClientSecret,
   validateClientAuthMethodMatch,
   verifyClientSecretValue,
+  hashClientSecret,
+  verifyClientSecretHash,
 } from './client-auth.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
 import type { TokenClientInfo } from './token-request.js';
@@ -229,6 +231,40 @@ describe('verifyClientSecret', () => {
     expect(error?.error).toBe(TokenErrorCode.InvalidClient);
     expect(error?.errorDescription).toBe('Client authentication failed');
   });
+
+  describe('hashed client secret', () => {
+    // SHA-256 of "secret", base64url without padding.
+    const hashedClient: TokenClientInfo = {
+      clientId: 'client123',
+      clientSecretHash: 'K7gNU3sdo-OL0wNhqoVWhr3g6s1xYv72ol_pe_Unols',
+      tokenEndpointAuthMethod: 'client_secret_basic',
+    };
+
+    it('should accept the secret whose hash is registered', async () => {
+      const error = await captureAsyncError(() => verifyClientSecret(hashedClient, 'secret'));
+
+      expect(error).toBeUndefined();
+    });
+
+    it('should reject a secret whose hash is not registered', async () => {
+      const error = await captureAsyncError(() => verifyClientSecret(hashedClient, 'wrong'));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe('Client authentication failed');
+    });
+
+    // The registered hash takes precedence: a plaintext clientSecret left on the
+    // same client is not a second way in.
+    it('should ignore clientSecret when clientSecretHash is registered', async () => {
+      const error = await captureAsyncError(() =>
+        verifyClientSecret({ ...hashedClient, clientSecret: 'plaintext' }, 'plaintext'),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+    });
+  });
 });
 
 describe('parseBasicClientCredentials', () => {
@@ -362,6 +398,44 @@ describe('verifyClientSecretValue', () => {
 
   it('should reject a different secret', async () => {
     await expect(verifyClientSecretValue('wrong', 'secret')).rejects.toThrow(
+      expect.objectContaining({
+        error: 'invalid_client',
+        errorDescription: 'Client authentication failed',
+      }),
+    );
+  });
+});
+
+describe('hashClientSecret', () => {
+  it('should return the base64url SHA-256 digest of the secret without padding', async () => {
+    expect(await hashClientSecret('secret')).toBe('K7gNU3sdo-OL0wNhqoVWhr3g6s1xYv72ol_pe_Unols');
+  });
+});
+
+// OAuth 2.1 §7.4.1 / RFC 6749 §10.10: a secret registered as a hash is still
+// compared in constant time, on the hash of the presented secret.
+describe('verifyClientSecretHash', () => {
+  const registeredHash = 'K7gNU3sdo-OL0wNhqoVWhr3g6s1xYv72ol_pe_Unols';
+
+  it('should accept the secret that hashes to the registered hash', async () => {
+    await expect(verifyClientSecretHash('secret', registeredHash)).resolves.toBeUndefined();
+  });
+
+  it('should reject a secret that hashes to another value', async () => {
+    await expect(verifyClientSecretHash('wrong', registeredHash)).rejects.toThrow(
+      expect.objectContaining({
+        error: 'invalid_client',
+        errorDescription: 'Client authentication failed',
+      }),
+    );
+  });
+
+  // SHA-256 of the empty string: a missing secret must not match a hash that
+  // was registered for an empty one.
+  it('should reject a missing secret even against the hash of an empty secret', async () => {
+    await expect(
+      verifyClientSecretHash(undefined, '47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU'),
+    ).rejects.toThrow(
       expect.objectContaining({
         error: 'invalid_client',
         errorDescription: 'Client authentication failed',

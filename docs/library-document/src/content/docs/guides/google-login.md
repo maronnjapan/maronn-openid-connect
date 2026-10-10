@@ -90,7 +90,7 @@ const googleSignIn = buildGoogleSignInAttributes({ clientId, loginUri, nonce, lo
 | `views.ts`（Hono は `views.tsx`） | `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。UI は生成コード側にあるので、見た目や配置は自由に変えられる |
 | `pages/login.ts`（Hono は `pages/login.tsx`） | `GET /login` と `POST /login/google` のルート。`routes/login.ts` が返した画面データの `googleSignIn`（ボタンの設定）を view に渡して描画し、`completeGoogleLogin()` の結果（セッション確立 → `/consent` へ、未設定なら 404、失敗ならエラー画面）を HTTP に変換する |
 | `routes/login.ts` | `buildGoogleSignIn()` で認証トランザクションに束縛した nonce を発行してボタンの設定を組み立て（`GET /login` とログイン失敗時の再表示の両方で使う）、`completeGoogleLogin()` で ID トークンを検証し、パスワードログインと同じ手順でセッションを確立する。Response は作らない |
-| `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()` |
+| `store.ts` | nonce → `transaction_id` を記録する `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両対応）と、Google ユーザーを登録する `userStore.linkGoogleAccount()`。`--db` 付きで生成した場合は、`db/stores.ts` が同じ 2 つを SQL のテーブルで実装する。nonce は `upstream_auth_requests`、Google ユーザーは `users` と `federated_identities`（Google アカウントとユーザーの対応）に保存する。どれも `--enable google-login` のときだけ `db/schema.sql` に加わるテーブル |
 | `app.ts` | `googleIdTokenVerifier` と `googleAccountResolver` を差し替えるオプション |
 | Next.js | `login/page.tsx` で `<div {...googleSignIn} />` と `next/script` による描画（`dangerouslySetInnerHTML` は使わない）、`login/google/route.ts`（Node.js ランタイム）、`_oidc-provider/provider.ts` の環境変数読み取り |
 
@@ -123,6 +123,7 @@ Next.js の `login/google/route.ts` は、失敗したコールバックを OP �
 既定では Google アカウントをその場で登録します（JIT provisioning）。
 
 - subject は `google:<Google の sub>`。`email` は変わりうるので識別子にしません（Google のドキュメントどおり）
+- `--db` 付きで生成した場合は、初めてのログインでランダムな ID のユーザーを `users` に作り、それが subject になります。Google の sub は `federated_identities` に記録し、同じ人かの判断に使います
 - `name` / `given_name` / `family_name` / `picture` / `locale` / `email` / `email_verified` を ID トークンからそのままクレームに写し、UserInfo と ID Token で返します
 - パスワードは持たないので、ユーザー名 + パスワードのフォームからはログインできません
 

@@ -18,3 +18,16 @@ export function splitScope(scopeValue: string): string[] {
 export function parseScope(scopeValue: string): string[] {
   return [...new Set(splitScope(scopeValue))];
 }
+
+/**
+ * RFC 7591 §2: クライアント登録メタデータ `scope`（クライアントが要求してよい scope の一覧）に
+ * 無い値を、要求の順に返す。
+ * 登録が無い（undefined）クライアントには制限を掛けないので、空配列を返す。
+ */
+export function findUnregisteredClientScopes(
+  requested: readonly string[],
+  registered: readonly string[] | undefined,
+): string[] {
+  if (registered === undefined) return [];
+  return requested.filter((scope) => !registered.includes(scope));
+}

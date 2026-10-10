@@ -9,7 +9,7 @@
  * OAuth 2.1 Section 2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
  */
 
-import { timingSafeEqual } from './crypto-utils.js';
+import { sha256, timingSafeEqual } from './crypto-utils.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
 import type { TokenClientInfo } from './token-request.js';
 
@@ -213,17 +213,30 @@ export function validateClientAuthMethod(
  * OAuth 2.1 Section 7.4.1 / RFC 6749 Section 10.10
  *
  * public client（登録方式 = none）は検証対象が無いためスキップする。
+ * clientSecretHash が登録されていれば、提示値のハッシュをそれと比べ、clientSecret は使わない。
  *
  * @throws {TokenError} invalid_client
  */
 export async function verifyClientSecret(
-  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod' | 'clientSecret'>,
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod' | 'clientSecret' | 'clientSecretHash'>,
   clientSecret: string | undefined,
 ): Promise<void> {
   const registeredMethod = selectRegisteredClientAuthMethod(client.tokenEndpointAuthMethod);
   if (registeredMethod === 'none') return;
 
+  if (client.clientSecretHash !== undefined) {
+    await verifyClientSecretHash(clientSecret, client.clientSecretHash);
+    return;
+  }
   await verifyClientSecretValue(clientSecret, client.clientSecret);
+}
+
+/**
+ * 登録用に client_secret のハッシュを作る。{@link TokenClientInfo.clientSecretHash} に保存する値で、
+ * SHA-256 の base64url（パディング無し）。
+ */
+export async function hashClientSecret(clientSecret: string): Promise<string> {
+  return sha256(clientSecret);
 }
 
 /**
@@ -338,6 +351,27 @@ export async function verifyClientSecretValue(
     registeredSecret ?? '',
     presentedSecret ?? '',
   );
+  if (!secretMatches) {
+    throw new TokenError(
+      TokenErrorCode.InvalidClient,
+      'Client authentication failed',
+    );
+  }
+}
+
+/**
+ * OAuth 2.1 §7.4.1 / RFC 6749 §10.10: 提示された client_secret のハッシュを、登録された
+ * ハッシュと定数時間で比較する。提示が無い、または一致しなければ invalid_client。
+ * 空文字のハッシュが登録されていても、未提示の client_secret は通さない。
+ */
+export async function verifyClientSecretHash(
+  presentedSecret: string | undefined,
+  registeredHash: string,
+): Promise<void> {
+  const secretMatches =
+    presentedSecret !== undefined &&
+    presentedSecret !== '' &&
+    (await timingSafeEqual(registeredHash, await hashClientSecret(presentedSecret)));
   if (!secretMatches) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,

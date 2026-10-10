@@ -354,6 +354,18 @@ describe('completeAuthTransaction', () => {
 
     expect(result.acrValues).toBeUndefined();
   });
+
+  // The authorization code is issued from these params, so naming the transaction
+  // lets a store record which transaction produced the code.
+  it('should return the id of the completed transaction', async () => {
+    const store = new InMemoryStore();
+    const txn = createTransaction();
+    await store.put('auth_txn:txn-1', txn, 60);
+
+    const result = await completeAuthTransaction('txn-1', txn, store);
+
+    expect(result.transactionId).toBe('txn-1');
+  });
 });
 
 describe('requiresReauthentication', () => {

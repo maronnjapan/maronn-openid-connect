@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.10.0",
+  "cliVersion": "0.11.0",
   "framework": "nextjs",
   "features": {
     "pkce": true,
@@ -17,5 +17,6 @@
     "rpInitiatedLogout": false,
     "googleLogin": true
   },
-  "scopes": []
+  "scopes": [],
+  "db": false
 }

@@ -13,7 +13,6 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
   createProviderConfig,
   type ProviderConfig,
 } from './config.js';
@@ -21,13 +20,16 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
   deviceAuthorizationStore,
   cibaAuthenticationRequestStore,
   cibaLoginTransactionStore,
   type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
+import { createDatabase } from './db/instance.js';
+import type { SqlDatabase } from './db/database.js';
+import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';
 import {
   getDefaultGoogleIdTokenVerifier,
   type GoogleAccountResolver,
@@ -58,11 +60,12 @@ export interface OidcProviderOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
+  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */
   clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   sessionResolver?: SessionResolver;
   consentResolver?: ConsentResolver;
-  /** Persistent stores shared by Route Handlers and Server Actions. */
+  /** Stores to use instead of db/: the SQL stores on the database db/instance.ts creates. */
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
@@ -114,6 +117,15 @@ export function validateSigningKeySet(
 export function createApp(options: OidcProviderOptions): WebRouter {
   const app = new WebRouter();
 
+  // db/: unless options.storage / options.clientResolver replace them, the
+  // stores and the registered clients come from the database that
+  // db/instance.ts creates. It is created once, here, so an unimplemented
+  // createDatabase() stops the server at startup instead of failing a request.
+  let database: SqlDatabase | undefined;
+  const openDatabase = (): SqlDatabase => (database ??= createDatabase());
+  const stores = options.storage ?? createSqlProviderStores(openDatabase());
+  const clientResolver = options.clientResolver ?? createSqlClientResolver(openDatabase());
+
   const corsOrigins = options.corsOrigins ?? '*';
   const protectedCors = createCorsMiddleware({
     origins: corsOrigins,
@@ -155,9 +167,6 @@ export function createApp(options: OidcProviderOptions): WebRouter {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-    const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
-    const stores = options.storage ?? defaultProviderStores;
     const storeResolvers = createStoreResolvers(stores);
 
     c.set('signingKeys', signingKeys);

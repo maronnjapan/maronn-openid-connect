@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.10.0",
+  "cliVersion": "0.11.0",
   "framework": "hono",
   "features": {
     "pkce": true,
@@ -17,5 +17,6 @@
     "rpInitiatedLogout": true,
     "googleLogin": false
   },
-  "scopes": []
+  "scopes": [],
+  "db": false
 }

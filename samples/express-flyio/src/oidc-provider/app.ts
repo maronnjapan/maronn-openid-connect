@@ -21,13 +21,14 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
   deviceAuthorizationStore,
   cibaAuthenticationRequestStore,
   cibaLoginTransactionStore,
   type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
+import { createDatabase } from './db/instance.js';
+import { createSqlProviderStores } from './db/stores.js';
 import {
   getDefaultGoogleIdTokenVerifier,
   type GoogleAccountResolver,
@@ -62,7 +63,7 @@ export interface OidcProviderOptions {
   tokenClientResolver?: TokenClientResolver;
   sessionResolver?: SessionResolver;
   consentResolver?: ConsentResolver;
-  /** Persistent stores shared by Route Handlers and Server Actions. */
+  /** Stores to use instead of db/: the SQL stores on the database db/instance.ts creates. */
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
@@ -114,6 +115,11 @@ export function validateSigningKeySet(
 export function createApp(options: OidcProviderOptions): WebRouter {
   const app = new WebRouter();
 
+  // db/: unless options.storage is given, the stores run on the database that
+  // db/instance.ts creates. It is created once, here, so an unimplemented
+  // createDatabase() stops the server at startup instead of failing a request.
+  const stores = options.storage ?? createSqlProviderStores(createDatabase());
+
   const corsOrigins = options.corsOrigins ?? '*';
   const protectedCors = createCorsMiddleware({
     origins: corsOrigins,
@@ -157,7 +163,6 @@ export function createApp(options: OidcProviderOptions): WebRouter {
 
     const clientResolver =
       options.clientResolver ?? createInMemoryClientResolver();
-    const stores = options.storage ?? defaultProviderStores;
     const storeResolvers = createStoreResolvers(stores);
 
     c.set('signingKeys', signingKeys);

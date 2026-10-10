@@ -44,6 +44,7 @@ const app = new Hono();
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
+| `--db` | 認可コードやトークンなどのデータを SQL のテーブルに保存する（`db/` を生成する。[Database (--db)](#database---db) を参照） |
 | `--force` | 出力先に既にあるファイルを上書きする |
 | `--dry-run` | 書き込みを行わず、出力予定のファイル一覧（新規か上書きか）を表示する |
 | `--help, -h` | ヘルプ表示 |
@@ -64,6 +65,7 @@ Tip: commit the generated files before overwriting so you can diff your changes.
 - 上書きするには `--force` を明示します。ログは新規作成が `Created:`、上書きが `Overwritten:` で区別されます
 - `--dry-run` は何も書き込まず、出力予定の全ファイルを `Would create:` / `Would overwrite:` で表示します。`--force` の前に影響範囲を確認する用途を想定しています
 - 再生成する予定があるなら、**生成直後にコミットしてから改造してください**。`--force` で上書きしても、自分の変更を `git diff` で取り戻せます
+- `--db` で生成する `db/instance.ts` は利用者が書くファイルなので、無いときだけ作り、`--force` を付けても上書きしません。既にあれば上書き保護の対象にも数えず、生成ログには `Kept:`、`--dry-run` には `Would keep:` と表示します
 
 ## Generated Files
 
@@ -77,6 +79,7 @@ oidc-provider/
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
 ├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
+├── db/                   # --db 指定時のみ。SQL のテーブル定義とストア（instance.ts だけは利用者が書く）
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
@@ -114,7 +117,8 @@ src/app/
 │   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションを Cookie から取得（無ければ notFound()）
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
-│   └── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア
+│   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア（--db 指定時は生成しない）
+│   └── db/                   # --db 指定時のみ。SQL のテーブル定義とストア（instance.ts だけは利用者が書く）
 ├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
 ├── token/route.ts            # POST /token
 ├── userinfo/route.ts         # GET|POST /userinfo
@@ -346,11 +350,75 @@ SSO と `prompt=none` では、**保存済み同意を引く前**にポリシー
 
 なお、カスタムスコープに対応する UserInfo クレームはありません（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集してください。
 
+## Database (--db)
+
+`--db` を付けると、生成 OP は認可コード、トークン、セッション、同意を SQL のテーブルに保存します。
+既定のインメモリストアや、`JsonStoreBackend` で 1 つのテーブルに JSON を入れる方式の代わりになります。
+
+```bash
+maronn-oidc generate express --db
+```
+
+出力先には `db/` が生成されます（Next.js は `_oidc-provider/db/`）。
+利用者が書くのは `instance.ts` だけで、それ以外は CLI が生成します。
+
+| ファイル | 役割 |
+|---|---|
+| `instance.ts` | DB インスタンス。`createDatabase()` で利用者の DB を返す。CLI は無いときだけ作り、`--force` を付けても上書きしない |
+| `database.ts` | `createDatabase()` が返す `SqlDatabase` の型。SQL を 1 文実行する `all` と `run` の 2 メソッドだけを持つ |
+| `schema.sql` | テーブル定義。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る |
+| `schema.ts` | `schema.sql` と同じ内容の文字列 `SCHEMA_SQL`。起動時にテーブルを作る DB で使う |
+| `stores.ts` | `store.ts` の `ProviderStores` を SQL で実装したストア |
+
+`SqlDatabase` は SQL を実行する口を 2 つ持つだけなので、どのドライバーでも実装できます。
+ORM も生の SQL を実行するメソッドを持っているので、CLI は ORM ごとのコードを生成しません。
+生成直後の `instance.ts` は、実装されるまで「`createDatabase()` が未実装である」というエラーを投げます。
+ファイルの末尾に node:sqlite、Cloudflare D1（Hono のみ）、PostgreSQL（pg）、Prisma の例を載せているので、使う DB に合わせて書き換えてください。
+
+```typescript
+// db/instance.ts を node:sqlite で書いた例
+import { DatabaseSync } from 'node:sqlite';
+import type { SqlDatabase, SqlStatement } from './database.js';
+import { SCHEMA_SQL } from './schema.js';
+
+export function createDatabase(): SqlDatabase {
+  const sqlite = new DatabaseSync(process.env.OIDC_SQLITE_PATH ?? 'oidc.sqlite');
+  sqlite.exec(SCHEMA_SQL);
+  return {
+    async all<Row>(statement: SqlStatement): Promise<Row[]> {
+      return sqlite.prepare(statement.sql).all(...statement.params) as Row[];
+    },
+    async run(statement: SqlStatement) {
+      const result = sqlite.prepare(statement.sql).run(...statement.params);
+      return { changes: Number(result.changes) };
+    },
+  };
+}
+```
+
+生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使います。
+`createDatabase()` を呼ぶ時機はフレームワークによって異なります。
+
+- **Hono**：リクエストごとに Hono のコンテキストを渡して呼ぶ。Cloudflare D1 のバインディング（`c.env.DB`）はそこから読める
+- **Express / Fastify**：アプリを作るときに 1 回呼ぶ。`instance.ts` が未実装なら起動時に止まる
+- **Next.js**：`_oidc-provider/provider.ts` が最初のクエリのときに呼ぶので、`next build` の時点では呼ばない（`instance.ts` がモジュールの読み込み時に接続しない限り、ビルドに DB は要らない）
+
+`stores.ts` を ORM のクエリなどで書き直してもかまいませんが、ファイル先頭のコメントに挙げた動きは保つ必要があります。
+たとえば認可コードとリフレッシュトークンの `consume` は、「`used = 0` の行だけを `used = 1` にする」を 1 回の `UPDATE` で行い、変更した行が無ければ `invalid_grant` を投げます。
+`SELECT` してから `UPDATE` する 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行されます。
+
+ユーザーとクライアントは `db/` に入れていません。
+パスワードでログインするユーザーは `store.ts` の固定ユーザー（testuser / otheruser）のままで、クライアントは `config.ts` の登録を使います。
+既存のユーザーテーブルにつなぐ場合は、`stores.ts` の `userStore` を書き換えてください。
+`--enable google-login` と組み合わせると、Google アカウントから作ったユーザーと、ログインに使う nonce も `db/` のテーブルに保存します。
+実験的機能（PAR、Device Authorization Grant、CIBA）のストアはインメモリのままです。
+
 ## After Generation
 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. `config.ts` のデフォルト値はローカル検証専用として扱う
-3. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
+3. `--db` 付きで生成した場合は、`db/instance.ts` の `createDatabase()` を書き、`db/schema.sql` を DB に適用する
+4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
 
 Next.js では 1 と 2 を `_oidc-provider/provider.ts` で行います（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっています）。
 

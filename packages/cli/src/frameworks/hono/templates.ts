@@ -87,10 +87,35 @@ async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Pro
 `;
 }
 
+/**
+ * --db: the app.ts / apply.ts pieces that make db/ the default storage. Without
+ * --db every piece is the regular output, byte for byte.
+ */
+function honoStorageTemplateParts(db: boolean): {
+  defaultStoresImport: string;
+  dbImports: string;
+  storageDoc: string;
+  defaultStores: string;
+} {
+  return {
+    defaultStoresImport: db ? '' : '  defaultProviderStores,\n',
+    dbImports: db
+      ? `import { createDatabase } from './db/instance.js';
+import { createSqlProviderStores } from './db/stores.js';\n`
+      : '',
+    storageDoc: db
+      ? 'Stores to use instead of db/: the SQL stores on the database db/instance.ts creates for each request.'
+      : 'Persistent stores, or a request-aware factory for bindings such as Cloudflare D1.',
+    defaultStores: db ? 'createSqlProviderStores(createDatabase(context))' : 'defaultProviderStores',
+  };
+}
+
 export function appTemplate(
   _corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  db = false,
 ): string {
+  const storageParts = honoStorageTemplateParts(db);
   const introspectionImport = features.introspection
     ? `import { introspectionApp } from './routes/introspection.js';\n`
     : '';
@@ -267,12 +292,11 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
-${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-${googleLoginImport}import {
+${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -319,7 +343,7 @@ export interface CreateAppOptions {
    * Defaults to the in-memory consent store resolver in resolvers.ts.
    */
   consentResolver?: ConsentResolver;
-  /** Persistent stores, or a request-aware factory for bindings such as Cloudflare D1. */
+  /** ${storageParts.storageDoc} */
   storage?: ProviderStores | ProviderStoresFactory;
   acrResolver?: AcrResolver;
   /**
@@ -457,7 +481,7 @@ async function resolveProviderStores(
   storage: CreateAppOptions['storage'],
   context: any,
 ): Promise<ProviderStores> {
-  if (!storage) return defaultProviderStores;
+  if (!storage) return ${storageParts.defaultStores};
   return typeof storage === 'function' ? storage(context) : storage;
 }
 `;
@@ -8247,7 +8271,9 @@ ${consentSuccessResponse}
 export function applyTemplate(
   _corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  db = false,
 ): string {
+  const storageParts = honoStorageTemplateParts(db);
   const introspectionImport = features.introspection
     ? `import { introspectionApp } from './routes/introspection.js';\n`
     : '';
@@ -8419,12 +8445,11 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
-${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-${googleLoginImport}import {
+${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -8488,7 +8513,7 @@ export interface ApplyOidcOptions {
    * Defaults to the in-memory consent store resolver in resolvers.ts.
    */
   consentResolver?: ConsentResolver;
-  /** Persistent stores, or a request-aware factory for bindings such as Cloudflare D1. */
+  /** ${storageParts.storageDoc} */
   storage?: ProviderStores | ProviderStoresFactory;
   /**
    * acr / amr resolver (OIDC Core 1.0 §2 / §12.1).
@@ -8652,7 +8677,7 @@ async function resolveProviderStores(
   storage: ApplyOidcOptions['storage'],
   context: any,
 ): Promise<ProviderStores> {
-  if (!storage) return defaultProviderStores;
+  if (!storage) return ${storageParts.defaultStores};
   return typeof storage === 'function' ? storage(context) : storage;
 }
 `;

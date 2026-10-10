@@ -14,6 +14,8 @@
 | `fastify-flyio` | Fastify | Fly.io | node:sqlite | node:sqlite + 永続ボリューム |
 | `nextjs-vercel` | Next.js | Vercel | node:sqlite | Upstash Redis REST |
 
+ストアの組み立て方も分けている。`express-flyio` は CLI の `--db` で生成した SQL のテーブル（DB インスタンスの `db/instance.ts` だけをサンプルが書く）を使い、ほかの 3 つは `JsonStoreBackend`（1 つのテーブルや KV に JSON を入れる方式）を使う。E2E はどちらの方式も検証する。
+
 ## 一発コマンド
 
 すべてリポジトリルートから実行する。クローン直後でもそのまま動く（依存インストール・ビルド込み）。

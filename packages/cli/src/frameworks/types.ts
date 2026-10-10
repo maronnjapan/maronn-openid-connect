@@ -6,6 +6,11 @@ export interface GeneratedFile {
   path: string;
   /** File content */
   content: string;
+  /**
+   * The user writes this file (db/instance.ts): the CLI only creates it when it
+   * does not exist yet and never overwrites it, not even with --force.
+   */
+  userOwned?: boolean;
 }
 
 import type { OidcFeatureConfig } from '../features.js';
@@ -25,6 +30,11 @@ export interface GeneratorOptions {
    * (default: none declared, which generates no scope policy at all).
    */
   scopes?: string[];
+  /**
+   * `--db`: generate db/ (SQL tables, the stores on them, and the db/instance.ts
+   * the user writes) and use it as the default storage (default: false).
+   */
+  db?: boolean;
 }
 
 /**

@@ -15,7 +15,37 @@ import type { OidcFeatureConfig } from '../../features.js';
 export function nextJsProviderTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  db = false,
 ): string {
+  // --db: the stores run on the database db/instance.ts creates, instead of
+  // the Upstash Redis / node:sqlite key-value backends of storage-backend.ts.
+  const storesImport = db
+    ? `import type { SqlDatabase, SqlStatement } from './db/database';
+import { createDatabase } from './db/instance';
+import { createSqlProviderStores } from './db/stores';`
+    : `import { createNextJsProviderStores } from './storage-backend';`;
+  const storesDefinition = db
+    ? `/**
+ * Persistent provider stores: the SQL tables of db/schema.sql, on the database
+ * db/instance.ts creates. createDatabase() runs on the first query rather than
+ * at import, so \`next build\` does not call it.
+ */
+export const stores = createSqlProviderStores(deferDatabase(createDatabase));
+
+/** A SqlDatabase that calls create() on its first query and keeps the result. */
+function deferDatabase(create: () => SqlDatabase): SqlDatabase {
+  let database: SqlDatabase | undefined;
+  const resolve = (): SqlDatabase => (database ??= create());
+  return {
+    all: <Row>(statement: SqlStatement) => resolve().all<Row>(statement),
+    run: (statement: SqlStatement) => resolve().run(statement),
+  };
+}`
+    : `/**
+ * Persistent provider stores: Upstash Redis on Vercel, node:sqlite locally
+ * (storage-backend.ts).
+ */
+export const stores = createNextJsProviderStores();`;
   // A config field only exists when its feature was generated (config.ts), so
   // each override is emitted only alongside it.
   const refreshTokenConfig = features.refreshToken
@@ -137,7 +167,7 @@ import {
   type RegisteredClient,
 } from './config';
 import { createStoreResolvers } from './resolvers';
-import { createNextJsProviderStores } from './storage-backend';
+${storesImport}
 
 /**
  * Provider configuration. OIDC_ISSUER must be the exact public URL of this app:
@@ -160,11 +190,7 @@ export const config: ProviderConfig = createProviderConfig({
  */
 export const clientResolver = createInMemoryClientResolver(readRegisteredClients());
 
-/**
- * Persistent provider stores: Upstash Redis on Vercel, node:sqlite locally
- * (storage-backend.ts).
- */
-export const stores = createNextJsProviderStores();
+${storesDefinition}
 ${experimentalStoreExport}
 /** The resolvers core reads authorization codes, tokens, sessions and consent through. */
 export const resolvers = createStoreResolvers(stores);

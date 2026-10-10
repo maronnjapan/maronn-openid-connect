@@ -415,4 +415,66 @@ describe('run', () => {
     expect(output).toContain('--dry-run');
     consoleSpy.mockRestore();
   });
+
+  // db/instance.ts is where the user writes the database instance, so the CLI
+  // creates it only once and never overwrites it.
+  describe('--db', () => {
+    const userInstance = "export function createDatabase() { return myDatabase; }\n";
+
+    function writeUserInstance(outputDir: string): string {
+      const instancePath = join(outputDir, 'db', 'instance.ts');
+      mkdirSync(join(outputDir, 'db'), { recursive: true });
+      writeFileSync(instancePath, userInstance);
+      return instancePath;
+    }
+
+    it('should keep an existing db/instance.ts when generating with --force', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      const instancePath = writeUserInstance(outputDir);
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--db', '--force']);
+      expect(readFileSync(instancePath, 'utf-8')).toBe(userInstance);
+      expect(process.exitCode).toBe(undefined);
+      vi.restoreAllMocks();
+    });
+
+    it('should not refuse generation when db/instance.ts is the only existing file', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      const instancePath = writeUserInstance(outputDir);
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--db']);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(undefined);
+      expect(existsSync(join(outputDir, '.maronn-openid-connect.json'))).toBe(true);
+      expect(readFileSync(instancePath, 'utf-8')).toBe(userInstance);
+      vi.restoreAllMocks();
+    });
+
+    it('should report the kept db/instance.ts in the generation log', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      writeUserInstance(outputDir);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--db']);
+      expect(logSpy).toHaveBeenCalledWith('  Kept: db/instance.ts (yours; never overwritten)');
+      vi.restoreAllMocks();
+    });
+
+    it('should report the kept db/instance.ts in the --dry-run plan', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      writeUserInstance(outputDir);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--db', '--dry-run']);
+      expect(logSpy).toHaveBeenCalledWith('  Would keep: db/instance.ts (yours; never overwritten)');
+      vi.restoreAllMocks();
+    });
+
+    it('should list --db in help output', () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['--help']);
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('--db');
+      consoleSpy.mockRestore();
+    });
+  });
 });

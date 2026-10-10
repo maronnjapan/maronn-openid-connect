@@ -11,6 +11,7 @@ export class ExpressGenerator implements FrameworkGenerator {
       expressApplyTemplate(options.features),
       options.features,
       options.scopes,
+      options.db,
     );
   }
 }

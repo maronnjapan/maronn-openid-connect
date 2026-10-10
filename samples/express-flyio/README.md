@@ -1,6 +1,8 @@
 # Express + Fly.io sample
 
-Node.js組み込みの `node:sqlite` を使い、OPの全状態を `.data/oidc.sqlite` に永続化する。外部DBライブラリ、DBソフト、Dockerは不要（Node.js 22.13以上）。デプロイ想定環境はFly.io（永続ボリューム + 単一マシン）。
+CLIの `--db` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、OPの状態をNode.js組み込みの `node:sqlite` で永続化する。保存先は `.data/oidc.sqlite`。外部DBライブラリ、DBソフト、Dockerは不要（Node.js 22.13以上）。デプロイ想定環境はFly.io（永続ボリューム + 単一マシン）。
+
+`src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）とストア（`stores.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
 
 ## ローカル起動（一発）
 
@@ -22,7 +24,7 @@ flyctl のインストール・`fly auth login`・アプリ名の決定（自動
 
 オプション: `--app-name` / `--region` / `--org` / `--dry-run`（詳細は `--help`）。
 
-単一Nodeプロセスを永続ボリューム付きでデプロイするPoC向けであり、複数インスタンス構成では共有DB用の `JsonStoreBackend` 実装へ置き換える。署名鍵は起動時生成のため、fly.tomlは単一マシン構成に固定している。
+単一Nodeプロセスを永続ボリューム付きでデプロイするPoC向けであり、複数インスタンス構成では `src/oidc-provider/db/instance.ts` を共有DB（PostgreSQLなど）のインスタンスへ書き換える。署名鍵は起動時生成のため、fly.tomlは単一マシン構成に固定している。
 
 ## Google ログイン（任意）
 

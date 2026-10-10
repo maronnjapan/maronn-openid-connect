@@ -35,6 +35,7 @@ import {
   respondTemplate,
 } from './pages.js';
 import { honoViewsTemplate } from './views.js';
+import { dbGeneratedFiles } from '../db/templates.js';
 
 export class HonoGenerator implements FrameworkGenerator {
   readonly name = 'hono';
@@ -44,10 +45,11 @@ export class HonoGenerator implements FrameworkGenerator {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
+    const db = options.db ?? false;
 
     const files: GeneratedFile[] = [
-      { path: 'app.ts', content: appTemplate(pkg, features) },
-      { path: 'apply.ts', content: applyTemplate(pkg, features) },
+      { path: 'app.ts', content: appTemplate(pkg, features, db) },
+      { path: 'apply.ts', content: applyTemplate(pkg, features, db) },
       { path: 'config.ts', content: configTemplate(pkg, features) },
       // Custom scopes (--scope): the scope policy module is only generated when
       // at least one was declared.
@@ -123,6 +125,8 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features, scopes) },
       { path: 'routes/login.ts', content: loginRouteTemplate(pkg, features) },
       { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
+      // --db: SQL tables, the stores on them, and the db/instance.ts the user writes.
+      ...(db ? dbGeneratedFiles(pkg, features, 'hono') : []),
     ];
     // The templates are shared with the frameworks that write these modules as
     // .ts; point their comments at the .tsx files here ('views.ts' and

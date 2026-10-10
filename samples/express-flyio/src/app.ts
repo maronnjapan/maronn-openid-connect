@@ -11,7 +11,6 @@ import {
   type GoogleLoginConfig,
   type RegisteredClient,
 } from './oidc-provider/config.js';
-import { providerStores } from './storage.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? '3010');
@@ -83,7 +82,8 @@ applyOidc(app, {
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
   clientResolver: createInMemoryClientResolver(clients),
   tokenClientResolver: createInMemoryClientResolver(clients),
-  storage: providerStores,
+  // No storage option: the generated app keeps its data in the SQL tables of
+  // db/ (--db), on the node:sqlite database of db/instance.ts.
   acrResolver: sampleAcrResolver,
   corsOrigins: issuer,
 });

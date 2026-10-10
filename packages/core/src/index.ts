@@ -327,6 +327,9 @@ export {
   requireClientSecret,
   validateClientAuthMethodMatch,
   verifyClientSecretValue,
+  // client_secret をハッシュで登録するクライアント（TokenClientInfo.clientSecretHash）
+  hashClientSecret,
+  verifyClientSecretHash,
 } from './client-auth.js';
 
 export type {

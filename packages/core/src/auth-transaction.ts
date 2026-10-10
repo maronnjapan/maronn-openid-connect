@@ -188,6 +188,12 @@ export interface AuthorizationResponseParams {
   acrValues?: string;
   /** OIDC Core 1.0 §5.5: claims request to forward to authorization code / token endpoint. */
   claims?: ClaimsParameter;
+  /**
+   * この値を作った Auth Transaction の ID。{@link completeAuthTransaction} が設定し、
+   * 認可コードへ引き継がれる（どのトランザクションから発行したコードかを記録できる）。
+   * 認可レスポンスのパラメータではないので、リダイレクト URL には載せない。
+   */
+  transactionId?: string;
 }
 
 /**
@@ -510,7 +516,7 @@ export async function completeAuthTransaction(
   // ワンタイム性の担保: 認可コード発行前にトランザクションを削除
   await store.delete(key);
 
-  return buildAuthorizationResponseParams(transaction);
+  return { ...buildAuthorizationResponseParams(transaction), transactionId: txnId };
 }
 
 /**

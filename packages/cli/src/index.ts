@@ -142,12 +142,13 @@ Custom scopes (none declared by default): the standard scopes (openid, profile,
 Database (--db): the provider keeps its clients, users, authorization
   transactions, codes, tokens, sessions and consent in SQL tables instead of
   memory. db/schema.sql defines the tables (the same SQL runs on SQLite,
-  Cloudflare D1 and PostgreSQL), and db/stores.ts and db/clients.ts query them.
-  The tables of Sign in with Google come with --enable google-login. Register
-  clients with registerClient() in db/clients.ts. The one file you write is
-  db/instance.ts: createDatabase() returns your database, wrapping whichever
-  driver or ORM you use. The CLI creates it only when it is missing and never
-  overwrites it, even with --force.
+  Cloudflare D1 and PostgreSQL), and db/stores.ts, db/clients.ts and
+  db/users.ts query them. The tables of Sign in with Google come with
+  --enable google-login. Register clients with registerClient() in
+  db/clients.ts and users with registerUser() in db/users.ts. The one file you
+  write is db/instance.ts: createDatabase() returns your database, wrapping
+  whichever driver or ORM you use. The CLI creates it only when it is missing
+  and never overwrites it, even with --force.
 `);
 }
 
@@ -469,8 +470,8 @@ export function run(args: string[]): void {
       console.log(
         `Database (--db): the provider keeps its data in the SQL tables of ${dbDir}/schema.sql.\n` +
           `Write createDatabase() in ${dbDir}/instance.ts (examples inside); that file is yours and is\n` +
-          'never overwritten. The provider reads its clients from the client tables: register them\n' +
-          `with registerClient() (${dbDir}/clients.ts).\n`,
+          'never overwritten. The provider reads its clients and users from the tables: register them\n' +
+          `with registerClient() (${dbDir}/clients.ts) and registerUser() (${dbDir}/users.ts).\n`,
       );
     }
     // Decided before writing: a user-owned file created by this run is not "kept".
@@ -502,7 +503,7 @@ export function run(args: string[]): void {
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
         parsed.db
-          ? `Write createDatabase() in ${parsed.outputDir}/db/instance.ts, apply ${parsed.outputDir}/db/schema.sql to your database and register clients with registerClient() (${parsed.outputDir}/db/clients.ts)`
+          ? `Write createDatabase() in ${parsed.outputDir}/db/instance.ts, apply ${parsed.outputDir}/db/schema.sql to your database and register clients and users with registerClient() (${parsed.outputDir}/db/clients.ts) and registerUser() (${parsed.outputDir}/db/users.ts)`
           : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
         `Use ${parsed.outputDir}/config.ts defaults only for quick local testing`,
         ...(features.par ||
@@ -530,7 +531,7 @@ export function run(args: string[]): void {
         ),
         features,
       );
-      const dbStep = `Write createDatabase() in ${dbDir}/instance.ts, apply ${dbDir}/schema.sql to your database and register clients with registerClient() (${dbDir}/clients.ts)`;
+      const dbStep = `Write createDatabase() in ${dbDir}/instance.ts, apply ${dbDir}/schema.sql to your database and register clients and users with registerClient() (${dbDir}/clients.ts) and registerUser() (${dbDir}/users.ts)`;
       // Next.js reads its configuration from the environment in
       // _oidc-provider/provider.ts, which already wires the persistent stores.
       const nextSteps =

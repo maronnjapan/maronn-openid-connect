@@ -43,6 +43,7 @@ export function dbGeneratedFiles(
     { path: 'db/schema.ts', content: dbSchemaModuleTemplate(features) },
     { path: 'db/stores.ts', content: dbStoresTemplate(corePkg, features) },
     { path: 'db/clients.ts', content: dbClientsTemplate(corePkg) },
+    { path: 'db/users.ts', content: dbUsersTemplate(corePkg) },
   ];
 }
 
@@ -132,7 +133,7 @@ CREATE TABLE IF NOT EXISTS upstream_auth_requests (
     ? ''
     : `
 -- (upstream_pending is used by Sign in with Google, --enable google-login.)`;
-  return `-- Tables of the generated OpenID Provider (db/stores.ts and db/clients.ts).
+  return `-- Tables of the generated OpenID Provider (db/stores.ts, db/clients.ts and db/users.ts).
 --
 -- The tables follow the ER model of the OP: clients, users, authorization
 -- transactions, codes and tokens. Each comment names the entity a table
@@ -142,9 +143,9 @@ CREATE TABLE IF NOT EXISTS upstream_auth_requests (
 -- The same statements run on SQLite, Cloudflare D1 and PostgreSQL. Dates are
 -- epoch seconds in BIGINT columns, because the three share no date type that
 -- every driver binds and reads the same way. Booleans are BOOLEAN, and JSON is
--- TEXT. Codes and tokens are stored as their SHA-256 hash and client secrets
--- as the hash from hashClientSecret(), so the database holds no credential
--- that works as it is.
+-- TEXT. Codes and tokens are stored as their SHA-256 hash, client secrets as
+-- the hash from hashClientSecret() and passwords as the hash from
+-- hashPassword(), so the database holds no credential that works as it is.
 --
 -- Foreign keys tie together the rows of one client, of one user and of one
 -- authorization transaction. Transactions and tokens do not reference clients
@@ -165,14 +166,15 @@ CREATE TABLE IF NOT EXISTS clients (
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Client_auth: a way the client authenticates at the token endpoint. A public
--- client has none. A confidential client authenticates with its one
--- client_secret_basic or client_secret_post row.
+-- Client_auth: how the client authenticates at the token endpoint. A public
+-- client has none, and a confidential client has one. Another method (such as
+-- private_key_jwt) is added here, with a table of its own like client_secrets,
+-- when the OP supports it.
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
   client_auth_type VARCHAR(1000) NOT NULL
-    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt')),
+    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
   UNIQUE (id, client_auth_type)
 );
 CREATE INDEX IF NOT EXISTS client_auths_client_id_idx ON client_auths (client_id);
@@ -185,20 +187,6 @@ CREATE TABLE IF NOT EXISTS client_secrets (
   client_auth_type VARCHAR(1000) NOT NULL
     CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
   secret           VARCHAR(5000) NOT NULL,
-  FOREIGN KEY (id, client_auth_type)
-    REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
-);
-
--- Private_key_jwt: the public keys of the client, as a JWK Set (jwks) or as
--- the URL of one (jwks_uri), never both. The OP verifies signed Request
--- Objects with jwks. It cannot authenticate a client with private_key_jwt yet
--- and does not fetch jwks_uri.
-CREATE TABLE IF NOT EXISTS client_private_key_jwts (
-  id               TEXT PRIMARY KEY,
-  client_auth_type VARCHAR(1000) NOT NULL CHECK (client_auth_type = 'private_key_jwt'),
-  jwks             TEXT,
-  jwks_uri         VARCHAR(5000),
-  CHECK ((jwks IS NOT NULL AND jwks_uri IS NULL) OR (jwks IS NULL AND jwks_uri IS NOT NULL)),
   FOREIGN KEY (id, client_auth_type)
     REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
 );
@@ -220,8 +208,9 @@ CREATE TABLE IF NOT EXISTS client_grant_types (
 );
 CREATE INDEX IF NOT EXISTS client_grant_types_client_id_idx ON client_grant_types (client_id);
 
--- Scope: the scopes the client may request. The OP does not read it yet:
--- scopes.ts decides the accepted scopes for every client.
+-- Scope: the scopes the client may request. A request for any other scope is
+-- rejected with invalid_scope. A client without rows may request every scope
+-- the OP accepts.
 CREATE TABLE IF NOT EXISTS client_scopes (
   id        TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -229,28 +218,19 @@ CREATE TABLE IF NOT EXISTS client_scopes (
 );
 CREATE INDEX IF NOT EXISTS client_scopes_client_id_idx ON client_scopes (client_id);
 
--- Authorization_details: the authorization_details (RFC 9396) the client may
--- request, type being the type member of the JSON in value. The OP does not
--- support authorization_details yet and does not read it.
-CREATE TABLE IF NOT EXISTS client_authorization_details (
-  id        TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
-  type      VARCHAR(5000) NOT NULL,
-  value     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS client_authorization_details_client_id_idx
-  ON client_authorization_details (client_id);
-
--- User: a user who signed in. email and is_verified are the email and
--- email_verified claims.
+-- User: a user of the OP. email and is_verified are the email and
+-- email_verified claims. password_hash is the hash from hashPassword()
+-- (users.ts), and NULL for a user who has no password and signs in another
+-- way (such as Sign in with Google).
 CREATE TABLE IF NOT EXISTS users (
-  id          TEXT PRIMARY KEY,
-  email       VARCHAR(1000),
-  is_verified BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at  BIGINT NOT NULL,
-  updated_at  BIGINT NOT NULL,
+  id            TEXT PRIMARY KEY,
+  email         VARCHAR(1000),
+  is_verified   BOOLEAN NOT NULL DEFAULT FALSE,
+  password_hash VARCHAR(1000),
+  created_at    BIGINT NOT NULL,
+  updated_at    BIGINT NOT NULL,
   -- Not in the ER model: the other claims of the user (name, address, ...) as JSON.
-  claims      TEXT
+  claims        TEXT
 );
 ${federatedIdentityTable}
 -- Transaction: one authorization request, from /authorize until its code is
@@ -349,20 +329,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS refresh_tokens_grant_id_idx ON refresh_tokens (grant_id);
 CREATE INDEX IF NOT EXISTS refresh_tokens_access_token_id_idx ON refresh_tokens (access_token_id);
 
--- Id_token: an issued ID Token, id being its jti. The OP does not record ID
--- Tokens yet, so the table stays empty until the token endpoint writes to it.
-CREATE TABLE IF NOT EXISTS id_tokens (
-  id             TEXT PRIMARY KEY,
-  sub            VARCHAR(5000) NOT NULL,
-  exp            BIGINT NOT NULL,
-  iat            BIGINT NOT NULL,
-  iss            VARCHAR(5000) NOT NULL,
-  aud            VARCHAR(5000) NOT NULL,
-  scope          TEXT,
-  nonce          VARCHAR(5000),
-  transaction_id VARCHAR(5000) REFERENCES transactions (transaction_id) ON DELETE SET NULL
-);
-
 -- Not in the ER model: OP browser sessions (the session_id cookie) for SSO,
 -- prompt=none and max_age.
 CREATE TABLE IF NOT EXISTS browser_sessions (
@@ -415,23 +381,15 @@ import type { GoogleLoginNonceStore } from '${GOOGLE_LOGIN_PACKAGE}';`
 const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
 `
     : '';
-  const usersComment = features.googleLogin
-    ? `// Password users are the development users of store.ts (testuser / otheruser):
-// replace authenticate() below with the check of your own users. Users of
-// "Sign in with Google" have no password. Every user who signs in is saved to
-// the users table, and getClaims() reads the claims from there.`
-    : `// Password users are the development users of store.ts (testuser / otheruser):
-// replace authenticate() below with the check of your own users. Every user who
-// signs in is saved to the users table, and getClaims() reads the claims from
-// there.`;
   // auth_type of auth_users: the provider of the user's federated identity, or
   // password. Without google-login there is no federated identity.
   const authTypeHelper = features.googleLogin
     ? `
   // auth_type of a sign-in (auth_users): the provider of the user's federated
-  // identity, or password. Users created by Sign in with Google have no
-  // password, and the development users have no federated identity, so a user
-  // signs in one way only.
+  // identity, or password. A user created by Sign in with Google has no
+  // password, and registerUser() (users.ts) creates no federated identity, so
+  // each user signs in one way only unless you link a Google account to a
+  // user with a password yourself.
   const authTypeOf = async (userId: string): Promise<string> => {
     const [row] = await db.all<{ provider: string }>({
       sql: 'SELECT provider FROM federated_identities WHERE user_id = ? ORDER BY created_at LIMIT 1',
@@ -476,6 +434,19 @@ const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
     }
     return linkedUserId;
   };
+
+  // EXTENSION (google-login): save the claims Google asserted to the user:
+  // email and email_verified to their columns, the others to claims as JSON.
+  // password_hash is left as it is.
+  const saveGoogleClaims = async (claims: UserClaims): Promise<void> => {
+    const { sub, email, email_verified, ...otherClaims } = claims;
+    await db.run({
+      sql:
+        'UPDATE users SET email = ?, is_verified = ' + sqlBoolean(email_verified === true) + ', ' +
+        'updated_at = ?, claims = ? WHERE id = ?',
+      params: [email ?? null, nowSeconds(), JSON.stringify(otherClaims), sub],
+    });
+  };
 `
     : '';
   const linkGoogleAccount = features.googleLogin
@@ -486,7 +457,7 @@ const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
     async linkGoogleAccount(account) {
       const userId = (await findGoogleUser(account.sub)) ?? (await createGoogleUser(account.sub));
       const claims: UserClaims = { ...googleAccountToClaims(account), sub: userId };
-      await saveUser(claims);
+      await saveGoogleClaims(claims);
       return claims;
     },`
     : '';
@@ -568,8 +539,7 @@ import {
   type RefreshTokenInfo,
   type UserClaims,
 } from '${corePkg}';${googleLoginTypeImport}
-import {
-  UserStore,${googleStoreImport}
+import {${googleStoreImport}
   type AccessTokenStorage,
   type AuthSessionInfo,
   type AuthSessionStorage,
@@ -581,9 +551,7 @@ import {
   type UserStorage,
 } from '../store.js';
 import type { SqlDatabase } from './database.js';
-
-${usersComment}
-const developmentUsers = new UserStore();
+import { verifyPassword } from './users.js';
 
 /** core prefixes the id of every AuthTransactionStore key with this. */
 const TRANSACTION_KEY_PREFIX = 'auth_txn:';
@@ -980,47 +948,31 @@ ${authTypeHelper}
     },
   };
 
-  // User: email and email_verified go to their columns, the other claims to
-  // the claims column as JSON.
-  const saveUser = async (claims: UserClaims): Promise<void> => {
-    const { sub, email, email_verified, ...otherClaims } = claims;
-    const now = nowSeconds();
-    await db.run({
-      sql:
-        'INSERT INTO users (id, email, is_verified, created_at, updated_at, claims) ' +
-        'VALUES (?, ?, ' + sqlBoolean(email_verified === true) + ', ?, ?, ?) ' +
-        'ON CONFLICT (id) DO UPDATE SET email = excluded.email, is_verified = excluded.is_verified, ' +
-        'updated_at = excluded.updated_at, claims = excluded.claims',
-      params: [sub, email ?? null, now, now, JSON.stringify(otherClaims)],
-    });
-  };
 ${googleUserHelpers}
+  // User: the users table. Put users there with registerUser() (users.ts).
   const userStore: UserStorage = {
+    // The password form checks users.id as the username. Look the row up by
+    // email instead to sign in with an email address.
     async authenticate(username, password) {
-      const user = developmentUsers.authenticate(username, password);
-      if (user) {
-        const { password: _password, ...claims } = user;
-        await saveUser(claims);
+      const [row] = await db.all<UserRow & { password_hash: string | null }>({
+        sql: 'SELECT email, is_verified, password_hash, claims FROM users WHERE id = ?',
+        params: [username],
+      });
+      // verifyPassword() takes as long without a hash, so the response time does
+      // not tell whether the user exists. A user without a password (such as one
+      // created by Sign in with Google) cannot sign in with the form.
+      const passwordHash = row?.password_hash ?? null;
+      if (!(await verifyPassword(password, passwordHash)) || !row || passwordHash === null) {
+        return undefined;
       }
-      return user;
+      return { ...userClaims(username, row), password: passwordHash };
     },
     async getClaims(sub) {
       const [row] = await db.all<UserRow>({
         sql: 'SELECT email, is_verified, claims FROM users WHERE id = ?',
         params: [sub],
       });
-      // A subject that never signed in here (such as one the CIBA user
-      // resolver picked) falls back to the development users.
-      if (!row) return developmentUsers.getClaims(sub);
-      const claims: UserClaims = {
-        ...(row.claims ? (JSON.parse(row.claims) as Partial<UserClaims>) : {}),
-        sub,
-      };
-      if (row.email !== null) {
-        claims.email = row.email;
-        claims.email_verified = toBoolean(row.is_verified);
-      }
-      return claims;
+      return row ? userClaims(sub, row) : undefined;
     },${linkGoogleAccount}
   };
 ${googleLoginNonceStore}
@@ -1113,6 +1065,19 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+/** The claims of a users row: email and email_verified from their columns, the rest from claims. */
+function userClaims(sub: string, row: UserRow): UserClaims {
+  const claims: UserClaims = {
+    ...(row.claims ? (JSON.parse(row.claims) as Partial<UserClaims>) : {}),
+    sub,
+  };
+  if (row.email !== null) {
+    claims.email = row.email;
+    claims.email_verified = toBoolean(row.is_verified);
+  }
+  return claims;
+}
+
 function withoutPrefix(key: string, prefix: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
@@ -1162,24 +1127,20 @@ export function dbClientsTemplate(corePkg: string): string {
  * How the tables become a RegisteredClient (config.ts):
  *
  * - clients.client_type public: no client authentication ('none').
- * - client_secret_basic / client_secret_post: the client's one row of these
- *   decides token_endpoint_auth_method, and its client_secrets.secret is the
- *   clientSecretHash the presented secret is checked against. More than one
- *   such row is a configuration error.
- * - private_key_jwt: its jwks are the public keys of the client, used to
- *   verify signed Request Objects. The token endpoint cannot authenticate with
- *   private_key_jwt yet, and jwks_uri is not fetched.
- * - client_redirect_uris and client_grant_types: redirectUris and grantTypes.
- * - client_scopes and client_authorization_details are not read: scopes.ts
- *   decides the scopes of every client, and authorization_details are not
- *   supported yet.
- * - Metadata without a column (response_types, default_max_age, the ID Token
- *   and UserInfo signing algs) keeps its default.
+ * - client_auths and client_secrets: token_endpoint_auth_method
+ *   (client_secret_basic / client_secret_post), and the clientSecretHash the
+ *   presented secret is checked against. More than one row per client is a
+ *   configuration error, because a client has one registered method.
+ * - client_redirect_uris, client_grant_types and client_scopes: redirectUris,
+ *   grantTypes and scope. A request for a scope outside scope is rejected with
+ *   invalid_scope (validateClientScope() in core). A client without
+ *   client_scopes rows may request every scope the OP accepts.
+ * - Metadata without a column (response_types, default_max_age, jwks, the ID
+ *   Token and UserInfo signing algs) keeps its default.
  */
 import {
   hashClientSecret,
   type ClientResolver,
-  type JwkSet,
   type TokenClientResolver,
 } from '${corePkg}';
 import type { RegisteredClient } from '../config.js';
@@ -1193,12 +1154,10 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         params: [clientId],
       });
       if (!client) return null;
-      const auths = await db.all<{ client_auth_type: string; secret: string | null; jwks: string | null }>({
+      const auths = await db.all<{ client_auth_type: string; secret: string | null }>({
         sql:
-          'SELECT a.client_auth_type, s.secret, k.jwks FROM client_auths a ' +
-          'LEFT JOIN client_secrets s ON s.id = a.id ' +
-          'LEFT JOIN client_private_key_jwts k ON k.id = a.id ' +
-          'WHERE a.client_id = ? ORDER BY a.id',
+          'SELECT a.client_auth_type, s.secret FROM client_auths a ' +
+          'LEFT JOIN client_secrets s ON s.id = a.id WHERE a.client_id = ? ORDER BY a.id',
         params: [clientId],
       });
       const redirectUris = await db.all<{ value: string }>({
@@ -1209,6 +1168,10 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         sql: 'SELECT grant_type FROM client_grant_types WHERE client_id = ? ORDER BY id',
         params: [clientId],
       });
+      const scopes = await db.all<{ value: string }>({
+        sql: 'SELECT value FROM client_scopes WHERE client_id = ? ORDER BY id',
+        params: [clientId],
+      });
 
       const registered: RegisteredClient = {
         clientId: client.id,
@@ -1216,25 +1179,20 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         redirectUris: redirectUris.map((row) => row.value),
       };
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
+      if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
 
-      const secretAuths = auths.filter((row) => row.client_auth_type !== 'private_key_jwt');
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethod = 'none';
-      } else if (secretAuths.length > 1) {
-        throw new Error(
-          'Client ' + clientId + ' has more than one client_secret_basic / client_secret_post row in client_auths',
-        );
-      } else if (secretAuths[0]) {
-        registered.tokenEndpointAuthMethod = secretAuths[0].client_auth_type as
+      } else if (auths.length > 1) {
+        throw new Error('Client ' + clientId + ' has more than one row in client_auths');
+      } else if (auths[0]) {
+        registered.tokenEndpointAuthMethod = auths[0].client_auth_type as
           | 'client_secret_basic'
           | 'client_secret_post';
-        if (secretAuths[0].secret !== null) registered.clientSecretHash = secretAuths[0].secret;
+        if (auths[0].secret !== null) registered.clientSecretHash = auths[0].secret;
       }
-      // A confidential client without such a row keeps the default
+      // A confidential client without a client_auths row keeps the default
       // client_secret_basic with no secret, so it cannot authenticate.
-
-      const jwks = auths.find((row) => row.jwks !== null)?.jwks;
-      if (jwks) registered.jwks = JSON.parse(jwks) as JwkSet;
       return registered;
     },
   };
@@ -1249,9 +1207,9 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
  *     await registerClient(db, client);
  *   }
  *
- * clientSecret is saved as its hash (hashClientSecret()), and jwks as a
- * private_key_jwt row. The statements run one at a time (SqlDatabase has no
- * transactions), so run it again if it stops halfway.
+ * clientSecret is saved as its hash (hashClientSecret()). The statements run
+ * one at a time (SqlDatabase has no transactions), so run it again if it stops
+ * halfway.
  */
 export async function registerClient(
   db: SqlDatabase,
@@ -1267,14 +1225,14 @@ export async function registerClient(
     params: [client.clientId, client.name ?? null, clientType],
   });
 
-  // Replace the child rows. Secrets and keys go first: they reference
-  // client_auths, and SQLite cascades only with foreign keys on.
+  // Replace the child rows. Secrets go first: they reference client_auths,
+  // and SQLite cascades only with foreign keys on.
   const childRows = [
     'DELETE FROM client_secrets WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)',
-    'DELETE FROM client_private_key_jwts WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)',
     'DELETE FROM client_auths WHERE client_id = ?',
     'DELETE FROM client_redirect_uris WHERE client_id = ?',
     'DELETE FROM client_grant_types WHERE client_id = ?',
+    'DELETE FROM client_scopes WHERE client_id = ?',
   ];
   for (const sql of childRows) {
     await db.run({ sql, params: [client.clientId] });
@@ -1295,29 +1253,157 @@ export async function registerClient(
       params: [authId, authMethod, secretHash],
     });
   }
-  if (client.jwks !== undefined) {
-    const authId = crypto.randomUUID();
-    await db.run({
-      sql: "INSERT INTO client_auths (id, client_id, client_auth_type) VALUES (?, ?, 'private_key_jwt')",
-      params: [authId, client.clientId],
-    });
-    await db.run({
-      sql: "INSERT INTO client_private_key_jwts (id, client_auth_type, jwks) VALUES (?, 'private_key_jwt', ?)",
-      params: [authId, JSON.stringify(client.jwks)],
-    });
+  const childValues: Array<[table: string, column: string, values: readonly string[]]> = [
+    ['client_redirect_uris', 'value', client.redirectUris],
+    ['client_grant_types', 'grant_type', client.grantTypes ?? []],
+    ['client_scopes', 'value', client.scope ?? []],
+  ];
+  for (const [table, column, values] of childValues) {
+    for (const value of values) {
+      await db.run({
+        sql: 'INSERT INTO ' + table + ' (id, client_id, ' + column + ') VALUES (?, ?, ?)',
+        params: [crypto.randomUUID(), client.clientId, value],
+      });
+    }
   }
-  for (const redirectUri of client.redirectUris) {
-    await db.run({
-      sql: 'INSERT INTO client_redirect_uris (id, client_id, value) VALUES (?, ?, ?)',
-      params: [crypto.randomUUID(), client.clientId, redirectUri],
-    });
+}
+`;
+}
+
+/**
+ * db/users.ts: registerUser() to fill the users table, and the password
+ * hashing the password form of the OP checks against.
+ */
+export function dbUsersTemplate(corePkg: string): string {
+  return `/**
+ * Users in the users table of db/schema.sql: registerUser() to put a user
+ * there, and the password hashing that authenticate() (stores.ts) checks the
+ * login form against.
+ *
+ * Passwords are hashed with PBKDF2-HMAC-SHA256 of the Web Crypto API, which
+ * every runtime of the generated OP has. A stored hash records its own
+ * iteration count and salt ('pbkdf2-sha256$<iterations>$<salt>$<hash>'), so
+ * raising PASSWORD_HASH_ITERATIONS later keeps the existing hashes valid.
+ */
+import type { UserClaims } from '${corePkg}';
+import type { SqlDatabase } from './database.js';
+
+const PASSWORD_HASH_ALGORITHM = 'pbkdf2-sha256';
+/**
+ * OWASP recommends 600,000 iterations for PBKDF2-HMAC-SHA256, but Cloudflare
+ * Workers accept at most 100,000, so the generated code uses that. Raise it
+ * where the runtime allows more.
+ */
+const PASSWORD_HASH_ITERATIONS = 100_000;
+const PASSWORD_SALT_BYTES = 16;
+const PASSWORD_HASH_BYTES = 32;
+
+/**
+ * Put a user into the users table, replacing an earlier registration with the
+ * same id (sub). email and email_verified go to their columns, the other
+ * claims to the claims column, and password (when given) is saved as its hash.
+ * Without a password the user cannot use the login form of the OP.
+ *
+ *   await registerUser(db, { sub: 'alice', email: 'alice@example.com', email_verified: true, password: '...' });
+ */
+export async function registerUser(
+  db: SqlDatabase,
+  user: UserClaims & { password?: string },
+): Promise<void> {
+  const { sub, email, email_verified, password, ...otherClaims } = user;
+  const now = Math.floor(Date.now() / 1000);
+  await db.run({
+    sql:
+      'INSERT INTO users (id, email, is_verified, password_hash, created_at, updated_at, claims) ' +
+      'VALUES (?, ?, ' + (email_verified === true ? 'TRUE' : 'FALSE') + ', ?, ?, ?, ?) ' +
+      'ON CONFLICT (id) DO UPDATE SET email = excluded.email, is_verified = excluded.is_verified, ' +
+      'password_hash = excluded.password_hash, updated_at = excluded.updated_at, claims = excluded.claims',
+    params: [
+      sub,
+      email ?? null,
+      password === undefined ? null : await hashPassword(password),
+      now,
+      now,
+      JSON.stringify(otherClaims),
+    ],
+  });
+}
+
+/** The value of users.password_hash for a password, with a new random salt. */
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(PASSWORD_SALT_BYTES));
+  const hash = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
+  return [PASSWORD_HASH_ALGORITHM, PASSWORD_HASH_ITERATIONS, toBase64Url(salt), toBase64Url(hash)].join('$');
+}
+
+/**
+ * Whether a password matches users.password_hash. Without a hash (null, or a
+ * value in another format) it still derives a key before answering false, so
+ * the time taken does not tell whether the user exists or has a password.
+ */
+export async function verifyPassword(password: string, passwordHash: string | null): Promise<boolean> {
+  const stored = passwordHash === null ? undefined : parsePasswordHash(passwordHash);
+  const derived = await derivePasswordHash(
+    password,
+    stored?.salt ?? new Uint8Array(PASSWORD_SALT_BYTES),
+    stored?.iterations ?? PASSWORD_HASH_ITERATIONS,
+  );
+  return stored !== undefined && constantTimeEqual(derived, stored.hash);
+}
+
+async function derivePasswordHash(password: string, salt: ArrayLike<number>, iterations: number) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: new Uint8Array(salt), iterations },
+    key,
+    PASSWORD_HASH_BYTES * 8,
+  );
+  return new Uint8Array(bits);
+}
+
+function parsePasswordHash(value: string) {
+  const [algorithm, iterations, salt, hash, ...rest] = value.split('$');
+  const iterationCount = Number(iterations);
+  if (
+    algorithm !== PASSWORD_HASH_ALGORITHM ||
+    rest.length > 0 ||
+    !Number.isInteger(iterationCount) ||
+    iterationCount < 1 ||
+    !salt ||
+    !hash
+  ) {
+    return undefined;
   }
-  for (const grantType of client.grantTypes ?? []) {
-    await db.run({
-      sql: 'INSERT INTO client_grant_types (id, client_id, grant_type) VALUES (?, ?, ?)',
-      params: [crypto.randomUUID(), client.clientId, grantType],
-    });
+  return { iterations: iterationCount, salt: fromBase64Url(salt), hash: fromBase64Url(hash) };
+}
+
+/** Compares in time that does not depend on where the values differ. */
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let difference = 0;
+  for (let index = 0; index < a.length; index++) {
+    difference |= (a[index] ?? 0) ^ (b[index] ?? 0);
   }
+  return difference === 0;
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(value: string) {
+  const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 `;
 }

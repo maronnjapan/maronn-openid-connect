@@ -1,4 +1,4 @@
--- Tables of the generated OpenID Provider (db/stores.ts and db/clients.ts).
+-- Tables of the generated OpenID Provider (db/stores.ts, db/clients.ts and db/users.ts).
 --
 -- The tables follow the ER model of the OP: clients, users, authorization
 -- transactions, codes and tokens. Each comment names the entity a table
@@ -8,9 +8,9 @@
 -- The same statements run on SQLite, Cloudflare D1 and PostgreSQL. Dates are
 -- epoch seconds in BIGINT columns, because the three share no date type that
 -- every driver binds and reads the same way. Booleans are BOOLEAN, and JSON is
--- TEXT. Codes and tokens are stored as their SHA-256 hash and client secrets
--- as the hash from hashClientSecret(), so the database holds no credential
--- that works as it is.
+-- TEXT. Codes and tokens are stored as their SHA-256 hash, client secrets as
+-- the hash from hashClientSecret() and passwords as the hash from
+-- hashPassword(), so the database holds no credential that works as it is.
 --
 -- Foreign keys tie together the rows of one client, of one user and of one
 -- authorization transaction. Transactions and tokens do not reference clients
@@ -31,14 +31,15 @@ CREATE TABLE IF NOT EXISTS clients (
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Client_auth: a way the client authenticates at the token endpoint. A public
--- client has none. A confidential client authenticates with its one
--- client_secret_basic or client_secret_post row.
+-- Client_auth: how the client authenticates at the token endpoint. A public
+-- client has none, and a confidential client has one. Another method (such as
+-- private_key_jwt) is added here, with a table of its own like client_secrets,
+-- when the OP supports it.
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
   client_auth_type VARCHAR(1000) NOT NULL
-    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt')),
+    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
   UNIQUE (id, client_auth_type)
 );
 CREATE INDEX IF NOT EXISTS client_auths_client_id_idx ON client_auths (client_id);
@@ -51,20 +52,6 @@ CREATE TABLE IF NOT EXISTS client_secrets (
   client_auth_type VARCHAR(1000) NOT NULL
     CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
   secret           VARCHAR(5000) NOT NULL,
-  FOREIGN KEY (id, client_auth_type)
-    REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
-);
-
--- Private_key_jwt: the public keys of the client, as a JWK Set (jwks) or as
--- the URL of one (jwks_uri), never both. The OP verifies signed Request
--- Objects with jwks. It cannot authenticate a client with private_key_jwt yet
--- and does not fetch jwks_uri.
-CREATE TABLE IF NOT EXISTS client_private_key_jwts (
-  id               TEXT PRIMARY KEY,
-  client_auth_type VARCHAR(1000) NOT NULL CHECK (client_auth_type = 'private_key_jwt'),
-  jwks             TEXT,
-  jwks_uri         VARCHAR(5000),
-  CHECK ((jwks IS NOT NULL AND jwks_uri IS NULL) OR (jwks IS NULL AND jwks_uri IS NOT NULL)),
   FOREIGN KEY (id, client_auth_type)
     REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
 );
@@ -86,8 +73,9 @@ CREATE TABLE IF NOT EXISTS client_grant_types (
 );
 CREATE INDEX IF NOT EXISTS client_grant_types_client_id_idx ON client_grant_types (client_id);
 
--- Scope: the scopes the client may request. The OP does not read it yet:
--- scopes.ts decides the accepted scopes for every client.
+-- Scope: the scopes the client may request. A request for any other scope is
+-- rejected with invalid_scope. A client without rows may request every scope
+-- the OP accepts.
 CREATE TABLE IF NOT EXISTS client_scopes (
   id        TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -95,28 +83,19 @@ CREATE TABLE IF NOT EXISTS client_scopes (
 );
 CREATE INDEX IF NOT EXISTS client_scopes_client_id_idx ON client_scopes (client_id);
 
--- Authorization_details: the authorization_details (RFC 9396) the client may
--- request, type being the type member of the JSON in value. The OP does not
--- support authorization_details yet and does not read it.
-CREATE TABLE IF NOT EXISTS client_authorization_details (
-  id        TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
-  type      VARCHAR(5000) NOT NULL,
-  value     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS client_authorization_details_client_id_idx
-  ON client_authorization_details (client_id);
-
--- User: a user who signed in. email and is_verified are the email and
--- email_verified claims.
+-- User: a user of the OP. email and is_verified are the email and
+-- email_verified claims. password_hash is the hash from hashPassword()
+-- (users.ts), and NULL for a user who has no password and signs in another
+-- way (such as Sign in with Google).
 CREATE TABLE IF NOT EXISTS users (
-  id          TEXT PRIMARY KEY,
-  email       VARCHAR(1000),
-  is_verified BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at  BIGINT NOT NULL,
-  updated_at  BIGINT NOT NULL,
+  id            TEXT PRIMARY KEY,
+  email         VARCHAR(1000),
+  is_verified   BOOLEAN NOT NULL DEFAULT FALSE,
+  password_hash VARCHAR(1000),
+  created_at    BIGINT NOT NULL,
+  updated_at    BIGINT NOT NULL,
   -- Not in the ER model: the other claims of the user (name, address, ...) as JSON.
-  claims      TEXT
+  claims        TEXT
 );
 
 -- Federated_identity (google-login): the account of a user at an external IdP.
@@ -242,20 +221,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 CREATE INDEX IF NOT EXISTS refresh_tokens_grant_id_idx ON refresh_tokens (grant_id);
 CREATE INDEX IF NOT EXISTS refresh_tokens_access_token_id_idx ON refresh_tokens (access_token_id);
-
--- Id_token: an issued ID Token, id being its jti. The OP does not record ID
--- Tokens yet, so the table stays empty until the token endpoint writes to it.
-CREATE TABLE IF NOT EXISTS id_tokens (
-  id             TEXT PRIMARY KEY,
-  sub            VARCHAR(5000) NOT NULL,
-  exp            BIGINT NOT NULL,
-  iat            BIGINT NOT NULL,
-  iss            VARCHAR(5000) NOT NULL,
-  aud            VARCHAR(5000) NOT NULL,
-  scope          TEXT,
-  nonce          VARCHAR(5000),
-  transaction_id VARCHAR(5000) REFERENCES transactions (transaction_id) ON DELETE SET NULL
-);
 
 -- Not in the ER model: OP browser sessions (the session_id cookie) for SSO,
 -- prompt=none and max_age.

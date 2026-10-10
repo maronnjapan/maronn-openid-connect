@@ -31,6 +31,7 @@ import {
 import {
   TokenError,
   extractClientCredentials,
+  findUnregisteredClientScopes,
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
@@ -146,6 +147,16 @@ deviceAuthorizationApp.post('/', async (c) => {
     // everywhere (same rule as /authorize). Requests that omit scope — legal per
     // RFC 8628 — are therefore rejected: a known, deliberate profile restriction.
     const requestedScope = validateDeviceAuthorizationScope(params['scope']);
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes, the same rule as /authorize.
+    const unregisteredScopes = findUnregisteredClientScopes(requestedScope, client.scope);
+    if (unregisteredScopes.length > 0) {
+      throw new DeviceAuthorizationError(
+        'invalid_scope',
+        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+      );
+    }
 
     // OIDC Core 1.0 §11: drop offline_access when it could never be granted.
     const scope = applyOfflineAccessPolicy(requestedScope, {

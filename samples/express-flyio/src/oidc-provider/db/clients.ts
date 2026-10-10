@@ -6,24 +6,20 @@
  * How the tables become a RegisteredClient (config.ts):
  *
  * - clients.client_type public: no client authentication ('none').
- * - client_secret_basic / client_secret_post: the client's one row of these
- *   decides token_endpoint_auth_method, and its client_secrets.secret is the
- *   clientSecretHash the presented secret is checked against. More than one
- *   such row is a configuration error.
- * - private_key_jwt: its jwks are the public keys of the client, used to
- *   verify signed Request Objects. The token endpoint cannot authenticate with
- *   private_key_jwt yet, and jwks_uri is not fetched.
- * - client_redirect_uris and client_grant_types: redirectUris and grantTypes.
- * - client_scopes and client_authorization_details are not read: scopes.ts
- *   decides the scopes of every client, and authorization_details are not
- *   supported yet.
- * - Metadata without a column (response_types, default_max_age, the ID Token
- *   and UserInfo signing algs) keeps its default.
+ * - client_auths and client_secrets: token_endpoint_auth_method
+ *   (client_secret_basic / client_secret_post), and the clientSecretHash the
+ *   presented secret is checked against. More than one row per client is a
+ *   configuration error, because a client has one registered method.
+ * - client_redirect_uris, client_grant_types and client_scopes: redirectUris,
+ *   grantTypes and scope. A request for a scope outside scope is rejected with
+ *   invalid_scope (validateClientScope() in core). A client without
+ *   client_scopes rows may request every scope the OP accepts.
+ * - Metadata without a column (response_types, default_max_age, jwks, the ID
+ *   Token and UserInfo signing algs) keeps its default.
  */
 import {
   hashClientSecret,
   type ClientResolver,
-  type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import type { RegisteredClient } from '../config.js';
@@ -37,12 +33,10 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         params: [clientId],
       });
       if (!client) return null;
-      const auths = await db.all<{ client_auth_type: string; secret: string | null; jwks: string | null }>({
+      const auths = await db.all<{ client_auth_type: string; secret: string | null }>({
         sql:
-          'SELECT a.client_auth_type, s.secret, k.jwks FROM client_auths a ' +
-          'LEFT JOIN client_secrets s ON s.id = a.id ' +
-          'LEFT JOIN client_private_key_jwts k ON k.id = a.id ' +
-          'WHERE a.client_id = ? ORDER BY a.id',
+          'SELECT a.client_auth_type, s.secret FROM client_auths a ' +
+          'LEFT JOIN client_secrets s ON s.id = a.id WHERE a.client_id = ? ORDER BY a.id',
         params: [clientId],
       });
       const redirectUris = await db.all<{ value: string }>({
@@ -53,6 +47,10 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         sql: 'SELECT grant_type FROM client_grant_types WHERE client_id = ? ORDER BY id',
         params: [clientId],
       });
+      const scopes = await db.all<{ value: string }>({
+        sql: 'SELECT value FROM client_scopes WHERE client_id = ? ORDER BY id',
+        params: [clientId],
+      });
 
       const registered: RegisteredClient = {
         clientId: client.id,
@@ -60,25 +58,20 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         redirectUris: redirectUris.map((row) => row.value),
       };
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
+      if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
 
-      const secretAuths = auths.filter((row) => row.client_auth_type !== 'private_key_jwt');
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethod = 'none';
-      } else if (secretAuths.length > 1) {
-        throw new Error(
-          'Client ' + clientId + ' has more than one client_secret_basic / client_secret_post row in client_auths',
-        );
-      } else if (secretAuths[0]) {
-        registered.tokenEndpointAuthMethod = secretAuths[0].client_auth_type as
+      } else if (auths.length > 1) {
+        throw new Error('Client ' + clientId + ' has more than one row in client_auths');
+      } else if (auths[0]) {
+        registered.tokenEndpointAuthMethod = auths[0].client_auth_type as
           | 'client_secret_basic'
           | 'client_secret_post';
-        if (secretAuths[0].secret !== null) registered.clientSecretHash = secretAuths[0].secret;
+        if (auths[0].secret !== null) registered.clientSecretHash = auths[0].secret;
       }
-      // A confidential client without such a row keeps the default
+      // A confidential client without a client_auths row keeps the default
       // client_secret_basic with no secret, so it cannot authenticate.
-
-      const jwks = auths.find((row) => row.jwks !== null)?.jwks;
-      if (jwks) registered.jwks = JSON.parse(jwks) as JwkSet;
       return registered;
     },
   };
@@ -93,9 +86,9 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
  *     await registerClient(db, client);
  *   }
  *
- * clientSecret is saved as its hash (hashClientSecret()), and jwks as a
- * private_key_jwt row. The statements run one at a time (SqlDatabase has no
- * transactions), so run it again if it stops halfway.
+ * clientSecret is saved as its hash (hashClientSecret()). The statements run
+ * one at a time (SqlDatabase has no transactions), so run it again if it stops
+ * halfway.
  */
 export async function registerClient(
   db: SqlDatabase,
@@ -111,14 +104,14 @@ export async function registerClient(
     params: [client.clientId, client.name ?? null, clientType],
   });
 
-  // Replace the child rows. Secrets and keys go first: they reference
-  // client_auths, and SQLite cascades only with foreign keys on.
+  // Replace the child rows. Secrets go first: they reference client_auths,
+  // and SQLite cascades only with foreign keys on.
   const childRows = [
     'DELETE FROM client_secrets WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)',
-    'DELETE FROM client_private_key_jwts WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)',
     'DELETE FROM client_auths WHERE client_id = ?',
     'DELETE FROM client_redirect_uris WHERE client_id = ?',
     'DELETE FROM client_grant_types WHERE client_id = ?',
+    'DELETE FROM client_scopes WHERE client_id = ?',
   ];
   for (const sql of childRows) {
     await db.run({ sql, params: [client.clientId] });
@@ -139,27 +132,17 @@ export async function registerClient(
       params: [authId, authMethod, secretHash],
     });
   }
-  if (client.jwks !== undefined) {
-    const authId = crypto.randomUUID();
-    await db.run({
-      sql: "INSERT INTO client_auths (id, client_id, client_auth_type) VALUES (?, ?, 'private_key_jwt')",
-      params: [authId, client.clientId],
-    });
-    await db.run({
-      sql: "INSERT INTO client_private_key_jwts (id, client_auth_type, jwks) VALUES (?, 'private_key_jwt', ?)",
-      params: [authId, JSON.stringify(client.jwks)],
-    });
-  }
-  for (const redirectUri of client.redirectUris) {
-    await db.run({
-      sql: 'INSERT INTO client_redirect_uris (id, client_id, value) VALUES (?, ?, ?)',
-      params: [crypto.randomUUID(), client.clientId, redirectUri],
-    });
-  }
-  for (const grantType of client.grantTypes ?? []) {
-    await db.run({
-      sql: 'INSERT INTO client_grant_types (id, client_id, grant_type) VALUES (?, ?, ?)',
-      params: [crypto.randomUUID(), client.clientId, grantType],
-    });
+  const childValues: Array<[table: string, column: string, values: readonly string[]]> = [
+    ['client_redirect_uris', 'value', client.redirectUris],
+    ['client_grant_types', 'grant_type', client.grantTypes ?? []],
+    ['client_scopes', 'value', client.scope ?? []],
+  ];
+  for (const [table, column, values] of childValues) {
+    for (const value of values) {
+      await db.run({
+        sql: 'INSERT INTO ' + table + ' (id, client_id, ' + column + ') VALUES (?, ?, ?)',
+        params: [crypto.randomUUID(), client.clientId, value],
+      });
+    }
   }
 }

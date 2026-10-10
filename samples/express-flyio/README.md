@@ -2,9 +2,11 @@
 
 CLIの `--db` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、OPの状態をNode.js組み込みの `node:sqlite` で永続化する。保存先は `.data/oidc.sqlite`。外部DBライブラリ、DBソフト、Dockerは不要（Node.js 22.13以上）。デプロイ想定環境はFly.io（永続ボリューム + 単一マシン）。
 
-`src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）、ストア（`stores.ts`）、クライアントの読み書き（`clients.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
+`src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）、ストア（`stores.ts`）、クライアントとユーザーの読み書き（`clients.ts`、`users.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
 
-クライアントもSQLのテーブルから読む。`src/app.ts` が起動時に、E2E用のクライアント（`OIDC_CLIENTS_JSON` があればその内容）を `registerClient()` でテーブルに登録する。client_secret はハッシュだけを保存する。
+クライアントとユーザーもSQLのテーブルから読む。`src/app.ts` が起動時に、E2E用のクライアント（`OIDC_CLIENTS_JSON` があればその内容）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` でテーブルに登録する。client_secret とパスワードはハッシュだけを保存する。
+
+クライアントのテーブルにはまだ `jwks`（クライアントの公開鍵）の列が無いので、`OIDC_CLIENTS_JSON` に `jwks` があるクライアント（OpenID Conformance Suite の署名付き Request Object）は、`src/app.ts` がその値を足して返す。
 
 ## ローカル起動（一発）
 

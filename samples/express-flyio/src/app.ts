@@ -2,13 +2,16 @@ import express from 'express';
 import {
   createCachedSigningKeyProvider,
   type AcrResolver,
+  type ClientResolver,
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import type { GoogleLoginConfig, RegisteredClient } from './oidc-provider/config.js';
-import { registerClient } from './oidc-provider/db/clients.js';
+import { createSqlClientResolver, registerClient } from './oidc-provider/db/clients.js';
 import { createDatabase } from './oidc-provider/db/instance.js';
+import { registerUser } from './oidc-provider/db/users.js';
+import { UserStore } from './oidc-provider/store.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? '3010');
@@ -31,6 +34,27 @@ const clients = readRegisteredClients();
 for (const client of clients.values()) {
   await registerClient(createDatabase(), client);
 }
+
+// Users are read from the users table too. E2E and the conformance suite sign
+// in as the development users of store.ts (testuser / otheruser, password
+// "password"), so they are registered there with their claims.
+const developmentUsers = new UserStore();
+for (const username of ['testuser', 'otheruser']) {
+  const user = developmentUsers.authenticate(username, 'password');
+  if (user) await registerUser(createDatabase(), user);
+}
+
+// The client tables have no column for jwks (the client's public keys) yet:
+// they come with private_key_jwt. The conformance suite registers jwks to sign
+// Request Objects with, so they are added from OIDC_CLIENTS_JSON here.
+const sqlClientResolver = createSqlClientResolver(createDatabase());
+const clientResolver: ClientResolver = {
+  async findClient(requestedClientId) {
+    const client = await sqlClientResolver.findClient(requestedClientId);
+    const jwks = clients.get(requestedClientId)?.jwks;
+    return client && jwks ? { ...client, jwks } : client;
+  },
+};
 const allowNonPkceAuthorizationCodeFlow =
   process.env.OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW === '1';
 // OIDC Core 1.0 §6.1 / RFC 9101: accepting unsigned (alg:none) Request Objects is a
@@ -85,9 +109,10 @@ applyOidc(app, {
     googleLogin,
   },
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
-  // No clientResolver and no storage option: the generated app reads the
-  // clients and keeps its data in the SQL tables of db/ (--db), on the
-  // node:sqlite database of db/instance.ts.
+  // The generated app keeps its data in the SQL tables of db/ (--db), on the
+  // node:sqlite database of db/instance.ts. The clients come from the same
+  // tables, with the jwks of OIDC_CLIENTS_JSON added (see above).
+  clientResolver,
   acrResolver: sampleAcrResolver,
   corsOrigins: issuer,
 });

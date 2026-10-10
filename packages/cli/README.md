@@ -78,7 +78,7 @@ oidc-provider/
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
 ├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
-├── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントの読み書き（instance.ts だけは利用者が書く）
+├── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
@@ -154,7 +154,7 @@ src/app/
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
 │   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア（--db 指定時は生成しない）
-│   └── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントの読み書き（instance.ts だけは利用者が書く）
+│   └── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
 ├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
 ├── token/route.ts            # POST /token
 ├── userinfo/route.ts         # GET|POST /userinfo
@@ -300,6 +300,7 @@ maronn-oidc generate express --db
 | `schema.ts` | `schema.sql` と同じ内容の文字列 `SCHEMA_SQL`。起動時にテーブルを作る DB で使う |
 | `stores.ts` | `store.ts` の `ProviderStores` を SQL で実装したストア |
 | `clients.ts` | クライアントのテーブルを読む `ClientResolver` と、クライアントを登録する `registerClient()` |
+| `users.ts` | ユーザーを登録する `registerUser()` と、パスワードのハッシュを作って照合する `hashPassword()` / `verifyPassword()` |
 
 `SqlDatabase` は SQL を実行する口を 2 つ持つだけなので、どのドライバーでも実装できる。
 ORM も生の SQL を実行するメソッドを持っているので、CLI は ORM ごとのコードを生成しない。
@@ -343,18 +344,21 @@ export function createDatabase(): SqlDatabase {
 | テーブル | 保存するもの |
 |---|---|
 | `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
-| `client_auths`、`client_secrets`、`client_private_key_jwts` | クライアント認証の方式と、方式ごとの秘密情報や公開鍵 |
-| `client_redirect_uris`、`client_grant_types` | リダイレクト URI と、使ってよい grant type |
-| `client_scopes`、`client_authorization_details` | 要求してよいスコープと authorization_details（RFC 9396）。OP はまだ読まない |
-| `users` | ログインしたユーザー。`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
+| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post）と、シークレットのハッシュ |
+| `client_redirect_uris`、`client_grant_types`、`client_scopes` | リダイレクト URI、使ってよい grant type、要求してよいスコープ |
+| `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
 | `codes`、`access_tokens`、`refresh_tokens` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュで引く |
-| `id_tokens` | 発行した ID トークン。OP はまだ書き込まないので空のまま |
 | `browser_sessions`、`consent_scopes`、`consent_grants` | SSO、`prompt=none`、`max_age` に使うブラウザセッションと、ユーザーが与えた同意 |
 
 `--enable google-login` と組み合わせたときだけ、Sign in with Google のための 2 つのテーブルが加わる。
 `federated_identities` は Google アカウントとユーザーの対応を、`upstream_auth_requests` はログイン画面の Google ボタンに埋めた nonce を持つ。
+
+ID トークンは保存しない。
+RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためである。
+private_key_jwt によるクライアント認証と authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていない。
+private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_secrets` と同じ形で方式ごとのテーブルを加える。
 
 `transactions.status` は、認可リクエストがどこまで進んだかを表す。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進む。
@@ -365,7 +369,16 @@ OP は終わったトランザクションの行を消さず、`codes` と `acce
 クライアントシークレットは、`hashClientSecret()`（core）で作った SHA-256 のハッシュだけを `client_secrets` に保存する。
 トークンエンドポイントは、提示されたシークレットのハッシュをこの値と比べる。
 SHA-256 は計算が速く、短い値や推測できる値は総当たりで元に戻されるので、シークレットには CSPRNG で作った十分長い値を使う。
-private_key_jwt によるクライアント認証は core がまだ対応していないため、`client_private_key_jwts` の `jwks` は署名付き Request Object の検証にだけ使う。
+
+### クライアントのスコープ
+
+`client_scopes` に行があるクライアントは、そこに無いスコープを要求すると `invalid_scope` で拒否される。
+`/authorize` のほか、Device Authorization Grant と CIBA の要求も同じ規則で検証する。
+`openid` や `offline_access` も、要求させるなら登録する。
+行が無いクライアントには制限を掛けず、OP が受け付けるスコープをすべて要求できる。
+
+検証は core の `validateClientScope()` が `ClientInfo.scope`（RFC 7591 §2 の `scope`）を見て行うので、`--db` を使わない場合も、`config.ts` で登録するクライアントに `scope` を書けば同じ制限が掛かる。
+`scopes.ts` の `resolveGrantableScopes()` は、この検証を通った後で、ユーザーごとにスコープを絞る場所として残る。
 
 ### クライアントとユーザーの登録
 
@@ -385,11 +398,32 @@ for (const client of defaultRegisteredClients.values()) {
 
 Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録する。
 Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読まない。
-テーブルに列の無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
+テーブルに列の無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
+`jwks` が無いので、署名付き Request Object の署名は検証できず、そのような要求は拒否される。
 
-ユーザーは、ログインに成功した時点で `users` に保存される。
-パスワードでログインするユーザーは `store.ts` の固定ユーザー（testuser / otheruser）のままなので、既存のユーザー管理につなぐ場合は `stores.ts` の `userStore.authenticate()` を書き換える。
-Sign in with Google のユーザーは、Google の `sub`（`federated_identities.provider_sub`）で同じ人かを判断し、初めてのログインでランダムな ID のユーザーを作る。
+ユーザーは、`users.ts` の `registerUser()` でテーブルに入れる。
+`password` を渡すと PBKDF2（HMAC-SHA256、100,000 回）のハッシュを `password_hash` に保存し、渡さなければ NULL になる。
+反復回数は Cloudflare Workers の上限に合わせた値で、上限の無い環境では `users.ts` の `PASSWORD_HASH_ITERATIONS` で上げられる。
+ハッシュには回数とソルトも記録しているので、回数を上げても既存のハッシュはそのまま検証できる。
+
+```typescript
+import { registerUser } from './oidc-provider/db/users.js';
+
+await registerUser(createDatabase(), {
+  sub: 'alice',
+  email: 'alice@example.com',
+  email_verified: true,
+  name: 'Alice',
+  password: process.env.ALICE_PASSWORD,
+});
+```
+
+ログインフォームのユーザー名は `users.id` と照合する。
+メールアドレスでログインさせる場合は、`stores.ts` の `authenticate()` が引く列を `email` に変える。
+パスワードの無いユーザーは、ログインフォームでは認証できない。
+`store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録する（`samples/express-flyio` は起動時に登録している）。
+
+Sign in with Google のユーザーはパスワードを持たず、Google の `sub`（`federated_identities.provider_sub`）で同じ人かを判断して、初めてのログインでランダムな ID のユーザーを作る。
 メールアドレスは Google アカウント側で変えられるので、同じ人かの判断には使わない。
 
 ### stores.ts を書き換えるときに保つ動き
@@ -403,7 +437,7 @@ Sign in with Google のユーザーは、Google の `sub`（`federated_identitie
 ## 生成後のセットアップ
 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
-2. 生成される `JsonStoreBackend` を実装し、`createJsonProviderStores()` の結果を `storage` に渡す（`--db` 付きで生成した場合は、代わりに `db/instance.ts` の `createDatabase()` を書き、`db/schema.sql` を DB に適用して、`db/clients.ts` の `registerClient()` でクライアントを登録する）
+2. 生成される `JsonStoreBackend` を実装し、`createJsonProviderStores()` の結果を `storage` に渡す（`--db` 付きで生成した場合は、代わりに `db/instance.ts` の `createDatabase()` を書き、`db/schema.sql` を DB に適用して、`db/clients.ts` の `registerClient()` と `db/users.ts` の `registerUser()` でクライアントとユーザーを登録する）
 3. `config.ts` と未指定時のインメモリストアはローカル検証専用として扱う
 4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`。`--enable google-login` 時は `@maronn-openid-connect/google-login` も）
 

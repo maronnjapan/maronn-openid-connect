@@ -39,7 +39,6 @@ import {
 } from '@maronn-openid-connect/core';
 import type { GoogleLoginNonceStore } from '@maronn-openid-connect/google-login';
 import {
-  UserStore,
   googleAccountToClaims,
   type AccessTokenStorage,
   type AuthSessionInfo,
@@ -52,12 +51,7 @@ import {
   type UserStorage,
 } from '../store.js';
 import type { SqlDatabase } from './database.js';
-
-// Password users are the development users of store.ts (testuser / otheruser):
-// replace authenticate() below with the check of your own users. Users of
-// "Sign in with Google" have no password. Every user who signs in is saved to
-// the users table, and getClaims() reads the claims from there.
-const developmentUsers = new UserStore();
+import { verifyPassword } from './users.js';
 
 /** core prefixes the id of every AuthTransactionStore key with this. */
 const TRANSACTION_KEY_PREFIX = 'auth_txn:';
@@ -353,9 +347,10 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
   };
 
   // auth_type of a sign-in (auth_users): the provider of the user's federated
-  // identity, or password. Users created by Sign in with Google have no
-  // password, and the development users have no federated identity, so a user
-  // signs in one way only.
+  // identity, or password. A user created by Sign in with Google has no
+  // password, and registerUser() (users.ts) creates no federated identity, so
+  // each user signs in one way only unless you link a Google account to a
+  // user with a password yourself.
   const authTypeOf = async (userId: string): Promise<string> => {
     const [row] = await db.all<{ provider: string }>({
       sql: 'SELECT provider FROM federated_identities WHERE user_id = ? ORDER BY created_at LIMIT 1',
@@ -469,20 +464,6 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     },
   };
 
-  // User: email and email_verified go to their columns, the other claims to
-  // the claims column as JSON.
-  const saveUser = async (claims: UserClaims): Promise<void> => {
-    const { sub, email, email_verified, ...otherClaims } = claims;
-    const now = nowSeconds();
-    await db.run({
-      sql:
-        'INSERT INTO users (id, email, is_verified, created_at, updated_at, claims) ' +
-        'VALUES (?, ?, ' + sqlBoolean(email_verified === true) + ', ?, ?, ?) ' +
-        'ON CONFLICT (id) DO UPDATE SET email = excluded.email, is_verified = excluded.is_verified, ' +
-        'updated_at = excluded.updated_at, claims = excluded.claims',
-      params: [sub, email ?? null, now, now, JSON.stringify(otherClaims)],
-    });
-  };
 
   // EXTENSION (google-login): the user linked to a Google account, if any.
   const findGoogleUser = async (googleSub: string): Promise<string | undefined> => {
@@ -517,32 +498,43 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     return linkedUserId;
   };
 
+  // EXTENSION (google-login): save the claims Google asserted to the user:
+  // email and email_verified to their columns, the others to claims as JSON.
+  // password_hash is left as it is.
+  const saveGoogleClaims = async (claims: UserClaims): Promise<void> => {
+    const { sub, email, email_verified, ...otherClaims } = claims;
+    await db.run({
+      sql:
+        'UPDATE users SET email = ?, is_verified = ' + sqlBoolean(email_verified === true) + ', ' +
+        'updated_at = ?, claims = ? WHERE id = ?',
+      params: [email ?? null, nowSeconds(), JSON.stringify(otherClaims), sub],
+    });
+  };
+
+  // User: the users table. Put users there with registerUser() (users.ts).
   const userStore: UserStorage = {
+    // The password form checks users.id as the username. Look the row up by
+    // email instead to sign in with an email address.
     async authenticate(username, password) {
-      const user = developmentUsers.authenticate(username, password);
-      if (user) {
-        const { password: _password, ...claims } = user;
-        await saveUser(claims);
+      const [row] = await db.all<UserRow & { password_hash: string | null }>({
+        sql: 'SELECT email, is_verified, password_hash, claims FROM users WHERE id = ?',
+        params: [username],
+      });
+      // verifyPassword() takes as long without a hash, so the response time does
+      // not tell whether the user exists. A user without a password (such as one
+      // created by Sign in with Google) cannot sign in with the form.
+      const passwordHash = row?.password_hash ?? null;
+      if (!(await verifyPassword(password, passwordHash)) || !row || passwordHash === null) {
+        return undefined;
       }
-      return user;
+      return { ...userClaims(username, row), password: passwordHash };
     },
     async getClaims(sub) {
       const [row] = await db.all<UserRow>({
         sql: 'SELECT email, is_verified, claims FROM users WHERE id = ?',
         params: [sub],
       });
-      // A subject that never signed in here (such as one the CIBA user
-      // resolver picked) falls back to the development users.
-      if (!row) return developmentUsers.getClaims(sub);
-      const claims: UserClaims = {
-        ...(row.claims ? (JSON.parse(row.claims) as Partial<UserClaims>) : {}),
-        sub,
-      };
-      if (row.email !== null) {
-        claims.email = row.email;
-        claims.email_verified = toBoolean(row.is_verified);
-      }
-      return claims;
+      return row ? userClaims(sub, row) : undefined;
     },
     // EXTENSION (google-login): find or create the user of a verified Google
     // account by its federated identity (never by email), and save the claims
@@ -550,7 +542,7 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     async linkGoogleAccount(account) {
       const userId = (await findGoogleUser(account.sub)) ?? (await createGoogleUser(account.sub));
       const claims: UserClaims = { ...googleAccountToClaims(account), sub: userId };
-      await saveUser(claims);
+      await saveGoogleClaims(claims);
       return claims;
     },
   };
@@ -678,6 +670,19 @@ interface UserRow {
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+/** The claims of a users row: email and email_verified from their columns, the rest from claims. */
+function userClaims(sub: string, row: UserRow): UserClaims {
+  const claims: UserClaims = {
+    ...(row.claims ? (JSON.parse(row.claims) as Partial<UserClaims>) : {}),
+    sub,
+  };
+  if (row.email !== null) {
+    claims.email = row.email;
+    claims.email_verified = toBoolean(row.is_verified);
+  }
+  return claims;
 }
 
 function withoutPrefix(key: string, prefix: string): string {

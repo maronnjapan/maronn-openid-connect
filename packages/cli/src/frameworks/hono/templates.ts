@@ -871,6 +871,12 @@ export function createProviderConfig(
  * gates both refresh token flavors; OIDC Core 1.0 §11 (prompt=consent) decides
  * which flavor the authorization produces.
  *
+ * scope (RFC 7591 §2 \`scope\`, from ClientInfo / TokenClientInfo): the scope
+ * values this client may request. When set, a request for any other scope is
+ * rejected with invalid_scope at /authorize (and at the device and CIBA
+ * endpoints when they are generated). Leave it out to let the client request
+ * every scope the provider accepts.
+ *
  * userinfoSignedResponseAlg: when set, the UserInfo endpoint returns a signed JWT
  * with content-type \`application/jwt\` (OIDC Core 1.0 Section 5.3.2 — client metadata
  * \`userinfo_signed_response_alg\`). The endpoint picks a registered UserInfo signing
@@ -3170,6 +3176,7 @@ import {
   validateAuthorizationCodePkce,
   validatePromptParameter,
   applyOfflineAccessPolicy,
+  validateClientScope,
   validateDisplayParameter,
   resolveMaxAge,
   parseAudienceParameter,
@@ -3337,6 +3344,10 @@ ${jarmResolveStep}${rejectUnsupportedStep}
 
     // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
     let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes. Any other one, offline_access included, is invalid_scope.
+    validateClientScope(scope, client.scope, redirectUri, state);
 
     // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
     // exists only for the OIDF Basic OP static-client compatibility target).
@@ -3878,6 +3889,7 @@ import {
 import {
   TokenError,
   extractClientCredentials,
+  findUnregisteredClientScopes,
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
@@ -3993,6 +4005,16 @@ deviceAuthorizationApp.post('/', async (c) => {
     // everywhere (same rule as /authorize). Requests that omit scope — legal per
     // RFC 8628 — are therefore rejected: a known, deliberate profile restriction.
     const requestedScope = validateDeviceAuthorizationScope(params['scope']);
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes, the same rule as /authorize.
+    const unregisteredScopes = findUnregisteredClientScopes(requestedScope, client.scope);
+    if (unregisteredScopes.length > 0) {
+      throw new DeviceAuthorizationError(
+        'invalid_scope',
+        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+      );
+    }
 
     // OIDC Core 1.0 §11: drop offline_access when it could never be granted.
     const scope = applyOfflineAccessPolicy(requestedScope, {
@@ -4672,6 +4694,7 @@ import {
 import {
   TokenError,
   extractClientCredentials,
+  findUnregisteredClientScopes,
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
@@ -4800,7 +4823,20 @@ backchannelAuthenticationApp.post('/', async (c) => {
         return claims ? { subject: claims.sub } : null;
       });
 
-${customScopeStep}    // --- Backchannel authentication pipeline --------------------------------
+${customScopeStep}    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes, the same rule as /authorize.
+    const unregisteredScopes = findUnregisteredClientScopes(
+      (params['scope'] ?? '').split(' ').filter((scope) => scope.length > 0),
+      client.scope,
+    );
+    if (unregisteredScopes.length > 0) {
+      throw new BackchannelAuthenticationError(
+        'invalid_scope',
+        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+      );
+    }
+
+    // --- Backchannel authentication pipeline --------------------------------
     // Validation runs in CIBA §7.1 order inside the experimental package:
     // client checks (public client / grant registration / delivery mode) →
     // request parameter rejection → the one-and-only-one hint rule → scope →

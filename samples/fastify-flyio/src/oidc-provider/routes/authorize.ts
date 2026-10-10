@@ -20,6 +20,7 @@ import {
   validateAuthorizationCodePkce,
   validatePromptParameter,
   applyOfflineAccessPolicy,
+  validateClientScope,
   validateDisplayParameter,
   resolveMaxAge,
   parseAudienceParameter,
@@ -229,6 +230,10 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
 
     // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
     let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes. Any other one, offline_access included, is invalid_scope.
+    validateClientScope(scope, client.scope, redirectUri, state);
 
     // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
     // exists only for the OIDF Basic OP static-client compatibility target).

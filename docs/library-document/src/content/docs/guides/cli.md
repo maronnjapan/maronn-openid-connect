@@ -373,7 +373,8 @@ maronn-oidc generate express --db
 `SqlDatabase` は SQL を実行する口を 2 つ持つだけなので、どのドライバーでも実装できます。
 ORM も生の SQL を実行するメソッドを持っているので、CLI は ORM ごとのコードを生成しません。
 生成直後の `instance.ts` は、実装されるまで「`createDatabase()` が未実装である」というエラーを投げます。
-ファイルの末尾に node:sqlite、Cloudflare D1（Hono のみ）、PostgreSQL（pg）、Prisma の例を載せているので、使う DB に合わせて書き換えてください。
+ファイルの末尾に node:sqlite、Cloudflare D1（Hono のみ）、PostgreSQL（pg）、Prisma、Drizzle、Kysely の例を載せているので、使う DB に合わせて書き換えてください。
+Prisma、Drizzle、Kysely の例は、プロジェクトですでに作ってあるクライアント（`prisma` や `db`）をそのまま使います。
 
 ```typescript
 // db/instance.ts を node:sqlite で書いた例

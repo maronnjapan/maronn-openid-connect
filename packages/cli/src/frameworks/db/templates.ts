@@ -593,14 +593,14 @@ const NOT_IMPLEMENTED_ERROR = `    'db/instance.ts: createDatabase() is not impl
       'Return the database the OP stores its data in (see the examples in that file).',`;
 
 /**
- * PostgreSQL (pg) and Prisma examples. `parameters` is the parameter list of
- * createDatabase() for the target, so the examples keep the signature the
- * generated app calls.
+ * PostgreSQL examples: pg, Prisma, Drizzle and Kysely. `parameters` is the
+ * parameter list of createDatabase() for the target, so the examples keep the
+ * signature the generated app calls.
  */
 function postgresExamples(parameters: string): string {
   return `//
-// PostgreSQL numbers its placeholders, so the next two examples turn each ?
-// into $1, $2, ... with this helper:
+// PostgreSQL numbers its placeholders, so the pg, Prisma and Kysely examples
+// turn each ? into $1, $2, ... with this helper:
 //
 //   const numbered = (sql: string): string => {
 //     let index = 0;
@@ -639,8 +639,52 @@ function postgresExamples(parameters: string): string {
 //     };
 //   }
 //
-// Drizzle: db.$client is the driver Drizzle runs on (a pg Pool, a D1 binding,
-// ...), so wrap it as in the matching example.`;
+// Drizzle on PostgreSQL (drizzle-orm/node-postgres; db is your Drizzle
+// instance). The statement is rebuilt with Drizzle's sql tag, which writes the
+// placeholders of the dialect itself. Other Drizzle drivers return their own
+// result shapes (on D1, use db.all() for rows and db.run() for changes):
+//
+//   import { sql, type SQL } from 'drizzle-orm';
+//
+//   const toDrizzleSql = (statement: SqlStatement): SQL => {
+//     const query = sql.empty();
+//     statement.sql.split('?').forEach((part, index) => {
+//       if (index > 0) query.append(sql\`\${statement.params[index - 1]}\`);
+//       query.append(sql.raw(part));
+//     });
+//     return query;
+//   };
+//
+//   export function createDatabase(${parameters}): SqlDatabase {
+//     return {
+//       async all<Row>(statement: SqlStatement): Promise<Row[]> {
+//         const result = await db.execute(toDrizzleSql(statement));
+//         return result.rows as Row[];
+//       },
+//       async run(statement: SqlStatement) {
+//         const result = await db.execute(toDrizzleSql(statement));
+//         return { changes: result.rowCount ?? 0 };
+//       },
+//     };
+//   }
+//
+// Kysely on PostgreSQL (PostgresDialect; db is your Kysely instance). With a
+// SQLite dialect, pass statement.sql as it is instead of numbered(...):
+//
+//   import { CompiledQuery } from 'kysely';
+//
+//   export function createDatabase(${parameters}): SqlDatabase {
+//     return {
+//       async all<Row>(statement: SqlStatement): Promise<Row[]> {
+//         const query = CompiledQuery.raw(numbered(statement.sql), statement.params);
+//         return [...(await db.executeQuery<Row>(query)).rows];
+//       },
+//       async run(statement: SqlStatement) {
+//         const query = CompiledQuery.raw(numbered(statement.sql), statement.params);
+//         return { changes: Number((await db.executeQuery(query)).numAffectedRows ?? 0) };
+//       },
+//     };
+//   }`;
 }
 
 /**

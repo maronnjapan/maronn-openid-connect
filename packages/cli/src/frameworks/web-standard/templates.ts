@@ -1,7 +1,9 @@
 import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
-import { dbGeneratedFiles } from '../db/templates.js';
+import type { DbKind } from '../../db.js';
+import { databaseNames } from '../db/names.js';
+import { databaseGeneratedFiles } from '../db/wiring.js';
 import {
   backchannelAuthenticationRouteTemplate,
   cibaVerificationRouteTemplate,
@@ -387,7 +389,7 @@ export async function writeWebResponse(
  * --db: the app.ts pieces that make db/ the default storage. Without --db every
  * piece is the regular output, byte for byte.
  */
-function webStorageTemplateParts(db: boolean): {
+function webStorageTemplateParts(db: DbKind | undefined): {
   defaultStoresImport: string;
   inMemoryClientResolverImport: string;
   dbImports: string;
@@ -397,44 +399,47 @@ function webStorageTemplateParts(db: boolean): {
   requestStores: string;
   requestClientResolver: string;
 } {
+  if (!db) {
+    return {
+      defaultStoresImport: '  defaultProviderStores,\n',
+      inMemoryClientResolverImport: '  createInMemoryClientResolver,\n',
+      dbImports: '',
+      storageDoc: 'Persistent stores shared by Route Handlers and Server Actions.',
+      clientResolverDoc: '',
+      appStores: '',
+      requestStores: '    const stores = options.storage ?? defaultProviderStores;\n',
+      requestClientResolver: '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
+    };
+  }
+  const names = databaseNames(db);
   return {
-    defaultStoresImport: db ? '' : '  defaultProviderStores,\n',
-    inMemoryClientResolverImport: db ? '' : '  createInMemoryClientResolver,\n',
-    dbImports: db
-      ? `import { createDatabase } from './db/instance.js';
-import type { SqlDatabase } from './db/database.js';
-import { createSqlProviderStores } from './db/stores.js';
-import { createSqlClientResolver } from './db/clients.js';\n`
-      : '',
-    storageDoc: db
-      ? 'Stores to use instead of db/: the SQL stores on the database db/instance.ts creates.'
-      : 'Persistent stores shared by Route Handlers and Server Actions.',
-    clientResolverDoc: db
-      ? '  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */\n'
-      : '',
-    appStores: db
-      ? `
+    defaultStoresImport: '',
+    inMemoryClientResolverImport: '',
+    dbImports: `import { createDatabase } from './db/instance.js';
+import type { ${names.databaseType} } from './db/database.js';
+import { ${names.createProviderStores} } from './db/stores.js';
+import { ${names.createClientResolver} } from './db/clients.js';\n`,
+    storageDoc: `Stores to use instead of db/: ${names.storesDescription} on the database db/instance.ts creates.`,
+    clientResolverDoc: `  /** Clients to use instead of ${names.clientsDescription} (registerClient() in db/clients.ts). */\n`,
+    appStores: `
   // db/: unless options.storage / options.clientResolver replace them, the
   // stores and the registered clients come from the database that
   // db/instance.ts creates. It is created once, here, so an unimplemented
   // createDatabase() stops the server at startup instead of failing a request.
-  let database: SqlDatabase | undefined;
-  const openDatabase = (): SqlDatabase => (database ??= createDatabase());
-  const stores = options.storage ?? createSqlProviderStores(openDatabase());
-  const clientResolver = options.clientResolver ?? createSqlClientResolver(openDatabase());
-`
-      : '',
-    requestStores: db ? '' : '    const stores = options.storage ?? defaultProviderStores;\n',
-    requestClientResolver: db
-      ? ''
-      : '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
+  let database: ${names.databaseType} | undefined;
+  const openDatabase = (): ${names.databaseType} => (database ??= createDatabase());
+  const stores = options.storage ?? ${names.createProviderStores}(openDatabase());
+  const clientResolver = options.clientResolver ?? ${names.createClientResolver}(openDatabase());
+`,
+    requestStores: '',
+    requestClientResolver: '',
   };
 }
 
 export function webAppTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  db = false,
+  db?: DbKind,
 ): string {
   const storageParts = webStorageTemplateParts(db);
   const introspectionImport = features.introspection
@@ -949,7 +954,7 @@ function webCoreGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
-  db = false,
+  db?: DbKind,
 ): GeneratedFile[] {
   return [
     { path: 'app.ts', content: webAppTemplate(corePkg, features, db) },
@@ -1049,13 +1054,14 @@ export function webGeneratedFiles(
   applyTemplate: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
-  db = false,
+  db?: DbKind,
 ): GeneratedFile[] {
   return [
     ...webCoreGeneratedFiles(corePkg, features, scopes, db),
     { path: 'apply.ts', content: applyTemplate },
     { path: 'node-adapter.ts', content: nodeAdapterTemplate() },
-    // --db: SQL tables, the stores on them, and the db/instance.ts the user writes.
-    ...(db ? dbGeneratedFiles(corePkg, features, 'node') : []),
+    // --db sql / --db kv: the SQL tables or the key layout, the stores on
+    // them, and the db/instance.ts the user writes.
+    ...(db ? databaseGeneratedFiles(db, corePkg, features, 'node') : []),
   ];
 }

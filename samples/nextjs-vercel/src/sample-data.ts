@@ -1,12 +1,12 @@
 /**
- * The clients and users of this sample. The generated OP (src/app, --db)
- * reads both from the tables of src/app/_oidc-provider/db/, so
+ * The clients and users of this sample. The generated OP (src/app, --db kv)
+ * reads both from the key-value store of src/app/_oidc-provider/db/, so
  * instrumentation.ts registers them there when a server instance starts.
  */
 import type { RegisteredClient } from './app/_oidc-provider/config';
 import { registerClient } from './app/_oidc-provider/db/clients';
 import { createDatabase } from './app/_oidc-provider/db/instance';
-import { createSqlProviderStores } from './app/_oidc-provider/db/stores';
+import { createKvProviderStores } from './app/_oidc-provider/db/stores';
 import { registerUser } from './app/_oidc-provider/db/users';
 import { UserStore } from './app/_oidc-provider/store';
 
@@ -14,9 +14,8 @@ export async function registerSampleData(): Promise<void> {
   const db = createDatabase();
 
   // registerClient() replaces an earlier registration of the same client_id,
-  // so a restart picks up changed clients. It writes the same rows when the
-  // values are the same, so instances that start at the same moment do not
-  // conflict.
+  // so a restart picks up changed clients. A client is one record written in
+  // one set, so instances that start at the same moment do not conflict.
   for (const client of readRegisteredClients().values()) {
     await registerClient(db, client);
   }
@@ -25,7 +24,7 @@ export async function registerSampleData(): Promise<void> {
   // store.ts (testuser / otheruser, password "password"). registerUser()
   // hashes the password with PBKDF2, which would slow down every cold start
   // on Vercel, so a user that is already registered is left as it is.
-  const { userStore } = createSqlProviderStores(db);
+  const { userStore } = createKvProviderStores(db);
   const developmentUsers = new UserStore();
   for (const username of ['testuser', 'otheruser']) {
     if (await userStore.getClaims(username)) continue;

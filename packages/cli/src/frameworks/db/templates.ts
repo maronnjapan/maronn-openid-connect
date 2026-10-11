@@ -1325,16 +1325,7 @@ export function dbUsersTemplate(corePkg: string): string {
 import type { UserClaims } from '${corePkg}';
 import type { SqlDatabase } from './database.js';
 
-const PASSWORD_HASH_ALGORITHM = 'pbkdf2-sha256';
-/**
- * OWASP recommends 600,000 iterations for PBKDF2-HMAC-SHA256, but Cloudflare
- * Workers accept at most 100,000, so the generated code uses that. Raise it
- * where the runtime allows more.
- */
-const PASSWORD_HASH_ITERATIONS = 100_000;
-const PASSWORD_SALT_BYTES = 16;
-const PASSWORD_HASH_BYTES = 32;
-
+${passwordHashingConstants()}
 /**
  * Put a user into the users table, replacing an earlier registration with the
  * same id (sub). email and email_verified go to their columns, the other
@@ -1366,7 +1357,29 @@ export async function registerUser(
   });
 }
 
-/** The value of users.password_hash for a password, with a new random salt. */
+${passwordHashingFunctions('users.password_hash')}`;
+}
+
+/** The parameters of the password hashing, shared by the users.ts of --db sql and --db kv. */
+export function passwordHashingConstants(): string {
+  return `const PASSWORD_HASH_ALGORITHM = 'pbkdf2-sha256';
+/**
+ * OWASP recommends 600,000 iterations for PBKDF2-HMAC-SHA256, but Cloudflare
+ * Workers accept at most 100,000, so the generated code uses that. Raise it
+ * where the runtime allows more.
+ */
+const PASSWORD_HASH_ITERATIONS = 100_000;
+const PASSWORD_SALT_BYTES = 16;
+const PASSWORD_HASH_BYTES = 32;
+`;
+}
+
+/**
+ * hashPassword() / verifyPassword() and their helpers, shared by the users.ts
+ * of --db sql and --db kv. hashField names where a user's hash is kept.
+ */
+export function passwordHashingFunctions(hashField: string): string {
+  return `/** The value of ${hashField} for a password, with a new random salt. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(PASSWORD_SALT_BYTES));
   const hash = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
@@ -1374,7 +1387,7 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /**
- * Whether a password matches users.password_hash. Without a hash (null, or a
+ * Whether a password matches ${hashField}. Without a hash (null, or a
  * value in another format) it still derives a key before answering false, so
  * the time taken does not tell whether the user exists or has a password.
  */

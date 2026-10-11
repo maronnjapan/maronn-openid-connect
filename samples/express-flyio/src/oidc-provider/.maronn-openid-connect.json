@@ -18,5 +18,5 @@
     "googleLogin": true
   },
   "scopes": [],
-  "db": true
+  "db": "sql"
 }

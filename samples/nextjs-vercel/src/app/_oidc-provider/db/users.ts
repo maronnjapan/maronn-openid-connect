@@ -1,7 +1,7 @@
 /**
- * Users in the users table of db/schema.sql: registerUser() to put a user
- * there, and the password hashing that authenticate() (stores.ts) checks the
- * login form against.
+ * Users in the key-value store: registerUser() to put a user there, and the
+ * password hashing that authenticate() (stores.ts) checks the login form
+ * against.
  *
  * Passwords are hashed with PBKDF2-HMAC-SHA256 of the Web Crypto API, which
  * every runtime of the generated OP has. A stored hash records its own
@@ -9,7 +9,8 @@
  * raising PASSWORD_HASH_ITERATIONS later keeps the existing hashes valid.
  */
 import type { UserClaims } from '@maronn-openid-connect/core';
-import type { SqlDatabase } from './database';
+import { readRecord, writeRecord, type KvDatabase } from './database';
+import { keys, type UserRecord } from './keys';
 
 const PASSWORD_HASH_ALGORITHM = 'pbkdf2-sha256';
 /**
@@ -22,37 +23,34 @@ const PASSWORD_SALT_BYTES = 16;
 const PASSWORD_HASH_BYTES = 32;
 
 /**
- * Put a user into the users table, replacing an earlier registration with the
- * same id (sub). email and email_verified go to their columns, the other
- * claims to the claims column, and password (when given) is saved as its hash.
- * Without a password the user cannot use the login form of the OP.
+ * Put a user into the store, replacing an earlier registration with the same
+ * id (sub). email and email_verified go to their fields, the other claims to
+ * claims, and password (when given) is saved as its hash. Without a password
+ * the user cannot use the login form of the OP.
  *
  *   await registerUser(db, { sub: 'alice', email: 'alice@example.com', email_verified: true, password: '...' });
  */
 export async function registerUser(
-  db: SqlDatabase,
+  db: KvDatabase,
   user: UserClaims & { password?: string },
 ): Promise<void> {
   const { sub, email, email_verified, password, ...otherClaims } = user;
   const now = Math.floor(Date.now() / 1000);
-  await db.run({
-    sql:
-      'INSERT INTO users (id, email, is_verified, password_hash, created_at, updated_at, claims) ' +
-      'VALUES (?, ?, ' + (email_verified === true ? 'TRUE' : 'FALSE') + ', ?, ?, ?, ?) ' +
-      'ON CONFLICT (id) DO UPDATE SET email = excluded.email, is_verified = excluded.is_verified, ' +
-      'password_hash = excluded.password_hash, updated_at = excluded.updated_at, claims = excluded.claims',
-    params: [
-      sub,
-      email ?? null,
-      password === undefined ? null : await hashPassword(password),
-      now,
-      now,
-      JSON.stringify(otherClaims),
-    ],
-  });
+  const current = await readRecord<UserRecord>(db, keys.user(sub));
+  const record: UserRecord = {
+    email: email ?? null,
+    is_verified: email_verified === true,
+    password_hash: password === undefined ? null : await hashPassword(password),
+    created_at: current?.created_at ?? now,
+    updated_at: now,
+    claims: otherClaims,
+    // A Google account linked to the user stays linked.
+    ...(current?.federated_identities ? { federated_identities: current.federated_identities } : {}),
+  };
+  await writeRecord(db, keys.user(sub), record);
 }
 
-/** The value of users.password_hash for a password, with a new random salt. */
+/** The value of a user's password_hash for a password, with a new random salt. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(PASSWORD_SALT_BYTES));
   const hash = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
@@ -60,7 +58,7 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /**
- * Whether a password matches users.password_hash. Without a hash (null, or a
+ * Whether a password matches a user's password_hash. Without a hash (null, or a
  * value in another format) it still derives a key before answering false, so
  * the time taken does not tell whether the user exists or has a password.
  */

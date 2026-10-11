@@ -12,9 +12,9 @@
 | `hono-cloudflare` | Hono | Cloudflare Workers | D1（Wranglerエミュレート） | D1 |
 | `express-flyio` | Express | Fly.io | node:sqlite | node:sqlite + 永続ボリューム |
 | `fastify-flyio` | Fastify | Fly.io | node:sqlite | node:sqlite + 永続ボリューム |
-| `nextjs-vercel` | Next.js | Vercel | node:sqlite | Turso（libSQL の HTTP API） |
+| `nextjs-vercel` | Next.js | Vercel | node:sqlite（キー・バリューの表） | Upstash Redis REST |
 
-どのサンプルも CLI の `--db` で生成した SQL のテーブルにデータを保存し、クライアントとユーザーもそのテーブルから読む。生成物のうちサンプルが書くのは DB インスタンスを返す `db/instance.ts` だけで、上の表のストレージはこのファイルで切り替えている。クライアントと開発用のユーザーは、各サンプルが起動時に `registerClient()` と `registerUser()` で登録する。`--db` を付けない生成（`JsonStoreBackend` で 1 つのテーブルや KV に JSON を入れる方式）は、サンプルの E2E では検証していない。
+どのサンプルも CLI の `--db` で生成した `db/` にデータを保存し、クライアントとユーザーもそこから読む。`nextjs-vercel` は `--db kv`（キー・バリューストア）、ほかの 3 つは `--db sql`（SQL のテーブル）で生成している。生成物のうちサンプルが書くのは DB インスタンスを返す `db/instance.ts` だけで、上の表のストレージはこのファイルで切り替えている。クライアントと開発用のユーザーは、各サンプルが起動時に `registerClient()` と `registerUser()` で登録する。`--db` を付けない生成（`JsonStoreBackend` で 1 つのテーブルや KV に JSON を入れる方式）は、サンプルの E2E では検証していない。
 
 ## 一発コマンド
 

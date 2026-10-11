@@ -4,6 +4,8 @@
 
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
+import type { DbKind } from '../../db.js';
+import { databaseNames } from '../db/names.js';
 
 /**
  * Package that hosts the experimental (unstable) features. Generated code only
@@ -91,7 +93,7 @@ async function enforceOidcEndpointMethod(c: any, next: () => Promise<void>): Pro
  * --db: the app.ts / apply.ts pieces that make db/ the default storage. Without
  * --db every piece is the regular output, byte for byte.
  */
-function honoStorageTemplateParts(db: boolean): {
+function honoStorageTemplateParts(db: DbKind | undefined): {
   defaultStoresImport: string;
   inMemoryClientResolverImport: string;
   dbImports: string;
@@ -100,31 +102,35 @@ function honoStorageTemplateParts(db: boolean): {
   defaultStores: string;
   defaultClientResolver: string;
 } {
+  if (!db) {
+    return {
+      defaultStoresImport: '  defaultProviderStores,\n',
+      inMemoryClientResolverImport: '  createInMemoryClientResolver,\n',
+      dbImports: '',
+      storageDoc: 'Persistent stores, or a request-aware factory for bindings such as Cloudflare D1.',
+      clientResolverDoc: '',
+      defaultStores: 'defaultProviderStores',
+      defaultClientResolver: 'createInMemoryClientResolver()',
+    };
+  }
+  const names = databaseNames(db);
   return {
-    defaultStoresImport: db ? '' : '  defaultProviderStores,\n',
-    inMemoryClientResolverImport: db ? '' : '  createInMemoryClientResolver,\n',
-    dbImports: db
-      ? `import { createDatabase } from './db/instance.js';
-import { createSqlProviderStores } from './db/stores.js';
-import { createSqlClientResolver } from './db/clients.js';\n`
-      : '',
-    storageDoc: db
-      ? 'Stores to use instead of db/: the SQL stores on the database db/instance.ts creates for each request.'
-      : 'Persistent stores, or a request-aware factory for bindings such as Cloudflare D1.',
-    clientResolverDoc: db
-      ? '  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */\n'
-      : '',
-    defaultStores: db ? 'createSqlProviderStores(createDatabase(context))' : 'defaultProviderStores',
-    defaultClientResolver: db
-      ? 'createSqlClientResolver(createDatabase(c))'
-      : 'createInMemoryClientResolver()',
+    defaultStoresImport: '',
+    inMemoryClientResolverImport: '',
+    dbImports: `import { createDatabase } from './db/instance.js';
+import { ${names.createProviderStores} } from './db/stores.js';
+import { ${names.createClientResolver} } from './db/clients.js';\n`,
+    storageDoc: `Stores to use instead of db/: ${names.storesDescription} on the database db/instance.ts creates for each request.`,
+    clientResolverDoc: `  /** Clients to use instead of ${names.clientsDescription} (registerClient() in db/clients.ts). */\n`,
+    defaultStores: `${names.createProviderStores}(createDatabase(context))`,
+    defaultClientResolver: `${names.createClientResolver}(createDatabase(c))`,
   };
 }
 
 export function appTemplate(
   _corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  db = false,
+  db?: DbKind,
 ): string {
   const storageParts = honoStorageTemplateParts(db);
   const introspectionImport = features.introspection
@@ -8317,7 +8323,7 @@ ${consentSuccessResponse}
 export function applyTemplate(
   _corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  db = false,
+  db?: DbKind,
 ): string {
   const storageParts = honoStorageTemplateParts(db);
   const introspectionImport = features.introspection

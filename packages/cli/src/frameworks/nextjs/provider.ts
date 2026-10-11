@@ -4,6 +4,7 @@
  * dependencies from, the storage backend behind it, and the small helpers the
  * Route Handlers share.
  */
+import type { DbKind } from '../../db.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
 
@@ -15,16 +16,22 @@ import type { OidcFeatureConfig } from '../../features.js';
 export function nextJsProviderTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
-  db = false,
+  db?: DbKind,
 ): string {
   // --db: the stores run on the database db/instance.ts creates, instead of
   // the Upstash Redis / node:sqlite key-value backends of storage-backend.ts.
-  const storesImport = db
-    ? `import type { SqlDatabase, SqlStatement } from './db/database';
+  const storesImport =
+    db === 'kv'
+      ? `import type { KvDatabase } from './db/database';
+import { createDatabase } from './db/instance';
+import { createKvProviderStores } from './db/stores';
+import { createKvClientResolver } from './db/clients';`
+      : db === 'sql'
+        ? `import type { SqlDatabase, SqlStatement } from './db/database';
 import { createDatabase } from './db/instance';
 import { createSqlProviderStores } from './db/stores';
 import { createSqlClientResolver } from './db/clients';`
-    : `import { createNextJsProviderStores } from './storage-backend';`;
+        : `import { createNextJsProviderStores } from './storage-backend';`;
   // --db: the registered clients come from the client tables of db/ too, so the
   // environment-variable clients (readRegisteredClients) are not generated.
   const registeredClientsReader = db
@@ -89,13 +96,21 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
   const configClientImports = db
     ? { resolver: '', registeredClient: '' }
     : { resolver: '\n  createInMemoryClientResolver,', registeredClient: '\n  type RegisteredClient,' };
-  const clientsDefinition = db
-    ? `/**
- * The database of db/instance.ts. createDatabase() runs on the first query
+  const databaseDefinition = `/**
+ * The database of db/instance.ts. createDatabase() runs on its first use
  * rather than at import, so \`next build\` does not call it.
  */
 const database = deferDatabase(createDatabase);
-
+`;
+  const clientsDefinition = db === 'kv'
+    ? `${databaseDefinition}
+/**
+ * Registered clients: the client records of the key-value store (db/keys.ts).
+ * Put clients there with registerClient() (db/clients.ts).
+ */
+export const clientResolver = createKvClientResolver(database);`
+    : db === 'sql'
+    ? `${databaseDefinition}
 /**
  * Registered clients: the client tables of db/schema.sql. Put clients there
  * with registerClient() (db/clients.ts).
@@ -108,7 +123,22 @@ export const clientResolver = createSqlClientResolver(database);`
  * in a real project.
  */
 export const clientResolver = createInMemoryClientResolver(readRegisteredClients());`;
-  const storesDefinition = db
+  const storesDefinition = db === 'kv'
+    ? `/** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
+export const stores = createKvProviderStores(database);
+
+/** A KvDatabase that calls create() on its first use and keeps the result. */
+function deferDatabase(create: () => KvDatabase): KvDatabase {
+  let database: KvDatabase | undefined;
+  const resolve = (): KvDatabase => (database ??= create());
+  return {
+    get: (key) => resolve().get(key),
+    set: (key, value, ttlSeconds) => resolve().set(key, value, ttlSeconds),
+    setIfAbsent: (key, value, ttlSeconds) => resolve().setIfAbsent(key, value, ttlSeconds),
+    delete: (key) => resolve().delete(key),
+  };
+}`
+    : db === 'sql'
     ? `/** Persistent provider stores: the SQL tables of db/schema.sql, on the same database. */
 export const stores = createSqlProviderStores(database);
 

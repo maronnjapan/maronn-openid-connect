@@ -1,12 +1,12 @@
 # Next.js + Vercel sample
 
-CLIの `--db` で生成したSQLのテーブル（`src/app/_oidc-provider/db/`）に、OPの状態を保存する。ローカルではNode.js組み込みの `node:sqlite`、VercelではMarketplaceから接続できるTurso（SQLite互換のlibSQL）を、そのHTTP APIで使う。どちらも外部ランタイムライブラリは不要。
+CLIの `--db kv` で生成したキー・バリューストア用のコード（`src/app/_oidc-provider/db/`）で、OPの状態を保存する。VercelではMarketplaceから接続できるUpstash Redisを、そのREST APIで使う。ローカルではNode.js組み込みの `node:sqlite` の1つの表を、キー・バリューストアとして使う。どちらも外部ランタイムライブラリは不要。
 
-`src/app/_oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）、ストア（`stores.ts`）、クライアントとユーザーの読み書き（`clients.ts`、`users.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。`instance.ts` は `TURSO_DATABASE_URL` と `TURSO_AUTH_TOKEN` があればTursoを、無ければ `node:sqlite` を使い、最初のクエリの前に `schema.sql` のテーブルを作る。文はすべて `CREATE ... IF NOT EXISTS` なので、作成済みのDBでは何も変わらない。
+`src/app/_oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、キーの一覧（`keys.ts`）、ストア（`stores.ts`）、クライアントとユーザーの読み書き（`clients.ts`、`users.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。`instance.ts` は `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` があればUpstash Redisを、無ければ `node:sqlite` を使う。`node:sqlite` の `setIfAbsent()` は条件付きの `INSERT` 1文で行うので、同時に呼ばれても成功するのは1回だけである。
 
-クライアントとユーザーもSQLのテーブルから読む。サーバーの起動時に `src/instrumentation.ts`（Next.jsが起動時に1回呼ぶ `register()`）が、`src/sample-data.ts` のクライアント（`OIDC_CLIENTS_JSON`、無ければ `OIDC_CLIENT_ID` などの環境変数）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` でテーブルに登録する。client_secret とパスワードはハッシュだけを保存する。`registerClient()` は値が同じなら同じ行を書くので、同時に起動したインスタンスが登録し合っても行は重複しない。ユーザーはパスワードのハッシュ化に時間がかかるので、登録済みならそのままにする。
+クライアントとユーザーもキー・バリューストアから読む。サーバーの起動時に `src/instrumentation.ts`（Next.jsが起動時に1回呼ぶ `register()`）が、`src/sample-data.ts` のクライアント（`OIDC_CLIENTS_JSON`、無ければ `OIDC_CLIENT_ID` などの環境変数）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` で登録する。client_secret とパスワードはハッシュだけを保存する。クライアントは1つのレコードを1回の書き込みで登録するので、同時に起動したインスタンスが登録し合っても壊れない。ユーザーはパスワードのハッシュ化に時間がかかるので、登録済みならそのままにする。
 
-クライアントのテーブルにはまだ `jwks`（クライアントの公開鍵）の列が無い。Express、Fastify、Honoのサンプルは `OIDC_CLIENTS_JSON` の `jwks` をアプリのコードで足すが、このサンプルではクライアントを読む `provider.ts` もCLIの生成物なので足せない。そのため、OpenID Conformance Suiteの署名付きRequest Objectは、このサンプルでは検証できない。
+クライアントのレコードにはまだ `jwks`（クライアントの公開鍵）が無い。Express、Fastify、Honoのサンプルは `OIDC_CLIENTS_JSON` の `jwks` をアプリのコードで足すが、このサンプルではクライアントを読む `provider.ts` もCLIの生成物なので足せない。そのため、OpenID Conformance Suiteの署名付きRequest Objectは、このサンプルでは検証できない。
 
 ## 構成
 
@@ -28,16 +28,16 @@ pnpm sample:nextjs-vercel
 pnpm deploy:nextjs-vercel
 ```
 
-Vercel CLIは `pnpm dlx` 経由で使うためグローバルインストール不要。`vercel login`（未ログイン時のみ）とTursoの資格情報以外はすべて自動化されている:
+Vercel CLIは `pnpm dlx` 経由で使うためグローバルインストール不要。`vercel login`（未ログイン時のみ）とUpstash Redisの資格情報以外はすべて自動化されている:
 
 - プロジェクト（`maronn-openid-connect-sample-nextjs-vercel`）の作成またはリンク
-- `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` が未設定なら、Vercel Marketplace連携またはTurso CLIでの作成手順をガイドし、貼り付け入力で `vercel env add` まで実施
+- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` が未設定なら、Vercel Marketplace連携またはUpstashコンソールでの作成手順をガイドし、貼り付け入力で `vercel env add` まで実施
 - ローカルでの `vercel build`（workspace依存の `@maronn-openid-connect/core` をローカルで解決）と `--prebuilt` での本番デプロイ
 - 公開URLの `OIDC_ISSUER` への固定（初回のみ2回デプロイ）とDiscoveryでのissuer検証
 
 issuerは `.deploy/issuer` に保存され、2回目以降は1回のデプロイで完了する。カスタムドメインは `--issuer` で指定できる（詳細は `--help`）。
 
-`VERCEL` が設定された環境でTursoの資格情報がない場合は、ほかの関数から読めない一時ファイルへ誤ってフォールバックしないよう起動を失敗させる。署名鍵は起動時生成のため、複数インスタンスに広がる本番相当の検証では固定鍵の読み込みへ置き換えること（`src/app/_oidc-provider/provider.ts` の署名鍵の節）。
+`VERCEL` が設定された環境でRedisの資格情報がない場合は、ほかの関数から読めない一時ファイルへ誤ってフォールバックしないよう起動を失敗させる。署名鍵は起動時生成のため、複数インスタンスに広がる本番相当の検証では固定鍵の読み込みへ置き換えること（`src/app/_oidc-provider/provider.ts` の署名鍵の節）。
 
 ## Google ログイン（任意）
 
@@ -51,4 +51,4 @@ issuerは `.deploy/issuer` に保存され、2回目以降は1回のデプロイ
 GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com HOST=localhost OIDC_ISSUER=http://localhost:3010 pnpm sample:nextjs-vercel
 ```
 
-`GOOGLE_HOSTED_DOMAIN=example.com` を足すと、その Google Workspace ドメインのアカウントだけを受け付ける。Google アカウントは、初めてのログインでランダムな ID のユーザーとして `users` テーブルにその場で登録され、Google の sub は `federated_identities` テーブルに記録される。`name` / `email` などのクレームは ID トークンから写される。Vercel では `vercel env add GOOGLE_CLIENT_ID production` で設定して再デプロイする（リダイレクト URI は `<OIDC_ISSUER>/login/google`。デプロイスクリプトが完了時に案内する）。
+`GOOGLE_HOSTED_DOMAIN=example.com` を足すと、その Google Workspace ドメインのアカウントだけを受け付ける。Google アカウントは、初めてのログインでランダムな ID のユーザーとしてその場で登録され（`user:` のキー）、Google の sub は `federated_identity:` のキーに記録される。`name` / `email` などのクレームは ID トークンから写される。Vercel では `vercel env add GOOGLE_CLIENT_ID production` で設定して再デプロイする（リダイレクト URI は `<OIDC_ISSUER>/login/google`。デプロイスクリプトが完了時に案内する）。

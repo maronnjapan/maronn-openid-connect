@@ -44,7 +44,7 @@ const app = new Hono();
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
-| `--db` | クライアント、ユーザー、認可コード、トークンなどのデータを SQL のテーブルに保存する（`db/` を生成する。[Database (--db)](#database---db) を参照） |
+| `--db <sql\|kv>` | クライアント、ユーザー、認可コード、トークンなどのデータを、SQL のテーブル（`sql`）かキー・バリューストア（`kv`）に保存する（`db/` を生成する。[Database (--db)](#database---db) を参照） |
 | `--force` | 出力先に既にあるファイルを上書きする |
 | `--dry-run` | 書き込みを行わず、出力予定のファイル一覧（新規か上書きか）を表示する |
 | `--help, -h` | ヘルプ表示 |
@@ -79,7 +79,7 @@ oidc-provider/
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
 ├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
-├── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
+├── db/                   # --db 指定時のみ。テーブル定義（sql）かキーの一覧（kv）、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
 └── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
 ```
 
@@ -118,7 +118,7 @@ src/app/
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
 │   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア（--db 指定時は生成しない）
-│   └── db/                   # --db 指定時のみ。SQL のテーブル定義、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
+│   └── db/                   # --db 指定時のみ。テーブル定義（sql）かキーの一覧（kv）、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
 ├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
 ├── token/route.ts            # POST /token
 ├── userinfo/route.ts         # GET|POST /userinfo
@@ -196,7 +196,8 @@ const app = createApp({
   "cliVersion": "0.5.0",
   "framework": "hono",
   "features": { "pkce": true, "refreshToken": true, "...": "..." },
-  "scopes": []
+  "scopes": [],
+  "db": null
 }
 ```
 
@@ -352,30 +353,44 @@ SSO と `prompt=none` では、**保存済み同意を引く前**にポリシー
 
 ## Database (--db)
 
-`--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を SQL のテーブルに保存します。
-既定のインメモリストアや、`JsonStoreBackend` で 1 つのテーブルに JSON を入れる方式の代わりになります。
+`--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を利用者の DB に保存します。
+保存先の種類は `--db` の値で選びます。
+`--db sql` は SQL のテーブル（SQLite、Cloudflare D1、PostgreSQL）に、`--db kv` は Redis などのキー・バリューストアに保存します。
+どちらも、既定のインメモリストアや、`JsonStoreBackend` で JSON を入れる方式の代わりになります。
 
 ```bash
-maronn-oidc generate express --db
+maronn-oidc generate express --db sql
+maronn-oidc generate nextjs --db kv --output ./src/app
 ```
 
 出力先には `db/` が生成されます（Next.js は `_oidc-provider/db/`）。
-利用者が書くのは `instance.ts` だけで、それ以外は CLI が生成します。
+利用者が書くのは DB インスタンスを返す `instance.ts` だけで、それ以外は CLI が生成します。
 
-| ファイル | 役割 |
-|---|---|
-| `instance.ts` | DB インスタンス。`createDatabase()` で利用者の DB を返す。CLI は無いときだけ作り、`--force` を付けても上書きしない |
-| `database.ts` | `createDatabase()` が返す `SqlDatabase` の型。SQL を 1 文実行する `all` と `run` の 2 メソッドだけを持つ |
-| `schema.sql` | テーブル定義。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る |
-| `schema.ts` | `schema.sql` と同じ内容の文字列 `SCHEMA_SQL`。起動時にテーブルを作る DB で使う |
-| `stores.ts` | `store.ts` の `ProviderStores` を SQL で実装したストア |
-| `clients.ts` | クライアントのテーブルを読む `ClientResolver` と、クライアントを登録する `registerClient()` |
-| `users.ts` | ユーザーを登録する `registerUser()` と、パスワードのハッシュを作って照合する `hashPassword()` / `verifyPassword()` |
+| ファイル | `--db sql` | `--db kv` |
+|---|---|---|
+| `instance.ts` | DB インスタンス。`createDatabase()` で利用者の DB を返す。CLI は無いときだけ作り、`--force` を付けても上書きしない | 同じ |
+| `database.ts` | `createDatabase()` が返す `SqlDatabase` の型。SQL を 1 文実行する `all` と `run` を持つ | `createDatabase()` が返す `KvDatabase` の型。`get`、`set`、`setIfAbsent`、`delete` を持つ |
+| `schema.sql`、`schema.ts` | テーブル定義と、同じ内容の文字列 `SCHEMA_SQL`。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る | 生成しない |
+| `keys.ts` | 生成しない | キーの一覧と、各キーに入れる JSON レコードの型 |
+| `stores.ts` | `store.ts` の `ProviderStores` の実装 | 同じ |
+| `clients.ts` | 登録クライアントを読む `ClientResolver` と、クライアントを登録する `registerClient()` | 同じ |
+| `users.ts` | ユーザーを登録する `registerUser()` と、パスワードのハッシュを作って照合する `hashPassword()` / `verifyPassword()` | 同じ |
+
+生成直後の `instance.ts` は、実装されるまで「`createDatabase()` が未実装である」というエラーを投げます。
+ファイルの末尾に DB ごとの例を載せているので、使う DB に合わせて書き換えてください。
+
+生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` オプションを渡さなければ `db/` からクライアントを読みます。
+`createDatabase()` を呼ぶ時機はフレームワークによって異なります。
+
+- **Hono**：リクエストごとに Hono のコンテキストを渡して呼ぶ。Cloudflare D1 のバインディング（`c.env.DB`）や環境変数はそこから読める
+- **Express / Fastify**：アプリを作るときに 1 回呼ぶ。`instance.ts` が未実装なら起動時に止まる
+- **Next.js**：`_oidc-provider/provider.ts` が最初に使うときに呼ぶので、`next build` の時点では呼ばない（`instance.ts` がモジュールの読み込み時に接続しない限り、ビルドに DB は要らない）
+
+### SQL のテーブル（--db sql）
 
 `SqlDatabase` は SQL を実行する口を 2 つ持つだけなので、どのドライバーでも実装できます。
 ORM も生の SQL を実行するメソッドを持っているので、CLI は ORM ごとのコードを生成しません。
-生成直後の `instance.ts` は、実装されるまで「`createDatabase()` が未実装である」というエラーを投げます。
-ファイルの末尾に node:sqlite、Cloudflare D1（Hono のみ）、PostgreSQL（pg）、Prisma、Drizzle、Kysely の例を載せているので、使う DB に合わせて書き換えてください。
+`instance.ts` の末尾には node:sqlite、Cloudflare D1（Hono のみ）、PostgreSQL（pg）、Prisma、Drizzle、Kysely の例があります。
 Prisma、Drizzle、Kysely の例は、プロジェクトですでに作ってあるクライアント（`prisma` や `db`）をそのまま使います。
 
 ```typescript
@@ -399,14 +414,7 @@ export function createDatabase(): SqlDatabase {
 }
 ```
 
-生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` オプションを渡さなければ `db/` のテーブルからクライアントを読みます。
-`createDatabase()` を呼ぶ時機はフレームワークによって異なります。
-
-- **Hono**：リクエストごとに Hono のコンテキストを渡して呼ぶ。Cloudflare D1 のバインディング（`c.env.DB`）はそこから読める
-- **Express / Fastify**：アプリを作るときに 1 回呼ぶ。`instance.ts` が未実装なら起動時に止まる
-- **Next.js**：`_oidc-provider/provider.ts` が最初のクエリのときに呼ぶので、`next build` の時点では呼ばない（`instance.ts` がモジュールの読み込み時に接続しない限り、ビルドに DB は要らない）
-
-### テーブルの構成
+#### テーブルの構成
 
 テーブルは、OP が扱うデータをエンティティごとに分けています。
 `schema.sql` の各テーブルのコメントには、そのテーブルが表すエンティティ（Client、Transaction など）の名前を書いています。
@@ -440,21 +448,106 @@ OP は終わったトランザクションの行を消さず、`codes` と `acce
 トークンエンドポイントは、提示されたシークレットのハッシュをこの値と比べます。
 SHA-256 は計算が速く、短い値や推測できる値は総当たりで元に戻されるので、シークレットには CSPRNG で作った十分長い値を使ってください。
 
+### キー・バリューストア（--db kv）
+
+`--db kv` の生成物は、キー・バリューストアに 4 つの操作だけを求めます。
+`get`、`set`（TTL を付けられる）、`delete` と、キーが無いときだけ値を書く `setIfAbsent` です。
+値はどれも JSON の文字列で、キーの一覧は `keys.ts` にあります。
+
+`instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）、node-redis、ioredis、メモリ上の Map の例があります。
+Hono の生成物には、Workers で動く Upstash Redis とメモリ上の Map の例だけを載せています。
+
+```typescript
+// db/instance.ts を Upstash Redis の REST API で書いた例
+import type { KvDatabase } from './database.js';
+
+const run = async (command: Array<string | number>): Promise<unknown> => {
+  const response = await fetch(process.env.UPSTASH_REDIS_REST_URL as string, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer ' + process.env.UPSTASH_REDIS_REST_TOKEN,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(command),
+  });
+  const body = (await response.json()) as { result?: unknown; error?: string };
+  if (!response.ok || body.error !== undefined) {
+    throw new Error('Upstash: ' + (body.error ?? 'HTTP ' + response.status));
+  }
+  return body.result;
+};
+const expiry = (ttlSeconds?: number) => (ttlSeconds === undefined ? [] : ['EX', ttlSeconds]);
+
+export function createDatabase(): KvDatabase {
+  return {
+    get: async (key) => (await run(['GET', key])) as string | null,
+    set: async (key, value, ttlSeconds) => {
+      await run(['SET', key, value, ...expiry(ttlSeconds)]);
+    },
+    setIfAbsent: async (key, value, ttlSeconds) =>
+      (await run(['SET', key, value, 'NX', ...expiry(ttlSeconds)])) === 'OK',
+    delete: async (key) => {
+      await run(['DEL', key]);
+    },
+  };
+}
+```
+
+ストアには 2 つの条件があります。
+1 つ目は、`setIfAbsent` を 1 回の不可分な操作にすることです（Redis の `SET NX` や、DynamoDB の条件付き書き込み）。
+認可コードとリフレッシュトークンは、使ったときに使用済みの印のキーを `setIfAbsent` で書くことで 1 回限りにしています。
+読んでから書く 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行されます。
+2 つ目は、書き込みの完了後に始めた読み込みが、その書き込みを必ず見ることです。
+Cloudflare Workers KV は、書き込みがほかの拠点に届くまで時間がかかり、不可分な書き込みも持たないので、どちらの条件も満たしません。
+ログイン画面で発行した認可コードを、別の拠点に届いたトークンリクエストが見つけられないことがあります。
+Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったストアを使ってください。
+
+#### キーの構成
+
+レコードは、`--db sql` のテーブルと同じ ER モデルのエンティティごとにキーを分け、属性の名前もそろえています。
+1 つのエンティティに属するものは、そのレコードの中に入れます。
+たとえばクライアントのレコードは、認証の方式、シークレットのハッシュ、リダイレクト URI、grant type、スコープを持ち、1 回の `set` で書きます。
+
+| キー | 保存するもの |
+|---|---|
+| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値 |
+| `user:<id>` | ユーザー |
+| `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
+| `transaction_result:<transaction_id>` | トランザクションの終わり方（`failed`、`code_issued`、`token_issued`） |
+| `auth_user:<transaction_id>` | トランザクションでログインしたユーザー |
+| `code:<hash>`、`access_token:<hash>`、`refresh_token:<hash>` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュをキーにする |
+| `code_used:<hash>`、`refresh_token_used:<hash>` | 使用済みの印。`setIfAbsent` で書く |
+| `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
+| `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
+
+`--enable google-login` と組み合わせたときだけ、`federated_identity:<provider>:<sub>`（Google アカウントとユーザーの対応）と、`upstream_auth_request:<transaction_id>`、`upstream_nonce:<nonce>`（Google ボタンに埋めた nonce）が加わります。
+キーにはすべて `oidc:` が付き、リクエストから来た値（ID やサブジェクト）は URI エンコードしてから入れます。
+
+期限のあるレコードは TTL を付けて書き、期限（`expired_at`、`exp`）もレコードの中に持ちます。
+ストアは読むたびにこの期限を確かめるので、期限切れのキーを遅れて消すストア（DynamoDB の TTL など）でも、期限切れのレコードは返りません。
+クライアント、ユーザー、ブラウザセッション、同意は期限を持たないので、不要になったら利用者が消してください。
+
+`--db kv` は、`--db sql` の UPDATE や JOIN の代わりにキーを分けて動きをそろえています。
+
+- **トランザクションの終了**：`transaction:<id>` を残したまま、`transaction_result:<id>` を書く。`transaction:<id>` を書き直す処理はこのキーに触れないので、終わったトランザクションが再び始まることはない
+- **grant 単位の失効**：`grant_access_tokens_revoked:<grant_id>` などの印のキーを書き、トークンを読むときに印を確かめる。ローテーション済みのリフレッシュトークンも、この印で読めなくなる
+- **値の読み書き**：grant、同意、進行中のトランザクションの状態は、読んでから書き戻す。同じレコードを 2 つのリクエストが同時に書き換えると、片方の変更が失われることがある。grant を書き換えるのはコードとトークンを発行するリクエストで、リフレッシュは使用済みの印で 1 つしか通らないので、同じ grant が同時に書き換わることは無い。同意は、1 人のユーザーが 1 つのクライアントを 2 つのタブで同時に認可したときに同時に書き換わりうる。失われるのがスコープならユーザーにもう一度同意を求め、grant の ID なら `revokeConsentAndTokens()` がその grant を失効しない
+
 ### クライアントのスコープ
 
-`client_scopes` に行があるクライアントは、そこに無いスコープを要求すると `invalid_scope` で拒否されます。
+スコープを登録したクライアント（`--db sql` は `client_scopes` の行、`--db kv` はクライアントのレコードの `scopes`）は、登録外のスコープを要求すると `invalid_scope` で拒否されます。
 `/authorize` のほか、Device Authorization Grant と CIBA の要求も同じ規則で検証します。
 `openid` や `offline_access` も、要求させるなら登録してください。
-行が無いクライアントには制限を掛けず、OP が受け付けるスコープをすべて要求できます。
+スコープを登録していないクライアントには制限を掛けず、OP が受け付けるスコープをすべて要求できます。
 
 検証は core の `validateClientScope()` が `ClientInfo.scope`（RFC 7591 §2 の `scope`）を見て行うので、`--db` を使わない場合も、`config.ts` で登録するクライアントに `scope` を書けば同じ制限が掛かります。
 `scopes.ts` の `resolveGrantableScopes()` は、この検証を通った後で、ユーザーごとにスコープを絞る場所として残ります。
 
 ### クライアントとユーザーの登録
 
-クライアントは、`clients.ts` の `registerClient()` でテーブルに入れます。
+クライアントは、`clients.ts` の `registerClient()` で DB に入れます。
 同じ client_id で呼び直すと、前の登録を置き換えます。
-同じ値で呼び直しても行は変わらないので、複数のインスタンスが起動時に同時に呼んでも構いません。
+同じ値で呼び直しても DB の中身は変わらないので、複数のインスタンスが起動時に同時に呼んでも構いません。
 Express や Fastify なら、起動時に次のように登録できます。
 
 ```typescript
@@ -471,10 +564,10 @@ Hono（Cloudflare D1）では、管理用のスクリプトから `registerClien
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行います（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読みません。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
-テーブルに列の無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
+テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
 `jwks` が無いので、署名付き Request Object の署名は検証できず、そのような要求は拒否されます。
 
-ユーザーは、`users.ts` の `registerUser()` でテーブルに入れます。
+ユーザーは、`users.ts` の `registerUser()` で DB に入れます。
 `password` を渡すと PBKDF2（HMAC-SHA256、100,000 回）のハッシュを `password_hash` に保存し、渡さなければ NULL になります。
 反復回数は Cloudflare Workers の上限に合わせた値で、上限の無い環境では `users.ts` の `PASSWORD_HASH_ITERATIONS` で上げられます。
 ハッシュには回数とソルトも記録しているので、回数を上げても既存のハッシュはそのまま検証できます。
@@ -491,19 +584,20 @@ await registerUser(createDatabase(), {
 });
 ```
 
-ログインフォームのユーザー名は `users.id` と照合します。
-メールアドレスでログインさせる場合は、`stores.ts` の `authenticate()` が引く列を `email` に変えてください。
+ログインフォームのユーザー名は、ユーザーの ID（`--db sql` は `users.id`、`--db kv` は `user:<id>` のキー）と照合します。
+メールアドレスでログインさせる場合、`--db sql` では `stores.ts` の `authenticate()` が引く列を `email` に変え、`--db kv` ではメールアドレスからユーザーの ID を引くキーを足してください。
 パスワードの無いユーザーは、ログインフォームでは認証できません。
 `store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録してください（`samples/*` はどれも起動時に登録している）。
 
-Sign in with Google のユーザーはパスワードを持たず、Google の `sub`（`federated_identities.provider_sub`）で同じ人かを判断して、初めてのログインでランダムな ID のユーザーを作ります。
+Sign in with Google のユーザーはパスワードを持たず、Google の `sub`（Federated_identity の `provider_sub`）で同じ人かを判断して、初めてのログインでランダムな ID のユーザーを作ります。
 メールアドレスは Google アカウント側で変えられるので、同じ人かの判断には使いません。
 
 ### stores.ts を書き換えるときに保つ動き
 
-`stores.ts` を ORM のクエリなどで書き直してもかまいませんが、ファイル先頭のコメントに挙げた動きは保つ必要があります。
-たとえば認可コードとリフレッシュトークンの `consume` は、「`is_used` が FALSE の行だけを TRUE にする」を 1 回の `UPDATE` で行い、変更した行が無ければ `invalid_grant` を投げます。
-`SELECT` してから `UPDATE` する 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行されます。
+`stores.ts` を ORM のクエリや別のストアの API で書き直してもかまいませんが、ファイル先頭のコメントに挙げた動きは保つ必要があります。
+たとえば認可コードとリフレッシュトークンの `consume` は、使用済みにする操作を 1 回の不可分な操作で行い、使用済みにできなければ `invalid_grant` を投げます。
+`--db sql` は「`is_used` が FALSE の行だけを TRUE にする」を 1 回の `UPDATE` で行い、`--db kv` は使用済みの印のキーを `setIfAbsent` で書きます。
+読んでから書く 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行されます。
 
 実験的機能（PAR、Device Authorization Grant、CIBA）のストアはインメモリのままです。
 
@@ -511,7 +605,7 @@ Sign in with Google のユーザーはパスワードを持たず、Google の `
 
 1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
 2. `config.ts` のデフォルト値はローカル検証専用として扱う
-3. `--db` 付きで生成した場合は、`db/instance.ts` の `createDatabase()` を書き、`db/schema.sql` を DB に適用して、`db/clients.ts` の `registerClient()` と `db/users.ts` の `registerUser()` でクライアントとユーザーを登録する
+3. `--db` 付きで生成した場合は、`db/instance.ts` の `createDatabase()` を書き、`--db sql` なら `db/schema.sql` を DB に適用して、`db/clients.ts` の `registerClient()` と `db/users.ts` の `registerUser()` でクライアントとユーザーを登録する
 4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`）
 
 Next.js では 1 と 2 を `_oidc-provider/provider.ts` で行います（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっています）。

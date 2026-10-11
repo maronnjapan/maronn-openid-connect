@@ -13,6 +13,7 @@ export interface GeneratedFile {
   userOwned?: boolean;
 }
 
+import type { DbKind } from '../db.js';
 import type { OidcFeatureConfig } from '../features.js';
 
 /**
@@ -31,10 +32,11 @@ export interface GeneratorOptions {
    */
   scopes?: string[];
   /**
-   * `--db`: generate db/ (SQL tables, the stores on them, and the db/instance.ts
-   * the user writes) and use it as the default storage (default: false).
+   * `--db sql` / `--db kv`: generate db/ (SQL tables or a key-value layout, the
+   * stores on them, and the db/instance.ts the user writes) and use it as the
+   * default storage (default: none, the in-memory stores).
    */
-  db?: boolean;
+  db?: DbKind;
 }
 
 /**

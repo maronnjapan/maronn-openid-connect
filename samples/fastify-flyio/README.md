@@ -1,6 +1,6 @@
 # Fastify + Fly.io sample
 
-CLIの `--db` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、OPの状態をNode.js組み込みの `node:sqlite` で永続化する。保存先は `.data/oidc.sqlite`。外部DBライブラリ、DBソフト、Dockerは不要（Node.js 22.13以上）。デプロイ想定環境はFly.io（永続ボリューム + 単一マシン）。
+CLIの `--db sql` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、OPの状態をNode.js組み込みの `node:sqlite` で永続化する。保存先は `.data/oidc.sqlite`。外部DBライブラリ、DBソフト、Dockerは不要（Node.js 22.13以上）。デプロイ想定環境はFly.io（永続ボリューム + 単一マシン）。
 
 `src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）、ストア（`stores.ts`）、クライアントとユーザーの読み書き（`clients.ts`、`users.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
 

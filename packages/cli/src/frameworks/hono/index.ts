@@ -35,7 +35,7 @@ import {
   respondTemplate,
 } from './pages.js';
 import { honoViewsTemplate } from './views.js';
-import { dbGeneratedFiles } from '../db/templates.js';
+import { databaseGeneratedFiles } from '../db/wiring.js';
 
 export class HonoGenerator implements FrameworkGenerator {
   readonly name = 'hono';
@@ -45,7 +45,7 @@ export class HonoGenerator implements FrameworkGenerator {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
-    const db = options.db ?? false;
+    const db = options.db;
 
     const files: GeneratedFile[] = [
       { path: 'app.ts', content: appTemplate(pkg, features, db) },
@@ -125,8 +125,9 @@ export class HonoGenerator implements FrameworkGenerator {
       { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features, scopes) },
       { path: 'routes/login.ts', content: loginRouteTemplate(pkg, features) },
       { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
-      // --db: SQL tables, the stores on them, and the db/instance.ts the user writes.
-      ...(db ? dbGeneratedFiles(pkg, features, 'hono') : []),
+      // --db sql / --db kv: the SQL tables or the key layout, the stores on
+      // them, and the db/instance.ts the user writes.
+      ...(db ? databaseGeneratedFiles(db, pkg, features, 'hono') : []),
     ];
     // The templates are shared with the frameworks that write these modules as
     // .ts; point their comments at the .tsx files here ('views.ts' and

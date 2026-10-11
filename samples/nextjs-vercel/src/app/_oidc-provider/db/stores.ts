@@ -1,30 +1,40 @@
 /**
- * ProviderStores (store.ts) on the tables of db/schema.sql: the stores the OP
- * uses when no other storage is passed in. Every SQL statement runs through
- * the SqlDatabase that db/instance.ts creates. An operation that touches two
- * tables (a transaction and its request, a code and the status of its
- * transaction) runs its statements one after another.
+ * ProviderStores (store.ts) on the key-value store of db/instance.ts: the
+ * stores the OP uses when no other storage is passed in. keys.ts lists the
+ * keys and the records they hold.
  *
- * Rewriting this file for another driver or an ORM is fine, but keep these
- * behaviors - routes/ and resolvers.ts rely on them:
+ * Rewriting this file for another store is fine, but keep these behaviors -
+ * routes/ and resolvers.ts rely on them:
  *
  * 1. Keep the ProviderStores types (method names, parameters, return values).
- * 2. authCodeStore.consume and refreshTokenStore.consume flip is_used from
- *    FALSE to TRUE in ONE conditional UPDATE, and throw TokenError
- *    (invalid_grant) when it changed no row. A SELECT followed by an UPDATE
- *    lets two concurrent requests both see an unused code and both receive
- *    tokens (OAuth 2.1 §4.1.2).
- * 3. consume never deletes the row. A used code or a rotated refresh token has
- *    to stay readable, so a replay is detected and the grant's tokens revoked.
- * 4. get never returns an expired row, and does return used ones.
- * 5. revokeByGrantId also removes the rotated (used) refresh tokens of the grant.
+ * 2. authCodeStore.consume and refreshTokenStore.consume claim the code_used /
+ *    refresh_token_used key with setIfAbsent, and throw TokenError
+ *    (invalid_grant) when it was already taken. A get followed by a set lets
+ *    two concurrent requests both see an unused code and both receive tokens
+ *    (OAuth 2.1 §4.1.2).
+ * 3. consume never deletes the record. A used code or a rotated refresh token
+ *    has to stay readable, so a replay is detected and the grant's tokens
+ *    revoked.
+ * 4. get never returns an expired record, and does return used ones.
+ * 5. revokeByGrantId makes every token of that kind in the grant unreadable,
+ *    the rotated (used) refresh tokens included, by writing a marker key with
+ *    set. Nothing the stores read and write back holds it, so a token request
+ *    running at the same moment cannot undo it.
  * 6. hasConsent is true only when every requested scope was granted.
- * 7. Codes and tokens are stored and looked up by their SHA-256 hash; the raw
- *    value is never written to the database.
- * 8. transactionStore.get returns a transaction only while it is in progress
- *    (requested, upstream_pending, authenticated), and delete ends it instead
- *    of removing the row: its status becomes failed, then code_issued if a code
- *    is issued from it, and token_issued once that code is exchanged.
+ * 7. Codes and tokens are stored under their SHA-256 hash; the raw value is
+ *    never written to the store.
+ * 8. transactionStore.get returns a transaction only while it is in progress,
+ *    and delete ends it with a transaction_result key that put never changes,
+ *    so an ended transaction cannot start again: failed, then code_issued if a
+ *    code is issued from it, and token_issued once that code is exchanged.
+ *
+ * A few records are read, changed and written back: a grant, a consent, and
+ * the status of a transaction in progress. Two requests that change the same
+ * one at the same moment can lose one of the changes. The OP's flows change a
+ * grant from one request at a time (consume lets one refresh through). A
+ * consent changes at once only when one user authorizes one client from two
+ * browser tabs in the same moment: a lost scope asks the user again, and a
+ * lost grant id leaves that grant out of revokeConsentAndTokens().
  */
 import {
   TokenError,
@@ -50,7 +60,23 @@ import {
   type RefreshTokenStorage,
   type UserStorage,
 } from '../store';
-import type { SqlDatabase } from './database';
+import { readRecord, writeRecord, type KvDatabase } from './database';
+import {
+  keys,
+  type AccessTokenRecord,
+  type AuthUserRecord,
+  type BrowserSessionRecord,
+  type CodeRecord,
+  type ConsentRecord,
+  type FederatedIdentityRecord,
+  type GrantRecord,
+  type RefreshTokenRecord,
+  type TransactionRecord,
+  type TransactionResultRecord,
+  type UpstreamAuthRequestRecord,
+  type UpstreamNonceRecord,
+  type UserRecord,
+} from './keys';
 import { verifyPassword } from './users';
 
 /** core prefixes the id of every AuthTransactionStore key with this. */
@@ -59,39 +85,88 @@ const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 /** google-login prefixes the nonce of every GoogleLoginNonceStore key with this. */
 const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
 
-/** The statuses of a transaction in progress. */
-const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
+/**
+ * The TTL of a sign-in (auth_user) whose transaction record is already gone:
+ * the transaction cannot be completed any more, so the record only has to
+ * outlive the request that writes it.
+ */
+const FALLBACK_TTL_SECONDS = 600;
 
-export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
-  // Transaction + Authentication_request: what the authorization request asked
-  // for goes to authentication_requests, the state of the flow to transactions.
+/** The value of a single-use marker (code_used, refresh_token_used) and of a revocation marker. */
+const MARKER = 'true';
+
+export function createKvProviderStores(db: KvDatabase): ProviderStores {
+  const read = <T>(key: string) => readRecord<T>(db, key);
+  const write = (key: string, record: unknown, ttlSeconds?: number) =>
+    writeRecord(db, key, record, ttlSeconds);
+
+  /** The record of a transaction, unless it has expired. */
+  const readTransaction = async (transactionId: string): Promise<TransactionRecord | undefined> => {
+    const record = await read<TransactionRecord>(keys.transaction(transactionId));
+    return record && record.expired_at > nowSeconds() ? record : undefined;
+  };
+
+  /** Move a transaction in progress from one of the statuses in from to status. */
+  const advanceTransaction = async (
+    transactionId: string,
+    from: Array<TransactionRecord['status']>,
+    status: TransactionRecord['status'],
+  ): Promise<void> => {
+    const record = await readTransaction(transactionId);
+    if (record && from.includes(record.status)) {
+      await write(keys.transaction(transactionId), { ...record, status }, ttlUntil(record.expired_at));
+    }
+  };
+
+  /** The record of a grant, changed by change and written back. It lives until expiresAt at least. */
+  const updateGrant = async (
+    grantId: string,
+    expiresAt: number,
+    change: (grant: GrantRecord) => GrantRecord,
+  ): Promise<GrantRecord> => {
+    const current = (await read<GrantRecord>(keys.grant(grantId))) ?? {
+      transaction_id: null,
+      latest_access_token: null,
+      expired_at: 0,
+    };
+    const grant = { ...change(current), expired_at: Math.max(current.expired_at, expiresAt) };
+    await write(keys.grant(grantId), grant, ttlUntil(grant.expired_at));
+    return grant;
+  };
+
+  /** Mark the tokens of one kind in a grant revoked, until the grant's last code or token expires. */
+  const revokeGrant = async (revokedKey: string, grantId: string): Promise<void> => {
+    const grant = await read<GrantRecord>(keys.grant(grantId));
+    // Without a grant record every code and token of the grant has expired.
+    if (grant) await db.set(revokedKey, MARKER, ttlUntil(grant.expired_at));
+  };
+
+  // Transaction + Authentication_request: one record, written in one set.
   const transactionStore: AuthTransactionStore = {
     async get(key) {
-      const [row] = await db.all<TransactionRow>({
-        sql:
-          'SELECT t.created_at, t.expired_at, t.payload AS transaction_payload, r.client_id, ' +
-          'r.redirect_uri, r.state, r.nonce, r.code_challenge, r.code_challenge_method, ' +
-          'r.response_type, r.scope, r.payload AS request_payload FROM transactions t ' +
-          'JOIN authentication_requests r ON r.transaction_id = t.transaction_id ' +
-          'WHERE t.transaction_id = ? AND t.status IN ' + IN_PROGRESS + ' AND t.expired_at > ?',
-        params: [withoutPrefix(key, TRANSACTION_KEY_PREFIX), nowSeconds()],
-      });
-      if (!row) return null;
+      const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
+      const [record, result] = await Promise.all([
+        readTransaction(transactionId),
+        db.get(keys.transactionResult(transactionId)),
+      ]);
+      // A transaction that ended (failed, code_issued, token_issued) is gone for the OP.
+      if (!record || result !== null) return null;
+      const request = record.authentication_request;
       const transaction: AuthTransaction = {
-        ...(JSON.parse(row.request_payload) as OtherRequestParameters),
-        ...(JSON.parse(row.transaction_payload) as TransactionPayload),
-        clientId: row.client_id,
-        redirectUri: row.redirect_uri,
-        responseType: row.response_type,
-        scope: row.scope ?? '',
-        createdAt: Number(row.created_at) * 1000,
-        expiresAt: Number(row.expired_at) * 1000,
+        ...(request.payload as OtherRequestParameters),
+        ...(record.payload as TransactionPayload),
+        clientId: request.client_id,
+        redirectUri: request.redirect_uri,
+        responseType: request.response_type,
+        scope: request.scope ?? '',
+        createdAt: record.created_at * 1000,
+        expiresAt: record.expired_at * 1000,
       };
-      if (row.state !== null) transaction.state = row.state;
-      if (row.nonce !== null) transaction.nonce = row.nonce;
-      if (row.code_challenge !== null) transaction.codeChallenge = row.code_challenge;
-      if (row.code_challenge_method !== null) {
-        transaction.codeChallengeMethod = row.code_challenge_method as 'S256';
+      if (request.state !== null) transaction.state = request.state;
+      if (request.nonce !== null) transaction.nonce = request.nonce;
+      if (request.code_challenge !== null) transaction.codeChallenge = request.code_challenge;
+      if (request.code_challenge_method !== null) {
+        transaction.codeChallengeMethod = request.code_challenge_method as 'S256';
       }
       return transaction;
     },
@@ -115,49 +190,40 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
         bindingHash,
         ...otherParameters
       } = value;
-      // A new transaction starts as requested. Saving it again (a failed login
-      // attempt) keeps its status.
-      await db.run({
-        sql:
-          'INSERT INTO transactions (transaction_id, status, created_at, expired_at, payload) ' +
-          "VALUES (?, 'requested', ?, ?, ?) " +
-          'ON CONFLICT (transaction_id) DO UPDATE SET expired_at = excluded.expired_at, payload = excluded.payload',
-        params: [
-          transactionId,
-          Math.floor(createdAt / 1000),
-          Math.ceil(expiresAt / 1000),
-          JSON.stringify({ csrfToken, failedAttempts, bindingHash }),
-        ],
-      });
-      await db.run({
-        sql:
-          'INSERT INTO authentication_requests (transaction_id, client_id, redirect_uri, state, nonce, ' +
-          'code_challenge, code_challenge_method, response_type, scope, payload) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-          'ON CONFLICT (transaction_id) DO UPDATE SET client_id = excluded.client_id, ' +
-          'redirect_uri = excluded.redirect_uri, state = excluded.state, nonce = excluded.nonce, ' +
-          'code_challenge = excluded.code_challenge, code_challenge_method = excluded.code_challenge_method, ' +
-          'response_type = excluded.response_type, scope = excluded.scope, payload = excluded.payload',
-        params: [
-          transactionId,
-          clientId,
-          redirectUri,
-          state ?? null,
-          nonce ?? null,
-          codeChallenge ?? null,
-          codeChallengeMethod ?? null,
-          responseType,
+      // A new transaction starts as requested. Saving it again (a failed
+      // sign-in attempt) keeps its status.
+      const current = await readTransaction(transactionId);
+      const record: TransactionRecord = {
+        status: current?.status ?? 'requested',
+        created_at: Math.floor(createdAt / 1000),
+        expired_at: Math.ceil(expiresAt / 1000),
+        authentication_request: {
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          state: state ?? null,
+          nonce: nonce ?? null,
+          code_challenge: codeChallenge ?? null,
+          code_challenge_method: codeChallengeMethod ?? null,
+          response_type: responseType,
           scope,
-          JSON.stringify(otherParameters),
-        ],
-      });
+          payload: otherParameters,
+        },
+        payload: { csrfToken, failedAttempts, bindingHash },
+      };
+      await write(keys.transaction(transactionId), record, ttlUntil(record.expired_at));
     },
-    // One-time use: the transaction is no longer in progress, and its row stays.
+    // One-time use: the transaction ends as failed, unless a code was issued
+    // from it already (code_issued stays).
     async delete(key) {
-      await db.run({
-        sql: "UPDATE transactions SET status = 'failed' WHERE transaction_id = ? AND status IN " + IN_PROGRESS,
-        params: [withoutPrefix(key, TRANSACTION_KEY_PREFIX)],
-      });
+      const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
+      const record = await readTransaction(transactionId);
+      if (!record) return;
+      const result: TransactionResultRecord = { status: 'failed' };
+      await db.setIfAbsent(
+        keys.transactionResult(transactionId),
+        JSON.stringify(result),
+        ttlUntil(record.expired_at),
+      );
     },
   };
 
@@ -165,376 +231,352 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     async set(code, info) {
       // The routes pass core's AuthorizationCodeData, which names the
       // transaction the code was issued from. Neither the raw code nor a value
-      // with its own column goes into payload.
+      // with a field of its own goes into payload.
       const { code: _code, used, expiresAt, grantId, transactionId, ...payload } =
         info as AuthorizationCodeInfo & Pick<AuthorizationCodeData, 'transactionId'>;
-      await db.run({
-        sql:
-          'INSERT INTO codes (id, transaction_id, expired_at, is_used, grant_id, payload) ' +
-          'VALUES (?, ?, ?, ' + sqlBoolean(used) + ', ?, ?)',
-        params: [await hashKey(code), transactionId ?? null, expiresAt, grantId, JSON.stringify(payload)],
-      });
+      const codeHash = await hashKey(code);
+      const record: CodeRecord = {
+        transaction_id: transactionId ?? null,
+        expired_at: expiresAt,
+        grant_id: grantId,
+        payload,
+      };
+      await write(keys.code(codeHash), record, ttlUntil(expiresAt));
+      if (used) await db.setIfAbsent(keys.codeUsed(codeHash), MARKER, ttlUntil(expiresAt));
+      await updateGrant(grantId, expiresAt, (grant) => ({
+        ...grant,
+        transaction_id: transactionId ?? grant.transaction_id,
+      }));
       if (transactionId !== undefined) {
-        await db.run({
-          sql: "UPDATE transactions SET status = 'code_issued' WHERE transaction_id = ?",
-          params: [transactionId],
-        });
+        // The result outlives the transaction until the code expires, so the
+        // exchange of the code can still record token_issued.
+        const transaction = await read<TransactionRecord>(keys.transaction(transactionId));
+        const result: TransactionResultRecord = { status: 'code_issued' };
+        await db.set(
+          keys.transactionResult(transactionId),
+          JSON.stringify(result),
+          ttlUntil(Math.max(expiresAt, transaction?.expired_at ?? 0)),
+        );
       }
     },
     async get(code) {
-      const [row] = await db.all<CodeRow>({
-        sql: 'SELECT expired_at, is_used, grant_id, payload FROM codes WHERE id = ? AND expired_at > ?',
-        params: [await hashKey(code), nowSeconds()],
-      });
-      if (!row) return undefined;
-      const payload = JSON.parse(row.payload) as Omit<
-        AuthorizationCodeInfo,
-        'code' | 'used' | 'expiresAt' | 'grantId'
-      >;
+      const codeHash = await hashKey(code);
+      const [record, used] = await Promise.all([
+        read<CodeRecord>(keys.code(codeHash)),
+        db.get(keys.codeUsed(codeHash)),
+      ]);
+      if (!record || record.expired_at <= nowSeconds()) return undefined;
       return {
-        ...payload,
+        ...(record.payload as Omit<AuthorizationCodeInfo, 'code' | 'used' | 'expiresAt' | 'grantId'>),
         code,
-        grantId: row.grant_id,
-        expiresAt: Number(row.expired_at),
-        used: toBoolean(row.is_used),
+        grantId: record.grant_id,
+        expiresAt: record.expired_at,
+        used: used !== null,
       };
     },
-    // Only one of two concurrent requests changes the row; the other one finds
-    // the code already used and must not receive tokens.
+    // Only one of two concurrent requests stores the code_used key; the other
+    // one finds the code already used and must not receive tokens.
     async consume(code) {
-      const { changes } = await db.run({
-        sql: 'UPDATE codes SET is_used = TRUE WHERE id = ? AND is_used = FALSE',
-        params: [await hashKey(code)],
-      });
-      if (changes === 0) {
+      const codeHash = await hashKey(code);
+      const record = await read<CodeRecord>(keys.code(codeHash));
+      const claimed =
+        record !== undefined &&
+        (await db.setIfAbsent(keys.codeUsed(codeHash), MARKER, ttlUntil(record.expired_at)));
+      if (!claimed) {
         throw new TokenError(TokenErrorCode.InvalidGrant, 'Authorization code has already been used');
       }
     },
     async delete(code) {
-      await db.run({ sql: 'DELETE FROM codes WHERE id = ?', params: [await hashKey(code)] });
+      const codeHash = await hashKey(code);
+      await db.delete(keys.code(codeHash));
+      await db.delete(keys.codeUsed(codeHash));
     },
   };
 
   const deleteAccessToken = async (token: string): Promise<void> => {
-    await db.run({
-      sql: 'DELETE FROM access_tokens WHERE token_hash = ?',
-      params: [await hashKey(token)],
-    });
+    await db.delete(keys.accessToken(await hashKey(token)));
   };
 
   const accessTokenStore: AccessTokenStorage = {
     async set(token, info) {
       const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, ...payload } = info;
       const tokenHash = await hashKey(token);
-      await db.run({
-        sql:
-          'INSERT INTO access_tokens (id, sub, exp, iat, iss, client_id, scope, transaction_id, ' +
-          'token_hash, grant_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ' +
-          // The transaction of the code the grant came from. A grant without a
-          // code (the device flow, CIBA) has none.
-          '(SELECT transaction_id FROM codes WHERE grant_id = ? LIMIT 1), ?, ?, ?)',
-        params: [
-          // A token issued without a jti is kept under its hash.
-          jti ?? tokenHash,
-          sub,
-          expiresAt,
-          iat ?? null,
-          issuer ?? null,
-          clientId,
-          joinScope(scope),
-          grantId ?? null,
-          tokenHash,
-          grantId ?? null,
-          JSON.stringify(payload),
-        ],
-      });
-      if (grantId !== undefined) {
-        await db.run({
-          sql:
-            "UPDATE transactions SET status = 'token_issued' WHERE status = 'code_issued' " +
-            'AND transaction_id = (SELECT transaction_id FROM codes WHERE grant_id = ? LIMIT 1)',
-          params: [grantId],
-        });
+      // A token issued without a jti is kept under its hash.
+      const id = jti ?? tokenHash;
+      // The grant also names the transaction of the code it came from. A grant
+      // without a code (the device flow, CIBA) has none.
+      const grant =
+        grantId === undefined
+          ? undefined
+          : await updateGrant(grantId, expiresAt, (current) => ({
+            ...current,
+            latest_access_token: { id, iat: iat ?? null },
+          }));
+      const record: AccessTokenRecord = {
+        id,
+        sub,
+        exp: expiresAt,
+        iat: iat ?? null,
+        iss: issuer ?? null,
+        client_id: clientId,
+        scope: joinScope(scope),
+        transaction_id: grant?.transaction_id ?? null,
+        grant_id: grantId ?? null,
+        payload,
+      };
+      await write(keys.accessToken(tokenHash), record, ttlUntil(expiresAt));
+      if (grant?.transaction_id) {
+        const transactionId = grant.transaction_id;
+        const result = await read<TransactionResultRecord>(keys.transactionResult(transactionId));
+        if (result?.status === 'code_issued') {
+          const issued: TransactionResultRecord = { status: 'token_issued' };
+          await db.set(keys.transactionResult(transactionId), JSON.stringify(issued), ttlUntil(expiresAt));
+        }
       }
     },
     async get(token) {
       const tokenHash = await hashKey(token);
-      const [row] = await db.all<AccessTokenRow>({
-        sql:
-          'SELECT id, sub, exp, iat, iss, client_id, scope, grant_id, payload FROM access_tokens ' +
-          'WHERE token_hash = ? AND exp > ?',
-        params: [tokenHash, nowSeconds()],
-      });
-      if (!row) return undefined;
+      const record = await read<AccessTokenRecord>(keys.accessToken(tokenHash));
+      if (!record || record.exp <= nowSeconds()) return undefined;
+      if (record.grant_id !== null && (await db.get(keys.grantAccessTokensRevoked(record.grant_id))) !== null) {
+        return undefined;
+      }
       const info: AccessTokenInfo = {
-        ...(JSON.parse(row.payload) as Omit<AccessTokenInfo, AccessTokenColumn>),
-        sub: row.sub,
-        clientId: row.client_id,
-        scope: splitScope(row.scope),
-        expiresAt: Number(row.exp),
+        ...(record.payload as Omit<AccessTokenInfo, AccessTokenField>),
+        sub: record.sub,
+        clientId: record.client_id,
+        scope: splitScope(record.scope),
+        expiresAt: record.exp,
       };
-      if (row.id !== tokenHash) info.jti = row.id;
-      if (row.iat !== null) info.iat = Number(row.iat);
-      if (row.iss !== null) info.issuer = row.iss;
-      if (row.grant_id !== null) info.grantId = row.grant_id;
+      if (record.id !== tokenHash) info.jti = record.id;
+      if (record.iat !== null) info.iat = record.iat;
+      if (record.iss !== null) info.issuer = record.iss;
+      if (record.grant_id !== null) info.grantId = record.grant_id;
       return info;
     },
     delete: deleteAccessToken,
     revoke: deleteAccessToken,
     async revokeByGrantId(grantId) {
-      await db.run({ sql: 'DELETE FROM access_tokens WHERE grant_id = ?', params: [grantId] });
+      await revokeGrant(keys.grantAccessTokensRevoked(grantId), grantId);
     },
   };
 
   const deleteRefreshToken = async (token: string): Promise<void> => {
-    await db.run({ sql: 'DELETE FROM refresh_tokens WHERE id = ?', params: [await hashKey(token)] });
+    const tokenHash = await hashKey(token);
+    await db.delete(keys.refreshToken(tokenHash));
+    await db.delete(keys.refreshTokenUsed(tokenHash));
   };
 
   const refreshTokenStore: RefreshTokenStorage = {
     async set(token, info) {
       const { used, expiresAt, iat, grantId, ...payload } = info;
-      await db.run({
-        sql:
-          'INSERT INTO refresh_tokens (id, access_token_id, exp, iat, is_used, grant_id, payload) VALUES (?, ' +
-          // The access token of the same token response: the token endpoint
-          // stores it just before, with the same grant and iat, and no refresh
-          // token links it yet.
-          '(SELECT a.id FROM access_tokens a WHERE a.grant_id = ? AND a.iat = ? ' +
-          'AND NOT EXISTS (SELECT 1 FROM refresh_tokens r WHERE r.access_token_id = a.id) ' +
-          'ORDER BY a.id LIMIT 1), ?, ?, ' + sqlBoolean(used) + ', ?, ?)',
-        params: [
-          await hashKey(token),
-          grantId,
-          iat ?? null,
-          expiresAt,
-          iat ?? null,
-          grantId,
-          JSON.stringify(payload),
-        ],
+      const tokenHash = await hashKey(token);
+      let accessTokenId: string | null = null;
+      // The access token of the same token response: the token endpoint stores
+      // it just before, with the same grant and iat.
+      await updateGrant(grantId, expiresAt, (grant) => {
+        const latest = grant.latest_access_token;
+        if (latest && latest.iat === (iat ?? null)) accessTokenId = latest.id;
+        return { ...grant, latest_access_token: null };
       });
+      const record: RefreshTokenRecord = {
+        access_token_id: accessTokenId,
+        exp: expiresAt,
+        iat: iat ?? null,
+        grant_id: grantId,
+        payload,
+      };
+      await write(keys.refreshToken(tokenHash), record, ttlUntil(expiresAt));
+      if (used) await db.setIfAbsent(keys.refreshTokenUsed(tokenHash), MARKER, ttlUntil(expiresAt));
     },
     async get(token) {
-      const [row] = await db.all<RefreshTokenRow>({
-        sql: 'SELECT exp, iat, is_used, grant_id, payload FROM refresh_tokens WHERE id = ? AND exp > ?',
-        params: [await hashKey(token), nowSeconds()],
-      });
-      if (!row) return undefined;
+      const tokenHash = await hashKey(token);
+      const [record, used] = await Promise.all([
+        read<RefreshTokenRecord>(keys.refreshToken(tokenHash)),
+        db.get(keys.refreshTokenUsed(tokenHash)),
+      ]);
+      if (!record || record.exp <= nowSeconds()) return undefined;
+      if ((await db.get(keys.grantRefreshTokensRevoked(record.grant_id))) !== null) return undefined;
       const info: RefreshTokenInfo = {
-        ...(JSON.parse(row.payload) as Omit<RefreshTokenInfo, 'used' | 'expiresAt' | 'iat' | 'grantId'>),
-        grantId: row.grant_id,
-        expiresAt: Number(row.exp),
-        used: toBoolean(row.is_used),
+        ...(record.payload as Omit<RefreshTokenInfo, 'used' | 'expiresAt' | 'iat' | 'grantId'>),
+        grantId: record.grant_id,
+        expiresAt: record.exp,
+        used: used !== null,
       };
-      if (row.iat !== null) info.iat = Number(row.iat);
+      if (record.iat !== null) info.iat = record.iat;
       return info;
     },
     // Rotation: like authCodeStore.consume, exactly one request wins.
     async consume(token) {
-      const { changes } = await db.run({
-        sql: 'UPDATE refresh_tokens SET is_used = TRUE WHERE id = ? AND is_used = FALSE',
-        params: [await hashKey(token)],
-      });
-      if (changes === 0) {
+      const tokenHash = await hashKey(token);
+      const record = await read<RefreshTokenRecord>(keys.refreshToken(tokenHash));
+      const claimed =
+        record !== undefined &&
+        (await db.setIfAbsent(keys.refreshTokenUsed(tokenHash), MARKER, ttlUntil(record.exp)));
+      if (!claimed) {
         throw new TokenError(TokenErrorCode.InvalidGrant, 'Refresh token has already been used');
       }
     },
     delete: deleteRefreshToken,
     revoke: deleteRefreshToken,
-    // Rotated (used) refresh tokens share the grant_id, so they go too.
     async revokeByGrantId(grantId) {
-      await db.run({ sql: 'DELETE FROM refresh_tokens WHERE grant_id = ?', params: [grantId] });
+      await revokeGrant(keys.grantRefreshTokensRevoked(grantId), grantId);
     },
   };
 
-  // auth_type of a sign-in (auth_users): the provider of the user's federated
+  // auth_type of a sign-in (auth_user): the provider of the user's federated
   // identity, or password. A user created by Sign in with Google has no
-  // password, and registerUser() (users.ts) creates no federated identity, so
+  // password, and registerUser() (users.ts) adds no federated identity, so
   // each user signs in one way only unless you link a Google account to a
   // user with a password yourself.
   const authTypeOf = async (userId: string): Promise<string> => {
-    const [row] = await db.all<{ provider: string }>({
-      sql: 'SELECT provider FROM federated_identities WHERE user_id = ? ORDER BY created_at LIMIT 1',
-      params: [userId],
-    });
-    return row?.provider ?? 'password';
+    const user = await read<UserRecord>(keys.user(userId));
+    return user?.federated_identities?.[0]?.provider ?? 'password';
   };
 
   // Auth_user: the sign-in handed from /login to /consent, per transaction.
+  // It expires with the transaction.
   const authSessionStore: AuthSessionStorage = {
     async set(transactionId, info) {
-      await db.run({
-        sql:
-          'INSERT INTO auth_users (transaction_id, user_id, auth_type, auth_time, session_id) ' +
-          'VALUES (?, ?, ?, ?, ?) ' +
-          'ON CONFLICT (transaction_id) DO UPDATE SET user_id = excluded.user_id, ' +
-          'auth_type = excluded.auth_type, auth_time = excluded.auth_time, session_id = excluded.session_id',
-        params: [transactionId, info.subject, await authTypeOf(info.subject), info.authTime, info.sessionId ?? null],
-      });
-      await db.run({
-        sql:
-          "UPDATE transactions SET status = 'authenticated' " +
-          "WHERE transaction_id = ? AND status IN ('requested', 'upstream_pending')",
-        params: [transactionId],
-      });
+      const transaction = await readTransaction(transactionId);
+      const record: AuthUserRecord = {
+        user_id: info.subject,
+        auth_type: await authTypeOf(info.subject),
+        auth_time: info.authTime,
+        session_id: info.sessionId ?? null,
+      };
+      await write(
+        keys.authUser(transactionId),
+        record,
+        transaction ? ttlUntil(transaction.expired_at) : FALLBACK_TTL_SECONDS,
+      );
+      await advanceTransaction(transactionId, ['requested', 'upstream_pending'], 'authenticated');
     },
     async get(transactionId) {
-      const [row] = await db.all<{ user_id: string; auth_time: number | string; session_id: string | null }>({
-        sql: 'SELECT user_id, auth_time, session_id FROM auth_users WHERE transaction_id = ?',
-        params: [transactionId],
-      });
-      if (!row) return undefined;
-      const info: AuthSessionInfo = { subject: row.user_id, authTime: Number(row.auth_time) };
-      if (row.session_id !== null) info.sessionId = row.session_id;
+      const record = await read<AuthUserRecord>(keys.authUser(transactionId));
+      if (!record) return undefined;
+      const info: AuthSessionInfo = { subject: record.user_id, authTime: record.auth_time };
+      if (record.session_id !== null) info.sessionId = record.session_id;
       return info;
     },
     async delete(transactionId) {
-      await db.run({ sql: 'DELETE FROM auth_users WHERE transaction_id = ?', params: [transactionId] });
+      await db.delete(keys.authUser(transactionId));
     },
   };
 
   const browserSessionStore: BrowserSessionStorage = {
     async set(sessionId, info) {
-      await db.run({
-        sql:
-          'INSERT INTO browser_sessions (session_id, subject, auth_time) VALUES (?, ?, ?) ' +
-          'ON CONFLICT (session_id) DO UPDATE SET subject = excluded.subject, auth_time = excluded.auth_time',
-        params: [sessionId, info.subject, info.authTime],
-      });
+      const record: BrowserSessionRecord = { subject: info.subject, auth_time: info.authTime };
+      await write(keys.browserSession(sessionId), record);
     },
     async get(sessionId) {
-      const [row] = await db.all<{ subject: string; auth_time: number | string }>({
-        sql: 'SELECT subject, auth_time FROM browser_sessions WHERE session_id = ?',
-        params: [sessionId],
-      });
-      return row ? { subject: row.subject, authTime: Number(row.auth_time) } : undefined;
+      const record = await read<BrowserSessionRecord>(keys.browserSession(sessionId));
+      return record ? { subject: record.subject, authTime: record.auth_time } : undefined;
     },
     async delete(sessionId) {
-      await db.run({ sql: 'DELETE FROM browser_sessions WHERE session_id = ?', params: [sessionId] });
+      await db.delete(keys.browserSession(sessionId));
     },
   };
 
+  const readConsent = async (subject: string, clientId: string): Promise<ConsentRecord> =>
+    (await read<ConsentRecord>(keys.consent(subject, clientId))) ?? { scopes: [], grant_ids: [] };
+
   const consentStore: ConsentStorage = {
     async grant(subject, clientId, scopes) {
-      const unique = [...new Set(scopes)];
-      if (unique.length === 0) return;
-      // Scopes granted before are skipped by ON CONFLICT DO NOTHING; new ones are added.
-      await db.run({
-        sql:
-          'INSERT INTO consent_scopes (subject, client_id, scope) VALUES ' +
-          unique.map(() => '(?, ?, ?)').join(', ') +
-          ' ON CONFLICT DO NOTHING',
-        params: unique.flatMap((scope) => [subject, clientId, scope]),
+      if (scopes.length === 0) return;
+      const consent = await readConsent(subject, clientId);
+      await write(keys.consent(subject, clientId), {
+        ...consent,
+        scopes: [...new Set([...consent.scopes, ...scopes])],
       });
     },
     async hasConsent(subject, clientId, scopes) {
       const unique = [...new Set(scopes)];
-      // An empty request is never treated as consented (and IN () is not valid SQL).
+      // An empty request is never treated as consented.
       if (unique.length === 0) return false;
-      const [row] = await db.all<{ granted: number | string }>({
-        sql:
-          'SELECT COUNT(*) AS granted FROM consent_scopes ' +
-          'WHERE subject = ? AND client_id = ? AND scope IN (' +
-          unique.map(() => '?').join(', ') +
-          ')',
-        params: [subject, clientId, ...unique],
-      });
-      // A partially granted request counts fewer rows than it asked for.
-      return Number(row?.granted ?? 0) === unique.length;
+      const consent = await readConsent(subject, clientId);
+      return unique.every((scope) => consent.scopes.includes(scope));
     },
     async recordGrant(subject, clientId, grantId) {
-      await db.run({
-        sql:
-          'INSERT INTO consent_grants (subject, client_id, grant_id) VALUES (?, ?, ?) ' +
-          'ON CONFLICT DO NOTHING',
-        params: [subject, clientId, grantId],
+      const consent = await readConsent(subject, clientId);
+      if (consent.grant_ids.includes(grantId)) return;
+      await write(keys.consent(subject, clientId), {
+        ...consent,
+        grant_ids: [...consent.grant_ids, grantId],
       });
     },
+    // The grants come back, so the caller revokes the tokens of each one.
     async revoke(subject, clientId) {
-      await db.run({
-        sql: 'DELETE FROM consent_scopes WHERE subject = ? AND client_id = ?',
-        params: [subject, clientId],
-      });
-      // DELETE ... RETURNING hands back every grant it removed, in the same
-      // statement, so the caller revokes the tokens of each one.
-      const rows = await db.all<{ grant_id: string }>({
-        sql: 'DELETE FROM consent_grants WHERE subject = ? AND client_id = ? RETURNING grant_id',
-        params: [subject, clientId],
-      });
-      return rows.map((row) => row.grant_id);
+      const consent = await readConsent(subject, clientId);
+      await db.delete(keys.consent(subject, clientId));
+      return consent.grant_ids;
     },
   };
-
 
   // EXTENSION (google-login): the user linked to a Google account, if any.
   const findGoogleUser = async (googleSub: string): Promise<string | undefined> => {
-    const [row] = await db.all<{ user_id: string }>({
-      sql: "SELECT user_id FROM federated_identities WHERE provider = 'google' AND provider_sub = ?",
-      params: [googleSub],
-    });
-    return row?.user_id;
+    const identity = await read<FederatedIdentityRecord>(keys.federatedIdentity('google', googleSub));
+    return identity?.user_id;
   };
 
-  // EXTENSION (google-login): create the user of a Google account on its first
-  // sign-in, under a new random id. Two first sign-ins of one account may race:
-  // UNIQUE (provider, provider_sub) keeps one federated identity, and the user
-  // created by the other request is removed again.
+  // EXTENSION (google-login): link a Google account to a new user, under a new
+  // random id, on its first sign-in. Two first sign-ins of one account may
+  // race: setIfAbsent keeps one federated identity, and the request that lost
+  // uses the user it names.
   const createGoogleUser = async (googleSub: string): Promise<string> => {
     const userId = crypto.randomUUID();
     const now = nowSeconds();
-    await db.run({
-      sql: 'INSERT INTO users (id, is_verified, created_at, updated_at) VALUES (?, FALSE, ?, ?)',
-      params: [userId, now, now],
-    });
-    await db.run({
-      sql:
-        'INSERT INTO federated_identities (id, user_id, provider, provider_sub, created_at, updated_at) ' +
-        "VALUES (?, ?, 'google', ?, ?, ?) ON CONFLICT (provider, provider_sub) DO NOTHING",
-      params: [crypto.randomUUID(), userId, googleSub, now, now],
-    });
-    const linkedUserId = (await findGoogleUser(googleSub)) ?? userId;
-    if (linkedUserId !== userId) {
-      await db.run({ sql: 'DELETE FROM users WHERE id = ?', params: [userId] });
-    }
-    return linkedUserId;
+    const identity: FederatedIdentityRecord = { user_id: userId, created_at: now, updated_at: now };
+    const linked = await db.setIfAbsent(
+      keys.federatedIdentity('google', googleSub),
+      JSON.stringify(identity),
+    );
+    return linked ? userId : ((await findGoogleUser(googleSub)) ?? userId);
   };
 
-  // EXTENSION (google-login): save the claims Google asserted to the user:
-  // email and email_verified to their columns, the others to claims as JSON.
-  // password_hash is left as it is.
-  const saveGoogleClaims = async (claims: UserClaims): Promise<void> => {
+  // EXTENSION (google-login): save the claims Google asserted to the user
+  // (email and email_verified to their fields, the others to claims), and
+  // create the user record on the first sign-in. password_hash is left as it
+  // is.
+  const saveGoogleClaims = async (claims: UserClaims, googleSub: string): Promise<void> => {
     const { sub, email, email_verified, ...otherClaims } = claims;
-    await db.run({
-      sql:
-        'UPDATE users SET email = ?, is_verified = ' + sqlBoolean(email_verified === true) + ', ' +
-        'updated_at = ?, claims = ? WHERE id = ?',
-      params: [email ?? null, nowSeconds(), JSON.stringify(otherClaims), sub],
-    });
+    const current = await read<UserRecord>(keys.user(sub));
+    const now = nowSeconds();
+    const identities = current?.federated_identities ?? [];
+    const linked = identities.some(
+      (identity) => identity.provider === 'google' && identity.provider_sub === googleSub,
+    );
+    const record: UserRecord = {
+      email: email ?? null,
+      is_verified: email_verified === true,
+      password_hash: current?.password_hash ?? null,
+      created_at: current?.created_at ?? now,
+      updated_at: now,
+      claims: otherClaims,
+      federated_identities: linked
+        ? identities
+        : [...identities, { provider: 'google', provider_sub: googleSub }],
+    };
+    await write(keys.user(sub), record);
   };
 
-  // User: the users table. Put users there with registerUser() (users.ts).
+  // User: the user records. Put users there with registerUser() (users.ts).
   const userStore: UserStorage = {
-    // The password form checks users.id as the username. Look the row up by
-    // email instead to sign in with an email address.
+    // The password form checks the user's id as the username.
     async authenticate(username, password) {
-      const [row] = await db.all<UserRow & { password_hash: string | null }>({
-        sql: 'SELECT email, is_verified, password_hash, claims FROM users WHERE id = ?',
-        params: [username],
-      });
-      // verifyPassword() takes as long without a hash, so the response time does
-      // not tell whether the user exists. A user without a password (such as one
-      // created by Sign in with Google) cannot sign in with the form.
-      const passwordHash = row?.password_hash ?? null;
-      if (!(await verifyPassword(password, passwordHash)) || !row || passwordHash === null) {
+      const user = await read<UserRecord>(keys.user(username));
+      // verifyPassword() takes as long without a hash, so the response time
+      // does not tell whether the user exists. A user without a password
+      // cannot sign in with the form.
+      const passwordHash = user?.password_hash ?? null;
+      if (!(await verifyPassword(password, passwordHash)) || !user || passwordHash === null) {
         return undefined;
       }
-      return { ...userClaims(username, row), password: passwordHash };
+      return { ...userClaims(username, user), password: passwordHash };
     },
     async getClaims(sub) {
-      const [row] = await db.all<UserRow>({
-        sql: 'SELECT email, is_verified, claims FROM users WHERE id = ?',
-        params: [sub],
-      });
-      return row ? userClaims(sub, row) : undefined;
+      const user = await read<UserRecord>(keys.user(sub));
+      return user ? userClaims(sub, user) : undefined;
     },
     // EXTENSION (google-login): find or create the user of a verified Google
     // account by its federated identity (never by email), and save the claims
@@ -542,43 +584,45 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     async linkGoogleAccount(account) {
       const userId = (await findGoogleUser(account.sub)) ?? (await createGoogleUser(account.sub));
       const claims: UserClaims = { ...googleAccountToClaims(account), sub: userId };
-      await saveGoogleClaims(claims);
+      await saveGoogleClaims(claims, account.sub);
       return claims;
     },
   };
 
-  // EXTENSION (google-login): the nonce of the Google button, kept as the
-  // upstream_auth_requests row of its transaction. A transaction has one row,
-  // so a newer login page replaces the nonce of an older one. The record
-  // expires with the transaction.
+  // EXTENSION (google-login): the nonce of the Google button, kept in the
+  // upstream_auth_request record of its transaction, and found by the nonce
+  // through upstream_nonce. A transaction has one record, so a newer login
+  // page replaces the nonce of an older one. Both expire with the nonce.
   const googleLoginNonceStore: GoogleLoginNonceStore = {
     async get(key) {
-      const [row] = await db.all<{ transaction_id: string; expired_at: number | string }>({
-        sql:
-          'SELECT u.transaction_id, t.expired_at FROM upstream_auth_requests u ' +
-          'JOIN transactions t ON t.transaction_id = u.transaction_id ' +
-          'WHERE u.nonce = ? AND t.expired_at > ?',
-        params: [withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX), nowSeconds()],
-      });
-      return row ? { transactionId: row.transaction_id, expiresAt: Number(row.expired_at) * 1000 } : null;
+      const nonce = withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX);
+      const index = await read<UpstreamNonceRecord>(keys.upstreamNonce(nonce));
+      if (!index) return null;
+      const request = await read<UpstreamAuthRequestRecord>(keys.upstreamAuthRequest(index.transaction_id));
+      if (!request || request.nonce !== nonce || request.expired_at <= nowSeconds()) return null;
+      return { transactionId: index.transaction_id, expiresAt: request.expired_at * 1000 };
     },
-    async put(key, value, _ttlSeconds) {
-      await db.run({
-        sql:
-          "INSERT INTO upstream_auth_requests (transaction_id, provider, nonce) VALUES (?, 'google', ?) " +
-          'ON CONFLICT (transaction_id) DO UPDATE SET provider = excluded.provider, nonce = excluded.nonce',
-        params: [value.transactionId, withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX)],
-      });
-      await db.run({
-        sql: "UPDATE transactions SET status = 'upstream_pending' WHERE transaction_id = ? AND status = 'requested'",
-        params: [value.transactionId],
-      });
+    async put(key, value, ttlSeconds) {
+      const nonce = withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX);
+      const request: UpstreamAuthRequestRecord = {
+        provider: 'google',
+        state: null,
+        nonce,
+        code_verifier: null,
+        expired_at: Math.ceil(value.expiresAt / 1000),
+      };
+      const index: UpstreamNonceRecord = { transaction_id: value.transactionId };
+      await write(keys.upstreamAuthRequest(value.transactionId), request, ttlSeconds);
+      await write(keys.upstreamNonce(nonce), index, ttlSeconds);
+      await advanceTransaction(value.transactionId, ['requested'], 'upstream_pending');
     },
     async delete(key) {
-      await db.run({
-        sql: 'DELETE FROM upstream_auth_requests WHERE nonce = ?',
-        params: [withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX)],
-      });
+      const nonce = withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX);
+      const index = await read<UpstreamNonceRecord>(keys.upstreamNonce(nonce));
+      await db.delete(keys.upstreamNonce(nonce));
+      if (!index) return;
+      const request = await read<UpstreamAuthRequestRecord>(keys.upstreamAuthRequest(index.transaction_id));
+      if (request?.nonce === nonce) await db.delete(keys.upstreamAuthRequest(index.transaction_id));
     },
   };
 
@@ -595,10 +639,10 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
   };
 }
 
-/** The values of an AuthTransaction kept in transactions.payload. */
+/** The values of an AuthTransaction kept in the payload of the transaction record. */
 type TransactionPayload = Pick<AuthTransaction, 'csrfToken' | 'failedAttempts' | 'bindingHash'>;
 
-/** The values of an AuthTransaction kept in authentication_requests.payload. */
+/** The values of an AuthTransaction kept in the payload of its authentication request. */
 type OtherRequestParameters = Omit<
   AuthTransaction,
   | keyof TransactionPayload
@@ -614,73 +658,24 @@ type OtherRequestParameters = Omit<
   | 'expiresAt'
 >;
 
-/** The values of an AccessTokenInfo with a column of their own in access_tokens. */
-type AccessTokenColumn = 'sub' | 'scope' | 'clientId' | 'expiresAt' | 'iat' | 'issuer' | 'jti' | 'grantId';
-
-// Rows as the drivers return them: a BIGINT may come back as a string (pg) and
-// a BOOLEAN as 1 / 0 (SQLite), so they are read with Number() and toBoolean().
-
-interface TransactionRow {
-  created_at: number | string;
-  expired_at: number | string;
-  transaction_payload: string;
-  client_id: string;
-  redirect_uri: string;
-  state: string | null;
-  nonce: string | null;
-  code_challenge: string | null;
-  code_challenge_method: string | null;
-  response_type: string;
-  scope: string | null;
-  request_payload: string;
-}
-
-interface CodeRow {
-  expired_at: number | string;
-  is_used: unknown;
-  grant_id: string;
-  payload: string;
-}
-
-interface AccessTokenRow {
-  id: string;
-  sub: string;
-  exp: number | string;
-  iat: number | string | null;
-  iss: string | null;
-  client_id: string;
-  scope: string | null;
-  grant_id: string | null;
-  payload: string;
-}
-
-interface RefreshTokenRow {
-  exp: number | string;
-  iat: number | string | null;
-  is_used: unknown;
-  grant_id: string;
-  payload: string;
-}
-
-interface UserRow {
-  email: string | null;
-  is_verified: unknown;
-  claims: string | null;
-}
+/** The values of an AccessTokenInfo with a field of their own in the access token record. */
+type AccessTokenField = 'sub' | 'scope' | 'clientId' | 'expiresAt' | 'iat' | 'issuer' | 'jti' | 'grantId';
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** The claims of a users row: email and email_verified from their columns, the rest from claims. */
-function userClaims(sub: string, row: UserRow): UserClaims {
-  const claims: UserClaims = {
-    ...(row.claims ? (JSON.parse(row.claims) as Partial<UserClaims>) : {}),
-    sub,
-  };
-  if (row.email !== null) {
-    claims.email = row.email;
-    claims.email_verified = toBoolean(row.is_verified);
+/** The TTL that makes a key expire at expiresAt (epoch seconds), 1 second at least. */
+function ttlUntil(expiresAt: number): number {
+  return Math.max(1, expiresAt - nowSeconds());
+}
+
+/** The claims of a user record: email and email_verified from their fields, the rest from claims. */
+function userClaims(sub: string, user: UserRecord): UserClaims {
+  const claims: UserClaims = { ...(user.claims as Partial<UserClaims>), sub };
+  if (user.email !== null) {
+    claims.email = user.email;
+    claims.email_verified = user.is_verified;
   }
   return claims;
 }
@@ -689,26 +684,13 @@ function withoutPrefix(key: string, prefix: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
 
-/** The scope column: space-separated, NULL when there is none. */
+/** The scope field: space-separated, null when there is none. */
 function joinScope(scope: string[]): string | null {
   return scope.length > 0 ? scope.join(' ') : null;
 }
 
 function splitScope(scope: string | null): string[] {
   return scope ? scope.split(' ') : [];
-}
-
-/**
- * A boolean as SQL text. TRUE / FALSE work on SQLite, D1 and PostgreSQL alike,
- * while a bound number is not a BOOLEAN to every PostgreSQL driver.
- */
-function sqlBoolean(value: boolean): 'TRUE' | 'FALSE' {
-  return value ? 'TRUE' : 'FALSE';
-}
-
-/** A BOOLEAN column as read back: true / false from PostgreSQL, 1 / 0 from SQLite. */
-function toBoolean(value: unknown): boolean {
-  return value === true || Number(value) === 1;
 }
 
 /** The key a code or token is stored under: its SHA-256 hash, base64url-encoded. */

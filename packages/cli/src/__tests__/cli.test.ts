@@ -428,34 +428,40 @@ describe('run', () => {
       return instancePath;
     }
 
-    it('should keep an existing db/instance.ts when generating with --force', () => {
-      const outputDir = join(testDir, 'oidc-provider');
-      const instancePath = writeUserInstance(outputDir);
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      run(['generate', 'hono', '-o', outputDir, '--db', '--force']);
-      expect(readFileSync(instancePath, 'utf-8')).toBe(userInstance);
-      expect(process.exitCode).toBe(undefined);
-      vi.restoreAllMocks();
-    });
+    it.each(['sql', 'kv'])(
+      'should keep an existing db/instance.ts when generating with --db %s --force',
+      (kind) => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const instancePath = writeUserInstance(outputDir);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--db', kind, '--force']);
+        expect(readFileSync(instancePath, 'utf-8')).toBe(userInstance);
+        expect(process.exitCode).toBe(undefined);
+        vi.restoreAllMocks();
+      },
+    );
 
-    it('should not refuse generation when db/instance.ts is the only existing file', () => {
-      const outputDir = join(testDir, 'oidc-provider');
-      const instancePath = writeUserInstance(outputDir);
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      run(['generate', 'hono', '-o', outputDir, '--db']);
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(undefined);
-      expect(existsSync(join(outputDir, '.maronn-openid-connect.json'))).toBe(true);
-      expect(readFileSync(instancePath, 'utf-8')).toBe(userInstance);
-      vi.restoreAllMocks();
-    });
+    it.each(['sql', 'kv'])(
+      'should not refuse generation with --db %s when db/instance.ts is the only existing file',
+      (kind) => {
+        const outputDir = join(testDir, 'oidc-provider');
+        const instancePath = writeUserInstance(outputDir);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        run(['generate', 'hono', '-o', outputDir, '--db', kind]);
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(undefined);
+        expect(existsSync(join(outputDir, '.maronn-openid-connect.json'))).toBe(true);
+        expect(readFileSync(instancePath, 'utf-8')).toBe(userInstance);
+        vi.restoreAllMocks();
+      },
+    );
 
     it('should report the kept db/instance.ts in the generation log', () => {
       const outputDir = join(testDir, 'oidc-provider');
       writeUserInstance(outputDir);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      run(['generate', 'hono', '-o', outputDir, '--db']);
+      run(['generate', 'hono', '-o', outputDir, '--db', 'sql']);
       expect(logSpy).toHaveBeenCalledWith('  Kept: db/instance.ts (yours; never overwritten)');
       vi.restoreAllMocks();
     });
@@ -464,16 +470,44 @@ describe('run', () => {
       const outputDir = join(testDir, 'oidc-provider');
       writeUserInstance(outputDir);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      run(['generate', 'hono', '-o', outputDir, '--db', '--dry-run']);
+      run(['generate', 'hono', '-o', outputDir, '--db', 'kv', '--dry-run']);
       expect(logSpy).toHaveBeenCalledWith('  Would keep: db/instance.ts (yours; never overwritten)');
       vi.restoreAllMocks();
     });
 
-    it('should list --db in help output', () => {
+    it('should error without writing anything when --db has no kind', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--db']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: --db needs a kind: --db sql (SQL tables) or --db kv (a key-value store)',
+      );
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(outputDir)).toBe(false);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error without writing anything on an unknown --db kind', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--db', 'redis', '--force']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: Unknown --db kind: "redis". Use --db sql (SQL tables) or --db kv (a key-value store)',
+      );
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(outputDir)).toBe(false);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should list both --db kinds in help output', () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       run(['--help']);
       const output = consoleSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain('--db');
+      expect(output).toContain('--db <sql|kv>');
       consoleSpy.mockRestore();
     });
   });

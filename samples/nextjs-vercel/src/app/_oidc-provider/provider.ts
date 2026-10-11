@@ -32,10 +32,10 @@ import {
   type ProviderConfig,
 } from './config';
 import { createStoreResolvers } from './resolvers';
-import type { SqlDatabase, SqlStatement } from './db/database';
+import type { KvDatabase } from './db/database';
 import { createDatabase } from './db/instance';
-import { createSqlProviderStores } from './db/stores';
-import { createSqlClientResolver } from './db/clients';
+import { createKvProviderStores } from './db/stores';
+import { createKvClientResolver } from './db/clients';
 
 /**
  * Provider configuration. OIDC_ISSUER must be the exact public URL of this app:
@@ -66,27 +66,29 @@ export const config: ProviderConfig = createProviderConfig({
 });
 
 /**
- * The database of db/instance.ts. createDatabase() runs on the first query
+ * The database of db/instance.ts. createDatabase() runs on its first use
  * rather than at import, so `next build` does not call it.
  */
 const database = deferDatabase(createDatabase);
 
 /**
- * Registered clients: the client tables of db/schema.sql. Put clients there
- * with registerClient() (db/clients.ts).
+ * Registered clients: the client records of the key-value store (db/keys.ts).
+ * Put clients there with registerClient() (db/clients.ts).
  */
-export const clientResolver = createSqlClientResolver(database);
+export const clientResolver = createKvClientResolver(database);
 
-/** Persistent provider stores: the SQL tables of db/schema.sql, on the same database. */
-export const stores = createSqlProviderStores(database);
+/** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
+export const stores = createKvProviderStores(database);
 
-/** A SqlDatabase that calls create() on its first query and keeps the result. */
-function deferDatabase(create: () => SqlDatabase): SqlDatabase {
-  let database: SqlDatabase | undefined;
-  const resolve = (): SqlDatabase => (database ??= create());
+/** A KvDatabase that calls create() on its first use and keeps the result. */
+function deferDatabase(create: () => KvDatabase): KvDatabase {
+  let database: KvDatabase | undefined;
+  const resolve = (): KvDatabase => (database ??= create());
   return {
-    all: <Row>(statement: SqlStatement) => resolve().all<Row>(statement),
-    run: (statement: SqlStatement) => resolve().run(statement),
+    get: (key) => resolve().get(key),
+    set: (key, value, ttlSeconds) => resolve().set(key, value, ttlSeconds),
+    setIfAbsent: (key, value, ttlSeconds) => resolve().setIfAbsent(key, value, ttlSeconds),
+    delete: (key) => resolve().delete(key),
   };
 }
 

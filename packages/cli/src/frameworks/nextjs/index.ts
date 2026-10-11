@@ -15,7 +15,8 @@ import {
   nextJsStorageBackendTemplate,
 } from './provider.js';
 import { nextJsDiscoveryRouteTemplate, nextJsJwksRouteTemplate } from './metadata.js';
-import { dbGeneratedFiles } from '../db/templates.js';
+import type { DbKind } from '../../db.js';
+import { databaseGeneratedFiles } from '../db/wiring.js';
 import { nextJsAuthorizeRouteTemplate } from './authorize.js';
 import {
   nextJsCibaGrantTemplate,
@@ -85,7 +86,7 @@ export class NextJsGenerator implements FrameworkGenerator {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
-    return nextJsGeneratedFiles(pkg, features, scopes, options.db ?? false);
+    return nextJsGeneratedFiles(pkg, features, scopes, options.db);
   }
 }
 
@@ -110,7 +111,7 @@ function nextJsGeneratedFiles(
   pkg: string,
   features: OidcFeatureConfig,
   scopes: string[],
-  db: boolean,
+  db: DbKind | undefined,
 ): GeneratedFile[] {
   // Screens that set a cookie on the response that renders them, and answer
   // with their own status codes, are Route Handlers returning HTML (see
@@ -140,10 +141,10 @@ function nextJsGeneratedFiles(
         ),
       ),
     },
-    // --db replaces the key-value backends with db/ (the SQL tables, the stores
-    // on them, and the db/instance.ts the user writes).
+    // --db replaces the key-value backends with db/ (the SQL tables or the key
+    // layout, the stores on them, and the db/instance.ts the user writes).
     ...(db
-      ? dbGeneratedFiles(pkg, features, 'nextjs').map((file) => ({
+      ? databaseGeneratedFiles(db, pkg, features, 'nextjs').map((file) => ({
         ...file,
         path: `_oidc-provider/${file.path}`,
         content: file.path.endsWith('.ts') ? withBundlerImports(file.content) : file.content,

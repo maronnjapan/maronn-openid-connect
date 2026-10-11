@@ -1,6 +1,6 @@
 # Hono + Cloudflare Workers sample
 
-Cloudflare Workers上で動くHono OPで、CLIの `--db` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、クライアント・ユーザー・認可トランザクション・コード・トークン・セッション・同意をD1で保存する。ローカルでもWranglerがD1をエミュレートするため、DBソフトやDockerは不要。
+Cloudflare Workers上で動くHono OPで、CLIの `--db sql` で生成したSQLのテーブル（`src/oidc-provider/db/`）に、クライアント・ユーザー・認可トランザクション・コード・トークン・セッション・同意をD1で保存する。ローカルでもWranglerがD1をエミュレートするため、DBソフトやDockerは不要。
 
 `src/oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、テーブル定義（`schema.sql`）、ストア（`stores.ts`）、クライアントとユーザーの読み書き（`clients.ts`、`users.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。
 

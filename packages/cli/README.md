@@ -398,7 +398,9 @@ for (const client of defaultRegisteredClients.values()) {
 ```
 
 Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録する。
+Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行う（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読まない。
+Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行う（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
 テーブルに列の無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
 `jwks` が無いので、署名付き Request Object の署名は検証できず、そのような要求は拒否される。
 
@@ -422,7 +424,7 @@ await registerUser(createDatabase(), {
 ログインフォームのユーザー名は `users.id` と照合する。
 メールアドレスでログインさせる場合は、`stores.ts` の `authenticate()` が引く列を `email` に変える。
 パスワードの無いユーザーは、ログインフォームでは認証できない。
-`store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録する（`samples/express-flyio` は起動時に登録している）。
+`store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録する（`samples/*` はどれも起動時に登録している）。
 
 Sign in with Google のユーザーはパスワードを持たず、Google の `sub`（`federated_identities.provider_sub`）で同じ人かを判断して、初めてのログインでランダムな ID のユーザーを作る。
 メールアドレスは Google アカウント側で変えられるので、同じ人かの判断には使わない。
@@ -457,7 +459,7 @@ applyOidc(app, {
 });
 ```
 
-Honoではリクエストごとのバインディングを受け取るstorage factoryも指定できる。配線済みの実例は本リポジトリの `samples/hono-cloudflare` / `samples/fastify-flyio` / `samples/nextjs-vercel`（`JsonStoreBackend`）と `samples/express-flyio`（`--db`）を参照。
+Honoではリクエストごとのバインディングを受け取るstorage factoryも指定できる。本リポジトリの `samples/*` はどれも `--db` で生成しており、`db/instance.ts` の実例（node:sqlite、Cloudflare D1、TursoのHTTP API）を参照できる。
 
 ## ライセンス
 

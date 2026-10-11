@@ -12,9 +12,9 @@
 | `hono-cloudflare` | Hono | Cloudflare Workers | D1（Wranglerエミュレート） | D1 |
 | `express-flyio` | Express | Fly.io | node:sqlite | node:sqlite + 永続ボリューム |
 | `fastify-flyio` | Fastify | Fly.io | node:sqlite | node:sqlite + 永続ボリューム |
-| `nextjs-vercel` | Next.js | Vercel | node:sqlite | Upstash Redis REST |
+| `nextjs-vercel` | Next.js | Vercel | node:sqlite | Turso（libSQL の HTTP API） |
 
-ストアの組み立て方も分けている。`express-flyio` は CLI の `--db` で生成した SQL のテーブル（DB インスタンスの `db/instance.ts` だけをサンプルが書く）を使い、クライアントもそのテーブルから読む。ほかの 3 つは `JsonStoreBackend`（1 つのテーブルや KV に JSON を入れる方式）を使う。E2E はどちらの方式も検証する。
+どのサンプルも CLI の `--db` で生成した SQL のテーブルにデータを保存し、クライアントとユーザーもそのテーブルから読む。生成物のうちサンプルが書くのは DB インスタンスを返す `db/instance.ts` だけで、上の表のストレージはこのファイルで切り替えている。クライアントと開発用のユーザーは、各サンプルが起動時に `registerClient()` と `registerUser()` で登録する。`--db` を付けない生成（`JsonStoreBackend` で 1 つのテーブルや KV に JSON を入れる方式）は、サンプルの E2E では検証していない。
 
 ## 一発コマンド
 

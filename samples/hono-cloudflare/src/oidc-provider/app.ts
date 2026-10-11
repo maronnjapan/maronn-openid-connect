@@ -16,7 +16,6 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
   createProviderConfig,
   type ProviderConfig,
 } from './config.js';
@@ -24,7 +23,6 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
   parStore,
   deviceAuthorizationStore,
   cibaAuthenticationRequestStore,
@@ -33,6 +31,9 @@ import {
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
+import { createDatabase } from './db/instance.js';
+import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';
 import {
   assertHasRs256Key,
   assertKeyStrength,
@@ -66,6 +67,7 @@ export interface CreateAppOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
+  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */
   clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   /**
@@ -80,7 +82,7 @@ export interface CreateAppOptions {
    * Defaults to the in-memory consent store resolver in resolvers.ts.
    */
   consentResolver?: ConsentResolver;
-  /** Persistent stores, or a request-aware factory for bindings such as Cloudflare D1. */
+  /** Stores to use instead of db/: the SQL stores on the database db/instance.ts creates for each request. */
   storage?: ProviderStores | ProviderStoresFactory;
   acrResolver?: AcrResolver;
   /**
@@ -212,7 +214,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
     const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
+      options.clientResolver ?? createSqlClientResolver(createDatabase(c));
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -288,6 +290,6 @@ async function resolveProviderStores(
   storage: CreateAppOptions['storage'],
   context: any,
 ): Promise<ProviderStores> {
-  if (!storage) return defaultProviderStores;
+  if (!storage) return createSqlProviderStores(createDatabase(context));
   return typeof storage === 'function' ? storage(context) : storage;
 }

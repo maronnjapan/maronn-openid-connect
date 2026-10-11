@@ -16,7 +16,6 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
   createProviderConfig,
   type ProviderConfig,
 } from './config.js';
@@ -24,7 +23,6 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
   parStore,
   deviceAuthorizationStore,
   cibaAuthenticationRequestStore,
@@ -33,6 +31,9 @@ import {
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
+import { createDatabase } from './db/instance.js';
+import { createSqlProviderStores } from './db/stores.js';
+import { createSqlClientResolver } from './db/clients.js';
 import {
   assertHasRs256Key,
   assertKeyStrength,
@@ -83,6 +84,7 @@ export interface ApplyOidcOptions {
    * (OIDC Core 1.0 Section 5.3.2).
    */
   userinfoSigningKeyProvider?: SigningKeyProvider;
+  /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */
   clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   /**
@@ -97,7 +99,7 @@ export interface ApplyOidcOptions {
    * Defaults to the in-memory consent store resolver in resolvers.ts.
    */
   consentResolver?: ConsentResolver;
-  /** Persistent stores, or a request-aware factory for bindings such as Cloudflare D1. */
+  /** Stores to use instead of db/: the SQL stores on the database db/instance.ts creates for each request. */
   storage?: ProviderStores | ProviderStoresFactory;
   /**
    * acr / amr resolver (OIDC Core 1.0 §2 / §12.1).
@@ -255,7 +257,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
     const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
+      options.clientResolver ?? createSqlClientResolver(createDatabase(c));
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -331,6 +333,6 @@ async function resolveProviderStores(
   storage: ApplyOidcOptions['storage'],
   context: any,
 ): Promise<ProviderStores> {
-  if (!storage) return defaultProviderStores;
+  if (!storage) return createSqlProviderStores(createDatabase(context));
   return typeof storage === 'function' ? storage(context) : storage;
 }

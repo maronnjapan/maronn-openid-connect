@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# One-command deploy of the nextjs-vercel sample OP to Vercel + Upstash Redis.
+# One-command deploy of the nextjs-vercel sample OP to Vercel + Turso.
 #
 # This is verification tooling for maintainers of this repository: it puts the
-# CLI-generated OP onto real Vercel infrastructure so the Upstash Redis REST
-# storage backend can be checked against an actual HTTPS deployment. It is not
-# a production deployment guide for library users (see the repository README.md).
+# CLI-generated OP onto real Vercel infrastructure so the SQL tables of the
+# generated db/ can be checked on Turso (libSQL over HTTP) against an actual
+# HTTPS deployment. It is not a production deployment guide for library users
+# (see the repository README.md).
 #
 # Zero-argument usage is the intended path. The script automates everything the
 # Vercel CLI allows: project link, env pull, local monorepo build
@@ -15,9 +16,9 @@
 #
 # Human steps the guide walks through when they are unavoidable:
 #   - Vercel login (browser / email confirmation)
-#   - Upstash Redis credentials: Vercel cannot create the database via CLI, so
-#     the guide explains where to create it (Vercel Marketplace or Upstash
-#     console) and accepts the two REST values as pasted input.
+#   - Turso credentials: Vercel cannot create the database via CLI, so the
+#     guide explains where to create it (Vercel Marketplace or the Turso CLI)
+#     and accepts the database URL and token as pasted input.
 #
 # The issuer works like the other samples: the production URL is only known
 # after the first deploy, so the first run deploys once, pins the reported URL
@@ -53,7 +54,7 @@ Usage: deploy-vercel.sh [--issuer <https://...>] [--dry-run]
   1. pnpm / 依存関係 / @maronn-openid-connect/core のビルドを準備
   2. Vercel 未ログインなら 'vercel login' を起動
   3. プロジェクト（${PROJECT_NAME}）を作成またはリンク
-  4. Upstash Redis の環境変数（UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN）が
+  4. Turso の環境変数（TURSO_DATABASE_URL / TURSO_AUTH_TOKEN）が
      未設定なら、作成手順を案内して貼り付け入力で設定
   5. ローカルで 'vercel build' を実行し、--prebuilt で本番デプロイ
      （workspace 依存の @maronn-openid-connect/core を含めてローカルで解決）
@@ -100,7 +101,7 @@ guide_ok "ツールチェーンの準備ができました（Vercel CLI は pnpm
 if [ "${DRY_RUN}" = "1" ]; then
   guide_info "実行: vercel login（未ログイン時のみ）"
   guide_info "実行: vercel link --yes --project ${PROJECT_NAME}"
-  guide_info "実行: vercel env ls production（UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN を確認）"
+  guide_info "実行: vercel env ls production（TURSO_DATABASE_URL / TURSO_AUTH_TOKEN を確認）"
   guide_info "実行: vercel pull --yes --environment=production"
   guide_info "実行: vercel build --prod"
   guide_info "実行: vercel deploy --prebuilt --prod"
@@ -128,40 +129,40 @@ else
   guide_ok "リンク済みの Vercel プロジェクトを再利用します（.vercel/project.json）。"
 fi
 
-# ── Upstash Redis 環境変数の確認（無ければガイド付きで設定） ───────────
-guide_step "ストレージ（Upstash Redis）の環境変数を確認します"
+# ── Turso 環境変数の確認（無ければガイド付きで設定） ───────────────────
+guide_step "データベース（Turso）の環境変数を確認します"
 env_list="$(vercel_cmd env ls production 2>/dev/null || true)"
 missing=()
-for name in UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN; do
+for name in TURSO_DATABASE_URL TURSO_AUTH_TOKEN; do
   if ! printf '%s' "${env_list}" | grep -q "${name}"; then
     missing+=("${name}")
   fi
 done
 if [ "${#missing[@]}" -gt 0 ]; then
   guide_warn "未設定の環境変数があります: ${missing[*]}"
-  guide_info "このサンプルは Vercel 上では Upstash Redis REST をストレージに使います。値の入手方法は次のどちらでも構いません:"
-  guide_info "  A) Vercel ダッシュボード → プロジェクト → Storage → Upstash (Marketplace) で Redis を作成"
-  guide_info "     （この場合は環境変数が自動注入されるので、完了後にこのスクリプトを再実行するだけです）"
-  guide_info "  B) https://console.upstash.com で Redis データベースを作成し、『REST API』欄の"
-  guide_info "     UPSTASH_REDIS_REST_URL と UPSTASH_REDIS_REST_TOKEN をこの場に貼り付け"
+  guide_info "このサンプルは Vercel 上では Turso（SQLite 互換の libSQL）をデータベースに使います。値の入手方法は次のどちらでも構いません:"
+  guide_info "  A) Vercel ダッシュボード → プロジェクト → Storage → Turso (Marketplace) でデータベースを作成"
+  guide_info "     （TURSO_DATABASE_URL / TURSO_AUTH_TOKEN が自動で入った場合は、完了後にこのスクリプトを再実行するだけです）"
+  guide_info "  B) Turso CLI で 'turso db create <名前>' を実行し、'turso db show <名前> --url' の URL と"
+  guide_info "     'turso db tokens create <名前>' のトークンをこの場に貼り付け"
   if ! guide_confirm "いま値を貼り付けて設定しますか？（n の場合は A) の完了後に再実行してください）" y; then
     guide_info "Marketplace 連携の完了後、もう一度このコマンドを実行してください。"
     exit 0
   fi
   for name in "${missing[@]}"; do
     case "${name}" in
-      UPSTASH_REDIS_REST_URL)
-        guide_ask value "UPSTASH_REDIS_REST_URL（例: https://xxxx.upstash.io）" ""
+      TURSO_DATABASE_URL)
+        guide_ask value "TURSO_DATABASE_URL（例: libsql://xxxx.turso.io）" ""
         ;;
       *)
-        guide_ask_secret value "UPSTASH_REDIS_REST_TOKEN"
+        guide_ask_secret value "TURSO_AUTH_TOKEN"
         ;;
     esac
     printf '%s' "${value}" | vercel_cmd env add "${name}" production >/dev/null
     guide_ok "${name} を production に設定しました。"
   done
 fi
-guide_ok "ストレージの環境変数が揃っています。"
+guide_ok "データベースの環境変数が揃っています。"
 
 # ── ISSUER の解決（前回値 → 初回はデプロイ結果から確定） ───────────────
 if [ -z "${ISSUER}" ] && [ -f "${ISSUER_FILE}" ]; then

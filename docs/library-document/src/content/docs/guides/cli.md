@@ -468,7 +468,9 @@ for (const client of defaultRegisteredClients.values()) {
 ```
 
 Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録してください。
+Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行います（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読みません。
+Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
 テーブルに列の無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
 `jwks` が無いので、署名付き Request Object の署名は検証できず、そのような要求は拒否されます。
 
@@ -492,7 +494,7 @@ await registerUser(createDatabase(), {
 ログインフォームのユーザー名は `users.id` と照合します。
 メールアドレスでログインさせる場合は、`stores.ts` の `authenticate()` が引く列を `email` に変えてください。
 パスワードの無いユーザーは、ログインフォームでは認証できません。
-`store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録してください（`samples/express-flyio` は起動時に登録している）。
+`store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録してください（`samples/*` はどれも起動時に登録している）。
 
 Sign in with Google のユーザーはパスワードを持たず、Google の `sub`（`federated_identities.provider_sub`）で同じ人かを判断して、初めてのログインでランダムな ID のユーザーを作ります。
 メールアドレスは Google アカウント側で変えられるので、同じ人かの判断には使いません。

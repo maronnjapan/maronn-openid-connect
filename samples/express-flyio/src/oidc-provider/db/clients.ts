@@ -86,6 +86,13 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
  *     await registerClient(db, client);
  *   }
  *
+ * Registering a client again with the same values leaves its rows as they
+ * are, so every instance of the OP may register its clients at startup, even
+ * at the same moment: each row's id comes from the values it holds, so two
+ * registrations write the same rows instead of adding copies. When the values
+ * change, the new redirect URIs, grant types and scopes go in before the old
+ * ones are removed, so requests in between still find the client.
+ *
  * clientSecret is saved as its hash (hashClientSecret()). The statements run
  * one at a time (SqlDatabase has no transactions), so run it again if it stops
  * halfway.
@@ -104,45 +111,75 @@ export async function registerClient(
     params: [client.clientId, client.name ?? null, clientType],
   });
 
-  // Replace the child rows. Secrets go first: they reference client_auths,
-  // and SQLite cascades only with foreign keys on.
-  const childRows = [
-    'DELETE FROM client_secrets WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)',
-    'DELETE FROM client_auths WHERE client_id = ?',
-    'DELETE FROM client_redirect_uris WHERE client_id = ?',
-    'DELETE FROM client_grant_types WHERE client_id = ?',
-    'DELETE FROM client_scopes WHERE client_id = ?',
-  ];
-  for (const sql of childRows) {
-    await db.run({ sql, params: [client.clientId] });
-  }
-
   const secretHash =
     client.clientSecretHash ??
     (client.clientSecret !== undefined ? await hashClientSecret(client.clientSecret) : undefined);
   const authMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
-  if (clientType === 'confidential' && authMethod !== 'none' && secretHash !== undefined) {
-    const authId = crypto.randomUUID();
+  const auth =
+    clientType === 'confidential' && authMethod !== 'none' && secretHash !== undefined
+      ? { id: await childRowId(client.clientId, 'client_auths', authMethod), secretHash }
+      : undefined;
+  const authIds = auth ? [auth.id] : [];
+  // The rows of another method go first, so the client never has two
+  // client_auths rows. Secrets go before their client_auths rows: they
+  // reference them, and SQLite cascades only with foreign keys on.
+  await db.run({
+    sql: exceptIds('DELETE FROM client_secrets WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)', authIds),
+    params: [client.clientId, ...authIds],
+  });
+  await db.run({
+    sql: exceptIds('DELETE FROM client_auths WHERE client_id = ?', authIds),
+    params: [client.clientId, ...authIds],
+  });
+  if (auth) {
     await db.run({
-      sql: 'INSERT INTO client_auths (id, client_id, client_auth_type) VALUES (?, ?, ?)',
-      params: [authId, client.clientId, authMethod],
+      sql: 'INSERT INTO client_auths (id, client_id, client_auth_type) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING',
+      params: [auth.id, client.clientId, authMethod],
     });
     await db.run({
-      sql: 'INSERT INTO client_secrets (id, client_auth_type, secret) VALUES (?, ?, ?)',
-      params: [authId, authMethod, secretHash],
+      sql:
+        'INSERT INTO client_secrets (id, client_auth_type, secret) VALUES (?, ?, ?) ' +
+        'ON CONFLICT (id) DO UPDATE SET secret = excluded.secret',
+      params: [auth.id, authMethod, auth.secretHash],
     });
   }
+
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [
     ['client_redirect_uris', 'value', client.redirectUris],
     ['client_grant_types', 'grant_type', client.grantTypes ?? []],
     ['client_scopes', 'value', client.scope ?? []],
   ];
   for (const [table, column, values] of childValues) {
+    const ids: string[] = [];
     for (const value of values) {
+      const id = await childRowId(client.clientId, table, value);
+      ids.push(id);
       await db.run({
-        sql: 'INSERT INTO ' + table + ' (id, client_id, ' + column + ') VALUES (?, ?, ?)',
-        params: [crypto.randomUUID(), client.clientId, value],
+        sql: 'INSERT INTO ' + table + ' (id, client_id, ' + column + ') VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING',
+        params: [id, client.clientId, value],
       });
     }
+    await db.run({
+      sql: exceptIds('DELETE FROM ' + table + ' WHERE client_id = ?', ids),
+      params: [client.clientId, ...ids],
+    });
   }
+}
+
+/**
+ * The id of a row under a client: the SHA-256 (hex) of the client_id, the
+ * table and the value the row holds, so the same value always maps to the
+ * same row.
+ */
+async function childRowId(clientId: string, table: string, value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify([clientId, table, value])),
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** A DELETE of a client's rows, narrowed to the rows whose id is not in keep. */
+function exceptIds(sql: string, keep: readonly string[]): string {
+  return keep.length === 0 ? sql : sql + ' AND id NOT IN (' + keep.map(() => '?').join(', ') + ')';
 }

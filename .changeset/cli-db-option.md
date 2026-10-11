@@ -11,7 +11,7 @@
 - `db/database.ts`：`createDatabase()` が返す `SqlDatabase` の型。SQL を 1 文実行する `all` と `run` の 2 メソッドだけなので、どのドライバーや ORM でも実装できる
 - `db/schema.sql` と `db/schema.ts`：テーブル定義。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る。クライアント（`clients` と、認証方式、シークレット、リダイレクト URI、grant type、スコープの子テーブル）、ユーザー（`users`）、認可トランザクション（`transactions`、`authentication_requests`、`auth_users`）、認可コードとトークン（`codes`、`access_tokens`、`refresh_tokens`）をエンティティごとのテーブルに分ける。Sign in with Google の `federated_identities` と `upstream_auth_requests` は `--enable google-login` のときだけ作る
 - `db/stores.ts`：`ProviderStores` の SQL 実装。認可コードとリフレッシュトークンの `consume` は条件付きの `UPDATE` 1 回で使用済みにし、同時に来た 2 つ目のリクエストを `invalid_grant` で止める。認可トランザクションは行を消さずに `status`（`requested` から `token_issued` まで、またはコードを出さずに終わった `failed`）で進み具合を記録し、認可コードとアクセストークンから `transaction_id` で参照する。ログインフォームは `users` のパスワードのハッシュと照合する
-- `db/clients.ts`：クライアントのテーブルを読む `ClientResolver` と、クライアントを登録する `registerClient()`。client_secret は `hashClientSecret()`（core）のハッシュだけを保存し、`clientSecretHash` で照合する
+- `db/clients.ts`：クライアントのテーブルを読む `ClientResolver` と、クライアントを登録する `registerClient()`。client_secret は `hashClientSecret()`（core）のハッシュだけを保存し、`clientSecretHash` で照合する。`registerClient()` は同じ値で呼び直しても行を変えないので、複数のインスタンスが起動時に同時に登録しても行は重複しない
 - `db/users.ts`：ユーザーを登録する `registerUser()` と、パスワードを PBKDF2（HMAC-SHA256、100,000 回）でハッシュにする `hashPassword()` / `verifyPassword()`。パスワードは NULL にでき、パスワードの無いユーザー（Sign in with Google で作ったユーザーなど）はログインフォームでは認証できない
 
 Sign in with Google のユーザーは、Google の sub で同じ人かを判断し、初めてのログインでランダムな ID のユーザーを作る。

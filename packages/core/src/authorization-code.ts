@@ -61,6 +61,12 @@ export interface AuthorizationCodeData {
    * ブラウザセッションを持たない経路（device authorization grant など）では省略する。
    */
   sessionId?: string;
+  /**
+   * この認可コードを発行した Auth Transaction の ID（AuthorizationResponseParams.transactionId）。
+   * ストアがコードと認可リクエストを結び付けて記録するために使う。トランザクションを
+   * 経ない経路では省略する。
+   */
+  transactionId?: string;
 }
 
 /**
@@ -166,6 +172,9 @@ export function buildAuthorizationCodeData(
   }
   if (sessionId !== undefined) {
     data.sessionId = sessionId;
+  }
+  if (authorizationResponse.transactionId !== undefined) {
+    data.transactionId = authorizationResponse.transactionId;
   }
 
   return data;

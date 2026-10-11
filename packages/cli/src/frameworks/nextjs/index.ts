@@ -15,6 +15,8 @@ import {
   nextJsStorageBackendTemplate,
 } from './provider.js';
 import { nextJsDiscoveryRouteTemplate, nextJsJwksRouteTemplate } from './metadata.js';
+import type { DbKind } from '../../db.js';
+import { databaseGeneratedFiles } from '../db/wiring.js';
 import { nextJsAuthorizeRouteTemplate } from './authorize.js';
 import {
   nextJsCibaGrantTemplate,
@@ -84,7 +86,7 @@ export class NextJsGenerator implements FrameworkGenerator {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
-    return nextJsGeneratedFiles(pkg, features, scopes);
+    return nextJsGeneratedFiles(pkg, features, scopes, options.db);
   }
 }
 
@@ -109,6 +111,7 @@ function nextJsGeneratedFiles(
   pkg: string,
   features: OidcFeatureConfig,
   scopes: string[],
+  db: DbKind | undefined,
 ): GeneratedFile[] {
   // Screens that set a cookie on the response that renders them, and answer
   // with their own status codes, are Route Handlers returning HTML (see
@@ -118,7 +121,7 @@ function nextJsGeneratedFiles(
 
   return [
     // --- Shared by every endpoint (private folder, never routed) -------------
-    { path: '_oidc-provider/provider.ts', content: nextJsProviderTemplate(pkg, features) },
+    { path: '_oidc-provider/provider.ts', content: nextJsProviderTemplate(pkg, features, db) },
     {
       path: '_oidc-provider/config.ts',
       // The authorize Route Handler always sends non-redirectable errors to
@@ -138,7 +141,15 @@ function nextJsGeneratedFiles(
         ),
       ),
     },
-    { path: '_oidc-provider/storage-backend.ts', content: nextJsStorageBackendTemplate() },
+    // --db replaces the key-value backends with db/ (the SQL tables or the key
+    // layout, the stores on them, and the db/instance.ts the user writes).
+    ...(db
+      ? databaseGeneratedFiles(db, pkg, features, 'nextjs').map((file) => ({
+        ...file,
+        path: `_oidc-provider/${file.path}`,
+        content: file.path.endsWith('.ts') ? withBundlerImports(file.content) : file.content,
+      }))
+      : [{ path: '_oidc-provider/storage-backend.ts', content: nextJsStorageBackendTemplate() }]),
     { path: '_oidc-provider/http.ts', content: nextJsHttpTemplate() },
     { path: '_oidc-provider/transaction.ts', content: nextJsTransactionTemplate(pkg) },
     { path: '_oidc-provider/error-view.tsx', content: nextJsErrorViewTemplate() },

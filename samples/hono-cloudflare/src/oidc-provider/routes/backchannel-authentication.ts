@@ -29,6 +29,7 @@ import {
 import {
   TokenError,
   extractClientCredentials,
+  findUnregisteredClientScopes,
   resolveAuthenticatedTokenClient,
   sanitizeErrorDescription,
   validateClientAuthMethod,
@@ -156,6 +157,19 @@ backchannelAuthenticationApp.post('/', async (c) => {
         const claims = await userStore.getClaims(loginHint);
         return claims ? { subject: claims.sub } : null;
       });
+
+    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
+    // request those scopes, the same rule as /authorize.
+    const unregisteredScopes = findUnregisteredClientScopes(
+      (params['scope'] ?? '').split(' ').filter((scope) => scope.length > 0),
+      client.scope,
+    );
+    if (unregisteredScopes.length > 0) {
+      throw new BackchannelAuthenticationError(
+        'invalid_scope',
+        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+      );
+    }
 
     // --- Backchannel authentication pipeline --------------------------------
     // Validation runs in CIBA §7.1 order inside the experimental package:

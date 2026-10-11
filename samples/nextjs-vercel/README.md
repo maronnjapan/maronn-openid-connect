@@ -1,10 +1,16 @@
 # Next.js + Vercel sample
 
-VercelではMarketplaceから接続できるUpstash Redis REST、ローカルではNode.js組み込みSQLiteを使用する。どちらも生成OPの同じ `JsonStoreBackend` 契約へ接続され、外部ランタイムライブラリは不要。
+CLIの `--db kv` で生成したキー・バリューストア用のコード（`src/app/_oidc-provider/db/`）で、OPの状態を保存する。VercelではMarketplaceから接続できるUpstash Redisを、そのREST APIで使う。ローカルではNode.js組み込みの `node:sqlite` の1つの表を、キー・バリューストアとして使う。どちらも外部ランタイムライブラリは不要。
+
+`src/app/_oidc-provider/db/` のうち、このサンプルが書いているのはDBインスタンスを返す `instance.ts` だけで、キーの一覧（`keys.ts`）、ストア（`stores.ts`）、クライアントとユーザーの読み書き（`clients.ts`、`users.ts`）はCLIの生成物である。`instance.ts` はCLIが上書きしないので、`pnpm run generate` で再生成しても残る。`instance.ts` は `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` があればUpstash Redisを、無ければ `node:sqlite` を使う。`node:sqlite` の `setIfAbsent()` は条件付きの `INSERT` 1文で行うので、同時に呼ばれても成功するのは1回だけである。
+
+クライアントとユーザーもキー・バリューストアから読む。サーバーの起動時に `src/instrumentation.ts`（Next.jsが起動時に1回呼ぶ `register()`）が、`src/sample-data.ts` のクライアント（`OIDC_CLIENTS_JSON`、無ければ `OIDC_CLIENT_ID` などの環境変数）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` で登録する。client_secret とパスワードはハッシュだけを保存する。クライアントは1つのレコードを1回の書き込みで登録するので、同時に起動したインスタンスが登録し合っても壊れない。ユーザーはパスワードのハッシュ化に時間がかかるので、登録済みならそのままにする。
+
+クライアントのレコードにはまだ `jwks`（クライアントの公開鍵）が無い。Express、Fastify、Honoのサンプルは `OIDC_CLIENTS_JSON` の `jwks` をアプリのコードで足すが、このサンプルではクライアントを読む `provider.ts` もCLIの生成物なので足せない。そのため、OpenID Conformance Suiteの署名付きRequest Objectは、このサンプルでは検証できない。
 
 ## 構成
 
-`src/app` は CLI（`pnpm run generate`）が生成した App Router のコードで、手では編集しない。エンドポイントごとの Route Handler（`authorize/route.ts`・`token/route.ts` など）、ログイン・同意のページと Server Action（`login/`・`consent/`。トランザクションが無いときの `not-found.tsx` と想定外の例外のときの `error.tsx` を含む）、OP のエラーページ（`oidc-error/page.tsx`）、全エンドポイントが共有する部品（`_oidc-provider/`）から成る。設定・クライアント・署名鍵・ストアの組み立ては `src/app/_oidc-provider/provider.ts` にある。
+`src/app` は CLI（`pnpm run generate`）が生成した App Router のコードで、手では編集しない（例外は、サンプルが書いた `_oidc-provider/db/instance.ts`。CLI はこのファイルを上書きしない）。エンドポイントごとの Route Handler（`authorize/route.ts`・`token/route.ts` など）、ログイン・同意のページと Server Action（`login/`・`consent/`。トランザクションが無いときの `not-found.tsx` と想定外の例外のときの `error.tsx` を含む）、OP のエラーページ（`oidc-error/page.tsx`）、全エンドポイントが共有する部品（`_oidc-provider/`）から成る。設定・クライアント・署名鍵・ストアの組み立ては `src/app/_oidc-provider/provider.ts` にある。`src/app` の外にある `src/instrumentation.ts` と `src/sample-data.ts` は、起動時にクライアントとユーザーを登録するサンプルのコードである。
 
 ## ローカル起動（一発）
 
@@ -31,7 +37,7 @@ Vercel CLIは `pnpm dlx` 経由で使うためグローバルインストール�
 
 issuerは `.deploy/issuer` に保存され、2回目以降は1回のデプロイで完了する。カスタムドメインは `--issuer` で指定できる（詳細は `--help`）。
 
-`VERCEL` が設定された環境でRedis資格情報がない場合は、永続化されない一時ファイルへ誤ってフォールバックしないよう起動を失敗させる。署名鍵は起動時生成のため、複数インスタンスに広がる本番相当の検証では固定鍵の読み込みへ置き換えること（`src/app/_oidc-provider/provider.ts` の署名鍵の節）。
+`VERCEL` が設定された環境でRedisの資格情報がない場合は、ほかの関数から読めない一時ファイルへ誤ってフォールバックしないよう起動を失敗させる。署名鍵は起動時生成のため、複数インスタンスに広がる本番相当の検証では固定鍵の読み込みへ置き換えること（`src/app/_oidc-provider/provider.ts` の署名鍵の節）。
 
 ## Google ログイン（任意）
 
@@ -45,4 +51,4 @@ issuerは `.deploy/issuer` に保存され、2回目以降は1回のデプロイ
 GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com HOST=localhost OIDC_ISSUER=http://localhost:3010 pnpm sample:nextjs-vercel
 ```
 
-`GOOGLE_HOSTED_DOMAIN=example.com` を足すと、その Google Workspace ドメインのアカウントだけを受け付ける。Google アカウントは `google:<sub>` を subject とするユーザーとしてその場で登録され（ローカルは SQLite、Vercel では Upstash Redis に永続化）、`name` / `email` などのクレームは ID トークンから写される。Vercel では `vercel env add GOOGLE_CLIENT_ID production` で設定して再デプロイする（リダイレクト URI は `<OIDC_ISSUER>/login/google`。デプロイスクリプトが完了時に案内する）。
+`GOOGLE_HOSTED_DOMAIN=example.com` を足すと、その Google Workspace ドメインのアカウントだけを受け付ける。Google アカウントは、初めてのログインでランダムな ID のユーザーとしてその場で登録され（`user:` のキー）、Google の sub は `federated_identity:` のキーに記録される。`name` / `email` などのクレームは ID トークンから写される。Vercel では `vercel env add GOOGLE_CLIENT_ID production` で設定して再デプロイする（リダイレクト URI は `<OIDC_ISSUER>/login/google`。デプロイスクリプトが完了時に案内する）。

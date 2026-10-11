@@ -140,6 +140,12 @@ export function createProviderConfig(
  * gates both refresh token flavors; OIDC Core 1.0 §11 (prompt=consent) decides
  * which flavor the authorization produces.
  *
+ * scope (RFC 7591 §2 `scope`, from ClientInfo / TokenClientInfo): the scope
+ * values this client may request. When set, a request for any other scope is
+ * rejected with invalid_scope at /authorize (and at the device and CIBA
+ * endpoints when they are generated). Leave it out to let the client request
+ * every scope the provider accepts.
+ *
  * userinfoSignedResponseAlg: when set, the UserInfo endpoint returns a signed JWT
  * with content-type `application/jwt` (OIDC Core 1.0 Section 5.3.2 — client metadata
  * `userinfo_signed_response_alg`). The endpoint picks a registered UserInfo signing

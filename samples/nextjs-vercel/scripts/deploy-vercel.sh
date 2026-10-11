@@ -2,9 +2,10 @@
 # One-command deploy of the nextjs-vercel sample OP to Vercel + Upstash Redis.
 #
 # This is verification tooling for maintainers of this repository: it puts the
-# CLI-generated OP onto real Vercel infrastructure so the Upstash Redis REST
-# storage backend can be checked against an actual HTTPS deployment. It is not
-# a production deployment guide for library users (see the repository README.md).
+# CLI-generated OP onto real Vercel infrastructure so the key-value stores of
+# the generated db/ (--db kv) can be checked on Upstash Redis REST against an
+# actual HTTPS deployment. It is not a production deployment guide for library
+# users (see the repository README.md).
 #
 # Zero-argument usage is the intended path. The script automates everything the
 # Vercel CLI allows: project link, env pull, local monorepo build

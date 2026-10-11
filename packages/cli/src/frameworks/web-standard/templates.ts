@@ -1,6 +1,9 @@
 import type { GeneratedFile } from '../types.js';
 import { DEFAULT_FEATURES } from '../../features.js';
 import type { OidcFeatureConfig } from '../../features.js';
+import type { DbKind } from '../../db.js';
+import { databaseNames } from '../db/names.js';
+import { databaseGeneratedFiles } from '../db/wiring.js';
 import {
   backchannelAuthenticationRouteTemplate,
   cibaVerificationRouteTemplate,
@@ -382,10 +385,63 @@ export async function writeWebResponse(
 `;
 }
 
+/**
+ * --db: the app.ts pieces that make db/ the default storage. Without --db every
+ * piece is the regular output, byte for byte.
+ */
+function webStorageTemplateParts(db: DbKind | undefined): {
+  defaultStoresImport: string;
+  inMemoryClientResolverImport: string;
+  dbImports: string;
+  storageDoc: string;
+  clientResolverDoc: string;
+  appStores: string;
+  requestStores: string;
+  requestClientResolver: string;
+} {
+  if (!db) {
+    return {
+      defaultStoresImport: '  defaultProviderStores,\n',
+      inMemoryClientResolverImport: '  createInMemoryClientResolver,\n',
+      dbImports: '',
+      storageDoc: 'Persistent stores shared by Route Handlers and Server Actions.',
+      clientResolverDoc: '',
+      appStores: '',
+      requestStores: '    const stores = options.storage ?? defaultProviderStores;\n',
+      requestClientResolver: '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
+    };
+  }
+  const names = databaseNames(db);
+  return {
+    defaultStoresImport: '',
+    inMemoryClientResolverImport: '',
+    dbImports: `import { createDatabase } from './db/instance.js';
+import type { ${names.databaseType} } from './db/database.js';
+import { ${names.createProviderStores} } from './db/stores.js';
+import { ${names.createClientResolver} } from './db/clients.js';\n`,
+    storageDoc: `Stores to use instead of db/: ${names.storesDescription} on the database db/instance.ts creates.`,
+    clientResolverDoc: `  /** Clients to use instead of ${names.clientsDescription} (registerClient() in db/clients.ts). */\n`,
+    appStores: `
+  // db/: unless options.storage / options.clientResolver replace them, the
+  // stores and the registered clients come from the database that
+  // db/instance.ts creates. It is created once, here, so an unimplemented
+  // createDatabase() stops the server at startup instead of failing a request.
+  let database: ${names.databaseType} | undefined;
+  const openDatabase = (): ${names.databaseType} => (database ??= createDatabase());
+  const stores = options.storage ?? ${names.createProviderStores}(openDatabase());
+  const clientResolver = options.clientResolver ?? ${names.createClientResolver}(openDatabase());
+`,
+    requestStores: '',
+    requestClientResolver: '',
+  };
+}
+
 export function webAppTemplate(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
+  db?: DbKind,
 ): string {
+  const storageParts = webStorageTemplateParts(db);
   const introspectionImport = features.introspection
     ? `import { introspectionApp } from './routes/introspection.js';\n`
     : '';
@@ -548,19 +604,17 @@ import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
 import {
-  createInMemoryClientResolver,
-  createProviderConfig,
+${storageParts.inMemoryClientResolverImport}  createProviderConfig,
   type ProviderConfig,
 } from './config.js';
 import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-  defaultProviderStores,
-${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
-${googleLoginImport}import {
+${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
@@ -584,11 +638,11 @@ export interface OidcProviderOptions {
   signingKeyProvider: SigningKeyProvider;
   idTokenSigningKeyProvider?: SigningKeyProvider;
   userinfoSigningKeyProvider?: SigningKeyProvider;
-  clientResolver?: ClientResolver;
+${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
   sessionResolver?: SessionResolver;
   consentResolver?: ConsentResolver;
-  /** Persistent stores shared by Route Handlers and Server Actions. */
+  /** ${storageParts.storageDoc} */
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
@@ -618,7 +672,7 @@ export function validateSigningKeySet(
 
 export function createApp(options: OidcProviderOptions): WebRouter {
   const app = new WebRouter();
-
+${storageParts.appStores}
   const corsOrigins = options.corsOrigins ?? '*';
   const protectedCors = createCorsMiddleware({
     origins: corsOrigins,
@@ -656,10 +710,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-    const clientResolver =
-      options.clientResolver ?? createInMemoryClientResolver();
-    const stores = options.storage ?? defaultProviderStores;
-    const storeResolvers = createStoreResolvers(stores);
+${storageParts.requestClientResolver}${storageParts.requestStores}    const storeResolvers = createStoreResolvers(stores);
 
     c.set('signingKeys', signingKeys);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
@@ -903,9 +954,10 @@ function webCoreGeneratedFiles(
   corePkg: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
+  db?: DbKind,
 ): GeneratedFile[] {
   return [
-    { path: 'app.ts', content: webAppTemplate(corePkg, features) },
+    { path: 'app.ts', content: webAppTemplate(corePkg, features, db) },
     { path: 'web-router.ts', content: webRouterTemplate() },
     { path: 'config.ts', content: configTemplate(corePkg, features) },
     // Custom scopes (--scope): the scope policy module is only generated when
@@ -1002,10 +1054,14 @@ export function webGeneratedFiles(
   applyTemplate: string,
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
+  db?: DbKind,
 ): GeneratedFile[] {
   return [
-    ...webCoreGeneratedFiles(corePkg, features, scopes),
+    ...webCoreGeneratedFiles(corePkg, features, scopes, db),
     { path: 'apply.ts', content: applyTemplate },
     { path: 'node-adapter.ts', content: nodeAdapterTemplate() },
+    // --db sql / --db kv: the SQL tables or the key layout, the stores on
+    // them, and the db/instance.ts the user writes.
+    ...(db ? databaseGeneratedFiles(db, corePkg, features, 'node') : []),
   ];
 }

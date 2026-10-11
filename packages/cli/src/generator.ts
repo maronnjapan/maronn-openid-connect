@@ -2,6 +2,7 @@ import { getGenerator, getAvailableFrameworks } from './frameworks/index.js';
 import { DEFAULT_FEATURES } from './features.js';
 import type { OidcFeatureConfig } from './features.js';
 import type { GeneratedFile } from './frameworks/types.js';
+import type { DbKind } from './db.js';
 
 export interface GenerateOptions {
   /** Target framework name */
@@ -17,6 +18,8 @@ export interface GenerateOptions {
    * scope policy is generated and the provider keeps accepting any scope value).
    */
   scopes?: string[];
+  /** Generate db/ and keep the provider's data in SQL tables or a key-value store (default: none). */
+  db?: DbKind;
 }
 
 export interface GenerateResult {
@@ -36,6 +39,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     corePackageName = DEFAULT_CORE_PACKAGE,
     features = { ...DEFAULT_FEATURES },
     scopes = [],
+    db,
   } = options;
 
   const generator = getGenerator(framework);
@@ -46,7 +50,7 @@ export function generate(options: GenerateOptions): GenerateResult {
     );
   }
 
-  const files = generator.generate({ outputDir, corePackageName, features, scopes });
+  const files = generator.generate({ outputDir, corePackageName, features, scopes, db });
 
   return { files, framework };
 }

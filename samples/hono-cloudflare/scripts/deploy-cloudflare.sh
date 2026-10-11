@@ -2,16 +2,18 @@
 # One-command deploy of the hono-cloudflare sample OP to Cloudflare Workers + D1.
 #
 # This is verification tooling for maintainers of this repository: it puts the
-# CLI-generated OP onto real Cloudflare infrastructure so the D1 storage
-# backend can be checked against an actual HTTPS deployment. It is not a
+# CLI-generated OP onto real Cloudflare infrastructure so the D1 tables of the
+# generated db/ can be checked against an actual HTTPS deployment. It is not a
 # production deployment guide for library users (see the repository README.md).
 #
 # Zero-argument usage is the intended path. The script automates everything
 # wrangler allows: D1 database creation/reuse, database_id resolution (the
-# checked-in wrangler.jsonc keeps a placeholder id for local dev), remote
-# migrations, deploy, and issuer pinning. The only human steps are the
-# Cloudflare login (browser) and — on first ever Workers deploy for an
-# account — the workers.dev subdomain registration prompt wrangler shows.
+# checked-in wrangler.jsonc keeps a placeholder id for local dev), deploy,
+# and issuer pinning. There is no migration step: the Worker creates its
+# tables on its first request (src/oidc-provider/db/instance.ts). The only
+# human steps are the Cloudflare login (browser) and — on first ever Workers
+# deploy for an account — the workers.dev subdomain registration prompt
+# wrangler shows.
 #
 # The issuer works like this: a Worker cannot know its public
 # https://<name>.<subdomain>.workers.dev URL before the first deploy, so on
@@ -46,7 +48,7 @@ Usage: deploy-cloudflare.sh [--issuer <https://...>] [--dry-run]
   1. pnpm / 依存関係 / @maronn-openid-connect/core のビルドを準備
   2. Cloudflare 未ログインなら 'wrangler login' を起動
   3. D1 データベース（${D1_NAME}）を作成または再利用し、database_id を自動解決
-  4. wrangler.deploy.jsonc（gitignore 済み）を生成してリモートへマイグレーション適用
+  4. wrangler.deploy.jsonc（gitignore 済み）を生成（テーブルは Worker が最初のリクエストで作る）
   5. デプロイし、workers.dev の公開URLを ISSUER として固定（初回のみ2回デプロイ）
   6. Discovery エンドポイントで issuer の一致を検証
 
@@ -159,7 +161,6 @@ deploy_once() {
 if [ "${DRY_RUN}" = "1" ]; then
   generate_deploy_config "${ISSUER:-https://example.workers.dev}"
   guide_info "wrangler.deploy.jsonc を生成しました（dry-run 用のサンプル値）。"
-  guide_info "実行: wrangler d1 migrations apply ${D1_NAME} --remote --config wrangler.deploy.jsonc"
   guide_info "実行: wrangler deploy --config wrangler.deploy.jsonc"
   guide_ok "--dry-run のため、実際の Cloudflare API 呼び出しは行いませんでした。"
   exit 0
@@ -173,11 +174,8 @@ if [ -z "${ISSUER}" ] && [ -f "${ISSUER_FILE}" ]; then
   fi
 fi
 
-guide_step "リモート D1 へマイグレーションを適用します"
-generate_deploy_config "${ISSUER}"
-run d1 migrations apply "${D1_NAME}" --remote --config "${DEPLOY_CONFIG}"
-
 guide_step "デプロイします"
+generate_deploy_config "${ISSUER}"
 if [ -z "${ISSUER}" ]; then
   guide_info "初回デプロイのため、まず公開URLを確定させます（このあと ISSUER を固定してもう一度デプロイします）。"
   deploy_once

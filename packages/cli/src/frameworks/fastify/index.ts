@@ -11,6 +11,7 @@ export class FastifyGenerator implements FrameworkGenerator {
       fastifyApplyTemplate(options.features),
       options.features,
       options.scopes,
+      options.db,
     );
   }
 }

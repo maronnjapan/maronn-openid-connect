@@ -3,17 +3,20 @@ import { Hono } from 'hono';
 import {
   createCachedSigningKeyProvider,
   type AcrResolver,
+  type ClientResolver,
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
-import {
-  createInMemoryClientResolver,
-  type RegisteredClient,
-} from './oidc-provider/config.js';
+import type { RegisteredClient } from './oidc-provider/config.js';
+import { createSqlClientResolver, registerClient } from './oidc-provider/db/clients.js';
+import type { SqlDatabase } from './oidc-provider/db/database.js';
+import { createDatabase, d1Database } from './oidc-provider/db/instance.js';
+import { createSqlProviderStores } from './oidc-provider/db/stores.js';
+import { registerUser } from './oidc-provider/db/users.js';
 import { idJagConfig } from './oidc-provider/routes/token.js';
 import { rpInitiatedLogoutConfig } from './oidc-provider/routes/logout.js';
-import { createD1ProviderStores } from './storage.js';
+import { UserStore } from './oidc-provider/store.js';
 
 interface Bindings {
   DB: D1Database;
@@ -33,6 +36,19 @@ interface Bindings {
 const bindings = env as Bindings;
 const issuer = bindings.ISSUER ?? 'http://127.0.0.1:3010';
 const clients = readRegisteredClients(bindings.OIDC_CLIENTS_JSON);
+
+// The generated app reads its clients from the client tables of db/ (--db).
+// The client tables have no column for jwks (the client's public keys) yet:
+// they come with private_key_jwt. The conformance suite registers jwks to sign
+// Request Objects with, so they are added from OIDC_CLIENTS_JSON here.
+const sqlClientResolver = createSqlClientResolver(d1Database(bindings.DB));
+const clientResolver: ClientResolver = {
+  async findClient(requestedClientId) {
+    const client = await sqlClientResolver.findClient(requestedClientId);
+    const jwks = clients.get(requestedClientId)?.jwks;
+    return client && jwks ? { ...client, jwks } : client;
+  },
+};
 
 // EXPERIMENTAL (Cross-App Access / ID-JAG): wire the trust configuration from
 // env vars so two instances of this sample can play the IdP and the resource
@@ -83,7 +99,7 @@ if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
   const generatedActorTokenResolver = idJagConfig.actorTokenResolver;
   idJagConfig.actorTokenResolver = async (input) => {
     if (input.actorTokenType === 'urn:ietf:params:oauth:token-type:access_token') {
-      const stores = createD1ProviderStores(bindings.DB);
+      const stores = createSqlProviderStores(d1Database(bindings.DB));
       const info = await stores.accessTokenStore.get(input.actorToken);
       if (info === undefined || info.clientId !== input.clientId) return null;
       if (info.expiresAt <= Math.floor(Date.now() / 1000)) return null;
@@ -105,6 +121,21 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.get('/', (c) => c.text('maronn-openid-connect Hono Cloudflare sample'));
 app.get('/health', (c) => c.json({ status: 'ok' }));
 
+// The sample clients (OIDC_CLIENTS_JSON, or the E2E defaults below) and the
+// development users are registered in the D1 tables the generated app reads.
+// Workers reach D1 only while handling a request, so the first request of
+// each isolate registers them before the OP handles it. registerClient()
+// writes the same rows when the values are the same, so isolates that start
+// at the same moment do not conflict.
+let sampleDataRegistered = false;
+app.use('*', async (c, next) => {
+  if (!sampleDataRegistered) {
+    await registerSampleData(createDatabase(c));
+    sampleDataRegistered = true;
+  }
+  await next();
+});
+
 applyOidc(app, {
   config: {
     issuer,
@@ -122,14 +153,35 @@ applyOidc(app, {
     createEphemeralRs256KeyProvider(bindings.OIDC_SIGNING_KEY_ID),
     60_000,
   ),
-  clientResolver: createInMemoryClientResolver(clients),
-  tokenClientResolver: createInMemoryClientResolver(clients),
-  storage: (context) => createD1ProviderStores(context.env.DB as D1Database),
+  // The generated app keeps its data in the SQL tables of db/ (--db), on the
+  // D1 database of db/instance.ts. The clients come from the same tables,
+  // with the jwks of OIDC_CLIENTS_JSON added (see above).
+  clientResolver,
   acrResolver: sampleAcrResolver,
   corsOrigins: issuer,
 });
 
 export default app;
+
+async function registerSampleData(db: SqlDatabase): Promise<void> {
+  // registerClient() replaces an earlier registration of the same client_id,
+  // so a restart picks up changed clients.
+  for (const client of clients.values()) {
+    await registerClient(db, client);
+  }
+
+  // E2E and the conformance suite sign in as the development users of
+  // store.ts (testuser / otheruser, password "password"). registerUser()
+  // hashes the password with PBKDF2, which costs CPU time on every isolate,
+  // so a user that is already registered is left as it is.
+  const { userStore } = createSqlProviderStores(db);
+  const developmentUsers = new UserStore();
+  for (const username of ['testuser', 'otheruser']) {
+    if (await userStore.getClaims(username)) continue;
+    const user = developmentUsers.authenticate(username, 'password');
+    if (user) await registerUser(db, user);
+  }
+}
 
 function createEphemeralRs256KeyProvider(keyId = 'hono-cloudflare-rs256-key'): SigningKeyProvider {
   const keyPromise = generateSigningKey(keyId);

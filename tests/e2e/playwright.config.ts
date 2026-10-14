@@ -241,9 +241,13 @@ export default defineConfig({
               OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
                 ? `${process.env.OIDC_D1_PERSIST_PATH}-dcr`
                 : '.wrangler/state-dcr',
-              ...(process.env.OIDC_SQLITE_PATH
-                ? { OIDC_SQLITE_PATH: `${process.env.OIDC_SQLITE_PATH}-dcr` }
-                : {}),
+              // Always a path of its own: the node:sqlite samples default to
+              // .data/oidc.sqlite, and two OP processes writing one SQLite file
+              // (this instance seeding its sample data, the main one handling
+              // flows) fail each other's writes.
+              OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
+                ? `${process.env.OIDC_SQLITE_PATH}-dcr`
+                : '.data/oidc-e2e-dcr.sqlite',
             },
           },
         ]

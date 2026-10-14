@@ -61,6 +61,6 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "google-auth-library": "^11.1.0"
+    "google-auth-library": "^11.2.0"
   }
 }

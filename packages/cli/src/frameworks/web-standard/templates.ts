@@ -19,6 +19,7 @@ import {
   jwksRouteTemplate,
   loginRouteTemplate,
   parRouteTemplate,
+  registerRouteTemplate,
   jarmConfigTemplate,
   GOOGLE_LOGIN_PACKAGE,
   resolversTemplate,
@@ -389,7 +390,7 @@ export async function writeWebResponse(
  * --db: the app.ts pieces that make db/ the default storage. Without --db every
  * piece is the regular output, byte for byte.
  */
-function webStorageTemplateParts(db: DbKind | undefined): {
+function webStorageTemplateParts(db: DbKind | undefined, dynamicClientRegistration: boolean): {
   defaultStoresImport: string;
   inMemoryClientResolverImport: string;
   dbImports: string;
@@ -408,7 +409,11 @@ function webStorageTemplateParts(db: DbKind | undefined): {
       clientResolverDoc: '',
       appStores: '',
       requestStores: '    const stores = options.storage ?? defaultProviderStores;\n',
-      requestClientResolver: '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
+      // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after
+      // the configured clients, so a static registration always wins.
+      requestClientResolver: dynamicClientRegistration
+        ? '    const clientResolver = withDynamicallyRegisteredClients(\n      options.clientResolver ?? createInMemoryClientResolver(),\n    );\n'
+        : '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
     };
   }
   const names = databaseNames(db);
@@ -429,7 +434,13 @@ import { ${names.createClientResolver} } from './db/clients.js';\n`,
   let database: ${names.databaseType} | undefined;
   const openDatabase = (): ${names.databaseType} => (database ??= createDatabase());
   const stores = options.storage ?? ${names.createProviderStores}(openDatabase());
-  const clientResolver = options.clientResolver ?? ${names.createClientResolver}(openDatabase());
+  const clientResolver = ${dynamicClientRegistration
+    ? `withDynamicallyRegisteredClients(
+    // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after the
+    // configured clients, so a static registration always wins.
+    options.clientResolver ?? ${names.createClientResolver}(openDatabase()),
+  )`
+    : `options.clientResolver ?? ${names.createClientResolver}(openDatabase())`};
 `,
     requestStores: '',
     requestClientResolver: '',
@@ -441,7 +452,7 @@ export function webAppTemplate(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   db?: DbKind,
 ): string {
-  const storageParts = webStorageTemplateParts(db);
+  const storageParts = webStorageTemplateParts(db, features.dynamicClientRegistration);
   const introspectionImport = features.introspection
     ? `import { introspectionApp } from './routes/introspection.js';\n`
     : '';
@@ -547,6 +558,48 @@ import { cibaPage } from './pages/ciba.js';\n`
   const logoutMount = features.rpInitiatedLogout
     ? `  app.route('/logout', logoutPage);\n`
     : '';
+  // EXPERIMENTAL (RFC 7591): the client registration endpoint is a back-channel
+  // POST endpoint (optionally Bearer-guarded), so it gets the same CORS policy
+  // as /token. The issued clients are resolved by wrapping the configured
+  // client resolver with the dynamic registration store (store.ts).
+  const dcrImport = features.dynamicClientRegistration
+    ? `import { registerApp, dynamicClientRegistrationConfig } from './routes/register.js';\n`
+    : '';
+  const dcrCors = features.dynamicClientRegistration
+    ? `  app.use('/register', protectedCors);\n`
+    : '';
+  const dcrMount = features.dynamicClientRegistration
+    ? `  app.route('/register', registerApp);\n`
+    : '';
+  const dcrStorageContext = features.dynamicClientRegistration
+    ? `    c.set('dynamicClientStore', dynamicClientStore);
+    c.set('dynamicClientRegistrationConfig', { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration });\n`
+    : '';
+  const dcrStoreImport = features.dynamicClientRegistration
+    ? `  dynamicClientStore,
+  withDynamicallyRegisteredClients,\n`
+    : '';
+  const dcrOptionsField = features.dynamicClientRegistration
+    ? `  /**
+   * EXPERIMENTAL (RFC 7591): override the generated dynamic client registration
+   * settings (routes/register.ts) per deployment — for example from environment
+   * variables — without editing the generated file. Unset fields keep the
+   * generated defaults.
+   */
+  dynamicClientRegistration?: {
+    initialAccessToken?: string;
+    maxRegisteredClients?: number;
+    maxRegistrationBodyBytes?: number;
+  };
+`
+    : '';
+  // EXPERIMENTAL (RFC 7591): the token endpoint resolves clients through its
+  // own resolver, so both resolvers get the dynamic registration fallback.
+  const tokenClientResolverContext = features.dynamicClientRegistration
+    ? `    c.set('tokenClientResolver', options.tokenClientResolver
+      ? withDynamicallyRegisteredClients(options.tokenClientResolver)
+      : clientResolver);`
+    : `    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);`;
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
   // maps a verified Google account to an OP subject. The default resolver links
@@ -599,7 +652,7 @@ import { cibaPage } from './pages/ciba.js';\n`
 import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}${dcrImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
@@ -611,7 +664,7 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}${dcrStoreImport}  type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
 ${storageParts.dbImports}${googleLoginImport}import {
@@ -646,7 +699,7 @@ ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   storage?: ProviderStores;
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-${cibaOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
+${cibaOptionsField}${dcrOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -688,7 +741,7 @@ ${storageParts.appStores}
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}${dcrCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
   app.use('*', async (c, next) => {
@@ -717,7 +770,7 @@ ${storageParts.requestClientResolver}${storageParts.requestStores}    const stor
     c.set('userinfoSigningKeys', userinfoSigningKeys);
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
-    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
+${tokenClientResolverContext}
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);
@@ -729,7 +782,7 @@ ${storageParts.requestClientResolver}${storageParts.requestStores}    const stor
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${googleLoginStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${dcrStorageContext}${googleLoginStorageContext}
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }
@@ -749,7 +802,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}${dcrMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginPage);
   app.route('/consent', consentPage);
@@ -805,6 +858,10 @@ export function expressApplyTemplate(
   const parEndpoint = features.par
     ? `  '/par',\n`
     : '';
+  // EXPERIMENTAL (RFC 7591): the client registration endpoint.
+  const dcrEndpoint = features.dynamicClientRegistration
+    ? `  '/register',\n`
+    : '';
   // EXPERIMENTAL (RFC 8628): the device authorization endpoint and the whole
   // verification UI. '/device' also covers '/device/login' and '/device/approve'
   // because app.use() matches by path prefix.
@@ -830,7 +887,7 @@ const OIDC_ENDPOINTS = [
   '/authorize',
   '/token',
   '/userinfo',
-${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${deviceEndpoints}${cibaEndpoints}  '/.well-known/jwks.json',
+${introspectionEndpoint}${revocationEndpoint}${parEndpoint}${dcrEndpoint}${deviceEndpoints}${cibaEndpoints}  '/.well-known/jwks.json',
   '/.well-known/openid-configuration',
   '/login',
   '/consent',
@@ -869,6 +926,10 @@ export function fastifyApplyTemplate(
   // EXPERIMENTAL (RFC 9126): the pushed authorization request endpoint.
   const parRoute = features.par
     ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/par', handler: handle });\n`
+    : '';
+  // EXPERIMENTAL (RFC 7591): the client registration endpoint.
+  const dcrRoute = features.dynamicClientRegistration
+    ? `  app.route({ method: ['POST', 'OPTIONS'], url: '/register', handler: handle });\n`
     : '';
   // EXPERIMENTAL (RFC 8628): Fastify needs each verification UI path registered
   // explicitly — unlike Express it does not match by prefix.
@@ -929,7 +990,7 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/authorize', handler: handle });
   app.route({ method: ['POST', 'OPTIONS'], url: '/token', handler: handle });
   app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
-${introspectionRoute}${revocationRoute}${parRoute}${deviceRoutes}${cibaRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
+${introspectionRoute}${revocationRoute}${parRoute}${dcrRoute}${deviceRoutes}${cibaRoutes}  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
   app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
   app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
 ${googleLoginRoute}  app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
@@ -1005,6 +1066,11 @@ function webCoreGeneratedFiles(
     // Experimental (RFC 9126): only generated with --enable par.
     ...(features.par
       ? [{ path: 'routes/par.ts', content: toWebRouteTemplate(parRouteTemplate(corePkg)) }]
+      : []),
+    // Experimental (RFC 7591): only generated with
+    // --enable dynamic-client-registration.
+    ...(features.dynamicClientRegistration
+      ? [{ path: 'routes/register.ts', content: toWebRouteTemplate(registerRouteTemplate(corePkg)) }]
       : []),
     // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
     ...(features.deviceAuthorizationGrant

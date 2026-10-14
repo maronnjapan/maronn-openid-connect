@@ -106,6 +106,16 @@ import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';`
     ],
 `
     : '';
+  // EXPERIMENTAL (RFC 7591 / OIDC Discovery 1.0 §3): unlike the merged entries
+  // below, registration_endpoint has a core DiscoveryConfig field that is
+  // emitted only when set, so it is passed to buildProviderMetadata directly.
+  const dcrMetadata = features.dynamicClientRegistration
+    ? `    // EXPERIMENTAL — OIDC Discovery 1.0 §3: the client registration endpoint
+    // (RFC 7591) is advertised only because this OP was generated with
+    // --enable dynamic-client-registration.
+    registrationEndpoint: \`\${issuer}/register\`,
+`
+    : '';
   const responseModesSupportedEntry = features.jarm
     ? `    // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0
     // §3: the code flow answers via query. EXPERIMENTAL (JARM §4): this provider
@@ -263,7 +273,7 @@ ${requestObjectMetadata}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.5: the clai
     claimsParameterSupported: true,
     // RFC 9207 §3: every authorization response carries iss.
     authorizationResponseIssParameterSupported: true,
-${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
+${rfc8414Comment}${introspectionMetadata}${revocationMetadata}${dcrMetadata}  });
 
   // RFC 8414 §3.2 / RFC 9111 §5.2: discovery metadata is cacheable; 3600s, the
   // same freshness lifetime as the JWKS endpoint.

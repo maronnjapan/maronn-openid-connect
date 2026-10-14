@@ -71,7 +71,7 @@ describe('run', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
     expect(consoleSpy).toHaveBeenCalledWith(
-      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout. Extension features (disabled by default): google-login',
+      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration. Extension features (disabled by default): google-login',
     );
     expect(process.exitCode).toBe(1);
     vi.restoreAllMocks();
@@ -418,6 +418,42 @@ describe('run', () => {
 
   // db/instance.ts is where the user writes the database instance, so the CLI
   // creates it only once and never overwrites it.
+  // EXPERIMENTAL (RFC 7591): the CLI-side surface of --enable
+  // dynamic-client-registration — option parsing and the install guidance.
+  // The generated OP's behavior is covered by tests/e2e, not here.
+  describe('--enable dynamic-client-registration', () => {
+    it('should accept the feature name and generate without errors', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--enable', 'dynamic-client-registration']);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(undefined);
+      vi.restoreAllMocks();
+    });
+
+    it('should add the experimental package to the install guidance when selected', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--enable', 'dynamic-client-registration']);
+      const output = logSpy.mock.calls.map((call) => call[0]).join('\n');
+      expect(output).toContain(
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental',
+      );
+      vi.restoreAllMocks();
+    });
+
+    it('should keep the install guidance without the experimental package when not selected', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir]);
+      const output = logSpy.mock.calls.map((call) => call[0]).join('\n');
+      expect(output).toContain('Install dependencies: pnpm add hono @maronn-openid-connect/core');
+      expect(output).not.toContain('@maronn-openid-connect/experimental');
+      vi.restoreAllMocks();
+    });
+  });
+
   describe('--db', () => {
     const userInstance = "export function createDatabase() { return myDatabase; }\n";
 

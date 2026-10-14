@@ -12,6 +12,10 @@
       "types": "./dist/device-authorization-grant/index.d.ts",
       "import": "./dist/device-authorization-grant/index.js"
     },
+    "./dynamic-client-registration": {
+      "types": "./dist/dynamic-client-registration/index.d.ts",
+      "import": "./dist/dynamic-client-registration/index.js"
+    },
     "./id-jag": {
       "types": "./dist/id-jag/index.d.ts",
       "import": "./dist/id-jag/index.js"

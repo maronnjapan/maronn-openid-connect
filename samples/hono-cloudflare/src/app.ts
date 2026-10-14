@@ -31,6 +31,8 @@ interface Bindings {
   XAA_ALLOW_ACTOR_TOKENS?: string;
   XAA_ACTOR_TOKEN_RESOLVER?: string;
   OIDC_POST_LOGOUT_REDIRECT_URIS_JSON?: string;
+  OIDC_DCR_INITIAL_ACCESS_TOKEN?: string;
+  OIDC_DCR_MAX_CLIENTS?: string;
 }
 
 const bindings = env as Bindings;
@@ -109,6 +111,19 @@ if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
   };
 }
 
+// EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
+// sample with an initial access token and a small inventory cap, so the
+// restricted-registration paths (401 / 429) can be exercised over real HTTP.
+// With the vars unset the generated defaults stay: open registration, cap 100.
+const dynamicClientRegistration = {
+  ...(bindings.OIDC_DCR_INITIAL_ACCESS_TOKEN
+    ? { initialAccessToken: bindings.OIDC_DCR_INITIAL_ACCESS_TOKEN }
+    : {}),
+  ...(bindings.OIDC_DCR_MAX_CLIENTS
+    ? { maxRegisteredClients: Number(bindings.OIDC_DCR_MAX_CLIENTS) }
+    : {}),
+};
+
 const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
   if (!requestedAcrValues) return undefined;
   const preferred = requestedAcrValues.split(' ').find((value) => value.length > 0);
@@ -158,6 +173,7 @@ applyOidc(app, {
   // with the jwks of OIDC_CLIENTS_JSON added (see above).
   clientResolver,
   acrResolver: sampleAcrResolver,
+  dynamicClientRegistration,
   corsOrigins: issuer,
 });
 

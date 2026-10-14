@@ -57,6 +57,10 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
     ? `  '/logout': ['GET', 'POST'],
   '/logout/approve': ['POST'],\n`
     : '';
+  // EXPERIMENTAL (RFC 7591 §3.1): the client registration endpoint is POST-only.
+  const dcrMethod = features.dynamicClientRegistration
+    ? `  '/register': ['POST'],\n`
+    : '';
   // EXTENSION (google-login): the Google login callback (login_uri) receives a
   // browser form POST from Google's redirect; the login page keeps GET / POST.
   const googleLoginMethods = features.googleLogin
@@ -66,7 +70,7 @@ function oidcMethodGuardTemplate(features: OidcFeatureConfig): string {
   '/authorize': ['GET', 'POST'],
   '/token': ['POST'],
   '/userinfo': ['GET', 'POST'],
-${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}${logoutMethods}  '/.well-known/jwks.json': ['GET'],
+${introspectionMethod}${revocationMethod}${parMethod}${deviceMethods}${cibaMethods}${logoutMethods}${dcrMethod}  '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
 ${googleLoginMethods}  '/consent': ['GET', 'POST'],
@@ -242,6 +246,56 @@ import { cibaPage } from './pages/ciba.js';\n`
   const logoutMount = features.rpInitiatedLogout
     ? `  app.route('/logout', logoutPage);\n`
     : '';
+  // EXPERIMENTAL (RFC 7591): the client registration endpoint is a back-channel
+  // POST endpoint (optionally Bearer-guarded), so it gets the same CORS policy
+  // as /token. The issued clients are resolved by wrapping the configured
+  // client resolver with the dynamic registration store (store.ts).
+  const dcrImport = features.dynamicClientRegistration
+    ? `import { registerApp, dynamicClientRegistrationConfig } from './routes/register.js';\n`
+    : '';
+  const dcrCors = features.dynamicClientRegistration
+    ? `  app.use('/register', protectedCors);\n`
+    : '';
+  const dcrMount = features.dynamicClientRegistration
+    ? `  app.route('/register', registerApp);\n`
+    : '';
+  const dcrStorageContext = features.dynamicClientRegistration
+    ? `    c.set('dynamicClientStore', dynamicClientStore);
+    c.set('dynamicClientRegistrationConfig', { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration });\n`
+    : '';
+  const dcrStoreImport = features.dynamicClientRegistration
+    ? `  dynamicClientStore,
+  withDynamicallyRegisteredClients,\n`
+    : '';
+  const dcrOptionsField = features.dynamicClientRegistration
+    ? `  /**
+   * EXPERIMENTAL (RFC 7591): override the generated dynamic client registration
+   * settings (routes/register.ts) per deployment — for example from environment
+   * variables — without editing the generated file. Unset fields keep the
+   * generated defaults.
+   */
+  dynamicClientRegistration?: {
+    initialAccessToken?: string;
+    maxRegisteredClients?: number;
+    maxRegistrationBodyBytes?: number;
+  };
+`
+    : '';
+  // EXPERIMENTAL (RFC 7591): the token endpoint resolves clients through its
+  // own resolver, so both resolvers get the dynamic registration fallback.
+  const clientResolverAssignment = features.dynamicClientRegistration
+    ? `    // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after the
+    // configured clients, so a static registration always wins.
+    const clientResolver = withDynamicallyRegisteredClients(
+      options.clientResolver ?? ${storageParts.defaultClientResolver},
+    );`
+    : `    const clientResolver =
+      options.clientResolver ?? ${storageParts.defaultClientResolver};`;
+  const tokenClientResolverContext = features.dynamicClientRegistration
+    ? `    c.set('tokenClientResolver', options.tokenClientResolver
+      ? withDynamicallyRegisteredClients(options.tokenClientResolver)
+      : clientResolver);`
+    : `    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);`;
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
   // maps a verified Google account to an OP subject. The default resolver links
@@ -296,7 +350,7 @@ import { cors } from 'hono/cors';
 import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}${dcrImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
@@ -308,7 +362,7 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}${dcrStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -375,7 +429,7 @@ ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
    * Override only when hints are signed by a different key set.
    */
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
-${cibaOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
+${cibaOptionsField}${dcrOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
 }
 
 export function validateSigningKeySet(
@@ -414,7 +468,7 @@ export function createApp(options: CreateAppOptions): Hono<{ Variables: Record<s
   const publicCors = cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 600 });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}${dcrCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -440,8 +494,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     } catch {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
-    const clientResolver =
-      options.clientResolver ?? ${storageParts.defaultClientResolver};
+${clientResolverAssignment}
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -450,7 +503,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     c.set('userinfoSigningKeys', userinfoSigningKeys);
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
-    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
+${tokenClientResolverContext}
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);
@@ -462,7 +515,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${googleLoginStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${dcrStorageContext}${googleLoginStorageContext}
     // P1: default cookie-based session + consent resolvers so prompt=none /
     // max_age / SSO work out of the box (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
     c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
@@ -485,7 +538,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}${dcrMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginPage);
   app.route('/consent', consentPage);
@@ -1280,6 +1333,92 @@ export const cibaLoginTransactionStore: CibaLoginTransactionStore =
     createInMemoryCibaLoginTransactionStore());
 `
     : '';
+  // EXPERIMENTAL (RFC 7591): the record of a dynamic registration is the same
+  // RegisteredClient shape the static clients use, so the issued client rides
+  // the existing resolution and validation paths unchanged.
+  const dcrStoreTypeImport = features.dynamicClientRegistration
+    ? `
+import type { RegisteredClient } from './config.js';`
+    : '';
+  const dcrStoreImplementation = features.dynamicClientRegistration
+    ? `
+/**
+ * EXPERIMENTAL — store contract for dynamically registered clients (RFC 7591).
+ *
+ * - get(clientId): return the registered client, or undefined when unknown.
+ * - save(client): persist the registration under client.clientId.
+ * - count(): how many dynamic registrations exist, for the
+ *   maxRegisteredClients inventory cap (RFC 7591 §5 DoS consideration).
+ */
+export interface DynamicallyRegisteredClientStore {
+  get(clientId: string): Promise<RegisteredClient | undefined>;
+  save(client: RegisteredClient): Promise<void>;
+  count(): Promise<number>;
+}
+
+/**
+ * EXPERIMENTAL — in-memory store for dynamically registered clients (RFC 7591).
+ *
+ * Dynamic registrations live only in this process: they survive neither a
+ * restart nor a second instance (the statically registered clients do), so a
+ * long-running deployment needs a persistent implementation of the contract
+ * above. There is no expiry: RFC 7592 (deregistration) is not implemented, so
+ * the inventory cap and a restart are the only ways a registration goes away.
+ */
+export class InMemoryDynamicallyRegisteredClientStore
+  implements DynamicallyRegisteredClientStore
+{
+  private clients = new Map<string, RegisteredClient>();
+
+  async get(clientId: string): Promise<RegisteredClient | undefined> {
+    return this.clients.get(clientId);
+  }
+
+  async save(client: RegisteredClient): Promise<void> {
+    this.clients.set(client.clientId, client);
+  }
+
+  async count(): Promise<number> {
+    return this.clients.size;
+  }
+}
+
+// Kept on globalThis for the same reason as the provider stores above: Next.js
+// instantiates route handlers and server actions in separate module layers.
+const dynamicClientStoreRegistry = globalThis as typeof globalThis & {
+  __oidcDynamicallyRegisteredClientStore?: DynamicallyRegisteredClientStore;
+};
+
+export const dynamicClientStore: DynamicallyRegisteredClientStore =
+  (dynamicClientStoreRegistry.__oidcDynamicallyRegisteredClientStore ??=
+    new InMemoryDynamicallyRegisteredClientStore());
+
+/**
+ * EXPERIMENTAL — consult the dynamically registered clients (RFC 7591) after
+ * the configured resolver, so a statically registered client can never be
+ * shadowed by a dynamic registration (ids minted at /register carry the dcr-
+ * prefix and cannot collide with human-named static ids anyway).
+ *
+ * The wrapper keeps the base resolver's own type: a value serving as both
+ * ClientResolver and TokenClientResolver stays usable as both, and the
+ * RegisteredClient records the store adds satisfy either view.
+ */
+export function withDynamicallyRegisteredClients<
+  Resolver extends { findClient(clientId: string): Promise<any> },
+>(base: Resolver): Resolver {
+  return {
+    ...base,
+    async findClient(clientId: string): Promise<RegisteredClient | null> {
+      const registered = (await base.findClient(clientId)) as RegisteredClient | null;
+      if (registered) {
+        return registered;
+      }
+      return (await dynamicClientStore.get(clientId)) ?? null;
+    },
+  } as Resolver;
+}
+`
+    : '';
   // EXTENSION (google-login): nonce store contract + verified account payload.
   const googleLoginStoreTypeImport = features.googleLogin
     ? `
@@ -1532,7 +1671,7 @@ export function buildClearedSessionCookie(): string {
   AccessTokenInfo,
   RefreshTokenInfo,
   UserClaims,
-} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}${googleLoginStoreTypeImport}
+} from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}${dcrStoreTypeImport}${googleLoginStoreTypeImport}
 
 /**
  * In-memory Authorization Transaction Store.
@@ -2463,7 +2602,7 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;${googleLoginStoreExport}
-${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}`;
+${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}${dcrStoreImplementation}`;
 }
 
 export function resolversTemplate(
@@ -3816,6 +3955,155 @@ parApp.post('/', async (c) => {
         c.header('WWW-Authenticate', error.wwwAuthenticate);
       }
       return c.json({ error: error.code, error_description: error.errorDescription }, error.statusCode);
+    }
+    return c.json({ error: 'server_error' }, 500);
+  }
+});
+`;
+}
+
+/**
+ * EXPERIMENTAL — client registration endpoint (RFC 7591 §3), generated only
+ * with `--enable dynamic-client-registration`.
+ *
+ * Also owns the settings module for the feature: apply.ts / app.ts import
+ * `dynamicClientRegistrationConfig` from here to merge the applyOidc option
+ * override over it, so both read one source of truth.
+ */
+export function registerRouteTemplate(_corePkg: string): string {
+  return `/**
+ * EXPERIMENTAL — Dynamic Client Registration (RFC 7591).
+ *
+ * This route was generated because the OP was created with
+ * \`--enable dynamic-client-registration\`. It is backed by
+ * ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change in a breaking
+ * way between releases. Do not build production code on it without pinning the
+ * version.
+ *
+ * The client POSTs its metadata here as JSON and receives a freshly minted
+ * client_id (and, for confidential clients, a client_secret) that works on
+ * /authorize and /token right away. Registration is open by default
+ * (RFC 7591 §3.1 SHOULD); set initialAccessToken to require a Bearer token.
+ */
+import { Hono } from 'hono';
+import {
+  ClientRegistrationError,
+  buildClientRegistrationResponse,
+  buildRegisteredClient,
+  validateClientRegistrationRequest,
+  verifyInitialAccessToken,
+} from '${EXPERIMENTAL_PACKAGE}/dynamic-client-registration';
+import { dynamicClientStore as defaultDynamicClientStore } from '../store.js';
+
+/**
+ * Dynamic client registration settings. apply.ts merges the applyOidc option
+ * override over these defaults, so change them here or per deployment there.
+ *
+ * - initialAccessToken: when set, POST /register requires
+ *   \`Authorization: Bearer <value>\` (OIDC Dynamic Client Registration 1.0 §3).
+ *   Unset means open registration (RFC 7591 §3.1 SHOULD). This is one static
+ *   secret for PoC use — there is no issuance or rotation.
+ * - maxRegisteredClients: inventory cap on dynamic registrations
+ *   (RFC 7591 §5 DoS consideration). The cap answers 429, not
+ *   invalid_client_metadata: nothing about the metadata is wrong, so a
+ *   metadata-retry loop must not be invited.
+ * - maxRegistrationBodyBytes: request body limit in UTF-8 bytes.
+ */
+export const dynamicClientRegistrationConfig = {
+  initialAccessToken: undefined as string | undefined,
+  maxRegisteredClients: 100,
+  maxRegistrationBodyBytes: 16384,
+};
+
+export const registerApp = new Hono<{ Variables: Record<string, any> }>();
+
+/**
+ * RFC 7591 §3.1: the registration request body MUST be application/json.
+ * Enforcing the media type also closes the cross-origin text/plain form post
+ * that can synthesize a JSON-shaped body without a CORS preflight.
+ */
+function isJson(contentType: string): boolean {
+  const [mediaType = ''] = contentType.toLowerCase().split(';');
+  return mediaType.trim() === 'application/json';
+}
+
+/**
+ * Client Registration Endpoint
+ * RFC 7591 §3
+ *
+ * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
+ * deployment layer (reverse proxy / platform); this endpoint only enforces the
+ * inventory and body-size caps above. Open registration grants no trust: what
+ * an issued client can do stays bounded by the same validation as a static
+ * client (PKCE, exact redirect_uri match, client authentication).
+ */
+registerApp.post('/', async (c) => {
+  // The 201 body carries the client_secret, so it must never be cached.
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
+  const config = c.get('dynamicClientRegistrationConfig') ?? dynamicClientRegistrationConfig;
+  const store = c.get('dynamicClientStore') ?? defaultDynamicClientStore;
+
+  // (1) Initial access token, checked before the body is read. The two 401
+  // shapes follow RFC 6750 §3.1: no error code without credentials, and
+  // error="invalid_token" for presented-but-wrong ones. Neither reflects
+  // anything about the expected token.
+  if (config.initialAccessToken !== undefined) {
+    const authorization = c.req.header('Authorization');
+    if (authorization === undefined) {
+      c.header('WWW-Authenticate', 'Bearer');
+      return c.body(null, 401);
+    }
+    const accepted = await verifyInitialAccessToken(authorization, config.initialAccessToken);
+    if (!accepted) {
+      c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+      return c.body(null, 401);
+    }
+  }
+
+  // (2) RFC 7591 §3.1: application/json only (parameters such as charset are fine).
+  if (!isJson(c.req.header('Content-Type') ?? '')) {
+    return c.json(
+      { error: 'invalid_client_metadata', error_description: 'registration requests must use application/json' },
+      400,
+    );
+  }
+
+  const rawBody = await c.req.text();
+  try {
+    // (3)–(8) Body size, JSON shape, allowlist-pick of the understood fields,
+    // value checks and RFC 7591 §2 defaults — pure functions from
+    // ${EXPERIMENTAL_PACKAGE}/dynamic-client-registration. Unknown metadata is
+    // silently ignored (§2 MUST), and every error_description is a fixed ASCII
+    // string that never reflects request values.
+    const metadata = validateClientRegistrationRequest(rawBody, {
+      maxBodyBytes: config.maxRegistrationBodyBytes,
+    });
+    const client = buildRegisteredClient(metadata);
+
+    // (9) Inventory cap (RFC 7591 §5). 429 with a fixed body: the metadata is
+    // fine, so answering invalid_client_metadata would invite a retry loop that
+    // amplifies the very DoS surface the cap is here to close. No Retry-After —
+    // the cap is a stock ceiling, not a rate, so no recovery time is promised.
+    if ((await store.count()) >= config.maxRegisteredClients) {
+      return c.json(
+        { error: 'too_many_registrations', error_description: 'registration limit reached' },
+        429,
+      );
+    }
+    await store.save(client);
+
+    // Never log the registration metadata or the issued client_secret.
+
+    // RFC 7591 §3.2.1: 201 Created with the issued values and every registered
+    // metadata value (defaults applied). client_secret_expires_at: 0 means the
+    // secret does not expire.
+    return c.json(buildClientRegistrationResponse(client), 201);
+  } catch (error) {
+    if (error instanceof ClientRegistrationError) {
+      // RFC 7591 §3.2.2: 400 with error / error_description JSON.
+      return c.json({ error: error.error, error_description: error.errorDescription }, 400);
     }
     return c.json({ error: 'server_error' }, 500);
   }
@@ -7370,6 +7658,17 @@ import { parConfig } from './par.js';`
     // EXPERIMENTAL — RP-Initiated Logout 1.0 §2.1 metadata.
     end_session_endpoint: \`\${issuer}/logout\`,`
     : '';
+  // EXPERIMENTAL (RFC 7591 / OIDC Discovery 1.0 §3): unlike the endpoints above,
+  // registration_endpoint has a core DiscoveryConfig field that is emitted only
+  // when set, so it is passed to buildProviderMetadata instead of being merged
+  // onto the result — core needs no change either way.
+  const dcrDiscoveryMetadata = features.dynamicClientRegistration
+    ? `    // EXPERIMENTAL — OIDC Discovery 1.0 §3: the client registration endpoint
+    // (RFC 7591) is advertised only because this OP was generated with
+    // --enable dynamic-client-registration.
+    registrationEndpoint: \`\${issuer}/register\`,
+`
+    : '';
   return `import { Hono } from 'hono';
 import { buildProviderMetadata, getJwaAlgorithm, type SigningKey } from '${corePkg}';
 import { defaultProviderConfig } from '../config.js';${parDiscoveryImport}${customScopeImport}
@@ -7467,7 +7766,7 @@ ${requestObjectMetadata}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.5: the 'cla
     claimsParameterSupported: true,
     // RFC 9207 §3: authorize endpoint adds iss to all authorization responses.
     authorizationResponseIssParameterSupported: true,
-${rfc8414Comment}${introspectionMetadata}${revocationMetadata}  });
+${rfc8414Comment}${introspectionMetadata}${revocationMetadata}${dcrDiscoveryMetadata}  });
 
   // RFC 8414 §3.2 / RFC 9111 §5.2: Discovery metadata is cacheable. Advertise a
   // 3600s freshness lifetime, symmetric with the JWKS endpoint (jwks.ts), so
@@ -8430,6 +8729,56 @@ import { cibaPage } from './pages/ciba.js';\n`
   const logoutMount = features.rpInitiatedLogout
     ? `  app.route('/logout', logoutPage);\n`
     : '';
+  // EXPERIMENTAL (RFC 7591): the client registration endpoint is a back-channel
+  // POST endpoint (optionally Bearer-guarded), so it gets the same CORS policy
+  // as /token. The issued clients are resolved by wrapping the configured
+  // client resolver with the dynamic registration store (store.ts).
+  const dcrImport = features.dynamicClientRegistration
+    ? `import { registerApp, dynamicClientRegistrationConfig } from './routes/register.js';\n`
+    : '';
+  const dcrCors = features.dynamicClientRegistration
+    ? `  app.use('/register', protectedCors);\n`
+    : '';
+  const dcrMount = features.dynamicClientRegistration
+    ? `  app.route('/register', registerApp);\n`
+    : '';
+  const dcrStorageContext = features.dynamicClientRegistration
+    ? `    c.set('dynamicClientStore', dynamicClientStore);
+    c.set('dynamicClientRegistrationConfig', { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration });\n`
+    : '';
+  const dcrStoreImport = features.dynamicClientRegistration
+    ? `  dynamicClientStore,
+  withDynamicallyRegisteredClients,\n`
+    : '';
+  const dcrOptionsField = features.dynamicClientRegistration
+    ? `  /**
+   * EXPERIMENTAL (RFC 7591): override the generated dynamic client registration
+   * settings (routes/register.ts) per deployment — for example from environment
+   * variables — without editing the generated file. Unset fields keep the
+   * generated defaults.
+   */
+  dynamicClientRegistration?: {
+    initialAccessToken?: string;
+    maxRegisteredClients?: number;
+    maxRegistrationBodyBytes?: number;
+  };
+`
+    : '';
+  // EXPERIMENTAL (RFC 7591): the token endpoint resolves clients through its
+  // own resolver, so both resolvers get the dynamic registration fallback.
+  const clientResolverAssignment = features.dynamicClientRegistration
+    ? `    // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after the
+    // configured clients, so a static registration always wins.
+    const clientResolver = withDynamicallyRegisteredClients(
+      options.clientResolver ?? ${storageParts.defaultClientResolver},
+    );`
+    : `    const clientResolver =
+      options.clientResolver ?? ${storageParts.defaultClientResolver};`;
+  const tokenClientResolverContext = features.dynamicClientRegistration
+    ? `    c.set('tokenClientResolver', options.tokenClientResolver
+      ? withDynamicallyRegisteredClients(options.tokenClientResolver)
+      : clientResolver);`
+    : `    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);`;
   // EXTENSION (google-login): the Google login callback needs the nonce store,
   // the ID token verifier (google-auth-library by default) and the resolver that
   // maps a verified Google account to an OP subject. The default resolver links
@@ -8484,7 +8833,7 @@ import { cors } from 'hono/cors';
 import { authorizePage } from './pages/authorize.js';
 import { tokenApp } from './routes/token.js';
 import { userinfoApp } from './routes/userinfo.js';
-${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}import { jwksApp } from './routes/jwks.js';
+${introspectionImport}${revocationImport}${parImport}${deviceImport}${cibaImport}${logoutImport}${dcrImport}import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
 import { consentPage } from './pages/consent.js';
@@ -8496,7 +8845,7 @@ import {
   createStoreResolvers,
 } from './resolvers.js';
 import {
-${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}  type ProviderStores,
+${storageParts.defaultStoresImport}${parStoreImport}${deviceStoreImport}${cibaStoreImport}${dcrStoreImport}  type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -8588,7 +8937,7 @@ ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
    * Token / UserInfo / Introspection / Revocation エンドポイントに適用される。
    * Discovery / JWKS は仕様上常に '*' 固定 (OIDC Discovery / RFC 8414 で公開資産扱い)。
    */
-${cibaOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
+${cibaOptionsField}${dcrOptionsField}${googleLoginOptionsFields}  corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
    * Provide any subset; omitted pages fall back to the default views.
@@ -8645,7 +8994,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   });
   app.use('/token', protectedCors);
   app.use('/userinfo', protectedCors);
-${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use('/.well-known/openid-configuration', publicCors);
+${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}${dcrCors}  app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
   app.use('*', enforceOidcEndpointMethod);
@@ -8671,8 +9020,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     } catch {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
-    const clientResolver =
-      options.clientResolver ?? ${storageParts.defaultClientResolver};
+${clientResolverAssignment}
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -8683,7 +9031,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
 
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
-    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
+${tokenClientResolverContext}
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);
@@ -8695,7 +9043,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}  app.use
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
-${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${googleLoginStorageContext}
+${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${dcrStorageContext}${googleLoginStorageContext}
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -8718,7 +9066,7 @@ ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext
   app.route('/authorize', authorizePage);
   app.route('/token', tokenApp);
   app.route('/userinfo', userinfoApp);
-${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}  app.route('/.well-known/jwks.json', jwksApp);
+${introspectionMount}${revocationMount}${parMount}${deviceMount}${cibaMount}${logoutMount}${dcrMount}  app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginPage);
   app.route('/consent', consentPage);

@@ -13,12 +13,24 @@ const clientBaseURL =
 const resourceServerURL =
   process.env.E2E_RESOURCE_SERVER_URL ?? `http://${host}:${resourceServerPort}`;
 const xaaIssuer = process.env.E2E_XAA_ISSUER ?? `http://${host}:${xaaOpPort}`;
+// EXPERIMENTAL (RFC 7591): a further OP instance with an initial access token
+// and a small registration inventory cap, so the dynamic-client-registration
+// spec can exercise the 401 and 429 paths without restricting the open
+// registration the main instance offers.
+const dcrOpPort = Number(process.env.E2E_DCR_OP_PORT ?? '3050');
+const dcrIssuer = process.env.E2E_DCR_ISSUER ?? `http://${host}:${dcrOpPort}`;
 const opPackage =
   process.env.E2E_OP_PACKAGE ?? '@maronn-openid-connect/sample-hono-cloudflare';
 // The XAA topology (two trust domains) is exercised against the hono sample,
 // which is the one generated with --enable id-jag. Other sample OPs keep the
 // single-instance setup; the XAA spec skips itself when the second OP is absent.
 const startXaaOp = opPackage === '@maronn-openid-connect/sample-hono-cloudflare';
+// The restricted-registration instance only makes sense for the samples
+// generated with --enable dynamic-client-registration; the spec skips its
+// tests when the instance is absent.
+const startDcrOp =
+  opPackage === '@maronn-openid-connect/sample-hono-cloudflare' ||
+  opPackage === '@maronn-openid-connect/sample-express-flyio';
 const oidcClientsJson = JSON.stringify([
   {
     clientId: 'e2e-client',
@@ -203,6 +215,39 @@ export default defineConfig({
               ...(process.env.OIDC_SQLITE_PATH
                 ? { OIDC_SQLITE_PATH: `${process.env.OIDC_SQLITE_PATH}-xaa` }
                 : {}),
+            },
+          },
+        ]
+      : []),
+    // EXPERIMENTAL (RFC 7591): the restricted-registration OP instance. It
+    // requires the initial access token below on POST /register and caps the
+    // dynamic registrations at 3, so the 401 and 429 paths of the
+    // dynamic-client-registration spec run against real HTTP. The values are
+    // mirrored as constants in specs/dynamic-client-registration.spec.ts.
+    ...(startDcrOp
+      ? [
+          {
+            command: `pnpm --filter ${opPackage} start`,
+            url: `${dcrIssuer}/.well-known/openid-configuration`,
+            reuseExistingServer: !process.env.CI,
+            timeout: 30_000,
+            env: {
+              HOST: host,
+              PORT: String(dcrOpPort),
+              ISSUER: dcrIssuer,
+              OIDC_SIGNING_KEY_ID: 'e2e-dcr-rs256-key',
+              OIDC_DCR_INITIAL_ACCESS_TOKEN: 'e2e-dcr-initial-access-token',
+              OIDC_DCR_MAX_CLIENTS: '3',
+              OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
+                ? `${process.env.OIDC_D1_PERSIST_PATH}-dcr`
+                : '.wrangler/state-dcr',
+              // Always a path of its own: the node:sqlite samples default to
+              // .data/oidc.sqlite, and two OP processes writing one SQLite file
+              // (this instance seeding its sample data, the main one handling
+              // flows) fail each other's writes.
+              OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
+                ? `${process.env.OIDC_SQLITE_PATH}-dcr`
+                : '.data/oidc-e2e-dcr.sqlite',
             },
           },
         ]

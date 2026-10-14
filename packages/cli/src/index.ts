@@ -39,7 +39,8 @@ function withExperimentalPackage(installCommand: string, features: OidcFeatureCo
     !features.idJag &&
     !features.ciba &&
     !features.jwtIntrospectionResponse &&
-    !features.rpInitiatedLogout
+    !features.rpInitiatedLogout &&
+    !features.dynamicClientRegistration
   ) {
     return installCommand;
   }
@@ -549,7 +550,8 @@ export function run(args: string[]): void {
         features.tokenExchange ||
         features.jarm ||
         features.deviceAuthorizationGrant ||
-        features.ciba
+        features.ciba ||
+        features.dynamicClientRegistration
           ? [`Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`]
           : []),
         ...(features.googleLogin

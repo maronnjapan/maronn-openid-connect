@@ -8,6 +8,7 @@ import { deviceAuthorizationApp } from './routes/device-authorization.js';
 import { devicePage } from './pages/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
 import { cibaPage } from './pages/ciba.js';
+import { registerApp, dynamicClientRegistrationConfig } from './routes/register.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
@@ -23,6 +24,8 @@ import {
   deviceAuthorizationStore,
   cibaAuthenticationRequestStore,
   cibaLoginTransactionStore,
+  dynamicClientStore,
+  withDynamicallyRegisteredClients,
   type ProviderStores,
 } from './store.js';
 import { createViews, type Views } from './views.js';
@@ -78,6 +81,17 @@ export interface OidcProviderOptions {
     loginHint: string,
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
   /**
+   * EXPERIMENTAL (RFC 7591): override the generated dynamic client registration
+   * settings (routes/register.ts) per deployment — for example from environment
+   * variables — without editing the generated file. Unset fields keep the
+   * generated defaults.
+   */
+  dynamicClientRegistration?: {
+    initialAccessToken?: string;
+    maxRegisteredClients?: number;
+    maxRegistrationBodyBytes?: number;
+  };
+  /**
    * EXTENSION (google-login): verifier for the ID token Google posts to
    * /login/google. Defaults to google-auth-library (OAuth2Client.verifyIdToken)
    * with a process-wide certificate cache; inject a custom one for tests or a
@@ -124,7 +138,11 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   let database: SqlDatabase | undefined;
   const openDatabase = (): SqlDatabase => (database ??= createDatabase());
   const stores = options.storage ?? createSqlProviderStores(openDatabase());
-  const clientResolver = options.clientResolver ?? createSqlClientResolver(openDatabase());
+  const clientResolver = withDynamicallyRegisteredClients(
+    // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after the
+    // configured clients, so a static registration always wins.
+    options.clientResolver ?? createSqlClientResolver(openDatabase()),
+  );
 
   const corsOrigins = options.corsOrigins ?? '*';
   const protectedCors = createCorsMiddleware({
@@ -145,6 +163,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.use('/revoke', protectedCors);
   app.use('/device_authorization', protectedCors);
   app.use('/backchannel_authentication', protectedCors);
+  app.use('/register', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
 
@@ -174,7 +193,9 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     c.set('userinfoSigningKeys', userinfoSigningKeys);
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
-    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
+    c.set('tokenClientResolver', options.tokenClientResolver
+      ? withDynamicallyRegisteredClients(options.tokenClientResolver)
+      : clientResolver);
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);
@@ -198,6 +219,8 @@ export function createApp(options: OidcProviderOptions): WebRouter {
       const claims = await stores.userStore.getClaims(loginHint);
       return claims ? { subject: claims.sub } : null;
     }));
+    c.set('dynamicClientStore', dynamicClientStore);
+    c.set('dynamicClientRegistrationConfig', { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration });
     c.set('googleLoginNonceStore', stores.googleLoginNonceStore);
     c.set('googleIdTokenVerifier', options.googleIdTokenVerifier ?? getDefaultGoogleIdTokenVerifier());
     c.set('googleAccountResolver', options.googleAccountResolver ?? {
@@ -230,6 +253,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
   app.route('/device', devicePage);
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
   app.route('/ciba', cibaPage);
+  app.route('/register', registerApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginPage);

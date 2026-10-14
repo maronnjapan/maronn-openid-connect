@@ -29,6 +29,8 @@ import {
   nextJsIntrospectionRouteTemplate,
   nextJsParConfigTemplate,
   nextJsParRouteTemplate,
+  nextJsRegisterConfigTemplate,
+  nextJsRegisterRouteTemplate,
   nextJsRevocationRouteTemplate,
   nextJsUserinfoRouteTemplate,
 } from './endpoints.js';
@@ -211,6 +213,13 @@ function nextJsGeneratedFiles(
       ? [
         { path: 'par/route.ts', content: nextJsParRouteTemplate(pkg) },
         { path: 'par/config.ts', content: nextJsParConfigTemplate() },
+      ]
+      : []),
+    // RFC 7591: only generated with --enable dynamic-client-registration.
+    ...(features.dynamicClientRegistration
+      ? [
+        { path: 'register/route.ts', content: nextJsRegisterRouteTemplate() },
+        { path: 'register/config.ts', content: nextJsRegisterConfigTemplate() },
       ]
       : []),
     // RFC 8693: only generated with --enable token-exchange.

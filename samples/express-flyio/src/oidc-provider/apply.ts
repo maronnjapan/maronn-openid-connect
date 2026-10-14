@@ -11,6 +11,7 @@ const OIDC_ENDPOINTS = [
   '/userinfo',
   '/introspect',
   '/revoke',
+  '/register',
   '/device_authorization',
   '/device',
   '/backchannel_authentication',

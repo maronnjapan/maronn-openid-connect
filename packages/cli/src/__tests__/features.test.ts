@@ -30,6 +30,7 @@ describe('EXPERIMENTAL_FEATURES', () => {
       'ciba',
       'jwt-introspection-response',
       'rp-initiated-logout',
+      'dynamic-client-registration',
     ]);
   });
 });
@@ -56,6 +57,7 @@ describe('DEFAULT_FEATURES', () => {
       ciba: false,
       jwtIntrospectionResponse: false,
       rpInitiatedLogout: false,
+      dynamicClientRegistration: false,
       googleLogin: false,
     });
   });
@@ -78,6 +80,7 @@ describe('resolveFeatures', () => {
         ciba: false,
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
+        dynamicClientRegistration: false,
         googleLogin: false,
       });
     });
@@ -99,6 +102,7 @@ describe('resolveFeatures', () => {
         ciba: false,
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
+        dynamicClientRegistration: false,
         googleLogin: false,
       });
     });
@@ -120,6 +124,7 @@ describe('resolveFeatures', () => {
         ciba: false,
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
+        dynamicClientRegistration: false,
         googleLogin: false,
       });
     });
@@ -145,6 +150,7 @@ describe('resolveFeatures', () => {
         ciba: false,
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
+        dynamicClientRegistration: false,
         googleLogin: false,
       });
     });
@@ -164,6 +170,7 @@ describe('resolveFeatures', () => {
         ciba: false,
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
+        dynamicClientRegistration: false,
         googleLogin: false,
       });
     });
@@ -180,6 +187,7 @@ describe('resolveFeatures', () => {
             'ciba',
             'jwt-introspection-response',
             'rp-initiated-logout',
+            'dynamic-client-registration',
             'google-login',
           ],
         }),
@@ -197,6 +205,7 @@ describe('resolveFeatures', () => {
         ciba: true,
         jwtIntrospectionResponse: true,
         rpInitiatedLogout: true,
+        dynamicClientRegistration: true,
         googleLogin: true,
       });
     });
@@ -216,6 +225,7 @@ describe('resolveFeatures', () => {
         ciba: false,
         jwtIntrospectionResponse: false,
         rpInitiatedLogout: false,
+        dynamicClientRegistration: false,
         googleLogin: false,
       });
     });

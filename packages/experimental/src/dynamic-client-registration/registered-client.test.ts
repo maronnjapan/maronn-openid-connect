@@ -97,6 +97,30 @@ describe('buildRegisteredClient', () => {
       );
       expect(client.clientName).toBe('My Test App');
     });
+
+    // scope (RFC 7591 Section 2): the registered per-client scope allow list.
+    it('should carry the registered scope values into the client record', () => {
+      const client = buildRegisteredClient(
+        { ...CONFIDENTIAL, scope: ['openid', 'profile'] },
+        { generateClientId: () => 'dcr-x', generateClientSecret: () => 's', now: () => 0 },
+      );
+      expect(client.scope).toEqual(['openid', 'profile']);
+    });
+
+    it('should omit the scope key from the client record when none was registered', () => {
+      const client = buildRegisteredClient(CONFIDENTIAL);
+      expect(Object.hasOwn(client, 'scope')).toBe(false);
+    });
+
+    it('should copy the scope array instead of sharing it', () => {
+      const metadata: ValidatedClientRegistration = {
+        ...CONFIDENTIAL,
+        scope: ['openid'],
+      };
+      const client = buildRegisteredClient(metadata);
+      metadata.scope!.push('profile');
+      expect(client.scope).toEqual(['openid']);
+    });
   });
 });
 
@@ -147,6 +171,47 @@ describe('buildClientRegistrationResponse', () => {
     });
     expect(Object.hasOwn(response, 'client_secret')).toBe(false);
     expect(Object.hasOwn(response, 'client_secret_expires_at')).toBe(false);
+  });
+
+  // RFC 7591 §3.2.1: the response carries all registered metadata, so a
+  // registered scope list comes back as the space-delimited `scope` string.
+  it('should include scope as a space-delimited string in the registration response when registered', () => {
+    const response = buildClientRegistrationResponse({
+      clientId: 'dcr-fixed',
+      clientSecret: 'fixed-secret',
+      clientType: 'confidential',
+      redirectUris: ['https://app.example.com/cb'],
+      grantTypes: ['authorization_code'],
+      responseTypes: ['code'],
+      tokenEndpointAuthMethod: 'client_secret_basic',
+      scope: ['openid', 'profile'],
+      clientIdIssuedAt: 1_790_812_800,
+    });
+    expect(response).toEqual({
+      client_id: 'dcr-fixed',
+      client_secret: 'fixed-secret',
+      client_secret_expires_at: 0,
+      client_id_issued_at: 1_790_812_800,
+      redirect_uris: ['https://app.example.com/cb'],
+      token_endpoint_auth_method: 'client_secret_basic',
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      scope: 'openid profile',
+    });
+  });
+
+  it('should omit scope from the registration response when not registered', () => {
+    const response = buildClientRegistrationResponse({
+      clientId: 'dcr-x',
+      clientSecret: 's',
+      clientType: 'confidential',
+      redirectUris: ['https://app.example.com/cb'],
+      grantTypes: ['authorization_code'],
+      responseTypes: ['code'],
+      tokenEndpointAuthMethod: 'client_secret_basic',
+      clientIdIssuedAt: 0,
+    });
+    expect(Object.hasOwn(response, 'scope')).toBe(false);
   });
 
   it('should omit client_name when none was registered', () => {

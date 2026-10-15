@@ -40,6 +40,11 @@ export interface ValidatedClientRegistration {
   grantTypes: string[];
   responseTypes: string[];
   clientName?: string;
+  /**
+   * RFC 7591 §2 `scope`: このクライアントが要求してよい scope 値の一覧。
+   * 省略時はキー自体が無く、クライアント単位の制限を掛けずに登録される。
+   */
+  scope?: string[];
 }
 
 export interface ValidateClientRegistrationOptions {
@@ -49,6 +54,12 @@ export interface ValidateClientRegistrationOptions {
    * 判定し、多バイト文字を含む境界値テストを決定的にする。
    */
   maxBodyBytes?: number;
+  /**
+   * この OP が受理する scope 値の一覧。指定すると、`scope` メタデータに
+   * 一覧外の値を含む登録を invalid_client_metadata で拒否する。未指定なら
+   * 構文検証のみ行う（OP 自体が受理一覧を持たない構成向け）。
+   */
+  supportedScopes?: readonly string[];
 }
 
 const DEFAULT_MAX_BODY_BYTES = 16384;
@@ -70,7 +81,7 @@ const SUPPORTED_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
  * 登録リクエストボディ（文字列）を検証し、既定値を適用して返す。
  *
  * 未知フィールドは黙って捨てる（RFC 7591 §2 MUST ignore）。実装は「理解する
- * 5 フィールドだけを新しいオブジェクトへ選び取る」allowlist-pick 方式で、
+ * 6 フィールドだけを新しいオブジェクトへ選び取る」allowlist-pick 方式で、
  * パース結果のスプレッドや Object.assign によるコピーをしない。`__proto__`
  * などプロトタイプ経路のキーを持つ入力は、読まれないまま不活性に落ちる。
  *
@@ -113,6 +124,7 @@ export function validateClientRegistrationRequest(
     grantTypes: validateGrantTypes(metadata['grant_types']),
     responseTypes: validateResponseTypes(metadata['response_types']),
     ...pickClientName(metadata['client_name']),
+    ...pickScope(metadata['scope'], options?.supportedScopes),
   };
 }
 
@@ -208,6 +220,53 @@ function validateResponseTypes(value: unknown): string[] {
     );
   }
   return ['code'];
+}
+
+/**
+ * RFC 6749 §3.3: scope-token = 1*( %x21 / %x23-5B / %x5D-7E )。
+ * `"`（%x22）と `\`（%x5C）を除く可視 ASCII。
+ */
+const SCOPE_TOKEN = /^[\x21\x23-\x5b\x5d-\x7e]+$/;
+
+/**
+ * scope: OPTIONAL（RFC 7591 §2）。要求時に使ってよい scope 値のスペース
+ * 区切り文字列。登録した値は生成コード側で ClientInfo.scope（クライアント
+ * 単位の許可一覧）になり、一覧外の scope 要求は invalid_scope で拒否される。
+ *
+ * 構文は RFC 6749 §3.3（scope = scope-token *( SP scope-token )）で検査し、
+ * 空文字列・連続スペース・scope-token 外の文字は拒否する。supportedScopes が
+ * 与えられた場合は一覧外の値も拒否する。エラー文言は固定の ASCII に限り、
+ * リクエスト由来の値を埋め込まない（redirect_uris と同じ方針）。
+ * 重複は最初の出現だけを残して 1 つに正規化する。省略時はキー自体を出さない
+ * （exactOptionalPropertyTypes 互換）。
+ */
+function pickScope(
+  value: unknown,
+  supportedScopes: readonly string[] | undefined,
+): { scope?: string[] } {
+  if (value === undefined) {
+    return {};
+  }
+  if (typeof value !== 'string') {
+    throw new ClientRegistrationError('invalid_client_metadata', 'scope must be a string');
+  }
+  const tokens = value.split(' ');
+  if (tokens.some((token) => !SCOPE_TOKEN.test(token))) {
+    throw new ClientRegistrationError(
+      'invalid_client_metadata',
+      'scope must be a space-delimited list of scope values',
+    );
+  }
+  if (
+    supportedScopes !== undefined &&
+    tokens.some((token) => !supportedScopes.includes(token))
+  ) {
+    throw new ClientRegistrationError(
+      'invalid_client_metadata',
+      'scope must only contain scope values this provider supports',
+    );
+  }
+  return { scope: [...new Set(tokens)] };
 }
 
 const CLIENT_NAME_MAX_LENGTH = 128;

@@ -96,7 +96,7 @@ export class HonoGenerator implements FrameworkGenerator {
       // Experimental (RFC 7591): only generated with
       // --enable dynamic-client-registration.
       ...(features.dynamicClientRegistration
-        ? [{ path: 'routes/register.ts', content: registerRouteTemplate(pkg) }]
+        ? [{ path: 'routes/register.ts', content: registerRouteTemplate(pkg, scopes) }]
         : []),
       // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
       ...(features.deviceAuthorizationGrant

@@ -26,6 +26,12 @@ export interface DynamicallyRegisteredClient {
   responseTypes: string[];
   tokenEndpointAuthMethod: 'client_secret_basic' | 'client_secret_post' | 'none';
   clientName?: string;
+  /**
+   * RFC 7591 §2 `scope`: 登録時に許可した scope 一覧。core の ClientInfo.scope
+   * としてそのまま解釈され、一覧外の scope 要求は invalid_scope で拒否される。
+   * 省略時はクライアント単位の制限を掛けない。
+   */
+  scope?: string[];
   clientIdIssuedAt: number;
 }
 
@@ -77,6 +83,7 @@ export function buildRegisteredClient(
     responseTypes: [...metadata.responseTypes],
     tokenEndpointAuthMethod: metadata.tokenEndpointAuthMethod,
     ...(metadata.clientName === undefined ? {} : { clientName: metadata.clientName }),
+    ...(metadata.scope === undefined ? {} : { scope: [...metadata.scope] }),
     clientIdIssuedAt: Math.floor(now() / 1000),
   };
 }
@@ -105,5 +112,7 @@ export function buildClientRegistrationResponse(
     grant_types: [...client.grantTypes],
     response_types: [...client.responseTypes],
     ...(client.clientName === undefined ? {} : { client_name: client.clientName }),
+    // scope は RFC 6749 §3.3 の表現（スペース区切り文字列）へ戻して返す。
+    ...(client.scope === undefined ? {} : { scope: client.scope.join(' ') }),
   };
 }

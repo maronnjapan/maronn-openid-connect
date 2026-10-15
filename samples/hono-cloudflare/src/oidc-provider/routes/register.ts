@@ -103,7 +103,9 @@ registerApp.post('/', async (c) => {
     // value checks and RFC 7591 §2 defaults — pure functions from
     // @maronn-openid-connect/experimental/dynamic-client-registration. Unknown metadata is
     // silently ignored (§2 MUST), and every error_description is a fixed ASCII
-    // string that never reflects request values.
+    // string that never reflects request values. A registered `scope`
+    // (RFC 7591 §2) becomes the client's per-client allow list: requests for
+    // any other scope fail with invalid_scope, like a static client's.
     const metadata = validateClientRegistrationRequest(rawBody, {
       maxBodyBytes: config.maxRegistrationBodyBytes,
     });

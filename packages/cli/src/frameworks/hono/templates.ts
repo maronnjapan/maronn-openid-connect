@@ -3970,7 +3970,21 @@ parApp.post('/', async (c) => {
  * `dynamicClientRegistrationConfig` from here to merge the applyOidc option
  * override over it, so both read one source of truth.
  */
-export function registerRouteTemplate(_corePkg: string): string {
+export function registerRouteTemplate(_corePkg: string, scopes: string[] = []): string {
+  // --scope: when the provider declares its scope allow list (scopes.ts), a
+  // registration may only claim scopes from it, so the registered client's
+  // per-client allow list (RFC 7591 §2 `scope`) never contradicts
+  // scopes_supported. Without the module the OP has no declared list to check
+  // against, and the registration keeps its syntax-validated scope as is.
+  const customScopesDeclared = scopes.length > 0;
+  const customScopeImport = customScopesDeclared
+    ? `
+import { SUPPORTED_SCOPES } from '../scopes.js';`
+    : '';
+  const supportedScopesOption = customScopesDeclared
+    ? `
+      supportedScopes: SUPPORTED_SCOPES,`
+    : '';
   return `/**
  * EXPERIMENTAL — Dynamic Client Registration (RFC 7591).
  *
@@ -3993,7 +4007,7 @@ import {
   validateClientRegistrationRequest,
   verifyInitialAccessToken,
 } from '${EXPERIMENTAL_PACKAGE}/dynamic-client-registration';
-import { dynamicClientStore as defaultDynamicClientStore } from '../store.js';
+import { dynamicClientStore as defaultDynamicClientStore } from '../store.js';${customScopeImport}
 
 /**
  * Dynamic client registration settings. apply.ts merges the applyOidc option
@@ -4076,9 +4090,11 @@ registerApp.post('/', async (c) => {
     // value checks and RFC 7591 §2 defaults — pure functions from
     // ${EXPERIMENTAL_PACKAGE}/dynamic-client-registration. Unknown metadata is
     // silently ignored (§2 MUST), and every error_description is a fixed ASCII
-    // string that never reflects request values.
+    // string that never reflects request values. A registered \`scope\`
+    // (RFC 7591 §2) becomes the client's per-client allow list: requests for
+    // any other scope fail with invalid_scope, like a static client's.
     const metadata = validateClientRegistrationRequest(rawBody, {
-      maxBodyBytes: config.maxRegistrationBodyBytes,
+      maxBodyBytes: config.maxRegistrationBodyBytes,${supportedScopesOption}
     });
     const client = buildRegisteredClient(metadata);
 

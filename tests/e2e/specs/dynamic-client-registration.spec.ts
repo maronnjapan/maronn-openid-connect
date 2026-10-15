@@ -256,6 +256,76 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(Object.hasOwn(registered, 'software_statement')).toBe(false);
   });
 
+  // --- scope (RFC 7591 §2): the registered per-client scope allow list ---
+
+  test('should echo the registered scope in the 201 response (RFC 7591 §3.2.1)', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      scope: 'openid profile',
+    });
+    // The response carries all registered metadata (RFC 7591 §3.2.1), so the
+    // client can see which scope restriction its registration ended up with.
+    expect(registered.scope).toBe('openid profile');
+  });
+
+  test('should continue to the login screen for a scope the registration allows', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      scope: 'openid',
+    });
+    const clientId = requireString(registered.client_id, 'client_id');
+
+    const response = await request.get(scopeAuthorizeUrl(issuer, clientId, 'openid'), {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(302);
+    expect(requireHeader(response.headers(), 'location')).toBe(`${issuer}/login`);
+  });
+
+  test('should redirect invalid_scope for a scope outside the registered scope (RFC 6749 §4.1.2.1)', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      scope: 'openid',
+    });
+    const clientId = requireString(registered.client_id, 'client_id');
+
+    // The dynamically registered scope is enforced exactly like a static
+    // client's: a request outside it is a redirectable invalid_scope error.
+    const response = await request.get(scopeAuthorizeUrl(issuer, clientId, 'openid profile'), {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(302);
+    const location = new URL(requireHeader(response.headers(), 'location'));
+    expect(`${location.origin}${location.pathname}`).toBe(registeredRedirectUri);
+    expect(location.searchParams.get('error')).toBe('invalid_scope');
+    expect(location.searchParams.get('error_description')).toBe(
+      'Client is not registered for scope: profile',
+    );
+    expect(location.searchParams.get('state')).toBe('dcr-scope-state');
+    expect(location.searchParams.get('code')).toBe(null);
+  });
+
   // --- The restricted instance: initial access token and the inventory cap ---
 
   test('should answer 401 without an error code when no credentials accompany the request (RFC 6750 §3.1)', async ({
@@ -391,6 +461,23 @@ async function authorizeInBrowser(
   const code = callbackUrl.searchParams.get('code');
   expect(code).not.toBe(null);
   return { code: code as string, state: { codeVerifier } };
+}
+
+/**
+ * An /authorize URL for the scope tests: a fixed state and the RFC 7636
+ * Appendix B S256 challenge, with only client_id and scope varying.
+ */
+function scopeAuthorizeUrl(issuer: string, clientId: string, scope: string): string {
+  const url = new URL('/authorize', issuer);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('redirect_uri', registeredRedirectUri);
+  url.searchParams.set('scope', scope);
+  url.searchParams.set('state', 'dcr-scope-state');
+  url.searchParams.set('nonce', 'dcr-scope-nonce');
+  url.searchParams.set('code_challenge', 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+  url.searchParams.set('code_challenge_method', 'S256');
+  return url.toString();
 }
 
 /**

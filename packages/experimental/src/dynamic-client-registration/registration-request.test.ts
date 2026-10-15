@@ -347,6 +347,92 @@ describe('validateClientRegistrationRequest', () => {
     });
   });
 
+  // scope (RFC 7591 Section 2): space-delimited list of scope values the client
+  // may use. Registered values become the client's per-client scope allow list.
+  describe('scope', () => {
+    it('should register the scope values from a space-delimited scope string', () => {
+      const validated = validateClientRegistrationRequest(
+        body({ ...MINIMAL, scope: 'openid profile' }),
+      );
+      expect(validated.scope).toEqual(['openid', 'profile']);
+    });
+
+    it('should omit the scope key when scope is not provided', () => {
+      const validated = validateClientRegistrationRequest(body(MINIMAL));
+      expect(Object.hasOwn(validated, 'scope')).toBe(false);
+    });
+
+    it('should reject a non-string scope with invalid_client_metadata', () => {
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, scope: ['openid'] })),
+      ).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'scope must be a string'),
+      );
+    });
+
+    it('should reject an empty scope string with invalid_client_metadata', () => {
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, scope: '' })),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'scope must be a space-delimited list of scope values',
+        ),
+      );
+    });
+
+    it('should reject a scope string with consecutive spaces with invalid_client_metadata', () => {
+      // RFC 6749 §3.3: scope = scope-token *( SP scope-token ) — one SP between tokens.
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, scope: 'openid  profile' })),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'scope must be a space-delimited list of scope values',
+        ),
+      );
+    });
+
+    it('should reject a scope value with a character outside the scope-token set', () => {
+      // RFC 6749 §3.3: scope-token = 1*( %x21 / %x23-5B / %x5D-7E ) — no '"' or '\'.
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, scope: 'open"id' })),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'scope must be a space-delimited list of scope values',
+        ),
+      );
+    });
+
+    it('should reject a scope value outside supportedScopes with invalid_client_metadata', () => {
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, scope: 'openid reports.read' }), {
+          supportedScopes: ['openid', 'profile'],
+        }),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'scope must only contain scope values this provider supports',
+        ),
+      );
+    });
+
+    it('should accept any syntactically valid scope when supportedScopes is not provided', () => {
+      const validated = validateClientRegistrationRequest(
+        body({ ...MINIMAL, scope: 'reports.read reports.write' }),
+      );
+      expect(validated.scope).toEqual(['reports.read', 'reports.write']);
+    });
+
+    it('should deduplicate repeated scope values', () => {
+      const validated = validateClientRegistrationRequest(
+        body({ ...MINIMAL, scope: 'openid openid profile' }),
+      );
+      expect(validated.scope).toEqual(['openid', 'profile']);
+    });
+  });
+
   describe('client_name', () => {
     it('should accept a client_name of exactly 128 characters', () => {
       const name = 'a'.repeat(128);

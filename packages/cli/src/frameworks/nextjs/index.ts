@@ -218,7 +218,7 @@ function nextJsGeneratedFiles(
     // RFC 7591: only generated with --enable dynamic-client-registration.
     ...(features.dynamicClientRegistration
       ? [
-        { path: 'register/route.ts', content: nextJsRegisterRouteTemplate() },
+        { path: 'register/route.ts', content: nextJsRegisterRouteTemplate(scopes) },
         { path: 'register/config.ts', content: nextJsRegisterConfigTemplate() },
       ]
       : []),

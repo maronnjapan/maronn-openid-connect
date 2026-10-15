@@ -14,6 +14,7 @@ import {
   revocationRouteTemplate,
   jwksRouteTemplate,
   parRouteTemplate,
+  registerRouteTemplate,
   deviceAuthorizationRouteTemplate,
   deviceVerificationRouteTemplate,
   backchannelAuthenticationRouteTemplate,
@@ -91,6 +92,11 @@ export class HonoGenerator implements FrameworkGenerator {
       // Experimental (RFC 9126): only generated with --enable par.
       ...(features.par
         ? [{ path: 'routes/par.ts', content: parRouteTemplate(pkg) }]
+        : []),
+      // Experimental (RFC 7591): only generated with
+      // --enable dynamic-client-registration.
+      ...(features.dynamicClientRegistration
+        ? [{ path: 'routes/register.ts', content: registerRouteTemplate(pkg) }]
         : []),
       // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
       ...(features.deviceAuthorizationGrant

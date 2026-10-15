@@ -72,6 +72,7 @@ pnpm add @maronn-openid-connect/experimental
 | `ciba` | Client-Initiated Backchannel Authentication（Poll モード） | CIBA Core 1.0 (OpenID Foundation Final) | [CIBA](./ciba/) |
 | `jwt-introspection-response` | JWT Response for OAuth Token Introspection | RFC 9701 | [JWT Introspection Response](./jwt-introspection-response/) |
 | `rp-initiated-logout` | RP-Initiated Logout（end_session_endpoint） | RP-Initiated Logout 1.0 (OpenID Foundation Final) | [RP-Initiated Logout](./rp-initiated-logout/) |
+| `dynamic-client-registration` | Dynamic Client Registration（registration_endpoint） | RFC 7591 | [Dynamic Client Registration](./dynamic-client-registration/) |
 
 ## 問題の報告
 

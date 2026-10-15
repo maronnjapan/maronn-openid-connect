@@ -96,6 +96,19 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
+// sample with an initial access token and a small inventory cap, so the
+// restricted-registration paths (401 / 429) can be exercised over real HTTP.
+// With the vars unset the generated defaults stay: open registration, cap 100.
+const dynamicClientRegistration = {
+  ...(process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN
+    ? { initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN }
+    : {}),
+  ...(process.env.OIDC_DCR_MAX_CLIENTS
+    ? { maxRegisteredClients: Number(process.env.OIDC_DCR_MAX_CLIENTS) }
+    : {}),
+};
+
 applyOidc(app, {
   config: {
     issuer,
@@ -114,6 +127,7 @@ applyOidc(app, {
   // tables, with the jwks of OIDC_CLIENTS_JSON added (see above).
   clientResolver,
   acrResolver: sampleAcrResolver,
+  dynamicClientRegistration,
   corsOrigins: issuer,
 });
 

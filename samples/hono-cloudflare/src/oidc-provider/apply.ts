@@ -11,6 +11,7 @@ import { devicePage } from './pages/device.js';
 import { backchannelAuthenticationApp } from './routes/backchannel-authentication.js';
 import { cibaPage } from './pages/ciba.js';
 import { logoutPage } from './pages/logout.js';
+import { registerApp, dynamicClientRegistrationConfig } from './routes/register.js';
 import { jwksApp } from './routes/jwks.js';
 import { discoveryApp } from './routes/discovery.js';
 import { loginPage } from './pages/login.js';
@@ -27,6 +28,8 @@ import {
   deviceAuthorizationStore,
   cibaAuthenticationRequestStore,
   cibaLoginTransactionStore,
+  dynamicClientStore,
+  withDynamicallyRegisteredClients,
   type ProviderStores,
   type ProviderStoresFactory,
 } from './store.js';
@@ -131,6 +134,17 @@ export interface ApplyOidcOptions {
   cibaUserResolver?: (
     loginHint: string,
   ) => Promise<{ subject: string } | null> | { subject: string } | null;
+  /**
+   * EXPERIMENTAL (RFC 7591): override the generated dynamic client registration
+   * settings (routes/register.ts) per deployment — for example from environment
+   * variables — without editing the generated file. Unset fields keep the
+   * generated defaults.
+   */
+  dynamicClientRegistration?: {
+    initialAccessToken?: string;
+    maxRegisteredClients?: number;
+    maxRegistrationBodyBytes?: number;
+  };
   corsOrigins?: CorsOrigins;
   /**
    * Custom UI for the login / consent / error pages.
@@ -172,6 +186,7 @@ const OIDC_ENDPOINT_METHODS: Readonly<Record<string, readonly string[]>> = {
   '/ciba/approve': ['POST'],
   '/logout': ['GET', 'POST'],
   '/logout/approve': ['POST'],
+  '/register': ['POST'],
   '/.well-known/jwks.json': ['GET'],
   '/.well-known/openid-configuration': ['GET'],
   '/login': ['GET', 'POST'],
@@ -230,6 +245,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.use('/par', protectedCors);
   app.use('/device_authorization', protectedCors);
   app.use('/backchannel_authentication', protectedCors);
+  app.use('/register', protectedCors);
   app.use('/.well-known/openid-configuration', publicCors);
   app.use('/.well-known/jwks.json', publicCors);
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
@@ -256,8 +272,11 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     } catch {
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
-    const clientResolver =
-      options.clientResolver ?? createSqlClientResolver(createDatabase(c));
+    // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after the
+    // configured clients, so a static registration always wins.
+    const clientResolver = withDynamicallyRegisteredClients(
+      options.clientResolver ?? createSqlClientResolver(createDatabase(c)),
+    );
     const stores = await resolveProviderStores(options.storage, c);
     const storeResolvers = createStoreResolvers(stores);
 
@@ -268,7 +287,9 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
 
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
-    c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
+    c.set('tokenClientResolver', options.tokenClientResolver
+      ? withDynamicallyRegisteredClients(options.tokenClientResolver)
+      : clientResolver);
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);
@@ -292,7 +313,9 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     c.set('cibaUserResolver', options.cibaUserResolver ?? (async (loginHint: string) => {
       const claims = await stores.userStore.getClaims(loginHint);
       return claims ? { subject: claims.sub } : null;
-    }));
+    }));    c.set('dynamicClientStore', dynamicClientStore);
+    c.set('dynamicClientRegistrationConfig', { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration });
+
     // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
@@ -323,6 +346,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
   app.route('/backchannel_authentication', backchannelAuthenticationApp);
   app.route('/ciba', cibaPage);
   app.route('/logout', logoutPage);
+  app.route('/register', registerApp);
   app.route('/.well-known/jwks.json', jwksApp);
   app.route('/.well-known/openid-configuration', discoveryApp);
   app.route('/login', loginPage);

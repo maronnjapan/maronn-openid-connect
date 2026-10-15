@@ -308,9 +308,18 @@ export function resolveFeatures(options: {
     assertKnownFeature(name);
     features[featureKey(name)] = false;
   }
-  // Cross-feature dependency: the RFC 9701 JWT response rides on the RFC 7662
-  // introspection endpoint, which is not generated when introspection is
-  // disabled — there would be nowhere to answer with the JWT.
+  assertFeatureDependencies(features);
+  return features;
+}
+
+/**
+ * Cross-feature dependency: the RFC 9701 JWT response rides on the RFC 7662
+ * introspection endpoint, which is not generated when introspection is
+ * disabled — there would be nowhere to answer with the JWT.
+ *
+ * @throws {Error} when a feature is enabled without the feature it needs.
+ */
+export function assertFeatureDependencies(features: OidcFeatureConfig): void {
   if (features.jwtIntrospectionResponse && !features.introspection) {
     throw new Error(
       'Feature "jwt-introspection-response" requires the introspection feature: ' +
@@ -318,5 +327,34 @@ export function resolveFeatures(options: {
         'which is not generated when introspection is disabled',
     );
   }
+}
+
+/** The OidcFeatureConfig keys, in declaration order (also the manifest order). */
+export const FEATURE_CONFIG_KEYS = Object.keys(DEFAULT_FEATURES) as (keyof OidcFeatureConfig)[];
+
+/**
+ * Turn a feature object read from a file (a flow document, a manifest) into an
+ * OidcFeatureConfig: every key must be a known feature with a boolean value;
+ * a key that is left out keeps its default.
+ *
+ * @throws {Error} on an unknown key, a non-boolean value, or a broken dependency.
+ */
+export function normalizeFeatures(input: unknown, source = 'features'): OidcFeatureConfig {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error(`${source} must be an object of feature flags`);
+  }
+  const features: OidcFeatureConfig = { ...DEFAULT_FEATURES };
+  for (const [key, value] of Object.entries(input)) {
+    if (!(FEATURE_CONFIG_KEYS as string[]).includes(key)) {
+      throw new Error(
+        `${source} has an unknown feature "${key}". Known features: ${FEATURE_CONFIG_KEYS.join(', ')}`,
+      );
+    }
+    if (typeof value !== 'boolean') {
+      throw new Error(`${source}.${key} must be true or false`);
+    }
+    features[key as keyof OidcFeatureConfig] = value;
+  }
+  assertFeatureDependencies(features);
   return features;
 }

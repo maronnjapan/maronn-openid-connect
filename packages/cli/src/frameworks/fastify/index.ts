@@ -4,6 +4,7 @@ import { fastifyApplyTemplate, webGeneratedFiles } from '../web-standard/templat
 export class FastifyGenerator implements FrameworkGenerator {
   readonly name = 'fastify';
   readonly displayName = 'Fastify';
+  readonly supportsStepSelection = true;
 
   generate(options: GeneratorOptions): GeneratedFile[] {
     return webGeneratedFiles(
@@ -12,6 +13,7 @@ export class FastifyGenerator implements FrameworkGenerator {
       options.features,
       options.scopes,
       options.db,
+      options.steps,
     );
   }
 }

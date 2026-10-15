@@ -5,7 +5,9 @@ description: Generate OpenID Provider code with the maronn-oidc CLI.
 
 `@maronn-openid-connect/cli` は、Authorization Code Flow（OAuth 2.1 / OIDC Core 1.0 準拠）を実装した OP コード一式を生成する CLI ツールです。生成コードは `@maronn-openid-connect/core` のロジックを HTTP に配線したもので、利用者はこのコードを改造しながら仕様を検証します。
 
-生成される各エンドポイント（`routes/authorize.ts` / `token.ts` / `userinfo.ts` / `introspection.ts` / `revocation.ts`）は、core の合成関数を1回呼ぶ形ではなく、クライアント認証・クライアント解決・期限・redirect URI・PKCE・scope・再利用検知・ID Token クレーム構築などの機能単位ステップを順に呼び出す形で生成されます。必要なステップを消す、独自検証を間に足す、ID Token に独自クレームを足す、といった PoC 向けの改修を生成コード上で直接行えます。
+生成される各エンドポイント（`routes/token.ts` など）は、リクエストの解析、クライアント認証、grant の検証、トークンの発行、応答のように、処理を 1 段階ずつ export 関数に分けた形で生成されます。各関数が core の機能単位ステップ（クライアント認証、PKCE、scope、再利用検知、ID Token クレーム構築など）を呼び、エンドポイントの本体はそれらの関数を順に呼ぶだけです。必要な段階を消す、独自検証を間に足す、ID Token に独自クレームを足す、といった PoC 向けの改修を生成コード上で直接行えます。
+
+この関数の分け方は、`maronn-oidc graph` が描く図の箱と一致します。図を見てからコードを読む、図の元になる JSON を編集してからコードを生成する、という使い方を [Flow Graph (graph / --flow)](#flow-graph-graph----flow) で説明します。
 
 ## Commands
 
@@ -15,11 +17,16 @@ maronn-oidc generate <framework> [options]
 
 # 生成 + 既存エントリファイルへの組み込み（Next.js 以外）
 maronn-oidc setup <framework> [options]
+
+# 生成される OP を箱と矢印の図（Mermaid）か、その元になる JSON のフロー文書にする
+maronn-oidc graph [framework] [options]
 ```
 
 対応フレームワーク: `hono`, `express`, `fastify`, `nextjs`
 
 `setup` は生成に加えて、エントリファイル内のプレースホルダーコメント（`// <!-- OIDC_IMPORT_PLACEHOLDER -->` と `// <!-- OIDC_SETUP_PLACEHOLDER -->`）を `applyOidc` の import と呼び出しに置換します。Next.js は App Router のファイル規約に従うため `setup` 非対応で、`maronn-oidc generate nextjs --output ./src/app` を使います。
+
+`graph` は何も書き込みません。`generate` と同じ `--enable` / `--disable` / `--scope` / `--db`（または `--flow`）から、生成される OP の図を標準出力に書きます。framework を付けると、JSON のフロー文書に各エンドポイントの生成先ファイル（`module`）が入ります。詳しくは [Flow Graph (graph / --flow)](#flow-graph-graph----flow) を参照してください。
 
 ### setup に必要なプレースホルダー
 
@@ -39,12 +46,17 @@ const app = new Hono();
 
 | オプション | 説明 |
 |---|---|
-| `--output, -o <dir>` | 出力先ディレクトリ（既定: `./oidc-provider`） |
+| `--output, -o <dir>` | 出力先ディレクトリ（既定: `./oidc-provider`）。`graph` では標準出力の代わりに書き込むファイル |
 | `--entry, -e <file>` | setup 時にパッチするエントリファイル（既定: `./src/index.ts`） |
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
 | `--db <sql\|kv>` | クライアント、ユーザー、認可コード、トークンなどのデータを、SQL のテーブル（`sql`）かキー・バリューストア（`kv`）に保存する（`db/` を生成する。[Database (--db)](#database---db) を参照） |
+| `--flow <file>` | `graph --format json` が書いたフロー文書（編集済みでもよい）から生成、または描画する。`--enable` / `--disable` / `--scope` / `--db` の代わりになり、同時には指定できない（[Flow Graph (graph / --flow)](#flow-graph-graph----flow) を参照） |
+| `--format <mermaid\|json>` | `graph` のみ。Mermaid の flowchart（既定）か、JSON のフロー文書 |
+| `--detail <endpoints\|steps>` | `graph` のみ。エンドポイントごとに 1 箱（既定）か、各エンドポイントの中のステップを関数 1 つにつき 1 箱で描く |
+| `--endpoint <ids>` | `graph` のみ。描くエンドポイントの ID（カンマ区切り・複数回指定可。既定は全部） |
+| `--no-error-edges` | `graph` のみ。エラー応答のステップへ向かう破線の矢印を省く |
 | `--force` | 出力先に既にあるファイルを上書きする |
 | `--dry-run` | 書き込みを行わず、出力予定のファイル一覧（新規か上書きか）を表示する |
 | `--help, -h` | ヘルプ表示 |
@@ -78,9 +90,9 @@ oidc-provider/
 ├── resolvers.ts          # セッション・同意状態の resolver
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
-├── routes/               # API ルーティング（ロジック本体。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
+├── routes/               # API ルーティング（ロジック本体。処理の段階ごとに export 関数 1 つ。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
 ├── db/                   # --db 指定時のみ。テーブル定義（sql）かキーの一覧（kv）、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
-└── .maronn-openid-connect.json  # 生成元の CLI バージョンと機能構成の記録
+└── .maronn-openid-connect.json  # 生成元の CLI バージョン、機能構成、--flow で並べ替えたステップの記録
 ```
 
 Next.js は App Router のファイル規約に沿った別の構成になります（[Next.js](#nextjs) を参照）。
@@ -92,7 +104,7 @@ Next.js は App Router のファイル規約に沿った別の構成になりま
 | 層 | ファイル | 役割 |
 |---|---|---|
 | 画面用ルーティング | `pages/authorize.ts` / `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts` / `pages/respond.ts`（機能有効時: `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts`） | ブラウザ向けのルートは **GET も POST も** ここにあります（`GET\|POST /authorize`・`GET\|POST /login`・`GET\|POST /consent` など）。リクエストを読み、`routes/` の関数を 1 回呼び、返ってきた結果（outcome）を画面かリダイレクトに変換します。ロジックは持ちません |
-| API ルーティング | `routes/*.ts` | OIDC のロジック本体。`token` / `userinfo` などの JSON エンドポイントはルーターのままです。ブラウザ向けの各ステップ（`authorize` / `login` / `consent` / `device` / `ciba-verification` / `logout`）は Response を返さない関数（`processAuthorizationRequest()` / `prepareLogin()` / `submitLogin()` / `submitConsent()` など）で、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返します。描画・リダイレクト・`Set-Cookie`・`c.json()` は一切行わず、`views.ts` も `pages/` も import しません |
+| API ルーティング | `routes/*.ts` | OIDC のロジック本体。`token` / `userinfo` などの JSON エンドポイントはルーターのままです。ブラウザ向けの各ステップ（`authorize` / `login` / `consent` / `device` / `ciba-verification` / `logout`）は Response を返さない関数（`processAuthorizationRequest()` / `prepareLogin()` / `submitLogin()` / `submitConsent()` など）で、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返します。描画・リダイレクト・`Set-Cookie`・`c.json()` は一切行わず、`views.ts` も `pages/` も import しません。各ファイルは処理の段階ごとに export 関数を 1 つ持ち（`routes/token.ts` なら `parseTokenRequest()` → `authenticateTokenClient()` → … → `respondToken()`）、ハンドラーはそれらを `// [parse-request]` のようなステップ ID のコメントを添えて順に呼びます。関数の並びは `maronn-oidc graph --detail steps` が描く箱の並びと同じです |
 
 たとえば `POST /login` は `pages/login.ts` がフォームを読んで `submitLogin()` を呼び、`{ kind: 'authenticated', cookies }` なら Cookie を付けて `/consent` へ 302、`{ kind: 'invalid_credentials' }` ならフォームを再表示、`{ kind: 'locked_out' }` なら 429 のエラー画面、という変換だけを行います。
 
@@ -197,11 +209,118 @@ const app = createApp({
   "framework": "hono",
   "features": { "pkce": true, "refreshToken": true, "...": "..." },
   "scopes": [],
-  "db": null
+  "db": null,
+  "steps": null,
+  "endpointOrder": null
 }
 ```
 
+`steps` と `endpointOrder` には、`--flow` でステップやエンドポイントの順番を変えて生成したときだけ、その並びが入ります（[Flow Graph (graph / --flow)](#flow-graph-graph----flow) を参照）。コマンドラインの機能フラグだけで生成したときは `null` です。
+
 このライブラリはテンプレートへ仕様修正（多くはセキュリティ修正）を継続的に入れています。手元の生成コードへ修正を取り込むか判断するときは、`cliVersion` と [リリースノート](https://github.com/maronnjapan/maronn-openid-connect/releases) を突き合わせ、生成元の版と最新版の差分を確認してください。マニフェストは利用者が編集するファイルではないため、上書き保護の対象外として生成のたびに更新されます（生成日時は含めず、同じ入力からは同じ出力になります）。
+
+## Flow Graph (graph / --flow)
+
+`maronn-oidc graph` は、生成される OP を箱と矢印の図にします。`generate` と同じ機能フラグを受け取り、何も書き込みません。既定では箱がエンドポイント、矢印はエンドポイントの間でコードやトークンが渡る向きです。`--detail steps` を付けると、各エンドポイントの中を、生成コードの export 関数 1 つにつき箱 1 つで描きます。
+
+```bash
+# エンドポイントの図（Mermaid）を標準出力へ
+maronn-oidc graph --enable par --enable jarm
+
+# /token の中のステップを描き、ファイルに書く
+maronn-oidc graph --detail steps --endpoint token -o token.mmd
+
+# 図の元になるフロー文書（JSON）
+maronn-oidc graph --format json -o op-flow.json
+
+# 編集したフロー文書を描いて確かめる
+maronn-oidc graph --flow op-flow.json --detail steps --endpoint token
+```
+
+既定の機能構成では、エンドポイントの図は次のようになります。
+
+```mermaid
+flowchart LR
+  subgraph metadata["Metadata"]
+    discovery["GET /.well-known/openid-configuration<br/>Discovery"]
+    jwks["GET /.well-known/jwks.json<br/>JWKS"]
+  end
+  subgraph authorization_code["Authorization Code Flow"]
+    authorize["GET|POST /authorize<br/>Authorization endpoint"]
+    login["GET|POST /login<br/>Login screen"]
+    consent["GET|POST /consent<br/>Consent screen"]
+    token["POST /token<br/>Token endpoint"]
+    userinfo["GET|POST /userinfo<br/>UserInfo endpoint"]
+  end
+  subgraph token_management["Token management"]
+    introspection["POST /introspect<br/>Token introspection endpoint"]
+    revocation["POST /revoke<br/>Token revocation endpoint"]
+  end
+  authorize -->|"login required"| login
+  authorize -->|"SSO: consent required"| consent
+  authorize -->|"code (prompt=none / SSO)"| token
+  login -->|"authenticated"| consent
+  consent -->|"code"| token
+  token -->|"access_token"| userinfo
+  token -->|"token"| introspection
+  token -->|"token"| revocation
+```
+
+### 図の箱と生成コードの対応
+
+`--detail steps` の箱は、生成コードの export 関数と 1 対 1 で対応します。箱にはステップの ID、関数名、根拠になる仕様の節が書かれ、生成コードでは同じ ID が呼び出しの手前のコメントになります。たとえば `routes/token.ts` のハンドラーは次の形です。
+
+```typescript
+tokenApp.post('/', async (c) => {
+  try {
+    // [parse-request] Parse the token request — RFC 6749 §4.1.3 / §3.2
+    const { params, authorization } = await parseTokenRequest(c);
+
+    // [authenticate-client] Authenticate the client — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
+    const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
+
+    // ...（grant の検証、鍵の選択、subject の解決、トークンの発行と保存）
+
+    // [build-token-response] Build the token response body — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
+    const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
+
+    // [respond] Respond (no-store) — RFC 6749 §5.1
+    return respondToken(c, tokenResponse);
+  } catch (error) {
+    return respondTokenError(c, error);
+  }
+});
+```
+
+API のエンドポイント（`/authorize`、`/token`、`/userinfo`、`/introspect`、`/revoke`、Discovery、JWKS、experimental の `/par`、`/register`、`/device_authorization`、`/backchannel_authentication`）は、この「関数を順に呼ぶ」形で生成されます。画面のエンドポイント（`/login`、`/login/google`、`/consent`、`/device`、`/ciba`、`/logout`）も箱ごとに関数を持ちますが、GET と POST の流れが順番を決めているため、`prepareLogin()` / `submitLogin()` のような入口の関数がそれらを決まった順で呼びます。
+
+### フロー文書を編集して生成する（--flow）
+
+`--format json` が書く**フロー文書**には、エンドポイントとステップの一覧、各ステップが読む値と作る値（`consumes` / `produces`）、消せるかどうか（`removable`）、そして描いたときの `features` / `scopes` / `db` が入っています。この文書を編集して `--flow` に渡すと、`generate` と `setup` はコマンドラインの機能フラグの代わりに文書の内容で生成します。
+
+```bash
+maronn-oidc graph --format json -o op-flow.json
+# op-flow.json を編集する（例: /token の steps から issue-id-token を外す）
+maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
+```
+
+文書で変えられるのは次の 4 つです。
+
+- **ステップを消す**：`removable: true` のステップ（`/token` の `issue-id-token` と `revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外します。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token なら `undefined`）で補います
+- **ステップを並べ替える**：値のやり取りが無いステップ同士は順番を変えられます。値を作るステップより前にそれを読むステップを置く、`after` / `before` の制約に反する、といった並びはエラーになります
+- **エンドポイントを並べ替える**：`endpoints` の順番は図の並びとしてマニフェストの `endpointOrder` に記録されます。生成コードがエンドポイントをマウントする順番は変わりません
+- **機能を切り替える**：`features` の値を変えると、`--enable` / `--disable` と同じようにエンドポイントとステップが増減します。`scopes` と `db` も同様です
+
+次の変更はエラーで止まり、何も書き込みません。
+
+- `removable: false` のステップを消す。`feature` が付いたステップは、ステップではなく `features` の側で外します
+- 画面のエンドポイント（`login` / `login-google` / `consent` / `device` / `ciba` / `logout`）のステップ列を変える
+- 必須のエンドポイント（`authorize` / `token` など）を外す。機能で増えたエンドポイント（`introspection` など）は `features` の側で外します
+- `--flow` と `--enable` / `--disable` / `--scope` / `--db` を同時に指定する。文書が機能構成を持っているためです
+
+並べ替えたステップは Hono / Express / Fastify の生成コードに反映されます。Next.js は App Router の Route Handler に処理を直接書く構成のため、`steps` を変えた文書を渡すとエラーになり、エンドポイントと機能の変更だけを受け付けます。
+
+フロー文書は、図を UI 上で編集して（箱をドラッグ&ドロップで並べ替えて）生成する、という使い方のための入出力です。CLI だけで使うときは、`graph --format json` の出力を手で編集してください。
 
 ## Auth Transaction (Cookie + csrf_token)
 

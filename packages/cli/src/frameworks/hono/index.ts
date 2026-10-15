@@ -41,12 +41,16 @@ import { databaseGeneratedFiles } from '../db/wiring.js';
 export class HonoGenerator implements FrameworkGenerator {
   readonly name = 'hono';
   readonly displayName = 'Hono';
+  readonly supportsStepSelection = true;
 
   generate(options: GeneratorOptions): GeneratedFile[] {
     const pkg = options.corePackageName;
     const features = options.features ?? DEFAULT_FEATURES;
     const scopes = options.scopes ?? [];
     const db = options.db;
+    // --flow: the rearranged steps per endpoint (flow/flow-file.ts); an endpoint
+    // that is absent keeps the catalog's steps.
+    const steps = options.steps ?? {};
 
     const files: GeneratedFile[] = [
       { path: 'app.ts', content: appTemplate(pkg, features, db) },
@@ -80,30 +84,30 @@ export class HonoGenerator implements FrameworkGenerator {
       ...(features.rpInitiatedLogout
         ? [{ path: 'pages/logout.tsx', content: logoutPageTemplate('jsx') }]
         : []),
-      { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features, scopes) },
-      { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features) },
-      { path: 'routes/userinfo.ts', content: userinfoRouteTemplate(pkg) },
+      { path: 'routes/authorize.ts', content: authorizeRouteTemplate(pkg, features, scopes, steps['authorize']) },
+      { path: 'routes/token.ts', content: tokenRouteTemplate(pkg, features, steps['token']) },
+      { path: 'routes/userinfo.ts', content: userinfoRouteTemplate(pkg, steps['userinfo']) },
       ...(features.introspection
-        ? [{ path: 'routes/introspection.ts', content: introspectionRouteTemplate(pkg, features) }]
+        ? [{ path: 'routes/introspection.ts', content: introspectionRouteTemplate(pkg, features, steps['introspection']) }]
         : []),
       ...(features.revocation
-        ? [{ path: 'routes/revocation.ts', content: revocationRouteTemplate(pkg) }]
+        ? [{ path: 'routes/revocation.ts', content: revocationRouteTemplate(pkg, steps['revocation']) }]
         : []),
       // Experimental (RFC 9126): only generated with --enable par.
       ...(features.par
-        ? [{ path: 'routes/par.ts', content: parRouteTemplate(pkg) }]
+        ? [{ path: 'routes/par.ts', content: parRouteTemplate(pkg, steps['par']) }]
         : []),
       // Experimental (RFC 7591): only generated with
       // --enable dynamic-client-registration.
       ...(features.dynamicClientRegistration
-        ? [{ path: 'routes/register.ts', content: registerRouteTemplate(pkg) }]
+        ? [{ path: 'routes/register.ts', content: registerRouteTemplate(pkg, steps['register']) }]
         : []),
       // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
       ...(features.deviceAuthorizationGrant
         ? [
           {
             path: 'routes/device-authorization.ts',
-            content: deviceAuthorizationRouteTemplate(pkg, features, scopes),
+            content: deviceAuthorizationRouteTemplate(pkg, features, scopes, steps['device-authorization']),
           },
           { path: 'routes/device.ts', content: deviceVerificationRouteTemplate(pkg, scopes) },
         ]
@@ -113,7 +117,7 @@ export class HonoGenerator implements FrameworkGenerator {
         ? [
           {
             path: 'routes/backchannel-authentication.ts',
-            content: backchannelAuthenticationRouteTemplate(pkg, features, scopes),
+            content: backchannelAuthenticationRouteTemplate(pkg, features, scopes, steps['backchannel-authentication']),
           },
           { path: 'routes/ciba-verification.ts', content: cibaVerificationRouteTemplate(pkg, scopes) },
         ]
@@ -127,8 +131,8 @@ export class HonoGenerator implements FrameworkGenerator {
       ...(features.jarm
         ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
         : []),
-      { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg) },
-      { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features, scopes) },
+      { path: 'routes/jwks.ts', content: jwksRouteTemplate(pkg, steps['jwks']) },
+      { path: 'routes/discovery.ts', content: discoveryRouteTemplate(pkg, features, scopes, steps['discovery']) },
       { path: 'routes/login.ts', content: loginRouteTemplate(pkg, features) },
       { path: 'routes/consent.ts', content: consentRouteTemplate(pkg, features, scopes) },
       // --db sql / --db kv: the SQL tables or the key layout, the stores on

@@ -19,5 +19,7 @@
     "googleLogin": false
   },
   "scopes": [],
-  "db": "sql"
+  "db": "sql",
+  "steps": null,
+  "endpointOrder": null
 }

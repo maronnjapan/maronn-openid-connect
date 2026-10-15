@@ -1016,6 +1016,9 @@ function webCoreGeneratedFiles(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
   db?: DbKind,
+  // --flow: the rearranged steps per endpoint (flow/flow-file.ts); an endpoint
+  // that is absent keeps the catalog's steps.
+  steps: Record<string, string[]> = {},
 ): GeneratedFile[] {
   return [
     { path: 'app.ts', content: webAppTemplate(corePkg, features, db) },
@@ -1054,30 +1057,30 @@ function webCoreGeneratedFiles(
     ...(features.rpInitiatedLogout
       ? [{ path: 'pages/logout.ts', content: toWebRouteTemplate(logoutPageTemplate()) }]
       : []),
-    { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes)) },
-    { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features)) },
-    { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg)) },
+    { path: 'routes/authorize.ts', content: toWebRouteTemplate(authorizeRouteTemplate(corePkg, features, scopes, steps['authorize'])) },
+    { path: 'routes/token.ts', content: toWebRouteTemplate(tokenRouteTemplate(corePkg, features, steps['token'])) },
+    { path: 'routes/userinfo.ts', content: toWebRouteTemplate(userinfoRouteTemplate(corePkg, steps['userinfo'])) },
     ...(features.introspection
-      ? [{ path: 'routes/introspection.ts', content: toWebRouteTemplate(introspectionRouteTemplate(corePkg, features)) }]
+      ? [{ path: 'routes/introspection.ts', content: toWebRouteTemplate(introspectionRouteTemplate(corePkg, features, steps['introspection'])) }]
       : []),
     ...(features.revocation
-      ? [{ path: 'routes/revocation.ts', content: toWebRouteTemplate(revocationRouteTemplate(corePkg)) }]
+      ? [{ path: 'routes/revocation.ts', content: toWebRouteTemplate(revocationRouteTemplate(corePkg, steps['revocation'])) }]
       : []),
     // Experimental (RFC 9126): only generated with --enable par.
     ...(features.par
-      ? [{ path: 'routes/par.ts', content: toWebRouteTemplate(parRouteTemplate(corePkg)) }]
+      ? [{ path: 'routes/par.ts', content: toWebRouteTemplate(parRouteTemplate(corePkg, steps['par'])) }]
       : []),
     // Experimental (RFC 7591): only generated with
     // --enable dynamic-client-registration.
     ...(features.dynamicClientRegistration
-      ? [{ path: 'routes/register.ts', content: toWebRouteTemplate(registerRouteTemplate(corePkg)) }]
+      ? [{ path: 'routes/register.ts', content: toWebRouteTemplate(registerRouteTemplate(corePkg, steps['register'])) }]
       : []),
     // Experimental (RFC 8628): only generated with --enable device-authorization-grant.
     ...(features.deviceAuthorizationGrant
       ? [
         {
           path: 'routes/device-authorization.ts',
-          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features, scopes)),
+          content: toWebRouteTemplate(deviceAuthorizationRouteTemplate(corePkg, features, scopes, steps['device-authorization'])),
         },
         {
           path: 'routes/device.ts',
@@ -1090,7 +1093,7 @@ function webCoreGeneratedFiles(
       ? [
         {
           path: 'routes/backchannel-authentication.ts',
-          content: toWebRouteTemplate(backchannelAuthenticationRouteTemplate(corePkg, features, scopes)),
+          content: toWebRouteTemplate(backchannelAuthenticationRouteTemplate(corePkg, features, scopes, steps['backchannel-authentication'])),
         },
         {
           path: 'routes/ciba-verification.ts',
@@ -1108,8 +1111,8 @@ function webCoreGeneratedFiles(
     ...(features.jarm
       ? [{ path: 'routes/jarm.ts', content: jarmConfigTemplate() }]
       : []),
-    { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg)) },
-    { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features, scopes)) },
+    { path: 'routes/jwks.ts', content: toWebRouteTemplate(jwksRouteTemplate(corePkg, steps['jwks'])) },
+    { path: 'routes/discovery.ts', content: toWebRouteTemplate(discoveryRouteTemplate(corePkg, features, scopes, steps['discovery'])) },
     { path: 'routes/login.ts', content: toWebRouteTemplate(loginRouteTemplate(corePkg, features)) },
     { path: 'routes/consent.ts', content: toWebRouteTemplate(consentRouteTemplate(corePkg, features, scopes)) },
   ];
@@ -1121,9 +1124,10 @@ export function webGeneratedFiles(
   features: OidcFeatureConfig = DEFAULT_FEATURES,
   scopes: string[] = [],
   db?: DbKind,
+  steps: Record<string, string[]> = {},
 ): GeneratedFile[] {
   return [
-    ...webCoreGeneratedFiles(corePkg, features, scopes, db),
+    ...webCoreGeneratedFiles(corePkg, features, scopes, db, steps),
     { path: 'apply.ts', content: applyTemplate },
     { path: 'node-adapter.ts', content: nodeAdapterTemplate() },
     // --db sql / --db kv: the SQL tables or the key layout, the stores on

@@ -20,6 +20,10 @@ export interface GenerateOptions {
   scopes?: string[];
   /** Generate db/ and keep the provider's data in SQL tables or a key-value store (default: none). */
   db?: DbKind;
+  /** `--flow`: rearranged steps per endpoint (default: the catalog's steps everywhere). */
+  steps?: Record<string, string[]>;
+  /** `--flow`: endpoint mount order (default: the catalog order). */
+  endpointOrder?: string[];
 }
 
 export interface GenerateResult {
@@ -40,6 +44,8 @@ export function generate(options: GenerateOptions): GenerateResult {
     features = { ...DEFAULT_FEATURES },
     scopes = [],
     db,
+    steps = {},
+    endpointOrder,
   } = options;
 
   const generator = getGenerator(framework);
@@ -50,7 +56,24 @@ export function generate(options: GenerateOptions): GenerateResult {
     );
   }
 
-  const files = generator.generate({ outputDir, corePackageName, features, scopes, db });
+  const rearranged = Object.keys(steps);
+  if (rearranged.length > 0 && !generator.supportsStepSelection) {
+    throw new Error(
+      `The ${generator.displayName} output does not follow a rearranged step order yet ` +
+        `(endpoint ${rearranged.map((id) => `"${id}"`).join(', ')}). ` +
+        'Remove the steps changes from the flow document, or generate for hono, express or fastify',
+    );
+  }
+
+  const files = generator.generate({
+    outputDir,
+    corePackageName,
+    features,
+    scopes,
+    db,
+    steps,
+    ...(endpointOrder === undefined ? {} : { endpointOrder }),
+  });
 
   return { files, framework };
 }

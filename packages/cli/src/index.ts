@@ -14,6 +14,11 @@ import type { OidcFeatureConfig } from './features.js';
 import type { GeneratedFile } from './frameworks/types.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
+import { buildOpFlow } from './flow/catalog.js';
+import { renderMermaid, type MermaidDetail } from './flow/mermaid.js';
+import { annotateFlowModules } from './flow/modules.js';
+import { applyFlowSelection, parseFlowFile, type FlowSelection } from './flow/flow-file.js';
+import type { OpFlow } from './flow/types.js';
 
 const INSTALL_COMMANDS: Record<string, string> = {
   hono: 'pnpm add hono @maronn-openid-connect/core',
@@ -102,16 +107,29 @@ Usage: maronn-oidc <command> <framework> [options]
 Commands:
   generate <framework>  Generate OIDC provider code for the specified framework
   setup <framework>     Generate OIDC provider code and apply it to an existing entry file
+  graph [framework]     Draw the provider a generate run produces: its endpoints
+                        (boxes), the steps inside each endpoint (one box per
+                        generated function) and the arrows between them
 
 Frameworks: ${frameworks}
 
 Options:
-  --output, -o <dir>    Output directory (default: ./oidc-provider)
+  --output, -o <dir>    Output directory (default: ./oidc-provider); for graph, the
+                        file to write instead of printing to stdout
   --entry, -e <file>    Entry file to patch with OIDC setup (setup command only, default: ./src/index.ts)
   --enable <features>   Comma-separated features to enable (repeatable)
   --disable <features>  Comma-separated features to remove from the default set (repeatable)
   --scope <scopes>      Comma-separated custom scopes the provider accepts (repeatable)
   --db <sql|kv>         Keep the provider's data in SQL tables (sql) or a key-value store (kv); you write db/instance.ts
+  --flow <file>         Generate (or draw) from a flow document: the JSON that
+                        \`graph --format json\` writes, possibly rearranged. Replaces
+                        --enable / --disable / --scope / --db
+  --format <mermaid|json>
+                        graph only: Mermaid flowchart (default) or the JSON flow document
+  --detail <endpoints|steps>
+                        graph only: one box per endpoint (default), or the steps inside each
+  --endpoint <ids>      graph only: comma-separated endpoint ids to draw (repeatable; default: all)
+  --no-error-edges      graph only: leave out the dashed arrows into the error steps
   --force               Overwrite files that already exist in the output directory
   --dry-run             Show what would be written without writing anything
   --help, -h            Show this help message
@@ -140,6 +158,17 @@ Custom scopes (none declared by default): the standard scopes (openid, profile,
   may be granted which scope is left to the generated code: scopes.ts holds
   resolveGrantableScopes(), already wired into consent, SSO, prompt=none and the
   device / CIBA approvals, as the one place to write that filtering.
+
+Flow documents (graph / --flow): \`maronn-oidc graph --format json\` describes the
+  provider as endpoints, steps and arrows, with the features, scopes and db of
+  the run. Edit it (drop a removable step, reorder independent steps, reorder
+  the endpoints, flip a feature flag) and generate from it with --flow <file>;
+  what the document says is checked against the catalog, so a step another
+  step depends on can never be dropped by accident. Screen endpoints (login,
+  consent, device, ciba, logout) have a fixed sequence of steps. The generated
+  pipelines follow a rearranged step order for hono, express and fastify;
+  the Next.js output keeps its own layout and accepts endpoint and feature
+  changes only.
 
 Database (--db sql | --db kv): the provider keeps its clients, users,
   authorization transactions, codes, tokens, sessions and consent in your
@@ -187,29 +216,53 @@ function dbGuidance(db: DbKind, dbDir: string): { summary: string; step: string 
   };
 }
 
-function parseArgs(args: string[]): {
+interface ParsedArgs {
   command?: string;
   framework?: string;
-  outputDir: string;
+  /** --output; undefined when not given (generate defaults to ./oidc-provider, graph to stdout). */
+  outputDir: string | undefined;
   entryFile: string;
   enable: string[];
   disable: string[];
   scope: string[];
   /** undefined without --db, null for --db without a kind. */
   db: string | null | undefined;
+  /** --flow <file>; null for --flow without a file. */
+  flow: string | null | undefined;
+  /** graph: --format; null for --format without a value. */
+  format: string | null | undefined;
+  /** graph: --detail; null for --detail without a value. */
+  detail: string | null | undefined;
+  /** graph: --endpoint ids (raw, comma-separated). */
+  endpoint: string[];
+  /** graph: --no-error-edges. */
+  errorEdges: boolean;
   force: boolean;
   dryRun: boolean;
   help: boolean;
-} {
+}
+
+/** The value after a flag, or null when the next word is another flag (or nothing). */
+function flagValue(args: string[], index: number): string | null {
+  const value = args[index + 1];
+  return value === undefined || value.startsWith('-') ? null : value;
+}
+
+function parseArgs(args: string[]): ParsedArgs {
   let command: string | undefined;
   let framework: string | undefined;
-  let outputDir = './oidc-provider';
+  let outputDir: string | undefined;
   let entryFile = './src/index.ts';
   const enable: string[] = [];
   const disable: string[] = [];
   // Kept raw here; splitting and validation are resolveCustomScopes()'s job.
   const scope: string[] = [];
   let db: string | null | undefined;
+  let flow: string | null | undefined;
+  let format: string | null | undefined;
+  let detail: string | null | undefined;
+  const endpoint: string[] = [];
+  let errorEdges = true;
   let force = false;
   let dryRun = false;
   let help = false;
@@ -240,13 +293,22 @@ function parseArgs(args: string[]): {
     } else if (arg === '--db') {
       // The kind is the next word; another flag (or nothing) after --db means
       // the kind was left out, which resolveDbKind() reports.
-      const kind = args[i + 1];
-      if (kind === undefined || kind.startsWith('-')) {
-        db = null;
-      } else {
-        db = kind;
-        i++;
-      }
+      db = flagValue(args, i);
+      if (db !== null) i++;
+    } else if (arg === '--flow') {
+      flow = flagValue(args, i);
+      if (flow !== null) i++;
+    } else if (arg === '--format') {
+      format = flagValue(args, i);
+      if (format !== null) i++;
+    } else if (arg === '--detail') {
+      detail = flagValue(args, i);
+      if (detail !== null) i++;
+    } else if (arg === '--endpoint') {
+      i++;
+      endpoint.push(...splitFeatureList(args[i]));
+    } else if (arg === '--no-error-edges') {
+      errorEdges = false;
     } else if (arg === '--force') {
       force = true;
     } else if (arg === '--dry-run') {
@@ -258,7 +320,146 @@ function parseArgs(args: string[]): {
     }
   }
 
-  return { command, framework, outputDir, entryFile, enable, disable, scope, db, force, dryRun, help };
+  return {
+    command,
+    framework,
+    outputDir,
+    entryFile,
+    enable,
+    disable,
+    scope,
+    db,
+    flow,
+    format,
+    detail,
+    endpoint,
+    errorEdges,
+    force,
+    dryRun,
+    help,
+  };
+}
+
+/**
+ * What a run generates: the features, scopes and db, plus (with --flow) the
+ * rearranged steps and the endpoint order the flow document asks for.
+ */
+interface GenerationInputs {
+  features: OidcFeatureConfig;
+  scopes: string[];
+  db: DbKind | undefined;
+  flow: FlowSelection | undefined;
+}
+
+/**
+ * Resolve the generation inputs from the flags, or from the flow document when
+ * --flow is given. The two are exclusive: a document already carries the
+ * features, scopes and db it was drawn with, so a flag beside it would either
+ * be ignored or contradict it.
+ *
+ * @throws {Error} on an invalid combination, a missing or invalid flow file,
+ *   or an invalid flag value.
+ */
+function resolveGenerationInputs(parsed: ParsedArgs): GenerationInputs {
+  if (parsed.flow === undefined) {
+    return {
+      features: resolveFeatures({ enable: parsed.enable, disable: parsed.disable }),
+      scopes: resolveCustomScopes({ scope: parsed.scope }),
+      db: resolveDbKind(parsed.db),
+      flow: undefined,
+    };
+  }
+  if (parsed.flow === null) {
+    throw new Error('--flow needs a file: --flow <file> (the JSON that `maronn-oidc graph --format json` writes)');
+  }
+  if (parsed.enable.length > 0 || parsed.disable.length > 0 || parsed.scope.length > 0 || parsed.db !== undefined) {
+    throw new Error(
+      '--flow cannot be combined with --enable, --disable, --scope or --db: ' +
+        'the flow document already carries the features, scopes and db it was drawn with',
+    );
+  }
+  if (!existsSync(parsed.flow)) {
+    throw new Error(`Flow file not found: ${parsed.flow}`);
+  }
+  const selection = parseFlowFile(readFileSync(parsed.flow, 'utf-8'), parsed.flow);
+  return { features: selection.features, scopes: selection.scopes, db: selection.db, flow: selection };
+}
+
+const GRAPH_FORMATS = ['mermaid', 'json'] as const;
+type GraphFormat = (typeof GRAPH_FORMATS)[number];
+const GRAPH_DETAILS: readonly MermaidDetail[] = ['endpoints', 'steps'];
+
+function resolveGraphFormat(value: string | null | undefined): GraphFormat {
+  if (value === undefined) return 'mermaid';
+  if (value !== null && (GRAPH_FORMATS as readonly string[]).includes(value)) return value as GraphFormat;
+  throw new Error(`--format needs one of ${GRAPH_FORMATS.join(', ')}${value === null ? '' : `, not "${value}"`}`);
+}
+
+function resolveGraphDetail(value: string | null | undefined): MermaidDetail {
+  if (value === undefined) return 'endpoints';
+  if (value !== null && (GRAPH_DETAILS as readonly string[]).includes(value)) return value as MermaidDetail;
+  throw new Error(`--detail needs one of ${GRAPH_DETAILS.join(', ')}${value === null ? '' : `, not "${value}"`}`);
+}
+
+/** The flow of a run: the catalog for its inputs, rearranged as its flow document asks. */
+function resolveOpFlow(inputs: GenerationInputs, framework: string | undefined): OpFlow {
+  const catalog = buildOpFlow({
+    features: inputs.features,
+    scopes: inputs.scopes,
+    ...(inputs.db === undefined ? {} : { db: inputs.db }),
+  });
+  const flow = inputs.flow === undefined ? catalog : applyFlowSelection(catalog, inputs.flow);
+  return framework === undefined ? flow : annotateFlowModules(flow, framework);
+}
+
+/**
+ * `graph [framework]`: print (or write) the provider as boxes and arrows.
+ * Nothing is generated.
+ */
+function runGraph(parsed: ParsedArgs): void {
+  if (parsed.framework !== undefined && !getAvailableFrameworks().includes(parsed.framework)) {
+    throw new Error(
+      `Unknown framework: "${parsed.framework}". Available frameworks: ${getAvailableFrameworks().join(', ')}`,
+    );
+  }
+  const format = resolveGraphFormat(parsed.format);
+  const detail = resolveGraphDetail(parsed.detail);
+  const flow = resolveOpFlow(resolveGenerationInputs(parsed), parsed.framework);
+  const endpoints = parsed.endpoint.length > 0 ? parsed.endpoint : undefined;
+  const output =
+    format === 'json'
+      ? `${JSON.stringify(endpoints === undefined ? flow : pickEndpoints(flow, endpoints), null, 2)}\n`
+      : renderMermaid(flow, {
+          detail,
+          errorEdges: parsed.errorEdges,
+          ...(endpoints === undefined ? {} : { endpoints }),
+        });
+  if (parsed.outputDir === undefined) {
+    process.stdout.write(output);
+    return;
+  }
+  const dir = dirname(parsed.outputDir);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(parsed.outputDir, output, 'utf-8');
+  console.log(`Wrote ${parsed.outputDir}`);
+}
+
+/** The flow restricted to some endpoints (and the arrows among them), for --endpoint with --format json. */
+function pickEndpoints(flow: OpFlow, ids: string[]): OpFlow {
+  const known = new Set(flow.endpoints.map((e) => e.id));
+  const unknown = ids.filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown endpoint: ${unknown.map((id) => `"${id}"`).join(', ')}. ` +
+        `Endpoints of this configuration: ${flow.endpoints.map((e) => e.id).join(', ')}`,
+    );
+  }
+  const wanted = new Set(ids);
+  return {
+    ...flow,
+    endpoints: flow.endpoints.filter((e) => wanted.has(e.id)),
+    edges: flow.edges.filter((e) => wanted.has(e.from) && wanted.has(e.to)),
+  };
 }
 
 function buildManifestFile(
@@ -266,9 +467,27 @@ function buildManifestFile(
   features: OidcFeatureConfig,
   scopes: string[],
   db: DbKind | undefined,
+  flow: FlowSelection | undefined,
 ): GeneratedFile {
   // No timestamp: the same inputs must keep producing byte-identical output.
-  const manifest = { cliVersion: CLI_VERSION, framework, features, scopes, db: db ?? null };
+  // steps / endpointOrder record what a --flow document rearranged (null when
+  // the output follows the catalog), so `graph --format json` of the same
+  // inputs plus these two fields reproduces the document.
+  const rearrangedSteps = flow !== undefined && Object.keys(flow.steps).length > 0 ? flow.steps : null;
+  const catalogOrder = buildOpFlow({ features, scopes, ...(db === undefined ? {} : { db }) }).endpoints.map(
+    (e) => e.id,
+  );
+  const endpointOrder =
+    flow !== undefined && flow.endpointOrder.some((id, i) => id !== catalogOrder[i]) ? flow.endpointOrder : null;
+  const manifest = {
+    cliVersion: CLI_VERSION,
+    framework,
+    features,
+    scopes,
+    db: db ?? null,
+    steps: rearrangedSteps,
+    endpointOrder,
+  };
   return { path: MANIFEST_FILENAME, content: `${JSON.stringify(manifest, null, 2)}\n` };
 }
 
@@ -418,12 +637,25 @@ export function run(args: string[]): void {
     return;
   }
 
+  if (parsed.command === 'graph') {
+    try {
+      runGraph(parsed);
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error(`Error: ${error.message}`);
+      }
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (parsed.command !== 'generate' && parsed.command !== 'setup') {
     console.error(`Unknown command: ${parsed.command}`);
     printUsage();
     process.exitCode = 1;
     return;
   }
+  const outputDir = parsed.outputDir ?? './oidc-provider';
 
   if (!parsed.framework) {
     console.error('Error: Framework name is required.');
@@ -447,32 +679,28 @@ export function run(args: string[]): void {
   }
 
   try {
-    const features = resolveFeatures({
-      enable: parsed.enable,
-      disable: parsed.disable,
-    });
-    const scopes = resolveCustomScopes({ scope: parsed.scope });
-    const db = resolveDbKind(parsed.db);
+    const { features, scopes, db, flow } = resolveGenerationInputs(parsed);
     const result = generate({
       framework: parsed.framework,
-      outputDir: parsed.outputDir,
+      outputDir,
       features,
       scopes,
       db,
+      ...(flow === undefined ? {} : { steps: flow.steps, endpointOrder: flow.endpointOrder }),
     });
-    const manifestFile = buildManifestFile(result.framework, features, scopes, db);
+    const manifestFile = buildManifestFile(result.framework, features, scopes, db, flow);
     const plannedFiles = [...result.files, manifestFile];
 
     if (parsed.dryRun) {
-      printDryRunPlan(parsed.outputDir, plannedFiles);
+      printDryRunPlan(outputDir, plannedFiles);
       return;
     }
 
     // Only user-facing files arm the guard: the manifest is machine-written
     // and is refreshed on every generation, --force or not.
-    const existingPaths = findExistingFiles(parsed.outputDir, result.files);
+    const existingPaths = findExistingFiles(outputDir, result.files);
     if (existingPaths.length > 0 && !parsed.force) {
-      printOverwriteRefusal(parsed.outputDir, existingPaths);
+      printOverwriteRefusal(outputDir, existingPaths);
       process.exitCode = 1;
       return;
     }
@@ -515,20 +743,20 @@ export function run(args: string[]): void {
       console.log(dbGuidance(db, dbDir).summary);
     }
     // Decided before writing: a user-owned file created by this run is not "kept".
-    const keptCount = plannedFiles.filter((file) => isKeptUserFile(parsed.outputDir, file)).length;
-    writeGeneratedFiles(parsed.outputDir, plannedFiles);
-    console.log(`\nDone! Generated ${plannedFiles.length - keptCount} files in ${parsed.outputDir}`);
+    const keptCount = plannedFiles.filter((file) => isKeptUserFile(outputDir, file)).length;
+    writeGeneratedFiles(outputDir, plannedFiles);
+    console.log(`\nDone! Generated ${plannedFiles.length - keptCount} files in ${outputDir}`);
     if (result.framework === 'hono') {
       printHonoJsxNotes();
     }
 
     if (parsed.command === 'setup') {
       console.log(`\nPatching entry file...`);
-      const patchResult = patchEntryFile(parsed.entryFile, parsed.outputDir);
+      const patchResult = patchEntryFile(parsed.entryFile, outputDir);
       if (patchResult.status === 'missing-placeholders') {
         printMissingPlaceholderError(
           parsed.entryFile,
-          parsed.outputDir,
+          outputDir,
           parsed.framework,
           patchResult.missing,
         );
@@ -543,9 +771,9 @@ export function run(args: string[]): void {
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
         db
-          ? dbGuidance(db, `${parsed.outputDir}/db`).step
+          ? dbGuidance(db, `${outputDir}/db`).step
           : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
-        `Use ${parsed.outputDir}/config.ts defaults only for quick local testing`,
+        `Use ${outputDir}/config.ts defaults only for quick local testing`,
         ...(features.par ||
         features.tokenExchange ||
         features.jarm ||

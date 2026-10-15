@@ -37,6 +37,17 @@ export interface GeneratorOptions {
    * default storage (default: none, the in-memory stores).
    */
   db?: DbKind;
+  /**
+   * `--flow`: the ordered step ids of each rearrangeable endpoint whose steps
+   * were removed or reordered (see flow/flow-file.ts). An endpoint that is
+   * absent keeps the catalog's steps (default: none rearranged).
+   */
+  steps?: Record<string, string[]>;
+  /**
+   * `--flow`: the endpoints in the order of the flow document, which the
+   * generated app mounts them in (default: the catalog order).
+   */
+  endpointOrder?: string[];
 }
 
 /**
@@ -48,6 +59,12 @@ export interface FrameworkGenerator {
   readonly name: string;
   /** Human-readable display name */
   readonly displayName: string;
+  /**
+   * Whether the generated pipelines follow `GeneratorOptions.steps`. A
+   * generator without it still produces every endpoint of a flow document,
+   * but rejects a document that removes or reorders steps.
+   */
+  readonly supportsStepSelection: boolean;
   /** Generate all files for the OIDC provider */
   generate(options: GeneratorOptions): GeneratedFile[];
 }

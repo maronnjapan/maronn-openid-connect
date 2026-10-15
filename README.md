@@ -192,6 +192,8 @@ ID Token の生成、認可エンドポイント、トークンエンドポイ�
 
 OpenID Connect 関連機能をプロジェクトへ導入する CLI ツールです。
 Authorization Code Flow や OpenID Connect の拡張機能を実行するためのコードを生成します。
+`maronn-oidc graph` は、生成される OP をエンドポイントとステップの図（Mermaid）か JSON のフロー文書として書き出します。
+フロー文書を編集して `--flow` で渡すと、ステップを消したり並べ替えたりした OP を生成できます。
 
 ### packages/google-login
 

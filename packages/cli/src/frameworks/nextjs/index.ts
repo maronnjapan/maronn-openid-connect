@@ -83,6 +83,7 @@ import {
 export class NextJsGenerator implements FrameworkGenerator {
   readonly name = 'nextjs';
   readonly displayName = 'Next.js';
+  readonly supportsStepSelection = false;
 
   generate(options: GeneratorOptions): GeneratedFile[] {
     const pkg = options.corePackageName;

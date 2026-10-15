@@ -68,6 +68,10 @@ export default defineConfig({
               slug: 'experimental/device-authorization-grant',
             },
             { label: 'Cross-App Access / ID-JAG', slug: 'experimental/id-jag' },
+            {
+              label: 'Dynamic Client Registration (RFC 7591)',
+              slug: 'experimental/dynamic-client-registration',
+            },
           ],
         },
       ],

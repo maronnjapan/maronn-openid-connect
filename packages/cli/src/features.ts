@@ -55,6 +55,12 @@ export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
  *   the end_session_endpoint (GET|POST /logout) with a confirmation screen for
  *   requests without a valid id_token_hint, and redirects to a registered
  *   post_logout_redirect_uri on an exact match only.
+ * - dynamic-client-registration: OAuth 2.0 Dynamic Client Registration
+ *   (RFC 7591) — the OP serves the client registration endpoint
+ *   (POST /register, open registration by default, optionally guarded by a
+ *   single initial access token) and resolves the issued clients alongside the
+ *   statically registered ones. Registration management (RFC 7592) is not
+ *   implemented.
  */
 export const EXPERIMENTAL_FEATURES = [
   'par',
@@ -65,6 +71,7 @@ export const EXPERIMENTAL_FEATURES = [
   'ciba',
   'jwt-introspection-response',
   'rp-initiated-logout',
+  'dynamic-client-registration',
 ] as const;
 
 export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
@@ -151,6 +158,14 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   rpInitiatedLogoutConfig.postLogoutRedirectUris) via
  *   `@maronn-openid-connect/experimental/rp-initiated-logout`. Every other
  *   endpoint is generated exactly as before.
+ * - dynamicClientRegistration: experimental, disabled by default. When true,
+ *   the OP additionally serves the client registration endpoint
+ *   (POST /register, RFC 7591), advertises registration_endpoint in discovery,
+ *   validates the posted metadata and mints client_id / client_secret via
+ *   `@maronn-openid-connect/experimental/dynamic-client-registration`, and
+ *   resolves the registered clients from an in-memory store consulted after
+ *   the configured client resolver. Every other endpoint is generated exactly
+ *   as before.
  * - googleLogin: extension, disabled by default. When true, the login page
  *   renders a "Sign in with Google" button (redirect mode) and the OP serves
  *   POST /login/google, which verifies the ID token Google posts there with
@@ -173,6 +188,7 @@ export interface OidcFeatureConfig {
   ciba: boolean;
   jwtIntrospectionResponse: boolean;
   rpInitiatedLogout: boolean;
+  dynamicClientRegistration: boolean;
   googleLogin: boolean;
 }
 
@@ -195,6 +211,7 @@ const EXPERIMENTAL_FEATURE_KEYS: Record<ExperimentalFeatureName, keyof OidcFeatu
   ciba: 'ciba',
   'jwt-introspection-response': 'jwtIntrospectionResponse',
   'rp-initiated-logout': 'rpInitiatedLogout',
+  'dynamic-client-registration': 'dynamicClientRegistration',
 };
 
 /** Mapping from CLI extension feature names to OidcFeatureConfig keys. */
@@ -220,6 +237,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   ciba: false,
   jwtIntrospectionResponse: false,
   rpInitiatedLogout: false,
+  dynamicClientRegistration: false,
   googleLogin: false,
 };
 

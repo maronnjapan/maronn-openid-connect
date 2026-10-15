@@ -96,33 +96,45 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
   const configClientImports = db
     ? { resolver: '', registeredClient: '' }
     : { resolver: '\n  createInMemoryClientResolver,', registeredClient: '\n  type RegisteredClient,' };
+  // EXPERIMENTAL (RFC 7591): the resolver wrapper lives in store.ts next to the
+  // dynamic registration store it reads.
+  const dcrResolverImport = features.dynamicClientRegistration
+    ? `
+import { withDynamicallyRegisteredClients } from './store';`
+    : '';
   const databaseDefinition = `/**
  * The database of db/instance.ts. createDatabase() runs on its first use
  * rather than at import, so \`next build\` does not call it.
  */
 const database = deferDatabase(createDatabase);
 `;
+  // EXPERIMENTAL (RFC 7591): dynamically registered clients resolve after the
+  // configured clients, so a static registration always wins.
+  const wrapClientResolver = (expression: string): string =>
+    features.dynamicClientRegistration
+      ? `withDynamicallyRegisteredClients(${expression})`
+      : expression;
   const clientsDefinition = db === 'kv'
     ? `${databaseDefinition}
 /**
  * Registered clients: the client records of the key-value store (db/keys.ts).
  * Put clients there with registerClient() (db/clients.ts).
  */
-export const clientResolver = createKvClientResolver(database);`
+export const clientResolver = ${wrapClientResolver('createKvClientResolver(database)')};`
     : db === 'sql'
     ? `${databaseDefinition}
 /**
  * Registered clients: the client tables of db/schema.sql. Put clients there
  * with registerClient() (db/clients.ts).
  */
-export const clientResolver = createSqlClientResolver(database);`
+export const clientResolver = ${wrapClientResolver('createSqlClientResolver(database)')};`
     : `/**
  * Registered clients: OIDC_CLIENTS_JSON (a JSON array of RegisteredClient), or a
  * single confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
  * OIDC_CLIENT_REDIRECT_URI. Replace this with a database-backed ClientResolver
  * in a real project.
  */
-export const clientResolver = createInMemoryClientResolver(readRegisteredClients());`;
+export const clientResolver = ${wrapClientResolver('createInMemoryClientResolver(readRegisteredClients())')};`;
   const storesDefinition = db === 'kv'
     ? `/** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
 export const stores = createKvProviderStores(database);
@@ -217,6 +229,10 @@ function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
   /** EXPERIMENTAL (CIBA Core 1.0): sign-in forms of the authentication device UI. */
   cibaLoginTransactionStore,`]
       : []),
+    ...(features.dynamicClientRegistration
+      ? [`  /** EXPERIMENTAL (RFC 7591): dynamically registered clients. */
+  dynamicClientStore,`]
+      : []),
   ];
   const experimentalStoreExport = experimentalStores.length > 0
     ? `
@@ -275,7 +291,7 @@ import {${configClientImports.resolver}
   type ProviderConfig,${configClientImports.registeredClient}
 } from './config';
 import { createStoreResolvers } from './resolvers';
-${storesImport}
+${storesImport}${dcrResolverImport}
 
 /**
  * Provider configuration. OIDC_ISSUER must be the exact public URL of this app:

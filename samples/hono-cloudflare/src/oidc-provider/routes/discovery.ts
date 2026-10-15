@@ -130,6 +130,10 @@ discoveryApp.get('/', (c) => {
       'client_secret_basic',
       'client_secret_post',
     ],
+    // EXPERIMENTAL — OIDC Discovery 1.0 §3: the client registration endpoint
+    // (RFC 7591) is advertised only because this OP was generated with
+    // --enable dynamic-client-registration.
+    registrationEndpoint: `${issuer}/register`,
   });
 
   // RFC 8414 §3.2 / RFC 9111 §5.2: Discovery metadata is cacheable. Advertise a

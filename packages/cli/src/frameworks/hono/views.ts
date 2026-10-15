@@ -429,11 +429,46 @@ ${googleSignInMarkup}    </Layout>
 // approval fail, and renaming 'deny' makes the Deny button rejected as well.
 // See routes/consent.ts.
 function defaultConsentPage(params: ConsentPageParams): JSX.Element {
+  // OIDC Dynamic Client Registration 1.0 §2: client_name identifies the client
+  // to the End-User. The name is self-asserted, so the clientId stays visible
+  // next to it — a spoofed display name alone must not pass as identification
+  // (RFC 6749 §10.2). The URIs below were scheme-checked (http/https only) in
+  // routes/consent.ts before they reached this view.
+  //
+  // params.logoUri is deliberately not rendered here: an <img> whose URL the
+  // client registered opens a default phishing surface (a spoofed well-known
+  // logo lends this screen false trust), widens CSP img-src to arbitrary hosts,
+  // and leaks the End-User's IP to a third-party server on every consent view.
+  // Render a logo only from a custom view (createViews()) after weighing those.
+  const clientLinks = [
+    params.clientUri ? { href: params.clientUri, label: 'Website' } : undefined,
+    params.policyUri ? { href: params.policyUri, label: 'Privacy Policy' } : undefined,
+    params.tosUri ? { href: params.tosUri, label: 'Terms of Service' } : undefined,
+  ].filter((link): link is { href: string; label: string } => link !== undefined);
   return (
     <Layout title="Consent">
       <h1>Authorize Application</h1>
-      <p>Client <strong>{params.clientId}</strong> is requesting access to the following scopes:</p>
+      <p>
+        Client{' '}
+        {params.clientName ? (
+          <>
+            <strong>{params.clientName}</strong> (<code>{params.clientId}</code>)
+          </>
+        ) : (
+          <strong>{params.clientId}</strong>
+        )}{' '}
+        is requesting access to the following scopes:
+      </p>
       <ScopeList scopes={params.scopes} />
+      {clientLinks.length > 0 ? (
+        <ul>
+          {clientLinks.map((link) => (
+            <li>
+              <a href={link.href} target="_blank" rel="noopener noreferrer">{link.label}</a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <form method="post" action="/consent">
         <input type="hidden" name="csrf_token" value={params.csrfToken} />
         <button type="submit" name="action" value="approve">Approve</button>

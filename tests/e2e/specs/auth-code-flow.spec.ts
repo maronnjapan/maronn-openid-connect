@@ -38,8 +38,17 @@ test.describe('Authorization Code Flow', () => {
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
-    await expect(page.locator('strong')).toHaveText(clientId);
-    await expect(page.locator('li')).toHaveText(['openid', 'profile', 'email']);
+    // OIDC Dynamic Client Registration 1.0 §2: the registered client_name is
+    // shown, with the client_id kept visible beside it (RFC 6749 §10.2).
+    await expect(page.locator('strong')).toHaveText('E2E Test Client');
+    await expect(page.locator('code')).toHaveText(clientId);
+    // The first list is the requested scopes; the second holds the registered
+    // document links (consent-client-identification.spec.ts pins those).
+    await expect(page.locator('ul').first().locator('li')).toHaveText([
+      'openid',
+      'profile',
+      'email',
+    ]);
 
     await page.getByRole('button', { name: 'Approve' }).click();
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(redirectUri)}\\?`));

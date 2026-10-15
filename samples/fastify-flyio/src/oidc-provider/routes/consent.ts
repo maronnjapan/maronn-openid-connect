@@ -14,10 +14,12 @@ import {
   validateCsrfToken,
   completeAuthTransaction,
   createAuthorizationCode,
+  isSafeDisplayUri,
   AuthTransactionError,
   type AuthTransaction,
 } from '@maronn-openid-connect/core';
 import {
+  clientResolver as defaultClientResolver,
   consentResolver as defaultConsentResolver,
 } from '../resolvers.js';
 import {
@@ -43,6 +45,23 @@ export interface ConsentScreen {
   scopes: string[];
   /** Client requesting the authorization. */
   clientId: string;
+  /**
+   * Registered client_name (OIDC Dynamic Client Registration 1.0 §2 / RFC 7591
+   * §2), when one is registered. Self-asserted: a view that shows it must keep
+   * clientId visible next to it (RFC 6749 §10.2).
+   */
+  clientName?: string;
+  /** Registered client_uri, present only when it passed the http(s) scheme check. */
+  clientUri?: string;
+  /**
+   * Registered logo_uri, present only when it passed the http(s) scheme check.
+   * The default view does not render it (see ConsentPageParams in views.ts).
+   */
+  logoUri?: string;
+  /** Registered policy_uri, present only when it passed the http(s) scheme check. */
+  policyUri?: string;
+  /** Registered tos_uri, present only when it passed the http(s) scheme check. */
+  tosUri?: string;
 }
 
 /** A failure the OP shows on its own error page (never redirected to the client). */
@@ -123,6 +142,44 @@ function rejectCrossOriginFormPost(c: any): ConsentError | undefined {
 }
 
 /**
+ * Display metadata of the requesting client for the consent screen
+ * (OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: client_name /
+ * client_uri / logo_uri / policy_uri / tos_uri).
+ *
+ * The screen renders without it, so an unknown client or a resolver failure
+ * falls back to the clientId-only display instead of failing the GET: by the
+ * time the browser is here, /authorize has already validated the client, and
+ * the End-User is better served by a degraded screen than by a 500.
+ *
+ * Each URI is kept only when isSafeDisplayUri() (core) accepts its scheme
+ * (http/https): these values become links (logo_uri an image URL) in the
+ * End-User's browser, where javascript:/data:/custom schemes execute or
+ * navigate. The check runs here in the logic layer, so every view — default
+ * or custom — receives only renderable URIs.
+ */
+async function loadClientDisplay(
+  c: any,
+  clientId: string,
+): Promise<Pick<ConsentScreen, 'clientName' | 'clientUri' | 'logoUri' | 'policyUri' | 'tosUri'>> {
+  const clientResolver = c.get('clientResolver') ?? defaultClientResolver;
+  const safeUri = (uri: string | undefined) =>
+    uri !== undefined && isSafeDisplayUri(uri) ? uri : undefined;
+  try {
+    const client = await clientResolver.findClient(clientId);
+    if (!client) return {};
+    return {
+      clientName: client.clientName,
+      clientUri: safeUri(client.clientUri),
+      logoUri: safeUri(client.logoUri),
+      policyUri: safeUri(client.policyUri),
+      tosUri: safeUri(client.tosUri),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
  * GET /consent: load the transaction this browser's cookie names and describe
  * the form, or the error to show instead when there is none.
  */
@@ -135,6 +192,7 @@ export async function prepareConsent(c: any): Promise<ConsentScreen | ConsentErr
     csrfToken: transaction.csrfToken,
     scopes: transaction.scope.split(' ').filter(Boolean),
     clientId: transaction.clientId,
+    ...(await loadClientDisplay(c, transaction.clientId)),
   };
 }
 

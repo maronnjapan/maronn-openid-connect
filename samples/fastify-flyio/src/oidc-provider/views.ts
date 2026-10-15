@@ -66,6 +66,39 @@ export interface ConsentPageParams {
   scopes: string[];
   /** Client ID requesting authorization */
   clientId: string;
+  /**
+   * Registered client_name (OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2),
+   * when the client registered one. The name is self-asserted and spoofable, so a
+   * view that shows it must keep the clientId visible next to it: RFC 6749 §10.2's
+   * client-impersonation defense works only while the End-User can identify the
+   * client.
+   */
+  clientName?: string;
+  /**
+   * Registered client_uri (client home page). Already scheme-checked by
+   * routes/consent.ts (http/https only, isSafeDisplayUri in the core package),
+   * so a view may render it as a link as-is — HTML-escaping still applies.
+   */
+  clientUri?: string;
+  /**
+   * Registered logo_uri. Passed through for custom views, but the default view
+   * deliberately does NOT render it: an <img> whose URL the client chose opens a
+   * default phishing surface (a spoofed well-known logo lends the consent screen
+   * false trust), widens CSP img-src to arbitrary hosts, and leaks the End-User's
+   * IP to a third-party server on every consent view. Render it only from a
+   * custom view (createViews()) after weighing those.
+   */
+  logoUri?: string;
+  /**
+   * Registered policy_uri (how the client uses profile data). Scheme-checked like
+   * clientUri; the default view renders it as a link when present.
+   */
+  policyUri?: string;
+  /**
+   * Registered tos_uri (terms of service). Scheme-checked like clientUri; the
+   * default view renders it as a link when present.
+   */
+  tosUri?: string;
 }
 
 export interface ErrorPageParams {
@@ -303,16 +336,39 @@ function defaultConsentPage(params: ConsentPageParams): string {
 
   const escapedClientId = escapeHtml(params.clientId);
 
+  // OIDC Dynamic Client Registration 1.0 §2: client_name identifies the client
+  // to the End-User. The name is self-asserted, so the clientId stays visible
+  // next to it — a spoofed display name alone must not pass as identification
+  // (RFC 6749 §10.2). The URIs below were scheme-checked (http/https only) in
+  // routes/consent.ts before they reached this view; escaping still applies.
+  const clientDisplayHtml = params.clientName
+    ? `<strong>${escapeHtml(params.clientName)}</strong> (<code>${escapedClientId}</code>)`
+    : `<strong>${escapedClientId}</strong>`;
+
+  // params.logoUri is deliberately not rendered here: an <img> whose URL the
+  // client registered opens a default phishing surface (a spoofed well-known
+  // logo lends this screen false trust), widens CSP img-src to arbitrary hosts,
+  // and leaks the End-User's IP to a third-party server on every consent view.
+  // Render a logo only from a custom view (createViews()) after weighing those.
+  const clientLinkItems = [
+    params.clientUri ? `    <li><a href="${escapeHtml(params.clientUri)}" target="_blank" rel="noopener noreferrer">Website</a></li>` : '',
+    params.policyUri ? `    <li><a href="${escapeHtml(params.policyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a></li>` : '',
+    params.tosUri ? `    <li><a href="${escapeHtml(params.tosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a></li>` : '',
+  ].filter((item) => item !== '');
+  const clientLinksHtml = clientLinkItems.length > 0
+    ? `  <ul>\n${clientLinkItems.join('\n')}\n  </ul>\n`
+    : '';
+
   return `<!DOCTYPE html>
 <html>
 <head><title>Consent</title></head>
 <body>
   <h1>Authorize Application</h1>
-  <p>Client <strong>${escapedClientId}</strong> is requesting access to the following scopes:</p>
+  <p>Client ${clientDisplayHtml} is requesting access to the following scopes:</p>
   <ul>
 ${scopeListHtml}
   </ul>
-  <form method="POST" action="/consent">
+${clientLinksHtml}  <form method="POST" action="/consent">
     <input type="hidden" name="csrf_token" value="${escapeHtml(params.csrfToken)}" />
     <button type="submit" name="action" value="approve">Approve</button>
     <button type="submit" name="action" value="deny">Deny</button>

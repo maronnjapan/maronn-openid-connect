@@ -1,12 +1,16 @@
 /**
  * Login step (API layer: logic only).
  *
- * Everything the login screen has to decide lives here as plain functions:
- * finding the transaction through the transaction cookie, the csrf_token
- * check, the credential check, the lockout, the OP session cookie and the
- * hand-off to the consent step. None of them builds a Response — each returns
- * an outcome, and pages/login.ts turns that outcome into a screen or a
- * redirect. The UI can therefore be changed without touching this file.
+ * Everything the login screen has to decide lives here as plain functions, one
+ * per box of `maronn-oidc graph --detail steps --endpoint login`: finding the
+ * transaction through the transaction cookie (loadTransaction), the csrf_token
+ * check (validateLoginCsrfToken), the credential check (authenticateEndUser),
+ * the lockout (recordLoginFailure), the OP session cookie
+ * (establishBrowserSession) and the hand-off to the consent step
+ * (handOffToConsent). None of them builds a Response — each returns an
+ * outcome, and pages/login.ts turns that outcome into a screen or a redirect.
+ * prepareLogin() (GET) and submitLogin() (POST) run them in the order the
+ * screen needs, so the UI can be changed without touching this file.
  */
 import {
   getAuthTransaction,
@@ -107,11 +111,12 @@ function transactionErrorOutcome(error: unknown): LoginError {
 }
 
 /**
- * The transaction this browser is in the middle of: the id from the transaction
- * cookie /authorize set (buildTransactionCookie() in store.ts), loaded from the
- * store. Returns the error to show instead when there is none.
+ * [load-transaction] The transaction this browser is in the middle of: the id
+ * from the transaction cookie /authorize set (buildTransactionCookie() in
+ * store.ts), loaded from the store. Returns the error to show instead when
+ * there is none. OIDC Core 1.0 §3.1.2.3
  */
-async function loadTransaction(
+export async function loadTransaction(
   c: any,
 ): Promise<{ transactionId: string; transaction: AuthTransaction } | LoginError> {
   const transactionId = parseTransactionId(c.req.header('Cookie') ?? null);
@@ -122,24 +127,55 @@ async function loadTransaction(
       statusCode: 400,
     };
   }
+  const loaded = await loadTransactionById(c, transactionId);
+  if ('kind' in loaded) return loaded;
+  return { transactionId, transaction: loaded.transaction };
+}
+
+/**
+ * Load the transaction with a known id from the store, or the error to show
+ * when it is unknown, finished or expired.
+ */
+export async function loadTransactionById(
+  c: any,
+  transactionId: string,
+): Promise<{ transaction: AuthTransaction } | LoginError> {
   const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
   try {
-    return { transactionId, transaction: await getAuthTransaction(transactionId, transactionStore) };
+    return { transaction: await getAuthTransaction(transactionId, transactionStore) };
   } catch (error) {
     return transactionErrorOutcome(error);
   }
 }
 
 /**
- * Refuse a login form POST that the browser says came from anywhere but the
- * OP's own pages (403, never redirected). See isSameOriginFormPost() in store.ts.
+ * [reject-cross-origin-post] Refuse a login form POST that the browser says
+ * came from anywhere but the OP's own pages (403, never redirected). See
+ * isSameOriginFormPost() in store.ts.
  */
-function rejectCrossOriginFormPost(c: any): LoginError | undefined {
+export function rejectCrossOriginFormPost(c: any): LoginError | undefined {
   const sameOrigin = isSameOriginFormPost(
     { origin: c.req.header('Origin') ?? null, secFetchSite: c.req.header('Sec-Fetch-Site') ?? null },
     c.get('config').issuer,
   );
   return sameOrigin ? undefined : { kind: 'error', error: CROSS_ORIGIN_FORM_POST_MESSAGE, statusCode: 403 };
+}
+
+/**
+ * [validate-csrf-token] The csrf_token says the submission came from the form
+ * the OP rendered for exactly this transaction; any other token is refused
+ * (403) on the OP's own error page.
+ */
+export function validateLoginCsrfToken(
+  transaction: AuthTransaction,
+  csrfToken: string,
+): LoginError | undefined {
+  try {
+    validateCsrfToken(transaction, csrfToken);
+    return undefined;
+  } catch (error) {
+    return transactionErrorOutcome(error);
+  }
 }
 
 /**
@@ -151,7 +187,7 @@ function rejectCrossOriginFormPost(c: any): LoginError | undefined {
  * its way back to this authorization request (the redirect-mode POST carries
  * nothing else).
  */
-async function buildGoogleSignIn(
+export async function buildGoogleSignIn(
   c: any,
   transactionId: string,
   transaction: AuthTransaction,
@@ -178,12 +214,12 @@ async function buildGoogleSignIn(
 }
 
 /**
- * EXTENSION (google-login): run the callback checks and map the Google account
- * to an OP subject. Returns the error to show on failure so a failed Google
- * callback is never redirected to a client — until the nonce is verified the
- * OP cannot tell whose transaction this is.
+ * [verify-google-callback] EXTENSION (google-login): run the callback checks
+ * and map the Google account to an OP subject. Returns the error to show on
+ * failure so a failed Google callback is never redirected to a client — until
+ * the nonce is verified the OP cannot tell whose transaction this is.
  */
-async function verifyGoogleLoginCallback(
+export async function verifyGoogleLoginCallback(
   c: any,
   googleLogin: GoogleLoginConfig,
 ): Promise<{ transactionId: string; subject: string } | LoginError> {
@@ -218,8 +254,11 @@ async function verifyGoogleLoginCallback(
   }
 }
 
-/** Describe the form for a transaction (the shared part of GET and a failed POST). */
-async function describeLoginScreen(
+/**
+ * [describe-login-screen] Describe the form for a transaction (the shared part
+ * of GET and a failed POST). OIDC Core 1.0 §3.1.2.1 (login_hint)
+ */
+export async function describeLoginScreen(
   c: any,
   transactionId: string,
   transaction: AuthTransaction,
@@ -233,91 +272,154 @@ async function describeLoginScreen(
 }
 
 /**
+ * [authenticate-user] Check the credentials against the user store (or the
+ * authenticateUser hook applyOidc() put on the request context). Returns the
+ * End-User, or undefined when the credentials are wrong.
+ */
+export async function authenticateEndUser(
+  c: any,
+  username: string,
+  password: string,
+): Promise<{ sub: string } | undefined> {
+  const authenticateUser =
+    c.get('authenticateUser') ??
+    ((u: string, p: string) => userStore.authenticate(u, p));
+  return (await authenticateUser(username, password)) ?? undefined;
+}
+
+/**
+ * [record-login-failure] Count the failed attempt on the transaction. Once the
+ * attempts are used up the transaction is deleted (canRetry: false) and no
+ * further attempt is accepted.
+ */
+export async function recordLoginFailure(
+  c: any,
+  transactionId: string,
+  transaction: AuthTransaction,
+): Promise<{ canRetry: boolean; remainingAttempts: number }> {
+  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
+  const failure = await handleLoginFailure(transactionId, transaction, transactionStore);
+  return {
+    canRetry: failure.canRetry,
+    remainingAttempts: failure.maxAttempts - failure.failedAttempts,
+  };
+}
+
+/**
+ * [discard-session-for-fresh-login] prompt=login (and prompt=select_account)
+ * requires fresh authentication: discard any existing transaction hand-off AND
+ * browser session before the new one is established. OIDC Core 1.0 §3.1.2.1
+ * (prompt is a space-delimited list).
+ */
+export async function discardSessionForFreshLogin(
+  c: any,
+  transactionId: string,
+  transaction: AuthTransaction,
+): Promise<void> {
+  const promptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
+  if (!promptValues.includes('login') && !promptValues.includes('select_account')) return;
+  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  await authSessionStore.delete(transactionId);
+  const existingSessionId = parseSessionId(c.req.header('Cookie') ?? null);
+  if (existingSessionId) await browserSessionStore.delete(existingSessionId);
+}
+
+/**
+ * [establish-session] Establish the persistent browser (OP) session for the
+ * authenticated subject. Its cookie travels with the answer so SSO,
+ * prompt=none and max_age work on later authorization requests.
+ * OIDC Core 1.0 §3.1.2.3
+ */
+export async function establishBrowserSession(
+  c: any,
+  subject: string,
+): Promise<{ sessionId: string; authTime: number }> {
+  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
+  const authTime = Math.floor(Date.now() / 1000);
+  const sessionId = await generateRandomString(32);
+  await browserSessionStore.set(sessionId, { subject, authTime });
+  return { sessionId, authTime };
+}
+
+/**
+ * [hand-off-to-consent] Store the authenticated subject for the consent step
+ * (the per-transaction hand-off) and answer with the session cookie. The
+ * sessionId travels along for the online refresh token: the authorization code
+ * the consent step issues inherits this session, so the refresh token stops
+ * working at logout.
+ */
+export async function handOffToConsent(
+  c: any,
+  transactionId: string,
+  subject: string,
+  sessionId: string,
+  authTime: number,
+): Promise<{ kind: 'authenticated'; cookies: string[] }> {
+  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
+  await authSessionStore.set(transactionId, { subject, authTime, sessionId });
+  return { kind: 'authenticated', cookies: [buildSessionCookie(sessionId)] };
+}
+
+/**
  * GET /login: load the transaction this browser's cookie names and describe the
  * form, or the error to show instead when there is none.
  */
 export async function prepareLogin(c: any): Promise<LoginScreen | LoginError> {
+  // [load-transaction]
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
+  // [describe-login-screen]
   return describeLoginScreen(c, loaded.transactionId, loaded.transaction);
 }
 
 /**
  * POST /login: check the credentials and, on success, establish the OP session.
+ * The steps run in the fixed order the screen needs (the login endpoint of
+ * `maronn-oidc graph --detail steps`).
  */
 export async function submitLogin(c: any, input: LoginSubmission): Promise<LoginOutcome> {
   const { csrfToken, username, password } = input;
 
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
-  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
-  const authenticateUser =
-    c.get('authenticateUser') ??
-    ((u: string, p: string) => userStore.authenticate(u, p));
-
-  // First the browser's own statement of where the form was submitted from
-  // (isSameOriginFormPost() in store.ts): independent of the cookie and the
-  // csrf_token, so a forged POST is stopped even if both were planted.
+  // [reject-cross-origin-post] First the browser's own statement of where the
+  // form was submitted from (isSameOriginFormPost() in store.ts): independent
+  // of the cookie and the csrf_token, so a forged POST is stopped even if both
+  // were planted.
   const sameOriginError = rejectCrossOriginFormPost(c);
   if (sameOriginError) return sameOriginError;
 
-  // The cookie says which transaction this browser is in; the csrf_token says
-  // the submission came from the form the OP rendered for exactly that one.
+  // [load-transaction] The cookie says which transaction this browser is in.
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
-  try {
-    validateCsrfToken(transaction, csrfToken);
-  } catch (error) {
-    return transactionErrorOutcome(error);
-  }
 
-  // Authenticate user
-  const user = await authenticateUser(username, password);
+  // [validate-csrf-token] The csrf_token says the submission came from the form
+  // the OP rendered for exactly that one.
+  const csrfError = validateLoginCsrfToken(transaction, csrfToken);
+  if (csrfError) return csrfError;
+
+  // [authenticate-user]
+  const user = await authenticateEndUser(c, username, password);
   if (!user) {
-    const failureResult = await handleLoginFailure(
-      transactionId,
-      transaction,
-      transactionStore,
-    );
-    if (!failureResult.canRetry) {
+    // [record-login-failure] Wrong credentials: count the attempt, then either
+    // lock the transaction or show the form again with the attempts left.
+    const failure = await recordLoginFailure(c, transactionId, transaction);
+    if (!failure.canRetry) {
       return { kind: 'locked_out' };
     }
     return {
       kind: 'invalid_credentials',
       screen: await describeLoginScreen(c, transactionId, transaction),
-      remainingAttempts: failureResult.maxAttempts - failureResult.failedAttempts,
+      remainingAttempts: failure.remainingAttempts,
     };
   }
 
-  // prompt=login (and prompt=select_account in Phase 1) requires fresh
-  // authentication: discard any existing transaction handoff AND browser session.
-  // OIDC Core 1.0 Section 3.1.2.1 — prompt is a space-delimited list, use includes()
-  const loginPromptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
-  if (loginPromptValues.includes('login') || loginPromptValues.includes('select_account')) {
-    await authSessionStore.delete(transactionId);
-    const existingSessionId = parseSessionId(c.req.header('Cookie') ?? null);
-    if (existingSessionId) await browserSessionStore.delete(existingSessionId);
-  }
-
-  const authTime = Math.floor(Date.now() / 1000);
-
-  // Establish a persistent browser (OP) session; its cookie travels with the
-  // answer so SSO / prompt=none / max_age work on subsequent authorization
-  // requests (OIDC Core 1.0 Section 3.1.2.3).
-  const sessionId = await generateRandomString(32);
-  await browserSessionStore.set(sessionId, { subject: user.sub, authTime });
-
-  // Store authenticated subject for the consent step (per-transaction handoff).
-  // sessionId も渡すのは online refresh token のため。consent 経由で発行する認可
-  // コードにこのセッションを引き継ぎ、ログアウトで使えなくなる RT を作る。
-  await authSessionStore.set(transactionId, {
-    subject: user.sub,
-    authTime,
-    sessionId,
-  });
-
-  return { kind: 'authenticated', cookies: [buildSessionCookie(sessionId)] };
+  // [discard-session-for-fresh-login]
+  await discardSessionForFreshLogin(c, transactionId, transaction);
+  // [establish-session]
+  const { sessionId, authTime } = await establishBrowserSession(c, user.sub);
+  // [hand-off-to-consent]
+  return handOffToConsent(c, transactionId, user.sub, sessionId, authTime);
 }
 
 /**
@@ -325,7 +427,8 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
  *
  * Sign in with Google (redirect mode) posts the ID token here once the user
  * picks an account. After the callback checks, this continues exactly like a
- * successful password login: same session cookie, same consent hand-off.
+ * successful password login: same session cookie, same consent hand-off (the
+ * login-google endpoint of `maronn-oidc graph --detail steps`).
  *
  * The transaction cookie does not come along: Google's POST is a cross-site
  * navigation, so the browser withholds SameSite=Lax cookies. The single-use
@@ -339,36 +442,20 @@ export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
     return { kind: 'not_configured' };
   }
 
+  // [verify-google-callback]
   const verified = await verifyGoogleLoginCallback(c, config.googleLogin);
   if ('kind' in verified) return verified;
   const { transactionId, subject } = verified;
 
-  const transactionStore = c.get('transactionStore') ?? defaultTransactionStore;
-  const authSessionStore = c.get('authSessionStore') ?? defaultAuthSessionStore;
-  const browserSessionStore = c.get('browserSessionStore') ?? defaultBrowserSessionStore;
-  let transaction: AuthTransaction;
-  try {
-    transaction = await getAuthTransaction(transactionId, transactionStore);
-  } catch (error) {
-    return transactionErrorOutcome(error);
-  }
+  // [load-transaction] The nonce named the transaction; load it from the store.
+  const loaded = await loadTransactionById(c, transactionId);
+  if ('kind' in loaded) return loaded;
+  const { transaction } = loaded;
 
-  // prompt=login / select_account requires fresh authentication: discard any
-  // existing transaction handoff AND browser session (OIDC Core 1.0 Section 3.1.2.1).
-  const loginPromptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
-  if (loginPromptValues.includes('login') || loginPromptValues.includes('select_account')) {
-    await authSessionStore.delete(transactionId);
-    const existingSessionId = parseSessionId(c.req.header('Cookie') ?? null);
-    if (existingSessionId) await browserSessionStore.delete(existingSessionId);
-  }
-
-  const authTime = Math.floor(Date.now() / 1000);
-
-  // Establish the browser (OP) session and the per-transaction handoff exactly
-  // as the password login does (OIDC Core 1.0 Section 3.1.2.3).
-  const sessionId = await generateRandomString(32);
-  await browserSessionStore.set(sessionId, { subject, authTime });
-  await authSessionStore.set(transactionId, { subject, authTime, sessionId });
-
-  return { kind: 'authenticated', cookies: [buildSessionCookie(sessionId)] };
+  // [discard-session-for-fresh-login]
+  await discardSessionForFreshLogin(c, transactionId, transaction);
+  // [establish-session]
+  const { sessionId, authTime } = await establishBrowserSession(c, subject);
+  // [hand-off-to-consent]
+  return handOffToConsent(c, transactionId, subject, sessionId, authTime);
 }

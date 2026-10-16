@@ -547,4 +547,292 @@ describe('run', () => {
       consoleSpy.mockRestore();
     });
   });
+
+  // `graph` draws the provider a run would generate; it writes no code.
+  describe('graph', () => {
+    function captureStdout(): { output: () => string; restore: () => void } {
+      const chunks: string[] = [];
+      const spy = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+        chunks.push(String(chunk));
+        return true;
+      }) as typeof process.stdout.write);
+      return { output: () => chunks.join(''), restore: () => spy.mockRestore() };
+    }
+
+    it('should print a Mermaid flowchart of the default provider to stdout', () => {
+      const stdout = captureStdout();
+      run(['graph']);
+      const lines = stdout.output().split('\n');
+      stdout.restore();
+      expect(process.exitCode).toBe(undefined);
+      expect(lines[0]).toBe('flowchart LR');
+      expect(lines.includes('    token["POST /token<br/>Token endpoint"]')).toBe(true);
+      expect(lines.includes('  consent -->|"code"| token')).toBe(true);
+    });
+
+    it('should print the JSON flow document with the module of each endpoint for a framework', () => {
+      const stdout = captureStdout();
+      run(['graph', 'hono', '--format', 'json']);
+      const document = JSON.parse(stdout.output()) as {
+        version: number;
+        endpoints: { id: string; module?: string; steps: { module?: string }[] }[];
+      };
+      stdout.restore();
+      expect(document.version).toBe(1);
+      const token = document.endpoints.find((e) => e.id === 'token');
+      expect(token?.module).toBe('routes/token.ts');
+      expect(token?.steps[0]?.module).toBe('routes/token.ts');
+    });
+
+    it('should name the App Router module for nextjs', () => {
+      const stdout = captureStdout();
+      run(['graph', 'nextjs', '--format', 'json']);
+      const document = JSON.parse(stdout.output()) as { endpoints: { id: string; module?: string }[] };
+      stdout.restore();
+      expect(document.endpoints.find((e) => e.id === 'discovery')?.module).toBe(
+        '.well-known/openid-configuration/route.ts',
+      );
+    });
+
+    it('should draw the steps of one endpoint with --detail steps --endpoint', () => {
+      const stdout = captureStdout();
+      run(['graph', '--detail', 'steps', '--endpoint', 'token', '--enable', 'token-exchange']);
+      const output = stdout.output();
+      stdout.restore();
+      expect(output.startsWith('flowchart TD\n  subgraph token["POST /token<br/>Token endpoint"]\n')).toBe(true);
+      expect(output.includes('token__dispatch_token_exchange[')).toBe(true);
+      expect(output.includes('subgraph authorize[')).toBe(false);
+    });
+
+    it('should write the diagram to the --output file', () => {
+      const file = join(testDir, 'diagrams', 'op.mmd');
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['graph', '-o', file]);
+      expect(logSpy).toHaveBeenCalledWith(`Wrote ${file}`);
+      expect(readFileSync(file, 'utf-8').startsWith('flowchart LR\n')).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    it('should error on an unknown format', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['graph', '--format', 'svg']);
+      expect(errorSpy).toHaveBeenCalledWith('Error: --format needs one of mermaid, json, not "svg"');
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error on an unknown detail level', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['graph', '--detail']);
+      expect(errorSpy).toHaveBeenCalledWith('Error: --detail needs one of endpoints, steps');
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error on an unknown endpoint', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['graph', '--endpoint', 'dpop']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: Unknown endpoint: "dpop". Endpoints of this configuration: discovery, jwks, authorize, login, consent, token, userinfo, introspection, revocation',
+      );
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error on an unknown framework', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['graph', 'koa']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: Unknown framework: "koa". Available frameworks: hono, express, fastify, nextjs',
+      );
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should draw the rearranged provider of a flow document', () => {
+      const stdout = captureStdout();
+      run(['graph', '--format', 'json', '--disable', 'revocation']);
+      const document = JSON.parse(stdout.output()) as {
+        endpoints: { id: string; steps: { id: string }[] }[];
+      };
+      stdout.restore();
+      const authorize = document.endpoints.find((e) => e.id === 'authorize');
+      authorize!.steps = authorize!.steps.filter((s) => s.id !== 'verify-id-token-hint');
+      document.endpoints.reverse();
+      const file = join(testDir, 'op.flow.json');
+      writeFileSync(file, JSON.stringify(document));
+
+      const drawn = captureStdout();
+      run(['graph', '--flow', file, '--format', 'json']);
+      const redrawn = JSON.parse(drawn.output()) as { endpoints: { id: string; steps: { id: string }[] }[] };
+      drawn.restore();
+      expect(redrawn.endpoints.map((e) => e.id)).toEqual([
+        'introspection',
+        'userinfo',
+        'token',
+        'consent',
+        'login',
+        'authorize',
+        'jwks',
+        'discovery',
+      ]);
+      expect(
+        redrawn.endpoints.find((e) => e.id === 'authorize')?.steps.some((s) => s.id === 'verify-id-token-hint'),
+      ).toBe(false);
+    });
+  });
+
+  // --flow generates from a flow document instead of the feature flags.
+  describe('--flow', () => {
+    function writeFlowDocument(name: string, edit: (document: any) => void = () => {}): string {
+      const chunks: string[] = [];
+      const spy = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+        chunks.push(String(chunk));
+        return true;
+      }) as typeof process.stdout.write);
+      run(['graph', 'hono', '--format', 'json']);
+      spy.mockRestore();
+      const document = JSON.parse(chunks.join(''));
+      edit(document);
+      const file = join(testDir, name);
+      writeFileSync(file, JSON.stringify(document));
+      return file;
+    }
+
+    it('should generate from the document graph wrote and record its inputs in the manifest', () => {
+      const file = writeFlowDocument('op.flow.json');
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--flow', file]);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(undefined);
+      const manifest = JSON.parse(readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8'));
+      expect(manifest.features.introspection).toBe(true);
+      expect(manifest.steps).toBe(null);
+      expect(manifest.endpointOrder).toBe(null);
+      vi.restoreAllMocks();
+    });
+
+    it('should follow the feature flags of the document', () => {
+      const file = writeFlowDocument('op.flow.json', (document) => {
+        document.features.revocation = false;
+        document.endpoints = document.endpoints.filter((e: { id: string }) => e.id !== 'revocation');
+      });
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--flow', file]);
+      expect(existsSync(join(outputDir, 'routes', 'revocation.ts'))).toBe(false);
+      expect(existsSync(join(outputDir, 'routes', 'introspection.ts'))).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    it('should record a rearranged endpoint order in the manifest', () => {
+      const file = writeFlowDocument('op.flow.json', (document) => {
+        document.endpoints.reverse();
+      });
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--flow', file]);
+      const manifest = JSON.parse(readFileSync(join(outputDir, '.maronn-openid-connect.json'), 'utf-8'));
+      expect(manifest.endpointOrder).toEqual([
+        'revocation',
+        'introspection',
+        'userinfo',
+        'token',
+        'consent',
+        'login',
+        'authorize',
+        'jwks',
+        'discovery',
+      ]);
+      vi.restoreAllMocks();
+    });
+
+    it('should refuse a rearranged step order for the Next.js output', () => {
+      const file = writeFlowDocument('op.flow.json', (document) => {
+        const authorize = document.endpoints.find((e: { id: string }) => e.id === 'authorize');
+        authorize.steps = authorize.steps.filter((s: { id: string }) => s.id !== 'verify-id-token-hint');
+      });
+      const outputDir = join(testDir, 'app');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'nextjs', '-o', outputDir, '--flow', file]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: The Next.js output does not follow a rearranged step order yet (endpoint "authorize"). Remove the steps changes from the flow document, or generate for hono, express or fastify',
+      );
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(outputDir)).toBe(false);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error without writing anything when the document is invalid', () => {
+      const file = writeFlowDocument('op.flow.json', (document) => {
+        const token = document.endpoints.find((e: { id: string }) => e.id === 'token');
+        token.steps = token.steps.filter((s: { id: string }) => s.id !== 'authenticate-client');
+      });
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--flow', file]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        `Error: ${file}: endpoint "token" leaves out step "authenticate-client", which cannot be removed`,
+      );
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(outputDir)).toBe(false);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error when the flow file does not exist', () => {
+      const outputDir = join(testDir, 'oidc-provider');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', outputDir, '--flow', join(testDir, 'missing.json')]);
+      expect(errorSpy).toHaveBeenCalledWith(`Error: Flow file not found: ${join(testDir, 'missing.json')}`);
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should error when --flow has no file', () => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', join(testDir, 'oidc-provider'), '--flow']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: --flow needs a file: --flow <file> (the JSON that `maronn-oidc graph --format json` writes)',
+      );
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should refuse --flow together with a feature flag', () => {
+      const file = writeFlowDocument('op.flow.json');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      run(['generate', 'hono', '-o', join(testDir, 'oidc-provider'), '--flow', file, '--enable', 'par']);
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: --flow cannot be combined with --enable, --disable, --scope or --db: the flow document already carries the features, scopes and db it was drawn with',
+      );
+      expect(process.exitCode).toBe(1);
+      vi.restoreAllMocks();
+      process.exitCode = undefined;
+    });
+
+    it('should list --flow and the graph command in help output', () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['--help']);
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('graph [framework]');
+      expect(output).toContain('--flow <file>');
+      expect(output).toContain('--format <mermaid|json>');
+      consoleSpy.mockRestore();
+    });
+  });
 });

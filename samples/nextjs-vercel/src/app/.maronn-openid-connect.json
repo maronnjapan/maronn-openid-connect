@@ -19,5 +19,7 @@
     "googleLogin": true
   },
   "scopes": [],
-  "db": "kv"
+  "db": "kv",
+  "steps": null,
+  "endpointOrder": null
 }

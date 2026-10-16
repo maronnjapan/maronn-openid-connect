@@ -1,3 +1,25 @@
+import { Hono } from 'hono';
+import {
+  sanitizeErrorDescription,
+  extractClientCredentials,
+  resolveAuthenticatedTokenClient,
+  validateClientAuthMethod,
+  verifyClientSecret,
+  type TokenClientInfo,
+  findUnregisteredClientScopes,
+  TokenError,
+} from '@maronn-openid-connect/core';
+import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
+import {
+  cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
+  userStore,
+} from '../store.js';
+import {
+  BackchannelAuthenticationError,
+  processBackchannelAuthenticationRequest,
+  type CibaClientInfo,
+} from '@maronn-openid-connect/experimental/ciba';
+
 /**
  * EXPERIMENTAL — OpenID Connect Client-Initiated Backchannel Authentication
  * (CIBA Core 1.0), poll mode.
@@ -10,7 +32,9 @@
  * The consumption device (a call-center console, a kiosk, a smart speaker
  * backend) POSTs here — back channel, client-authenticated — with a login_hint
  * naming the user, and receives an auth_req_id it polls the token endpoint
- * with. The user approves or denies on their own browser at /ciba.
+ * with. The user approves or denies on their own browser at /ciba. Every
+ * function exported below is one box of the endpoint's pipeline
+ * (`maronn-oidc graph --detail steps --endpoint backchannel-authentication`).
  *
  * NOTE (CIBA §15): the login_hint is a user identifier and therefore PII.
  * Never log it, and never echo it in an error_description. Rate limiting the
@@ -20,26 +44,6 @@
  * authentication, the fixed unknown_user_id wording, and the per-subject
  * pending-request cap below.
  */
-import { Hono } from 'hono';
-import {
-  BackchannelAuthenticationError,
-  processBackchannelAuthenticationRequest,
-  type CibaClientInfo,
-} from '@maronn-openid-connect/experimental/ciba';
-import {
-  TokenError,
-  extractClientCredentials,
-  findUnregisteredClientScopes,
-  resolveAuthenticatedTokenClient,
-  sanitizeErrorDescription,
-  validateClientAuthMethod,
-  verifyClientSecret,
-} from '@maronn-openid-connect/core';
-import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
-import {
-  cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
-  userStore,
-} from '../store.js';
 
 /**
  * EXPERIMENTAL — CIBA settings (CIBA Core 1.0).
@@ -77,6 +81,22 @@ if (cibaConfig.maxPendingPerSubject < 1 || cibaConfig.maxPendingPerSubject > 100
   throw new Error('cibaConfig.maxPendingPerSubject must be between 1 and 100');
 }
 
+/** What the backchannel authentication endpoint answers; respondBackchannelAuthentication() turns it into HTTP. */
+export interface BackchannelAuthenticationEndpointResponse {
+  status: number;
+  body: object;
+  headers?: Record<string, string>;
+}
+
+/** A failure a step answers with a fixed response (a malformed request). */
+export class BackchannelAuthenticationEndpointError extends Error {
+  constructor(readonly response: BackchannelAuthenticationEndpointResponse) {
+    const details = (response.body ?? {}) as { error?: unknown; error_description?: unknown };
+    super(String(details.error_description ?? details.error ?? 'backchannel authentication endpoint error'));
+    this.name = 'BackchannelAuthenticationEndpointError';
+  }
+}
+
 export const backchannelAuthenticationApp = new Hono<{ Variables: Record<string, any> }>();
 
 /**
@@ -96,14 +116,18 @@ function noStore(c: any): void {
 }
 
 /**
- * Backchannel Authentication Endpoint
- * CIBA Core 1.0 §7.1 / §7.2 / §7.3
+ * Parse the backchannel authentication request: the form body and the
+ * Authorization header. CIBA Core 1.0 §7.1 / RFC 6749 §3.1
  */
-backchannelAuthenticationApp.post('/', async (c) => {
+export async function parseBackchannelAuthenticationRequest(
+  c: any,
+): Promise<{ params: Record<string, string>; authorization: string }> {
   const contentType = c.req.header('Content-Type') ?? '';
   if (!isFormUrlEncoded(contentType)) {
-    noStore(c);
-    return c.json({ error: 'invalid_request', error_description: 'Backchannel authentication requests must use application/x-www-form-urlencoded' }, 400);
+    throw new BackchannelAuthenticationEndpointError({
+      status: 400,
+      body: { error: 'invalid_request', error_description: 'Backchannel authentication requests must use application/x-www-form-urlencoded' },
+    });
   }
 
   // RFC 6749 §3.1: request parameters MUST NOT be repeated. Read the raw body so
@@ -122,88 +146,152 @@ backchannelAuthenticationApp.post('/', async (c) => {
   }
 
   if (duplicateKey !== undefined) {
-    noStore(c);
-    return c.json({ error: 'invalid_request', error_description: `Parameter "${sanitizeErrorDescription(duplicateKey)}" must not be repeated` }, 400);
+    throw new BackchannelAuthenticationEndpointError({
+      status: 400,
+      body: { error: 'invalid_request', error_description: `Parameter "${sanitizeErrorDescription(duplicateKey)}" must not be repeated` },
+    });
   }
 
   const authorization = c.req.header('Authorization') ?? '';
+  return { params, authorization };
+}
 
+/**
+ * CIBA §7.1: "The Client MUST authenticate ... using the authentication
+ * method registered for its client_id" — the same pipeline the token
+ * endpoint runs, step function for step function.
+ */
+export async function authenticateCibaClient(
+  c: any,
+  params: Record<string, string>,
+  authorization: string,
+): Promise<TokenClientInfo> {
+  const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
+  const presentedCredentials = extractClientCredentials({
+    params,
+    authorizationHeader: authorization,
+  });
+  const client = await resolveAuthenticatedTokenClient(
+    presentedCredentials.clientId,
+    tokenClientResolver,
+  );
+  validateClientAuthMethod(client, presentedCredentials);
+  await verifyClientSecret(client, presentedCredentials.clientSecret);
+  return client;
+}
+
+/**
+ * RFC 7591 §2: a client registered with a scope list (client.scope) may only
+ * request those scopes, the same rule as /authorize.
+ */
+export function validateCibaClientScope(params: Record<string, string>, client: TokenClientInfo): void {
+  const unregisteredScopes = findUnregisteredClientScopes(
+    (params['scope'] ?? '').split(' ').filter((scope) => scope.length > 0),
+    client.scope,
+  );
+  if (unregisteredScopes.length > 0) {
+    throw new BackchannelAuthenticationError(
+      'invalid_scope',
+      'Client is not registered for scope: ' + unregisteredScopes.join(' '),
+    );
+  }
+}
+
+/**
+ * Resolve the login_hint and create the pending authentication request.
+ * CIBA Core 1.0 §7.1 - §7.3
+ *
+ * Validation runs in CIBA §7.1 order inside the experimental package:
+ * client checks (public client / grant registration / delivery mode) →
+ * request parameter rejection → the one-and-only-one hint rule → scope →
+ * binding_message → requested_expiry → login_hint resolution → the
+ * per-subject pending cap → record creation.
+ *
+ * login_hint → subject resolution is the deployment's swap point: the
+ * default (wired in app.ts) treats the hint as a username of the configured
+ * user store. Replace c.set('cibaUserResolver', ...) — or the fallback
+ * below — to resolve email addresses, phone numbers, or your own ids.
+ *
+ * Never log auth_req_id (a live credential) or login_hint (PII, CIBA §15).
+ */
+export async function createBackchannelAuthenticationRequest(
+  c: any,
+  params: Record<string, string>,
+  client: TokenClientInfo,
+): Promise<object> {
+  const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+  const resolveUser =
+    c.get('cibaUserResolver') ??
+    (async (loginHint: string) => {
+      const claims = await userStore.getClaims(loginHint);
+      return claims ? { subject: claims.sub } : null;
+    });
+  return processBackchannelAuthenticationRequest({
+    params,
+    client: client as CibaClientInfo,
+    store: cibaStore,
+    config: cibaConfig,
+    refreshTokenFeatureEnabled: true,
+    resolveUser,
+  });
+}
+
+/**
+ * CIBA Core 1.0 §7.3: the authentication request acknowledgement. auth_req_id
+ * is a credential, so the response follows the token response rules of
+ * RFC 6749 §5.1 (no-store).
+ */
+export function respondBackchannelAuthentication(c: any, response: object): Response {
+  noStore(c);
+  return c.json(response);
+}
+
+/**
+ * CIBA §13 / RFC 6749 §5.2 error shape. Authentication failures are core
+ * TokenErrors (with their 401); everything the experimental package rejects
+ * is a BackchannelAuthenticationError.
+ */
+export function respondBackchannelAuthenticationError(c: any, error: unknown): Response {
+  noStore(c);
+  if (error instanceof BackchannelAuthenticationEndpointError) {
+    for (const [name, value] of Object.entries(error.response.headers ?? {})) {
+      c.header(name, value);
+    }
+    return c.json(error.response.body, error.response.status);
+  }
+  if (error instanceof BackchannelAuthenticationError) {
+    return c.json({ error: error.code, error_description: error.errorDescription }, error.statusCode);
+  }
+  if (error instanceof TokenError) {
+    if (error.wwwAuthenticate) {
+      c.header('WWW-Authenticate', error.wwwAuthenticate);
+    }
+    return c.json({ error: error.error, error_description: error.errorDescription }, error.statusCode);
+  }
+  return c.json({ error: 'server_error' }, 500);
+}
+
+/**
+ * Backchannel Authentication Endpoint
+ * CIBA Core 1.0 §7.1 / §7.2 / §7.3
+ */
+backchannelAuthenticationApp.post('/', async (c) => {
   try {
-    const tokenClientResolver = c.get('tokenClientResolver') ?? defaultTokenClientResolver;
-    const cibaStore = c.get('cibaAuthenticationRequestStore') ?? defaultCibaAuthenticationRequestStore;
+    // [parse-request] Parse the backchannel authentication request — CIBA Core 1.0 §7.1
+    const { params, authorization } = await parseBackchannelAuthenticationRequest(c);
 
-    // --- Client authentication pipeline -------------------------------------
-    // CIBA §7.1: "The Client MUST authenticate ... using the authentication
-    // method registered for its client_id" — the same pipeline the token
-    // endpoint runs, step function for step function.
-    const presentedCredentials = extractClientCredentials({
-      params,
-      authorizationHeader: authorization,
-    });
-    const client = await resolveAuthenticatedTokenClient(
-      presentedCredentials.clientId,
-      tokenClientResolver,
-    );
-    validateClientAuthMethod(client, presentedCredentials);
-    await verifyClientSecret(client, presentedCredentials.clientSecret);
+    // [authenticate-client] Authenticate the client — CIBA Core 1.0 §7.1
+    const client = await authenticateCibaClient(c, params, authorization);
 
-    // login_hint → subject resolution is the deployment's swap point: the
-    // default (wired in app.ts) treats the hint as a username of the configured
-    // user store. Replace c.set('cibaUserResolver', ...) — or the fallback
-    // below — to resolve email addresses, phone numbers, or your own ids.
-    const resolveUser =
-      c.get('cibaUserResolver') ??
-      (async (loginHint: string) => {
-        const claims = await userStore.getClaims(loginHint);
-        return claims ? { subject: claims.sub } : null;
-      });
+    // [validate-client-scope] Check the requested scope against the registration — RFC 7591 §2 / RFC 6749 §3.3
+    validateCibaClientScope(params, client);
 
-    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
-    // request those scopes, the same rule as /authorize.
-    const unregisteredScopes = findUnregisteredClientScopes(
-      (params['scope'] ?? '').split(' ').filter((scope) => scope.length > 0),
-      client.scope,
-    );
-    if (unregisteredScopes.length > 0) {
-      throw new BackchannelAuthenticationError(
-        'invalid_scope',
-        'Client is not registered for scope: ' + unregisteredScopes.join(' '),
-      );
-    }
+    // [create-request] Resolve the login_hint and create the pending request — CIBA Core 1.0 §7.1 - §7.3
+    const cibaResponse = await createBackchannelAuthenticationRequest(c, params, client);
 
-    // --- Backchannel authentication pipeline --------------------------------
-    // Validation runs in CIBA §7.1 order inside the experimental package:
-    // client checks (public client / grant registration / delivery mode) →
-    // request parameter rejection → the one-and-only-one hint rule → scope →
-    // binding_message → requested_expiry → login_hint resolution → the
-    // per-subject pending cap → record creation.
-    const response = await processBackchannelAuthenticationRequest({
-      params,
-      client: client as CibaClientInfo,
-      store: cibaStore,
-      config: cibaConfig,
-      refreshTokenFeatureEnabled: true,
-      resolveUser,
-    });
-
-    // Never log auth_req_id (a live credential) or login_hint (PII, CIBA §15).
-
-    noStore(c);
-    return c.json(response);
+    // [respond] Respond with auth_req_id (no-store) — CIBA Core 1.0 §7.3
+    return respondBackchannelAuthentication(c, cibaResponse);
   } catch (error) {
-    noStore(c);
-    if (error instanceof BackchannelAuthenticationError) {
-      // CIBA §13 / RFC 6749 §5.2 error shape. Authentication failures never
-      // reach here — they are core TokenErrors, handled below with their 401.
-      return c.json({ error: error.code, error_description: error.errorDescription }, error.statusCode);
-    }
-    if (error instanceof TokenError) {
-      const status = error.statusCode as 400 | 401;
-      if (error.wwwAuthenticate) {
-        c.header('WWW-Authenticate', error.wwwAuthenticate);
-      }
-      return c.json({ error: error.error, error_description: error.errorDescription }, status);
-    }
-    return c.json({ error: 'server_error' }, 500);
+    return respondBackchannelAuthenticationError(c, error);
   }
 });

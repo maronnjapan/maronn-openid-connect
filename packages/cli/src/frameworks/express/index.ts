@@ -4,6 +4,7 @@ import { expressApplyTemplate, webGeneratedFiles } from '../web-standard/templat
 export class ExpressGenerator implements FrameworkGenerator {
   readonly name = 'express';
   readonly displayName = 'Express';
+  readonly supportsStepSelection = true;
 
   generate(options: GeneratorOptions): GeneratedFile[] {
     return webGeneratedFiles(
@@ -12,6 +13,7 @@ export class ExpressGenerator implements FrameworkGenerator {
       options.features,
       options.scopes,
       options.db,
+      options.steps,
     );
   }
 }

@@ -22,6 +22,9 @@ export {
   resolveMaxAge,
   parseAudienceParameter,
   parseClaimsRequestParameter,
+  // OIDC Core 1.0 §3.1.2.1: acr_values の構文検証
+  validateAcrValuesParameter,
+  validateAcrValues,
   defaultIsOfflineAccessGranted,
   AuthorizationError,
   AuthorizationErrorCode,
@@ -50,6 +53,8 @@ export {
 } from './authorization-request.js';
 
 export { parseScope, findUnregisteredClientScopes } from './scope.js';
+
+export { parseAcrValues } from './acr.js';
 
 export {
   clientAllowsGrantType,
@@ -167,6 +172,7 @@ export {
   computeAtHash,
   resolveAcrAmr,
   selectRequestedAcrValues,
+  selectPreferredAcr,
   buildIdTokenPayload,
 } from './token-response.js';
 

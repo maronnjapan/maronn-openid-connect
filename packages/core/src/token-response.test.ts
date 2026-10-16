@@ -317,6 +317,20 @@ describe('buildAccessTokenPayload', () => {
       expect(second.aud).toEqual(['https://op.refresh-default.com']);
     });
   });
+
+  // RFC 9068 §2.2.1: acr (OIDC Core 1.0 §2) is an OPTIONAL authentication
+  // information claim of a JWT access token.
+  describe('acr claim (RFC 9068 §2.2.1)', () => {
+    it('should include acr when provided', () => {
+      const payload = buildAccessTokenPayload(accessTokenInput({ acr: 'urn:example:loa:2' }));
+      expect(payload.acr).toBe('urn:example:loa:2');
+    });
+
+    it('should not include acr when not provided', () => {
+      const payload = buildAccessTokenPayload(accessTokenInput());
+      expect(Object.keys(payload)).not.toContain('acr');
+    });
+  });
 });
 
 describe('createJwtAccessTokenIssuer', () => {

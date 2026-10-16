@@ -210,13 +210,14 @@ export interface RefreshTokenInfo {
   /**
    * 初回認証の Authentication Context Class Reference。
    * OIDC Core 1.0 Section 12.1 SHOULD: refresh の ID Token も同じ acr を保持。
-   * 現状 acr の判定機構は未実装 (T-009 Hold) のため通常は undefined。
+   * refresh で発行するアクセストークンの acr（RFC 9068 §2.2.1）にも同じ値を使う。
+   * 初回の発行で acr を決めなかった（要求も AcrResolver も無かった）場合は undefined。
    */
   acr?: string;
   /**
    * 初回認証の Authentication Methods References。
    * OIDC Core 1.0 Section 12.1 SHOULD: refresh の ID Token も同じ amr を保持。
-   * acr 同様、判定機構は未実装 (T-009 Hold)。
+   * 初回の発行で amr を決めなかった場合は undefined。
    */
   amr?: string[];
   /**

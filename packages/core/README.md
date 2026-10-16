@@ -37,7 +37,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `prompt` / `display` / `max_age` / `claims` / `request` などのパラメータを、`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` が機能単位で検証する。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。CLI 生成コードはこれらを個別に呼び出すため、検証ステップを消したり独自処理を足したりできる |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `prompt` / `display` / `max_age` / `claims` / `acr_values` / `request` などのパラメータを、`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter` が機能単位で検証する。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。CLI 生成コードはこれらを個別に呼び出すため、検証ステップを消したり独自処理を足したりできる |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務。OAuth 2.1 §4.1.2） |
@@ -63,11 +63,12 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 | トークンリクエスト検証のステップ関数 | `validateGrantTypeSupported`（OP 全体での grant_type サポート判定） / `resolveAuthenticatedTokenClient`（認証済みクライアントの解決） / `validateClientGrantType`（クライアント単位の grant_type 認可）。CLI 生成コードはこれらを個別に呼び出す |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
 | refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenSession` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
-| トークンレスポンス生成のステップ関数 | アクセストークンと ID トークンの発行。`buildAccessTokenPayload`（RFC 9068 の payload 構築） / `computeAtHash`（OIDC Core 1.0 §3.1.3.6） / `resolveAcrAmr`（`acr` / `amr` の解決） / `buildIdTokenPayload`（ID Token クレームの構築） / `generateIdToken`（署名）。CLI 生成コードはこれらを個別に呼び出すため、ID Token へ独自クレームを足したり、発行処理を差し替えたりしやすい |
+| トークンレスポンス生成のステップ関数 | アクセストークンと ID トークンの発行。`buildAccessTokenPayload`（RFC 9068 の payload 構築） / `computeAtHash`（OIDC Core 1.0 §3.1.3.6） / `resolveAcrAmr`（`acr` / `amr` の解決） / `selectPreferredAcr`（要求された acr 値のうち最も優先する値） / `buildIdTokenPayload`（ID Token クレームの構築） / `generateIdToken`（署名）。CLI 生成コードはこれらを個別に呼び出すため、ID Token へ独自クレームを足したり、発行処理を差し替えたりしやすい |
 | `buildAccessTokenAudience` / `buildIdTokenAudience` | audience の構築 |
 | `TokenError` / `TokenErrorCode` | トークンエンドポイントのエラー表現（OAuth 2.1 §3.2.3） |
 
-- ID トークンは RS256 で署名され、`iss` / `sub` / `aud` / `exp` / `iat` に加え、条件に応じて `auth_time` / `nonce` / `at_hash` / `acr` / `amr` を含む。`acr` / `amr` は `AcrResolver` を注入して決定する
+- ID トークンは RS256 で署名され、`iss` / `sub` / `aud` / `exp` / `iat` に加え、条件に応じて `auth_time` / `nonce` / `at_hash` / `acr` / `amr` を含む。`acr` / `amr` は `AcrResolver` を注入して決定する。`AcrResolver` を使わずに要求された値を `acr` にするなら、`selectPreferredAcr` で最も優先する値を選ぶ
+- アクセストークンにも、ID トークンと同じ `acr` を `buildAccessTokenPayload` の `acr` で載せられる（RFC 9068 §2.2.1）。`AccessTokenInfo.acr` に保存すると、`buildIntrospectionResponse` がイントロスペクションのレスポンスに `acr` を含める（RFC 9470 §6.2）
 - アクセストークンは `createJwtAccessTokenIssuer`（RFC 9068 準拠 JWT）と `createOpaqueAccessTokenIssuer`（不透明文字列。ストア検証前提で Introspection / Revocation と相性が良い）を切り替えられる
 - リフレッシュトークンは rotation 前提で、absolute lifetime（初回発行時刻起点）でのみ失効する（OAuth 2.1 §6.1）
 
@@ -161,7 +162,7 @@ await verifyPkceCodeVerifier(
 
 | 処理 | 個別に呼び出せる関数 |
 |---|---|
-| 認可パラメータの検証 | `validateSupportedResponseType`、`validateClientResponseType`、`requireAuthorizationScope`、`parseScope`、`findUnregisteredClientScopes`、`validateOpenIdScope`、`parsePromptValues`、`validatePromptValues`、`validatePromptNoneNotCombined`、`validateMaxAge`、`validateDefaultMaxAge`、`requireCodeChallenge`、`requireCodeChallengeMethod`、`validateCodeChallengeMethod`、`validateS256CodeChallenge`、`resolveRedirectUri` |
+| 認可パラメータの検証 | `validateSupportedResponseType`、`validateClientResponseType`、`requireAuthorizationScope`、`parseScope`、`findUnregisteredClientScopes`、`validateOpenIdScope`、`parsePromptValues`、`validatePromptValues`、`validatePromptNoneNotCombined`、`validateMaxAge`、`validateDefaultMaxAge`、`parseAcrValues`、`validateAcrValues`、`requireCodeChallenge`、`requireCodeChallengeMethod`、`validateCodeChallengeMethod`、`validateS256CodeChallenge`、`resolveRedirectUri` |
 | Request Object の反映 | `mergeRequestObjectParams`。署名検証済みのクレームを渡す |
 | 同意結果の適用 | `filterOfflineAccessScope`。判定済みの真偽値を渡す |
 | 認可コードの検証 | `requireAuthorizationCode`、`requireStoredAuthorizationCode`、`validateAuthorizationCodeNotUsed`、`requireTokenRequestRedirectUri`、`validateAuthorizationCodeRedirectUriMatch`、`hasPkceBinding`、`requirePkceBinding`、`requireCodeVerifier`、`validateCodeVerifier`、`verifyCodeChallenge`、`verifyPkceCodeVerifier` |
@@ -170,7 +171,7 @@ await verifyPkceCodeVerifier(
 | 認証トランザクション | `buildAuthTransaction`、`validateAuthTransactionExpiration`、`evaluateLoginFailure`、`computeAuthTransactionTtlSeconds`、`buildAuthorizationResponseParams`。保存や削除は行わない |
 | prompt=none の判定 | `requirePromptNoneSession`、`validatePromptNoneConsentGranted`。解決済みのセッションと同意の照会結果を渡す |
 | 認可コードの発行 | `buildAuthorizationCodeData`。生成済みの認可コード、grantId、現在時刻を渡す |
-| acr の要求値 | `selectRequestedAcrValues` |
+| acr の要求値 | `selectRequestedAcrValues`、`selectPreferredAcr` |
 | Introspection の活性判定 | `isAccessTokenActive`、`isRefreshTokenActive`。有効期限、使用済みフラグ、現在時刻を渡す |
 | クレームの値の照合 | `matchesRequestedClaimValue` |
 | JWT の組み立て | `buildJoseHeader`、`encodeJwtSigningInput`、`signJwt`。クレームの検証と署名鍵に合うアルゴリズムの選択は呼び出し側が行う |

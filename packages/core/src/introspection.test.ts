@@ -325,13 +325,32 @@ describe('buildIntrospectionResponse', () => {
       });
     });
 
+    // RFC 9470 §6.2: acr is an introspection response member that tells the
+    // resource server how the End-User authenticated, echoed when stored.
+    it('should echo acr when the token carries one', () => {
+      const response = buildIntrospectionResponse({
+        tokenType: 'access_token',
+        accessToken: accessToken({ expiresAt: NOW + 1000, acr: 'urn:example:loa:2' }),
+      });
+
+      expect(response).toEqual({
+        active: true,
+        scope: 'openid',
+        client_id: CLIENT_ID,
+        sub: 'alice',
+        token_type: 'Bearer',
+        exp: NOW + 1000,
+        acr: 'urn:example:loa:2',
+      });
+    });
+
     it('should omit optional claims that are not stored', () => {
       const response = buildIntrospectionResponse({
         tokenType: 'access_token',
         accessToken: accessToken({ expiresAt: NOW + 60 }),
       });
 
-      // active, scope, client_id, token_type, sub, exp は出るが iat/nbf/aud/iss/jti は無い
+      // active, scope, client_id, token_type, sub, exp は出るが iat/nbf/aud/iss/jti/acr は無い
       expect(response).toEqual({
         active: true,
         scope: 'openid',

@@ -38,7 +38,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `display` | `page` / `popup` / `touch` / `wap` のみ受理し、それ以外は拒否（OIDC Core 1.0 §3.1.2.1） |
 | `max_age` | 経過時間超過時に再認証を要求。ID Token に `auth_time` を含める |
 | `ui_locales` / `claims_locales` | 受理 |
-| `acr_values` | `AcrResolver` 注入時に ID Token の `acr` / `amr` へ反映 |
+| `acr_values` | 省略可。空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字（`"` と `\` を除く表示可能な ASCII 文字）でなければ `invalid_request`。最も優先する値（`AcrResolver` 注入時はその戻り値）を ID Token とアクセストークンの `acr` に反映し、イントロスペクションでも返す |
 | `login_hint` | ログイン画面のユーザー名欄に事前入力（OIDC Core 1.0 §3.1.2.1） |
 | `id_token_hint` | 署名・クレームを検証（OIDC Core 1.0 §3.1.2.2）。既定では OP 自身の署名鍵で検証 |
 | `claims` | JSON をパースし `userinfo` / `id_token` の個別クレーム要求に対応（OIDC Core 1.0 §5.5） |
@@ -59,7 +59,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `jwt`（既定） | RFC 9068 準拠の自己完結型 JWT。ステートレス検証可能 |
 | `opaque` | CSPRNG ベースの不透明文字列。ストア参照 / Introspection で検証し、即時失効に強い |
 
-クレーム: `iss` / `sub` / `aud` / `exp` / `iat` / `nbf` / `jti` / `scope` / `client_id`（RFC 9068 §2.2）。
+クレーム: `iss` / `sub` / `aud` / `exp` / `iat` / `nbf` / `jti` / `scope` / `client_id`（RFC 9068 §2.2）。`acr_values` を要求された（または `AcrResolver` が acr を返した）場合は、ID Token と同じ `acr`（RFC 9068 §2.2.1）も含む。
 
 `jti` は発行ごとに 128bit の CSPRNG 値を生成する。RS256（RSASSA-PKCS1-v1_5）は決定的な署名方式のため、
 `jti` のような発行ごとの可変要素が無いと、同じクレームのトークンを同じ秒に 2 回発行したときに
@@ -72,7 +72,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 
 - RS256 で署名（JOSE ヘッダーに `kid` を含む）
 - 必須クレーム: `iss` / `sub` / `aud` / `exp` / `iat`
-- 条件付きクレーム: `nonce`（リクエスト時）、`at_hash`（アクセストークン発行時）、`auth_time`（`max_age` / `claims` 要求時）、`acr` / `amr`（`AcrResolver` 注入時）
+- 条件付きクレーム: `nonce`（リクエスト時）、`at_hash`（アクセストークン発行時）、`auth_time`（`max_age` / `claims` 要求時）、`acr`（`acr_values` 要求時、または `AcrResolver` が返したとき）、`amr`（`AcrResolver` が返したとき）
 
 ### Refresh Token
 

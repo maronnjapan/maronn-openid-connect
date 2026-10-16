@@ -582,6 +582,7 @@ function validateRequestFragment(ctx: AuthorizeTemplateContext): StepFragment {
         'resolveMaxAge',
         'parseAudienceParameter',
         'parseClaimsRequestParameter',
+        'validateAcrValuesParameter',
         ...(customScopes ? ['AuthorizationError', 'AuthorizationErrorCode'] : []),
         'type AuthorizationRequestParams',
         'type ClientInfo',
@@ -648,6 +649,12 @@ ${offlineAccessStep}${customScopeStep}
   // OIDC Core 1.0 §5.5: parse the claims request parameter (userinfo / id_token).
   const claims = parseClaimsRequestParameter(effectiveParams, redirectUri, state);
 
+  // OIDC Core 1.0 §3.1.2.1: acr_values is optional, space-separated acr values
+  // in order of preference, each of visible ASCII characters other than " and \\.
+  // The token endpoint puts the acr it settles on into the ID Token and the
+  // access token (routes/token.ts).
+  const acrValues = validateAcrValuesParameter(effectiveParams, redirectUri, state);
+
   // Assemble the validated request from each step's result. This is core's
   // ValidatedAuthorizationRequest (what createAuthTransaction() takes), so
   // downstream code (transactions, authorization codes) is unaffected by
@@ -669,7 +676,7 @@ ${offlineAccessStep}${customScopeStep}
     maxAge,
     uiLocales: effectiveParams.ui_locales,
     claimsLocales: effectiveParams.claims_locales,
-    acrValues: effectiveParams.acr_values,
+    acrValues,
     loginHint: effectiveParams.login_hint,
     idTokenHint: effectiveParams.id_token_hint,
     audience,

@@ -310,6 +310,28 @@ describe('resolveFlowSelection', () => {
         'endpoint "token": step "revoke-rotated-refresh-token" must come after step "issue-refresh-token"',
       );
     });
+
+    // RFC 9068 §2.2.1: the access token carries the acr the step resolves, so
+    // the step can be left out (no acr) but not moved after the access token.
+    it('should accept leaving out the acr / amr resolution of the token endpoint', () => {
+      const doc = document();
+      const token = endpointOf(doc, 'token');
+      token.steps = token.steps.filter((s) => s.id !== 'resolve-acr-amr');
+      expect(resolveFlowSelection(doc).steps['token']).toEqual(token.steps.map((s) => s.id));
+    });
+
+    it('should reject resolving the acr after the access token that carries it', () => {
+      const doc = document();
+      const token = endpointOf(doc, 'token');
+      const ids = token.steps.map((s) => s.id);
+      const resolveAcr = ids.indexOf('resolve-acr-amr');
+      const issueAccessToken = ids.indexOf('issue-access-token');
+      [ids[resolveAcr], ids[issueAccessToken]] = [ids[issueAccessToken] as string, ids[resolveAcr] as string];
+      (token as unknown as { steps: string[] }).steps = ids;
+      expect(() => resolveFlowSelection(doc)).toThrow(
+        'endpoint "token": step "issue-access-token" reads "acr", which no earlier step produces (produced by "resolve-acr-amr")',
+      );
+    });
   });
 
   describe('steps of a fixed endpoint', () => {

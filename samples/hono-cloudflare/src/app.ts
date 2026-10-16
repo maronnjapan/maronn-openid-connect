@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import {
   createCachedSigningKeyProvider,
+  selectPreferredAcr,
   type AcrResolver,
   type ClientResolver,
   type SigningKey,
@@ -124,11 +125,20 @@ const dynamicClientRegistration = {
     : {}),
 };
 
+// OIDC Core 1.0 §2 / §3.1.2.1: when a client requests an acr via `acr_values`
+// (or `claims.id_token.acr.values`), echo the most-preferred requested value back
+// as the `acr` of the ID Token and the access token. The generated OP does that
+// without any resolver too; this one also reports `amr: ['pwd']`, the method of
+// the sample's password form (RFC 8176). The OIDF
+// oidcc-ensure-request-with-acr-values-succeeds module only requires that the
+// returned acr is one of the requested values
+// (ValidateIdTokenACRClaimAgainstAcrValuesRequest). This sample treats every
+// requested acr as satisfiable — a real deployment must map this to its actual
+// authentication context instead of echoing the request.
 const sampleAcrResolver: AcrResolver = async ({ requestedAcrValues }) => {
-  if (!requestedAcrValues) return undefined;
-  const preferred = requestedAcrValues.split(' ').find((value) => value.length > 0);
-  if (!preferred) return undefined;
-  return { acr: preferred, amr: ['pwd'] };
+  const acr = selectPreferredAcr(requestedAcrValues);
+  if (acr === undefined) return undefined;
+  return { acr, amr: ['pwd'] };
 };
 
 const app = new Hono<{ Bindings: Bindings }>();

@@ -32,6 +32,11 @@ export interface AccessTokenPayload {
   jti?: string;
   scope?: string;
   client_id?: string;
+  /**
+   * RFC 9068 §2.2.1: the Authentication Context Class Reference (OIDC Core 1.0
+   * §2) the authentication that obtained this token satisfied. OPTIONAL.
+   */
+  acr?: string;
   [key: string]: unknown;
 }
 

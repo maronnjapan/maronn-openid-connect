@@ -3,6 +3,7 @@ import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJ
 import type { AccessTokenPayload } from './access-token.js';
 import { filterClaimsByScope } from './userinfo.js';
 import type { UserClaims, ClaimsParameter } from './userinfo.js';
+import { parseAcrValues } from './acr.js';
 
 /**
  * acr / amr resolver
@@ -14,9 +15,12 @@ import type { UserClaims, ClaimsParameter } from './userinfo.js';
  *
  * - `userId`: ID Token の sub（呼び出し側で確定済みのユーザー識別子）
  * - `clientId`: トークンを受け取るクライアント識別子
- * - `requestedAcrValues`: 認可リクエストの `acr_values` （未指定時は undefined）
+ * - `requestedAcrValues`: 認可リクエストの `acr_values`（優先順の空白区切り。未指定時は
+ *   `claims.id_token.acr.values` を連結した値、どちらも無ければ undefined）
  *
- * 戻り値が `undefined` の場合は ID Token に acr / amr クレームを含めない。
+ * 戻り値の acr / amr は ID Token の `acr` / `amr` になる。アクセストークンにも acr を載せるときは、
+ * 同じ acr を {@link buildAccessTokenPayload} の `acr` に渡す（RFC 9068 §2.2.1）。
+ * 戻り値が `undefined` の場合は acr / amr クレームを含めない。
  */
 export type AcrResolver = (context: {
   userId: string;
@@ -119,11 +123,17 @@ export interface AccessTokenPayloadInput {
    * 省略時は 128bit の CSPRNG 値を生成する。既存の識別子を再利用したい場合のみ渡す。
    */
   jti?: string;
+  /**
+   * トークンを発行した認証が満たした acr（OIDC Core 1.0 §2）。同時に発行する ID Token の
+   * `acr` と同じ値を渡す。省略時は `acr` クレームを含めない。
+   */
+  acr?: string;
 }
 
 /**
  * ステップ: アクセストークンの payload を組み立てる
  * RFC 9068 §2.2: iss / sub / aud / exp / iat / jti / scope / client_id
+ * RFC 9068 §2.2.1: acr（指定時のみ）
  *
  * 実際の発行（JWT 署名 / Opaque 文字列）は {@link AccessTokenIssuer} の責務。
  * 独自クレームを載せたい場合は戻り値へ追加してから issuer に渡す。
@@ -154,6 +164,9 @@ export function buildAccessTokenPayload(
     jti: input.jti ?? generateRandomString(16),
     scope: scope.join(' '),
     client_id: clientId,
+    // RFC 9068 §2.2.1: acr は OPTIONAL な認証情報クレーム。リソースサーバーは、
+    // どの認証コンテキストで発行されたトークンかをこれで判断できる。
+    ...(input.acr !== undefined ? { acr: input.acr } : {}),
   };
 }
 
@@ -205,7 +218,7 @@ export interface ResolvedAcrAmr {
 }
 
 /**
- * ステップ: ID Token に載せる acr / amr を解決する
+ * ステップ: トークンに載せる acr / amr を解決する（ID Token は acr と amr、アクセストークンは acr）
  *
  * 優先順位:
  * 1. 呼び出し側が直接指定した acr / amr（refresh 時に §12.1 の初回値を保持するケース）
@@ -232,6 +245,19 @@ export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<Resolved
   });
 
   return { acr: result?.acr, amr: result?.amr };
+}
+
+/**
+ * 要求された acr 値のうち、最も優先する値（先頭の値）を返す。
+ * OIDC Core 1.0 §3.1.2.1: acr_values は値を優先順に並べる。
+ *
+ * AcrResolver を使わない構成で、要求された acr をそのままトークンの `acr` にするときに使う。
+ * この値は要求を信じたもので、OP が実際に行った認証を表すとは限らない。
+ * 要求が無い、または値が 1 つも無い場合は undefined を返す。
+ */
+export function selectPreferredAcr(requestedAcrValues: string | undefined): string | undefined {
+  if (requestedAcrValues === undefined) return undefined;
+  return parseAcrValues(requestedAcrValues)[0];
 }
 
 /**

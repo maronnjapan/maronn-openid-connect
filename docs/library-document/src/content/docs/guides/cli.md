@@ -306,7 +306,7 @@ maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
 
 文書で変えられるのは次の 4 つです。
 
-- **ステップを消す**：`removable: true` のステップ（`/token` の `issue-id-token` と `revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外します。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token なら `undefined`）で補います
+- **ステップを消す**：`removable: true` のステップ（`/token` の `resolve-acr-amr`、`issue-id-token`、`revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外します。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token や acr なら `undefined`）で補います
 - **ステップを並べ替える**：値のやり取りが無いステップ同士は順番を変えられます。値を作るステップより前にそれを読むステップを置く、`after` / `before` の制約に反する、といった並びはエラーになります
 - **エンドポイントを並べ替える**：`endpoints` の順番は図の並びとしてマニフェストの `endpointOrder` に記録されます。生成コードがエンドポイントをマウントする順番は変わりません
 - **機能を切り替える**：`features` の値を変えると、`--enable` / `--disable` と同じようにエンドポイントとステップが増減します。`scopes` と `db` も同様です
@@ -470,6 +470,26 @@ SSO と `prompt=none` では、**保存済み同意を引く前**にポリシー
 
 なお、カスタムスコープに対応する UserInfo クレームはありません（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集してください。
 
+## Authentication Context (acr_values)
+
+`/authorize` は、省略できるパラメータ `acr_values`（OIDC Core 1.0 §3.1.2.1）を受け付けます。
+値は空白区切りで、各値が RFC 6749 §3.3 の scope-token と同じ文字（`"` と `\` を除く、表示できる ASCII 文字）だけでできていれば通し、ほかの文字を含めば `invalid_request` をクライアントへ返します。
+空文字と空白だけの値は、省略と同じに扱います。
+
+Hono / Express / Fastify の生成物では、トークンに載せる acr を `routes/token.ts` の `resolveTokenAcrAmr()` が決めます。
+`createApp` / `applyOidc` に `acrResolver` を渡していれば、その戻り値の acr / amr を使います。
+渡していなければ、要求された値のうち最も優先する値（先頭の値）を acr にし、amr は載せません。
+`claims` パラメータの `id_token.acr.values` も、`acr_values` と同じ要求として扱います（OIDC Core 1.0 §5.5.1.1）。
+要求が無ければ acr も載せません。
+Next.js の生成物では、`_oidc-provider/provider.ts` の `acrResolver` が同じく最も優先する値を返し、amr に `pwd` を加えます。
+
+決めた acr は、ID トークンの `acr`、JWT のアクセストークンの `acr`（RFC 9068 §2.2.1）、アクセストークンの保存レコードに入ります。
+保存レコードの acr はイントロスペクションのレスポンスにも `acr`（RFC 9470 §6.2）として載るので、クレームを持たない Opaque のアクセストークンでも、リソースサーバーは acr を確かめられます。
+リフレッシュで発行するトークンは、最初に決めた acr / amr を引き継ぎます（OIDC Core 1.0 §12.1）。
+
+要求された値をそのまま acr にした場合、その acr は OP が実際に行った認証を表すとは限りません。
+ログインの方式に合った acr を返すときは、`acrResolver` を渡してください（Next.js では書き換えてください）。
+
 ## Database (--db)
 
 `--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を利用者の DB に保存します。
@@ -556,6 +576,15 @@ ID トークンは保存しません。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためです。
 private_key_jwt によるクライアント認証と authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていません。
 private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_secrets` と同じ形で方式ごとのテーブルを加えます。
+
+`access_tokens.acr` は、トークンに載せた acr（[Authentication Context](#authentication-context-acr_values) を参照）を持ち、acr を決めなかったトークンでは NULL になります。
+
+`schema.sql` の文はどれも `CREATE TABLE IF NOT EXISTS` なので、`acr` 列が加わる前の CLI で作ったデータベースに実行し直しても、列は増えません。
+そのデータベースでは、新しい生成コードでトークンを発行する前に、次の文で列を足してください。
+
+```sql
+ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
+```
 
 `transactions.status` は、認可リクエストがどこまで進んだかを表します。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進みます。
@@ -645,6 +674,10 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 期限のあるレコードは TTL を付けて書き、期限（`expired_at`、`exp`）もレコードの中に持ちます。
 ストアは読むたびにこの期限を確かめるので、期限切れのキーを遅れて消すストア（DynamoDB の TTL など）でも、期限切れのレコードは返りません。
 クライアント、ユーザー、ブラウザセッション、同意は期限を持たないので、不要になったら利用者が消してください。
+
+`access_token:<hash>` のレコードは、`--db sql` の `access_tokens.acr` と同じ `acr` を持ちます。
+`acr` が加わる前の CLI で書いたレコードはこの属性を持ちませんが、移行は要りません。
+そのレコードは acr の無いトークンとして読まれ、アクセストークンの期限が来ると消えます。
 
 `--db kv` は、`--db sql` の UPDATE や JOIN の代わりにキーを分けて動きをそろえています。
 

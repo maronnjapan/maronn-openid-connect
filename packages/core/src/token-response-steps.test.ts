@@ -13,6 +13,7 @@ import {
   buildIdTokenPayload,
   computeAtHash,
   resolveAcrAmr,
+  selectPreferredAcr,
   selectRequestedAcrValues,
 } from './token-response.js';
 import type { AcrResolver } from './token-response.js';
@@ -56,6 +57,32 @@ describe('buildAccessTokenPayload', () => {
       jti: 'fixed-jti-for-assertion',
       scope: 'openid profile',
       client_id: 'client-1',
+    });
+  });
+
+  it('should add the acr of the authentication to the payload', () => {
+    const result = buildAccessTokenPayload({
+      issuer: 'https://op.example.com',
+      subject: 'user-1',
+      clientId: 'client-1',
+      scope: ['openid'],
+      audience: ['https://op.example.com/userinfo'],
+      expiresIn: 3600,
+      issuedAt: NOW,
+      jti: 'fixed-jti-for-assertion',
+      acr: 'urn:example:loa:2',
+    });
+
+    expect(result).toEqual({
+      iss: 'https://op.example.com',
+      sub: 'user-1',
+      aud: ['https://op.example.com/userinfo'],
+      exp: NOW + 3600,
+      iat: NOW,
+      jti: 'fixed-jti-for-assertion',
+      scope: 'openid',
+      client_id: 'client-1',
+      acr: 'urn:example:loa:2',
     });
   });
 
@@ -230,5 +257,24 @@ describe('selectRequestedAcrValues', () => {
 
   it('should return undefined when neither is present', () => {
     expect(selectRequestedAcrValues(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe('selectPreferredAcr', () => {
+  // OIDC Core 1.0 §3.1.2.1: acr_values lists the values in order of preference.
+  it('should return the first requested acr value', () => {
+    expect(selectPreferredAcr('urn:example:loa:3 urn:example:loa:2')).toBe('urn:example:loa:3');
+  });
+
+  it('should skip the empty entries of repeated spaces', () => {
+    expect(selectPreferredAcr('  urn:example:loa:2 urn:example:loa:1')).toBe('urn:example:loa:2');
+  });
+
+  it('should return undefined when no acr value is requested', () => {
+    expect(selectPreferredAcr(undefined)).toBeUndefined();
+  });
+
+  it('should return undefined for a blank value', () => {
+    expect(selectPreferredAcr('   ')).toBeUndefined();
   });
 });

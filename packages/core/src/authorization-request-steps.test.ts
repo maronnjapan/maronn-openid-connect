@@ -22,6 +22,8 @@ import {
   validateDisplayParameter,
   resolveMaxAge,
   parseClaimsRequestParameter,
+  validateAcrValuesParameter,
+  validateAcrValues,
   validateSupportedResponseType,
   validateClientResponseType,
   validateClientScope,
@@ -41,6 +43,7 @@ import {
   AuthorizationErrorCode,
 } from './authorization-request.js';
 import { findUnregisteredClientScopes, parseScope } from './scope.js';
+import { parseAcrValues } from './acr.js';
 import type {
   AuthorizationRequestParams,
   ClientInfo,
@@ -468,6 +471,29 @@ describe('parseClaimsRequestParameter', () => {
   });
 });
 
+describe('validateAcrValuesParameter', () => {
+  it('should return undefined when acr_values is absent', () => {
+    const result = validateAcrValuesParameter(validParams(), redirectUri, 'abc');
+
+    expect(result).toBe(undefined);
+  });
+
+  it('should reject a value with a disallowed character with a redirectable invalid_request', () => {
+    const error = captureError(() =>
+      validateAcrValuesParameter(
+        validParams({ acr_values: 'loa2 "loa1"' }),
+        redirectUri,
+        'abc'
+      )
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
+    expect(error?.redirectUri).toBe(redirectUri);
+    expect(error?.state).toBe('abc');
+  });
+});
+
 describe('validateSupportedResponseType', () => {
   it('should accept code', () => {
     expect(validateSupportedResponseType('code', 'https://client.example/cb', 'state-1')).toBe('code');
@@ -683,6 +709,82 @@ describe('validatePromptNoneNotCombined', () => {
         state: 'state-1',
       }),
     );
+  });
+});
+
+describe('parseAcrValues', () => {
+  it('should split acr values on spaces in order of preference', () => {
+    expect(parseAcrValues('urn:example:loa:3 urn:example:loa:2')).toEqual([
+      'urn:example:loa:3',
+      'urn:example:loa:2',
+    ]);
+  });
+
+  it('should drop the empty entries of repeated spaces', () => {
+    expect(parseAcrValues(' loa2  loa1 ')).toEqual(['loa2', 'loa1']);
+  });
+
+  it('should return an empty array for a blank value', () => {
+    expect(parseAcrValues('   ')).toEqual([]);
+  });
+
+  it('should keep values with disallowed characters for the caller to validate', () => {
+    expect(parseAcrValues('"loa2"')).toEqual(['"loa2"']);
+  });
+});
+
+// acr values follow the scope-token syntax of RFC 6749 §3.3:
+// 1*( %x21 / %x23-5B / %x5D-7E ).
+describe('validateAcrValues', () => {
+  it('should accept numbers, URNs and URLs', () => {
+    expect(
+      validateAcrValues(
+        ['0', 'urn:mace:incommon:iap:silver', 'http://idmanagement.gov/ns/assurance/loa/1'],
+        'https://client.example/cb',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('should accept every visible ASCII character except double quote and backslash', () => {
+    expect(
+      validateAcrValues(["!#$%&'()*+,-./:;<=>?@[]^_`{|}~"], 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  it('should reject a value containing a double quote', () => {
+    expect(() =>
+      validateAcrValues(['loa"2'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'invalid_request',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
+  });
+
+  it('should reject a value containing a backslash', () => {
+    expect(() =>
+      validateAcrValues(['loa\\2'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(expect.objectContaining({ error: 'invalid_request', state: 'state-1' }));
+  });
+
+  it('should reject a value containing a control character', () => {
+    expect(() =>
+      validateAcrValues(['loa2\tloa1'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(expect.objectContaining({ error: 'invalid_request', state: 'state-1' }));
+  });
+
+  it('should reject a value containing a non-ASCII character', () => {
+    expect(() =>
+      validateAcrValues(['loaé'], 'https://client.example/cb', 'state-1'),
+    ).toThrow(expect.objectContaining({ error: 'invalid_request', state: 'state-1' }));
+  });
+
+  it('should reject an empty value', () => {
+    expect(() =>
+      validateAcrValues([''], 'https://client.example/cb', 'state-1'),
+    ).toThrow(expect.objectContaining({ error: 'invalid_request', state: 'state-1' }));
   });
 });
 

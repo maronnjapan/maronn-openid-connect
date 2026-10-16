@@ -2,6 +2,7 @@
  * Authentication Request（認可リクエスト）のバリデーション
  * OIDC Core 1.0 Section 3.1.2 / OAuth 2.1 に準拠
  */
+import { parseAcrValues } from './acr.js';
 import { clientAllowsRefreshTokenGrant } from './client-grant-types.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 import { isLoopbackHostname } from './loopback.js';
@@ -246,6 +247,10 @@ export interface ValidatedAuthorizationRequest {
   maxAge?: number;
   uiLocales?: string;
   claimsLocales?: string;
+  /**
+   * OIDC Core 1.0 §3.1.2.1: 要求された acr 値（優先順、空白区切り）。
+   * {@link validateAcrValuesParameter} が構文を検証し、1 つの空白で連結し直した値。
+   */
   acrValues?: string;
   loginHint?: string;
   idTokenHint?: string;
@@ -296,6 +301,14 @@ const VALID_PROMPT_VALUES = ['none', 'login', 'consent', 'select_account'] as co
 
 // OIDC Core 1.0 §3.1.2.1: `display` is OPTIONAL and constrained to these values.
 const VALID_DISPLAY_VALUES = ['page', 'popup', 'touch', 'wap'] as const;
+
+// OIDC Core 1.0 §3.1.2.1 does not define the characters of an acr value. Like
+// scope, acr_values is a space-separated list, so each value follows the
+// scope-token syntax of RFC 6749 §3.3: 1*( %x21 / %x23-5B / %x5D-7E ).
+// Besides spaces, control and non-ASCII characters, that leaves out the double
+// quote and the backslash: acr values are echoed in the acr claim and, per
+// RFC 9470 §3, in the quoted-string of a WWW-Authenticate challenge.
+const ACR_VALUE_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 
 const VALID_CODE_CHALLENGE_METHODS = ['S256'] as const;
 
@@ -1081,6 +1094,57 @@ export function validateDisplayParameter(
     );
   }
   return display;
+}
+
+/**
+ * acr_values パラメータを検証する（機能単位のステップ関数）。
+ *
+ * OIDC Core 1.0 §3.1.2.1: `acr_values` は OPTIONAL で、要求する acr 値を優先順に
+ * 空白区切りで並べる。各値の構文は {@link validateAcrValues} が検査し、外れれば
+ * invalid_request（redirectable）とする。OP がその認証コンテキストを満たせるかは
+ * 検査しない。満たした acr はトークンエンドポイントで決め、ID Token とアクセストークンの
+ * `acr` クレームに載せる。
+ *
+ * パラメータが無い場合と、値が 1 つも無い（空文字、空白のみ）場合は undefined を返す
+ * （RFC 6749 §3.1: 値の無いパラメータは省略されたものとして扱う）。値があれば、
+ * 優先順を保ったまま 1 つの空白で連結し直した文字列を返す。
+ */
+export function validateAcrValuesParameter(
+  effectiveParams: Pick<AuthorizationRequestParams, 'acr_values'>,
+  redirectUri: string,
+  state?: string,
+): string | undefined {
+  if (effectiveParams.acr_values === undefined) {
+    return undefined;
+  }
+  const acrValues = parseAcrValues(effectiveParams.acr_values);
+  if (acrValues.length === 0) {
+    return undefined;
+  }
+  validateAcrValues(acrValues, redirectUri, state);
+  return acrValues.join(' ');
+}
+
+/**
+ * acr 値がそれぞれ scope-token と同じ構文（RFC 6749 §3.3）であることを検証する。
+ * 空の値と、空白、制御文字、非 ASCII 文字、二重引用符、バックスラッシュを含む値は
+ * invalid_request とする。
+ */
+export function validateAcrValues(
+  acrValues: readonly string[],
+  redirectUri: string,
+  state?: string,
+): void {
+  for (const value of acrValues) {
+    if (!ACR_VALUE_PATTERN.test(value)) {
+      throw new AuthorizationError(
+        AuthorizationErrorCode.InvalidRequest,
+        'acr_values must be space-separated values of visible ASCII characters other than double quote and backslash',
+        redirectUri,
+        state
+      );
+    }
+  }
 }
 
 /**

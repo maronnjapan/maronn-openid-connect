@@ -235,6 +235,46 @@ describe('buildIntrospectionResponse', () => {
       jti: 'jti-1',
     });
   });
+
+  it('should add the acr of an access token issued for one', () => {
+    const result = buildIntrospectionResponse({
+      tokenType: 'access_token',
+      accessToken: { ...defaultAccessToken, acr: 'urn:example:loa:2' },
+    });
+
+    expect(result).toEqual({
+      active: true,
+      scope: 'openid profile',
+      client_id: 'client123',
+      token_type: 'Bearer',
+      sub: 'user-123',
+      exp: NOW + 3600,
+      iat: NOW - 10,
+      nbf: NOW - 10,
+      aud: ['https://op.example.com/userinfo'],
+      iss: 'https://op.example.com',
+      jti: 'jti-1',
+      acr: 'urn:example:loa:2',
+    });
+  });
+
+  it('should not add the acr of a refresh token', () => {
+    const result = buildIntrospectionResponse({
+      tokenType: 'refresh_token',
+      refreshToken: { ...defaultRefreshToken, acr: 'urn:example:loa:2' },
+    });
+
+    expect(result).toEqual({
+      active: true,
+      scope: 'openid offline_access',
+      client_id: 'client123',
+      token_type: 'refresh_token',
+      sub: 'user-123',
+      exp: NOW + 86400,
+      iat: NOW - 100,
+      iss: 'https://op.example.com',
+    });
+  });
 });
 
 describe('isAccessTokenActive', () => {

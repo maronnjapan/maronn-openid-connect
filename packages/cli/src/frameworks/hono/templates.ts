@@ -424,6 +424,13 @@ ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   consentResolver?: ConsentResolver;
   /** ${storageParts.storageDoc} */
   storage?: ProviderStores | ProviderStoresFactory;
+  /**
+   * acr / amr of the tokens (OIDC Core 1.0 §2 / §3.1.2.1 / RFC 9068 §2.2.1):
+   * return the acr / amr your login satisfied for the acr values the client
+   * requested. The ID Token carries both and the access token the acr.
+   * Omit it to put the most preferred requested acr value (acr_values) into
+   * both tokens, without amr (resolveTokenAcrAmr() in routes/token.ts).
+   */
   acrResolver?: AcrResolver;
   /**
    * Custom UI for the login / consent / error pages.
@@ -4125,9 +4132,10 @@ ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   /** ${storageParts.storageDoc} */
   storage?: ProviderStores | ProviderStoresFactory;
   /**
-   * acr / amr resolver (OIDC Core 1.0 §2 / §12.1).
-   * Host application が認証ポリシーに合わせて acr / amr を返す。
-   * 未指定の場合 ID Token に acr / amr クレームは含まれない（T-009 hold 相当）。
+   * acr / amr resolver (OIDC Core 1.0 §2 / §12.1)。
+   * Host application が認証ポリシーに合わせて acr / amr を返す。返した acr は ID Token と
+   * アクセストークン（RFC 9068 §2.2.1）の両方に載る。
+   * 未指定の場合は、要求された acr 値（acr_values）の最優先値を acr とし、amr は含めない。
    */
   acrResolver?: AcrResolver;
   /**
@@ -4253,7 +4261,8 @@ ${tokenClientResolverContext}
     c.set('accessTokenResolver', storeResolvers.accessTokenResolver);
     c.set('userClaimsResolver', storeResolvers.userClaimsResolver);
 ${refreshStorageContext}${introspectionStorageContext}${revocationStorageContext}${parStorageContext}${deviceStorageContext}${cibaStorageContext}${dcrStorageContext}${googleLoginStorageContext}
-    // T-015: acr / amr resolver (optional; undefined preserves T-009 hold behavior).
+    // T-015: acr / amr resolver (optional; without one, routes/token.ts puts the
+    // most preferred requested acr value into the tokens).
     if (options.acrResolver) {
       c.set('acrResolver', options.acrResolver);
     }

@@ -328,11 +328,32 @@ async function token(request: Request): Promise<Response> {
     // Each step below is an independent core function. Add your own ID Token
     // claims by editing idTokenPayload before it is signed.
 
+    // T-015: acr / amr of the tokens. The ID Token carries both, and the access
+    // token the acr, so a resource server can tell how the End-User
+    // authenticated (RFC 9068 §2.2.1).
+    // - authorization_code: ask acrResolver (provider.ts); acr_values and the
+    //   claims request are forwarded so it can honor them.
+    // - refresh_token: the stored acr / amr are reused so OIDC Core 1.0 §12.1
+    //   "preserve initial auth context" holds; the resolver is bypassed.
+    const { acr, amr } = await resolveAcrAmr({
+      subject,
+      clientId: validatedRequest.clientId,
+      acr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.acr : undefined,
+      amr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : undefined,
+      acrResolver: validatedRequest.grantType === 'authorization_code' ? acrResolver : undefined,
+      requestedAcrValues:
+        validatedRequest.grantType === 'authorization_code' ? validatedRequest.acrValues : undefined,
+      // OIDC Core 1.0 §5.5: the parsed claims request lets the resolver satisfy
+      // id_token member requests (e.g. acr.values).
+      claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
+    });
+
     // One timestamp for the whole response so the issued tokens and the stored
     // token metadata agree on iat / exp.
     const issuedAt = Math.floor(Date.now() / 1000);
 
-    // RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id.
+    // RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id, and the
+    // acr of the authentication (§2.2.1) when there is one.
     // Add access token claims here before the payload is signed.
     const accessTokenPayload = buildAccessTokenPayload({
       issuer: config.issuer,
@@ -342,6 +363,7 @@ async function token(request: Request): Promise<Response> {
       audience: effectiveAudience,
       expiresIn: config.accessTokenExpiresIn,
       issuedAt,
+      acr,
     });
 
     // JWT or opaque, as chosen by config.accessTokenFormat (provider.ts).
@@ -355,30 +377,10 @@ async function token(request: Request): Promise<Response> {
     // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / acr / amr / azp で再発行する。
     // （§12.2 は nonce を再発行 ID Token の保持クレームに挙げないため nonce は refresh では undefined）
     let idToken: string | undefined;
-    let resolvedAcr: string | undefined = undefined;
-    let resolvedAmr: string[] | undefined = undefined;
     if (validatedRequest.scope.includes('openid')) {
       // OIDC Core 1.0 §3.1.3.6: at_hash binds the ID Token to this access token.
       // The hash function follows the ID Token signing alg.
       const atHash = await computeAtHash(accessToken, idTokenKey.privateKey);
-
-      // T-015: acr / amr.
-      // - authorization_code: ask acrResolver (provider.ts); acr_values and the
-      //   claims request are forwarded so it can honor them.
-      // - refresh_token: the stored acr / amr are reused so OIDC Core 1.0 §12.1
-      //   "preserve initial auth context" holds; the resolver is bypassed.
-      ({ acr: resolvedAcr, amr: resolvedAmr } = await resolveAcrAmr({
-        subject,
-        clientId: validatedRequest.clientId,
-        acr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.acr : undefined,
-        amr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : undefined,
-        acrResolver: validatedRequest.grantType === 'authorization_code' ? acrResolver : undefined,
-        requestedAcrValues:
-          validatedRequest.grantType === 'authorization_code' ? validatedRequest.acrValues : undefined,
-        // OIDC Core 1.0 §5.5: the parsed claims request lets the resolver satisfy
-        // id_token member requests (e.g. acr.values).
-        claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
-      }));
 
       const idTokenPayload = buildIdTokenPayload({
         issuer: config.issuer,
@@ -390,8 +392,8 @@ async function token(request: Request): Promise<Response> {
         atHash,
         nonce,
         authTime,
-        acr: resolvedAcr,
-        amr: resolvedAmr,
+        acr,
+        amr,
       });
 
       // Add your own ID Token claims here, e.g.:
@@ -415,9 +417,9 @@ async function token(request: Request): Promise<Response> {
     };
 
     // Store the access token for the UserInfo / Introspection / Revocation
-    // endpoints. iat / nbf / audience / issuer are kept so RFC 7662
-    // introspection can echo them; grantId ties the token to its authorization
-    // grant so it is revoked with its siblings on code reuse (OAuth 2.1 §4.1.2).
+    // endpoints. iat / nbf / audience / issuer / acr are kept so introspection
+    // can echo them; grantId ties the token to its authorization grant so it is
+    // revoked with its siblings on code reuse (OAuth 2.1 §4.1.2).
     await accessTokenStore.set(tokenResponse.access_token, {
       sub: subject,
       clientId: validatedRequest.clientId,
@@ -437,6 +439,9 @@ async function token(request: Request): Promise<Response> {
       // OIDC Core 1.0 §5.5: the authorization request's claims parameter, so the
       // UserInfo endpoint can honor claims.userinfo members independently of scope.
       claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
+      // RFC 9068 §2.2.1 / RFC 9470 §6.2: the acr the token was issued with, so
+      // introspection reports it for an opaque token too.
+      acr,
     });
 
     // Store the new refresh token for rotation (OAuth 2.1 §4.3.1). grantId /
@@ -483,8 +488,9 @@ async function token(request: Request): Promise<Response> {
         authTime: rtAuthTime,
         nonce,
         // OIDC Core 1.0 §12.1: refresh で再発行する ID Token は初回認証時の acr / amr を保持する。
-        acr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.acr : resolvedAcr,
-        amr: validatedRequest.grantType === 'refresh_token' ? validatedRequest.amr : resolvedAmr,
+        // refresh_token grant では、上の resolveAcrAmr() が保存済みの値を返している。
+        acr,
+        amr,
         azp: validatedRequest.grantType === 'refresh_token' ? validatedRequest.azp : undefined,
         // online refresh token の束縛。undefined なら offline refresh token として
         // セッションから独立し、ログアウト後も使える。

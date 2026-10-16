@@ -67,6 +67,13 @@ export interface OidcProviderOptions {
   consentResolver?: ConsentResolver;
   /** Stores to use instead of db/: the SQL stores on the database db/instance.ts creates. */
   storage?: ProviderStores;
+  /**
+   * acr / amr of the tokens (OIDC Core 1.0 §2 / §3.1.2.1 / RFC 9068 §2.2.1):
+   * return the acr / amr your login satisfied for the acr values the client
+   * requested. The ID Token carries both and the access token the acr.
+   * Omit it to put the most preferred requested acr value (acr_values) into
+   * both tokens, without amr (resolveTokenAcrAmr() in routes/token.ts).
+   */
   acrResolver?: AcrResolver;
   jwksProvider?: () => Promise<JwkSet> | JwkSet;
   /**

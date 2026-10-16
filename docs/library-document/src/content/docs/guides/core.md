@@ -27,7 +27,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務） |
@@ -53,7 +53,7 @@ core の純関数            ← このパッケージ
 | 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
 | refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenSession` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
-| トークンレスポンス生成のステップ関数 | アクセストークンと ID トークンの発行。`buildAccessTokenPayload` / `computeAtHash` / `resolveAcrAmr` / `buildIdTokenPayload` / `generateIdToken` |
+| トークンレスポンス生成のステップ関数 | アクセストークンと ID トークンの発行。`buildAccessTokenPayload` / `computeAtHash` / `resolveAcrAmr` / `selectPreferredAcr` / `buildIdTokenPayload` / `generateIdToken`。`buildAccessTokenPayload` の `acr` を指定すると、アクセストークンにも ID トークンと同じ `acr` が入る（RFC 9068 §2.2.1） |
 | `createJwtAccessTokenIssuer` / `createOpaqueAccessTokenIssuer` | アクセストークン形式（JWT / Opaque）の切り替え |
 
 ### UserInfo Endpoint
@@ -78,7 +78,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| Introspection のステップ関数 | RFC 7662 準拠のトークン照会（クライアント認証必須）。`requireIntrospectionToken` / `requireIntrospectionClient` / `requireConfidentialIntrospectionCaller` / `resolveIntrospectionToken` / `isIntrospectionTokenActive` / `buildIntrospectionResponse` |
+| Introspection のステップ関数 | RFC 7662 準拠のトークン照会（クライアント認証必須）。`requireIntrospectionToken` / `requireIntrospectionClient` / `requireConfidentialIntrospectionCaller` / `resolveIntrospectionToken` / `isIntrospectionTokenActive` / `buildIntrospectionResponse`。`AccessTokenInfo.acr` を保存したアクセストークンには `acr` を返す（RFC 9470 §6.2） |
 | Revocation のステップ関数 | RFC 7009 準拠のトークン失効（refresh 失効時は同一 grant のアクセストークンも cascade 失効）。`requireRevocationToken` / `requireRevocationClient` / `resolveRevocationTarget` / `validateRevocationTokenClient` / `revokeResolvedToken` / `revokeGrantAccessTokens` |
 
 ### Errors / Utilities

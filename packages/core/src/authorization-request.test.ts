@@ -34,6 +34,7 @@ import {
   resolveMaxAge,
   parseAudienceParameter,
   parseClaimsRequestParameter,
+  validateAcrValuesParameter,
   AuthorizationError,
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
@@ -498,16 +499,17 @@ describe('resolveRequestObjectParams', () => {
       const scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
       const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
       const maxAge = resolveMaxAge(effectiveParams, roClient, redirectUri, state);
+      const acrValues = validateAcrValuesParameter(effectiveParams, redirectUri, state);
 
       expect(redirectUri).toBe(REDIRECT_URI);
       expect(state).toBe('ro-state');
       expect(scope).toEqual(['openid', 'profile']);
       expect(prompt).toEqual(['login', 'consent']);
       expect(maxAge).toBe(120);
-      // nonce / acr_values / login_hint は検証ステップを持たず、有効パラメータの値がそのまま使われる
+      expect(acrValues).toBe('urn:mace:incommon:iap:silver');
+      // nonce / login_hint は検証ステップを持たず、有効パラメータの値がそのまま使われる
       expect(effectiveParams).toMatchObject({
         nonce: 'ro-nonce',
-        acr_values: 'urn:mace:incommon:iap:silver',
         login_hint: 'alice@example.org',
       });
     });
@@ -2174,6 +2176,101 @@ describe('resolveMaxAge', () => {
       // registered value is never consulted (OIDC Core 1.0 §3.1.2.1).
       expect(maxAge).toBe(120);
     });
+  });
+});
+
+// OIDC Core 1.0 §3.1.2.1: acr_values is OPTIONAL. It is a space-separated
+// string of requested acr values, in order of preference. Each value follows
+// the scope-token syntax of RFC 6749 §3.3: 1*( %x21 / %x23-5B / %x5D-7E ).
+describe('validateAcrValuesParameter', () => {
+  it('should leave acr_values undefined when the parameter is omitted', () => {
+    const acrValues = validateAcrValuesParameter(validParams(), REDIRECT_URI, STATE);
+
+    expect(acrValues).toBeUndefined();
+  });
+
+  // RFC 6749 §3.1: parameters sent without a value are treated as omitted.
+  it('should leave acr_values undefined when the parameter is empty', () => {
+    const acrValues = validateAcrValuesParameter(validParams({ acr_values: '' }), REDIRECT_URI, STATE);
+
+    expect(acrValues).toBeUndefined();
+  });
+
+  it('should leave acr_values undefined when the parameter holds only spaces', () => {
+    const acrValues = validateAcrValuesParameter(validParams({ acr_values: '   ' }), REDIRECT_URI, STATE);
+
+    expect(acrValues).toBeUndefined();
+  });
+
+  it('should accept a single acr value', () => {
+    const acrValues = validateAcrValuesParameter(
+      validParams({ acr_values: 'urn:mace:incommon:iap:silver' }),
+      REDIRECT_URI,
+      STATE,
+    );
+
+    expect(acrValues).toBe('urn:mace:incommon:iap:silver');
+  });
+
+  it('should keep the requested values in order of preference', () => {
+    const acrValues = validateAcrValuesParameter(
+      validParams({ acr_values: 'urn:example:loa:3 urn:example:loa:2 0' }),
+      REDIRECT_URI,
+      STATE,
+    );
+
+    expect(acrValues).toBe('urn:example:loa:3 urn:example:loa:2 0');
+  });
+
+  it('should join the values with single spaces when the request repeats spaces', () => {
+    const acrValues = validateAcrValuesParameter(
+      validParams({ acr_values: ' loa2   loa1  ' }),
+      REDIRECT_URI,
+      STATE,
+    );
+
+    expect(acrValues).toBe('loa2 loa1');
+  });
+
+  it('should reject a value containing a double quote with invalid_request', () => {
+    const error = captureStepError(() =>
+      validateAcrValuesParameter(validParams({ acr_values: 'loa2 "loa1"' }), REDIRECT_URI, STATE),
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
+    expect(error?.errorDescription).toBe(
+      'acr_values must be space-separated values of visible ASCII characters other than double quote and backslash',
+    );
+  });
+
+  it('should reject values separated by a tab with invalid_request', () => {
+    const error = captureStepError(() =>
+      validateAcrValuesParameter(validParams({ acr_values: 'loa2\tloa1' }), REDIRECT_URI, STATE),
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
+  });
+
+  it('should reject a value containing a non-ASCII character with invalid_request', () => {
+    const error = captureStepError(() =>
+      validateAcrValuesParameter(validParams({ acr_values: 'niveauélevé' }), REDIRECT_URI, STATE),
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
+  });
+
+  it('should return a redirectable error with state for a malformed acr_values', () => {
+    const error = captureStepError(() =>
+      validateAcrValuesParameter(validParams({ acr_values: 'loa\\2' }), REDIRECT_URI, STATE),
+    );
+
+    expect(error).toBeInstanceOf(AuthorizationError);
+    expect(error?.redirectable).toBe(true);
+    expect(error?.redirectUri).toBe(REDIRECT_URI);
+    expect(error?.state).toBe(STATE);
   });
 });
 

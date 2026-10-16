@@ -77,6 +77,12 @@ export interface AccessTokenInfo {
   /** トークンの一意識別子。JWT の jti、Opaque は任意 */
   jti?: string;
   /**
+   * トークンを発行した認証が満たした acr（OIDC Core 1.0 §2 / RFC 9068 §2.2.1）。
+   * ID Token の `acr` と同じ値。Opaque トークンはクレームを持たないため、ここに保存した値を
+   * イントロスペクションが返す（RFC 9470 §6.2）。
+   */
+  acr?: string;
+  /**
    * Authorization Request の `claims` parameter（OIDC Core 1.0 §5.5）。
    * UserInfo route が `applyRequestedClaims()` へ渡せるよう、
    * 認可コード発行時に解決した claims をアクセストークン metadata として保存する。

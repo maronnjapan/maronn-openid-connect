@@ -80,6 +80,8 @@ export type IntrospectionResponse =
       aud?: string | string[];
       iss?: string;
       jti?: string;
+      /** RFC 9470 §6.2: トークンを発行した認証が満たした acr（OIDC Core 1.0 §2） */
+      acr?: string;
     };
 
 /**
@@ -150,6 +152,9 @@ function buildAccessTokenResponse(info: AccessTokenInfo): IntrospectionResponse 
   }
   if (info.issuer !== undefined) res.iss = info.issuer;
   if (info.jti !== undefined) res.jti = info.jti;
+  // RFC 9470 §6.2: acr is an introspection response member, so a resource server
+  // can check how the End-User authenticated without a self-contained token.
+  if (info.acr !== undefined) res.acr = info.acr;
   return res;
 }
 
@@ -286,7 +291,8 @@ export function isIntrospectionTokenActive(
 /**
  * ステップ 5: active なトークンの RFC 7662 §2.2 レスポンスクレームを組み立てる
  *
- * 保存されていない optional クレーム（iat / nbf / aud / iss / jti）は省略する。
+ * 保存されていない optional クレーム（iat / nbf / aud / iss / jti、アクセストークンの
+ * acr（RFC 9470 §6.2））は省略する。
  * inactive なトークンには使わず、`INACTIVE_INTROSPECTION_RESPONSE` を返すこと。
  */
 export function buildIntrospectionResponse(

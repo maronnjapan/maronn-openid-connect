@@ -32,6 +32,7 @@ function openDatabase(): SqlDatabase {
   const sqlite = new DatabaseSync(databasePath === ':memory:' ? databasePath : resolve(databasePath));
   sqlite.exec('PRAGMA journal_mode = WAL');
   sqlite.exec(SCHEMA_SQL);
+  addAccessTokenAcrColumn(sqlite);
   return {
     async all<Row>(statement: SqlStatement): Promise<Row[]> {
       return sqlite.prepare(statement.sql).all(...statement.params) as Row[];
@@ -41,4 +42,16 @@ function openDatabase(): SqlDatabase {
       return { changes: Number(result.changes) };
     },
   };
+}
+
+/**
+ * Adds access_tokens.acr to a database created before the column was part of
+ * schema.sql (a Fly.io volume, an existing .data/oidc.sqlite): CREATE TABLE IF
+ * NOT EXISTS leaves an existing table as it is.
+ */
+function addAccessTokenAcrColumn(sqlite: DatabaseSync): void {
+  const columns = sqlite.prepare('PRAGMA table_info(access_tokens)').all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'acr')) {
+    sqlite.exec('ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000)');
+  }
 }

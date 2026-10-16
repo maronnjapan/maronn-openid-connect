@@ -18,6 +18,7 @@ import {
   createCachedSigningKeyProvider,
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
+  selectPreferredAcr,
   selectSigningKeyByAlg,
   signingKeysToJwkSet,
   type AccessTokenIssuer,
@@ -124,18 +125,19 @@ export const accessTokenIssuer: AccessTokenIssuer =
 export const corsOrigins: string | readonly string[] = process.env.OIDC_CORS_ORIGINS ?? config.issuer;
 
 /**
- * acr / amr of the ID Token (OIDC Core 1.0 §2 / §3.1.2.1).
+ * acr / amr of the tokens (OIDC Core 1.0 §2 / §3.1.2.1): the ID Token carries
+ * both, and the access token the acr (RFC 9068 §2.2.1).
  *
  * This sample echoes the most-preferred requested acr_values entry back, which
  * is what the OIDF oidcc-ensure-request-with-acr-values-succeeds module checks.
+ * Without acr_values (or claims.id_token.acr.values) the tokens carry no acr.
  * A real deployment must map this to its actual authentication context instead
  * of trusting the request.
  */
 export const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
-  if (!requestedAcrValues) return undefined;
-  const preferred = requestedAcrValues.split(' ').find((value) => value.length > 0);
-  if (!preferred) return undefined;
-  return { acr: preferred, amr: ['pwd'] };
+  const acr = selectPreferredAcr(requestedAcrValues);
+  if (acr === undefined) return undefined;
+  return { acr, amr: ['pwd'] };
 };
 
 /**

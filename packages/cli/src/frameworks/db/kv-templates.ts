@@ -307,6 +307,13 @@ export interface AccessTokenRecord {
   client_id: string;
   /** Space-separated. */
   scope: string | null;
+  /**
+   * The acr claim of the token (RFC 9068, OpenID Connect Core 1.0): the
+   * authentication context class it was issued for, the same as the acr of its
+   * ID Token. null when the token has none, as when the authorization request
+   * asked for no acr (acr_values).
+   */
+  acr: string | null;
   /** The transaction of the code the grant came from. null for the device flow and CIBA. */
   transaction_id: string | null;
   grant_id: string | null;
@@ -651,7 +658,7 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
 
   const accessTokenStore: AccessTokenStorage = {
     async set(token, info) {
-      const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, ...payload } = info;
+      const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, acr, ...payload } = info;
       const tokenHash = await hashKey(token);
       // A token issued without a jti is kept under its hash.
       const id = jti ?? tokenHash;
@@ -672,6 +679,7 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
         iss: issuer ?? null,
         client_id: clientId,
         scope: joinScope(scope),
+        acr: acr ?? null,
         transaction_id: grant?.transaction_id ?? null,
         grant_id: grantId ?? null,
         payload,
@@ -703,6 +711,7 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
       if (record.id !== tokenHash) info.jti = record.id;
       if (record.iat !== null) info.iat = record.iat;
       if (record.iss !== null) info.issuer = record.iss;
+      if (record.acr !== null) info.acr = record.acr;
       if (record.grant_id !== null) info.grantId = record.grant_id;
       return info;
     },
@@ -1011,7 +1020,16 @@ type OtherRequestParameters = Omit<
 >;
 
 /** The values of an AccessTokenInfo with a field of their own in the access token record. */
-type AccessTokenField = 'sub' | 'scope' | 'clientId' | 'expiresAt' | 'iat' | 'issuer' | 'jti' | 'grantId';
+type AccessTokenField =
+  | 'sub'
+  | 'scope'
+  | 'clientId'
+  | 'expiresAt'
+  | 'iat'
+  | 'issuer'
+  | 'jti'
+  | 'grantId'
+  | 'acr';
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);

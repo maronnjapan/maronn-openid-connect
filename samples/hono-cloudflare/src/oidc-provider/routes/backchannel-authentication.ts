@@ -14,6 +14,7 @@ import {
   cibaAuthenticationRequestStore as defaultCibaAuthenticationRequestStore,
   userStore,
 } from '../store.js';
+import { verifyPrivateKeyJwt } from '../client-auth.js';
 import {
   BackchannelAuthenticationError,
   processBackchannelAuthenticationRequest,
@@ -176,7 +177,11 @@ export async function authenticateCibaClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(client, presentedCredentials);
-  await verifyClientSecret(client, presentedCredentials.clientSecret);
+  if (presentedCredentials.method === 'private_key_jwt') {
+    await verifyPrivateKeyJwt(c, client, presentedCredentials, '/backchannel_authentication');
+  } else {
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
+  }
   return client;
 }
 

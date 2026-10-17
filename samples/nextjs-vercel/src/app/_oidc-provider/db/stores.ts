@@ -27,6 +27,10 @@
  *    and delete ends it with a transaction_result key that put never changes,
  *    so an ended transaction cannot start again: failed, then code_issued if a
  *    code is issued from it, and token_issued once that code is exchanged.
+ * 9. clientAssertionJtiStore.markUsed claims the client_assertion_jti key with
+ *    setIfAbsent and is true only when it took the key. A get followed by a
+ *    set lets two requests carrying the same client assertion both pass
+ *    (OIDC Core 1.0 §9: an assertion MUST only be used once).
  *
  * A few records are read, changed and written back: a grant, a consent, and
  * the status of a transaction in progress. Two requests that change the same
@@ -44,6 +48,7 @@ import {
   type AuthTransactionStore,
   type AuthorizationCodeData,
   type AuthorizationCodeInfo,
+  type ClientAssertionJtiStore,
   type RefreshTokenInfo,
   type UserClaims,
 } from '@maronn-openid-connect/core';
@@ -628,6 +633,16 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
     },
   };
 
+  // Not in the ER model: the client assertions (private_key_jwt) the OP
+  // accepted. setIfAbsent takes the key only while no request has used the
+  // same assertion, and the key expires with the assertion.
+  const clientAssertionJtiStore: ClientAssertionJtiStore = {
+    async markUsed({ clientId, jti, expiresAt }) {
+      const jtiHash = await hashKey(JSON.stringify([clientId, jti]));
+      return db.setIfAbsent(keys.clientAssertionJti(jtiHash), MARKER, ttlUntil(expiresAt));
+    },
+  };
+
   return {
     transactionStore,
     authCodeStore,
@@ -638,6 +653,7 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
     consentStore,
     userStore,
     googleLoginNonceStore,
+    clientAssertionJtiStore,
   };
 }
 

@@ -22,6 +22,7 @@ import {
   RevocationError,
   TokenError,
 } from '@maronn-openid-connect/core';
+import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import { clientResolver, resolvers } from '../_oidc-provider/provider';
 import {
   clientCors,
@@ -63,7 +64,11 @@ async function revoke(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(revokingClient, presentedCredentials);
-    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+    if (presentedCredentials.method === 'private_key_jwt') {
+      await verifyPrivateKeyJwt(revokingClient, presentedCredentials, '/revoke');
+    } else {
+      await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+    }
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Revocation pipeline ------------------------------------------------

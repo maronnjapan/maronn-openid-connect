@@ -30,6 +30,7 @@ import {
   verifyClientSecret,
   type AuthorizationRequestParams,
   type ClientResolver,
+  type TokenClientInfo,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import { PAR_REQUEST_URI_PREFIX } from './store.js';
@@ -109,6 +110,8 @@ export interface PushedAuthorizationRequestContext {
   authorizationHeader?: string;
   /** クライアント解決。認可リクエスト検証とクライアント認証の両方に使う */
   clientResolver: ClientResolver & TokenClientResolver;
+  /** private_key_jwt のクライアントアサーションを検証する関数（{@link authenticateParClient}） */
+  verifyClientAssertion?: ClientAssertionVerifier;
   store: PushedAuthorizationRequestStore;
   /** {@link validatePushedAuthorizationParams} へ渡すオプション */
   validationOptions: PushedAuthorizationValidationOptions;
@@ -170,6 +173,16 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
 }
 
 /**
+ * private_key_jwt（OIDC Core 1.0 §9）のクライアントアサーションを検証する関数。
+ * 署名・クレーム・jti の再利用を検証し、通らなければ core の TokenError（invalid_client）を投げる。
+ * 呼び出し側は core の verifyClientAssertion と rejectReplayedClientAssertion で組む。
+ */
+export type ClientAssertionVerifier = (
+  client: TokenClientInfo,
+  clientAssertion: string,
+) => Promise<void>;
+
+/**
  * ステップ 2: クライアントを認証する（RFC 9126 §2.1: token endpoint と同一規則）。
  *
  * 資格情報の抽出・多重方式の判定・検証はすべて core の
@@ -184,6 +197,8 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
  * - RFC 9126 §2.1 で必須の認可パラメータとしてボディに入る `client_id` は、
  *   `Basic` 併用時に core が Basic 側の client_id との一致を検証する
  *   （RFC 9126 §2.2: request_uri は pushed request を送ったクライアントに紐付く）
+ * - `client_assertion` による private_key_jwt は `verifyClientAssertion` で検証する。
+ *   渡さなければ、client_assertion を提示したリクエストは invalid_client で拒否する
  *
  * @returns 認証されたクライアントID
  * @throws {ParError} invalid_client / invalid_request
@@ -192,12 +207,19 @@ export async function authenticateParClient(context: {
   params: Record<string, string>;
   authorizationHeader?: string;
   clientResolver: TokenClientResolver;
+  verifyClientAssertion?: ClientAssertionVerifier;
 }): Promise<string> {
   const { params, clientResolver } = context;
   return runClientAuthentication({
-    params: { client_id: params['client_id'], client_secret: params['client_secret'] },
+    params: {
+      client_id: params['client_id'],
+      client_secret: params['client_secret'],
+      client_assertion: params['client_assertion'],
+      client_assertion_type: params['client_assertion_type'],
+    },
     authorizationHeader: context.authorizationHeader ?? '',
     clientResolver,
+    verifyClientAssertion: context.verifyClientAssertion,
   });
 }
 
@@ -208,6 +230,7 @@ async function runClientAuthentication(context: {
   params: Record<string, string | undefined>;
   authorizationHeader: string;
   clientResolver: TokenClientResolver;
+  verifyClientAssertion: ClientAssertionVerifier | undefined;
 }): Promise<string> {
   try {
     const presented = extractClientCredentials({
@@ -216,7 +239,14 @@ async function runClientAuthentication(context: {
     });
     const client = await resolveAuthenticatedTokenClient(presented.clientId, context.clientResolver);
     validateClientAuthMethod(client, presented);
-    await verifyClientSecret(client, presented.clientSecret);
+    if (presented.method === 'private_key_jwt') {
+      if (!context.verifyClientAssertion || presented.clientAssertion === undefined) {
+        throw new TokenError(TokenErrorCode.InvalidClient, 'private_key_jwt is not supported by this endpoint');
+      }
+      await context.verifyClientAssertion(client, presented.clientAssertion);
+    } else {
+      await verifyClientSecret(client, presented.clientSecret);
+    }
     return presented.clientId;
   } catch (error) {
     throw toParError(error);
@@ -340,6 +370,7 @@ export async function handlePushedAuthorizationRequest(
     params: context.params,
     authorizationHeader: context.authorizationHeader,
     clientResolver: context.clientResolver,
+    verifyClientAssertion: context.verifyClientAssertion,
   });
 
   // client_id を認証済みの値に正規化してから検証する（ボディ省略時にも成立させる）。

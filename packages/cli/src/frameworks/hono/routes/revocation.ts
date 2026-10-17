@@ -78,6 +78,7 @@ const AUTHENTICATE_CLIENT: StepFragment = {
   imports: {
     core: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
     resolvers: ['tokenClientResolver as defaultTokenClientResolver'],
+    modules: { '../client-auth.js': ['verifyPrivateKeyJwt'] },
   },
   definition: `/**
  * Authenticate the caller — the same steps as the token endpoint
@@ -99,7 +100,11 @@ export async function authenticateRevocationClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(revokingClient, presentedCredentials);
-  await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+  if (presentedCredentials.method === 'private_key_jwt') {
+    await verifyPrivateKeyJwt(c, revokingClient, presentedCredentials, '/revoke');
+  } else {
+    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+  }
   return presentedCredentials.clientId;
 }`,
   call: { bind: 'authenticatedClientId', expression: 'await authenticateRevocationClient(c, params, authorization)' },

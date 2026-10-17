@@ -88,6 +88,7 @@ oidc-provider/
 ├── config.ts             # ProviderConfig・クライアント登録（既定値はローカル検証専用）
 ├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
 ├── resolvers.ts          # セッション・同意状態の resolver
+├── client-auth.ts        # private_key_jwt のクライアント認証（クライアントを認証するエンドポイントが共有する）
 ├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
 ├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
 ├── routes/               # API ルーティング（ロジック本体。処理の段階ごとに export 関数 1 つ。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
@@ -119,7 +120,7 @@ Hono の出力は TSX 前提で生成される。画面のマークアップ（`
 | パス | 役割 |
 |---|---|
 | `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応） |
-| `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
+| `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
 | `/login`, `/consent` | ログイン・同意画面。ルート（GET / POST）と描画は `pages/`、認証・同意の判断は `routes/` の関数が担当する（差し替え可能なデフォルト UI 付き。Next.js はページと Server Action） |
 | `/login/google` | Sign in with Google の `login_uri`（Google が ID トークンを POST する先。`google-login` 有効時） |
@@ -266,6 +267,7 @@ src/app/
 ├── _oidc-provider/           # 全エンドポイントが共有する部品（private folder なのでルーティングされない）
 │   ├── provider.ts           # 設定・クライアント・署名鍵・ストアの組み立て。プロジェクトへ組み込むときに編集する場所
 │   ├── http.ts               # CORS・キャッシュ禁止の JSON 応答・パラメータ重複の検出・エラーページへのリダイレクトなど、Route Handler と Server Action 共通の部品
+│   ├── client-auth.ts        # private_key_jwt のクライアント認証（クライアントを認証する Route Handler が共有する）
 │   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションを Cookie から取得（無ければ notFound()）
 │   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
 │   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
@@ -416,6 +418,91 @@ Next.js の生成物では、`_oidc-provider/provider.ts` の `acrResolver` が�
 要求された値をそのまま acr にした場合、その acr は OP が実際に行った認証を表すとは限らない。
 ログインの方式に合った acr を返すときは、`acrResolver` を渡す（Next.js では書き換える）。
 
+## private_key_jwt によるクライアント認証
+
+生成 OP は、client_secret_basic と client_secret_post に加えて、private_key_jwt（OIDC Core 1.0 §9、RFC 7523 §3）でクライアントを認証できる。
+クライアントは自分の秘密鍵で JWT に署名して `client_assertion` に入れ、OP はそのクライアントが登録した公開鍵で署名を検証する。
+受け付けるのは `/token`、`/introspect`、`/revoke` と、生成していれば PAR、Device Authorization、CIBA のエンドポイントである。
+検証はどのエンドポイントでも `client-auth.ts`（Next.js は `_oidc-provider/client-auth.ts`）の `verifyPrivateKeyJwt()` が行う。
+Discovery メタデータは、トークン、イントロスペクション、失効の各エンドポイントについて、認証方式の一覧（`token_endpoint_auth_methods_supported` など）に `private_key_jwt` を、署名アルゴリズムの一覧（`token_endpoint_auth_signing_alg_values_supported` など）に受け付けるアルゴリズムを載せる（RFC 8414 §2）。
+
+1 つのクライアントに、シークレットの方式（client_secret_basic か client_secret_post のどちらか）と private_key_jwt を両方登録できる。
+OP はリクエストが送った資格情報から方式を決め、登録していない方式なら `invalid_client` で拒否する。
+Authorization ヘッダー、`client_secret`、`client_assertion` のうち 2 つ以上を同時に送ったリクエストは、`invalid_request` で拒否する。
+
+OP は、次の条件をすべて満たすアサーションだけを受け付ける。
+
+- 署名を、クライアントが登録した鍵のどれかで検証できる。ヘッダーに `kid` があれば同じ `kid` の鍵を使い、その `kid` の鍵が無ければ `kid` の無い鍵を使う
+- `alg` が RS256、RS384、RS512、ES256、ES384、ES512 のどれかである。RSA の鍵は 2048 ビット以上とする（RFC 7518 §3.3）
+- ヘッダーに鍵を指す `jku`、`jwk`、`x5u`、`x5c` と、`crit` が無い。`typ` は省略するか、`JWT` か `client-authentication+jwt` にする
+- `iss` と `sub` が client_id である
+- `aud` の値がすべて、issuer、トークンエンドポイントの URL、リクエストを受けたエンドポイントの URL のどれかである
+- `exp` を過ぎておらず、`nbf` と `iat` が未来の時刻でない。どれも 60 秒までの時計のずれを許す
+- `jti` があり、そのクライアントがまだ使っていない値である
+
+使った `jti` は、アサーションの期限（`exp` に許容する時計のずれを足した時刻）まで覚えておく。
+保存先は、`--db sql` なら `client_assertion_jtis` テーブル、`--db kv` なら `client_assertion_jti:<hash>` のキーで、`--db` を付けなければ `store.ts` のストアである。
+
+`aud` に載せてよい値は、`client-auth.ts` の `clientAssertionAudiences()` が決める。
+OIDC Core 1.0 §9 は、トークンエンドポイントの URL を `aud` にするよう求めている（SHOULD）。
+一方、draft-ietf-oauth-rfc7523bis は issuer だけを `aud` にするよう求め、エンドポイントの URL を禁じている（CVE-2025-27370 への対策）。
+生成物はどちらに従うクライアントも受け付ける。
+草案に厳密に従うときは、`clientAssertionAudiences()` が issuer だけを返すように書き換える。
+そうすると、トークンエンドポイントの URL を `aud` にするクライアントは拒否される。
+
+### 公開鍵の登録
+
+OP は、クライアントの鍵を発行する機能も、公開鍵を登録する API や画面も持たない。
+鍵の組はクライアントが自分で作り、運用者が公開鍵を DB に書き込む。
+`--db` 付きの生成物はリクエストのたびに DB からクライアントを読むので、書き込んだ変更は次のリクエストから効き、OP を再起動する必要は無い。
+
+`--db sql` では、`client_auths` に private_key_jwt の行を、`client_jwks` に公開鍵の行を足す。
+`client_jwks` の 1 行は、公開鍵 1 つの JWK（RFC 7517）を JSON で持つ。
+
+```sql
+INSERT INTO client_auths (id, client_id, client_auth_type)
+  VALUES ('my-client:private_key_jwt', 'my-client', 'private_key_jwt');
+INSERT INTO client_jwks (id, client_id, jwk)
+  VALUES ('my-client:2026-10', 'my-client', '{"kty":"RSA","kid":"2026-10","alg":"RS256","n":"...","e":"AQAB"}');
+```
+
+`client_jwks` には公開鍵だけを入れ、`d` などの秘密鍵のメンバーを持つ JWK は入れない。
+シークレットの方式から移るときは、クライアントが JWT の署名に切り替え終わるまで client_secret_basic（または client_secret_post）の行を残す。
+切り替え終わったら、その行と、同じ `id` を持つ `client_secrets` の行を消す。
+鍵を入れ替えるときは、新しい鍵の行を先に足し、クライアントが新しい鍵で署名し始めてから古い鍵の行を消す。
+1 つのクライアントにはいくつでも鍵を登録できるので、入れ替えの途中はどちらの鍵の署名も通る。
+
+`--db kv` では、`client:<client_id>` のレコードの `private_key_jwt` を `true` にし、`client_jwks:<client_id>` に `{ "keys": [ <JWK>, ... ] }` を書く。
+鍵を足すときも消すときも、この `keys` を書き換える。
+
+登録した鍵は、クライアントの署名付き Request Object の検証にも使う（OIDC Core 1.0 §6.3.2）。
+private_key_jwt の行（`--db kv` ではレコードの `private_key_jwt`）を足さずに鍵だけを登録すると、そのクライアントは private_key_jwt では認証できないが、署名付き Request Object は送れる。
+
+`--db` を付けない生成物では、`config.ts` で登録するクライアント（Next.js は `OIDC_CLIENTS_JSON` の各クライアント）の `tokenEndpointAuthMethods` に `'private_key_jwt'` を加え、`jwks` に公開鍵を書く。
+この登録は起動時に読むので、鍵を足したり消したりするには OP を再起動する。
+再起動せずに鍵を変えたいときは、`--db` で生成するか、リクエストのたびに鍵を読む `ClientResolver` を使う（Hono / Express / Fastify は `clientResolver` オプションに渡し、Next.js は `_oidc-provider/provider.ts` の `clientResolver` を書き換える）。
+
+`registerClient()` は、渡したクライアントの private_key_jwt と `jwks` の鍵を DB に足すが、DB にある private_key_jwt の登録や鍵を消すことはない。
+起動のたびに `registerClient()` で登録し直しても、運用中に DB へ足した鍵は残る。
+鍵や private_key_jwt の登録を消すときは、DB から消すのに加えて、`registerClient()` に渡すクライアントからも外す。
+外さなければ、次の登録で足し直される。
+
+### 以前の CLI で作ったデータベース
+
+`schema.sql` の文はどれも `CREATE TABLE IF NOT EXISTS` なので、private_key_jwt に対応する前の CLI で作ったデータベースに実行し直すと、`client_jwks` と `client_assertion_jtis` は加わるが、`client_auths.client_auth_type` の CHECK は古いまま残る。
+その CHECK は private_key_jwt の行を拒否するので、private_key_jwt の行を足す前に広げる。
+PostgreSQL では、次の文で CHECK を置き換える。
+
+```sql
+ALTER TABLE client_auths DROP CONSTRAINT client_auths_client_auth_type_check;
+ALTER TABLE client_auths ADD CONSTRAINT client_auths_client_auth_type_check
+  CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt'));
+```
+
+SQLite と Cloudflare D1 は CHECK を変更できないので、`client_auths` を作り直す。
+`client_secrets` は `client_auths` を外部キーで参照しているため、作り直す間に `client_secrets` の行が消えないようにする必要がある。
+手順は、`samples/express-flyio`（node:sqlite）と `samples/hono-cloudflare`（D1）の `src/oidc-provider/db/instance.ts` にある `allowPrivateKeyJwtClientAuth()` を参照する。
+
 ## DB に保存する（--db）
 
 `--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を利用者の DB に保存する。
@@ -487,21 +574,22 @@ export function createDatabase(): SqlDatabase {
 | テーブル | 保存するもの |
 |---|---|
 | `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
-| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post）と、シークレットのハッシュ |
+| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post / private_key_jwt）と、シークレットのハッシュ |
+| `client_jwks` | クライアントの公開鍵（1 行に JWK 1 つ）。private_key_jwt のアサーションと署名付き Request Object の検証に使う |
 | `client_redirect_uris`、`client_grant_types`、`client_scopes` | リダイレクト URI、使ってよい grant type、要求してよいスコープ |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
 | `codes`、`access_tokens`、`refresh_tokens` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュで引く |
 | `browser_sessions`、`consent_scopes`、`consent_grants` | SSO、`prompt=none`、`max_age` に使うブラウザセッションと、ユーザーが与えた同意 |
+| `client_assertion_jtis` | 受け付けた private_key_jwt のアサーションの `jti`。同じアサーションの再利用を拒否するため、期限まで持つ |
 
 `--enable google-login` と組み合わせたときだけ、Sign in with Google のための 2 つのテーブルが加わる。
 `federated_identities` は Google アカウントとユーザーの対応を、`upstream_auth_requests` はログイン画面の Google ボタンに埋めた nonce を持つ。
 
 ID トークンは保存しない。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためである。
-private_key_jwt によるクライアント認証と authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていない。
-private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_secrets` と同じ形で方式ごとのテーブルを加える。
+authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていない。
 
 `access_tokens.acr` は、トークンに載せた acr（[認証コンテキスト（acr_values と acr）](#認証コンテキストacr_values-と-acr)を参照）を持ち、acr を決めなかったトークンでは NULL になる。
 
@@ -565,7 +653,7 @@ export function createDatabase(): KvDatabase {
 
 ストアには 2 つの条件がある。
 1 つ目は、`setIfAbsent` を 1 回の不可分な操作にすることである（Redis の `SET NX` や、DynamoDB の条件付き書き込み）。
-認可コードとリフレッシュトークンは、使ったときに使用済みの印のキーを `setIfAbsent` で書くことで 1 回限りにしている。
+認可コード、リフレッシュトークン、private_key_jwt のアサーションは、使ったときに使用済みの印のキーを `setIfAbsent` で書くことで 1 回限りにしている。
 読んでから書く 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行される。
 2 つ目は、書き込みの完了後に始めた読み込みが、その書き込みを必ず見ることである。
 Cloudflare Workers KV は、書き込みがほかの拠点に届くまで時間がかかり、不可分な書き込みも持たないので、どちらの条件も満たさない。
@@ -581,6 +669,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | キー | 保存するもの |
 |---|---|
 | `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値 |
+| `client_jwks:<client_id>` | クライアントの公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
 | `transaction_result:<transaction_id>` | トランザクションの終わり方（`failed`、`code_issued`、`token_issued`） |
@@ -589,6 +678,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | `code_used:<hash>`、`refresh_token_used:<hash>` | 使用済みの印。`setIfAbsent` で書く |
 | `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
 | `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
+| `client_assertion_jti:<hash>` | 受け付けた private_key_jwt のアサーションの `jti`。`setIfAbsent` で書き、期限まで持つ |
 
 `--enable google-login` と組み合わせたときだけ、`federated_identity:<provider>:<sub>`（Google アカウントとユーザーの対応）と、`upstream_auth_request:<transaction_id>`、`upstream_nonce:<nonce>`（Google ボタンに埋めた nonce）が加わる。
 キーにはすべて `oidc:` が付き、リクエストから来た値（ID やサブジェクト）は URI エンコードしてから入れる。
@@ -638,8 +728,8 @@ Hono（Cloudflare D1）では、管理用のスクリプトから `registerClien
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行う（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読まない。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行う（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
-テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
-`jwks` が無いので、署名付き Request Object の署名は検証できず、そのような要求は拒否される。
+テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
+クライアントの公開鍵（`jwks`）は、`--db sql` では `client_jwks` テーブルから、`--db kv` では `client_jwks:<client_id>` のキーから読む（[公開鍵の登録](#公開鍵の登録)を参照）。
 
 ユーザーは、`users.ts` の `registerUser()` で DB に入れる。
 `password` を渡すと PBKDF2（HMAC-SHA256、100,000 回）のハッシュを `password_hash` に保存し、渡さなければ NULL になる。
@@ -671,6 +761,7 @@ Sign in with Google のユーザーはパスワードを持たず、Google の `
 `stores.ts` を ORM のクエリや別のストアの API で書き直してもよいが、ファイル先頭のコメントに挙げた動きは保つ必要がある。
 たとえば認可コードとリフレッシュトークンの `consume` は、使用済みにする操作を 1 回の不可分な操作で行い、使用済みにできなければ `invalid_grant` を投げる。
 `--db sql` は「`is_used` が FALSE の行だけを TRUE にする」を 1 回の `UPDATE` で行い、`--db kv` は使用済みの印のキーを `setIfAbsent` で書く。
+private_key_jwt のアサーションの `jti` を記録する `markUsed` も同じで、まだ使われていないことの確認と記録を 1 回の不可分な操作で行う。
 読んでから書く 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行される。
 
 実験的機能（PAR、Device Authorization Grant、CIBA）のストアはインメモリのままである。

@@ -53,6 +53,12 @@ export interface ProviderMetadataConfig {
   // Optional
   grantTypesSupported?: string[];
   tokenEndpointAuthMethodsSupported?: string[];
+  /**
+   * OIDC Discovery 1.0 §3 / RFC 8414 §2: JWS `alg` values the token endpoint accepts
+   * for the private_key_jwt client assertion. Required when
+   * `tokenEndpointAuthMethodsSupported` lists `private_key_jwt`; `none` is rejected.
+   */
+  tokenEndpointAuthSigningAlgValuesSupported?: string[];
   responseModesSupported?: string[];
   claimsParameterSupported?: boolean;
   requestParameterSupported?: boolean;
@@ -73,8 +79,12 @@ export interface ProviderMetadataConfig {
   // OIDC Discovery 1.0 itself does not define them.
   introspectionEndpoint?: string;
   introspectionEndpointAuthMethodsSupported?: string[];
+  /** RFC 8414 §2: like `tokenEndpointAuthSigningAlgValuesSupported`, for the introspection endpoint. */
+  introspectionEndpointAuthSigningAlgValuesSupported?: string[];
   revocationEndpoint?: string;
   revocationEndpointAuthMethodsSupported?: string[];
+  /** RFC 8414 §2: like `tokenEndpointAuthSigningAlgValuesSupported`, for the revocation endpoint. */
+  revocationEndpointAuthSigningAlgValuesSupported?: string[];
 }
 
 /**
@@ -101,6 +111,7 @@ export interface ProviderMetadata {
   // Optional
   grant_types_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
+  token_endpoint_auth_signing_alg_values_supported?: string[];
   response_modes_supported?: string[];
   claims_parameter_supported?: boolean;
   request_parameter_supported?: boolean;
@@ -113,8 +124,32 @@ export interface ProviderMetadata {
   // RFC 8414
   introspection_endpoint?: string;
   introspection_endpoint_auth_methods_supported?: string[];
+  introspection_endpoint_auth_signing_alg_values_supported?: string[];
   revocation_endpoint?: string;
   revocation_endpoint_auth_methods_supported?: string[];
+  revocation_endpoint_auth_signing_alg_values_supported?: string[];
+}
+
+/**
+ * RFC 8414 §2 / OIDC Discovery 1.0 §3: the `*_auth_signing_alg_values_supported`
+ * entry MUST be present when the matching auth methods list a JWT-based method
+ * (private_key_jwt / client_secret_jwt), and `none` MUST NOT be one of its values.
+ */
+function validateAuthSigningAlgs(
+  methodsName: string,
+  methods: string[] | undefined,
+  algsName: string,
+  algs: string[] | undefined,
+): void {
+  const listsJwtMethod =
+    methods?.includes('private_key_jwt') === true || methods?.includes('client_secret_jwt') === true;
+  if (listsJwtMethod && (!algs || algs.length === 0)) {
+    const method = methods?.includes('private_key_jwt') ? 'private_key_jwt' : 'client_secret_jwt';
+    throw new Error(`${algsName} is required when ${methodsName} lists ${method}`);
+  }
+  if (algs?.includes('none')) {
+    throw new Error(`${algsName} must not contain none`);
+  }
 }
 
 /**
@@ -239,6 +274,19 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
   if (config.tokenEndpointAuthMethodsSupported && config.tokenEndpointAuthMethodsSupported.length > 0) {
     metadata.token_endpoint_auth_methods_supported = config.tokenEndpointAuthMethodsSupported;
   }
+  validateAuthSigningAlgs(
+    'tokenEndpointAuthMethodsSupported',
+    config.tokenEndpointAuthMethodsSupported,
+    'tokenEndpointAuthSigningAlgValuesSupported',
+    config.tokenEndpointAuthSigningAlgValuesSupported,
+  );
+  if (
+    config.tokenEndpointAuthSigningAlgValuesSupported &&
+    config.tokenEndpointAuthSigningAlgValuesSupported.length > 0
+  ) {
+    metadata.token_endpoint_auth_signing_alg_values_supported =
+      config.tokenEndpointAuthSigningAlgValuesSupported;
+  }
   if (config.responseModesSupported && config.responseModesSupported.length > 0) {
     metadata.response_modes_supported = config.responseModesSupported;
   }
@@ -277,6 +325,19 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
     metadata.introspection_endpoint_auth_methods_supported =
       config.introspectionEndpointAuthMethodsSupported;
   }
+  validateAuthSigningAlgs(
+    'introspectionEndpointAuthMethodsSupported',
+    config.introspectionEndpointAuthMethodsSupported,
+    'introspectionEndpointAuthSigningAlgValuesSupported',
+    config.introspectionEndpointAuthSigningAlgValuesSupported,
+  );
+  if (
+    config.introspectionEndpointAuthSigningAlgValuesSupported &&
+    config.introspectionEndpointAuthSigningAlgValuesSupported.length > 0
+  ) {
+    metadata.introspection_endpoint_auth_signing_alg_values_supported =
+      config.introspectionEndpointAuthSigningAlgValuesSupported;
+  }
   if (config.revocationEndpoint) {
     metadata.revocation_endpoint = config.revocationEndpoint;
   }
@@ -286,6 +347,19 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
   ) {
     metadata.revocation_endpoint_auth_methods_supported =
       config.revocationEndpointAuthMethodsSupported;
+  }
+  validateAuthSigningAlgs(
+    'revocationEndpointAuthMethodsSupported',
+    config.revocationEndpointAuthMethodsSupported,
+    'revocationEndpointAuthSigningAlgValuesSupported',
+    config.revocationEndpointAuthSigningAlgValuesSupported,
+  );
+  if (
+    config.revocationEndpointAuthSigningAlgValuesSupported &&
+    config.revocationEndpointAuthSigningAlgValuesSupported.length > 0
+  ) {
+    metadata.revocation_endpoint_auth_signing_alg_values_supported =
+      config.revocationEndpointAuthSigningAlgValuesSupported;
   }
 
   return metadata;

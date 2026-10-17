@@ -8,6 +8,7 @@ import {
   backchannelAuthenticationRouteTemplate,
   cibaVerificationRouteTemplate,
   authorizeRouteTemplate,
+  clientAuthTemplate,
   configTemplate,
   consentRouteTemplate,
   customScopesTemplate,
@@ -784,6 +785,7 @@ ${tokenClientResolverContext}
     c.set('refreshTokenStore', stores.refreshTokenStore);
     c.set('authSessionStore', stores.authSessionStore);
     c.set('browserSessionStore', stores.browserSessionStore);
+    c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
     c.set('authenticateUser', (username: string, password: string) =>
       stores.userStore.authenticate(username, password));
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
@@ -1048,6 +1050,9 @@ function webCoreGeneratedFiles(
         'Project integrations should inject a D1/KV/env-backed resolver through the generated request context.',
       ),
     },
+    // private_key_jwt client authentication, shared by the routes that
+    // authenticate clients (OIDC Core 1.0 §9).
+    { path: 'client-auth.ts', content: clientAuthTemplate(corePkg) },
     { path: 'views.ts', content: viewsTemplate(features) },
     // Screen routing layer: every browser-facing GET / POST (authorize, login,
     // consent, and the device / CIBA / logout UIs) plus the render helpers. Each

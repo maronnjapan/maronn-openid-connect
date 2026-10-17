@@ -36,15 +36,16 @@ CREATE TABLE IF NOT EXISTS clients (
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Client_auth: how the client authenticates at the token endpoint. A public
--- client has none, and a confidential client has one. Another method (such as
--- private_key_jwt) is added here, with a table of its own like client_secrets,
--- when the OP supports it.
+-- Client_auth: a method the client may authenticate with at the token
+-- endpoint. A public client has none. A confidential client has one row per
+-- method: at most one of client_secret_basic / client_secret_post, whose
+-- secret is in client_secrets, and private_key_jwt, whose keys are in
+-- client_jwks (OIDC Core 1.0 §9).
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
   client_auth_type VARCHAR(1000) NOT NULL
-    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
+    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt')),
   UNIQUE (id, client_auth_type)
 );
 CREATE INDEX IF NOT EXISTS client_auths_client_id_idx ON client_auths (client_id);
@@ -60,6 +61,17 @@ CREATE TABLE IF NOT EXISTS client_secrets (
   FOREIGN KEY (id, client_auth_type)
     REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
 );
+
+-- Client_jwk: a public key of the client, one JWK (RFC 7517) as JSON. The
+-- keys verify the client's private_key_jwt assertions and its signed Request
+-- Objects. The OP reads them on every request, so a key inserted or deleted
+-- here takes effect at once. Never store a private key.
+CREATE TABLE IF NOT EXISTS client_jwks (
+  id        TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  jwk       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_jwks_client_id_idx ON client_jwks (client_id);
 
 -- Redirect_Uri: the redirect URIs of the client.
 CREATE TABLE IF NOT EXISTS client_redirect_uris (
@@ -255,5 +267,13 @@ CREATE TABLE IF NOT EXISTS consent_grants (
   client_id TEXT NOT NULL,
   grant_id  TEXT NOT NULL,
   PRIMARY KEY (subject, client_id, grant_id)
+);
+
+-- Not in the ER model: the client assertions (private_key_jwt) the OP
+-- accepted, kept until they expire so none is used twice (OIDC Core 1.0 §9).
+-- jti_hash is the SHA-256 hash of the client_id and the jti of the assertion.
+CREATE TABLE IF NOT EXISTS client_assertion_jtis (
+  jti_hash   VARCHAR(1000) PRIMARY KEY,
+  expired_at BIGINT NOT NULL
 );
 `;

@@ -31,6 +31,7 @@ import {
   validateClientAuthMethod,
   verifyClientSecret,
 } from '@maronn-openid-connect/core';
+import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import {
   cibaAuthenticationRequestStore,
   clientResolver,
@@ -88,7 +89,11 @@ async function backchannelAuthentication(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(client, presentedCredentials);
-    await verifyClientSecret(client, presentedCredentials.clientSecret);
+    if (presentedCredentials.method === 'private_key_jwt') {
+      await verifyPrivateKeyJwt(client, presentedCredentials, '/backchannel_authentication');
+    } else {
+      await verifyClientSecret(client, presentedCredentials.clientSecret);
+    }
 
     // RFC 7591 §2: a client registered with a scope list (client.scope) may only
     // request those scopes, the same rule as /authorize.

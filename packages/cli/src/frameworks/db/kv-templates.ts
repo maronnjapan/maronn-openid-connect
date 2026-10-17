@@ -131,6 +131,8 @@ function key(...parts: string[]): string {
 export const keys = {
   /** Client, with its Client_auth, Client_secret, Redirect_Uri, Grant and Scope (ClientRecord). */
   client: (clientId: string) => key('client', clientId),
+  /** Client_jwk: the public keys of a client (ClientJwksRecord). */
+  clientJwks: (clientId: string) => key('client_jwks', clientId),
   /** User (UserRecord). */
   user: (userId: string) => key('user', userId),${google ? `
   /** Federated_identity, found by the account at the provider (FederatedIdentityRecord). */
@@ -170,6 +172,11 @@ export const keys = {
   browserSession: (sessionId: string) => key('browser_session', sessionId),
   /** Not in the ER model: what a user consented to for a client (ConsentRecord). */
   consent: (subject: string, clientId: string) => key('consent', subject, clientId),
+  /**
+   * Not in the ER model: written with setIfAbsent when a client assertion
+   * (private_key_jwt) is used, under the SHA-256 hash of the client_id and jti.
+   */
+  clientAssertionJti: (jtiHash: string) => key('client_assertion_jti', jtiHash),
 };
 
 /** Client: id is the client_id, in the key. The OP does not know a deleted client (is_deleted). */
@@ -186,6 +193,14 @@ export interface ClientRecord {
     client_auth_type: 'client_secret_basic' | 'client_secret_post';
     secret: string;
   } | null;
+  /**
+   * Client_auth of private_key_jwt (OIDC Core 1.0 §9): true lets the client
+   * authenticate with a JWT signed by one of its keys (keys.clientJwks()),
+   * next to the method of client_auth. registerClient() sets it for a client
+   * that lists private_key_jwt and never clears it, so it can be turned on
+   * here while the OP runs.
+   */
+  private_key_jwt?: boolean;
   /** Redirect_Uri: the redirect URIs of the client. */
   redirect_uris: string[];
   /** Grant: the grant types the client may use. Empty: authorization_code only. */
@@ -195,6 +210,16 @@ export interface ClientRecord {
    * rejected with invalid_scope. Empty: every scope the OP accepts.
    */
   scopes: string[];
+}
+
+/**
+ * Client_jwk: the public keys of a client, as a JWK Set (RFC 7517 §5). They
+ * verify the client's private_key_jwt assertions and its signed Request
+ * Objects. The OP reads this record on every request, so a key added to it or
+ * removed from it takes effect at once. Never store a private key.
+ */
+export interface ClientJwksRecord {
+  keys: Array<Record<string, unknown>>;
 }
 
 /**
@@ -390,6 +415,10 @@ export function kvStoresTemplate(corePkg: string, features: OidcFeatureConfig): 
  *    and delete ends it with a transaction_result key that put never changes,
  *    so an ended transaction cannot start again: failed, then code_issued if a
  *    code is issued from it, and token_issued once that code is exchanged.
+ * 9. clientAssertionJtiStore.markUsed claims the client_assertion_jti key with
+ *    setIfAbsent and is true only when it took the key. A get followed by a
+ *    set lets two requests carrying the same client assertion both pass
+ *    (OIDC Core 1.0 §9: an assertion MUST only be used once).
  *
  * A few records are read, changed and written back: a grant, a consent, and
  * the status of a transaction in progress. Two requests that change the same
@@ -407,6 +436,7 @@ import {
   type AuthTransactionStore,
   type AuthorizationCodeData,
   type AuthorizationCodeInfo,
+  type ClientAssertionJtiStore,
   type RefreshTokenInfo,
   type UserClaims,
 } from '${corePkg}';
@@ -988,6 +1018,16 @@ ${google ? `
     },
   };
 ` : ''}
+  // Not in the ER model: the client assertions (private_key_jwt) the OP
+  // accepted. setIfAbsent takes the key only while no request has used the
+  // same assertion, and the key expires with the assertion.
+  const clientAssertionJtiStore: ClientAssertionJtiStore = {
+    async markUsed({ clientId, jti, expiresAt }) {
+      const jtiHash = await hashKey(JSON.stringify([clientId, jti]));
+      return db.setIfAbsent(keys.clientAssertionJti(jtiHash), MARKER, ttlUntil(expiresAt));
+    },
+  };
+
   return {
     transactionStore,
     authCodeStore,
@@ -997,6 +1037,7 @@ ${google ? `
     browserSessionStore,
     consentStore,
     userStore,${google ? '\n    googleLoginNonceStore,' : ''}
+    clientAssertionJtiStore,
   };
 }
 
@@ -1084,31 +1125,45 @@ export function kvClientsTemplate(corePkg: string): string {
  * a RegisteredClient (config.ts):
  *
  * - client_type public: no client authentication ('none').
- * - client_auth: token_endpoint_auth_method (client_secret_basic /
- *   client_secret_post), and the clientSecretHash the presented secret is
- *   checked against. A confidential client without one keeps the default
- *   client_secret_basic with no secret, so it cannot authenticate.
+ * - client_auth and private_key_jwt: the methods the client may authenticate
+ *   with (tokenEndpointAuthMethods). client_auth is client_secret_basic or
+ *   client_secret_post with the clientSecretHash the presented secret is
+ *   checked against. private_key_jwt lets the client sign a JWT with one of
+ *   its keys instead (OIDC Core 1.0 §9). A confidential client with neither
+ *   keeps the default client_secret_basic with no secret, so it cannot
+ *   authenticate.
+ * - keys.clientJwks(): jwks, the client's public keys (ClientJwksRecord). They
+ *   verify its private_key_jwt assertions and its signed Request Objects.
  * - redirect_uris, grant_types and scopes: redirectUris, grantTypes and scope.
  *   A request for a scope outside scope is rejected with invalid_scope
  *   (validateClientScope() in core). A client without scopes may request every
  *   scope the OP accepts.
- * - Metadata without a field (response_types, default_max_age, jwks, the ID
- *   Token and UserInfo signing algs) keeps its default.
+ * - Metadata without a field (response_types, default_max_age, the ID Token
+ *   and UserInfo signing algs) keeps its default.
+ *
+ * findClient() reads both records on every call, so a change made while the
+ * OP runs takes effect from the next request. That is how a client starts
+ * using private_key_jwt or rotates its keys, without a restart: set
+ * private_key_jwt to true in its client record, and put its public keys into
+ * keys.clientJwks() as { "keys": [ <JWK>, ... ] }.
  */
 import {
   hashClientSecret,
+  selectRegisteredClientAuthMethods,
   type ClientResolver,
+  type Jwk,
   type TokenClientResolver,
 } from '${corePkg}';
 import type { RegisteredClient } from '../config.js';
 import { readRecord, writeRecord, type KvDatabase } from './database.js';
-import { keys, type ClientRecord } from './keys.js';
+import { keys, type ClientJwksRecord, type ClientRecord } from './keys.js';
 
 export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
       const client = await readRecord<ClientRecord>(db, keys.client(clientId));
       if (!client || client.is_deleted) return null;
+      const jwks = await readRecord<ClientJwksRecord>(db, keys.clientJwks(clientId));
       const registered: RegisteredClient = {
         clientId,
         clientType: client.client_type === 'public' ? 'public' : 'confidential',
@@ -1116,11 +1171,16 @@ export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenCl
       };
       if (client.grant_types.length > 0) registered.grantTypes = client.grant_types;
       if (client.scopes.length > 0) registered.scope = client.scopes;
+      if (jwks && jwks.keys.length > 0) registered.jwks = { keys: jwks.keys as unknown as Jwk[] };
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethod = 'none';
-      } else if (client.client_auth) {
-        registered.tokenEndpointAuthMethod = client.client_auth.client_auth_type;
-        registered.clientSecretHash = client.client_auth.secret;
+      } else {
+        const methods = [
+          ...(client.client_auth ? [client.client_auth.client_auth_type] : []),
+          ...(client.private_key_jwt ? (['private_key_jwt'] as const) : []),
+        ];
+        if (methods.length > 0) registered.tokenEndpointAuthMethods = methods;
+        if (client.client_auth) registered.clientSecretHash = client.client_auth.secret;
       }
       return registered;
     },
@@ -1139,6 +1199,13 @@ export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenCl
  * The whole client is one record written in one set, so every instance of the
  * OP may register its clients at startup, even at the same moment.
  * clientSecret is saved as its hash (hashClientSecret()).
+ *
+ * private_key_jwt and the keys of jwks are only ever added here: the record
+ * keeps private_key_jwt once it is true, and a key of jwks missing from
+ * keys.clientJwks() is appended to it. Both may be managed in the store while
+ * the OP runs (see the top of this file), and registering the client again at
+ * the next start keeps them. To remove one, change it in the store, and drop
+ * it from the client passed here too, or the next registration adds it back.
  */
 export async function registerClient(
   db: KvDatabase,
@@ -1149,20 +1216,39 @@ export async function registerClient(
   const secretHash =
     client.clientSecretHash ??
     (client.clientSecret !== undefined ? await hashClientSecret(client.clientSecret) : undefined);
-  const authMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
+  const methods = clientType === 'confidential' ? selectRegisteredClientAuthMethods(client) : [];
+  const secretMethod = methods.find(
+    (method): method is 'client_secret_basic' | 'client_secret_post' =>
+      method === 'client_secret_basic' || method === 'client_secret_post',
+  );
+  const current = await readRecord<ClientRecord>(db, keys.client(client.clientId));
   const record: ClientRecord = {
     name: client.name ?? null,
     client_type: clientType,
     is_deleted: false,
     client_auth:
-      clientType === 'confidential' && authMethod !== 'none' && secretHash !== undefined
-        ? { client_auth_type: authMethod, secret: secretHash }
+      secretMethod !== undefined && secretHash !== undefined
+        ? { client_auth_type: secretMethod, secret: secretHash }
         : null,
     redirect_uris: [...client.redirectUris],
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],
   };
+  if (methods.includes('private_key_jwt') || current?.private_key_jwt === true) {
+    record.private_key_jwt = true;
+  }
   await writeRecord(db, keys.client(client.clientId), record);
+
+  const listedKeys = (client.jwks?.keys ?? []) as unknown as Array<Record<string, unknown>>;
+  if (listedKeys.length > 0) {
+    const stored = (await readRecord<ClientJwksRecord>(db, keys.clientJwks(client.clientId)))?.keys ?? [];
+    const storedJson = new Set(stored.map((key) => JSON.stringify(key)));
+    const added = listedKeys.filter((key) => !storedJson.has(JSON.stringify(key)));
+    if (added.length > 0) {
+      const record: ClientJwksRecord = { keys: [...stored, ...added] };
+      await writeRecord(db, keys.clientJwks(client.clientId), record);
+    }
+  }
 }
 `;
 }

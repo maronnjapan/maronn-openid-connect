@@ -105,6 +105,20 @@ const oidcClientsJson = JSON.stringify([
     responseTypes: ['code'],
     scope: ['openid', 'profile'],
   },
+  {
+    // OIDC Core 1.0 §9: registered with client_secret_post only, like a client
+    // that existed before it moved to private_key_jwt. The private-key-jwt spec
+    // adds that method and the client's public key to the OP's database while
+    // the OP runs. Nothing serves the redirect URI: the spec reads the code
+    // from the URL the browser lands on.
+    clientId: 'e2e-private-key-jwt',
+    clientSecret: 'e2e-private-key-jwt-secret',
+    redirectUris: [`${clientBaseURL}/private-key-jwt-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code', 'refresh_token'],
+    tokenEndpointAuthMethod: 'client_secret_post',
+    responseTypes: ['code'],
+  },
 ]);
 
 // EXPERIMENTAL (ID-JAG draft §4.4): the client registrations of the SECOND OP

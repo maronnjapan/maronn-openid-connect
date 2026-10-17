@@ -1,5 +1,6 @@
 import { TokenError, TokenErrorCode } from './token-error.js';
 import { clientAllowsGrantType } from './client-grant-types.js';
+import type { JwkSet } from './jwks.js';
 
 /**
  * トークンエンドポイントへの生パラメータ（バリデーション前）
@@ -62,8 +63,25 @@ export interface TokenClientInfo {
    * OIDC Core 1.0 §9 / RFC 7591 §2: 既定は `client_secret_basic`。
    * 未指定時も既定の `client_secret_basic` を強制し、実際に使われた方式が一致しなければ
    * 認証失敗（`invalid_client`）として扱う（認証方式ダウングレード防止）。
+   * `'none'` は public client を表し、{@link tokenEndpointAuthMethods} より優先する。
    */
-  tokenEndpointAuthMethod?: 'client_secret_basic' | 'client_secret_post' | 'none';
+  tokenEndpointAuthMethod?: 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt' | 'none';
+  /**
+   * このクライアントが使ってよいクライアント認証方式の一覧。空でなければ
+   * {@link tokenEndpointAuthMethod} の代わりにこの一覧で照合し、一覧外の方式は
+   * `invalid_client` で拒否する。`client_secret_basic` から `private_key_jwt` へ移る間のように、
+   * 1 つのクライアントに複数の方式を許すときに使う。
+   *
+   * public client（`tokenEndpointAuthMethod: 'none'`）は資格情報を持たないため、
+   * この一覧に `'none'` は書けない。
+   */
+  tokenEndpointAuthMethods?: Array<'client_secret_basic' | 'client_secret_post' | 'private_key_jwt'>;
+  /**
+   * クライアントが登録した公開鍵集合（JWKS）。{@link ClientInfo.jwks} と同じ値。
+   * OIDC Core 1.0 §9: `private_key_jwt` のクライアントアサーションは、この鍵のどれかで
+   * 署名を検証する（{@link verifyClientAssertion}）。
+   */
+  jwks?: JwkSet;
 }
 
 /**

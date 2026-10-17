@@ -48,7 +48,8 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret` |
+| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret`。`TokenClientInfo.tokenEndpointAuthMethods` を登録すると、1 つのクライアントに複数の方式を許せる |
+| `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが登録した公開鍵（`TokenClientInfo.jwks`）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` が署名、`iss` / `sub` / `aud` / `exp` / `nbf` / `iat` / `jti` を確かめ、`rejectReplayedClientAssertion` が `ClientAssertionJtiStore` に `jti` を記録して 2 回目の使用を拒否する。`aud` として受け付ける値は `audiences` で渡し、issuer だけを渡すと draft-ietf-oauth-rfc7523bis に従う |
 | `hashClientSecret` / `verifyClientSecretHash` | client_secret を平文で持たずに登録するためのハッシュ（SHA-256、base64url）の作成と照合。`TokenClientInfo.clientSecretHash` に登録すると、`verifyClientSecret` は提示値のハッシュをこの値と比べる |
 | 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
@@ -68,7 +69,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `buildProviderMetadata` | OpenID Provider Metadata の生成 |
+| `buildProviderMetadata` | OpenID Provider Metadata の生成。`*_auth_methods_supported` に `private_key_jwt` を載せるときは `*_auth_signing_alg_values_supported` も必要で、無ければ例外を投げる（RFC 8414 §2） |
 | `exportPublicJwk` / `exportJwks` / `signingKeysToJwkSet` | 公開鍵の JWK / JWK Set 化 |
 | `createCachedSigningKeyProvider` | 署名鍵プロバイダーの TTL 付きキャッシュラッパー |
 | `selectSigningKeyByAlg` | 登録鍵セットからのアルゴリズム別選択 |

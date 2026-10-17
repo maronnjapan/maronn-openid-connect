@@ -12,6 +12,19 @@ const MULTIPLE_METHODS_DESCRIPTION =
   'Multiple client authentication methods provided. Use either Authorization header or request body, not both.';
 const METHOD_MISMATCH_DESCRIPTION =
   'Client authentication method does not match the registered token_endpoint_auth_method';
+const MULTIPLE_METHODS_WITH_ASSERTION_DESCRIPTION =
+  'Multiple client authentication methods provided. Use only one of the Authorization header, client_secret or client_assertion.';
+const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+
+/**
+ * A client assertion whose payload names the given sub. Extraction only reads
+ * the sub, so the signature segment is a placeholder.
+ */
+function unverifiedAssertion(sub: string): string {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${encode({ alg: 'RS256' })}.${encode({ iss: sub, sub })}.c2lnbmF0dXJl`;
+}
 
 interface RecordingClientResolver extends TokenClientResolver {
   /** The client_id passed to each findClient call, in call order */
@@ -319,6 +332,158 @@ describe('extractClientCredentials', () => {
       expect(error?.errorDescription).toBe('Client authentication required');
     });
   });
+
+  // OIDC Core 1.0 §9 / RFC 7521 §4.2 / RFC 7523 §2.2: private_key_jwt sends the
+  // signed JWT as client_assertion with the jwt-bearer client_assertion_type.
+  describe('private_key_jwt (client_assertion)', () => {
+    it('should extract the client assertion and report private_key_jwt', () => {
+      const assertion = unverifiedAssertion('client-123');
+
+      const presented = extractClientCredentials({
+        params: {
+          client_id: 'client-123',
+          client_assertion_type: JWT_BEARER,
+          client_assertion: assertion,
+        },
+        authorizationHeader: '',
+      });
+
+      expect(presented).toEqual({
+        clientId: 'client-123',
+        clientAssertion: assertion,
+        method: 'private_key_jwt',
+      });
+    });
+
+    // RFC 7521 §4.2: client_id is OPTIONAL because the assertion's subject
+    // identifies the client.
+    it('should identify the client by the assertion sub when the body omits client_id', () => {
+      const presented = extractClientCredentials({
+        params: { client_assertion_type: JWT_BEARER, client_assertion: unverifiedAssertion('client-123') },
+        authorizationHeader: '',
+      });
+
+      expect(presented.clientId).toBe('client-123');
+    });
+
+    // RFC 7521 §4.2: a client_id that is present MUST identify the same client as
+    // the assertion. The signature check rejects a sub that differs later on.
+    it('should keep the body client_id when the body sends one', () => {
+      const presented = extractClientCredentials({
+        params: {
+          client_id: 'client-123',
+          client_assertion_type: JWT_BEARER,
+          client_assertion: unverifiedAssertion('someone-else'),
+        },
+        authorizationHeader: '',
+      });
+
+      expect(presented.clientId).toBe('client-123');
+    });
+
+    it('should throw invalid_request when client_assertion comes without client_assertion_type', () => {
+      const error = captureError(() =>
+        extractClientCredentials({
+          params: { client_id: 'client-123', client_assertion: unverifiedAssertion('client-123') },
+          authorizationHeader: '',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidRequest);
+      expect(error?.errorDescription).toBe(
+        'client_assertion and client_assertion_type must be sent together',
+      );
+    });
+
+    it('should throw invalid_request when client_assertion_type comes without client_assertion', () => {
+      const error = captureError(() =>
+        extractClientCredentials({
+          params: { client_id: 'client-123', client_assertion_type: JWT_BEARER },
+          authorizationHeader: '',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidRequest);
+      expect(error?.errorDescription).toBe(
+        'client_assertion and client_assertion_type must be sent together',
+      );
+    });
+
+    // RFC 6749 §5.2: invalid_client covers an unsupported authentication method.
+    it('should throw invalid_client for an unsupported client_assertion_type', () => {
+      const error = captureError(() =>
+        extractClientCredentials({
+          params: {
+            client_id: 'client-123',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:saml2-bearer',
+            client_assertion: 'PHNhbWw+',
+          },
+          authorizationHeader: '',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe('Unsupported client_assertion_type');
+    });
+
+    // OAuth 2.1 §2.3: only one authentication method per request.
+    it('should throw invalid_request when a client assertion comes with a Basic header', () => {
+      const error = captureError(() =>
+        extractClientCredentials({
+          params: { client_assertion_type: JWT_BEARER, client_assertion: unverifiedAssertion('client-123') },
+          authorizationHeader: basicAuth('client-123', 'secret-xyz'),
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidRequest);
+      expect(error?.errorDescription).toBe(MULTIPLE_METHODS_WITH_ASSERTION_DESCRIPTION);
+    });
+
+    it('should throw invalid_request when a client assertion comes with a body client_secret', () => {
+      const error = captureError(() =>
+        extractClientCredentials({
+          params: {
+            client_id: 'client-123',
+            client_secret: 'secret-xyz',
+            client_assertion_type: JWT_BEARER,
+            client_assertion: unverifiedAssertion('client-123'),
+          },
+          authorizationHeader: '',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidRequest);
+      expect(error?.errorDescription).toBe(MULTIPLE_METHODS_WITH_ASSERTION_DESCRIPTION);
+    });
+
+    // RFC 6749 §3.2: parameters sent without a value are treated as omitted.
+    it('should treat empty client_assertion and client_assertion_type as absent', () => {
+      const presented = extractClientCredentials({
+        params: { client_id: 'public-client', client_assertion_type: '', client_assertion: '' },
+        authorizationHeader: '',
+      });
+
+      expect(presented).toEqual({ clientId: 'public-client', method: 'none' });
+    });
+
+    it('should throw invalid_client for a malformed assertion when the body omits client_id', () => {
+      const error = captureError(() =>
+        extractClientCredentials({
+          params: { client_assertion_type: JWT_BEARER, client_assertion: 'not-a-jwt' },
+          authorizationHeader: '',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe('Client assertion is not a valid JWS compact serialization');
+    });
+  });
 });
 
 // RFC 6749 §5.2: a client that cannot be identified is rejected with invalid_client.
@@ -484,6 +649,113 @@ describe('validateClientAuthMethod', () => {
       });
 
       const error = captureError(() => validateClientAuthMethod(validClient, presented));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe('Client authentication required');
+    });
+  });
+
+  // A client may register several methods (tokenEndpointAuthMethods), for example
+  // client_secret_basic while it moves to private_key_jwt. The method a request
+  // uses must still be one of them.
+  describe('private_key_jwt and several registered methods', () => {
+    const privateKeyJwtClient: TokenClientInfo = {
+      clientId: 'client-123',
+      tokenEndpointAuthMethod: 'private_key_jwt',
+    };
+
+    const basicAndPrivateKeyJwtClient: TokenClientInfo = {
+      clientId: 'client-123',
+      clientSecret: 'secret-xyz',
+      tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'],
+    };
+
+    function presentAssertion() {
+      return extractClientCredentials({
+        params: { client_assertion_type: JWT_BEARER, client_assertion: unverifiedAssertion('client-123') },
+        authorizationHeader: '',
+      });
+    }
+
+    it('should accept private_key_jwt when the client registered private_key_jwt', () => {
+      const error = captureError(() => validateClientAuthMethod(privateKeyJwtClient, presentAssertion()));
+
+      expect(error).toBeUndefined();
+    });
+
+    it('should accept private_key_jwt when tokenEndpointAuthMethods lists it next to client_secret_basic', () => {
+      const error = captureError(() =>
+        validateClientAuthMethod(basicAndPrivateKeyJwtClient, presentAssertion()),
+      );
+
+      expect(error).toBeUndefined();
+    });
+
+    it('should accept client_secret_basic when tokenEndpointAuthMethods lists it next to private_key_jwt', () => {
+      const presented = extractClientCredentials({
+        params: {},
+        authorizationHeader: basicAuth('client-123', 'secret-xyz'),
+      });
+
+      const error = captureError(() => validateClientAuthMethod(basicAndPrivateKeyJwtClient, presented));
+
+      expect(error).toBeUndefined();
+    });
+
+    it('should reject client_secret_post when tokenEndpointAuthMethods lists only client_secret_basic and private_key_jwt', () => {
+      const presented = extractClientCredentials({
+        params: { client_id: 'client-123', client_secret: 'secret-xyz' },
+        authorizationHeader: '',
+      });
+
+      const error = captureError(() => validateClientAuthMethod(basicAndPrivateKeyJwtClient, presented));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe(METHOD_MISMATCH_DESCRIPTION);
+    });
+
+    it('should reject private_key_jwt when the client registered only client_secret_basic', () => {
+      const error = captureError(() => validateClientAuthMethod(basicClient, presentAssertion()));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe(METHOD_MISMATCH_DESCRIPTION);
+    });
+
+    // A public client never authenticates, whatever else is listed for it.
+    it('should reject a client assertion from a public client that also lists private_key_jwt', () => {
+      const publicWithMethods: TokenClientInfo = {
+        clientId: 'client-123',
+        tokenEndpointAuthMethod: 'none',
+        tokenEndpointAuthMethods: ['private_key_jwt'],
+      };
+
+      const error = captureError(() => validateClientAuthMethod(publicWithMethods, presentAssertion()));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe(METHOD_MISMATCH_DESCRIPTION);
+    });
+
+    it('should require client authentication when a private_key_jwt client sends client_id only', () => {
+      const presented = extractClientCredentials({
+        params: { client_id: 'client-123' },
+        authorizationHeader: '',
+      });
+
+      const error = captureError(() => validateClientAuthMethod(privateKeyJwtClient, presented));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe('Client authentication required');
+    });
+
+    it('should require the assertion value when the presented method is private_key_jwt', () => {
+      const error = captureError(() =>
+        validateClientAuthMethod(privateKeyJwtClient, { method: 'private_key_jwt' }),
+      );
 
       expect(error).toBeInstanceOf(TokenError);
       expect(error?.error).toBe(TokenErrorCode.InvalidClient);

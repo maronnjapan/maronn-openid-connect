@@ -49,7 +49,8 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 ## Token Endpoint
 
 - グラント: `authorization_code` / `refresh_token`
-- クライアント認証: `client_secret_basic` / `client_secret_post` / `none`（public client）。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
+- クライアント認証: `client_secret_basic` / `client_secret_post` / `private_key_jwt` / `none`（public client）。1 リクエストに複数の認証方式を併用した場合は拒否（OAuth 2.1 §2.3）
+- `private_key_jwt`: クライアントが登録した公開鍵で `client_assertion` の署名を検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`alg` は RS256 / RS384 / RS512 / ES256 / ES384 / ES512、`jti` は 1 回限り。1 つのクライアントにシークレットの方式と `private_key_jwt` を両方登録できる
 - 認可コード: ワンタイム使用、TTL 既定 300 秒、redirect_uri 一致検証、PKCE `code_verifier` の S256 検証
 
 ### Access Token

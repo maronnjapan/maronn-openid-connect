@@ -30,6 +30,8 @@ function key(...parts: string[]): string {
 export const keys = {
   /** Client, with its Client_auth, Client_secret, Redirect_Uri, Grant and Scope (ClientRecord). */
   client: (clientId: string) => key('client', clientId),
+  /** Client_jwk: the public keys of a client (ClientJwksRecord). */
+  clientJwks: (clientId: string) => key('client_jwks', clientId),
   /** User (UserRecord). */
   user: (userId: string) => key('user', userId),
   /** Federated_identity, found by the account at the provider (FederatedIdentityRecord). */
@@ -69,6 +71,11 @@ export const keys = {
   browserSession: (sessionId: string) => key('browser_session', sessionId),
   /** Not in the ER model: what a user consented to for a client (ConsentRecord). */
   consent: (subject: string, clientId: string) => key('consent', subject, clientId),
+  /**
+   * Not in the ER model: written with setIfAbsent when a client assertion
+   * (private_key_jwt) is used, under the SHA-256 hash of the client_id and jti.
+   */
+  clientAssertionJti: (jtiHash: string) => key('client_assertion_jti', jtiHash),
 };
 
 /** Client: id is the client_id, in the key. The OP does not know a deleted client (is_deleted). */
@@ -85,6 +92,14 @@ export interface ClientRecord {
     client_auth_type: 'client_secret_basic' | 'client_secret_post';
     secret: string;
   } | null;
+  /**
+   * Client_auth of private_key_jwt (OIDC Core 1.0 §9): true lets the client
+   * authenticate with a JWT signed by one of its keys (keys.clientJwks()),
+   * next to the method of client_auth. registerClient() sets it for a client
+   * that lists private_key_jwt and never clears it, so it can be turned on
+   * here while the OP runs.
+   */
+  private_key_jwt?: boolean;
   /** Redirect_Uri: the redirect URIs of the client. */
   redirect_uris: string[];
   /** Grant: the grant types the client may use. Empty: authorization_code only. */
@@ -94,6 +109,16 @@ export interface ClientRecord {
    * rejected with invalid_scope. Empty: every scope the OP accepts.
    */
   scopes: string[];
+}
+
+/**
+ * Client_jwk: the public keys of a client, as a JWK Set (RFC 7517 §5). They
+ * verify the client's private_key_jwt assertions and its signed Request
+ * Objects. The OP reads this record on every request, so a key added to it or
+ * removed from it takes effect at once. Never store a private key.
+ */
+export interface ClientJwksRecord {
+  keys: Array<Record<string, unknown>>;
 }
 
 /**

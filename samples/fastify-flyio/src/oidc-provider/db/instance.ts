@@ -33,6 +33,7 @@ function openDatabase(): SqlDatabase {
   sqlite.exec('PRAGMA journal_mode = WAL');
   sqlite.exec(SCHEMA_SQL);
   addAccessTokenAcrColumn(sqlite);
+  allowPrivateKeyJwtClientAuth(sqlite);
   return {
     async all<Row>(statement: SqlStatement): Promise<Row[]> {
       return sqlite.prepare(statement.sql).all(...statement.params) as Row[];
@@ -53,5 +54,39 @@ function addAccessTokenAcrColumn(sqlite: DatabaseSync): void {
   const columns = sqlite.prepare('PRAGMA table_info(access_tokens)').all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === 'acr')) {
     sqlite.exec('ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000)');
+  }
+}
+
+/**
+ * Lets client_auths hold the private_key_jwt rows of a database created before
+ * that method was part of schema.sql (a Fly.io volume, an existing
+ * .data/oidc.sqlite). CREATE TABLE IF NOT EXISTS leaves the table with its old
+ * CHECK, and SQLite changes a CHECK only by rebuilding the table. Foreign keys
+ * are off while it is rebuilt, so dropping the old table does not delete the
+ * client_secrets rows that reference it.
+ */
+function allowPrivateKeyJwtClientAuth(sqlite: DatabaseSync): void {
+  const table = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'client_auths'")
+    .get() as { sql: string } | undefined;
+  if (!table || table.sql.includes('private_key_jwt')) return;
+  sqlite.exec('PRAGMA foreign_keys = OFF');
+  try {
+    sqlite.exec(`BEGIN;
+CREATE TABLE client_auths_rebuilt (
+  id               TEXT PRIMARY KEY,
+  client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  client_auth_type VARCHAR(1000) NOT NULL
+    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt')),
+  UNIQUE (id, client_auth_type)
+);
+INSERT INTO client_auths_rebuilt (id, client_id, client_auth_type)
+  SELECT id, client_id, client_auth_type FROM client_auths;
+DROP TABLE client_auths;
+ALTER TABLE client_auths_rebuilt RENAME TO client_auths;
+CREATE INDEX IF NOT EXISTS client_auths_client_id_idx ON client_auths (client_id);
+COMMIT;`);
+  } finally {
+    sqlite.exec('PRAGMA foreign_keys = ON');
   }
 }

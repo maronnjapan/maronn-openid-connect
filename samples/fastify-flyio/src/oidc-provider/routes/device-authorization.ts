@@ -11,6 +11,7 @@ import {
 } from '@maronn-openid-connect/core';
 import { tokenClientResolver as defaultTokenClientResolver } from '../resolvers.js';
 import { deviceAuthorizationStore as defaultDeviceAuthorizationStore } from '../store.js';
+import { verifyPrivateKeyJwt } from '../client-auth.js';
 import {
   DeviceAuthorizationError,
   applyOfflineAccessPolicy,
@@ -162,7 +163,11 @@ export async function authenticateDeviceClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(client, presentedCredentials);
-  await verifyClientSecret(client, presentedCredentials.clientSecret);
+  if (presentedCredentials.method === 'private_key_jwt') {
+    await verifyPrivateKeyJwt(c, client, presentedCredentials, '/device_authorization');
+  } else {
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
+  }
   return client;
 }
 

@@ -3,6 +3,7 @@ import type {
   AuthTransactionStore,
   AuthorizationCodeInfo,
   AccessTokenInfo,
+  ClientAssertionJtiStore,
   RefreshTokenInfo,
   UserClaims,
 } from '@maronn-openid-connect/core';
@@ -543,6 +544,27 @@ export class UserStore {
 }
 
 /**
+ * In-memory store of the client assertions (private_key_jwt) the OP accepted.
+ * OIDC Core 1.0 §9: an assertion MUST only be used once, so markUsed() checks
+ * and records its jti in one step and refuses it the second time. A jti is
+ * kept until the assertion expires.
+ */
+export class InMemoryClientAssertionJtiStore implements ClientAssertionJtiStore {
+  private used = new Map<string, number>();
+
+  async markUsed(entry: { clientId: string; jti: string; expiresAt: number }): Promise<boolean> {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [key, expiresAt] of this.used) {
+      if (expiresAt < now) this.used.delete(key);
+    }
+    const key = JSON.stringify([entry.clientId, entry.jti]);
+    if (this.used.has(key)) return false;
+    this.used.set(key, entry.expiresAt);
+    return true;
+  }
+}
+
+/**
  * EXTENSION (google-login): OP subject prefix for users provisioned from Google.
  */
 export const GOOGLE_SUBJECT_PREFIX = 'google:';
@@ -675,6 +697,8 @@ export interface ProviderStores {
   userStore: UserStorage;
   /** EXTENSION (google-login): nonce -> transaction binding for the Google callback. */
   googleLoginNonceStore: GoogleLoginNonceStore;
+  /** The client assertions (private_key_jwt) the OP accepted, so none is used twice. */
+  clientAssertionJtiStore: ClientAssertionJtiStore;
 }
 
 export type ProviderStoresFactory = (
@@ -689,6 +713,7 @@ const AUTH_SESSION_PREFIX = 'auth-session:';
 const BROWSER_SESSION_PREFIX = 'browser-session:';
 const CONSENT_PREFIX = 'consent:';
 const USER_PREFIX = 'user:';
+const CLIENT_ASSERTION_JTI_PREFIX = 'client-assertion-jti:';
 const GOOGLE_USER_PREFIX = 'google-user:';
 const GOOGLE_LOGIN_NONCE_PREFIX = 'google-login-nonce:';
 
@@ -933,6 +958,26 @@ class JsonUserStore implements UserStorage {
   }
 }
 
+/**
+ * The client assertions (private_key_jwt) the OP accepted, one key per jti.
+ * A JSON backend has no set-if-absent, so two requests carrying the same
+ * assertion at the same moment can both pass. Implement markUsed() with an
+ * atomic write of your backend (or use --db, whose stores have one) where that
+ * matters.
+ */
+class JsonClientAssertionJtiStore implements ClientAssertionJtiStore {
+  constructor(private readonly backend: JsonStoreBackend) {}
+
+  async markUsed(entry: { clientId: string; jti: string; expiresAt: number }): Promise<boolean> {
+    const key =
+      CLIENT_ASSERTION_JTI_PREFIX + encodeURIComponent(entry.clientId) + ':' + encodeURIComponent(entry.jti);
+    const used = await this.backend.get<{ expiresAt: number }>(key);
+    if (used && used.expiresAt >= epochSeconds()) return false;
+    await this.backend.put(key, { expiresAt: entry.expiresAt }, ttlUntil(entry.expiresAt));
+    return true;
+  }
+}
+
 class JsonGoogleLoginNonceStore implements GoogleLoginNonceStore {
   constructor(private readonly backend: JsonStoreBackend) {}
 
@@ -961,6 +1006,7 @@ export function createJsonProviderStores(backend: JsonStoreBackend): ProviderSto
     consentStore: new JsonConsentStore(backend),
     userStore: new JsonUserStore(backend),
     googleLoginNonceStore: new JsonGoogleLoginNonceStore(backend),
+    clientAssertionJtiStore: new JsonClientAssertionJtiStore(backend),
   };
 }
 
@@ -1046,6 +1092,7 @@ export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
   consentStore: new ConsentStore(),
   userStore: new UserStore(),
   googleLoginNonceStore: new InMemoryGoogleLoginNonceStore(),
+  clientAssertionJtiStore: new InMemoryClientAssertionJtiStore(),
 });
 
 export const transactionStore = defaultProviderStores.transactionStore;
@@ -1056,6 +1103,7 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
+export const clientAssertionJtiStore = defaultProviderStores.clientAssertionJtiStore;
 export const googleLoginNonceStore = defaultProviderStores.googleLoginNonceStore;
 
 /**

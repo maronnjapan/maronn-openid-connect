@@ -188,6 +188,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     c.set('refreshTokenStore', stores.refreshTokenStore);
     c.set('authSessionStore', stores.authSessionStore);
     c.set('browserSessionStore', stores.browserSessionStore);
+    c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
     c.set('authenticateUser', (username: string, password: string) =>
       stores.userStore.authenticate(username, password));
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);

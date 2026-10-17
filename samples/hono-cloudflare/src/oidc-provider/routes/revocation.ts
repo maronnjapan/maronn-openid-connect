@@ -18,6 +18,7 @@ import {
   tokenClientResolver as defaultTokenClientResolver,
   revocationResolvers as defaultRevocationResolvers,
 } from '../resolvers.js';
+import { verifyPrivateKeyJwt } from '../client-auth.js';
 
 /**
  * Token Revocation endpoint (API layer).
@@ -103,7 +104,11 @@ export async function authenticateRevocationClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(revokingClient, presentedCredentials);
-  await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+  if (presentedCredentials.method === 'private_key_jwt') {
+    await verifyPrivateKeyJwt(c, revokingClient, presentedCredentials, '/revoke');
+  } else {
+    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
+  }
   return presentedCredentials.clientId;
 }
 

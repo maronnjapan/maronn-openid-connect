@@ -1,7 +1,11 @@
 /**
  * OpenID Provider Configuration (OIDC Discovery 1.0 §4).
  */
-import { buildProviderMetadata, getJwaAlgorithm } from '@maronn-openid-connect/core';
+import {
+  buildProviderMetadata,
+  DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS,
+  getJwaAlgorithm,
+} from '@maronn-openid-connect/core';
 import { config, loadSigningKeys } from '../../_oidc-provider/provider';
 import {
   corsPreflight,
@@ -87,12 +91,16 @@ async function providerMetadata(): Promise<Response> {
     ],
     grantTypesSupported: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:device_code', 'urn:openid:params:grant-type:ciba'],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
-    // (no client_secret) are accepted at the token endpoint.
+    // (no client_secret) are accepted at the token endpoint. OIDC Core 1.0 §9:
+    // private_key_jwt is a JWT signed with a key the client registered (jwks).
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
+      'private_key_jwt',
       'none',
     ],
+    // RFC 8414 §2: the JWS algs of the private_key_jwt assertion.
+    tokenEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
     // OIDC Core 1.0 §5.3.2: the algs the registered UserInfo keys can sign with,
     // so clients relying on userinfo_signed_response_alg can trust the metadata.
     userinfoSigningAlgValuesSupported: [
@@ -118,12 +126,16 @@ async function providerMetadata(): Promise<Response> {
     introspectionEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
+      'private_key_jwt',
     ],
+    introspectionEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
     revocationEndpoint: `${issuer}/revoke`,
     revocationEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
+      'private_key_jwt',
     ],
+    revocationEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
   });
 
   // RFC 8414 §3.2 / RFC 9111 §5.2: discovery metadata is cacheable; 3600s, the

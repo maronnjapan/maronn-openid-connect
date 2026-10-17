@@ -65,6 +65,7 @@ import {
   selectIdTokenSigningKey,
   stores,
 } from '../_oidc-provider/provider';
+import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import {
   clientCors,
   corsPreflight,
@@ -112,10 +113,10 @@ async function token(request: Request): Promise<Response> {
 
   try {
     // --- Client authentication pipeline -------------------------------------
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
-    // Each step below is an independent core function. Replace
-    // verifyClientSecret with your own assertion check (e.g. private_key_jwt)
-    // without touching the rest.
+    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post /
+    // private_key_jwt. Each step below is an independent core function;
+    // verifyPrivateKeyJwt() (_oidc-provider/client-auth.ts) runs the
+    // private_key_jwt ones. Replace a check without touching the rest.
 
     // Read the presented credentials and which method was actually used.
     const presentedCredentials = extractClientCredentials({
@@ -129,12 +130,18 @@ async function token(request: Request): Promise<Response> {
       clientResolver,
     );
 
-    // OIDC Core 1.0 §9: the method used must match the registered
-    // token_endpoint_auth_method (blocks auth method downgrade / public-client mixups).
+    // OIDC Core 1.0 §9: the method used must be one the client registered
+    // (blocks auth method downgrade / public-client mixups).
     validateClientAuthMethod(tokenClient, presentedCredentials);
 
-    // OAuth 2.1 §7.4.1: constant-time client_secret comparison.
-    await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
+    if (presentedCredentials.method === 'private_key_jwt') {
+      // OIDC Core 1.0 §9 / RFC 7523 §3: a JWT signed with a key the client
+      // registered, used only once.
+      await verifyPrivateKeyJwt(tokenClient, presentedCredentials, '/token');
+    } else {
+      // OAuth 2.1 §7.4.1: constant-time client_secret comparison.
+      await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
+    }
 
     const authenticatedClientId = presentedCredentials.clientId;
 

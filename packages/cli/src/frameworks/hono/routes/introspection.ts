@@ -83,6 +83,7 @@ const AUTHENTICATE_CLIENT: StepFragment = {
       'requireConfidentialIntrospectionCaller',
     ],
     resolvers: ['tokenClientResolver as defaultTokenClientResolver'],
+    modules: { '../client-auth.js': ['verifyPrivateKeyJwt'] },
   },
   definition: `/**
  * Authenticate the caller — the same steps as the token endpoint
@@ -110,7 +111,11 @@ export async function authenticateIntrospectionClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(introspectingClient, presentedCredentials);
-  await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+  if (presentedCredentials.method === 'private_key_jwt') {
+    await verifyPrivateKeyJwt(c, introspectingClient, presentedCredentials, '/introspect');
+  } else {
+    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
+  }
   requireConfidentialIntrospectionCaller(introspectingClient);
   return presentedCredentials.clientId;
 }`,

@@ -92,16 +92,8 @@ export function literalArgumentOf(source: string, callee: string): string | unde
   if (!match) return undefined;
   const start = match.index + match[0].length - 1;
   let depth = 0;
-  let quote: string | undefined;
-  for (let index = start; index < source.length; index += 1) {
-    const char = source[index];
-    if (quote !== undefined) {
-      if (char === '\\') index += 1;
-      else if (char === quote) quote = undefined;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === '`') quote = char;
-    else if (char === '{' || char === '[') depth += 1;
+  for (const { char, index } of codeOf(source, start)) {
+    if (char === '{' || char === '[') depth += 1;
     else if (char === '}' || char === ']') {
       depth -= 1;
       if (depth === 0) return source.slice(start, index + 1);
@@ -114,14 +106,43 @@ export function literalArgumentOf(source: string, callee: string): string | unde
 export function evaluateLiteral(literal: string): unknown {
   // A literal of literals has no call, no arrow and no template: anything
   // else would run code of the source while reading it.
-  if (/[()`]|=>/.test(stripStrings(literal).replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, ''))) {
+  const code = [...codeOf(literal, 0)].map(({ char }) => char).join('');
+  if (/[()`]|=>/.test(code)) {
     throw new Error(`Not a plain literal: ${literal.slice(0, 80)}`);
   }
   return new Function(`"use strict"; return (${literal});`)();
 }
 
-function stripStrings(text: string): string {
-  return text.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, "''");
+/**
+ * The characters of the source from start on that are code: neither inside a
+ * string ('…', "…") nor inside a comment (// … and /* … *\/). A template
+ * literal counts as code, so evaluateLiteral() refuses it.
+ */
+function* codeOf(source: string, start: number): Generator<{ char: string; index: number }> {
+  let quote: string | undefined;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index] ?? '';
+    if (quote !== undefined) {
+      if (char === '\\') index += 1;
+      else if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index);
+      index = end === -1 ? source.length : end - 1;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2);
+      index = end === -1 ? source.length : end + 1;
+      continue;
+    }
+    yield { char, index };
+  }
 }
 
 /** The step meta of a steps/<id>.ts source, or undefined when it has none. */

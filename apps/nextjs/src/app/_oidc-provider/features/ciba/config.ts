@@ -35,3 +35,15 @@ if (cibaConfig.pollingInterval < 1 || cibaConfig.pollingInterval > 60) {
 if (cibaConfig.maxPendingPerSubject < 1 || cibaConfig.maxPendingPerSubject > 100) {
   throw new Error('cibaConfig.maxPendingPerSubject must be between 1 and 100');
 }
+
+declare module '../../config' {
+  interface RegisteredClient {
+    /**
+     * EXPERIMENTAL (CIBA Core 1.0 §4): the backchannel_token_delivery_mode
+     * client metadata. This provider offers poll only, so a client registered
+     * for ping or push has every backchannel authentication request refused
+     * with unauthorized_client. Omitted means poll.
+     */
+    backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';
+  }
+}

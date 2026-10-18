@@ -26,5 +26,12 @@ export default defineConfig({
   test: {
     globals: false,
     include: ['src/**/*.test.{ts,tsx}'],
+    // _oidc-provider/provider.ts opens the key-value store of db/kv/instance.ts
+    // when it is imported: keep it in memory so no test writes a file, and fix
+    // the issuer to the one of test-support/context.ts.
+    env: {
+      OIDC_SQLITE_PATH: ':memory:',
+      OIDC_ISSUER: 'https://op.example.com',
+    },
   },
 });

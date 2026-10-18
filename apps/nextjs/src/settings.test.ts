@@ -99,5 +99,3 @@ describe('readCrossAppAccess', () => {
     });
   });
 });
-
-// OIDC Core 1.0 §2 / §3.1.2.1: the acr the client asked for, with amr pwd (RFC 8176).

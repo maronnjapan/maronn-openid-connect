@@ -3,8 +3,8 @@
  * (generated without --db). Generate with --db sql or --db kv to keep the
  * data in a database instead; the functions below keep their names.
  *
- * app.ts reads the provider's data through these functions, and so does the
- * code that sets the provider up (registering clients and users).
+ * provider.ts reads the provider's data through these functions, and so does
+ * the code that sets the provider up (registering clients and users).
  */
 export { createDatabase } from './database';
 export type { MemoryDatabase as Database } from './database';

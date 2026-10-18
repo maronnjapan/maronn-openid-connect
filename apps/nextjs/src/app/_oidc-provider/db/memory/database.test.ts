@@ -3,7 +3,7 @@ import { createDatabase, createEmptyDatabase, federatedIdentityKey } from './dat
 
 describe('createDatabase', () => {
   it('should return the same database on every call', () => {
-    expect(createDatabase()).toBe(createDatabase({ request: 'ignored' }));
+    expect(createDatabase()).toBe(createDatabase());
   });
 });
 

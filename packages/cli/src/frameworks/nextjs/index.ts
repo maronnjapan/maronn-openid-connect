@@ -1,6 +1,6 @@
 import type { FrameworkGenerator, GeneratedFile, GeneratorOptions } from '../types.js';
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import {
   configTemplate,
   customScopesTemplate,

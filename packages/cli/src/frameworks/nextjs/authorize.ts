@@ -2,8 +2,8 @@
  * Next.js template for the Authorization Endpoint Route Handler
  * (`authorize/route.ts`).
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { EXPERIMENTAL_PACKAGE } from '../hono/templates.js';
 
 /** `authorize/route.ts` — OIDC Core 1.0 §3.1.2. */

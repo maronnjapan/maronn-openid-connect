@@ -3,8 +3,8 @@
  * (RFC 8628): the device authorization endpoint and the verification UI.
  * Only generated with `--enable device-authorization-grant`.
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { EXPERIMENTAL_PACKAGE } from '../hono/templates.js';
 
 const DEVICE_PACKAGE = `${EXPERIMENTAL_PACKAGE}/device-authorization-grant`;

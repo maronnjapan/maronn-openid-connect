@@ -1,6 +1,6 @@
 import type { GeneratedFile } from '../types.js';
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import type { DbKind } from '../../db.js';
 import { databaseNames } from '../db/names.js';
 import { databaseGeneratedFiles } from '../db/wiring.js';

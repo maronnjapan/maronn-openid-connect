@@ -3,7 +3,7 @@
  * fastify output: one fragment per step of the `revocation` endpoint of the
  * flow catalog.
  */
-import { DEFAULT_FEATURES } from '../../../features.js';
+import { DEFAULT_FEATURES } from '../../../registry.js';
 import { buildOpFlow } from '../../../flow/catalog.js';
 import { renderPipelineRoute, type StepFragment } from '../pipeline.js';
 

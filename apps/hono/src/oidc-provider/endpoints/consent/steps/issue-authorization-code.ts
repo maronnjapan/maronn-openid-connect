@@ -15,7 +15,7 @@ export const meta = step({
   label: 'Issue the authorization code',
   spec: 'OIDC Core 1.0 §3.1.2.5 / §3.1.3.1',
   function: 'issueConsentedAuthorizationCode',
-  calls: ['completeAuthTransaction', 'createAuthorizationCode'],
+  calls: ['completeAuthTransaction', 'resolveGrantableScopes', 'createAuthorizationCode'],
   consumes: ['transactionId', 'transaction', 'session'],
   produces: ['responseParams', 'authCodeData', 'grantedScope'],
   removable: false,

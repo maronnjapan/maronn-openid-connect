@@ -3,8 +3,8 @@
  * endpoint: UserInfo, introspection, revocation and pushed authorization
  * requests.
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { EXPERIMENTAL_PACKAGE } from '../hono/templates.js';
 
 /** `userinfo/route.ts` — OIDC Core 1.0 §5.3. */

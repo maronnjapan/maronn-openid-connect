@@ -17,6 +17,7 @@ export const meta = step({
   function: 'createAuthorizationTransaction',
   calls: ['generateRandomString', 'createAuthTransaction'],
   consumes: ['validatedRequest', 'responseMode'],
+  optional: ['responseMode'],
   produces: ['transactionId', 'transaction', 'transactionTtlSeconds'],
   removable: false,
 });

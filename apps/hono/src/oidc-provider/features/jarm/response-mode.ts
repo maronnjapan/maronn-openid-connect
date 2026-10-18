@@ -13,7 +13,19 @@ import type {
   AuthorizationResponseMode,
   AuthorizationResponseModeHandler,
 } from '../../endpoints/authorize/response-mode.js';
+import { contribute } from '../../endpoints/step.js';
 import { jarmConfig } from './config.js';
+
+/**
+ * What JARM adds to the build-authorization-response box of the consent
+ * endpoint: the response it restores can be the signed JWT of JARM §2.3.1.
+ */
+export const contribution = contribute({
+  endpoint: 'consent',
+  step: 'build-authorization-response',
+  feature: 'jarm',
+  spec: 'JARM §2.3.1',
+});
 
 /** The name the transaction stores: the query.jwt mode (its `jwt` shorthand is answered the same way). */
 export const JARM_RESPONSE_MODE_NAME = 'query.jwt';

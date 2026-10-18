@@ -10,8 +10,8 @@
  * generated file; prepareConsent() and submitConsent() run them in the order
  * the screen needs.
  */
-import { DEFAULT_FEATURES } from '../../../features.js';
-import type { OidcFeatureConfig } from '../../../features.js';
+import { DEFAULT_FEATURES } from '../../../registry.js';
+import type { OidcFeatureConfig } from '../../../registry.js';
 import { EXPERIMENTAL_PACKAGE } from '../../packages.js';
 
 export function consentRouteTemplate(

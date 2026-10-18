@@ -32,8 +32,9 @@ export const meta = step({
   label: 'Validate the request parameters',
   spec: 'OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5',
   function: 'validateAuthorizationRequestParams',
-  calls: ['rejectUnsupportedRequestParams', 'validateRequestObjectConsistency', 'validateResponseType', 'validateAuthorizationScope', 'validateClientScope', 'validateAuthorizationCodePkce', 'validatePromptParameter', 'applyOfflineAccessPolicy', 'validateDisplayParameter', 'resolveMaxAge', 'parseAudienceParameter', 'parseClaimsRequestParameter', 'validateAcrValuesParameter'],
+  calls: ['rejectUnsupportedRequestParams', 'validateRequestObjectConsistency', 'validateResponseType', 'validateAuthorizationScope', 'validateClientScope', 'validateAuthorizationCodePkce', 'validatePromptParameter', 'applyOfflineAccessPolicy', 'findUnsupportedScopes', 'validateDisplayParameter', 'resolveMaxAge', 'parseAudienceParameter', 'parseClaimsRequestParameter', 'validateAcrValuesParameter'],
   consumes: ['params', 'effectiveParams', 'requestObjectClaims', 'client', 'redirectUri', 'state'],
+  optional: ['effectiveParams', 'requestObjectClaims'],
   produces: ['validatedRequest'],
   removable: false,
 });

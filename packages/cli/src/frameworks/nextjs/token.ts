@@ -2,8 +2,8 @@
  * Next.js templates for the Token Endpoint: `token/route.ts` and the modules
  * next to it that answer the experimental grants.
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { EXPERIMENTAL_PACKAGE } from '../hono/templates.js';
 
 const EXPERIMENTAL_NOTICE = ` * Backed by ${EXPERIMENTAL_PACKAGE}, whose API is NOT stable: it may change in

@@ -10,8 +10,8 @@
  * generated file; prepareLogin() and submitLogin() (and completeGoogleLogin()
  * with the google-login extension) run them in the order the screen needs.
  */
-import { DEFAULT_FEATURES } from '../../../features.js';
-import type { OidcFeatureConfig } from '../../../features.js';
+import { DEFAULT_FEATURES } from '../../../registry.js';
+import type { OidcFeatureConfig } from '../../../registry.js';
 import { GOOGLE_LOGIN_PACKAGE } from '../../packages.js';
 
 export function loginRouteTemplate(

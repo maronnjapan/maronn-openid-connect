@@ -15,7 +15,7 @@ export const meta = step({
   label: 'Single Sign-On: reuse the active OP session',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'reuseExistingSession',
-  calls: ['requiresReauthentication', 'consentResolver.hasConsent'],
+  calls: ['requiresReauthentication', 'resolveGrantableScopes', 'consentResolver.hasConsent'],
   consumes: ['promptValues', 'transactionId', 'transaction', 'transactionTtlSeconds', 'verifiedHintSubject'],
   produces: ['session'],
   removable: true,

@@ -3,7 +3,7 @@
  * output: one fragment per step of the `userinfo` endpoint of the flow catalog.
  */
 import { buildOpFlow } from '../../../flow/catalog.js';
-import { DEFAULT_FEATURES } from '../../../features.js';
+import { DEFAULT_FEATURES } from '../../../registry.js';
 import { renderPipelineRoute, type StepFragment } from '../pipeline.js';
 
 const HEADER = `/**

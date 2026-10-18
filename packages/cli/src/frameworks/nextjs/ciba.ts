@@ -4,8 +4,8 @@
  * authentication endpoint and the authentication device UI.
  * Only generated with `--enable ciba`.
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { EXPERIMENTAL_PACKAGE } from '../hono/templates.js';
 
 const CIBA_PACKAGE = `${EXPERIMENTAL_PACKAGE}/ciba`;

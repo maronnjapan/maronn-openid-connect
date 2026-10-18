@@ -4,8 +4,8 @@
  * Google login callback, and the OP's error screens (the oidc-error page and
  * the not-found.tsx / error.tsx of the login and consent pages).
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { EXPERIMENTAL_PACKAGE, GOOGLE_LOGIN_PACKAGE } from '../hono/templates.js';
 
 /** `login/session.ts` — starting the OP session once the End-User is authenticated. */

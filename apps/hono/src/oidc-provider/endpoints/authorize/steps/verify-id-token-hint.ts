@@ -17,6 +17,7 @@ export const meta = step({
   function: 'verifyIdTokenHint',
   calls: ['validateIdTokenHint'],
   consumes: ['transactionId', 'transaction', 'issuer', 'responseMode'],
+  optional: ['responseMode'],
   produces: ['verifiedHintSubject'],
   removable: true,
   fallback: true,

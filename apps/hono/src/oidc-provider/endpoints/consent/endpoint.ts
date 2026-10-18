@@ -3,6 +3,7 @@ import { defineEndpoint } from '../step.js';
 /** The consent screen. OIDC Core 1.0 §3.1.2.4 */
 export const endpoint = defineEndpoint({
   id: 'consent',
+  order: 60,
   label: 'Consent screen',
   path: '/consent',
   methods: ['GET', 'POST'],
@@ -10,6 +11,18 @@ export const endpoint = defineEndpoint({
   group: { id: 'authorization-code', label: 'Authorization Code Flow' },
   spec: 'OIDC Core 1.0 §3.1.2.4',
   rearrangeable: false,
+  steps: [
+    'load-transaction',
+    'describe-consent-screen',
+    'reject-cross-origin-post',
+    'validate-csrf-token',
+    'deny-authorization',
+    'validate-decision',
+    'require-authenticated-subject',
+    'issue-authorization-code',
+    'record-consent',
+    'build-authorization-response',
+  ],
   edges: {
     chain: false,
     extra: [
@@ -24,5 +37,7 @@ export const endpoint = defineEndpoint({
       { from: 'record-consent', to: 'build-authorization-response', kind: 'flow' },
     ],
   },
-  journeys: [{ from: 'consent', to: 'token', label: 'code', kind: 'flow' }],
+  journeys: [
+    { from: 'consent', to: 'token', label: 'code', kind: 'flow', order: 90 },
+  ],
 });

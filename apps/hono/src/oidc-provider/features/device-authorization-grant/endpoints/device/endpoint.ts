@@ -3,6 +3,7 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 /** EXPERIMENTAL — the device verification screens. RFC 8628 §3.3 */
 export const endpoint = defineEndpoint({
   id: 'device',
+  order: 140,
   label: 'Device verification screens',
   path: '/device',
   methods: ['GET', 'POST'],
@@ -11,6 +12,11 @@ export const endpoint = defineEndpoint({
   spec: 'RFC 8628 §3.3',
   feature: 'device-authorization-grant',
   rearrangeable: false,
+  steps: [
+    'submit-user-code',
+    'submit-login',
+    'submit-decision',
+  ],
   edges: {
     chain: false,
     extra: [

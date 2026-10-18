@@ -11,6 +11,7 @@ export const meta = step({
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'rejectCombinedPromptNone',
   consumes: ['transactionId', 'transaction', 'issuer', 'responseMode'],
+  optional: ['responseMode'],
   produces: ['promptValues'],
   removable: false,
 });

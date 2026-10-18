@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { run } from '../index.js';
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -349,10 +349,10 @@ describe('run', () => {
 
   it('should list every existing file in the refusal message', () => {
     const outputDir = join(testDir, 'guarded-output');
-    mkdirSync(join(outputDir, 'routes'), { recursive: true });
+    mkdirSync(join(outputDir, 'endpoints', 'token'), { recursive: true });
     writeFileSync(join(outputDir, 'config.ts'), '// a\n');
     writeFileSync(join(outputDir, 'store.ts'), '// b\n');
-    writeFileSync(join(outputDir, 'routes', 'token.ts'), '// c\n');
+    writeFileSync(join(outputDir, 'endpoints', 'token', 'pipeline.ts'), '// c\n');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     run(['generate', 'hono', '-o', outputDir]);
@@ -361,8 +361,8 @@ describe('run', () => {
       [
         `Error: 3 file(s) already exist in ${outputDir}:`,
         '  config.ts',
+        '  endpoints/token/pipeline.ts',
         '  store.ts',
-        '  routes/token.ts',
         '',
         'Re-run with --force to overwrite them, or use -o <dir> to generate into a new directory.',
         'Tip: commit the generated files before overwriting so you can diff your changes.',
@@ -394,13 +394,18 @@ describe('run', () => {
     run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
     vi.restoreAllMocks();
     const afterFirstRun = readFileSync(entryFile, 'utf-8');
+    // Every file of the first run is in the way of the second, except the
+    // manifest, which is rewritten on every run.
+    const generatedCount = readdirSync(outputDir, { recursive: true })
+      .map(String)
+      .filter((path) => statSync(join(outputDir, path)).isFile() && path !== '.maronn-openid-connect.json').length;
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
     expect(process.exitCode).toBe(1);
     expect(errorSpy.mock.calls.map((c) => String(c[0]))[0]).toBe(
-      `Error: 20 file(s) already exist in ${outputDir}:`,
+      `Error: ${generatedCount} file(s) already exist in ${outputDir}:`,
     );
     expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
     vi.restoreAllMocks();
@@ -580,8 +585,8 @@ describe('run', () => {
       stdout.restore();
       expect(document.version).toBe(1);
       const token = document.endpoints.find((e) => e.id === 'token');
-      expect(token?.module).toBe('routes/token.ts');
-      expect(token?.steps[0]?.module).toBe('routes/token.ts');
+      expect(token?.module).toBe('endpoints/token/pipeline.ts');
+      expect(token?.steps[0]?.module).toBe('endpoints/token/steps/parse-request.ts');
     });
 
     it('should name the App Router module for nextjs', () => {
@@ -726,8 +731,8 @@ describe('run', () => {
       const outputDir = join(testDir, 'oidc-provider');
       vi.spyOn(console, 'log').mockImplementation(() => {});
       run(['generate', 'hono', '-o', outputDir, '--flow', file]);
-      expect(existsSync(join(outputDir, 'routes', 'revocation.ts'))).toBe(false);
-      expect(existsSync(join(outputDir, 'routes', 'introspection.ts'))).toBe(true);
+      expect(existsSync(join(outputDir, 'features', 'revocation'))).toBe(false);
+      expect(existsSync(join(outputDir, 'features', 'introspection'))).toBe(true);
       vi.restoreAllMocks();
     });
 

@@ -11,6 +11,7 @@ export const meta = step({
   spec: 'OIDC Core 1.0 §3.1.2.6 / §3.1.2.2',
   function: 'authorizationErrorOutcome',
   consumes: ['responseMode'],
+  optional: ['responseMode'],
   produces: [],
   removable: false,
 });

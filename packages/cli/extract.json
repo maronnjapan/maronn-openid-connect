@@ -1,0 +1,40 @@
+{
+  "$comment": "Where `maronn-oidc generate` takes the generated code from. `pnpm run build` copies every source of `sources` into templates/<name>/ (tests excluded) and bakes the meta of their steps and endpoints into templates/<name>/catalog.json. A framework names its source, the root under it that becomes the output directory, and files placed over that root (output path: source path under the source).",
+  "sources": {
+    "hono": {
+      "directory": "../../apps/hono/src",
+      "include": ["oidc-provider", "web"],
+      "exclude": ["\\.test\\.tsx?$"]
+    }
+  },
+  "frameworks": {
+    "hono": {
+      "source": "hono",
+      "root": "oidc-provider",
+      "layout": "hono",
+      "files": {}
+    },
+    "express": {
+      "source": "hono",
+      "root": "oidc-provider",
+      "layout": "hono",
+      "router": "web",
+      "files": {
+        "apply.ts": "web/express/apply.ts",
+        "web-router.ts": "web/web-router.ts",
+        "node-adapter.ts": "web/node-adapter.ts"
+      }
+    },
+    "fastify": {
+      "source": "hono",
+      "root": "oidc-provider",
+      "layout": "hono",
+      "router": "web",
+      "files": {
+        "apply.ts": "web/fastify/apply.ts",
+        "web-router.ts": "web/web-router.ts",
+        "node-adapter.ts": "web/node-adapter.ts"
+      }
+    }
+  }
+}

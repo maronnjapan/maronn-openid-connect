@@ -17,6 +17,7 @@ export const meta = step({
   function: 'issueAuthorizationCodeResponse',
   calls: ['completeAuthTransaction', 'createAuthorizationCode', 'consentResolver.recordGrant'],
   consumes: ['transactionId', 'transaction', 'session', 'issuer', 'responseMode'],
+  optional: ['responseMode'],
   produces: [],
   removable: false,
   calledFrom: ['authenticate-silently', 'reuse-session'],

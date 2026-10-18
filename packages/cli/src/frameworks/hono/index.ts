@@ -1,5 +1,5 @@
 import type { FrameworkGenerator, GeneratedFile, GeneratorOptions } from '../types.js';
-import { DEFAULT_FEATURES } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
 import {
   appTemplate,
   applyTemplate,

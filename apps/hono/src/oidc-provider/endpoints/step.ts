@@ -55,6 +55,12 @@ export interface StepMeta {
   readonly calls?: readonly string[];
   /** The pipeline values the step reads. */
   readonly consumes: readonly string[];
+  /**
+   * Values of consumes the step reads only when an earlier step defines them
+   * (a step of a feature): without that step they are undefined, and the
+   * diagram does not list them.
+   */
+  readonly optional?: readonly string[];
   /** The pipeline values the step defines. */
   readonly produces: readonly string[];
   /**
@@ -96,6 +102,8 @@ export interface StepContribution {
   readonly feature: string;
   readonly calls?: readonly string[];
   readonly consumes?: readonly string[];
+  /** A specification the step then also implements, appended to its spec. */
+  readonly spec?: string;
 }
 
 /** Describe a contribution. The function only checks the shape; it returns its argument. */
@@ -112,9 +120,36 @@ export interface EdgeMeta {
   readonly kind: 'flow' | 'branch' | 'error';
 }
 
+/** An arrow between endpoints, with its place in the list of all such arrows. */
+export interface JourneyMeta extends EdgeMeta {
+  /** Arrows between endpoints are drawn in ascending order. */
+  readonly order: number;
+}
+
+/**
+ * The arrows between the steps of an endpoint.
+ *
+ * chain draws one arrow from each stage to the next, in the order of steps:
+ * a stage is a step that is not the errorStep, not listed in `off` and not a
+ * branch of a fork. A fork splits the chain after a stage: an arrow labelled
+ * with the branch goes into each branch step that is there, and an arrow from
+ * it to the next stage. fromKind draws an arrow from every step of a kind,
+ * and extra lists arrows drawn as they are, when both ends are there.
+ */
+export interface EndpointEdges {
+  readonly chain: boolean;
+  /** Steps outside the chain: those another step calls (calledFrom). */
+  readonly off?: readonly string[];
+  readonly forks?: readonly { readonly at: string; readonly branches: readonly { readonly step: string; readonly label: string }[] }[];
+  readonly fromKind?: readonly { readonly kind: StepKind; readonly to: string; readonly label: string }[];
+  readonly extra?: readonly EdgeMeta[];
+}
+
 export interface EndpointMeta {
   /** Unique within the provider (kebab-case). */
   readonly id: string;
+  /** Endpoints are listed (and mounted in the diagram) in ascending order. */
+  readonly order: number;
   readonly label: string;
   /** The HTTP path, as app.ts mounts it. */
   readonly path: string;
@@ -133,21 +168,20 @@ export interface EndpointMeta {
   readonly rearrangeable: boolean;
   /** Values the pipeline has before its first step (read from the context). */
   readonly initial?: readonly string[];
+  /**
+   * The steps of the endpoint in the order of the diagram, those of the
+   * features included (a step whose feature is not generated is left out).
+   */
+  readonly steps: readonly string[];
   /** The step every failing step ends in: the dashed arrows into it. */
   readonly errorStep?: string;
-  /**
-   * The arrows between the steps. 'chain' draws one arrow from each stage of
-   * the pipeline to the next, in the order of pipeline.ts; listed arrows are
-   * drawn beside it (or alone, without 'chain').
-   */
-  readonly edges: { readonly chain: boolean; readonly extra?: readonly EdgeMeta[] };
+  readonly edges: EndpointEdges;
   /**
    * Arrows between endpoints: how a client or browser travels to and from
-   * this one. An endpoint lists the arrows it takes part in that no endpoint
-   * before it in the provider lists; an arrow to an endpoint the provider
-   * does not have is not drawn.
+   * this one. Each arrow is listed by one of the endpoints it joins; an arrow
+   * to an endpoint the provider does not have is not drawn.
    */
-  readonly journeys?: readonly EdgeMeta[];
+  readonly journeys?: readonly JourneyMeta[];
 }
 
 /** Describe an endpoint. The function only checks the shape; it returns its argument. */

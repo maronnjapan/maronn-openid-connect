@@ -3,6 +3,7 @@ import { defineEndpoint } from '../step.js';
 /** The login screen. OIDC Core 1.0 §3.1.2.3 */
 export const endpoint = defineEndpoint({
   id: 'login',
+  order: 40,
   label: 'Login screen',
   path: '/login',
   methods: ['GET', 'POST'],
@@ -10,6 +11,17 @@ export const endpoint = defineEndpoint({
   group: { id: 'authorization-code', label: 'Authorization Code Flow' },
   spec: 'OIDC Core 1.0 §3.1.2.3',
   rearrangeable: false,
+  steps: [
+    'load-transaction',
+    'describe-login-screen',
+    'reject-cross-origin-post',
+    'validate-csrf-token',
+    'authenticate-user',
+    'record-login-failure',
+    'discard-session-for-fresh-login',
+    'establish-session',
+    'hand-off-to-consent',
+  ],
   edges: {
     chain: false,
     extra: [
@@ -24,5 +36,7 @@ export const endpoint = defineEndpoint({
       { from: 'establish-session', to: 'hand-off-to-consent', kind: 'flow' },
     ],
   },
-  journeys: [{ from: 'login', to: 'consent', label: 'authenticated', kind: 'flow' }],
+  journeys: [
+    { from: 'login', to: 'consent', label: 'authenticated', kind: 'flow', order: 80 },
+  ],
 });

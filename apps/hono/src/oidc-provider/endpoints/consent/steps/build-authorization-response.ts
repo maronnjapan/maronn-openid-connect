@@ -9,7 +9,7 @@ export const meta = step({
   endpoint: 'consent',
   kind: 'transform',
   label: 'Build the authorization response URL',
-  spec: 'RFC 9207 §2 / JARM §2.3.1',
+  spec: 'RFC 9207 §2',
   function: 'buildConsentRedirect',
   calls: ['restoreResponseMode'],
   consumes: ['transaction', 'responseParams', 'authCodeData', 'issuer'],

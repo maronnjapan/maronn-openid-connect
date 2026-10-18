@@ -4,8 +4,8 @@
  * `routes/device-authorization.ts`, `routes/backchannel-authentication.ts` —
  * one fragment per step of their endpoints in the flow catalog.
  */
-import { DEFAULT_FEATURES } from '../../../features.js';
-import type { OidcFeatureConfig } from '../../../features.js';
+import { DEFAULT_FEATURES } from '../../../registry.js';
+import type { OidcFeatureConfig } from '../../../registry.js';
 import { buildOpFlow } from '../../../flow/catalog.js';
 import type { FlowEndpoint } from '../../../flow/types.js';
 import { EXPERIMENTAL_PACKAGE } from '../../packages.js';

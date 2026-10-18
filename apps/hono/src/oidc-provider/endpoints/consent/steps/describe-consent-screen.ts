@@ -9,7 +9,8 @@ export const meta = step({
   kind: 'transform',
   label: 'Describe the consent form',
   function: 'describeConsentScreen',
-  consumes: ['transaction'],
+  calls: ['resolveGrantableScopes'],
+  consumes: ['transactionId', 'transaction'],
   produces: ['screen'],
   removable: false,
 });

@@ -10,6 +10,7 @@ export const meta = step({
   spec: 'OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1',
   function: 'buildTokenResponse',
   consumes: ['accessToken', 'idToken', 'refreshToken', 'validatedRequest'],
+  optional: ['refreshToken'],
   produces: ['tokenResponse'],
   removable: false,
 });

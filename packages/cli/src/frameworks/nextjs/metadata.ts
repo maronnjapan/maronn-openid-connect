@@ -2,8 +2,8 @@
  * Next.js templates for the public metadata Route Handlers:
  * `.well-known/openid-configuration` and `.well-known/jwks.json`.
  */
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 
 /**
  * The grant types the generated OP supports, as discovery advertises them. A

@@ -14,6 +14,7 @@ export const meta = step({
   function: 'resolveRedirectTarget',
   calls: ['resolveAuthorizationRedirectUri'],
   consumes: ['params', 'effectiveParams', 'client'],
+  optional: ['effectiveParams'],
   produces: ['redirectUri', 'state'],
   removable: false,
 });

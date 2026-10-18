@@ -5,8 +5,8 @@
  * Route Handlers share.
  */
 import type { DbKind } from '../../db.js';
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 
 /**
  * `_oidc-provider/provider.ts`: the OpenID Provider's configuration and the

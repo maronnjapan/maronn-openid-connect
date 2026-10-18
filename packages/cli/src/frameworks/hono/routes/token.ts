@@ -7,8 +7,8 @@
  * below, and the handler calls them in the order of the catalog or of the
  * `--flow` document.
  */
-import { DEFAULT_FEATURES } from '../../../features.js';
-import type { OidcFeatureConfig } from '../../../features.js';
+import { DEFAULT_FEATURES } from '../../../registry.js';
+import type { OidcFeatureConfig } from '../../../registry.js';
 import { buildOpFlow } from '../../../flow/catalog.js';
 import { EXPERIMENTAL_PACKAGE } from '../../packages.js';
 import { renderPipelineRoute, type StepFragment } from '../pipeline.js';

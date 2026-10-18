@@ -11,7 +11,7 @@
  * to every step and is not listed.
  */
 import type { DbKind } from '../db.js';
-import type { OidcFeatureConfig } from '../features.js';
+import type { OidcFeatureConfig } from '../registry.js';
 import type { FlowEdge, FlowEndpoint, FlowGroup, FlowStep, FlowStepKind, OpFlow } from './types.js';
 
 export interface BuildOpFlowOptions {

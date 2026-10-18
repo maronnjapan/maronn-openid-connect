@@ -21,6 +21,7 @@ export const meta = step({
   function: 'validateAuthorizationCodeGrant',
   calls: ['resolveAuthorizationCode', 'validateAuthorizationCodeUnused', 'validateAuthorizationCodeClient', 'validateAuthorizationCodeExpiration', 'validateAuthorizationCodeRedirectUri', 'verifyAuthorizationCodePkce', 'consumeAuthorizationCode', 'buildValidatedAuthorizationCodeRequest'],
   consumes: ['params', 'authenticatedClientId', 'grantType', 'refreshTokenRequest'],
+  optional: ['refreshTokenRequest'],
   produces: ['validatedRequest'],
   removable: false,
 });

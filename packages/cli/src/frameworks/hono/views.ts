@@ -9,8 +9,8 @@
  * own, so the generated views carry no escapeHtml helper.
  */
 
-import { DEFAULT_FEATURES } from '../../features.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import { DEFAULT_FEATURES } from '../../registry.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import {
   GOOGLE_LOGIN_PACKAGE,
   viewParamTypesTemplate,

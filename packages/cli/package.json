@@ -16,6 +16,8 @@
   },
   "files": [
     "dist",
+    "templates",
+    "extract.json",
     "LICENSE",
     "README.md"
   ],
@@ -23,11 +25,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node dist/extract/collect.js",
     "test": "vitest run",
     "test:ci": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:matrix": "node scripts/test-matrix.mjs"
   },
   "keywords": [
     "openid-connect",
@@ -47,7 +50,10 @@
   },
   "homepage": "https://github.com/maronnjapan/maronn-openid-connect/tree/main/packages/cli#readme",
   "devDependencies": {
+    "@types/express": "^5.0.5",
     "@types/node": "^26.6.4",
+    "fastify": "^5.12.2",
+    "hono": "^4.13.13",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }

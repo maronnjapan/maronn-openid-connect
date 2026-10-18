@@ -9,12 +9,12 @@ import {
   EXPERIMENTAL_FEATURES,
   EXTENSION_FEATURES,
   resolveFeatures,
-} from './features.js';
-import type { OidcFeatureConfig } from './features.js';
+} from './registry.js';
+import type { OidcFeatureConfig } from './registry.js';
 import type { GeneratedFile } from './frameworks/types.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
-import { buildOpFlow } from './flow/catalog.js';
+import { buildOpFlow } from './flow/build.js';
 import { renderMermaid, type MermaidDetail } from './flow/mermaid.js';
 import { annotateFlowModules } from './flow/modules.js';
 import { applyFlowSelection, parseFlowFile, type FlowSelection } from './flow/flow-file.js';

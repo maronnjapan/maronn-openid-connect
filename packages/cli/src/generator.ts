@@ -1,6 +1,7 @@
-import { getGenerator, getAvailableFrameworks } from './frameworks/index.js';
-import { DEFAULT_FEATURES } from './features.js';
-import type { OidcFeatureConfig } from './features.js';
+import { getGenerator } from './frameworks/index.js';
+import { extractProvider, extractableFrameworks } from './generate.js';
+import { DEFAULT_FEATURES } from './registry.js';
+import type { OidcFeatureConfig } from './registry.js';
 import type { GeneratedFile } from './frameworks/types.js';
 import type { DbKind } from './db.js';
 
@@ -48,6 +49,20 @@ export function generate(options: GenerateOptions): GenerateResult {
     endpointOrder,
   } = options;
 
+  if (extractableFrameworks().includes(framework)) {
+    const files = extractProvider({
+      framework,
+      features,
+      scopes,
+      corePackageName,
+      steps,
+      ...(db === undefined ? {} : { db }),
+    });
+    void outputDir;
+    void endpointOrder;
+    return { files, framework };
+  }
+
   const generator = getGenerator(framework);
   if (!generator) {
     const available = getAvailableFrameworks().join(', ');
@@ -78,4 +93,7 @@ export function generate(options: GenerateOptions): GenerateResult {
   return { files, framework };
 }
 
-export { getAvailableFrameworks };
+/** The frameworks generate accepts: the ones extract.json describes, then Next.js. */
+export function getAvailableFrameworks(): string[] {
+  return [...extractableFrameworks(), 'nextjs'];
+}

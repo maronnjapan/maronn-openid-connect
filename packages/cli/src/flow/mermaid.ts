@@ -9,7 +9,7 @@
  *   arrows connect the subgraphs.
  */
 import type { FlowEdge, FlowEndpoint, FlowStep, OpFlow } from './types.js';
-import { FLOW_STEP_KINDS } from './catalog.js';
+import { FLOW_STEP_KINDS } from './build.js';
 
 export type MermaidDetail = 'endpoints' | 'steps';
 

@@ -3,7 +3,7 @@
  * names the generated app uses for them are in names.ts.
  */
 import type { DbKind } from '../../db.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import type { GeneratedFile } from '../types.js';
 import { kvGeneratedFiles } from './kv-templates.js';
 import { dbGeneratedFiles, type DbInstanceTarget } from './templates.js';

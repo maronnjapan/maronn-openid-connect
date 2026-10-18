@@ -14,7 +14,7 @@ export interface GeneratedFile {
 }
 
 import type { DbKind } from '../db.js';
-import type { OidcFeatureConfig } from '../features.js';
+import type { OidcFeatureConfig } from '../registry.js';
 
 /**
  * Options for code generation

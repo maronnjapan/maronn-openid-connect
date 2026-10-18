@@ -18,7 +18,7 @@ export const meta = step({
   label: 'Validate the grant registration and the scope',
   spec: 'RFC 8628 §3.1 / RFC 7591 §2 / OIDC Core 1.0 §11',
   function: 'validateDeviceAuthorizationRequest',
-  calls: ['validateDeviceGrantAllowed', 'validateDeviceAuthorizationScope', 'findUnregisteredClientScopes', 'applyOfflineAccessPolicy'],
+  calls: ['validateDeviceGrantAllowed', 'validateDeviceAuthorizationScope', 'findUnregisteredClientScopes', 'applyOfflineAccessPolicy', 'findUnsupportedScopes'],
   consumes: ['params', 'client'],
   produces: ['scope'],
   removable: false,

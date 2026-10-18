@@ -3,6 +3,7 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 /** Token Introspection. RFC 7662 §2 */
 export const endpoint = defineEndpoint({
   id: 'introspection',
+  order: 90,
   label: 'Token introspection endpoint',
   path: '/introspect',
   methods: ['POST'],
@@ -11,6 +12,15 @@ export const endpoint = defineEndpoint({
   spec: 'RFC 7662 §2',
   feature: 'introspection',
   rearrangeable: true,
+  steps: [
+    'parse-request',
+    'authenticate-client',
+    'resolve-token',
+    'build-response',
+    'sign-response',
+    'respond',
+    'respond-error',
+  ],
   errorStep: 'respond-error',
   edges: {
     chain: true,
@@ -18,5 +28,7 @@ export const endpoint = defineEndpoint({
       { from: 'sign-response', to: 'respond', label: 'application/token-introspection+jwt', kind: 'branch' },
     ],
   },
-  journeys: [{ from: 'token', to: 'introspection', label: 'token', kind: 'flow' }],
+  journeys: [
+    { from: 'token', to: 'introspection', label: 'token', kind: 'flow', order: 110 },
+  ],
 });

@@ -19,8 +19,9 @@ export const meta = step({
   label: 'prompt=none: authenticate without interaction',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'completePromptNoneRequest',
-  calls: ['resolvePromptNoneSession', 'validatePromptNoneIdTokenHint', 'validatePromptNoneConsent', 'requiresReauthentication'],
+  calls: ['resolvePromptNoneSession', 'validatePromptNoneIdTokenHint', 'resolveGrantableScopes', 'validatePromptNoneConsent', 'requiresReauthentication'],
   consumes: ['promptValues', 'transactionId', 'transaction', 'verifiedHintSubject', 'issuer', 'responseMode'],
+  optional: ['responseMode'],
   produces: ['session'],
   removable: true,
 });

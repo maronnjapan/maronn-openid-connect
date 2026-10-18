@@ -14,7 +14,7 @@
  * concurrent first sign-ins of a Google account create the user.
  */
 import type { GeneratedFile } from '../types.js';
-import type { OidcFeatureConfig } from '../../features.js';
+import type { OidcFeatureConfig } from '../../registry.js';
 import { GOOGLE_LOGIN_PACKAGE } from '../hono/templates.js';
 import {
   passwordHashingConstants,

@@ -47,3 +47,7 @@ samples/*/.vercel/
 /.serena
 /.mcp.json
 /docs/implementation-guides
+
+# packages/cli: the templates the build copies from apps/, and the generated test:matrix combinations
+packages/cli/templates/
+packages/cli/.matrix/

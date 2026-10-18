@@ -21,6 +21,7 @@
 import type { webcrypto } from 'node:crypto';
 import {
   extractAlgorithmParamsFromJwk,
+  isPublicTokenClient,
   type AccessTokenInfo,
   type Jwk,
   type JwkSet,
@@ -170,7 +171,7 @@ export function authorizeIdJagRedemptionClient(client: TokenClientInfo): void {
       'The client is not authorized to use the jwt-bearer grant type',
     );
   }
-  if (client.tokenEndpointAuthMethod === 'none') {
+  if (isPublicTokenClient(client)) {
     throw new IdJagError(
       'unauthorized_client',
       'Public clients are not allowed to use the jwt-bearer grant type',

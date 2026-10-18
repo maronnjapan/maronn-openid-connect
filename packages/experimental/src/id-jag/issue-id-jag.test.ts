@@ -92,7 +92,7 @@ function confidentialClient(overrides: Partial<TokenClientInfo> = {}): TokenClie
     clientId: CLIENT_ID,
     clientSecret: 'secret',
     grantTypes: ['authorization_code', TOKEN_EXCHANGE_GRANT_TYPE],
-    tokenEndpointAuthMethod: 'client_secret_basic',
+    tokenEndpointAuthMethods: ['client_secret_basic'],
     ...overrides,
   };
 }
@@ -205,7 +205,7 @@ describe('authorizeIdJagIssuanceClient', () => {
   // draft §9.1: confidential client 限定
   it('should reject a public client with unauthorized_client', () => {
     const client = confidentialClient({
-      tokenEndpointAuthMethod: 'none',
+      tokenEndpointAuthMethods: ['none'],
       clientSecret: undefined,
     });
     expect(() => authorizeIdJagIssuanceClient(client)).toThrow(

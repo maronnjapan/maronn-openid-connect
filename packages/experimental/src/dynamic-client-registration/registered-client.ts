@@ -16,6 +16,9 @@ import type { ValidatedClientRegistration } from './registration-request.js';
  * （core の ClientInfo & TokenClientInfo を合成した型）へそのまま適合する。
  * clientName と clientIdIssuedAt は core が解釈しない付加情報で、応答の
  * 組み立てだけに使われる。
+ *
+ * tokenEndpointAuthMethods は、登録した token_endpoint_auth_method（RFC 7591 §2 は 1 つ）を
+ * core の TokenClientInfo.tokenEndpointAuthMethods と同じ一覧の形で持つ。
  */
 export interface DynamicallyRegisteredClient {
   clientId: string;
@@ -24,7 +27,7 @@ export interface DynamicallyRegisteredClient {
   redirectUris: string[];
   grantTypes: string[];
   responseTypes: string[];
-  tokenEndpointAuthMethod: 'client_secret_basic' | 'client_secret_post' | 'none';
+  tokenEndpointAuthMethods: [ValidatedClientRegistration['tokenEndpointAuthMethod']];
   clientName?: string;
   clientIdIssuedAt: number;
 }
@@ -75,7 +78,7 @@ export function buildRegisteredClient(
     redirectUris: [...metadata.redirectUris],
     grantTypes: [...metadata.grantTypes],
     responseTypes: [...metadata.responseTypes],
-    tokenEndpointAuthMethod: metadata.tokenEndpointAuthMethod,
+    tokenEndpointAuthMethods: [metadata.tokenEndpointAuthMethod],
     ...(metadata.clientName === undefined ? {} : { clientName: metadata.clientName }),
     clientIdIssuedAt: Math.floor(now() / 1000),
   };
@@ -101,7 +104,7 @@ export function buildClientRegistrationResponse(
       : { client_secret: client.clientSecret, client_secret_expires_at: 0 }),
     client_id_issued_at: client.clientIdIssuedAt,
     redirect_uris: [...client.redirectUris],
-    token_endpoint_auth_method: client.tokenEndpointAuthMethod,
+    token_endpoint_auth_method: client.tokenEndpointAuthMethods[0],
     grant_types: [...client.grantTypes],
     response_types: [...client.responseTypes],
     ...(client.clientName === undefined ? {} : { client_name: client.clientName }),

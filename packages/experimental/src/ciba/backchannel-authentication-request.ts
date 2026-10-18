@@ -10,7 +10,7 @@
  * validateClientAuthMethod → verifyClientSecret）で済ませてから、認証済み
  * クライアントをここへ渡す。
  */
-import { generateRandomString, type TokenClientInfo } from '@maronn-openid-connect/core';
+import { generateRandomString, isPublicTokenClient, type TokenClientInfo } from '@maronn-openid-connect/core';
 import { BackchannelAuthenticationError } from './errors.js';
 import {
   CIBA_GRANT_TYPE,
@@ -168,7 +168,7 @@ export async function processBackchannelAuthenticationRequest(input: {
  * @throws {BackchannelAuthenticationError} unauthorized_client
  */
 function validateCibaClient(client: CibaClientInfo): void {
-  if (client.tokenEndpointAuthMethod === 'none') {
+  if (isPublicTokenClient(client)) {
     throw new BackchannelAuthenticationError(
       'unauthorized_client',
       'Public clients are not allowed to use the CIBA grant type',

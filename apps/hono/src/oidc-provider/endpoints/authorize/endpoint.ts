@@ -33,9 +33,6 @@ export const endpoint = defineEndpoint({
     'respond-error',
   ],
   errorStep: 'respond-error',
-  // Defined before the first step: the issuer of the provider, and the
-  // response mode, which the resolve-jarm-response-mode step sets and the
-  // error step reads even when a step before it failed.
   edges: {
     chain: true,
     off: ['issue-authorization-code'],

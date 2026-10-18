@@ -176,7 +176,7 @@ export type ExperimentalFeatureName = (typeof EXPERIMENTAL_FEATURES)[number];
  *
  * - google-login: Sign in with Google (Google Identity Services, redirect mode)
  *   as a login method next to the username / password form. The generated
- *   login page renders the Google button and a new login_uri route
+ *   login page renders the Google button and a new login_uri endpoint
  *   (POST /login/google) verifies the posted ID token with Google's official
  *   google-auth-library through `@maronn-openid-connect/google-login`, then
  *   continues into the same session / consent steps as the password login.
@@ -200,13 +200,13 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  * - requestObject: when false, the authorize endpoint rejects the `request`
  *   parameter with `request_not_supported` (OIDC Core 1.0 §6.3).
  * - par: experimental, disabled by default. When true, the PAR endpoint
- *   (RFC 9126) is generated and the authorize route resolves URN-form
+ *   (RFC 9126) is generated and the authorization endpoint resolves URN-form
  *   `request_uri` values through `@maronn-openid-connect/experimental/par`.
  * - tokenExchange: experimental, disabled by default. When true, the token
- *   route dispatches the `urn:ietf:params:oauth:grant-type:token-exchange`
+ *   endpoint dispatches the `urn:ietf:params:oauth:grant-type:token-exchange`
  *   grant (RFC 8693) to `@maronn-openid-connect/experimental/token-exchange` before
  *   core's grant_type validation would reject the URN.
- * - jarm: experimental, disabled by default. When true, the authorize route
+ * - jarm: experimental, disabled by default. When true, the authorization endpoint
  *   interprets `response_mode=query.jwt` (and its `jwt` shorthand) and returns
  *   the authorization response as a single signed JWT in the `response` query
  *   parameter, via `@maronn-openid-connect/experimental/jarm`. A request that
@@ -218,7 +218,7 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   `urn:ietf:params:oauth:grant-type:device_code` grant (RFC 8628) to
  *   `@maronn-openid-connect/experimental/device-authorization-grant` before
  *   core's grant_type validation would reject the URN.
- * - idJag: experimental, disabled by default. When true, the token route issues
+ * - idJag: experimental, disabled by default. When true, the token endpoint issues
  *   ID-JAGs (Cross-App Access, draft-ietf-oauth-identity-assertion-authz-grant)
  *   on the token-exchange grant for
  *   `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and redeems
@@ -234,7 +234,7 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   `@maronn-openid-connect/experimental/ciba` before core's grant_type
  *   validation would reject the URN.
  * - jwtIntrospectionResponse: experimental, disabled by default. When true, the
- *   introspection route answers a request whose Accept header names
+ *   introspection endpoint answers a request whose Accept header names
  *   application/token-introspection+jwt with a signed introspection JWT
  *   (RFC 9701 §5, typ token-introspection+jwt, RS256) via
  *   `@maronn-openid-connect/experimental/jwt-introspection-response`, after
@@ -242,7 +242,7 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   request that does not name that media type is answered exactly as before.
  * - rpInitiatedLogout: experimental, disabled by default. When true, the OP
  *   additionally serves the end_session_endpoint (GET|POST /logout) and the
- *   confirmation approve route (POST /logout/approve), advertises
+ *   confirmation approve endpoint (POST /logout/approve), advertises
  *   end_session_endpoint in discovery, and resolves the logout decision and the
  *   post_logout_redirect_uri (exact match against
  *   rpInitiatedLogoutConfig.postLogoutRedirectUris) via

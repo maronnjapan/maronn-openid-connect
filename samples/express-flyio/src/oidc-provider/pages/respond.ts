@@ -1,9 +1,10 @@
 /**
- * Response helpers shared by the screen routes (pages/).
+ * Response helpers shared by the screens (the page.tsx of the endpoints and
+ * features).
  *
- * The logic layer (routes/) describes what to do — which screen to show, where
- * to send the browser, which cookies to set — and never builds a Response. The
- * helpers below are how a page turns that description into HTTP.
+ * The steps of a screen describe what to do (which screen to show, where to
+ * send the browser, which cookies to set) as an outcome and never build a
+ * Response. The helpers below are how a page turns that outcome into HTTP.
  */
 
 /**

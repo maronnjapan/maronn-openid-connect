@@ -49,7 +49,7 @@ CLI コマンドでフローの実装コードを生成し、利用者はその�
 - t_wada が提唱する方法でテスト駆動開発を行う
 - 機能追加または修正を実ブラウザや実 HTTP フローで検証できる場合は、原則として `tests/e2e` に Playwright E2E テストも追加する
 - E2E で使う OpenID Provider は、PR ごとに `apps/*` の全機能オンのアプリを、nightly と手動起動で `samples/*` の CLI 生成アプリを対象とする。E2E 専用のクライアントとリソースサーバーは `tests/e2e` 配下に置き、`apps/*` と `samples/*` には OP 以外の役割を混在させない
-- `apps/*/src/oidc-provider` の base（`features/<id>/` と `db/<kind>/` 以外）は `features/<id>/` と experimental パッケージを import しない。機能は `features/feature.ts` のフックか、パイプラインの所有者付きブロック（`// [step-id] (feature: <id>) ...`）で base に差し込む。この境界は `pnpm run lint`（`.github/scripts/lint-import-boundaries.mjs`）が検査する
+- `apps/hono/src/oidc-provider` と `apps/nextjs/src/app` の base（機能と db の種類が持つファイル以外）は、機能のディレクトリと experimental パッケージを import しない。機能は `features/feature.ts`（Next.js は `_oidc-provider/feature.ts`）のフックか、パイプライン（`pipeline.ts`、Next.js は `route.ts`）の所有者付きブロック（`// [step-id] (feature: <id>) ...`）で base に差し込む。この境界は `pnpm run lint`（`.github/scripts/lint-import-boundaries.mjs`）が検査する
 - `packages/experimental/src` の変更に対して changeset を手で書かない。main への push で CI が patch の changeset を自動生成する。experimental の bump はどの変更でも patch 固定であり、minor または major を指定すると `pnpm run test:release-contract` が失敗する。詳細は `RELEASE.md` の「experimental の自動 publish」を参照する
 - `packages/experimental` の機能を実装し終えたら、作業用 notes リポジトリの `implementation-guides/experimental/` に実装解説の日本語版と英語版を作成する。`packages/experimental/src` または CLI 統合を変更した場合は、該当解説の掲載コードと説明も同じ変更内で更新する
 
@@ -216,14 +216,22 @@ private な workspace パッケージで、それぞれ単体で起動できま�
 エンドポイントは `endpoints/<endpoint>/pipeline.ts` に `// [step-id]` 付きの呼び出し列を持ち、ステップは `steps/<id>.ts` に一つずつ置いて `meta` で自分を記述します。
 機能は `features/<id>/` のディレクトリで、`feature.ts` がフック（routes、discovery、context など）で base への差し込み先を宣言します。
 有効な機能は `features/enabled.ts` が列挙し、DB は `db/memory/`、`db/sql/`、`db/kv/` が同じ export 名で `db/index.ts` から選ばれます。
+
+`apps/nextjs`（`@maronn-openid-connect/app-nextjs`）は Next.js（App Router）の OP で、`pnpm --filter @maronn-openid-connect/app-nextjs dev` で `next dev` が起動し、`src/instrumentation.ts` が開発用のクライアントとユーザーを登録します。
+`src/app/` が CLI の抽出範囲で、App Router の作法のまま書いています。
+機能のルートはその機能の route group `(<feature-id>)/` に、ルートを持たない機能のロジックは `_oidc-provider/features/<id>/` に置き、`_oidc-provider/features.ts` が有効な機能を列挙します。
+所有者付きブロックを持つ `route.ts` の隣には、ステップの一覧を書いた `endpoint.ts` を置きます。
+DB は apps/hono と同じ `_oidc-provider/db/{memory,sql,kv}/` で、このアプリは `--db kv`（ローカルは node:sqlite）で動きます。
+
+生成コードを直すときは、この二つのアプリの実コードと隣のテストを直します。
 OP 以外の役割（クライアントやリソースサーバー）は置きません。
 
 ### samples/*
 
 `packages/core` などの機能を実際に試すための OpenID Provider 専用サンプルです。
-OpenID Connect 機能は、原則として `packages/cli` のコード生成処理で実装します。
+OpenID Connect 機能は、原則として `apps/*` の実コードに実装し、`packages/cli` がそこから生成コードを抽出します。
 ストア処理や環境変数などの設定は、各 sample で設定します。
-`samples/*/src/oidc-provider` は CLI の生成物なので、変更が必要な場合は `packages/cli` を修正します。
+`samples/*/src/oidc-provider`（Next.js は `src/app`）は CLI の生成物なので、変更が必要な場合は生成元の `apps/*` を修正して再生成します。
 ただし、`--db` で生成した `db/instance.ts` は各 sample が書く DB インスタンスで、CLI は上書きしません（sample はどれも `--db` で生成しています）。
 クライアントやリソースサーバーは sample に同居させず、E2E 専用のものは `tests/e2e` 配下に置きます。
 
@@ -235,4 +243,4 @@ sample のディレクトリ名は、デプロイ先が分かる「フレーム�
 
 Playwright による E2E テストを配置します。
 `apps/*` または CLI 生成済みの `samples/*` の OpenID Provider を起動し、E2E 専用のクライアントとリソースサーバーを `tests/e2e/apps` に分離して検証します。
-`pnpm run test:e2e` は `apps/hono` を対象に PR ごとに走り、`pnpm run test:e2e:samples` は四つの samples を対象に `e2e-samples.yml`（nightly と手動起動）で走ります。
+`pnpm run test:e2e` は `apps/hono` と `apps/nextjs` を対象に PR ごとに走り、`pnpm run test:e2e:samples` は四つの samples を対象に `e2e-samples.yml`（nightly と手動起動）で走ります。

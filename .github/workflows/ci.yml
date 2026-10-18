@@ -131,7 +131,7 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
 
-      # PR ごとの E2E は apps/hono（CLI が生成コードを抽出する全機能オンのアプリ）を対象にする。
+      # PR ごとの E2E は apps/hono と apps/nextjs（CLI が生成コードを抽出する全機能オンのアプリ）を対象にする。
       # samples の E2E は e2e-samples.yml が nightly と手動起動で回す。
       - name: E2E tests
         run: pnpm run test:e2e

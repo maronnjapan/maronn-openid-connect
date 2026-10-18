@@ -15,7 +15,8 @@
  * block whose marker line names it, `// [step-id] (feature: <id>) Label — Spec`.
  *
  * _oidc-provider/features.ts lists the features of this provider. Remove a
- * feature by deleting its directory, its route group and its line there.
+ * feature by deleting its directory, its route group, its lines there and the
+ * owner blocks that name it in the route.ts files.
  */
 import type { ClientResolver, TokenClientResolver } from '@maronn-openid-connect/core';
 import type { AuthorizationResponseModeHandler } from '../authorize/response-mode';

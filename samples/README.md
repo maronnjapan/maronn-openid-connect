@@ -1,6 +1,7 @@
 # samples/*
 
 `packages/cli` が生成する OpenID Provider コードを、実フレームワークおよび実インフラで動作確認するための内部検証用サンプル集です。
+生成コードの生成元は `apps/hono`（hono、express、fastify）と `apps/nextjs`（Next.js）で、生成物を直すときはそちらを直して `pnpm run generate` で再生成する。
 利用者が直接触るものではありません（ルートの `README.md` を参照）。
 
 ## 命名規則
@@ -14,7 +15,7 @@
 | `fastify-flyio` | Fastify | Fly.io | node:sqlite | node:sqlite + 永続ボリューム |
 | `nextjs-vercel` | Next.js | Vercel | node:sqlite（キー・バリューの表） | Upstash Redis REST |
 
-どのサンプルも CLI の `--db` で生成した `db/` にデータを保存し、クライアントとユーザーもそこから読む。`nextjs-vercel` は `--db kv`（キー・バリューストア）、ほかの 3 つは `--db sql`（SQL のテーブル）で生成している。生成物のうちサンプルが書くのは DB インスタンスを返す `db/instance.ts` だけで、上の表のストレージはこのファイルで切り替えている。クライアントと開発用のユーザーは、各サンプルが起動時に `registerClient()` と `registerUser()` で登録する。`--db` を付けない生成（`JsonStoreBackend` で 1 つのテーブルや KV に JSON を入れる方式）は、サンプルの E2E では検証していない。
+どのサンプルも CLI の `--db` で生成した `db/` にデータを保存し、クライアントとユーザーもそこから読む。`nextjs-vercel` は `--db kv`（キー・バリューストア）、ほかの 3 つは `--db sql`（SQL のテーブル）で生成している。生成物のうちサンプルが書くのは DB インスタンスを返す `db/instance.ts` だけで、上の表のストレージはこのファイルで切り替えている。クライアントと開発用のユーザーは、各サンプルが起動時に `registerClient()` と開発用ユーザーの登録関数（生成物の `development.ts`）で登録する。`--db` を付けない生成（データをプロセスのメモリに置く `db/memory/`）はサンプルでは使わず、`apps/hono` の E2E が PR ごとに検証している。
 
 ## 一発コマンド
 

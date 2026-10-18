@@ -24,13 +24,14 @@ const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 /**
  * OIDC Core 1.0 §9: with private_key_jwt the client signs a JWT with its own
  * private key and sends it as client_assertion; the OP verifies it with the
- * public keys the client registered.
+ * public keys the client registered for that purpose.
  *
- * The generated OP reads a client's methods (client_auths) and keys
- * (client_jwks, or the client_jwks record with --db kv) from its database on
- * every request. This spec does what an operator would: it adds the method
- * and the public key to the sample OP's database while the OP runs, and the
- * very next request authenticates with them, without a restart.
+ * The generated OP reads a client's methods (client_auths) from its database
+ * on every request, and its keys one purpose at a time (client_jwks rows, or
+ * the client_jwks:<client_id>:<purpose> records with --db kv) whenever a
+ * process needs them. This spec does what an operator would: it adds the
+ * method and the public keys to the sample OP's database while the OP runs,
+ * and the very next request uses them, without a restart.
  */
 test.describe('private_key_jwt', () => {
   test.beforeEach(() => {
@@ -94,7 +95,7 @@ test.describe('private_key_jwt', () => {
     // key. Nothing restarts.
     const database = openOpDatabase();
     database.allowPrivateKeyJwt();
-    database.addKey(key.publicJwk);
+    database.addKey(key.publicJwk, 'private_key_jwt');
 
     // Client authentication runs before the code is checked, so the refused
     // request left the code unused and the same code is redeemed now.
@@ -117,7 +118,7 @@ test.describe('private_key_jwt', () => {
     const key = await generateClientKey();
     const database = openOpDatabase();
     database.allowPrivateKeyJwt();
-    database.addKey(key.publicJwk);
+    database.addKey(key.publicJwk, 'private_key_jwt');
     const { code, codeVerifier } = await authorize(page, issuer);
 
     const firstAssertion = await signClientAssertion(key, `${issuer}/token`);
@@ -155,7 +156,7 @@ test.describe('private_key_jwt', () => {
     );
 
     // The operator removes the key; the next request already misses it.
-    database.removeKey(key.publicJwk.kid);
+    database.removeKey(key.publicJwk.kid, 'private_key_jwt');
     const withoutKey = await refresh(request, issuer, refreshToken, {
       client_assertion_type: JWT_BEARER,
       client_assertion: await signClientAssertion(key, `${issuer}/token`),
@@ -172,6 +173,90 @@ test.describe('private_key_jwt', () => {
       client_secret: clientSecret,
     });
     expect(withSecret.status()).toBe(200);
+  });
+
+  test('should not verify a client assertion with a key registered only for another purpose', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const key = await generateClientKey();
+    const database = openOpDatabase();
+    database.allowPrivateKeyJwt();
+    database.addKey(key.publicJwk, 'request_object');
+    const { code, codeVerifier } = await authorize(page, issuer);
+
+    const refused = await redeemCode(request, issuer, code, codeVerifier, {
+      client_assertion_type: JWT_BEARER,
+      client_assertion: await signClientAssertion(key, `${issuer}/token`),
+    });
+    expect(refused.status()).toBe(401);
+    expect(await refused.json()).toEqual({
+      error: 'invalid_client',
+      error_description: 'The client has no registered keys for private_key_jwt',
+    });
+
+    // The same key registered for private_key_jwt too authenticates the client.
+    database.addKey(key.publicJwk, 'private_key_jwt');
+    const accepted = await redeemCode(request, issuer, code, codeVerifier, {
+      client_assertion_type: JWT_BEARER,
+      client_assertion: await signClientAssertion(key, `${issuer}/token`),
+    });
+    expect(accepted.status()).toBe(200);
+  });
+});
+
+/**
+ * OIDC Core 1.0 §6.3.2: the OP verifies a signed Request Object with the keys
+ * the client registered for the request_object purpose, read from the same
+ * client_jwks as the private_key_jwt keys.
+ */
+test.describe('signed Request Object keys', () => {
+  test.beforeEach(() => {
+    resetClientRegistration();
+  });
+
+  test.afterEach(() => {
+    resetClientRegistration();
+  });
+
+  test('should verify a signed Request Object with the keys registered for request_object', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const key = await generateClientKey();
+    const database = openOpDatabase();
+    // A key registered for private_key_jwt does not verify Request Objects.
+    database.addKey(key.publicJwk, 'private_key_jwt');
+    const { url, state, codeVerifier } = await signedRequestObjectUrl(key, issuer);
+
+    const refused = await request.get(url, {
+      maxRedirects: 0,
+      headers: { Accept: 'application/json' },
+    });
+    expect(refused.status()).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: 'invalid_request_object',
+      error_description: 'no JWKS registered to verify the request object signature',
+    });
+
+    // redirect_uri, state and code_challenge come from the Request Object
+    // alone, so a code issued to that redirect_uri and redeemed with the
+    // matching code_verifier shows the OP applied its claims.
+    database.addKey(key.publicJwk, 'request_object');
+    const callback = await completeAuthorization(page, url);
+    expect(callback.searchParams.get('state')).toBe(state);
+    const redeemed = await redeemCode(
+      request,
+      issuer,
+      requireString(callback.searchParams.get('code'), 'code'),
+      codeVerifier,
+      { client_id: clientId, client_secret: clientSecret },
+    );
+    expect(redeemed.status()).toBe(200);
   });
 });
 
@@ -209,15 +294,22 @@ async function generateClientKey(): Promise<ClientKey> {
 /** OIDC Core 1.0 §9: iss and sub are the client_id, aud the OP, and jti is new each time. */
 async function signClientAssertion(key: ClientKey, audience: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const header = { alg: 'RS256', typ: 'JWT', kid: key.publicJwk.kid };
-  const payload = {
+  return signJwt(key, { alg: 'RS256', typ: 'JWT', kid: key.publicJwk.kid }, {
     iss: clientId,
     sub: clientId,
     aud: audience,
     jti: randomUUID(),
     iat: now,
     exp: now + 60,
-  };
+  });
+}
+
+/** A compact JWS signed with the client's RS256 key. */
+async function signJwt(
+  key: ClientKey,
+  header: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): Promise<string> {
   const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
   const signature = await crypto.subtle.sign(
     'RSASSA-PKCS1-v1_5',
@@ -243,7 +335,14 @@ async function authorize(page: Page, issuer: string): Promise<{ code: string; co
     code_challenge_method: 'S256',
   }).toString();
 
-  await page.goto(authorizationUrl.toString());
+  const callback = await completeAuthorization(page, authorizationUrl.toString());
+  expect(callback.searchParams.get('state')).toBe(state);
+  return { code: requireString(callback.searchParams.get('code'), 'code'), codeVerifier };
+}
+
+/** Sign in and approve in the browser, and return the URL the OP redirected back to. */
+async function completeAuthorization(page: Page, authorizationUrl: string): Promise<URL> {
+  await page.goto(authorizationUrl);
   await expect(page).toHaveURL(/\/login$/);
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
@@ -251,10 +350,43 @@ async function authorize(page: Page, issuer: string): Promise<{ code: string; co
   await expect(page).toHaveURL(/\/consent$/);
   await page.getByRole('button', { name: 'Approve' }).click();
   await page.waitForURL((url) => url.pathname === '/private-key-jwt-callback');
+  return new URL(page.url());
+}
 
-  const callback = new URL(page.url());
-  expect(callback.searchParams.get('state')).toBe(state);
-  return { code: requireString(callback.searchParams.get('code'), 'code'), codeVerifier };
+/**
+ * An authorization request whose parameters are in a Request Object signed with
+ * key (OIDC Core 1.0 §6.1). The query keeps only what §6.1 requires there:
+ * response_type, client_id and scope.
+ */
+async function signedRequestObjectUrl(
+  key: ClientKey,
+  issuer: string,
+): Promise<{ url: string; state: string; codeVerifier: string }> {
+  const now = Math.floor(Date.now() / 1000);
+  const state = randomBytes(16).toString('base64url');
+  const codeVerifier = randomBytes(32).toString('base64url');
+  const requestObject = await signJwt(key, { alg: 'RS256', typ: 'oauth-authz-req+jwt', kid: key.publicJwk.kid }, {
+    iss: clientId,
+    aud: issuer,
+    iat: now,
+    exp: now + 300,
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: 'openid',
+    state,
+    nonce: randomBytes(16).toString('base64url'),
+    code_challenge: createHash('sha256').update(codeVerifier).digest('base64url'),
+    code_challenge_method: 'S256',
+  });
+  const url = new URL('/authorize', issuer);
+  url.search = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    scope: 'openid',
+    request: requestObject,
+  }).toString();
+  return { url: url.toString(), state, codeVerifier };
 }
 
 async function redeemCode(
@@ -292,10 +424,14 @@ async function refresh(
  */
 interface OpDatabase {
   allowPrivateKeyJwt(): void;
-  addKey(jwk: ClientKey['publicJwk']): void;
-  removeKey(kid: string): void;
+  addKey(jwk: ClientKey['publicJwk'], purpose: KeyPurpose): void;
+  removeKey(kid: string, purpose: KeyPurpose): void;
   reset(): void;
 }
+
+/** The key purposes this spec registers keys for (ClientKeyPurpose in core). */
+type KeyPurpose = 'private_key_jwt' | 'request_object';
+const KEY_PURPOSES: KeyPurpose[] = ['private_key_jwt', 'request_object'];
 
 /** Leave the client as playwright.config.ts registered it: client_secret_post and no keys. */
 function resetClientRegistration(): void {
@@ -349,16 +485,16 @@ function sqlDatabase(path: string): OpDatabase {
           .run(`${clientId}:private_key_jwt`, clientId),
       );
     },
-    addKey(jwk) {
+    addKey(jwk, purpose) {
       withSqlite(path, (sqlite) =>
         sqlite
-          .prepare('INSERT INTO client_jwks (id, client_id, jwk) VALUES (?, ?, ?)')
-          .run(`${clientId}:${jwk.kid}`, clientId, JSON.stringify(jwk)),
+          .prepare('INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES (?, ?, ?, ?)')
+          .run(`${clientId}:${purpose}:${jwk.kid}`, clientId, purpose, JSON.stringify(jwk)),
       );
     },
-    removeKey(kid) {
+    removeKey(kid, purpose) {
       withSqlite(path, (sqlite) =>
-        sqlite.prepare('DELETE FROM client_jwks WHERE id = ?').run(`${clientId}:${kid}`),
+        sqlite.prepare('DELETE FROM client_jwks WHERE id = ?').run(`${clientId}:${purpose}:${kid}`),
       );
     },
     reset() {
@@ -375,7 +511,8 @@ function sqlDatabase(path: string): OpDatabase {
 function kvDatabase(path: string): OpDatabase {
   // keys.ts: 'oidc:' and the URI-encoded parts, joined with ':'.
   const clientKey = `oidc:client:${encodeURIComponent(clientId)}`;
-  const jwksKey = `oidc:client_jwks:${encodeURIComponent(clientId)}`;
+  const jwksKey = (purpose: KeyPurpose) =>
+    `oidc:client_jwks:${encodeURIComponent(clientId)}:${encodeURIComponent(purpose)}`;
   const read = (sqlite: DatabaseSync, key: string): Record<string, unknown> | undefined => {
     const row = sqlite.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
     return row ? (JSON.parse(row.value) as Record<string, unknown>) : undefined;
@@ -388,8 +525,8 @@ function kvDatabase(path: string): OpDatabase {
       )
       .run(key, JSON.stringify(value));
   };
-  const keysOf = (sqlite: DatabaseSync): Array<{ kid?: unknown }> =>
-    ((read(sqlite, jwksKey)?.keys ?? []) as Array<{ kid?: unknown }>);
+  const keysOf = (sqlite: DatabaseSync, purpose: KeyPurpose): Array<{ kid?: unknown }> =>
+    ((read(sqlite, jwksKey(purpose))?.keys ?? []) as Array<{ kid?: unknown }>);
   return {
     allowPrivateKeyJwt() {
       withSqlite(path, (sqlite) => {
@@ -397,17 +534,21 @@ function kvDatabase(path: string): OpDatabase {
         write(sqlite, clientKey, { ...requireRecord(client, clientKey), private_key_jwt: true });
       });
     },
-    addKey(jwk) {
-      withSqlite(path, (sqlite) => write(sqlite, jwksKey, { keys: [...keysOf(sqlite), jwk] }));
-    },
-    removeKey(kid) {
+    addKey(jwk, purpose) {
       withSqlite(path, (sqlite) =>
-        write(sqlite, jwksKey, { keys: keysOf(sqlite).filter((key) => key.kid !== kid) }),
+        write(sqlite, jwksKey(purpose), { keys: [...keysOf(sqlite, purpose), jwk] }),
+      );
+    },
+    removeKey(kid, purpose) {
+      withSqlite(path, (sqlite) =>
+        write(sqlite, jwksKey(purpose), { keys: keysOf(sqlite, purpose).filter((key) => key.kid !== kid) }),
       );
     },
     reset() {
       withSqlite(path, (sqlite) => {
-        sqlite.prepare('DELETE FROM kv WHERE key = ?').run(jwksKey);
+        for (const purpose of KEY_PURPOSES) {
+          sqlite.prepare('DELETE FROM kv WHERE key = ?').run(jwksKey(purpose));
+        }
         const { private_key_jwt: _, ...client } = requireRecord(read(sqlite, clientKey), clientKey);
         write(sqlite, clientKey, client);
       });

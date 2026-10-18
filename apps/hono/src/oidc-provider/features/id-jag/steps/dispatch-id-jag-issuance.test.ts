@@ -11,7 +11,7 @@ import { providerContext, TEST_ISSUER } from '../../../../test-support/context.j
 import { rs256Key } from '../../../../test-support/keys.js';
 import { TokenEndpointError, type TokenRequestBody } from '../../../endpoints/token/response.js';
 import { idJagConfig } from '../config.js';
-import { issueIdJag } from './dispatch-id-jag-issuance.js';
+import { issueIdJag, rejectTokenExchangeWithoutFeature } from './dispatch-id-jag-issuance.js';
 
 /** 2026-01-01T00:00:00Z: every test runs on this clock. */
 const NOW = Date.UTC(2026, 0, 1) / 1000;
@@ -244,5 +244,42 @@ describe('issueIdJag', () => {
 
     const { access_token: idJag } = (await response!.json()) as { access_token: string };
     expect(decodeJwt(idJag).payload).toMatchObject({ sub: 'alice', act: { sub: 'agent-1' } });
+  });
+});
+
+describe('rejectTokenExchangeWithoutFeature', () => {
+  // The exchange grant is advertised for ID-JAG issuance; without the
+  // token-exchange feature any other exchange gets a pointer, not
+  // unsupported_grant_type (RFC 6749 §5.2).
+  it('should answer invalid_request for a token exchange when the token-exchange feature is off', () => {
+    const error = (() => {
+      try {
+        rejectTokenExchangeWithoutFeature({ grant_type: TOKEN_EXCHANGE_GRANT_TYPE } as TokenRequestBody, false);
+        return undefined;
+      } catch (reason) {
+        return reason;
+      }
+    })();
+
+    expect(error).toBeInstanceOf(TokenEndpointError);
+    expect((error as TokenEndpointError).response).toEqual({
+      status: 400,
+      body: {
+        error: 'invalid_request',
+        error_description: `This authorization server only supports requested_token_type ${ID_JAG_TOKEN_TYPE} for token exchange`,
+      },
+    });
+  });
+
+  it('should leave a token exchange to the token-exchange feature when it is on', () => {
+    expect(
+      rejectTokenExchangeWithoutFeature({ grant_type: TOKEN_EXCHANGE_GRANT_TYPE } as TokenRequestBody, true),
+    ).toBeUndefined();
+  });
+
+  it('should leave another grant alone when the token-exchange feature is off', () => {
+    expect(
+      rejectTokenExchangeWithoutFeature({ grant_type: 'authorization_code' } as TokenRequestBody, false),
+    ).toBeUndefined();
   });
 });

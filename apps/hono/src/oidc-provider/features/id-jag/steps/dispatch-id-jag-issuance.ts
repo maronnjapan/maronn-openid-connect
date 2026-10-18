@@ -4,10 +4,13 @@ import {
   type SigningKey,
 } from '@maronn-openid-connect/core';
 import {
+  ID_JAG_TOKEN_TYPE,
   IdJagError,
+  TOKEN_EXCHANGE_GRANT_TYPE,
   matchesIdJagIssuanceRequest,
   processIdJagIssuanceRequest,
 } from '@maronn-openid-connect/experimental/id-jag';
+import { features } from '../../enabled.js';
 import { type TokenRequestBody, TokenEndpointError } from '../../../endpoints/token/response.js';
 import { respondToken } from '../../../endpoints/token/steps/respond.js';
 import { idJagConfig } from '../config.js';
@@ -49,7 +52,10 @@ export async function issueIdJag(
   params: TokenRequestBody,
   tokenClient: TokenClientInfo,
 ): Promise<Response | undefined> {
-  if (!matchesIdJagIssuanceRequest(params)) return undefined;
+  if (!matchesIdJagIssuanceRequest(params)) {
+    rejectTokenExchangeWithoutFeature(params, features.some((feature) => feature.id === 'token-exchange'));
+    return undefined;
+  }
 
   try {
     const idJagIssuanceConfig = c.get('config');
@@ -115,4 +121,22 @@ export async function issueIdJag(
     }
     throw error;
   }
+}
+
+/**
+ * Without the token-exchange feature, the exchange grant exists only to issue
+ * ID-JAGs, and discovery advertises it for that. Any other requested_token_type
+ * is answered with a pointer instead of falling through to
+ * unsupported_grant_type (RFC 6749 §5.2). With the feature on, the
+ * dispatch-token-exchange step answers it.
+ */
+export function rejectTokenExchangeWithoutFeature(params: TokenRequestBody, tokenExchangeEnabled: boolean): undefined {
+  if (tokenExchangeEnabled || params.grant_type !== TOKEN_EXCHANGE_GRANT_TYPE) return undefined;
+  throw new TokenEndpointError({
+    status: 400,
+    body: {
+      error: 'invalid_request',
+      error_description: `This authorization server only supports requested_token_type ${ID_JAG_TOKEN_TYPE} for token exchange`,
+    },
+  });
 }

@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BASIC_OP_TEST_PLAN,
+  basicOpTestPlan,
   REQUEST_OBJECT_PUBLIC_JWK,
   REQUEST_OBJECT_PRIVATE_JWK,
   REQUEST_OBJECT_SIGNING_ALG,
@@ -254,6 +255,41 @@ describe('resolveSampleApp', () => {
           message: 'Unsupported CONFORMANCE_SAMPLE_APP "not-a-sample". Expected one of: hono-cloudflare, express-flyio, fastify-flyio, nextjs-vercel',
         },
       );
+    });
+  });
+});
+
+describe('basicOpTestPlan', () => {
+  describe('manual review modules', () => {
+    it('should run every module of the plan by default', () => {
+      assert.equal(basicOpTestPlan(), BASIC_OP_TEST_PLAN);
+    });
+
+    // The three modules wait for a screenshot (manual review), which an
+    // unattended run never uploads: the runner gives each of them 240 s.
+    it('should select every module but the manual review ones when they are skipped', () => {
+      assert.equal(
+        basicOpTestPlan({ skipManualReview: true }),
+        'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]:' +
+          'oidcc-server,oidcc-response-type-missing,oidcc-idtoken-signature,oidcc-idtoken-unsigned,' +
+          'oidcc-userinfo-get,oidcc-userinfo-post-header,oidcc-userinfo-post-body,' +
+          'oidcc-ensure-request-without-nonce-succeeds-for-code-flow,oidcc-scope-profile,oidcc-scope-email,' +
+          'oidcc-scope-address,oidcc-scope-phone,oidcc-scope-all,oidcc-alternate-happy-flow,' +
+          'oidcc-display-page,oidcc-display-popup,oidcc-prompt-none-not-logged-in,oidcc-prompt-none-logged-in,' +
+          'oidcc-max-age-10000,oidcc-ensure-request-with-unknown-parameter-succeeds,oidcc-id-token-hint,' +
+          'oidcc-login-hint,oidcc-ui-locales,oidcc-claims-locales,oidcc-ensure-request-with-acr-values-succeeds,' +
+          'oidcc-codereuse,oidcc-codereuse-30seconds,oidcc-ensure-post-request-succeeds,' +
+          'oidcc-server-client-secret-post,oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported,' +
+          'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported,oidcc-claims-essential,' +
+          'oidcc-ensure-request-object-with-redirect-uri,oidcc-refresh-token,' +
+          'oidcc-ensure-request-with-valid-pkce-succeeds',
+      );
+    });
+
+    it('should put the plan of the run into the artifacts', () => {
+      const artifacts = createBasicOpConformanceArtifacts({ skipManualReview: true });
+
+      assert.equal(artifacts.testPlan, basicOpTestPlan({ skipManualReview: true }));
     });
   });
 });

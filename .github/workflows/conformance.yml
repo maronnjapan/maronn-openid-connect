@@ -33,7 +33,7 @@ jobs:
   basic-op:
     if: github.event_name == 'workflow_dispatch' || contains(join(github.event.pull_request.labels.*.name, ','), 'run-conformance')
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -53,6 +53,9 @@ jobs:
         env:
           CONFORMANCE_SAMPLE_APP: ${{ github.event.inputs.sample_app || 'hono-cloudflare' }}
           CONFORMANCE_SUITE_IMAGE_TAG: ${{ github.event.inputs.suite_image_tag || 'latest' }}
+          # The modules that wait for a screenshot never finish unattended, and
+          # the runner waits 240 s for each (tests/conformance/README.md).
+          CONFORMANCE_SKIP_MANUAL_REVIEW: "1"
         run: pnpm run conformance:basic-op
 
       - name: Upload conformance artifacts

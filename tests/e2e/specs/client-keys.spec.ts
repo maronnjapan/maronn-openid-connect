@@ -10,7 +10,10 @@ const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
 const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
 const opPackage =
-  process.env.E2E_OP_PACKAGE ?? '@maronn-openid-connect/sample-hono-cloudflare';
+  process.env.E2E_OP_PACKAGE ?? '@maronn-openid-connect/app-hono';
+// apps/hono keeps its data in memory: its operator routes change the keys
+// (apps/hono/src/operator.ts), with the token playwright.config.ts starts it with.
+const operatorToken = 'e2e-operator-token';
 
 // Registered in playwright.config.ts with client_secret_post and no public keys.
 const clientId = 'e2e-client-keys';
@@ -34,12 +37,12 @@ const UNVERIFIABLE_REQUEST_OBJECT = {
  * request uses them, without a restart.
  */
 test.describe('client keys', () => {
-  test.beforeEach(() => {
-    openOpDatabase().reset();
+  test.beforeEach(async ({ baseURL }) => {
+    await openOpDatabase(requireBaseUrl(baseURL)).reset();
   });
 
-  test.afterEach(() => {
-    openOpDatabase().reset();
+  test.afterEach(async ({ baseURL }) => {
+    await openOpDatabase(requireBaseUrl(baseURL)).reset();
   });
 
   test('should verify a signed Request Object with a key as soon as it is registered for request_object', async ({
@@ -49,9 +52,9 @@ test.describe('client keys', () => {
   }) => {
     const issuer = requireBaseUrl(baseURL);
     const key = await generateClientKey();
-    const database = openOpDatabase();
+    const database = openOpDatabase(issuer);
     // A key registered for another purpose does not verify Request Objects.
-    database.addKey(key.publicJwk, 'private_key_jwt');
+    await database.addKey(key.publicJwk, 'private_key_jwt');
     const { url, state, codeVerifier } = await signedRequestObjectUrl(key, issuer);
 
     const refused = await request.get(url, {
@@ -62,7 +65,7 @@ test.describe('client keys', () => {
     expect(await refused.json()).toEqual(UNVERIFIABLE_REQUEST_OBJECT);
 
     // The operator registers the same key for request_object. Nothing restarts.
-    database.addKey(key.publicJwk, 'request_object');
+    await database.addKey(key.publicJwk, 'request_object');
 
     // redirect_uri, state and code_challenge come from the Request Object
     // alone, so a code issued to that redirect_uri and redeemed with the
@@ -85,15 +88,15 @@ test.describe('client keys', () => {
   }) => {
     const issuer = requireBaseUrl(baseURL);
     const key = await generateClientKey();
-    const database = openOpDatabase();
-    database.addKey(key.publicJwk, 'request_object');
+    const database = openOpDatabase(issuer);
+    await database.addKey(key.publicJwk, 'request_object');
 
     // The Request Object is verified, so the OP asks the user to sign in.
     await page.goto((await signedRequestObjectUrl(key, issuer)).url);
     await expect(page).toHaveURL(/\/login$/);
 
     // The operator removes the key; the next request already misses it.
-    database.removeKey(key.publicJwk.kid, 'request_object');
+    await database.removeKey(key.publicJwk.kid, 'request_object');
     const refused = await request.get((await signedRequestObjectUrl(key, issuer)).url, {
       maxRedirects: 0,
       headers: { Accept: 'application/json' },
@@ -216,17 +219,20 @@ async function redeemCode(request: APIRequestContext, issuer: string, code: stri
  * changed from this process the way an operator changes them.
  */
 interface OpDatabase {
-  addKey(jwk: ClientKey['publicJwk'], purpose: KeyPurpose): void;
-  removeKey(kid: string, purpose: KeyPurpose): void;
+  addKey(jwk: ClientKey['publicJwk'], purpose: KeyPurpose): void | Promise<void>;
+  removeKey(kid: string, purpose: KeyPurpose): void | Promise<void>;
   /** Leave the client as playwright.config.ts registered it: without keys. */
-  reset(): void;
+  reset(): void | Promise<void>;
 }
 
 /** The key purposes this spec registers keys for (ClientKeyPurpose in core). */
 type KeyPurpose = 'private_key_jwt' | 'request_object';
 const KEY_PURPOSES: KeyPurpose[] = ['private_key_jwt', 'request_object'];
 
-function openOpDatabase(): OpDatabase {
+function openOpDatabase(issuer: string): OpDatabase {
+  if (opPackage === '@maronn-openid-connect/app-hono') {
+    return operatorRoutes(issuer);
+  }
   const sampleDir = resolve(
     dirname(fileURLToPath(import.meta.url)),
     '../../../samples',
@@ -241,6 +247,28 @@ function openOpDatabase(): OpDatabase {
     return sqlDatabase(localD1File(resolve(sampleDir, process.env.OIDC_D1_PERSIST_PATH ?? '.wrangler/state')));
   }
   return sqlDatabase(resolve(sampleDir, process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite'));
+}
+
+/** The operator routes of apps/hono: the same changes over HTTP. */
+function operatorRoutes(issuer: string): OpDatabase {
+  const send = async (method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<void> => {
+    const response = await fetch(`${issuer}/operator/clients/${encodeURIComponent(clientId)}/keys${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${operatorToken}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (response.status !== 204) {
+      throw new Error(`operator route ${method} ${path} answered ${response.status}`);
+    }
+  };
+  return {
+    addKey: (jwk, purpose) => send('POST', `/${purpose}`, jwk),
+    removeKey: (kid, purpose) => send('DELETE', `/${purpose}/${encodeURIComponent(kid)}`),
+    reset: () => send('DELETE', ''),
+  };
 }
 
 /** wrangler dev keeps a D1 database in one SQLite file under --persist-to. */

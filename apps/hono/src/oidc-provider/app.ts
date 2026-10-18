@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import {
   assertHasRs256Key,
   assertKeyStrength,
@@ -16,6 +15,7 @@ import {
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import { createProviderConfig, type ProviderConfig } from './config.js';
+import { createCorsMiddleware } from './cors.js';
 import {
   createClientKeyResolver,
   createClientResolver,
@@ -37,7 +37,7 @@ import { createViews, type Views } from './views.js';
 
 /**
  * CORS の許可 origin。
- * - '*' (デフォルト) または string / string[]: cors() の origin オプションに直接渡される
+ * - '*' (デフォルト) または string / string[]: createCorsMiddleware()（cors.ts）の origins に渡される
  * - browser-based クライアントで Authorization ヘッダや form body を使う場合は許可必須 (OAuth 2.1 §4.2)
  */
 export type CorsOrigins = string | string[];
@@ -115,7 +115,7 @@ export interface OidcProviderOptions {
   /**
    * CORS で許可する origin。
    * - 未指定: '*' (=ワイルドカード)
-   * - 文字列または配列: そのまま hono/cors の origin に渡す
+   * - 文字列または配列: そのまま createCorsMiddleware()（cors.ts）の origins に渡す
    *
    * Token / UserInfo と、機能が protected として登録したエンドポイントに適用される。
    * Discovery / JWKS は仕様上常に '*' 固定 (OIDC Discovery / RFC 8414 で公開資産扱い)。
@@ -158,6 +158,15 @@ const baseRoutes: readonly FeatureRoute[] = [
   { path: '/consent', app: consentPage, methods: ['GET', 'POST'] },
 ];
 
+/**
+ * The paths the provider serves: the endpoints of every provider and those of
+ * the features of features/enabled.ts. The apply.ts of Express and Fastify
+ * hands these paths to the provider.
+ */
+export function providerRoutes(): FeatureRoute[] {
+  return [...baseRoutes, ...routesOf(features)];
+}
+
 /** Discovery and JWKS are public documents (OIDC Discovery 1.0 / RFC 8414): CORS '*'. */
 const PUBLIC_DOCUMENT_PATHS = ['/.well-known/openid-configuration', '/.well-known/jwks.json'];
 
@@ -183,19 +192,24 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
   // module scope makes later createApp calls reuse a matcher whose routes were
   // already finalized and also leaks the first call's middleware/options.
   const app = new Hono<{ Variables: Record<string, any> }>();
-  const routes = [...baseRoutes, ...routesOf(features)];
+  const routes = providerRoutes();
   const methods = endpointMethods(routes);
 
   // CORS middleware (OAuth 2.1 §4.2): browser-based clients call the token,
   // UserInfo and the protected feature endpoints with Access-Control-Allow-Origin.
   // Preflight (OPTIONS) requests are answered here too.
-  const protectedCors = cors({
-    origin: options.corsOrigins ?? '*',
+  const protectedCors = createCorsMiddleware({
+    origins: options.corsOrigins ?? '*',
     allowMethods: ['POST', 'GET', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type'],
     maxAge: 600,
   });
-  const publicCors = cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'], maxAge: 600 });
+  const publicCors = createCorsMiddleware({
+    origins: '*',
+    allowMethods: ['GET', 'OPTIONS'],
+    allowHeaders: ['Content-Type'],
+    maxAge: 600,
+  });
   for (const route of routes) {
     if (route.cors === 'protected') app.use(route.path, protectedCors);
   }

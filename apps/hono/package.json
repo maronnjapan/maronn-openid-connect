@@ -18,7 +18,10 @@
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.5",
+    "@types/express": "^5.0.5",
     "@types/node": "^26.6.4",
+    "express": "^5.2.1",
+    "fastify": "^5.12.2",
     "google-auth-library": "^11.2.0",
     "hono": "^4.13.13",
     "tsx": "^4.23.15",

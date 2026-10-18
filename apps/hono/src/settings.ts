@@ -16,10 +16,20 @@ import type { ClientRegistration } from './oidc-provider/config.js';
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
+/** A positive integer variable; a value that is not one stops the app instead of being half-read. */
+function readPositiveInteger(env: Environment, name: string): number | undefined {
+  const value = env[name];
+  if (value === undefined || value === '') return undefined;
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new Error(`${name} must be a positive integer, not "${value}"`);
+  }
+  return Number(value);
+}
+
 /** Where the app listens and the issuer it answers as. */
 export function readServerAddress(env: Environment): { host: string; port: number; issuer: string } {
   const host = env['HOST'] ?? '127.0.0.1';
-  const port = Number(env['PORT'] ?? '3010');
+  const port = readPositiveInteger(env, 'PORT') ?? 3010;
   return { host, port, issuer: env['ISSUER'] ?? `http://${host}:${port}` };
 }
 
@@ -82,10 +92,10 @@ export function readDynamicClientRegistration(env: Environment): {
   maxRegisteredClients?: number;
 } {
   const initialAccessToken = env['OIDC_DCR_INITIAL_ACCESS_TOKEN'];
-  const maxClients = env['OIDC_DCR_MAX_CLIENTS'];
+  const maxRegisteredClients = readPositiveInteger(env, 'OIDC_DCR_MAX_CLIENTS');
   return {
     ...(initialAccessToken ? { initialAccessToken } : {}),
-    ...(maxClients ? { maxRegisteredClients: Number(maxClients) } : {}),
+    ...(maxRegisteredClients === undefined ? {} : { maxRegisteredClients }),
   };
 }
 

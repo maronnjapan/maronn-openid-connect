@@ -4,7 +4,6 @@ import { validateTokenGrantType } from './validate-grant-type.js';
 
 const client: TokenClientInfo = {
   clientId: 'client-1',
-  clientType: 'confidential',
   grantTypes: ['authorization_code'],
   tokenEndpointAuthMethods: ['client_secret_post'],
 };

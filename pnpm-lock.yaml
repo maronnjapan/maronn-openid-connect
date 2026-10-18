@@ -53,9 +53,18 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
+      '@types/express':
+        specifier: ^5.0.5
+        version: 5.0.6
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
+      fastify:
+        specifier: ^5.12.2
+        version: 5.12.5
       google-auth-library:
         specifier: ^11.2.0
         version: 11.2.0
@@ -83,9 +92,18 @@ importers:
 
   packages/cli:
     devDependencies:
+      '@types/express':
+        specifier: ^5.0.5
+        version: 5.0.6
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
+      fastify:
+        specifier: ^5.12.2
+        version: 5.12.5
+      hono:
+        specifier: ^4.13.13
+        version: 4.13.13
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

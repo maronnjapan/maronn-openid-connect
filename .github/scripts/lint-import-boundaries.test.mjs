@@ -60,12 +60,12 @@ describe('ownerOf', () => {
 });
 
 describe('parseImports', () => {
-  it('should read the local names of a multi-line named import', () => {
+  it('should read the local names and the lines of a multi-line named import', () => {
     const imports = parseImports(
       ["import {", "  a,", "  b as c,", "  type D,", "} from './x.js';", ''].join('\n'),
     );
 
-    assert.deepEqual(imports, [{ specifier: './x.js', names: ['a', 'c', 'D'], line: 1 }]);
+    assert.deepEqual(imports, [{ specifier: './x.js', names: ['a', 'c', 'D'], line: 1, endLine: 5 }]);
   });
 
   it('should read default, namespace and side-effect imports', () => {
@@ -74,16 +74,16 @@ describe('parseImports', () => {
     );
 
     assert.deepEqual(imports, [
-      { specifier: 'x', names: ['x'], line: 1 },
-      { specifier: 'y', names: ['y'], line: 2 },
-      { specifier: './z.js', names: [], line: 3 },
+      { specifier: 'x', names: ['x'], line: 1, endLine: 1 },
+      { specifier: 'y', names: ['y'], line: 2, endLine: 2 },
+      { specifier: './z.js', names: [], line: 3, endLine: 3 },
     ]);
   });
 
   it('should read a re-export as an import without local names', () => {
     const imports = parseImports("export { a } from './a.js';\n");
 
-    assert.deepEqual(imports, [{ specifier: './a.js', names: [], line: 1 }]);
+    assert.deepEqual(imports, [{ specifier: './a.js', names: [], line: 1, endLine: 1 }]);
   });
 });
 
@@ -359,6 +359,84 @@ describe('lintSource', () => {
       ].join('\n');
 
       assert.deepEqual(lint('endpoints/jwks/pipeline.ts', source), []);
+    });
+  });
+
+  describe('Next.js route handler', () => {
+    const route = (blocks, imports) =>
+      [
+        ...imports,
+        '',
+        'export async function POST(request) {',
+        '  try {',
+        ...blocks,
+        '  } catch (error) {',
+        '    return oauthError(error);',
+        '  }',
+        '}',
+        '',
+      ].join('\n');
+
+    it('should accept a route.ts importing core and the base modules, as App Router code does', () => {
+      const source = route(
+        [
+          '    // [validate-grant-type] Validate grant_type',
+          '    const grantType = validateGrantTypeSupported(await request.text());',
+          '    // [dispatch-ciba] (feature: ciba) Redeem an auth_req_id',
+          '    const answered = await dispatchCiba(grantType, stores);',
+          '    if (answered) return answered;',
+          '    // [respond] Respond',
+          '    return noStoreJson(grantType);',
+        ],
+        [
+          "import { validateGrantTypeSupported } from '@maronn-openid-connect/core';",
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
+          "import { noStoreJson, oauthError } from '../_oidc-provider/http';",
+          "import { stores } from '../_oidc-provider/provider';",
+        ],
+      );
+
+      assert.deepEqual(lint('token/route.ts', source, NEXTJS), []);
+    });
+
+    it('should reject a feature import used outside the block of that feature in a route.ts', () => {
+      const source = route(
+        ['    // [respond] Respond', '    return (await dispatchCiba(request)) ?? oauthError(request);'],
+        [
+          "import { dispatchCiba } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
+    it('should not count the names of a multi-line import as a use outside the blocks', () => {
+      const source = route(
+        [
+          '    // [validate-refresh-token-grant] (feature: refresh-token) Validate',
+          '    const refreshed = await validateRefreshTokenGrant(request);',
+          '    // [issue-refresh-token] (feature: refresh-token) Issue',
+          '    const token = await issueRefreshToken(refreshed);',
+          '    // [respond] Respond',
+          '    return oauthError(token);',
+        ],
+        [
+          'import {',
+          '  issueRefreshToken,',
+          '  validateRefreshTokenGrant,',
+          "} from '../_oidc-provider/features/refresh-token/token';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(lint('token/route.ts', source, NEXTJS), []);
+    });
+
+    it('should accept _oidc-provider/features.ts importing the extensionless feature.ts of each feature', () => {
+      const source = "import { par } from './features/par/feature';\n\nexport const features = [\n  par,\n];\n";
+
+      assert.deepEqual(lint('_oidc-provider/features.ts', source, NEXTJS), []);
     });
   });
 

@@ -233,14 +233,18 @@ function openOpDatabase(issuer: string): OpDatabase {
   if (opPackage === '@maronn-openid-connect/app-hono') {
     return operatorRoutes(issuer);
   }
-  const sampleDir = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    '../../../samples',
-    opPackage.replace('@maronn-openid-connect/sample-', ''),
-  );
-  // --db kv (Next.js sample): one key-value table; --db sql (the others): the
-  // tables of schema.sql, in node:sqlite or in the local D1 of wrangler dev.
-  if (opPackage.endsWith('-nextjs-vercel')) {
+  // apps/nextjs runs on --db kv over node:sqlite, as the Next.js sample does.
+  const sampleDir = opPackage === '@maronn-openid-connect/app-nextjs'
+    ? resolve(dirname(fileURLToPath(import.meta.url)), '../../../apps/nextjs')
+    : resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../samples',
+        opPackage.replace('@maronn-openid-connect/sample-', ''),
+      );
+  // --db kv (apps/nextjs and the Next.js sample): one key-value table; --db
+  // sql (the others): the tables of schema.sql, in node:sqlite or in the local
+  // D1 of wrangler dev.
+  if (opPackage.endsWith('-nextjs-vercel') || opPackage === '@maronn-openid-connect/app-nextjs') {
     return kvDatabase(resolve(sampleDir, process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite'));
   }
   if (opPackage.endsWith('-hono-cloudflare')) {

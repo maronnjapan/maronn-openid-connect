@@ -15,11 +15,13 @@
  *   - a db kind imports no feature and no other db kind
  *   - features/<a>/ imports features/<b>/ only when the registry entry of a
  *     lists b in requires (packages/cli/src/registry.ts)
- *   - a pipeline (pipeline.ts; route.ts in Next.js) imports only its own
- *     steps, the modules beside it, the framework and feature directories; an
- *     identifier imported from features/<id>/ is used only in the owner blocks
- *     of that feature (`// [step-id] (feature: <id>) ...`), and an owner block
- *     of a feature uses no identifier imported from elsewhere
+ *   - a pipeline (pipeline.ts; route.ts in Next.js) uses an identifier
+ *     imported from features/<id>/ only in the owner blocks of that feature
+ *     (`// [step-id] (feature: <id>) ...`)
+ *   - in hono, a pipeline imports only its own steps, the modules beside it,
+ *     the framework and feature directories, and an owner block of a feature
+ *     uses no identifier imported from elsewhere. A Next.js route.ts keeps the
+ *     imports of App Router code (core, the modules of _oidc-provider/)
  *
  * Test files are not extracted and are not checked.
  *
@@ -76,12 +78,13 @@ export function parseImports(source) {
     /^[ \t]*(import|export)[ \t]+(?:type[ \t]+)?([^;'"]*?)[ \t]*from[ \t]*['"]([^'"]+)['"]|^[ \t]*import[ \t]+['"]([^'"]+)['"]/gm;
   for (const match of source.matchAll(declaration)) {
     const line = source.slice(0, match.index).split('\n').length;
+    const endLine = line + match[0].split('\n').length - 1;
     if (match[4] !== undefined) {
-      imports.push({ specifier: match[4], names: [], line });
+      imports.push({ specifier: match[4], names: [], line, endLine });
       continue;
     }
     const names = match[1] === 'import' ? bindingNames(match[2]) : [];
-    imports.push({ specifier: match[3], names, line });
+    imports.push({ specifier: match[3], names, line, endLine });
   }
   return imports;
 }
@@ -158,7 +161,7 @@ function isPipeline(path, layout) {
  */
 function isFeatureListEntry(path, target, layout) {
   if (layout === 'nextjs') {
-    return path === '_oidc-provider/features.ts' && /^_oidc-provider\/features\/[a-z0-9-]+\/feature\.(js|ts)$/.test(target);
+    return path === '_oidc-provider/features.ts' && /^_oidc-provider\/features\/[a-z0-9-]+\/feature(\.(js|ts))?$/.test(target);
   }
   return path === 'features/enabled.ts' && /^features\/[a-z0-9-]+\/feature\.(js|ts)$/.test(target);
 }
@@ -256,7 +259,7 @@ function lintPipeline({ path, source, layout, owner, imports }) {
     const feature = targetOwner?.kind === 'feature' && targetOwner.id !== (owner.kind === 'feature' ? owner.id : undefined)
       ? targetOwner.id
       : undefined;
-    if (!(beside || ownSteps || feature !== undefined || FRAMEWORK_PACKAGES.includes(specifier))) {
+    if (layout === 'hono' && !(beside || ownSteps || feature !== undefined || FRAMEWORK_PACKAGES.includes(specifier))) {
       report(
         line,
         'pipeline-import-not-allowed',
@@ -282,7 +285,7 @@ function lintPipeline({ path, source, layout, owner, imports }) {
           `${name} comes from features/${origin.feature}/ but is used in the block [${block.id}]${block.feature ? ` of ${block.feature}` : ''}`,
         );
       }
-      if (block.feature !== undefined && origin.feature === undefined) {
+      if (layout === 'hono' && block.feature !== undefined && origin.feature === undefined) {
         report(
           block.startLine,
           'feature-block-uses-base-import',
@@ -292,8 +295,15 @@ function lintPipeline({ path, source, layout, owner, imports }) {
     }
   }
 
-  // Outside every block (the imports, the try / catch around the blocks).
-  const outside = lines.filter((_, index) => !inBlock.has(index + 1) && !/^\s*(import|export)\s/.test(lines[index]));
+  // Outside every block and every import declaration (the try / catch around
+  // the blocks, the helpers of the file).
+  const inImport = new Set();
+  for (const { line, endLine } of imports) {
+    for (let number = line; number <= endLine; number += 1) inImport.add(number);
+  }
+  const outside = lines.filter(
+    (_, index) => !inBlock.has(index + 1) && !inImport.has(index + 1) && !/^\s*(import|export)\s/.test(lines[index]),
+  );
   for (const name of identifiersIn(outside)) {
     const origin = origins.get(name);
     if (origin?.feature !== undefined) {

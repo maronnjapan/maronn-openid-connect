@@ -24,16 +24,18 @@ const dcrIssuer = process.env.E2E_DCR_ISSUER ?? `http://${host}:${dcrOpPort}`;
 const opPackage =
   process.env.E2E_OP_PACKAGE ?? '@maronn-openid-connect/app-hono';
 // The XAA topology (two trust domains) is exercised against the OPs that have
-// the id-jag feature: apps/hono and the hono sample. Other sample OPs keep the
+// the id-jag feature: the apps and the hono sample. Other sample OPs keep the
 // single-instance setup; the XAA spec skips itself when the second OP is absent.
 const startXaaOp =
   opPackage === '@maronn-openid-connect/app-hono' ||
+  opPackage === '@maronn-openid-connect/app-nextjs' ||
   opPackage === '@maronn-openid-connect/sample-hono-cloudflare';
 // The restricted-registration instance only makes sense for the OPs that have
 // the dynamic-client-registration feature; the spec skips its tests when the
 // instance is absent.
 const startDcrOp =
   opPackage === '@maronn-openid-connect/app-hono' ||
+  opPackage === '@maronn-openid-connect/app-nextjs' ||
   opPackage === '@maronn-openid-connect/sample-hono-cloudflare' ||
   opPackage === '@maronn-openid-connect/sample-express-flyio';
 const oidcClientsJson = JSON.stringify([
@@ -248,9 +250,12 @@ export default defineConfig({
               OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
                 ? `${process.env.OIDC_D1_PERSIST_PATH}-xaa`
                 : '.wrangler/state-xaa',
-              ...(process.env.OIDC_SQLITE_PATH
-                ? { OIDC_SQLITE_PATH: `${process.env.OIDC_SQLITE_PATH}-xaa` }
-                : {}),
+              // A path of its own, as the restricted-registration instance below
+              // has: two OP processes writing one SQLite file fail each other's
+              // writes.
+              OIDC_SQLITE_PATH: process.env.OIDC_SQLITE_PATH
+                ? `${process.env.OIDC_SQLITE_PATH}-xaa`
+                : '.data/oidc-e2e-xaa.sqlite',
             },
           },
         ]

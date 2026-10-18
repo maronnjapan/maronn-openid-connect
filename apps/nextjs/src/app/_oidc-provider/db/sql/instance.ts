@@ -13,10 +13,13 @@
  * clients from the client tables, so register them there with registerClient()
  * (clients.ts) or with INSERT statements.
  *
- * The generated app calls createDatabase() whenever it reads or writes. Keep
- * the connection (a PostgreSQL pool, a SQLite file) on globalThis instead of
- * opening it here: Next.js loads this module once per module layer (Route
- * Handlers, Server Actions, instrumentation.ts), and all of them have to use
+ * The generated app does not call createDatabase() when its modules are
+ * imported (`next build` imports every Route Handler): createDatabase() of
+ * db/index.ts calls it on its first statement, and only once. provider.ts
+ * calls that once per module layer of Next.js (Route Handlers, Server
+ * Actions), and so does the code that registers the clients
+ * (instrumentation.ts, for one). Keep the connection (a PostgreSQL pool, a
+ * SQLite file) on globalThis instead of opening it here, so all of them use
  * the same database.
  */
 import type { SqlDatabase } from './database';

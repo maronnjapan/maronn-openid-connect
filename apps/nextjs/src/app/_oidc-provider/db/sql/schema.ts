@@ -20,9 +20,9 @@ export const SCHEMA_SQL = `-- Tables of the generated OpenID Provider (stores.ts
 -- Foreign keys tie together the rows of one client, of one user and of one
 -- authorization transaction. Transactions and tokens do not reference clients
 -- or users with a foreign key, so the OP still works when clients or users come
--- from elsewhere (options.clientResolver, your own userStore). SQLite checks
--- foreign keys only with PRAGMA foreign_keys = ON, which node:sqlite and D1
--- turn on by default.
+-- from elsewhere (your own clientResolver or userStore in provider.ts). SQLite
+-- checks foreign keys only with PRAGMA foreign_keys = ON, which node:sqlite and
+-- D1 turn on by default.
 --
 -- Expired rows are not deleted by the OP. Delete them on a schedule if needed,
 -- e.g. DELETE FROM transactions WHERE expired_at <= <now in epoch seconds>.

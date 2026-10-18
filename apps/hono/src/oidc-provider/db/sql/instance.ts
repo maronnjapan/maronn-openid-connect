@@ -13,8 +13,12 @@
  * clients from the client tables, so register them there with registerClient()
  * (clients.ts) or with INSERT statements.
  *
- * The generated app calls createDatabase() for every request with the Hono
- * context, so a binding such as Cloudflare D1 (c.env.DB) can be read from it.
+ * The generated app calls createDatabase() for every request with the
+ * context of that request. In the Hono output it is Hono's Context, so on
+ * Cloudflare Workers a binding such as D1 (c.env.DB) can be read from it. The
+ * Express and Fastify output passes the WebContext of web-router.ts instead:
+ * it carries the request (c.req.header(), c.req.query() and the Fetch API
+ * Request c.req.raw) but no c.env, so read settings from process.env there.
  * Keep a connection that must outlive a request (a PostgreSQL pool, a SQLite
  * file) in a module-level variable instead of opening it here.
  */
@@ -32,7 +36,9 @@ export function createDatabase(_c: Context): SqlDatabase {
 // Examples. Replace createDatabase() above with one of them, adapted to your
 // project; each needs: import type { SqlDatabase, SqlStatement } from './database.js';
 //
-// Cloudflare D1 (apply schema.sql with wrangler d1 migrations):
+// Cloudflare D1, for the Hono output on Cloudflare Workers (the context of
+// the Express and Fastify output has no c.env). Apply schema.sql with
+// wrangler d1 migrations:
 //
 //   export function createDatabase(c: Context): SqlDatabase {
 //     const d1 = c.env.DB as D1Database;

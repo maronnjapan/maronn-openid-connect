@@ -4,8 +4,8 @@
  *
  * db/ implements it. The provider is generated with one kind of database
  * (--db): db/memory keeps everything in this process, db/sql in SQL tables,
- * db/kv in a key-value store. Pass your own ProviderStores through the
- * storage option of createApp() / applyOidc() to keep the data elsewhere.
+ * db/kv in a key-value store. To keep the data elsewhere, set stores in
+ * provider.ts to your own ProviderStores.
  */
 import type {
   AccessTokenInfo,

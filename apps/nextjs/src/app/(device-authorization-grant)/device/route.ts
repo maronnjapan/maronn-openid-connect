@@ -6,7 +6,9 @@
  * browser: the user_code is known to whoever started the flow — possibly an
  * attacker — so a CSRF token on the record alone would be no defense. The
  * binding cookie minted here is what every later step requires (see
- * buildDeviceBindingCookie() in store.ts for the full model).
+ * buildDeviceBindingCookie() in
+ * _oidc-provider/features/device-authorization-grant/cookies.ts for the full
+ * model).
  *
  * Backed by @maronn-openid-connect/experimental, whose API is NOT stable.
  */

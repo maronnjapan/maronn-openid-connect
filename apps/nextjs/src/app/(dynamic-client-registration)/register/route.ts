@@ -9,14 +9,16 @@
  * The client POSTs its metadata here as JSON and receives a freshly minted
  * client_id (and, for confidential clients, a client_secret) that works on
  * /authorize and /token right away. Registration is open by default
- * (RFC 7591 §3.1 SHOULD); set initialAccessToken (register/config.ts) to
- * require a Bearer token.
+ * (RFC 7591 §3.1 SHOULD); set initialAccessToken of
+ * dynamicClientRegistrationConfig
+ * (_oidc-provider/features/dynamic-client-registration/config.ts) to require a
+ * Bearer token.
  *
  * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
  * deployment layer (reverse proxy / platform); this endpoint only enforces the
- * inventory and body-size caps of register/config.ts. Open registration grants
- * no trust: what an issued client can do stays bounded by the same validation
- * as a static client (PKCE, exact redirect_uri match, client authentication).
+ * inventory and body-size caps of that config.ts. Open registration grants no
+ * trust: what an issued client can do stays bounded by the same validation as
+ * a static client (PKCE, exact redirect_uri match, client authentication).
  */
 import {
   ClientRegistrationError,

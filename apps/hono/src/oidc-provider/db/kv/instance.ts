@@ -13,10 +13,13 @@
  * reads its clients and users from the store, so register them there with
  * registerClient() (clients.ts) and registerUser() (users.ts).
  *
- * The generated app calls createDatabase() for every request with the Hono
- * context, so the URL and token of a store can be read from its bindings
- * (c.env). Keep a client that must outlive a request in a module-level
- * variable instead of creating it here.
+ * The generated app calls createDatabase() for every request with the
+ * context of that request. In the Hono output it is Hono's Context, so on
+ * Cloudflare Workers the URL and token of a store can be read from its
+ * bindings (c.env). The Express and Fastify output passes the WebContext of
+ * web-router.ts instead: it carries the request (c.req) but no c.env, so read
+ * them from process.env there. Keep a client that must outlive a request in a
+ * module-level variable instead of creating it here.
  */
 import type { Context } from 'hono';
 import type { KvDatabase } from './database.js';
@@ -33,7 +36,12 @@ export function createDatabase(_c: Context): KvDatabase {
 // project; each needs: import type { KvDatabase } from './database.js';
 //
 // Upstash Redis over its REST API (Vercel KV is Upstash too). fetch is all
-// it needs, so it runs on Node.js, Vercel and Cloudflare Workers alike:
+// it needs, so it runs on Node.js, Vercel and Cloudflare Workers alike. This
+// version reads the URL and token from the bindings of the Hono output on
+// Cloudflare Workers (c.env). On Node.js and Vercel, and in the Express and
+// Fastify output, whose context has no c.env, pass
+// process.env.UPSTASH_REDIS_REST_URL and process.env.UPSTASH_REDIS_REST_TOKEN
+// instead:
 //
 //   const upstash = async (url: string, token: string, command: Array<string | number>) => {
 //     const response = await fetch(url, {
@@ -65,9 +73,71 @@ export function createDatabase(_c: Context): KvDatabase {
 //     };
 //   }
 //
-// In memory, for trying the OP out: the data lives in the memory of one isolate,
-// so it is lost on every restart and never shared between isolates. It fits
-// wrangler dev and nothing else:
+// Redis, Valkey and other Redis servers over TCP. These run on Node.js only
+// (the Express and Fastify output, or Hono on Node.js), not on Cloudflare
+// Workers. With node-redis (pnpm add redis):
+//
+//   import { createClient } from 'redis';
+//
+//   const redis = createClient({ url: process.env.REDIS_URL });
+//   const connected = redis.connect();
+//
+//   export function createDatabase(_c: Context): KvDatabase {
+//     return {
+//       get: async (key) => {
+//         await connected;
+//         return redis.get(key);
+//       },
+//       set: async (key, value, ttlSeconds) => {
+//         await connected;
+//         if (ttlSeconds === undefined) await redis.set(key, value);
+//         else await redis.set(key, value, { expiration: { type: 'EX', value: ttlSeconds } });
+//       },
+//       setIfAbsent: async (key, value, ttlSeconds) => {
+//         await connected;
+//         const reply =
+//           ttlSeconds === undefined
+//             ? await redis.set(key, value, { condition: 'NX' })
+//             : await redis.set(key, value, {
+//               condition: 'NX',
+//               expiration: { type: 'EX', value: ttlSeconds },
+//             });
+//         return reply === 'OK';
+//       },
+//       delete: async (key) => {
+//         await connected;
+//         await redis.del(key);
+//       },
+//     };
+//   }
+//
+// With ioredis (pnpm add ioredis):
+//
+//   import { Redis } from 'ioredis';
+//
+//   const redis = new Redis(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379');
+//
+//   export function createDatabase(_c: Context): KvDatabase {
+//     return {
+//       get: (key) => redis.get(key),
+//       set: async (key, value, ttlSeconds) => {
+//         if (ttlSeconds === undefined) await redis.set(key, value);
+//         else await redis.set(key, value, 'EX', ttlSeconds);
+//       },
+//       setIfAbsent: async (key, value, ttlSeconds) =>
+//         (ttlSeconds === undefined
+//           ? await redis.set(key, value, 'NX')
+//           : await redis.set(key, value, 'EX', ttlSeconds, 'NX')) === 'OK',
+//       delete: async (key) => {
+//         await redis.del(key);
+//       },
+//     };
+//   }
+//
+// In memory, for trying the OP out: the data lives in the memory of one
+// process (one isolate on Cloudflare Workers), so it is lost on every restart
+// and never shared between processes or isolates. It fits local development
+// with a single process (wrangler dev included) and nothing else:
 //
 //   const entries = new Map<string, { value: string; expiresAt: number }>();
 //   const live = (key: string) => {

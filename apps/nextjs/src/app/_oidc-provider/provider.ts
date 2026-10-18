@@ -7,9 +7,12 @@
  * into a project — read clients from a database, load fixed signing keys, swap
  * the storage backend, decide acr / amr.
  *
- * Everything below is created once per server process. Next.js bundles Route
- * Handlers apart from pages and Server Actions, so anything that has to be the
- * same instance for both (the stores, the signing key) is kept on globalThis.
+ * Everything below is created when a module first imports this file. Next.js
+ * bundles Route Handlers apart from pages and Server Actions and loads this
+ * file once for each, so what has to be the same instance for both is kept on
+ * globalThis: the signing key here, and the store under the database in db/
+ * (db/database.ts without --db, db/instance.ts with --db kv; with --db sql,
+ * keep the connection there on globalThis).
  */
 import {
   assertHasRs256Key,
@@ -104,8 +107,9 @@ export const corsOrigins: string | readonly string[] = process.env.OIDC_CORS_ORI
  * acr / amr of the tokens (OIDC Core 1.0 §2 / §3.1.2.1): the ID Token carries
  * both, and the access token the acr (RFC 9068 §2.2.1).
  *
- * This sample echoes the most-preferred requested acr_values entry back, which
- * is what the OIDF oidcc-ensure-request-with-acr-values-succeeds module checks.
+ * As generated, it echoes the most-preferred requested acr_values entry back,
+ * which is what the OIDF oidcc-ensure-request-with-acr-values-succeeds module
+ * checks.
  * Without acr_values (or claims.id_token.acr.values) the tokens carry no acr.
  * A real deployment must map this to its actual authentication context instead
  * of trusting the request.

@@ -16,7 +16,8 @@ import type { JwkSet } from './jwks.js';
  * - `dpop`: DPoP proof（RFC 9449）。DPoP の proof は検証に使う鍵を自分の `jwk` ヘッダーに
  *   持つので、登録した鍵の proof だけを受け付ける OP が使う
  *
- * 文字列なので、ほかの用途も足せる。
+ * 文字列なので、ほかの用途も足せる。core で鍵を受け取る処理は署名付き Request Object の検証
+ * （`resolveRequestObjectParams()` の `options.jwks`）だけで、private_key_jwt と DPoP の検証は持たない。
  */
 export type ClientKeyPurpose = 'private_key_jwt' | 'request_object' | 'dpop' | (string & {});
 

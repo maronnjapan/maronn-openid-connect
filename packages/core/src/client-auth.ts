@@ -5,13 +5,10 @@
  * Token Endpoint で受け付けるクライアント認証方式:
  * - client_secret_basic: Authorization: Basic base64(clientId:clientSecret)
  * - client_secret_post:  リクエストボディの client_id + client_secret
- * - private_key_jwt:     リクエストボディの client_assertion_type + client_assertion
- *                        （署名の検証は client-assertion.ts の verifyClientAssertion）
  *
  * OAuth 2.1 Section 2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
  */
 
-import { CLIENT_ASSERTION_TYPE_JWT_BEARER, readClientAssertionSubject } from './client-assertion.js';
 import { sha256, timingSafeEqual } from './crypto-utils.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
 import type { ClientAuthMethod, TokenClientInfo } from './token-request.js';
@@ -105,8 +102,6 @@ export interface PresentedClientCredentials {
   clientId: string;
   /** 提示された client_secret。public client（method='none'）では undefined */
   clientSecret?: string;
-  /** private_key_jwt で提示された client_assertion（署名は未検証）。他の方式では undefined */
-  clientAssertion?: string;
   /** 実際に使われた認証方式 */
   method: ClientAuthMethod;
 }
@@ -117,16 +112,12 @@ export interface PresentedClientCredentials {
  *
  * - `Authorization: Basic` → client_secret_basic
  * - ボディの client_id + client_secret → client_secret_post
- * - ボディの client_assertion_type + client_assertion → private_key_jwt
  * - ボディの client_id のみ → none（public client の識別）
  *
  * OAuth 2.1 §2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
  * RFC 6749 §4.1.3: 未認証クライアントも client_id を送らなければならない。
- * RFC 7521 §4.2: client_assertion を使うリクエストは client_id を省略でき、
- * そのときはアサーションの sub でクライアントを識別する。
  *
- * @throws {TokenError} invalid_request（複数方式・パラメータの組の欠け）/
- *   invalid_client（形式不正・client_id 欠落・未対応の client_assertion_type）
+ * @throws {TokenError} invalid_request（複数方式）/ invalid_client（形式不正・client_id 欠落）
  */
 export function extractClientCredentials(
   context: ClientAuthContext,
@@ -138,11 +129,6 @@ export function extractClientCredentials(
   // 正規化し、多重方式判定・method 判定・後段検証の意味論を一箇所で揃える。
   const postSecret =
     params.client_secret === '' ? undefined : params.client_secret;
-  const clientAssertion =
-    params.client_assertion === '' ? undefined : params.client_assertion;
-  const clientAssertionType =
-    params.client_assertion_type === '' ? undefined : params.client_assertion_type;
-  const hasClientAssertion = clientAssertion !== undefined || clientAssertionType !== undefined;
 
   const hasBasicHeader = hasAuthScheme(authorizationHeader, 'Basic');
   const hasPostCredential =
@@ -150,27 +136,10 @@ export function extractClientCredentials(
 
   // RFC 6749 §2.3 / OAuth 2.1 §2.3: 1リクエストで複数の「認証方式」を併用してはいけない。
   // ただし §3.2.1 の client_id 単独送信は自身を識別するための「識別子」であって認証方式ではない。
-  // よって多重認証方式の判定はボディの client_secret（client_secret_post の資格情報）と
-  // client_assertion（private_key_jwt の資格情報）の有無で行い、
+  // よって多重認証方式の判定はボディの client_secret（client_secret_post の資格情報）の有無のみで行い、
   // Basic ヘッダ + ボディ client_id（secret なし）という多くのクライアントライブラリの実装を拒否しない。
   // 空値の client_secret は資格情報を運ばないため「もう一つの認証方式」に数えない（RFC 6749 §2.3）。
-  validateSingleClientAuthMethod({
-    hasBasicHeader,
-    hasClientSecret: postSecret !== undefined,
-    hasClientAssertion,
-  });
-
-  if (hasClientAssertion) {
-    const assertion = requireJwtBearerClientAssertion(clientAssertion, clientAssertionType);
-    // RFC 7521 §4.2: client_id が無ければアサーションの sub がクライアントを示す。
-    // client_id があってアサーションと食い違う場合は、署名検証後の sub の照合が拒否する。
-    const clientId = params.client_id ?? readClientAssertionSubject(assertion);
-    return {
-      clientId: requireClientId(clientId),
-      clientAssertion: assertion,
-      method: 'private_key_jwt',
-    };
-  }
+  validateSingleClientAuthMethod(hasBasicHeader, postSecret);
 
   let clientId: string | undefined;
   let clientSecret: string | undefined;
@@ -200,30 +169,27 @@ export function extractClientCredentials(
   const method = selectPresentedClientAuthMethod({
     hasBasicHeader,
     hasClientSecret: clientSecret !== undefined,
-    hasClientAssertion: false,
   });
 
   return { clientId: requiredClientId, clientSecret, method };
 }
 
 /**
- * ステップ 3: 使用された認証方式が登録方式のどれかであることを検証する
+ * ステップ 3: 使用された認証方式が、クライアントに登録された方式のどれかであることを検証する
  * OIDC Core 1.0 Section 9 / RFC 7591 Section 2
  *
- * 登録方式は {@link selectRegisteredClientAuthMethods} で決まり、既定は client_secret_basic。
+ * 登録方式の既定は client_secret_basic。
  * - 登録が `none`（public client）: 資格情報を一切提示していないことを要求する。
  *   提示していれば confidential への昇格混同を防ぐため拒否する。
- * - 登録が confidential 方式: client_secret（private_key_jwt なら client_assertion）必須。
- *   実際に使われた方式が登録方式のどれでもない場合は、認証方式ダウングレードを防ぐため拒否する。
- *
- * 資格情報そのものの検証は、client_secret なら {@link verifyClientSecret}、
- * private_key_jwt なら verifyClientAssertion が行う。
+ * - 登録が confidential 方式: client_secret 必須。実際に使われた方式が登録方式のどれでも
+ *   なければ認証方式ダウングレードを防ぐため拒否する。
  *
  * @throws {TokenError} invalid_client
+ * @throws {Error} `none` をほかの方式と並べた登録（{@link selectRegisteredClientAuthMethods}）
  */
 export function validateClientAuthMethod(
   client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>,
-  presented: Pick<PresentedClientCredentials, 'method' | 'clientSecret' | 'clientAssertion'>,
+  presented: Pick<PresentedClientCredentials, 'method' | 'clientSecret'>,
 ): void {
   const registeredMethods = selectRegisteredClientAuthMethods(client);
 
@@ -236,12 +202,8 @@ export function validateClientAuthMethod(
     return;
   }
 
-  // confidential client は資格情報が必須。
-  if (presented.method === 'private_key_jwt') {
-    requireClientAssertion(presented.clientAssertion);
-  } else {
-    requireClientSecret(presented.clientSecret);
-  }
+  // confidential client は client_secret 必須。
+  requireClientSecret(presented.clientSecret);
 
   // 実際に使われた認証方式が登録方式のどれでもなければ認証失敗とし、認証方式ダウングレードを防ぐ。
   validateClientAuthMethodAllowed(presented.method, registeredMethods);
@@ -278,51 +240,19 @@ export async function hashClientSecret(clientSecret: string): Promise<string> {
 }
 
 /**
- * OAuth 2.1 §2.3: Basic ヘッダー、ボディの client_secret、client_assertion のうち
- * 2 つ以上を併用していないことを検証する。
- * 空の client_secret は未提示として扱い、hasClientSecret を false で渡す（RFC 6749 §3.2）。
+ * OAuth 2.1 §2.3: Basic ヘッダーとボディの client_secret を併用していないことを検証する。
+ * 空の client_secret は未提示として扱う（RFC 6749 §3.2）。
  */
-export function validateSingleClientAuthMethod(presented: {
-  hasBasicHeader: boolean;
-  hasClientSecret: boolean;
-  hasClientAssertion: boolean;
-}): void {
-  const { hasBasicHeader, hasClientSecret: hasPostSecret, hasClientAssertion } = presented;
-  if (hasClientAssertion && (hasBasicHeader || hasPostSecret)) {
-    throw new TokenError(
-      TokenErrorCode.InvalidRequest,
-      'Multiple client authentication methods provided. Use only one of the Authorization header, client_secret or client_assertion.',
-    );
-  }
-  if (hasBasicHeader && hasPostSecret) {
+export function validateSingleClientAuthMethod(
+  hasBasicHeader: boolean,
+  postSecret: string | undefined,
+): void {
+  if (hasBasicHeader && postSecret !== undefined && postSecret !== '') {
     throw new TokenError(
       TokenErrorCode.InvalidRequest,
       'Multiple client authentication methods provided. Use either Authorization header or request body, not both.',
     );
   }
-}
-
-/**
- * RFC 7521 §4.2 / RFC 7523 §2.2: client_assertion と client_assertion_type が両方あり、
- * client_assertion_type が jwt-bearer であることを確かめ、client_assertion を返す。
- *
- * @throws {TokenError} invalid_request（片方だけ）/ invalid_client（未対応の client_assertion_type）
- */
-export function requireJwtBearerClientAssertion(
-  clientAssertion: string | undefined,
-  clientAssertionType: string | undefined,
-): string {
-  if (clientAssertion === undefined || clientAssertionType === undefined) {
-    throw new TokenError(
-      TokenErrorCode.InvalidRequest,
-      'client_assertion and client_assertion_type must be sent together',
-    );
-  }
-  // RFC 6749 §5.2: 未対応の認証方式は invalid_client。
-  if (clientAssertionType !== CLIENT_ASSERTION_TYPE_JWT_BEARER) {
-    throw new TokenError(TokenErrorCode.InvalidClient, 'Unsupported client_assertion_type');
-  }
-  return clientAssertion;
 }
 
 /**
@@ -359,16 +289,13 @@ export function requireClientId(clientId: string | undefined): string {
 
 /**
  * リクエストが実際に使ったクライアント認証方式を選ぶ。
- * client_assertion があれば private_key_jwt、Basic ヘッダーがあれば client_secret_basic、
- * ボディに secret があれば client_secret_post、どれも無ければ none とする。
- * 登録方式との照合は行わない。
+ * Basic ヘッダーがあれば client_secret_basic、ボディに secret があれば client_secret_post、
+ * どちらも無ければ none とする。登録方式との照合は行わない。
  */
 export function selectPresentedClientAuthMethod(presented: {
   hasBasicHeader: boolean;
   hasClientSecret: boolean;
-  hasClientAssertion: boolean;
-}): ClientAuthMethod {
-  if (presented.hasClientAssertion) return 'private_key_jwt';
+}): PresentedClientCredentials['method'] {
   if (presented.hasBasicHeader) return 'client_secret_basic';
   return presented.hasClientSecret ? 'client_secret_post' : 'none';
 }
@@ -414,19 +341,6 @@ export function requireClientSecret(clientSecret: string | undefined): string {
 }
 
 /**
- * private_key_jwt の方式で client_assertion を提示していることを確かめる。
- */
-export function requireClientAssertion(clientAssertion: string | undefined): string {
-  if (!clientAssertion) {
-    throw new TokenError(
-      TokenErrorCode.InvalidClient,
-      'Client authentication required',
-    );
-  }
-  return clientAssertion;
-}
-
-/**
  * 実際に使われた認証方式が、クライアントに登録された方式のどれかであることを検証する。
  * 認証方式のダウングレードや public / confidential の混同を防ぐ（OIDC Core 1.0 §9）。
  */
@@ -444,17 +358,16 @@ export function validateClientAuthMethodAllowed(
 
 /**
  * OAuth 2.1 §7.4.1 / RFC 6749 §10.10: 提示された client_secret を登録値と定数時間で比較する。
- * 提示が無い（空文字を含む）、または一致しなければ invalid_client。シークレットを登録していない
- * クライアント（private_key_jwt だけのクライアントなど）も、未提示の client_secret では通さない。
+ * どちらかが未指定なら空文字として比較し、一致しなければ invalid_client。
  */
 export async function verifyClientSecretValue(
   presentedSecret: string | undefined,
   registeredSecret: string | undefined,
 ): Promise<void> {
-  const secretMatches =
-    presentedSecret !== undefined &&
-    presentedSecret !== '' &&
-    (await timingSafeEqual(registeredSecret ?? '', presentedSecret));
+  const secretMatches = await timingSafeEqual(
+    registeredSecret ?? '',
+    presentedSecret ?? '',
+  );
   if (!secretMatches) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,

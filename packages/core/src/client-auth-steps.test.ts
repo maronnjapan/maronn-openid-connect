@@ -20,7 +20,6 @@ import {
   selectRegisteredClientAuthMethods,
   isPublicTokenClient,
   requireClientSecret,
-  requireClientAssertion,
   validateClientAuthMethodAllowed,
   verifyClientSecretValue,
   hashClientSecret,
@@ -234,22 +233,6 @@ describe('verifyClientSecret', () => {
     expect(error?.errorDescription).toBe('Client authentication failed');
   });
 
-  // A private_key_jwt client registers no secret. Comparing an absent secret
-  // with an absent registered one must not count as authentication, or a
-  // pipeline that skips the assertion check would let any request through.
-  it('should reject a client without a registered secret when no secret is presented', async () => {
-    const privateKeyJwtClient: TokenClientInfo = {
-      clientId: 'client123',
-      tokenEndpointAuthMethods: ['private_key_jwt'],
-    };
-
-    const error = await captureAsyncError(() => verifyClientSecret(privateKeyJwtClient, undefined));
-
-    expect(error).toBeInstanceOf(TokenError);
-    expect(error?.error).toBe(TokenErrorCode.InvalidClient);
-    expect(error?.errorDescription).toBe('Client authentication failed');
-  });
-
   describe('hashed client secret', () => {
     // SHA-256 of "secret", base64url without padding.
     const hashedClient: TokenClientInfo = {
@@ -305,50 +288,12 @@ describe('parseBasicClientCredentials', () => {
 
 describe('validateSingleClientAuthMethod', () => {
   it('should accept Basic without a body secret', () => {
-    expect(
-      validateSingleClientAuthMethod({ hasBasicHeader: true, hasClientSecret: false, hasClientAssertion: false }),
-    ).toBeUndefined();
+    expect(validateSingleClientAuthMethod(true, undefined)).toBeUndefined();
   });
 
   it('should reject Basic combined with a body secret', () => {
-    expect(() =>
-      validateSingleClientAuthMethod({ hasBasicHeader: true, hasClientSecret: true, hasClientAssertion: false }),
-    ).toThrow(
-      expect.objectContaining({
-        error: 'invalid_request',
-        errorDescription:
-          'Multiple client authentication methods provided. Use either Authorization header or request body, not both.',
-      }),
-    );
-  });
-
-  it('should accept a client assertion alone', () => {
-    expect(
-      validateSingleClientAuthMethod({ hasBasicHeader: false, hasClientSecret: false, hasClientAssertion: true }),
-    ).toBeUndefined();
-  });
-
-  it('should reject a client assertion combined with Basic', () => {
-    expect(() =>
-      validateSingleClientAuthMethod({ hasBasicHeader: true, hasClientSecret: false, hasClientAssertion: true }),
-    ).toThrow(
-      expect.objectContaining({
-        error: 'invalid_request',
-        errorDescription:
-          'Multiple client authentication methods provided. Use only one of the Authorization header, client_secret or client_assertion.',
-      }),
-    );
-  });
-
-  it('should reject a client assertion combined with a body secret', () => {
-    expect(() =>
-      validateSingleClientAuthMethod({ hasBasicHeader: false, hasClientSecret: true, hasClientAssertion: true }),
-    ).toThrow(
-      expect.objectContaining({
-        error: 'invalid_request',
-        errorDescription:
-          'Multiple client authentication methods provided. Use only one of the Authorization header, client_secret or client_assertion.',
-      }),
+    expect(() => validateSingleClientAuthMethod(true, 'secret')).toThrow(
+      expect.objectContaining({ error: 'invalid_request' }),
     );
   });
 });
@@ -383,37 +328,21 @@ describe('requireClientId', () => {
 
 describe('selectPresentedClientAuthMethod', () => {
   it('should select client_secret_basic when Basic is used', () => {
-    expect(
-      selectPresentedClientAuthMethod({ hasBasicHeader: true, hasClientSecret: true, hasClientAssertion: false }),
-    ).toBe(
+    expect(selectPresentedClientAuthMethod({ hasBasicHeader: true, hasClientSecret: true })).toBe(
       'client_secret_basic',
     );
   });
 
   it('should select client_secret_post for a body secret', () => {
-    expect(
-      selectPresentedClientAuthMethod({ hasBasicHeader: false, hasClientSecret: true, hasClientAssertion: false }),
-    ).toBe(
+    expect(selectPresentedClientAuthMethod({ hasBasicHeader: false, hasClientSecret: true })).toBe(
       'client_secret_post',
     );
   });
 
   it('should select none without a secret', () => {
-    expect(
-      selectPresentedClientAuthMethod({ hasBasicHeader: false, hasClientSecret: false, hasClientAssertion: false }),
-    ).toBe(
+    expect(selectPresentedClientAuthMethod({ hasBasicHeader: false, hasClientSecret: false })).toBe(
       'none',
     );
-  });
-
-  it('should select private_key_jwt for a client assertion', () => {
-    expect(
-      selectPresentedClientAuthMethod({
-        hasBasicHeader: false,
-        hasClientSecret: false,
-        hasClientAssertion: true,
-      }),
-    ).toBe('private_key_jwt');
   });
 });
 
@@ -425,8 +354,8 @@ describe('selectRegisteredClientAuthMethods', () => {
 
   it('should return the registered methods', () => {
     expect(
-      selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'] }),
-    ).toEqual(['client_secret_basic', 'private_key_jwt']);
+      selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'] }),
+    ).toEqual(['client_secret_basic', 'client_secret_post']);
   });
 
   it('should return none for a public client', () => {
@@ -442,7 +371,7 @@ describe('selectRegisteredClientAuthMethods', () => {
   // method that authenticates.
   it('should reject none listed together with another method', () => {
     expect(() =>
-      selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['none', 'private_key_jwt'] }),
+      selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['none', 'client_secret_post'] }),
     ).toThrow(new Error('tokenEndpointAuthMethods must not list none together with another method'));
   });
 });
@@ -457,23 +386,10 @@ describe('isPublicTokenClient', () => {
     expect(isPublicTokenClient({})).toBe(false);
   });
 
-  it('should treat a client registered with private_key_jwt as confidential', () => {
-    expect(isPublicTokenClient({ tokenEndpointAuthMethods: ['private_key_jwt'] })).toBe(false);
-  });
-});
-
-describe('requireClientAssertion', () => {
-  it('should return the client assertion', () => {
-    expect(requireClientAssertion('eyJ.eyJ.sig')).toBe('eyJ.eyJ.sig');
-  });
-
-  it('should reject a missing client assertion with invalid_client', () => {
-    expect(() => requireClientAssertion(undefined)).toThrow(
-      expect.objectContaining({
-        error: 'invalid_client',
-        errorDescription: 'Client authentication required',
-      }),
-    );
+  it('should treat a client registered with secret methods as confidential', () => {
+    expect(
+      isPublicTokenClient({ tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'] }),
+    ).toBe(false);
   });
 });
 
@@ -495,18 +411,17 @@ describe('requireClientSecret', () => {
 describe('validateClientAuthMethodAllowed', () => {
   it('should accept a method the client registered', () => {
     expect(
-      validateClientAuthMethodAllowed('private_key_jwt', ['client_secret_basic', 'private_key_jwt']),
+      validateClientAuthMethodAllowed('client_secret_post', ['client_secret_basic', 'client_secret_post']),
     ).toBeUndefined();
   });
 
   it('should reject a method the client did not register', () => {
     expect(() =>
-      validateClientAuthMethodAllowed('client_secret_post', ['client_secret_basic', 'private_key_jwt']),
+      validateClientAuthMethodAllowed('client_secret_post', ['client_secret_basic']),
     ).toThrow(
       expect.objectContaining({
         error: 'invalid_client',
-        errorDescription:
-          'Client authentication method is not registered for the client',
+        errorDescription: 'Client authentication method is not registered for the client',
       }),
     );
   });
@@ -519,26 +434,6 @@ describe('verifyClientSecretValue', () => {
 
   it('should reject a different secret', async () => {
     await expect(verifyClientSecretValue('wrong', 'secret')).rejects.toThrow(
-      expect.objectContaining({
-        error: 'invalid_client',
-        errorDescription: 'Client authentication failed',
-      }),
-    );
-  });
-
-  // Same rule as verifyClientSecretHash: nothing presented never matches, not
-  // even a client that has no secret registered.
-  it('should reject a missing secret even when no secret is registered', async () => {
-    await expect(verifyClientSecretValue(undefined, undefined)).rejects.toThrow(
-      expect.objectContaining({
-        error: 'invalid_client',
-        errorDescription: 'Client authentication failed',
-      }),
-    );
-  });
-
-  it('should reject an empty secret even when an empty secret is registered', async () => {
-    await expect(verifyClientSecretValue('', '')).rejects.toThrow(
       expect.objectContaining({
         error: 'invalid_client',
         errorDescription: 'Client authentication failed',

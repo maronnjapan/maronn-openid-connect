@@ -48,8 +48,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret`。登録する方式は `TokenClientInfo.tokenEndpointAuthMethods` の一覧で、省略すると `['client_secret_basic']`、`['none']` は public client（`isPublicTokenClient`）。`client_secret_basic` と `private_key_jwt` のように複数の方式を並べられる |
-| `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが private_key_jwt の用途に登録した公開鍵（`ClientKeyResolver` で引く）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` が署名、`iss` / `sub` / `aud` / `exp` / `nbf` / `iat` / `jti` を確かめ、`rejectReplayedClientAssertion` が `ClientAssertionJtiStore` に `jti` を記録して 2 回目の使用を拒否する。`aud` として受け付ける値は `audiences` で渡し、issuer だけを渡すと draft-ietf-oauth-rfc7523bis に従う |
+| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret`。登録する方式は `TokenClientInfo.tokenEndpointAuthMethods` の一覧で、省略すると `['client_secret_basic']`、`['none']` は public client（`isPublicTokenClient`）。`client_secret_basic` と `client_secret_post` のように複数の方式を並べられ、どの方式でも同じシークレットと比べる |
 | `hashClientSecret` / `verifyClientSecretHash` | client_secret を平文で持たずに登録するためのハッシュ（SHA-256、base64url）の作成と照合。`TokenClientInfo.clientSecretHash` に登録すると、`verifyClientSecret` は提示値のハッシュをこの値と比べる |
 | 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
@@ -69,7 +68,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `buildProviderMetadata` | OpenID Provider Metadata の生成。`*_auth_methods_supported` に `private_key_jwt` を載せるときは `*_auth_signing_alg_values_supported` も必要で、無ければ例外を投げる（RFC 8414 §2） |
+| `buildProviderMetadata` | OpenID Provider Metadata の生成 |
 | `exportPublicJwk` / `exportJwks` / `signingKeysToJwkSet` | 公開鍵の JWK / JWK Set 化 |
 | `createCachedSigningKeyProvider` | 署名鍵プロバイダーの TTL 付きキャッシュラッパー |
 | `selectSigningKeyByAlg` | 登録鍵セットからのアルゴリズム別選択 |
@@ -86,7 +85,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose)`）。用途の `ClientKeyPurpose` は `private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む |
+| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose)`）。用途の `ClientKeyPurpose` は鍵を使う処理の名前で、`private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。core で鍵を受け取るのは `resolveRequestObjectParams` だけで、private_key_jwt と DPoP の検証は持たない |
 | `createClientKeyResolver` | クライアントごとの「用途 → JWK Set」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る。設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う |
 
 ### Errors / Utilities

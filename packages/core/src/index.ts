@@ -337,46 +337,16 @@ export {
   // client_secret をハッシュで登録するクライアント（TokenClientInfo.clientSecretHash）
   hashClientSecret,
   verifyClientSecretHash,
-  // クライアントが登録した認証方式（TokenClientInfo.tokenEndpointAuthMethods）と private_key_jwt
+  // クライアントが登録した認証方式（TokenClientInfo.tokenEndpointAuthMethods）
   selectRegisteredClientAuthMethods,
   isPublicTokenClient,
   validateClientAuthMethodAllowed,
-  requireClientAssertion,
-  requireJwtBearerClientAssertion,
 } from './client-auth.js';
 
 export type {
   ClientAuthContext,
   PresentedClientCredentials,
 } from './client-auth.js';
-
-export {
-  // private_key_jwt のクライアントアサーション検証（OIDC Core 1.0 §9 / RFC 7523 §3）
-  CLIENT_ASSERTION_TYPE_JWT_BEARER,
-  DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS,
-  DEFAULT_CLIENT_ASSERTION_CLOCK_SKEW_SEC,
-  verifyClientAssertion,
-  decodeClientAssertion,
-  readClientAssertionSubject,
-  validateClientAssertionHeader,
-  selectClientAssertionKeys,
-  verifyClientAssertionSignature,
-  validateClientAssertionIssuer,
-  validateClientAssertionSubject,
-  validateClientAssertionAudience,
-  validateClientAssertionExpiration,
-  validateClientAssertionNotBefore,
-  validateClientAssertionIssuedAt,
-  requireClientAssertionJti,
-  rejectReplayedClientAssertion,
-} from './client-assertion.js';
-
-export type {
-  ClientAssertionJtiStore,
-  DecodedClientAssertion,
-  VerifiedClientAssertion,
-  VerifyClientAssertionOptions,
-} from './client-assertion.js';
 
 export {
   // クライアントが用途ごとに登録した公開鍵の取得（private_key_jwt / Request Object / DPoP など）

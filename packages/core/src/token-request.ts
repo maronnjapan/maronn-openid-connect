@@ -64,8 +64,8 @@ export interface TokenClientInfo {
    *
    * - 省略すると RFC 7591 §2 の既定どおり `['client_secret_basic']`
    * - `['none']` は public client。`none` はほかの方式と並べられない
-   * - `client_secret_basic` から `private_key_jwt` へ移る間のように、1 つのクライアントに複数の方式を
-   *   許すときは並べる
+   * - `client_secret_basic` と `client_secret_post` のように、1 つのクライアントに複数の方式を
+   *   許すときは並べる。シークレットはどの方式でも同じ `clientSecret`（`clientSecretHash`）と照合する
    * - 空の一覧はどの方式も許さない
    */
   tokenEndpointAuthMethods?: readonly ClientAuthMethod[];
@@ -75,7 +75,7 @@ export interface TokenClientInfo {
  * クライアントに登録できるクライアント認証方式（RFC 7591 §2 の `token_endpoint_auth_method`）。
  * `none` はクライアント認証をしない public client を表す。
  */
-export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt' | 'none';
+export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'none';
 
 /**
  * クライアント情報を解決するインターフェース

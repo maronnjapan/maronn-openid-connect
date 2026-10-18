@@ -186,7 +186,9 @@ function identifiersIn(lines) {
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/\/\/[^\n]*/g, ' ')
     .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, ' ')
-    .replace(/`(?:\\.|[^`\\])*`/g, ' ');
+    .replace(/`(?:\\.|[^`\\])*`/g, ' ')
+    // A spread is no property access: ...name reads name.
+    .replace(/\.\.\./g, ' ');
   return new Set(code.match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? []);
 }
 

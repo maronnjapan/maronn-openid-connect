@@ -9,9 +9,11 @@
  * repository root first). Nothing compares the generated text.
  *
  * Combinations: the default, everything off, each feature alone (with what
- * it requires), every feature on, --db sql / --db kv, custom scopes, and two
- * --flow documents (a reordered token endpoint; every removable step left
- * out), for hono, express and fastify.
+ * it requires), every feature on, --db sql / --db kv, custom scopes, for
+ * hono, express, fastify and nextjs; and two --flow documents (a reordered
+ * token endpoint; every removable step left out) for hono, express and
+ * fastify (the Next.js output refuses a rearranged step order). The Next.js
+ * combinations are checked with the JSX of React and the types of Next.js.
  *
  * Usage: node scripts/test-matrix.mjs   (pnpm --filter @maronn-openid-connect/cli test:matrix)
  */
@@ -32,7 +34,7 @@ const { DEFAULT_FEATURES, FEATURE_CONFIG_KEYS, FEATURE_REGISTRY, featureKeyOf } 
 const { buildOpFlow } = await import(join(packageRoot, 'dist/flow/build.js'));
 const { resolveFlowSelection } = await import(join(packageRoot, 'dist/flow/flow-file.js'));
 
-const FRAMEWORKS = ['hono', 'express', 'fastify'];
+const FRAMEWORKS = ['hono', 'express', 'fastify', 'nextjs'];
 
 /**
  * The steps of two flow documents, checked by flow-file.ts like a --flow
@@ -87,7 +89,8 @@ function combinationsOf(framework) {
     combinations.set(`only-${entry.id}`, { features: withFeature(allOff(), entry.id) });
   }
   const everything = Object.fromEntries(FEATURE_CONFIG_KEYS.map((key) => [key, true]));
-  for (const [name, features] of [['default', { ...DEFAULT_FEATURES }], ['all', everything]]) {
+  const flowDocuments = framework === 'nextjs' ? [] : [['default', { ...DEFAULT_FEATURES }], ['all', everything]];
+  for (const [name, features] of flowDocuments) {
     const { reordered, minimal } = flowSteps(features);
     combinations.set(`flow-reordered-${name}`, { features, steps: reordered });
     combinations.set(`flow-minimal-${name}`, { features, steps: minimal });
@@ -117,45 +120,56 @@ for (const combination of combinations) {
 }
 
 const dist = (path) => join(repositoryRoot, 'packages', path);
-writeFileSync(
-  join(matrixRoot, 'tsconfig.json'),
-  `${JSON.stringify(
-    {
-      compilerOptions: {
-        target: 'ES2022',
-        lib: ['ES2022', 'DOM', 'DOM.Iterable'],
-        types: ['node'],
-        module: 'ESNext',
-        moduleResolution: 'bundler',
-        jsx: 'react-jsx',
-        jsxImportSource: 'hono/jsx',
-        strict: true,
-        noUnusedLocals: true,
-        noUnusedParameters: true,
-        noFallthroughCasesInSwitch: true,
-        isolatedModules: true,
-        skipLibCheck: true,
-        noEmit: true,
-        typeRoots: [join(packageRoot, 'node_modules/@types')],
-        paths: {
-          '@maronn-openid-connect/core': [dist('core/dist/index.d.ts')],
-          '@maronn-openid-connect/experimental/*': [dist('experimental/dist/*/index.d.ts')],
-          '@maronn-openid-connect/google-login': [dist('google-login/dist/index.d.ts')],
-          '@maronn-openid-connect/google-login/sign-in': [dist('google-login/dist/sign-in.d.ts')],
-        },
-      },
-      include: ['**/*.ts', '**/*.tsx'],
-    },
-    null,
-    2,
-  )}\n`,
-);
+const workspacePaths = {
+  '@maronn-openid-connect/core': [dist('core/dist/index.d.ts')],
+  '@maronn-openid-connect/experimental/*': [dist('experimental/dist/*/index.d.ts')],
+  '@maronn-openid-connect/google-login': [dist('google-login/dist/index.d.ts')],
+  '@maronn-openid-connect/google-login/sign-in': [dist('google-login/dist/sign-in.d.ts')],
+};
+const compilerOptions = {
+  target: 'ES2022',
+  lib: ['ES2022', 'DOM', 'DOM.Iterable'],
+  module: 'ESNext',
+  moduleResolution: 'bundler',
+  strict: true,
+  noUnusedLocals: true,
+  noUnusedParameters: true,
+  noFallthroughCasesInSwitch: true,
+  isolatedModules: true,
+  skipLibCheck: true,
+  noEmit: true,
+  typeRoots: [join(packageRoot, 'node_modules/@types')],
+  paths: workspacePaths,
+};
+const projects = [
+  {
+    name: 'tsconfig.hono.json',
+    compilerOptions: { ...compilerOptions, types: ['node'], jsx: 'react-jsx', jsxImportSource: 'hono/jsx' },
+    include: FRAMEWORKS.filter((framework) => framework !== 'nextjs').flatMap((framework) => [
+      `${framework}-*/**/*.ts`,
+      `${framework}-*/**/*.tsx`,
+    ]),
+  },
+  {
+    name: 'tsconfig.nextjs.json',
+    compilerOptions: { ...compilerOptions, types: ['node', 'react', 'react-dom'], jsx: 'react-jsx' },
+    include: ['nextjs-*/**/*.ts', 'nextjs-*/**/*.tsx'],
+  },
+];
+for (const project of projects) {
+  writeFileSync(
+    join(matrixRoot, project.name),
+    `${JSON.stringify({ compilerOptions: project.compilerOptions, include: project.include }, null, 2)}\n`,
+  );
+}
 
 console.log(`Type-checking ${combinations.length} generated providers in ${matrixRoot} ...`);
 try {
-  execFileSync(join(packageRoot, 'node_modules/.bin/tsc'), ['--noEmit', '-p', join(matrixRoot, 'tsconfig.json')], {
-    stdio: 'inherit',
-  });
+  for (const project of projects) {
+    execFileSync(join(packageRoot, 'node_modules/.bin/tsc'), ['--noEmit', '-p', join(matrixRoot, project.name)], {
+      stdio: 'inherit',
+    });
+  }
 } catch {
   console.error('\nA generated combination does not compile: the errors above name its directory under .matrix/.');
   process.exit(1);

@@ -496,6 +496,23 @@ describe('run', () => {
       );
     });
 
+    it('should tell the Next.js output to register its clients in _oidc-provider/db', () => {
+      expect(guidanceOf(['nextjs'])).toContain(
+        'Register your clients and users with registerClient() and registerUser() of _oidc-provider/db (instrumentation.ts runs once when the server starts)',
+      );
+    });
+
+    it('should not point the Next.js output at OIDC_CLIENTS_JSON, which it no longer reads', () => {
+      expect(guidanceOf(['nextjs'])).not.toContain('OIDC_CLIENTS_JSON');
+    });
+
+    // The --db kv instance.ts of the Next.js output runs as generated.
+    it('should name the stores the Next.js key-value instance runs on', () => {
+      expect(guidanceOf(['nextjs', '--db', 'kv'])).toContain(
+        '_oidc-provider/db/instance.ts runs on Upstash Redis when UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set, and on node:sqlite (.data/oidc.sqlite) otherwise',
+      );
+    });
+
     it('should not name a store contract the generated code does not have', () => {
       expect(guidanceOf(['hono'])).not.toContain('JsonStoreBackend');
     });

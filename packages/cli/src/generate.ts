@@ -5,24 +5,28 @@
  * pipelines.
  *
  * 1. Resolve the features (registry.ts) and the db kind.
- * 2. Select the files: every file of the base, features/<id>/** of the
- *    enabled features, and db/<kind>/** (memory without --db) moved up into
- *    db/; db/index.ts of the app is the one of that kind.
- * 3. Render features/enabled.ts (the lines of the enabled features) and the
- *    custom scopes of scopes.ts. The manifest is written by the caller.
- * 4. Remove the owner blocks of the disabled features and their imports. A
- *    value such a block defined that later code still reads becomes
- *    `const <name> = undefined;`, and a value nothing reads any more loses
- *    its binding.
+ * 2. Select the files: every file of the base, the files of the enabled
+ *    features, and the files of one db kind (memory without --db) moved up
+ *    into the db directory, whose index.ts is the one of that kind. A
+ *    feature owns features/<id>/** in the hono layout, and its route group
+ *    (<id>)/** and _oidc-provider/features/<id>/** in the Next.js layout.
+ * 3. Render the feature list (features/enabled.ts; _oidc-provider/features.ts)
+ *    with the lines of the enabled features, and the custom scopes of
+ *    scopes.ts. The manifest is written by the caller.
+ * 4. Remove the owner blocks of the disabled features and their imports from
+ *    the pipelines (pipeline.ts; route.ts). A value such a block defined that
+ *    later code still reads becomes `const <name> = undefined;` (from the
+ *    produces of its step: the step meta of the catalog, or the endpoint.ts
+ *    beside a route.ts), and a value nothing reads any more loses its binding.
  * 5. Move the relative imports to the output layout and point
  *    @maronn-openid-connect/core at the package name of the run. Express and
  *    Fastify also get Hono replaced with the WebRouter (web.ts).
  */
 import { posix } from 'node:path';
 import type { DbKind } from './db.js';
-import type { GeneratedFile } from './frameworks/types.js';
+import type { GeneratedFile } from './generated-file.js';
 import { enabledFeatureIds, type OidcFeatureConfig } from './registry.js';
-import type { SourceCatalog, StepMeta } from './extract/meta.js';
+import { evaluateLiteral, literalArgumentOf, type SourceCatalog } from './extract/meta.js';
 import {
   identifiersIn,
   mapSpecifiers,
@@ -66,12 +70,35 @@ export function extractableFrameworks(definition = readExtractionDefinition()): 
   return Object.keys(definition.frameworks);
 }
 
-/** The owner of a path under the extraction root of a hono-layout app. */
-function ownerOf(path: string): { kind: 'base' } | { kind: 'feature' | 'db'; id: string } {
+type Layout = FrameworkDefinition['layout'];
+type Owner = { kind: 'base' } | { kind: 'feature' | 'db'; id: string };
+
+/**
+ * The owner of a path under the extraction root. In the Next.js layout a
+ * route group (<id>) and _oidc-provider/features/<id>/ belong to the feature,
+ * and _oidc-provider/db/<kind>/ to the db kind.
+ */
+function ownerOf(path: string, layout: Layout): Owner {
   const segments = path.split('/');
+  if (layout === 'nextjs') {
+    const group = segments.find((segment) => /^\([a-z0-9-]+\)$/.test(segment));
+    if (group !== undefined) return { kind: 'feature', id: group.slice(1, -1) };
+    return segments[0] === '_oidc-provider' ? ownerWithin(segments.slice(1)) : { kind: 'base' };
+  }
+  return ownerWithin(segments);
+}
+
+function ownerWithin(segments: readonly string[]): Owner {
   if (segments[0] === 'features' && segments.length > 2) return { kind: 'feature', id: segments[1] ?? '' };
   if (segments[0] === 'db' && segments.length > 2) return { kind: 'db', id: segments[1] ?? '' };
   return { kind: 'base' };
+}
+
+/** Where the files the generator renders or moves sit in a layout. */
+function layoutPaths(layout: Layout): { featureList: string; scopes: string; db: string } {
+  return layout === 'nextjs'
+    ? { featureList: '_oidc-provider/features.ts', scopes: '_oidc-provider/scopes.ts', db: '_oidc-provider/db' }
+    : { featureList: 'features/enabled.ts', scopes: 'scopes.ts', db: 'db' };
 }
 
 /** Generate the files of a provider. Paths are relative to the output directory. */
@@ -84,9 +111,14 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
     );
   }
   const sourceFiles = options.sourceFiles ?? readSourceFiles(framework.source, definition);
-  const catalog = readSourceCatalog(framework.source, framework.root, sourceFiles, definition);
+  // The step meta of the hono layout; a Next.js route.ts has its endpoint.ts.
+  const catalog: SourceCatalog =
+    framework.layout === 'hono'
+      ? readSourceCatalog(framework.source, framework.root, sourceFiles, definition)
+      : { files: [], steps: [], endpoints: [], contributions: [] };
   const enabled = new Set(enabledFeatureIds(options.features));
   const dbKind = options.db ?? 'memory';
+  const paths = layoutPaths(framework.layout);
 
   // Source path (under the source directory) → output path.
   const placement = selectFiles(framework, sourceFiles, enabled, dbKind);
@@ -96,9 +128,16 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
     let content = sourceFiles.get(sourcePath) ?? '';
     const rootPath = sourcePath.startsWith(`${framework.root}/`) ? sourcePath.slice(framework.root.length + 1) : undefined;
 
-    if (rootPath === 'features/enabled.ts') content = renderEnabledFeatures(content, enabled);
-    if (rootPath === 'scopes.ts') content = renderCustomScopes(content, options.scopes ?? []);
-    if (rootPath !== undefined && /(^|\/)pipeline\.ts$/.test(rootPath)) {
+    if (rootPath === paths.featureList) content = renderEnabledFeatures(content, enabled);
+    if (rootPath === paths.scopes) content = renderCustomScopes(content, options.scopes ?? []);
+    if (framework.layout === 'nextjs' && rootPath !== undefined && /(^|\/)route\.ts$/.test(rootPath)) {
+      const endpointSource = sourceFiles.get(posix.join(posix.dirname(sourcePath), 'endpoint.ts'));
+      content = transformRouteHandler(content, enabled, endpointSource);
+    }
+    if (framework.layout === 'nextjs' && rootPath !== undefined && /(^|\/)endpoint\.ts$/.test(rootPath)) {
+      content = withoutDisabledSteps(content, enabled);
+    }
+    if (framework.layout === 'hono' && rootPath !== undefined && /(^|\/)pipeline\.ts$/.test(rootPath)) {
       const endpoint = endpointOfPipeline(rootPath, catalog);
       content = transformPipeline(
         content,
@@ -110,7 +149,7 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
     }
     content = removeImports(content, (declaration) => {
       const target = resolveRelative(sourcePath, declaration.specifier, known);
-      return target !== undefined && isDisabledFeatureFile(target, framework.root, enabled);
+      return target !== undefined && isDisabledFeatureFile(target, framework, enabled);
     });
     content = mapSpecifiers(content, (specifier) => {
       if (specifier === CORE_PACKAGE) return options.corePackageName ?? CORE_PACKAGE;
@@ -122,10 +161,16 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
         return undefined;
       }
       // The app's db/index.ts re-exports one kind; the output's is that kind's own.
-      const placed = target === `${framework.root}/db/index.ts` ? `${framework.root}/db/${dbKind}/index.ts` : target;
+      const placed =
+        target === `${framework.root}/${paths.db}/index.ts` ? `${framework.root}/${paths.db}/${dbKind}/index.ts` : target;
       const targetOutput = placement.get(placed);
       if (targetOutput === undefined) {
         throw new Error(`${sourcePath} imports ${specifier}, which this generation leaves out`);
+      }
+      if (framework.layout === 'nextjs') {
+        // Next.js imports without extensions, and a directory for its index.ts.
+        const directory = /\/index\.tsx?$/.test(targetOutput) && !/\/index(\.[jt]sx?)?$/.test(specifier);
+        return relativeSpecifier(outputPath, targetOutput, { extensionless: true, directory });
       }
       return relativeSpecifier(outputPath, targetOutput);
     });
@@ -133,7 +178,7 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
     files.push({
       path: outputPath,
       content,
-      ...(rootPath === `db/${dbKind}/instance.ts` ? { userOwned: true } : {}),
+      ...(rootPath === `${paths.db}/${dbKind}/instance.ts` ? { userOwned: true } : {}),
     });
   }
   return dropUnreachableSteps(files, options.steps ?? {}, catalog).sort((a, b) =>
@@ -168,9 +213,9 @@ function dropUnreachableSteps(
   return files.filter((file) => !leftOut.has(file.path) || imported.has(file.path));
 }
 
-function isDisabledFeatureFile(sourcePath: string, root: string, enabled: ReadonlySet<string>): boolean {
-  if (!sourcePath.startsWith(`${root}/`)) return false;
-  const owner = ownerOf(sourcePath.slice(root.length + 1));
+function isDisabledFeatureFile(sourcePath: string, framework: FrameworkDefinition, enabled: ReadonlySet<string>): boolean {
+  if (!sourcePath.startsWith(`${framework.root}/`)) return false;
+  const owner = ownerOf(sourcePath.slice(framework.root.length + 1), framework.layout);
   return owner.kind === 'feature' && !enabled.has(owner.id);
 }
 
@@ -183,19 +228,20 @@ function selectFiles(
 ): Map<string, string> {
   const placement = new Map<string, string>();
   const overlaid = new Set(Object.keys(framework.files));
+  const db = layoutPaths(framework.layout).db;
   for (const sourcePath of sourceFiles.keys()) {
     if (!sourcePath.startsWith(`${framework.root}/`)) continue;
     const rootPath = sourcePath.slice(framework.root.length + 1);
     if (overlaid.has(rootPath)) continue;
-    const owner = ownerOf(rootPath);
+    const owner = ownerOf(rootPath, framework.layout);
     if (owner.kind === 'feature' && !enabled.has(owner.id)) continue;
     if (owner.kind === 'db') {
       if (owner.id !== dbKind) continue;
       // db/<kind>/x.ts → db/x.ts: the kind's index.ts is the db/index.ts of the output.
-      placement.set(sourcePath, `db/${rootPath.slice(`db/${dbKind}/`.length)}`);
+      placement.set(sourcePath, `${db}/${rootPath.slice(`${db}/${dbKind}/`.length)}`);
       continue;
     }
-    if (rootPath === 'db/index.ts') continue;
+    if (rootPath === `${db}/index.ts`) continue;
     placement.set(sourcePath, rootPath);
   }
   for (const [outputPath, sourcePath] of Object.entries(framework.files)) {
@@ -207,16 +253,20 @@ function selectFiles(
   return placement;
 }
 
-/** features/enabled.ts with the import and the entry of every disabled feature removed. */
+/** One import line of the feature list: `./<id>/feature.js` (hono) or `./features/<id>/feature` (Next.js). */
+const FEATURE_IMPORT = /^import \{ ([\w$]+) \} from '\.\/(?:features\/)?([a-z0-9-]+)\/feature(?:\.js)?';$/;
+
+/** The feature list with the import and the entry of every disabled feature removed. */
 export function renderEnabledFeatures(source: string, enabled: ReadonlySet<string>): string {
   const names = new Map<string, string>();
-  for (const match of source.matchAll(/^import \{ ([\w$]+) \} from '\.\/([a-z0-9-]+)\/feature\.js';$/gm)) {
-    names.set(match[1] ?? '', match[2] ?? '');
+  for (const line of source.split('\n')) {
+    const match = FEATURE_IMPORT.exec(line);
+    if (match) names.set(match[1] ?? '', match[2] ?? '');
   }
   return source
     .split('\n')
     .filter((line) => {
-      const imported = /^import \{ ([\w$]+) \} from '\.\/([a-z0-9-]+)\/feature\.js';$/.exec(line);
+      const imported = FEATURE_IMPORT.exec(line);
       if (imported) return enabled.has(imported[2] ?? '');
       const entry = /^ {2}([\w$]+),$/.exec(line);
       const id = entry ? names.get(entry[1] ?? '') : undefined;
@@ -253,29 +303,78 @@ export function transformPipeline(
   keep?: readonly string[],
 ): string {
   const endpoint = endpointOfPipeline(rootPath, catalog);
-  const steps = new Map<string, StepMeta>(
-    catalog.steps.filter((meta) => meta.endpoint === endpoint?.id).map((meta) => [meta.id, meta]),
+  const produces = new Map<string, readonly string[]>(
+    catalog.steps.filter((meta) => meta.endpoint === endpoint?.id).map((meta) => [meta.id, meta.produces]),
   );
   const isRemoved = (block: OwnerBlock) =>
     (block.feature !== undefined && !enabled.has(block.feature)) || (keep !== undefined && !keep.includes(block.id));
-  const blocks = parseOwnerBlocks(source);
-  let result = source;
-  if (blocks.some(isRemoved)) {
-    const remaining = blocks.filter((block) => !isRemoved(block));
-    const definedByRemaining = new Set(remaining.flatMap((block) => steps.get(block.id)?.produces ?? []));
-    const initial = new Set(endpoint?.initial ?? []);
-    const stillRead = identifiersIn(withoutImports(removeOwnerBlocks(source, isRemoved)));
-    const kept = withoutImports(removeOwnerBlocks(source, isRemoved));
-    result = removeOwnerBlocks(source, isRemoved, (block) =>
-      (steps.get(block.id)?.produces ?? []).filter(
-        (name) =>
-          stillRead.has(name) && !initial.has(name) && !definedByRemaining.has(name) && !isDeclared(kept, name),
-      ),
-    );
-  }
+  let result = removeBlocks(source, isRemoved, produces, new Set(endpoint?.initial ?? []));
   if (keep !== undefined) result = reorderOwnerBlocks(result, keep);
   if (result === source) return source;
   return dropUnusedImports(dropUnusedBindings(result));
+}
+
+/**
+ * A Next.js route.ts without the owner blocks of the disabled features. The
+ * produces of each step come from the endpoint.ts beside it
+ * (defineEndpoint({ steps: [{ id, produces }] })).
+ */
+export function transformRouteHandler(
+  source: string,
+  enabled: ReadonlySet<string>,
+  endpointSource: string | undefined,
+): string {
+  const isRemoved = (block: OwnerBlock) => block.feature !== undefined && !enabled.has(block.feature);
+  if (!parseOwnerBlocks(source).some(isRemoved)) return source;
+  if (endpointSource === undefined) {
+    throw new Error('A route.ts with owner blocks needs the endpoint.ts beside it that lists its steps');
+  }
+  const result = removeBlocks(source, isRemoved, routeStepProduces(endpointSource), new Set());
+  return dropUnusedImports(dropUnusedBindings(result));
+}
+
+/** The produces of each step of an endpoint.ts of the Next.js layout. */
+function routeStepProduces(endpointSource: string): Map<string, readonly string[]> {
+  const literal = literalArgumentOf(endpointSource, 'defineEndpoint');
+  if (literal === undefined) throw new Error('endpoint.ts has no defineEndpoint({ ... }) to read the steps from');
+  const meta = evaluateLiteral(literal) as { steps?: { id: string; produces?: string[] }[] };
+  return new Map((meta.steps ?? []).map((step) => [step.id, step.produces ?? []]));
+}
+
+/** An endpoint.ts of the Next.js layout without the step lines of the disabled features. */
+export function withoutDisabledSteps(source: string, enabled: ReadonlySet<string>): string {
+  return source
+    .split('\n')
+    .filter((line) => {
+      const feature = /^\s*\{ id: '[a-z0-9-]+', feature: '([a-z0-9-]+)'/.exec(line)?.[1];
+      return feature === undefined || enabled.has(feature);
+    })
+    .join('\n');
+}
+
+/**
+ * The source without the blocks isRemoved picks. The values a removed block
+ * defined (produces of its step) that the code left still reads become
+ * `const <name> = undefined;`, unless they are there before the first step
+ * (initial), a remaining step defines them, or the code declares them itself.
+ */
+function removeBlocks(
+  source: string,
+  isRemoved: (block: OwnerBlock) => boolean,
+  produces: ReadonlyMap<string, readonly string[]>,
+  initial: ReadonlySet<string>,
+): string {
+  const blocks = parseOwnerBlocks(source);
+  if (!blocks.some(isRemoved)) return source;
+  const remaining = blocks.filter((block) => !isRemoved(block));
+  const definedByRemaining = new Set(remaining.flatMap((block) => produces.get(block.id) ?? []));
+  const kept = withoutImports(removeOwnerBlocks(source, isRemoved));
+  const stillRead = identifiersIn(kept);
+  return removeOwnerBlocks(source, isRemoved, (block) =>
+    (produces.get(block.id) ?? []).filter(
+      (name) => stillRead.has(name) && !initial.has(name) && !definedByRemaining.has(name) && !isDeclared(kept, name),
+    ),
+  );
 }
 
 /** Whether the code declares the name itself (a `let` before the blocks the removed one assigned). */

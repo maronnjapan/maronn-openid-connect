@@ -107,9 +107,20 @@ export function resolveRelative(fromPath: string, specifier: string, known: Read
   return undefined;
 }
 
-/** The relative specifier from one output file to another, with the .js extension TypeScript expects. */
-export function relativeSpecifier(fromOutput: string, toOutput: string): string {
-  const relative = posix.relative(posix.dirname(fromOutput), toOutput).replace(/\.(ts|tsx)$/, '.js');
+/**
+ * The relative specifier from one output file to another: with the .js
+ * extension TypeScript expects (the hono layout), or without an extension, the
+ * way a Next.js app imports (`./x`, and `./dir` for dir/index.ts).
+ */
+export function relativeSpecifier(
+  fromOutput: string,
+  toOutput: string,
+  style: { extensionless?: boolean; directory?: boolean } = {},
+): string {
+  const target = style.directory ? posix.dirname(toOutput) : toOutput;
+  const relative = style.extensionless
+    ? posix.relative(posix.dirname(fromOutput), target).replace(/\.(ts|tsx)$/, '')
+    : posix.relative(posix.dirname(fromOutput), target).replace(/\.(ts|tsx)$/, '.js');
   return relative.startsWith('.') ? relative : `./${relative}`;
 }
 
@@ -183,6 +194,8 @@ export function identifiersIn(code: string): Set<string> {
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/\/\/[^\n]*/g, ' ')
     .replace(/'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"/g, ' ')
-    .replace(/`(?:\\.|[^`\\])*`/g, ' ');
+    .replace(/`(?:\\.|[^`\\])*`/g, ' ')
+    // A spread is no property access: ...name reads name.
+    .replace(/\.\.\./g, ' ');
   return new Set(stripped.match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? []);
 }

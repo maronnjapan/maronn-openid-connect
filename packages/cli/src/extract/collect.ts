@@ -1,6 +1,6 @@
 /**
  * `pnpm run build` (after tsc): copy the sources of extract.json into
- * templates/<source>/ and bake the catalog of each framework root into
+ * templates/<source>/ and bake the catalog of each hono-layout root into
  * templates/<source>/<root>.catalog.json, so the published package can
  * generate without apps/.
  *
@@ -25,9 +25,11 @@ export function collectTemplates(packageRoot = PACKAGE_ROOT): string[] {
       writeFileSync(target, content);
       written.push(`${name}/${path}`);
     }
+    // The catalog describes the steps of the hono layout (graph and --flow
+    // read it); a Next.js route keeps its step meta in its endpoint.ts.
     const roots = new Set(
       Object.values(definition.frameworks)
-        .filter((framework) => framework.source === name)
+        .filter((framework) => framework.source === name && framework.layout === 'hono')
         .map((framework) => framework.root),
     );
     for (const root of roots) {

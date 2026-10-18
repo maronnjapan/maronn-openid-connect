@@ -4,8 +4,8 @@
  *
  * Hono, Express and Fastify are extracted from apps/hono: an endpoint is the
  * pipeline.ts beside its endpoint.ts (or the page that runs its steps, for a
- * screen), and a step is its own file under steps/. Next.js follows the App
- * Router layout.
+ * screen), and a step is its own file under steps/. Next.js is extracted
+ * from apps/nextjs: an endpoint and its steps are its Route Handler.
  */
 import { posix } from 'node:path';
 import type { SourceCatalog } from '../extract/meta.js';
@@ -14,24 +14,25 @@ import type { OpFlow } from './types.js';
 
 type ModuleMap = Record<string, string>;
 
+/** The Route Handler (or Server Action) of each endpoint in apps/nextjs; a feature's sits in its route group. */
 const APP_ROUTER_LAYOUT: ModuleMap = {
   discovery: '.well-known/openid-configuration/route.ts',
   jwks: '.well-known/jwks.json/route.ts',
   authorize: 'authorize/route.ts',
   login: 'login/actions.ts',
-  'login-google': 'login/google/route.ts',
+  'login-google': '(google-login)/login/google/route.ts',
   consent: 'consent/actions.ts',
   token: 'token/route.ts',
   userinfo: 'userinfo/route.ts',
-  introspection: 'introspect/route.ts',
-  revocation: 'revoke/route.ts',
-  par: 'par/route.ts',
-  register: 'register/route.ts',
-  'device-authorization': 'device_authorization/route.ts',
-  device: 'device/route.ts',
-  'backchannel-authentication': 'backchannel_authentication/route.ts',
-  ciba: 'ciba/route.ts',
-  logout: 'logout/route.ts',
+  introspection: '(introspection)/introspect/route.ts',
+  revocation: '(revocation)/revoke/route.ts',
+  par: '(par)/par/route.ts',
+  register: '(dynamic-client-registration)/register/route.ts',
+  'device-authorization': '(device-authorization-grant)/device_authorization/route.ts',
+  device: '(device-authorization-grant)/device/route.ts',
+  'backchannel-authentication': '(ciba)/backchannel_authentication/route.ts',
+  ciba: '(ciba)/ciba/route.ts',
+  logout: '(rp-initiated-logout)/logout/route.ts',
 };
 
 const EXTRACTED_FRAMEWORKS = new Set(['hono', 'express', 'fastify']);

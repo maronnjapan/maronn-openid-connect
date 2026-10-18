@@ -412,6 +412,18 @@ describe('lintSource', () => {
       assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
     });
 
+    it('should count a spread of a feature import outside its block as a use', () => {
+      const source = route(
+        ['    // [respond] Respond', '    return oauthError([...grantsOf(request)]);'],
+        [
+          "import { grantsOf } from '../_oidc-provider/features/ciba/grant';",
+          "import { oauthError } from '../_oidc-provider/http';",
+        ],
+      );
+
+      assert.deepEqual(rulesOf(lint('token/route.ts', source, NEXTJS)), ['feature-import-outside-its-block']);
+    });
+
     it('should not count the names of a multi-line import as a use outside the blocks', () => {
       const source = route(
         [

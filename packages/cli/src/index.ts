@@ -11,7 +11,7 @@ import {
   resolveFeatures,
 } from './registry.js';
 import { enabledFeatureIds, findFeature, type OidcFeatureConfig } from './registry.js';
-import type { GeneratedFile } from './frameworks/types.js';
+import type { GeneratedFile } from './generated-file.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
 import { buildOpFlow } from './flow/build.js';
@@ -131,8 +131,8 @@ Extension features (disabled by default): ${extensionFeatures}
   google-login (${GOOGLE_LOGIN_PACKAGE}): adds a "Sign in with Google" button to
   the login page and a POST /login/google callback that verifies the ID token
   Google posts there with Google's official google-auth-library. Node.js 22+
-  only. Set config.googleLogin.clientId (the generated Next.js provider.ts and
-  the samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
+  only. Set config.googleLogin.clientId (the generated Next.js output and the
+  samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
   authorized redirect URI of that Google OAuth client. Enable with:
   --enable google-login
 
@@ -159,7 +159,9 @@ Flow documents (graph / --flow): \`maronn-oidc graph --format json\` describes t
 
 Database (--db sql | --db kv): the provider keeps its clients, users,
   authorization transactions, codes, tokens, sessions and consent in your
-  database instead of memory. Either kind generates db/, where db/stores.ts,
+  database instead of memory. Either kind generates db/ (_oidc-provider/db/
+  for Next.js, whose --db kv instance.ts runs on Upstash Redis or node:sqlite
+  as generated), where db/stores.ts,
   db/clients.ts and db/users.ts read and write the data; the records of Sign
   in with Google come with --enable google-login. Register clients with
   registerClient() in db/clients.ts and users with registerUser() in
@@ -180,9 +182,19 @@ Database (--db sql | --db kv): the provider keeps its clients, users,
 }
 
 /** What --db generated, printed after generation, and the next step it leaves to the user. */
-function dbGuidance(db: DbKind, dbDir: string): { summary: string; step: string } {
+function dbGuidance(db: DbKind, dbDir: string, framework?: string): { summary: string; step: string } {
   const registerFunctions = `registerClient() (${dbDir}/clients.ts) and registerUser() (${dbDir}/users.ts)`;
   const registration = `register clients and users with ${registerFunctions}`;
+  if (db === 'kv' && framework === 'nextjs') {
+    return {
+      summary:
+        `Key-value store (--db kv): the provider keeps its data under the keys of ${dbDir}/keys.ts.\n` +
+        `${dbDir}/instance.ts runs on Upstash Redis (UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN)\n` +
+        'or on node:sqlite; that file is yours and is never overwritten. The provider reads its clients\n' +
+        `and users from the store: register them with ${registerFunctions}.\n`,
+      step: `Register clients and users with ${registerFunctions}`,
+    };
+  }
   if (db === 'kv') {
     return {
       summary:
@@ -714,7 +726,7 @@ export function run(args: string[]): void {
       console.log(`Extension features enabled: ${enabledExtensions.join(', ')}`);
       console.log(
         'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
-          'Next.js provider.ts and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
+          'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
           'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
       );
     }
@@ -728,7 +740,7 @@ export function run(args: string[]): void {
     }
     const dbDir = result.framework === 'nextjs' ? '_oidc-provider/db' : 'db';
     if (db) {
-      console.log(dbGuidance(db, dbDir).summary);
+      console.log(dbGuidance(db, dbDir, result.framework).summary);
     }
     // Decided before writing: a user-owned file created by this run is not "kept".
     const keptCount = plannedFiles.filter((file) => isKeptUserFile(outputDir, file)).length;
@@ -783,16 +795,17 @@ export function run(args: string[]): void {
         features,
       );
       // Next.js reads its configuration from the environment in
-      // _oidc-provider/provider.ts, which already wires the persistent stores.
+      // _oidc-provider/provider.ts and its data from _oidc-provider/db.
       const nextSteps =
         result.framework === 'nextjs'
           ? [
-              db
-                ? 'Configure the OP with environment variables: OIDC_ISSUER (see _oidc-provider/provider.ts)'
-                : 'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
-              db
-                ? dbGuidance(db, dbDir).step
-                : 'On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',
+              'Configure the OP with environment variables: OIDC_ISSUER (see _oidc-provider/provider.ts)',
+              db === 'kv'
+                ? `${dbDir}/instance.ts runs on Upstash Redis when UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set, and on node:sqlite (.data/oidc.sqlite) otherwise`
+                : db
+                  ? dbGuidance(db, dbDir).step
+                  : 'The data is kept in memory (_oidc-provider/db): generate with --db kv (Upstash Redis on Vercel) or --db sql to keep it',
+              'Register your clients and users with registerClient() and registerUser() of _oidc-provider/db (instrumentation.ts runs once when the server starts)',
               'Load a fixed signing key in _oidc-provider/provider.ts before running more than one instance',
               `Install dependencies: ${installCommand}`,
               'Start the server: next dev',

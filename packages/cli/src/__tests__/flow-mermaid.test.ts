@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_FEATURES } from '../features.js';
-import { buildOpFlow } from '../flow/catalog.js';
+import { DEFAULT_FEATURES } from '../registry.js';
+import { buildOpFlow } from '../flow/build.js';
 import { renderMermaid } from '../flow/mermaid.js';
 import type { OpFlow } from '../flow/types.js';
 

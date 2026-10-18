@@ -10,12 +10,12 @@
  *   3. build が CI のどのジョブでも走らず、ビルド破綻が publish 直前まで露見しない
  *
  * ゲートは「一度直せば終わり」ではなく、外されたら気づける必要がある。
- * ここでは ci.yml と packages/* の package.json を突き合わせ、
+ * ここでは ci.yml と packages/*・apps/* の package.json とルートの package.json を突き合わせ、
  * ゲートが機能する形で残っていることをテストとして固定する。
  *
  * この検査は、過去に main へビルド不能なコードが入った回帰を防ぐ。
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -260,20 +260,52 @@ export function assertEveryPackageIsTypechecked(packageJsons) {
   }
 }
 
-export function assertLintGateIsBacked(workflow, packageJsons) {
+/** ルートの lint が検査スクリプト（.github/scripts の import 境界 lint など）を直接実行しているか。 */
+function runsChecker(rootPackageJson) {
+  const lint = rootPackageJson?.scripts?.lint ?? '';
+  return /(^|&&\s*)node\s/.test(lint);
+}
+
+export function assertLintGateIsBacked(workflow, packageJsons, rootPackageJson) {
   if (findJobRunning(workflow, LINT_COMMAND) === undefined) return;
 
-  const implemented = packageJsons.some((packageJson) => packageJson?.scripts?.lint !== undefined);
+  const implemented =
+    packageJsons.some((packageJson) => packageJson?.scripts?.lint !== undefined) ||
+    runsChecker(rootPackageJson);
   if (implemented) return;
 
   throw new Error(
-    `CI が \`${LINT_COMMAND}\` を実行していますが、packages/* のどのパッケージにも ` +
-      'lint スクリプトがありません。pnpm --filter は対象が 0 件でも成功するため、' +
-      'この Lint ステップは常に緑になり何も検証しません。',
+    `CI が \`${LINT_COMMAND}\` を実行していますが、packages/* と apps/* のどのパッケージにも ` +
+      'lint スクリプトがなく、ルートの lint も検査スクリプトを実行していません。' +
+      'pnpm --filter は対象が 0 件でも成功するため、この Lint ステップは常に緑になり何も検証しません。',
   );
 }
 
+/**
+ * apps/* は CLI が生成コードを抽出する元であり、ルートの typecheck と test:ci が
+ * それを対象にしていることを要求する。packages/* だけを filter していると、
+ * apps の型エラーと単体テストの失敗が CI をすり抜ける。
+ */
+export function assertRootScriptsCoverApps(rootPackageJson, appNames) {
+  if (appNames.length === 0) return;
+
+  const scripts = rootPackageJson?.scripts ?? {};
+  if (!/--filter\s+"\.\/apps\/\*"\s+typecheck/.test(scripts.typecheck ?? '')) {
+    throw new Error(
+      'ルートの typecheck スクリプトが apps/* を対象にしていません（--filter "./apps/*" typecheck）。' +
+        'apps は CLI が生成コードを抽出する元なので、その型エラーは生成物の型エラーになります。',
+    );
+  }
+  if (!/--filter\s+"\.\/apps\/\*"\s+test(\s|$)/.test(scripts['test:ci'] ?? '')) {
+    throw new Error(
+      'ルートの test:ci スクリプトが apps/* を対象にしていません（--filter "./apps/*" test）。' +
+        'apps の単体テストが CI で走らなくなります。',
+    );
+  }
+}
+
 function readPackageJsons(packagesDirectory) {
+  if (!existsSync(packagesDirectory)) return [];
   return readdirSync(packagesDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(packagesDirectory, entry.name, 'package.json'))
@@ -285,14 +317,22 @@ function verifyCiGate() {
   const workflow = parseWorkflow(
     readFileSync(join(repositoryRoot, '.github/workflows/ci.yml'), 'utf8'),
   );
-  const packageJsons = readPackageJsons(join(repositoryRoot, 'packages'));
+  const appPackageJsons = readPackageJsons(join(repositoryRoot, 'apps'));
+  const packageJsons = [...readPackageJsons(join(repositoryRoot, 'packages')), ...appPackageJsons];
+  const rootPackageJson = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'));
 
   assertWorkflowVerifiesMainPush(workflow);
   assertStaticVerificationGate(workflow);
   assertEveryPackageIsTypechecked(packageJsons);
-  assertLintGateIsBacked(workflow, packageJsons);
+  assertLintGateIsBacked(workflow, packageJsons, rootPackageJson);
+  assertRootScriptsCoverApps(
+    rootPackageJson,
+    appPackageJsons.map((packageJson) => packageJson.name),
+  );
 
-  console.log('CI gate verified: main push trigger, build / typecheck / test order, typecheck coverage');
+  console.log(
+    'CI gate verified: main push trigger, build / typecheck / test order, typecheck coverage (packages and apps)',
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

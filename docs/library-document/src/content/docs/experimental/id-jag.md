@@ -75,22 +75,28 @@ maronn-oidc generate hono --enable id-jag
 pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 ```
 
-`--enable id-jag` を付けずに生成した出力は、この機能が存在しなかった頃と**バイト単位で同一**です。
+`--enable id-jag` を付けずに生成した出力には `features/id-jag/` が含まれず、トークンエンドポイントのパイプラインからも ID-JAG のブロックと import が消えます。
 既存の `--enable token-exchange` との併用もできます。その場合、`requested_token_type=...id-jag` の要求だけが ID-JAG の分岐へ入り、それ以外の交換は従来どおり Token Exchange 機能が処理します。
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/id-jag/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/token.ts` | 発行分岐（Token Exchange 内）、受領分岐（jwt-bearer）、設定値 `idJagConfig`、信頼 IdP の JWKS 取得ヘルパ、`IdJagError` の catch 分岐 |
-| `routes/discovery.ts` | `grant_types_supported` への両 URN の追加、draft §7 の 2 つのメタデータ |
-| `config.ts` | サンプルクライアントの `grantTypes` への両 URN の追加 |
+| `features/id-jag/steps/dispatch-id-jag-issuance.ts` | 発行分岐（Token Exchange の grant で `requested_token_type` が ID-JAG の要求）と、`IdJagError` のエラー応答 |
+| `features/id-jag/steps/dispatch-id-jag-redemption.ts` | 受領分岐（jwt-bearer）と、`IdJagError` のエラー応答 |
+| `features/id-jag/config.ts` | 設定値 `idJagConfig` と、信頼 IdP の JWKS 取得ヘルパ |
+| `features/id-jag/feature.ts` | 両 URN の grant の登録（`grant_types_supported` にも載る）と、draft §7 の 2 つのメタデータ |
+
+2 つの分岐は、`endpoints/token/pipeline.ts` の `(feature: id-jag)` のブロックから呼ばれます。
+Next.js では、`token/route.ts` の同じブロックから `_oidc-provider/features/id-jag/`（`grant.ts` と `config.ts`）が呼ばれます。
 
 **新しいエンドポイントは増えません。** 既存のトークンエンドポイントに分岐が 2 つ加わるだけです。
 
 ## 設定
 
-生成された `routes/token.ts` が `idJagConfig` を export します。
+生成された `features/id-jag/config.ts`（Next.js は `_oidc-provider/features/id-jag/config.ts`）が `idJagConfig` を export します。
 
 ```typescript
 export const idJagConfig = {
@@ -101,7 +107,7 @@ export const idJagConfig = {
   // 発行側: 許可する scope の上限。undefined は素通し（受領側ポリシーに委ねる）
   allowedScopes: undefined as string[] | undefined,
   // 発行側: refresh token を subject_token として受けるか（draft §4.3 MAY）。
-  // refresh-token feature 有効時のみ生成される。検証は通常の refresh grant と同一
+  // 検証は通常の refresh grant と同一
   allowRefreshTokenSubjects: true,
   // 発行側: actor_token を受けて act クレームを発行するか（draft 範囲外の opt-in 拡張）
   allowActorTokens: false,

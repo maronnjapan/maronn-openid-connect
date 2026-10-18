@@ -41,6 +41,24 @@ services:
       - ${CONFORMANCE_SAMPLE_START_COMMAND:-corepack enable && pnpm --dir samples/hono-cloudflare start}
     volumes:
       - ../..:/workspace:ro
+    # wrangler dev (hono-cloudflare) writes its bundles under the project's
+    # .wrangler/. The workspace is read-only, so that one directory is a tmpfs
+    # (run-basic-op.sh creates it as the mount point).
+    tmpfs:
+      - /workspace/samples/${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}/.wrangler
+    # The suite only starts once the OP answers Discovery, so an OP that does
+    # not come up stops `docker compose up` within about three minutes instead
+    # of leaving the runner waiting.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3010/.well-known/openid-configuration').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     environment:
       HOST: 0.0.0.0
       PORT: 3010
@@ -58,7 +76,8 @@ services:
       - ./.generated/nginx/op-tls.conf:/etc/nginx/nginx.conf:ro
       - ./.generated/certs:/etc/nginx/certs:ro
     depends_on:
-      - op
+      op:
+        condition: service_healthy
     networks:
       default:
         aliases:

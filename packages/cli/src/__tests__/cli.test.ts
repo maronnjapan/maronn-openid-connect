@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { run } from '../index.js';
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -349,10 +349,10 @@ describe('run', () => {
 
   it('should list every existing file in the refusal message', () => {
     const outputDir = join(testDir, 'guarded-output');
-    mkdirSync(join(outputDir, 'routes'), { recursive: true });
+    mkdirSync(join(outputDir, 'endpoints', 'token'), { recursive: true });
     writeFileSync(join(outputDir, 'config.ts'), '// a\n');
     writeFileSync(join(outputDir, 'store.ts'), '// b\n');
-    writeFileSync(join(outputDir, 'routes', 'token.ts'), '// c\n');
+    writeFileSync(join(outputDir, 'endpoints', 'token', 'pipeline.ts'), '// c\n');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     run(['generate', 'hono', '-o', outputDir]);
@@ -361,8 +361,8 @@ describe('run', () => {
       [
         `Error: 3 file(s) already exist in ${outputDir}:`,
         '  config.ts',
+        '  endpoints/token/pipeline.ts',
         '  store.ts',
-        '  routes/token.ts',
         '',
         'Re-run with --force to overwrite them, or use -o <dir> to generate into a new directory.',
         'Tip: commit the generated files before overwriting so you can diff your changes.',
@@ -394,13 +394,18 @@ describe('run', () => {
     run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
     vi.restoreAllMocks();
     const afterFirstRun = readFileSync(entryFile, 'utf-8');
+    // Every file of the first run is in the way of the second, except the
+    // manifest, which is rewritten on every run.
+    const generatedCount = readdirSync(outputDir, { recursive: true })
+      .map(String)
+      .filter((path) => statSync(join(outputDir, path)).isFile() && path !== '.maronn-openid-connect.json').length;
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
     expect(process.exitCode).toBe(1);
     expect(errorSpy.mock.calls.map((c) => String(c[0]))[0]).toBe(
-      `Error: 20 file(s) already exist in ${outputDir}:`,
+      `Error: ${generatedCount} file(s) already exist in ${outputDir}:`,
     );
     expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
     vi.restoreAllMocks();
@@ -451,6 +456,93 @@ describe('run', () => {
       expect(output).toContain('Install dependencies: pnpm add hono @maronn-openid-connect/core');
       expect(output).not.toContain('@maronn-openid-connect/experimental');
       vi.restoreAllMocks();
+    });
+  });
+
+  describe('install guidance', () => {
+    function guidanceOf(args: string[]): string {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', ...args, '-o', join(testDir, 'oidc-provider')]);
+      const output = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      vi.restoreAllMocks();
+      return output;
+    }
+
+    // The screens of the Express and Fastify output are hono/jsx, as in the Hono output.
+    it('should add hono to the install guidance of the Express output', () => {
+      expect(guidanceOf(['express'])).toContain(
+        'Install dependencies: pnpm add express hono @maronn-openid-connect/core && pnpm add -D @types/express',
+      );
+    });
+
+    it('should add hono to the install guidance of the Fastify output', () => {
+      expect(guidanceOf(['fastify'])).toContain('Install dependencies: pnpm add fastify hono @maronn-openid-connect/core');
+    });
+
+    it('should tell the JSX settings for the Express output', () => {
+      expect(guidanceOf(['express'])).toContain('"jsx": "react-jsx", "jsxImportSource": "hono/jsx"');
+    });
+
+    // The generated google-login feature imports google-auth-library itself.
+    it('should add the packages of google-login to the install guidance', () => {
+      expect(guidanceOf(['hono', '--enable', 'google-login'])).toContain(
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library',
+      );
+    });
+
+    it('should add the experimental package once for several experimental features', () => {
+      expect(guidanceOf(['hono', '--enable', 'id-jag', '--enable', 'rp-initiated-logout'])).toContain(
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental\n',
+      );
+    });
+
+    it('should tell the Next.js output to register its clients in _oidc-provider/db', () => {
+      expect(guidanceOf(['nextjs'])).toContain(
+        'Register your clients and users with registerClient() and registerUser() of _oidc-provider/db (instrumentation.ts runs once when the server starts)',
+      );
+    });
+
+    it('should not point the Next.js output at OIDC_CLIENTS_JSON, which it no longer reads', () => {
+      expect(guidanceOf(['nextjs'])).not.toContain('OIDC_CLIENTS_JSON');
+    });
+
+    // The --db kv instance.ts of the Next.js output runs as generated.
+    it('should name the stores the Next.js key-value instance runs on', () => {
+      expect(guidanceOf(['nextjs', '--db', 'kv'])).toContain(
+        '_oidc-provider/db/instance.ts runs on Upstash Redis when UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set, and on node:sqlite (.data/oidc.sqlite) otherwise',
+      );
+    });
+
+    it('should not name a store contract the generated code does not have', () => {
+      expect(guidanceOf(['hono'])).not.toContain('JsonStoreBackend');
+    });
+
+    // The generated OP starts with no client and no user registered.
+    it('should tell the Hono output to register its clients and users in db/', () => {
+      expect(guidanceOf(['hono'])).toContain(
+        'Register your clients and users with registerClient() and registerUser() of db/ (registerDevelopmentUsers() of development.ts adds testuser and otheruser)',
+      );
+    });
+
+    it('should not point the Hono output at clients of config.ts, which has none', () => {
+      expect(guidanceOf(['hono'])).not.toContain('config.ts defaults');
+    });
+  });
+
+  describe('--help', () => {
+    function helpText(): string {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['--help']);
+      const output = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      vi.restoreAllMocks();
+      return output;
+    }
+
+    // schema.sql and keys.ts carry the Sign in with Google records for every feature set.
+    it('should say that the Sign in with Google records are generated without --enable google-login', () => {
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'the tables and keys of Sign in with Google are generated either way, and the OP writes them only with --enable google-login',
+      );
     });
   });
 
@@ -580,8 +672,8 @@ describe('run', () => {
       stdout.restore();
       expect(document.version).toBe(1);
       const token = document.endpoints.find((e) => e.id === 'token');
-      expect(token?.module).toBe('routes/token.ts');
-      expect(token?.steps[0]?.module).toBe('routes/token.ts');
+      expect(token?.module).toBe('endpoints/token/pipeline.ts');
+      expect(token?.steps[0]?.module).toBe('endpoints/token/steps/parse-request.ts');
     });
 
     it('should name the App Router module for nextjs', () => {
@@ -726,8 +818,8 @@ describe('run', () => {
       const outputDir = join(testDir, 'oidc-provider');
       vi.spyOn(console, 'log').mockImplementation(() => {});
       run(['generate', 'hono', '-o', outputDir, '--flow', file]);
-      expect(existsSync(join(outputDir, 'routes', 'revocation.ts'))).toBe(false);
-      expect(existsSync(join(outputDir, 'routes', 'introspection.ts'))).toBe(true);
+      expect(existsSync(join(outputDir, 'features', 'revocation'))).toBe(false);
+      expect(existsSync(join(outputDir, 'features', 'introspection'))).toBe(true);
       vi.restoreAllMocks();
     });
 

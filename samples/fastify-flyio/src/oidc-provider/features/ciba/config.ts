@@ -1,0 +1,60 @@
+/**
+ * EXPERIMENTAL — CIBA settings (CIBA Core 1.0).
+ *
+ * Read by the backchannel authentication endpoint, the authentication device
+ * UI (/ciba) and the CIBA grant of the token endpoint.
+ *
+ * - authReqIdExpiresIn: §7.3 expires_in, in seconds (range 30–600). Keep it
+ *   short: it is the window the user has to approve, and the window in which a
+ *   pending request can pile up on the approval screen.
+ * - pollingInterval: §7.3 interval, in seconds (range 1–60). The token endpoint
+ *   raises a record's own interval by 5 every time it answers slow_down (§11).
+ * - maxPendingPerSubject: pending backchannel requests allowed per user (range
+ *   1–100) before new ones are refused — the flood defense for the approval
+ *   screen (the role §7.1.2's unsupported user_code would otherwise play).
+ * - maxLoginAttempts: failed /ciba logins allowed per login transaction before
+ *   it is discarded. Per-transaction only — see the notes in the UI route.
+ */
+export const cibaConfig = {
+  authReqIdExpiresIn: 120,
+  pollingInterval: 5,
+  maxPendingPerSubject: 10,
+  maxLoginAttempts: 5,
+};
+
+// Fail fast on a config edit that leaves the documented ranges: a typo here
+// weakens either the approval-screen flood cap or the polling contract.
+if (cibaConfig.authReqIdExpiresIn < 30 || cibaConfig.authReqIdExpiresIn > 600) {
+  throw new Error('cibaConfig.authReqIdExpiresIn must be between 30 and 600 seconds');
+}
+if (cibaConfig.pollingInterval < 1 || cibaConfig.pollingInterval > 60) {
+  throw new Error('cibaConfig.pollingInterval must be between 1 and 60 seconds');
+}
+if (cibaConfig.maxPendingPerSubject < 1 || cibaConfig.maxPendingPerSubject > 100) {
+  throw new Error('cibaConfig.maxPendingPerSubject must be between 1 and 100');
+}
+
+declare module '../../app.js' {
+  interface OidcProviderOptions {
+    /**
+     * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the subject the
+     * authentication request is for. Defaults to treating the hint as a username
+     * of the configured user store. Return null when no user matches.
+     */
+    cibaUserResolver?: (
+      loginHint: string,
+    ) => Promise<{ subject: string } | null> | { subject: string } | null;
+  }
+}
+
+declare module '../../config.js' {
+  interface RegisteredClient {
+    /**
+     * EXPERIMENTAL (CIBA Core 1.0 §4): the backchannel_token_delivery_mode
+     * client metadata. This provider offers poll only, so a client registered
+     * for ping or push has every backchannel authentication request refused
+     * with unauthorized_client. Omitted means poll.
+     */
+    backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';
+  }
+}

@@ -62,17 +62,21 @@ maronn-oidc generate hono --enable token-exchange
 pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 ```
 
-`--enable token-exchange` を付けなかった場合、Token Exchange に関するコードは一切生成されず、インストール案内にも `@maronn-openid-connect/experimental` は現れません。付けずに生成した出力は、この機能が存在しなかった頃と**バイト単位で同一**です。
+`--enable token-exchange` を付けなかった場合、Token Exchange に関するコードは一切生成されず、インストール案内にも `@maronn-openid-connect/experimental` は現れません。`features/token-exchange/` は出力されず、トークンエンドポイントのパイプラインからも交換のブロックと import が消えます。
 
 `@maronn-openid-connect/core` は `@maronn-openid-connect/experimental` の peerDependency です。experimental は core のエラークラスを `instanceof` で判定するため、アプリ内の core インスタンスが 1 つでないと判定が静かに失敗します。experimental は core より速く更新されるので、**バージョン番号が揃っていない状態は正常です**。インストール時に `unmet peer @maronn-openid-connect/core` が出たときだけ core を上げてください。
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/token-exchange/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/token.ts` | 交換 grant の分岐、設定値 `tokenExchangeConfig`、`TokenExchangeError` の catch 分岐 |
-| `routes/discovery.ts` | `grant_types_supported` への交換 URN の追加 |
-| `config.ts` | サンプルクライアントの `grantTypes` への交換 URN の追加 |
+| `features/token-exchange/steps/dispatch-token-exchange.ts` | 交換 grant の処理と、`TokenExchangeError` のエラー応答。`endpoints/token/pipeline.ts` の `(feature: token-exchange)` のブロックから呼ばれる |
+| `features/token-exchange/config.ts` | 設定値 `tokenExchangeConfig` |
+| `features/token-exchange/feature.ts` | 交換 URN の grant の登録（トークンエンドポイントが受け付け、`grant_types_supported` にも載る） |
+
+Next.js では、`token/route.ts` の `(feature: token-exchange)` のブロックから `_oidc-provider/features/token-exchange/`（`grant.ts` と `config.ts`）が呼ばれます。
 
 **新しいエンドポイントは増えません。** 既存のトークンエンドポイントに分岐が 1 つ加わるだけです。
 
@@ -81,7 +85,7 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 有効化した直後は、**対象指定付きの交換はすべて拒否されます**。`allowedTargets` が空だからです（安全側デフォルト）。下流サービスの識別子を明示的に追加してください。
 
 ```typescript
-// routes/token.ts
+// features/token-exchange/config.ts
 export const tokenExchangeConfig = {
   allowedTargets: [] as string[],
 };
@@ -99,7 +103,7 @@ export const tokenExchangeConfig = {
 
 `audience`（論理名）と `resource`（URI）は同じ許可リストで検証されます。リストが空でも、**scope 縮小・期限短縮だけの交換は成立します**（対象は元トークンの audience を継承）。
 
-交換を許可するクライアントは `config.ts` 側で明示します。
+交換を許可するクライアントは、`registerClient()` で登録するクライアントの `grantTypes` に明示します。
 
 ```typescript
 grantTypes: [
@@ -316,7 +320,7 @@ delegation で発行したトークンをストアへ保存するときは、met
 |---|---|
 | `unsupported_grant_type` が返る | `--enable token-exchange` を付けずに生成しています。再生成してください（discovery の `grant_types_supported` で確認できます） |
 | `Cannot find module '@maronn-openid-connect/experimental/token-exchange'` | `pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental` を実行してください |
-| `unauthorized_client: The client is not authorized to use the token-exchange grant type` | クライアントの `grantTypes` に交換 URN が入っていません。`config.ts`（または実際のクライアント登録元）に追加してください |
+| `unauthorized_client: The client is not authorized to use the token-exchange grant type` | クライアントの `grantTypes` に交換 URN が入っていません。`registerClient()` に渡すクライアント（または実際のクライアント登録元）に追加してください |
 | `unauthorized_client: Public clients are not allowed...` | public client からの交換は仕様上の設計判断で拒否しています。confidential client を使ってください |
 | `invalid_target` が返る | `tokenExchangeConfig.allowedTargets` に対象が入っていません。既定は空です |
 | `invalid_request: The provided subject_token is not valid` | `subject_token` が不存在・期限切れ・失効済み・nbf 未来のいずれかです。種別は意図的に区別されません |

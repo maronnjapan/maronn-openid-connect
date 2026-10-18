@@ -65,20 +65,24 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/device-authorization-grant/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/device-authorization.ts` | デバイス認可エンドポイント（`POST /device_authorization`）と設定値 `deviceAuthorizationConfig` |
-| `pages/device.ts`（Hono は `pages/device.tsx`） | 検証 UI の画面層（`GET /device`・`POST /device`・`POST /device/login`・`POST /device/approve` のルートと各画面の描画。UI カスタマイズはここ） |
-| `routes/device.ts` | 検証 UI の処理層（`submitDeviceUserCode()`・`submitDeviceLogin()`・`submitDeviceDecision()`。user_code の照合・認証・承認を行い、結果を outcome で返す。Response は作らない） |
-| `views.ts`（Hono は `views.tsx`） | `deviceVerificationPage` / `deviceLoginPage` / `deviceApprovalPage` / `deviceCompletedPage` の追加 |
-| `store.ts` | `InMemoryDeviceAuthorizationStore`・`deviceAuthorizationStore` シングルトン・バインディング Cookie ヘルパーの追加 |
-| `routes/token.ts` | `device_code` grant の分岐と RFC 8628 §3.5 エラーの catch 分岐の追加 |
-| `routes/discovery.ts` | `device_authorization_endpoint` と grant URN の広告 |
-| `app.ts` / `apply.ts` | 4 エンドポイントのマウント・CORS・許可メソッドの追加 |
+| `features/device-authorization-grant/endpoints/device-authorization/` | デバイス認可エンドポイント（`POST /device_authorization`）。`pipeline.ts` がステップ（`steps/`）を順に呼ぶ |
+| `features/device-authorization-grant/endpoints/device/page.tsx` | 検証 UI の画面層（`GET /device`・`POST /device`・`POST /device/login`・`POST /device/approve` のルートと各画面の描画。UI カスタマイズはここ） |
+| `features/device-authorization-grant/endpoints/device/steps/` | 検証 UI の処理層（`submitDeviceUserCode()`・`submitDeviceLogin()`・`submitDeviceDecision()`。user_code の照合・認証・承認を行い、結果を outcome で返す。Response は作らない） |
+| `features/device-authorization-grant/views.tsx` | `deviceVerificationPage` / `deviceLoginPage` / `deviceApprovalPage` / `deviceCompletedPage` の view（`views` オプションで差し替え可能） |
+| `features/device-authorization-grant/store.ts` / `cookies.ts` | `InMemoryDeviceAuthorizationStore` と `deviceAuthorizationStore` シングルトン、バインディング Cookie のヘルパー |
+| `features/device-authorization-grant/config.ts` | 設定値 `deviceAuthorizationConfig` |
+| `features/device-authorization-grant/steps/dispatch-device-code.ts` | トークンエンドポイントの `device_code` grant の処理と RFC 8628 §3.5 のエラー応答。`endpoints/token/pipeline.ts` の `(feature: device-authorization-grant)` のブロックから呼ばれる |
+| `features/device-authorization-grant/feature.ts` | 2 つのルート（`/device_authorization` と、`/login`・`/approve` を下に持つ `/device`）、`device_authorization_endpoint` の広告、grant URN の登録（`grant_types_supported` にも載る）、ストアの配線 |
+
+Next.js では、エンドポイントと画面は `(device-authorization-grant)/` の下の Route Handler（`device_authorization/route.ts`、`device/route.ts`、`device/login/route.ts`、`device/approve/route.ts`、描画は `device/screens.ts`）で、設定・ストア・grant の処理は `_oidc-provider/features/device-authorization-grant/` にあります。
 
 ## 設定
 
-`routes/device-authorization.ts` の `deviceAuthorizationConfig` を編集します。検証 UI と discovery もここを参照します。
+`features/device-authorization-grant/config.ts`（Next.js は `_oidc-provider/features/device-authorization-grant/config.ts`）の `deviceAuthorizationConfig` を編集します。デバイス認可エンドポイントと検証 UI がここを参照します。
 
 ```typescript
 export const deviceAuthorizationConfig = {

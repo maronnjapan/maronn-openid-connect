@@ -1,38 +1,19 @@
-import {
-  createClientKeyResolver,
-  type ClientInfo,
-  type ClientKeyResolver,
-  type ClientKeysByPurpose,
-  type ClientResolver,
-  type TokenClientInfo,
-  type TokenClientResolver,
+import type {
+  ClientInfo,
+  ClientKeysByPurpose,
+  TokenClientInfo,
 } from '@maronn-openid-connect/core';
+import { configOf } from './features/feature.js';
+import { features } from './features/enabled.js';
 
 /**
- * EXTENSION (google-login): Sign in with Google (Google Identity Services,
- * redirect mode) as a login method. See @maronn-openid-connect/google-login.
+ * The settings of the provider.
+ *
+ * The fields below are the ones every generated provider has. A feature that
+ * needs a setting of its own adds it to this interface from its directory
+ * (`declare module '../../config.js'` in features/<id>/), and its default from
+ * the config entry of its feature.ts. Removing the feature removes both.
  */
-export interface GoogleLoginConfig {
-  /**
-   * OAuth 2.0 client ID (type: Web application) from the Google Cloud console.
-   * The ID token's `aud` must equal it. Register `<issuer>/login/google` as an
-   * authorized redirect URI of this client, and the login page origin as an
-   * authorized JavaScript origin.
-   */
-  clientId: string;
-  /**
-   * Optional: only accept Google Workspace accounts of these hosted domains
-   * (`hd` claim). A personal Google account has no `hd` and is rejected.
-   */
-  hostedDomain?: string | string[];
-  /**
-   * Optional: reject accounts whose email Google has not verified
-   * (`email_verified !== true`). Off by default; users are keyed by the Google
-   * `sub`, never by email, so an unverified email cannot hijack another user.
-   */
-  requireVerifiedEmail?: boolean;
-}
-
 export interface ProviderConfig {
   issuer: string;
   accessTokenExpiresIn: number;
@@ -81,32 +62,21 @@ export interface ProviderConfig {
   authorizationCodeTtl: number;
   /**
    * OpenID Foundation Basic OP static-client conformance 互換モード。
-   * false の場合はOAuth 2.1方針としてPKCE(S256)を必須にする。true の場合でも
-   * core 側は明示的な confidential client の完全な非PKCE requestだけを許可し、
-   * 不正なPKCE値やpublic clientの非PKCE requestは拒否する。
+   * true の場合、core は明示的な confidential client の完全な非 PKCE request だけを
+   * 許可し、不正な PKCE 値や public client の非 PKCE request は拒否する。
+   * false の場合は OAuth 2.1 方針として PKCE(S256) を必須にする。
+   *
+   * The pkce feature (features/pkce/) sets the default to false. A provider
+   * generated with --disable pkce keeps the default of this file, true.
    */
   allowNonPkceAuthorizationCodeFlow: boolean;
-  /**
-   * OIDC Core 1.0 §6.1: 署名無し（`alg: "none"`）Request Object を互換受理するか。
-   * 既定は false（署名付き Request Object のみ受理）。OIDF Conformance Suite の一部
-   * module は unsigned Request Object を送るため、Basic OP conformance 互換のときだけ
-   * true にする。true の場合は discovery の request_object_signing_alg_values_supported に
-   * "none" も広告される。
-   */
-  allowUnsignedRequestObject: boolean;
-  /**
-   * EXTENSION (google-login): Sign in with Google. Leave undefined to render no
-   * Google button; the login page then only offers the username / password form.
-   */
-  googleLogin?: GoogleLoginConfig;
 }
 
 /**
- * Optional defaults for quick local testing.
- * Production code should create ProviderConfig from environment variables,
- * KV, D1, or another project-owned configuration source.
+ * The defaults of the fields above. The features add theirs on top
+ * (createProviderConfig()), the defaults of the fields they declare included.
  */
-export const defaultProviderConfig: ProviderConfig = {
+const baseProviderConfig = {
   issuer: 'http://localhost:3000',
   accessTokenExpiresIn: 3600,
   idTokenExpiresIn: 3600,
@@ -118,19 +88,25 @@ export const defaultProviderConfig: ProviderConfig = {
   accessTokenFormat: 'jwt',
   // OIDC Core 1.0 §3.1.3.1: authorization code は short-lived であるべき（5 分 = 300 秒）。
   authorizationCodeTtl: 300,
-  allowNonPkceAuthorizationCodeFlow: false,
-  // OIDC Core 1.0 §6.1: require signed Request Objects by default; enable only for
-  // Basic OP conformance compatibility where the suite sends unsigned ones.
-  allowUnsignedRequestObject: false,
-};
+  allowNonPkceAuthorizationCodeFlow: true,
+} satisfies Partial<ProviderConfig>;
 
+/**
+ * The settings of the provider: the defaults of this file, those of the
+ * enabled features, and the overrides of the app, in that order.
+ * Production code should take the overrides from environment variables, KV,
+ * D1, or another project-owned configuration source.
+ */
 export function createProviderConfig(
   overrides: Partial<ProviderConfig> = {},
 ): ProviderConfig {
+  // Every field a feature declares gets its default from the config entry of
+  // that feature's feature.ts, so the merged object is a whole ProviderConfig.
   return {
-    ...defaultProviderConfig,
+    ...baseProviderConfig,
+    ...configOf(features),
     ...overrides,
-  };
+  } as ProviderConfig;
 }
 
 /**
@@ -165,78 +141,27 @@ export function createProviderConfig(
  *
  * The client's public keys are not part of it: each process that needs them
  * asks the ClientKeyResolver for the keys of its own purpose
- * (ClientRegistration.keys below, or the client_jwks of db/ with --db).
+ * (ClientRegistration.keys below, kept by registerClient() of db/).
+ *
+ * A feature that reads client metadata of its own adds it to this interface
+ * from its directory (`declare module '../../config.js'` in features/<id>/),
+ * so removing the feature removes the field.
  */
-export type RegisteredClient = ClientInfo & TokenClientInfo & {
+export interface RegisteredClient extends ClientInfo, TokenClientInfo {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
   idTokenSignedResponseAlg?: 'RS256' | 'ES256';
-  backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';
-};
+}
 
 /**
- * A client as this file lists it: the RegisteredClient and its public keys by
- * purpose (keys). A purpose names the process that uses the keys, such as
- * request_object for the signed Request Objects the OP verifies (OIDC Core 1.0
- * §6.3.2), or private_key_jwt and dpop for processes a project adds. Register
- * the same key under two purposes to use it for both.
+ * A client as registerClient() (db/clients.ts) takes it: the RegisteredClient
+ * and its public keys by purpose (keys). A purpose names the process that uses
+ * the keys, such as request_object for the signed Request Objects the OP
+ * verifies (OIDC Core 1.0 §6.3.2), or private_key_jwt and dpop for processes a
+ * project adds. Register the same key under two purposes to use it for both.
+ *
+ * clientSecret is the secret as the client presents it; registerClient()
+ * stores only its hash (clientSecretHash).
  */
 export type ClientRegistration = RegisteredClient & {
   keys?: ClientKeysByPurpose;
 };
-
-/**
- * Optional in-memory defaults for quick local testing only.
- * Prefer D1, KV, or another project-owned client resolver in real projects.
- */
-export const defaultRegisteredClients: ReadonlyMap<string, ClientRegistration> = new Map([
-  [
-    'example-client',
-    {
-      clientId: 'example-client',
-      clientSecret: 'example-secret',
-      redirectUris: ['http://localhost:3000/callback'],
-      clientType: 'confidential' as const,
-      // RFC 7591 §2: grant_types default is ["authorization_code"]. Registering
-      // refresh_token is the single switch that lets this client receive refresh
-      // tokens at all: an online refresh token (bound to the login session) on every
-      // authorization, and an offline one (usable after logout) when offline_access
-      // is granted per OIDC Core 1.0 §11. Remove it and neither is issued.
-      // EXPERIMENTAL (CIBA Core 1.0 §7.1): registering the CIBA URN is what lets
-      // this confidential client POST /backchannel_authentication and poll the
-      // token endpoint with the resulting auth_req_id. Remove it to forbid CIBA
-      // for this client; public clients are rejected either way.
-      grantTypes: ['authorization_code', 'refresh_token', 'urn:openid:params:grant-type:ciba'],
-      // RFC 7591 §2: token_endpoint_auth_method default is client_secret_basic.
-      // The sample client authenticates with client_secret_post, so register it explicitly.
-      tokenEndpointAuthMethods: ['client_secret_post'],
-      // OIDC Dynamic Client Registration 1.0 §2: default_max_age (seconds).
-      // When the authorization request omits max_age, the OP applies this as the
-      // default re-authentication freshness. A request-supplied max_age overrides it.
-      defaultMaxAge: 3600,
-    },
-  ],
-]);
-
-export function createInMemoryClientResolver(
-  clients: ReadonlyMap<string, ClientRegistration> = defaultRegisteredClients,
-): ClientResolver & TokenClientResolver {
-  return {
-    async findClient(clientId: string): Promise<RegisteredClient | null> {
-      const registration = clients.get(clientId);
-      if (!registration) return null;
-      const { keys: _keys, ...client } = registration;
-      return client;
-    },
-  };
-}
-
-/**
- * The public keys of the clients (ClientRegistration.keys), one purpose at a
- * time: the ClientKeyResolver of an OP generated without --db. The map is read
- * as it is when a key is asked for.
- */
-export function createInMemoryClientKeyResolver(
-  clients: ReadonlyMap<string, ClientRegistration> = defaultRegisteredClients,
-): ClientKeyResolver {
-  return createClientKeyResolver((clientId) => clients.get(clientId)?.keys);
-}

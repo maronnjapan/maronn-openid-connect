@@ -70,18 +70,20 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/jarm/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/jarm.ts` | 設定値 `jarmConfig` と、起動時に範囲を検証する `assertJarmLifetimeSeconds` 呼び出し |
-| `routes/authorize.ts` | `response_mode` の解釈、応答 JWT を組む `buildSuccessRedirect` / `buildErrorRedirect`、トランザクションへのモード記録 |
-| `routes/consent.ts` | 承認 / 拒否の応答を記録済みモードで返す分岐 |
-| `routes/discovery.ts` | `response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
+| `features/jarm/config.ts` | 設定値 `jarmConfig` と、起動時に範囲を検証する `assertJarmLifetimeSeconds` 呼び出し |
+| `features/jarm/steps/resolve-jarm-response-mode.ts` | `redirect_uri` の確定後に `response_mode` を解釈するステップ。`endpoints/authorize/pipeline.ts` の `(feature: jarm)` のブロックから呼ばれ、JARM の応答モードを返す。認可エンドポイントは、そのモードの名前をトランザクションに記録する |
+| `features/jarm/response-mode.ts` | 応答 JWT を組んで `response` パラメータだけを付けたリダイレクト先を作る応答モードと、同意エンドポイントが記録済みのモードを戻すためのハンドラー |
+| `features/jarm/feature.ts` | 同意エンドポイントへの応答モードの登録、`response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
 
-Next.js では、同じ役割を `_oidc-provider/jarm.ts`（設定）・`authorize/route.ts`・`consent/actions.ts`（同意の Server Action）・`.well-known/openid-configuration/route.ts` が担います。Server Action は Route Handler と別のモジュール層にバンドルされますが、署名鍵プロバイダは `globalThis` で共有しているため、同意画面を経由する応答も `/.well-known/jwks.json` が公開する鍵で署名した JARM 応答になります。
+Next.js では、同じ役割を `_oidc-provider/features/jarm/`（設定、`authorize/route.ts` から呼ばれる `authorize.ts`、応答モード、機能の宣言）が担います。Server Action は Route Handler と別のモジュール層にバンドルされますが、署名鍵プロバイダは `globalThis` で共有しているため、同意画面を経由する応答も `/.well-known/jwks.json` が公開する鍵で署名した JARM 応答になります。
 
 ## 設定
 
-`routes/jarm.ts`（Next.js は `_oidc-provider/jarm.ts`）の `jarmConfig` を編集します。認可エンドポイントと consent エンドポイントの両方がここを参照します。
+`features/jarm/config.ts`（Next.js は `_oidc-provider/features/jarm/config.ts`）の `jarmConfig` を編集します。認可エンドポイントと consent エンドポイントの両方がここを参照します。
 
 ```typescript
 export const jarmConfig = {
@@ -221,7 +223,7 @@ if (resolution.kind === 'jarm') {
 
 ### ストア契約（未知フィールドの保存）
 
-JARM モードは auth transaction に `jarmResponseMode: 'query.jwt'` として記録され、ログイン・同意画面を挟んで consent エンドポイントまで store を往復します。
+JARM モードは auth transaction に載せて、ログイン・同意画面を挟んで consent エンドポイントまで store を往復させます。この API の型（`JarmAuthTransactionFields`）では `jarmResponseMode: 'query.jwt'` として記録します。生成コードは同じ値を、応答モードの名前として `responseMode: 'query.jwt'` に記録し（`endpoints/authorize/response-mode.ts`、Next.js は `authorize/response-mode.ts`）、consent エンドポイントが `restoreResponseMode()` で JARM の応答モードに戻します。
 
 ```typescript
 import type { JarmAuthTransactionFields } from '@maronn-openid-connect/experimental/jarm';
@@ -234,9 +236,9 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
   AuthTransaction & JarmAuthTransactionFields;
 ```
 
-**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode` が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。
+**store 実装は未知のフィールドを透過的に保存しなければなりません。** オブジェクトを丸ごと JSON 化する通常の実装なら自然に満たされますが、フィールドを列挙してコピーする実装では `jarmResponseMode`（生成コードでは `responseMode`）が落ち、JARM を要求したクライアントへ**静かに平文クエリで応答してしまいます**。
 
-なお `prompt=none` と SSO 再利用の応答は authorize ルート内で完結するため、store の往復に依存しません。ストアの取りこぼしが影響するのはログイン・同意画面を挟む経路だけです。
+なお `prompt=none` と SSO 再利用の応答は認可エンドポイント内で完結するため、store の往復に依存しません。ストアの取りこぼしが影響するのはログイン・同意画面を挟む経路だけです。
 
 ## エラー処理
 

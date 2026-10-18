@@ -1,0 +1,61 @@
+# samples の E2E
+#
+# samples/* は CLI の生成物を各デプロイ先の構成で動かしたもの。PR ごとの E2E は
+# apps/*（生成元の全機能オンのアプリ）を対象にし、samples はここで nightly と
+# 手動起動で確かめる。CLI の生成物が samples の構成で動くこと（--db sql / kv、
+# express / fastify への WebRouter 置換、Next.js）を、生成元の変更とは別の周期で検査する。
+name: E2E (samples)
+
+on:
+  schedule:
+    # 毎日 18:17 UTC（03:17 JST）
+    - cron: '17 18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-samples-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [hono-cloudflare, express-flyio, fastify-flyio, nextjs-vercel]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm run build
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
+
+      - name: E2E tests
+        run: pnpm --filter @maronn-openid-connect/e2e test:e2e:${{ matrix.sample }}
+
+      - name: Upload E2E reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-reports-${{ matrix.sample }}
+          path: |
+            tests/e2e/playwright-report
+            tests/e2e/test-results
+          if-no-files-found: ignore

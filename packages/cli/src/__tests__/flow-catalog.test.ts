@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_FEATURES, type OidcFeatureConfig } from '../features.js';
-import { buildOpFlow } from '../flow/catalog.js';
+import { DEFAULT_FEATURES, type OidcFeatureConfig } from '../registry.js';
+import { buildOpFlow } from '../flow/build.js';
 import { resolveFlowSelection } from '../flow/flow-file.js';
 
 const ALL_FEATURES: OidcFeatureConfig = {
@@ -136,8 +136,8 @@ describe('buildOpFlow', () => {
         'parse-request',
         'authenticate-client',
         'validate-grant-type',
-        'validate-authorization-code-grant',
         'validate-refresh-token-grant',
+        'validate-authorization-code-grant',
         'select-signing-keys',
         'resolve-subject',
         'decide-refresh-token-issuance',
@@ -239,12 +239,14 @@ describe('buildOpFlow', () => {
       ]);
     });
 
-    it('should list the scope policy call only when custom scopes are declared', () => {
+    // scopes.ts is generated in every configuration, so the scope policy is
+    // called whether or not custom scopes were declared.
+    it('should list the scope policy call with and without custom scopes', () => {
       const without = buildOpFlow({ features: DEFAULT_FEATURES });
       const withScopes = buildOpFlow({ features: DEFAULT_FEATURES, scopes: ['reports.read'] });
       const calls = (flow: typeof without) =>
         flow.endpoints.find((e) => e.id === 'authorize')?.steps.find((s) => s.id === 'validate-request')?.calls;
-      expect(calls(without)?.includes('findUnsupportedScopes')).toBe(false);
+      expect(calls(without)?.includes('findUnsupportedScopes')).toBe(true);
       expect(calls(withScopes)?.includes('findUnsupportedScopes')).toBe(true);
     });
   });

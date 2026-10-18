@@ -9,59 +9,50 @@ import {
   EXPERIMENTAL_FEATURES,
   EXTENSION_FEATURES,
   resolveFeatures,
-} from './features.js';
-import type { OidcFeatureConfig } from './features.js';
-import type { GeneratedFile } from './frameworks/types.js';
+} from './registry.js';
+import { enabledFeatureIds, findFeature, type OidcFeatureConfig } from './registry.js';
+import type { GeneratedFile } from './generated-file.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
-import { buildOpFlow } from './flow/catalog.js';
+import { buildOpFlow } from './flow/build.js';
 import { renderMermaid, type MermaidDetail } from './flow/mermaid.js';
 import { annotateFlowModules } from './flow/modules.js';
 import { applyFlowSelection, parseFlowFile, type FlowSelection } from './flow/flow-file.js';
 import type { OpFlow } from './flow/types.js';
 
+// The screens of every output but Next.js are hono/jsx, so Express and
+// Fastify need hono too (as the JSX runtime).
 const INSTALL_COMMANDS: Record<string, string> = {
   hono: 'pnpm add hono @maronn-openid-connect/core',
-  express: 'pnpm add express @maronn-openid-connect/core && pnpm add -D @types/express',
-  fastify: 'pnpm add fastify @maronn-openid-connect/core',
+  express: 'pnpm add express hono @maronn-openid-connect/core && pnpm add -D @types/express',
+  fastify: 'pnpm add fastify hono @maronn-openid-connect/core',
   nextjs: 'pnpm add @maronn-openid-connect/core && pnpm add -D next react react-dom',
 };
 
 const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
 
-/**
- * Insert @maronn-openid-connect/experimental into the install guidance, but only when an
- * experimental feature was actually selected. Without a selection the command
- * string is returned untouched so existing output never changes.
- */
-function withExperimentalPackage(installCommand: string, features: OidcFeatureConfig): string {
-  if (
-    !features.par &&
-    !features.tokenExchange &&
-    !features.jarm &&
-    !features.deviceAuthorizationGrant &&
-    !features.idJag &&
-    !features.ciba &&
-    !features.jwtIntrospectionResponse &&
-    !features.rpInitiatedLogout &&
-    !features.dynamicClientRegistration
-  ) {
-    return installCommand;
-  }
-  return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${EXPERIMENTAL_PACKAGE}`);
+/** The step that registers the clients and users the generated OP starts without. */
+const REGISTER_STEP =
+  'Register your clients and users with registerClient() and registerUser() of db/ (registerDevelopmentUsers() of development.ts adds testuser and otheruser)';
+
+/** What the generated code of an output without --db keeps its data in, and how to change that. */
+const MEMORY_STORES_STEP =
+  'The data is kept in memory (db/): generate with --db sql or --db kv, or pass your own ProviderStores as storage';
+
+/** The packages the code of the enabled features imports (packages of registry.ts), each once. */
+function featurePackagesOf(features: OidcFeatureConfig): string[] {
+  return [...new Set(enabledFeatureIds(features).flatMap((id) => findFeature(id)?.packages ?? []))];
 }
 
 /**
- * Insert @maronn-openid-connect/google-login into the install guidance, but only
- * when the google-login extension was selected. Applied before the experimental
- * insertion so the packages read core, experimental, google-login.
+ * Insert the packages of the enabled features after @maronn-openid-connect/core.
+ * Without a feature that needs a package the command is returned untouched.
  */
-function withGoogleLoginPackage(installCommand: string, features: OidcFeatureConfig): string {
-  if (!features.googleLogin) {
-    return installCommand;
-  }
-  return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${GOOGLE_LOGIN_PACKAGE}`);
+function withFeaturePackages(installCommand: string, features: OidcFeatureConfig): string {
+  const packages = featurePackagesOf(features);
+  if (packages.length === 0) return installCommand;
+  return installCommand.replace('@maronn-openid-connect/core', ['@maronn-openid-connect/core', ...packages].join(' '));
 }
 
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
@@ -144,8 +135,8 @@ Extension features (disabled by default): ${extensionFeatures}
   google-login (${GOOGLE_LOGIN_PACKAGE}): adds a "Sign in with Google" button to
   the login page and a POST /login/google callback that verifies the ID token
   Google posts there with Google's official google-auth-library. Node.js 22+
-  only. Set config.googleLogin.clientId (the generated Next.js provider.ts and
-  the samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
+  only. Set config.googleLogin.clientId (the generated Next.js output and the
+  samples read GOOGLE_CLIENT_ID) and register <issuer>/login/google as an
   authorized redirect URI of that Google OAuth client. Enable with:
   --enable google-login
 
@@ -162,19 +153,25 @@ Custom scopes (none declared by default): the standard scopes (openid, profile,
 Flow documents (graph / --flow): \`maronn-oidc graph --format json\` describes the
   provider as endpoints, steps and arrows, with the features, scopes and db of
   the run. Edit it (drop a removable step, reorder independent steps, reorder
-  the endpoints, flip a feature flag) and generate from it with --flow <file>;
+  the endpoints, switch a feature) and generate from it with --flow <file>;
   what the document says is checked against the catalog, so a step another
-  step depends on can never be dropped by accident. Screen endpoints (login,
-  consent, device, ciba, logout) have a fixed sequence of steps. The generated
-  pipelines follow a rearranged step order for hono, express and fastify;
-  the Next.js output keeps its own layout and accepts endpoint and feature
-  changes only.
+  step depends on can never be dropped by accident. To switch a feature,
+  change its flag in features together with its endpoints and steps, or
+  redraw the document with graph --enable <id> (or --disable <id>)
+  --format json, which gets all of them right. Screen endpoints (login,
+  login-google, consent, device, ciba, logout) have a fixed sequence of
+  steps. The generated pipelines follow a rearranged step order for hono,
+  express and fastify; the Next.js output keeps its own layout and accepts
+  endpoint and feature changes only.
 
 Database (--db sql | --db kv): the provider keeps its clients, users,
   authorization transactions, codes, tokens, sessions and consent in your
-  database instead of memory. Either kind generates db/, where db/stores.ts,
-  db/clients.ts and db/users.ts read and write the data; the records of Sign
-  in with Google come with --enable google-login. Register clients with
+  database instead of memory. Either kind generates db/ (_oidc-provider/db/
+  for Next.js, whose --db kv instance.ts runs on Upstash Redis or node:sqlite
+  as generated), where db/stores.ts,
+  db/clients.ts and db/users.ts read and write the data; the tables and keys
+  of Sign in with Google are generated either way, and the OP writes them
+  only with --enable google-login. Register clients with
   registerClient() in db/clients.ts and users with registerUser() in
   db/users.ts. The one file you write is db/instance.ts: createDatabase()
   returns your database. The CLI creates it only when it is missing and never
@@ -193,9 +190,19 @@ Database (--db sql | --db kv): the provider keeps its clients, users,
 }
 
 /** What --db generated, printed after generation, and the next step it leaves to the user. */
-function dbGuidance(db: DbKind, dbDir: string): { summary: string; step: string } {
+function dbGuidance(db: DbKind, dbDir: string, framework?: string): { summary: string; step: string } {
   const registerFunctions = `registerClient() (${dbDir}/clients.ts) and registerUser() (${dbDir}/users.ts)`;
   const registration = `register clients and users with ${registerFunctions}`;
+  if (db === 'kv' && framework === 'nextjs') {
+    return {
+      summary:
+        `Key-value store (--db kv): the provider keeps its data under the keys of ${dbDir}/keys.ts.\n` +
+        `${dbDir}/instance.ts runs on Upstash Redis (UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN)\n` +
+        'or on node:sqlite; that file is yours and is never overwritten. The provider reads its clients\n' +
+        `and users from the store: register them with ${registerFunctions}.\n`,
+      step: `Register clients and users with ${registerFunctions}`,
+    };
+  }
   if (db === 'kv') {
     return {
       summary:
@@ -551,12 +558,13 @@ function writeGeneratedFiles(outputDir: string, files: GeneratedFile[]): void {
 }
 
 /**
- * Hono's screens are generated as hono/jsx (views.tsx and the pages/*.tsx that
- * render them). Say which compiler options that needs.
+ * The screens are generated as hono/jsx (the views.tsx and page.tsx files of
+ * the endpoints and features), for Express and Fastify too. Say which compiler
+ * options that needs.
  */
 function printHonoJsxNotes(): void {
   console.log(
-    '\nThe screens (views.tsx, pages/*.tsx) use hono/jsx. Enable JSX in tsconfig.json:\n' +
+    '\nThe screens (the .tsx files) use hono/jsx. Enable JSX in tsconfig.json:\n' +
       '  "jsx": "react-jsx", "jsxImportSource": "hono/jsx"',
   );
 }
@@ -726,7 +734,7 @@ export function run(args: string[]): void {
       console.log(`Extension features enabled: ${enabledExtensions.join(', ')}`);
       console.log(
         'google-login: the button renders once config.googleLogin.clientId is set (the generated\n' +
-          'Next.js provider.ts and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
+          'Next.js output and the samples read GOOGLE_CLIENT_ID). Register <issuer>/login/google as an\n' +
           'authorized redirect URI of that Google OAuth client. Node.js 22+ only.\n',
       );
     }
@@ -740,13 +748,13 @@ export function run(args: string[]): void {
     }
     const dbDir = result.framework === 'nextjs' ? '_oidc-provider/db' : 'db';
     if (db) {
-      console.log(dbGuidance(db, dbDir).summary);
+      console.log(dbGuidance(db, dbDir, result.framework).summary);
     }
     // Decided before writing: a user-owned file created by this run is not "kept".
     const keptCount = plannedFiles.filter((file) => isKeptUserFile(outputDir, file)).length;
     writeGeneratedFiles(outputDir, plannedFiles);
     console.log(`\nDone! Generated ${plannedFiles.length - keptCount} files in ${outputDir}`);
-    if (result.framework === 'hono') {
+    if (result.framework !== 'nextjs') {
       printHonoJsxNotes();
     }
 
@@ -770,20 +778,17 @@ export function run(args: string[]): void {
       );
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
-        db
-          ? dbGuidance(db, `${outputDir}/db`).step
-          : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
-        `Use ${outputDir}/config.ts defaults only for quick local testing`,
-        ...(features.par ||
-        features.tokenExchange ||
-        features.jarm ||
-        features.deviceAuthorizationGrant ||
-        features.ciba ||
-        features.dynamicClientRegistration
+        db ? dbGuidance(db, `${outputDir}/db`).step : MEMORY_STORES_STEP,
+        REGISTER_STEP,
+        ...(featurePackagesOf(features).includes(EXPERIMENTAL_PACKAGE)
           ? [`Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`]
           : []),
         ...(features.googleLogin
-          ? [`Install the Google login extension: pnpm add ${GOOGLE_LOGIN_PACKAGE}`]
+          ? [
+              `Install the Google login extension: pnpm add ${featurePackagesOf(features)
+                .filter((name) => name !== EXPERIMENTAL_PACKAGE)
+                .join(' ')}`,
+            ]
           : []),
         'Start the server',
       ];
@@ -793,34 +798,30 @@ export function run(args: string[]): void {
         console.log(`  ${index + 1}. ${step}${isLast ? '\n' : ''}`);
       });
     } else {
-      const installCommand = withExperimentalPackage(
-        withGoogleLoginPackage(
-          INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
-          features,
-        ),
+      const installCommand = withFeaturePackages(
+        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
         features,
       );
       // Next.js reads its configuration from the environment in
-      // _oidc-provider/provider.ts, which already wires the persistent stores.
+      // _oidc-provider/provider.ts and its data from _oidc-provider/db.
       const nextSteps =
         result.framework === 'nextjs'
           ? [
-              db
-                ? 'Configure the OP with environment variables: OIDC_ISSUER (see _oidc-provider/provider.ts)'
-                : 'Configure the OP with environment variables: OIDC_ISSUER, OIDC_CLIENTS_JSON (see _oidc-provider/provider.ts)',
-              db
-                ? dbGuidance(db, dbDir).step
-                : 'On Vercel, set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (local runs use node:sqlite at .data/oidc.sqlite)',
+              'Configure the OP with environment variables: OIDC_ISSUER (see _oidc-provider/provider.ts)',
+              db === 'kv'
+                ? `${dbDir}/instance.ts runs on Upstash Redis when UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set, and on node:sqlite (.data/oidc.sqlite) otherwise`
+                : db
+                  ? dbGuidance(db, dbDir).step
+                  : 'The data is kept in memory (_oidc-provider/db): generate with --db kv (Upstash Redis on Vercel) or --db sql to keep it',
+              'Register your clients and users with registerClient() and registerUser() of _oidc-provider/db (instrumentation.ts runs once when the server starts)',
               'Load a fixed signing key in _oidc-provider/provider.ts before running more than one instance',
               `Install dependencies: ${installCommand}`,
               'Start the server: next dev',
             ]
           : [
               'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
-              db
-                ? dbGuidance(db, dbDir).step
-                : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
-              'Use config.ts defaults only for quick local testing',
+              db ? dbGuidance(db, dbDir).step : MEMORY_STORES_STEP,
+              REGISTER_STEP,
               `Install dependencies: ${installCommand}`,
               'Start the server',
             ];

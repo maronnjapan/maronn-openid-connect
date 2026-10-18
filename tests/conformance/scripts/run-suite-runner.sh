@@ -19,7 +19,7 @@ wait_for_url() {
   local attempts="${3:-120}"
 
   for attempt in $(seq 1 "${attempts}"); do
-    if curl -kfsS "${url}" >/dev/null 2>&1; then
+    if curl -kfsS --max-time 10 "${url}" >/dev/null 2>&1; then
       return 0
     fi
     echo "Waiting for ${name} (${attempt}/${attempts}): ${url}"
@@ -37,7 +37,9 @@ fi
 mkdir -p "${RESULTS_DIR}"
 
 wait_for_url "conformance suite" "${CONFORMANCE_SERVER}api/runner/available" 150
-wait_for_url "sample OP discovery" "https://op-tls:3443/.well-known/openid-configuration" 60
+# The OP is healthy before op-tls starts (docker-compose.yml), so this only
+# waits for the TLS proxy.
+wait_for_url "sample OP discovery" "https://op-tls:3443/.well-known/openid-configuration" 30
 
 cd "${SUITE_DIR}"
 

@@ -163,14 +163,19 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
 
     // The contrast to the flows above: a client_id nobody registered must not
     // start a flow. An unknown client is a non-redirectable error (OAuth 2.1
-    // §4.1.2.1), so no Location header carries a code anywhere.
+    // §4.1.2.1), so no Location header carries a code anywhere. The Next.js OP
+    // shows a browser its error page; asking for JSON gets the error itself.
     const url = new URL('/authorize', issuer);
     url.searchParams.set('client_id', 'dcr-0000000000000000000000');
     url.searchParams.set('redirect_uri', registeredRedirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'openid');
-    const response = await request.get(url.toString(), { maxRedirects: 0 });
+    const response = await request.get(url.toString(), {
+      maxRedirects: 0,
+      headers: { Accept: 'application/json' },
+    });
     expect(response.status()).toBe(400);
+    expect(response.headers()['location']).toBe(undefined);
   });
 
   test('should answer invalid_redirect_uri without reflecting the offending URI (RFC 7591 §3.2.2)', async ({

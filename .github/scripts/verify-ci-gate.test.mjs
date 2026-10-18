@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   assertEveryPackageIsTypechecked,
   assertLintGateIsBacked,
+  assertRootScriptsCoverApps,
   assertStaticVerificationGate,
   assertWorkflowVerifiesMainPush,
   parseWorkflow,
@@ -313,7 +314,26 @@ describe('assertLintGateIsBacked', () => {
     });
   });
 
-  it('should reject a lint step that no package implements', () => {
+  it('should accept a lint step backed by a root lint script that runs a checker', () => {
+    const workflow = workflowWith(
+      [
+        'jobs:',
+        '  test:',
+        '    steps:',
+        '      - name: Lint',
+        '        run: pnpm run lint',
+        '',
+      ].join('\n'),
+    );
+
+    assert.doesNotThrow(() => {
+      assertLintGateIsBacked(workflow, [{ name: '@maronn-openid-connect/core', scripts: {} }], {
+        scripts: { lint: 'node .github/scripts/lint-import-boundaries.mjs' },
+      });
+    });
+  });
+
+  it('should reject a lint step that no package and no root checker implements', () => {
     const workflow = workflowWith(
       [
         'jobs:',
@@ -326,11 +346,61 @@ describe('assertLintGateIsBacked', () => {
     );
 
     assert.throws(
-      () => assertLintGateIsBacked(workflow, [{ name: '@maronn-openid-connect/core', scripts: {} }]),
+      () =>
+        assertLintGateIsBacked(workflow, [{ name: '@maronn-openid-connect/core', scripts: {} }], {
+          scripts: { lint: 'pnpm --filter "./packages/*" lint' },
+        }),
       new Error(
-        'CI が `pnpm run lint` を実行していますが、packages/* のどのパッケージにも ' +
-          'lint スクリプトがありません。pnpm --filter は対象が 0 件でも成功するため、' +
-          'この Lint ステップは常に緑になり何も検証しません。',
+        'CI が `pnpm run lint` を実行していますが、packages/* と apps/* のどのパッケージにも ' +
+          'lint スクリプトがなく、ルートの lint も検査スクリプトを実行していません。' +
+          'pnpm --filter は対象が 0 件でも成功するため、この Lint ステップは常に緑になり何も検証しません。',
+      ),
+    );
+  });
+});
+
+describe('assertRootScriptsCoverApps', () => {
+  const coveringScripts = {
+    typecheck: 'pnpm --filter "./packages/*" typecheck && pnpm --filter "./apps/*" typecheck',
+    'test:ci': 'pnpm run test:ci-gate && pnpm --filter "./packages/*" test && pnpm --filter "./apps/*" test',
+  };
+
+  it('should accept root typecheck and test:ci scripts that run the apps', () => {
+    assert.doesNotThrow(() => {
+      assertRootScriptsCoverApps({ scripts: coveringScripts }, ['@maronn-openid-connect/app-hono']);
+    });
+  });
+
+  it('should accept any root scripts when there are no apps', () => {
+    assert.doesNotThrow(() => {
+      assertRootScriptsCoverApps({ scripts: { typecheck: 'pnpm --filter "./packages/*" typecheck' } }, []);
+    });
+  });
+
+  it('should reject a root typecheck script that leaves the apps out', () => {
+    assert.throws(
+      () =>
+        assertRootScriptsCoverApps(
+          { scripts: { ...coveringScripts, typecheck: 'pnpm --filter "./packages/*" typecheck' } },
+          ['@maronn-openid-connect/app-hono'],
+        ),
+      new Error(
+        'ルートの typecheck スクリプトが apps/* を対象にしていません（--filter "./apps/*" typecheck）。' +
+          'apps は CLI が生成コードを抽出する元なので、その型エラーは生成物の型エラーになります。',
+      ),
+    );
+  });
+
+  it('should reject a root test:ci script that leaves the apps out', () => {
+    assert.throws(
+      () =>
+        assertRootScriptsCoverApps(
+          { scripts: { ...coveringScripts, 'test:ci': 'pnpm --filter "./packages/*" test' } },
+          ['@maronn-openid-connect/app-hono'],
+        ),
+      new Error(
+        'ルートの test:ci スクリプトが apps/* を対象にしていません（--filter "./apps/*" test）。' +
+          'apps の単体テストが CI で走らなくなります。',
       ),
     );
   });

@@ -5,7 +5,7 @@ import {
   EXPERIMENTAL_FEATURES,
   EXTENSION_FEATURES,
   resolveFeatures,
-} from '../features.js';
+} from '../registry.js';
 
 describe('AVAILABLE_FEATURES', () => {
   it('should list the toggleable features in a stable order', () => {

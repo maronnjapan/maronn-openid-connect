@@ -1,0 +1,30 @@
+{
+  "name": "@maronn-openid-connect/app-nextjs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Next.js OpenID Provider with every feature it supports enabled: the source the CLI extracts its Next.js output from",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname ${HOST:-127.0.0.1} --port ${PORT:-3510}",
+    "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login run build && next build",
+    "start": "next start --hostname ${HOST:-127.0.0.1} --port ${PORT:-3510}",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@maronn-openid-connect/core": "workspace:*",
+    "@maronn-openid-connect/experimental": "workspace:*",
+    "@maronn-openid-connect/google-login": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "google-auth-library": "^11.2.0",
+    "next": "^16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

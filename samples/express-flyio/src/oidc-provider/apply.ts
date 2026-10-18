@@ -1,26 +1,23 @@
-import type { Express } from 'express';
-import type { Request, Response, NextFunction } from 'express';
-import { createApp, type OidcProviderOptions } from './app.js';
+/**
+ * Apply the OpenID Connect Provider to an Express app.
+ *
+ * Every path the provider serves (providerRoutes() of app.ts: the endpoints
+ * of every provider and those of the generated features) is handed to the
+ * provider's router; app.use() matches a path with everything below it, so
+ * /device also covers /device/login and /device/approve.
+ *
+ * @example
+ * import express from 'express';
+ * import { applyOidc } from './oidc-provider/apply.js';
+ *
+ * const app = express();
+ * applyOidc(app, { signingKeyProvider: yourProvider, config: { issuer: 'https://op.example.com' } });
+ */
+import type { Express, NextFunction, Request, Response } from 'express';
+import { createApp, providerRoutes, type OidcProviderOptions } from './app.js';
 import { toWebRequest, writeWebResponse } from './node-adapter.js';
 
 export type ApplyOidcOptions = OidcProviderOptions;
-
-const OIDC_ENDPOINTS = [
-  '/authorize',
-  '/token',
-  '/userinfo',
-  '/introspect',
-  '/revoke',
-  '/register',
-  '/device_authorization',
-  '/device',
-  '/backchannel_authentication',
-  '/ciba',
-  '/.well-known/jwks.json',
-  '/.well-known/openid-configuration',
-  '/login',
-  '/consent',
-] as const;
 
 export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   const oidc = createApp(options);
@@ -29,8 +26,8 @@ export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
-  for (const endpoint of OIDC_ENDPOINTS) {
-    app.use(endpoint, async (req: Request, res: Response, next: NextFunction) => {
+  for (const route of providerRoutes()) {
+    app.use(route.path, async (req: Request, res: Response, next: NextFunction) => {
       try {
         const response = await oidc.request(toWebRequest(req, baseUrl));
         await writeWebResponse(res, response);

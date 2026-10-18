@@ -62,6 +62,9 @@ CONFORMANCE_OUT_DIR="${GENERATED_DIR}" \
 pnpm --filter @maronn-openid-connect/conformance generate
 
 "${SCRIPT_DIR}/ensure-op-tls-cert.sh"
+# The mount point of the tmpfs the op service writes wrangler's bundles to: it
+# has to exist, because the workspace is mounted read-only.
+mkdir -p "${ROOT_DIR}/samples/${SAMPLE_APP}/.wrangler"
 cp "${CONFORMANCE_DIR}/nginx/op-tls.conf" "${GENERATED_DIR}/nginx/op-tls.conf"
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-maronn_oidf_conformance}"
@@ -73,7 +76,9 @@ export CONFORMANCE_SERVER="${CONFORMANCE_SUITE_BASE_URL}/"
 export CONFORMANCE_SERVER_MTLS="${CONFORMANCE_SERVER_MTLS:-${CONFORMANCE_SERVER}}"
 export CONFORMANCE_CONFIG_PATH="/workspace/tests/conformance/.generated/basic-op-config.json"
 export CONFORMANCE_RESULTS_DIR="/workspace/tests/conformance/results"
-export CONFORMANCE_TEST_PLAN="oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]"
+# The Basic OP plan, without the manual review modules when
+# CONFORMANCE_SKIP_MANUAL_REVIEW=1 (create-basic-op-config.mjs writes it).
+export CONFORMANCE_TEST_PLAN="${CONFORMANCE_TEST_PLAN:-$(cat "${GENERATED_DIR}/test-plan.txt")}"
 export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-1}"
 # OIDC Core 1.0 §6.1 / RFC 9101: the Basic OP plan skips the Request Object modules
 # (oidcc-unsigned-request-object-... / oidcc-ensure-request-object-with-redirect-uri)

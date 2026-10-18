@@ -11,11 +11,7 @@ import {
 } from '@maronn-openid-connect/core';
 import { errorPagePath } from './http';
 import { config, stores } from './provider';
-import {
-  CROSS_ORIGIN_FORM_POST_MESSAGE,
-  TRANSACTION_COOKIE_NAME,
-  isSameOriginFormPost,
-} from './store';
+import { CROSS_ORIGIN_FORM_POST_MESSAGE, TRANSACTION_COOKIE_NAME, isSameOriginFormPost } from './cookies';
 
 /** The transaction a login or consent request continues, and the id it is stored under. */
 export interface CurrentTransaction {
@@ -28,7 +24,7 @@ export interface CurrentTransaction {
  * and consent pages and their Server Actions.
  *
  * /authorize hands the transaction id to the browser only in the HttpOnly
- * transaction cookie (buildTransactionCookie() in store.ts) — never in a URL or
+ * transaction cookie (buildTransactionCookie() in cookies.ts) — never in a URL or
  * in the HTML — so this is where it is read from. The forms carry just the
  * csrf_token, which the Server Actions accept only for this transaction.
  *
@@ -53,7 +49,7 @@ export async function requireTransaction(): Promise<CurrentTransaction> {
 
 /**
  * Stop a login or consent Server Action that the browser says was not
- * submitted from the OP's own pages (isSameOriginFormPost() in store.ts): the
+ * submitted from the OP's own pages (isSameOriginFormPost() in cookies.ts): the
  * OP's error page, never the client. It depends on neither the transaction
  * cookie nor the csrf_token, so it still holds when a sibling subdomain planted
  * a transaction cookie whose csrf_token it knows.

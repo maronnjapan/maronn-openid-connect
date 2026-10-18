@@ -1,7 +1,7 @@
 /**
  * The database contract of the generated OP (--db).
  *
- * db/stores.ts and db/clients.ts run every query through these two methods,
+ * stores.ts and clients.ts run every query through these two methods,
  * and db/instance.ts creates the object that implements them for your
  * database. Any driver or ORM can implement them, because every one of them
  * can run raw SQL.

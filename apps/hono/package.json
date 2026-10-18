@@ -1,0 +1,31 @@
+{
+  "name": "@maronn-openid-connect/app-hono",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Hono OpenID Provider with every feature enabled: the source the CLI extracts its generated code from",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login run build && tsc --noEmit",
+    "start": "tsx src/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@maronn-openid-connect/core": "workspace:*",
+    "@maronn-openid-connect/experimental": "workspace:*",
+    "@maronn-openid-connect/google-login": "workspace:*"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@types/express": "^5.0.5",
+    "@types/node": "^26.6.4",
+    "express": "^5.2.1",
+    "fastify": "^5.12.2",
+    "google-auth-library": "^11.2.0",
+    "hono": "^4.13.13",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,7 +1,7 @@
-import { getGenerator, getAvailableFrameworks } from './frameworks/index.js';
-import { DEFAULT_FEATURES } from './features.js';
-import type { OidcFeatureConfig } from './features.js';
-import type { GeneratedFile } from './frameworks/types.js';
+import { extractProvider, extractableFrameworks } from './generate.js';
+import { DEFAULT_FEATURES } from './registry.js';
+import type { OidcFeatureConfig } from './registry.js';
+import type { GeneratedFile } from './generated-file.js';
 import type { DbKind } from './db.js';
 
 export interface GenerateOptions {
@@ -48,34 +48,36 @@ export function generate(options: GenerateOptions): GenerateResult {
     endpointOrder,
   } = options;
 
-  const generator = getGenerator(framework);
-  if (!generator) {
-    const available = getAvailableFrameworks().join(', ');
-    throw new Error(
-      `Unknown framework: "${framework}". Available frameworks: ${available}`,
-    );
-  }
-
+  // Next.js keeps the order of its Route Handlers: a flow document can not
+  // rearrange or drop their steps.
   const rearranged = Object.keys(steps);
-  if (rearranged.length > 0 && !generator.supportsStepSelection) {
+  if (framework === 'nextjs' && rearranged.length > 0) {
     throw new Error(
-      `The ${generator.displayName} output does not follow a rearranged step order yet ` +
+      'The Next.js output does not follow a rearranged step order yet ' +
         `(endpoint ${rearranged.map((id) => `"${id}"`).join(', ')}). ` +
         'Remove the steps changes from the flow document, or generate for hono, express or fastify',
     );
   }
 
-  const files = generator.generate({
-    outputDir,
-    corePackageName,
-    features,
-    scopes,
-    db,
-    steps,
-    ...(endpointOrder === undefined ? {} : { endpointOrder }),
-  });
+  if (extractableFrameworks().includes(framework)) {
+    const files = extractProvider({
+      framework,
+      features,
+      scopes,
+      corePackageName,
+      steps,
+      ...(db === undefined ? {} : { db }),
+    });
+    void outputDir;
+    void endpointOrder;
+    return { files, framework };
+  }
 
-  return { files, framework };
+  const available = getAvailableFrameworks().join(', ');
+  throw new Error(`Unknown framework: "${framework}". Available frameworks: ${available}`);
 }
 
-export { getAvailableFrameworks };
+/** The frameworks generate accepts: the ones extract.json describes. */
+export function getAvailableFrameworks(): string[] {
+  return extractableFrameworks();
+}

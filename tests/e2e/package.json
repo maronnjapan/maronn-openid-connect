@@ -2,16 +2,19 @@
     "name": "@maronn-openid-connect/e2e",
     "version": "0.0.1",
     "private": true,
-    "description": "Playwright E2E tests for CLI-generated OpenID Provider samples",
+    "description": "Playwright E2E tests for the apps/ OpenID Providers and the CLI-generated samples",
     "type": "module",
     "scripts": {
         "test": "pnpm run test:e2e",
-        "test:e2e": "pnpm run test:e2e:hono-cloudflare && pnpm run test:e2e:express-flyio && pnpm run test:e2e:fastify-flyio && pnpm run test:e2e:nextjs-vercel",
+        "test:e2e": "pnpm run test:e2e:app-hono && pnpm run test:e2e:app-nextjs",
         "test:e2e:hono-cloudflare": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/sample-hono-cloudflare build && E2E_OP_PACKAGE=@maronn-openid-connect/sample-hono-cloudflare E2E_OP_PORT=3010 E2E_CLIENT_PORT=3020 E2E_RESOURCE_SERVER_PORT=3030 E2E_ISSUER=http://127.0.0.1:3010 E2E_CLIENT_BASE_URL=http://127.0.0.1:3020 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3030 playwright test",
         "test:e2e:express-flyio": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/sample-express-flyio build && E2E_OP_PACKAGE=@maronn-openid-connect/sample-express-flyio E2E_OP_PORT=3110 E2E_CLIENT_PORT=3120 E2E_RESOURCE_SERVER_PORT=3130 E2E_ISSUER=http://127.0.0.1:3110 E2E_CLIENT_BASE_URL=http://127.0.0.1:3120 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3130 playwright test",
         "test:e2e:fastify-flyio": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/sample-fastify-flyio build && E2E_OP_PACKAGE=@maronn-openid-connect/sample-fastify-flyio E2E_OP_PORT=3210 E2E_CLIENT_PORT=3220 E2E_RESOURCE_SERVER_PORT=3230 E2E_ISSUER=http://127.0.0.1:3210 E2E_CLIENT_BASE_URL=http://127.0.0.1:3220 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3230 playwright test",
         "test:e2e:nextjs-vercel": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/sample-nextjs-vercel build && E2E_OP_PACKAGE=@maronn-openid-connect/sample-nextjs-vercel E2E_OP_PORT=3310 E2E_CLIENT_PORT=3320 E2E_RESOURCE_SERVER_PORT=3330 E2E_ISSUER=http://127.0.0.1:3310 E2E_CLIENT_BASE_URL=http://127.0.0.1:3320 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3330 playwright test",
-        "typecheck": "tsc --noEmit && node --check apps/client.mjs && node --check apps/resource-server.mjs"
+        "typecheck": "tsc --noEmit && node --check apps/client.mjs && node --check apps/resource-server.mjs",
+        "test:e2e:samples": "pnpm run test:e2e:hono-cloudflare && pnpm run test:e2e:express-flyio && pnpm run test:e2e:fastify-flyio && pnpm run test:e2e:nextjs-vercel",
+        "test:e2e:app-hono": "pnpm --filter @maronn-openid-connect/app-hono build && E2E_OP_PACKAGE=@maronn-openid-connect/app-hono E2E_OP_PORT=3410 E2E_CLIENT_PORT=3420 E2E_RESOURCE_SERVER_PORT=3430 E2E_ISSUER=http://127.0.0.1:3410 E2E_CLIENT_BASE_URL=http://127.0.0.1:3420 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3430 playwright test",
+        "test:e2e:app-nextjs": "pnpm --filter @maronn-openid-connect/app-nextjs build && E2E_OP_PACKAGE=@maronn-openid-connect/app-nextjs E2E_OP_PORT=3510 E2E_CLIENT_PORT=3520 E2E_RESOURCE_SERVER_PORT=3530 E2E_ISSUER=http://127.0.0.1:3510 E2E_CLIENT_BASE_URL=http://127.0.0.1:3520 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3530 OIDC_SQLITE_PATH=.data/oidc-e2e.sqlite playwright test"
     },
     "devDependencies": {
         "@playwright/test": "^1.64.0",

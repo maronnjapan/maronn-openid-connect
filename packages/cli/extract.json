@@ -1,0 +1,61 @@
+{
+  "$comment": "Where `maronn-oidc generate` takes the generated code from. `pnpm run build` copies every source of `sources` into templates/<name>/ (tests excluded) and bakes the meta of the steps and endpoints of each hono-layout root into templates/<name>/<root>.catalog.json. A framework names its source, the root under it that becomes the output directory, its layout (hono: features/<id>/ and db/<kind>/; nextjs: the route groups (<id>)/, _oidc-provider/features/<id>/ and _oidc-provider/db/<kind>/), and files placed over that root (output path: source path under the source).",
+  "sources": {
+    "hono": {
+      "directory": "../../apps/hono/src",
+      "include": [
+        "oidc-provider",
+        "web"
+      ],
+      "exclude": [
+        "\\.test\\.tsx?$"
+      ]
+    },
+    "nextjs": {
+      "directory": "../../apps/nextjs/src",
+      "include": [
+        "app"
+      ],
+      "exclude": [
+        "\\.test\\.tsx?$",
+        "^app/layout\\.tsx$"
+      ]
+    }
+  },
+  "frameworks": {
+    "hono": {
+      "source": "hono",
+      "root": "oidc-provider",
+      "layout": "hono",
+      "files": {}
+    },
+    "express": {
+      "source": "hono",
+      "root": "oidc-provider",
+      "layout": "hono",
+      "router": "web",
+      "files": {
+        "apply.ts": "web/express/apply.ts",
+        "web-router.ts": "web/web-router.ts",
+        "node-adapter.ts": "web/node-adapter.ts"
+      }
+    },
+    "fastify": {
+      "source": "hono",
+      "root": "oidc-provider",
+      "layout": "hono",
+      "router": "web",
+      "files": {
+        "apply.ts": "web/fastify/apply.ts",
+        "web-router.ts": "web/web-router.ts",
+        "node-adapter.ts": "web/node-adapter.ts"
+      }
+    },
+    "nextjs": {
+      "source": "nextjs",
+      "root": "app",
+      "layout": "nextjs",
+      "files": {}
+    }
+  }
+}

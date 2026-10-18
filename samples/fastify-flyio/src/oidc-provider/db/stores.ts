@@ -1,12 +1,12 @@
 /**
- * ProviderStores (store.ts) on the tables of db/schema.sql: the stores the OP
+ * ProviderStores (store.ts) on the tables of schema.sql: the stores the OP
  * uses when no other storage is passed in. Every SQL statement runs through
- * the SqlDatabase that db/instance.ts creates. An operation that touches two
- * tables (a transaction and its request, a code and the status of its
- * transaction) runs its statements one after another.
+ * the SqlDatabase that createDatabase() (db/instance.ts) returns. An
+ * operation that touches two tables (a transaction and its request, a code
+ * and the status of its transaction) runs its statements one after another.
  *
  * Rewriting this file for another driver or an ORM is fine, but keep these
- * behaviors - routes/ and resolvers.ts rely on them:
+ * behaviors - the endpoints and resolvers.ts rely on them:
  *
  * 1. Keep the ProviderStores types (method names, parameters, return values).
  * 2. authCodeStore.consume and refreshTokenStore.consume flip is_used from
@@ -37,18 +37,17 @@ import {
   type RefreshTokenInfo,
   type UserClaims,
 } from '@maronn-openid-connect/core';
-import type { GoogleLoginNonceStore } from '@maronn-openid-connect/google-login';
-import {
-  googleAccountToClaims,
-  type AccessTokenStorage,
-  type AuthSessionInfo,
-  type AuthSessionStorage,
-  type AuthorizationCodeStorage,
-  type BrowserSessionStorage,
-  type ConsentStorage,
-  type ProviderStores,
-  type RefreshTokenStorage,
-  type UserStorage,
+import type {
+  AccessTokenStorage,
+  AuthSessionInfo,
+  AuthSessionStorage,
+  AuthorizationCodeStorage,
+  BrowserSessionStorage,
+  ConsentStorage,
+  ProviderStores,
+  RefreshTokenStorage,
+  UpstreamLoginStorage,
+  UserStorage,
 } from '../store.js';
 import type { SqlDatabase } from './database.js';
 import { verifyPassword } from './users.js';
@@ -56,13 +55,10 @@ import { verifyPassword } from './users.js';
 /** core prefixes the id of every AuthTransactionStore key with this. */
 const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 
-/** google-login prefixes the nonce of every GoogleLoginNonceStore key with this. */
-const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
-
 /** The statuses of a transaction in progress. */
 const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 
-export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
+export function createProviderStores(db: SqlDatabase): ProviderStores {
   // Transaction + Authentication_request: what the authorization request asked
   // for goes to authentication_requests, the state of the flow to transactions.
   const transactionStore: AuthTransactionStore = {
@@ -349,10 +345,10 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
   };
 
   // auth_type of a sign-in (auth_users): the provider of the user's federated
-  // identity, or password. A user created by Sign in with Google has no
-  // password, and registerUser() (users.ts) creates no federated identity, so
-  // each user signs in one way only unless you link a Google account to a
-  // user with a password yourself.
+  // identity, or password. A user created by an upstream sign-in (such as Sign
+  // in with Google) has no password, and registerUser() (users.ts) creates no
+  // federated identity, so each user signs in one way only unless you link an
+  // upstream account to a user with a password yourself.
   const authTypeOf = async (userId: string): Promise<string> => {
     const [row] = await db.all<{ provider: string }>({
       sql: 'SELECT provider FROM federated_identities WHERE user_id = ? ORDER BY created_at LIMIT 1',
@@ -467,20 +463,20 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
   };
 
 
-  // EXTENSION (google-login): the user linked to a Google account, if any.
-  const findGoogleUser = async (googleSub: string): Promise<string | undefined> => {
+  // The user linked to an account at an upstream identity provider, if any.
+  const findFederatedUser = async (provider: string, providerSub: string): Promise<string | undefined> => {
     const [row] = await db.all<{ user_id: string }>({
-      sql: "SELECT user_id FROM federated_identities WHERE provider = 'google' AND provider_sub = ?",
-      params: [googleSub],
+      sql: 'SELECT user_id FROM federated_identities WHERE provider = ? AND provider_sub = ?',
+      params: [provider, providerSub],
     });
     return row?.user_id;
   };
 
-  // EXTENSION (google-login): create the user of a Google account on its first
-  // sign-in, under a new random id. Two first sign-ins of one account may race:
-  // UNIQUE (provider, provider_sub) keeps one federated identity, and the user
-  // created by the other request is removed again.
-  const createGoogleUser = async (googleSub: string): Promise<string> => {
+  // Create the user of an upstream account on its first sign-in, under a new
+  // random id. Two first sign-ins of one account may race: UNIQUE (provider,
+  // provider_sub) keeps one federated identity, and the user created by the
+  // other request is removed again.
+  const createFederatedUser = async (provider: string, providerSub: string): Promise<string> => {
     const userId = crypto.randomUUID();
     const now = nowSeconds();
     await db.run({
@@ -490,20 +486,20 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     await db.run({
       sql:
         'INSERT INTO federated_identities (id, user_id, provider, provider_sub, created_at, updated_at) ' +
-        "VALUES (?, ?, 'google', ?, ?, ?) ON CONFLICT (provider, provider_sub) DO NOTHING",
-      params: [crypto.randomUUID(), userId, googleSub, now, now],
+        'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (provider, provider_sub) DO NOTHING',
+      params: [crypto.randomUUID(), userId, provider, providerSub, now, now],
     });
-    const linkedUserId = (await findGoogleUser(googleSub)) ?? userId;
+    const linkedUserId = (await findFederatedUser(provider, providerSub)) ?? userId;
     if (linkedUserId !== userId) {
       await db.run({ sql: 'DELETE FROM users WHERE id = ?', params: [userId] });
     }
     return linkedUserId;
   };
 
-  // EXTENSION (google-login): save the claims Google asserted to the user:
-  // email and email_verified to their columns, the others to claims as JSON.
+  // Save the claims the upstream provider asserted to the user: email and
+  // email_verified to their columns, the others to claims as JSON.
   // password_hash is left as it is.
-  const saveGoogleClaims = async (claims: UserClaims): Promise<void> => {
+  const saveFederatedClaims = async (claims: UserClaims): Promise<void> => {
     const { sub, email, email_verified, ...otherClaims } = claims;
     await db.run({
       sql:
@@ -523,8 +519,8 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
         params: [username],
       });
       // verifyPassword() takes as long without a hash, so the response time does
-      // not tell whether the user exists. A user without a password (such as one
-      // created by Sign in with Google) cannot sign in with the form.
+      // not tell whether the user exists. A user without a password (one
+      // created by an upstream sign-in) cannot sign in with the form.
       const passwordHash = row?.password_hash ?? null;
       if (!(await verifyPassword(password, passwordHash)) || !row || passwordHash === null) {
         return undefined;
@@ -538,49 +534,48 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
       });
       return row ? userClaims(sub, row) : undefined;
     },
-    // EXTENSION (google-login): find or create the user of a verified Google
-    // account by its federated identity (never by email), and save the claims
-    // Google asserted.
-    async linkGoogleAccount(account) {
-      const userId = (await findGoogleUser(account.sub)) ?? (await createGoogleUser(account.sub));
-      const claims: UserClaims = { ...googleAccountToClaims(account), sub: userId };
-      await saveGoogleClaims(claims);
+    // Find or create the user of a verified upstream account by its federated
+    // identity (never by email), and save the claims the provider asserted.
+    async linkFederatedIdentity(identity) {
+      const userId =
+        (await findFederatedUser(identity.provider, identity.subject)) ??
+        (await createFederatedUser(identity.provider, identity.subject));
+      const claims: UserClaims = { ...identity.claims, sub: userId };
+      await saveFederatedClaims(claims);
       return claims;
     },
   };
 
-  // EXTENSION (google-login): the nonce of the Google button, kept as the
-  // upstream_auth_requests row of its transaction. A transaction has one row,
-  // so a newer login page replaces the nonce of an older one. The record
-  // expires with the transaction.
-  const googleLoginNonceStore: GoogleLoginNonceStore = {
-    async get(key) {
-      const [row] = await db.all<{ transaction_id: string; expired_at: number | string }>({
+  // The upstream sign-in a transaction waits for, kept as the
+  // upstream_auth_requests row of the transaction and found by its nonce. A
+  // transaction has one row, so a newer login page replaces the nonce of an
+  // older one. The record expires with the transaction.
+  const upstreamLoginStore: UpstreamLoginStorage = {
+    async find(nonce) {
+      const [row] = await db.all<{ provider: string; transaction_id: string; expired_at: number | string }>({
         sql:
-          'SELECT u.transaction_id, t.expired_at FROM upstream_auth_requests u ' +
+          'SELECT u.provider, u.transaction_id, t.expired_at FROM upstream_auth_requests u ' +
           'JOIN transactions t ON t.transaction_id = u.transaction_id ' +
           'WHERE u.nonce = ? AND t.expired_at > ?',
-        params: [withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX), nowSeconds()],
+        params: [nonce, nowSeconds()],
       });
-      return row ? { transactionId: row.transaction_id, expiresAt: Number(row.expired_at) * 1000 } : null;
+      if (!row) return undefined;
+      return { provider: row.provider, transactionId: row.transaction_id, expiresAt: Number(row.expired_at) * 1000 };
     },
-    async put(key, value, _ttlSeconds) {
+    async save(nonce, login) {
       await db.run({
         sql:
-          "INSERT INTO upstream_auth_requests (transaction_id, provider, nonce) VALUES (?, 'google', ?) " +
+          'INSERT INTO upstream_auth_requests (transaction_id, provider, nonce) VALUES (?, ?, ?) ' +
           'ON CONFLICT (transaction_id) DO UPDATE SET provider = excluded.provider, nonce = excluded.nonce',
-        params: [value.transactionId, withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX)],
+        params: [login.transactionId, login.provider, nonce],
       });
       await db.run({
         sql: "UPDATE transactions SET status = 'upstream_pending' WHERE transaction_id = ? AND status = 'requested'",
-        params: [value.transactionId],
+        params: [login.transactionId],
       });
     },
-    async delete(key) {
-      await db.run({
-        sql: 'DELETE FROM upstream_auth_requests WHERE nonce = ?',
-        params: [withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX)],
-      });
+    async delete(nonce) {
+      await db.run({ sql: 'DELETE FROM upstream_auth_requests WHERE nonce = ?', params: [nonce] });
     },
   };
 
@@ -593,7 +588,7 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     browserSessionStore,
     consentStore,
     userStore,
-    googleLoginNonceStore,
+    upstreamLoginStore,
   };
 }
 

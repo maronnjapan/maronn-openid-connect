@@ -8,9 +8,9 @@
  * step another step depends on.
  */
 import { resolveDbKind, type DbKind } from '../db.js';
-import { normalizeFeatures, type OidcFeatureConfig } from '../features.js';
+import { normalizeFeatures, type OidcFeatureConfig } from '../registry.js';
 import { resolveCustomScopes } from '../scopes.js';
-import { buildOpFlow } from './catalog.js';
+import { buildOpFlow } from './build.js';
 import type { FlowEdge, FlowEndpoint, FlowStep, OpFlow } from './types.js';
 
 /** What a flow document selects for a generation. */

@@ -1,5 +1,5 @@
 /**
- * Registered clients on the client tables of db/schema.sql: the ClientResolver
+ * Registered clients on the client tables of schema.sql: the ClientResolver
  * and the ClientKeyResolver the OP uses when no other ones are passed in, and
  * registerClient() to put a client into those tables.
  *
@@ -51,7 +51,7 @@ import {
 import type { ClientRegistration, RegisteredClient } from '../config.js';
 import type { SqlDatabase } from './database.js';
 
-export function createSqlClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
+export function createClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
       const [client] = await db.all<{ id: string; client_type: string }>({
@@ -113,7 +113,7 @@ type ClientAuthType = 'client_secret_basic' | 'client_secret_post';
  * verifies a signed Request Object with the keys of request_object. A deleted
  * client (is_deleted) has no keys.
  */
-export function createSqlClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
+export function createClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
   return {
     async findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet> {
       const rows = await db.all<{ jwk: string }>({
@@ -144,11 +144,19 @@ function parseJwk(clientId: string, json: string): Jwk {
 /**
  * Put a client into the client tables, replacing the rows of an earlier
  * registration with the same client_id. Call it from a setup script or at
- * startup, for example for the clients of config.ts:
+ * startup, with the database of db/ (createDatabase() of db/index.ts) and a
+ * ClientRegistration (config.ts):
  *
- *   for (const client of defaultRegisteredClients.values()) {
- *     await registerClient(db, client);
- *   }
+ *   // createDatabase(c) where the request context exists, when instance.ts
+ *   // reads it (in the Hono output, a binding of c.env such as D1)
+ *   const db = createDatabase();
+ *   await registerClient(db, {
+ *     clientId: 'my-client',
+ *     clientSecret: '...',
+ *     redirectUris: ['https://client.example.com/callback'],
+ *     grantTypes: ['authorization_code', 'refresh_token'],
+ *     tokenEndpointAuthMethods: ['client_secret_basic'],
+ *   });
  *
  * Registering a client again with the same values leaves its rows as they
  * are, so every instance of the OP may register its clients at startup, even

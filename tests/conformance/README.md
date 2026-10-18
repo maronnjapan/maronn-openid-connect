@@ -78,6 +78,7 @@ CONFORMANCE_SAMPLE_APP=nextjs-vercel pnpm run conformance:basic-op
 - `CONFORMANCE_SUITE_REF`: `run-test-plan.py` 用にcloneする `openid/conformance-suite` のGit ref。デフォルトは `master`。
 - `CONFORMANCE_SUITE_PORT`: Conformance Suite HTTPSエンドポイントのhost port。デフォルトは `8443`。
 - `CONFORMANCE_OP_TLS_PORT`: サンプルOP HTTPS proxyのhost port。デフォルトは `3443`。
+- `CONFORMANCE_SKIP_MANUAL_REVIEW`: `1` のとき、manual review が必要な3つの module（下記）を除いてプランを実行します。CI（`.github/workflows/conformance.yml`）は `1` で実行します。デフォルトはすべての module を実行します。
 - `CONFORMANCE_KEEP_SERVICES=1`: runner終了後もDocker Composeサービスを残す。
 - `CONFORMANCE_ALIAS`: コールバックURLに使うOIDF test alias。デフォルトは `maronn-basic-op`。
 - `CONFORMANCE_OP_ISSUER`: Compose内でサンプルOPが使うissuer。デフォルトは `https://op-tls:3443`。
@@ -176,11 +177,11 @@ GitHub Actionsの `OpenID Conformance` workflowを選び、以下を指定して
 - `sample_app`: `hono-cloudflare`, `express-flyio`, `fastify-flyio`, `nextjs-vercel` のいずれか。
 - `suite_image_tag`: OpenID Foundation Conformance Suite image tag。通常は `latest`。
 
-workflowでは以下を実行します。
+workflowでは以下を実行します。manual review が必要な module は除きます（`CONFORMANCE_SKIP_MANUAL_REVIEW=1`、[実行時間](#実行時間)を参照）。
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm run conformance:basic-op
+CONFORMANCE_SKIP_MANUAL_REVIEW=1 pnpm run conformance:basic-op
 ```
 
 Suiteが失敗した場合でも、以下のartifactをアップロードします。
@@ -197,6 +198,7 @@ Basic OP checkを要求できるようにしています。
 PR triggerの対象pathは以下に限定しています。
 
 - `packages/**`
+- `apps/**`
 - `samples/**`
 - `tests/conformance/**`
 - `.github/workflows/conformance.yml`
@@ -293,6 +295,13 @@ OP の挙動自体は正しい。
 にも適用済み。`CONFORMANCE_SAMPLE_APP=nextjs-vercel` でのCI実行でも **32 passed / 0 warning /
 0 skipped / 0 condition failure**（残り3 module は screenshot 待ちの WAITING）となり、
 hono-cloudflare と同じく screenshot 提出以外の未pass項目は0件であることを確認済み。
+
+## 実行時間
+
+- `op` サービスは Discovery に応答するまで healthy にならず、`op-tls` と `runner` は healthy になってから起動します。OP が起動しない場合は、約3分で `docker compose up` が失敗します。
+- `op` サービスはリポジトリを読み取り専用でマウントするので、`wrangler dev`（`hono-cloudflare`）が書き込む `samples/<サンプル>/.wrangler/` だけを tmpfs にしています。マウントポイントは `run-basic-op.sh` が作ります。
+- manual review が必要な module は screenshot の提出を待つので、`run-test-plan.py` は1つにつき240秒待ってから打ち切ります。`CONFORMANCE_SKIP_MANUAL_REVIEW=1` はこの待ち時間（3つで約12分）を省きます。
+- static client の設定は `alias` を持つので、`run-test-plan.py` は module を並列に実行しません。
 
 ## Manual review が必要な module の扱い
 

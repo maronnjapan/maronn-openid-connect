@@ -6,7 +6,7 @@
 import { cookies } from 'next/headers';
 import { generateRandomString, type AuthTransaction } from '@maronn-openid-connect/core';
 import { stores } from '../_oidc-provider/provider';
-import { SESSION_COOKIE_NAME } from '../_oidc-provider/store';
+import { SESSION_COOKIE_NAME } from '../_oidc-provider/cookies';
 
 /**
  * Start the OP session for subject and hand it to the consent step of this
@@ -14,9 +14,9 @@ import { SESSION_COOKIE_NAME } from '../_oidc-provider/store';
  *
  * The session (OIDC Core 1.0 §3.1.2.3) is what SSO, prompt=none and max_age
  * read back on later authorization requests: an opaque id in an HttpOnly
- * cookie, with the same attributes as buildSessionCookie() in store.ts —
- * Secure, and SameSite=Lax because Strict would drop it on the cross-site
- * redirect back from the client.
+ * cookie, with the same attributes as buildSessionCookie() in
+ * _oidc-provider/cookies.ts — Secure, and SameSite=Lax because Strict would
+ * drop it on the cross-site redirect back from the client.
  */
 export async function startSession(
   transactionId: string,

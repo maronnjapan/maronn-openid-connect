@@ -5,6 +5,7 @@ import {
   assertChangesetCoversChangedPackages,
   findChangedPublishablePackages,
   isReleaseRelevantPath,
+  selectExtractedSources,
   selectPublishablePackages,
 } from './verify-changeset-coverage.mjs';
 
@@ -36,6 +37,33 @@ describe('selectPublishablePackages', () => {
 
   it('should drop packages without a name', () => {
     assert.deepEqual(selectPublishablePackages([{ directory: 'packages/cli', manifest: {} }]), []);
+  });
+});
+
+// packages/cli の生成コードは apps/hono から抽出される（extract.json）ので、
+// 抽出元の変更も packages/cli の出荷物の変更として扱う
+describe('selectExtractedSources', () => {
+  it('should map every included directory of extract.json to the package that extracts it', () => {
+    assert.deepEqual(
+      selectExtractedSources([
+        {
+          name: '@maronn-openid-connect/cli',
+          directory: 'packages/cli',
+          extract: { sources: { hono: { directory: '../../apps/hono/src', include: ['oidc-provider', 'web'] } } },
+        },
+      ]),
+      [
+        { name: '@maronn-openid-connect/cli', directory: 'apps/hono/src/oidc-provider' },
+        { name: '@maronn-openid-connect/cli', directory: 'apps/hono/src/web' },
+      ],
+    );
+  });
+
+  it('should map nothing for a package without extract.json', () => {
+    assert.deepEqual(
+      selectExtractedSources([{ name: '@maronn-openid-connect/core', directory: 'packages/core', extract: undefined }]),
+      [],
+    );
   });
 });
 
@@ -118,6 +146,29 @@ describe('findChangedPublishablePackages', () => {
   it('should not match a package whose directory is a name prefix of another', () => {
     assert.deepEqual(
       findChangedPublishablePackages(['packages/cli-extra/src/index.ts'], PACKAGES),
+      [],
+    );
+  });
+});
+
+describe('findChangedPublishablePackages with extracted sources', () => {
+  const SOURCES = [{ name: '@maronn-openid-connect/cli', directory: 'apps/hono/src/oidc-provider' }];
+
+  it('should return the package that extracts the changed file', () => {
+    assert.deepEqual(
+      findChangedPublishablePackages(['apps/hono/src/oidc-provider/app.ts'], [...PACKAGES, ...SOURCES]),
+      ['@maronn-openid-connect/cli'],
+    );
+  });
+
+  // apps/hono の server.ts や設定はアプリ自身のもので、生成コードには入らない
+  it('should ignore a file of the app outside the extracted directories', () => {
+    assert.deepEqual(findChangedPublishablePackages(['apps/hono/src/server.ts'], [...PACKAGES, ...SOURCES]), []);
+  });
+
+  it('should ignore a test file of the extracted directories', () => {
+    assert.deepEqual(
+      findChangedPublishablePackages(['apps/hono/src/oidc-provider/app.test.ts'], [...PACKAGES, ...SOURCES]),
       [],
     );
   });

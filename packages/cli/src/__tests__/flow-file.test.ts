@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_FEATURES } from '../features.js';
-import { buildOpFlow } from '../flow/catalog.js';
+import { DEFAULT_FEATURES } from '../registry.js';
+import { buildOpFlow } from '../flow/build.js';
 import { FlowFileError, parseFlowFile, resolveFlowSelection } from '../flow/flow-file.js';
 import type { OpFlow } from '../flow/types.js';
 

@@ -16,7 +16,7 @@
  * step lives in — are added by the generators (see `annotateFlowModules`).
  */
 import type { DbKind } from '../db.js';
-import type { OidcFeatureConfig } from '../features.js';
+import type { OidcFeatureConfig } from '../registry.js';
 
 /** Where a request to the endpoint comes from. */
 export type FlowEndpointLayer =

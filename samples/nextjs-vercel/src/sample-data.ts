@@ -4,11 +4,8 @@
  * instrumentation.ts registers them there when a server instance starts.
  */
 import type { ClientRegistration } from './app/_oidc-provider/config';
-import { registerClient } from './app/_oidc-provider/db/clients';
-import { createDatabase } from './app/_oidc-provider/db/instance';
-import { createKvProviderStores } from './app/_oidc-provider/db/stores';
-import { registerUser } from './app/_oidc-provider/db/users';
-import { UserStore } from './app/_oidc-provider/store';
+import { createDatabase, registerClient } from './app/_oidc-provider/db';
+import { registerDevelopmentUsers } from './app/_oidc-provider/development';
 
 export async function registerSampleData(): Promise<void> {
   const db = createDatabase();
@@ -21,16 +18,11 @@ export async function registerSampleData(): Promise<void> {
   }
 
   // E2E and the conformance suite sign in as the development users of
-  // store.ts (testuser / otheruser, password "password"). registerUser()
-  // hashes the password with PBKDF2, which would slow down every cold start
-  // on Vercel, so a user that is already registered is left as it is.
-  const { userStore } = createKvProviderStores(db);
-  const developmentUsers = new UserStore();
-  for (const username of ['testuser', 'otheruser']) {
-    if (await userStore.getClaims(username)) continue;
-    const user = developmentUsers.authenticate(username, 'password');
-    if (user) await registerUser(db, user);
-  }
+  // development.ts (testuser / otheruser, password "password").
+  // registerUser() hashes the password with PBKDF2, which would slow down
+  // every cold start on Vercel, so registerDevelopmentUsers() leaves a user
+  // that is already registered as it is.
+  await registerDevelopmentUsers(db);
 }
 
 /**

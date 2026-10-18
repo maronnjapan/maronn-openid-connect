@@ -196,26 +196,27 @@ maronn-oidc generate <hono|express|fastify|nextjs> --enable google-login
 pnpm add @maronn-openid-connect/core @maronn-openid-connect/google-login
 ```
 
-`google-login` は CLI の**拡張機能**（Optional / Experimental とは別カテゴリ。既定では無効）で、有効にすると生成コードに次が加わる。それ以外の生成物は無効時と同じ。
+`google-login` は CLI の**拡張機能**（Optional / Experimental とは別カテゴリ。既定では無効）で、有効にすると生成コードに次の機能のファイルが加わり、有効な機能の一覧（`features/enabled.ts`、Next.js は `_oidc-provider/features.ts`）に `googleLogin` が 1 行増える。それ以外の生成物は無効時と同じで、ログイン画面や `config.ts` などの OP 本体は、機能のフック（`routes` / `context` / `config` / `loginMethods`）と、機能のディレクトリからの型の拡張（`declare module`）を通して google-login を取り込む。生成コードは CLI が `apps/hono`（Hono / Express / Fastify）と `apps/nextjs`（Next.js）から写したもので、パスは Hono / Express / Fastify では出力先（`oidc-provider/`）から、Next.js では `app/` からの相対パス。
 
 | 生成物 | 内容 |
 |---|---|
-| `config.ts` | `ProviderConfig.googleLogin?: GoogleLoginConfig`（`clientId` / 任意の `hostedDomain` / `requireVerifiedEmail`）。未設定ならボタンは出ず、`/login/google` は 404 |
-| `views.ts`（Hono は `views.tsx`） | `LoginPageParams.googleSignIn`（`g_id_onload` の属性）。既定のログイン画面はパスワードフォームの下に GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。UI は生成コード側にあるので自由に変えられる |
-| `routes/login.ts` | GET `/login` でトランザクションに束縛した nonce を発行してボタンを描画。`POST /login/google`（`login_uri`）で `handleGoogleLoginRedirect` → `resolveGoogleLoginSubject` → パスワードログインと同じセッション確立 → `/consent` |
-| `store.ts` | `googleLoginNonceStore`（インメモリ / `JsonStoreBackend` 両方）と、Google アカウントを `google:<sub>` の subject で JIT 登録する `userStore.linkGoogleAccount()`。CLI の `--db` 付きでは `db/stores.ts` が同じ 2 つを、`--db sql` なら SQL のテーブル（`upstream_auth_requests`、`users`、`federated_identities`）で、`--db kv` なら同じ名前のキーで実装する |
-| `app.ts` | `googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）と `googleAccountResolver`（既定は `linkGoogleAccount`）を差し替えられるオプション |
-| Next.js: `login/page.tsx`, `login/google/route.ts`, `_oidc-provider/provider.ts` | ページ側で `<div {...googleSignIn} />` と `next/script` による描画、`login_uri` の Route Handler（Node.js ランタイム。失敗は OP のエラーページ `oidc-error/page.tsx` へ 303 でリダイレクトして表示）、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` の読み取り |
+| `features/google-login/config.ts` | `GoogleLoginConfig`（`clientId` / 任意の `hostedDomain` / `requireVerifiedEmail`）。`declare module` で `config.ts` の `ProviderConfig` に `googleLogin?` を、`app.ts` の `OidcProviderOptions` に `googleIdTokenVerifier?` / `googleAccountResolver?` を足す。`config.googleLogin` が未設定ならボタンは出ず、`/login/google` は 404 |
+| `features/google-login/feature.ts` | 機能の宣言。`routes` で `POST /login/google` をマウントし、`context` でリクエストごとに nonce ストア、`googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）、`googleAccountResolver`（既定は `userStore.linkFederatedIdentity` による JIT 登録）を入れ、`loginMethods` でボタンをログイン画面に足す |
+| `features/google-login/login-method.tsx`、`views.tsx` | ログイン画面のボタン。`buildGoogleSignIn()` がトランザクションに束縛した nonce を `issueGoogleLoginNonce` で発行して `g_id_onload` の属性を組み立て、`views.tsx` の `googleSignInButton` が GIS の 3 要素（スクリプト / `g_id_onload` / `g_id_signin`）を書き出す。ログイン画面（`endpoints/login/page.tsx`）では `describe-login-screen` のステップが `loginMethods` からこれを描画し、パスワードフォームの下に置く。`googleSignInButton` は `declare module` で `Views` に足したメンバーなので、`createApp()` / `applyOidc()` の `views` で差し替えられる |
+| `features/google-login/endpoints/login-google/` | `login_uri`（`POST /login/google`）。`page.ts` が `pipeline.ts` の `completeGoogleLogin()` を呼び、`steps/` を `verify-google-callback`（`handleGoogleLoginRedirect` → `resolveGoogleLoginSubject`）→ `load-transaction` → `discard-session-for-fresh-login` → `establish-session` → `hand-off-to-consent` の順に実行して `/consent` へ進む。後ろの 4 つはパスワードログインのステップ（`endpoints/login/steps/`）そのもの。失敗は OP のエラー画面（`pages/errors.tsx`）に `GoogleLoginError` の `httpStatusCode` で表示する |
+| `features/google-login/store.ts` | パッケージの `GoogleLoginNonceStore` を `db/` の `upstreamLoginStore` の上に作る `createGoogleLoginNonceStore()` と、検証済みの Google アカウントを Federated_identity にする `googleAccountToFederatedIdentity()` |
+| Next.js: `_oidc-provider/features/google-login/` | `config.ts` は `GoogleLoginConfig` と `declare module` による `ProviderConfig.googleLogin?` に加え、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` を読む `readGoogleLoginConfig()` を持ち（`GOOGLE_CLIENT_ID` が無ければ未設定）、`feature.ts` がそれを `config` のフックで設定に重ね、`loginMethods` でボタンを足す。`login-method.tsx` はログイン画面（`login/page.tsx`）のボタンで、nonce の発行は Hono と同じ。`next/script` の `<Script>` と `<div {...googleSignIn} />` で描画する。`store.ts` は Hono と同じ |
+| Next.js: `(google-login)/login/google/route.ts` | `login_uri` の Route Handler（Node.js ランタイム）。`handleGoogleLoginRedirect` → `resolveGoogleLoginSubject` → `getAuthTransaction` → パスワードログインと共有する `login/session.ts` の `startSession()` → `/consent`。失敗は OP のエラーページ `oidc-error/page.tsx` へ 303 でリダイレクトして表示する。`googleIdTokenVerifier`（既定は `getDefaultGoogleIdTokenVerifier()`）と `googleAccountResolver`（既定は `userStore.linkFederatedIdentity`）はこのファイルの定数 |
 
-生成コードは `config.googleLogin` が無いときはボタンを描画せず `/login/google` を 404 で閉じるので、まず生成だけしておき、Google Cloud コンソールの準備ができてから `clientId` を渡す、という順でも動く。`login_uri` は `new URL('/login/google', config.issuer)` で組み立てるため、Google 側には `<issuer>/login/google` を登録する。
+生成コードは `config.googleLogin` が無いときはボタンを描画せず `/login/google` を 404 で閉じるので、まず生成だけしておき、Google Cloud コンソールの準備ができてから `clientId` を渡す（Next.js では `GOOGLE_CLIENT_ID` を設定する）、という順でも動く。`login_uri` は `new URL('/login/google', config.issuer)` で組み立てるため、Google 側には `<issuer>/login/google` を登録する。
 
-Google アカウントはパスワードのユーザーとは別に扱われ、subject は `google:<Google の sub>` になる（`email` は変わりうるので識別子にしない）。CLI の `--db` 付きでは、初めてのログインでランダムな ID のユーザーを作ってそれを subject にし、Google の sub は Federated_identity（`--db sql` は `federated_identities` テーブル、`--db kv` は `federated_identity:` のキー）に記録して同じ人かの判断に使う。`name` / `given_name` / `family_name` / `picture` / `locale` / `email` / `email_verified` は ID トークンからそのままクレームに写す。既存ユーザーと紐付けたい場合は `applyOidc(app, { googleAccountResolver })` で差し替える。
+Google アカウントはパスワードのユーザーとは別に扱われる。保存先の種類（`--db` 無しのメモリ、`--db sql`、`--db kv`）によらず、初めてのログインでランダムな ID のユーザーを作ってそれを subject にし、Google の sub は Federated_identity（`--db` 無しは `db/` のメモリ、`--db sql` は `federated_identities` テーブル、`--db kv` は `federated_identity:` のキー）に記録して同じ人かの判断に使う（`email` は変わりうるので識別子にしない）。ログイン画面で発行した nonce も `db/` の `upstreamLoginStore`（`--db sql` は `upstream_auth_requests` テーブル、`--db kv` は `upstream_auth_request:` と `upstream_nonce:` のキー）に置く。Next.js の保存先は `_oidc-provider/db/` で、中身は同じ。`name` / `given_name` / `family_name` / `picture` / `locale` / `email` / `email_verified` は ID トークンからそのままクレームに写す。既存ユーザーと紐付けたい場合は、Hono / Express / Fastify では `applyOidc(app, { googleAccountResolver })`（`createApp()` も同じオプションを受け取る）で、Next.js では `(google-login)/login/google/route.ts` の `googleAccountResolver` を書き換えて差し替える。
 
 配線済みの実例は本リポジトリの `samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel`（いずれも `GOOGLE_CLIENT_ID` を設定すると有効化）を参照。`samples/hono-cloudflare` は Cloudflare Workers 向けで `google-auth-library` が動かないため有効にしていない。
 
 ## 生成コードへの配線
 
-CLI を使わずに組み込む場合（または `--enable google-login` が `routes/login.ts` に生成するものを知りたい場合）の例。CLI が生成するログインルートと同じ材料（`transactionStore` / `authSessionStore` / `browserSessionStore` / `views`）を使って、GET のログイン画面にボタンを足し、`login_uri` のルートを 1 つ追加する。以下は Hono の例。
+CLI を使わずに組み込む場合の例。`--enable google-login` の生成コードは同じ処理を、前節の表のとおりボタン（`features/google-login/login-method.tsx`）と `login_uri` のステップ（`features/google-login/endpoints/login-google/steps/`）に分けて持つ。ここでは生成コードのログインのステップと同じ材料（`ProviderStores` の `transactionStore` / `authSessionStore` / `browserSessionStore` と `views`）を使って、GET のログイン画面にボタンを足し、`login_uri` のルートを 1 つ追加する。以下は Hono の例。
 
 ```typescript
 import { Hono } from 'hono';
@@ -233,17 +234,21 @@ import {
   buildGoogleSignInAttributes,
   type GoogleSignInAttributes,
 } from '@maronn-openid-connect/google-login/sign-in';
-import { transactionStore, authSessionStore, browserSessionStore, buildSessionCookie, userStore } from './store.js';
-import { defaultProviderConfig } from './config.js';
+// アプリ側の OP のストアとセッション Cookie、issuer。CLI の生成コードでは ProviderStores（db/ の
+// createProviderStores()）の同名のストアと、cookies.ts の buildSessionCookie() にあたる
+import { transactionStore, authSessionStore, browserSessionStore, userStore } from './stores.js';
+import { buildSessionCookie } from './cookies.js';
+import { issuer } from './config.js';
 
 const googleLoginConfig = {
   clientId: process.env.GOOGLE_CLIENT_ID!,
   // Google Cloud コンソールの「承認済みのリダイレクト URI」と完全一致させる
-  loginUri: new URL('/login/google', defaultProviderConfig.issuer).toString(),
+  loginUri: new URL('/login/google', issuer).toString(),
 };
 
 // nonce → transaction_id の記録。core の AuthTransactionStore と同じ KV 契約
-// （ここではインメモリ。TTL の扱いは consumeGoogleLoginNonce が期限を見るので省いてよい）
+// （ここではインメモリ。TTL の扱いは consumeGoogleLoginNonce が期限を見るので省いてよい）。
+// CLI の生成コードは features/google-login/store.ts で、db/ の upstreamLoginStore の上に作る
 const nonceRecords = new Map<string, GoogleLoginNonceRecord>();
 const googleLoginNonceStore: GoogleLoginNonceStore = {
   async get(key) {
@@ -258,7 +263,8 @@ const googleLoginNonceStore: GoogleLoginNonceStore = {
 };
 
 // Google アカウント → OP の subject。sub をキーにし、email はキーにしない。
-// findByGoogleSubject はアプリ側のユーザーストアに用意する（生成コードの userStore には無い）
+// findByGoogleSubject はアプリ側のユーザーストアに用意する（CLI の生成コードは代わりに
+// userStore.linkFederatedIdentity で、初めてのログインのときにユーザーを作る）
 const googleAccountResolver: GoogleAccountResolver = {
   async resolveSubject(account) {
     return (await userStore.findByGoogleSubject(account.sub))?.sub ?? null;
@@ -310,7 +316,7 @@ googleLoginApp.post('/', async (c) => {
   await authSessionStore.set(login.transactionId, { subject, authTime, sessionId });
 
   // 同意画面は CLI 生成コードと同じく、トランザクション Cookie からトランザクションを引く
-  return c.redirect(new URL('/consent', defaultProviderConfig.issuer).toString());
+  return c.redirect(new URL('/consent', issuer).toString());
 });
 ```
 

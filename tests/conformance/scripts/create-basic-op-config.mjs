@@ -5,6 +5,74 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const BASIC_OP_TEST_PLAN =
   'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
 
+/**
+ * The modules of the Basic OP plan, in its order (OIDCCBasicTestPlan of the
+ * conformance suite). A run names them only to leave the manual review ones
+ * out; the suite ignores a name its plan does not have.
+ */
+const BASIC_OP_MODULES = [
+  'oidcc-server',
+  'oidcc-response-type-missing',
+  'oidcc-idtoken-signature',
+  'oidcc-idtoken-unsigned',
+  'oidcc-userinfo-get',
+  'oidcc-userinfo-post-header',
+  'oidcc-userinfo-post-body',
+  'oidcc-ensure-request-without-nonce-succeeds-for-code-flow',
+  'oidcc-scope-profile',
+  'oidcc-scope-email',
+  'oidcc-scope-address',
+  'oidcc-scope-phone',
+  'oidcc-scope-all',
+  'oidcc-alternate-happy-flow',
+  'oidcc-display-page',
+  'oidcc-display-popup',
+  'oidcc-prompt-login',
+  'oidcc-prompt-none-not-logged-in',
+  'oidcc-prompt-none-logged-in',
+  'oidcc-max-age-1',
+  'oidcc-max-age-10000',
+  'oidcc-ensure-request-with-unknown-parameter-succeeds',
+  'oidcc-id-token-hint',
+  'oidcc-login-hint',
+  'oidcc-ui-locales',
+  'oidcc-claims-locales',
+  'oidcc-ensure-request-with-acr-values-succeeds',
+  'oidcc-codereuse',
+  'oidcc-codereuse-30seconds',
+  'oidcc-ensure-registered-redirect-uri',
+  'oidcc-ensure-post-request-succeeds',
+  'oidcc-server-client-secret-post',
+  'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported',
+  'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported',
+  'oidcc-claims-essential',
+  'oidcc-ensure-request-object-with-redirect-uri',
+  'oidcc-refresh-token',
+  'oidcc-ensure-request-with-valid-pkce-succeeds',
+];
+
+/**
+ * The modules that wait for a screenshot (manual review; see the README). An
+ * unattended run never uploads one, and run-test-plan.py waits 240 s for each
+ * before it gives up.
+ */
+export const MANUAL_REVIEW_MODULES = [
+  'oidcc-prompt-login',
+  'oidcc-max-age-1',
+  'oidcc-ensure-registered-redirect-uri',
+];
+
+/**
+ * The test plan argument of run-test-plan.py: the whole Basic OP plan, or,
+ * with skipManualReview, its modules without the manual review ones
+ * (`<plan>:<module>,<module>`).
+ */
+export function basicOpTestPlan({ skipManualReview = false } = {}) {
+  if (!skipManualReview) return BASIC_OP_TEST_PLAN;
+  const automated = BASIC_OP_MODULES.filter((module) => !MANUAL_REVIEW_MODULES.includes(module));
+  return `${BASIC_OP_TEST_PLAN}:${automated.join(',')}`;
+}
+
 const DEFAULT_ALIAS = 'maronn-basic-op';
 const DEFAULT_OP_ISSUER = 'https://op-tls:3443';
 const DEFAULT_SUITE_BASE_URL = 'https://conformance-nginx:8443';
@@ -124,7 +192,7 @@ export function createBasicOpConformanceArtifacts(options = {}) {
   const clients = createStaticClients(redirectUris, clientJwks);
 
   return {
-    testPlan: BASIC_OP_TEST_PLAN,
+    testPlan: basicOpTestPlan({ skipManualReview: options.skipManualReview }),
     sampleApp,
     config: {
       alias,
@@ -173,6 +241,7 @@ export async function writeBasicOpConformanceArtifacts(options = {}) {
   const configPath = join(outDir, 'basic-op-config.json');
   const clientsPath = join(outDir, 'oidc-clients.json');
   const metadataPath = join(outDir, 'metadata.json');
+  const testPlanPath = join(outDir, 'test-plan.txt');
 
   await writeJsonFile(configPath, artifacts.config);
   await writeJsonFile(clientsPath, artifacts.clients);
@@ -182,6 +251,7 @@ export async function writeBasicOpConformanceArtifacts(options = {}) {
     configPath,
     clientsPath,
   });
+  await writeFile(testPlanPath, `${artifacts.testPlan}\n`);
 
   return {
     ...artifacts,
@@ -189,6 +259,7 @@ export async function writeBasicOpConformanceArtifacts(options = {}) {
       configPath,
       clientsPath,
       metadataPath,
+      testPlanPath,
     },
   };
 }
@@ -321,6 +392,9 @@ async function main() {
     clientJwks: process.env.CONFORMANCE_CLIENT_JWKS
       ? JSON.parse(process.env.CONFORMANCE_CLIENT_JWKS)
       : undefined,
+    // CONFORMANCE_SKIP_MANUAL_REVIEW=1 (CI) leaves out the modules that wait
+    // for a screenshot.
+    skipManualReview: process.env.CONFORMANCE_SKIP_MANUAL_REVIEW === '1',
   });
 
   console.log(JSON.stringify({

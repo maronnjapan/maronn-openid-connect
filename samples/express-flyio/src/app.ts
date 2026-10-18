@@ -7,11 +7,10 @@ import {
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
-import type { ClientRegistration, GoogleLoginConfig } from './oidc-provider/config.js';
-import { registerClient } from './oidc-provider/db/clients.js';
-import { createDatabase } from './oidc-provider/db/instance.js';
-import { registerUser } from './oidc-provider/db/users.js';
-import { UserStore } from './oidc-provider/store.js';
+import type { ClientRegistration } from './oidc-provider/config.js';
+import { createDatabase, registerClient, registerUser } from './oidc-provider/db/index.js';
+import { developmentUsers } from './oidc-provider/development.js';
+import type { GoogleLoginConfig } from './oidc-provider/features/google-login/config.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? '3010');
@@ -36,12 +35,10 @@ for (const client of clients.values()) {
 }
 
 // Users are read from the users table too. E2E and the conformance suite sign
-// in as the development users of store.ts (testuser / otheruser, password
-// "password"), so they are registered there with their claims.
-const developmentUsers = new UserStore();
-for (const username of ['testuser', 'otheruser']) {
-  const user = developmentUsers.authenticate(username, 'password');
-  if (user) await registerUser(createDatabase(), user);
+// in as the development users of development.ts (testuser / otheruser,
+// password "password"), so they are registered there with their claims.
+for (const user of developmentUsers) {
+  await registerUser(createDatabase(), user);
 }
 
 const allowNonPkceAuthorizationCodeFlow =

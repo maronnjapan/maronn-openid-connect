@@ -99,4 +99,4 @@ core の純関数            ← このパッケージ
 
 ## Wiring Example
 
-配線の実例としては CLI 生成コードそのものが最良のリファレンスです。`maronn-oidc generate hono` の出力（`routes/*.ts`）では、機能単位のステップ関数を仕様の順に呼び出しています。検証の削除や独自ステップの挿入は、この呼び出しの並びを書き換えて行えます。
+配線の実例としては CLI 生成コードそのものが最良のリファレンスです。`maronn-oidc generate hono` の出力（`endpoints/<endpoint>/pipeline.ts` と、ステップを 1 つずつ置いた `endpoints/<endpoint>/steps/`）では、機能単位のステップ関数を仕様の順に呼び出しています。検証の削除や独自ステップの挿入は、この呼び出しの並びを書き換えて行えます。

@@ -3,8 +3,9 @@
  *
  * `maronn-oidc generate` writes this file with the features of --enable /
  * --disable, one import and one entry each. To remove a feature by hand,
- * delete its line in both places, its directory under features/ and the
- * owner blocks that name it in the pipelines (with their imports).
+ * delete its line in both places, its directory under features/, the owner
+ * blocks that name it in the pipelines (with their imports) and the lines of
+ * its steps in the endpoint.ts files (with the edges to and from them).
  */
 import type { Feature } from './feature.js';
 import { pkce } from './pkce/feature.js';

@@ -33,9 +33,10 @@ export const endpoint = defineEndpoint({
     'respond-error',
   ],
   errorStep: 'respond-error',
-  // The grant is validated by one of two steps, chosen by grant_type: the
-  // chain goes from validate-grant-type through either of them. A grant a
-  // feature answers itself (a dispatch step) goes straight to respond.
+  // The grant is validated by the step of its grant_type: the chain goes from
+  // validate-grant-type through the step of each grant it forks to. A grant a
+  // feature answers itself (a dispatch step of that feature) goes straight to
+  // respond.
   edges: {
     chain: true,
     forks: [

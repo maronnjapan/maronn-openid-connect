@@ -12,8 +12,8 @@ export const endpoint = defineEndpoint({
   spec: 'OIDC Core 1.0 §3.1.2',
   rearrangeable: true,
   // Defined before the first step: the issuer of the provider. The response
-  // mode is declared there too (undefined until the resolve-jarm-response-mode
-  // step sets it), so the error step can read it whichever step failed.
+  // mode is declared there too (undefined unless a step of a feature, such as
+  // JARM's, sets it), so the error step can read it whichever step failed.
   initial: ['issuer'],
   steps: [
     'parse-request',

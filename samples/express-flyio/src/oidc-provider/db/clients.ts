@@ -148,7 +148,7 @@ function parseJwk(clientId: string, json: string): Jwk {
  * ClientRegistration (config.ts):
  *
  *   // createDatabase(c) where the request context exists, when instance.ts
- *   // reads it (D1 or other bindings of c.env)
+ *   // reads it (in the Hono output, a binding of c.env such as D1)
  *   const db = createDatabase();
  *   await registerClient(db, {
  *     clientId: 'my-client',

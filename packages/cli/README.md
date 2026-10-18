@@ -11,14 +11,16 @@ Hono / Express / Fastify / Next.js 向けに、Authorization Code Flow（OAuth 2
 
 | 生成ファイル | 並んでいる関数（`maronn-oidc graph --detail steps` の箱） |
 |---|---|
-| `routes/authorize.ts` | `parseAuthorizationRequest` → `resolveAuthorizationClient` → `resolveRequestObject` → `resolveRedirectTarget` → `validateAuthorizationRequestParams` → `createAuthorizationTransaction` → `rejectCombinedPromptNone` → `verifyIdTokenHint` → `completePromptNoneRequest` → `reuseExistingSession` → `continueToLogin`（`prompt=none` と SSO は `issueAuthorizationCodeResponse` を呼ぶ） |
-| `routes/token.ts` | `parseTokenRequest` → `authenticateTokenClient` → `validateTokenGrantType` → `validateAuthorizationCodeGrant` / `validateRefreshTokenGrant` → `selectTokenSigningKeys` → `resolveTokenSubject` → `decideRefreshTokenIssuance` → `resolveTokenAcrAmr` → `issueAccessToken` → `issueIdToken` → `persistAccessToken` → `issueRefreshToken` → `revokeRotatedRefreshToken` → `buildTokenResponse` → `respondToken` |
-| `routes/userinfo.ts` | `parseUserInfoRequest` → `resolveUserInfoToken` → `resolveUserInfoResponseClaims` → `buildUserInfoResponse` → `respondUserInfo` |
-| `routes/introspection.ts` | `parseIntrospectionRequest` → `authenticateIntrospectionClient` → `resolveIntrospectedToken` → `describeIntrospectedToken` → `respondIntrospection`（`jwt-introspection-response` 有効時は `signIntrospectionResponse` が入る） |
-| `routes/revocation.ts` | `parseRevocationRequest` → `authenticateRevocationClient` → `resolveRevocationTokenTarget` → `revokeToken` → `respondRevocation` |
-| `routes/login.ts` / `routes/consent.ts` | `loadTransaction` → `validateLoginCsrfToken` → `authenticateEndUser` → `establishBrowserSession` → `handOffToConsent` のような画面の判断。GET と POST の流れが順番を決めるため、`prepareLogin()` / `submitLogin()` などの入口がこれらを決まった順で呼ぶ |
+| `endpoints/authorize/pipeline.ts` | `parseAuthorizationRequest` → `resolveAuthorizationClient` → `resolveRequestObject` → `resolveRedirectTarget` → `validateAuthorizationRequestParams` → `createAuthorizationTransaction` → `rejectCombinedPromptNone` → `verifyIdTokenHint` → `completePromptNoneRequest` → `reuseExistingSession` → `continueToLogin`（`prompt=none` と SSO は `issueAuthorizationCodeResponse` を呼ぶ） |
+| `endpoints/token/pipeline.ts` | `parseTokenRequest` → `authenticateTokenClient` → `validateTokenGrantType` → `validateAuthorizationCodeGrant` / `validateRefreshTokenGrant` → `selectTokenSigningKeys` → `resolveTokenSubject` → `decideRefreshTokenIssuance` → `resolveTokenAcrAmr` → `issueAccessToken` → `issueIdToken` → `persistAccessToken` → `issueRefreshToken` → `revokeRotatedRefreshToken` → `buildTokenResponse` → `respondToken` |
+| `endpoints/userinfo/pipeline.ts` | `parseUserInfoRequest` → `resolveUserInfoToken` → `resolveUserInfoResponseClaims` → `buildUserInfoResponse` → `respondUserInfo` |
+| `features/introspection/endpoints/introspection/pipeline.ts` | `parseIntrospectionRequest` → `authenticateIntrospectionClient` → `resolveIntrospectedToken` → `describeIntrospectedToken` → `respondIntrospection`（`jwt-introspection-response` 有効時は `signIntrospectionResponse` が入る） |
+| `features/revocation/endpoints/revocation/pipeline.ts` | `parseRevocationRequest` → `authenticateRevocationClient` → `resolveRevocationTokenTarget` → `revokeToken` → `respondRevocation` |
+| `endpoints/login/pipeline.ts` / `endpoints/consent/pipeline.ts` | `loadTransaction` → `validateLoginCsrfToken` → `authenticateEndUser` → `establishBrowserSession` → `handOffToConsent` のような画面の判断。GET と POST の流れが順番を決めるため、`prepareLogin()` / `submitLogin()` などの入口がこれらを決まった順で呼ぶ |
 
-ID Token へ独自クレームを足すなら `routes/token.ts` の `issueIdToken()` を書き換える、といった改修が生成コード上で完結する。
+表のパスは Hono / Express / Fastify の生成物のもので、関数はステップごとに `steps/<step-id>.ts`（機能のステップは `features/<id>/` の下）にある。
+Next.js の構成は [Next.js の生成物](#nextjs-の生成物)を参照。
+ID Token へ独自クレームを足すなら `endpoints/token/steps/issue-id-token.ts` の `issueIdToken()` を書き換える、といった改修が生成コード上で完結する。
 この関数の分け方は `maronn-oidc graph` が描く図の箱と一致し、図の元になる JSON を編集して生成することもできる（[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照）。
 
 ## インストールと実行
@@ -60,7 +62,7 @@ maronn-oidc graph [framework] [options]
 | `--enable <features>` | 有効化する機能（カンマ区切り・複数回指定可） |
 | `--disable <features>` | 既定セットから外す機能（カンマ区切り・複数回指定可） |
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
-| `--db <sql\|kv>` | クライアント、ユーザー、認可コード、トークンなどのデータを、SQL のテーブル（`sql`）かキー・バリューストア（`kv`）に保存する（`db/` を生成する。[DB に保存する（--db）](#db-に保存する--db)を参照） |
+| `--db <sql\|kv>` | クライアント、ユーザー、認可コード、トークンなどのデータを、SQL のテーブル（`sql`）かキー・バリューストア（`kv`）に保存する。指定しなければ、データは `db/` のメモリに入る（[DB に保存する（--db）](#db-に保存する--db)を参照） |
 | `--flow <file>` | `graph --format json` が書いたフロー文書（編集済みでもよい）から生成、または描画する。`--enable` / `--disable` / `--scope` / `--db` の代わりになり、同時には指定できない（[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照） |
 | `--format <mermaid\|json>` | `graph` のみ。Mermaid の flowchart（既定）か、JSON のフロー文書 |
 | `--detail <endpoints\|steps>` | `graph` のみ。エンドポイントごとに 1 箱（既定）か、各エンドポイントの中のステップを関数 1 つにつき 1 箱で描く |
@@ -82,26 +84,46 @@ maronn-oidc graph [framework] [options]
 
 ## 生成されるもの
 
+Hono、Express、Fastify の出力は次の構成になる。Express と Fastify には `web-router.ts` と `node-adapter.ts` が加わり、`apply.ts` がそのフレームワーク用のものになる。
+
 ```
 oidc-provider/
-├── app.ts / apply.ts     # OP 本体と既存アプリへの組み込み関数
-├── config.ts             # ProviderConfig・クライアント登録（既定値はローカル検証専用）
-├── store.ts              # インメモリストア（認可コード・トークン・セッション等）
-├── resolvers.ts          # セッション・同意状態の resolver
-├── views.ts              # ログイン / 同意 / エラー画面のデフォルト HTML（Hono は views.tsx の JSX コンポーネント）
-├── pages/                # 画面用ルーティング（ブラウザ向けの GET/POST。描画・リダイレクト・Cookie 付与はすべてここ。UI カスタマイズはここ）
-├── routes/               # API ルーティング（ロジック本体。処理の段階ごとに export 関数 1 つ。ブラウザ向けステップは Response を返さず結果（outcome）を返す関数）
-├── db/                   # --db 指定時のみ。テーブル定義（sql）かキーの一覧（kv）、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
+├── app.ts                # OP 本体を作る createApp() と、そのオプションの型 OidcProviderOptions
+├── apply.ts              # 既存アプリへの組み込み関数 applyOidc()
+├── config.ts             # ProviderConfig の型と既定値、クライアントの型（RegisteredClient / ClientRegistration）
+├── store.ts              # ストアの契約 ProviderStores の型（実装は db/stores.ts）
+├── resolvers.ts          # ストアの上に作る core の resolver（認可コード、トークン、セッション、同意）
+├── cookies.ts            # セッション Cookie とトランザクション Cookie、フォームの送信元の確認
+├── cors.ts               # CORS のミドルウェア
+├── scopes.ts             # スコープポリシー（--scope の値と、ユーザーごとの絞り込み）
+├── development.ts        # 試用のための開発用ユーザー（testuser / otheruser）
+├── views.tsx             # ログイン、同意、エラー画面のデフォルト（hono/jsx のコンポーネント）
+├── pages/                # 画面に共通の部品（エラー画面の描画と、Cookie 付きのリダイレクト）
+├── endpoints/            # どの OP にもあるエンドポイント。1 つにつき 1 ディレクトリで、ハンドラーとステップのファイルが入る
+├── features/             # 機能ごとのディレクトリ features/<id>/、フックの型 feature.ts、有効な機能の一覧 enabled.ts
+├── db/                   # データの読み書き。--db 無しはメモリ、--db sql はテーブル、--db kv はキー・バリューストア（instance.ts だけは利用者が書く）
+├── web-router.ts         # Express / Fastify のみ。エンドポイントが Hono の代わりに使う Fetch API のルーター
+├── node-adapter.ts       # Express / Fastify のみ。Node.js のリクエストとレスポンスを Fetch API の Request / Response に変換する
 └── .maronn-openid-connect.json  # 生成元の CLI バージョン、機能構成、--flow で並べ替えたステップの記録
 ```
 
-Next.js は App Router のファイル規約に沿った別の構成になる（[Next.js の生成物](#nextjs-の生成物)を参照）。
+エンドポイントのディレクトリの中身と、機能がどこに入るかは[エンドポイントの組み立て](#エンドポイントの組み立て)を参照。Next.js は App Router のファイル規約に沿った別の構成になる（[Next.js の生成物](#nextjs-の生成物)を参照）。
 
-Hono の出力は TSX 前提で生成される。画面のマークアップ（`views.tsx`）は [hono/jsx](https://hono.dev/docs/guides/jsx) のコンポーネントで、画面を描く `pages/`（`errors` / `login` / `consent`、機能有効時は `device` / `ciba` / `logout`）も `.tsx` になり、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画する。HTML を返さない `pages/authorize.ts` と `pages/respond.ts` は `.ts` のまま。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できる。
+### 生成元のアプリとファイルの選び方
 
-ビューは JSX 要素を返すコンポーネントで、`createApp` / `applyOidc` の `views` オプションで差し替えるときも `loginPage: (params) => <MyLoginPage {...params} />` のように書く。別の手段で組み立てた HTML を返すときは `hono/html` の `html` タグか `raw()` で包む（`raw()` は渡した文字列をそのまま信頼するので、エスケープ済みの HTML だけを渡す）。ステータスやヘッダーなど Response そのものを変えたいときは、`pages/*.tsx` の `render*Page()` を書き換える。
+生成コードは、このモノレポで動いている OP のアプリのコードを写したものである。Hono、Express、Fastify は `apps/hono/src/oidc-provider/` から、Next.js は `apps/nextjs/src/app/`（App Router）から写す。Express と Fastify には、`apps/hono/src/web/` からフレームワークごとの `apply.ts`（`web/express/apply.ts` か `web/fastify/apply.ts`）と、`web-router.ts`、`node-adapter.ts` を加え、生成コードが import する Hono のルーター（`Hono` と型の `Context`）を `web-router.ts` の `WebRouter` と `WebContext` に置き換える。写す元は `packages/cli/extract.json` に書かれており、テスト（`*.test.ts`、`*.test.tsx`）と Next.js の `app/layout.tsx` は写さない。
 
-コンパイルには `tsconfig.json` で JSX を有効にしておく必要がある。
+`generate` は、写すファイルを機能構成とデータの保存先から選ぶ。どの機能にもデータの保存先の種類にも属さないファイルはすべて写し、機能のファイル（`features/<id>/`、Next.js はルートグループ `(<id>)/` と `_oidc-provider/features/<id>/`）は有効な機能のものだけを写す。データの保存先は `db/memory/`、`db/sql/`、`db/kv/` のうち 1 つ（`--db` 無しは `memory`）を選んで出力の `db/` の直下に置き、その種類の `index.ts` が出力の `db/index.ts` になる。そのうえで、機能の一覧（`features/enabled.ts`、Next.js は `_oidc-provider/features.ts`）を有効な機能だけにし、`scopes.ts` の `CUSTOM_SCOPES` に `--scope` の値を書き込み、無効な機能のブロックをパイプラインから取り除く（[機能の差し込み](#機能の差し込み)を参照）。
+
+生成コードの挙動を変えるときは、CLI ではなく `apps/hono` か `apps/nextjs` のコードを、隣に置いた単体テストと一緒に変える。CLI のビルド（`pnpm run build`）がそのコードを `packages/cli/templates/` に写し、`generate` はそこから出力を作る。
+
+### 画面の JSX（hono/jsx）
+
+Hono、Express、Fastify の画面は [hono/jsx](https://hono.dev/docs/guides/jsx) で書かれている。画面のマークアップ（`views.tsx`、機能の画面は `features/<id>/views.tsx`）は hono/jsx のコンポーネントで、画面のルートを持つ `page.tsx`（`endpoints/login/`、`endpoints/consent/`、機能有効時は `features/<id>/endpoints/` の `device`、`ciba`、`logout`）とエラー画面の `pages/errors.tsx` が、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画する。HTML を返さない `endpoints/authorize/page.ts`、`pages/respond.ts`、google-login の `features/google-login/endpoints/login-google/page.ts` は `.ts` のまま。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できる。
+
+ビューは JSX 要素を返すコンポーネントで、`createApp` / `applyOidc` の `views` オプションで差し替えるときも `loginPage: (params) => <MyLoginPage {...params} />` のように書く。別の手段で組み立てた HTML を返すときは `hono/html` の `html` タグか `raw()` で包む（`raw()` は渡した文字列をそのまま信頼するので、エスケープ済みの HTML だけを渡す）。ステータスやヘッダーなど Response そのものを変えたいときは、その画面の `page.tsx` の `render*Page()`（エラー画面は `pages/errors.tsx` の `renderErrorPage()`）を書き換える。
+
+Express と Fastify の生成物も画面は hono/jsx のままなので、`hono` もインストールする（`generate` の最後に、`pnpm add express hono @maronn-openid-connect/core` のようなフレームワークごとのコマンドが表示される）。3 つのどれでも、コンパイルには `tsconfig.json` で JSX を有効にしておく必要がある。
 
 ```jsonc
 {
@@ -112,47 +134,89 @@ Hono の出力は TSX 前提で生成される。画面のマークアップ（`
 }
 ```
 
-`.maronn-openid-connect.json` は、どの CLI バージョン・どの機能構成（`framework` / `features` / `scopes` / `db`）から生成されたかと、`--flow` で並べ替えたステップとエンドポイントの順番（`steps` / `endpointOrder`。並べ替えていなければ `null`）を記録するマニフェスト（[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照）。テンプレートへ仕様修正が入ったとき、リリースノートと突き合わせて「自分のコードがどの版から生成されたか」を特定する起点になる。利用者が編集するファイルではないため、上書き保護の対象外として毎回更新される（生成日時は含めず、同じ入力からは同じ出力になる）。
+### 生成のマニフェスト（.maronn-openid-connect.json）
 
-生成される OP のエンドポイント:
+`.maronn-openid-connect.json` は、どの CLI バージョン、どの機能構成（`framework` / `features` / `scopes` / `db`）から生成されたかと、`--flow` で並べ替えたステップとエンドポイントの順番（`steps` / `endpointOrder`。並べ替えていなければ `null`）を記録するマニフェスト（[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照）。生成元のコードへ仕様修正が入ったとき、リリースノートと突き合わせて「自分のコードがどの版から生成されたか」を特定する起点になる。利用者が編集するファイルではないため、上書き保護の対象外として毎回更新される（生成日時は含めず、同じ入力からは同じ出力になる）。
+
+### 生成される OP のエンドポイント
 
 | パス | 役割 |
 |---|---|
 | `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応） |
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
-| `/login`, `/consent` | ログイン・同意画面。ルート（GET / POST）と描画は `pages/`、認証・同意の判断は `routes/` の関数が担当する（差し替え可能なデフォルト UI 付き。Next.js はページと Server Action） |
+| `/login`, `/consent` | ログイン画面と同意画面。ルート（GET / POST）と描画は `endpoints/login/page.tsx` と `endpoints/consent/page.tsx`、認証と同意の判断は同じディレクトリの `pipeline.ts` が呼ぶステップが担当する（差し替え可能なデフォルト UI 付き。Next.js はページと Server Action） |
 | `/login/google` | Sign in with Google の `login_uri`（Google が ID トークンを POST する先。`google-login` 有効時） |
 | `/.well-known/openid-configuration` | Discovery メタデータ |
 | `/.well-known/jwks.json` | JWKS（公開鍵） |
 | `/introspect` | RFC 7662 Token Introspection（`introspection` 有効時） |
 | `/revoke` | RFC 7009 Token Revocation（`revocation` 有効時） |
 
-## 画面用ルーティング（pages/）と API ルーティング（routes/）
+## エンドポイントの組み立て
 
-生成されるルーティングは 2 種類に分かれている。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて `pages/` が担当し、`routes/` は Response を一切作らない。UI をカスタマイズするときに触るのは `pages/`（と `views.ts`、Hono は `views.tsx`）だけで、`routes/` のロジックは読まなくてよい。以下の `pages/login.ts` などのファイル名は、Hono では `authorize.ts` と `respond.ts` を除いて `.tsx` になる。
+Hono、Express、Fastify の生成物では、エンドポイント 1 つにつき 1 つのディレクトリ（`endpoints/<endpoint>/`、機能が足すエンドポイントは `features/<id>/endpoints/<endpoint>/`）があり、処理の段階（ステップ）ごとに `steps/<step-id>.ts` のファイルを 1 つ置く。ステップのファイルは、処理の本体である export 関数と、その関数を説明する `meta` を持つ。`meta` は `endpoints/step.ts` の `step()` で書き、ステップの ID、関数名、根拠になる仕様の節、読む値と作る値（`consumes` / `produces`）、`--flow` で消せるか（`removable`）を並べる。`maronn-oidc graph` はこの `meta` から図を描く。
 
-| 層 | ファイル | 役割 |
-|---|---|---|
-| 画面用ルーティング | `pages/authorize.ts` / `pages/login.ts` / `pages/consent.ts` / `pages/errors.ts` / `pages/respond.ts`（機能有効時: `pages/device.ts` / `pages/ciba.ts` / `pages/logout.ts`） | ブラウザ向けのルートは **GET も POST も** ここにある（`GET\|POST /authorize`・`GET\|POST /login`・`GET\|POST /consent` など）。リクエストを読み、`routes/` の関数を 1 回呼び、返ってきた結果（outcome）を画面かリダイレクトに変換する。ロジックは持たない |
-| API ルーティング | `routes/*.ts` | OIDC のロジック本体。`token` / `userinfo` などの JSON エンドポイントはルーターのまま。ブラウザ向けの各ステップ（`authorize` / `login` / `consent` / `device` / `ciba-verification` / `logout`）は Response を返さない関数（`processAuthorizationRequest()` / `prepareLogin()` / `submitLogin()` / `submitConsent()` など）で、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返す。描画・リダイレクト・`Set-Cookie`・`c.json()` は一切行わず、`views.ts` も `pages/` も import しない。各ファイルは処理の段階ごとに export 関数を 1 つ持ち（`routes/token.ts` なら `parseTokenRequest()` → `authenticateTokenClient()` → … → `respondToken()`）、ハンドラーはそれらを `// [parse-request]` のようなステップ ID のコメントを添えて順に呼ぶ。関数の並びは `maronn-oidc graph --detail steps` が描く箱の並びと同じ |
+| ファイル | 役割 |
+|---|---|
+| `endpoint.ts` | エンドポイントの説明（`defineEndpoint()`）。パス、メソッド、ステップの並び、図に描く矢印 |
+| `pipeline.ts` | ステップを順に呼ぶ。`token` / `userinfo` / `discovery` / `jwks` などの JSON を返すエンドポイントでは、このファイルがルーター（`tokenApp` など）を export し、ハンドラーがステップを呼ぶブロックを上から並べる。`authorize` / `login` / `consent` の `pipeline.ts` は Response を作らず、入口の関数（`processAuthorizationRequest()`、`prepareLogin()` / `submitLogin()`、`prepareConsent()` / `submitConsent()`）がステップを決まった順で呼んで、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返す |
+| `steps/<step-id>.ts` | ステップ 1 つ。core の機能単位の関数（クライアント認証、PKCE、scope、再利用検知、ID Token クレーム構築など）を呼ぶ |
+| `page.tsx`（`authorize` は `page.ts`） | ブラウザ向けのルート。**GET も POST も**ここにある。リクエストを読み、`pipeline.ts` の入口の関数を 1 回呼び、返ってきた outcome を画面かリダイレクトに変換する。ロジックは持たない。機能の画面（`device`、`ciba`、`logout`）は `pipeline.ts` を持たず、`page.tsx` が `steps/` の関数を呼ぶ |
+| `screen.ts` / `outcome.ts` | 画面に渡すデータ、フォームの入力、outcome の型 |
 
-たとえば `POST /login` は `pages/login.ts` がフォームを読んで `submitLogin()` を呼び、`{ kind: 'authenticated', cookies }` なら Cookie を付けて `/consent` へ 302、`{ kind: 'invalid_credentials' }` ならフォームを再表示、`{ kind: 'locked_out' }` なら 429 のエラー画面、という変換だけを行う。
+`pipeline.ts` のブロックは、ステップ ID のマーカーコメント（`// [step-id] Label — Spec`）で始まる。ブロックを消せばそのステップは実行されず、ブロックの間に独自の処理を書き足せる。ハンドラーの実例は[図の箱と生成コードの対応](#図の箱と生成コードの対応)にある。
+
+画面に共通の部品は `pages/` にある。`pages/errors.tsx` は OP のエラー画面を描く `renderErrorPage()` と、非リダイレクトの認可エラーを描く `renderAuthorizationErrorPage()` を持ち、`pages/respond.ts` は Cookie を付けて応答する `redirectWithCookies()` と `withCookies()` を持つ。
+
+たとえば `POST /login` は `endpoints/login/page.tsx` がフォームを読んで `submitLogin()` を呼び、`{ kind: 'authenticated', cookies }` なら Cookie を付けて `/consent` へ 302、`{ kind: 'invalid_credentials' }` ならフォームを再表示、`{ kind: 'locked_out' }` なら 429 のエラー画面、という変換だけを行う。
 
 UI を変える場所は、変えたい範囲で選ぶ。
 
-- **HTML だけ変える** → `views.ts`（Hono は `views.tsx`）の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
-- **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ `pages/*.ts` の `render*Page()` と outcome を変換している箇所を書き換える。画面を返す経路はすべて `pages/` を通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
-- **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `pages/*.ts` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
-- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.ts` の `renderAuthorizationErrorPage()`
+- **HTML だけ変える** → `views.tsx`（機能の画面は `features/<id>/views.tsx`）の `default*Page` を書き換えるか、`createApp` / `applyOidc` の `views` オプションで差し替える
+- **描画の仕方を変える**（テンプレートエンジン、フレームワークネイティブの Response、別に用意した UI へのリダイレクト）→ その画面の `page.tsx` の `render*Page()` と outcome を変換している箇所を書き換える。画面を返す経路はすべて `page.tsx` を通るので、`GET /login` もログイン失敗時の再表示も一緒に変わる
+- **画面遷移を変える**（ログイン後の遷移先、エラー時の見せ方など）→ `page.tsx` で `redirectWithCookies()` / `withCookies()`（`pages/respond.ts`）を呼んでいる箇所。付けるべき Cookie は outcome の `cookies` にそのまま入っている
+- **非リダイレクトの認可エラー（OIDC Core 1.0 §3.1.2.2）の見せ方を変える** → `pages/errors.tsx` の `renderAuthorizationErrorPage()`
 
-フォームの `name`（`csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `pages/` が `routes/` の関数へ渡す入力なので、画面を差し替えても維持する。トランザクション Cookie と `csrf_token` の照合や google-login のボタン設定（`buildGoogleSignIn()`）は判断なので `routes/login.ts` / `routes/consent.ts` にあり、`pages/` は返ってきた結果を描くだけでよい。
+フォームの `name`（`csrf_token` / `username` / `password`、同意の `action=approve|deny`）は `page.tsx` が入口の関数へ渡す入力なので、画面を差し替えても維持する。トランザクション Cookie と `csrf_token` の照合は `login` と `consent` のステップ（`load-transaction`、`validate-csrf-token`、`reject-cross-origin-post`）が行い、機能が足すログイン手段（google-login のボタンなら `features/google-login/login-method.tsx` の `buildGoogleSignIn()`）は `describe-login-screen` のステップが描画済みの部品にして渡すので、`page.tsx` は返ってきた結果を描くだけでよい。
+
+### 機能の差し込み
+
+機能のコードは `features/<id>/` にあり、その `feature.ts` が `features/feature.ts` の `defineFeature()` で、機能が OP に足すものを宣言する。どの OP にもあるコード（`features/<id>/` と `db/<kind>/` の外）は、後述するパイプラインの所有者付きブロックを除いて機能を import せず、`features/enabled.ts` の一覧から次のフックを読む。
+
+| フック | 機能が足すもの |
+|---|---|
+| `routes` | 機能のエンドポイント。`app.ts` がどの OP にもあるエンドポイントと同じようにマウントし、Express と Fastify の `apply.ts` もこの一覧のパスを OP へ渡す |
+| `discovery` | Discovery メタデータのメンバー。配列は OP がすでに載せている配列に足し、それ以外は置き換える |
+| `context` | リクエストのコンテキスト（`c.set()`）に入れる値。OP が入れた値と同じ名前なら置き換える |
+| `config` | `ProviderConfig` の既定値。`config.ts` の既定値の上に重なる |
+| `token.grants` | トークンエンドポイントで答える `grant_type`。受け付ける grant と `grant_types_supported` に入る |
+| `authorize.responseModes` | 機能が答える response mode。`/consent` は保存したトランザクションから、認可リクエストが求めた mode を戻す |
+| `loginMethods` | ログイン画面のパスワードのフォームの隣に出すログイン手段 |
+
+機能の設定、クライアントのメタデータ、オプション、画面の型は、機能のディレクトリから型を拡張して足す（`declare module '../../config.js'` で `ProviderConfig` と `RegisteredClient` に、`'../../app.js'` で `OidcProviderOptions` に、`'../../views.js'` で `Views` に。たとえば ciba は `features/ciba/config.ts` で `RegisteredClient` に `backchannelTokenDeliveryMode` を足す）。機能ごとの設定オブジェクト（`parConfig`、`rpInitiatedLogoutConfig` など）は `features/<id>/config.ts` にある。機能を外すと、これらはディレクトリごと消える。
+
+エンドポイントのパイプラインの中で動く処理は、フックではなく `pipeline.ts` の所有者付きブロックとして書かれている。ブロックのマーカーは `// [step-id] (feature: <id>) Label — Spec` で、そのステップのファイルは `features/<id>/` の下にある。たとえば `endpoints/token/pipeline.ts` には refresh-token の 4 つのブロックがあり、`features/refresh-token/steps/` のステップを呼ぶ。
+
+`generate` は、無効な機能のディレクトリを写さず、`features/enabled.ts` からその import と一覧の行を消し、パイプラインからその機能のブロックとその import を取り除く。取り除いたブロックが作っていた値を後のステップが読むなら、その値は `const <name> = undefined;` として残る（どの値かはステップの `meta` の `produces` で決まる）。読む側が無くなった変数の束縛も外す。たとえば `--disable refresh-token` の `endpoints/token/pipeline.ts` は次の形になる。
+
+```typescript
+    // [validate-grant-type] Validate grant_type — RFC 6749 §5.2
+    validateTokenGrantType(params, tokenClient);
+
+    const refreshTokenRequest = undefined;
+
+    // [validate-authorization-code-grant] Validate the authorization_code grant — OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2
+    const validatedRequest =
+      refreshTokenRequest ?? (await validateAuthorizationCodeGrant(c, params, authenticatedClientId));
+```
+
+生成した後で機能を手で外すときは、`features/enabled.ts` にあるその機能の import の行と一覧の行、`features/<id>/` に加えて、パイプラインにあるその機能のブロックも消す。
 
 ### 認可トランザクションの受け渡し（Cookie + csrf_token）
 
-`/authorize` から `/login`・`/consent` へ引き継ぐ認可トランザクションの ID は、URL にも HTML にも載せない。`/authorize` は ID を HttpOnly Cookie `__Host-oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡してクエリの無い `/login`（または `/consent`）へリダイレクトし、ログイン・同意画面は Cookie からトランザクションを引いて、フォームには `csrf_token`（Cookie とは別の乱数）だけを埋め込む。`POST /login`・`POST /consent` は、まずブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたかを確かめ（`store.ts` の `isSameOriginFormPost()`）、次に Cookie が指すトランザクションに対して `csrf_token` を照合する。同意の結果を返すときに Cookie は消える。
+`/authorize` から `/login` と `/consent` へ引き継ぐ認可トランザクションの ID は、URL にも HTML にも載せない。`/authorize` は ID を HttpOnly Cookie `__Host-oidc_txn`（`Secure; SameSite=Lax; Path=/; Max-Age=600`）でブラウザに渡してクエリの無い `/login`（または `/consent`）へリダイレクトし、ログイン画面と同意画面は Cookie からトランザクションを引いて、フォームには `csrf_token`（Cookie とは別の乱数）だけを埋め込む。`POST /login` と `POST /consent` は、まずブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたかを確かめ（`cookies.ts` の `isSameOriginFormPost()`。Next.js は `_oidc-provider/cookies.ts`）、次に Cookie が指すトランザクションに対して `csrf_token` を照合する。同意の結果を返すときに Cookie は消える。
 
-ID が URL から漏れて第三者に同意画面を開かれることはない（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 が実装に委ねている User-Agent の同一性の担保）。`__Host-` プレフィックスはサブドメインからの Cookie の設定（Cookie tossing）をブラウザに拒否させ、送信元チェックは Cookie と `csrf_token` の両方を握られた偽の POST でも止める。Cookie は同意の結果を返すまで残るので、ログイン・同意画面をリロードしても同じトランザクションのフォーム（同じ `csrf_token`）がもう一度表示される。Cookie はブラウザに 1 つなので、同じブラウザの別タブで新しい認可リクエストを始めると、先のタブのフォームは `csrf_token` が一致せず拒否される。curl などで手動で進めるときは Cookie を持ち回る（`curl -c jar.txt -b jar.txt`）。
+ID が URL から漏れて第三者に同意画面を開かれることはない（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 が実装に委ねている User-Agent の同一性の担保）。`__Host-` プレフィックスはサブドメインからの Cookie の設定（Cookie tossing）をブラウザに拒否させ、送信元チェックは Cookie と `csrf_token` の両方を握られた偽の POST でも止める。Cookie は同意の結果を返すまで残るので、ログイン画面や同意画面をリロードしても同じトランザクションのフォーム（同じ `csrf_token`）がもう一度表示される。Cookie はブラウザに 1 つなので、同じブラウザの別タブで新しい認可リクエストを始めると、先のタブのフォームは `csrf_token` が一致せず拒否される。curl などで手動で進めるときは Cookie を持ち回る（`curl -c jar.txt -b jar.txt`）。
 
 ## フロー図とフロー文書（graph / --flow）
 
@@ -203,7 +267,7 @@ flowchart LR
 
 ### 図の箱と生成コードの対応
 
-`--detail steps` の箱は、生成コードの export 関数と 1 対 1 で対応する。箱にはステップの ID、関数名、根拠になる仕様の節が書かれ、生成コードでは同じ ID が呼び出しの手前のコメントになる。たとえば `routes/token.ts` のハンドラーは次の形になる。
+`--detail steps` の箱は、生成コードの export 関数（ステップ 1 つにつき `steps/<step-id>.ts` の関数 1 つ）と 1 対 1 で対応する。箱にはステップの ID、関数名、根拠になる仕様の節が書かれ、生成コードでは同じ ID が呼び出しの手前のコメントになる。たとえば `endpoints/token/pipeline.ts` のハンドラーは次の形になる。
 
 ```typescript
 tokenApp.post('/', async (c) => {
@@ -241,7 +305,7 @@ maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
 
 文書で変えられるのは次の 4 つ。
 
-- **ステップを消す**：`removable: true` のステップ（`/token` の `resolve-acr-amr`、`issue-id-token`、`revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外す。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token や acr なら `undefined`）で補う
+- **ステップを消す**：`removable: true` のステップ（`/token` の `resolve-acr-amr`、`issue-id-token`、`revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外す。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token や acr なら `undefined`）で補う。消したステップのファイルは、ほかのファイルが import していなければ出力しない
 - **ステップを並べ替える**：値のやり取りが無いステップ同士は順番を変えられる。値を作るステップより前にそれを読むステップを置く、`after` / `before` の制約に反する、といった並びはエラーになる
 - **エンドポイントを並べ替える**：`endpoints` の順番は図の並びとしてマニフェストの `endpointOrder` に記録される。生成コードがエンドポイントをマウントする順番は変わらない
 - **機能を切り替える**：`features` の値を変えると、`--enable` / `--disable` と同じようにエンドポイントとステップが増減する。`scopes` と `db` も同様
@@ -259,58 +323,114 @@ maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
 
 ## Next.js の生成物
 
-Next.js では、App Router の機能をそのまま使ったコードを `--output`（例: `./src/app`）へ生成する。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いている。`/token` の挙動を知りたければ `token/route.ts` だけを読めばよい。
+Next.js では、`apps/nextjs/src/app/` の App Router のコードを `--output`（例: `./src/app`）へ写す。共通のルーターや独自のコンテキストは挟まず、エンドポイントごとの Route Handler にその処理を上から順に書いている。`/token` の挙動を知りたければ `token/route.ts` を上から読めばよく、機能の処理はそこから `_oidc-provider/features/<id>/` の関数を呼ぶブロックになっている。
 
 ```
 src/app/
-├── _oidc-provider/           # 全エンドポイントが共有する部品（private folder なのでルーティングされない）
-│   ├── provider.ts           # 設定・クライアント・署名鍵・ストアの組み立て。プロジェクトへ組み込むときに編集する場所
-│   ├── http.ts               # CORS・キャッシュ禁止の JSON 応答・パラメータ重複の検出・エラーページへのリダイレクトなど、Route Handler と Server Action 共通の部品
-│   ├── transaction.ts        # ログイン・同意が続ける認可トランザクションを Cookie から取得（無ければ notFound()）
-│   ├── error-view.tsx        # エラー画面の共通レイアウト（oidc-error・not-found・error の各画面が使う）
-│   ├── config.ts / store.ts / resolvers.ts  # 他のフレームワークと共通の設定型・ストア・resolver
-│   ├── storage-backend.ts    # Vercel 向け Upstash Redis REST とローカル SQLite のストア（--db 指定時は生成しない）
-│   └── db/                   # --db 指定時のみ。テーブル定義（sql）かキーの一覧（kv）、ストア、クライアントとユーザーの読み書き（instance.ts だけは利用者が書く）
-├── authorize/route.ts        # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
-├── token/route.ts            # POST /token
-├── userinfo/route.ts         # GET|POST /userinfo
-├── introspect/route.ts       # POST /introspect（introspection 有効時）
-├── revoke/route.ts           # POST /revoke（revocation 有効時）
-├── .well-known/openid-configuration/route.ts
+├── _oidc-provider/                 # 全エンドポイントが共有する部品（private folder なのでルーティングされない）
+│   ├── provider.ts                 # 設定、クライアントと鍵の resolver、ストア、署名鍵、acrResolver の組み立て。プロジェクトへ組み込むときに編集する場所
+│   ├── config.ts / store.ts / resolvers.ts / cookies.ts / scopes.ts / development.ts  # Hono の生成物の同名のファイルと同じ役割
+│   ├── feature.ts                  # 機能が使うフックの型と defineFeature()
+│   ├── features.ts                 # 有効な機能の一覧（CLI が書く）
+│   ├── features/<id>/              # 機能のコード。設定（config.ts）、ストア（store.ts）、Route Handler のブロックから呼ぶ関数
+│   ├── shared.ts                   # shared()：モジュール層をまたいで、プロセスに 1 つの値を持つ
+│   ├── endpoint.ts                 # route.ts の隣の endpoint.ts が使う defineEndpoint() の型
+│   ├── http.ts                     # CORS、キャッシュ禁止の JSON 応答、パラメータ重複の検出、エラーページへのリダイレクトなど、Route Handler と Server Action 共通の部品
+│   ├── transaction.ts              # ログインと同意が続ける認可トランザクションを Cookie から取得（無ければ notFound()）し、フォームの送信元を確かめる
+│   ├── html.ts                     # Route Handler が返す画面（device / CIBA / RP-Initiated Logout）の HTML 応答
+│   ├── error-view.tsx              # エラー画面の共通レイアウト（oidc-error、not-found、error の各画面が使う）
+│   └── db/                         # データの読み書き。--db 無しはメモリ（instance.ts は --db sql / kv のときだけ生成する）
+├── authorize/route.ts              # GET|POST /authorize（検証パイプラインをこのファイルに直接書いている）
+├── authorize/endpoint.ts           # route.ts のブロックの一覧（ステップ ID、機能、読む値と作る値）
+├── authorize/response-mode.ts      # 認可レスポンスの返し方（JARM が response mode を足す）
+├── token/route.ts / endpoint.ts    # POST /token
+├── userinfo/route.ts               # GET|POST /userinfo
+├── .well-known/openid-configuration/route.ts / endpoint.ts
 ├── .well-known/jwks.json/route.ts
-├── login/page.tsx            # ログイン画面（React Server Component）
-├── login/actions.ts          # ログインの Server Action
-├── login/session.ts          # OP セッションの開始（パスワードログインと Google ログインで共有）
-├── login/not-found.tsx       # トランザクションが無いとき（notFound()）の画面。HTTP 404
-├── login/error.tsx           # 想定外の例外のときの画面（error boundary）
-├── consent/page.tsx          # 同意画面
-├── consent/actions.ts        # 同意の Server Action（認可コードを発行してクライアントへリダイレクト）
+├── login/page.tsx                  # ログイン画面（React Server Component）
+├── login/actions.ts                # ログインの Server Action
+├── login/session.ts                # OP セッションの開始（パスワードログインと Google ログインで共有）
+├── login/login-method.ts           # 機能がログイン画面に足すログイン手段の型
+├── login/not-found.tsx             # トランザクションが無いとき（notFound()）の画面。HTTP 404
+├── login/error.tsx                 # 想定外の例外のときの画面（error boundary）
+├── consent/page.tsx                # 同意画面
+├── consent/actions.ts              # 同意の Server Action（認可コードを発行してクライアントへリダイレクト）
 ├── consent/not-found.tsx / consent/error.tsx  # 同意画面の not-found / error（ログイン画面と同じ役割）
-└── oidc-error/page.tsx       # クライアントへ返してはいけないエラーの表示先
+├── oidc-error/page.tsx             # クライアントへ返してはいけないエラーの表示先
+├── (introspection)/introspect/route.ts / endpoint.ts  # POST /introspect（introspection 有効時）
+├── (revocation)/revoke/route.ts    # POST /revoke（revocation 有効時）
+└── .maronn-openid-connect.json
 ```
 
-各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export する。ログイン・同意画面は React のページと Server Action なので、見た目は `page.tsx`、判断は `actions.ts` を書き換える。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要がある。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成する。実験的機能の設定は、それを使うコードの隣に置く（例: `par/config.ts`、トークンエンドポイントの grant なら `token/token-exchange.ts` の `tokenExchangeConfig`）。認可エンドポイントと同意の両方が読む JARM の設定は `_oidc-provider/jarm.ts` にある。
+`app/layout.tsx` は写さないので、プロジェクトのルートレイアウトがそのまま使われる。
+
+### 機能のルートグループとブロック
+
+機能のエンドポイントは、機能 ID を名前にしたルートグループ `(<feature-id>)/` に入る。ルートグループの名前は URL に現れないので、`(introspection)/introspect/route.ts` は `POST /introspect` に、`(google-login)/login/google/route.ts` は `POST /login/google` になる。実験的機能と拡張機能のルートグループは `(par)`、`(device-authorization-grant)`、`(ciba)`、`(rp-initiated-logout)`、`(dynamic-client-registration)`、`(google-login)` で、`generate` は有効な機能のルートグループと `_oidc-provider/features/<id>/` だけを写す。
+
+機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`loginMethods` がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`token/route.ts`、`(introspection)/introspect/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。
+
+`generate` は、無効な機能のブロックとその import を `route.ts` から取り除き、そのブロックが作っていた値を後のブロックが読むなら、`endpoint.ts` の `produces` から決めた名前で `const <name> = undefined;` を残す。`endpoint.ts` からも、無効な機能のステップの行を消す。生成した後で機能を手で外すときは、`_oidc-provider/features.ts` にあるその機能の import の行と一覧の行、`_oidc-provider/features/<id>/`、ルートグループ `(<id>)/` に加えて、Route Handler にあるその機能のブロックも消す。
+
+### 画面とエラーの表し方
+
+各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export する。ログイン画面と同意画面は React のページと Server Action なので、見た目は `page.tsx`、判断は `actions.ts` を書き換える。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要がある。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成する。機能の設定は `_oidc-provider/features/<id>/config.ts` にある（例: PAR の `parConfig`、Token Exchange の `tokenExchangeConfig`、JARM の `jarmConfig`）。
 
 OP がブラウザを止める場面は、Next.js の機能で表す。
 
-- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明・完了済み・期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示する。利用者はクライアントからやり直すしかない
+- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明か、完了済みか、期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示する。利用者はクライアントからやり直すしかない
 - クライアントへ返してはいけないエラー（OIDC Core 1.0 §3.1.2.2。未登録の `redirect_uri`、CSRF トークンの不一致、ログイン試行回数の上限、判断を含まない同意の POST、Google ログインのコールバックの失敗など）: `redirect()` で `oidc-error/page.tsx` へ送る。Route Handler からは 303 でリダイレクトする
 - 想定外の例外（ストアの障害など）: `error.tsx`（error boundary）が表示する。本番の Next.js はエラーメッセージをブラウザへ渡さないので、画面にはサーバーログと突き合わせられる `digest` だけを出す
 
 これらの画面はどれも `_oidc-provider/error-view.tsx` の `ErrorView` で描くので、見た目はそこを書き換えれば揃って変わる。device / CIBA / RP-Initiated Logout の画面のエラーは、ステータスコード（403 / 429 など）を保つため、画面と同じく `_oidc-provider/html.ts` の HTML で返す。
 
-Next.js は Route Handler とページ・Server Action を別々のモジュール層にバンドルする。両方から同じインスタンスを参照する必要があるストアと署名鍵は、`globalThis` に保持している（`provider.ts` / `storage-backend.ts`）。
+### モジュール層をまたぐ値（shared()）
+
+Next.js は、モジュールをモジュール層（Route Handler、ページと Server Action、`instrumentation.ts`）ごとに読み込む。モジュールの先頭で作った値は層ごとに別のものになるので、`instrumentation.ts` で書き換えた設定が Route Handler に届かない。そのため、機能の設定（`_oidc-provider/features/<id>/config.ts` の `parConfig` など）は `_oidc-provider/shared.ts` の `shared()` で作り、名前ごとに `globalThis` に 1 つだけ持つ。層をまたいで同じものを使う必要がある署名鍵（`provider.ts`）、メモリ上の `db/`（`db/database.ts`）、`--db kv` の `instance.ts` が開くストア、実験的機能のストア（`_oidc-provider/features/<id>/store.ts`）も `globalThis` に置いている。
+
+### クライアントとユーザーの登録（instrumentation.ts）
+
+Next.js の生成物は、クライアントもユーザーも `_oidc-provider/db/` から読み、クライアントを環境変数からは読まない。生成した直後は、クライアントもユーザーも登録されていない。Next.js はサーバーのインスタンスが起動するとき、リクエストを処理する前に `instrumentation.ts` の `register()` を 1 回呼ぶので、そこで `_oidc-provider/db` の `registerClient()` と `registerUser()` を呼ぶ。`instrumentation.ts` は `app/` の外（`src/app` に生成したなら `src/instrumentation.ts`）に置くファイルで、CLI は生成しない。
+
+```typescript
+// src/instrumentation.ts
+export async function register(): Promise<void> {
+  // register() は Edge ランタイムでも呼ばれるので、Node.js のときだけ db を読み込む
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  const { createDatabase, registerClient, registerUser } = await import('./app/_oidc-provider/db');
+  const db = createDatabase();
+  await registerClient(db, {
+    clientId: 'my-client',
+    clientSecret: '...',
+    redirectUris: ['https://client.example.com/callback'],
+    grantTypes: ['authorization_code', 'refresh_token'],
+    tokenEndpointAuthMethods: ['client_secret_basic'],
+  });
+  await registerUser(db, { sub: 'alice', email: 'alice@example.com', email_verified: true, password: '...' });
+}
+```
+
+開発用のユーザー（testuser と otheruser、パスワードはどちらも `password`）で試すなら、`_oidc-provider/development` の `registerDevelopmentUsers(db)` を呼ぶ。本リポジトリの `apps/nextjs` と `samples/nextjs-vercel` は、`src/instrumentation.ts` からクライアントと開発用のユーザーを登録している。
+
+### データの保存先（_oidc-provider/db/）
+
+`--db` を付けなければ、データは `_oidc-provider/db/` のメモリ（`globalThis` の Map）に入る。プロセスを再起動すると消え、Vercel のように複数のインスタンスで動かすと、インスタンスの間で共有されない。`--db kv` の `_oidc-provider/db/instance.ts` は生成したままで動き、`UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` があれば Upstash Redis（Vercel Marketplace の Redis）を REST API で使い、無ければ Node.js 組み込みの node:sqlite の 1 テーブル（`OIDC_SQLITE_PATH`、既定は `.data/oidc.sqlite`。Node.js 22.13 以上）を使う。Vercel の上（`VERCEL` が設定されている）で Upstash の変数が無ければ、ファイルに書く代わりに最初の読み書きでエラーになる。`--db sql` の `instance.ts` は、ほかのフレームワークと同じく利用者が書く（[DB に保存する（--db）](#db-に保存する--db)を参照）。
+
+`--flow` でステップを並べ替えた文書は、Next.js では受け付けない（[フロー文書を編集して生成する（--flow）](#フロー文書を編集して生成する--flow)を参照）。
+
+### 環境変数
 
 設定は環境変数から読む。
 
 | 環境変数 | 用途 |
 |---|---|
-| `OIDC_ISSUER` | issuer。OP 自身の URL はすべてこれを基準に組み立てる |
-| `OIDC_CLIENTS_JSON` | 登録クライアント（`ClientRegistration` の JSON 配列）。未指定なら `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI` の 1 クライアント |
-| `OIDC_SIGNING_KEY_ID` | 起動時に生成する署名鍵の `kid` |
+| `OIDC_ISSUER` | issuer。OP 自身の URL はすべてこれを基準に組み立てる（未指定なら `ISSUER`、どちらも無ければ `http://localhost:3000`） |
+| `OIDC_SIGNING_KEY_ID` | 起動時に生成する署名鍵の `kid`（既定は `nextjs-rs256-key`） |
 | `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
-| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Vercel で使うストア。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`） |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時） |
+| `OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW` | `1` で `allowNonPkceAuthorizationCodeFlow` を有効にし、confidential client の PKCE を任意にする（`pkce` 有効時。`_oidc-provider/features/pkce/feature.ts`） |
+| `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT` | `1` で署名の無い Request Object を受け付ける（`request-object` 有効時。`_oidc-provider/features/request-object/feature.ts`） |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | `--db kv` の `instance.ts` が使う Upstash Redis。未指定ならローカルの node:sqlite（`OIDC_SQLITE_PATH`、既定は `.data/oidc.sqlite`） |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` | Sign in with Google（`google-login` 有効時。`_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()`） |
 
 ## 機能トグル（--enable / --disable）
 
@@ -341,14 +461,15 @@ Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / 
 
 ```bash
 maronn-oidc generate express --enable google-login
-pnpm add express @maronn-openid-connect/core @maronn-openid-connect/google-login
+pnpm add express hono @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library
+pnpm add -D @types/express
 ```
 
 | 機能名 | 既定 | 内容 | 実装 package |
 |---|---|---|---|
-| `google-login` | 無効 | ログイン画面に「Google でログイン」（Google Identity Services の redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。ID トークンの検証は Google 公式の `google-auth-library` に委ね、CSRF（`g_csrf_token` の Double Submit Cookie）、nonce による認証トランザクションへの束縛、`google:<sub>` を subject にした Google ユーザーの JIT 登録を生成コードが行う（`--db` 付きでは、ランダムな ID のユーザーを作り、Google の sub を Federated_identity（`--db sql` は `federated_identities` テーブル、`--db kv` は `federated_identity:` のキー）に記録する） | `@maronn-openid-connect/google-login`（Node.js 22 以上限定。Cloudflare Workers などのエッジでは動かない） |
+| `google-login` | 無効 | ログイン画面に「Google でログイン」（Google Identity Services の redirect mode）を追加し、Google が ID トークンを POST する `POST /login/google` を生成する。ID トークンの検証は Google 公式の `google-auth-library` に委ね、CSRF（`g_csrf_token` の Double Submit Cookie）、nonce による認証トランザクションへの束縛、Google ユーザーの JIT 登録を生成コードが行う（初めてのログインでランダムな ID のユーザーを作り、Google の sub を Federated_identity として記録する。`--db` 無しは `db/` のメモリ、`--db sql` は `federated_identities` テーブル、`--db kv` は `federated_identity:` のキーに入る） | `@maronn-openid-connect/google-login`（Node.js 22 以上限定。Cloudflare Workers などのエッジでは動かない） |
 
-有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js の `_oidc-provider/provider.ts` と本リポジトリの samples は `GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
+有効化しても `config.googleLogin` を渡すまでボタンは表示されず、`/login/google` は 404 を返す。設定は `ProviderConfig.googleLogin = { clientId, hostedDomain?, requireVerifiedEmail? }` で、Google Cloud コンソールの OAuth クライアントには `<issuer>/login/google` を「承認済みのリダイレクト URI」に、ログイン画面のオリジンを「承認済みの JavaScript 生成元」に登録する。生成される Next.js では `_oidc-provider/features/google-login/config.ts` の `readGoogleLoginConfig()` が、本リポジトリの Express と Fastify の samples では `src/app.ts` が、`GOOGLE_CLIENT_ID` / `GOOGLE_HOSTED_DOMAIN` からこれを読む。詳細は [`@maronn-openid-connect/google-login` の README](../google-login/README.md) を参照。
 
 ## カスタムスコープ（--scope）
 
@@ -358,10 +479,10 @@ pnpm add express @maronn-openid-connect/core @maronn-openid-connect/google-login
 maronn-oidc generate hono --scope reports.read,reports.write
 ```
 
-宣言すると `scopes.ts`（スコープポリシー）が生成され、生成 OP は次のようになる。
+スコープポリシーの `scopes.ts`（Next.js は `_oidc-provider/scopes.ts`）は `--scope` の有無にかかわらず生成され、宣言したスコープはその `CUSTOM_SCOPES` に書き込まれる。宣言すると、生成 OP は次のようになる。
 
 - discovery の `scopes_supported` に宣言したスコープが載る
-- **宣言していないスコープ値は `invalid_scope` で拒否される**（RFC 6749 §3.3 / §4.1.2.1）。宣言が 1 つも無ければこのチェック自体を生成しないので、既定の生成物の挙動は変わらない
+- **宣言していないスコープ値は `invalid_scope` で拒否される**（RFC 6749 §3.3 / §4.1.2.1）。宣言が 1 つも無ければ `findUnsupportedScopes()` はどの値も拒否しないので、既定の生成物はどのスコープ値も受け付ける
 - ユーザーごとの絞り込みは、生成された `scopes.ts` に書く
 
 ### ユーザーごとの絞り込みは生成コードに書く
@@ -369,9 +490,11 @@ maronn-oidc generate hono --scope reports.read,reports.write
 「誰にどのスコープを許すか」は CLI のオプションにしていない。運用ごとに条件（ロール、テナント、DB 参照）が違い、生成コードを改造して検証するというこのライブラリの使い方に合わないためである。代わりに、生成される `scopes.ts` に絞り込みの入口を用意し、判断が必要な全ステップから呼び出した状態で生成する。
 
 ```typescript
-// scopes.ts
+// scopes.ts（--scope reports.read,reports.write で生成した場合）
+export const CUSTOM_SCOPES: readonly string[] = ['reports.read', 'reports.write'];
+
 export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
-  'reports.read': ['alice'],   // ← 手早く絞るならここに書く
+  'reports.read': ['alice'],   // ← 手早く絞るならここに書く（生成直後は空）
 };
 
 export async function resolveGrantableScopes(
@@ -388,13 +511,15 @@ export async function resolveGrantableScopes(
 
 | 呼び出し元 | タイミング |
 |---|---|
-| `routes/consent.ts` | 同意画面の表示内容と、承認時の付与スコープ |
-| `routes/authorize.ts` | SSO fast path と `prompt=none`（同意画面を出さずに付与する経路）。どちらも**保存済み同意を引く前**に適用する。絞る前の scope で同意を探すと、そのユーザーが持てないスコープをキーに検索することになり永久に一致しない |
-| `routes/device.ts` / `routes/ciba-verification.ts` | device / CIBA の承認ステップ（該当機能を有効にした場合） |
+| `endpoints/consent/steps/describe-consent-screen.ts` / `endpoints/consent/steps/issue-authorization-code.ts` | 同意画面の表示内容と、承認時の付与スコープ |
+| `endpoints/authorize/steps/reuse-session.ts` / `endpoints/authorize/steps/authenticate-silently.ts` | SSO fast path と `prompt=none`（同意画面を出さずに付与する経路）。どちらも**保存済み同意を引く前**に適用する。絞る前の scope で同意を探すと、そのユーザーが持てないスコープをキーに検索することになり永久に一致しない |
+| `features/device-authorization-grant/endpoints/device/steps/` / `features/ciba/endpoints/ciba/` | device / CIBA の承認ステップ（該当機能を有効にした場合） |
+
+Next.js では、`consent/page.tsx` と `consent/actions.ts`、`authorize/route.ts`、`(device-authorization-grant)/device/` と `(ciba)/ciba/` の下のファイルが、同じ場面で呼ぶ。
 
 落としたスコープはリクエストを失敗させず、付与スコープを狭めるだけになる（RFC 6749 §3.3 は要求より狭いスコープの発行を認めており、トークンレスポンスの `scope` に実際の付与内容が載る）。リクエストごと拒否したい場合は、呼び出し元で throw する。
 
-カスタムスコープに対応する UserInfo クレームは無い（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `routes/userinfo.ts` を編集する。
+カスタムスコープに対応する UserInfo クレームは無い（OIDC Core 1.0 §5.4 が定義するのは profile / email / address / phone のみ）。独自クレームを返す場合は `endpoints/userinfo/steps/resolve-claims.ts`（Next.js は `userinfo/route.ts`）を編集する。
 
 ## 認証コンテキスト（acr_values と acr）
 
@@ -402,7 +527,7 @@ export async function resolveGrantableScopes(
 値は空白区切りで、各値が RFC 6749 §3.3 の scope-token と同じ文字（`"` と `\` を除く、表示できる ASCII 文字）だけでできていれば通し、ほかの文字を含めば `invalid_request` をクライアントへ返す。
 空文字と空白だけの値は、省略と同じに扱う。
 
-Hono / Express / Fastify の生成物では、トークンに載せる acr を `routes/token.ts` の `resolveTokenAcrAmr()` が決める。
+Hono / Express / Fastify の生成物では、トークンに載せる acr を `endpoints/token/steps/resolve-acr-amr.ts` の `resolveTokenAcrAmr()` が決める。
 `createApp` / `applyOidc` に `acrResolver` を渡していれば、その戻り値の acr / amr を使う。
 渡していなければ、要求された値のうち最も優先する値（先頭の値）を acr にし、amr は載せない。
 `claims` パラメータの `id_token.acr.values` も、`acr_values` と同じ要求として扱う（OIDC Core 1.0 §5.5.1.1）。
@@ -471,11 +596,12 @@ INSERT INTO client_jwks (id, client_id, purpose, jwk)
 `--db kv` では、`client_jwks:<client_id>:<purpose>` のキーに、その用途の鍵を JWK Set（`{ "keys": [ <JWK>, ... ] }`）で書く。
 鍵を足すときも消すときも、この `keys` を書き換える。
 
-`--db` を付けない生成物は、`config.ts` に書いたクライアント（`ClientRegistration`）の `keys` から鍵を返す（`config.ts` の `createInMemoryClientKeyResolver()`）。
+`--db` を付けない生成物は、`registerClient()` に渡したクライアント（`ClientRegistration`）を `db/` のメモリに持ち、その `keys` から鍵を返す（`db/clients.ts` の `createClientKeyResolver()`。Next.js は `_oidc-provider/db/clients.ts`）。
 `keys` は、用途ごとにその用途の鍵を JWK Set で持つ。
 同じ鍵を 2 つの用途で使うときは、両方の用途に書く。
-Next.js では、`OIDC_CLIENTS_JSON` の各クライアントの `keys` に書く。
-この登録は起動時に読むので、鍵を足したり消したりするには OP を再起動する。
+鍵は呼ばれるたびにメモリから読むので、`registerClient()` で登録し直せば次のリクエストから効く。
+登録し直すと、そのクライアントの前の登録は `keys` ごと置き換わる。
+メモリに持つだけなので、OP を再起動すると登録ごと消える。
 
 ```typescript
 {
@@ -488,14 +614,14 @@ Next.js では、`OIDC_CLIENTS_JSON` の各クライアントの `keys` に書�
 }
 ```
 
-`createApp` / `applyOidc` の `clientResolver` に自前のクライアントの一覧から作った resolver を渡すときは、同じ一覧から作った `createInMemoryClientKeyResolver(clients)` を `clientKeyResolver` に渡す。
-`clientKeyResolver` の既定は `config.ts` の `defaultRegisteredClients` の鍵を返すので、渡さなければ自前のクライアントの鍵は見つからない。
+`createApp` / `applyOidc` の `clientResolver` に自前のクライアントの一覧から作った resolver を渡すときは、同じ一覧から鍵を引く resolver を `clientKeyResolver` に渡す（core の `createClientKeyResolver((clientId) => clients.get(clientId)?.keys)` のように作れる）。
+`clientKeyResolver` の既定は `db/` に登録したクライアントの鍵を返すので、渡さなければ自前のクライアントの鍵は見つからない。
 
 鍵の保存先を変えるときは、`ClientKeyResolver` を実装して差し替える。
 Hono / Express / Fastify は `createApp` / `applyOidc` の `clientKeyResolver` オプションに渡し、Next.js は `_oidc-provider/provider.ts` の `clientKeyResolver` を書き換える。
 鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む。
 
-`registerClient()` は、渡したクライアント（`ClientRegistration`）の `keys` の鍵を、それぞれの用途で DB に足す。
+`--db` 付きの `registerClient()` は、渡したクライアント（`ClientRegistration`）の `keys` の鍵を、それぞれの用途で DB に足す。
 `registerClient()` は鍵を足すだけで、DB にある鍵を消すことはない。
 起動のたびに `registerClient()` で登録し直しても、運用中に DB へ足した鍵は残る。
 鍵を消すときは、DB から消すのに加えて、`registerClient()` に渡すクライアントの `keys` からも外す。
@@ -506,42 +632,48 @@ Hono / Express / Fastify は `createApp` / `applyOidc` の `clientKeyResolver` �
 `--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を利用者の DB に保存する。
 保存先の種類は `--db` の値で選ぶ。
 `--db sql` は SQL のテーブル（SQLite、Cloudflare D1、PostgreSQL）に、`--db kv` は Redis などのキー・バリューストアに保存する。
-どちらも、既定のインメモリストアや、`JsonStoreBackend` で JSON を入れる方式の代わりになる。
+`--db` を付けなければ、同じデータを `db/` のメモリ（`globalThis` の Map）に持つ。
+メモリのデータは OP を再起動すると消え、OP の複数のインスタンスの間で共有されないので、試用とテスト向けである。
 
 ```bash
 maronn-oidc generate express --db sql
 maronn-oidc generate nextjs --db kv --output ./src/app
 ```
 
-出力先には `db/` が生成される（Next.js は `_oidc-provider/db/`）。
-利用者が書くのは DB インスタンスを返す `instance.ts` だけで、それ以外は CLI が生成する。
+出力先の `db/`（Next.js は `_oidc-provider/db/`）は、どの種類でも同じ名前の関数を export する。
+`db/index.ts` が export するのは、DB を返す `createDatabase`、ストアを作る `createProviderStores`、クライアントを読む `createClientResolver` と `createClientKeyResolver`、登録する `registerClient` と `registerUser`、それに DB の型 `Database` である。
+`app.ts`（Next.js は `_oidc-provider/provider.ts`）はこの関数でデータを読み書きするので、`--db` を変えて生成し直しても、クライアントやユーザーを登録する利用者のコードは変わらない。
+`--db sql` と `--db kv` で利用者が書くのは DB インスタンスを返す `instance.ts` だけで、それ以外は CLI が生成する。
 
-| ファイル | `--db sql` | `--db kv` |
-|---|---|---|
-| `instance.ts` | DB インスタンス。`createDatabase()` で利用者の DB を返す。CLI は無いときだけ作り、`--force` を付けても上書きしない | 同じ |
-| `database.ts` | `createDatabase()` が返す `SqlDatabase` の型。SQL を 1 文実行する `all` と `run` を持つ | `createDatabase()` が返す `KvDatabase` の型。`get`、`set`、`setIfAbsent`、`delete` を持つ |
-| `schema.sql`、`schema.ts` | テーブル定義と、同じ内容の文字列 `SCHEMA_SQL`。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る | 生成しない |
-| `keys.ts` | 生成しない | キーの一覧と、各キーに入れる JSON レコードの型 |
-| `stores.ts` | `store.ts` の `ProviderStores` の実装 | 同じ |
-| `clients.ts` | 登録クライアントを読む `ClientResolver` と、クライアントを登録する `registerClient()` | 同じ |
-| `users.ts` | ユーザーを登録する `registerUser()` と、パスワードのハッシュを作って照合する `hashPassword()` / `verifyPassword()` | 同じ |
+| ファイル | `--db` 無し | `--db sql` | `--db kv` |
+|---|---|---|---|
+| `index.ts` | 上の関数と型を export する | 同じ（`createDatabase` は `instance.ts` の DB を返す。Next.js では、最初の読み書きまで `instance.ts` を呼ばない） | 同じ |
+| `instance.ts` | 生成しない | DB インスタンス。`createDatabase()` で利用者の DB を返す。CLI は無いときだけ作り、`--force` を付けても上書きしない | 同じ（Next.js では生成したままで動く。[データの保存先（_oidc-provider/db/）](#データの保存先_oidc-providerdb)を参照） |
+| `database.ts` | メモリ上の DB の型 `MemoryDatabase` と、それを `globalThis` に 1 つだけ作る `createDatabase()` | `createDatabase()` が返す `SqlDatabase` の型。SQL を 1 文実行する `all` と `run` を持つ | `createDatabase()` が返す `KvDatabase` の型。`get`、`set`、`setIfAbsent`、`delete` を持つ |
+| `schema.sql`、`schema.ts` | 生成しない | テーブル定義と、同じ内容の文字列 `SCHEMA_SQL`。SQLite、Cloudflare D1、PostgreSQL のどれでもそのまま通る | 生成しない |
+| `keys.ts` | 生成しない | 生成しない | キーの一覧と、各キーに入れる JSON レコードの型 |
+| `stores.ts` | `store.ts` の `ProviderStores` の実装 | 同じ | 同じ |
+| `clients.ts` | 登録クライアントを読む `ClientResolver` と `ClientKeyResolver`、クライアントを登録する `registerClient()` | 同じ | 同じ |
+| `users.ts` | ユーザーを登録する `registerUser()` と、パスワードのハッシュを作って照合する `hashPassword()` / `verifyPassword()` | 同じ | 同じ |
 
-生成直後の `instance.ts` は、実装されるまで「`createDatabase()` が未実装である」というエラーを投げる。
+`--db sql` と、Hono / Express / Fastify の `--db kv` の `instance.ts` は、生成直後には実装されておらず、「`createDatabase()` が未実装である」というエラーを投げる。
 ファイルの末尾に DB ごとの例を載せているので、使う DB に合わせて書き換える。
 
-生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` オプションを渡さなければ `db/` からクライアントを読む。
-`createDatabase()` を呼ぶ時機はフレームワークによって異なる。
+生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` と `clientKeyResolver` のオプションを渡さなければ `db/` からクライアントとその鍵を読む。
+`createDatabase()` を呼ぶ時機は、Hono / Express / Fastify と Next.js で異なる。
 
-- **Hono**：リクエストごとに Hono のコンテキストを渡して呼ぶ。Cloudflare D1 のバインディング（`c.env.DB`）や環境変数はそこから読める
-- **Express / Fastify**：アプリを作るときに 1 回呼ぶ。`instance.ts` が未実装なら起動時に止まる
-- **Next.js**：`_oidc-provider/provider.ts` が最初に使うときに呼ぶので、`next build` の時点では呼ばない（`instance.ts` がモジュールの読み込み時に接続しない限り、ビルドに DB は要らない）
+- **Hono / Express / Fastify**：`app.ts` がリクエストごとに、そのリクエストのコンテキスト（Hono の `Context`、Express と Fastify は `web-router.ts` の `WebContext`）を渡して呼ぶ。Hono では Cloudflare D1 のバインディング（`c.env.DB`）や環境変数をそこから読める。引数を取らない `createDatabase()` でもよい。リクエストをまたいで使う接続（PostgreSQL のプール、SQLite のファイル）は、ここで開かずにモジュールの変数に置く
+- **Next.js**：`_oidc-provider/provider.ts` はモジュールを読み込むときに `db/index.ts` の `createDatabase()` で DB を作るが、`--db sql` と `--db kv` の `db/index.ts` は、`db/instance.ts` の `createDatabase()` を最初の読み書きのときに 1 回だけ呼ぶ。`next build` が Route Handler のモジュールを読み込んでも `instance.ts` は呼ばれないので、`instance.ts` がモジュールの読み込み時に接続しない限り、ビルドに DB は要らない。Next.js はモジュールをモジュール層ごとに読み込み、層ごとに `instance.ts` を呼ぶので、接続は `globalThis` に置いて層の間で 1 つにする（生成される `--db kv` の `instance.ts` と、`--db sql` の `instance.ts` にある node:sqlite の例はそうしている）
 
 ### SQL のテーブル（--db sql）
 
 `SqlDatabase` は SQL を実行する口を 2 つ持つだけなので、どのドライバーでも実装できる。
 ORM も生の SQL を実行するメソッドを持っているので、CLI は ORM ごとのコードを生成しない。
-`instance.ts` の末尾には node:sqlite、Cloudflare D1（Hono のみ）、PostgreSQL（pg）、Prisma、Drizzle、Kysely の例がある。
+Hono / Express / Fastify の `instance.ts` の末尾には Cloudflare D1、node:sqlite、PostgreSQL（pg）、Prisma、Drizzle、Kysely の例がある。
+Next.js の `instance.ts` には、Cloudflare D1 を除いた同じ例がある。
 Prisma、Drizzle、Kysely の例は、プロジェクトですでに作ってあるクライアント（`prisma` や `db`）をそのまま使う。
+
+Hono / Express / Fastify では `createDatabase()` がリクエストごとに呼ばれるので、次の例は SQLite のファイルをモジュールの読み込み時に 1 回だけ開く（Next.js の `instance.ts` にある例は、開いた DB を `globalThis` にも置く）。
 
 ```typescript
 // db/instance.ts を node:sqlite で書いた例
@@ -549,9 +681,10 @@ import { DatabaseSync } from 'node:sqlite';
 import type { SqlDatabase, SqlStatement } from './database.js';
 import { SCHEMA_SQL } from './schema.js';
 
+const sqlite = new DatabaseSync(process.env.OIDC_SQLITE_PATH ?? 'oidc.sqlite');
+sqlite.exec(SCHEMA_SQL);
+
 export function createDatabase(): SqlDatabase {
-  const sqlite = new DatabaseSync(process.env.OIDC_SQLITE_PATH ?? 'oidc.sqlite');
-  sqlite.exec(SCHEMA_SQL);
   return {
     async all<Row>(statement: SqlStatement): Promise<Row[]> {
       return sqlite.prepare(statement.sql).all(...statement.params) as Row[];
@@ -581,8 +714,9 @@ export function createDatabase(): SqlDatabase {
 | `codes`、`access_tokens`、`refresh_tokens` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュで引く |
 | `browser_sessions`、`consent_scopes`、`consent_grants` | SSO、`prompt=none`、`max_age` に使うブラウザセッションと、ユーザーが与えた同意 |
 
-`--enable google-login` と組み合わせたときだけ、Sign in with Google のための 2 つのテーブルが加わる。
+`schema.sql` には、Sign in with Google のための 2 つのテーブルも入っている。
 `federated_identities` は Google アカウントとユーザーの対応を、`upstream_auth_requests` はログイン画面の Google ボタンに埋めた nonce を持つ。
+`--enable google-login` を付けなくても作られるが、OP がこの 2 つを読み書きするのは google-login を有効にしたときだけである。
 
 ID トークンは保存しない。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためである。
@@ -610,8 +744,9 @@ OP は終わったトランザクションの行を消さず、`codes` と `acce
 `get`、`set`（TTL を付けられる）、`delete` と、キーが無いときだけ値を書く `setIfAbsent` である。
 値はどれも JSON の文字列で、キーの一覧は `keys.ts` にある。
 
-`instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）、node-redis、ioredis、メモリ上の Map の例がある。
-Hono の生成物には、Workers で動く Upstash Redis とメモリ上の Map の例だけを載せている。
+Hono / Express / Fastify の `instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）とメモリ上の Map の例がある。
+生成される例はバインディング（`c.env`）から Upstash の URL とトークンを読むので、Node.js で動かすなら、次のように環境変数から読む形に書き換える。
+Next.js の `instance.ts` は、Upstash Redis か node:sqlite で生成したままで動く（[データの保存先（_oidc-provider/db/）](#データの保存先_oidc-providerdb)を参照）。
 
 ```typescript
 // db/instance.ts を Upstash Redis の REST API で書いた例
@@ -677,7 +812,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | `grant:<grant_id>`、`grant_*_revoked:<grant_id>` | 1 回の認可で出したコードとトークンのつながりと、失効の印 |
 | `browser_session:<session_id>`、`consent:<subject>:<client_id>` | ブラウザセッションと、ユーザーが与えた同意 |
 
-`--enable google-login` と組み合わせたときだけ、`federated_identity:<provider>:<sub>`（Google アカウントとユーザーの対応）と、`upstream_auth_request:<transaction_id>`、`upstream_nonce:<nonce>`（Google ボタンに埋めた nonce）が加わる。
+`keys.ts` には、Sign in with Google のための `federated_identity:<provider>:<sub>`（Google アカウントとユーザーの対応）と、`upstream_auth_request:<transaction_id>`、`upstream_nonce:<nonce>`（Google ボタンに埋めた nonce）も載っており、OP がこれらを書くのは google-login を有効にしたときだけである。
 キーにはすべて `oidc:` が付き、リクエストから来た値（ID やサブジェクト）は URI エンコードしてから入れる。
 
 期限のあるレコードは TTL を付けて書き、期限（`expired_at`、`exp`）もレコードの中に持つ。
@@ -701,42 +836,30 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 `openid` や `offline_access` も、要求させるなら登録する。
 スコープを登録していないクライアントには制限を掛けず、OP が受け付けるスコープをすべて要求できる。
 
-検証は core の `validateClientScope()` が `ClientInfo.scope`（RFC 7591 §2 の `scope`）を見て行うので、`--db` を使わない場合も、`config.ts` で登録するクライアントに `scope` を書けば同じ制限が掛かる。
+検証は core の `validateClientScope()` が `ClientInfo.scope`（RFC 7591 §2 の `scope`）を見て行うので、`--db` を使わない場合も、`registerClient()` に渡すクライアントに `scope` を書けば同じ制限が掛かる。
 `scopes.ts` の `resolveGrantableScopes()` は、この検証を通った後で、ユーザーごとにスコープを絞る場所として残る。
 
 ### クライアントとユーザーの登録
 
-クライアントは、`clients.ts` の `registerClient()` で DB に入れる。
+生成した直後の OP には、クライアントもユーザーも登録されていない。
+クライアントは、`db/clients.ts` の `registerClient()` で `db/` に入れる（`db/index.ts` からも import できる）。
 同じ client_id で呼び直すと、前の登録を置き換える。
-同じ値で呼び直しても DB の中身は変わらないので、複数のインスタンスが起動時に同時に呼んでもよい。
-Express や Fastify なら、起動時に次のように登録できる。
+`--db sql` と `--db kv` では、同じ値で呼び直しても DB の中身は変わらないので、複数のインスタンスが起動時に同時に呼んでもよい。
+`--db` 無しの `db/` はメモリなので、起動のたびに登録する。
+Hono（Node.js）、Express、Fastify なら、起動時に次のように登録できる。
 
 ```typescript
-import { defaultRegisteredClients } from './oidc-provider/config.js';
-import { registerClient } from './oidc-provider/db/clients.js';
-import { createDatabase } from './oidc-provider/db/instance.js';
+import { createDatabase, registerClient, registerUser } from './oidc-provider/db/index.js';
 
-for (const client of defaultRegisteredClients.values()) {
-  await registerClient(createDatabase(), client);
-}
-```
-
-Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録する。
-Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行う（`samples/hono-cloudflare` の `src/app.ts`）。
-Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読まない。
-Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行う（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
-テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
-クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに `client_jwks` から読む（[クライアントの公開鍵](#クライアントの公開鍵)を参照）。
-
-ユーザーは、`users.ts` の `registerUser()` で DB に入れる。
-`password` を渡すと PBKDF2（HMAC-SHA256、100,000 回）のハッシュを `password_hash` に保存し、渡さなければ NULL になる。
-反復回数は Cloudflare Workers の上限に合わせた値で、上限の無い環境では `users.ts` の `PASSWORD_HASH_ITERATIONS` で上げられる。
-ハッシュには回数とソルトも記録しているので、回数を上げても既存のハッシュはそのまま検証できる。
-
-```typescript
-import { registerUser } from './oidc-provider/db/users.js';
-
-await registerUser(createDatabase(), {
+const db = createDatabase();
+await registerClient(db, {
+  clientId: 'my-client',
+  clientSecret: '...',
+  redirectUris: ['https://client.example.com/callback'],
+  grantTypes: ['authorization_code', 'refresh_token'],
+  tokenEndpointAuthMethods: ['client_secret_basic'],
+});
+await registerUser(db, {
   sub: 'alice',
   email: 'alice@example.com',
   email_verified: true,
@@ -745,10 +868,23 @@ await registerUser(createDatabase(), {
 });
 ```
 
-ログインフォームのユーザー名は、ユーザーの ID（`--db sql` は `users.id`、`--db kv` は `user:<id>` のキー）と照合する。
+Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録する。
+Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行う（`samples/hono-cloudflare` の `src/app.ts`）。
+Next.js は、`instrumentation.ts` の `register()` で登録する（[クライアントとユーザーの登録（instrumentation.ts）](#クライアントとユーザーの登録instrumentationts)を参照）。
+`--db sql` と `--db kv` では、テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
+クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに読む（`--db sql` は `client_jwks` から。[クライアントの公開鍵](#クライアントの公開鍵)を参照）。
+
+ユーザーは、`db/users.ts` の `registerUser()` で `db/` に入れる。
+`password` を渡すと PBKDF2（HMAC-SHA256、100,000 回）のハッシュを保存し（`--db sql` は `password_hash` 列）、渡さなければハッシュを持たない（`--db sql` は NULL）。
+反復回数は Cloudflare Workers の上限に合わせた値で、上限の無い環境では `users.ts` の `PASSWORD_HASH_ITERATIONS` で上げられる。
+ハッシュには回数とソルトも記録しているので、回数を上げても既存のハッシュはそのまま検証できる。
+
+ログインフォームのユーザー名は、ユーザーの ID（`--db sql` は `users.id`、`--db kv` は `user:<id>` のキー、`--db` 無しは `registerUser()` に渡した `sub`）と照合する。
 メールアドレスでログインさせる場合、`--db sql` では `stores.ts` の `authenticate()` が引く列を `email` に変え、`--db kv` ではメールアドレスからユーザーの ID を引くキーを足す。
 パスワードの無いユーザーは、ログインフォームでは認証できない。
-`store.ts` の開発用の固定ユーザー（testuser / otheruser）は `--db` 付きでは使わないので、試すときは `registerUser()` で登録する（`samples/*` はどれも起動時に登録している）。
+試用のための開発用ユーザー（testuser と otheruser）は `development.ts` にあり、`registerDevelopmentUsers(db)` を呼んだときだけ登録される。
+パスワードはどちらも `password` なので、本番の DB には登録しない。
+生成コードはこれを呼ばないので、そのユーザーでログインを試すときは自分で呼ぶ（`samples/*` はどれも、起動時か最初のリクエストで `registerDevelopmentUsers()` か `registerUser()` を呼んで登録している）。
 
 Sign in with Google のユーザーはパスワードを持たず、Google の `sub`（Federated_identity の `provider_sub`）で同じ人かを判断して、初めてのログインでランダムな ID のユーザーを作る。
 メールアドレスは Google アカウント側で変えられるので、同じ人かの判断には使わない。
@@ -760,31 +896,32 @@ Sign in with Google のユーザーはパスワードを持たず、Google の `
 `--db sql` は「`is_used` が FALSE の行だけを TRUE にする」を 1 回の `UPDATE` で行い、`--db kv` は使用済みの印のキーを `setIfAbsent` で書く。
 読んでから書く 2 段階に分けると、同じ認可コードで同時に来た 2 つのリクエストがどちらも未使用と判断し、両方にトークンが発行される。
 
-実験的機能（PAR、Device Authorization Grant、CIBA）のストアはインメモリのままである。
+実験的機能（PAR、Device Authorization Grant、CIBA、Dynamic Client Registration）のストアは、`--db` を付けてもメモリのままである（`features/<id>/store.ts`。Next.js は `_oidc-provider/features/<id>/store.ts`）。
 
 ## 生成後のセットアップ
 
-1. ProviderConfig・署名鍵・クライアント resolver を環境変数 / DB / KV から供給する
-2. 生成される `JsonStoreBackend` を実装し、`createJsonProviderStores()` の結果を `storage` に渡す（`--db` 付きで生成した場合は、代わりに `db/instance.ts` の `createDatabase()` を書き、`--db sql` なら `db/schema.sql` を DB に適用して、`db/clients.ts` の `registerClient()` と `db/users.ts` の `registerUser()` でクライアントとユーザーを登録する）
-3. `config.ts` と未指定時のインメモリストアはローカル検証専用として扱う
-4. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`。`--enable google-login` 時は `@maronn-openid-connect/google-login` も）
+1. ProviderConfig と署名鍵を、環境変数や秘密情報の保存先から `createApp` / `applyOidc` の `config` と `signingKeyProvider` に渡す
+2. データの保存先を決める。`--db` 無しのメモリは試用とテストに限る。`--db` 付きで生成した場合は `db/instance.ts` の `createDatabase()` を書き、`--db sql` なら `db/schema.sql` を DB に適用する。自前のストアを使うなら、`store.ts` の `ProviderStores` を実装して `storage` に渡す
+3. `db/clients.ts` の `registerClient()` と `db/users.ts` の `registerUser()` でクライアントとユーザーを登録する（[クライアントとユーザーの登録](#クライアントとユーザーの登録)を参照）
+4. `config.ts` の既定値と `development.ts` の開発用ユーザーは、ローカル検証専用として扱う
+5. 依存をインストールしてサーバーを起動する（例: `pnpm add hono @maronn-openid-connect/core`。Express と Fastify も画面のために `hono` を入れる。`--enable` した機能の package は、`generate` の最後に表示されるコマンドに入っている）
 
-Next.js では 1〜3 をすべて `_oidc-provider/provider.ts` で行う（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっている）。
+Next.js では、設定と署名鍵を `_oidc-provider/provider.ts` で組み立て（設定は環境変数から読む）、クライアントとユーザーを `instrumentation.ts` で登録する。`provider.ts` の署名鍵はサーバーの起動時に生成するので、再起動すると発行済みのトークンは検証できなくなり、インスタンスの間でも鍵は共有されない。複数のインスタンスで動かす前に、固定の鍵を読み込むように書き換える。
 
 署名鍵は `SigningKeyProvider`（`getSigningKeys()` で鍵の配列を返す）として注入する。配列の先頭の鍵が新しいトークンの署名に使われ、すべての鍵が JWKS で公開される。ローテーションでは新しい鍵を先頭に置き、古い鍵はそれで署名したトークンが失効するまで後ろに残す。`createCachedSigningKeyProvider()`（core 提供）でラップすると、TTL 付きキャッシュで鍵ローテーションに追随できる。
 
 ```typescript
 import { applyOidc } from './oidc-provider/apply.js';
-import { createJsonProviderStores } from './oidc-provider/store.js';
 
 applyOidc(app, {
   config: { issuer: 'http://localhost:3000' },
   signingKeyProvider: yourSigningKeyProvider,
-  storage: createJsonProviderStores(yourJsonStoreBackend),
+  // 自前のストアを使うときだけ渡す。省略すると db/ のストアを使う
+  storage: yourProviderStores,
 });
 ```
 
-Honoではリクエストごとのバインディングを受け取るstorage factoryも指定できる。本リポジトリの `samples/*` はどれも `--db` で生成しており、`db/instance.ts` の実例を参照できる（`samples/nextjs-vercel` は `--db kv` で Upstash Redis とローカルの node:sqlite、ほかは `--db sql` で node:sqlite と Cloudflare D1）。
+`storage` には、`ProviderStores` のほか、リクエストのコンテキストを受け取って `ProviderStores` を返す関数（`store.ts` の `ProviderStoresFactory`）も渡せる。本リポジトリの `samples/*` はどれも `--db` で生成しており、`db/instance.ts` の実例を参照できる（`samples/nextjs-vercel` は `--db kv` で Upstash Redis とローカルの node:sqlite、ほかは `--db sql` で node:sqlite と Cloudflare D1）。
 
 ## ライセンス
 

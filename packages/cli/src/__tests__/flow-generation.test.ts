@@ -43,12 +43,36 @@ const PIPELINE = [
   '',
 ].join('\n');
 
+const ENDPOINT = [
+  'export const endpoint = defineEndpoint({',
+  "  id: 'demo',",
+  '  order: 10,',
+  "  label: 'Demo',",
+  "  path: '/demo',",
+  "  methods: ['GET'],",
+  "  layer: 'api',",
+  "  group: { id: 'demo', label: 'Demo' },",
+  '  rearrangeable: true,',
+  '  steps: [',
+  "    'first',",
+  "    'expand',",
+  "    'second',",
+  "    'third',",
+  '  ],',
+  '  edges: {',
+  '    chain: true,',
+  '    extra: [',
+  "      { from: 'expand', to: 'third', label: 'expanded', kind: 'branch' },",
+  "      { from: 'first', to: 'third', label: 'short', kind: 'branch' },",
+  '    ],',
+  '  },',
+  '});',
+  '',
+].join('\n');
+
 const SOURCE = new Map<string, string>([
   ['provider/endpoints/demo/pipeline.ts', PIPELINE],
-  [
-    'provider/endpoints/demo/endpoint.ts',
-    "export const endpoint = defineEndpoint({ id: 'demo', order: 10, label: 'Demo', path: '/demo', methods: ['GET'], layer: 'api', group: { id: 'demo', label: 'Demo' }, rearrangeable: true, steps: ['first', 'expand', 'second', 'third'], edges: { chain: true } });\n",
-  ],
+  ['provider/endpoints/demo/endpoint.ts', ENDPOINT],
   ['provider/endpoints/demo/steps/first.ts', stepFile('first', [], ['value'])],
   ['provider/endpoints/demo/steps/second.ts', stepFile('second', ['value', 'expanded'], ['other'], ", optional: ['expanded']")],
   ['provider/endpoints/demo/steps/third.ts', stepFile('third', ['other'], [])],
@@ -100,6 +124,39 @@ describe('extractProvider', () => {
           '',
         ].join('\n'),
       );
+    });
+
+    it('should leave the steps of a disabled feature and their edges out of endpoint.ts', () => {
+      expect(generateDemo({ par: false }).get('endpoints/demo/endpoint.ts')).toBe(
+        [
+          'export const endpoint = defineEndpoint({',
+          "  id: 'demo',",
+          '  order: 10,',
+          "  label: 'Demo',",
+          "  path: '/demo',",
+          "  methods: ['GET'],",
+          "  layer: 'api',",
+          "  group: { id: 'demo', label: 'Demo' },",
+          '  rearrangeable: true,',
+          '  steps: [',
+          "    'first',",
+          "    'second',",
+          "    'third',",
+          '  ],',
+          '  edges: {',
+          '    chain: true,',
+          '    extra: [',
+          "      { from: 'first', to: 'third', label: 'short', kind: 'branch' },",
+          '    ],',
+          '  },',
+          '});',
+          '',
+        ].join('\n'),
+      );
+    });
+
+    it('should keep endpoint.ts as it is when every feature of its steps is enabled', () => {
+      expect(generateDemo({ par: true }).get('endpoints/demo/endpoint.ts')).toBe(ENDPOINT);
     });
 
     it('should leave out the directory of a disabled feature', () => {

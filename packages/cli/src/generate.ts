@@ -137,6 +137,9 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
     if (framework.layout === 'nextjs' && rootPath !== undefined && /(^|\/)endpoint\.ts$/.test(rootPath)) {
       content = withoutDisabledSteps(content, enabled);
     }
+    if (framework.layout === 'hono' && rootPath !== undefined && /(^|\/)endpoint\.ts$/.test(rootPath)) {
+      content = withoutStepsOf(content, disabledStepsOf(rootPath, catalog, enabled));
+    }
     if (framework.layout === 'hono' && rootPath !== undefined && /(^|\/)pipeline\.ts$/.test(rootPath)) {
       const endpoint = endpointOfPipeline(rootPath, catalog);
       content = transformPipeline(
@@ -348,6 +351,44 @@ export function withoutDisabledSteps(source: string, enabled: ReadonlySet<string
     .filter((line) => {
       const feature = /^\s*\{ id: '[a-z0-9-]+', feature: '([a-z0-9-]+)'/.exec(line)?.[1];
       return feature === undefined || enabled.has(feature);
+    })
+    .join('\n');
+}
+
+/** The ids of the steps of the endpoint.ts at rootPath that a disabled feature adds. */
+function disabledStepsOf(rootPath: string, catalog: SourceCatalog, enabled: ReadonlySet<string>): Set<string> {
+  const endpoint = catalog.endpoints.find((candidate) => candidate.file === rootPath);
+  if (endpoint === undefined) return new Set();
+  return new Set(
+    catalog.steps
+      .filter((step) => step.endpoint === endpoint.id && step.feature !== undefined && !enabled.has(step.feature))
+      .map((step) => step.id),
+  );
+}
+
+/**
+ * An endpoint.ts of the hono layout without the given steps: their lines in
+ * `steps` and the edges that start or end at them (one per line, as the apps
+ * write them). A fork at a removed step spans lines and is refused. The
+ * journeys name endpoints, not steps, and are kept.
+ */
+export function withoutStepsOf(source: string, removed: ReadonlySet<string>): string {
+  if (removed.size === 0) return source;
+  let inJourneys = false;
+  return source
+    .split('\n')
+    .filter((line) => {
+      if (/^\s*journeys: \[/.test(line)) inJourneys = true;
+      else if (inJourneys && /^\s*\],?\s*$/.test(line)) inJourneys = false;
+      if (inJourneys) return true;
+      const fork = /^\s*\{ at: '([a-z0-9-]+)'/.exec(line)?.[1];
+      if (fork !== undefined && removed.has(fork)) {
+        throw new Error(`endpoint.ts forks at step "${fork}" of a disabled feature; move the fork to a step of the base`);
+      }
+      const listed = /^\s*'([a-z0-9-]+)',\s*$/.exec(line)?.[1];
+      if (listed !== undefined) return !removed.has(listed);
+      const edgeSteps = [...line.matchAll(/\b(?:from|to|step): '([a-z0-9-]+)'/g)].map((match) => match[1] ?? '');
+      return !(/^\s*\{/.test(line) && edgeSteps.some((id) => removed.has(id)));
     })
     .join('\n');
 }

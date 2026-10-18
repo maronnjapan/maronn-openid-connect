@@ -5,7 +5,7 @@
  * In the repository the CLI reads them straight from apps/ (so a change to an
  * app is generated without a rebuild). The published package has no apps/: it
  * carries the copy `pnpm run build` makes in templates/ (collect.ts), with the
- * catalog of the steps baked into templates/<source>/catalog.json.
+ * catalog of the steps baked into templates/<source>/<root>.catalog.json.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';

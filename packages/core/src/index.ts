@@ -379,6 +379,14 @@ export type {
 } from './client-assertion.js';
 
 export {
+  // クライアントが用途ごとに登録した公開鍵の取得（private_key_jwt / Request Object / DPoP など）
+  JWKS_CLIENT_KEY_PURPOSES,
+  createClientJwksKeyResolver,
+} from './client-keys.js';
+
+export type { ClientKeyPurpose, ClientKeyResolver } from './client-keys.js';
+
+export {
   createAuthorizationCode,
   buildAuthorizationCodeData,
 } from './authorization-code.js';

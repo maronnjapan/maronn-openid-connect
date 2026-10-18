@@ -60,7 +60,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 | API | 役割 |
 |---|---|
 | クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`。OAuth 2.1 §2.3 / OIDC Core 1.0 §9）。`extractClientCredentials`（提示された資格情報と使用方式の抽出。`client_assertion` は `private_key_jwt` として取り出し、`client_id` が無ければアサーションの `sub` でクライアントを識別する） / `resolveAuthenticatedTokenClient`（登録クライアントの解決） / `validateClientAuthMethod`（使われた方式が登録方式のどれかであることの検証。`TokenClientInfo.tokenEndpointAuthMethods` を登録すると、1 つのクライアントに複数の方式を許せる） / `verifyClientSecret`（定数時間比較。`clientSecretHash` を登録したクライアントは、提示値の SHA-256 ハッシュと比べる。シークレットを提示していなければ、シークレットを登録していないクライアントでも通さない）。CLI 生成コードはこれらを個別に呼び出し、`private_key_jwt` のときは `verifyClientSecret` の代わりに次の行のステップを呼ぶ |
-| `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが登録した公開鍵（`TokenClientInfo.jwks`）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` は署名（ヘッダーの `kid` で鍵を選び、無ければ登録鍵をすべて試す）と、`iss` と `sub` が client_id であること、`aud` の各値が呼び出し側の渡したこの OP の識別子であること、`exp` / `nbf` / `iat`、`jti` を確かめる。`alg` は非対称の `DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS`（RS256 / ES256 など）だけを受け付け、鍵を JWT のヘッダー（`jku` / `jwk` など）からは取らない。`rejectReplayedClientAssertion` は `ClientAssertionJtiStore` に `jti` を記録し、同じアサーションの 2 回目を拒否する。`decodeClientAssertion` / `validateClientAssertionHeader` / `selectClientAssertionKeys` / `verifyClientAssertionSignature` / `validateClientAssertionAudience` などの個別のステップも呼べる |
+| `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが private_key_jwt の用途に登録した公開鍵（`ClientKeyResolver` で引く）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` は署名（ヘッダーの `kid` で鍵を選び、無ければ登録鍵をすべて試す）と、`iss` と `sub` が client_id であること、`aud` の各値が呼び出し側の渡したこの OP の識別子であること、`exp` / `nbf` / `iat`、`jti` を確かめる。`alg` は非対称の `DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS`（RS256 / ES256 など）だけを受け付け、鍵を JWT のヘッダー（`jku` / `jwk` など）からは取らない。`rejectReplayedClientAssertion` は `ClientAssertionJtiStore` に `jti` を記録し、同じアサーションの 2 回目を拒否する。`decodeClientAssertion` / `validateClientAssertionHeader` / `selectClientAssertionKeys` / `verifyClientAssertionSignature` / `validateClientAssertionAudience` などの個別のステップも呼べる |
 | トークンリクエスト検証のステップ関数 | `validateGrantTypeSupported`（OP 全体での grant_type サポート判定） / `resolveAuthenticatedTokenClient`（認証済みクライアントの解決） / `validateClientGrantType`（クライアント単位の grant_type 認可）。CLI 生成コードはこれらを個別に呼び出す |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
 | refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenSession` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
@@ -108,6 +108,13 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 |---|---|
 | Introspection のステップ関数 | RFC 7662 準拠のトークン照会（クライアント認証必須、`active: false` 応答は最小限）。`requireIntrospectionToken` / `requireIntrospectionClient` / `requireConfidentialIntrospectionCaller` / `resolveIntrospectionToken` / `isIntrospectionTokenActive` / `buildIntrospectionResponse` / `INACTIVE_INTROSPECTION_RESPONSE` |
 | Revocation のステップ関数 | RFC 7009 準拠のトークン失効（他クライアントのトークン指定は `invalid_grant`、refresh 失効時は同一 grant のアクセストークンも cascade 失効）。`requireRevocationToken` / `requireRevocationClient` / `resolveRevocationTarget` / `validateRevocationTokenClient` / `revokeResolvedToken` / `revokeGrantAccessTokens` |
+
+### クライアントの公開鍵
+
+| API | 役割 |
+|---|---|
+| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose)`）。用途の `ClientKeyPurpose` は `private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む |
+| `createClientJwksKeyResolver` | クライアント登録の `jwks`（RFC 7591 §2 / `ClientInfo.jwks`）を鍵の保存先にする `ClientKeyResolver`。`jwks` は用途を分けない 1 組の鍵なので、`JWKS_CLIENT_KEY_PURPOSES`（`private_key_jwt` と `request_object`）の用途にだけ、その鍵を返す |
 
 ### ユーティリティ
 

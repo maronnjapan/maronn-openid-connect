@@ -3,7 +3,7 @@
  * OIDC Core 1.0 §9 / RFC 7523 §3 / RFC 7521 §4.2
  *
  * クライアントは自分の秘密鍵で署名した JWT を `client_assertion` として送り、
- * OP はクライアントが登録した公開鍵（`jwks`）で署名とクレームを検証する。
+ * OP はクライアントが private_key_jwt の用途に登録した公開鍵で署名とクレームを検証する。
  * 鍵は登録済みの JWK Set からだけ選び、JWT のヘッダー（jku / jwk など）からは取らない。
  *
  * どのステップも鍵の取得や保存には触れない。登録鍵の読み出しと jti の記録は
@@ -63,7 +63,10 @@ export interface DecodedClientAssertion {
 export interface VerifyClientAssertionOptions {
   /** 認証するクライアントの client_id。アサーションの iss と sub はこれと一致しなければならない。 */
   clientId: string;
-  /** クライアントが登録した公開鍵（`TokenClientInfo.jwks`）。無ければ必ず拒否する。 */
+  /**
+   * クライアントが private_key_jwt の用途に登録した公開鍵（ClientKeyResolver の
+   * `findClientKeys(clientId, 'private_key_jwt')`）。無ければ必ず拒否する。
+   */
   jwks: JwkSet | undefined;
   /**
    * aud として受け付ける値。aud の各値がこのどれかでなければ拒否する。

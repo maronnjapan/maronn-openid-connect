@@ -49,7 +49,7 @@ core の純関数            ← このパッケージ
 | API | 役割 |
 |---|---|
 | クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret`。`TokenClientInfo.tokenEndpointAuthMethods` を登録すると、1 つのクライアントに複数の方式を許せる |
-| `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが登録した公開鍵（`TokenClientInfo.jwks`）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` が署名、`iss` / `sub` / `aud` / `exp` / `nbf` / `iat` / `jti` を確かめ、`rejectReplayedClientAssertion` が `ClientAssertionJtiStore` に `jti` を記録して 2 回目の使用を拒否する。`aud` として受け付ける値は `audiences` で渡し、issuer だけを渡すと draft-ietf-oauth-rfc7523bis に従う |
+| `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが private_key_jwt の用途に登録した公開鍵（`ClientKeyResolver` で引く）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` が署名、`iss` / `sub` / `aud` / `exp` / `nbf` / `iat` / `jti` を確かめ、`rejectReplayedClientAssertion` が `ClientAssertionJtiStore` に `jti` を記録して 2 回目の使用を拒否する。`aud` として受け付ける値は `audiences` で渡し、issuer だけを渡すと draft-ietf-oauth-rfc7523bis に従う |
 | `hashClientSecret` / `verifyClientSecretHash` | client_secret を平文で持たずに登録するためのハッシュ（SHA-256、base64url）の作成と照合。`TokenClientInfo.clientSecretHash` に登録すると、`verifyClientSecret` は提示値のハッシュをこの値と比べる |
 | 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
@@ -81,6 +81,13 @@ core の純関数            ← このパッケージ
 |---|---|
 | Introspection のステップ関数 | RFC 7662 準拠のトークン照会（クライアント認証必須）。`requireIntrospectionToken` / `requireIntrospectionClient` / `requireConfidentialIntrospectionCaller` / `resolveIntrospectionToken` / `isIntrospectionTokenActive` / `buildIntrospectionResponse`。`AccessTokenInfo.acr` を保存したアクセストークンには `acr` を返す（RFC 9470 §6.2） |
 | Revocation のステップ関数 | RFC 7009 準拠のトークン失効（refresh 失効時は同一 grant のアクセストークンも cascade 失効）。`requireRevocationToken` / `requireRevocationClient` / `resolveRevocationTarget` / `validateRevocationTokenClient` / `revokeResolvedToken` / `revokeGrantAccessTokens` |
+
+### Client Keys
+
+| API | 役割 |
+|---|---|
+| `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose)`）。用途の `ClientKeyPurpose` は `private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む |
+| `createClientJwksKeyResolver` | クライアント登録の `jwks`（RFC 7591 §2 / `ClientInfo.jwks`）を鍵の保存先にする `ClientKeyResolver`。`jwks` は用途を分けない 1 組の鍵なので、`JWKS_CLIENT_KEY_PURPOSES`（`private_key_jwt` と `request_object`）の用途にだけ、その鍵を返す |
 
 ### Errors / Utilities
 

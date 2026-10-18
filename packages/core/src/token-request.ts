@@ -1,6 +1,5 @@
 import { TokenError, TokenErrorCode } from './token-error.js';
 import { clientAllowsGrantType } from './client-grant-types.js';
-import type { JwkSet } from './jwks.js';
 
 /**
  * トークンエンドポイントへの生パラメータ（バリデーション前）
@@ -76,12 +75,6 @@ export interface TokenClientInfo {
    * この一覧に `'none'` は書けない。
    */
   tokenEndpointAuthMethods?: Array<'client_secret_basic' | 'client_secret_post' | 'private_key_jwt'>;
-  /**
-   * クライアントが登録した公開鍵集合（JWKS）。{@link ClientInfo.jwks} と同じ値。
-   * OIDC Core 1.0 §9: `private_key_jwt` のクライアントアサーションは、この鍵のどれかで
-   * 署名を検証する（{@link verifyClientAssertion}）。
-   */
-  jwks?: JwkSet;
 }
 
 /**

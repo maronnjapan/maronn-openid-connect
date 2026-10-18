@@ -48,7 +48,8 @@ CLI コマンドでフローの実装コードを生成し、利用者はその�
 - `devDependencies` には外部ライブラリを使用してよい
 - t_wada が提唱する方法でテスト駆動開発を行う
 - 機能追加または修正を実ブラウザや実 HTTP フローで検証できる場合は、原則として `tests/e2e` に Playwright E2E テストも追加する
-- E2E で使う OpenID Provider は `samples/*` 配下の CLI 生成アプリを対象とし、E2E 専用のクライアントとリソースサーバーは `tests/e2e` 配下に置く。`samples/*` には OP 以外の役割を混在させない
+- E2E で使う OpenID Provider は、PR ごとに `apps/*` の全機能オンのアプリを、nightly と手動起動で `samples/*` の CLI 生成アプリを対象とする。E2E 専用のクライアントとリソースサーバーは `tests/e2e` 配下に置き、`apps/*` と `samples/*` には OP 以外の役割を混在させない
+- `apps/*/src/oidc-provider` の base（`features/<id>/` と `db/<kind>/` 以外）は `features/<id>/` と experimental パッケージを import しない。機能は `features/feature.ts` のフックか、パイプラインの所有者付きブロック（`// [step-id] (feature: <id>) ...`）で base に差し込む。この境界は `pnpm run lint`（`.github/scripts/lint-import-boundaries.mjs`）が検査する
 - `packages/experimental/src` の変更に対して changeset を手で書かない。main への push で CI が patch の changeset を自動生成する。experimental の bump はどの変更でも patch 固定であり、minor または major を指定すると `pnpm run test:release-contract` が失敗する。詳細は `RELEASE.md` の「experimental の自動 publish」を参照する
 - `packages/experimental` の機能を実装し終えたら、作業用 notes リポジトリの `implementation-guides/experimental/` に実装解説の日本語版と英語版を作成する。`packages/experimental/src` または CLI 統合を変更した場合は、該当解説の掲載コードと説明も同じ変更内で更新する
 
@@ -62,9 +63,12 @@ README、実装解説、タスク文書などの Markdown 資料を作成また�
 
 ## テストコードの書き方
 
-CLI が生成するコードのテストは書きません。
-生成コードの文字列やファイル構成を検査する単体テストも、生成物に含めて出力するテストも追加しません。
-生成 OP の挙動は、`tests/e2e` の E2E テストと `tests/conformance` の OpenID Conformance Suite で確認します。
+`apps/*` の実コードには単体テストを書きます。
+ステップは `steps/<id>.ts` の隣に `<id>.test.ts` を置き、機能は `features/<id>/` の中で同じように置きます。
+テストは CLI の抽出範囲から除外されるので、生成物には含まれません。
+
+生成物の文字列やファイル構成を検査するテストは書きません。
+CLI が生成した機能の組合せは型検査だけで確かめ、生成 OP の挙動は `tests/e2e` の E2E テストと `tests/conformance` の OpenID Conformance Suite で確認します。
 CLI 自体の入力検証、エラー処理、既存ファイルの保護は `packages/cli` の単体テストで検証します。
 
 ### テストケースの命名規則
@@ -162,7 +166,7 @@ pnpm --filter <package-name> <command>
 
 ## アーキテクチャ
 
-- **モノレポ構成**：`packages/*` にパッケージを配置する
+- **モノレポ構成**：`packages/*` にパッケージを、`apps/*` に CLI が生成コードを抽出する元のアプリを配置する
 - **Web 標準技術のみ**：Node.js 固有の API ではなく、Fetch API や Web Crypto API などの Web 標準 API を使用する
 - **外部依存なし**：production の `dependencies` には外部ライブラリを使用しない（例外は `packages/google-login` の `google-auth-library`。同パッケージのみ Node.js 22 以上限定になる）
 
@@ -202,6 +206,18 @@ Google が `login_uri` へ POST する ID トークンの検証は Google 公式
 単体で使うものではなく、core と組み合わせて `packages/cli` の生成コードから呼び出す想定です。`maronn-oidc generate <framework> --enable google-login` で生成コードに組み込まれ（拡張機能。既定では無効）、ログイン画面の「Google でログイン」ボタンと `POST /login/google` の受け口が追加されます。`samples/express-flyio` / `samples/fastify-flyio` / `samples/nextjs-vercel` は `GOOGLE_CLIENT_ID` を設定すると Google ログインが有効になります。
 `google-auth-library` の要件により Node.js 22 以上限定で、エッジランタイムでは動きません。
 
+### apps/*
+
+CLI が生成コードを抽出する元の、全機能オンの OpenID Provider です。
+private な workspace パッケージで、それぞれ単体で起動できます。
+`apps/hono`（`@maronn-openid-connect/app-hono`）は Hono の OP で、`pnpm --filter @maronn-openid-connect/app-hono dev` で `src/server.ts` がメモリ DB と開発用のクライアントとユーザーを登録して待ち受けます。
+
+`src/oidc-provider/` が CLI の抽出範囲です。
+エンドポイントは `endpoints/<endpoint>/pipeline.ts` に `// [step-id]` 付きの呼び出し列を持ち、ステップは `steps/<id>.ts` に一つずつ置いて `meta` で自分を記述します。
+機能は `features/<id>/` のディレクトリで、`feature.ts` がフック（routes、discovery、context など）で base への差し込み先を宣言します。
+有効な機能は `features/enabled.ts` が列挙し、DB は `db/memory/`、`db/sql/`、`db/kv/` が同じ export 名で `db/index.ts` から選ばれます。
+OP 以外の役割（クライアントやリソースサーバー）は置きません。
+
 ### samples/*
 
 `packages/core` などの機能を実際に試すための OpenID Provider 専用サンプルです。
@@ -218,4 +234,5 @@ sample のディレクトリ名は、デプロイ先が分かる「フレーム�
 ### tests/e2e
 
 Playwright による E2E テストを配置します。
-CLI 生成済みの `samples/*` の OpenID Provider を起動し、E2E 専用のクライアントとリソースサーバーを `tests/e2e/apps` に分離して検証します。
+`apps/*` または CLI 生成済みの `samples/*` の OpenID Provider を起動し、E2E 専用のクライアントとリソースサーバーを `tests/e2e/apps` に分離して検証します。
+`pnpm run test:e2e` は `apps/hono` を対象に PR ごとに走り、`pnpm run test:e2e:samples` は四つの samples を対象に `e2e-samples.yml`（nightly と手動起動）で走ります。

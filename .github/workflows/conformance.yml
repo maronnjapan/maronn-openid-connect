@@ -22,6 +22,7 @@ on:
     types: [opened, synchronize, reopened, labeled]
     paths:
       - "packages/**"
+      - "apps/**"
       - "samples/**"
       - "tests/conformance/**"
       - ".github/workflows/conformance.yml"

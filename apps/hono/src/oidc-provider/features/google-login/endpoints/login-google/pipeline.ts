@@ -1,4 +1,4 @@
-import type { LoginError } from '../../../../endpoints/login/screen.js';
+import type { GoogleLoginOutcome } from './outcome.js';
 import { discardSessionForFreshLogin } from './steps/discard-session-for-fresh-login.js';
 import { establishBrowserSession } from './steps/establish-session.js';
 import { handOffToConsent } from './steps/hand-off-to-consent.js';
@@ -16,13 +16,7 @@ import { verifyGoogleLoginCallback } from './steps/verify-google-callback.js';
  * `maronn-oidc graph --detail steps --endpoint login-google`).
  */
 
-/** What the Google login callback decided; page.ts turns it into HTTP. */
-export type GoogleLoginOutcome =
-  | LoginError
-  /** config.googleLogin is not set: the callback does not exist (404). */
-  | { kind: 'not_configured' }
-  /** Signed in: the OP session cookie(s) to set, then continue to the consent step. */
-  | { kind: 'authenticated'; cookies: string[] };
+export type { GoogleLoginOutcome } from './outcome.js';
 
 export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   const config = c.get('config');

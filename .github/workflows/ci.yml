@@ -117,10 +117,13 @@ jobs:
       - name: Type check
         run: pnpm run typecheck
 
-      # TODO: lint ツール自体が未導入のため Lint ステップは追加していない。
-      # packages/* のどれも lint スクリプトを持たない状態で `pnpm run lint` を
-      # 呼ぶと、対象 0 件のまま成功して「常に緑で何も検証しないステップ」になる。
-      # この false green は test:ci-gate が検知する。
+      # apps/* の import 境界（base が features と experimental を import しない、
+      # requires の無い features 間 import が無い、所有者付きブロックの参照先）を検査する。
+      # CLI はこの境界を前提にファイルを選んでブロックを消すため、破れると生成物が壊れる。
+      # 実体は .github/scripts/lint-import-boundaries.mjs。lint が何も検査しない
+      # false green は test:ci-gate が検知する。
+      - name: Lint
+        run: pnpm run lint
 
       - name: Unit & Integration tests
         run: pnpm run test:ci
@@ -128,6 +131,8 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
 
+      # PR ごとの E2E は apps/hono（CLI が生成コードを抽出する全機能オンのアプリ）を対象にする。
+      # samples の E2E は e2e-samples.yml が nightly と手動起動で回す。
       - name: E2E tests
         run: pnpm run test:e2e
 

@@ -66,21 +66,24 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/ciba/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/backchannel-authentication.ts` | バックチャネル認証エンドポイント（`POST /backchannel_authentication`）と設定値 `cibaConfig` |
-| `pages/ciba.ts`（Hono は `pages/ciba.tsx`） | 認証デバイス UI の画面層（`GET /ciba`・`POST /ciba/login`・`POST /ciba/approve` のルートと、サインイン・保留一覧・完了画面の描画。UI カスタマイズはここ） |
-| `routes/ciba-verification.ts` | 認証デバイス UI の処理層（`prepareCibaDevice()`・`submitCibaLogin()`・`submitCibaDecision()`。ログイントランザクションの発行・認証・承認の判断を行い、結果を outcome で返す。Response は作らない） |
-| `views.ts`（Hono は `views.tsx`） | `cibaLoginPage` / `cibaPendingRequestsPage` / `cibaCompletedPage` の追加 |
-| `store.ts` | CIBA ストアのシングルトン（実体は experimental の in-memory 実装）とログイン用バインディング Cookie ヘルパーの追加 |
-| `config.ts` | `RegisteredClient` への `backchannelTokenDeliveryMode` の追加とサンプルクライアントへの grant URN 登録 |
-| `routes/token.ts` | CIBA grant の分岐と CIBA §11 エラーの catch 分岐の追加 |
-| `routes/discovery.ts` | `backchannel_authentication_endpoint` / `backchannel_token_delivery_modes_supported` / grant URN の広告 |
-| `app.ts` / `apply.ts` | 4 エンドポイントのマウント・CORS・許可メソッド・`login_hint` リゾルバの配線 |
+| `features/ciba/endpoints/backchannel-authentication/` | バックチャネル認証エンドポイント（`POST /backchannel_authentication`）。`pipeline.ts` がステップ（`steps/`）を順に呼ぶ |
+| `features/ciba/endpoints/ciba/page.tsx` | 認証デバイス UI の画面層（`GET /ciba`・`POST /ciba/login`・`POST /ciba/approve` のルートと、サインイン・保留一覧・完了画面の描画。UI カスタマイズはここ） |
+| `features/ciba/endpoints/ciba/steps/` | 認証デバイス UI の処理層（`prepareCibaDevice()`・`submitCibaLogin()`・`submitCibaDecision()`。ログイントランザクションの発行・認証・承認の判断を行い、結果を outcome で返す。Response は作らない） |
+| `features/ciba/views.tsx` | `cibaLoginPage` / `cibaPendingRequestsPage` / `cibaCompletedPage` の view（`views` オプションで差し替え可能） |
+| `features/ciba/store.ts` / `features/ciba/cookies.ts` | CIBA ストアのシングルトン（実体は experimental の in-memory 実装）と、ログイン用バインディング Cookie のヘルパー |
+| `features/ciba/config.ts` | 設定値 `cibaConfig`、`RegisteredClient` への `backchannelTokenDeliveryMode` の追加、`createApp` / `applyOidc` への `cibaUserResolver` オプションの追加 |
+| `features/ciba/steps/dispatch-ciba.ts` | トークンエンドポイントの CIBA grant の処理と CIBA §11 のエラー応答。`endpoints/token/pipeline.ts` の `(feature: ciba)` のブロックから呼ばれる |
+| `features/ciba/feature.ts` | 2 つのルート（`/backchannel_authentication` と、`/login`・`/approve` を下に持つ `/ciba`）、`backchannel_authentication_endpoint` / `backchannel_token_delivery_modes_supported` の広告、grant URN の登録（`grant_types_supported` にも載る）、ストアと `login_hint` リゾルバの配線 |
+
+Next.js では、エンドポイントと画面は `(ciba)/` の下の Route Handler（`backchannel_authentication/route.ts`、`ciba/route.ts`、`ciba/login/route.ts`、`ciba/approve/route.ts`、描画は `ciba/screens.ts`）で、設定・ストア・grant の処理は `_oidc-provider/features/ciba/` にあります。
 
 ## 設定
 
-`routes/backchannel-authentication.ts` の `cibaConfig` を編集します。認証デバイス UI とトークンルートもここを参照します。範囲外の値はモジュール読み込み時にエラーになります。
+`features/ciba/config.ts`（Next.js は `_oidc-provider/features/ciba/config.ts`）の `cibaConfig` を編集します。認証デバイス UI とトークンエンドポイントの CIBA grant もここを参照します。範囲外の値はモジュール読み込み時にエラーになります。
 
 ```typescript
 export const cibaConfig = {

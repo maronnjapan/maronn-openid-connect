@@ -10,8 +10,9 @@ description: クライアントが実行時に自分を登録して client_id �
 
 ## 概要
 
-この OP でクライアントを増やす方法は、既定の生成物では静的な登録簿の編集しかありません。
-`config.ts` の Map か、`--db` で生成した場合はクライアント表へエントリを足し、ビルドと再起動を経てはじめて新しいクライアントが使えます。
+この OP でクライアントを増やす方法は、既定の生成物では運用者による静的な登録しかありません。
+`db/` の `registerClient()`（`--db sql` なら `INSERT` 文でも可）でクライアントを足し、その登録を実行してはじめて新しいクライアントが使えます。
+`--db` を付けない生成物は OP のプロセスのメモリにデータを置くので、`registerClient()` は OP のプロセスの中（起動時の処理など）で呼びます。管理用のスクリプトや `INSERT` 文で足せるのは、`--db sql` / `--db kv` のときだけです。
 
 Dynamic Client Registration は、クライアントが実行時に自分のメタデータを送って登録を受ける**クライアント登録エンドポイント**を定義します。
 `--enable dynamic-client-registration` で生成した OP は `POST /register` を提供し、discovery に `registration_endpoint` を公表します。
@@ -79,7 +80,7 @@ pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 ## 設定
 
-設定は生成された `routes/register.ts` の `dynamicClientRegistrationConfig` にあります。
+設定は生成された `features/dynamic-client-registration/config.ts`（Next.js は `_oidc-provider/features/dynamic-client-registration/config.ts`）の `dynamicClientRegistrationConfig` にあります。
 
 | 設定 | 既定値 | 意味 |
 |---|---|---|
@@ -104,12 +105,16 @@ PoC の検証用と割り切り、本番の審査付き登録には使わない�
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/dynamic-client-registration/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/register.ts`（Next.js は `register/route.ts` と `register/config.ts`） | 登録エンドポイントと設定オブジェクト `dynamicClientRegistrationConfig` |
-| `store.ts`（追記） | 動的登録クライアントの in-memory ストアと、設定済みのクライアント解決へ合成する `withDynamicallyRegisteredClients()` |
-| `apply.ts` / `app.ts`（追記） | `/register` のマウントと、クライアント解決への合成 |
-| `routes/discovery.ts`（追記） | `registration_endpoint` メタデータ |
+| `features/dynamic-client-registration/endpoints/register/` | 登録エンドポイント（`POST /register`）。`pipeline.ts` がステップ（`steps/`）を順に呼ぶ |
+| `features/dynamic-client-registration/config.ts` | 設定オブジェクト `dynamicClientRegistrationConfig` と、`createApp` / `applyOidc` に足す `dynamicClientRegistration` オプション |
+| `features/dynamic-client-registration/store.ts` | 動的登録クライアントの in-memory ストアと、設定済みのクライアント解決へ合成する `withDynamicallyRegisteredClients()` |
+| `features/dynamic-client-registration/feature.ts` | `/register` のルート、`registration_endpoint` メタデータ、リクエストのコンテキストでのクライアント解決への合成 |
+
+Next.js では、`(dynamic-client-registration)/register/route.ts` がエンドポイントで、設定とストアは `_oidc-provider/features/dynamic-client-registration/` にあります。
 
 ## 受理するメタデータ
 
@@ -159,7 +164,7 @@ PoC の検証用と割り切り、本番の審査付き登録には使わない�
 
 ## core の静的登録との違い
 
-静的登録は設定（`config.ts` の Map、または `--db` のクライアント表）の編集と再起動を要し、動的登録は API 呼び出し 1 回で済みます。
+静的登録は運用者が `registerClient()`（または `--db sql` のクライアント表への `INSERT`）を実行する必要があり、動的登録は API 呼び出し 1 回で済みます。
 登録後の扱いは同一で、クライアント解決が「設定済みの解決 → 動的ストア」の順に引くだけの違いです。
 同じ `client_id` が両方にあることは起きません（動的側は常に `dcr-` プレフィックス付きの乱数です）。
 
@@ -167,7 +172,7 @@ PoC の検証用と割り切り、本番の審査付き登録には使わない�
 
 - **`/register` が 404**：`--enable dynamic-client-registration` を付けて生成したかを discovery の `registration_endpoint` で確認してください
 - **401 が返る**：`dynamicClientRegistrationConfig.initialAccessToken` が設定されています。`Authorization: Bearer <値>` を付けるか、オープン登録に戻してください
-- **登録したクライアントが再起動後に消えた**：既知の制約のとおり in-memory です。恒久的なクライアントは静的な登録簿に書いてください
+- **登録したクライアントが再起動後に消えた**：既知の制約のとおり in-memory です。恒久的なクライアントは `registerClient()` で静的に登録してください（再起動をまたいで残るのは `--db sql` / `--db kv` で生成した `db/` への登録だけです）
 - **`text/plain` で送った JSON が 400 になる**：RFC 7591 §3.1 のとおり `Content-Type: application/json` だけを受理します
 
 ## 参考資料

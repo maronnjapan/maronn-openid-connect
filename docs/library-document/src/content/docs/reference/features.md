@@ -137,6 +137,6 @@ CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` 
 
 ## Custom Scopes
 
-生成 OP が受け付けるスコープは、標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）に加えて、CLI の `--scope` で宣言できます。宣言すると `scopes.ts` が生成され、discovery の `scopes_supported` に載り、認可エンドポイントは宣言していないスコープを `invalid_scope` で拒否します（RFC 6749 §3.3）。
+生成 OP が受け付けるスコープは、標準スコープ（`openid` / `profile` / `email` / `address` / `phone` / `offline_access`）に加えて、CLI の `--scope` で宣言できます。宣言したスコープは生成された `scopes.ts` に書き込まれ、discovery の `scopes_supported` に載り、認可エンドポイントは宣言していないスコープを `invalid_scope` で拒否します（RFC 6749 §3.3）。
 
-「誰にどのスコープを許すか」は CLI のオプションではなく、生成された `scopes.ts` の `resolveGrantableScopes()` に書きます。同意・SSO・`prompt=none`・device / CIBA の承認から呼び出された状態で生成されるので、この 1 関数を書き換えるだけで全経路に反映されます。宣言が無ければ何も生成されず、既定の生成物の挙動は変わりません。詳細は [CLI Guide](../../guides/cli/#custom-scopes) を参照してください。
+「誰にどのスコープを許すか」は CLI のオプションではなく、生成された `scopes.ts` の `resolveGrantableScopes()` に書きます。同意・SSO・`prompt=none`・device / CIBA の承認から呼び出された状態で生成されるので、この 1 関数を書き換えるだけで全経路に反映されます。宣言が無ければ許容リストのチェックはどの値も拒否せず、既定の生成物の挙動は変わりません。詳細は [CLI Guide](../../guides/cli/#custom-scopes) を参照してください。

@@ -62,10 +62,10 @@ pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 ## 設定
 
-リダイレクトを許す戻り先は、生成された `routes/logout.ts` の `rpInitiatedLogoutConfig` に**クライアントごとに**登録します。
+リダイレクトを許す戻り先は、生成された `features/rp-initiated-logout/config.ts`（Next.js は `_oidc-provider/features/rp-initiated-logout/config.ts`）の `rpInitiatedLogoutConfig` に**クライアントごとに**登録します。
 
 ```typescript
-import { rpInitiatedLogoutConfig } from './oidc-provider/routes/logout.js';
+import { rpInitiatedLogoutConfig } from './oidc-provider/features/rp-initiated-logout/config.js';
 
 rpInitiatedLogoutConfig.postLogoutRedirectUris = {
   'my-client': ['https://rp.example/loggedout'],
@@ -77,13 +77,18 @@ rpInitiatedLogoutConfig.postLogoutRedirectUris = {
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/rp-initiated-logout/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/logout.ts` | `processEndSessionRequest()`（end_session リクエストの検証と、確認画面を出すか直接ログアウトするかの判断）・`approveLogout()`（確認後のセッション破棄）と設定オブジェクト `rpInitiatedLogoutConfig`。Response は作らない |
-| `pages/logout.ts`（Hono は `pages/logout.tsx`） | `GET\|POST /logout` と `POST /logout/approve` のルート。確認画面・完了画面の描画、RP へのリダイレクト、Cookie の付与（UI カスタマイズはここ） |
-| `store.ts`（追記） | 確認画面の CSRF cookie ヘルパーとセッション Cookie の破棄ヘルパー |
-| `views.ts`（Hono は `views.tsx`）（追記） | 確認画面 `logoutConfirmationPage` と完了画面 `logoutCompletedPage`（`views` オプションで差し替え可能） |
-| `routes/discovery.ts`（追記） | `end_session_endpoint` メタデータ |
+| `features/rp-initiated-logout/endpoints/logout/steps/` | `processEndSessionRequest()`（end_session リクエストの検証と、確認画面を出すか直接ログアウトするかの判断）・`approveLogout()`（確認後のセッション破棄）。Response は作らない |
+| `features/rp-initiated-logout/endpoints/logout/page.tsx` | `GET\|POST /logout` と `POST /logout/approve` のルート。確認画面・完了画面の描画、RP へのリダイレクト、Cookie の付与（UI カスタマイズはここ） |
+| `features/rp-initiated-logout/config.ts` | 設定オブジェクト `rpInitiatedLogoutConfig` |
+| `features/rp-initiated-logout/cookies.ts` | 確認画面の CSRF cookie ヘルパー（セッション Cookie の破棄には、共通の `cookies.ts` の `buildClearedSessionCookie()` を使う） |
+| `features/rp-initiated-logout/views.tsx` | 確認画面 `logoutConfirmationPage` と完了画面 `logoutCompletedPage`（`views` オプションで差し替え可能） |
+| `features/rp-initiated-logout/feature.ts` | `/logout` のルートと `end_session_endpoint` メタデータ |
+
+Next.js では、`(rp-initiated-logout)/logout/route.ts` と `(rp-initiated-logout)/logout/approve/route.ts` がエンドポイントで（描画は `logout/screens.ts`）、設定と Cookie のヘルパーは `_oidc-provider/features/rp-initiated-logout/` にあります。
 
 ## 判定規則
 

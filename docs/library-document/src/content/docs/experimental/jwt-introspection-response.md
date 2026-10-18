@@ -68,14 +68,16 @@ maronn-oidc generate hono --enable jwt-introspection-response
 pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 ```
 
-`--enable jwt-introspection-response` を付けなかった場合、この機能に関するコードは一切生成されず、生成出力は機能が存在しなかった頃とバイト単位で同一です。
+`--enable jwt-introspection-response` を付けなかった場合、この機能に関するコードは一切生成されません。`features/jwt-introspection-response/` は出力されず、イントロスペクションのパイプラインからもこの機能のブロックと import が消えます。
 
 ## 生成されるもの
 
 | ファイル | 内容 |
 |---|---|
-| `routes/introspection.ts` | 応答構築後の `Accept` 判定と、JWT 応答への分岐（audience 制限 → RS256 鍵の選択 → 署名） |
-| `routes/discovery.ts` | `introspection_signing_alg_values_supported: ['RS256']` の広告 |
+| `features/jwt-introspection-response/steps/sign-response.ts` | 応答構築後の `Accept` 判定と、JWT 応答への分岐（audience 制限 → RS256 鍵の選択 → 署名）。`features/introspection/endpoints/introspection/pipeline.ts` の `(feature: jwt-introspection-response)` のブロックから呼ばれる |
+| `features/jwt-introspection-response/feature.ts` | `introspection_signing_alg_values_supported: ['RS256']` の広告 |
+
+Next.js では、`(introspection)/introspect/route.ts` の `(feature: jwt-introspection-response)` のブロックから `_oidc-provider/features/jwt-introspection-response/respond.ts` が呼ばれます。
 
 新しいエンドポイント・画面・ストア契約はありません。
 設定値もありません（署名 alg は RS256 固定、応答 JWT は `exp` を持たないため寿命設定も不要です）。

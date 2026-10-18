@@ -56,7 +56,7 @@ maronn-oidc generate hono --enable par
 pnpm add @maronn-openid-connect/experimental
 ```
 
-`--enable` を付けずに生成した場合の出力は、Experimental 機能が存在しなかった頃と**バイト単位で同一**です。既存の OP を再生成しても差分は出ません。
+`--enable` を付けずに生成した場合の出力には、Experimental 機能のディレクトリ（`features/<feature-id>/`、Next.js は route group の `(<feature-id>)/` と `_oidc-provider/features/<feature-id>/`）も、標準のエンドポイントに入るその機能のブロックと import も含まれません。同じ CLI のバージョンと同じ指定で再生成しても差分は出ません。
 
 利用可能な feature-id は `maronn-oidc --help` で確認できます。
 

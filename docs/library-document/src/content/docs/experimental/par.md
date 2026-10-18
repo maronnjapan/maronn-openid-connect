@@ -61,17 +61,21 @@ pnpm add @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 ## 生成されるもの
 
+Hono / Express / Fastify では、この機能のコードはすべて `features/par/` にあります。
+
 | ファイル | 内容 |
 |---|---|
-| `routes/par.ts` | PAR エンドポイント（`POST /par`）と設定値 `parConfig` |
-| `store.ts` | `InMemoryPushedAuthorizationRequestStore` と `parStore` シングルトンの追加 |
-| `routes/authorize.ts` | `request_uri` を展開する前段フックと、解決失敗を描画する catch 分岐の追加 |
-| `routes/discovery.ts` | `pushed_authorization_request_endpoint` の広告 |
-| `app.ts` / `apply.ts` | `/par` のマウント・CORS・許可メソッド（POST のみ）の追加 |
+| `features/par/endpoints/par/` | PAR エンドポイント（`POST /par`）。`pipeline.ts` がステップ（`steps/`）を順に呼ぶ |
+| `features/par/config.ts` | 設定値 `parConfig` |
+| `features/par/store.ts` | `InMemoryPushedAuthorizationRequestStore` と `parStore` シングルトン |
+| `features/par/steps/resolve-pushed-request.ts` | 認可エンドポイントで `request_uri` を展開するステップ。`endpoints/authorize/pipeline.ts` の `(feature: par)` のブロックから呼ばれる |
+| `features/par/feature.ts` | `/par` のルート（POST のみ、トークンエンドポイントと同じ CORS）、`pushed_authorization_request_endpoint` の広告、リクエストのコンテキストへの `parStore` の追加 |
+
+Next.js では、`(par)/par/route.ts` がエンドポイントで、設定とストアは `_oidc-provider/features/par/` にあります。
 
 ## 設定
 
-`routes/par.ts` の `parConfig` を編集します。認可エンドポイントもここを参照します。
+`features/par/config.ts`（Next.js は `_oidc-provider/features/par/config.ts`）の `parConfig` を編集します。認可エンドポイントもここを参照します。
 
 ```typescript
 export const parConfig = {

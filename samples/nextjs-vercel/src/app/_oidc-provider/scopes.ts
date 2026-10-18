@@ -18,8 +18,9 @@
  *
  * Custom scopes carry no UserInfo claims of their own: OIDC Core 1.0 §5.4 defines
  * claims for profile / email / address / phone only, so `filterClaimsByScope()`
- * ignores them. Return your own claims for a custom scope by editing the
- * resolve-claims step of endpoints/userinfo/.
+ * ignores them. Return your own claims for a custom scope by editing
+ * userinfo/route.ts, where resolveUserInfoClaims() loads the claims and
+ * filterClaimsByScope() keeps those of the granted scopes.
  */
 
 /**

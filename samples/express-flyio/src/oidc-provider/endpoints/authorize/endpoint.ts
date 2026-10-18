@@ -17,11 +17,9 @@ export const endpoint = defineEndpoint({
   initial: ['issuer'],
   steps: [
     'parse-request',
-    'resolve-pushed-request',
     'resolve-client',
     'resolve-request-object',
     'resolve-redirect-uri',
-    'resolve-jarm-response-mode',
     'validate-request',
     'create-transaction',
     'validate-prompt-combination',

@@ -63,8 +63,9 @@ export function buildDiscoveryMetadata(
       'exp',
       'iat',
       // OIDC Core 1.0 §2 / §3.1.3.6: ID Token protocol claims the OP issues
-      // (id-token.ts). auth_time/nonce/acr/amr are set from the auth context,
-      // azp for multi-audience tokens, at_hash for code flow access tokens.
+      // (the issue-id-token step of endpoints/token/). auth_time/nonce/acr/amr
+      // are set from the auth context, azp for multi-audience tokens, at_hash
+      // for code flow access tokens.
       // c_hash is intentionally omitted (Hybrid flow is not implemented).
       'auth_time',
       'nonce',

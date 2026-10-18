@@ -14,9 +14,6 @@ export const endpoint = defineEndpoint({
   steps: [
     'parse-request',
     'authenticate-client',
-    'dispatch-id-jag-issuance',
-    'dispatch-id-jag-redemption',
-    'dispatch-token-exchange',
     'dispatch-device-code',
     'dispatch-ciba',
     'validate-grant-type',

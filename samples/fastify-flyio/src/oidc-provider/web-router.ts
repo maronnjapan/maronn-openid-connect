@@ -89,8 +89,8 @@ export class WebContext {
     this.variables.set(key, value);
   }
 
-  // Mirrors Hono's loose context variable API so generated route templates can
-  // stay framework-neutral without forcing every c.get() call to cast.
+  // Mirrors Hono's loose context variable API, so the provider's code, written
+  // against Hono, runs on this router without a cast at every c.get() call.
   get(key: string): any {
     return this.variables.get(key);
   }

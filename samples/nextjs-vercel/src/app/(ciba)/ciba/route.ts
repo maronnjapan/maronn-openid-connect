@@ -25,7 +25,7 @@ export const runtime = 'nodejs';
  * browser by a cookie. A hidden csrf_token alone cannot stop login CSRF — the
  * attacker can fetch a valid pair from their own form — so the submission must
  * also present this browser's binding (see buildCibaLoginBindingCookie() in
- * store.ts).
+ * _oidc-provider/features/ciba/cookies.ts).
  */
 export async function GET(request: Request): Promise<Response> {
   const sessionId = parseSessionId(request.headers.get('Cookie'));

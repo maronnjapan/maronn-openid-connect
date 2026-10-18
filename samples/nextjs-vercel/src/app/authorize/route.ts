@@ -247,7 +247,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // The authentication transaction carries the request through login and
     // consent. csrfToken is embedded in their forms; transactionId never leaves
     // the OP except in the HttpOnly transaction cookie (buildTransactionCookie()
-    // in store.ts).
+    // in _oidc-provider/cookies.ts).
     const csrfToken = generateRandomString(32);
     const transaction = createAuthTransaction(validatedRequest, csrfToken);
     const transactionId = generateRandomString(32);

@@ -144,11 +144,19 @@ function parseJwk(clientId: string, json: string): Jwk {
 /**
  * Put a client into the client tables, replacing the rows of an earlier
  * registration with the same client_id. Call it from a setup script or at
- * startup, for example for the clients of config.ts:
+ * startup, with the database of db/ (createDatabase() of db/index.ts) and a
+ * ClientRegistration (config.ts):
  *
- *   for (const client of defaultRegisteredClients.values()) {
- *     await registerClient(db, client);
- *   }
+ *   // createDatabase(c) where the request context exists, when instance.ts
+ *   // reads it (D1 or other bindings of c.env)
+ *   const db = createDatabase();
+ *   await registerClient(db, {
+ *     clientId: 'my-client',
+ *     clientSecret: '...',
+ *     redirectUris: ['https://client.example.com/callback'],
+ *     grantTypes: ['authorization_code', 'refresh_token'],
+ *     tokenEndpointAuthMethods: ['client_secret_basic'],
+ *   });
  *
  * Registering a client again with the same values leaves its rows as they
  * are, so every instance of the OP may register its clients at startup, even

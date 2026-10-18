@@ -17,7 +17,6 @@ export const endpoint = defineEndpoint({
     'authenticate-client',
     'resolve-token',
     'build-response',
-    'sign-response',
     'respond',
     'respond-error',
   ],
@@ -25,7 +24,6 @@ export const endpoint = defineEndpoint({
   edges: {
     chain: true,
     extra: [
-      { from: 'sign-response', to: 'respond', label: 'application/token-introspection+jwt', kind: 'branch' },
     ],
   },
   journeys: [

@@ -183,9 +183,10 @@ function endpointMethods(routes: readonly FeatureRoute[]): Map<string, readonly 
 }
 
 /**
- * Initialize the OpenID Connect Provider: a Hono app with its middleware and
- * its endpoints. Mount it with app.route('/', createApp(options)), or call
- * applyOidc() (apply.ts).
+ * Initialize the OpenID Connect Provider: a router with its middleware and its
+ * endpoints (a Hono app; in the Express and Fastify output, the WebRouter of
+ * web-router.ts). On Hono, mount it with app.route('/', createApp(options));
+ * on Express and Fastify, call applyOidc() (apply.ts).
  */
 export function createApp(options: OidcProviderOptions): Hono<{ Variables: Record<string, any> }> {
   // A factory must return an isolated router each time. Keeping this instance at
@@ -224,7 +225,7 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
     const method = c.req.method;
     // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
     // supported. HEAD shares GET semantics (§9.3.2), so let it through on any
-    // GET-allowing endpoint; Hono runs the GET handler and strips the body.
+    // GET-allowing endpoint; the router runs the GET handler and strips the body.
     const isHeadOnGet = method === 'HEAD' && (allowed?.includes('GET') ?? false);
     if (allowed && !allowed.includes(method) && !isHeadOnGet) {
       c.header('Allow', allowed.join(', '));

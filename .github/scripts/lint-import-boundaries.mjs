@@ -23,6 +23,9 @@
  *     uses no identifier imported from elsewhere. A Next.js route.ts keeps the
  *     imports of App Router code (core, the modules of _oidc-provider/)
  *
+ * A Next.js route.ts with marker lines has an endpoint.ts beside it that
+ * lists the same steps (lintEndpointMeta).
+ *
  * Test files are not extracted and are not checked.
  *
  * Usage: node .github/scripts/lint-import-boundaries.mjs (pnpm run lint)
@@ -332,6 +335,34 @@ function listSourceFiles(directory) {
 }
 
 /** The violations of every extraction root that exists under repositoryRoot. */
+/**
+ * Next.js: the endpoint.ts beside a route.ts with marker lines lists its steps
+ * (the CLI reads it to remove the blocks of a disabled feature), so it names
+ * the same steps, with the same features, in the same order.
+ */
+export function lintEndpointMeta({ path, routeSource, endpointSource }) {
+  const markers = parseOwnerBlocks(routeSource).map(({ id, feature }) => ({ id, feature }));
+  if (markers.length === 0) return [];
+  const endpointPath = posix.join(posix.dirname(path), 'endpoint.ts');
+  if (endpointSource === undefined) {
+    return [{ path, line: 1, rule: 'endpoint-meta-missing', message: `${endpointPath} must list the steps of the markers of this route.ts` }];
+  }
+  const steps = [...endpointSource.matchAll(/\{ id: '([a-z0-9-]+)'(?:, feature: '([a-z0-9-]+)')?/g)].map((match) => ({
+    id: match[1],
+    feature: match[2],
+  }));
+  const describe = (list) => list.map(({ id, feature }) => (feature ? `${id} (${feature})` : id)).join(', ');
+  if (describe(steps) === describe(markers)) return [];
+  return [
+    {
+      path: endpointPath,
+      line: 1,
+      rule: 'endpoint-meta-mismatch',
+      message: `the steps [${describe(steps)}] differ from the markers of route.ts [${describe(markers)}]`,
+    },
+  ];
+}
+
 export function lintRepository(repositoryRoot) {
   const requires = readRequires(readFileSync(join(repositoryRoot, REGISTRY_PATH), 'utf8'));
   const violations = [];
@@ -341,7 +372,18 @@ export function lintRepository(repositoryRoot) {
     for (const file of listSourceFiles(directory)) {
       const path = relative(directory, file).split('\\').join('/');
       const source = readFileSync(file, 'utf8');
-      for (const violation of lintSource({ path, source, layout, requires })) {
+      const found = [...lintSource({ path, source, layout, requires })];
+      if (layout === 'nextjs' && !isTestFile(path) && posix.basename(path) === 'route.ts') {
+        const endpointFile = join(dirname(file), 'endpoint.ts');
+        found.push(
+          ...lintEndpointMeta({
+            path,
+            routeSource: source,
+            endpointSource: existsSync(endpointFile) ? readFileSync(endpointFile, 'utf8') : undefined,
+          }),
+        );
+      }
+      for (const violation of found) {
         violations.push({ ...violation, path: `${root}/${violation.path}` });
       }
     }

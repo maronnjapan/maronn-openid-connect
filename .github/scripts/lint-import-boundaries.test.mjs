@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  lintEndpointMeta,
   lintSource,
   ownerOf,
   parseImports,
@@ -444,5 +445,55 @@ describe('lintSource', () => {
     const source = "import { parStore } from '../../features/par/store.js';\n";
 
     assert.deepEqual(lint('endpoints/authorize/steps/parse-request.test.ts', source), []);
+  });
+});
+
+describe('lintEndpointMeta', () => {
+  const routeSource = [
+    'export async function POST(request) {',
+    '  // [parse-request] Parse',
+    '  const params = await request.text();',
+    '  // [dispatch-ciba] (feature: ciba) Redeem',
+    '  const answered = await dispatchCiba(params);',
+    '  // [respond] Respond',
+    '  return answered;',
+    '}',
+    '',
+  ].join('\n');
+  const endpointSource = (steps) => ['export const endpoint = defineEndpoint({', "  path: '/token',", '  steps: [', ...steps, '  ],', '});', ''].join('\n');
+
+  it('should accept an endpoint.ts that lists the markers of its route.ts in order', () => {
+    const steps = endpointSource([
+      "    { id: 'parse-request', consumes: [], produces: ['params'] },",
+      "    { id: 'dispatch-ciba', feature: 'ciba', consumes: ['params'], produces: [] },",
+      "    { id: 'respond', consumes: [], produces: [] },",
+    ]);
+
+    assert.deepEqual(lintEndpointMeta({ path: 'token/route.ts', routeSource, endpointSource: steps }), []);
+  });
+
+  it('should reject an endpoint.ts whose steps differ from the markers', () => {
+    const steps = endpointSource([
+      "    { id: 'parse-request', consumes: [], produces: ['params'] },",
+      "    { id: 'dispatch-ciba', consumes: ['params'], produces: [] },",
+      "    { id: 'respond', consumes: [], produces: [] },",
+    ]);
+
+    assert.deepEqual(rulesOf(lintEndpointMeta({ path: 'token/route.ts', routeSource, endpointSource: steps })), [
+      'endpoint-meta-mismatch',
+    ]);
+  });
+
+  it('should reject a route.ts with markers and no endpoint.ts beside it', () => {
+    assert.deepEqual(rulesOf(lintEndpointMeta({ path: 'token/route.ts', routeSource, endpointSource: undefined })), [
+      'endpoint-meta-missing',
+    ]);
+  });
+
+  it('should accept a route.ts without markers and without endpoint.ts', () => {
+    assert.deepEqual(
+      lintEndpointMeta({ path: 'jwks/route.ts', routeSource: 'export function GET() {}\n', endpointSource: undefined }),
+      [],
+    );
   });
 });

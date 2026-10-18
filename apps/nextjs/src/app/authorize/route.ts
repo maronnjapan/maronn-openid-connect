@@ -110,15 +110,14 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
   // issuer identifier, so clients can pin the issuer that produced it.
   const issuer = config.issuer;
 
+  // Each step below is an independent core function, called in OIDC Core 1.0
+  // §3.1.2 order. Delete a call to drop that validation, or insert your own
+  // logic between steps. Steps that run before redirectUri is resolved throw
+  // non-redirectable errors (shown on the OP); steps after it throw
+  // redirectable errors (sent back to the client).
   try {
     // [resolve-pushed-request] (feature: par) Expand the pushed request_uri — RFC 9126 §4 / §5
     params = await resolvePushedAuthorizationRequest(params);
-
-    // Each step below is an independent core function, called in OIDC Core 1.0
-    // §3.1.2 order. Delete a call to drop that validation, or insert your own
-    // logic between steps. Steps that run before redirectUri is resolved throw
-    // non-redirectable errors (shown on the OP); steps after it throw
-    // redirectable errors (sent back to the client).
 
     // [resolve-client] Resolve the client — OAuth 2.1 §4.1.2.1 / RFC 8252 §8
     const client = await resolveClientForAuthorization(params, clientResolver);

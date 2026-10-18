@@ -106,16 +106,28 @@ const oidcClientsJson = JSON.stringify([
     scope: ['openid', 'profile'],
   },
   {
-    // OIDC Core 1.0 §9: registered with client_secret_post only, like a client
-    // that existed before it moved to private_key_jwt. The private-key-jwt spec
-    // adds that method and the client's public key to the OP's database while
-    // the OP runs. Nothing serves the redirect URI: the spec reads the code
-    // from the URL the browser lands on.
-    clientId: 'e2e-private-key-jwt',
-    clientSecret: 'e2e-private-key-jwt-secret',
-    redirectUris: [`${clientBaseURL}/private-key-jwt-callback`],
+    // Registered with two client authentication methods, so the
+    // client-auth-methods spec can authenticate with each of them. Nothing
+    // serves the redirect URI: the spec reads the code from the URL the
+    // browser lands on.
+    clientId: 'e2e-multiple-auth-methods',
+    clientSecret: 'e2e-multiple-auth-methods-secret',
+    redirectUris: [`${clientBaseURL}/multiple-auth-methods-callback`],
     clientType: 'confidential',
     grantTypes: ['authorization_code', 'refresh_token'],
+    tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'],
+    responseTypes: ['code'],
+  },
+  {
+    // Registered without public keys: the client-keys spec adds them to the
+    // OP's database while the OP runs, the way an operator does. Nothing
+    // serves the redirect URI: the spec reads the code from the URL the
+    // browser lands on.
+    clientId: 'e2e-client-keys',
+    clientSecret: 'e2e-client-keys-secret',
+    redirectUris: [`${clientBaseURL}/client-keys-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
     tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },

@@ -12,6 +12,7 @@ hono、express、fastify の生成コードを、文字列のテンプレート�
 - DB は `--db` の有無にかかわらず `db/` に置かれ、`db/index.ts` がどの種類でも `createDatabase`、`createProviderStores`、`createClientResolver`、`createClientKeyResolver`、`registerClient`、`registerUser` を export する。`--db` 無しはプロセスのメモリ（`db/memory`）に置く。`db/instance.ts` は今まで通り利用者のファイルで上書きされず、`createDatabase()` はリクエストの文脈を受け取っても受け取らなくてもよい
 - `maronn-oidc graph` と `--flow` は、アプリのステップとエンドポイントが自分を記述する `meta`（build 時に `catalog.json` へ焼く）から図と検証を作る。箱と矢印は前と同じで、token の図は refresh_token の検証を authorization_code の検証より前に描く。`--flow` の並べ替えはパイプラインのブロックの並べ替えになる
 - express と fastify の画面も hono/jsx で描くので、`hono` のインストールと `tsconfig.json` の JSX 設定（`"jsx": "react-jsx"`, `"jsxImportSource": "hono/jsx"`）が要る。インストールの案内にも `hono` が加わった
+- `config.ts` の `RegisteredClient` は、機能が自分のディレクトリから項目を足す interface になった（`ProviderConfig` と同じ）。ciba は `features/ciba/config.ts` で `backchannelTokenDeliveryMode` を足す
 - `features/id-jag` だけを有効にした出力で、ID-JAG 以外の `requested_token_type` の Token Exchange に、ID-JAG だけを受け付けると述べる `invalid_request` を返す（以前の生成コードと同じ）
 
 ## 破壊的変更

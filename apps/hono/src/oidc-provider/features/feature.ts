@@ -14,8 +14,9 @@
  * marker line names it, `// [step-id] (feature: <id>) Label — Spec`.
  *
  * features/enabled.ts lists the features of this provider. Remove a feature
- * by deleting its directory, its lines there and the owner blocks that name
- * it in the pipelines (with their imports).
+ * by deleting its directory, its lines there, the owner blocks that name it
+ * in the pipelines (with their imports) and the lines of its steps in the
+ * endpoint.ts files (with the edges to and from them).
  */
 import type { Hono } from 'hono';
 import type { OidcProviderOptions } from '../app.js';

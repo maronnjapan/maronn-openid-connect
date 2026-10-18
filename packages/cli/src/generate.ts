@@ -18,6 +18,9 @@
  *    later code still reads becomes `const <name> = undefined;` (from the
  *    produces of its step: the step meta of the catalog, or the endpoint.ts
  *    beside a route.ts), and a value nothing reads any more loses its binding.
+ *    The endpoint.ts files lose the steps of the disabled features (and, in
+ *    the hono layout, the steps a flow document leaves out) with the edges to
+ *    and from them, and list the steps in the order of the flow document.
  * 5. Move the relative imports to the output layout and point
  *    @maronn-openid-connect/core at the package name of the run. Express and
  *    Fastify also get Hono replaced with the WebRouter (web.ts).
@@ -138,7 +141,7 @@ export function extractProvider(options: ExtractOptions): GeneratedFile[] {
       content = withoutDisabledSteps(content, enabled);
     }
     if (framework.layout === 'hono' && rootPath !== undefined && /(^|\/)endpoint\.ts$/.test(rootPath)) {
-      content = withoutStepsOf(content, disabledStepsOf(rootPath, catalog, enabled));
+      content = endpointForOutput(content, rootPath, catalog, enabled, options.steps);
     }
     if (framework.layout === 'hono' && rootPath !== undefined && /(^|\/)pipeline\.ts$/.test(rootPath)) {
       const endpoint = endpointOfPipeline(rootPath, catalog);
@@ -355,15 +358,42 @@ export function withoutDisabledSteps(source: string, enabled: ReadonlySet<string
     .join('\n');
 }
 
-/** The ids of the steps of the endpoint.ts at rootPath that a disabled feature adds. */
-function disabledStepsOf(rootPath: string, catalog: SourceCatalog, enabled: ReadonlySet<string>): Set<string> {
+/**
+ * The endpoint.ts at rootPath as the output has it: without the steps of the
+ * disabled features and the steps a flow document leaves out, and with its
+ * steps in the order of the flow document.
+ */
+function endpointForOutput(
+  source: string,
+  rootPath: string,
+  catalog: SourceCatalog,
+  enabled: ReadonlySet<string>,
+  flowSteps: Readonly<Record<string, readonly string[]>> | undefined,
+): string {
   const endpoint = catalog.endpoints.find((candidate) => candidate.file === rootPath);
-  if (endpoint === undefined) return new Set();
-  return new Set(
-    catalog.steps
-      .filter((step) => step.endpoint === endpoint.id && step.feature !== undefined && !enabled.has(step.feature))
-      .map((step) => step.id),
+  if (endpoint === undefined) return source;
+  const order = flowSteps?.[endpoint.id];
+  const removed = new Set(
+    endpoint.steps.filter((id) => {
+      const step = catalog.steps.find((candidate) => candidate.endpoint === endpoint.id && candidate.id === id);
+      const disabled = step?.feature !== undefined && !enabled.has(step.feature);
+      return disabled || (order !== undefined && !order.includes(id));
+    }),
   );
+  const kept = withoutStepsOf(source, removed);
+  return order === undefined ? kept : inStepOrder(kept, order);
+}
+
+/** An endpoint.ts with the lines of its `steps` list in the given order. */
+function inStepOrder(source: string, order: readonly string[]): string {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^\s*steps: \[\s*$/.test(line));
+  if (start === -1) return source;
+  const end = lines.findIndex((line, index) => index > start && /^\s*\],?\s*$/.test(line));
+  const listed = lines.slice(start + 1, end);
+  const rank = (line: string) => order.indexOf(/'([a-z0-9-]+)'/.exec(line)?.[1] ?? '');
+  const sorted = [...listed].sort((a, b) => rank(a) - rank(b));
+  return [...lines.slice(0, start + 1), ...sorted, ...lines.slice(end)].join('\n');
 }
 
 /**
@@ -375,7 +405,7 @@ function disabledStepsOf(rootPath: string, catalog: SourceCatalog, enabled: Read
 export function withoutStepsOf(source: string, removed: ReadonlySet<string>): string {
   if (removed.size === 0) return source;
   let inJourneys = false;
-  return source
+  const kept = source
     .split('\n')
     .filter((line) => {
       if (/^\s*journeys: \[/.test(line)) inJourneys = true;
@@ -391,6 +421,35 @@ export function withoutStepsOf(source: string, removed: ReadonlySet<string>): st
       return !(/^\s*\{/.test(line) && edgeSteps.some((id) => removed.has(id)));
     })
     .join('\n');
+  const left = stepsNamedBy(kept).find((id) => removed.has(id));
+  if (left !== undefined) {
+    throw new Error(
+      `endpoint.ts still names step "${left}" after removing it: write steps, edges and errorStep one entry per line`,
+    );
+  }
+  return kept;
+}
+
+/** Every step an endpoint.ts names: its steps, its error step and the ends of its edges. */
+function stepsNamedBy(source: string): string[] {
+  const literal = literalArgumentOf(source, 'defineEndpoint');
+  if (literal === undefined) return [];
+  const meta = evaluateLiteral(literal) as {
+    steps?: string[];
+    errorStep?: string;
+    edges?: {
+      off?: string[];
+      forks?: { at: string; branches: { step: string }[] }[];
+      extra?: { from: string; to: string }[];
+    };
+  };
+  return [
+    ...(meta.steps ?? []),
+    ...(meta.errorStep === undefined ? [] : [meta.errorStep]),
+    ...(meta.edges?.off ?? []),
+    ...(meta.edges?.forks ?? []).flatMap((fork) => [fork.at, ...fork.branches.map((branch) => branch.step)]),
+    ...(meta.edges?.extra ?? []).flatMap((edge) => [edge.from, edge.to]),
+  ];
 }
 
 /**

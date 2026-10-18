@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_FEATURES } from '../registry.js';
 import { generate } from '../generator.js';
-import { extractProvider } from '../generate.js';
+import { extractProvider, withoutStepsOf } from '../generate.js';
 import type { ExtractionDefinition } from '../extract/templates.js';
 
 /**
@@ -205,6 +205,124 @@ describe('extractProvider', () => {
       expect(pipeline.includes("from '../../features/par/steps/expand.js'")).toBe(false);
       expect(generated.has('features/par/steps/expand.ts')).toBe(false);
     });
+
+    it('should leave a step the flow document leaves out, and its edges, out of endpoint.ts', () => {
+      const endpoint = generateDemo({ par: true, steps: { demo: ['first', 'second', 'third'] } }).get(
+        'endpoints/demo/endpoint.ts',
+      );
+      expect(endpoint?.split('\n').slice(9, 18)).toEqual([
+        '  steps: [',
+        "    'first',",
+        "    'second',",
+        "    'third',",
+        '  ],',
+        '  edges: {',
+        '    chain: true,',
+        '    extra: [',
+        "      { from: 'first', to: 'third', label: 'short', kind: 'branch' },",
+      ]);
+    });
+
+    it('should list the steps of endpoint.ts in the order of the flow document', () => {
+      const endpoint = generateDemo({ par: true, steps: { demo: ['first', 'second', 'expand', 'third'] } }).get(
+        'endpoints/demo/endpoint.ts',
+      );
+      expect(endpoint?.split('\n').slice(9, 15)).toEqual([
+        '  steps: [',
+        "    'first',",
+        "    'second',",
+        "    'expand',",
+        "    'third',",
+        '  ],',
+      ]);
+    });
+  });
+});
+
+/** An endpoint.ts in the layout of the apps, with a fork, a fromKind rule and a journey. */
+const FORKED_ENDPOINT = [
+  'export const endpoint = defineEndpoint({',
+  "  id: 'demo',",
+  '  steps: [',
+  "    'first',",
+  "    'choose',",
+  "    'plain',",
+  "    'extended',",
+  "    'respond',",
+  '  ],',
+  "  errorStep: 'respond',",
+  '  edges: {',
+  '    chain: true,',
+  '    forks: [',
+  "      { at: 'choose', branches: [",
+  "        { step: 'plain', label: 'plain' },",
+  "        { step: 'extended', label: 'extended' },",
+  '      ] },',
+  '    ],',
+  '    fromKind: [',
+  "      { kind: 'dispatch', to: 'respond', label: 'answered' },",
+  '    ],',
+  '  },',
+  '  journeys: [',
+  "    { from: 'extended', to: 'demo', label: 'again', kind: 'flow', order: 10 },",
+  '  ],',
+  '});',
+  '',
+].join('\n');
+
+describe('withoutStepsOf', () => {
+  it('should remove the branch of a fork that goes to a removed step', () => {
+    expect(withoutStepsOf(FORKED_ENDPOINT, new Set(['extended'])).split('\n').slice(2, 18)).toEqual([
+      '  steps: [',
+      "    'first',",
+      "    'choose',",
+      "    'plain',",
+      "    'respond',",
+      '  ],',
+      "  errorStep: 'respond',",
+      '  edges: {',
+      '    chain: true,',
+      '    forks: [',
+      "      { at: 'choose', branches: [",
+      "        { step: 'plain', label: 'plain' },",
+      '      ] },',
+      '    ],',
+      '    fromKind: [',
+      "      { kind: 'dispatch', to: 'respond', label: 'answered' },",
+    ]);
+  });
+
+  // The journeys name endpoints, not steps: an endpoint may share its id with a step.
+  it('should keep the journeys', () => {
+    expect(withoutStepsOf(FORKED_ENDPOINT, new Set(['extended'])).split('\n').slice(20, 23)).toEqual([
+      '  journeys: [',
+      "    { from: 'extended', to: 'demo', label: 'again', kind: 'flow', order: 10 },",
+      '  ],',
+    ]);
+  });
+
+  it('should return the source as it is when no step is removed', () => {
+    expect(withoutStepsOf(FORKED_ENDPOINT, new Set())).toBe(FORKED_ENDPOINT);
+  });
+
+  it('should refuse to remove the step a fork is at', () => {
+    expect(() => withoutStepsOf(FORKED_ENDPOINT, new Set(['choose']))).toThrow(
+      'endpoint.ts forks at step "choose" of a disabled feature; move the fork to a step of the base',
+    );
+  });
+
+  it('should refuse to remove the error step', () => {
+    expect(() => withoutStepsOf(FORKED_ENDPOINT, new Set(['respond']))).toThrow(
+      'endpoint.ts still names step "respond" after removing it: write steps, edges and errorStep one entry per line',
+    );
+  });
+
+  it('should refuse a steps list it cannot remove a step from line by line', () => {
+    expect(() =>
+      withoutStepsOf("export const endpoint = defineEndpoint({ id: 'demo', steps: ['first', 'extended'], edges: { chain: true } });\n", new Set(['extended'])),
+    ).toThrow(
+      'endpoint.ts still names step "extended" after removing it: write steps, edges and errorStep one entry per line',
+    );
   });
 });
 

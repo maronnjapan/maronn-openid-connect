@@ -296,16 +296,13 @@ const AUTHENTICATE_CLIENT: StepFragment = {
       'type TokenClientInfo',
     ],
     resolvers: ['tokenClientResolver as defaultTokenClientResolver'],
-    modules: { '../client-auth.js': ['verifyPrivateKeyJwt'] },
   },
   definition: `/**
  * Authenticate the client.
- * OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post /
- * private_key_jwt.
+ * OAuth 2.1 §2.3 / OIDC Core 1.0 §9: client_secret_basic / client_secret_post.
  *
- * Each step inside is an independent core function; verifyPrivateKeyJwt()
- * (client-auth.ts) runs the private_key_jwt ones. Replace a check without
- * touching the rest.
+ * Each step inside is an independent core function. Replace verifyClientSecret
+ * with your own assertion check (e.g. private_key_jwt) without touching the rest.
  */
 export async function authenticateTokenClient(
   c: any,
@@ -330,14 +327,8 @@ export async function authenticateTokenClient(
   // (blocks auth method downgrade / public-client mixups).
   validateClientAuthMethod(tokenClient, presentedCredentials);
 
-  if (presentedCredentials.method === 'private_key_jwt') {
-    // OIDC Core 1.0 §9 / RFC 7523 §3: a JWT signed with a key the client
-    // registered, used only once.
-    await verifyPrivateKeyJwt(c, tokenClient, presentedCredentials, '/token');
-  } else {
-    // OAuth 2.1 §7.4.1: constant-time client_secret comparison.
-    await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
-  }
+  // OAuth 2.1 §7.4.1: constant-time client_secret comparison.
+  await verifyClientSecret(tokenClient, presentedCredentials.clientSecret);
 
   return { tokenClient, authenticatedClientId: presentedCredentials.clientId };
 }`,

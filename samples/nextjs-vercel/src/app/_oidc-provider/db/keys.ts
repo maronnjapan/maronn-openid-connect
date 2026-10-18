@@ -71,11 +71,6 @@ export const keys = {
   browserSession: (sessionId: string) => key('browser_session', sessionId),
   /** Not in the ER model: what a user consented to for a client (ConsentRecord). */
   consent: (subject: string, clientId: string) => key('consent', subject, clientId),
-  /**
-   * Not in the ER model: written with setIfAbsent when a client assertion
-   * (private_key_jwt) is used, under the SHA-256 hash of the client_id and jti.
-   */
-  clientAssertionJti: (jtiHash: string) => key('client_assertion_jti', jtiHash),
 };
 
 /** Client: id is the client_id, in the key. The OP does not know a deleted client (is_deleted). */
@@ -86,12 +81,10 @@ export interface ClientRecord {
   /**
    * Client_auth (with its Client_secret): the methods the client may
    * authenticate with at the token endpoint. A public client has none. A
-   * confidential client has at most one of client_secret_basic /
-   * client_secret_post, whose secret is the hash from hashClientSecret(), and
-   * private_key_jwt (OIDC Core 1.0 §9), whose keys are those of the
-   * private_key_jwt purpose (keys.clientJwks(client_id, 'private_key_jwt')).
-   * registerClient() replaces the secret method and keeps private_key_jwt, so
-   * private_key_jwt can be added here while the OP runs.
+   * confidential client has one entry per method it may use:
+   * client_secret_basic, client_secret_post or both. Every entry carries the
+   * same secret, the hash from hashClientSecret() of the client's one
+   * client_secret (RFC 7591 §2).
    */
   client_auths: ClientAuthRecord[];
   /** Redirect_Uri: the redirect URIs of the client. */
@@ -105,19 +98,20 @@ export interface ClientRecord {
   scopes: string[];
 }
 
-/** One Client_auth of ClientRecord.client_auths. */
-export type ClientAuthRecord =
-  | { client_auth_type: 'client_secret_basic' | 'client_secret_post'; secret: string }
-  | { client_auth_type: 'private_key_jwt' };
+/** One Client_auth of ClientRecord.client_auths, with its Client_secret. */
+export interface ClientAuthRecord {
+  client_auth_type: 'client_secret_basic' | 'client_secret_post';
+  secret: string;
+}
 
 /**
  * Client_jwk: the public keys of a client for one purpose, as a JWK Set
  * (RFC 7517 §5). The purpose is part of the key and names the process that
- * uses the keys: private_key_jwt (client assertions, OIDC Core 1.0 §9),
- * request_object (signed Request Objects, OIDC Core 1.0 §6.3.2), dpop (DPoP
- * proofs, RFC 9449) or another one. The OP reads the record of a purpose each
- * time a process needs its keys, so a key added to it or removed from it takes
- * effect at once. Never store a private key.
+ * uses the keys: request_object for the signed Request Objects the OP verifies
+ * (OIDC Core 1.0 §6.3.2), or another one such as private_key_jwt (OIDC Core
+ * 1.0 §9) or dpop (RFC 9449) for a process a project adds. The OP reads the
+ * record of a purpose each time a process needs its keys, so a key added to it
+ * or removed from it takes effect at once. Never store a private key.
  */
 export interface ClientJwksRecord {
   keys: Array<Record<string, unknown>>;

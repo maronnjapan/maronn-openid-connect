@@ -23,7 +23,6 @@ import {
   type IntrospectionResponse,
 } from '@maronn-openid-connect/core';
 import { clientResolver, resolvers } from '../_oidc-provider/provider';
-import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import {
   clientCors,
   corsPreflight,
@@ -63,11 +62,7 @@ async function introspect(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(introspectingClient, presentedCredentials);
-    if (presentedCredentials.method === 'private_key_jwt') {
-      await verifyPrivateKeyJwt(introspectingClient, presentedCredentials, '/introspect');
-    } else {
-      await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
-    }
+    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
     // RFC 7662 §2.1 / RFC 9701 §5: the caller must be an authenticated
     // confidential client. A client registered with token_endpoint_auth_method
     // 'none' passes the pipeline above with its client_id alone — public

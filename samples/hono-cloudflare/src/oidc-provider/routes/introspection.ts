@@ -23,7 +23,6 @@ import {
   introspectionAccessTokenResolver as defaultAccessResolver,
   introspectionRefreshTokenResolver as defaultRefreshResolver,
 } from '../resolvers.js';
-import { verifyPrivateKeyJwt } from '../client-auth.js';
 import {
   TOKEN_INTROSPECTION_JWT_MEDIA_TYPE,
   acceptsIntrospectionJwt,
@@ -118,11 +117,7 @@ export async function authenticateIntrospectionClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(introspectingClient, presentedCredentials);
-  if (presentedCredentials.method === 'private_key_jwt') {
-    await verifyPrivateKeyJwt(c, introspectingClient, presentedCredentials, '/introspect');
-  } else {
-    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
-  }
+  await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
   requireConfidentialIntrospectionCaller(introspectingClient);
   return presentedCredentials.clientId;
 }

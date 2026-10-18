@@ -112,10 +112,7 @@ ${formParseBody('ParEndpointError', 'Pushed authorization requests')}
     'authenticate-client': {
       imports: {
         resolvers: ['clientResolver as defaultClientResolver'],
-        modules: {
-          [`${EXPERIMENTAL_PACKAGE}/par`]: ['authenticateParClient', 'rejectForbiddenParParams'],
-          '../client-auth.js': ['verifyPrivateKeyJwt'],
-        },
+        modules: { [`${EXPERIMENTAL_PACKAGE}/par`]: ['authenticateParClient', 'rejectForbiddenParParams'] },
       },
       definition: `/**
  * Authenticate the pushing client exactly like the token endpoint does
@@ -140,9 +137,6 @@ export async function authenticatePushingClient(
     params,
     authorizationHeader: authorization,
     clientResolver,
-    // OIDC Core 1.0 §9: private_key_jwt, checked like the token endpoint does.
-    verifyClientAssertion: (client, clientAssertion) =>
-      verifyPrivateKeyJwt(c, client, { clientAssertion }, '/par'),
   });
 
   return { clientId, pushedParams: { ...params, client_id: clientId } };
@@ -566,11 +560,7 @@ ${formParseBody('DeviceAuthorizationEndpointError', 'Device authorization reques
       call: { bind: ['params', 'authorization'], expression: 'await parseDeviceAuthorizationRequest(c)' },
     },
     'authenticate-client': {
-      imports: {
-        core: CLIENT_AUTH_CORE_IMPORTS,
-        resolvers: ['tokenClientResolver as defaultTokenClientResolver'],
-        modules: { '../client-auth.js': ['verifyPrivateKeyJwt'] },
-      },
+      imports: { core: CLIENT_AUTH_CORE_IMPORTS, resolvers: ['tokenClientResolver as defaultTokenClientResolver'] },
       definition: `/**
  * RFC 8628 §3.1: "The client authentication requirements of Section 3.2.1 of
  * [RFC6749] apply" — so this is the same pipeline the token endpoint runs,
@@ -591,11 +581,7 @@ export async function authenticateDeviceClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(client, presentedCredentials);
-  if (presentedCredentials.method === 'private_key_jwt') {
-    await verifyPrivateKeyJwt(c, client, presentedCredentials, '/device_authorization');
-  } else {
-    await verifyClientSecret(client, presentedCredentials.clientSecret);
-  }
+  await verifyClientSecret(client, presentedCredentials.clientSecret);
   return client;
 }`,
       call: { bind: 'client', expression: 'await authenticateDeviceClient(c, params, authorization)' },
@@ -866,11 +852,7 @@ ${formParseBody('BackchannelAuthenticationEndpointError', 'Backchannel authentic
       call: { bind: ['params', 'authorization'], expression: 'await parseBackchannelAuthenticationRequest(c)' },
     },
     'authenticate-client': {
-      imports: {
-        core: CLIENT_AUTH_CORE_IMPORTS,
-        resolvers: ['tokenClientResolver as defaultTokenClientResolver'],
-        modules: { '../client-auth.js': ['verifyPrivateKeyJwt'] },
-      },
+      imports: { core: CLIENT_AUTH_CORE_IMPORTS, resolvers: ['tokenClientResolver as defaultTokenClientResolver'] },
       definition: `/**
  * CIBA §7.1: "The Client MUST authenticate ... using the authentication
  * method registered for its client_id" — the same pipeline the token
@@ -891,11 +873,7 @@ export async function authenticateCibaClient(
     tokenClientResolver,
   );
   validateClientAuthMethod(client, presentedCredentials);
-  if (presentedCredentials.method === 'private_key_jwt') {
-    await verifyPrivateKeyJwt(c, client, presentedCredentials, '/backchannel_authentication');
-  } else {
-    await verifyClientSecret(client, presentedCredentials.clientSecret);
-  }
+  await verifyClientSecret(client, presentedCredentials.clientSecret);
   return client;
 }`,
       call: { bind: 'client', expression: 'await authenticateCibaClient(c, params, authorization)' },

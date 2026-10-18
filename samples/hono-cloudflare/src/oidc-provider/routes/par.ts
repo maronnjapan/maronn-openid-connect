@@ -11,7 +11,6 @@ import {
   createPushedAuthorizationRecord,
   ParError,
 } from '@maronn-openid-connect/experimental/par';
-import { verifyPrivateKeyJwt } from '../client-auth.js';
 
 /**
  * EXPERIMENTAL — Pushed Authorization Requests (RFC 9126).
@@ -140,9 +139,6 @@ export async function authenticatePushingClient(
     params,
     authorizationHeader: authorization,
     clientResolver,
-    // OIDC Core 1.0 §9: private_key_jwt, checked like the token endpoint does.
-    verifyClientAssertion: (client, clientAssertion) =>
-      verifyPrivateKeyJwt(c, client, { clientAssertion }, '/par'),
   });
 
   return { clientId, pushedParams: { ...params, client_id: clientId } };

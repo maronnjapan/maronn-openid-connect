@@ -95,9 +95,7 @@ import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';`
     introspectionEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
-      'private_key_jwt',
     ],
-    introspectionEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
 `
     : '';
   const revocationMetadata = features.revocation
@@ -105,9 +103,7 @@ import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';`
     revocationEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
-      'private_key_jwt',
     ],
-    revocationEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
 `
     : '';
   // EXPERIMENTAL (RFC 7591 / OIDC Discovery 1.0 §3): unlike the merged entries
@@ -184,11 +180,7 @@ import { parConfig } from '../../par/config';`
   return `/**
  * OpenID Provider Configuration (OIDC Discovery 1.0 §4).
  */
-import {
-  buildProviderMetadata,
-  DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS,
-  getJwaAlgorithm,
-} from '${corePkg}';
+import { buildProviderMetadata, getJwaAlgorithm } from '${corePkg}';
 import { config, loadSigningKeys } from '../../_oidc-provider/provider';
 import {
   corsPreflight,
@@ -265,16 +257,12 @@ ${scopesSupportedEntry}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP p
     ],
     grantTypesSupported: [${supportedGrantTypes.join(', ')}],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
-    // (no client_secret) are accepted at the token endpoint. OIDC Core 1.0 §9:
-    // private_key_jwt is a JWT signed with a key the client registered (jwks).
+    // (no client_secret) are accepted at the token endpoint.
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
-      'private_key_jwt',
       'none',
     ],
-    // RFC 8414 §2: the JWS algs of the private_key_jwt assertion.
-    tokenEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
     // OIDC Core 1.0 §5.3.2: the algs the registered UserInfo keys can sign with,
     // so clients relying on userinfo_signed_response_alg can trust the metadata.
     userinfoSigningAlgValuesSupported: [

@@ -80,9 +80,10 @@ const database = deferDatabase(createDatabase);
 export const clientResolver = createKvClientResolver(database);
 
 /**
- * The public keys of the registered clients, one purpose at a time
- * (private_key_jwt, request_object, ...): the client_jwks records of the
- * key-value store, read for each request (db/keys.ts).
+ * The public keys of the registered clients, one purpose at a time (the OP
+ * verifies signed Request Objects with those of request_object): the
+ * client_jwks records of the key-value store, read for each request
+ * (db/keys.ts).
  */
 export const clientKeyResolver: ClientKeyResolver = createKvClientKeyResolver(database);
 

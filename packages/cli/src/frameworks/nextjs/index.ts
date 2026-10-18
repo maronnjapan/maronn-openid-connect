@@ -9,7 +9,6 @@ import {
   storeTemplate,
 } from '../hono/templates.js';
 import {
-  nextJsClientAuthTemplate,
   nextJsHtmlTemplate,
   nextJsHttpTemplate,
   nextJsProviderTemplate,
@@ -155,9 +154,6 @@ function nextJsGeneratedFiles(
       }))
       : [{ path: '_oidc-provider/storage-backend.ts', content: nextJsStorageBackendTemplate() }]),
     { path: '_oidc-provider/http.ts', content: nextJsHttpTemplate() },
-    // private_key_jwt client authentication, shared by the Route Handlers that
-    // authenticate clients (OIDC Core 1.0 §9).
-    { path: '_oidc-provider/client-auth.ts', content: nextJsClientAuthTemplate(pkg) },
     { path: '_oidc-provider/transaction.ts', content: nextJsTransactionTemplate(pkg) },
     { path: '_oidc-provider/error-view.tsx', content: nextJsErrorViewTemplate() },
     ...(servesHtmlFromRouteHandlers

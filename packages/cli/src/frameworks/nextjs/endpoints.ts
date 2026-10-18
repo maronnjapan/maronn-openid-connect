@@ -323,7 +323,6 @@ import {
   type IntrospectionResponse,
 } from '${corePkg}';${jwtImports}
 ${providerImports}
-import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 ${httpImports}
 
 export const dynamic = 'force-dynamic';
@@ -356,11 +355,7 @@ ${keyLoading}  if (!isFormUrlEncoded(request)) {
       clientResolver,
     );
     validateClientAuthMethod(introspectingClient, presentedCredentials);
-    if (presentedCredentials.method === 'private_key_jwt') {
-      await verifyPrivateKeyJwt(introspectingClient, presentedCredentials, '/introspect');
-    } else {
-      await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
-    }
+    await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
     // RFC 7662 §2.1 / RFC 9701 §5: the caller must be an authenticated
     // confidential client. A client registered with token_endpoint_auth_method
     // 'none' passes the pipeline above with its client_id alone — public
@@ -440,7 +435,6 @@ import {
   RevocationError,
   TokenError,
 } from '${corePkg}';
-import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import { clientResolver, resolvers } from '../_oidc-provider/provider';
 import {
   clientCors,
@@ -482,11 +476,7 @@ async function revoke(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(revokingClient, presentedCredentials);
-    if (presentedCredentials.method === 'private_key_jwt') {
-      await verifyPrivateKeyJwt(revokingClient, presentedCredentials, '/revoke');
-    } else {
-      await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
-    }
+    await verifyClientSecret(revokingClient, presentedCredentials.clientSecret);
     const authenticatedClientId = presentedCredentials.clientId;
 
     // --- Revocation pipeline ------------------------------------------------
@@ -595,7 +585,6 @@ import {
   validatePushedAuthorizationParams,
 } from '${EXPERIMENTAL_PACKAGE}/par';
 import { sanitizeErrorDescription } from '${corePkg}';
-import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import { clientResolver, config, parStore } from '../_oidc-provider/provider';
 import {
   clientCors,
@@ -651,9 +640,6 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
       clientResolver,
-      // OIDC Core 1.0 §9: private_key_jwt, checked like the token endpoint does.
-      verifyClientAssertion: (client, clientAssertion) =>
-        verifyPrivateKeyJwt(client, { clientAssertion }, '/par'),
     });
 
     // client_id is a required authorization request parameter (RFC 9126 §2.1),

@@ -93,8 +93,8 @@ export interface ApplyOidcOptions {
   tokenClientResolver?: TokenClientResolver;
   /**
    * The public keys each client registered, one purpose at a time
-   * (ClientKeyResolver in core): private_key_jwt for client assertions,
-   * request_object for signed Request Objects.
+   * (ClientKeyResolver in core). The OP verifies signed Request Objects with
+   * the keys of request_object.
    * Defaults to the client_jwks table of db/, read for each request.
    */
   clientKeyResolver?: ClientKeyResolver;
@@ -306,7 +306,6 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     c.set('refreshTokenStore', stores.refreshTokenStore);
     c.set('authSessionStore', stores.authSessionStore);
     c.set('browserSessionStore', stores.browserSessionStore);
-    c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
     c.set('authenticateUser', (username: string, password: string) =>
       stores.userStore.authenticate(username, password));
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);

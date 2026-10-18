@@ -114,7 +114,6 @@ import {
   validateClientAuthMethod,
   verifyClientSecret,
 } from '${corePkg}';
-import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import {
   cibaAuthenticationRequestStore,
   clientResolver,
@@ -172,11 +171,7 @@ async function backchannelAuthentication(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(client, presentedCredentials);
-    if (presentedCredentials.method === 'private_key_jwt') {
-      await verifyPrivateKeyJwt(client, presentedCredentials, '/backchannel_authentication');
-    } else {
-      await verifyClientSecret(client, presentedCredentials.clientSecret);
-    }
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
 
 ${customScopeStep}    // RFC 7591 §2: a client registered with a scope list (client.scope) may only
     // request those scopes, the same rule as /authorize.

@@ -400,7 +400,7 @@ describe('run', () => {
     run(['setup', 'hono', '-o', outputDir, '-e', entryFile]);
     expect(process.exitCode).toBe(1);
     expect(errorSpy.mock.calls.map((c) => String(c[0]))[0]).toBe(
-      `Error: 21 file(s) already exist in ${outputDir}:`,
+      `Error: 20 file(s) already exist in ${outputDir}:`,
     );
     expect(readFileSync(entryFile, 'utf-8')).toBe(afterFirstRun);
     vi.restoreAllMocks();

@@ -8,7 +8,6 @@ import {
   backchannelAuthenticationRouteTemplate,
   cibaVerificationRouteTemplate,
   authorizeRouteTemplate,
-  clientAuthTemplate,
   configTemplate,
   consentRouteTemplate,
   customScopesTemplate,
@@ -462,8 +461,8 @@ import { ${names.createClientKeyResolver}, ${names.createClientResolver} } from 
 /** The start of the doc comment of the clientKeyResolver option. */
 const CLIENT_KEY_RESOLVER_DOC = `  /**
    * The public keys each client registered, one purpose at a time
-   * (ClientKeyResolver in core): private_key_jwt for client assertions,
-   * request_object for signed Request Objects.
+   * (ClientKeyResolver in core). The OP verifies signed Request Objects with
+   * the keys of request_object.
 `;
 
 export function webAppTemplate(
@@ -806,7 +805,6 @@ ${tokenClientResolverContext}
     c.set('refreshTokenStore', stores.refreshTokenStore);
     c.set('authSessionStore', stores.authSessionStore);
     c.set('browserSessionStore', stores.browserSessionStore);
-    c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
     c.set('authenticateUser', (username: string, password: string) =>
       stores.userStore.authenticate(username, password));
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
@@ -1071,9 +1069,6 @@ function webCoreGeneratedFiles(
         'Project integrations should inject a D1/KV/env-backed resolver through the generated request context.',
       ),
     },
-    // private_key_jwt client authentication, shared by the routes that
-    // authenticate clients (OIDC Core 1.0 §9).
-    { path: 'client-auth.ts', content: clientAuthTemplate(corePkg) },
     { path: 'views.ts', content: viewsTemplate(features) },
     // Screen routing layer: every browser-facing GET / POST (authorize, login,
     // consent, and the device / CIBA / logout UIs) plus the render helpers. Each

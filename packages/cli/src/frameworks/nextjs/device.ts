@@ -97,7 +97,6 @@ import {
   validateClientAuthMethod,
   verifyClientSecret,
 } from '${corePkg}';
-import { verifyPrivateKeyJwt } from '../_oidc-provider/client-auth';
 import { clientResolver, config, deviceAuthorizationStore } from '../_oidc-provider/provider';
 import {
   clientCors,
@@ -151,11 +150,7 @@ async function deviceAuthorization(request: Request): Promise<Response> {
       clientResolver,
     );
     validateClientAuthMethod(client, presentedCredentials);
-    if (presentedCredentials.method === 'private_key_jwt') {
-      await verifyPrivateKeyJwt(client, presentedCredentials, '/device_authorization');
-    } else {
-      await verifyClientSecret(client, presentedCredentials.clientSecret);
-    }
+    await verifyClientSecret(client, presentedCredentials.clientSecret);
 
     // --- Device authorization pipeline --------------------------------------
     // Each step below is an independent function from

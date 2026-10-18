@@ -109,9 +109,7 @@ function buildMetadataFragment(features: OidcFeatureConfig, scopes: string[]): S
     introspectionEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
-      'private_key_jwt',
     ],
-    introspectionEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
 `
     : '';
   const revocationMetadata = features.revocation
@@ -119,9 +117,7 @@ function buildMetadataFragment(features: OidcFeatureConfig, scopes: string[]): S
     revocationEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
-      'private_key_jwt',
     ],
-    revocationEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
 `
     : '';
   const responseModesSupportedEntry = features.jarm
@@ -196,7 +192,7 @@ function buildMetadataFragment(features: OidcFeatureConfig, scopes: string[]): S
     : '';
   return {
     imports: {
-      core: ['buildProviderMetadata', 'DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS'],
+      core: ['buildProviderMetadata'],
       config: ['defaultProviderConfig'],
       modules: {
         ...(features.par ? { './par.js': ['parConfig'] } : {}),
@@ -271,16 +267,12 @@ ${scopesSupportedEntry}    // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP p
     ],
     grantTypesSupported: [${supportedGrantTypes.join(', ')}],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
-    // (no client_secret) are accepted at the token endpoint. OIDC Core 1.0 §9:
-    // private_key_jwt is a JWT signed with a key the client registered (jwks).
+    // (no client_secret) are accepted at the token endpoint.
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
-      'private_key_jwt',
       'none',
     ],
-    // RFC 8414 §2: the JWS algs of the private_key_jwt assertion.
-    tokenEndpointAuthSigningAlgValuesSupported: [...DEFAULT_CLIENT_ASSERTION_SIGNING_ALGS],
     // Required when any client uses userinfo_signed_response_alg
     // (OIDC Core 1.0 Section 5.3.2). Derived from the registered UserInfo key set so
     // ES256 (and other) algs are advertised once a matching key is configured.

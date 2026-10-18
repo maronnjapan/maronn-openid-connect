@@ -25,10 +25,6 @@
  *    (requested, upstream_pending, authenticated), and delete ends it instead
  *    of removing the row: its status becomes failed, then code_issued if a code
  *    is issued from it, and token_issued once that code is exchanged.
- * 9. clientAssertionJtiStore.markUsed checks and records a jti in ONE INSERT,
- *    and is true only when that INSERT changed a row. A SELECT followed by an
- *    INSERT lets two requests carrying the same client assertion both pass
- *    (OIDC Core 1.0 §9: an assertion MUST only be used once).
  */
 import {
   TokenError,
@@ -38,7 +34,6 @@ import {
   type AuthTransactionStore,
   type AuthorizationCodeData,
   type AuthorizationCodeInfo,
-  type ClientAssertionJtiStore,
   type RefreshTokenInfo,
   type UserClaims,
 } from '@maronn-openid-connect/core';
@@ -481,23 +476,6 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     },
   };
 
-  // Not in the ER model: the client assertions (private_key_jwt) the OP
-  // accepted. The INSERT records the jti, or takes over the row of an
-  // assertion that has expired, and changes nothing while the earlier one is
-  // still valid.
-  const clientAssertionJtiStore: ClientAssertionJtiStore = {
-    async markUsed({ clientId, jti, expiresAt }) {
-      const result = await db.run({
-        sql:
-          'INSERT INTO client_assertion_jtis (jti_hash, expired_at) VALUES (?, ?) ' +
-          'ON CONFLICT (jti_hash) DO UPDATE SET expired_at = excluded.expired_at ' +
-          'WHERE client_assertion_jtis.expired_at < ?',
-        params: [await hashKey(JSON.stringify([clientId, jti])), expiresAt, nowSeconds()],
-      });
-      return result.changes > 0;
-    },
-  };
-
   return {
     transactionStore,
     authCodeStore,
@@ -507,7 +485,6 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     browserSessionStore,
     consentStore,
     userStore,
-    clientAssertionJtiStore,
   };
 }
 

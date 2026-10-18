@@ -126,9 +126,10 @@ const database = deferDatabase(createDatabase);
 export const clientResolver = ${wrapClientResolver('createKvClientResolver(database)')};
 
 /**
- * The public keys of the registered clients, one purpose at a time
- * (private_key_jwt, request_object, ...): the client_jwks records of the
- * key-value store, read for each request (db/keys.ts).
+ * The public keys of the registered clients, one purpose at a time (the OP
+ * verifies signed Request Objects with those of request_object): the
+ * client_jwks records of the key-value store, read for each request
+ * (db/keys.ts).
  */
 export const clientKeyResolver: ClientKeyResolver = createKvClientKeyResolver(database);`
     : db === 'sql'
@@ -140,9 +141,9 @@ export const clientKeyResolver: ClientKeyResolver = createKvClientKeyResolver(da
 export const clientResolver = ${wrapClientResolver('createSqlClientResolver(database)')};
 
 /**
- * The public keys of the registered clients, one purpose at a time
- * (private_key_jwt, request_object, ...): the client_jwks table, read for each
- * request (db/schema.sql).
+ * The public keys of the registered clients, one purpose at a time (the OP
+ * verifies signed Request Objects with those of request_object): the
+ * client_jwks table, read for each request (db/schema.sql).
  */
 export const clientKeyResolver: ClientKeyResolver = createSqlClientKeyResolver(database);`
     : `/**
@@ -156,8 +157,8 @@ export const clientResolver = ${wrapClientResolver('createInMemoryClientResolver
 
 /**
  * The public keys of the registered clients above (ClientRegistration.keys),
- * one purpose at a time (private_key_jwt, request_object, ...). Replace it to
- * keep keys elsewhere.
+ * one purpose at a time (the OP verifies signed Request Objects with those of
+ * request_object). Replace it to keep keys elsewhere.
  */
 export const clientKeyResolver: ClientKeyResolver = createInMemoryClientKeyResolver(registeredClients);`;
   const storesDefinition = db === 'kv'
@@ -940,82 +941,6 @@ export function errorPage(error: string, statusCode: number, errorDescription?: 
 </html>\`,
     { status: statusCode },
   );
-}
-`;
-}
-
-/**
- * `_oidc-provider/client-auth.ts`: private_key_jwt client authentication
- * (OIDC Core 1.0 §9), shared by the Route Handlers that authenticate clients.
- * The same contract as the Hono / Express / Fastify client-auth.ts, reading
- * the issuer and the stores from provider.ts.
- */
-export function nextJsClientAuthTemplate(corePkg: string): string {
-  return `/**
- * Client authentication with private_key_jwt (OIDC Core 1.0 §9 / RFC 7523 §3),
- * shared by every Route Handler that authenticates clients: /token,
- * /introspect, /revoke, and the PAR, device authorization and CIBA endpoints
- * when they are generated.
- *
- * The client signs a JWT with its own private key and sends it as
- * client_assertion. verifyPrivateKeyJwt() checks it against the public keys
- * the client registered for the private_key_jwt purpose (clientKeyResolver of
- * provider.ts: the client_jwks table or records with --db, read for each
- * request), then records its jti so the same assertion is refused the second
- * time.
- */
-import {
-  rejectReplayedClientAssertion,
-  requireClientAssertion,
-  verifyClientAssertion,
-  type PresentedClientCredentials,
-  type TokenClientInfo,
-} from '${corePkg}';
-import { clientKeyResolver, config, stores } from './provider';
-import { clientAssertionJtiStore as defaultClientAssertionJtiStore } from './store';
-
-/**
- * Verify the client assertion of a request that authenticates with
- * private_key_jwt. endpointPath is the path of the endpoint that received it
- * (for example '/token'): its URL is one of the audiences the assertion may
- * name.
- */
-export async function verifyPrivateKeyJwt(
-  client: TokenClientInfo,
-  presented: Pick<PresentedClientCredentials, 'clientAssertion'>,
-  endpointPath: string,
-): Promise<void> {
-  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the keys the client
-  // registered for private_key_jwt, iss and sub the client_id, aud this OP,
-  // exp / nbf / iat, and a jti.
-  const verified = await verifyClientAssertion(requireClientAssertion(presented.clientAssertion), {
-    clientId: client.clientId,
-    jwks: await clientKeyResolver.findClientKeys(client.clientId, 'private_key_jwt'),
-    audiences: clientAssertionAudiences(config.issuer, endpointPath),
-  });
-
-  // OIDC Core 1.0 §9: a client assertion MUST only be used once. Stores
-  // without a clientAssertionJtiStore keep the jtis in memory.
-  await rejectReplayedClientAssertion(stores.clientAssertionJtiStore ?? defaultClientAssertionJtiStore, {
-    clientId: client.clientId,
-    jti: verified.jti,
-    expiresAt: verified.expiresAt,
-  });
-}
-
-/**
- * The aud values a client assertion may carry: the issuer identifier, the
- * token endpoint URL and the URL of the endpoint that received the request.
- * Every value of aud has to be one of them.
- *
- * OIDC Core 1.0 §9 says the token endpoint URL SHOULD be the audience.
- * draft-ietf-oauth-rfc7523bis requires the issuer identifier as the only
- * audience and forbids the endpoint URLs (the fix for CVE-2025-27370). Return
- * [issuer] alone to follow the draft strictly; clients written to OIDC Core 1.0
- * that send the token endpoint URL are then refused.
- */
-export function clientAssertionAudiences(issuer: string, endpointPath: string): string[] {
-  return [...new Set([issuer, issuer + '/token', issuer + endpointPath])];
 }
 `;
 }

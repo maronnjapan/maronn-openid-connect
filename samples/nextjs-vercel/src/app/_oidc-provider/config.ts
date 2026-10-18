@@ -175,10 +175,10 @@ export type RegisteredClient = ClientInfo & TokenClientInfo & {
 
 /**
  * A client as this file lists it: the RegisteredClient and its public keys by
- * purpose (keys). A purpose names the process that uses the keys:
- * private_key_jwt for client assertions (OIDC Core 1.0 §9), request_object for
- * signed Request Objects (OIDC Core 1.0 §6.3.2), or another one such as dpop.
- * Register the same key under two purposes to use it for both.
+ * purpose (keys). A purpose names the process that uses the keys, such as
+ * request_object for the signed Request Objects the OP verifies (OIDC Core 1.0
+ * §6.3.2), or private_key_jwt and dpop for processes a project adds. Register
+ * the same key under two purposes to use it for both.
  */
 export type ClientRegistration = RegisteredClient & {
   keys?: ClientKeysByPurpose;

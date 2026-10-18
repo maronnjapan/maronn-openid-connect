@@ -33,14 +33,15 @@ CREATE TABLE IF NOT EXISTS clients (
 
 -- Client_auth: a method the client may authenticate with at the token
 -- endpoint. A public client has none. A confidential client has one row per
--- method: at most one of client_secret_basic / client_secret_post, whose
--- secret is in client_secrets, and private_key_jwt, whose keys are the
--- client_jwks rows of the private_key_jwt purpose (OIDC Core 1.0 §9).
+-- method it may use: client_secret_basic, client_secret_post or both. Every
+-- row of a client carries the same secret in client_secrets, because a client
+-- has one client_secret (RFC 7591 §2). Another method (such as
+-- private_key_jwt) is added here when the OP supports it.
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
   client_auth_type VARCHAR(1000) NOT NULL
-    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt')),
+    CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post')),
   UNIQUE (id, client_auth_type)
 );
 CREATE INDEX IF NOT EXISTS client_auths_client_id_idx ON client_auths (client_id);
@@ -58,13 +59,13 @@ CREATE TABLE IF NOT EXISTS client_secrets (
 );
 
 -- Client_jwk: a public key of the client for one purpose, one JWK (RFC 7517)
--- as JSON. purpose names the process that uses the key: private_key_jwt
--- (client assertions, OIDC Core 1.0 §9), request_object (signed Request
--- Objects, OIDC Core 1.0 §6.3.2), dpop (DPoP proofs, RFC 9449) or another one.
--- It has no CHECK, so a new purpose needs no migration. A key used for two
--- purposes is two rows. The OP reads the keys of a purpose each time a process
--- needs them, so a key inserted or deleted here takes effect at once. Never
--- store a private key.
+-- as JSON. purpose names the process that uses the key: request_object for
+-- the signed Request Objects the OP verifies (OIDC Core 1.0 §6.3.2), or
+-- another one such as private_key_jwt (OIDC Core 1.0 §9) or dpop (RFC 9449)
+-- for a process a project adds. It has no CHECK, so a new purpose needs no
+-- migration. A key used for two purposes is two rows. The OP reads the keys
+-- of a purpose each time a process needs them, so a key inserted or deleted
+-- here takes effect at once. Never store a private key.
 CREATE TABLE IF NOT EXISTS client_jwks (
   id        TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -267,12 +268,4 @@ CREATE TABLE IF NOT EXISTS consent_grants (
   client_id TEXT NOT NULL,
   grant_id  TEXT NOT NULL,
   PRIMARY KEY (subject, client_id, grant_id)
-);
-
--- Not in the ER model: the client assertions (private_key_jwt) the OP
--- accepted, kept until they expire so none is used twice (OIDC Core 1.0 §9).
--- jti_hash is the SHA-256 hash of the client_id and the jti of the assertion.
-CREATE TABLE IF NOT EXISTS client_assertion_jtis (
-  jti_hash   VARCHAR(1000) PRIMARY KEY,
-  expired_at BIGINT NOT NULL
 );

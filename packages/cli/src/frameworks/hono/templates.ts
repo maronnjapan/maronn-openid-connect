@@ -151,8 +151,8 @@ import { ${names.createClientKeyResolver}, ${names.createClientResolver} } from 
 /** The start of the doc comment of the clientKeyResolver option. */
 const CLIENT_KEY_RESOLVER_DOC = `  /**
    * The public keys each client registered, one purpose at a time
-   * (ClientKeyResolver in core): private_key_jwt for client assertions,
-   * request_object for signed Request Objects.
+   * (ClientKeyResolver in core). The OP verifies signed Request Objects with
+   * the keys of request_object.
 `;
 
 export function appTemplate(
@@ -544,7 +544,6 @@ ${tokenClientResolverContext}
     c.set('refreshTokenStore', stores.refreshTokenStore);
     c.set('authSessionStore', stores.authSessionStore);
     c.set('browserSessionStore', stores.browserSessionStore);
-    c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
     c.set('authenticateUser', (username: string, password: string) =>
       stores.userStore.authenticate(username, password));
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);
@@ -999,10 +998,10 @@ export type RegisteredClient = ClientInfo & TokenClientInfo & {
 
 /**
  * A client as this file lists it: the RegisteredClient and its public keys by
- * purpose (keys). A purpose names the process that uses the keys:
- * private_key_jwt for client assertions (OIDC Core 1.0 §9), request_object for
- * signed Request Objects (OIDC Core 1.0 §6.3.2), or another one such as dpop.
- * Register the same key under two purposes to use it for both.
+ * purpose (keys). A purpose names the process that uses the keys, such as
+ * request_object for the signed Request Objects the OP verifies (OIDC Core 1.0
+ * §6.3.2), or private_key_jwt and dpop for processes a project adds. Register
+ * the same key under two purposes to use it for both.
  */
 export type ClientRegistration = RegisteredClient & {
   keys?: ClientKeysByPurpose;
@@ -1736,7 +1735,6 @@ export function buildClearedSessionCookie(): string {
   AuthTransactionStore,
   AuthorizationCodeInfo,
   AccessTokenInfo,
-  ClientAssertionJtiStore,
   RefreshTokenInfo,
   UserClaims,
 } from '${corePkg}';${parStoreTypeImport}${deviceStoreTypeImport}${cibaStoreTypeImport}${dcrStoreTypeImport}${googleLoginStoreTypeImport}
@@ -2244,27 +2242,6 @@ ${googleUsersField}  constructor() {
   }
 ${userStoreGoogleMethods}}
 
-/**
- * In-memory store of the client assertions (private_key_jwt) the OP accepted.
- * OIDC Core 1.0 §9: an assertion MUST only be used once, so markUsed() checks
- * and records its jti in one step and refuses it the second time. A jti is
- * kept until the assertion expires.
- */
-export class InMemoryClientAssertionJtiStore implements ClientAssertionJtiStore {
-  private used = new Map<string, number>();
-
-  async markUsed(entry: { clientId: string; jti: string; expiresAt: number }): Promise<boolean> {
-    const now = Math.floor(Date.now() / 1000);
-    for (const [key, expiresAt] of this.used) {
-      if (expiresAt < now) this.used.delete(key);
-    }
-    const key = JSON.stringify([entry.clientId, entry.jti]);
-    if (this.used.has(key)) return false;
-    this.used.set(key, entry.expiresAt);
-    return true;
-  }
-}
-
 ${googleLoginStoreImplementation}export type Awaitable<T> = T | Promise<T>;
 
 export interface JsonStoreEntry<T> {
@@ -2344,15 +2321,7 @@ export interface ProviderStores {
   browserSessionStore: BrowserSessionStorage;
   consentStore: ConsentStorage;
   userStore: UserStorage;
-${providerStoresGoogleMember}  /**
-   * The client assertions (private_key_jwt) the OP accepted, so none is used
-   * twice. Optional, as not every OP accepts private_key_jwt: without it the
-   * jtis are kept in this process's memory (clientAssertionJtiStore below),
-   * which refuses a replay only at the instance that saw the assertion. Pass a
-   * store the instances share when more than one accepts private_key_jwt.
-   */
-  clientAssertionJtiStore?: ClientAssertionJtiStore;
-}
+${providerStoresGoogleMember}}
 
 export type ProviderStoresFactory = (
   context: any,
@@ -2365,8 +2334,7 @@ const REFRESH_TOKEN_PREFIX = 'refresh-token:';
 const AUTH_SESSION_PREFIX = 'auth-session:';
 const BROWSER_SESSION_PREFIX = 'browser-session:';
 const CONSENT_PREFIX = 'consent:';
-const USER_PREFIX = 'user:';
-const CLIENT_ASSERTION_JTI_PREFIX = 'client-assertion-jti:';${googleLoginPrefixes}
+const USER_PREFIX = 'user:';${googleLoginPrefixes}
 
 class JsonTransactionStore implements AuthTransactionStore {
   constructor(private readonly backend: JsonStoreBackend) {}
@@ -2595,26 +2563,6 @@ class JsonUserStore implements UserStorage {
   }
 ${jsonUserStoreGoogleMethods}}
 
-/**
- * The client assertions (private_key_jwt) the OP accepted, one key per jti.
- * A JSON backend has no set-if-absent, so two requests carrying the same
- * assertion at the same moment can both pass. Implement markUsed() with an
- * atomic write of your backend (or use --db, whose stores have one) where that
- * matters.
- */
-class JsonClientAssertionJtiStore implements ClientAssertionJtiStore {
-  constructor(private readonly backend: JsonStoreBackend) {}
-
-  async markUsed(entry: { clientId: string; jti: string; expiresAt: number }): Promise<boolean> {
-    const key =
-      CLIENT_ASSERTION_JTI_PREFIX + encodeURIComponent(entry.clientId) + ':' + encodeURIComponent(entry.jti);
-    const used = await this.backend.get<{ expiresAt: number }>(key);
-    if (used && used.expiresAt >= epochSeconds()) return false;
-    await this.backend.put(key, { expiresAt: entry.expiresAt }, ttlUntil(entry.expiresAt));
-    return true;
-  }
-}
-
 ${jsonGoogleNonceStore}/** Create all OP stores over one deployment-native JSON backend. */
 export function createJsonProviderStores(backend: JsonStoreBackend): ProviderStores {
   return {
@@ -2626,8 +2574,7 @@ export function createJsonProviderStores(backend: JsonStoreBackend): ProviderSto
     browserSessionStore: new JsonBrowserSessionStore(backend),
     consentStore: new JsonConsentStore(backend),
     userStore: new JsonUserStore(backend),
-${jsonStoresGoogleEntry}    clientAssertionJtiStore: new JsonClientAssertionJtiStore(backend),
-  };
+${jsonStoresGoogleEntry}  };
 }
 
 function epochSeconds(): number {
@@ -2698,9 +2645,8 @@ function defaultUserFixture(username: string): StoredUser | undefined {
 // would be invisible to the /authorize and /token route handlers and vice
 // versa. It also survives dev-mode hot reloads. Harmless for single-layer
 // runtimes (Node / Hono / Express / Fastify), which always see one instance.
-// The defaults include every store, the optional ones too.
 const storeRegistry = globalThis as typeof globalThis & {
-  __oidcProviderStores?: Required<ProviderStores>;
+  __oidcProviderStores?: ProviderStores;
 };
 
 export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
@@ -2712,8 +2658,7 @@ export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
   browserSessionStore: new BrowserSessionStore(),
   consentStore: new ConsentStore(),
   userStore: new UserStore(),
-${defaultStoresGoogleEntry}  clientAssertionJtiStore: new InMemoryClientAssertionJtiStore(),
-});
+${defaultStoresGoogleEntry}});
 
 export const transactionStore = defaultProviderStores.transactionStore;
 export const authCodeStore = defaultProviderStores.authCodeStore;
@@ -2722,90 +2667,8 @@ export const refreshTokenStore = defaultProviderStores.refreshTokenStore;
 export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
-export const userStore = defaultProviderStores.userStore;
-export const clientAssertionJtiStore = defaultProviderStores.clientAssertionJtiStore;${googleLoginStoreExport}
+export const userStore = defaultProviderStores.userStore;${googleLoginStoreExport}
 ${parStoreImplementation}${deviceStoreImplementation}${cibaStoreImplementation}${dcrStoreImplementation}`;
-}
-
-/**
- * `client-auth.ts` — private_key_jwt client authentication (OIDC Core 1.0 §9),
- * shared by every route that authenticates clients. The Next.js generator has
- * its own variant that reads the provider module instead of the request
- * context.
- */
-export function clientAuthTemplate(corePkg: string): string {
-  return `/**
- * Client authentication with private_key_jwt (OIDC Core 1.0 §9 / RFC 7523 §3),
- * shared by every endpoint that authenticates clients: /token, /introspect,
- * /revoke, and the PAR, device authorization and CIBA endpoints when they are
- * generated.
- *
- * The client signs a JWT with its own private key and sends it as
- * client_assertion. verifyPrivateKeyJwt() checks it against the public keys
- * the client registered for the private_key_jwt purpose (the ClientKeyResolver
- * of the app: the client_jwks table or records with --db, read for each
- * request), then records its jti so the same assertion is refused the second
- * time.
- */
-import {
-  rejectReplayedClientAssertion,
-  requireClientAssertion,
-  verifyClientAssertion,
-  type PresentedClientCredentials,
-  type TokenClientInfo,
-} from '${corePkg}';
-import { clientKeyResolver as defaultClientKeyResolver } from './resolvers.js';
-import { clientAssertionJtiStore as defaultClientAssertionJtiStore } from './store.js';
-
-/**
- * Verify the client assertion of a request that authenticates with
- * private_key_jwt. endpointPath is the path of the endpoint that received it
- * (for example '/token'): its URL is one of the audiences the assertion may
- * name.
- */
-export async function verifyPrivateKeyJwt(
-  c: any,
-  client: TokenClientInfo,
-  presented: Pick<PresentedClientCredentials, 'clientAssertion'>,
-  endpointPath: string,
-): Promise<void> {
-  const { issuer } = c.get('config');
-  const clientKeyResolver = c.get('clientKeyResolver') ?? defaultClientKeyResolver;
-  // Storage without a clientAssertionJtiStore keeps the jtis in memory.
-  const jtiStore = c.get('clientAssertionJtiStore') ?? defaultClientAssertionJtiStore;
-
-  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the keys the client
-  // registered for private_key_jwt, iss and sub the client_id, aud this OP,
-  // exp / nbf / iat, and a jti.
-  const verified = await verifyClientAssertion(requireClientAssertion(presented.clientAssertion), {
-    clientId: client.clientId,
-    jwks: await clientKeyResolver.findClientKeys(client.clientId, 'private_key_jwt'),
-    audiences: clientAssertionAudiences(issuer, endpointPath),
-  });
-
-  // OIDC Core 1.0 §9: a client assertion MUST only be used once.
-  await rejectReplayedClientAssertion(jtiStore, {
-    clientId: client.clientId,
-    jti: verified.jti,
-    expiresAt: verified.expiresAt,
-  });
-}
-
-/**
- * The aud values a client assertion may carry: the issuer identifier, the
- * token endpoint URL and the URL of the endpoint that received the request.
- * Every value of aud has to be one of them.
- *
- * OIDC Core 1.0 §9 says the token endpoint URL SHOULD be the audience.
- * draft-ietf-oauth-rfc7523bis requires the issuer identifier as the only
- * audience and forbids the endpoint URLs (the fix for CVE-2025-27370). Return
- * [issuer] alone to follow the draft strictly; clients written to OIDC Core 1.0
- * that send the token endpoint URL are then refused.
- */
-export function clientAssertionAudiences(issuer: string, endpointPath: string): string[] {
-  return [...new Set([issuer, issuer + '/token', issuer + endpointPath])];
-}
-`;
 }
 
 export function resolversTemplate(
@@ -4452,7 +4315,6 @@ ${tokenClientResolverContext}
     c.set('refreshTokenStore', stores.refreshTokenStore);
     c.set('authSessionStore', stores.authSessionStore);
     c.set('browserSessionStore', stores.browserSessionStore);
-    c.set('clientAssertionJtiStore', stores.clientAssertionJtiStore);
     c.set('authenticateUser', (username: string, password: string) =>
       stores.userStore.authenticate(username, password));
     c.set('authCodeResolver', storeResolvers.authorizationCodeResolver);

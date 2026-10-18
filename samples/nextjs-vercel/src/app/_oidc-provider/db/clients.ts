@@ -9,13 +9,12 @@
  * - client_type public: no client authentication
  *   (tokenEndpointAuthMethods ['none']).
  * - client_auths: the methods the client may authenticate with
- *   (tokenEndpointAuthMethods). A client_secret_basic or client_secret_post
- *   entry carries the clientSecretHash the presented secret is checked
- *   against; more than one of those is a configuration error. A
- *   private_key_jwt entry lets the client sign a JWT with one of its keys of
- *   the private_key_jwt purpose instead (OIDC Core 1.0 §9). A confidential
- *   client without entries keeps the default client_secret_basic with no
- *   secret, so it cannot authenticate.
+ *   (tokenEndpointAuthMethods: client_secret_basic, client_secret_post or
+ *   both), and the clientSecretHash the presented secret is checked against
+ *   whichever of them the request uses. A client has one client_secret
+ *   (RFC 7591 §2), so entries with different secrets are a configuration
+ *   error. A confidential client without entries keeps the default
+ *   client_secret_basic with no secret, so it cannot authenticate.
  * - redirect_uris, grant_types and scopes: redirectUris, grantTypes and scope.
  *   A request for a scope outside scope is rejected with invalid_scope
  *   (validateClientScope() in core). A client without scopes may request every
@@ -24,24 +23,21 @@
  *   and UserInfo signing algs) keeps its default.
  *
  * The client's public keys (keys.clientJwks(), one record per purpose) are not
- * part of the RegisteredClient. Each process that needs them asks the
+ * part of the RegisteredClient. A process that needs them asks the
  * ClientKeyResolver for the keys of its own purpose (ClientKeyResolver in
- * core): private_key_jwt for client assertions, request_object for signed
- * Request Objects, and another purpose (dpop, for one) for a process added
- * later.
+ * core): the OP verifies signed Request Objects with those of request_object,
+ * and a process a project adds reads its own purpose (private_key_jwt or dpop,
+ * for one).
  *
  * findClient() and findClientKeys() read the store on every call, so a change
  * made while the OP runs takes effect from the next request. That is how a
- * client starts using private_key_jwt or rotates its keys, without a restart:
- * add { "client_auth_type": "private_key_jwt" } to client_auths of its client
- * record, and put its public keys into keys.clientJwks(client_id,
- * 'private_key_jwt') as { "keys": [ <JWK>, ... ] }.
+ * client's keys are added or rotated without a restart: write them into
+ * keys.clientJwks(client_id, purpose) as { "keys": [ <JWK>, ... ] }.
  */
 import {
   hashClientSecret,
   isPublicTokenClient,
   selectRegisteredClientAuthMethods,
-  type ClientAuthMethod,
   type ClientKeyPurpose,
   type ClientKeyResolver,
   type ClientResolver,
@@ -67,17 +63,15 @@ export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenCl
       if (client.scopes.length > 0) registered.scope = client.scopes;
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
-      } else if (client.client_auths.length > 0) {
-        const secretAuths = client.client_auths.filter(
-          (auth): auth is Extract<ClientAuthRecord, { secret: string }> => 'secret' in auth,
-        );
-        if (secretAuths.length > 1) {
-          throw new Error('Client ' + clientId + ' has more than one client_secret method in client_auths');
+      } else if (client.client_auths[0]) {
+        // A client has one client_secret (RFC 7591 §2), whichever method
+        // presents it.
+        const secret = client.client_auths[0].secret;
+        if (client.client_auths.some((auth) => auth.secret !== secret)) {
+          throw new Error('Client ' + clientId + ' has client_auths entries with different secrets');
         }
-        registered.tokenEndpointAuthMethods = client.client_auths.map(
-          (auth): ClientAuthMethod => auth.client_auth_type,
-        );
-        if (secretAuths[0]) registered.clientSecretHash = secretAuths[0].secret;
+        registered.tokenEndpointAuthMethods = client.client_auths.map((auth) => auth.client_auth_type);
+        registered.clientSecretHash = secret;
       }
       // A confidential client without client_auths keeps the default
       // client_secret_basic with no secret, so it cannot authenticate.
@@ -88,9 +82,9 @@ export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenCl
 
 /**
  * The public keys of keys.clientJwks() for one purpose at a time: the
- * ClientKeyResolver the OP uses when no other one is passed in. private_key_jwt
- * reads the record of the private_key_jwt purpose and a signed Request Object
- * that of request_object. A deleted client (is_deleted) has no keys.
+ * ClientKeyResolver the OP uses when no other one is passed in. The OP
+ * verifies a signed Request Object with the keys of request_object. A deleted
+ * client (is_deleted) has no keys.
  */
 export function createKvClientKeyResolver(db: KvDatabase): ClientKeyResolver {
   return {
@@ -116,16 +110,16 @@ export function createKvClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * OP may register its clients at startup, even at the same moment.
  * clientSecret is saved as its hash (hashClientSecret()).
  *
- * The keys of keys (ClientRegistration.keys) go into keys.clientJwks() of
- * their purpose.
+ * Each method of tokenEndpointAuthMethods becomes an entry of client_auths,
+ * all of them with the same secret.
  *
- * private_key_jwt and the keys are only ever added here: the record keeps a
- * private_key_jwt entry of client_auths once it has one, and a key missing
- * from its purpose's keys.clientJwks() is appended to it. Both may be managed
- * in the store while the OP runs (see the top of this file), and registering
- * the client again at the next start keeps them. To remove one, change it in
- * the store, and drop it from the client passed here too, or the next
- * registration adds it back.
+ * The keys of keys (ClientRegistration.keys) go into keys.clientJwks() of
+ * their purpose. They are only ever added here: a key missing from its
+ * purpose's keys.clientJwks() is appended to it, and none is removed, so the
+ * keys may be managed in the store while the OP runs (see the top of this
+ * file), and registering the client again at the next start keeps them. To
+ * remove a key, change it in the store, and drop it from the client passed
+ * here too, or the next registration adds it back.
  */
 export async function registerClient(
   db: KvDatabase,
@@ -135,26 +129,19 @@ export async function registerClient(
   const secretHash =
     client.clientSecretHash ??
     (client.clientSecret !== undefined ? await hashClientSecret(client.clientSecret) : undefined);
-  const methods = clientType === 'confidential' ? selectRegisteredClientAuthMethods(client) : [];
-  const secretMethod = methods.find(
-    (method): method is 'client_secret_basic' | 'client_secret_post' =>
-      method === 'client_secret_basic' || method === 'client_secret_post',
-  );
-  const current = await readRecord<ClientRecord>(db, keys.client(client.clientId));
-  const keepsPrivateKeyJwt =
-    clientType === 'confidential' &&
-    (methods.includes('private_key_jwt') ||
-      (current?.client_auths ?? []).some((auth) => auth.client_auth_type === 'private_key_jwt'));
+  const methods =
+    clientType === 'confidential'
+      ? selectRegisteredClientAuthMethods(client).filter(
+        (method): method is ClientAuthRecord['client_auth_type'] =>
+          method === 'client_secret_basic' || method === 'client_secret_post',
+      )
+      : [];
   const record: ClientRecord = {
     name: client.name ?? null,
     client_type: clientType,
     is_deleted: false,
-    client_auths: [
-      ...(secretMethod !== undefined && secretHash !== undefined
-        ? [{ client_auth_type: secretMethod, secret: secretHash }]
-        : []),
-      ...(keepsPrivateKeyJwt ? [{ client_auth_type: 'private_key_jwt' as const }] : []),
-    ],
+    client_auths:
+      secretHash === undefined ? [] : methods.map((method) => ({ client_auth_type: method, secret: secretHash })),
     redirect_uris: [...client.redirectUris],
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],

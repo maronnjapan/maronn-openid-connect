@@ -3,7 +3,6 @@ import { DEFAULT_FEATURES } from '../../features.js';
 import {
   appTemplate,
   applyTemplate,
-  clientAuthTemplate,
   configTemplate,
   customScopesTemplate,
   storeTemplate,
@@ -64,9 +63,6 @@ export class HonoGenerator implements FrameworkGenerator {
         : []),
       { path: 'store.ts', content: storeTemplate(pkg, features) },
       { path: 'resolvers.ts', content: resolversTemplate(pkg, features) },
-      // private_key_jwt client authentication, shared by the routes that
-      // authenticate clients (OIDC Core 1.0 §9).
-      { path: 'client-auth.ts', content: clientAuthTemplate(pkg) },
       // The default screens as hono/jsx components (views.tsx); the other
       // frameworks generate the same contract as HTML strings (views.ts).
       { path: 'views.tsx', content: honoViewsTemplate(features) },

@@ -3,7 +3,6 @@ import type {
   AuthTransactionStore,
   AuthorizationCodeInfo,
   AccessTokenInfo,
-  ClientAssertionJtiStore,
   RefreshTokenInfo,
   UserClaims,
 } from '@maronn-openid-connect/core';
@@ -616,27 +615,6 @@ export class UserStore {
   }
 }
 
-/**
- * In-memory store of the client assertions (private_key_jwt) the OP accepted.
- * OIDC Core 1.0 §9: an assertion MUST only be used once, so markUsed() checks
- * and records its jti in one step and refuses it the second time. A jti is
- * kept until the assertion expires.
- */
-export class InMemoryClientAssertionJtiStore implements ClientAssertionJtiStore {
-  private used = new Map<string, number>();
-
-  async markUsed(entry: { clientId: string; jti: string; expiresAt: number }): Promise<boolean> {
-    const now = Math.floor(Date.now() / 1000);
-    for (const [key, expiresAt] of this.used) {
-      if (expiresAt < now) this.used.delete(key);
-    }
-    const key = JSON.stringify([entry.clientId, entry.jti]);
-    if (this.used.has(key)) return false;
-    this.used.set(key, entry.expiresAt);
-    return true;
-  }
-}
-
 export type Awaitable<T> = T | Promise<T>;
 
 export interface JsonStoreEntry<T> {
@@ -716,14 +694,6 @@ export interface ProviderStores {
   browserSessionStore: BrowserSessionStorage;
   consentStore: ConsentStorage;
   userStore: UserStorage;
-  /**
-   * The client assertions (private_key_jwt) the OP accepted, so none is used
-   * twice. Optional, as not every OP accepts private_key_jwt: without it the
-   * jtis are kept in this process's memory (clientAssertionJtiStore below),
-   * which refuses a replay only at the instance that saw the assertion. Pass a
-   * store the instances share when more than one accepts private_key_jwt.
-   */
-  clientAssertionJtiStore?: ClientAssertionJtiStore;
 }
 
 export type ProviderStoresFactory = (
@@ -738,7 +708,6 @@ const AUTH_SESSION_PREFIX = 'auth-session:';
 const BROWSER_SESSION_PREFIX = 'browser-session:';
 const CONSENT_PREFIX = 'consent:';
 const USER_PREFIX = 'user:';
-const CLIENT_ASSERTION_JTI_PREFIX = 'client-assertion-jti:';
 
 class JsonTransactionStore implements AuthTransactionStore {
   constructor(private readonly backend: JsonStoreBackend) {}
@@ -967,26 +936,6 @@ class JsonUserStore implements UserStorage {
   }
 }
 
-/**
- * The client assertions (private_key_jwt) the OP accepted, one key per jti.
- * A JSON backend has no set-if-absent, so two requests carrying the same
- * assertion at the same moment can both pass. Implement markUsed() with an
- * atomic write of your backend (or use --db, whose stores have one) where that
- * matters.
- */
-class JsonClientAssertionJtiStore implements ClientAssertionJtiStore {
-  constructor(private readonly backend: JsonStoreBackend) {}
-
-  async markUsed(entry: { clientId: string; jti: string; expiresAt: number }): Promise<boolean> {
-    const key =
-      CLIENT_ASSERTION_JTI_PREFIX + encodeURIComponent(entry.clientId) + ':' + encodeURIComponent(entry.jti);
-    const used = await this.backend.get<{ expiresAt: number }>(key);
-    if (used && used.expiresAt >= epochSeconds()) return false;
-    await this.backend.put(key, { expiresAt: entry.expiresAt }, ttlUntil(entry.expiresAt));
-    return true;
-  }
-}
-
 /** Create all OP stores over one deployment-native JSON backend. */
 export function createJsonProviderStores(backend: JsonStoreBackend): ProviderStores {
   return {
@@ -998,7 +947,6 @@ export function createJsonProviderStores(backend: JsonStoreBackend): ProviderSto
     browserSessionStore: new JsonBrowserSessionStore(backend),
     consentStore: new JsonConsentStore(backend),
     userStore: new JsonUserStore(backend),
-    clientAssertionJtiStore: new JsonClientAssertionJtiStore(backend),
   };
 }
 
@@ -1070,9 +1018,8 @@ function defaultUserFixture(username: string): StoredUser | undefined {
 // would be invisible to the /authorize and /token route handlers and vice
 // versa. It also survives dev-mode hot reloads. Harmless for single-layer
 // runtimes (Node / Hono / Express / Fastify), which always see one instance.
-// The defaults include every store, the optional ones too.
 const storeRegistry = globalThis as typeof globalThis & {
-  __oidcProviderStores?: Required<ProviderStores>;
+  __oidcProviderStores?: ProviderStores;
 };
 
 export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
@@ -1084,7 +1031,6 @@ export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
   browserSessionStore: new BrowserSessionStore(),
   consentStore: new ConsentStore(),
   userStore: new UserStore(),
-  clientAssertionJtiStore: new InMemoryClientAssertionJtiStore(),
 });
 
 export const transactionStore = defaultProviderStores.transactionStore;
@@ -1095,7 +1041,6 @@ export const authSessionStore = defaultProviderStores.authSessionStore;
 export const browserSessionStore = defaultProviderStores.browserSessionStore;
 export const consentStore = defaultProviderStores.consentStore;
 export const userStore = defaultProviderStores.userStore;
-export const clientAssertionJtiStore = defaultProviderStores.clientAssertionJtiStore;
 
 /**
  * EXPERIMENTAL — in-memory Pushed Authorization Request store (RFC 9126).

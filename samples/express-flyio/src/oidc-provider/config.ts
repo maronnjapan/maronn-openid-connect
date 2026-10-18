@@ -1,8 +1,11 @@
-import type {
-  ClientInfo,
-  ClientResolver,
-  TokenClientInfo,
-  TokenClientResolver,
+import {
+  createClientKeyResolver,
+  type ClientInfo,
+  type ClientKeyResolver,
+  type ClientKeysByPurpose,
+  type ClientResolver,
+  type TokenClientInfo,
+  type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 
 /**
@@ -159,6 +162,10 @@ export function createProviderConfig(
  * The token endpoint picks an actual signing key matching this alg from the
  * registered ID Token key set; a request whose alg has no registered key is
  * rejected as a server configuration error.
+ *
+ * The client's public keys are not part of it: each process that needs them
+ * asks the ClientKeyResolver for the keys of its own purpose
+ * (ClientRegistration.keys below, or the client_jwks of db/ with --db).
  */
 export type RegisteredClient = ClientInfo & TokenClientInfo & {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
@@ -167,10 +174,21 @@ export type RegisteredClient = ClientInfo & TokenClientInfo & {
 };
 
 /**
+ * A client as this file lists it: the RegisteredClient and its public keys by
+ * purpose (keys). A purpose names the process that uses the keys:
+ * private_key_jwt for client assertions (OIDC Core 1.0 §9), request_object for
+ * signed Request Objects (OIDC Core 1.0 §6.3.2), or another one such as dpop.
+ * Register the same key under two purposes to use it for both.
+ */
+export type ClientRegistration = RegisteredClient & {
+  keys?: ClientKeysByPurpose;
+};
+
+/**
  * Optional in-memory defaults for quick local testing only.
  * Prefer D1, KV, or another project-owned client resolver in real projects.
  */
-export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = new Map([
+export const defaultRegisteredClients: ReadonlyMap<string, ClientRegistration> = new Map([
   [
     'example-client',
     {
@@ -190,7 +208,7 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
       grantTypes: ['authorization_code', 'refresh_token', 'urn:openid:params:grant-type:ciba'],
       // RFC 7591 §2: token_endpoint_auth_method default is client_secret_basic.
       // The sample client authenticates with client_secret_post, so register it explicitly.
-      tokenEndpointAuthMethod: 'client_secret_post',
+      tokenEndpointAuthMethods: ['client_secret_post'],
       // OIDC Dynamic Client Registration 1.0 §2: default_max_age (seconds).
       // When the authorization request omits max_age, the OP applies this as the
       // default re-authentication freshness. A request-supplied max_age overrides it.
@@ -200,11 +218,25 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
 ]);
 
 export function createInMemoryClientResolver(
-  clients: ReadonlyMap<string, RegisteredClient> = defaultRegisteredClients,
+  clients: ReadonlyMap<string, ClientRegistration> = defaultRegisteredClients,
 ): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
-      return clients.get(clientId) ?? null;
+      const registration = clients.get(clientId);
+      if (!registration) return null;
+      const { keys: _keys, ...client } = registration;
+      return client;
     },
   };
+}
+
+/**
+ * The public keys of the clients (ClientRegistration.keys), one purpose at a
+ * time: the ClientKeyResolver of an OP generated without --db. The map is read
+ * as it is when a key is asked for.
+ */
+export function createInMemoryClientKeyResolver(
+  clients: ReadonlyMap<string, ClientRegistration> = defaultRegisteredClients,
+): ClientKeyResolver {
+  return createClientKeyResolver((clientId) => clients.get(clientId)?.keys);
 }

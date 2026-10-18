@@ -8,7 +8,7 @@ Cloudflare Workers上で動くHono OPで、CLIの `--db sql` で生成したSQL�
 
 クライアントとユーザーもD1のテーブルから読む。Workersはリクエストの処理中にしかD1を使えないので、isolateごとの最初のリクエストで、`src/app.ts` がE2E用のクライアント（`OIDC_CLIENTS_JSON` があればその内容）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` でテーブルに登録する。client_secret とパスワードはハッシュだけを保存する。`registerClient()` は値が同じなら同じ行を書くので、同時に起動したisolateが登録し合っても行は重複しない。ユーザーはパスワードのハッシュ化にCPU時間がかかるので、登録済みならそのままにする。
 
-クライアントのテーブルにはまだ `jwks`（クライアントの公開鍵）の列が無いので、`OIDC_CLIENTS_JSON` に `jwks` があるクライアント（OpenID Conformance Suite の署名付き Request Object）は、`src/app.ts` がその値を足して返す。
+`OIDC_CLIENTS_JSON` のクライアントの `keys`（用途ごとの公開鍵）は、`registerClient()` が `client_jwks` テーブルに入れる。OpenID Conformance Suite の署名付き Request Object は、`request_object` の用途の鍵で検証する。
 
 ## ローカル起動（一発）
 

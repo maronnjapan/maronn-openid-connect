@@ -114,24 +114,21 @@ function honoStorageTemplateParts(db: DbKind | undefined): {
   clientResolverDoc: string;
   defaultStores: string;
   defaultClientResolver: string;
-  coreClientKeyResolverImport: string;
   clientKeyResolverDoc: string;
   defaultClientKeyResolver: string;
 } {
   if (!db) {
     return {
       defaultStoresImport: '  defaultProviderStores,\n',
-      inMemoryClientResolverImport: '  createInMemoryClientResolver,\n',
+      inMemoryClientResolverImport: '  createInMemoryClientKeyResolver,\n  createInMemoryClientResolver,\n',
       dbImports: '',
       storageDoc: 'Persistent stores, or a request-aware factory for bindings such as Cloudflare D1.',
       clientResolverDoc: '',
       defaultStores: 'defaultProviderStores',
       defaultClientResolver: 'createInMemoryClientResolver()',
-      coreClientKeyResolverImport: '  createClientJwksKeyResolver,\n',
-      clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to the jwks of each client (RegisteredClient.jwks), which covers
-   * private_key_jwt and request_object (createClientJwksKeyResolver() in core).
+      clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to the keys of the clients of config.ts (ClientRegistration.keys).
    */\n`,
-      defaultClientKeyResolver: 'createClientJwksKeyResolver(clientResolver)',
+      defaultClientKeyResolver: 'createInMemoryClientKeyResolver()',
     };
   }
   const names = databaseNames(db);
@@ -145,7 +142,6 @@ import { ${names.createClientKeyResolver}, ${names.createClientResolver} } from 
     clientResolverDoc: `  /** Clients to use instead of ${names.clientsDescription} (registerClient() in db/clients.ts). */\n`,
     defaultStores: `${names.createProviderStores}(createDatabase(context))`,
     defaultClientResolver: `${names.createClientResolver}(createDatabase(c))`,
-    coreClientKeyResolverImport: '',
     clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to ${names.clientKeysDescription}, read for each request.
    */\n`,
     defaultClientKeyResolver: `${names.createClientKeyResolver}(createDatabase(c))`,
@@ -398,7 +394,7 @@ ${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-${storageParts.coreClientKeyResolverImport}  signingKeysToJwkSet,
+  signingKeysToJwkSet,
 } from '${_corePkg}';
 import type {
   SigningKey,
@@ -902,11 +898,14 @@ export interface GoogleLoginConfig {
   googleLogin?: GoogleLoginConfig;
 `
     : '';
-  return `import type {
-  ClientInfo,
-  ClientResolver,
-  TokenClientInfo,
-  TokenClientResolver,
+  return `import {
+  createClientKeyResolver,
+  type ClientInfo,
+  type ClientKeyResolver,
+  type ClientKeysByPurpose,
+  type ClientResolver,
+  type TokenClientInfo,
+  type TokenClientResolver,
 } from '${corePkg}';
 ${googleLoginConfigTypes}
 export interface ProviderConfig {
@@ -988,6 +987,10 @@ export function createProviderConfig(
  * The token endpoint picks an actual signing key matching this alg from the
  * registered ID Token key set; a request whose alg has no registered key is
  * rejected as a server configuration error.
+ *
+ * The client's public keys are not part of it: each process that needs them
+ * asks the ClientKeyResolver for the keys of its own purpose
+ * (ClientRegistration.keys below, or the client_jwks of db/ with --db).
  */
 export type RegisteredClient = ClientInfo & TokenClientInfo & {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
@@ -995,10 +998,21 @@ export type RegisteredClient = ClientInfo & TokenClientInfo & {
 };
 
 /**
+ * A client as this file lists it: the RegisteredClient and its public keys by
+ * purpose (keys). A purpose names the process that uses the keys:
+ * private_key_jwt for client assertions (OIDC Core 1.0 §9), request_object for
+ * signed Request Objects (OIDC Core 1.0 §6.3.2), or another one such as dpop.
+ * Register the same key under two purposes to use it for both.
+ */
+export type ClientRegistration = RegisteredClient & {
+  keys?: ClientKeysByPurpose;
+};
+
+/**
  * Optional in-memory defaults for quick local testing only.
  * Prefer D1, KV, or another project-owned client resolver in real projects.
  */
-export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = new Map([
+export const defaultRegisteredClients: ReadonlyMap<string, ClientRegistration> = new Map([
   [
     'example-client',
     {
@@ -1008,7 +1022,7 @@ export const defaultRegisteredClients: ReadonlyMap<string, RegisteredClient> = n
       clientType: 'confidential' as const,
 ${exampleClientGrantFields}      // RFC 7591 §2: token_endpoint_auth_method default is client_secret_basic.
       // The sample client authenticates with client_secret_post, so register it explicitly.
-      tokenEndpointAuthMethod: 'client_secret_post',
+      tokenEndpointAuthMethods: ['client_secret_post'],
       // OIDC Dynamic Client Registration 1.0 §2: default_max_age (seconds).
       // When the authorization request omits max_age, the OP applies this as the
       // default re-authentication freshness. A request-supplied max_age overrides it.
@@ -1018,13 +1032,27 @@ ${exampleClientGrantFields}      // RFC 7591 §2: token_endpoint_auth_method def
 ]);
 
 export function createInMemoryClientResolver(
-  clients: ReadonlyMap<string, RegisteredClient> = defaultRegisteredClients,
+  clients: ReadonlyMap<string, ClientRegistration> = defaultRegisteredClients,
 ): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
-      return clients.get(clientId) ?? null;
+      const registration = clients.get(clientId);
+      if (!registration) return null;
+      const { keys: _keys, ...client } = registration;
+      return client;
     },
   };
+}
+
+/**
+ * The public keys of the clients (ClientRegistration.keys), one purpose at a
+ * time: the ClientKeyResolver of an OP generated without --db. The map is read
+ * as it is when a key is asked for.
+ */
+export function createInMemoryClientKeyResolver(
+  clients: ReadonlyMap<string, ClientRegistration> = defaultRegisteredClients,
+): ClientKeyResolver {
+  return createClientKeyResolver((clientId) => clients.get(clientId)?.keys);
 }
 `;
 }
@@ -2901,8 +2929,7 @@ export const introspectionRefreshTokenResolver =
     ? `export const revocationResolvers = defaultStoreResolvers.revocationResolvers;
 `
     : '';
-  return `import { createClientJwksKeyResolver } from '${corePkg}';
-import type {
+  return `import type {
   ClientResolver,
   ClientKeyResolver,
   TokenClientResolver,
@@ -2916,7 +2943,7 @@ ${introspectionTypeImports}${revocationTypeImports}  SessionResolver,
   SessionInfo,
   ConsentResolver,
 } from '${corePkg}';
-import { createInMemoryClientResolver } from './config.js';
+import { createInMemoryClientKeyResolver, createInMemoryClientResolver } from './config.js';
 import {
   defaultProviderStores,
   parseSessionId,
@@ -2933,10 +2960,10 @@ export const clientResolver: ClientResolver & TokenClientResolver =
 export const tokenClientResolver: TokenClientResolver = clientResolver;
 
 /**
- * Default key resolver: the jwks of the clients above (RegisteredClient.jwks),
- * for the purposes jwks covers (private_key_jwt and request_object).
+ * Default key resolver: the keys of the clients of config.ts
+ * (ClientRegistration.keys), one purpose at a time.
  */
-export const clientKeyResolver: ClientKeyResolver = createClientJwksKeyResolver(clientResolver);
+export const clientKeyResolver: ClientKeyResolver = createInMemoryClientKeyResolver();
 
 /**
  * Build the resolver suite over one coherent store set. A request must never
@@ -4236,7 +4263,7 @@ ${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-${storageParts.coreClientKeyResolverImport}  signingKeysToJwkSet,
+  signingKeysToJwkSet,
 } from '${_corePkg}';
 import type {
   SigningKey,

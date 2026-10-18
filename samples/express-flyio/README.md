@@ -6,7 +6,7 @@ CLIの `--db sql` で生成したSQLのテーブル（`src/oidc-provider/db/`）
 
 クライアントとユーザーもSQLのテーブルから読む。`src/app.ts` が起動時に、E2E用のクライアント（`OIDC_CLIENTS_JSON` があればその内容）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` でテーブルに登録する。client_secret とパスワードはハッシュだけを保存する。
 
-クライアントのテーブルにはまだ `jwks`（クライアントの公開鍵）の列が無いので、`OIDC_CLIENTS_JSON` に `jwks` があるクライアント（OpenID Conformance Suite の署名付き Request Object）は、`src/app.ts` がその値を足して返す。
+`OIDC_CLIENTS_JSON` のクライアントの `keys`（用途ごとの公開鍵）は、`registerClient()` が `client_jwks` テーブルに入れる。OpenID Conformance Suite の署名付き Request Object は、`request_object` の用途の鍵で検証する。
 
 ## ローカル起動（一発）
 

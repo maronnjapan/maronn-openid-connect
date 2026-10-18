@@ -77,11 +77,10 @@ import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider
     const requestObjectKeys = params.request === undefined
       ? undefined
       : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
-    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
-      params,
-      { jwks: requestObjectKeys },
-      { allowUnsigned: config.allowUnsignedRequestObject },
-    );
+    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(params, {
+      jwks: requestObjectKeys,
+      allowUnsigned: config.allowUnsignedRequestObject,
+    });
 `
     : `    // OIDC Core 1.0 §6.3: the request parameter (Request Object) is disabled in
     // this generated provider; rejectUnsupportedRequestParams below rejects it

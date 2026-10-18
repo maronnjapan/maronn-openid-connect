@@ -371,7 +371,7 @@ export async function resolveRequestObject(
   const jwks = params.request === undefined
     ? undefined
     : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
-  return resolveRequestObjectParams(params, { jwks }, { allowUnsigned: config.allowUnsignedRequestObject });
+  return resolveRequestObjectParams(params, { jwks, allowUnsigned: config.allowUnsignedRequestObject });
 }
 
 /**

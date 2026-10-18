@@ -168,7 +168,7 @@ Next.js は Route Handler とページ・Server Action を別々のモジュー�
 | 環境変数 | 用途 |
 |---|---|
 | `OIDC_ISSUER` | issuer。OP 自身の URL はすべてこれを基準に組み立てる |
-| `OIDC_CLIENTS_JSON` | 登録クライアント（`RegisteredClient` の JSON 配列）。未指定なら `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI` の 1 クライアント |
+| `OIDC_CLIENTS_JSON` | 登録クライアント（`ClientRegistration` の JSON 配列）。未指定なら `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI` の 1 クライアント |
 | `OIDC_SIGNING_KEY_ID` | 起動時に生成する署名鍵の `kid` |
 | `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Vercel で使うストア。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`） |
@@ -529,20 +529,34 @@ INSERT INTO client_jwks (id, client_id, purpose, jwk)
 `--db kv` では、`client_jwks:<client_id>:<purpose>` のキーに、その用途の鍵を JWK Set（`{ "keys": [ <JWK>, ... ] }`）で書きます。
 鍵を足すときも消すときも、この `keys` を書き換えます。
 
-`--db` を付けない生成物は、クライアントの登録メタデータ `jwks`（`RegisteredClient.jwks`、RFC 7591 §2）を、`private_key_jwt` と `request_object` の両方の用途の鍵として返します（core の `createClientJwksKeyResolver()`）。
-`jwks` は、用途を分けない 1 組の鍵だからです。
-鍵は、`config.ts` で登録するクライアント（Next.js は `OIDC_CLIENTS_JSON` の各クライアント）の `jwks` に書きます。
+`--db` を付けない生成物は、`config.ts` に書いたクライアント（`ClientRegistration`）の `keys` から鍵を返します（`config.ts` の `createInMemoryClientKeyResolver()`）。
+`keys` は、用途ごとにその用途の鍵を JWK Set で持ちます。
+同じ鍵を 2 つの用途で使うときは、両方の用途に書きます。
+Next.js では、`OIDC_CLIENTS_JSON` の各クライアントの `keys` に書きます。
 この登録は起動時に読むので、鍵を足したり消したりするには OP を再起動します。
+
+```typescript
+{
+  clientId: 'my-client',
+  redirectUris: ['https://client.example.com/callback'],
+  tokenEndpointAuthMethods: ['private_key_jwt'],
+  keys: {
+    private_key_jwt: { keys: [{ kty: 'RSA', kid: '2026-10', alg: 'RS256', n: '...', e: 'AQAB' }] },
+  },
+}
+```
+
+`createApp` / `applyOidc` の `clientResolver` に自前のクライアントの一覧から作った resolver を渡すときは、同じ一覧から作った `createInMemoryClientKeyResolver(clients)` を `clientKeyResolver` に渡してください。
+`clientKeyResolver` の既定は `config.ts` の `defaultRegisteredClients` の鍵を返すので、渡さなければ自前のクライアントの鍵は見つかりません。
 
 鍵の保存先を変えるときは、`ClientKeyResolver` を実装して差し替えます。
 Hono / Express / Fastify は `createApp` / `applyOidc` の `clientKeyResolver` オプションに渡し、Next.js は `_oidc-provider/provider.ts` の `clientKeyResolver` を書き換えます。
 鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読んでください。
 
-`registerClient()` は、渡したクライアントの `jwks` の鍵を、`private_key_jwt` と `request_object` の両方の用途で DB に足します。
-ほかの用途の鍵は、DB に直接書きます。
+`registerClient()` は、渡したクライアント（`ClientRegistration`）の `keys` の鍵を、それぞれの用途で DB に足します。
 `registerClient()` は鍵を足すだけで、DB にある鍵を消すことはありません。
 起動のたびに `registerClient()` で登録し直しても、運用中に DB へ足した鍵は残ります。
-鍵を消すときは、DB から消すのに加えて、`registerClient()` に渡すクライアントの `jwks` からも外してください。
+鍵を消すときは、DB から消すのに加えて、`registerClient()` に渡すクライアントの `keys` からも外してください。
 外さなければ、次の登録で足し直されます。
 
 ## Client Authentication (private_key_jwt)
@@ -554,7 +568,7 @@ Hono / Express / Fastify は `createApp` / `applyOidc` の `clientKeyResolver` �
 Discovery メタデータは、トークン、イントロスペクション、失効の各エンドポイントについて、認証方式の一覧（`token_endpoint_auth_methods_supported` など）に `private_key_jwt` を、署名アルゴリズムの一覧（`token_endpoint_auth_signing_alg_values_supported` など）に受け付けるアルゴリズムを載せます（RFC 8414 §2）。
 
 1 つのクライアントに、シークレットの方式（client_secret_basic か client_secret_post のどちらか）と private_key_jwt を両方登録できます。
-private_key_jwt を許すのは、`--db sql` では `client_auths` の private_key_jwt の行、`--db kv` ではクライアントのレコードの `private_key_jwt: true` で、`--db` を付けない生成物ではクライアントの `tokenEndpointAuthMethods` の `'private_key_jwt'` です。
+private_key_jwt を許すのは、`--db sql` では `client_auths` の private_key_jwt の行、`--db kv` ではクライアントのレコードの `client_auths` にある `{ "client_auth_type": "private_key_jwt" }` で、`--db` を付けない生成物ではクライアントの `tokenEndpointAuthMethods` の `'private_key_jwt'` です。
 鍵を登録しただけでは、private_key_jwt で認証できません。
 OP はリクエストが送った資格情報から方式を決め、登録していない方式なら `invalid_client` で拒否します。
 Authorization ヘッダー、`client_secret`、`client_assertion` のうち 2 つ以上を同時に送ったリクエストは、`invalid_request` で拒否します。
@@ -593,22 +607,6 @@ OIDC Core 1.0 §9 は、トークンエンドポイントの URL を `aud` に�
 生成物はどちらに従うクライアントも受け付けます。
 草案に厳密に従うときは、`clientAssertionAudiences()` が issuer だけを返すように書き換えてください。
 そうすると、トークンエンドポイントの URL を `aud` にするクライアントは拒否されます。
-
-### 以前の CLI で作ったデータベース
-
-`schema.sql` の文はどれも `CREATE TABLE IF NOT EXISTS` なので、private_key_jwt に対応する前の CLI で作ったデータベースに実行し直すと、`client_jwks` と `client_assertion_jtis` は加わりますが、`client_auths.client_auth_type` の CHECK は古いまま残ります。
-その CHECK は private_key_jwt の行を拒否するので、private_key_jwt の行を足す前に広げてください。
-PostgreSQL では、次の文で CHECK を置き換えます。
-
-```sql
-ALTER TABLE client_auths DROP CONSTRAINT client_auths_client_auth_type_check;
-ALTER TABLE client_auths ADD CONSTRAINT client_auths_client_auth_type_check
-  CHECK (client_auth_type IN ('client_secret_basic', 'client_secret_post', 'private_key_jwt'));
-```
-
-SQLite と Cloudflare D1 は CHECK を変更できないので、`client_auths` を作り直します。
-`client_secrets` は `client_auths` を外部キーで参照しているため、作り直す間に `client_secrets` の行が消えないようにする必要があります。
-手順は、`samples/express-flyio`（node:sqlite）と `samples/hono-cloudflare`（D1）の `src/oidc-provider/db/instance.ts` にある `allowPrivateKeyJwtClientAuth()` を参照してください。
 
 ## Database (--db)
 

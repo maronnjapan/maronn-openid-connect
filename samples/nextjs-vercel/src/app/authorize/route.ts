@@ -119,11 +119,10 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     const requestObjectKeys = params.request === undefined
       ? undefined
       : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
-    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
-      params,
-      { jwks: requestObjectKeys },
-      { allowUnsigned: config.allowUnsignedRequestObject },
-    );
+    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(params, {
+      jwks: requestObjectKeys,
+      allowUnsigned: config.allowUnsignedRequestObject,
+    });
 
     // Resolve redirect_uri against the registered URIs (OIDC Core 1.0 §3.1.2.1).
     const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, client);

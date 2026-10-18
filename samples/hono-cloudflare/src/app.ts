@@ -8,7 +8,7 @@ import {
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
-import type { RegisteredClient } from './oidc-provider/config.js';
+import type { ClientRegistration } from './oidc-provider/config.js';
 import { registerClient } from './oidc-provider/db/clients.js';
 import type { SqlDatabase } from './oidc-provider/db/database.js';
 import { createDatabase, d1Database } from './oidc-provider/db/instance.js';
@@ -166,7 +166,7 @@ applyOidc(app, {
   ),
   // The generated app keeps its data in the SQL tables of db/ (--db), on the
   // D1 database of db/instance.ts, and reads the clients from the same tables.
-  // registerSampleData() below puts OIDC_CLIENTS_JSON there, the jwks of each
+  // registerSampleData() below puts OIDC_CLIENTS_JSON there, the keys of each
   // client included (client_jwks).
   acrResolver: sampleAcrResolver,
   dynamicClientRegistration,
@@ -226,13 +226,13 @@ async function generateSigningKey(keyId: string): Promise<SigningKey> {
   return { privateKey: keyPair.privateKey, publicJwk, keyId };
 }
 
-function readRegisteredClients(encoded?: string): ReadonlyMap<string, RegisteredClient> {
+function readRegisteredClients(encoded?: string): ReadonlyMap<string, ClientRegistration> {
   if (encoded) {
-    const parsed = JSON.parse(encoded) as RegisteredClient[];
+    const parsed = JSON.parse(encoded) as ClientRegistration[];
     return new Map(parsed.map((client) => [client.clientId, client]));
   }
 
-  return new Map<string, RegisteredClient>([
+  return new Map<string, ClientRegistration>([
     [
       'e2e-client',
       {
@@ -241,7 +241,7 @@ function readRegisteredClients(encoded?: string): ReadonlyMap<string, Registered
         redirectUris: ['http://127.0.0.1:3020/callback'],
         clientType: 'confidential',
         grantTypes: ['authorization_code', 'refresh_token'],
-        tokenEndpointAuthMethod: 'client_secret_post',
+        tokenEndpointAuthMethods: ['client_secret_post'],
         responseTypes: ['code'],
       },
     ],
@@ -253,7 +253,7 @@ function readRegisteredClients(encoded?: string): ReadonlyMap<string, Registered
         redirectUris: ['http://127.0.0.1:3030/unused-callback'],
         clientType: 'confidential',
         grantTypes: ['authorization_code', 'refresh_token'],
-        tokenEndpointAuthMethod: 'client_secret_basic',
+        tokenEndpointAuthMethods: ['client_secret_basic'],
         responseTypes: ['code'],
       },
     ],

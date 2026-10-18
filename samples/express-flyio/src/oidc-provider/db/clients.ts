@@ -5,7 +5,8 @@
  *
  * How the tables become a RegisteredClient (config.ts):
  *
- * - clients.client_type public: no client authentication ('none').
+ * - clients.client_type public: no client authentication
+ *   (tokenEndpointAuthMethods ['none']).
  * - client_auths: the methods the client may authenticate with
  *   (tokenEndpointAuthMethods). A client_secret_basic or client_secret_post
  *   row carries the clientSecretHash the presented secret is checked against
@@ -42,8 +43,8 @@
  * member.
  */
 import {
-  JWKS_CLIENT_KEY_PURPOSES,
   hashClientSecret,
+  isPublicTokenClient,
   selectRegisteredClientAuthMethods,
   type ClientKeyPurpose,
   type ClientKeyResolver,
@@ -52,7 +53,7 @@ import {
   type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
-import type { RegisteredClient } from '../config.js';
+import type { ClientRegistration, RegisteredClient } from '../config.js';
 import type { SqlDatabase } from './database.js';
 
 export function createSqlClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
@@ -91,7 +92,7 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
 
       if (registered.clientType === 'public') {
-        registered.tokenEndpointAuthMethod = 'none';
+        registered.tokenEndpointAuthMethods = ['none'];
       } else if (auths.length > 0) {
         const secretAuths = auths.filter((auth) => auth.client_auth_type !== 'private_key_jwt');
         if (secretAuths.length > 1) {
@@ -165,25 +166,22 @@ function parseJwk(clientId: string, json: string): Jwk {
  * one at a time (SqlDatabase has no transactions), so run it again if it stops
  * halfway.
  *
- * jwks is the jwks of client registration (RFC 7591 §2): one set of keys for
- * every purpose it covers (JWKS_CLIENT_KEY_PURPOSES in core: private_key_jwt
- * and request_object). Each of its keys becomes a client_jwks row for each of
- * those purposes. Keys for another purpose go into client_jwks directly.
+ * Each key of keys (ClientRegistration.keys) becomes a client_jwks row of its
+ * purpose.
  *
  * The private_key_jwt row and the client_jwks rows are only ever added here:
  * registerClient() writes the private_key_jwt row when the client lists that
- * method and the client_jwks rows of jwks, and never deletes either. Those
- * rows may be managed in the database while the OP runs (see the top of this
- * file), and registering the client again at the next start keeps them. To
- * remove one, delete it in the database, and drop it from the client passed
- * here too, or the next registration adds it back.
+ * method and a client_jwks row for each key of keys, and never deletes either.
+ * Those rows may be managed in the database while the OP runs (see the top of
+ * this file), and registering the client again at the next start keeps them.
+ * To remove one, delete it in the database, and drop it from the client
+ * passed here too, or the next registration adds it back.
  */
 export async function registerClient(
   db: SqlDatabase,
-  client: RegisteredClient & { name?: string },
+  client: ClientRegistration & { name?: string },
 ): Promise<void> {
-  const clientType =
-    client.clientType ?? (client.tokenEndpointAuthMethod === 'none' ? 'public' : 'confidential');
+  const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   await db.run({
     sql:
       'INSERT INTO clients (id, name, client_type, is_deleted) VALUES (?, ?, ?, FALSE) ' +
@@ -238,9 +236,9 @@ export async function registerClient(
       params: [await childRowId(client.clientId, 'client_auths', 'private_key_jwt'), client.clientId, 'private_key_jwt'],
     });
   }
-  for (const key of client.jwks?.keys ?? []) {
-    const jwk = JSON.stringify(key);
-    for (const purpose of JWKS_CLIENT_KEY_PURPOSES) {
+  for (const [purpose, keySet] of Object.entries(client.keys ?? {})) {
+    for (const key of keySet?.keys ?? []) {
+      const jwk = JSON.stringify(key);
       await db.run({
         sql:
           'INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES (?, ?, ?, ?) ' +

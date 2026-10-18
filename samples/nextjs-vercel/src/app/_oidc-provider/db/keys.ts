@@ -84,23 +84,16 @@ export interface ClientRecord {
   client_type: 'public' | 'confidential';
   is_deleted: boolean;
   /**
-   * Client_auth and its Client_secret: how the client authenticates at the
-   * token endpoint. null for a public client. secret is the hash from
-   * hashClientSecret().
+   * Client_auth (with its Client_secret): the methods the client may
+   * authenticate with at the token endpoint. A public client has none. A
+   * confidential client has at most one of client_secret_basic /
+   * client_secret_post, whose secret is the hash from hashClientSecret(), and
+   * private_key_jwt (OIDC Core 1.0 §9), whose keys are those of the
+   * private_key_jwt purpose (keys.clientJwks(client_id, 'private_key_jwt')).
+   * registerClient() replaces the secret method and keeps private_key_jwt, so
+   * private_key_jwt can be added here while the OP runs.
    */
-  client_auth: {
-    client_auth_type: 'client_secret_basic' | 'client_secret_post';
-    secret: string;
-  } | null;
-  /**
-   * Client_auth of private_key_jwt (OIDC Core 1.0 §9): true lets the client
-   * authenticate with a JWT signed by one of its keys of the private_key_jwt
-   * purpose (keys.clientJwks(client_id, 'private_key_jwt')),
-   * next to the method of client_auth. registerClient() sets it for a client
-   * that lists private_key_jwt and never clears it, so it can be turned on
-   * here while the OP runs.
-   */
-  private_key_jwt?: boolean;
+  client_auths: ClientAuthRecord[];
   /** Redirect_Uri: the redirect URIs of the client. */
   redirect_uris: string[];
   /** Grant: the grant types the client may use. Empty: authorization_code only. */
@@ -111,6 +104,11 @@ export interface ClientRecord {
    */
   scopes: string[];
 }
+
+/** One Client_auth of ClientRecord.client_auths. */
+export type ClientAuthRecord =
+  | { client_auth_type: 'client_secret_basic' | 'client_secret_post'; secret: string }
+  | { client_auth_type: 'private_key_jwt' };
 
 /**
  * Client_jwk: the public keys of a client for one purpose, as a JWK Set

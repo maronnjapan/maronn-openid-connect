@@ -39,10 +39,10 @@ import { createSqlClientKeyResolver, createSqlClientResolver } from './db/client
     : `
 // --- Registered clients ---------------------------------------------------------
 
-function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
+function readRegisteredClients(): ReadonlyMap<string, ClientRegistration> {
   const encoded = process.env.OIDC_CLIENTS_JSON;
   if (encoded) {
-    const clients = JSON.parse(encoded) as RegisteredClient[];
+    const clients = JSON.parse(encoded) as ClientRegistration[];
     return new Map(clients.map((client) => [client.clientId, client]));
   }
 
@@ -54,7 +54,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
     process.env.CLIENT_REDIRECT_URI ??
     'http://localhost:3000/callback';
 
-  const clients = new Map<string, RegisteredClient>([
+  const clients = new Map<string, ClientRegistration>([
     [
       clientId,
       {
@@ -63,7 +63,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
         redirectUris: [clientRedirectUri],
         clientType: 'confidential',
         grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_post',
+        tokenEndpointAuthMethods: ['client_secret_post'],
         responseTypes: ['code'],
       },
     ],
@@ -85,7 +85,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
       redirectUris: [resourceServerRedirectUri],
       clientType: 'confidential',
       grantTypes: ['authorization_code'],
-      tokenEndpointAuthMethod: 'client_secret_basic',
+      tokenEndpointAuthMethods: ['client_secret_basic'],
       responseTypes: ['code'],
     });
   }
@@ -95,7 +95,10 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
 `;
   const configClientImports = db
     ? { resolver: '', registeredClient: '' }
-    : { resolver: '\n  createInMemoryClientResolver,', registeredClient: '\n  type RegisteredClient,' };
+    : {
+      resolver: '\n  createInMemoryClientKeyResolver,\n  createInMemoryClientResolver,',
+      registeredClient: '\n  type ClientRegistration,',
+    };
   // EXPERIMENTAL (RFC 7591): the resolver wrapper lives in store.ts next to the
   // dynamic registration store it reads.
   const dcrResolverImport = features.dynamicClientRegistration
@@ -143,19 +146,20 @@ export const clientResolver = ${wrapClientResolver('createSqlClientResolver(data
  */
 export const clientKeyResolver: ClientKeyResolver = createSqlClientKeyResolver(database);`
     : `/**
- * Registered clients: OIDC_CLIENTS_JSON (a JSON array of RegisteredClient), or a
- * single confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
+ * Registered clients: OIDC_CLIENTS_JSON (a JSON array of ClientRegistration), or
+ * a single confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
  * OIDC_CLIENT_REDIRECT_URI. Replace this with a database-backed ClientResolver
  * in a real project.
  */
-export const clientResolver = ${wrapClientResolver('createInMemoryClientResolver(readRegisteredClients())')};
+const registeredClients = readRegisteredClients();
+export const clientResolver = ${wrapClientResolver('createInMemoryClientResolver(registeredClients)')};
 
 /**
- * The public keys of the registered clients, one purpose at a time: the jwks
- * of each client above (RegisteredClient.jwks), for the purposes jwks covers
- * (private_key_jwt and request_object). Replace it to keep keys elsewhere.
+ * The public keys of the registered clients above (ClientRegistration.keys),
+ * one purpose at a time (private_key_jwt, request_object, ...). Replace it to
+ * keep keys elsewhere.
  */
-export const clientKeyResolver: ClientKeyResolver = createClientJwksKeyResolver(clientResolver);`;
+export const clientKeyResolver: ClientKeyResolver = createInMemoryClientKeyResolver(registeredClients);`;
   const storesDefinition = db === 'kv'
     ? `/** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
 export const stores = createKvProviderStores(database);
@@ -296,8 +300,7 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  createCachedSigningKeyProvider,${db ? '' : `
-  createClientJwksKeyResolver,`}
+  createCachedSigningKeyProvider,
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
   selectPreferredAcr,

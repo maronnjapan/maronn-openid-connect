@@ -7,7 +7,7 @@ import {
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
-import type { GoogleLoginConfig, RegisteredClient } from './oidc-provider/config.js';
+import type { ClientRegistration, GoogleLoginConfig } from './oidc-provider/config.js';
 import { registerClient } from './oidc-provider/db/clients.js';
 import { createDatabase } from './oidc-provider/db/instance.js';
 import { registerUser } from './oidc-provider/db/users.js';
@@ -114,7 +114,7 @@ applyOidc(app, {
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
   // The generated app keeps its data in the SQL tables of db/ (--db), on the
   // node:sqlite database of db/instance.ts, and reads the clients from the same
-  // tables. registerClient() above put OIDC_CLIENTS_JSON there, the jwks of
+  // tables. registerClient() above put OIDC_CLIENTS_JSON there, the keys of
   // each client included (client_jwks).
   acrResolver: sampleAcrResolver,
   dynamicClientRegistration,
@@ -163,13 +163,13 @@ function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
   return hostedDomain ? { clientId, hostedDomain } : { clientId };
 }
 
-function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
+function readRegisteredClients(): ReadonlyMap<string, ClientRegistration> {
   const encoded = process.env.OIDC_CLIENTS_JSON;
   if (encoded) {
     return parseRegisteredClients(encoded);
   }
 
-  return new Map<string, RegisteredClient>([
+  return new Map<string, ClientRegistration>([
     [
       clientId,
       {
@@ -178,7 +178,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
         redirectUris: [clientRedirectUri],
         clientType: 'confidential',
         grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_post',
+        tokenEndpointAuthMethods: ['client_secret_post'],
         responseTypes: ['code'],
       },
     ],
@@ -190,14 +190,14 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
         redirectUris: [resourceServerRedirectUri],
         clientType: 'confidential',
         grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_basic',
+        tokenEndpointAuthMethods: ['client_secret_basic'],
         responseTypes: ['code'],
       },
     ],
   ]);
 }
 
-function parseRegisteredClients(encoded: string): ReadonlyMap<string, RegisteredClient> {
+function parseRegisteredClients(encoded: string): ReadonlyMap<string, ClientRegistration> {
   const parsed: unknown = JSON.parse(encoded);
   if (!Array.isArray(parsed)) {
     throw new Error('OIDC_CLIENTS_JSON must be a JSON array');
@@ -211,7 +211,7 @@ function parseRegisteredClients(encoded: string): ReadonlyMap<string, Registered
   );
 }
 
-function assertRegisteredClient(value: unknown): asserts value is RegisteredClient {
+function assertRegisteredClient(value: unknown): asserts value is ClientRegistration {
   if (!isRecord(value) || typeof value.clientId !== 'string' || !Array.isArray(value.redirectUris)) {
     throw new Error('OIDC_CLIENTS_JSON entries must include clientId and redirectUris');
   }

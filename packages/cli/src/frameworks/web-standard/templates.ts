@@ -400,14 +400,13 @@ function webStorageTemplateParts(db: DbKind | undefined, dynamicClientRegistrati
   appStores: string;
   requestStores: string;
   requestClientResolver: string;
-  coreClientKeyResolverImport: string;
   clientKeyResolverDoc: string;
   requestClientKeyResolver: string;
 } {
   if (!db) {
     return {
       defaultStoresImport: '  defaultProviderStores,\n',
-      inMemoryClientResolverImport: '  createInMemoryClientResolver,\n',
+      inMemoryClientResolverImport: '  createInMemoryClientKeyResolver,\n  createInMemoryClientResolver,\n',
       dbImports: '',
       storageDoc: 'Persistent stores shared by Route Handlers and Server Actions.',
       clientResolverDoc: '',
@@ -418,12 +417,10 @@ function webStorageTemplateParts(db: DbKind | undefined, dynamicClientRegistrati
       requestClientResolver: dynamicClientRegistration
         ? '    const clientResolver = withDynamicallyRegisteredClients(\n      options.clientResolver ?? createInMemoryClientResolver(),\n    );\n'
         : '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
-      coreClientKeyResolverImport: '  createClientJwksKeyResolver,\n',
-      clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to the jwks of each client (RegisteredClient.jwks), which covers
-   * private_key_jwt and request_object (createClientJwksKeyResolver() in core).
+      clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to the keys of the clients of config.ts (ClientRegistration.keys).
    */\n`,
       requestClientKeyResolver:
-        '    const clientKeyResolver =\n      options.clientKeyResolver ?? createClientJwksKeyResolver(clientResolver);\n',
+        '    const clientKeyResolver =\n      options.clientKeyResolver ?? createInMemoryClientKeyResolver();\n',
     };
   }
   const names = databaseNames(db);
@@ -456,7 +453,6 @@ import { ${names.createClientKeyResolver}, ${names.createClientResolver} } from 
 `,
     requestStores: '',
     requestClientResolver: '',
-    coreClientKeyResolverImport: '',
     clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to ${names.clientKeysDescription}, read for each request.
    */\n`,
     requestClientKeyResolver: '',
@@ -694,7 +690,7 @@ ${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-${storageParts.coreClientKeyResolverImport}  signingKeysToJwkSet,
+  signingKeysToJwkSet,
 } from '${corePkg}';
 import type {
   SigningKey,

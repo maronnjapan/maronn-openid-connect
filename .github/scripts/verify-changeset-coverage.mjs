@@ -21,13 +21,16 @@
  *
  * 【対象の切り出し方】
  * - パッケージ: `packages` 配下の各 `package.json` のうち private でないもの（= npm に出る）
+ * - 抽出元: パッケージの `extract.json` が `sources` に挙げるディレクトリ（`include` の各要素）。
+ *   packages/cli の生成コードは apps/hono のコードをビルド時にコピーしたものなので、
+ *   抽出元の変更は packages/cli の出荷物の変更になる
  * - 変更ファイル: 出荷物に入らないもの（テスト・CHANGELOG・vitest 設定）は除外する
  * - changeset: **この PR で追加された** `.changeset/*.md` だけを見る。
  *   main に溜まっている既存 changeset を数えると、前の PR の changeset が
  *   今回の変更の CHANGELOG 記載を肩代わりしてしまい、変更履歴が欠ける。
  */
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, normalize } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseChangesetBumps } from './verify-release-contract.mjs';
@@ -46,6 +49,21 @@ export function selectPublishablePackages(entries) {
   return entries
     .filter(({ manifest }) => manifest.name !== undefined && manifest.private !== true)
     .map(({ directory, manifest }) => ({ name: manifest.name, directory }));
+}
+
+/**
+ * extract.json の sources が抽出するディレクトリを、それを抽出するパッケージの持ち物にする。
+ * directory はパッケージからの相対パス、include はその下のディレクトリ名。
+ */
+export function selectExtractedSources(entries) {
+  return entries.flatMap(({ name, directory, extract }) =>
+    Object.values(extract?.sources ?? {}).flatMap((source) =>
+      (source.include ?? []).map((include) => ({
+        name,
+        directory: normalize(join(directory, source.directory, include)).split('\\').join('/'),
+      })),
+    ),
+  );
 }
 
 export function isReleaseRelevantPath(path) {
@@ -95,7 +113,18 @@ function readPublishablePackages(repositoryRoot) {
       manifest: JSON.parse(readFileSync(join(packagesRoot, entry.name, 'package.json'), 'utf8')),
     }));
 
-  return selectPublishablePackages(entries);
+  const packages = selectPublishablePackages(entries);
+  const extracted = selectExtractedSources(
+    packages.map(({ name, directory }) => {
+      const extractPath = join(repositoryRoot, directory, 'extract.json');
+      return {
+        name,
+        directory,
+        extract: existsSync(extractPath) ? JSON.parse(readFileSync(extractPath, 'utf8')) : undefined,
+      };
+    }),
+  );
+  return [...packages, ...extracted];
 }
 
 function readAddedChangesets(repositoryRoot, addedChangesetPaths) {

@@ -945,6 +945,7 @@ import {
   type TokenClientInfo,
 } from '${corePkg}';
 import { config, stores } from './provider';
+import { clientAssertionJtiStore as defaultClientAssertionJtiStore } from './store';
 
 /**
  * Verify the client assertion of a request that authenticates with
@@ -965,8 +966,9 @@ export async function verifyPrivateKeyJwt(
     audiences: clientAssertionAudiences(config.issuer, endpointPath),
   });
 
-  // OIDC Core 1.0 §9: a client assertion MUST only be used once.
-  await rejectReplayedClientAssertion(stores.clientAssertionJtiStore, {
+  // OIDC Core 1.0 §9: a client assertion MUST only be used once. Stores
+  // without a clientAssertionJtiStore keep the jtis in memory.
+  await rejectReplayedClientAssertion(stores.clientAssertionJtiStore ?? defaultClientAssertionJtiStore, {
     clientId: client.clientId,
     jti: verified.jti,
     expiresAt: verified.expiresAt,

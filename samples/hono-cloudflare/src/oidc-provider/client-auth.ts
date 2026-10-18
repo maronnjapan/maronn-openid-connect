@@ -32,6 +32,7 @@ export async function verifyPrivateKeyJwt(
   endpointPath: string,
 ): Promise<void> {
   const { issuer } = c.get('config');
+  // Storage without a clientAssertionJtiStore keeps the jtis in memory.
   const jtiStore = c.get('clientAssertionJtiStore') ?? defaultClientAssertionJtiStore;
 
   // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the client's keys,

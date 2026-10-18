@@ -442,6 +442,11 @@ OP は、次の条件をすべて満たすアサーションだけを受け付�
 
 使った `jti` は、アサーションの期限（`exp` に許容する時計のずれを足した時刻）まで覚えておく。
 保存先は、`--db sql` なら `client_assertion_jtis` テーブル、`--db kv` なら `client_assertion_jti:<hash>` のキーで、`--db` を付けなければ `store.ts` のストアである。
+このストア（`ProviderStores` の `clientAssertionJtiStore`）は、private_key_jwt を使わない OP には要らないので省略できる。
+OP に渡すストア（Hono / Express / Fastify は `storage` オプション、Next.js は `_oidc-provider/provider.ts` の `stores`）に `clientAssertionJtiStore` が無ければ、`jti` はプロセスのメモリに保存される。
+その場合、同じアサーションの再利用を拒否できるのは、そのアサーションを受けたインスタンスだけである。
+複数のインスタンスで private_key_jwt を受け付けるときは、インスタンスの間で共有するストアを渡す。
+`db/` のストアと `createJsonProviderStores()` が作るストアは、どれも `clientAssertionJtiStore` を持っている。
 
 `aud` に載せてよい値は、`client-auth.ts` の `clientAssertionAudiences()` が決める。
 OIDC Core 1.0 §9 は、トークンエンドポイントの URL を `aud` にするよう求めている（SHOULD）。

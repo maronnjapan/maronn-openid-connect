@@ -11,7 +11,7 @@
 - 1 つのクライアントに、シークレットの方式（client_secret_basic か client_secret_post）と private_key_jwt を両方登録できる。生成するクライアントの resolver は、`client_auths` の行（`--db kv` ではレコード）を `tokenEndpointAuthMethods` に、`client_jwks` の鍵を `jwks` にする
 - resolver はリクエストのたびに DB からクライアントを読むので、DB に足した公開鍵や private_key_jwt の行は、OP を再起動せずに次のリクエストから効く。OP は鍵を発行せず、公開鍵を登録する API も持たないので、運用者が DB に書き込む
 - `registerClient()` は、渡したクライアントの private_key_jwt と `jwks` の鍵を DB に足すが、DB にある private_key_jwt の登録や鍵を消さない。起動のたびに登録し直しても、運用中に DB へ足した鍵は残る
-- `--db` を付けない生成物も、`store.ts` に `jti` を記録するストア（`ProviderStores.clientAssertionJtiStore`）を持つ。`createJsonProviderStores()` で作るストアにも含まれる
+- `ProviderStores` に、使った `jti` を記録する `clientAssertionJtiStore` を加えた。private_key_jwt を使わない OP には要らないので、省略できる。`store.ts` の既定のストア、`createJsonProviderStores()`、`db/` のストアは、どれもこのストアを持つ
 - `client_jwks` の鍵は署名付き Request Object の検証にも使う。これまで `--db` 付きの生成物は署名付き Request Object を検証できずに拒否していたが、鍵を登録したクライアントの Request Object は検証して受け付ける
 
 `schema.sql` は `CREATE TABLE IF NOT EXISTS` なので、以前の CLI で作った `--db sql` のデータベースに実行し直すと、`client_jwks` と `client_assertion_jtis` は加わるが、`client_auths` の CHECK は古いまま残る。private_key_jwt の行を足す前に CHECK を広げる。PostgreSQL では次の文で置き換える。
@@ -26,4 +26,4 @@ SQLite と Cloudflare D1 は CHECK を変更できないので、`client_auths` 
 
 `--db kv` は移行が要らない。`private_key_jwt` の無い既存のクライアントのレコードは、これまでどおりシークレットの方式だけのクライアントとして読まれる。
 
-`ProviderStores` に `clientAssertionJtiStore` が加わったので、`storage` オプションに自前の `ProviderStores` を渡している場合は、このストアも渡す。
+自前の `ProviderStores` を OP に渡している場合、`clientAssertionJtiStore` を足さなくても動く。そのときの `jti` はプロセスのメモリに保存され、同じアサーションの再利用を拒否できるのは、そのアサーションを受けたインスタンスだけになる。複数のインスタンスで private_key_jwt を受け付けるなら、インスタンスの間で共有するストアを渡す。

@@ -2294,8 +2294,14 @@ export interface ProviderStores {
   browserSessionStore: BrowserSessionStorage;
   consentStore: ConsentStorage;
   userStore: UserStorage;
-${providerStoresGoogleMember}  /** The client assertions (private_key_jwt) the OP accepted, so none is used twice. */
-  clientAssertionJtiStore: ClientAssertionJtiStore;
+${providerStoresGoogleMember}  /**
+   * The client assertions (private_key_jwt) the OP accepted, so none is used
+   * twice. Optional, as not every OP accepts private_key_jwt: without it the
+   * jtis are kept in this process's memory (clientAssertionJtiStore below),
+   * which refuses a replay only at the instance that saw the assertion. Pass a
+   * store the instances share when more than one accepts private_key_jwt.
+   */
+  clientAssertionJtiStore?: ClientAssertionJtiStore;
 }
 
 export type ProviderStoresFactory = (
@@ -2642,8 +2648,9 @@ function defaultUserFixture(username: string): StoredUser | undefined {
 // would be invisible to the /authorize and /token route handlers and vice
 // versa. It also survives dev-mode hot reloads. Harmless for single-layer
 // runtimes (Node / Hono / Express / Fastify), which always see one instance.
+// The defaults include every store, the optional ones too.
 const storeRegistry = globalThis as typeof globalThis & {
-  __oidcProviderStores?: ProviderStores;
+  __oidcProviderStores?: Required<ProviderStores>;
 };
 
 export const defaultProviderStores = (storeRegistry.__oidcProviderStores ??= {
@@ -2711,6 +2718,7 @@ export async function verifyPrivateKeyJwt(
   endpointPath: string,
 ): Promise<void> {
   const { issuer } = c.get('config');
+  // Storage without a clientAssertionJtiStore keeps the jtis in memory.
   const jtiStore = c.get('clientAssertionJtiStore') ?? defaultClientAssertionJtiStore;
 
   // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the client's keys,

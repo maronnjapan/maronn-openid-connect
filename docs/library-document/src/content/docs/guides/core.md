@@ -27,7 +27,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵（`jwks` オプション）で検証する |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務） |
@@ -48,7 +48,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret`。`TokenClientInfo.tokenEndpointAuthMethods` を登録すると、1 つのクライアントに複数の方式を許せる |
+| クライアント認証のステップ関数 | クライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt` / public client の `none`）。`extractClientCredentials` / `resolveAuthenticatedTokenClient` / `validateClientAuthMethod` / `verifyClientSecret`。登録する方式は `TokenClientInfo.tokenEndpointAuthMethods` の一覧で、省略すると `['client_secret_basic']`、`['none']` は public client（`isPublicTokenClient`）。`client_secret_basic` と `private_key_jwt` のように複数の方式を並べられる |
 | `private_key_jwt` のステップ関数 | クライアントが自分の秘密鍵で署名した JWT（`client_assertion`）を、クライアントが private_key_jwt の用途に登録した公開鍵（`ClientKeyResolver` で引く）で検証する（OIDC Core 1.0 §9 / RFC 7523 §3）。`verifyClientAssertion` が署名、`iss` / `sub` / `aud` / `exp` / `nbf` / `iat` / `jti` を確かめ、`rejectReplayedClientAssertion` が `ClientAssertionJtiStore` に `jti` を記録して 2 回目の使用を拒否する。`aud` として受け付ける値は `audiences` で渡し、issuer だけを渡すと draft-ietf-oauth-rfc7523bis に従う |
 | `hashClientSecret` / `verifyClientSecretHash` | client_secret を平文で持たずに登録するためのハッシュ（SHA-256、base64url）の作成と照合。`TokenClientInfo.clientSecretHash` に登録すると、`verifyClientSecret` は提示値のハッシュをこの値と比べる |
 | 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
@@ -87,7 +87,7 @@ core の純関数            ← このパッケージ
 | API | 役割 |
 |---|---|
 | `ClientKeyResolver` | クライアントが用途ごとに登録した公開鍵を返す口（`findClientKeys(clientId, purpose)`）。用途の `ClientKeyPurpose` は `private_key_jwt`（クライアント認証。OIDC Core 1.0 §9）、`request_object`（署名付き Request Object。OIDC Core 1.0 §6.3.2）、`dpop`（DPoP proof。RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読む |
-| `createClientJwksKeyResolver` | クライアント登録の `jwks`（RFC 7591 §2 / `ClientInfo.jwks`）を鍵の保存先にする `ClientKeyResolver`。`jwks` は用途を分けない 1 組の鍵なので、`JWKS_CLIENT_KEY_PURPOSES`（`private_key_jwt` と `request_object`）の用途にだけ、その鍵を返す |
+| `createClientKeyResolver` | クライアントごとの「用途 → JWK Set」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る。設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う |
 
 ### Errors / Utilities
 

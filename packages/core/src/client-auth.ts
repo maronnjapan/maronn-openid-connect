@@ -14,7 +14,7 @@
 import { CLIENT_ASSERTION_TYPE_JWT_BEARER, readClientAssertionSubject } from './client-assertion.js';
 import { sha256, timingSafeEqual } from './crypto-utils.js';
 import { TokenError, TokenErrorCode } from './token-error.js';
-import type { TokenClientInfo } from './token-request.js';
+import type { ClientAuthMethod, TokenClientInfo } from './token-request.js';
 
 /**
  * クライアント認証コンテキスト
@@ -97,8 +97,8 @@ export function parseBasicClientCredentials(
 /**
  * リクエストが提示したクライアント資格情報。
  *
- * `method` は「実際に使われた認証方式」であり、クライアントに登録された
- * `token_endpoint_auth_method` ではない。両者の一致は
+ * `method` は「実際に使われた認証方式」であり、クライアントに登録された方式
+ * （`tokenEndpointAuthMethods`）ではない。使われた方式が登録された方式のどれかであることは
  * {@link validateClientAuthMethod} が検証する。
  */
 export interface PresentedClientCredentials {
@@ -108,11 +108,8 @@ export interface PresentedClientCredentials {
   /** private_key_jwt で提示された client_assertion（署名は未検証）。他の方式では undefined */
   clientAssertion?: string;
   /** 実際に使われた認証方式 */
-  method: 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt' | 'none';
+  method: ClientAuthMethod;
 }
-
-/** 登録できるクライアント認証方式（{@link TokenClientInfo.tokenEndpointAuthMethod}）。 */
-type RegisteredClientAuthMethod = NonNullable<TokenClientInfo['tokenEndpointAuthMethod']>;
 
 /**
  * ステップ 1: リクエストからクライアント資格情報を抽出する
@@ -157,7 +154,11 @@ export function extractClientCredentials(
   // client_assertion（private_key_jwt の資格情報）の有無で行い、
   // Basic ヘッダ + ボディ client_id（secret なし）という多くのクライアントライブラリの実装を拒否しない。
   // 空値の client_secret は資格情報を運ばないため「もう一つの認証方式」に数えない（RFC 6749 §2.3）。
-  validateSingleClientAuthMethod(hasBasicHeader, postSecret, hasClientAssertion);
+  validateSingleClientAuthMethod({
+    hasBasicHeader,
+    hasClientSecret: postSecret !== undefined,
+    hasClientAssertion,
+  });
 
   if (hasClientAssertion) {
     const assertion = requireJwtBearerClientAssertion(clientAssertion, clientAssertionType);
@@ -199,6 +200,7 @@ export function extractClientCredentials(
   const method = selectPresentedClientAuthMethod({
     hasBasicHeader,
     hasClientSecret: clientSecret !== undefined,
+    hasClientAssertion: false,
   });
 
   return { clientId: requiredClientId, clientSecret, method };
@@ -220,7 +222,7 @@ export function extractClientCredentials(
  * @throws {TokenError} invalid_client
  */
 export function validateClientAuthMethod(
-  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod' | 'tokenEndpointAuthMethods'>,
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>,
   presented: Pick<PresentedClientCredentials, 'method' | 'clientSecret' | 'clientAssertion'>,
 ): void {
   const registeredMethods = selectRegisteredClientAuthMethods(client);
@@ -230,7 +232,7 @@ export function validateClientAuthMethod(
   // ただし credentials を提示した場合は登録方式（none）と一致しないため拒否し、
   // confidential への昇格／ダウングレードの混同を防ぐ。
   if (registeredMethods.includes('none')) {
-    validateClientAuthMethodMatch(presented.method, 'none');
+    validateClientAuthMethodAllowed(presented.method, registeredMethods);
     return;
   }
 
@@ -255,11 +257,10 @@ export function validateClientAuthMethod(
  * @throws {TokenError} invalid_client
  */
 export async function verifyClientSecret(
-  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod' | 'clientSecret' | 'clientSecretHash'>,
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods' | 'clientSecret' | 'clientSecretHash'>,
   clientSecret: string | undefined,
 ): Promise<void> {
-  const registeredMethod = selectRegisteredClientAuthMethod(client.tokenEndpointAuthMethod);
-  if (registeredMethod === 'none') return;
+  if (isPublicTokenClient(client)) return;
 
   if (client.clientSecretHash !== undefined) {
     await verifyClientSecretHash(clientSecret, client.clientSecretHash);
@@ -279,14 +280,14 @@ export async function hashClientSecret(clientSecret: string): Promise<string> {
 /**
  * OAuth 2.1 §2.3: Basic ヘッダー、ボディの client_secret、client_assertion のうち
  * 2 つ以上を併用していないことを検証する。
- * 空の client_secret は未提示として扱う（RFC 6749 §3.2）。
+ * 空の client_secret は未提示として扱い、hasClientSecret を false で渡す（RFC 6749 §3.2）。
  */
-export function validateSingleClientAuthMethod(
-  hasBasicHeader: boolean,
-  postSecret: string | undefined,
-  hasClientAssertion = false,
-): void {
-  const hasPostSecret = postSecret !== undefined && postSecret !== '';
+export function validateSingleClientAuthMethod(presented: {
+  hasBasicHeader: boolean;
+  hasClientSecret: boolean;
+  hasClientAssertion: boolean;
+}): void {
+  const { hasBasicHeader, hasClientSecret: hasPostSecret, hasClientAssertion } = presented;
   if (hasClientAssertion && (hasBasicHeader || hasPostSecret)) {
     throw new TokenError(
       TokenErrorCode.InvalidRequest,
@@ -365,37 +366,38 @@ export function requireClientId(clientId: string | undefined): string {
 export function selectPresentedClientAuthMethod(presented: {
   hasBasicHeader: boolean;
   hasClientSecret: boolean;
-  hasClientAssertion?: boolean;
-}): PresentedClientCredentials['method'] {
+  hasClientAssertion: boolean;
+}): ClientAuthMethod {
   if (presented.hasClientAssertion) return 'private_key_jwt';
   if (presented.hasBasicHeader) return 'client_secret_basic';
   return presented.hasClientSecret ? 'client_secret_post' : 'none';
 }
 
 /**
- * OIDC Core 1.0 §9 / RFC 7591 §2: 登録された token_endpoint_auth_method を返す。
- * 未登録なら既定の client_secret_basic を補う。
+ * クライアントが使ってよい認証方式の一覧（`tokenEndpointAuthMethods`）を返す。
+ * OIDC Core 1.0 §9 / RFC 7591 §2: 登録が無ければ既定の client_secret_basic だけ。
+ *
+ * @throws {Error} `none` をほかの方式と並べた登録。public client かどうかが決まらない
  */
-export function selectRegisteredClientAuthMethod(
-  tokenEndpointAuthMethod: TokenClientInfo['tokenEndpointAuthMethod'],
-): RegisteredClientAuthMethod {
-  return tokenEndpointAuthMethod ?? 'client_secret_basic';
+export function selectRegisteredClientAuthMethods(
+  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>,
+): ClientAuthMethod[] {
+  const methods = client.tokenEndpointAuthMethods;
+  if (methods === undefined) return ['client_secret_basic'];
+  if (methods.includes('none') && methods.length > 1) {
+    throw new Error('tokenEndpointAuthMethods must not list none together with another method');
+  }
+  return [...methods];
 }
 
 /**
- * クライアントが使ってよい認証方式の一覧を返す。
- * - `tokenEndpointAuthMethod: 'none'`（public client）は `['none']` だけ
- * - `tokenEndpointAuthMethods` が空でなければその一覧
- * - それ以外は `tokenEndpointAuthMethod`（未登録なら既定の client_secret_basic）だけ
+ * public client（登録した方式が `none`）かどうか。public client はクライアント認証をせず、
+ * client_id だけで自分を示す（OAuth 2.1 §2.4 / RFC 7591 §2）。
+ *
+ * @throws {Error} `none` をほかの方式と並べた登録（{@link selectRegisteredClientAuthMethods}）
  */
-export function selectRegisteredClientAuthMethods(
-  client: Pick<TokenClientInfo, 'tokenEndpointAuthMethod' | 'tokenEndpointAuthMethods'>,
-): RegisteredClientAuthMethod[] {
-  if (client.tokenEndpointAuthMethod === 'none') return ['none'];
-  if (client.tokenEndpointAuthMethods && client.tokenEndpointAuthMethods.length > 0) {
-    return [...client.tokenEndpointAuthMethods];
-  }
-  return [selectRegisteredClientAuthMethod(client.tokenEndpointAuthMethod)];
+export function isPublicTokenClient(client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>): boolean {
+  return selectRegisteredClientAuthMethods(client).includes('none');
 }
 
 /**
@@ -425,28 +427,17 @@ export function requireClientAssertion(clientAssertion: string | undefined): str
 }
 
 /**
- * 実際に使われた認証方式が登録方式と一致することを検証する。
- * 認証方式のダウングレードや public / confidential の混同を防ぐ（OIDC Core 1.0 §9）。
- */
-export function validateClientAuthMethodMatch(
-  presentedMethod: PresentedClientCredentials['method'],
-  registeredMethod: RegisteredClientAuthMethod,
-): void {
-  validateClientAuthMethodAllowed(presentedMethod, [registeredMethod]);
-}
-
-/**
  * 実際に使われた認証方式が、クライアントに登録された方式のどれかであることを検証する。
  * 認証方式のダウングレードや public / confidential の混同を防ぐ（OIDC Core 1.0 §9）。
  */
 export function validateClientAuthMethodAllowed(
-  presentedMethod: PresentedClientCredentials['method'],
-  registeredMethods: readonly RegisteredClientAuthMethod[],
+  presentedMethod: ClientAuthMethod,
+  registeredMethods: readonly ClientAuthMethod[],
 ): void {
   if (!registeredMethods.includes(presentedMethod)) {
     throw new TokenError(
       TokenErrorCode.InvalidClient,
-      'Client authentication method does not match the registered token_endpoint_auth_method',
+      'Client authentication method is not registered for the client',
     );
   }
 }

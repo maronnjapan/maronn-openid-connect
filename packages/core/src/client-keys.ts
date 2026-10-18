@@ -6,7 +6,6 @@
  * {@link ClientKeyResolver} から自分の用途の鍵だけを受け取る。鍵の保存と運用
  * （登録、入れ替え、削除）は resolver の実装と利用者が受け持つ。
  */
-import type { ClientInfo, ClientResolver } from './authorization-request.js';
 import type { JwkSet } from './jwks.js';
 
 /**
@@ -34,29 +33,27 @@ export interface ClientKeyResolver {
   findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet>;
 }
 
-/**
- * クライアント登録のメタデータ `jwks`（RFC 7591 §2 / {@link ClientInfo.jwks}）が受け持つ用途。
- * `jwks` は用途を分けない 1 組の鍵で、クライアント認証の JWT と Request Object の署名の
- * 検証に使う。
- */
-export const JWKS_CLIENT_KEY_PURPOSES: readonly ClientKeyPurpose[] = ['private_key_jwt', 'request_object'];
+/** 1 つのクライアントの公開鍵。キーが用途、値がその用途の JWK Set。 */
+export interface ClientKeysByPurpose {
+  private_key_jwt?: JwkSet;
+  request_object?: JwkSet;
+  dpop?: JwkSet;
+  [purpose: string]: JwkSet | undefined;
+}
 
 /**
- * クライアントの登録メタデータ `jwks` を鍵の保存先にする {@link ClientKeyResolver}。
+ * クライアントごとの「用途 → JWK Set」を返す lookup から {@link ClientKeyResolver} を作る。
+ * 設定ファイルや環境変数に書いたクライアントの鍵のように、鍵をまとめて持つ保存先に使う。
  *
- * `purposes` の用途（既定は {@link JWKS_CLIENT_KEY_PURPOSES}）には、clientResolver が返す
- * クライアントの `jwks` を、ほかの用途には空の JWK Set を返す。呼ばれるたびに
- * clientResolver でクライアントを引くので、登録の変更は次の呼び出しから効く。
+ * 呼ばれるたびに lookup を呼ぶので、lookup が返す値を変えれば次の呼び出しから効く。
  */
-export function createClientJwksKeyResolver(
-  clientResolver: ClientResolver,
-  purposes: readonly ClientKeyPurpose[] = JWKS_CLIENT_KEY_PURPOSES,
+export function createClientKeyResolver(
+  lookup: (clientId: string) => ClientKeysByPurpose | undefined | Promise<ClientKeysByPurpose | undefined>,
 ): ClientKeyResolver {
   return {
     async findClientKeys(clientId, purpose) {
-      if (!purposes.includes(purpose)) return { keys: [] };
-      const client = await clientResolver.findClient(clientId);
-      return { keys: [...(client?.jwks?.keys ?? [])] };
+      const keys = await lookup(clientId);
+      return { keys: [...(keys?.[purpose]?.keys ?? [])] };
     },
   };
 }

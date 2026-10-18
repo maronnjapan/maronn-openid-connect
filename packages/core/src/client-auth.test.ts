@@ -11,7 +11,7 @@ import type { TokenClientInfo, TokenClientResolver } from './token-request.js';
 const MULTIPLE_METHODS_DESCRIPTION =
   'Multiple client authentication methods provided. Use either Authorization header or request body, not both.';
 const METHOD_MISMATCH_DESCRIPTION =
-  'Client authentication method does not match the registered token_endpoint_auth_method';
+  'Client authentication method is not registered for the client';
 const MULTIPLE_METHODS_WITH_ASSERTION_DESCRIPTION =
   'Multiple client authentication methods provided. Use only one of the Authorization header, client_secret or client_assertion.';
 const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
@@ -69,7 +69,7 @@ async function captureAsyncError(
   }
 }
 
-// No tokenEndpointAuthMethod: the registered method defaults to client_secret_basic.
+// No tokenEndpointAuthMethods: the registered method defaults to client_secret_basic.
 const validClient: TokenClientInfo = {
   clientId: 'client-123',
   clientSecret: 'secret-xyz',
@@ -78,7 +78,7 @@ const validClient: TokenClientInfo = {
 const basicClient: TokenClientInfo = {
   clientId: 'client-123',
   clientSecret: 'secret-xyz',
-  tokenEndpointAuthMethod: 'client_secret_basic',
+  tokenEndpointAuthMethods: ['client_secret_basic'],
 };
 
 // OIDC Core 1.0 §9 / RFC 7591 §2: the client must be registered for client_secret_post
@@ -86,12 +86,12 @@ const basicClient: TokenClientInfo = {
 const postClient: TokenClientInfo = {
   clientId: 'client-123',
   clientSecret: 'secret-xyz',
-  tokenEndpointAuthMethod: 'client_secret_post',
+  tokenEndpointAuthMethods: ['client_secret_post'],
 };
 
 const publicClient: TokenClientInfo = {
   clientId: 'public-client',
-  tokenEndpointAuthMethod: 'none',
+  tokenEndpointAuthMethods: ['none'],
 };
 
 describe('extractClientCredentials', () => {
@@ -572,7 +572,7 @@ describe('validateClientAuthMethod', () => {
       expect(error).toBeUndefined();
     });
 
-    it('should enforce client_secret_basic default when tokenEndpointAuthMethod is unspecified', () => {
+    it('should enforce client_secret_basic default when tokenEndpointAuthMethods is unspecified', () => {
       // RFC 7591 §2: when unspecified, the default token_endpoint_auth_method is client_secret_basic.
       const presented = extractClientCredentials({
         params: {},
@@ -584,7 +584,7 @@ describe('validateClientAuthMethod', () => {
       expect(error).toBeUndefined();
     });
 
-    it('should reject client_secret_post when tokenEndpointAuthMethod is unspecified (default basic)', () => {
+    it('should reject client_secret_post when tokenEndpointAuthMethods is unspecified (default basic)', () => {
       // The default is client_secret_basic, so post-based authentication is rejected.
       const presented = extractClientCredentials({
         params: { client_id: 'client-123', client_secret: 'secret-xyz' },
@@ -662,7 +662,7 @@ describe('validateClientAuthMethod', () => {
   describe('private_key_jwt and several registered methods', () => {
     const privateKeyJwtClient: TokenClientInfo = {
       clientId: 'client-123',
-      tokenEndpointAuthMethod: 'private_key_jwt',
+      tokenEndpointAuthMethods: ['private_key_jwt'],
     };
 
     const basicAndPrivateKeyJwtClient: TokenClientInfo = {
@@ -724,19 +724,26 @@ describe('validateClientAuthMethod', () => {
       expect(error?.errorDescription).toBe(METHOD_MISMATCH_DESCRIPTION);
     });
 
-    // A public client never authenticates, whatever else is listed for it.
-    it('should reject a client assertion from a public client that also lists private_key_jwt', () => {
-      const publicWithMethods: TokenClientInfo = {
-        clientId: 'client-123',
-        tokenEndpointAuthMethod: 'none',
-        tokenEndpointAuthMethods: ['private_key_jwt'],
-      };
-
-      const error = captureError(() => validateClientAuthMethod(publicWithMethods, presentAssertion()));
+    // A public client never authenticates, so a client assertion is a method it
+    // did not register.
+    it('should reject a client assertion from a public client', () => {
+      const error = captureError(() => validateClientAuthMethod(publicClient, presentAssertion()));
 
       expect(error).toBeInstanceOf(TokenError);
       expect(error?.error).toBe(TokenErrorCode.InvalidClient);
       expect(error?.errorDescription).toBe(METHOD_MISMATCH_DESCRIPTION);
+    });
+
+    // none makes the client public, so it cannot sit next to private_key_jwt.
+    it('should fail on a registration that lists none together with private_key_jwt', () => {
+      const misconfigured: TokenClientInfo = {
+        clientId: 'client-123',
+        tokenEndpointAuthMethods: ['none', 'private_key_jwt'],
+      };
+
+      expect(() => validateClientAuthMethod(misconfigured, presentAssertion())).toThrow(
+        new Error('tokenEndpointAuthMethods must not list none together with another method'),
+      );
     });
 
     it('should require client authentication when a private_key_jwt client sends client_id only', () => {

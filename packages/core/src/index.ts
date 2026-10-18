@@ -141,6 +141,7 @@ export {
 export type {
   TokenRequestParams,
   TokenClientInfo,
+  ClientAuthMethod,
   TokenClientResolver,
   AuthorizationCodeInfo,
   AuthorizationCodeResolver,
@@ -331,15 +332,14 @@ export {
   validateClientIdConsistency,
   requireClientId,
   selectPresentedClientAuthMethod,
-  selectRegisteredClientAuthMethod,
   requireClientSecret,
-  validateClientAuthMethodMatch,
   verifyClientSecretValue,
   // client_secret をハッシュで登録するクライアント（TokenClientInfo.clientSecretHash）
   hashClientSecret,
   verifyClientSecretHash,
-  // 複数のクライアント認証方式（TokenClientInfo.tokenEndpointAuthMethods）と private_key_jwt
+  // クライアントが登録した認証方式（TokenClientInfo.tokenEndpointAuthMethods）と private_key_jwt
   selectRegisteredClientAuthMethods,
+  isPublicTokenClient,
   validateClientAuthMethodAllowed,
   requireClientAssertion,
   requireJwtBearerClientAssertion,
@@ -380,11 +380,10 @@ export type {
 
 export {
   // クライアントが用途ごとに登録した公開鍵の取得（private_key_jwt / Request Object / DPoP など）
-  JWKS_CLIENT_KEY_PURPOSES,
-  createClientJwksKeyResolver,
+  createClientKeyResolver,
 } from './client-keys.js';
 
-export type { ClientKeyPurpose, ClientKeyResolver } from './client-keys.js';
+export type { ClientKeyPurpose, ClientKeyResolver, ClientKeysByPurpose } from './client-keys.js';
 
 export {
   createAuthorizationCode,

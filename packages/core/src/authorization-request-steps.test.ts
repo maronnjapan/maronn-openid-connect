@@ -116,7 +116,7 @@ describe('resolveRequestObjectParams', () => {
   it('should return copied params and no claims when request parameter is absent', async () => {
     const params = validParams();
 
-    const result = await resolveRequestObjectParams(params, defaultClient);
+    const result = await resolveRequestObjectParams(params);
 
     expect(result.requestObjectClaims).toBe(undefined);
     expect(result.effectiveParams).toEqual(params);
@@ -135,8 +135,7 @@ describe('resolveRequestObjectParams', () => {
 
     const result = await resolveRequestObjectParams(
       validParams({ request, state: 'query-state' }),
-      defaultClient,
-      { allowUnsigned: true }
+      { allowUnsigned: true },
     );
 
     // OIDC Core 1.0 §6.1: Request Object の値がクエリ値を supersede する
@@ -156,10 +155,7 @@ describe('resolveRequestObjectParams', () => {
       client_id: 'client123',
     });
 
-    const error = await resolveRequestObjectParams(
-      validParams({ request }),
-      defaultClient
-    ).catch((e: unknown) => e);
+    const error = await resolveRequestObjectParams(validParams({ request })).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(AuthorizationError);
     const authError = error as AuthorizationError;

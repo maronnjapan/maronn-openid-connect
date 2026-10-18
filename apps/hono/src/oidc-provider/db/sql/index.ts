@@ -6,8 +6,18 @@
  * code that sets the provider up (registering clients and users). You write
  * one file, db/instance.ts: createDatabase() returns your database.
  */
-export { createDatabase } from './instance.js';
+import type { SqlDatabase } from './database.js';
+import { createDatabase as createInstanceDatabase } from './instance.js';
+
 export type { SqlDatabase as Database } from './database.js';
+
+/**
+ * The database of a request: createDatabase() of db/instance.ts, called with
+ * the request context. An instance.ts whose createDatabase() takes no
+ * argument (one database for the process) fits too.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const createDatabase: (c?: any) => SqlDatabase = createInstanceDatabase;
 export { createProviderStores } from './stores.js';
 export { createClientKeyResolver, createClientResolver, registerClient } from './clients.js';
 export { registerUser } from './users.js';

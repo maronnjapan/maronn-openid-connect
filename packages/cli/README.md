@@ -198,7 +198,7 @@ UI を変える場所は、変えたい範囲で選ぶ。
 
 エンドポイントのパイプラインの中で動く処理は、フックではなく `pipeline.ts` の所有者付きブロックとして書かれている。ブロックのマーカーは `// [step-id] (feature: <id>) Label — Spec` で、そのステップのファイルは `features/<id>/` の下にある。たとえば `endpoints/token/pipeline.ts` には refresh-token の 4 つのブロックがあり、`features/refresh-token/steps/` のステップを呼ぶ。
 
-`generate` は、無効な機能のディレクトリを写さず、`features/enabled.ts` からその import と一覧の行を消し、パイプラインからその機能のブロックとその import を取り除く。取り除いたブロックが作っていた値を後のステップが読むなら、その値は `const <name> = undefined;` として残る（どの値かはステップの `meta` の `produces` で決まる）。読む側が無くなった変数の束縛も外す。たとえば `--disable refresh-token` の `endpoints/token/pipeline.ts` は次の形になる。
+`generate` は、無効な機能のディレクトリを写さず、`features/enabled.ts` からその import と一覧の行を消し、パイプラインからその機能のブロックとその import を、`endpoint.ts` からその機能のステップの行とそのステップに出入りする矢印の行を取り除く。取り除いたブロックが作っていた値を後のステップが読むなら、その値は `const <name> = undefined;` として残る（どの値かはステップの `meta` の `produces` で決まる）。読む側が無くなった変数の束縛も外す。たとえば `--disable refresh-token` の `endpoints/token/pipeline.ts` は次の形になる。
 
 ```typescript
     // [validate-grant-type] Validate grant_type — RFC 6749 §5.2
@@ -211,7 +211,9 @@ UI を変える場所は、変えたい範囲で選ぶ。
       refreshTokenRequest ?? (await validateAuthorizationCodeGrant(c, params, authenticatedClientId));
 ```
 
-生成した後で機能を手で外すときは、`features/enabled.ts` にあるその機能の import の行と一覧の行、`features/<id>/` に加えて、パイプラインにあるその機能のブロックも消す。
+`--flow` の文書で外したステップについても、`endpoint.ts` からそのステップの行とそのステップに出入りする矢印の行を取り除く（[フロー文書を編集して生成する（--flow）](#フロー文書を編集して生成する--flow)を参照）。
+
+生成した後で機能を手で外すときは、`features/enabled.ts` にあるその機能の import の行と一覧の行、`features/<id>/` に加えて、パイプラインにあるその機能のブロックと、`endpoint.ts` にあるその機能のステップの行とそのステップに出入りする矢印の行も消す。
 
 ### 認可トランザクションの受け渡し（Cookie + csrf_token）
 

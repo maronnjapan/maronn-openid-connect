@@ -153,13 +153,16 @@ Custom scopes (none declared by default): the standard scopes (openid, profile,
 Flow documents (graph / --flow): \`maronn-oidc graph --format json\` describes the
   provider as endpoints, steps and arrows, with the features, scopes and db of
   the run. Edit it (drop a removable step, reorder independent steps, reorder
-  the endpoints, flip a feature flag) and generate from it with --flow <file>;
+  the endpoints, switch a feature) and generate from it with --flow <file>;
   what the document says is checked against the catalog, so a step another
-  step depends on can never be dropped by accident. Screen endpoints (login,
-  consent, device, ciba, logout) have a fixed sequence of steps. The generated
-  pipelines follow a rearranged step order for hono, express and fastify;
-  the Next.js output keeps its own layout and accepts endpoint and feature
-  changes only.
+  step depends on can never be dropped by accident. To switch a feature,
+  change its flag in features together with its endpoints and steps, or
+  redraw the document with graph --enable <id> (or --disable <id>)
+  --format json, which gets all of them right. Screen endpoints (login,
+  login-google, consent, device, ciba, logout) have a fixed sequence of
+  steps. The generated pipelines follow a rearranged step order for hono,
+  express and fastify; the Next.js output keeps its own layout and accepts
+  endpoint and feature changes only.
 
 Database (--db sql | --db kv): the provider keeps its clients, users,
   authorization transactions, codes, tokens, sessions and consent in your

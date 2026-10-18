@@ -104,7 +104,7 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * (config.ts):
  *
  *   // createDatabase(c) where the request context exists, when instance.ts
- *   // reads it (D1 or other bindings of c.env)
+ *   // reads it (in the Hono output, the Upstash URL and token of c.env)
  *   const db = createDatabase();
  *   await registerClient(db, {
  *     clientId: 'my-client',

@@ -26,7 +26,7 @@ maronn-oidc graph [framework] [options]
 
 `setup` は生成に加えて、エントリファイル内のプレースホルダーコメント（`// <!-- OIDC_IMPORT_PLACEHOLDER -->` と `// <!-- OIDC_SETUP_PLACEHOLDER -->`）を `applyOidc` の import と呼び出しに置換します。Next.js は App Router のファイル規約に従うため `setup` 非対応で、`maronn-oidc generate nextjs --output ./src/app` を使います。
 
-`graph` は何も書き込みません。`generate` と同じ `--enable` / `--disable` / `--scope` / `--db`（または `--flow`）から、生成される OP の図を標準出力に書きます。framework を付けると、JSON のフロー文書に各エンドポイントの生成先ファイル（`module`）が入ります。詳しくは [Flow Graph (graph / --flow)](#flow-graph-graph----flow) を参照してください。
+`graph` はコードを生成しません。`generate` と同じ `--enable` / `--disable` / `--scope` / `--db`（または `--flow`）から、生成される OP の図を標準出力（`--output` を付ければそのファイル）に書きます。framework を付けると、JSON のフロー文書に各エンドポイントと各ステップの生成先ファイル（`module`）が入ります。詳しくは [Flow Graph (graph / --flow)](#flow-graph-graph----flow) を参照してください。
 
 ### setup に必要なプレースホルダー
 
@@ -107,11 +107,11 @@ oidc-provider/
 
 Next.js は App Router のファイル規約に沿った別の構成になります（[Next.js](#nextjs) を参照）。
 
-機能ごとのコードは `features/<feature-id>/` にまとまっています。機能のエンドポイント（`features/par/endpoints/par/` など）、設定（`features/par/config.ts` の `parConfig` など）、ストア、画面がこのディレクトリにあり、`features/<feature-id>/feature.ts` がその機能の OP に足すもの（ルート、discovery のメタデータ、リクエストのコンテキストに入れる値、設定の既定値、トークンエンドポイントの grant、同意で戻す応答モード、ログイン画面のログイン手段）を宣言します。標準のエンドポイントの中で動く機能のステップは、パイプラインの `// [step-id] (feature: <feature-id>) ラベル — 仕様` の印が付いたブロックから呼ばれます。無効にした機能のディレクトリは出力されず、パイプラインからもその機能のブロックと import が消えます。
+機能ごとのコードは `features/<feature-id>/` にまとまっています。機能のエンドポイント（`features/par/endpoints/par/` など）、設定（`features/par/config.ts` の `parConfig` など）、ストア、画面がこのディレクトリにあり、`features/<feature-id>/feature.ts` がその機能の OP に足すもの（ルート、discovery のメタデータ、リクエストのコンテキストに入れる値、設定の既定値、トークンエンドポイントの grant、同意で戻す応答モード、ログイン画面のログイン手段）を宣言します。標準のエンドポイントの中で動く機能のステップは、パイプラインの `// [step-id] (feature: <feature-id>) ラベル — 仕様` の印が付いたブロックから呼ばれます。無効にした機能のディレクトリは出力されず、パイプラインからもその機能のブロックと import が消えます。各エンドポイントの `endpoint.ts` からも、その機能のステップの行とそのステップに出入りする矢印の行が消えます。
 
 ### Screen Routes (page.tsx) and Logic (pipeline.ts / steps/)
 
-生成されるルーティングは、画面の層とロジックの層に分かれています。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて各エンドポイントの `page.tsx`（HTML を返さない `/authorize` は `page.ts`）が担当し、`pipeline.ts` と `steps/` は画面の Response を作りません。UI をカスタマイズするときに触るのは `page.tsx` と `views.tsx` だけで、ロジックは読まなくて済みます（画面の書き方は [Screens (hono/jsx)](#screens-honojsx) を参照）。
+生成されるルーティングは、画面の層とロジックの層に分かれています。ブラウザに返すもの（画面の描画・リダイレクト・Cookie の付与）はすべて各エンドポイントの `page.tsx`（自分ではビューを JSX で描かない `/authorize` と google-login の `/login/google` は `page.ts`）が担当し、`pipeline.ts` と `steps/` は画面の Response を作りません。UI をカスタマイズするときに触るのは `page.tsx` と `views.tsx` だけで、ロジックは読まなくて済みます（画面の書き方は [Screens (hono/jsx)](#screens-honojsx) を参照）。
 
 | 層 | ファイル | 役割 |
 |---|---|---|
@@ -195,7 +195,7 @@ Next.js は Route Handler とページ・Server Action（と `instrumentation.ts
 
 ### Screens (hono/jsx)
 
-Hono / Express / Fastify の出力は TSX 前提で生成されます。画面のマークアップ（`views.tsx`、機能の画面は `features/<feature-id>/views.tsx`）は [hono/jsx](https://hono.dev/docs/guides/jsx) のコンポーネントで、画面を描く `endpoints/login/page.tsx` / `endpoints/consent/page.tsx` / `pages/errors.tsx`（機能有効時は device / CIBA / RP-Initiated Logout の `page.tsx`）も `.tsx` になり、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画します。HTML を返さない `endpoints/authorize/page.ts` と `pages/respond.ts` は `.ts` のままです。Express と Fastify の画面も hono/jsx で描くので、`hono` のインストールが要ります。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できます。
+Hono / Express / Fastify の出力は TSX 前提で生成されます。画面のマークアップ（`views.tsx`、機能の画面は `features/<feature-id>/views.tsx`）は [hono/jsx](https://hono.dev/docs/guides/jsx) のコンポーネントで、画面を描く `endpoints/login/page.tsx` / `endpoints/consent/page.tsx` / `pages/errors.tsx`（機能有効時は device / CIBA / RP-Initiated Logout の `page.tsx`）も `.tsx` になり、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画します。自分ではビューを JSX で描かない `endpoints/authorize/page.ts`、google-login の `features/google-login/endpoints/login-google/page.ts`（どちらもエラー画面は `pages/errors.tsx` に任せる）と `pages/respond.ts` は `.ts` のままです。Express と Fastify の画面も hono/jsx で描くので、`hono` のインストールが要ります。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できます。
 
 ビューは JSX 要素を返すコンポーネントです。`createApp` / `applyOidc` の `views` オプションで差し替えるときも、JSX で書きます。
 
@@ -242,7 +242,7 @@ const app = createApp({
 
 ## Flow Graph (graph / --flow)
 
-`maronn-oidc graph` は、生成される OP を箱と矢印の図にします。`generate` と同じ機能フラグを受け取り、何も書き込みません。既定では箱がエンドポイント、矢印はエンドポイントの間でコードやトークンが渡る向きです。`--detail steps` を付けると、各エンドポイントの中を、生成コードの export 関数 1 つにつき箱 1 つで描きます。
+`maronn-oidc graph` は、生成される OP を箱と矢印の図にします。`generate` と同じ機能フラグを受け取りますが、コードは生成しません。既定では箱がエンドポイント、矢印はエンドポイントの間でコードやトークンが渡る向きです。`--detail steps` を付けると、各エンドポイントの中を、生成コードの export 関数 1 つにつき箱 1 つで描きます。
 
 ```bash
 # エンドポイントの図（Mermaid）を標準出力へ
@@ -289,7 +289,7 @@ flowchart LR
 
 ### 図の箱と生成コードの対応
 
-`--detail steps` の箱は、生成コードの export 関数と 1 対 1 で対応します。箱にはステップの ID、関数名、根拠になる仕様の節が書かれ、生成コードでは同じ ID が呼び出しの手前のコメントになります。関数はステップ ID と同じ名前のファイル（`[parse-request]` なら `endpoints/token/steps/parse-request.ts`）にあり、`(feature: <feature-id>)` の印が付いたステップは `features/<feature-id>/steps/` にあります。たとえば `endpoints/token/pipeline.ts` のハンドラーは次の形です。
+`--detail steps` の箱は、生成コードの export 関数と 1 対 1 で対応します。箱にはステップの名前（ステップのファイルの `meta` が持つ `label`）、関数名、根拠になる仕様の節が書かれ、生成コードでは、ステップ ID と、箱と同じ名前と仕様の節が、呼び出しの手前のコメント（`// [step-id] Label — Spec`）になります。関数はステップ ID と同じ名前のファイル（`[parse-request]` なら `endpoints/token/steps/parse-request.ts`）にあり、`(feature: <feature-id>)` の印が付いたステップは `features/<feature-id>/steps/` にあります。たとえば `endpoints/token/pipeline.ts` のハンドラーは次の形です。
 
 ```typescript
 tokenApp.post('/', async (c) => {
@@ -330,13 +330,13 @@ maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
 - **ステップを消す**：`removable: true` のステップ（`/token` の `resolve-acr-amr`、`issue-id-token`、`revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外します。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token や acr なら `undefined`）で補います
 - **ステップを並べ替える**：値のやり取りが無いステップ同士は順番を変えられます。値を作るステップより前にそれを読むステップを置く、`after` / `before` の制約に反する、といった並びはエラーになります
 - **エンドポイントを並べ替える**：`endpoints` の順番は図の並びとしてマニフェストの `endpointOrder` に記録されます。生成コードがエンドポイントをマウントする順番は変わりません
-- **機能を切り替える**：`features` の値を変えると、`--enable` / `--disable` と同じようにエンドポイントとステップが増減します。`scopes` と `db` も同様です
+- **機能を切り替える**：`features` の値を変え、その機能が持つエンドポイント（`endpoints`）とステップ（`steps`）を同じ文書で足すか外します。どちらかだけを変えた文書はエラーで止まるので、`maronn-oidc graph --enable <id>`（または `--disable <id>`）`--format json` で文書を描き直すのが確実です。`scopes` と `db` は値を変えるだけで済みます
 
 次の変更はエラーで止まり、何も書き込みません。
 
-- `removable: false` のステップを消す。`feature` が付いたステップは、ステップではなく `features` の側で外します
+- `removable: false` のステップを消す。そのうち `feature` が付いたステップは、`features` のその機能を false にし、機能のステップとエンドポイントも文書から外します
 - 画面のエンドポイント（`login` / `login-google` / `consent` / `device` / `ciba` / `logout`）のステップ列を変える
-- 必須のエンドポイント（`authorize` / `token` など）を外す。機能で増えたエンドポイント（`introspection` など）は `features` の側で外します
+- 必須のエンドポイント（`authorize` / `token` など）を外す。機能で増えたエンドポイント（`introspection` など）は、`features` のその機能を false にし、エンドポイントとステップも文書から外します
 - `--flow` と `--enable` / `--disable` / `--scope` / `--db` を同時に指定する。文書が機能構成を持っているためです
 
 並べ替えたステップは、Hono / Express / Fastify の生成コードでパイプラインのブロックの並びとして反映されます。Next.js は App Router の Route Handler に処理を直接書く構成のため、`steps` を変えた文書を渡すとエラーになり、エンドポイントと機能の変更だけを受け付けます。
@@ -719,7 +719,7 @@ SHA-256 は計算が速く、短い値や推測できる値は総当たりで元
 `get`、`set`（TTL を付けられる）、`delete` と、キーが無いときだけ値を書く `setIfAbsent` です。
 値はどれも JSON の文字列で、キーの一覧は `keys.ts` にあります。
 
-Hono / Express / Fastify の `instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）と、メモリ上の Map の例があります。
+Hono / Express / Fastify の `instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）、TCP で Redis につなぐ node-redis と ioredis（Node.js だけで動き、Cloudflare Workers では動かない）、メモリ上の Map の例があります。
 Next.js の `instance.ts` は生成したまま動きます。
 `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` があれば Upstash Redis に、無ければ node:sqlite の 1 つのテーブル（`OIDC_SQLITE_PATH`、既定は `.data/oidc.sqlite`）に保存します。
 Vercel の上でこの 2 つが無いときは、ほかの関数から読めないファイルへ書く代わりに、最初の読み書きでエラーにします。

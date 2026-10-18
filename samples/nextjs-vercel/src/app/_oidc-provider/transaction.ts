@@ -11,11 +11,7 @@ import {
 } from '@maronn-openid-connect/core';
 import { errorPagePath } from './http';
 import { config, stores } from './provider';
-import {
-  CROSS_ORIGIN_FORM_POST_MESSAGE,
-  TRANSACTION_COOKIE_NAME,
-  isSameOriginFormPost,
-} from './store';
+import { CROSS_ORIGIN_FORM_POST_MESSAGE, TRANSACTION_COOKIE_NAME, isSameOriginFormPost } from './cookies';
 
 /** The transaction a login or consent request continues, and the id it is stored under. */
 export interface CurrentTransaction {

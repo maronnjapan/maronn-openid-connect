@@ -9,6 +9,10 @@ import {
   signingKeysUnavailable,
   withCors,
 } from '../../_oidc-provider/http';
+import { discoveryOf, tokenGrantsOf } from '../../_oidc-provider/feature';
+import { features } from '../../_oidc-provider/features';
+import { ADVERTISED_SCOPES } from '../../_oidc-provider/scopes';
+import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -22,9 +26,15 @@ export function OPTIONS(request: Request): Response {
 }
 
 async function providerMetadata(): Promise<Response> {
+  // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);
   if (!keys) return signingKeysUnavailable();
 
+  // [build-metadata] Build the provider metadata — OIDC Discovery 1.0 §3 / RFC 8414
+  // Every endpoint URL is built on config.issuer. The members below are those
+  // of every provider; each feature adds its own (its endpoint, the grants it
+  // answers, the response modes it signs) through the discovery entry of its
+  // feature.ts.
   const issuer = config.issuer;
   const metadata = buildProviderMetadata({
     issuer,
@@ -33,8 +43,7 @@ async function providerMetadata(): Promise<Response> {
     jwksUri: `${issuer}/.well-known/jwks.json`,
     responseTypesSupported: ['code'],
     // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0
-    // §3: the OP only implements the authorization code flow, whose response is
-    // returned via query, so response_modes_supported is pinned to ['query'].
+    // §3: the code flow answers via query.
     responseModesSupported: ['query'],
     subjectTypesSupported: ['public'],
     // OIDC Core 1.0 §15.1: id_token_signing_alg_values_supported is derived from
@@ -42,12 +51,7 @@ async function providerMetadata(): Promise<Response> {
     // as such (buildProviderMetadata enforces that RS256 is present).
     idTokenSigningKeys: keys.idToken.map((key) => key.privateKey),
     userinfoEndpoint: `${issuer}/userinfo`,
-    // OIDC Core 1.0 §11: offline_access is advertised so relying parties (and the
-    // OIDF Conformance Suite's oidcc-refresh-token module) know they may request
-    // refresh tokens via 'scope=openid offline_access' with prompt=consent.
-    // It is a refresh-token request scope, not a claim scope, so no matching
-    // entry is added to claimsSupported.
-    scopesSupported: ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'],
+    scopesSupported: [...ADVERTISED_SCOPES],
     // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP produces Normal Claims only
     // (no _claim_names / _claim_sources).
     claimTypesSupported: ['normal'],
@@ -85,7 +89,7 @@ async function providerMetadata(): Promise<Response> {
       'phone_number',
       'phone_number_verified',
     ],
-    grantTypesSupported: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:device_code', 'urn:openid:params:grant-type:ciba'],
+    grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
     // (no client_secret) are accepted at the token endpoint.
     tokenEndpointAuthMethodsSupported: [
@@ -98,47 +102,30 @@ async function providerMetadata(): Promise<Response> {
     userinfoSigningAlgValuesSupported: [
       ...new Set(keys.userinfo.map((key) => getJwaAlgorithm(key.privateKey))),
     ],
-    // OIDC Core 1.0 §6.1 / OIDC Discovery 1.0 §3: a signed Request Object by value
-    // is supported (verified against the client's registered JWKS). request_uri
-    // (§6.2) is not, so it is advertised as false explicitly — Discovery defaults
-    // request_uri_parameter_supported to true when omitted. 'none' is added only
-    // when unsigned objects are accepted for Basic OP conformance compatibility.
-    requestParameterSupported: true,
+    // OIDC Core 1.0 §6.1 / §6.2 / OIDC Discovery 1.0 §3: Request Objects are
+    // advertised by the request-object feature. request_uri is not supported,
+    // so it is advertised as false explicitly: Discovery defaults
+    // request_uri_parameter_supported to true when omitted.
+    requestParameterSupported: false,
     requestUriParameterSupported: false,
-    requestObjectSigningAlgValuesSupported: config.allowUnsignedRequestObject
-      ? ['RS256', 'none']
-      : ['RS256'],
     // OIDC Discovery 1.0 §3 / Core 1.0 §5.5: the claims request parameter is
     // implemented for both the ID Token and UserInfo.
     claimsParameterSupported: true,
     // RFC 9207 §3: every authorization response carries iss.
     authorizationResponseIssParameterSupported: true,
-    // RFC 8414 — both endpoints require client authentication.
-    introspectionEndpoint: `${issuer}/introspect`,
-    introspectionEndpointAuthMethodsSupported: [
-      'client_secret_basic',
-      'client_secret_post',
-    ],
-    revocationEndpoint: `${issuer}/revoke`,
-    revocationEndpointAuthMethodsSupported: [
-      'client_secret_basic',
-      'client_secret_post',
-    ],
   });
 
-  // RFC 8414 §3.2 / RFC 9111 §5.2: discovery metadata is cacheable; 3600s, the
-  // same freshness lifetime as the JWKS endpoint.
+  // [respond] Respond (cacheable) — RFC 8414 §3.2 / RFC 9111 §5.2
+  // Discovery metadata is cacheable; 3600s, the same freshness lifetime as the
+  // JWKS endpoint.
   return Response.json(
-    {
-      ...metadata,
+    discoveryOf(
+      features,
       // RFC 7636 / OAuth 2.1: not an OIDC Discovery field, so added here.
-      code_challenge_methods_supported: ['S256'],
-      // EXPERIMENTAL — RFC 8628 §4.
-      device_authorization_endpoint: `${issuer}/device_authorization`,
-      // EXPERIMENTAL — CIBA Core 1.0 §4. Only the poll delivery mode is offered.
-      backchannel_token_delivery_modes_supported: ['poll'],
-      backchannel_authentication_endpoint: `${issuer}/backchannel_authentication`,
-    },
+      { ...metadata, code_challenge_methods_supported: ['S256'] },
+      issuer,
+      config,
+    ),
     { headers: { 'Cache-Control': 'public, max-age=3600' } },
   );
 }

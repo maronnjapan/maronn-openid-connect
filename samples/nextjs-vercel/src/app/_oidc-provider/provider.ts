@@ -28,21 +28,22 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
+import { createProviderConfig, type ProviderConfig } from './config';
 import {
-  createProviderConfig,
-  type GoogleLoginConfig,
-  type ProviderConfig,
-} from './config';
+  createClientKeyResolver,
+  createClientResolver,
+  createDatabase,
+  createProviderStores,
+} from './db';
+import { contextOf } from './feature';
+import { features } from './features';
 import { createStoreResolvers } from './resolvers';
-import type { KvDatabase } from './db/database';
-import { createDatabase } from './db/instance';
-import { createKvProviderStores } from './db/stores';
-import { createKvClientKeyResolver, createKvClientResolver } from './db/clients';
 
 /**
  * Provider configuration. OIDC_ISSUER must be the exact public URL of this app:
  * it is the iss of every token, and the origin every URL the OP builds for
- * itself is based on (OIDC Discovery 1.0 §3).
+ * itself is based on (OIDC Discovery 1.0 §3). The enabled features add their
+ * own settings and defaults (createProviderConfig() in config.ts).
  */
 export const config: ProviderConfig = createProviderConfig({
   issuer: process.env.OIDC_ISSUER ?? process.env.ISSUER ?? 'http://localhost:3000',
@@ -51,68 +52,34 @@ export const config: ProviderConfig = createProviderConfig({
   refreshTokenAbsoluteLifetime: 7776000,
   accessTokenFormat: 'jwt',
   authorizationCodeTtl: 300,
-  // OIDF Basic OP static-client compatibility (OAuth 2.1 makes PKCE mandatory):
-  // set OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1 only for conformance runs.
-  allowNonPkceAuthorizationCodeFlow:
-    process.env.OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW === '1',
-  // OIDC Core 1.0 §6.1 / RFC 9101: accepting unsigned (alg:none) Request Objects
-  // is a security relaxation used only for OIDF Basic OP conformance, where the
-  // request object modules are skipped unless the OP advertises 'none' in
-  // request_object_signing_alg_values_supported. Default off (signed-only).
-  allowUnsignedRequestObject: process.env.OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT === '1',
-  // EXTENSION (google-login): set GOOGLE_CLIENT_ID (the OAuth client ID from the
-  // Google Cloud console) to render the "Sign in with Google" button, and
-  // register <issuer>/login/google as an authorized redirect URI there.
-  // GOOGLE_HOSTED_DOMAIN optionally restricts sign-in to one Workspace domain.
-  googleLogin: readGoogleLoginConfig(),
 });
 
 /**
- * The database of db/instance.ts. createDatabase() runs on its first use
- * rather than at import, so `next build` does not call it.
+ * The database of db/ (--db): the clients, the users and every record the OP
+ * keeps. db/instance.ts creates it on its first use, not at import, so `next
+ * build` does not open it.
  */
-const database = deferDatabase(createDatabase);
+const database = createDatabase();
 
 /**
- * Registered clients: the client records of the key-value store (db/keys.ts).
- * Put clients there with registerClient() (db/clients.ts).
+ * What the features may replace (their context hook): the registered
+ * clients, the client records of db/ put there with registerClient()
+ * (db/clients.ts).
  */
-export const clientResolver = createKvClientResolver(database);
+const context = contextOf(features, { clientResolver: createClientResolver(database) });
+
+/** Registered clients. */
+export const clientResolver = context.clientResolver;
 
 /**
  * The public keys of the registered clients, one purpose at a time (the OP
- * verifies signed Request Objects with those of request_object): the
- * client_jwks records of the key-value store, read for each request
- * (db/keys.ts).
+ * verifies signed Request Objects with those of request_object), read from
+ * db/ for each request.
  */
-export const clientKeyResolver: ClientKeyResolver = createKvClientKeyResolver(database);
+export const clientKeyResolver: ClientKeyResolver = createClientKeyResolver(database);
 
-/** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
-export const stores = createKvProviderStores(database);
-
-/** A KvDatabase that calls create() on its first use and keeps the result. */
-function deferDatabase(create: () => KvDatabase): KvDatabase {
-  let database: KvDatabase | undefined;
-  const resolve = (): KvDatabase => (database ??= create());
-  return {
-    get: (key) => resolve().get(key),
-    set: (key, value, ttlSeconds) => resolve().set(key, value, ttlSeconds),
-    setIfAbsent: (key, value, ttlSeconds) => resolve().setIfAbsent(key, value, ttlSeconds),
-    delete: (key) => resolve().delete(key),
-  };
-}
-
-// EXPERIMENTAL feature stores. They are in-memory (store.ts), so pending
-// requests do not survive a restart and are not shared between instances —
-// replace them with persistent stores before relying on these flows.
-export {
-  /** EXPERIMENTAL (RFC 8628): device authorizations. */
-  deviceAuthorizationStore,
-  /** EXPERIMENTAL (CIBA Core 1.0): backchannel authentication requests. */
-  cibaAuthenticationRequestStore,
-  /** EXPERIMENTAL (CIBA Core 1.0): sign-in forms of the authentication device UI. */
-  cibaLoginTransactionStore,
-} from './store';
+/** The stores of the authorization flows, on the same database. */
+export const stores = createProviderStores(database);
 
 /** The resolvers core reads authorization codes, tokens, sessions and consent through. */
 export const resolvers = createStoreResolvers(stores);
@@ -148,17 +115,6 @@ export const acrResolver: AcrResolver = async ({ requestedAcrValues }) => {
   if (acr === undefined) return undefined;
   return { acr, amr: ['pwd'] };
 };
-
-/**
- * EXPERIMENTAL (CIBA Core 1.0 §7.1): resolve a login_hint to the End-User the
- * backchannel authentication request is for. The default treats the hint as a
- * username of the user store; resolve email addresses, phone numbers or your
- * own identifiers here instead. Return null when no user matches.
- */
-export async function resolveCibaUser(loginHint: string): Promise<{ subject: string } | null> {
-  const claims = await stores.userStore.getClaims(loginHint);
-  return claims ? { subject: claims.sub } : null;
-}
 
 // --- Signing keys -------------------------------------------------------------
 //
@@ -289,11 +245,4 @@ async function generateSigningKey(): Promise<SigningKey> {
     publicJwk,
     keyId: publicJwk.kid,
   };
-}
-
-function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) return undefined;
-  const hostedDomain = process.env.GOOGLE_HOSTED_DOMAIN;
-  return hostedDomain ? { clientId, hostedDomain } : { clientId };
 }

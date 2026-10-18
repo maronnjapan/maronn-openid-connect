@@ -4,7 +4,7 @@
  * keys and the records they hold.
  *
  * Rewriting this file for another store is fine, but keep these behaviors -
- * routes/ and resolvers.ts rely on them:
+ * the endpoints and resolvers.ts rely on them:
  *
  * 1. Keep the ProviderStores types (method names, parameters, return values).
  * 2. authCodeStore.consume and refreshTokenStore.consume claim the code_used /
@@ -47,9 +47,7 @@ import {
   type RefreshTokenInfo,
   type UserClaims,
 } from '@maronn-openid-connect/core';
-import type { GoogleLoginNonceStore } from '@maronn-openid-connect/google-login';
 import {
-  googleAccountToClaims,
   type AccessTokenStorage,
   type AuthSessionInfo,
   type AuthSessionStorage,
@@ -58,6 +56,7 @@ import {
   type ConsentStorage,
   type ProviderStores,
   type RefreshTokenStorage,
+  type UpstreamLoginStorage,
   type UserStorage,
 } from '../store';
 import { readRecord, writeRecord, type KvDatabase } from './database';
@@ -82,9 +81,6 @@ import { verifyPassword } from './users';
 /** core prefixes the id of every AuthTransactionStore key with this. */
 const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 
-/** google-login prefixes the nonce of every GoogleLoginNonceStore key with this. */
-const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
-
 /**
  * The TTL of a sign-in (auth_user) whose transaction record is already gone:
  * the transaction cannot be completed any more, so the record only has to
@@ -95,7 +91,7 @@ const FALLBACK_TTL_SECONDS = 600;
 /** The value of a single-use marker (code_used, refresh_token_used) and of a revocation marker. */
 const MARKER = 'true';
 
-export function createKvProviderStores(db: KvDatabase): ProviderStores {
+export function createProviderStores(db: KvDatabase): ProviderStores {
   const read = <T>(key: string) => readRecord<T>(db, key);
   const write = (key: string, record: unknown, ttlSeconds?: number) =>
     writeRecord(db, key, record, ttlSeconds);
@@ -427,10 +423,10 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
   };
 
   // auth_type of a sign-in (auth_user): the provider of the user's federated
-  // identity, or password. A user created by Sign in with Google has no
-  // password, and registerUser() (users.ts) adds no federated identity, so
-  // each user signs in one way only unless you link a Google account to a
-  // user with a password yourself.
+  // identity, or password. A user created by an upstream sign-in (such as Sign
+  // in with Google) has no password, and registerUser() (users.ts) adds no
+  // federated identity, so each user signs in one way only unless you link an
+  // upstream account to a user with a password yourself.
   const authTypeOf = async (userId: string): Promise<string> => {
     const user = await read<UserRecord>(keys.user(userId));
     return user?.federated_identities?.[0]?.provider ?? 'password';
@@ -515,38 +511,41 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
     },
   };
 
-  // EXTENSION (google-login): the user linked to a Google account, if any.
-  const findGoogleUser = async (googleSub: string): Promise<string | undefined> => {
-    const identity = await read<FederatedIdentityRecord>(keys.federatedIdentity('google', googleSub));
+  // The user linked to an account at an upstream identity provider, if any.
+  const findFederatedUser = async (provider: string, providerSub: string): Promise<string | undefined> => {
+    const identity = await read<FederatedIdentityRecord>(keys.federatedIdentity(provider, providerSub));
     return identity?.user_id;
   };
 
-  // EXTENSION (google-login): link a Google account to a new user, under a new
-  // random id, on its first sign-in. Two first sign-ins of one account may
-  // race: setIfAbsent keeps one federated identity, and the request that lost
-  // uses the user it names.
-  const createGoogleUser = async (googleSub: string): Promise<string> => {
+  // Link an upstream account to a new user, under a new random id, on its
+  // first sign-in. Two first sign-ins of one account may race: setIfAbsent
+  // keeps one federated identity, and the request that lost uses the user it
+  // names.
+  const createFederatedUser = async (provider: string, providerSub: string): Promise<string> => {
     const userId = crypto.randomUUID();
     const now = nowSeconds();
     const identity: FederatedIdentityRecord = { user_id: userId, created_at: now, updated_at: now };
     const linked = await db.setIfAbsent(
-      keys.federatedIdentity('google', googleSub),
+      keys.federatedIdentity(provider, providerSub),
       JSON.stringify(identity),
     );
-    return linked ? userId : ((await findGoogleUser(googleSub)) ?? userId);
+    return linked ? userId : ((await findFederatedUser(provider, providerSub)) ?? userId);
   };
 
-  // EXTENSION (google-login): save the claims Google asserted to the user
-  // (email and email_verified to their fields, the others to claims), and
-  // create the user record on the first sign-in. password_hash is left as it
-  // is.
-  const saveGoogleClaims = async (claims: UserClaims, googleSub: string): Promise<void> => {
+  // Save the claims the upstream provider asserted to the user (email and
+  // email_verified to their fields, the others to claims), and create the user
+  // record on the first sign-in. password_hash is left as it is.
+  const saveFederatedClaims = async (
+    claims: UserClaims,
+    provider: string,
+    providerSub: string,
+  ): Promise<void> => {
     const { sub, email, email_verified, ...otherClaims } = claims;
     const current = await read<UserRecord>(keys.user(sub));
     const now = nowSeconds();
     const identities = current?.federated_identities ?? [];
     const linked = identities.some(
-      (identity) => identity.provider === 'google' && identity.provider_sub === googleSub,
+      (identity) => identity.provider === provider && identity.provider_sub === providerSub,
     );
     const record: UserRecord = {
       email: email ?? null,
@@ -557,7 +556,7 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
       claims: otherClaims,
       federated_identities: linked
         ? identities
-        : [...identities, { provider: 'google', provider_sub: googleSub }],
+        : [...identities, { provider, provider_sub: providerSub }],
     };
     await write(keys.user(sub), record);
   };
@@ -580,46 +579,46 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
       const user = await read<UserRecord>(keys.user(sub));
       return user ? userClaims(sub, user) : undefined;
     },
-    // EXTENSION (google-login): find or create the user of a verified Google
-    // account by its federated identity (never by email), and save the claims
-    // Google asserted.
-    async linkGoogleAccount(account) {
-      const userId = (await findGoogleUser(account.sub)) ?? (await createGoogleUser(account.sub));
-      const claims: UserClaims = { ...googleAccountToClaims(account), sub: userId };
-      await saveGoogleClaims(claims, account.sub);
+    // Find or create the user of a verified upstream account by its federated
+    // identity (never by email), and save the claims the provider asserted.
+    async linkFederatedIdentity(identity) {
+      const userId =
+        (await findFederatedUser(identity.provider, identity.subject)) ??
+        (await createFederatedUser(identity.provider, identity.subject));
+      const claims: UserClaims = { ...identity.claims, sub: userId };
+      await saveFederatedClaims(claims, identity.provider, identity.subject);
       return claims;
     },
   };
 
-  // EXTENSION (google-login): the nonce of the Google button, kept in the
-  // upstream_auth_request record of its transaction, and found by the nonce
+  // The upstream sign-in a transaction waits for, kept in the
+  // upstream_auth_request record of the transaction, and found by its nonce
   // through upstream_nonce. A transaction has one record, so a newer login
-  // page replaces the nonce of an older one. Both expire with the nonce.
-  const googleLoginNonceStore: GoogleLoginNonceStore = {
-    async get(key) {
-      const nonce = withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX);
+  // page replaces the nonce of an older one. Both expire with the transaction.
+  const upstreamLoginStore: UpstreamLoginStorage = {
+    async find(nonce) {
       const index = await read<UpstreamNonceRecord>(keys.upstreamNonce(nonce));
-      if (!index) return null;
+      if (!index) return undefined;
       const request = await read<UpstreamAuthRequestRecord>(keys.upstreamAuthRequest(index.transaction_id));
-      if (!request || request.nonce !== nonce || request.expired_at <= nowSeconds()) return null;
-      return { transactionId: index.transaction_id, expiresAt: request.expired_at * 1000 };
+      if (!request || request.nonce !== nonce || request.expired_at <= nowSeconds()) return undefined;
+      return { provider: request.provider, transactionId: index.transaction_id, expiresAt: request.expired_at * 1000 };
     },
-    async put(key, value, ttlSeconds) {
-      const nonce = withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX);
+    async save(nonce, login) {
+      const expiredAt = Math.ceil(login.expiresAt / 1000);
+      const ttlSeconds = Math.max(1, expiredAt - nowSeconds());
       const request: UpstreamAuthRequestRecord = {
-        provider: 'google',
+        provider: login.provider,
         state: null,
         nonce,
         code_verifier: null,
-        expired_at: Math.ceil(value.expiresAt / 1000),
+        expired_at: expiredAt,
       };
-      const index: UpstreamNonceRecord = { transaction_id: value.transactionId };
-      await write(keys.upstreamAuthRequest(value.transactionId), request, ttlSeconds);
+      const index: UpstreamNonceRecord = { transaction_id: login.transactionId };
+      await write(keys.upstreamAuthRequest(login.transactionId), request, ttlSeconds);
       await write(keys.upstreamNonce(nonce), index, ttlSeconds);
-      await advanceTransaction(value.transactionId, ['requested'], 'upstream_pending');
+      await advanceTransaction(login.transactionId, ['requested'], 'upstream_pending');
     },
-    async delete(key) {
-      const nonce = withoutPrefix(key, GOOGLE_LOGIN_NONCE_KEY_PREFIX);
+    async delete(nonce) {
       const index = await read<UpstreamNonceRecord>(keys.upstreamNonce(nonce));
       await db.delete(keys.upstreamNonce(nonce));
       if (!index) return;
@@ -637,7 +636,7 @@ export function createKvProviderStores(db: KvDatabase): ProviderStores {
     browserSessionStore,
     consentStore,
     userStore,
-    googleLoginNonceStore,
+    upstreamLoginStore,
   };
 }
 

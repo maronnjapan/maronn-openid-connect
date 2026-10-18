@@ -1,53 +1,33 @@
+/**
+ * The resolvers core takes, on one set of ProviderStores (store.ts).
+ *
+ * Build them over one coherent store set: a request must never mix resolvers
+ * of one backend with stores of another.
+ */
 import type {
-  ClientResolver,
-  ClientKeyResolver,
-  TokenClientResolver,
-  AuthorizationCodeResolver,
-  AuthorizationCodeInfo,
-  AccessTokenResolver,
   AccessTokenInfo,
-  RefreshTokenResolver,
-  RefreshTokenInfo,
-  AuthenticationSessionResolver,
+  AccessTokenResolver,
   AuthenticationSessionInfo,
-  UserClaimsResolver,
-  UserClaims,
-  IntrospectionAccessTokenResolver,
-  IntrospectionRefreshTokenResolver,
-  RevocationTokenResolvers,
-  SessionResolver,
-  SessionInfo,
+  AuthenticationSessionResolver,
+  AuthorizationCodeInfo,
+  AuthorizationCodeResolver,
   ConsentResolver,
+  RefreshTokenInfo,
+  RefreshTokenResolver,
+  SessionInfo,
+  SessionResolver,
+  UserClaims,
+  UserClaimsResolver,
 } from '@maronn-openid-connect/core';
-import { createInMemoryClientKeyResolver, createInMemoryClientResolver } from './config';
-import {
-  defaultProviderStores,
-  parseSessionId,
-  type ProviderStores,
-} from './store';
+import { parseSessionId } from './cookies';
+import type { ProviderStores } from './store';
 
-/**
- * Default in-memory client resolver for quick local testing.
- * The Next.js endpoints use the client resolver built in provider.ts instead.
- */
-export const clientResolver: ClientResolver & TokenClientResolver =
-  createInMemoryClientResolver();
-
-export const tokenClientResolver: TokenClientResolver = clientResolver;
-
-/**
- * Default key resolver: the keys of the clients of config.ts
- * (ClientRegistration.keys), one purpose at a time.
- */
-export const clientKeyResolver: ClientKeyResolver = createInMemoryClientKeyResolver();
-
-/**
- * Build the resolver suite over one coherent store set. A request must never
- * mix resolvers from one backend with direct stores from another backend.
- */
+/** A ConsentResolver that also records the grants issued under a consent. */
 export type GrantAwareConsentResolver = ConsentResolver & {
   recordGrant(subject: string, clientId: string, grantId: string): Promise<void>;
 };
+
+export type StoreResolvers = ReturnType<typeof createStoreResolvers>;
 
 export function createStoreResolvers(stores: ProviderStores) {
   const {
@@ -94,36 +74,6 @@ export function createStoreResolvers(stores: ProviderStores) {
   const userClaimsResolver: UserClaimsResolver = {
     async findUserClaims(sub: string): Promise<UserClaims | null> {
       return (await userStore.getClaims(sub)) ?? null;
-    },
-  };
-
-  const introspectionAccessTokenResolver: IntrospectionAccessTokenResolver = {
-    async findAccessToken(token) {
-      return (await accessTokenStore.get(token)) ?? null;
-    },
-  };
-
-  const introspectionRefreshTokenResolver: IntrospectionRefreshTokenResolver = {
-    async resolve(token) {
-      return (await refreshTokenStore.get(token)) ?? null;
-    },
-  };
-
-  const revocationResolvers: RevocationTokenResolvers = {
-    async findAccessToken(token) {
-      return (await accessTokenStore.get(token)) ?? null;
-    },
-    async revokeAccessToken(token) {
-      await accessTokenStore.revoke(token);
-    },
-    async findRefreshToken(token) {
-      return (await refreshTokenStore.get(token)) ?? null;
-    },
-    async revokeRefreshToken(token) {
-      await refreshTokenStore.revoke(token);
-    },
-    async revokeAccessTokensByGrantId(grantId) {
-      await accessTokenStore.revokeByGrantId(grantId);
     },
   };
 
@@ -180,31 +130,8 @@ export function createStoreResolvers(stores: ProviderStores) {
     refreshTokenResolver,
     authenticationSessionResolver,
     userClaimsResolver,
-    introspectionAccessTokenResolver,
-    introspectionRefreshTokenResolver,
-    revocationResolvers,
     sessionResolver,
     consentResolver,
     revokeConsentAndTokens,
   };
-}
-
-const defaultStoreResolvers = createStoreResolvers(defaultProviderStores);
-
-export const authorizationCodeResolver = defaultStoreResolvers.authorizationCodeResolver;
-export const accessTokenResolver = defaultStoreResolvers.accessTokenResolver;
-export const refreshTokenResolver = defaultStoreResolvers.refreshTokenResolver;
-export const authenticationSessionResolver =
-  defaultStoreResolvers.authenticationSessionResolver;
-export const userClaimsResolver = defaultStoreResolvers.userClaimsResolver;
-export const introspectionAccessTokenResolver =
-  defaultStoreResolvers.introspectionAccessTokenResolver;
-export const introspectionRefreshTokenResolver =
-  defaultStoreResolvers.introspectionRefreshTokenResolver;
-export const revocationResolvers = defaultStoreResolvers.revocationResolvers;
-export const sessionResolver = defaultStoreResolvers.sessionResolver;
-export const consentResolver = defaultStoreResolvers.consentResolver;
-
-export async function revokeConsentAndTokens(subject: string, clientId: string): Promise<void> {
-  await defaultStoreResolvers.revokeConsentAndTokens(subject, clientId);
 }

@@ -135,7 +135,7 @@ export interface UserRecord {
   federated_identities?: Array<{ provider: string; provider_sub: string }>;
 }
 
-/** Federated_identity (google-login): the account of a user at an external IdP. */
+/** Federated_identity: the account of a user at an external IdP, for an upstream sign-in such as Sign in with Google. */
 export interface FederatedIdentityRecord {
   user_id: string;
   created_at: number;
@@ -188,7 +188,7 @@ export interface AuthUserRecord {
 }
 
 /**
- * Upstream_auth_request (google-login): the request to the external IdP.
+ * Upstream_auth_request: the sign-in at an external IdP a transaction waits for.
  * Sign in with Google (GIS redirect mode) sends no state and uses no PKCE, so
  * state and code_verifier are null. A transaction has one, so a newer login
  * page replaces the nonce of an older one.

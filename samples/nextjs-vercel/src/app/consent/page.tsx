@@ -1,3 +1,5 @@
+import { stores } from '../_oidc-provider/provider';
+import { resolveGrantableScopes } from '../_oidc-provider/scopes';
 import { requireTransaction } from '../_oidc-provider/transaction';
 import { consentAction } from './actions';
 
@@ -18,9 +20,17 @@ export const dynamic = 'force-dynamic';
  * requireTransaction() in _oidc-provider/transaction.ts).
  */
 export default async function ConsentPage() {
-  const { transaction } = await requireTransaction();
+  const { transactionId, transaction } = await requireTransaction();
 
-  const scopes = transaction.scope.split(' ').filter(Boolean);
+  // Show only what THIS End-User can actually grant (resolveGrantableScopes in
+  // scopes.ts). The subject comes from the login step's hand-off; without one
+  // the request is shown as-is, and the Server Action stops on the same missing
+  // session.
+  const requestedScopes = transaction.scope.split(' ').filter(Boolean);
+  const consentSession = await stores.authSessionStore.get(transactionId);
+  const scopes = consentSession
+    ? await resolveGrantableScopes(requestedScopes, consentSession.subject)
+    : requestedScopes;
 
   return (
     <main>

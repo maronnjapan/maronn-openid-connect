@@ -7,11 +7,17 @@ import {
   completeAuthTransaction,
   createAuthorizationCode,
   validateCsrfToken,
-  type AuthTransaction,
 } from '@maronn-openid-connect/core';
+import {
+  authorizationResponseUrl,
+  restoreResponseMode,
+  type AuthorizationResponseMode,
+  type ResponseModeTransaction,
+} from '../authorize/response-mode';
 import { errorPagePath } from '../_oidc-provider/http';
-import { config, resolvers, stores } from '../_oidc-provider/provider';
-import { TRANSACTION_COOKIE_NAME } from '../_oidc-provider/store';
+import { config, loadSigningKeys, resolvers, stores } from '../_oidc-provider/provider';
+import { TRANSACTION_COOKIE_NAME } from '../_oidc-provider/cookies';
+import { resolveGrantableScopes } from '../_oidc-provider/scopes';
 import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider/transaction';
 
 /**
@@ -29,7 +35,7 @@ export async function consentAction(formData: FormData): Promise<void> {
   // The transaction cookie says which transaction this browser is in ...
   const current = await requireTransaction();
   const transactionId = current.transactionId;
-  const transaction = current.transaction;
+  const transaction: ResponseModeTransaction = current.transaction;
 
   // ... and the CSRF token proves the decision came from the form this browser
   // was shown for exactly that transaction. Checked before any decision is acted
@@ -39,6 +45,16 @@ export async function consentAction(formData: FormData): Promise<void> {
   } catch (error) {
     if (error instanceof AuthTransactionError) redirect(errorPagePath(error.code, error.message));
     throw error;
+  }
+
+  // The response mode the authorization request asked for (JARM's query.jwt),
+  // restored before anything is recorded, so a key outage stops here instead
+  // of after the code and the consent were stored.
+  let responseMode: AuthorizationResponseMode | undefined;
+  try {
+    responseMode = await restoreResponseMode(transaction, { issuer: config.issuer, loadSigningKeys });
+  } catch {
+    redirect(errorPagePath('server_error', 'Failed to load the response signing key'));
   }
 
   if (action === 'deny') {
@@ -52,10 +68,10 @@ export async function consentAction(formData: FormData): Promise<void> {
       httpOnly: true,
       sameSite: 'lax',
     });
-    redirect(authorizationResponseUrl(transaction, {
+    redirect(await authorizationResponseUrl(responseMode, transaction.redirectUri, {
       error: 'access_denied',
       state: transaction.state,
-    }));
+    }, config.issuer));
   }
 
   // OIDC Core 1.0 §3.1.2.4: "the Authorization Server MUST obtain an
@@ -87,10 +103,14 @@ export async function consentAction(formData: FormData): Promise<void> {
     stores.transactionStore,
   );
 
-  // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した後の値。
-  // offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、クライアント登録
-  // grant_types に refresh_token があるか）はそこで確定しているので再フィルタしない。
-  const grantedScope = transaction.scope.split(' ').filter(Boolean);
+  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place for
+  // per-user filtering). A dropped scope narrows the grant rather than failing
+  // the request: RFC 6749 §3.3 lets the authorization server issue a narrower
+  // scope, and the token response reports what was granted.
+  const grantedScope = await resolveGrantableScopes(
+    transaction.scope.split(' ').filter(Boolean),
+    session.subject,
+  );
 
   // OIDC Core 1.0 §3.1.3.1: TTL is configurable via ProviderConfig (300 seconds by default).
   const authCodeData = await createAuthorizationCode({
@@ -120,24 +140,8 @@ export async function consentAction(formData: FormData): Promise<void> {
     httpOnly: true,
     sameSite: 'lax',
   });
-  redirect(authorizationResponseUrl(transaction, {
+  redirect(await authorizationResponseUrl(responseMode, transaction.redirectUri, {
     code: authCodeData.code,
     state: responseParams.state,
-  }));
-}
-
-/**
- * The authorization response URL: the parameters in the query, with iss on
- * every response, success and error alike (RFC 9207 §2).
- */
-function authorizationResponseUrl(
-  transaction: AuthTransaction,
-  parameters: Record<string, string | undefined>,
-): string {
-  const url = new URL(transaction.redirectUri);
-  for (const [name, value] of Object.entries(parameters)) {
-    if (value !== undefined) url.searchParams.set(name, value);
-  }
-  url.searchParams.set('iss', config.issuer);
-  return url.toString();
+  }, config.issuer));
 }

@@ -1,9 +1,5 @@
-import Script from 'next/script';
-import { issueGoogleLoginNonce } from '@maronn-openid-connect/google-login';
-import {
-  buildGoogleSignInAttributes,
-  GOOGLE_GSI_CLIENT_SCRIPT_URL,
-} from '@maronn-openid-connect/google-login/sign-in';
+import { loginMethodsOf } from '../_oidc-provider/feature';
+import { features } from '../_oidc-provider/features';
 import { config, stores } from '../_oidc-provider/provider';
 import { requireTransaction } from '../_oidc-provider/transaction';
 import { loginAction } from './actions';
@@ -36,28 +32,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { error, remaining } = await searchParams;
   const { transactionId, transaction } = await requireTransaction();
 
-  // EXTENSION (google-login): the GIS configuration (g_id_onload attributes),
-  // built only when config.googleLogin is set. Each render issues a fresh nonce
-  // bound to this transaction; Google echoes it in the ID token, which is how
-  // login/google/route.ts finds its way back to this authorization request.
-  const googleLogin = config.googleLogin;
-  const googleSignIn = googleLogin
-    ? buildGoogleSignInAttributes({
-        clientId: googleLogin.clientId,
-        // Must equal an authorized redirect URI of the Google OAuth client. Built
-        // on config.issuer, like every URL the OP builds for itself.
-        loginUri: new URL('/login/google', config.issuer).toString(),
-        nonce: await issueGoogleLoginNonce({
-          transactionId,
-          expiresAt: transaction.expiresAt,
-          store: stores.googleLoginNonceStore,
-        }),
-        // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
-        loginHint: transaction.loginHint,
-        hostedDomain:
-          typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
-      })
-    : undefined;
+  // The other ways to sign in (the loginMethods of the features, such as
+  // Sign in with Google): each shows what it renders for this transaction.
+  const loginMethods = [];
+  for (const method of loginMethodsOf(features)) {
+    const rendered = await method.render({ transactionId, transaction, config, stores });
+    if (rendered !== undefined) loginMethods.push({ id: method.id, rendered });
+  }
 
   const errorMessage =
     error === 'invalid_credentials'
@@ -92,20 +73,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </div>
         <button type="submit">Login</button>
       </form>
-      {/*
-        EXTENSION (google-login): the three elements GIS needs for redirect mode.
-        googleSignIn holds the g_id_onload attributes (data-ux_mode="redirect",
-        data-login_uri, data-nonce, ...) and spreads straight onto the element;
-        GIS replaces .g_id_signin with the button — style it through the GIS
-        button attributes (data-theme, data-size, data-text, ...).
-      */}
-      {googleSignIn ? (
-        <section aria-label="Sign in with Google">
-          <Script src={GOOGLE_GSI_CLIENT_SCRIPT_URL} strategy="afterInteractive" />
-          <div {...googleSignIn} />
-          <div className="g_id_signin" data-type="standard" />
-        </section>
-      ) : null}
+      {loginMethods.map(({ id, rendered }) => (
+        <div key={id}>{rendered}</div>
+      ))}
     </main>
   );
 }

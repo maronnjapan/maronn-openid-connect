@@ -49,7 +49,7 @@ import type { ClientRegistration, RegisteredClient } from '../config';
 import { readRecord, writeRecord, type KvDatabase } from './database';
 import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord } from './keys';
 
-export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenClientResolver {
+export function createClientResolver(db: KvDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
       const client = await readRecord<ClientRecord>(db, keys.client(clientId));
@@ -86,7 +86,7 @@ export function createKvClientResolver(db: KvDatabase): ClientResolver & TokenCl
  * verifies a signed Request Object with the keys of request_object. A deleted
  * client (is_deleted) has no keys.
  */
-export function createKvClientKeyResolver(db: KvDatabase): ClientKeyResolver {
+export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
   return {
     async findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet> {
       const client = await readRecord<ClientRecord>(db, keys.client(clientId));

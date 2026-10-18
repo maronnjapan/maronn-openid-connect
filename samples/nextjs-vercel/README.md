@@ -10,7 +10,7 @@ CLIの `--db kv` で生成したキー・バリューストア用のコード（
 
 ## 構成
 
-`src/app` は CLI（`pnpm run generate`）が生成した App Router のコードで、手では編集しない（例外は、サンプルが書いた `_oidc-provider/db/instance.ts`。CLI はこのファイルを上書きしない）。エンドポイントごとの Route Handler（`authorize/route.ts`・`token/route.ts` など）、ログイン・同意のページと Server Action（`login/`・`consent/`。トランザクションが無いときの `not-found.tsx` と想定外の例外のときの `error.tsx` を含む）、OP のエラーページ（`oidc-error/page.tsx`）、全エンドポイントが共有する部品（`_oidc-provider/`）から成る。設定・クライアント・署名鍵・ストアの組み立ては `src/app/_oidc-provider/provider.ts` にある。`src/app` の外にある `src/instrumentation.ts` と `src/sample-data.ts` は、起動時にクライアントとユーザーを登録するサンプルのコードである。
+`src/app` は CLI（`pnpm run generate`）が生成した App Router のコードで、手では編集しない（例外は、サンプルが書いた `_oidc-provider/db/instance.ts`。CLI はこのファイルを上書きしない）。エンドポイントごとの Route Handler（`authorize/route.ts`・`token/route.ts` など。機能のエンドポイントは、その機能の route group `(<feature-id>)/` の下にある）、ログイン・同意のページと Server Action（`login/`・`consent/`。トランザクションが無いときの `not-found.tsx` と想定外の例外のときの `error.tsx` を含む）、OP のエラーページ（`oidc-error/page.tsx`）、全エンドポイントが共有する部品と機能のコード（`_oidc-provider/`。機能ごとのコードは `_oidc-provider/features/<feature-id>/`）から成る。生成元は `apps/nextjs` で、生成コードを直すときはそちらを直す。設定・クライアント・署名鍵・ストアの組み立ては `src/app/_oidc-provider/provider.ts` にある。`src/app` の外にある `src/instrumentation.ts` と `src/sample-data.ts` は、起動時にクライアントとユーザーを登録するサンプルのコードである。
 
 ## ローカル起動（一発）
 
@@ -41,7 +41,7 @@ issuerは `.deploy/issuer` に保存され、2回目以降は1回のデプロイ
 
 ## Google ログイン（任意）
 
-このサンプルは `--enable google-login`（`@maronn-openid-connect/google-login`）付きで生成されており、`GOOGLE_CLIENT_ID` を設定するとログイン画面（`src/app/login/page.tsx`）に「Google でログイン」が表示され、`src/app/login/google/route.ts` が Google からの POST を受ける。未設定なら従来どおりユーザー名 + パスワードのみ。
+このサンプルは `--enable google-login`（`@maronn-openid-connect/google-login`）付きで生成されており、`GOOGLE_CLIENT_ID` を設定するとログイン画面（`src/app/login/page.tsx`）に「Google でログイン」が表示され、`src/app/(google-login)/login/google/route.ts` が Google からの POST を受ける。未設定なら従来どおりユーザー名 + パスワードのみ。
 
 1. Google Cloud コンソールで OAuth 2.0 クライアント ID（ウェブ アプリケーション）を作成する
 2. 「承認済みの JavaScript 生成元」にログイン画面のオリジン、「承認済みのリダイレクト URI」に `<issuer>/login/google` を登録する（Google は `http://127.0.0.1` を生成元として受け付けないので、ローカルでは `localhost` で起動する）

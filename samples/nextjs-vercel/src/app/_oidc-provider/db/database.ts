@@ -1,7 +1,7 @@
 /**
  * The key-value contract of the generated OP (--db kv).
  *
- * db/stores.ts, db/clients.ts and db/users.ts keep every record through these
+ * stores.ts, clients.ts and users.ts keep every record through these
  * four methods, and db/instance.ts creates the object that implements them for
  * your store. keys.ts lists the keys and the records they hold.
  *

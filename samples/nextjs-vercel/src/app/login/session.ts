@@ -6,7 +6,7 @@
 import { cookies } from 'next/headers';
 import { generateRandomString, type AuthTransaction } from '@maronn-openid-connect/core';
 import { stores } from '../_oidc-provider/provider';
-import { SESSION_COOKIE_NAME } from '../_oidc-provider/store';
+import { SESSION_COOKIE_NAME } from '../_oidc-provider/cookies';
 
 /**
  * Start the OP session for subject and hand it to the consent step of this

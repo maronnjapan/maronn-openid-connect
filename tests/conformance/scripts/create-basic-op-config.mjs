@@ -208,21 +208,21 @@ function createStaticClients(redirectUris, clientJwks) {
       clientSecret: 'oidf-basic-client-secret',
       redirectUris,
       tokenEndpointAuthMethod: 'client_secret_basic',
-      jwks: clientJwks,
+      requestObjectJwks: clientJwks,
     }),
     createStaticClient({
       clientId: 'oidf-basic-client-2',
       clientSecret: 'oidf-basic-client-2-secret',
       redirectUris,
       tokenEndpointAuthMethod: 'client_secret_basic',
-      jwks: clientJwks,
+      requestObjectJwks: clientJwks,
     }),
     createStaticClient({
       clientId: 'oidf-post-client',
       clientSecret: 'oidf-post-client-secret',
       redirectUris,
       tokenEndpointAuthMethod: 'client_secret_post',
-      jwks: clientJwks,
+      requestObjectJwks: clientJwks,
     }),
   ];
 }
@@ -232,7 +232,7 @@ function createStaticClient({
   clientSecret,
   redirectUris,
   tokenEndpointAuthMethod,
-  jwks,
+  requestObjectJwks,
 }) {
   const client = {
     clientId,
@@ -240,13 +240,14 @@ function createStaticClient({
     redirectUris,
     clientType: 'confidential',
     grantTypes: ['authorization_code', 'refresh_token'],
-    tokenEndpointAuthMethod,
+    tokenEndpointAuthMethods: [tokenEndpointAuthMethod],
     responseTypes: ['code'],
   };
-  // OIDC Core 1.0 §6.1: register the client JWKS for signed Request Object
-  // verification only when supplied (keeps the default config shape unchanged).
-  if (jwks !== undefined) {
-    client.jwks = jwks;
+  // OIDC Core 1.0 §6.1: register the client JWKS as the keys of the
+  // request_object purpose, the ones the OP verifies signed Request Objects
+  // with, only when supplied (keeps the default config shape unchanged).
+  if (requestObjectJwks !== undefined) {
+    client.keys = { request_object: requestObjectJwks };
   }
   return client;
 }

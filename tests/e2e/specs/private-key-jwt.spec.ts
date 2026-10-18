@@ -87,8 +87,7 @@ test.describe('private_key_jwt', () => {
     expect(refused.status()).toBe(401);
     expect(await refused.json()).toEqual({
       error: 'invalid_client',
-      error_description:
-        'Client authentication method does not match the registered token_endpoint_auth_method',
+      error_description: 'Client authentication method is not registered for the client',
     });
 
     // The operator lets the client use private_key_jwt and stores its public
@@ -527,11 +526,19 @@ function kvDatabase(path: string): OpDatabase {
   };
   const keysOf = (sqlite: DatabaseSync, purpose: KeyPurpose): Array<{ kid?: unknown }> =>
     ((read(sqlite, jwksKey(purpose))?.keys ?? []) as Array<{ kid?: unknown }>);
+  // client_auths of the client record without its private_key_jwt entry.
+  const secretAuthsOf = (client: Record<string, unknown>): Array<{ client_auth_type?: unknown }> =>
+    ((client.client_auths ?? []) as Array<{ client_auth_type?: unknown }>).filter(
+      (auth) => auth.client_auth_type !== 'private_key_jwt',
+    );
   return {
     allowPrivateKeyJwt() {
       withSqlite(path, (sqlite) => {
-        const client = read(sqlite, clientKey);
-        write(sqlite, clientKey, { ...requireRecord(client, clientKey), private_key_jwt: true });
+        const client = requireRecord(read(sqlite, clientKey), clientKey);
+        write(sqlite, clientKey, {
+          ...client,
+          client_auths: [...secretAuthsOf(client), { client_auth_type: 'private_key_jwt' }],
+        });
       });
     },
     addKey(jwk, purpose) {
@@ -549,8 +556,8 @@ function kvDatabase(path: string): OpDatabase {
         for (const purpose of KEY_PURPOSES) {
           sqlite.prepare('DELETE FROM kv WHERE key = ?').run(jwksKey(purpose));
         }
-        const { private_key_jwt: _, ...client } = requireRecord(read(sqlite, clientKey), clientKey);
-        write(sqlite, clientKey, client);
+        const client = requireRecord(read(sqlite, clientKey), clientKey);
+        write(sqlite, clientKey, { ...client, client_auths: secretAuthsOf(client) });
       });
     },
   };

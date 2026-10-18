@@ -52,7 +52,7 @@ const oidcClientsJson = JSON.stringify([
       'urn:ietf:params:oauth:grant-type:jwt-bearer',
       'urn:openid:params:grant-type:ciba',
     ],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -64,7 +64,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -76,7 +76,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:openid:params:grant-type:ciba'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -85,7 +85,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${resourceServerURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['authorization_code', 'refresh_token'],
-    tokenEndpointAuthMethod: 'client_secret_basic',
+    tokenEndpointAuthMethods: ['client_secret_basic'],
     responseTypes: ['code'],
   },
   {
@@ -101,7 +101,7 @@ const oidcClientsJson = JSON.stringify([
       'urn:ietf:params:oauth:grant-type:device_code',
       'urn:openid:params:grant-type:ciba',
     ],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
     scope: ['openid', 'profile'],
   },
@@ -116,7 +116,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/private-key-jwt-callback`],
     clientType: 'confidential',
     grantTypes: ['authorization_code', 'refresh_token'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
 ]);
@@ -133,7 +133,7 @@ const xaaOidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -142,7 +142,7 @@ const xaaOidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
 ]);

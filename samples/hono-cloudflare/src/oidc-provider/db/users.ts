@@ -1,5 +1,5 @@
 /**
- * Users in the users table of db/schema.sql: registerUser() to put a user
+ * Users in the users table of schema.sql: registerUser() to put a user
  * there, and the password hashing that authenticate() (stores.ts) checks the
  * login form against.
  *

@@ -16,7 +16,8 @@
   "dependencies": {
     "@maronn-openid-connect/core": "workspace:*",
     "@maronn-openid-connect/experimental": "workspace:*",
-    "@maronn-openid-connect/google-login": "workspace:*"
+    "@maronn-openid-connect/google-login": "workspace:*",
+    "hono": "^4.13.13"
   },
   "devDependencies": {
     "@maronn-openid-connect/cli": "workspace:*",

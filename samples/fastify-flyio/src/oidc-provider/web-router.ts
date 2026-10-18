@@ -1,3 +1,14 @@
+/**
+ * A minimal router on the Fetch API, for the Express and Fastify output of
+ * `maronn-oidc generate`.
+ *
+ * The endpoints of the provider are written against Hono. For Express and
+ * Fastify the CLI puts this router in Hono's place: the endpoints only use the
+ * part of Hono's API it provides (use, route, get, post, and the c.req,
+ * c.json, c.header, c.set and c.get of the context), so the same code runs on
+ * it. apply.ts hands every request of the provider's paths from the framework
+ * to this router through node-adapter.ts.
+ */
 export type WebHandler = (c: WebContext) => Response | Promise<Response>;
 export type WebMiddleware = (
   c: WebContext,
@@ -150,7 +161,7 @@ export class WebRouter {
 
   request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const request = input instanceof Request
-      ? input
+      ? new Request(input, init)
       : new Request(resolveRequestInput(input), init);
     return this.fetch(request);
   }
@@ -197,11 +208,17 @@ export class WebRouter {
   }
 
   private dispatchRoute(context: WebContext, path: string): Promise<Response> {
+    // The longest mount prefix wins, so a router mounted at /login/google
+    // answers below a router mounted at /login whatever their order.
+    let matched: { mount: MountEntry; childPath: string } | undefined;
     for (const mount of this.mounts) {
       const childPath = childPathForMount(path, mount.prefix);
-      if (childPath !== undefined) {
-        return mount.router.dispatch(context, childPath);
+      if (childPath !== undefined && (matched === undefined || mount.prefix.length > matched.mount.prefix.length)) {
+        matched = { mount, childPath };
       }
+    }
+    if (matched) {
+      return matched.mount.router.dispatch(context, matched.childPath);
     }
 
     const route = this.routes.find(
@@ -261,7 +278,8 @@ function normalizePath(path: string): string {
 }
 
 function pathMatches(pattern: string, path: string): boolean {
-  const normalized = normalizeMount(pattern);
+  // Hono's /x/* matches /x and every path below it; a plain path matches the same.
+  const normalized = normalizeMount(pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern);
   if (normalized === '') return true;
   return path === normalized || path.startsWith(normalized + '/');
 }

@@ -1,3 +1,9 @@
+/**
+ * Node.js request / response conversion for the Express and Fastify output of
+ * `maronn-oidc generate`: apply.ts turns the framework's request into a Fetch
+ * API Request for the provider (WebRouter.fetch()) and writes the Response
+ * back.
+ */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 

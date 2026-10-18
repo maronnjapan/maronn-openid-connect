@@ -1,4 +1,4 @@
--- Tables of the generated OpenID Provider (db/stores.ts, db/clients.ts and db/users.ts).
+-- Tables of the generated OpenID Provider (stores.ts, clients.ts and users.ts of db/).
 --
 -- The tables follow the ER model of the OP: clients, users, authorization
 -- transactions, codes and tokens. Each comment names the entity a table
@@ -116,10 +116,23 @@ CREATE TABLE IF NOT EXISTS users (
   claims        TEXT
 );
 
+-- Federated_identity: the account of a user at an external IdP, for an upstream
+-- sign-in such as Sign in with Google (--enable google-login). A user is found
+-- by provider_sub, which the IdP never reassigns, and never by email.
+CREATE TABLE IF NOT EXISTS federated_identities (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  provider     VARCHAR(1000) NOT NULL,
+  provider_sub VARCHAR(255) NOT NULL,
+  created_at   BIGINT NOT NULL,
+  updated_at   BIGINT NOT NULL,
+  UNIQUE (provider, provider_sub)
+);
+CREATE INDEX IF NOT EXISTS federated_identities_user_id_idx ON federated_identities (user_id);
+
 -- Transaction: one authorization request, from /authorize until its code is
 -- exchanged. status moves requested -> upstream_pending -> authenticated ->
 -- code_issued -> token_issued, or ends as failed without a code.
--- (upstream_pending is used by Sign in with Google, --enable google-login.)
 CREATE TABLE IF NOT EXISTS transactions (
   transaction_id VARCHAR(5000) PRIMARY KEY,
   status         VARCHAR(1000) NOT NULL CHECK (status IN
@@ -148,6 +161,20 @@ CREATE TABLE IF NOT EXISTS authentication_requests (
   request_object        TEXT,
   -- Not in the ER model: the other parameters (prompt, max_age, claims, ...) as JSON.
   payload               TEXT NOT NULL
+);
+
+-- Upstream_auth_request: the sign-in at an external IdP a transaction waits
+-- for. nonce is the value the login page sends to the IdP, which returns it in
+-- its ID Token. Sign in with Google (redirect mode) sends no state and uses no
+-- PKCE, so state and code_verifier stay NULL. Only the latest login page of a
+-- transaction has a working upstream sign-in.
+CREATE TABLE IF NOT EXISTS upstream_auth_requests (
+  transaction_id VARCHAR(5000) PRIMARY KEY
+    REFERENCES transactions (transaction_id) ON DELETE CASCADE,
+  provider       VARCHAR(1000) NOT NULL,
+  state          VARCHAR(5000) UNIQUE,
+  nonce          VARCHAR(5000) NOT NULL UNIQUE,
+  code_verifier  VARCHAR(5000)
 );
 
 -- Auth_user: who signed in for the transaction, handed from the login step to

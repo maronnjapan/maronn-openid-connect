@@ -1,5 +1,5 @@
 /**
- * Registered clients on the client tables of db/schema.sql: the ClientResolver
+ * Registered clients on the client tables of schema.sql: the ClientResolver
  * and the ClientKeyResolver the OP uses when no other ones are passed in, and
  * registerClient() to put a client into those tables.
  *
@@ -51,7 +51,7 @@ import {
 import type { ClientRegistration, RegisteredClient } from '../config.js';
 import type { SqlDatabase } from './database.js';
 
-export function createSqlClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
+export function createClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
       const [client] = await db.all<{ id: string; client_type: string }>({
@@ -113,7 +113,7 @@ type ClientAuthType = 'client_secret_basic' | 'client_secret_post';
  * verifies a signed Request Object with the keys of request_object. A deleted
  * client (is_deleted) has no keys.
  */
-export function createSqlClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
+export function createClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
   return {
     async findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet> {
       const rows = await db.all<{ jwk: string }>({

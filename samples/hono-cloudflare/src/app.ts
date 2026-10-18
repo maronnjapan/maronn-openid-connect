@@ -9,14 +9,11 @@ import {
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
 import type { ClientRegistration } from './oidc-provider/config.js';
-import { registerClient } from './oidc-provider/db/clients.js';
-import type { SqlDatabase } from './oidc-provider/db/database.js';
+import { createProviderStores, registerClient, type Database } from './oidc-provider/db/index.js';
 import { createDatabase, d1Database } from './oidc-provider/db/instance.js';
-import { createSqlProviderStores } from './oidc-provider/db/stores.js';
-import { registerUser } from './oidc-provider/db/users.js';
-import { idJagConfig } from './oidc-provider/routes/token.js';
-import { rpInitiatedLogoutConfig } from './oidc-provider/routes/logout.js';
-import { UserStore } from './oidc-provider/store.js';
+import { registerDevelopmentUsers } from './oidc-provider/development.js';
+import { idJagConfig } from './oidc-provider/features/id-jag/config.js';
+import { rpInitiatedLogoutConfig } from './oidc-provider/features/rp-initiated-logout/config.js';
 
 interface Bindings {
   DB: D1Database;
@@ -88,7 +85,7 @@ if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
   const generatedActorTokenResolver = idJagConfig.actorTokenResolver;
   idJagConfig.actorTokenResolver = async (input) => {
     if (input.actorTokenType === 'urn:ietf:params:oauth:token-type:access_token') {
-      const stores = createSqlProviderStores(d1Database(bindings.DB));
+      const stores = createProviderStores(d1Database(bindings.DB));
       const info = await stores.accessTokenStore.get(input.actorToken);
       if (info === undefined || info.clientId !== input.clientId) return null;
       if (info.expiresAt <= Math.floor(Date.now() / 1000)) return null;
@@ -175,7 +172,7 @@ applyOidc(app, {
 
 export default app;
 
-async function registerSampleData(db: SqlDatabase): Promise<void> {
+async function registerSampleData(db: Database): Promise<void> {
   // registerClient() replaces an earlier registration of the same client_id,
   // so a restart picks up changed clients.
   for (const client of clients.values()) {
@@ -183,16 +180,10 @@ async function registerSampleData(db: SqlDatabase): Promise<void> {
   }
 
   // E2E and the conformance suite sign in as the development users of
-  // store.ts (testuser / otheruser, password "password"). registerUser()
-  // hashes the password with PBKDF2, which costs CPU time on every isolate,
-  // so a user that is already registered is left as it is.
-  const { userStore } = createSqlProviderStores(db);
-  const developmentUsers = new UserStore();
-  for (const username of ['testuser', 'otheruser']) {
-    if (await userStore.getClaims(username)) continue;
-    const user = developmentUsers.authenticate(username, 'password');
-    if (user) await registerUser(db, user);
-  }
+  // development.ts (testuser / otheruser, password "password").
+  // registerDevelopmentUsers() leaves a user that is already registered as
+  // it is, since hashing the password costs CPU time on every isolate.
+  await registerDevelopmentUsers(db);
 }
 
 function createEphemeralRs256KeyProvider(keyId = 'hono-cloudflare-rs256-key'): SigningKeyProvider {

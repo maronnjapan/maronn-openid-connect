@@ -1,9 +1,32 @@
-import type { FastifyInstance } from 'fastify';
-import type { FastifyReply, FastifyRequest } from 'fastify';
-import { createApp, type OidcProviderOptions } from './app.js';
+/**
+ * Apply the OpenID Connect Provider to a Fastify instance.
+ *
+ * Every path the provider serves (providerRoutes() of app.ts: the endpoints
+ * of every provider and those of the generated features, with the paths below
+ * them) is registered for every method and handed to the provider's router,
+ * which answers CORS preflights and 405 itself. Fastify matches paths exactly,
+ * so the paths below a mount point (/device/login, ...) are registered one by
+ * one.
+ *
+ * The routes live in a plugin of their own whose only body parser hands the
+ * raw bytes on, since the provider reads form and JSON bodies itself. The body
+ * parsers of the instance stay as they are for its own routes.
+ *
+ * @example
+ * import Fastify from 'fastify';
+ * import { applyOidc } from './oidc-provider/apply.js';
+ *
+ * const app = Fastify();
+ * await applyOidc(app, { signingKeyProvider: yourProvider, config: { issuer: 'https://op.example.com' } });
+ */
+import type { FastifyInstance, FastifyReply, FastifyRequest, HTTPMethods } from 'fastify';
+import { createApp, providerRoutes, type OidcProviderOptions } from './app.js';
 import { toWebRequest } from './node-adapter.js';
 
 export type ApplyOidcOptions = OidcProviderOptions;
+
+/** The methods every provider path is registered for; the provider answers 405 to those it does not serve. */
+const METHODS: HTTPMethods[] = ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT'];
 
 export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions): Promise<void> {
   const oidc = createApp(options);
@@ -12,45 +35,29 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
-  if (!app.hasContentTypeParser('application/x-www-form-urlencoded')) {
-    app.addContentTypeParser(
-      'application/x-www-form-urlencoded',
-      { parseAs: 'buffer' },
-      (_request, body, done) => {
-        done(null, body);
-      },
-    );
-  }
-
   const handle = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const body = Buffer.isBuffer(request.body)
-      ? request.body.buffer.slice(
+      ? (request.body.buffer.slice(
           request.body.byteOffset,
           request.body.byteOffset + request.body.byteLength,
-        ) as ArrayBuffer
+        ) as ArrayBuffer)
       : undefined;
     const response = await oidc.request(toWebRequest(request.raw, baseUrl, body));
     await toFastifyReply(reply, response);
   };
 
-  app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/authorize', handler: handle });
-  app.route({ method: ['POST', 'OPTIONS'], url: '/token', handler: handle });
-  app.route({ method: ['GET', 'POST', 'OPTIONS'], url: '/userinfo', handler: handle });
-  app.route({ method: ['POST', 'OPTIONS'], url: '/introspect', handler: handle });
-  app.route({ method: ['POST', 'OPTIONS'], url: '/revoke', handler: handle });
-  app.route({ method: ['POST', 'OPTIONS'], url: '/device_authorization', handler: handle });
-  app.route({ method: ['GET', 'POST'], url: '/device', handler: handle });
-  app.route({ method: ['POST'], url: '/device/login', handler: handle });
-  app.route({ method: ['POST'], url: '/device/approve', handler: handle });
-  app.route({ method: ['POST', 'OPTIONS'], url: '/backchannel_authentication', handler: handle });
-  app.route({ method: ['GET'], url: '/ciba', handler: handle });
-  app.route({ method: ['POST'], url: '/ciba/login', handler: handle });
-  app.route({ method: ['POST'], url: '/ciba/approve', handler: handle });
-  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/jwks.json', handler: handle });
-  app.route({ method: ['GET', 'OPTIONS'], url: '/.well-known/openid-configuration', handler: handle });
-  app.route({ method: ['GET', 'POST'], url: '/login', handler: handle });
-  app.route({ method: ['POST'], url: '/login/google', handler: handle });
-  app.route({ method: ['GET', 'POST'], url: '/consent', handler: handle });
+  await app.register(async (scope) => {
+    scope.removeAllContentTypeParsers();
+    scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
+      done(null, body);
+    });
+    for (const route of providerRoutes()) {
+      const paths = [route.path, ...Object.keys(route.subpaths ?? {}).map((subpath) => route.path + subpath)];
+      for (const url of paths) {
+        scope.route({ method: METHODS, url, handler: handle, exposeHeadRoute: false });
+      }
+    }
+  });
 }
 
 async function toFastifyReply(reply: FastifyReply, response: Response): Promise<void> {
@@ -63,5 +70,7 @@ async function toFastifyReply(reply: FastifyReply, response: Response): Promise<
     if (name.toLowerCase() === 'set-cookie') return;
     reply.header(name, value);
   });
-  reply.send(Buffer.from(await response.arrayBuffer()));
+  const body = Buffer.from(await response.arrayBuffer());
+  // An empty Buffer would be sent as application/octet-stream.
+  reply.send(body.byteLength === 0 ? undefined : body);
 }

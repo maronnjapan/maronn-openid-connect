@@ -1,12 +1,12 @@
 /**
- * ProviderStores (store.ts) on the tables of db/schema.sql: the stores the OP
+ * ProviderStores (store.ts) on the tables of schema.sql: the stores the OP
  * uses when no other storage is passed in. Every SQL statement runs through
- * the SqlDatabase that db/instance.ts creates. An operation that touches two
- * tables (a transaction and its request, a code and the status of its
- * transaction) runs its statements one after another.
+ * the SqlDatabase that createDatabase() (db/instance.ts) returns. An
+ * operation that touches two tables (a transaction and its request, a code
+ * and the status of its transaction) runs its statements one after another.
  *
  * Rewriting this file for another driver or an ORM is fine, but keep these
- * behaviors - routes/ and resolvers.ts rely on them:
+ * behaviors - the endpoints and resolvers.ts rely on them:
  *
  * 1. Keep the ProviderStores types (method names, parameters, return values).
  * 2. authCodeStore.consume and refreshTokenStore.consume flip is_used from
@@ -37,16 +37,17 @@ import {
   type RefreshTokenInfo,
   type UserClaims,
 } from '@maronn-openid-connect/core';
-import {
-  type AccessTokenStorage,
-  type AuthSessionInfo,
-  type AuthSessionStorage,
-  type AuthorizationCodeStorage,
-  type BrowserSessionStorage,
-  type ConsentStorage,
-  type ProviderStores,
-  type RefreshTokenStorage,
-  type UserStorage,
+import type {
+  AccessTokenStorage,
+  AuthSessionInfo,
+  AuthSessionStorage,
+  AuthorizationCodeStorage,
+  BrowserSessionStorage,
+  ConsentStorage,
+  ProviderStores,
+  RefreshTokenStorage,
+  UpstreamLoginStorage,
+  UserStorage,
 } from '../store.js';
 import type { SqlDatabase } from './database.js';
 import { verifyPassword } from './users.js';
@@ -57,7 +58,7 @@ const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 /** The statuses of a transaction in progress. */
 const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 
-export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
+export function createProviderStores(db: SqlDatabase): ProviderStores {
   // Transaction + Authentication_request: what the authorization request asked
   // for goes to authentication_requests, the state of the flow to transactions.
   const transactionStore: AuthTransactionStore = {
@@ -343,6 +344,19 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     },
   };
 
+  // auth_type of a sign-in (auth_users): the provider of the user's federated
+  // identity, or password. A user created by an upstream sign-in (such as Sign
+  // in with Google) has no password, and registerUser() (users.ts) creates no
+  // federated identity, so each user signs in one way only unless you link an
+  // upstream account to a user with a password yourself.
+  const authTypeOf = async (userId: string): Promise<string> => {
+    const [row] = await db.all<{ provider: string }>({
+      sql: 'SELECT provider FROM federated_identities WHERE user_id = ? ORDER BY created_at LIMIT 1',
+      params: [userId],
+    });
+    return row?.provider ?? 'password';
+  };
+
   // Auth_user: the sign-in handed from /login to /consent, per transaction.
   const authSessionStore: AuthSessionStorage = {
     async set(transactionId, info) {
@@ -352,7 +366,7 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
           'VALUES (?, ?, ?, ?, ?) ' +
           'ON CONFLICT (transaction_id) DO UPDATE SET user_id = excluded.user_id, ' +
           'auth_type = excluded.auth_type, auth_time = excluded.auth_time, session_id = excluded.session_id',
-        params: [transactionId, info.subject, 'password', info.authTime, info.sessionId ?? null],
+        params: [transactionId, info.subject, await authTypeOf(info.subject), info.authTime, info.sessionId ?? null],
       });
       await db.run({
         sql:
@@ -449,6 +463,52 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
   };
 
 
+  // The user linked to an account at an upstream identity provider, if any.
+  const findFederatedUser = async (provider: string, providerSub: string): Promise<string | undefined> => {
+    const [row] = await db.all<{ user_id: string }>({
+      sql: 'SELECT user_id FROM federated_identities WHERE provider = ? AND provider_sub = ?',
+      params: [provider, providerSub],
+    });
+    return row?.user_id;
+  };
+
+  // Create the user of an upstream account on its first sign-in, under a new
+  // random id. Two first sign-ins of one account may race: UNIQUE (provider,
+  // provider_sub) keeps one federated identity, and the user created by the
+  // other request is removed again.
+  const createFederatedUser = async (provider: string, providerSub: string): Promise<string> => {
+    const userId = crypto.randomUUID();
+    const now = nowSeconds();
+    await db.run({
+      sql: 'INSERT INTO users (id, is_verified, created_at, updated_at) VALUES (?, FALSE, ?, ?)',
+      params: [userId, now, now],
+    });
+    await db.run({
+      sql:
+        'INSERT INTO federated_identities (id, user_id, provider, provider_sub, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (provider, provider_sub) DO NOTHING',
+      params: [crypto.randomUUID(), userId, provider, providerSub, now, now],
+    });
+    const linkedUserId = (await findFederatedUser(provider, providerSub)) ?? userId;
+    if (linkedUserId !== userId) {
+      await db.run({ sql: 'DELETE FROM users WHERE id = ?', params: [userId] });
+    }
+    return linkedUserId;
+  };
+
+  // Save the claims the upstream provider asserted to the user: email and
+  // email_verified to their columns, the others to claims as JSON.
+  // password_hash is left as it is.
+  const saveFederatedClaims = async (claims: UserClaims): Promise<void> => {
+    const { sub, email, email_verified, ...otherClaims } = claims;
+    await db.run({
+      sql:
+        'UPDATE users SET email = ?, is_verified = ' + sqlBoolean(email_verified === true) + ', ' +
+        'updated_at = ?, claims = ? WHERE id = ?',
+      params: [email ?? null, nowSeconds(), JSON.stringify(otherClaims), sub],
+    });
+  };
+
   // User: the users table. Put users there with registerUser() (users.ts).
   const userStore: UserStorage = {
     // The password form checks users.id as the username. Look the row up by
@@ -459,8 +519,8 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
         params: [username],
       });
       // verifyPassword() takes as long without a hash, so the response time does
-      // not tell whether the user exists. A user without a password (such as one
-      // created by Sign in with Google) cannot sign in with the form.
+      // not tell whether the user exists. A user without a password (one
+      // created by an upstream sign-in) cannot sign in with the form.
       const passwordHash = row?.password_hash ?? null;
       if (!(await verifyPassword(password, passwordHash)) || !row || passwordHash === null) {
         return undefined;
@@ -474,6 +534,49 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
       });
       return row ? userClaims(sub, row) : undefined;
     },
+    // Find or create the user of a verified upstream account by its federated
+    // identity (never by email), and save the claims the provider asserted.
+    async linkFederatedIdentity(identity) {
+      const userId =
+        (await findFederatedUser(identity.provider, identity.subject)) ??
+        (await createFederatedUser(identity.provider, identity.subject));
+      const claims: UserClaims = { ...identity.claims, sub: userId };
+      await saveFederatedClaims(claims);
+      return claims;
+    },
+  };
+
+  // The upstream sign-in a transaction waits for, kept as the
+  // upstream_auth_requests row of the transaction and found by its nonce. A
+  // transaction has one row, so a newer login page replaces the nonce of an
+  // older one. The record expires with the transaction.
+  const upstreamLoginStore: UpstreamLoginStorage = {
+    async find(nonce) {
+      const [row] = await db.all<{ provider: string; transaction_id: string; expired_at: number | string }>({
+        sql:
+          'SELECT u.provider, u.transaction_id, t.expired_at FROM upstream_auth_requests u ' +
+          'JOIN transactions t ON t.transaction_id = u.transaction_id ' +
+          'WHERE u.nonce = ? AND t.expired_at > ?',
+        params: [nonce, nowSeconds()],
+      });
+      if (!row) return undefined;
+      return { provider: row.provider, transactionId: row.transaction_id, expiresAt: Number(row.expired_at) * 1000 };
+    },
+    async save(nonce, login) {
+      await db.run({
+        sql:
+          'INSERT INTO upstream_auth_requests (transaction_id, provider, nonce) VALUES (?, ?, ?) ' +
+          'ON CONFLICT (transaction_id) DO UPDATE SET provider = excluded.provider, nonce = excluded.nonce',
+        params: [login.transactionId, login.provider, nonce],
+      });
+      await db.run({
+        sql: "UPDATE transactions SET status = 'upstream_pending' WHERE transaction_id = ? AND status = 'requested'",
+        params: [login.transactionId],
+      });
+    },
+    async delete(nonce) {
+      await db.run({ sql: 'DELETE FROM upstream_auth_requests WHERE nonce = ?', params: [nonce] });
+    },
   };
 
   return {
@@ -485,6 +588,7 @@ export function createSqlProviderStores(db: SqlDatabase): ProviderStores {
     browserSessionStore,
     consentStore,
     userStore,
+    upstreamLoginStore,
   };
 }
 

@@ -1,9 +1,9 @@
 /**
- * The statements of db/schema.sql, for databases that are set up at startup
+ * The statements of schema.sql, for databases that are set up at startup
  * (for example node:sqlite: database.exec(SCHEMA_SQL)). Every statement is
  * CREATE ... IF NOT EXISTS, so running it again is harmless.
  */
-export const SCHEMA_SQL = `-- Tables of the generated OpenID Provider (db/stores.ts, db/clients.ts and db/users.ts).
+export const SCHEMA_SQL = `-- Tables of the generated OpenID Provider (stores.ts, clients.ts and users.ts of db/).
 --
 -- The tables follow the ER model of the OP: clients, users, authorization
 -- transactions, codes and tokens. Each comment names the entity a table
@@ -121,9 +121,9 @@ CREATE TABLE IF NOT EXISTS users (
   claims        TEXT
 );
 
--- Federated_identity (google-login): the account of a user at an external IdP.
--- A user is found by provider_sub, which the IdP never reassigns, and never by
--- email.
+-- Federated_identity: the account of a user at an external IdP, for an upstream
+-- sign-in such as Sign in with Google (--enable google-login). A user is found
+-- by provider_sub, which the IdP never reassigns, and never by email.
 CREATE TABLE IF NOT EXISTS federated_identities (
   id           TEXT PRIMARY KEY,
   user_id      TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -168,11 +168,11 @@ CREATE TABLE IF NOT EXISTS authentication_requests (
   payload               TEXT NOT NULL
 );
 
--- Upstream_auth_request (google-login): the sign-in at Google a transaction
--- waits for. nonce is the value the login page puts in the Google button, and
--- Google returns it in its ID Token. Sign in with Google (redirect mode) sends
--- no state and uses no PKCE, so state and code_verifier stay NULL. Only the
--- latest login page of a transaction has a working Google button.
+-- Upstream_auth_request: the sign-in at an external IdP a transaction waits
+-- for. nonce is the value the login page sends to the IdP, which returns it in
+-- its ID Token. Sign in with Google (redirect mode) sends no state and uses no
+-- PKCE, so state and code_verifier stay NULL. Only the latest login page of a
+-- transaction has a working upstream sign-in.
 CREATE TABLE IF NOT EXISTS upstream_auth_requests (
   transaction_id VARCHAR(5000) PRIMARY KEY
     REFERENCES transactions (transaction_id) ON DELETE CASCADE,

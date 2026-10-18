@@ -5,6 +5,8 @@
     "types": ["node"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "declaration": false,
     "sourceMap": true,
     "outDir": "./dist",

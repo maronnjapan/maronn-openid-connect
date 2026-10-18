@@ -56,8 +56,8 @@ export const config: ProviderConfig = createProviderConfig({
 
 /**
  * The database of db/ (--db): the clients, the users and every record the OP
- * keeps. db/instance.ts creates it on its first use, not at import, so `next
- * build` does not open it.
+ * keeps. createDatabase() of db/ opens the store of db/instance.ts on its
+ * first use, not here at import, so `next build` does not open it.
  */
 const database = createDatabase();
 

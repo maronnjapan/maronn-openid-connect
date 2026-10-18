@@ -142,11 +142,15 @@ export function createProviderConfig(
  * The client's public keys are not part of it: each process that needs them
  * asks the ClientKeyResolver for the keys of its own purpose
  * (ClientRegistration.keys below, kept by registerClient() of db/).
+ *
+ * A feature that reads client metadata of its own adds it to this interface
+ * from its directory (`declare module '../../config.js'` in features/<id>/),
+ * so removing the feature removes the field.
  */
-export type RegisteredClient = ClientInfo & TokenClientInfo & {
+export interface RegisteredClient extends ClientInfo, TokenClientInfo {
   userinfoSignedResponseAlg?: 'RS256' | 'ES256';
   idTokenSignedResponseAlg?: 'RS256' | 'ES256';
-};
+}
 
 /**
  * A client as registerClient() (db/clients.ts) takes it: the RegisteredClient

@@ -46,3 +46,15 @@ declare module '../../app.js' {
     ) => Promise<{ subject: string } | null> | { subject: string } | null;
   }
 }
+
+declare module '../../config.js' {
+  interface RegisteredClient {
+    /**
+     * EXPERIMENTAL (CIBA Core 1.0 §4): the backchannel_token_delivery_mode
+     * client metadata. This provider offers poll only, so a client registered
+     * for ping or push has every backchannel authentication request refused
+     * with unauthorized_client. Omitted means poll.
+     */
+    backchannelTokenDeliveryMode?: 'poll' | 'ping' | 'push';
+  }
+}

@@ -32,6 +32,10 @@ const INSTALL_COMMANDS: Record<string, string> = {
 const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
 
+/** The step that registers the clients and users the generated OP starts without. */
+const REGISTER_STEP =
+  'Register your clients and users with registerClient() and registerUser() of db/ (registerDevelopmentUsers() of development.ts adds testuser and otheruser)';
+
 /** What the generated code of an output without --db keeps its data in, and how to change that. */
 const MEMORY_STORES_STEP =
   'The data is kept in memory (db/): generate with --db sql or --db kv, or pass your own ProviderStores as storage';
@@ -162,8 +166,9 @@ Database (--db sql | --db kv): the provider keeps its clients, users,
   database instead of memory. Either kind generates db/ (_oidc-provider/db/
   for Next.js, whose --db kv instance.ts runs on Upstash Redis or node:sqlite
   as generated), where db/stores.ts,
-  db/clients.ts and db/users.ts read and write the data; the records of Sign
-  in with Google come with --enable google-login. Register clients with
+  db/clients.ts and db/users.ts read and write the data; the tables and keys
+  of Sign in with Google are generated either way, and the OP writes them
+  only with --enable google-login. Register clients with
   registerClient() in db/clients.ts and users with registerUser() in
   db/users.ts. The one file you write is db/instance.ts: createDatabase()
   returns your database. The CLI creates it only when it is missing and never
@@ -771,7 +776,7 @@ export function run(args: string[]): void {
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
         db ? dbGuidance(db, `${outputDir}/db`).step : MEMORY_STORES_STEP,
-        `Use ${outputDir}/config.ts defaults only for quick local testing`,
+        REGISTER_STEP,
         ...(featurePackagesOf(features).includes(EXPERIMENTAL_PACKAGE)
           ? [`Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`]
           : []),
@@ -813,7 +818,7 @@ export function run(args: string[]): void {
           : [
               'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
               db ? dbGuidance(db, dbDir).step : MEMORY_STORES_STEP,
-              'Use config.ts defaults only for quick local testing',
+              REGISTER_STEP,
               `Install dependencies: ${installCommand}`,
               'Start the server',
             ];

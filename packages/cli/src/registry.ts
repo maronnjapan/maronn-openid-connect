@@ -261,8 +261,9 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   POST /login/google, which verifies the ID token Google posts there with
  *   google-auth-library via `@maronn-openid-connect/google-login`, binds it to
  *   the authorization transaction through a single-use nonce, provisions the
- *   user just-in-time (subject `google:<sub>`) and hands off to consent like the
- *   password login. The button appears only once config.googleLogin is set.
+ *   user just-in-time (a random subject, with the Google sub kept as its
+ *   federated identity in db/) and hands off to consent like the password
+ *   login. The button appears only once config.googleLogin is set.
  */
 export interface OidcFeatureConfig {
   pkce: boolean;

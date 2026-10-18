@@ -516,6 +516,34 @@ describe('run', () => {
     it('should not name a store contract the generated code does not have', () => {
       expect(guidanceOf(['hono'])).not.toContain('JsonStoreBackend');
     });
+
+    // The generated OP starts with no client and no user registered.
+    it('should tell the Hono output to register its clients and users in db/', () => {
+      expect(guidanceOf(['hono'])).toContain(
+        'Register your clients and users with registerClient() and registerUser() of db/ (registerDevelopmentUsers() of development.ts adds testuser and otheruser)',
+      );
+    });
+
+    it('should not point the Hono output at clients of config.ts, which has none', () => {
+      expect(guidanceOf(['hono'])).not.toContain('config.ts defaults');
+    });
+  });
+
+  describe('--help', () => {
+    function helpText(): string {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['--help']);
+      const output = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      vi.restoreAllMocks();
+      return output;
+    }
+
+    // schema.sql and keys.ts carry the Sign in with Google records for every feature set.
+    it('should say that the Sign in with Google records are generated without --enable google-login', () => {
+      expect(helpText().replace(/\s+/g, ' ')).toContain(
+        'the tables and keys of Sign in with Google are generated either way, and the OP writes them only with --enable google-login',
+      );
+    });
   });
 
   describe('--db', () => {

@@ -17,7 +17,6 @@ export {
   handlePushedAuthorizationRequest,
   rejectForbiddenParParams,
   validatePushedAuthorizationParams,
-  type ClientAssertionVerifier,
   type ParErrorCode,
   type PushedAuthorizationRequestContext,
   type PushedAuthorizationResponse,

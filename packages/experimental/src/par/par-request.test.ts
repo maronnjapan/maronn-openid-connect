@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import {
-  TokenError,
-  TokenErrorCode,
-  type ClientInfo,
-  type ClientResolver,
-  type TokenClientInfo,
-  type TokenClientResolver,
+import type {
+  ClientInfo,
+  ClientResolver,
+  TokenClientInfo,
+  TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import {
   ParError,
@@ -86,11 +84,6 @@ function validParams(overrides: Record<string, string> = {}): Record<string, str
     code_challenge_method: 'S256',
     ...overrides,
   };
-}
-
-/** JWT の 1 セグメント（base64url の JSON）。 */
-function encodeSegment(value: unknown): string {
-  return btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /** `client_secret_basic` 用の Authorization ヘッダ（RFC 6749 §2.3.1）。 */
@@ -249,73 +242,6 @@ describe('authenticateParClient', () => {
         clientResolver: createClientResolver(),
       }),
     ).rejects.toThrowError(new ParError('invalid_client', 'Client authentication failed'));
-  });
-
-  // RFC 9126 §2.1: the PAR endpoint applies the token endpoint's client
-  // authentication rules, which include private_key_jwt (OIDC Core 1.0 §9).
-  describe('private_key_jwt', () => {
-    const JWT_CLIENT: TestClient = {
-      clientId: 'jwt-app',
-      redirectUris: ['https://client.example/cb'],
-      clientType: 'confidential',
-      tokenEndpointAuthMethods: ['private_key_jwt'],
-    };
-    const JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
-    // Extraction only reads the sub; the verifier below stands in for the signature check.
-    const assertion = `${encodeSegment({ alg: 'RS256' })}.${encodeSegment({ iss: 'jwt-app', sub: 'jwt-app' })}.c2ln`;
-
-    function jwtParams(): Record<string, string> {
-      return validParams({
-        client_id: 'jwt-app',
-        client_assertion_type: JWT_BEARER,
-        client_assertion: assertion,
-      });
-    }
-
-    function jwtClientResolver(): TokenClientResolver {
-      return { findClient: async (clientId) => (clientId === 'jwt-app' ? JWT_CLIENT : null) };
-    }
-
-    it('should authenticate a client assertion through the supplied verifier', async () => {
-      const verified: Array<{ clientId: string; clientAssertion: string }> = [];
-
-      const clientId = await authenticateParClient({
-        params: jwtParams(),
-        authorizationHeader: '',
-        clientResolver: jwtClientResolver(),
-        verifyClientAssertion: async (client, clientAssertion) => {
-          verified.push({ clientId: client.clientId, clientAssertion });
-        },
-      });
-
-      expect(clientId).toBe('jwt-app');
-      expect(verified).toEqual([{ clientId: 'jwt-app', clientAssertion: assertion }]);
-    });
-
-    it('should reject a client assertion with invalid_client when no verifier is supplied', async () => {
-      await expect(
-        authenticateParClient({
-          params: jwtParams(),
-          authorizationHeader: '',
-          clientResolver: jwtClientResolver(),
-        }),
-      ).rejects.toThrowError(
-        new ParError('invalid_client', 'private_key_jwt is not supported by this endpoint'),
-      );
-    });
-
-    it('should map a TokenError from the verifier to a ParError', async () => {
-      await expect(
-        authenticateParClient({
-          params: jwtParams(),
-          authorizationHeader: '',
-          clientResolver: jwtClientResolver(),
-          verifyClientAssertion: async () => {
-            throw new TokenError(TokenErrorCode.InvalidClient, 'Client assertion has expired');
-          },
-        }),
-      ).rejects.toThrowError(new ParError('invalid_client', 'Client assertion has expired'));
-    });
   });
 });
 

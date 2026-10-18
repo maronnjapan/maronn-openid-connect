@@ -142,7 +142,6 @@ const response = await handlePushedAuthorizationRequest({
   params,                 // フォームボディ（Record<string, string>）
   authorizationHeader,    // client_secret_basic 用
   clientResolver,         // core の ClientResolver & TokenClientResolver
-  verifyClientAssertion,  // private_key_jwt 用（省略可）
   store,                  // PushedAuthorizationRequestStore
   validationOptions: {},  // PushedAuthorizationValidationOptions
 });
@@ -152,10 +151,6 @@ const response = await handlePushedAuthorizationRequest({
 const pushedParams = await resolvePushedRequestUri({ params: queryParams, store });
 // URN 形式でなければ null。展開できた場合は request_uri を除いたパラメータ。
 ```
-
-`verifyClientAssertion` は、private_key_jwt（OIDC Core 1.0 §9）の `client_assertion` を検証する関数（`ClientAssertionVerifier`）です。
-core の `verifyClientAssertion` と `rejectReplayedClientAssertion` で組み、通らなければ `invalid_client` の `TokenError` を投げます。
-渡さなければ、`client_assertion` を送ったリクエストは `invalid_client` で拒否されます。
 
 ステップ関数（`rejectForbiddenParParams` / `authenticateParClient` / `validatePushedAuthorizationParams` / `createPushedAuthorizationRecord` / `buildPushedAuthorizationResponse`）を個別に呼べば、検証の差し替えや削除ができます。
 

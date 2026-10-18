@@ -47,7 +47,7 @@ eyJ0eXAiOiJ0b2tlbi1pbnRyb3NwZWN0aW9uK2p3dCIsImFsZyI6IlJTMjU2Iiwia2lkIjoi...
 | RFC 9701 §7 | Provider Metadata（`introspection_signing_alg_values_supported`） |
 | RFC 9701 §6（署名 alg ネゴシエーション） | **非対応**。クライアントメタデータ `introspection_signed_response_alg` は解釈せず、**RS256 固定**（省略時の既定値と一致） |
 | RFC 9701 §6（暗号化） | **非対応**（署名のみ。Nested JWT / JWE は生成しません） |
-| RFC 9701 §4（アクセストークンによる RS 認証） | **非対応**。イントロスペクションの呼び出しは従来どおりクライアント認証（`client_secret_basic` / `client_secret_post` / `private_key_jwt`）のみで、リソースサーバーはクライアントとして登録します |
+| RFC 9701 §4（アクセストークンによる RS 認証） | **非対応**。イントロスペクションの呼び出しは従来どおりクライアント認証（`client_secret_basic` / `client_secret_post`）のみで、リソースサーバーはクライアントとして登録します |
 
 ## ユースケース
 

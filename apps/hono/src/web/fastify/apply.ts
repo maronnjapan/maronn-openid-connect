@@ -3,9 +3,14 @@
  *
  * Every path the provider serves (providerRoutes() of app.ts: the endpoints
  * of every provider and those of the generated features, with the paths below
- * them) is registered with its methods and OPTIONS (the CORS preflight), and
- * handed to the provider's router. Fastify matches paths exactly, so the paths
- * below a mount point (/device/login, ...) are registered one by one.
+ * them) is registered for every method and handed to the provider's router,
+ * which answers CORS preflights and 405 itself. Fastify matches paths exactly,
+ * so the paths below a mount point (/device/login, ...) are registered one by
+ * one.
+ *
+ * The routes live in a plugin of their own whose only body parser hands the
+ * raw bytes on, since the provider reads form and JSON bodies itself. The body
+ * parsers of the instance stay as they are for its own routes.
  *
  * @example
  * import Fastify from 'fastify';
@@ -20,22 +25,15 @@ import { toWebRequest } from '../node-adapter.js';
 
 export type ApplyOidcOptions = OidcProviderOptions;
 
+/** The methods every provider path is registered for; the provider answers 405 to those it does not serve. */
+const METHODS: HTTPMethods[] = ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT'];
+
 export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions): Promise<void> {
   const oidc = createApp(options);
   // The advertised issuer is the source of truth for the OP's own origin
   // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
   // origin in favor of this value.
   const baseUrl = options.config?.issuer ?? 'http://localhost';
-
-  if (!app.hasContentTypeParser('application/x-www-form-urlencoded')) {
-    app.addContentTypeParser(
-      'application/x-www-form-urlencoded',
-      { parseAs: 'buffer' },
-      (_request, body, done) => {
-        done(null, body);
-      },
-    );
-  }
 
   const handle = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const body = Buffer.isBuffer(request.body)
@@ -48,17 +46,18 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
     await toFastifyReply(reply, response);
   };
 
-  for (const route of providerRoutes()) {
-    app.route({ method: withPreflight(route.methods), url: route.path, handler: handle });
-    for (const [subpath, methods] of Object.entries(route.subpaths ?? {})) {
-      app.route({ method: withPreflight(methods), url: route.path + subpath, handler: handle });
+  await app.register(async (scope) => {
+    scope.removeAllContentTypeParsers();
+    scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
+      done(null, body);
+    });
+    for (const route of providerRoutes()) {
+      const paths = [route.path, ...Object.keys(route.subpaths ?? {}).map((subpath) => route.path + subpath)];
+      for (const url of paths) {
+        scope.route({ method: METHODS, url, handler: handle, exposeHeadRoute: false });
+      }
     }
-  }
-}
-
-/** The methods of a path, with OPTIONS for the CORS preflight the provider answers. */
-function withPreflight(methods: readonly string[]): HTTPMethods[] {
-  return [...new Set([...methods, 'OPTIONS'])] as HTTPMethods[];
+  });
 }
 
 async function toFastifyReply(reply: FastifyReply, response: Response): Promise<void> {
@@ -71,5 +70,7 @@ async function toFastifyReply(reply: FastifyReply, response: Response): Promise<
     if (name.toLowerCase() === 'set-cookie') return;
     reply.header(name, value);
   });
-  reply.send(Buffer.from(await response.arrayBuffer()));
+  const body = Buffer.from(await response.arrayBuffer());
+  // An empty Buffer would be sent as application/octet-stream.
+  reply.send(body.byteLength === 0 ? undefined : body);
 }

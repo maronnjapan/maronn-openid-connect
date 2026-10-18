@@ -216,7 +216,10 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
   for (const path of PUBLIC_DOCUMENT_PATHS) app.use(path, publicCors);
 
   // CORS must run first so OPTIONS preflights are answered before method enforcement.
-  app.use('*', async (c, next) => {
+  // The middleware runs on the provider's paths only (`/x/*` matches /x and
+  // the paths below it), so a route the host app adds after applyOidc() is
+  // left to the app.
+  const enforceMethods = async (c: any, next: () => Promise<unknown>): Promise<Response | void> => {
     const allowed = methods.get(new URL(c.req.url).pathname);
     const method = c.req.method;
     // RFC 9110 §9.1: general-purpose servers MUST support HEAD wherever GET is
@@ -228,14 +231,22 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
       return c.body(null, 405);
     }
     await next();
-  });
+  };
 
   // Store runtime dependencies for use by the endpoints.
-  app.use('*', async (c, next) => {
+  const storeContext = async (c: any, next: () => Promise<unknown>): Promise<Response | void> => {
     const failure = await setRequestContext(c, options);
     if (failure) return failure;
     await next();
-  });
+  };
+
+  // A path below another provider path (/login/google below /login) is
+  // covered by the middleware of that path already.
+  const mountPaths = routes
+    .map((route) => route.path)
+    .filter((path) => !routes.some((other) => path.startsWith(`${other.path}/`)));
+  for (const path of mountPaths) app.use(`${path}/*`, enforceMethods);
+  for (const path of mountPaths) app.use(`${path}/*`, storeContext);
 
   for (const route of routes) app.route(route.path, route.app);
   return app;

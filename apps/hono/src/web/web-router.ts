@@ -161,7 +161,7 @@ export class WebRouter {
 
   request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const request = input instanceof Request
-      ? input
+      ? new Request(input, init)
       : new Request(resolveRequestInput(input), init);
     return this.fetch(request);
   }
@@ -278,7 +278,8 @@ function normalizePath(path: string): string {
 }
 
 function pathMatches(pattern: string, path: string): boolean {
-  const normalized = normalizeMount(pattern);
+  // Hono's /x/* matches /x and every path below it; a plain path matches the same.
+  const normalized = normalizeMount(pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern);
   if (normalized === '') return true;
   return path === normalized || path.startsWith(normalized + '/');
 }

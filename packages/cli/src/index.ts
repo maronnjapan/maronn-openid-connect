@@ -10,7 +10,7 @@ import {
   EXTENSION_FEATURES,
   resolveFeatures,
 } from './registry.js';
-import type { OidcFeatureConfig } from './registry.js';
+import { enabledFeatureIds, findFeature, type OidcFeatureConfig } from './registry.js';
 import type { GeneratedFile } from './frameworks/types.js';
 import { resolveCustomScopes } from './scopes.js';
 import { resolveDbKind, type DbKind } from './db.js';
@@ -20,48 +20,35 @@ import { annotateFlowModules } from './flow/modules.js';
 import { applyFlowSelection, parseFlowFile, type FlowSelection } from './flow/flow-file.js';
 import type { OpFlow } from './flow/types.js';
 
+// The screens of every output but Next.js are hono/jsx, so Express and
+// Fastify need hono too (as the JSX runtime).
 const INSTALL_COMMANDS: Record<string, string> = {
   hono: 'pnpm add hono @maronn-openid-connect/core',
-  express: 'pnpm add express @maronn-openid-connect/core && pnpm add -D @types/express',
-  fastify: 'pnpm add fastify @maronn-openid-connect/core',
+  express: 'pnpm add express hono @maronn-openid-connect/core && pnpm add -D @types/express',
+  fastify: 'pnpm add fastify hono @maronn-openid-connect/core',
   nextjs: 'pnpm add @maronn-openid-connect/core && pnpm add -D next react react-dom',
 };
 
 const EXPERIMENTAL_PACKAGE = '@maronn-openid-connect/experimental';
 const GOOGLE_LOGIN_PACKAGE = '@maronn-openid-connect/google-login';
 
-/**
- * Insert @maronn-openid-connect/experimental into the install guidance, but only when an
- * experimental feature was actually selected. Without a selection the command
- * string is returned untouched so existing output never changes.
- */
-function withExperimentalPackage(installCommand: string, features: OidcFeatureConfig): string {
-  if (
-    !features.par &&
-    !features.tokenExchange &&
-    !features.jarm &&
-    !features.deviceAuthorizationGrant &&
-    !features.idJag &&
-    !features.ciba &&
-    !features.jwtIntrospectionResponse &&
-    !features.rpInitiatedLogout &&
-    !features.dynamicClientRegistration
-  ) {
-    return installCommand;
-  }
-  return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${EXPERIMENTAL_PACKAGE}`);
+/** What the generated code of an output without --db keeps its data in, and how to change that. */
+const MEMORY_STORES_STEP =
+  'The data is kept in memory (db/): generate with --db sql or --db kv, or pass your own ProviderStores as storage';
+
+/** The packages the code of the enabled features imports (packages of registry.ts), each once. */
+function featurePackagesOf(features: OidcFeatureConfig): string[] {
+  return [...new Set(enabledFeatureIds(features).flatMap((id) => findFeature(id)?.packages ?? []))];
 }
 
 /**
- * Insert @maronn-openid-connect/google-login into the install guidance, but only
- * when the google-login extension was selected. Applied before the experimental
- * insertion so the packages read core, experimental, google-login.
+ * Insert the packages of the enabled features after @maronn-openid-connect/core.
+ * Without a feature that needs a package the command is returned untouched.
  */
-function withGoogleLoginPackage(installCommand: string, features: OidcFeatureConfig): string {
-  if (!features.googleLogin) {
-    return installCommand;
-  }
-  return installCommand.replace('@maronn-openid-connect/core', `@maronn-openid-connect/core ${GOOGLE_LOGIN_PACKAGE}`);
+function withFeaturePackages(installCommand: string, features: OidcFeatureConfig): string {
+  const packages = featurePackagesOf(features);
+  if (packages.length === 0) return installCommand;
+  return installCommand.replace('@maronn-openid-connect/core', ['@maronn-openid-connect/core', ...packages].join(' '));
 }
 
 const SETUP_UNSUPPORTED_FRAMEWORKS = new Set(['nextjs']);
@@ -551,12 +538,13 @@ function writeGeneratedFiles(outputDir: string, files: GeneratedFile[]): void {
 }
 
 /**
- * Hono's screens are generated as hono/jsx (views.tsx and the pages/*.tsx that
- * render them). Say which compiler options that needs.
+ * The screens are generated as hono/jsx (the views.tsx and page.tsx files of
+ * the endpoints and features), for Express and Fastify too. Say which compiler
+ * options that needs.
  */
 function printHonoJsxNotes(): void {
   console.log(
-    '\nThe screens (views.tsx, pages/*.tsx) use hono/jsx. Enable JSX in tsconfig.json:\n' +
+    '\nThe screens (the .tsx files) use hono/jsx. Enable JSX in tsconfig.json:\n' +
       '  "jsx": "react-jsx", "jsxImportSource": "hono/jsx"',
   );
 }
@@ -746,7 +734,7 @@ export function run(args: string[]): void {
     const keptCount = plannedFiles.filter((file) => isKeptUserFile(outputDir, file)).length;
     writeGeneratedFiles(outputDir, plannedFiles);
     console.log(`\nDone! Generated ${plannedFiles.length - keptCount} files in ${outputDir}`);
-    if (result.framework === 'hono') {
+    if (result.framework !== 'nextjs') {
       printHonoJsxNotes();
     }
 
@@ -770,20 +758,17 @@ export function run(args: string[]): void {
       );
       const setupSteps = [
         'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
-        db
-          ? dbGuidance(db, `${outputDir}/db`).step
-          : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
+        db ? dbGuidance(db, `${outputDir}/db`).step : MEMORY_STORES_STEP,
         `Use ${outputDir}/config.ts defaults only for quick local testing`,
-        ...(features.par ||
-        features.tokenExchange ||
-        features.jarm ||
-        features.deviceAuthorizationGrant ||
-        features.ciba ||
-        features.dynamicClientRegistration
+        ...(featurePackagesOf(features).includes(EXPERIMENTAL_PACKAGE)
           ? [`Install the experimental package: pnpm add ${EXPERIMENTAL_PACKAGE}`]
           : []),
         ...(features.googleLogin
-          ? [`Install the Google login extension: pnpm add ${GOOGLE_LOGIN_PACKAGE}`]
+          ? [
+              `Install the Google login extension: pnpm add ${featurePackagesOf(features)
+                .filter((name) => name !== EXPERIMENTAL_PACKAGE)
+                .join(' ')}`,
+            ]
           : []),
         'Start the server',
       ];
@@ -793,11 +778,8 @@ export function run(args: string[]): void {
         console.log(`  ${index + 1}. ${step}${isLast ? '\n' : ''}`);
       });
     } else {
-      const installCommand = withExperimentalPackage(
-        withGoogleLoginPackage(
-          INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
-          features,
-        ),
+      const installCommand = withFeaturePackages(
+        INSTALL_COMMANDS[result.framework] ?? `pnpm add @maronn-openid-connect/core`,
         features,
       );
       // Next.js reads its configuration from the environment in
@@ -817,9 +799,7 @@ export function run(args: string[]): void {
             ]
           : [
               'Provide runtime config, signing keys, and client resolvers from env/DB/KV',
-              db
-                ? dbGuidance(db, dbDir).step
-                : 'Inject persistent ProviderStores through the generated JsonStoreBackend contract',
+              db ? dbGuidance(db, dbDir).step : MEMORY_STORES_STEP,
               'Use config.ts defaults only for quick local testing',
               `Install dependencies: ${installCommand}`,
               'Start the server',

@@ -459,6 +459,48 @@ describe('run', () => {
     });
   });
 
+  describe('install guidance', () => {
+    function guidanceOf(args: string[]): string {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      run(['generate', ...args, '-o', join(testDir, 'oidc-provider')]);
+      const output = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      vi.restoreAllMocks();
+      return output;
+    }
+
+    // The screens of the Express and Fastify output are hono/jsx, as in the Hono output.
+    it('should add hono to the install guidance of the Express output', () => {
+      expect(guidanceOf(['express'])).toContain(
+        'Install dependencies: pnpm add express hono @maronn-openid-connect/core && pnpm add -D @types/express',
+      );
+    });
+
+    it('should add hono to the install guidance of the Fastify output', () => {
+      expect(guidanceOf(['fastify'])).toContain('Install dependencies: pnpm add fastify hono @maronn-openid-connect/core');
+    });
+
+    it('should tell the JSX settings for the Express output', () => {
+      expect(guidanceOf(['express'])).toContain('"jsx": "react-jsx", "jsxImportSource": "hono/jsx"');
+    });
+
+    // The generated google-login feature imports google-auth-library itself.
+    it('should add the packages of google-login to the install guidance', () => {
+      expect(guidanceOf(['hono', '--enable', 'google-login'])).toContain(
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/google-login google-auth-library',
+      );
+    });
+
+    it('should add the experimental package once for several experimental features', () => {
+      expect(guidanceOf(['hono', '--enable', 'id-jag', '--enable', 'rp-initiated-logout'])).toContain(
+        'Install dependencies: pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental\n',
+      );
+    });
+
+    it('should not name a store contract the generated code does not have', () => {
+      expect(guidanceOf(['hono'])).not.toContain('JsonStoreBackend');
+    });
+  });
+
   describe('--db', () => {
     const userInstance = "export function createDatabase() { return myDatabase; }\n";
 

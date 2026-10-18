@@ -51,7 +51,7 @@ maronn-oidc graph [framework] [options]
 
 `setup` は生成に加えて、エントリファイル内のプレースホルダーコメント（`// <!-- OIDC_IMPORT_PLACEHOLDER -->` と `// <!-- OIDC_SETUP_PLACEHOLDER -->`）を `applyOidc` の import と呼び出しに置換する。Next.js は App Router のファイル規約に従うため `setup` 非対応で、`maronn-oidc generate nextjs --output ./src/app` を使う。
 
-`graph` は何も書き込まない。`generate` と同じ `--enable` / `--disable` / `--scope` / `--db`（または `--flow`）から、生成される OP の図を標準出力に書く。framework を付けると、JSON のフロー文書に各エンドポイントの生成先ファイル（`module`）が入る。詳しくは[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照。
+`graph` はコードを生成しない。`generate` と同じ `--enable` / `--disable` / `--scope` / `--db`（または `--flow`）から、生成される OP の図を標準出力（`--output` を付ければそのファイル）に書く。framework を付けると、JSON のフロー文書に各エンドポイントと各ステップの生成先ファイル（`module`）が入る。詳しくは[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照。
 
 ### オプション
 
@@ -111,15 +111,15 @@ oidc-provider/
 
 ### 生成元のアプリとファイルの選び方
 
-生成コードは、このモノレポで動いている OP のアプリのコードを写したものである。Hono、Express、Fastify は `apps/hono/src/oidc-provider/` から、Next.js は `apps/nextjs/src/app/`（App Router）から写す。Express と Fastify には、`apps/hono/src/web/` からフレームワークごとの `apply.ts`（`web/express/apply.ts` か `web/fastify/apply.ts`）と、`web-router.ts`、`node-adapter.ts` を加え、生成コードが import する Hono のルーター（`Hono` と型の `Context`）を `web-router.ts` の `WebRouter` と `WebContext` に置き換える。写す元は `packages/cli/extract.json` に書かれており、テスト（`*.test.ts`、`*.test.tsx`）と Next.js の `app/layout.tsx` は写さない。
+生成コードは、このモノレポで動いている OP のアプリのコードを写したものである。Hono、Express、Fastify は `apps/hono/src/oidc-provider/` から、Next.js は `apps/nextjs/src/app/`（App Router）から写す。Express と Fastify には、`apps/hono/src/web/` からフレームワークごとの `apply.ts`（`web/express/apply.ts` か `web/fastify/apply.ts`）と、`web-router.ts`、`node-adapter.ts` を加え、生成コードが import する Hono のルーター（`Hono` と型の `Context`）を `web-router.ts` の `WebRouter` と `WebContext` に置き換える。写す元は `packages/cli/extract.json` に書かれており、テスト（`*.test.ts`、`*.test.tsx`）は写さない。Next.js の `app/layout.tsx` も、アプリに置いたとしても写さない（`extract.json` の exclude）。
 
-`generate` は、写すファイルを機能構成とデータの保存先から選ぶ。どの機能にもデータの保存先の種類にも属さないファイルはすべて写し、機能のファイル（`features/<id>/`、Next.js はルートグループ `(<id>)/` と `_oidc-provider/features/<id>/`）は有効な機能のものだけを写す。データの保存先は `db/memory/`、`db/sql/`、`db/kv/` のうち 1 つ（`--db` 無しは `memory`）を選んで出力の `db/` の直下に置き、その種類の `index.ts` が出力の `db/index.ts` になる。そのうえで、機能の一覧（`features/enabled.ts`、Next.js は `_oidc-provider/features.ts`）を有効な機能だけにし、`scopes.ts` の `CUSTOM_SCOPES` に `--scope` の値を書き込み、無効な機能のブロックをパイプラインから取り除く（[機能の差し込み](#機能の差し込み)を参照）。
+`generate` は、写すファイルを機能構成とデータの保存先から選ぶ。どの機能にもデータの保存先の種類にも属さないファイルはすべて写し、機能のファイル（`features/<id>/`、Next.js はルートグループ `(<id>)/` と `_oidc-provider/features/<id>/`）は有効な機能のものだけを写す。データの保存先は `db/memory/`、`db/sql/`、`db/kv/` のうち 1 つ（`--db` 無しは `memory`）を選んで出力の `db/` の直下に置き、その種類の `index.ts` が出力の `db/index.ts` になる。そのうえで、機能の一覧（`features/enabled.ts`、Next.js は `_oidc-provider/features.ts`）を有効な機能だけにし、`scopes.ts` の `CUSTOM_SCOPES` に `--scope` の値を書き込み、無効な機能のブロックをパイプライン（Next.js は Route Handler）から取り除く（[機能の差し込み](#機能の差し込み)を参照）。
 
-生成コードの挙動を変えるときは、CLI ではなく `apps/hono` か `apps/nextjs` のコードを、隣に置いた単体テストと一緒に変える。CLI のビルド（`pnpm run build`）がそのコードを `packages/cli/templates/` に写し、`generate` はそこから出力を作る。
+生成コードの挙動を変えるときは、CLI ではなく `apps/hono` か `apps/nextjs` のコードを、隣に置いた単体テストと一緒に変える。このリポジトリの中では `generate` が `apps/` のコードを直接読むので、アプリの変更は CLI をビルドし直さなくても生成物に入る。公開する package には `apps/` が無いため、CLI のビルド（`pnpm run build`）がそのコードを `packages/cli/templates/` に写し、package の `generate` はそこから出力を作る。
 
 ### 画面の JSX（hono/jsx）
 
-Hono、Express、Fastify の画面は [hono/jsx](https://hono.dev/docs/guides/jsx) で書かれている。画面のマークアップ（`views.tsx`、機能の画面は `features/<id>/views.tsx`）は hono/jsx のコンポーネントで、画面のルートを持つ `page.tsx`（`endpoints/login/`、`endpoints/consent/`、機能有効時は `features/<id>/endpoints/` の `device`、`ciba`、`logout`）とエラー画面の `pages/errors.tsx` が、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画する。HTML を返さない `endpoints/authorize/page.ts`、`pages/respond.ts`、google-login の `features/google-login/endpoints/login-google/page.ts` は `.ts` のまま。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できる。
+Hono、Express、Fastify の画面は [hono/jsx](https://hono.dev/docs/guides/jsx) で書かれている。画面のマークアップ（`views.tsx`、機能の画面は `features/<id>/views.tsx`）は hono/jsx のコンポーネントで、画面のルートを持つ `page.tsx`（`endpoints/login/`、`endpoints/consent/`、機能有効時は `features/<id>/endpoints/` の `device`、`ciba`、`logout`）とエラー画面の `pages/errors.tsx` が、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画する。自分ではビューを JSX で描かない `endpoints/authorize/page.ts`、google-login の `features/google-login/endpoints/login-google/page.ts`（どちらもエラー画面は `pages/errors.tsx` に任せる）と `pages/respond.ts` は `.ts` のまま。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できる。
 
 ビューは JSX 要素を返すコンポーネントで、`createApp` / `applyOidc` の `views` オプションで差し替えるときも `loginPage: (params) => <MyLoginPage {...params} />` のように書く。別の手段で組み立てた HTML を返すときは `hono/html` の `html` タグか `raw()` で包む（`raw()` は渡した文字列をそのまま信頼するので、エスケープ済みの HTML だけを渡す）。ステータスやヘッダーなど Response そのものを変えたいときは、その画面の `page.tsx` の `render*Page()`（エラー画面は `pages/errors.tsx` の `renderErrorPage()`）を書き換える。
 
@@ -159,10 +159,11 @@ Hono、Express、Fastify の生成物では、エンドポイント 1 つにつ�
 | ファイル | 役割 |
 |---|---|
 | `endpoint.ts` | エンドポイントの説明（`defineEndpoint()`）。パス、メソッド、ステップの並び、図に描く矢印 |
-| `pipeline.ts` | ステップを順に呼ぶ。`token` / `userinfo` / `discovery` / `jwks` などの JSON を返すエンドポイントでは、このファイルがルーター（`tokenApp` など）を export し、ハンドラーがステップを呼ぶブロックを上から並べる。`authorize` / `login` / `consent` の `pipeline.ts` は Response を作らず、入口の関数（`processAuthorizationRequest()`、`prepareLogin()` / `submitLogin()`、`prepareConsent()` / `submitConsent()`）がステップを決まった順で呼んで、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返す |
+| `pipeline.ts` | ステップを順に呼ぶ。`token` / `userinfo` / `discovery` / `jwks` などの JSON を返すエンドポイントでは、このファイルがルーター（`tokenApp` など）を export し、ハンドラーがステップを呼ぶブロックを上から並べる。`authorize` / `login` / `consent` の `pipeline.ts` は Response を作らず、入口の関数（`processAuthorizationRequest()`、`prepareLogin()` / `submitLogin()`、`prepareConsent()` / `submitConsent()`）がステップを順に呼んで、結果を `kind` 付きの outcome（リダイレクト先 `location`、付与する `cookies`、画面データ、またはエラー）として返す |
 | `steps/<step-id>.ts` | ステップ 1 つ。core の機能単位の関数（クライアント認証、PKCE、scope、再利用検知、ID Token クレーム構築など）を呼ぶ |
-| `page.tsx`（`authorize` は `page.ts`） | ブラウザ向けのルート。**GET も POST も**ここにある。リクエストを読み、`pipeline.ts` の入口の関数を 1 回呼び、返ってきた outcome を画面かリダイレクトに変換する。ロジックは持たない。機能の画面（`device`、`ciba`、`logout`）は `pipeline.ts` を持たず、`page.tsx` が `steps/` の関数を呼ぶ |
+| `page.tsx`（`authorize` と google-login の `login-google` は `page.ts`） | ブラウザ向けのルート。**GET も POST も**ここにある（`login-google` は POST だけ）。リクエストを読み、`pipeline.ts` の入口の関数を 1 回呼び、返ってきた outcome を画面かリダイレクトに変換する。ロジックは持たない。機能の画面（`device`、`ciba`、`logout`）は `pipeline.ts` を持たず、`page.tsx` が `steps/` の関数を呼ぶ |
 | `screen.ts` / `outcome.ts` | 画面に渡すデータ、フォームの入力、outcome の型 |
+| `response.ts` | JSON を返すエンドポイントの応答の型（`TokenEndpointResponse` など）と、ステップが決まった応答で終えるときに投げるエラー（`TokenEndpointError` など） |
 
 `pipeline.ts` のブロックは、ステップ ID のマーカーコメント（`// [step-id] Label — Spec`）で始まる。ブロックを消せばそのステップは実行されず、ブロックの間に独自の処理を書き足せる。ハンドラーの実例は[図の箱と生成コードの対応](#図の箱と生成コードの対応)にある。
 
@@ -181,7 +182,7 @@ UI を変える場所は、変えたい範囲で選ぶ。
 
 ### 機能の差し込み
 
-機能のコードは `features/<id>/` にあり、その `feature.ts` が `features/feature.ts` の `defineFeature()` で、機能が OP に足すものを宣言する。どの OP にもあるコード（`features/<id>/` と `db/<kind>/` の外）は、後述するパイプラインの所有者付きブロックを除いて機能を import せず、`features/enabled.ts` の一覧から次のフックを読む。
+機能のコードは `features/<id>/` にあり、その `feature.ts` が `features/feature.ts` の `defineFeature()` で、機能が OP に足すものを宣言する。どの OP にもあるコード（`features/<id>/` の外）は、後述するパイプラインの所有者付きブロックを除いて機能を import せず、`features/enabled.ts` の一覧から次のフックを読む。
 
 | フック | 機能が足すもの |
 |---|---|
@@ -220,7 +221,7 @@ ID が URL から漏れて第三者に同意画面を開かれることはない
 
 ## フロー図とフロー文書（graph / --flow）
 
-`maronn-oidc graph` は、生成される OP を箱と矢印の図にする。`generate` と同じ機能フラグを受け取り、何も書き込まない。既定では箱がエンドポイント、矢印はエンドポイントの間でコードやトークンが渡る向き。`--detail steps` を付けると、各エンドポイントの中を、生成コードの export 関数 1 つにつき箱 1 つで描く。
+`maronn-oidc graph` は、生成される OP を箱と矢印の図にする。`generate` と同じ機能フラグを受け取るが、コードは生成しない。既定では箱がエンドポイント、矢印はエンドポイントの間でコードやトークンが渡る向き。`--detail steps` を付けると、各エンドポイントの中を、生成コードの export 関数 1 つにつき箱 1 つで描く。
 
 ```bash
 # エンドポイントの図（Mermaid）を標準出力へ
@@ -267,7 +268,7 @@ flowchart LR
 
 ### 図の箱と生成コードの対応
 
-`--detail steps` の箱は、生成コードの export 関数（ステップ 1 つにつき `steps/<step-id>.ts` の関数 1 つ）と 1 対 1 で対応する。箱にはステップの ID、関数名、根拠になる仕様の節が書かれ、生成コードでは同じ ID が呼び出しの手前のコメントになる。たとえば `endpoints/token/pipeline.ts` のハンドラーは次の形になる。
+`--detail steps` の箱は、生成コードの export 関数（ステップ 1 つにつき `steps/<step-id>.ts` の関数 1 つ）と 1 対 1 で対応する。箱にはステップの名前（`meta` の `label`）、関数名、根拠になる仕様の節が書かれ、生成コードでは、ステップ ID と、箱と同じ名前と仕様の節が、呼び出しの手前のコメント（`// [step-id] Label — Spec`）になる。たとえば `endpoints/token/pipeline.ts` のハンドラーは次の形になる。
 
 ```typescript
 tokenApp.post('/', async (c) => {
@@ -291,7 +292,7 @@ tokenApp.post('/', async (c) => {
 });
 ```
 
-API のエンドポイント（`/authorize`、`/token`、`/userinfo`、`/introspect`、`/revoke`、Discovery、JWKS、experimental の `/par`、`/register`、`/device_authorization`、`/backchannel_authentication`）は、この「関数を順に呼ぶ」形で生成される。画面のエンドポイント（`/login`、`/login/google`、`/consent`、`/device`、`/ciba`、`/logout`）も箱ごとに関数を持つが、GET と POST の流れが順番を決めているため、`prepareLogin()` / `submitLogin()` のような入口の関数がそれらを決まった順で呼ぶ。
+画面のエンドポイント以外（`/authorize`、`/token`、`/userinfo`、`/introspect`、`/revoke`、Discovery、JWKS、experimental の `/par`、`/register`、`/device_authorization`、`/backchannel_authentication`）は、この「関数を順に呼ぶ」形で生成され、`--flow` でステップを並べ替えられる。画面のエンドポイント（`/login`、`/login/google`、`/consent`、`/device`、`/ciba`、`/logout`）も箱ごとに関数を持つが、GET と POST の流れが順番を決めているため、入口の関数（`prepareLogin()` / `submitLogin()` など。`device`、`ciba`、`logout` は `page.tsx` のハンドラー）がそれらを決まった順で呼ぶ。
 
 ### フロー文書を編集して生成する（--flow）
 
@@ -308,13 +309,13 @@ maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
 - **ステップを消す**：`removable: true` のステップ（`/token` の `resolve-acr-amr`、`issue-id-token`、`revoke-rotated-refresh-token`、`/authorize` の `verify-id-token-hint`、`authenticate-silently`、`reuse-session`）を `steps` から外す。消したステップが作っていた値を後のステップが読む場合、生成コードはその値を既定値（ID Token や acr なら `undefined`）で補う。消したステップのファイルは、ほかのファイルが import していなければ出力しない
 - **ステップを並べ替える**：値のやり取りが無いステップ同士は順番を変えられる。値を作るステップより前にそれを読むステップを置く、`after` / `before` の制約に反する、といった並びはエラーになる
 - **エンドポイントを並べ替える**：`endpoints` の順番は図の並びとしてマニフェストの `endpointOrder` に記録される。生成コードがエンドポイントをマウントする順番は変わらない
-- **機能を切り替える**：`features` の値を変えると、`--enable` / `--disable` と同じようにエンドポイントとステップが増減する。`scopes` と `db` も同様
+- **機能を切り替える**：`features` の値を変え、その機能が持つエンドポイント（`endpoints`）とステップ（`steps`）を同じ文書で足すか外す。どちらかだけを変えた文書はエラーで止まるので、`maronn-oidc graph --enable <id>`（または `--disable <id>`）`--format json` で文書を描き直すのが確実である。`scopes` と `db` は値を変えるだけでよい
 
 次の変更はエラーで止まり、何も書き込まない。
 
-- `removable: false` のステップを消す。`feature` が付いたステップは、ステップではなく `features` の側で外す
+- `removable: false` のステップを消す。そのうち `feature` が付いたステップは、`features` のその機能を false にし、機能のステップとエンドポイントも文書から外す
 - 画面のエンドポイント（`login` / `login-google` / `consent` / `device` / `ciba` / `logout`）のステップ列を変える
-- 必須のエンドポイント（`authorize` / `token` など）を外す。機能で増えたエンドポイント（`introspection` など）は `features` の側で外す
+- 必須のエンドポイント（`authorize` / `token` など）を外す。機能で増えたエンドポイント（`introspection` など）は、`features` のその機能を false にし、エンドポイントとステップも文書から外す
 - `--flow` と `--enable` / `--disable` / `--scope` / `--db` を同時に指定する。文書が機能構成を持っているため
 
 並べ替えたステップは Hono / Express / Fastify の生成コードに反映される。Next.js は App Router の Route Handler に処理を直接書く構成のため、`steps` を変えた文書を渡すとエラーになり、エンドポイントと機能の変更だけを受け付ける。
@@ -362,7 +363,7 @@ src/app/
 └── .maronn-openid-connect.json
 ```
 
-`app/layout.tsx` は写さないので、プロジェクトのルートレイアウトがそのまま使われる。
+生成物に `layout.tsx` は含まれないので、プロジェクトのルートレイアウトがそのまま使われる。
 
 ### 機能のルートグループとブロック
 
@@ -659,7 +660,7 @@ maronn-oidc generate nextjs --db kv --output ./src/app
 `--db sql` と、Hono / Express / Fastify の `--db kv` の `instance.ts` は、生成直後には実装されておらず、「`createDatabase()` が未実装である」というエラーを投げる。
 ファイルの末尾に DB ごとの例を載せているので、使う DB に合わせて書き換える。
 
-生成アプリは、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` と `clientKeyResolver` のオプションを渡さなければ `db/` からクライアントとその鍵を読む。
+Hono / Express / Fastify の `createApp` / `applyOidc` は、`storage` オプションを渡さなければ `db/` のストアを使い、`clientResolver` と `clientKeyResolver` のオプションを渡さなければ `db/` からクライアントとその鍵を読む。
 `createDatabase()` を呼ぶ時機は、Hono / Express / Fastify と Next.js で異なる。
 
 - **Hono / Express / Fastify**：`app.ts` がリクエストごとに、そのリクエストのコンテキスト（Hono の `Context`、Express と Fastify は `web-router.ts` の `WebContext`）を渡して呼ぶ。Hono では Cloudflare D1 のバインディング（`c.env.DB`）や環境変数をそこから読める。引数を取らない `createDatabase()` でもよい。リクエストをまたいで使う接続（PostgreSQL のプール、SQLite のファイル）は、ここで開かずにモジュールの変数に置く
@@ -716,7 +717,8 @@ export function createDatabase(): SqlDatabase {
 
 `schema.sql` には、Sign in with Google のための 2 つのテーブルも入っている。
 `federated_identities` は Google アカウントとユーザーの対応を、`upstream_auth_requests` はログイン画面の Google ボタンに埋めた nonce を持つ。
-`--enable google-login` を付けなくても作られるが、OP がこの 2 つを読み書きするのは google-login を有効にしたときだけである。
+`--enable google-login` を付けなくても作られるが、OP がこの 2 つに書き込むのは google-login を有効にしたときだけである。
+`federated_identities` は、`auth_users.auth_type` を決めるために、パスワードでのログインでも読む。
 
 ID トークンは保存しない。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためである。
@@ -744,7 +746,7 @@ OP は終わったトランザクションの行を消さず、`codes` と `acce
 `get`、`set`（TTL を付けられる）、`delete` と、キーが無いときだけ値を書く `setIfAbsent` である。
 値はどれも JSON の文字列で、キーの一覧は `keys.ts` にある。
 
-Hono / Express / Fastify の `instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）とメモリ上の Map の例がある。
+Hono / Express / Fastify の `instance.ts` の末尾には、Upstash Redis の REST API（fetch だけで動き、Vercel の KV もこれに当たる）、TCP で Redis につなぐ node-redis と ioredis（Node.js だけで動き、Cloudflare Workers では動かない）、メモリ上の Map の例がある。
 生成される例はバインディング（`c.env`）から Upstash の URL とトークンを読むので、Node.js で動かすなら、次のように環境変数から読む形に書き換える。
 Next.js の `instance.ts` は、Upstash Redis か node:sqlite で生成したままで動く（[データの保存先（_oidc-provider/db/）](#データの保存先_oidc-providerdb)を参照）。
 

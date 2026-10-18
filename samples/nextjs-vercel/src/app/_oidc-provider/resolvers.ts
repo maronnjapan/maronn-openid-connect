@@ -1,5 +1,6 @@
 import type {
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AuthorizationCodeResolver,
   AuthorizationCodeInfo,
@@ -18,7 +19,7 @@ import type {
   SessionInfo,
   ConsentResolver,
 } from '@maronn-openid-connect/core';
-import { createInMemoryClientResolver } from './config';
+import { createInMemoryClientKeyResolver, createInMemoryClientResolver } from './config';
 import {
   defaultProviderStores,
   parseSessionId,
@@ -33,6 +34,12 @@ export const clientResolver: ClientResolver & TokenClientResolver =
   createInMemoryClientResolver();
 
 export const tokenClientResolver: TokenClientResolver = clientResolver;
+
+/**
+ * Default key resolver: the keys of the clients of config.ts
+ * (ClientRegistration.keys), one purpose at a time.
+ */
+export const clientKeyResolver: ClientKeyResolver = createInMemoryClientKeyResolver();
 
 /**
  * Build the resolver suite over one coherent store set. A request must never

@@ -44,7 +44,7 @@ import type {
   ClientInfo,
   ClientResolver,
 } from './authorization-request.js';
-import { exportPublicJwk } from './jwks.js';
+import { exportPublicJwk, type JwkSet } from './jwks.js';
 import { sign, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
 
 // Helpers for building compact-JWS Request Objects (OIDC Core 1.0 §6.1).
@@ -145,11 +145,13 @@ function validParams(
   };
 }
 
-// 署名付き Request Object（OIDC Core 1.0 §6.1）の署名鍵と、その公開鍵を kid 付きで JWKS に
-// 登録したクライアント。otherKeyPair は登録外の鍵で署名した Request Object の再現に使う。
+// 署名付き Request Object（OIDC Core 1.0 §6.1）の署名鍵と、クライアントが request_object の
+// 用途に登録した、その公開鍵（kid 付き）。otherKeyPair は登録外の鍵で署名した Request Object の
+// 再現に使う。
 let rsaKeyPair: CryptoKeyPair;
 let otherKeyPair: CryptoKeyPair;
 let roClient: ClientInfo;
+let roJwks: JwkSet;
 const roKid = 'ro-key-1';
 
 beforeAll(async () => {
@@ -176,8 +178,8 @@ beforeAll(async () => {
   roClient = {
     clientId: 'ro-client',
     redirectUris: [REDIRECT_URI],
-    jwks: { keys: [await exportPublicJwk(rsaKeyPair.publicKey, roKid)] },
   };
+  roJwks = { keys: [await exportPublicJwk(rsaKeyPair.publicKey, roKid)] };
 });
 
 // Query parameters sent alongside a Request Object always carry the
@@ -493,7 +495,7 @@ describe('resolveRequestObjectParams', () => {
       );
       const params = roQueryParams({ request });
 
-      const { effectiveParams } = await resolveRequestObjectParams(params, roClient);
+      const { effectiveParams } = await resolveRequestObjectParams(params, { jwks: roJwks });
       const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, roClient);
       const state = effectiveParams.state;
       const scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
@@ -533,7 +535,7 @@ describe('resolveRequestObjectParams', () => {
 
       const { effectiveParams } = await resolveRequestObjectParams(
         roQueryParams({ request, state: 'query-state', nonce: 'query-nonce' }),
-        roClient,
+        { jwks: roJwks },
       );
 
       expect(effectiveParams).toMatchObject({
@@ -561,7 +563,7 @@ describe('resolveRequestObjectParams', () => {
       );
 
       const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(roQueryParams({ request }), roClient),
+        resolveRequestObjectParams(roQueryParams({ request }), { jwks: roJwks }),
       );
 
       expect(error).toBeInstanceOf(AuthorizationError);
@@ -582,7 +584,7 @@ describe('resolveRequestObjectParams', () => {
       );
 
       const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(roQueryParams({ request }), roClient),
+        resolveRequestObjectParams(roQueryParams({ request }), { jwks: roJwks }),
       );
 
       expect(error).toBeInstanceOf(AuthorizationError);
@@ -599,7 +601,7 @@ describe('resolveRequestObjectParams', () => {
       });
 
       const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(roQueryParams({ request }), roClient),
+        resolveRequestObjectParams(roQueryParams({ request }), { jwks: roJwks }),
       );
 
       expect(error).toBeInstanceOf(AuthorizationError);
@@ -607,11 +609,7 @@ describe('resolveRequestObjectParams', () => {
       expect(error?.errorDescription).toBe('unsupported request object signing alg: HS256');
     });
 
-    it('should reject a request object when no client JWKS is registered with invalid_request_object', async () => {
-      const noJwksClient: ClientInfo = {
-        clientId: 'ro-client-nokeys',
-        redirectUris: [REDIRECT_URI],
-      };
+    it('should reject a request object when the client registered no request_object keys with invalid_request_object', async () => {
       const request = await buildSignedRequestObject(
         {
           response_type: 'code',
@@ -626,7 +624,7 @@ describe('resolveRequestObjectParams', () => {
       const error = await captureAsyncStepError(() =>
         resolveRequestObjectParams(
           roQueryParams({ client_id: 'ro-client-nokeys', request }),
-          noJwksClient,
+          { jwks: { keys: [] } },
         ),
       );
 
@@ -639,7 +637,7 @@ describe('resolveRequestObjectParams', () => {
 
     it('should reject a request object with a broken JWS structure with invalid_request_object', async () => {
       const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(roQueryParams({ request: 'not-a-jwt' }), roClient),
+        resolveRequestObjectParams(roQueryParams({ request: 'not-a-jwt' }), { jwks: roJwks }),
       );
 
       expect(error).toBeInstanceOf(AuthorizationError);
@@ -651,7 +649,7 @@ describe('resolveRequestObjectParams', () => {
 
     it('should reject a JWE (5-segment) request object with invalid_request_object', async () => {
       const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(roQueryParams({ request: 'a.b.c.d.e' }), roClient),
+        resolveRequestObjectParams(roQueryParams({ request: 'a.b.c.d.e' }), { jwks: roJwks }),
       );
 
       expect(error).toBeInstanceOf(AuthorizationError);
@@ -678,8 +676,7 @@ describe('resolveRequestObjectParams', () => {
 
       const { effectiveParams } = await resolveRequestObjectParams(
         roQueryParams({ request }),
-        roClient,
-        { allowUnsigned: true },
+        { jwks: roJwks, allowUnsigned: true },
       );
       const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, roClient);
 
@@ -699,7 +696,7 @@ describe('resolveRequestObjectParams', () => {
       });
 
       const error = await captureAsyncStepError(() =>
-        resolveRequestObjectParams(roQueryParams({ request }), roClient),
+        resolveRequestObjectParams(roQueryParams({ request }), { jwks: roJwks }),
       );
 
       expect(error).toBeInstanceOf(AuthorizationError);
@@ -719,7 +716,7 @@ describe('resolveRequestObjectParams', () => {
       const error = await captureAsyncStepError(() =>
         resolveRequestObjectParams(
           roQueryParams({ request: 'not-a-jwt', state: 'st-broken' }),
-          roClient,
+          { jwks: roJwks },
         ),
       );
 
@@ -965,7 +962,7 @@ describe('resolveAuthorizationRedirectUri', () => {
 
       const { effectiveParams } = await resolveRequestObjectParams(
         roQueryParams({ request, redirect_uri: 'https://evil.example.com/cb' }),
-        roClient,
+        { jwks: roJwks },
       );
       const redirectUri = resolveAuthorizationRedirectUri(effectiveParams, roClient);
 
@@ -1115,7 +1112,7 @@ describe('validateRequestObjectConsistency', () => {
 
     const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
       params,
-      roClient,
+      { jwks: roJwks },
     );
     const error = captureStepError(() =>
       validateRequestObjectConsistency(
@@ -1352,7 +1349,7 @@ describe('validateAuthorizationScope', () => {
       );
       const params = roQueryParams({ request });
 
-      const { effectiveParams } = await resolveRequestObjectParams(params, roClient);
+      const { effectiveParams } = await resolveRequestObjectParams(params, { jwks: roJwks });
       const error = captureStepError(() =>
         validateAuthorizationScope(params, effectiveParams, REDIRECT_URI, effectiveParams.state),
       );
@@ -1801,7 +1798,7 @@ describe('validatePromptParameter', () => {
 
       const { effectiveParams } = await resolveRequestObjectParams(
         roQueryParams({ request }),
-        roClient,
+        { jwks: roJwks },
       );
       const error = captureStepError(() =>
         validatePromptParameter(effectiveParams, REDIRECT_URI, effectiveParams.state),

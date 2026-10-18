@@ -36,7 +36,10 @@ import {
   completeAuthTransaction,
   createAuthorizationCode,
 } from '@maronn-openid-connect/core';
-import { clientResolver as defaultClientResolver } from '../resolvers.js';
+import {
+  clientResolver as defaultClientResolver,
+  clientKeyResolver as defaultClientKeyResolver,
+} from '../resolvers.js';
 import {
   transactionStore as defaultTransactionStore,
   authSessionStore as defaultAuthSessionStore,
@@ -248,9 +251,10 @@ export async function resolveAuthorizationClient(
 }
 
 /**
- * Verify the signed Request Object (request parameter) against the client's
- * registered JWKS and overlay its claims onto the query parameters.
- * OIDC Core 1.0 §6.1
+ * Verify the signed Request Object (request parameter) against the keys the
+ * client registered for the request_object purpose and overlay its claims
+ * onto the query parameters.
+ * OIDC Core 1.0 §6.1 / §6.3.2
  *
  * RS256 is required; alg=none is accepted only when
  * config.allowUnsignedRequestObject is enabled (conformance compat).
@@ -262,7 +266,12 @@ export async function resolveRequestObject(
   client: ClientInfo,
 ): Promise<ResolvedRequestObjectParams> {
   const config = c.get('config');
-  return resolveRequestObjectParams(params, client, { allowUnsigned: config.allowUnsignedRequestObject });
+  const clientKeyResolver = c.get('clientKeyResolver') ?? defaultClientKeyResolver;
+  // The keys are read only for a request that carries a Request Object.
+  const jwks = params.request === undefined
+    ? undefined
+    : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
+  return resolveRequestObjectParams(params, { jwks, allowUnsigned: config.allowUnsignedRequestObject });
 }
 
 /**

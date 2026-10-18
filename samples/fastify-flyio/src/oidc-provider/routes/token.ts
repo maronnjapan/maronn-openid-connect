@@ -221,8 +221,8 @@ export async function authenticateTokenClient(
     tokenClientResolver,
   );
 
-  // OIDC Core 1.0 §9: the method used must match the registered
-  // token_endpoint_auth_method (blocks auth method downgrade / public-client mixups).
+  // OIDC Core 1.0 §9: the method used must be one the client registered
+  // (blocks auth method downgrade / public-client mixups).
   validateClientAuthMethod(tokenClient, presentedCredentials);
 
   // OAuth 2.1 §7.4.1: constant-time client_secret comparison.

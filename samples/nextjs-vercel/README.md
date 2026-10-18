@@ -6,7 +6,7 @@ CLIの `--db kv` で生成したキー・バリューストア用のコード（
 
 クライアントとユーザーもキー・バリューストアから読む。サーバーの起動時に `src/instrumentation.ts`（Next.jsが起動時に1回呼ぶ `register()`）が、`src/sample-data.ts` のクライアント（`OIDC_CLIENTS_JSON`、無ければ `OIDC_CLIENT_ID` などの環境変数）を `registerClient()` で、開発用のユーザー（testuser / otheruser、パスワードは `password`）を `registerUser()` で登録する。client_secret とパスワードはハッシュだけを保存する。クライアントは1つのレコードを1回の書き込みで登録するので、同時に起動したインスタンスが登録し合っても壊れない。ユーザーはパスワードのハッシュ化に時間がかかるので、登録済みならそのままにする。
 
-クライアントのレコードにはまだ `jwks`（クライアントの公開鍵）が無い。Express、Fastify、Honoのサンプルは `OIDC_CLIENTS_JSON` の `jwks` をアプリのコードで足すが、このサンプルではクライアントを読む `provider.ts` もCLIの生成物なので足せない。そのため、OpenID Conformance Suiteの署名付きRequest Objectは、このサンプルでは検証できない。
+`OIDC_CLIENTS_JSON` のクライアントの `keys`（用途ごとの公開鍵）は、`registerClient()` が `client_jwks:<client_id>:<purpose>` のレコードに入れる。OpenID Conformance Suiteの署名付きRequest Objectは、`request_object` の用途の鍵で検証する。
 
 ## 構成
 

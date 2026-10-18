@@ -3,7 +3,7 @@
  * reads both from the key-value store of src/app/_oidc-provider/db/, so
  * instrumentation.ts registers them there when a server instance starts.
  */
-import type { RegisteredClient } from './app/_oidc-provider/config';
+import type { ClientRegistration } from './app/_oidc-provider/config';
 import { registerClient } from './app/_oidc-provider/db/clients';
 import { createDatabase } from './app/_oidc-provider/db/instance';
 import { createKvProviderStores } from './app/_oidc-provider/db/stores';
@@ -34,16 +34,16 @@ export async function registerSampleData(): Promise<void> {
 }
 
 /**
- * OIDC_CLIENTS_JSON (a JSON array of RegisteredClient), or a single
+ * OIDC_CLIENTS_JSON (a JSON array of ClientRegistration), or a single
  * confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
  * OIDC_CLIENT_REDIRECT_URI, plus a resource server client when
  * OIDC_RESOURCE_SERVER_CLIENT_ID and OIDC_RESOURCE_SERVER_CLIENT_SECRET are
  * set.
  */
-function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
+function readRegisteredClients(): ReadonlyMap<string, ClientRegistration> {
   const encoded = process.env.OIDC_CLIENTS_JSON;
   if (encoded) {
-    const clients = JSON.parse(encoded) as RegisteredClient[];
+    const clients = JSON.parse(encoded) as ClientRegistration[];
     return new Map(clients.map((client) => [client.clientId, client]));
   }
 
@@ -55,7 +55,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
     process.env.CLIENT_REDIRECT_URI ??
     'http://localhost:3000/callback';
 
-  const clients = new Map<string, RegisteredClient>([
+  const clients = new Map<string, ClientRegistration>([
     [
       clientId,
       {
@@ -64,7 +64,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
         redirectUris: [clientRedirectUri],
         clientType: 'confidential',
         grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_post',
+        tokenEndpointAuthMethods: ['client_secret_post'],
         responseTypes: ['code'],
       },
     ],
@@ -86,7 +86,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
       redirectUris: [resourceServerRedirectUri],
       clientType: 'confidential',
       grantTypes: ['authorization_code'],
-      tokenEndpointAuthMethod: 'client_secret_basic',
+      tokenEndpointAuthMethods: ['client_secret_basic'],
       responseTypes: ['code'],
     });
   }

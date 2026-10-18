@@ -102,11 +102,11 @@ describe('createBasicOpConformanceArtifacts', () => {
           ],
           clientType: 'confidential',
           grantTypes: ['authorization_code', 'refresh_token'],
-          tokenEndpointAuthMethod: 'client_secret_basic',
+          tokenEndpointAuthMethods: ['client_secret_basic'],
           responseTypes: ['code'],
           // OIDC Core 1.0 §6.1 / RFC 9101: the OP trusts the public half so it can
           // verify Request Objects the suite signs with the private half.
-          jwks: { keys: [REQUEST_OBJECT_PUBLIC_JWK] },
+          keys: { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } },
         },
         {
           clientId: 'oidf-basic-client-2',
@@ -117,9 +117,9 @@ describe('createBasicOpConformanceArtifacts', () => {
           ],
           clientType: 'confidential',
           grantTypes: ['authorization_code', 'refresh_token'],
-          tokenEndpointAuthMethod: 'client_secret_basic',
+          tokenEndpointAuthMethods: ['client_secret_basic'],
           responseTypes: ['code'],
-          jwks: { keys: [REQUEST_OBJECT_PUBLIC_JWK] },
+          keys: { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } },
         },
         {
           clientId: 'oidf-post-client',
@@ -130,9 +130,9 @@ describe('createBasicOpConformanceArtifacts', () => {
           ],
           clientType: 'confidential',
           grantTypes: ['authorization_code', 'refresh_token'],
-          tokenEndpointAuthMethod: 'client_secret_post',
+          tokenEndpointAuthMethods: ['client_secret_post'],
           responseTypes: ['code'],
-          jwks: { keys: [REQUEST_OBJECT_PUBLIC_JWK] },
+          keys: { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } },
         },
       ]);
     });
@@ -161,9 +161,9 @@ describe('createBasicOpConformanceArtifacts', () => {
         clientJwks,
       });
 
-      assert.deepEqual(artifacts.clients[0].jwks, clientJwks);
-      assert.deepEqual(artifacts.clients[1].jwks, clientJwks);
-      assert.deepEqual(artifacts.clients[2].jwks, clientJwks);
+      assert.deepEqual(artifacts.clients[0].keys, { request_object: clientJwks });
+      assert.deepEqual(artifacts.clients[1].keys, { request_object: clientJwks });
+      assert.deepEqual(artifacts.clients[2].keys, { request_object: clientJwks });
     });
 
     it('should wire the default conformance Request Object key on both the OP and the suite', () => {
@@ -179,7 +179,7 @@ describe('createBasicOpConformanceArtifacts', () => {
 
       // OP side trusts only the public half (no private material must leak here).
       for (const client of artifacts.clients) {
-        assert.deepEqual(client.jwks, { keys: [REQUEST_OBJECT_PUBLIC_JWK] });
+        assert.deepEqual(client.keys, { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } });
       }
       assert.equal('d' in REQUEST_OBJECT_PUBLIC_JWK, false);
 

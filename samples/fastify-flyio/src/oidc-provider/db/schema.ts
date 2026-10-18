@@ -36,10 +36,12 @@ CREATE TABLE IF NOT EXISTS clients (
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Client_auth: how the client authenticates at the token endpoint. A public
--- client has none, and a confidential client has one. Another method (such as
--- private_key_jwt) is added here, with a table of its own like client_secrets,
--- when the OP supports it.
+-- Client_auth: a method the client may authenticate with at the token
+-- endpoint. A public client has none. A confidential client has one row per
+-- method it may use: client_secret_basic, client_secret_post or both. Every
+-- row of a client carries the same secret in client_secrets, because a client
+-- has one client_secret (RFC 7591 §2). Another method (such as
+-- private_key_jwt) is added here when the OP supports it.
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -60,6 +62,22 @@ CREATE TABLE IF NOT EXISTS client_secrets (
   FOREIGN KEY (id, client_auth_type)
     REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
 );
+
+-- Client_jwk: a public key of the client for one purpose, one JWK (RFC 7517)
+-- as JSON. purpose names the process that uses the key: request_object for
+-- the signed Request Objects the OP verifies (OIDC Core 1.0 §6.3.2), or
+-- another one such as private_key_jwt (OIDC Core 1.0 §9) or dpop (RFC 9449)
+-- for a process a project adds. It has no CHECK, so a new purpose needs no
+-- migration. A key used for two purposes is two rows. The OP reads the keys
+-- of a purpose each time a process needs them, so a key inserted or deleted
+-- here takes effect at once. Never store a private key.
+CREATE TABLE IF NOT EXISTS client_jwks (
+  id        TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  purpose   VARCHAR(1000) NOT NULL,
+  jwk       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_jwks_client_id_purpose_idx ON client_jwks (client_id, purpose);
 
 -- Redirect_Uri: the redirect URIs of the client.
 CREATE TABLE IF NOT EXISTS client_redirect_uris (

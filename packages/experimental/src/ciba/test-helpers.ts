@@ -35,7 +35,7 @@ export function makeClient(overrides: Partial<CibaClientInfo> = {}): CibaClientI
     clientId: 'ciba-client',
     clientSecret: 'secret',
     grantTypes: ['urn:openid:params:grant-type:ciba'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     ...overrides,
   };
 }

@@ -70,9 +70,9 @@ export interface AuthorizationRequestParams {
   /**
    * OIDC Core 1.0 §6.1: Request Object passed by value (a signed JWS JWT whose
    * claims are the Authorization Request parameters). Supported here: the JWS is
-   * verified against the client's registered keys (`ClientInfo.jwks`) and its
-   * claims supersede the OAuth query parameters. Discovery advertises
-   * `request_parameter_supported: true`.
+   * verified against the keys the client registered for the request_object
+   * purpose (passed to resolveRequestObjectParams) and its claims supersede the
+   * OAuth query parameters. Discovery advertises `request_parameter_supported: true`.
    */
   request?: string;
   /**
@@ -144,13 +144,6 @@ export interface ClientInfo {
    * `default_max_age` は OPTIONAL なメタデータであり、未指定の場合はフォールバックを行わない。
    */
   defaultMaxAge?: number;
-  /**
-   * クライアントが登録した公開鍵集合（JWKS）。
-   * OIDC Core 1.0 §6.1: 署名付き Request Object（`request` パラメータ）の JWS 署名検証に使う。
-   * 署名付き Request Object を受け付けるクライアントでは必須。未登録のまま署名付き
-   * Request Object を受け取った場合は `invalid_request` で拒否される。
-   */
-  jwks?: JwkSet;
 }
 
 /**
@@ -845,9 +838,11 @@ export interface ResolvedRequestObjectParams {
  * Request Object by value（OIDC Core 1.0 §6.1）を解決する（機能単位のステップ関数）。
  *
  * `request` パラメータが無い場合はクエリパラメータのコピーをそのまま返す。
- * ある場合は署名付き JWS Request Object をクライアント登録鍵（`ClientInfo.jwks`）で
- * 検証し、claim をクエリ値に supersede した有効パラメータ集合を返す。検証失敗
- * （壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
+ * ある場合は署名付き JWS Request Object を、クライアントが request_object の用途に登録した
+ * 公開鍵（`options.jwks`。ClientKeyResolver で引く）で検証し、claim をクエリ値に supersede
+ * した有効パラメータ集合を返す。鍵を引く呼び出し側は、`request` パラメータがあるときだけ
+ * 引けば足りる。
+ * 検証失敗（壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
  * 内部の redirect_uri も信用せず非リダイレクトの invalid_request_object
  * （OIDC Core 1.0 §6.3）とする。
  *
@@ -856,8 +851,12 @@ export interface ResolvedRequestObjectParams {
  */
 export async function resolveRequestObjectParams(
   params: AuthorizationRequestParams,
-  client: Pick<ClientInfo, 'jwks'>,
   options: {
+    /**
+     * 署名の検証に使う、クライアントが request_object の用途に登録した公開鍵。
+     * 無い（空を含む）まま署名付き Request Object を受け取ると invalid_request_object で拒否する。
+     */
+    jwks?: JwkSet;
     /**
      * 受理する JWS 署名アルゴリズム。
      * 未指定なら {@link DEFAULT_REQUEST_OBJECT_SIGNING_ALGS}（`["RS256"]`）。
@@ -877,7 +876,7 @@ export async function resolveRequestObjectParams(
   let requestObjectClaims: Record<string, unknown>;
   try {
     requestObjectClaims = await parseRequestObject(params.request, {
-      jwks: client.jwks,
+      jwks: options.jwks,
       supportedSigningAlgs:
         options.supportedSigningAlgs ?? [
           ...DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,

@@ -52,7 +52,7 @@ const oidcClientsJson = JSON.stringify([
       'urn:ietf:params:oauth:grant-type:jwt-bearer',
       'urn:openid:params:grant-type:ciba',
     ],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -64,7 +64,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -76,7 +76,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:openid:params:grant-type:ciba'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -85,7 +85,7 @@ const oidcClientsJson = JSON.stringify([
     redirectUris: [`${resourceServerURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['authorization_code', 'refresh_token'],
-    tokenEndpointAuthMethod: 'client_secret_basic',
+    tokenEndpointAuthMethods: ['client_secret_basic'],
     responseTypes: ['code'],
   },
   {
@@ -101,9 +101,35 @@ const oidcClientsJson = JSON.stringify([
       'urn:ietf:params:oauth:grant-type:device_code',
       'urn:openid:params:grant-type:ciba',
     ],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
     scope: ['openid', 'profile'],
+  },
+  {
+    // Registered with two client authentication methods, so the
+    // client-auth-methods spec can authenticate with each of them. Nothing
+    // serves the redirect URI: the spec reads the code from the URL the
+    // browser lands on.
+    clientId: 'e2e-multiple-auth-methods',
+    clientSecret: 'e2e-multiple-auth-methods-secret',
+    redirectUris: [`${clientBaseURL}/multiple-auth-methods-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code', 'refresh_token'],
+    tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'],
+    responseTypes: ['code'],
+  },
+  {
+    // Registered without public keys: the client-keys spec adds them to the
+    // OP's database while the OP runs, the way an operator does. Nothing
+    // serves the redirect URI: the spec reads the code from the URL the
+    // browser lands on.
+    clientId: 'e2e-client-keys',
+    clientSecret: 'e2e-client-keys-secret',
+    redirectUris: [`${clientBaseURL}/client-keys-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
   },
 ]);
 
@@ -119,7 +145,7 @@ const xaaOidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
   {
@@ -128,7 +154,7 @@ const xaaOidcClientsJson = JSON.stringify([
     redirectUris: [`${clientBaseURL}/unused-callback`],
     clientType: 'confidential',
     grantTypes: ['urn:ietf:params:oauth:grant-type:jwt-bearer'],
-    tokenEndpointAuthMethod: 'client_secret_post',
+    tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
 ]);

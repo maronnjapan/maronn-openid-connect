@@ -3,13 +3,12 @@ import {
   createCachedSigningKeyProvider,
   selectPreferredAcr,
   type AcrResolver,
-  type ClientResolver,
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
 import { applyOidc } from './oidc-provider/apply.js';
-import type { GoogleLoginConfig, RegisteredClient } from './oidc-provider/config.js';
-import { createSqlClientResolver, registerClient } from './oidc-provider/db/clients.js';
+import type { ClientRegistration, GoogleLoginConfig } from './oidc-provider/config.js';
+import { registerClient } from './oidc-provider/db/clients.js';
 import { createDatabase } from './oidc-provider/db/instance.js';
 import { registerUser } from './oidc-provider/db/users.js';
 import { UserStore } from './oidc-provider/store.js';
@@ -45,17 +44,6 @@ for (const username of ['testuser', 'otheruser']) {
   if (user) await registerUser(createDatabase(), user);
 }
 
-// The client tables have no column for jwks (the client's public keys) yet:
-// they come with private_key_jwt. The conformance suite registers jwks to sign
-// Request Objects with, so they are added from OIDC_CLIENTS_JSON here.
-const sqlClientResolver = createSqlClientResolver(createDatabase());
-const clientResolver: ClientResolver = {
-  async findClient(requestedClientId) {
-    const client = await sqlClientResolver.findClient(requestedClientId);
-    const jwks = clients.get(requestedClientId)?.jwks;
-    return client && jwks ? { ...client, jwks } : client;
-  },
-};
 const allowNonPkceAuthorizationCodeFlow =
   process.env.OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW === '1';
 // OIDC Core 1.0 §6.1 / RFC 9101: accepting unsigned (alg:none) Request Objects is a
@@ -125,9 +113,9 @@ applyOidc(app, {
   },
   signingKeyProvider: createCachedSigningKeyProvider(createEphemeralRs256KeyProvider(), 60_000),
   // The generated app keeps its data in the SQL tables of db/ (--db), on the
-  // node:sqlite database of db/instance.ts. The clients come from the same
-  // tables, with the jwks of OIDC_CLIENTS_JSON added (see above).
-  clientResolver,
+  // node:sqlite database of db/instance.ts, and reads the clients from the same
+  // tables. registerClient() above put OIDC_CLIENTS_JSON there, the keys of
+  // each client included (client_jwks).
   acrResolver: sampleAcrResolver,
   dynamicClientRegistration,
   corsOrigins: issuer,
@@ -175,13 +163,13 @@ function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
   return hostedDomain ? { clientId, hostedDomain } : { clientId };
 }
 
-function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
+function readRegisteredClients(): ReadonlyMap<string, ClientRegistration> {
   const encoded = process.env.OIDC_CLIENTS_JSON;
   if (encoded) {
     return parseRegisteredClients(encoded);
   }
 
-  return new Map<string, RegisteredClient>([
+  return new Map<string, ClientRegistration>([
     [
       clientId,
       {
@@ -190,7 +178,7 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
         redirectUris: [clientRedirectUri],
         clientType: 'confidential',
         grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_post',
+        tokenEndpointAuthMethods: ['client_secret_post'],
         responseTypes: ['code'],
       },
     ],
@@ -202,14 +190,14 @@ function readRegisteredClients(): ReadonlyMap<string, RegisteredClient> {
         redirectUris: [resourceServerRedirectUri],
         clientType: 'confidential',
         grantTypes: ['authorization_code'],
-        tokenEndpointAuthMethod: 'client_secret_basic',
+        tokenEndpointAuthMethods: ['client_secret_basic'],
         responseTypes: ['code'],
       },
     ],
   ]);
 }
 
-function parseRegisteredClients(encoded: string): ReadonlyMap<string, RegisteredClient> {
+function parseRegisteredClients(encoded: string): ReadonlyMap<string, ClientRegistration> {
   const parsed: unknown = JSON.parse(encoded);
   if (!Array.isArray(parsed)) {
     throw new Error('OIDC_CLIENTS_JSON must be a JSON array');
@@ -223,7 +211,7 @@ function parseRegisteredClients(encoded: string): ReadonlyMap<string, Registered
   );
 }
 
-function assertRegisteredClient(value: unknown): asserts value is RegisteredClient {
+function assertRegisteredClient(value: unknown): asserts value is ClientRegistration {
   if (!isRecord(value) || typeof value.clientId !== 'string' || !Array.isArray(value.redirectUris)) {
     throw new Error('OIDC_CLIENTS_JSON entries must include clientId and redirectUris');
   }

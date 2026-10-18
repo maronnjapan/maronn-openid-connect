@@ -31,7 +31,7 @@ export interface TokenClientInfo {
   clientId: string;
   /**
    * クライアントシークレット。
-   * RFC 6749 §2.1 / §3.2.1: public client（`tokenEndpointAuthMethod: 'none'`）は
+   * RFC 6749 §2.1 / §3.2.1: public client（`tokenEndpointAuthMethods: ['none']`）は
    * シークレットを持たないため optional。confidential client では必須（未設定なら認証は必ず失敗する）。
    */
   clientSecret?: string;
@@ -58,13 +58,24 @@ export interface TokenClientInfo {
    */
   scope?: string[];
   /**
-   * このクライアントに登録された Token Endpoint のクライアント認証方式。
-   * OIDC Core 1.0 §9 / RFC 7591 §2: 既定は `client_secret_basic`。
-   * 未指定時も既定の `client_secret_basic` を強制し、実際に使われた方式が一致しなければ
-   * 認証失敗（`invalid_client`）として扱う（認証方式ダウングレード防止）。
+   * このクライアントが Token Endpoint などで使ってよいクライアント認証方式
+   * （RFC 7591 §2 の `token_endpoint_auth_method` の値）。
+   * 実際に使われた方式がこの一覧に無ければ `invalid_client` で拒否する（認証方式ダウングレードの防止）。
+   *
+   * - 省略すると RFC 7591 §2 の既定どおり `['client_secret_basic']`
+   * - `['none']` は public client。`none` はほかの方式と並べられない
+   * - `client_secret_basic` と `client_secret_post` のように、1 つのクライアントに複数の方式を
+   *   許すときは並べる。シークレットはどの方式でも同じ `clientSecret`（`clientSecretHash`）と照合する
+   * - 空の一覧はどの方式も許さない
    */
-  tokenEndpointAuthMethod?: 'client_secret_basic' | 'client_secret_post' | 'none';
+  tokenEndpointAuthMethods?: readonly ClientAuthMethod[];
 }
+
+/**
+ * クライアントに登録できるクライアント認証方式（RFC 7591 §2 の `token_endpoint_auth_method`）。
+ * `none` はクライアント認証をしない public client を表す。
+ */
+export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'none';
 
 /**
  * クライアント情報を解決するインターフェース

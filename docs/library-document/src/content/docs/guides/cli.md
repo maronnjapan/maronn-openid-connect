@@ -166,7 +166,7 @@ Next.js は Route Handler とページ・Server Action を別々のモジュー�
 | 環境変数 | 用途 |
 |---|---|
 | `OIDC_ISSUER` | issuer。OP 自身の URL はすべてこれを基準に組み立てる |
-| `OIDC_CLIENTS_JSON` | 登録クライアント（`RegisteredClient` の JSON 配列）。未指定なら `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI` の 1 クライアント |
+| `OIDC_CLIENTS_JSON` | 登録クライアント（`ClientRegistration` の JSON 配列）。未指定なら `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI` の 1 クライアント |
 | `OIDC_SIGNING_KEY_ID` | 起動時に生成する署名鍵の `kid` |
 | `OIDC_CORS_ORIGINS` | トークンエンドポイントなどをブラウザから呼べるオリジン（既定は issuer） |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Vercel で使うストア。未指定ならローカル SQLite（`OIDC_SQLITE_PATH`、既定 `.data/oidc.sqlite`） |
@@ -490,6 +490,91 @@ Next.js の生成物では、`_oidc-provider/provider.ts` の `acrResolver` が�
 要求された値をそのまま acr にした場合、その acr は OP が実際に行った認証を表すとは限りません。
 ログインの方式に合った acr を返すときは、`acrResolver` を渡してください（Next.js では書き換えてください）。
 
+## Client Authentication Methods
+
+1 つのクライアントに、client_secret_basic と client_secret_post の両方を登録できます。
+登録する方式は、クライアントの `tokenEndpointAuthMethods`（core の `TokenClientInfo`）に一覧で書きます。
+省略すると RFC 7591 §2 の既定どおり `['client_secret_basic']` になり、`['none']` は public client を表します。
+`none` はクライアント認証をしない方式なので、ほかの方式と並べた登録は例外になります。
+OP はリクエストが送った資格情報から方式を決め、一覧に無い方式なら `invalid_client` で拒否します。
+
+```typescript
+{
+  clientId: 'my-client',
+  clientSecret: '...',
+  redirectUris: ['https://client.example.com/callback'],
+  tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'],
+}
+```
+
+どの方式で送られても、OP が照合するシークレットは 1 つです（RFC 7591 §2 の `client_secret`）。
+`--db sql` では `client_auths` に方式ごとの行を置き、どの行の `client_secrets` にも同じシークレットのハッシュを入れます。
+`--db kv` では、クライアントのレコードの `client_auths` に方式ごとの要素を置き、どの要素の `secret` も同じハッシュにします。
+`registerClient()` はこの形で書き込みます。
+シークレットの異なる行（要素）を持つクライアントは設定の誤りとして扱い、OP はそのクライアントを読むときに例外を投げます。
+
+## Client Keys
+
+クライアントの公開鍵は、鍵を使う処理（用途）ごとに登録します。
+鍵を使う処理は、core の `ClientKeyResolver` の `findClientKeys(clientId, purpose)` で、自分の用途の鍵だけを受け取ります。
+生成 OP が鍵を読むのは署名付き Request Object の検証（OIDC Core 1.0 §6.3.2）で、`request_object` の用途の鍵を使います。
+
+用途は文字列で、DB の側にも CHECK を付けていないので、ほかの処理の用途も同じ形で登録できます。
+たとえば、private_key_jwt（OIDC Core 1.0 §9）によるクライアント認証を足すなら、`private_key_jwt` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'private_key_jwt')` を呼びます。
+DPoP（RFC 9449）の proof を、登録した鍵で署名したものに限る処理なら、`dpop` の用途を使います。
+生成 OP は private_key_jwt によるクライアント認証も DPoP も実装しておらず、`request_object` 以外の用途の鍵を読む処理を持ちません。
+
+OP は、クライアントの鍵を発行する機能も、公開鍵を登録する API や画面も持ちません。
+鍵の組はクライアントが自分で作り、運用者が公開鍵を DB に書き込みます。
+`--db` 付きの生成物は、処理が鍵を使うたびに DB から読むので、書き込んだ変更は次のリクエストから効き、OP を再起動する必要はありません。
+
+`--db sql` では、`client_jwks` に行を足します。
+1 行は、1 つの用途と、公開鍵 1 つの JWK（RFC 7517）を JSON で持ちます。
+同じ鍵を 2 つの用途で使うときは、用途ごとに 1 行ずつ足してください。
+
+```sql
+INSERT INTO client_jwks (id, client_id, purpose, jwk)
+  VALUES ('my-client:request_object:2026-10', 'my-client', 'request_object',
+          '{"kty":"RSA","kid":"2026-10","alg":"RS256","n":"...","e":"AQAB"}');
+```
+
+`client_jwks` には公開鍵だけを入れ、`d` などの秘密鍵のメンバーを持つ JWK は入れないでください。
+鍵を入れ替えるときは、新しい鍵の行を先に足し、クライアントが新しい鍵で署名し始めてから古い鍵の行を消します。
+1 つの用途にはいくつでも鍵を登録できるので、入れ替えの途中はどちらの鍵の署名も通ります。
+
+`--db kv` では、`client_jwks:<client_id>:<purpose>` のキーに、その用途の鍵を JWK Set（`{ "keys": [ <JWK>, ... ] }`）で書きます。
+鍵を足すときも消すときも、この `keys` を書き換えます。
+
+`--db` を付けない生成物は、`config.ts` に書いたクライアント（`ClientRegistration`）の `keys` から鍵を返します（`config.ts` の `createInMemoryClientKeyResolver()`）。
+`keys` は、用途ごとにその用途の鍵を JWK Set で持ちます。
+同じ鍵を 2 つの用途で使うときは、両方の用途に書きます。
+Next.js では、`OIDC_CLIENTS_JSON` の各クライアントの `keys` に書きます。
+この登録は起動時に読むので、鍵を足したり消したりするには OP を再起動します。
+
+```typescript
+{
+  clientId: 'my-client',
+  clientSecret: '...',
+  redirectUris: ['https://client.example.com/callback'],
+  keys: {
+    request_object: { keys: [{ kty: 'RSA', kid: '2026-10', alg: 'RS256', n: '...', e: 'AQAB' }] },
+  },
+}
+```
+
+`createApp` / `applyOidc` の `clientResolver` に自前のクライアントの一覧から作った resolver を渡すときは、同じ一覧から作った `createInMemoryClientKeyResolver(clients)` を `clientKeyResolver` に渡してください。
+`clientKeyResolver` の既定は `config.ts` の `defaultRegisteredClients` の鍵を返すので、渡さなければ自前のクライアントの鍵は見つかりません。
+
+鍵の保存先を変えるときは、`ClientKeyResolver` を実装して差し替えます。
+Hono / Express / Fastify は `createApp` / `applyOidc` の `clientKeyResolver` オプションに渡し、Next.js は `_oidc-provider/provider.ts` の `clientKeyResolver` を書き換えます。
+鍵の追加や削除がすぐ効くように、実装は呼ばれるたびに保存先を読んでください。
+
+`registerClient()` は、渡したクライアント（`ClientRegistration`）の `keys` の鍵を、それぞれの用途で DB に足します。
+`registerClient()` は鍵を足すだけで、DB にある鍵を消すことはありません。
+起動のたびに `registerClient()` で登録し直しても、運用中に DB へ足した鍵は残ります。
+鍵を消すときは、DB から消すのに加えて、`registerClient()` に渡すクライアントの `keys` からも外してください。
+外さなければ、次の登録で足し直されます。
+
 ## Database (--db)
 
 `--db` を付けると、生成 OP はクライアント、ユーザー、認可トランザクション、認可コード、トークン、セッション、同意を利用者の DB に保存します。
@@ -561,7 +646,8 @@ export function createDatabase(): SqlDatabase {
 | テーブル | 保存するもの |
 |---|---|
 | `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
-| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post）と、シークレットのハッシュ |
+| `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post。1 つのクライアントに両方を登録できる）と、シークレットのハッシュ |
+| `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[Client Keys](#client-keys) を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_scopes` | リダイレクト URI、使ってよい grant type、要求してよいスコープ |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
@@ -575,7 +661,7 @@ export function createDatabase(): SqlDatabase {
 ID トークンは保存しません。
 RP は ID トークンを署名で検証し、OP も `id_token_hint` を署名で検証するので、DB から引く場面が無いためです。
 private_key_jwt によるクライアント認証と authorization_details（RFC 9396）のテーブルは、その機能を実装するときに足す前提で、今は作っていません。
-private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_secrets` と同じ形で方式ごとのテーブルを加えます。
+private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK を広げ、`client_jwks` の `private_key_jwt` の用途の鍵でアサーションを検証します。
 
 `access_tokens.acr` は、トークンに載せた acr（[Authentication Context](#authentication-context-acr_values) を参照）を持ち、acr を決めなかったトークンでは NULL になります。
 
@@ -659,6 +745,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 | キー | 保存するもの |
 |---|---|
 | `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値 |
+| `client_jwks:<client_id>:<purpose>` | クライアントの 1 つの用途の公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
 | `transaction_result:<transaction_id>` | トランザクションの終わり方（`failed`、`code_issued`、`token_issued`） |
@@ -716,8 +803,8 @@ Hono（Cloudflare D1）では、管理用のスクリプトから `registerClien
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行います（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の `OIDC_CLIENTS_JSON` などのクライアント用の環境変数は、`--db` 付きでは読みません。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
-テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、`jwks`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
-`jwks` が無いので、署名付き Request Object の署名は検証できず、そのような要求は拒否されます。
+テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
+クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに `client_jwks` から読みます（[Client Keys](#client-keys) を参照）。
 
 ユーザーは、`users.ts` の `registerUser()` で DB に入れます。
 `password` を渡すと PBKDF2（HMAC-SHA256、100,000 回）のハッシュを `password_hash` に保存し、渡さなければ NULL になります。

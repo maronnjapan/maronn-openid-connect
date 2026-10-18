@@ -105,7 +105,7 @@ describe('requireConfidentialIntrospectionCaller', () => {
   // (token_endpoint_auth_method 'none') is not authentication.
   it('should reject a client registered with the none method with invalid_client', () => {
     const error = captureError(() =>
-      requireConfidentialIntrospectionCaller({ tokenEndpointAuthMethod: 'none' }),
+      requireConfidentialIntrospectionCaller({ tokenEndpointAuthMethods: ['none'] }),
     );
 
     expect(error).toBeInstanceOf(IntrospectionError);
@@ -117,7 +117,7 @@ describe('requireConfidentialIntrospectionCaller', () => {
 
   it('should answer 401 with the Basic challenge for a public client', () => {
     const error = captureError(() =>
-      requireConfidentialIntrospectionCaller({ tokenEndpointAuthMethod: 'none' }),
+      requireConfidentialIntrospectionCaller({ tokenEndpointAuthMethods: ['none'] }),
     );
 
     expect(error?.statusCode).toBe(401);
@@ -128,7 +128,7 @@ describe('requireConfidentialIntrospectionCaller', () => {
     expect(
       captureError(() =>
         requireConfidentialIntrospectionCaller({
-          tokenEndpointAuthMethod: 'client_secret_basic',
+          tokenEndpointAuthMethods: ['client_secret_basic'],
         }),
       ),
     ).toBeUndefined();
@@ -138,7 +138,7 @@ describe('requireConfidentialIntrospectionCaller', () => {
     expect(
       captureError(() =>
         requireConfidentialIntrospectionCaller({
-          tokenEndpointAuthMethod: 'client_secret_post',
+          tokenEndpointAuthMethods: ['client_secret_post'],
         }),
       ),
     ).toBeUndefined();

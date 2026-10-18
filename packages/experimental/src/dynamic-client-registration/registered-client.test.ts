@@ -54,7 +54,7 @@ describe('buildRegisteredClient', () => {
         redirectUris: ['https://app.example.com/cb'],
         grantTypes: ['authorization_code'],
         responseTypes: ['code'],
-        tokenEndpointAuthMethod: 'client_secret_basic',
+        tokenEndpointAuthMethods: ['client_secret_basic'],
         clientIdIssuedAt: 1_790_812_800,
       });
     });
@@ -72,7 +72,7 @@ describe('buildRegisteredClient', () => {
         redirectUris: ['https://app.example.com/cb'],
         grantTypes: ['authorization_code'],
         responseTypes: ['code'],
-        tokenEndpointAuthMethod: 'none',
+        tokenEndpointAuthMethods: ['none'],
         clientIdIssuedAt: 1_790_812_800,
       });
       expect(Object.hasOwn(client, 'clientSecret')).toBe(false);
@@ -109,7 +109,7 @@ describe('buildClientRegistrationResponse', () => {
       redirectUris: ['https://app.example.com/cb'],
       grantTypes: ['authorization_code'],
       responseTypes: ['code'],
-      tokenEndpointAuthMethod: 'client_secret_basic',
+      tokenEndpointAuthMethods: ['client_secret_basic'],
       clientName: 'My Test App',
       clientIdIssuedAt: 1_790_812_800,
     });
@@ -134,7 +134,7 @@ describe('buildClientRegistrationResponse', () => {
       redirectUris: ['https://app.example.com/cb'],
       grantTypes: ['authorization_code'],
       responseTypes: ['code'],
-      tokenEndpointAuthMethod: 'none',
+      tokenEndpointAuthMethods: ['none'],
       clientIdIssuedAt: 1_790_812_800,
     });
     expect(response).toEqual({
@@ -157,7 +157,7 @@ describe('buildClientRegistrationResponse', () => {
       redirectUris: ['https://app.example.com/cb'],
       grantTypes: ['authorization_code'],
       responseTypes: ['code'],
-      tokenEndpointAuthMethod: 'client_secret_basic',
+      tokenEndpointAuthMethods: ['client_secret_basic'],
       clientIdIssuedAt: 0,
     });
     expect(Object.hasOwn(response, 'client_name')).toBe(false);

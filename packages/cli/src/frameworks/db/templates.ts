@@ -166,10 +166,12 @@ CREATE TABLE IF NOT EXISTS clients (
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Client_auth: how the client authenticates at the token endpoint. A public
--- client has none, and a confidential client has one. Another method (such as
--- private_key_jwt) is added here, with a table of its own like client_secrets,
--- when the OP supports it.
+-- Client_auth: a method the client may authenticate with at the token
+-- endpoint. A public client has none. A confidential client has one row per
+-- method it may use: client_secret_basic, client_secret_post or both. Every
+-- row of a client carries the same secret in client_secrets, because a client
+-- has one client_secret (RFC 7591 §2). Another method (such as
+-- private_key_jwt) is added here when the OP supports it.
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -190,6 +192,22 @@ CREATE TABLE IF NOT EXISTS client_secrets (
   FOREIGN KEY (id, client_auth_type)
     REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
 );
+
+-- Client_jwk: a public key of the client for one purpose, one JWK (RFC 7517)
+-- as JSON. purpose names the process that uses the key: request_object for
+-- the signed Request Objects the OP verifies (OIDC Core 1.0 §6.3.2), or
+-- another one such as private_key_jwt (OIDC Core 1.0 §9) or dpop (RFC 9449)
+-- for a process a project adds. It has no CHECK, so a new purpose needs no
+-- migration. A key used for two purposes is two rows. The OP reads the keys
+-- of a purpose each time a process needs them, so a key inserted or deleted
+-- here takes effect at once. Never store a private key.
+CREATE TABLE IF NOT EXISTS client_jwks (
+  id        TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  purpose   VARCHAR(1000) NOT NULL,
+  jwk       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_jwks_client_id_purpose_idx ON client_jwks (client_id, purpose);
 
 -- Redirect_Uri: the redirect URIs of the client.
 CREATE TABLE IF NOT EXISTS client_redirect_uris (
@@ -1138,29 +1156,55 @@ async function hashKey(value: string): Promise<string> {
 export function dbClientsTemplate(corePkg: string): string {
   return `/**
  * Registered clients on the client tables of db/schema.sql: the ClientResolver
- * the OP uses when no other one is passed in, and registerClient() to put a
- * client into those tables.
+ * and the ClientKeyResolver the OP uses when no other ones are passed in, and
+ * registerClient() to put a client into those tables.
  *
  * How the tables become a RegisteredClient (config.ts):
  *
- * - clients.client_type public: no client authentication ('none').
- * - client_auths and client_secrets: token_endpoint_auth_method
- *   (client_secret_basic / client_secret_post), and the clientSecretHash the
- *   presented secret is checked against. More than one row per client is a
- *   configuration error, because a client has one registered method.
+ * - clients.client_type public: no client authentication
+ *   (tokenEndpointAuthMethods ['none']).
+ * - client_auths and client_secrets: the methods the client may authenticate
+ *   with (tokenEndpointAuthMethods: client_secret_basic, client_secret_post or
+ *   both), and the clientSecretHash the presented secret is checked against
+ *   whichever of them the request uses. A client has one client_secret
+ *   (RFC 7591 §2), so rows of one client with different secrets are a
+ *   configuration error.
  * - client_redirect_uris, client_grant_types and client_scopes: redirectUris,
  *   grantTypes and scope. A request for a scope outside scope is rejected with
  *   invalid_scope (validateClientScope() in core). A client without
  *   client_scopes rows may request every scope the OP accepts.
- * - Metadata without a column (response_types, default_max_age, jwks, the ID
- *   Token and UserInfo signing algs) keeps its default.
+ * - Metadata without a column (response_types, default_max_age, the ID Token
+ *   and UserInfo signing algs) keeps its default.
+ *
+ * The client's public keys (client_jwks) are not part of the RegisteredClient.
+ * A process that needs them asks the ClientKeyResolver for the keys of its own
+ * purpose (ClientKeyResolver in core): the OP verifies signed Request Objects
+ * with those of request_object, and a process a project adds reads its own
+ * purpose (private_key_jwt or dpop, for one).
+ *
+ * findClient() and findClientKeys() read the tables on every call, so a row
+ * inserted or deleted while the OP runs takes effect from the next request.
+ * That is how a client's keys are added or rotated without a restart:
+ *
+ *   INSERT INTO client_jwks (id, client_id, purpose, jwk)
+ *     VALUES ('my-client:request_object:2026-10', 'my-client', 'request_object',
+ *             '{"kty":"RSA","kid":"2026-10","n":"...","e":"AQAB"}');
+ *
+ * Store public keys only: a client_jwks row is one JWK (RFC 7517) without d or
+ * any other private member.
  */
 import {
   hashClientSecret,
+  isPublicTokenClient,
+  selectRegisteredClientAuthMethods,
+  type ClientKeyPurpose,
+  type ClientKeyResolver,
   type ClientResolver,
+  type Jwk,
+  type JwkSet,
   type TokenClientResolver,
 } from '${corePkg}';
-import type { RegisteredClient } from '../config.js';
+import type { ClientRegistration, RegisteredClient } from '../config.js';
 import type { SqlDatabase } from './database.js';
 
 export function createSqlClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
@@ -1199,20 +1243,58 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
 
       if (registered.clientType === 'public') {
-        registered.tokenEndpointAuthMethod = 'none';
-      } else if (auths.length > 1) {
-        throw new Error('Client ' + clientId + ' has more than one row in client_auths');
+        registered.tokenEndpointAuthMethods = ['none'];
       } else if (auths[0]) {
-        registered.tokenEndpointAuthMethod = auths[0].client_auth_type as
-          | 'client_secret_basic'
-          | 'client_secret_post';
-        if (auths[0].secret !== null) registered.clientSecretHash = auths[0].secret;
+        // A client has one client_secret (RFC 7591 §2), whichever method
+        // presents it.
+        const secret = auths[0].secret;
+        if (auths.some((auth) => auth.secret !== secret)) {
+          throw new Error('Client ' + clientId + ' has client_auths rows with different secrets');
+        }
+        registered.tokenEndpointAuthMethods = auths.map((auth) => auth.client_auth_type as ClientAuthType);
+        if (secret !== null) registered.clientSecretHash = secret;
       }
       // A confidential client without a client_auths row keeps the default
       // client_secret_basic with no secret, so it cannot authenticate.
       return registered;
     },
   };
+}
+
+type ClientAuthType = 'client_secret_basic' | 'client_secret_post';
+
+/**
+ * The public keys of client_jwks for one purpose at a time: the
+ * ClientKeyResolver the OP uses when no other one is passed in. The OP
+ * verifies a signed Request Object with the keys of request_object. A deleted
+ * client (is_deleted) has no keys.
+ */
+export function createSqlClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
+  return {
+    async findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet> {
+      const rows = await db.all<{ jwk: string }>({
+        sql:
+          'SELECT k.jwk FROM client_jwks k JOIN clients c ON c.id = k.client_id ' +
+          'WHERE k.client_id = ? AND k.purpose = ? AND c.is_deleted = FALSE ORDER BY k.id',
+        params: [clientId, purpose],
+      });
+      return { keys: rows.map((row) => parseJwk(clientId, row.jwk)) };
+    },
+  };
+}
+
+/** A client_jwks row holds one public JWK as a JSON object. */
+function parseJwk(clientId: string, json: string): Jwk {
+  let jwk: unknown;
+  try {
+    jwk = JSON.parse(json);
+  } catch {
+    jwk = undefined;
+  }
+  if (typeof jwk !== 'object' || jwk === null || Array.isArray(jwk)) {
+    throw new Error('Client ' + clientId + ' has a client_jwks row that is not a JSON JWK');
+  }
+  return jwk as Jwk;
 }
 
 /**
@@ -1234,13 +1316,22 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
  * clientSecret is saved as its hash (hashClientSecret()). The statements run
  * one at a time (SqlDatabase has no transactions), so run it again if it stops
  * halfway.
+ *
+ * Each method of tokenEndpointAuthMethods becomes a client_auths row, all of
+ * them with the same secret.
+ *
+ * Each key of keys (ClientRegistration.keys) becomes a client_jwks row of its
+ * purpose. The client_jwks rows are only ever added here: registerClient()
+ * never deletes one, so they may be managed in the database while the OP runs
+ * (see the top of this file), and registering the client again at the next
+ * start keeps them. To remove a key, delete its row in the database, and drop
+ * it from the client passed here too, or the next registration adds it back.
  */
 export async function registerClient(
   db: SqlDatabase,
-  client: RegisteredClient & { name?: string },
+  client: ClientRegistration & { name?: string },
 ): Promise<void> {
-  const clientType =
-    client.clientType ?? (client.tokenEndpointAuthMethod === 'none' ? 'public' : 'confidential');
+  const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   await db.run({
     sql:
       'INSERT INTO clients (id, name, client_type, is_deleted) VALUES (?, ?, ?, FALSE) ' +
@@ -1252,15 +1343,22 @@ export async function registerClient(
   const secretHash =
     client.clientSecretHash ??
     (client.clientSecret !== undefined ? await hashClientSecret(client.clientSecret) : undefined);
-  const authMethod = client.tokenEndpointAuthMethod ?? 'client_secret_basic';
-  const auth =
-    clientType === 'confidential' && authMethod !== 'none' && secretHash !== undefined
-      ? { id: await childRowId(client.clientId, 'client_auths', authMethod), secretHash }
-      : undefined;
-  const authIds = auth ? [auth.id] : [];
-  // The rows of another method go first, so the client never has two
-  // client_auths rows. Secrets go before their client_auths rows: they
-  // reference them, and SQLite cascades only with foreign keys on.
+  const methods =
+    clientType === 'confidential'
+      ? selectRegisteredClientAuthMethods(client).filter(
+        (method): method is ClientAuthType => method === 'client_secret_basic' || method === 'client_secret_post',
+      )
+      : [];
+  const auths: Array<{ id: string; method: ClientAuthType; secretHash: string }> = [];
+  if (secretHash !== undefined) {
+    for (const method of methods) {
+      auths.push({ id: await childRowId(client.clientId, 'client_auths', method), method, secretHash });
+    }
+  }
+  const authIds = auths.map((auth) => auth.id);
+  // The rows of a method the client no longer lists go first. Secrets go
+  // before their client_auths rows: they reference them, and SQLite cascades
+  // only with foreign keys on.
   await db.run({
     sql: exceptIds('DELETE FROM client_secrets WHERE id IN (SELECT id FROM client_auths WHERE client_id = ?)', authIds),
     params: [client.clientId, ...authIds],
@@ -1269,17 +1367,33 @@ export async function registerClient(
     sql: exceptIds('DELETE FROM client_auths WHERE client_id = ?', authIds),
     params: [client.clientId, ...authIds],
   });
-  if (auth) {
+  for (const auth of auths) {
     await db.run({
       sql: 'INSERT INTO client_auths (id, client_id, client_auth_type) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING',
-      params: [auth.id, client.clientId, authMethod],
+      params: [auth.id, client.clientId, auth.method],
     });
     await db.run({
       sql:
         'INSERT INTO client_secrets (id, client_auth_type, secret) VALUES (?, ?, ?) ' +
         'ON CONFLICT (id) DO UPDATE SET secret = excluded.secret',
-      params: [auth.id, authMethod, auth.secretHash],
+      params: [auth.id, auth.method, auth.secretHash],
     });
+  }
+  for (const [purpose, keySet] of Object.entries(client.keys ?? {})) {
+    for (const key of keySet?.keys ?? []) {
+      const jwk = JSON.stringify(key);
+      await db.run({
+        sql:
+          'INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES (?, ?, ?, ?) ' +
+          'ON CONFLICT (id) DO NOTHING',
+        params: [
+          await childRowId(client.clientId, 'client_jwks', JSON.stringify([purpose, jwk])),
+          client.clientId,
+          purpose,
+          jwk,
+        ],
+      });
+    }
   }
 
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [

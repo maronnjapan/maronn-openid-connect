@@ -17,9 +17,10 @@ import {
   validateClientIdConsistency,
   requireClientId,
   selectPresentedClientAuthMethod,
-  selectRegisteredClientAuthMethod,
+  selectRegisteredClientAuthMethods,
+  isPublicTokenClient,
   requireClientSecret,
-  validateClientAuthMethodMatch,
+  validateClientAuthMethodAllowed,
   verifyClientSecretValue,
   hashClientSecret,
   verifyClientSecretHash,
@@ -30,12 +31,12 @@ import type { TokenClientInfo } from './token-request.js';
 const confidentialClient: TokenClientInfo = {
   clientId: 'client123',
   clientSecret: 'secret',
-  tokenEndpointAuthMethod: 'client_secret_basic',
+  tokenEndpointAuthMethods: ['client_secret_basic'],
 };
 
 const publicClient: TokenClientInfo = {
   clientId: 'public-client',
-  tokenEndpointAuthMethod: 'none',
+  tokenEndpointAuthMethods: ['none'],
 };
 
 function basicHeader(clientId: string, clientSecret: string): string {
@@ -237,7 +238,7 @@ describe('verifyClientSecret', () => {
     const hashedClient: TokenClientInfo = {
       clientId: 'client123',
       clientSecretHash: 'K7gNU3sdo-OL0wNhqoVWhr3g6s1xYv72ol_pe_Unols',
-      tokenEndpointAuthMethod: 'client_secret_basic',
+      tokenEndpointAuthMethods: ['client_secret_basic'],
     };
 
     it('should accept the secret whose hash is registered', async () => {
@@ -345,14 +346,50 @@ describe('selectPresentedClientAuthMethod', () => {
   });
 });
 
-describe('selectRegisteredClientAuthMethod', () => {
+describe('selectRegisteredClientAuthMethods', () => {
   // OIDC Core 1.0 §9 / RFC 7591 §2: the default is client_secret_basic
-  it('should default to client_secret_basic', () => {
-    expect(selectRegisteredClientAuthMethod(undefined)).toBe('client_secret_basic');
+  it('should default to client_secret_basic when no method is registered', () => {
+    expect(selectRegisteredClientAuthMethods({})).toEqual(['client_secret_basic']);
   });
 
-  it('should keep a registered method', () => {
-    expect(selectRegisteredClientAuthMethod('none')).toBe('none');
+  it('should return the registered methods', () => {
+    expect(
+      selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'] }),
+    ).toEqual(['client_secret_basic', 'client_secret_post']);
+  });
+
+  it('should return none for a public client', () => {
+    expect(selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['none'] })).toEqual(['none']);
+  });
+
+  // An empty list registers no method, so no request can authenticate.
+  it('should return no method for an empty list', () => {
+    expect(selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: [] })).toEqual([]);
+  });
+
+  // RFC 6749 §2.1: none makes the client public, so it cannot sit next to a
+  // method that authenticates.
+  it('should reject none listed together with another method', () => {
+    expect(() =>
+      selectRegisteredClientAuthMethods({ tokenEndpointAuthMethods: ['none', 'client_secret_post'] }),
+    ).toThrow(new Error('tokenEndpointAuthMethods must not list none together with another method'));
+  });
+});
+
+describe('isPublicTokenClient', () => {
+  // OAuth 2.1 §2.4 / RFC 7591 §2: token_endpoint_auth_method none is a public client.
+  it('should treat a client registered with none as public', () => {
+    expect(isPublicTokenClient({ tokenEndpointAuthMethods: ['none'] })).toBe(true);
+  });
+
+  it('should treat a client without registered methods as confidential', () => {
+    expect(isPublicTokenClient({})).toBe(false);
+  });
+
+  it('should treat a client registered with secret methods as confidential', () => {
+    expect(
+      isPublicTokenClient({ tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'] }),
+    ).toBe(false);
   });
 });
 
@@ -371,21 +408,20 @@ describe('requireClientSecret', () => {
   });
 });
 
-describe('validateClientAuthMethodMatch', () => {
-  it('should accept the registered method', () => {
+describe('validateClientAuthMethodAllowed', () => {
+  it('should accept a method the client registered', () => {
     expect(
-      validateClientAuthMethodMatch('client_secret_post', 'client_secret_post'),
+      validateClientAuthMethodAllowed('client_secret_post', ['client_secret_basic', 'client_secret_post']),
     ).toBeUndefined();
   });
 
-  it('should reject a different method', () => {
+  it('should reject a method the client did not register', () => {
     expect(() =>
-      validateClientAuthMethodMatch('client_secret_post', 'client_secret_basic'),
+      validateClientAuthMethodAllowed('client_secret_post', ['client_secret_basic']),
     ).toThrow(
       expect.objectContaining({
         error: 'invalid_client',
-        errorDescription:
-          'Client authentication method does not match the registered token_endpoint_auth_method',
+        errorDescription: 'Client authentication method is not registered for the client',
       }),
     );
   });

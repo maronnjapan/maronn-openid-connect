@@ -259,7 +259,7 @@ const grant = await processCibaGrant({ params, client, store });
 
 **`/ciba/login` が必ず 403 になる**：バインディング Cookie を送っていません。ブラウザならそのまま動きます。curl なら `-c` / `-b` で cookie jar を使い、`GET /ciba` から同じ jar でやり直してください。
 
-**`unauthorized_client` が返る**：クライアントの `grantTypes` に `urn:openid:params:grant-type:ciba` を登録したか、`backchannelTokenDeliveryMode` に `poll` 以外を設定していないか、public client（`tokenEndpointAuthMethod: 'none'`）になっていないかを確認してください。
+**`unauthorized_client` が返る**：クライアントの `grantTypes` に `urn:openid:params:grant-type:ciba` を登録したか、`backchannelTokenDeliveryMode` に `poll` 以外を設定していないか、public client（`tokenEndpointAuthMethods: ['none']`）になっていないかを確認してください。
 
 **承認したのにトークンが出ない**：ポーリングのクライアントが依頼時と同じ `client_id` か、`interval` を守っているか（`slow_down` 後は +5 秒）を確認してください。`expires_in`（既定 120 秒）を過ぎたレコードは `expired_token` になります。
 

@@ -28,7 +28,7 @@ const BASIC_CLIENT: TestClient = {
   clientSecret: 'secret',
   redirectUris: ['https://client.example/cb'],
   clientType: 'confidential',
-  tokenEndpointAuthMethod: 'client_secret_basic',
+  tokenEndpointAuthMethods: ['client_secret_basic'],
 };
 
 const POST_CLIENT: TestClient = {
@@ -36,14 +36,14 @@ const POST_CLIENT: TestClient = {
   clientSecret: 'secret',
   redirectUris: ['https://client.example/cb'],
   clientType: 'confidential',
-  tokenEndpointAuthMethod: 'client_secret_post',
+  tokenEndpointAuthMethods: ['client_secret_post'],
 };
 
 const PUBLIC_CLIENT: TestClient = {
   clientId: 'spa-app',
   redirectUris: ['https://spa.example/cb'],
   clientType: 'public',
-  tokenEndpointAuthMethod: 'none',
+  tokenEndpointAuthMethods: ['none'],
 };
 
 const TEST_CLIENTS: readonly TestClient[] = [BASIC_CLIENT, POST_CLIENT, PUBLIC_CLIENT];

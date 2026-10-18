@@ -13,6 +13,10 @@ export interface DatabaseNames {
   createProviderStores: string;
   /** db/clients.ts: the ClientResolver on the database. */
   createClientResolver: string;
+  /** db/clients.ts: the ClientKeyResolver on the database (the keys of each purpose). */
+  createClientKeyResolver: string;
+  /** Where the client keys are kept, as the comments of the generated app name it. */
+  clientKeysDescription: string;
   /** The stores, as the comments of the generated app name them. */
   storesDescription: string;
   /** Where the registered clients are kept, as the comments of the generated app name it. */
@@ -25,6 +29,8 @@ export function databaseNames(db: DbKind): DatabaseNames {
       databaseType: 'KvDatabase',
       createProviderStores: 'createKvProviderStores',
       createClientResolver: 'createKvClientResolver',
+      createClientKeyResolver: 'createKvClientKeyResolver',
+      clientKeysDescription: 'the client_jwks records of db/',
       storesDescription: 'the key-value stores',
       clientsDescription: 'the client records of db/',
     }
@@ -32,6 +38,8 @@ export function databaseNames(db: DbKind): DatabaseNames {
       databaseType: 'SqlDatabase',
       createProviderStores: 'createSqlProviderStores',
       createClientResolver: 'createSqlClientResolver',
+      createClientKeyResolver: 'createSqlClientKeyResolver',
+      clientKeysDescription: 'the client_jwks table of db/',
       storesDescription: 'the SQL stores',
       clientsDescription: 'the client tables of db/',
     };

@@ -27,6 +27,7 @@ import {
   IdTokenHintError,
   TokenError,
   generateRandomString,
+  isPublicTokenClient,
   resolveRefreshToken,
   validateIdTokenHint,
   validateRefreshTokenClient,
@@ -328,7 +329,7 @@ export function authorizeIdJagIssuanceClient(client: TokenClientInfo): void {
       'The client is not authorized to use the token-exchange grant type',
     );
   }
-  if (client.tokenEndpointAuthMethod === 'none') {
+  if (isPublicTokenClient(client)) {
     throw new IdJagError(
       'unauthorized_client',
       'Public clients are not allowed to request an ID-JAG',

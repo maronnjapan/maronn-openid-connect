@@ -30,6 +30,8 @@ function key(...parts: string[]): string {
 export const keys = {
   /** Client, with its Client_auth, Client_secret, Redirect_Uri, Grant and Scope (ClientRecord). */
   client: (clientId: string) => key('client', clientId),
+  /** Client_jwk: the public keys of a client for one purpose (ClientJwksRecord). */
+  clientJwks: (clientId: string, purpose: string) => key('client_jwks', clientId, purpose),
   /** User (UserRecord). */
   user: (userId: string) => key('user', userId),
   /** Federated_identity, found by the account at the provider (FederatedIdentityRecord). */
@@ -77,14 +79,14 @@ export interface ClientRecord {
   client_type: 'public' | 'confidential';
   is_deleted: boolean;
   /**
-   * Client_auth and its Client_secret: how the client authenticates at the
-   * token endpoint. null for a public client. secret is the hash from
-   * hashClientSecret().
+   * Client_auth (with its Client_secret): the methods the client may
+   * authenticate with at the token endpoint. A public client has none. A
+   * confidential client has one entry per method it may use:
+   * client_secret_basic, client_secret_post or both. Every entry carries the
+   * same secret, the hash from hashClientSecret() of the client's one
+   * client_secret (RFC 7591 §2).
    */
-  client_auth: {
-    client_auth_type: 'client_secret_basic' | 'client_secret_post';
-    secret: string;
-  } | null;
+  client_auths: ClientAuthRecord[];
   /** Redirect_Uri: the redirect URIs of the client. */
   redirect_uris: string[];
   /** Grant: the grant types the client may use. Empty: authorization_code only. */
@@ -94,6 +96,25 @@ export interface ClientRecord {
    * rejected with invalid_scope. Empty: every scope the OP accepts.
    */
   scopes: string[];
+}
+
+/** One Client_auth of ClientRecord.client_auths, with its Client_secret. */
+export interface ClientAuthRecord {
+  client_auth_type: 'client_secret_basic' | 'client_secret_post';
+  secret: string;
+}
+
+/**
+ * Client_jwk: the public keys of a client for one purpose, as a JWK Set
+ * (RFC 7517 §5). The purpose is part of the key and names the process that
+ * uses the keys: request_object for the signed Request Objects the OP verifies
+ * (OIDC Core 1.0 §6.3.2), or another one such as private_key_jwt (OIDC Core
+ * 1.0 §9) or dpop (RFC 9449) for a process a project adds. The OP reads the
+ * record of a purpose each time a process needs its keys, so a key added to it
+ * or removed from it takes effect at once. Never store a private key.
+ */
+export interface ClientJwksRecord {
+  keys: Array<Record<string, unknown>>;
 }
 
 /**

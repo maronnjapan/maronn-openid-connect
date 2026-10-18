@@ -68,16 +68,19 @@ import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider
 
   // --- Request Object (request-object feature) ------------------------------
   const requestObjectStep = features.requestObject
-    ? `    // OIDC Core 1.0 §6.1: verify the signed Request Object (request parameter)
-    // against the client's registered JWKS and overlay its claims onto the query
-    // parameters. RS256 is required; alg=none is accepted only when
-    // allowUnsignedRequestObject is enabled (conformance compat).
+    ? `    // OIDC Core 1.0 §6.1 / §6.3.2: verify the signed Request Object (request
+    // parameter) against the keys the client registered for the request_object
+    // purpose, read only when the request carries one, and overlay its claims
+    // onto the query parameters. RS256 is required; alg=none is accepted only
+    // when allowUnsignedRequestObject is enabled (conformance compat).
     // effectiveParams is what every later step validates.
-    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
-      params,
-      client,
-      { allowUnsigned: config.allowUnsignedRequestObject },
-    );
+    const requestObjectKeys = params.request === undefined
+      ? undefined
+      : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
+    const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(params, {
+      jwks: requestObjectKeys,
+      allowUnsigned: config.allowUnsignedRequestObject,
+    });
 `
     : `    // OIDC Core 1.0 §6.3: the request parameter (Request Object) is disabled in
     // this generated provider; rejectUnsupportedRequestParams below rejects it
@@ -384,7 +387,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import {
 ${coreImports.map((name) => `  ${name},`).join('\n')}
 } from '${corePkg}';${parImports}${jarmImports}
-import {
+import {${features.requestObject ? `
+  clientKeyResolver,` : ''}
   clientResolver,
   config,
   idTokenHintJwks,

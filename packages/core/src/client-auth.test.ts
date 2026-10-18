@@ -11,7 +11,7 @@ import type { TokenClientInfo, TokenClientResolver } from './token-request.js';
 const MULTIPLE_METHODS_DESCRIPTION =
   'Multiple client authentication methods provided. Use either Authorization header or request body, not both.';
 const METHOD_MISMATCH_DESCRIPTION =
-  'Client authentication method does not match the registered token_endpoint_auth_method';
+  'Client authentication method is not registered for the client';
 
 interface RecordingClientResolver extends TokenClientResolver {
   /** The client_id passed to each findClient call, in call order */
@@ -56,7 +56,7 @@ async function captureAsyncError(
   }
 }
 
-// No tokenEndpointAuthMethod: the registered method defaults to client_secret_basic.
+// No tokenEndpointAuthMethods: the registered method defaults to client_secret_basic.
 const validClient: TokenClientInfo = {
   clientId: 'client-123',
   clientSecret: 'secret-xyz',
@@ -65,7 +65,7 @@ const validClient: TokenClientInfo = {
 const basicClient: TokenClientInfo = {
   clientId: 'client-123',
   clientSecret: 'secret-xyz',
-  tokenEndpointAuthMethod: 'client_secret_basic',
+  tokenEndpointAuthMethods: ['client_secret_basic'],
 };
 
 // OIDC Core 1.0 §9 / RFC 7591 §2: the client must be registered for client_secret_post
@@ -73,12 +73,12 @@ const basicClient: TokenClientInfo = {
 const postClient: TokenClientInfo = {
   clientId: 'client-123',
   clientSecret: 'secret-xyz',
-  tokenEndpointAuthMethod: 'client_secret_post',
+  tokenEndpointAuthMethods: ['client_secret_post'],
 };
 
 const publicClient: TokenClientInfo = {
   clientId: 'public-client',
-  tokenEndpointAuthMethod: 'none',
+  tokenEndpointAuthMethods: ['none'],
 };
 
 describe('extractClientCredentials', () => {
@@ -407,7 +407,7 @@ describe('validateClientAuthMethod', () => {
       expect(error).toBeUndefined();
     });
 
-    it('should enforce client_secret_basic default when tokenEndpointAuthMethod is unspecified', () => {
+    it('should enforce client_secret_basic default when tokenEndpointAuthMethods is unspecified', () => {
       // RFC 7591 §2: when unspecified, the default token_endpoint_auth_method is client_secret_basic.
       const presented = extractClientCredentials({
         params: {},
@@ -419,7 +419,7 @@ describe('validateClientAuthMethod', () => {
       expect(error).toBeUndefined();
     });
 
-    it('should reject client_secret_post when tokenEndpointAuthMethod is unspecified (default basic)', () => {
+    it('should reject client_secret_post when tokenEndpointAuthMethods is unspecified (default basic)', () => {
       // The default is client_secret_basic, so post-based authentication is rejected.
       const presented = extractClientCredentials({
         params: { client_id: 'client-123', client_secret: 'secret-xyz' },
@@ -488,6 +488,88 @@ describe('validateClientAuthMethod', () => {
       expect(error).toBeInstanceOf(TokenError);
       expect(error?.error).toBe(TokenErrorCode.InvalidClient);
       expect(error?.errorDescription).toBe('Client authentication required');
+    });
+  });
+
+  // A client may register several methods (tokenEndpointAuthMethods). The method
+  // a request uses must still be one of them.
+  describe('several registered methods', () => {
+    const basicAndPostClient: TokenClientInfo = {
+      clientId: 'client-123',
+      clientSecret: 'secret-xyz',
+      tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post'],
+    };
+
+    it('should accept client_secret_basic when tokenEndpointAuthMethods lists it next to client_secret_post', () => {
+      const presented = extractClientCredentials({
+        params: {},
+        authorizationHeader: basicAuth('client-123', 'secret-xyz'),
+      });
+
+      const error = captureError(() => validateClientAuthMethod(basicAndPostClient, presented));
+
+      expect(error).toBeUndefined();
+    });
+
+    it('should accept client_secret_post when tokenEndpointAuthMethods lists it next to client_secret_basic', () => {
+      const presented = extractClientCredentials({
+        params: { client_id: 'client-123', client_secret: 'secret-xyz' },
+        authorizationHeader: '',
+      });
+
+      const error = captureError(() => validateClientAuthMethod(basicAndPostClient, presented));
+
+      expect(error).toBeUndefined();
+    });
+
+    it('should keep requiring client authentication when a client with several methods sends client_id only', () => {
+      const presented = extractClientCredentials({
+        params: { client_id: 'client-123' },
+        authorizationHeader: '',
+      });
+
+      const error = captureError(() => validateClientAuthMethod(basicAndPostClient, presented));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe('Client authentication required');
+    });
+
+    // An empty list registers no method, so no request can authenticate.
+    it('should reject every method when tokenEndpointAuthMethods is empty', () => {
+      const noMethodClient: TokenClientInfo = {
+        clientId: 'client-123',
+        clientSecret: 'secret-xyz',
+        tokenEndpointAuthMethods: [],
+      };
+      const presented = extractClientCredentials({
+        params: {},
+        authorizationHeader: basicAuth('client-123', 'secret-xyz'),
+      });
+
+      const error = captureError(() => validateClientAuthMethod(noMethodClient, presented));
+
+      expect(error).toBeInstanceOf(TokenError);
+      expect(error?.error).toBe(TokenErrorCode.InvalidClient);
+      expect(error?.errorDescription).toBe(METHOD_MISMATCH_DESCRIPTION);
+    });
+
+    // none makes the client public, so it cannot sit next to a method that
+    // authenticates.
+    it('should fail on a registration that lists none together with another method', () => {
+      const misconfigured: TokenClientInfo = {
+        clientId: 'client-123',
+        clientSecret: 'secret-xyz',
+        tokenEndpointAuthMethods: ['none', 'client_secret_basic'],
+      };
+      const presented = extractClientCredentials({
+        params: { client_id: 'client-123' },
+        authorizationHeader: '',
+      });
+
+      expect(() => validateClientAuthMethod(misconfigured, presented)).toThrow(
+        new Error('tokenEndpointAuthMethods must not list none together with another method'),
+      );
     });
   });
 });

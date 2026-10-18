@@ -28,7 +28,7 @@ function confidentialClient(overrides: Partial<TokenClientInfo> = {}): TokenClie
     clientId: 'exchange-client',
     clientSecret: 'secret',
     grantTypes: ['authorization_code', TOKEN_EXCHANGE_GRANT_TYPE],
-    tokenEndpointAuthMethod: 'client_secret_basic',
+    tokenEndpointAuthMethods: ['client_secret_basic'],
     ...overrides,
   };
 }
@@ -324,7 +324,7 @@ describe('authorizeTokenExchangeClient', () => {
   });
 
   it('should accept a client_secret_post client registered for the exchange grant', () => {
-    const client = confidentialClient({ tokenEndpointAuthMethod: 'client_secret_post' });
+    const client = confidentialClient({ tokenEndpointAuthMethods: ['client_secret_post'] });
     expect(authorizeTokenExchangeClient(client)).toBeUndefined();
   });
 
@@ -353,7 +353,7 @@ describe('authorizeTokenExchangeClient', () => {
   // RFC 8693 §2.1 の注記（窃取トークンの STS 経由の増幅）に対する設計判断。
   it('should reject a public client with unauthorized_client', () => {
     const client = confidentialClient({
-      tokenEndpointAuthMethod: 'none',
+      tokenEndpointAuthMethods: ['none'],
       clientSecret: undefined,
     });
     expect(() => authorizeTokenExchangeClient(client)).toThrow(
@@ -980,7 +980,7 @@ describe('processTokenExchangeRequest', () => {
       await expect(
         processTokenExchangeRequest({
           params: validParams(),
-          client: confidentialClient({ tokenEndpointAuthMethod: 'none', clientSecret: undefined }),
+          client: confidentialClient({ tokenEndpointAuthMethods: ['none'], clientSecret: undefined }),
           accessTokenResolver: resolverFor(subjectTokenInfo()),
           allowedTargets: [],
           configuredExpiresIn: 60,

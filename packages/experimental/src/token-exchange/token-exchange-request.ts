@@ -18,6 +18,7 @@
  * `accessTokenStore` と組み合わせる。
  */
 import {
+  isPublicTokenClient,
   sanitizeErrorDescription,
   type AccessTokenInfo,
   type AccessTokenResolver,
@@ -188,7 +189,7 @@ export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
       'The client is not authorized to use the token-exchange grant type',
     );
   }
-  if (client.tokenEndpointAuthMethod === 'none') {
+  if (isPublicTokenClient(client)) {
     throw new TokenExchangeError(
       'unauthorized_client',
       'Public clients are not allowed to use the token-exchange grant type',

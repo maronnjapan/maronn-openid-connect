@@ -174,7 +174,7 @@ describe('processBackchannelAuthenticationRequest', () => {
     // can never satisfy — a deliberate profile restriction on public clients.
     it('should reject a public client (auth method none) with unauthorized_client', async () => {
       const error = await expectError(
-        makeInput({ client: makeClient({ tokenEndpointAuthMethod: 'none', clientSecret: undefined }) }),
+        makeInput({ client: makeClient({ tokenEndpointAuthMethods: ['none'], clientSecret: undefined }) }),
         'unauthorized_client',
       );
 

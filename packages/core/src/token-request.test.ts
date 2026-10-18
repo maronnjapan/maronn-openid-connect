@@ -287,13 +287,13 @@ describe('resolveAuthenticatedTokenClient', () => {
       const result = await resolveAuthenticatedTokenClient(
         'client-123',
         createClientResolver([
-          { clientId: 'client-123', tokenEndpointAuthMethod: 'none' },
+          { clientId: 'client-123', tokenEndpointAuthMethods: ['none'] },
         ]),
       );
 
       expect(result).toEqual({
         clientId: 'client-123',
-        tokenEndpointAuthMethod: 'none',
+        tokenEndpointAuthMethods: ['none'],
       });
     });
   });
@@ -372,7 +372,7 @@ describe('validateClientGrantType', () => {
     it('should allow the refresh_token grant for a public client without client_secret', () => {
       const publicClient: TokenClientInfo = {
         clientId: 'client-123',
-        tokenEndpointAuthMethod: 'none',
+        tokenEndpointAuthMethods: ['none'],
         grantTypes: ['authorization_code', 'refresh_token'],
       };
 

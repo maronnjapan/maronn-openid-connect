@@ -25,12 +25,12 @@ export function nextJsProviderTemplate(
       ? `import type { KvDatabase } from './db/database';
 import { createDatabase } from './db/instance';
 import { createKvProviderStores } from './db/stores';
-import { createKvClientResolver } from './db/clients';`
+import { createKvClientKeyResolver, createKvClientResolver } from './db/clients';`
       : db === 'sql'
         ? `import type { SqlDatabase, SqlStatement } from './db/database';
 import { createDatabase } from './db/instance';
 import { createSqlProviderStores } from './db/stores';
-import { createSqlClientResolver } from './db/clients';`
+import { createSqlClientKeyResolver, createSqlClientResolver } from './db/clients';`
         : `import { createNextJsProviderStores } from './storage-backend';`;
   // --db: the registered clients come from the client tables of db/ too, so the
   // environment-variable clients (readRegisteredClients) are not generated.
@@ -120,21 +120,42 @@ const database = deferDatabase(createDatabase);
  * Registered clients: the client records of the key-value store (db/keys.ts).
  * Put clients there with registerClient() (db/clients.ts).
  */
-export const clientResolver = ${wrapClientResolver('createKvClientResolver(database)')};`
+export const clientResolver = ${wrapClientResolver('createKvClientResolver(database)')};
+
+/**
+ * The public keys of the registered clients, one purpose at a time
+ * (private_key_jwt, request_object, ...): the client_jwks records of the
+ * key-value store, read for each request (db/keys.ts).
+ */
+export const clientKeyResolver: ClientKeyResolver = createKvClientKeyResolver(database);`
     : db === 'sql'
     ? `${databaseDefinition}
 /**
  * Registered clients: the client tables of db/schema.sql. Put clients there
  * with registerClient() (db/clients.ts).
  */
-export const clientResolver = ${wrapClientResolver('createSqlClientResolver(database)')};`
+export const clientResolver = ${wrapClientResolver('createSqlClientResolver(database)')};
+
+/**
+ * The public keys of the registered clients, one purpose at a time
+ * (private_key_jwt, request_object, ...): the client_jwks table, read for each
+ * request (db/schema.sql).
+ */
+export const clientKeyResolver: ClientKeyResolver = createSqlClientKeyResolver(database);`
     : `/**
  * Registered clients: OIDC_CLIENTS_JSON (a JSON array of RegisteredClient), or a
  * single confidential client from OIDC_CLIENT_ID / OIDC_CLIENT_SECRET /
  * OIDC_CLIENT_REDIRECT_URI. Replace this with a database-backed ClientResolver
  * in a real project.
  */
-export const clientResolver = ${wrapClientResolver('createInMemoryClientResolver(readRegisteredClients())')};`;
+export const clientResolver = ${wrapClientResolver('createInMemoryClientResolver(readRegisteredClients())')};
+
+/**
+ * The public keys of the registered clients, one purpose at a time: the jwks
+ * of each client above (RegisteredClient.jwks), for the purposes jwks covers
+ * (private_key_jwt and request_object). Replace it to keep keys elsewhere.
+ */
+export const clientKeyResolver: ClientKeyResolver = createClientJwksKeyResolver(clientResolver);`;
   const storesDefinition = db === 'kv'
     ? `/** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
 export const stores = createKvProviderStores(database);
@@ -275,7 +296,8 @@ import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  createCachedSigningKeyProvider,
+  createCachedSigningKeyProvider,${db ? '' : `
+  createClientJwksKeyResolver,`}
   createJwtAccessTokenIssuer,
   createOpaqueAccessTokenIssuer,
   selectPreferredAcr,
@@ -283,6 +305,7 @@ import {
   signingKeysToJwkSet,
   type AccessTokenIssuer,
   type AcrResolver,
+  type ClientKeyResolver,
   type JwkSet,
   type SigningKey,
   type SigningKeyProvider,
@@ -933,9 +956,10 @@ export function nextJsClientAuthTemplate(corePkg: string): string {
  *
  * The client signs a JWT with its own private key and sends it as
  * client_assertion. verifyPrivateKeyJwt() checks it against the public keys
- * the client registered (RegisteredClient.jwks, read from the client_jwks
- * table or record with --db on every request), then records its jti so the
- * same assertion is refused the second time.
+ * the client registered for the private_key_jwt purpose (clientKeyResolver of
+ * provider.ts: the client_jwks table or records with --db, read for each
+ * request), then records its jti so the same assertion is refused the second
+ * time.
  */
 import {
   rejectReplayedClientAssertion,
@@ -944,7 +968,7 @@ import {
   type PresentedClientCredentials,
   type TokenClientInfo,
 } from '${corePkg}';
-import { config, stores } from './provider';
+import { clientKeyResolver, config, stores } from './provider';
 import { clientAssertionJtiStore as defaultClientAssertionJtiStore } from './store';
 
 /**
@@ -958,11 +982,12 @@ export async function verifyPrivateKeyJwt(
   presented: Pick<PresentedClientCredentials, 'clientAssertion'>,
   endpointPath: string,
 ): Promise<void> {
-  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the client's keys,
-  // iss and sub the client_id, aud this OP, exp / nbf / iat, and a jti.
+  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the keys the client
+  // registered for private_key_jwt, iss and sub the client_id, aud this OP,
+  // exp / nbf / iat, and a jti.
   const verified = await verifyClientAssertion(requireClientAssertion(presented.clientAssertion), {
     clientId: client.clientId,
-    jwks: client.jwks,
+    jwks: await clientKeyResolver.findClientKeys(client.clientId, 'private_key_jwt'),
     audiences: clientAssertionAudiences(config.issuer, endpointPath),
   });
 

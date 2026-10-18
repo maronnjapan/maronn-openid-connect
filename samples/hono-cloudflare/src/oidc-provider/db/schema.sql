@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS clients (
 -- Client_auth: a method the client may authenticate with at the token
 -- endpoint. A public client has none. A confidential client has one row per
 -- method: at most one of client_secret_basic / client_secret_post, whose
--- secret is in client_secrets, and private_key_jwt, whose keys are in
--- client_jwks (OIDC Core 1.0 §9).
+-- secret is in client_secrets, and private_key_jwt, whose keys are the
+-- client_jwks rows of the private_key_jwt purpose (OIDC Core 1.0 §9).
 CREATE TABLE IF NOT EXISTS client_auths (
   id               TEXT PRIMARY KEY,
   client_id        TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
@@ -57,16 +57,21 @@ CREATE TABLE IF NOT EXISTS client_secrets (
     REFERENCES client_auths (id, client_auth_type) ON DELETE CASCADE
 );
 
--- Client_jwk: a public key of the client, one JWK (RFC 7517) as JSON. The
--- keys verify the client's private_key_jwt assertions and its signed Request
--- Objects. The OP reads them on every request, so a key inserted or deleted
--- here takes effect at once. Never store a private key.
+-- Client_jwk: a public key of the client for one purpose, one JWK (RFC 7517)
+-- as JSON. purpose names the process that uses the key: private_key_jwt
+-- (client assertions, OIDC Core 1.0 §9), request_object (signed Request
+-- Objects, OIDC Core 1.0 §6.3.2), dpop (DPoP proofs, RFC 9449) or another one.
+-- It has no CHECK, so a new purpose needs no migration. A key used for two
+-- purposes is two rows. The OP reads the keys of a purpose each time a process
+-- needs them, so a key inserted or deleted here takes effect at once. Never
+-- store a private key.
 CREATE TABLE IF NOT EXISTS client_jwks (
   id        TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  purpose   VARCHAR(1000) NOT NULL,
   jwk       TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS client_jwks_client_id_idx ON client_jwks (client_id);
+CREATE INDEX IF NOT EXISTS client_jwks_client_id_purpose_idx ON client_jwks (client_id, purpose);
 
 -- Redirect_Uri: the redirect URIs of the client.
 CREATE TABLE IF NOT EXISTS client_redirect_uris (

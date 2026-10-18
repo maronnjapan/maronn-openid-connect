@@ -40,6 +40,7 @@ import {
   type AuthorizationRequestParams,
 } from '@maronn-openid-connect/core';
 import {
+  clientKeyResolver,
   clientResolver,
   config,
   idTokenHintJwks,
@@ -109,14 +110,18 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // schemes, non-loopback http) — OIDC Core 1.0 §3.1.2.1 / RFC 8252 §8.
     validateRegisteredRedirectUris(client.redirectUris);
 
-    // OIDC Core 1.0 §6.1: verify the signed Request Object (request parameter)
-    // against the client's registered JWKS and overlay its claims onto the query
-    // parameters. RS256 is required; alg=none is accepted only when
-    // allowUnsignedRequestObject is enabled (conformance compat).
+    // OIDC Core 1.0 §6.1 / §6.3.2: verify the signed Request Object (request
+    // parameter) against the keys the client registered for the request_object
+    // purpose, read only when the request carries one, and overlay its claims
+    // onto the query parameters. RS256 is required; alg=none is accepted only
+    // when allowUnsignedRequestObject is enabled (conformance compat).
     // effectiveParams is what every later step validates.
+    const requestObjectKeys = params.request === undefined
+      ? undefined
+      : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
     const { effectiveParams, requestObjectClaims } = await resolveRequestObjectParams(
       params,
-      client,
+      { jwks: requestObjectKeys },
       { allowUnsigned: config.allowUnsignedRequestObject },
     );
 

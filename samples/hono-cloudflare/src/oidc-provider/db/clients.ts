@@ -1,7 +1,7 @@
 /**
  * Registered clients on the client tables of db/schema.sql: the ClientResolver
- * the OP uses when no other one is passed in, and registerClient() to put a
- * client into those tables.
+ * and the ClientKeyResolver the OP uses when no other ones are passed in, and
+ * registerClient() to put a client into those tables.
  *
  * How the tables become a RegisteredClient (config.ts):
  *
@@ -10,10 +10,8 @@
  *   (tokenEndpointAuthMethods). A client_secret_basic or client_secret_post
  *   row carries the clientSecretHash the presented secret is checked against
  *   (client_secrets); more than one of those per client is a configuration
- *   error. A private_key_jwt row lets the client sign a JWT with one of the
- *   keys of client_jwks instead (OIDC Core 1.0 §9).
- * - client_jwks: jwks, the client's public keys. They verify its
- *   private_key_jwt assertions and its signed Request Objects.
+ *   error. A private_key_jwt row lets the client sign a JWT with one of its
+ *   keys of the private_key_jwt purpose instead (OIDC Core 1.0 §9).
  * - client_redirect_uris, client_grant_types and client_scopes: redirectUris,
  *   grantTypes and scope. A request for a scope outside scope is rejected with
  *   invalid_scope (validateClientScope() in core). A client without
@@ -21,14 +19,22 @@
  * - Metadata without a column (response_types, default_max_age, the ID Token
  *   and UserInfo signing algs) keeps its default.
  *
- * findClient() reads the tables on every call, so a row inserted or deleted
- * while the OP runs takes effect from the next request. That is how a client
- * starts using private_key_jwt or rotates its keys, without a restart:
+ * The client's public keys (client_jwks) are not part of the RegisteredClient.
+ * Each process that needs them asks the ClientKeyResolver for the keys of its
+ * own purpose (ClientKeyResolver in core): private_key_jwt for client
+ * assertions, request_object for signed Request Objects, and another purpose
+ * (dpop, for one) for a process added later.
+ *
+ * findClient() and findClientKeys() read the tables on every call, so a row
+ * inserted or deleted while the OP runs takes effect from the next request.
+ * That is how a client starts using private_key_jwt or rotates its keys,
+ * without a restart:
  *
  *   INSERT INTO client_auths (id, client_id, client_auth_type)
  *     VALUES ('my-client:private_key_jwt', 'my-client', 'private_key_jwt');
- *   INSERT INTO client_jwks (id, client_id, jwk)
- *     VALUES ('my-client:2026-10', 'my-client', '{"kty":"RSA","kid":"2026-10","n":"...","e":"AQAB"}');
+ *   INSERT INTO client_jwks (id, client_id, purpose, jwk)
+ *     VALUES ('my-client:private_key_jwt:2026-10', 'my-client', 'private_key_jwt',
+ *             '{"kty":"RSA","kid":"2026-10","n":"...","e":"AQAB"}');
  *
  * Keep the client_secret_basic / client_secret_post row while the client
  * moves over, and delete it once the client only signs JWTs. Store public keys
@@ -36,10 +42,14 @@
  * member.
  */
 import {
+  JWKS_CLIENT_KEY_PURPOSES,
   hashClientSecret,
   selectRegisteredClientAuthMethods,
+  type ClientKeyPurpose,
+  type ClientKeyResolver,
   type ClientResolver,
   type Jwk,
+  type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
 import type { RegisteredClient } from '../config.js';
@@ -71,10 +81,6 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
         sql: 'SELECT value FROM client_scopes WHERE client_id = ? ORDER BY id',
         params: [clientId],
       });
-      const keys = await db.all<{ jwk: string }>({
-        sql: 'SELECT jwk FROM client_jwks WHERE client_id = ? ORDER BY id',
-        params: [clientId],
-      });
 
       const registered: RegisteredClient = {
         clientId: client.id,
@@ -83,7 +89,6 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
       };
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
-      if (keys.length > 0) registered.jwks = { keys: keys.map((row) => parseJwk(clientId, row.jwk)) };
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethod = 'none';
@@ -105,6 +110,26 @@ export function createSqlClientResolver(db: SqlDatabase): ClientResolver & Token
 }
 
 type ClientAuthType = 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
+
+/**
+ * The public keys of client_jwks for one purpose at a time: the
+ * ClientKeyResolver the OP uses when no other one is passed in. private_key_jwt
+ * reads the keys of the private_key_jwt purpose and a signed Request Object
+ * those of request_object. A deleted client (is_deleted) has no keys.
+ */
+export function createSqlClientKeyResolver(db: SqlDatabase): ClientKeyResolver {
+  return {
+    async findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet> {
+      const rows = await db.all<{ jwk: string }>({
+        sql:
+          'SELECT k.jwk FROM client_jwks k JOIN clients c ON c.id = k.client_id ' +
+          'WHERE k.client_id = ? AND k.purpose = ? AND c.is_deleted = FALSE ORDER BY k.id',
+        params: [clientId, purpose],
+      });
+      return { keys: rows.map((row) => parseJwk(clientId, row.jwk)) };
+    },
+  };
+}
 
 /** A client_jwks row holds one public JWK as a JSON object. */
 function parseJwk(clientId: string, json: string): Jwk {
@@ -140,13 +165,18 @@ function parseJwk(clientId: string, json: string): Jwk {
  * one at a time (SqlDatabase has no transactions), so run it again if it stops
  * halfway.
  *
+ * jwks is the jwks of client registration (RFC 7591 §2): one set of keys for
+ * every purpose it covers (JWKS_CLIENT_KEY_PURPOSES in core: private_key_jwt
+ * and request_object). Each of its keys becomes a client_jwks row for each of
+ * those purposes. Keys for another purpose go into client_jwks directly.
+ *
  * The private_key_jwt row and the client_jwks rows are only ever added here:
  * registerClient() writes the private_key_jwt row when the client lists that
- * method and a client_jwks row for each key of jwks, and never deletes either.
- * Those rows may be managed in the database while the OP runs (see the top of
- * this file), and registering the client again at the next start keeps them.
- * To remove one, delete it in the database, and drop it from the client
- * passed here too, or the next registration adds it back.
+ * method and the client_jwks rows of jwks, and never deletes either. Those
+ * rows may be managed in the database while the OP runs (see the top of this
+ * file), and registering the client again at the next start keeps them. To
+ * remove one, delete it in the database, and drop it from the client passed
+ * here too, or the next registration adds it back.
  */
 export async function registerClient(
   db: SqlDatabase,
@@ -210,10 +240,19 @@ export async function registerClient(
   }
   for (const key of client.jwks?.keys ?? []) {
     const jwk = JSON.stringify(key);
-    await db.run({
-      sql: 'INSERT INTO client_jwks (id, client_id, jwk) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING',
-      params: [await childRowId(client.clientId, 'client_jwks', jwk), client.clientId, jwk],
-    });
+    for (const purpose of JWKS_CLIENT_KEY_PURPOSES) {
+      await db.run({
+        sql:
+          'INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES (?, ?, ?, ?) ' +
+          'ON CONFLICT (id) DO NOTHING',
+        params: [
+          await childRowId(client.clientId, 'client_jwks', JSON.stringify([purpose, jwk])),
+          client.clientId,
+          purpose,
+          jwk,
+        ],
+      });
+    }
   }
 
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [

@@ -29,7 +29,7 @@ import { createViews, type Views } from './views.js';
 import { createDatabase } from './db/instance.js';
 import type { SqlDatabase } from './db/database.js';
 import { createSqlProviderStores } from './db/stores.js';
-import { createSqlClientResolver } from './db/clients.js';
+import { createSqlClientKeyResolver, createSqlClientResolver } from './db/clients.js';
 import {
   getDefaultGoogleIdTokenVerifier,
   type GoogleAccountResolver,
@@ -46,6 +46,7 @@ import type {
   SigningKey,
   SigningKeyProvider,
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AcrResolver,
   JwkSet,
@@ -63,6 +64,13 @@ export interface OidcProviderOptions {
   /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */
   clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
+  /**
+   * The public keys each client registered, one purpose at a time
+   * (ClientKeyResolver in core): private_key_jwt for client assertions,
+   * request_object for signed Request Objects.
+   * Defaults to the client_jwks table of db/, read for each request.
+   */
+  clientKeyResolver?: ClientKeyResolver;
   sessionResolver?: SessionResolver;
   consentResolver?: ConsentResolver;
   /** Stores to use instead of db/: the SQL stores on the database db/instance.ts creates. */
@@ -124,14 +132,16 @@ export function validateSigningKeySet(
 export function createApp(options: OidcProviderOptions): WebRouter {
   const app = new WebRouter();
 
-  // db/: unless options.storage / options.clientResolver replace them, the
-  // stores and the registered clients come from the database that
-  // db/instance.ts creates. It is created once, here, so an unimplemented
-  // createDatabase() stops the server at startup instead of failing a request.
+  // db/: unless options.storage / options.clientResolver /
+  // options.clientKeyResolver replace them, the stores, the registered clients
+  // and their keys come from the database that db/instance.ts creates. It is
+  // created once, here, so an unimplemented createDatabase() stops the server
+  // at startup instead of failing a request.
   let database: SqlDatabase | undefined;
   const openDatabase = (): SqlDatabase => (database ??= createDatabase());
   const stores = options.storage ?? createSqlProviderStores(openDatabase());
   const clientResolver = options.clientResolver ?? createSqlClientResolver(openDatabase());
+  const clientKeyResolver = options.clientKeyResolver ?? createSqlClientKeyResolver(openDatabase());
 
   const corsOrigins = options.corsOrigins ?? '*';
   const protectedCors = createCorsMiddleware({
@@ -182,6 +192,7 @@ export function createApp(options: OidcProviderOptions): WebRouter {
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
     c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
+    c.set('clientKeyResolver', clientKeyResolver);
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);

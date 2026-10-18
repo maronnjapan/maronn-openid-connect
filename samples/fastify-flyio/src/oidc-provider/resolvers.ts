@@ -1,5 +1,7 @@
+import { createClientJwksKeyResolver } from '@maronn-openid-connect/core';
 import type {
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AuthorizationCodeResolver,
   AuthorizationCodeInfo,
@@ -33,6 +35,12 @@ export const clientResolver: ClientResolver & TokenClientResolver =
   createInMemoryClientResolver();
 
 export const tokenClientResolver: TokenClientResolver = clientResolver;
+
+/**
+ * Default key resolver: the jwks of the clients above (RegisteredClient.jwks),
+ * for the purposes jwks covers (private_key_jwt and request_object).
+ */
+export const clientKeyResolver: ClientKeyResolver = createClientJwksKeyResolver(clientResolver);
 
 /**
  * Build the resolver suite over one coherent store set. A request must never

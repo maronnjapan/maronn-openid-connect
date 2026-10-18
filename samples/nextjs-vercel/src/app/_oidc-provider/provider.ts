@@ -23,6 +23,7 @@ import {
   signingKeysToJwkSet,
   type AccessTokenIssuer,
   type AcrResolver,
+  type ClientKeyResolver,
   type JwkSet,
   type SigningKey,
   type SigningKeyProvider,
@@ -36,7 +37,7 @@ import { createStoreResolvers } from './resolvers';
 import type { KvDatabase } from './db/database';
 import { createDatabase } from './db/instance';
 import { createKvProviderStores } from './db/stores';
-import { createKvClientResolver } from './db/clients';
+import { createKvClientKeyResolver, createKvClientResolver } from './db/clients';
 
 /**
  * Provider configuration. OIDC_ISSUER must be the exact public URL of this app:
@@ -77,6 +78,13 @@ const database = deferDatabase(createDatabase);
  * Put clients there with registerClient() (db/clients.ts).
  */
 export const clientResolver = createKvClientResolver(database);
+
+/**
+ * The public keys of the registered clients, one purpose at a time
+ * (private_key_jwt, request_object, ...): the client_jwks records of the
+ * key-value store, read for each request (db/keys.ts).
+ */
+export const clientKeyResolver: ClientKeyResolver = createKvClientKeyResolver(database);
 
 /** Persistent provider stores: the records of db/keys.ts, in the same key-value store. */
 export const stores = createKvProviderStores(database);

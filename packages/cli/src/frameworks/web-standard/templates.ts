@@ -400,6 +400,9 @@ function webStorageTemplateParts(db: DbKind | undefined, dynamicClientRegistrati
   appStores: string;
   requestStores: string;
   requestClientResolver: string;
+  coreClientKeyResolverImport: string;
+  clientKeyResolverDoc: string;
+  requestClientKeyResolver: string;
 } {
   if (!db) {
     return {
@@ -415,6 +418,12 @@ function webStorageTemplateParts(db: DbKind | undefined, dynamicClientRegistrati
       requestClientResolver: dynamicClientRegistration
         ? '    const clientResolver = withDynamicallyRegisteredClients(\n      options.clientResolver ?? createInMemoryClientResolver(),\n    );\n'
         : '    const clientResolver =\n      options.clientResolver ?? createInMemoryClientResolver();\n',
+      coreClientKeyResolverImport: '  createClientJwksKeyResolver,\n',
+      clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to the jwks of each client (RegisteredClient.jwks), which covers
+   * private_key_jwt and request_object (createClientJwksKeyResolver() in core).
+   */\n`,
+      requestClientKeyResolver:
+        '    const clientKeyResolver =\n      options.clientKeyResolver ?? createClientJwksKeyResolver(clientResolver);\n',
     };
   }
   const names = databaseNames(db);
@@ -424,14 +433,15 @@ function webStorageTemplateParts(db: DbKind | undefined, dynamicClientRegistrati
     dbImports: `import { createDatabase } from './db/instance.js';
 import type { ${names.databaseType} } from './db/database.js';
 import { ${names.createProviderStores} } from './db/stores.js';
-import { ${names.createClientResolver} } from './db/clients.js';\n`,
+import { ${names.createClientKeyResolver}, ${names.createClientResolver} } from './db/clients.js';\n`,
     storageDoc: `Stores to use instead of db/: ${names.storesDescription} on the database db/instance.ts creates.`,
     clientResolverDoc: `  /** Clients to use instead of ${names.clientsDescription} (registerClient() in db/clients.ts). */\n`,
     appStores: `
-  // db/: unless options.storage / options.clientResolver replace them, the
-  // stores and the registered clients come from the database that
-  // db/instance.ts creates. It is created once, here, so an unimplemented
-  // createDatabase() stops the server at startup instead of failing a request.
+  // db/: unless options.storage / options.clientResolver /
+  // options.clientKeyResolver replace them, the stores, the registered clients
+  // and their keys come from the database that db/instance.ts creates. It is
+  // created once, here, so an unimplemented createDatabase() stops the server
+  // at startup instead of failing a request.
   let database: ${names.databaseType} | undefined;
   const openDatabase = (): ${names.databaseType} => (database ??= createDatabase());
   const stores = options.storage ?? ${names.createProviderStores}(openDatabase());
@@ -442,11 +452,23 @@ import { ${names.createClientResolver} } from './db/clients.js';\n`,
     options.clientResolver ?? ${names.createClientResolver}(openDatabase()),
   )`
     : `options.clientResolver ?? ${names.createClientResolver}(openDatabase())`};
+  const clientKeyResolver = options.clientKeyResolver ?? ${names.createClientKeyResolver}(openDatabase());
 `,
     requestStores: '',
     requestClientResolver: '',
+    coreClientKeyResolverImport: '',
+    clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to ${names.clientKeysDescription}, read for each request.
+   */\n`,
+    requestClientKeyResolver: '',
   };
 }
+
+/** The start of the doc comment of the clientKeyResolver option. */
+const CLIENT_KEY_RESOLVER_DOC = `  /**
+   * The public keys each client registered, one purpose at a time
+   * (ClientKeyResolver in core): private_key_jwt for client assertions,
+   * request_object for signed Request Objects.
+`;
 
 export function webAppTemplate(
   corePkg: string,
@@ -672,12 +694,13 @@ ${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  signingKeysToJwkSet,
+${storageParts.coreClientKeyResolverImport}  signingKeysToJwkSet,
 } from '${corePkg}';
 import type {
   SigningKey,
   SigningKeyProvider,
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AcrResolver,
   JwkSet,
@@ -694,6 +717,7 @@ export interface OidcProviderOptions {
   userinfoSigningKeyProvider?: SigningKeyProvider;
 ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
+${storageParts.clientKeyResolverDoc}  clientKeyResolver?: ClientKeyResolver;
   sessionResolver?: SessionResolver;
   consentResolver?: ConsentResolver;
   /** ${storageParts.storageDoc} */
@@ -771,7 +795,7 @@ ${introspectionCors}${revocationCors}${parCors}${deviceCors}${cibaCors}${dcrCors
       return c.json({ error: 'server_error', error_description: 'Failed to load signing key' }, 503);
     }
 
-${storageParts.requestClientResolver}${storageParts.requestStores}    const storeResolvers = createStoreResolvers(stores);
+${storageParts.requestClientResolver}${storageParts.requestClientKeyResolver}${storageParts.requestStores}    const storeResolvers = createStoreResolvers(stores);
 
     c.set('signingKeys', signingKeys);
     c.set('idTokenSigningKeys', idTokenSigningKeys);
@@ -779,6 +803,7 @@ ${storageParts.requestClientResolver}${storageParts.requestStores}    const stor
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
 ${tokenClientResolverContext}
+    c.set('clientKeyResolver', clientKeyResolver);
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);

@@ -114,6 +114,9 @@ function honoStorageTemplateParts(db: DbKind | undefined): {
   clientResolverDoc: string;
   defaultStores: string;
   defaultClientResolver: string;
+  coreClientKeyResolverImport: string;
+  clientKeyResolverDoc: string;
+  defaultClientKeyResolver: string;
 } {
   if (!db) {
     return {
@@ -124,6 +127,11 @@ function honoStorageTemplateParts(db: DbKind | undefined): {
       clientResolverDoc: '',
       defaultStores: 'defaultProviderStores',
       defaultClientResolver: 'createInMemoryClientResolver()',
+      coreClientKeyResolverImport: '  createClientJwksKeyResolver,\n',
+      clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to the jwks of each client (RegisteredClient.jwks), which covers
+   * private_key_jwt and request_object (createClientJwksKeyResolver() in core).
+   */\n`,
+      defaultClientKeyResolver: 'createClientJwksKeyResolver(clientResolver)',
     };
   }
   const names = databaseNames(db);
@@ -132,13 +140,24 @@ function honoStorageTemplateParts(db: DbKind | undefined): {
     inMemoryClientResolverImport: '',
     dbImports: `import { createDatabase } from './db/instance.js';
 import { ${names.createProviderStores} } from './db/stores.js';
-import { ${names.createClientResolver} } from './db/clients.js';\n`,
+import { ${names.createClientKeyResolver}, ${names.createClientResolver} } from './db/clients.js';\n`,
     storageDoc: `Stores to use instead of db/: ${names.storesDescription} on the database db/instance.ts creates for each request.`,
     clientResolverDoc: `  /** Clients to use instead of ${names.clientsDescription} (registerClient() in db/clients.ts). */\n`,
     defaultStores: `${names.createProviderStores}(createDatabase(context))`,
     defaultClientResolver: `${names.createClientResolver}(createDatabase(c))`,
+    coreClientKeyResolverImport: '',
+    clientKeyResolverDoc: CLIENT_KEY_RESOLVER_DOC + `   * Defaults to ${names.clientKeysDescription}, read for each request.
+   */\n`,
+    defaultClientKeyResolver: `${names.createClientKeyResolver}(createDatabase(c))`,
   };
 }
+
+/** The start of the doc comment of the clientKeyResolver option. */
+const CLIENT_KEY_RESOLVER_DOC = `  /**
+   * The public keys each client registered, one purpose at a time
+   * (ClientKeyResolver in core): private_key_jwt for client assertions,
+   * request_object for signed Request Objects.
+`;
 
 export function appTemplate(
   _corePkg: string,
@@ -379,12 +398,13 @@ ${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  signingKeysToJwkSet,
+${storageParts.coreClientKeyResolverImport}  signingKeysToJwkSet,
 } from '${_corePkg}';
 import type {
   SigningKey,
   SigningKeyProvider,
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AcrResolver,
   SessionResolver,
@@ -410,6 +430,7 @@ export interface CreateAppOptions {
   userinfoSigningKeyProvider?: SigningKeyProvider;
 ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
+${storageParts.clientKeyResolverDoc}  clientKeyResolver?: ClientKeyResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -520,6 +541,7 @@ ${clientResolverAssignment}
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
 ${tokenClientResolverContext}
+    c.set('clientKeyResolver', options.clientKeyResolver ?? ${storageParts.defaultClientKeyResolver});
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);
@@ -2692,9 +2714,10 @@ export function clientAuthTemplate(corePkg: string): string {
  *
  * The client signs a JWT with its own private key and sends it as
  * client_assertion. verifyPrivateKeyJwt() checks it against the public keys
- * the client registered (RegisteredClient.jwks, read from the client_jwks
- * table or record with --db on every request), then records its jti so the
- * same assertion is refused the second time.
+ * the client registered for the private_key_jwt purpose (the ClientKeyResolver
+ * of the app: the client_jwks table or records with --db, read for each
+ * request), then records its jti so the same assertion is refused the second
+ * time.
  */
 import {
   rejectReplayedClientAssertion,
@@ -2703,6 +2726,7 @@ import {
   type PresentedClientCredentials,
   type TokenClientInfo,
 } from '${corePkg}';
+import { clientKeyResolver as defaultClientKeyResolver } from './resolvers.js';
 import { clientAssertionJtiStore as defaultClientAssertionJtiStore } from './store.js';
 
 /**
@@ -2718,14 +2742,16 @@ export async function verifyPrivateKeyJwt(
   endpointPath: string,
 ): Promise<void> {
   const { issuer } = c.get('config');
+  const clientKeyResolver = c.get('clientKeyResolver') ?? defaultClientKeyResolver;
   // Storage without a clientAssertionJtiStore keeps the jtis in memory.
   const jtiStore = c.get('clientAssertionJtiStore') ?? defaultClientAssertionJtiStore;
 
-  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the client's keys,
-  // iss and sub the client_id, aud this OP, exp / nbf / iat, and a jti.
+  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the keys the client
+  // registered for private_key_jwt, iss and sub the client_id, aud this OP,
+  // exp / nbf / iat, and a jti.
   const verified = await verifyClientAssertion(requireClientAssertion(presented.clientAssertion), {
     clientId: client.clientId,
-    jwks: client.jwks,
+    jwks: await clientKeyResolver.findClientKeys(client.clientId, 'private_key_jwt'),
     audiences: clientAssertionAudiences(issuer, endpointPath),
   });
 
@@ -2875,8 +2901,10 @@ export const introspectionRefreshTokenResolver =
     ? `export const revocationResolvers = defaultStoreResolvers.revocationResolvers;
 `
     : '';
-  return `import type {
+  return `import { createClientJwksKeyResolver } from '${corePkg}';
+import type {
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AuthorizationCodeResolver,
   AuthorizationCodeInfo,
@@ -2903,6 +2931,12 @@ export const clientResolver: ClientResolver & TokenClientResolver =
   createInMemoryClientResolver();
 
 export const tokenClientResolver: TokenClientResolver = clientResolver;
+
+/**
+ * Default key resolver: the jwks of the clients above (RegisteredClient.jwks),
+ * for the purposes jwks covers (private_key_jwt and request_object).
+ */
+export const clientKeyResolver: ClientKeyResolver = createClientJwksKeyResolver(clientResolver);
 
 /**
  * Build the resolver suite over one coherent store set. A request must never
@@ -4202,12 +4236,13 @@ ${storageParts.dbImports}${googleLoginImport}import {
   assertHasRs256Key,
   assertKeyStrength,
   assertKidStrategyConsistent,
-  signingKeysToJwkSet,
+${storageParts.coreClientKeyResolverImport}  signingKeysToJwkSet,
 } from '${_corePkg}';
 import type {
   SigningKey,
   SigningKeyProvider,
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AcrResolver,
   JwkSet,
@@ -4250,6 +4285,7 @@ export interface ApplyOidcOptions {
   userinfoSigningKeyProvider?: SigningKeyProvider;
 ${storageParts.clientResolverDoc}  clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
+${storageParts.clientKeyResolverDoc}  clientKeyResolver?: ClientKeyResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -4382,6 +4418,7 @@ ${clientResolverAssignment}
     c.set('config', createProviderConfig(options.config));
     c.set('clientResolver', clientResolver);
 ${tokenClientResolverContext}
+    c.set('clientKeyResolver', options.clientKeyResolver ?? ${storageParts.defaultClientKeyResolver});
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);

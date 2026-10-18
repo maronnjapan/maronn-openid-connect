@@ -6,9 +6,10 @@
  *
  * The client signs a JWT with its own private key and sends it as
  * client_assertion. verifyPrivateKeyJwt() checks it against the public keys
- * the client registered (RegisteredClient.jwks, read from the client_jwks
- * table or record with --db on every request), then records its jti so the
- * same assertion is refused the second time.
+ * the client registered for the private_key_jwt purpose (the ClientKeyResolver
+ * of the app: the client_jwks table or records with --db, read for each
+ * request), then records its jti so the same assertion is refused the second
+ * time.
  */
 import {
   rejectReplayedClientAssertion,
@@ -17,6 +18,7 @@ import {
   type PresentedClientCredentials,
   type TokenClientInfo,
 } from '@maronn-openid-connect/core';
+import { clientKeyResolver as defaultClientKeyResolver } from './resolvers.js';
 import { clientAssertionJtiStore as defaultClientAssertionJtiStore } from './store.js';
 
 /**
@@ -32,14 +34,16 @@ export async function verifyPrivateKeyJwt(
   endpointPath: string,
 ): Promise<void> {
   const { issuer } = c.get('config');
+  const clientKeyResolver = c.get('clientKeyResolver') ?? defaultClientKeyResolver;
   // Storage without a clientAssertionJtiStore keeps the jtis in memory.
   const jtiStore = c.get('clientAssertionJtiStore') ?? defaultClientAssertionJtiStore;
 
-  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the client's keys,
-  // iss and sub the client_id, aud this OP, exp / nbf / iat, and a jti.
+  // OIDC Core 1.0 §9 / RFC 7523 §3: a signature by one of the keys the client
+  // registered for private_key_jwt, iss and sub the client_id, aud this OP,
+  // exp / nbf / iat, and a jti.
   const verified = await verifyClientAssertion(requireClientAssertion(presented.clientAssertion), {
     clientId: client.clientId,
-    jwks: client.jwks,
+    jwks: await clientKeyResolver.findClientKeys(client.clientId, 'private_key_jwt'),
     audiences: clientAssertionAudiences(issuer, endpointPath),
   });
 

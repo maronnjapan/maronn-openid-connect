@@ -36,7 +36,7 @@ import {
 import { createViews, type Views } from './views.js';
 import { createDatabase } from './db/instance.js';
 import { createSqlProviderStores } from './db/stores.js';
-import { createSqlClientResolver } from './db/clients.js';
+import { createSqlClientKeyResolver, createSqlClientResolver } from './db/clients.js';
 import {
   assertHasRs256Key,
   assertKeyStrength,
@@ -47,6 +47,7 @@ import type {
   SigningKey,
   SigningKeyProvider,
   ClientResolver,
+  ClientKeyResolver,
   TokenClientResolver,
   AcrResolver,
   JwkSet,
@@ -90,6 +91,13 @@ export interface ApplyOidcOptions {
   /** Clients to use instead of the client tables of db/ (registerClient() in db/clients.ts). */
   clientResolver?: ClientResolver;
   tokenClientResolver?: TokenClientResolver;
+  /**
+   * The public keys each client registered, one purpose at a time
+   * (ClientKeyResolver in core): private_key_jwt for client assertions,
+   * request_object for signed Request Objects.
+   * Defaults to the client_jwks table of db/, read for each request.
+   */
+  clientKeyResolver?: ClientKeyResolver;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -291,6 +299,7 @@ export function applyOidc(app: Hono<any>, options: ApplyOidcOptions): void {
     c.set('tokenClientResolver', options.tokenClientResolver
       ? withDynamicallyRegisteredClients(options.tokenClientResolver)
       : clientResolver);
+    c.set('clientKeyResolver', options.clientKeyResolver ?? createSqlClientKeyResolver(createDatabase(c)));
     c.set('transactionStore', stores.transactionStore);
     c.set('authCodeStore', stores.authCodeStore);
     c.set('accessTokenStore', stores.accessTokenStore);

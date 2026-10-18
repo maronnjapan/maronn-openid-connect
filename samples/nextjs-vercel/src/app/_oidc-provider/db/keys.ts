@@ -30,8 +30,8 @@ function key(...parts: string[]): string {
 export const keys = {
   /** Client, with its Client_auth, Client_secret, Redirect_Uri, Grant and Scope (ClientRecord). */
   client: (clientId: string) => key('client', clientId),
-  /** Client_jwk: the public keys of a client (ClientJwksRecord). */
-  clientJwks: (clientId: string) => key('client_jwks', clientId),
+  /** Client_jwk: the public keys of a client for one purpose (ClientJwksRecord). */
+  clientJwks: (clientId: string, purpose: string) => key('client_jwks', clientId, purpose),
   /** User (UserRecord). */
   user: (userId: string) => key('user', userId),
   /** Federated_identity, found by the account at the provider (FederatedIdentityRecord). */
@@ -94,7 +94,8 @@ export interface ClientRecord {
   } | null;
   /**
    * Client_auth of private_key_jwt (OIDC Core 1.0 §9): true lets the client
-   * authenticate with a JWT signed by one of its keys (keys.clientJwks()),
+   * authenticate with a JWT signed by one of its keys of the private_key_jwt
+   * purpose (keys.clientJwks(client_id, 'private_key_jwt')),
    * next to the method of client_auth. registerClient() sets it for a client
    * that lists private_key_jwt and never clears it, so it can be turned on
    * here while the OP runs.
@@ -112,10 +113,13 @@ export interface ClientRecord {
 }
 
 /**
- * Client_jwk: the public keys of a client, as a JWK Set (RFC 7517 §5). They
- * verify the client's private_key_jwt assertions and its signed Request
- * Objects. The OP reads this record on every request, so a key added to it or
- * removed from it takes effect at once. Never store a private key.
+ * Client_jwk: the public keys of a client for one purpose, as a JWK Set
+ * (RFC 7517 §5). The purpose is part of the key and names the process that
+ * uses the keys: private_key_jwt (client assertions, OIDC Core 1.0 §9),
+ * request_object (signed Request Objects, OIDC Core 1.0 §6.3.2), dpop (DPoP
+ * proofs, RFC 9449) or another one. The OP reads the record of a purpose each
+ * time a process needs its keys, so a key added to it or removed from it takes
+ * effect at once. Never store a private key.
  */
 export interface ClientJwksRecord {
   keys: Array<Record<string, unknown>>;

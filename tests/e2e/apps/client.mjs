@@ -57,6 +57,12 @@ const server = createServer(async (req, res) => {
       await startAuthorization(url, res, { responseMode: 'query.jwt' });
       return;
     }
+    // OAuth 2.0 Form Post Response Mode §2: ask the OP to post the
+    // authorization response to the redirect URI from an HTML form.
+    if (req.method === 'GET' && url.pathname === '/start-form-post') {
+      await startAuthorization(url, res, { responseMode: 'form_post' });
+      return;
+    }
     // EXPERIMENTAL (RFC 8628): act as the input-constrained device — ask for a
     // device_code / user_code pair and start polling the token endpoint in the
     // background while the browser side of the flow runs.
@@ -85,6 +91,12 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/callback') {
       await handleCallback(url, res);
+      return;
+    }
+    // Form Post Response Mode §2: the parameters arrive in the
+    // application/x-www-form-urlencoded body of a POST, and none in the query.
+    if (req.method === 'POST' && url.pathname === '/callback') {
+      await handleCallback(await formPostCallbackUrl(req, url), res, 'POST');
       return;
     }
     sendJson(res, 404, { error: 'not_found' });
@@ -125,7 +137,8 @@ async function startAuthorization(requestUrl, res, options = {}) {
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'prompt');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'id_token_hint');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'acr_values');
-  // EXPERIMENTAL (JARM §2.3): query.jwt / jwt select the JWT-secured response.
+  // EXPERIMENTAL (JARM §2.3): query.jwt / jwt select the JWT-secured response,
+  // and form_post (Form Post Response Mode §2) a response posted from a form.
   // The request itself is otherwise identical to the plain code flow.
   const responseMode = requestUrl.searchParams.get('response_mode') ?? options.responseMode;
   if (responseMode) authorizationUrl.searchParams.set('response_mode', responseMode);
@@ -391,7 +404,27 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function handleCallback(url, res) {
+/**
+ * The callback URL with the fields of a form_post authorization response as
+ * its query, so the response is handled like a query response. A response
+ * whose parameters are not in a form-encoded body is refused.
+ */
+async function formPostCallbackUrl(req, url) {
+  const [mediaType = ''] = (req.headers['content-type'] ?? '').toLowerCase().split(';');
+  if (mediaType.trim() !== 'application/x-www-form-urlencoded') {
+    throw new Error(`Unexpected form_post Content-Type: ${req.headers['content-type'] ?? '(none)'}`);
+  }
+  if (url.search !== '') {
+    throw new Error(`Unexpected query on the form_post callback: ${url.search}`);
+  }
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const callbackUrl = new URL(url);
+  callbackUrl.search = new URLSearchParams(Buffer.concat(chunks).toString('utf8')).toString();
+  return callbackUrl;
+}
+
+async function handleCallback(url, res, method = 'GET') {
   // EXPERIMENTAL (JARM §2.3.1): a JARM response carries no plain parameters at
   // all — everything is inside the signed JWT of the `response` parameter.
   if (url.searchParams.has('response')) {
@@ -417,6 +450,7 @@ async function handleCallback(url, res) {
       errorDescription: url.searchParams.get('error_description') ?? '',
       state,
       issuer: responseIssuer,
+      method,
     }));
     return;
   }
@@ -455,6 +489,7 @@ async function handleCallback(url, res) {
     tokens,
     userInfo,
     resourceProfile,
+    method,
   }));
 }
 
@@ -656,6 +691,7 @@ function renderResult(result) {
         <dt>code</dt><dd data-testid="authorization-code">${escapeHtml(result.code)}</dd>
         <dt>state</dt><dd data-testid="authorization-state">${escapeHtml(result.state)}</dd>
         <dt>iss</dt><dd data-testid="authorization-issuer">${escapeHtml(result.issuer)}</dd>
+        <dt>callback method</dt><dd data-testid="callback-method">${escapeHtml(result.method ?? 'GET')}</dd>
         <dt>nonce</dt><dd data-testid="authorization-nonce">${escapeHtml(result.nonce)}</dd>
         <dt>access token</dt><dd data-testid="token-access-token">${escapeHtml(result.tokens.access_token)}</dd>
         <dt>id token</dt><dd data-testid="token-id-token">${escapeHtml(result.tokens.id_token)}</dd>
@@ -712,7 +748,8 @@ function renderAuthorizationError(result) {
         <dt>error</dt><dd data-testid="authorization-error">${escapeHtml(result.error)}</dd>
         <dt>error description</dt><dd data-testid="authorization-error-description">${escapeHtml(result.errorDescription)}</dd>
         <dt>state</dt><dd data-testid="authorization-state">${escapeHtml(result.state)}</dd>
-        <dt>iss</dt><dd data-testid="authorization-issuer">${escapeHtml(result.issuer)}</dd>${renderJarmDetails(result.jarm)}
+        <dt>iss</dt><dd data-testid="authorization-issuer">${escapeHtml(result.issuer)}</dd>
+        <dt>callback method</dt><dd data-testid="callback-method">${escapeHtml(result.method ?? 'GET')}</dd>${renderJarmDetails(result.jarm)}
       </dl>
     </main>
   </body>

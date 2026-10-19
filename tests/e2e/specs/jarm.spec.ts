@@ -141,7 +141,7 @@ test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
     );
 
     // JARM §4: both AS metadata members the specification defines for JARM.
-    expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
+    expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'query.jwt', 'jwt']);
     expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
   });
 
@@ -164,8 +164,8 @@ test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
     await page.getByLabel('Password:').fill('password');
     await page.getByRole('button', { name: 'Login' }).click();
     await page.getByRole('button', { name: 'Approve' }).click();
-    // The consent decision may navigate asynchronously (a Next.js Server Action
-    // redirects after its round trip), so wait for the callback before reading it.
+    // The consent decision navigates once its form POST is answered, so wait
+    // for the callback before reading it.
     await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(clientBaseURL)}/callback\\?`));
 
     const callbackUrl = new URL(page.url());

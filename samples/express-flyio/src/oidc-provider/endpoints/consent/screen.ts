@@ -8,6 +8,7 @@ import {
   type AuthorizationCodeData,
   type AuthorizationResponseParams,
 } from '@maronn-openid-connect/core';
+import type { AuthorizationResponse } from '../authorize/response-mode.js';
 
 /** What the consent form needs, prepared for GET /consent. */
 export interface ConsentScreen {
@@ -43,8 +44,8 @@ export type ConsentOutcome =
   | { kind: 'invalid_decision' }
   /** No authenticated subject for this transaction: the login step was skipped or expired (400). */
   | { kind: 'session_missing' }
-  /** Approved or denied: the authorization response for the client, ready in the URL. */
-  | { kind: 'authorization_response'; location: string; cookies: string[] };
+  /** Approved or denied: the authorization response for the client, in the response mode the request asked for. */
+  | { kind: 'authorization_response'; response: AuthorizationResponse; cookies: string[] };
 
 /** The fields of the consent form. */
 export interface ConsentSubmission {

@@ -8,7 +8,7 @@ import {
   type SessionInfo,
 } from '@maronn-openid-connect/core';
 import { resolveGrantableScopes } from '../../../scopes.js';
-import { type AuthorizationOutcome, buildErrorRedirect } from '../outcome.js';
+import { type AuthorizationOutcome, buildErrorResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { step } from '../../step.js';
 
@@ -57,7 +57,7 @@ export async function completePromptNoneRequest(
     await transactionStore.delete('auth_txn:' + transactionId);
     return {
       kind: 'authorization_response',
-      location: await buildErrorRedirect(responseMode, transaction.redirectUri, error, transaction.state, description, issuer),
+      response: await buildErrorResponse(responseMode, transaction.redirectUri, error, transaction.state, description, issuer),
     };
   };
 

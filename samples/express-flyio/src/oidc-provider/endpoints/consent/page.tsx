@@ -6,15 +6,15 @@
  * Neither handler holds OIDC logic: prepareConsent() and submitConsent() in
  * pipeline.ts find the transaction through the transaction cookie, check
  * the csrf_token, record the decision, mint the authorization code and build
- * the authorization response URL, and report what happened as an outcome. This file turns each
- * outcome into a screen or a redirect. To customize the consent UI, edit this
+ * the authorization response, and report what happened as an outcome. This
+ * file turns each outcome into a screen or a redirect. To customize the consent UI, edit this
  * file or the consentPage view in views.tsx; pipeline.ts never has to
  * change. Keep the two button values ('approve' / 'deny') as they are: the
  * logic accepts exactly those.
  */
 import { WebRouter } from '../../web-router.js';
+import { respondToClient } from '../../pages/authorization-response.js';
 import { renderErrorPage } from '../../pages/errors.js';
-import { redirectWithCookies } from '../../pages/respond.js';
 import { defaultViews, renderView, type ConsentPageParams, type Views } from '../../views.js';
 import { prepareConsent, submitConsent } from './pipeline.js';
 
@@ -72,6 +72,7 @@ consentPage.post('/', async (c) => {
       statusCode: 400,
     });
   }
-  // Approved or denied: the authorization response is already in the URL.
-  return redirectWithCookies(outcome.location, outcome.cookies);
+  // Approved or denied: the authorization response, in the response mode the
+  // request asked for (a redirect, or the form a form_post response is posted from).
+  return respondToClient(c, outcome.response, outcome.cookies);
 });

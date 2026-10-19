@@ -1,5 +1,5 @@
 import type { AuthTransaction } from '@maronn-openid-connect/core';
-import { type AuthorizationOutcome, buildErrorRedirect } from '../outcome.js';
+import { type AuthorizationOutcome, buildErrorResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { step } from '../../step.js';
 
@@ -34,6 +34,6 @@ export async function rejectCombinedPromptNone(
   await transactionStore.delete('auth_txn:' + transactionId);
   return {
     kind: 'authorization_response',
-    location: await buildErrorRedirect(responseMode, transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer),
+    response: await buildErrorResponse(responseMode, transaction.redirectUri, 'invalid_request', transaction.state, 'prompt=none must not be combined with other prompt values', issuer),
   };
 }

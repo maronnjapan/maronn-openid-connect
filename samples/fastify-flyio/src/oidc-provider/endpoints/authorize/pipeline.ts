@@ -1,3 +1,4 @@
+import { resolveFormPostResponseContext } from '../../features/form-post-response-mode/steps/resolve-form-post-response-mode.js';
 import { resolveRequestObject } from '../../features/request-object/steps/resolve-request-object.js';
 import type { AuthorizationOutcome } from './outcome.js';
 import type { AuthorizationResponseMode } from './response-mode.js';
@@ -26,16 +27,18 @@ import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
  * names a feature belongs to that feature, and its step is in features/<id>/.
  *
  * The pipeline reports what the endpoint decided as an outcome: the
- * authorization response URL for the client, "continue on the login /
+ * authorization response for the client, "continue on the login /
  * consent screen", or an error that must stay on the OP. It never builds a
  * Response; page.ts, which owns GET|POST /authorize, turns the outcome into
  * HTTP. A step that throws ends in authorizationErrorOutcome().
  */
 export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
   // The response mode the request asked for, when a feature answers in one
-  // (JARM). Set once redirect_uri is verified; undefined means the plain query
-  // response. Declared before the try block so the catch can answer in the
-  // mode the request asked for.
+  // (JARM, form_post). Set once redirect_uri is verified, by the first block
+  // of a feature that answers the request's response_mode (each assigns it
+  // only while it is still unset); undefined means the plain query response.
+  // Declared before the try block so the catch can answer in the mode the
+  // request asked for.
   let responseMode: AuthorizationResponseMode | undefined;
   try {
     // RFC 9207 §2: include the issuer identifier on every authorization
@@ -56,6 +59,9 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
 
     // [resolve-redirect-uri] Resolve redirect_uri (errors become redirectable) — OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1
     const { redirectUri, state } = resolveRedirectTarget(effectiveParams ?? params, client);
+
+    // [resolve-form-post-response-mode] (feature: form-post-response-mode) Interpret response_mode=form_post — OAuth 2.0 Form Post Response Mode §2
+    responseMode ??= resolveFormPostResponseContext(effectiveParams ?? params, issuer);
 
     // [validate-request] Validate the request parameters — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
     const validatedRequest = await validateAuthorizationRequestParams(c, { params, effectiveParams, requestObjectClaims, client, redirectUri, state });

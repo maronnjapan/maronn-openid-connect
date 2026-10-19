@@ -21,7 +21,7 @@ const APP_ROUTER_LAYOUT: ModuleMap = {
   authorize: 'authorize/route.ts',
   login: 'login/actions.ts',
   'login-google': '(google-login)/login/google/route.ts',
-  consent: 'consent/actions.ts',
+  consent: 'consent/decision/route.ts',
   token: 'token/route.ts',
   userinfo: 'userinfo/route.ts',
   introspection: '(introspection)/introspect/route.ts',

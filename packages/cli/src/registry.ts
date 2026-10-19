@@ -53,6 +53,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'introspection', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Token Introspection endpoint (RFC 7662)' },
   { id: 'revocation', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Token Revocation endpoint (RFC 7009)' },
   { id: 'request-object', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'signed Request Objects passed by value (OIDC Core 1.0 §6.1)' },
+  { id: 'form-post-response-mode', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'response_mode=form_post (OAuth 2.0 Form Post Response Mode)' },
   { id: 'par', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Pushed Authorization Requests (RFC 9126)' },
   { id: 'token-exchange', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'OAuth 2.0 Token Exchange (RFC 8693)' },
   { id: 'jarm', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'JWT Secured Authorization Response Mode (signed query.jwt)' },
@@ -113,6 +114,7 @@ export const AVAILABLE_FEATURES = [
   'introspection',
   'revocation',
   'request-object',
+  'form-post-response-mode',
 ] as const;
 
 export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
@@ -199,6 +201,12 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  * - revocation: when false, the RFC 7009 endpoint is not generated.
  * - requestObject: when false, the authorize endpoint rejects the `request`
  *   parameter with `request_not_supported` (OIDC Core 1.0 §6.3).
+ * - formPostResponseMode: when true (the default), the authorization endpoint
+ *   and the consent step answer a request with `response_mode=form_post` with
+ *   an HTML form that posts the authorization response to the redirect URI
+ *   (OAuth 2.0 Form Post Response Mode §2), and discovery advertises
+ *   `form_post` in `response_modes_supported`. When false, `response_mode` is
+ *   ignored as before and the response is the plain query one.
  * - par: experimental, disabled by default. When true, the PAR endpoint
  *   (RFC 9126) is generated and the authorization endpoint resolves URN-form
  *   `request_uri` values through `@maronn-openid-connect/experimental/par`.
@@ -271,6 +279,7 @@ export interface OidcFeatureConfig {
   introspection: boolean;
   revocation: boolean;
   requestObject: boolean;
+  formPostResponseMode: boolean;
   par: boolean;
   tokenExchange: boolean;
   jarm: boolean;
@@ -290,6 +299,7 @@ const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
   introspection: 'introspection',
   revocation: 'revocation',
   'request-object': 'requestObject',
+  'form-post-response-mode': 'formPostResponseMode',
 };
 
 /** Mapping from CLI experimental feature names to OidcFeatureConfig keys. */
@@ -320,6 +330,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   introspection: true,
   revocation: true,
   requestObject: true,
+  formPostResponseMode: true,
   par: false,
   tokenExchange: false,
   jarm: false,

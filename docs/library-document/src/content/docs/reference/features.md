@@ -33,6 +33,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 |---|---|
 | `scope` | `openid` 必須。`profile` / `email` / `address` / `phone` / `offline_access` に対応 |
 | `state` | 認可レスポンスでそのまま返却 |
+| `response_mode` | `form_post` に対応（OAuth 2.0 Form Post Response Mode）。認可レスポンス（成功もリダイレクト可能なエラーも）を、リダイレクト URI を `action` とする HTML フォームの hidden フィールドにして、ブラウザから POST させる。応答には `Cache-Control: no-cache, no-store` を付ける。`iss`（RFC 9207）もフィールドに含める。未指定と `query` は従来どおりクエリで返す。それ以外の値は、Experimental 機能 JARM を有効にしたときの `.jwt` 系を除いて無視する。トグル `form-post-response-mode` で無効化できる |
 | `nonce` | ID Token の `nonce` クレームとして返却 |
 | `prompt` | `none` / `login` / `consent` / `select_account` に対応。`none` と他値の併用は拒否 |
 | `display` | `page` / `popup` / `touch` / `wap` のみ受理し、それ以外は拒否（OIDC Core 1.0 §3.1.2.1） |
@@ -125,7 +126,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 
 ## Feature Toggles
 
-CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` を機能単位で増減できます。詳細は [CLI Guide](../../guides/cli/) を参照してください。
+CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` / `form-post-response-mode` を機能単位で増減できます。詳細は [CLI Guide](../../guides/cli/) を参照してください。
 
 ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`__Host-oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します。`POST /login`・`POST /consent` は、ブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたことも確かめます（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 

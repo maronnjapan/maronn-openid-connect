@@ -162,18 +162,18 @@ src/app/
 ├── login/not-found.tsx       # トランザクションが無いとき（notFound()）の画面。HTTP 404
 ├── login/error.tsx           # 想定外の例外のときの画面（error boundary）
 ├── consent/page.tsx          # 同意画面
-├── consent/actions.ts        # 同意の Server Action（認可コードを発行してクライアントへリダイレクト）
+├── consent/decision/route.ts # 同意の判断を受ける Route Handler（認可コードを発行し、認可レスポンスを返す）
 ├── consent/not-found.tsx / consent/error.tsx  # 同意画面の not-found / error（ログイン画面と同じ役割）
 └── oidc-error/page.tsx       # クライアントへ返してはいけないエラーの表示先
 ```
 
-各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export します。ログイン・同意画面は React のページと Server Action なので、見た目は `page.tsx`、判断は `actions.ts` を書き換えます。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要があります。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成します。
+各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export します。ログイン画面と同意画面は React のページなので、見た目は `page.tsx` を書き換えます。判断はログインが Server Action の `login/actions.ts`、同意が Route Handler の `consent/decision/route.ts` にあります。同意だけ Route Handler にしているのは、`form_post` の認可レスポンスが HTML のページで、Server Action はリダイレクトしか返せないためです。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要があります。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成します。
 
 機能のルートは、その機能の route group（`(par)/par/route.ts`、`(google-login)/login/google/route.ts` など。route group の名前は URL に現れません）の下にあります。機能の設定やストアなど、ルート以外のコードは `_oidc-provider/features/<feature-id>/` にあり（例: `_oidc-provider/features/par/config.ts` の `parConfig`、`_oidc-provider/features/token-exchange/config.ts` の `tokenExchangeConfig`）、`_oidc-provider/features.ts` が有効な機能を並べます。標準の Route Handler の中で動く機能の処理は、`(feature: <feature-id>)` の印が付いたブロックから呼ばれ、無効にした機能はそのブロックごと消えます。
 
 OP がブラウザを止める場面は、Next.js の機能で表します。
 
-- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明・完了済み・期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示します。利用者はクライアントからやり直すしかありません
+- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明・完了済み・期限切れ）: ページとログインの Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示します。同意の判断を受ける Route Handler は、`oidc-error/page.tsx` へ 303 で送ります。どちらの場合も、利用者はクライアントからやり直すしかありません
 - クライアントへ返してはいけないエラー（OIDC Core 1.0 §3.1.2.2。未登録の `redirect_uri`、CSRF トークンの不一致、ログイン試行回数の上限、判断を含まない同意の POST、Google ログインのコールバックの失敗など）: `redirect()` で `oidc-error/page.tsx` へ送ります。Route Handler からは 303 でリダイレクトします
 - 想定外の例外（ストアの障害など）: `error.tsx`（error boundary）が表示します。本番の Next.js はエラーメッセージをブラウザへ渡さないので、画面にはサーバーログと突き合わせられる `digest` だけを出します
 
@@ -363,7 +363,7 @@ Cookie・`csrf_token`・送信元チェックは、それぞれ別の脅威を�
 | サブドメインが被害者のブラウザに自分のトランザクションの Cookie を設定する（Cookie tossing） | `__Host-` プレフィックス（ブラウザがサブドメインからの設定を拒否）、送信元チェック（設定できても、その Cookie と `csrf_token` を使った POST を拒否） |
 | Cookie の値そのものの盗難 | HttpOnly・Secure・URL に載せないこと。盗んだ本人が自分のブラウザで OP の画面を使う場合、OP 側だけでは防げない |
 
-送信元チェックは、`Sec-Fetch-Site` があれば `same-origin` と `none`（リロードなど利用者自身の操作）だけを通し、無ければ `Origin` が issuer のオリジンと一致することを求めます。どちらのヘッダーも無いリクエスト（curl などブラウザ以外）は通し、Cookie と `csrf_token` で判定します。Google が送ってくる `POST /login/google` はクロスサイトの POST なので対象外で、Google の `g_csrf_token` と nonce で守っています。Next.js の Server Action は Next.js 自身も `Origin` と `Host` を照合しますが、生成コードは issuer と比べる同じチェックを Server Action の先頭でも行います。
+送信元チェックは、`Sec-Fetch-Site` があれば `same-origin` と `none`（リロードなど利用者自身の操作）だけを通し、無ければ `Origin` が issuer のオリジンと一致することを求めます。どちらのヘッダーも無いリクエスト（curl などブラウザ以外）は通し、Cookie と `csrf_token` で判定します。Google が送ってくる `POST /login/google` はクロスサイトの POST なので対象外で、Google の `g_csrf_token` と nonce で守っています。Next.js の Server Action は Next.js 自身も `Origin` と `Host` を照合しますが、生成コードは issuer と比べる同じチェックをログインの Server Action の先頭でも行います。同意の判断を受ける Route Handler には Next.js の照合が無いので、このチェックだけが送信元を確かめます。
 
 URL にトランザクションを示すものがなくても、ログイン・同意画面はリロードできます。Cookie は同意の結果を返すまで（最長でトランザクションの有効期限の 10 分）残るので、リロードは同じ Cookie を付けた GET になり、同じトランザクションのフォーム（同じ `csrf_token`）がもう一度表示されます。Next.js はパスワードの誤りもフォームへのリダイレクトで返すので、その後のリロードも送信のやり直しになりません。
 
@@ -404,6 +404,7 @@ maronn-oidc generate express --disable pkce
 | `introspection` | 有効 | RFC 7662 introspection エンドポイント（`/introspect`）を生成しない |
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
+| `form-post-response-mode` | 有効 | `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）を解釈せず、認可レスポンスを従来どおりリダイレクト URI のクエリで返す。discovery の `response_modes_supported` から `form_post` を除く |
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
@@ -485,7 +486,7 @@ export async function resolveGrantableScopes(
 | `endpoints/authorize/steps/authenticate-silently.ts` / `reuse-session.ts` | SSO fast path と `prompt=none`（同意画面を出さずに付与する経路） |
 | `features/device-authorization-grant/endpoints/device/steps/` / `features/ciba/endpoints/ciba/` | device / CIBA の承認ステップ（該当機能を有効にした場合） |
 
-Next.js では、`consent/page.tsx` / `consent/actions.ts`、`authorize/route.ts`、device と CIBA の Route Handler から呼ばれます。
+Next.js では、`consent/page.tsx` / `consent/decision/route.ts`、`authorize/route.ts`、device と CIBA の Route Handler から呼ばれます。
 
 SSO と `prompt=none` では、**保存済み同意を引く前**にポリシーを適用します。絞る前の scope で同意を探すと、そのユーザーが持てないスコープをキーに検索することになり、いつまでも一致しないためです。
 

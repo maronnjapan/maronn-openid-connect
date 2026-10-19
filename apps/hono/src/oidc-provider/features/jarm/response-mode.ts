@@ -38,8 +38,9 @@ export function jarmResponseMode(input: {
 }): AuthorizationResponseMode {
   return {
     name: JARM_RESPONSE_MODE_NAME,
-    async redirect(redirectUri, parameters) {
-      return buildJarmRedirectUrl(
+    async respond(redirectUri, parameters) {
+      // JARM §2.3.1: query.jwt redirects to the redirect URI with the JWT in its query.
+      const location = buildJarmRedirectUrl(
         redirectUri,
         await createJarmResponseJwt({
           issuer: input.issuer,
@@ -49,6 +50,7 @@ export function jarmResponseMode(input: {
           lifetimeSeconds: jarmConfig.jarmResponseLifetimeSeconds,
         }),
       );
+      return { method: 'redirect', location };
     },
   };
 }

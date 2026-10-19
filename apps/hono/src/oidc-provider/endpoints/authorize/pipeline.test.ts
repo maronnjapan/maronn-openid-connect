@@ -164,6 +164,57 @@ describe('processAuthorizationRequest', () => {
     });
   });
 
+  // OAuth 2.0 Form Post Response Mode §2
+  describe('response_mode=form_post', () => {
+    it('should post the code, state and iss to the redirect_uri for SSO with prior consent', async () => {
+      const { db, stores } = await providerWithClient();
+      const cookie = await signIn(stores);
+      await stores.consentStore.grant(SUBJECT, CLIENT_ID, ['openid']);
+
+      const outcome = await authorize(db, authorizationParams({ response_mode: 'form_post' }), { cookie });
+
+      expect(outcome).toEqual({
+        kind: 'authorization_response',
+        response: {
+          method: 'form_post',
+          action: REDIRECT_URI,
+          fields: { code: [...db.codes.keys()][0], state: STATE, iss: TEST_ISSUER },
+        },
+      });
+    });
+
+    // RFC 6749 §4.1.2.1: a redirectable error goes back in the same response mode.
+    it('should post a validation error to the redirect_uri', async () => {
+      const { db } = await providerWithClient();
+
+      const outcome = await authorize(db, authorizationParams({ response_mode: 'form_post', scope: 'profile' }));
+
+      expect(outcome).toEqual({
+        kind: 'authorization_response',
+        response: {
+          method: 'form_post',
+          action: REDIRECT_URI,
+          fields: {
+            error: 'invalid_scope',
+            error_description: 'scope must include openid',
+            state: STATE,
+            iss: TEST_ISSUER,
+          },
+        },
+      });
+    });
+
+    // The response mode is recorded so /consent answers in it (restoreResponseMode()).
+    it('should record form_post on the transaction it continues on the login screen with', async () => {
+      const { db } = await providerWithClient();
+
+      await authorize(db, authorizationParams({ response_mode: 'form_post' }));
+
+      const [transactionId] = transactionIdsOf(db);
+      expect(db.transactions.get('auth_txn:' + transactionId)?.value).toMatchObject({ responseMode: 'form_post' });
+    });
+  });
+
   describe('Errors', () => {
     it('should answer bad_request for a request without client_id', async () => {
       const { db } = await providerWithClient();

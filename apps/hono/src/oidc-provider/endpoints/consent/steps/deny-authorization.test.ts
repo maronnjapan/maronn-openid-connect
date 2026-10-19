@@ -21,8 +21,10 @@ describe('denyAuthorizationRequest', () => {
 
     expect(await denyAuthorizationRequest(c, TRANSACTION_ID, transaction, ISSUER)).toEqual({
       kind: 'authorization_response',
-      location:
-        'https://rp.example.com/callback?error=access_denied&state=state-1&iss=https%3A%2F%2Fop.example.com',
+      response: {
+        method: 'redirect',
+        location: 'https://rp.example.com/callback?error=access_denied&state=state-1&iss=https%3A%2F%2Fop.example.com',
+      },
       cookies: ['__Host-oidc_txn=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'],
     });
   });
@@ -40,7 +42,7 @@ describe('denyAuthorizationRequest', () => {
     const { c, transaction } = await setUp(sampleTransaction({ state: undefined }));
 
     expect(await denyAuthorizationRequest(c, TRANSACTION_ID, transaction, ISSUER)).toMatchObject({
-      location: 'https://rp.example.com/callback?error=access_denied&iss=https%3A%2F%2Fop.example.com',
+      response: { method: 'redirect', location: 'https://rp.example.com/callback?error=access_denied&iss=https%3A%2F%2Fop.example.com' },
     });
   });
 });

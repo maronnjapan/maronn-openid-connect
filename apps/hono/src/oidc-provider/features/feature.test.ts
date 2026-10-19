@@ -35,7 +35,7 @@ function contextInput(values: Record<string, unknown> = {}): FeatureContextInput
 function responseMode(name: string): AuthorizationResponseModeHandler {
   return {
     names: [name],
-    restore: () => ({ name, redirect: async (redirectUri) => redirectUri }),
+    restore: () => ({ name, respond: async (redirectUri) => ({ method: 'redirect', location: redirectUri }) }),
   };
 }
 

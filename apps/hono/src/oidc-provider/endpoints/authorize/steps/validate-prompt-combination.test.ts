@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  RECORDED_RESPONSE,
   recordingResponseMode,
   REDIRECT_URI,
   STATE,
@@ -34,10 +35,13 @@ describe('rejectCombinedPromptNone', () => {
 
     expect(outcome).toEqual({
       kind: 'authorization_response',
-      location:
-        'https://rp.example.com/callback?error=invalid_request' +
-        '&error_description=prompt%3Dnone+must+not+be+combined+with+other+prompt+values' +
-        '&state=state-1&iss=https%3A%2F%2Fop.example.com',
+      response: {
+        method: 'redirect',
+        location:
+          'https://rp.example.com/callback?error=invalid_request' +
+          '&error_description=prompt%3Dnone+must+not+be+combined+with+other+prompt+values' +
+          '&state=state-1&iss=https%3A%2F%2Fop.example.com',
+      },
     });
     expect(db.transactions.has('auth_txn:' + TRANSACTION_ID)).toBe(false);
   });
@@ -46,12 +50,12 @@ describe('rejectCombinedPromptNone', () => {
     const { c, stores } = await providerContext();
     const transaction = transactionOf();
     await storeTransaction(stores, transaction);
-    const { responseMode, redirect } = recordingResponseMode();
+    const { responseMode, respond } = recordingResponseMode();
 
     const outcome = await rejectCombinedPromptNone(c, ['none', 'consent'], TRANSACTION_ID, transaction, TEST_ISSUER, responseMode);
 
-    expect(outcome).toEqual({ kind: 'authorization_response', location: 'https://rp.example.com/callback?response=recorded' });
-    expect(redirect.mock.calls).toEqual([
+    expect(outcome).toEqual({ kind: 'authorization_response', response: RECORDED_RESPONSE });
+    expect(respond.mock.calls).toEqual([
       [
         REDIRECT_URI,
         { error: 'invalid_request', error_description: 'prompt=none must not be combined with other prompt values', state: STATE },

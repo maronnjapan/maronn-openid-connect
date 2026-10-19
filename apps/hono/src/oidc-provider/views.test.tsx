@@ -44,6 +44,7 @@ describe('createViews', () => {
     expect(views.loginPage).toBe(loginPage);
     expect(views.consentPage).toBe(defaultViews.consentPage);
     expect(views.errorPage).toBe(defaultViews.errorPage);
+    expect(views.formPostPage).toBe(defaultViews.formPostPage);
   });
 });
 
@@ -80,6 +81,45 @@ describe('defaultViews', () => {
       expect(html).toContain('<ul><li>openid</li><li>email</li></ul>');
       expect(html).toContain('<button type="submit" name="action" value="approve">Approve</button>');
       expect(html).toContain('<button type="submit" name="action" value="deny">Deny</button>');
+    });
+  });
+
+  describe('formPostPage', () => {
+    // OAuth 2.0 Form Post Response Mode §2 / Appendix A: a POST form whose
+    // action is the redirect URI, one hidden field per parameter, submitted by
+    // script, with a button for a browser without JavaScript.
+    it('should render a POST form to the action with the fields as hidden inputs and submit it', async () => {
+      const html = await renderView(
+        defaultViews.formPostPage({
+          action: 'https://rp.example.com/callback?tenant=a',
+          fields: { code: 'code-1', state: 'state-1', iss: 'https://op.example.com' },
+        }),
+      ).text();
+
+      expect(html).toBe(
+        '<!DOCTYPE html><html><head><title>Submit This Form</title></head><body>' +
+          '<form method="post" action="https://rp.example.com/callback?tenant=a">' +
+          '<input type="hidden" name="code" value="code-1"/>' +
+          '<input type="hidden" name="state" value="state-1"/>' +
+          '<input type="hidden" name="iss" value="https://op.example.com"/>' +
+          '<noscript><button type="submit">Continue</button></noscript>' +
+          '</form>' +
+          '<script>document.forms[0].submit();</script>' +
+          '</body></html>',
+      );
+    });
+
+    // state is chosen by the client and error_description may echo request input.
+    it('should escape the field names and values', async () => {
+      const html = await renderView(
+        defaultViews.formPostPage({
+          action: 'https://rp.example.com/callback',
+          fields: { state: '"><script>alert(1)</script>' },
+        }),
+      ).text();
+
+      expect(html).toContain('<input type="hidden" name="state" value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"/>');
+      expect(html.split('<script>')).toHaveLength(2);
     });
   });
 });

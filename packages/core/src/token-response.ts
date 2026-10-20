@@ -1,7 +1,7 @@
 import type { IdTokenPayload } from './id-token.js';
 import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJwaAlgorithm, jwaToHashName } from './crypto-utils.js';
 import type { AccessTokenPayload } from './access-token.js';
-import { filterClaimsByScope } from './userinfo.js';
+import { filterClaimsByScope, matchesRequestedClaimValue } from './userinfo.js';
 import type { UserClaims, ClaimsParameter } from './userinfo.js';
 import { parseAcrValues } from './acr.js';
 
@@ -368,4 +368,69 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
   }
 
   return payload as IdTokenPayload;
+}
+
+/**
+ * ID Token が自身で持つクレーム（OIDC Core 1.0 §2、§3.1.3.6 / §3.2.2.10 / §3.3.2.11 の
+ * at_hash と c_hash）。認証と発行の結果で決まるので、claims.id_token で要求されても
+ * End-User のクレームからは取らない。
+ */
+const ID_TOKEN_OWN_CLAIMS: ReadonlySet<string> = new Set([
+  'iss',
+  'sub',
+  'aud',
+  'exp',
+  'iat',
+  'auth_time',
+  'nonce',
+  'acr',
+  'amr',
+  'azp',
+  'at_hash',
+  'c_hash',
+]);
+
+/**
+ * ステップ: claims リクエストパラメータの id_token メンバーで個別に要求されたクレームを
+ * ID Token の payload に加える
+ * OIDC Core 1.0 Section 5.5 / 5.5.1
+ *
+ * id_token メンバーのクレームは、ID Token の既定のクレームに加えて返すよう要求されたもの
+ * である（§5.5）。End-User のクレームにあるものを payload に足す。value / values が
+ * 指定されたクレームは、実値が一致するときだけ足す。値の無いクレームと一致しない
+ * クレームは省き、エラーにしない（§5.5.1）。
+ *
+ * ID Token 自身のクレーム（iss / sub / aud / exp / iat / auth_time / nonce / acr / amr /
+ * azp / at_hash / c_hash）は End-User のクレームから取らず、payload がすでに持つクレームも
+ * 置き換えない。acr の要求は acr_values と同じく {@link resolveAcrAmr} が扱う（§5.5.1.1）。
+ *
+ * 入力の payload は変更せず、新しいオブジェクトを返す。
+ *
+ * @param payload {@link buildIdTokenPayload} が組み立てた payload
+ * @param userClaims End-User のクレーム。undefined なら payload をそのまま返す
+ * @param claimsParameter 認可リクエストの claims パラメータ
+ * @returns 要求されたクレームを足した payload
+ */
+export function applyRequestedIdTokenClaims(
+  payload: IdTokenPayload,
+  userClaims: UserClaims | undefined,
+  claimsParameter?: ClaimsParameter,
+): IdTokenPayload {
+  const requested = claimsParameter?.id_token;
+  if (userClaims === undefined || requested === undefined) return payload;
+
+  const result: IdTokenPayload = { ...payload };
+  for (const [claimName, entry] of Object.entries(requested)) {
+    if (ID_TOKEN_OWN_CLAIMS.has(claimName)) continue;
+    if (Object.prototype.hasOwnProperty.call(result, claimName)) continue;
+    // Only the End-User's own claims, not what the object inherits (constructor, toString...).
+    if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;
+
+    const value = (userClaims as unknown as Record<string, unknown>)[claimName];
+    if (value === undefined || value === null) continue;
+    if (!matchesRequestedClaimValue(value, entry)) continue;
+
+    result[claimName] = value;
+  }
+  return result;
 }

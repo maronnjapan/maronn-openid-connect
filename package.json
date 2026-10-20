@@ -23,6 +23,7 @@
         "test:e2e:samples": "pnpm --filter @maronn-openid-connect/e2e test:e2e:samples",
         "test:conformance": "pnpm --filter @maronn-openid-connect/conformance test",
         "conformance:basic-op": "pnpm --filter @maronn-openid-connect/conformance basic-op",
+        "conformance:implicit-op": "pnpm --filter @maronn-openid-connect/conformance implicit-op",
         "typecheck": "pnpm --filter \"./packages/*\" typecheck && pnpm --filter \"./apps/*\" typecheck && pnpm --filter \"./samples/*\" typecheck && pnpm --filter \"./tests/*\" typecheck",
         "lint": "node .github/scripts/lint-import-boundaries.mjs",
         "build": "pnpm --filter @maronn-openid-connect/core --filter @maronn-openid-connect/experimental --filter @maronn-openid-connect/google-login --filter @maronn-openid-connect/cli run build",

@@ -100,8 +100,9 @@ const IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE = [
  * access token, and response_type-missing needs one run).
  *
  * run-test-plan.py runs a plan entry once per occurrence of its name in the
- * selection: a name listed once runs only its first entry (the id_token one),
- * so a module of both response types is named twice.
+ * selection (as the CI runs of this plan show): a name listed once ran only
+ * its first entry (the id_token one), so a module of both response types is
+ * named twice.
  */
 const IMPLICIT_OP_MODULES = [
   ...IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE,
@@ -327,7 +328,7 @@ export function createOpConformanceArtifacts(options = {}) {
       clientSecret: clientSecretOf(client.clientId),
     });
   }
-  config.browser = createBrowserAutomation(opIssuer);
+  config.browser = createBrowserAutomation({ opIssuer, suiteBaseUrl });
 
   return {
     profile,
@@ -434,7 +435,7 @@ function createStaticClient({
   return client;
 }
 
-function createBrowserAutomation(opIssuer) {
+function createBrowserAutomation({ opIssuer, suiteBaseUrl }) {
   return [
     {
       match: `${opIssuer}/authorize*`,
@@ -471,9 +472,16 @@ function createBrowserAutomation(opIssuer) {
           // to the suite before it shows submission_complete, so the same task
           // completes the Implicit Flow, whose response is in the fragment
           // (OIDC Core 1.0 §3.2.2.5).
+          //
+          // The pattern starts at the suite's base URL. The authorization
+          // request carries the callback URL in its query, unencoded, so
+          // */test/*/callback* also matched the OP's error page of
+          // ensure-registered-redirect-uri: the task then timed out waiting
+          // for submission_complete there and interrupted the module instead
+          // of leaving it to wait for its screenshot.
           task: 'Verify Complete',
           optional: true,
-          match: '*/test/*/callback*',
+          match: `${suiteBaseUrl}/test/*/callback*`,
           commands: [
             ['wait', 'id', 'submission_complete', 10],
           ],

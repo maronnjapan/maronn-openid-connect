@@ -47,10 +47,13 @@ const EXPECTED_BROWSER_AUTOMATION = [
         // Optional so manual-review / error-page modules
         // (ensure-registered-redirect-uri, prompt-login, max-age-1) are
         // not reported INTERRUPTED when the browser never reaches a suite
-        // callback. See create-op-config.mjs for the rationale.
+        // callback. The pattern starts at the suite's base URL: the
+        // authorization request carries the callback URL in its query, so
+        // */test/*/callback* also matched the OP's error page.
+        // See create-op-config.mjs for the rationale.
         task: 'Verify Complete',
         optional: true,
-        match: '*/test/*/callback*',
+        match: 'https://conformance-nginx:8443/test/*/callback*',
         commands: [
           ['wait', 'id', 'submission_complete', 10],
         ],

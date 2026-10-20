@@ -413,26 +413,31 @@ describe('opTestPlan', () => {
       assert.equal(opTestPlan('implicit-op'), IMPLICIT_OP_TEST_PLAN);
     });
 
-    // The Implicit OP plan runs each module once for response_type=id_token and
-    // once for id_token token, so leaving out a manual review module saves twice
-    // the runner's 240 s. The code flow modules of the Basic OP plan
-    // (code reuse, refresh token, PKCE, client_secret_post at the token
-    // endpoint) are not in it, and nonce is required (OIDC Core 1.0 §3.2.2.1).
-    it('should select every Implicit OP module but the manual review ones when they are skipped', () => {
+    // The Implicit OP plan runs most modules once with response_type=id_token
+    // and once with id_token token, and run-test-plan.py runs a plan entry per
+    // occurrence of its name, so the selection names those modules twice:
+    // leaving out a manual review module saves twice the runner's 240 s. The
+    // code flow modules of the Basic OP plan (code reuse, refresh token, PKCE,
+    // the token endpoint) are not in it, and nonce is required (OIDC Core 1.0
+    // §3.2.2.1).
+    it('should select every Implicit OP module run but the manual review ones when they are skipped', () => {
+      const perResponseType =
+        'oidcc-server,oidcc-ensure-request-without-nonce-fails,oidcc-scope-profile,oidcc-scope-email,' +
+        'oidcc-scope-address,oidcc-scope-phone,oidcc-scope-all,oidcc-alternate-happy-flow,' +
+        'oidcc-display-page,oidcc-display-popup,oidcc-prompt-none-not-logged-in,oidcc-prompt-none-logged-in,' +
+        'oidcc-max-age-10000,oidcc-ensure-request-with-unknown-parameter-succeeds,oidcc-id-token-hint,' +
+        'oidcc-login-hint,oidcc-ui-locales,oidcc-claims-locales,oidcc-ensure-request-with-acr-values-succeeds,' +
+        'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported,' +
+        'oidcc-ensure-request-object-with-redirect-uri,oidcc-claims-essential';
+
       assert.equal(
         opTestPlan('implicit-op', { skipManualReview: true }),
         'oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]:' +
-          'oidcc-server,oidcc-response-type-missing,oidcc-idtoken-signature,' +
-          'oidcc-userinfo-get,oidcc-userinfo-post-header,oidcc-userinfo-post-body,' +
-          'oidcc-ensure-request-without-nonce-fails,oidcc-scope-profile,oidcc-scope-email,' +
-          'oidcc-scope-address,oidcc-scope-phone,oidcc-scope-all,oidcc-alternate-happy-flow,' +
-          'oidcc-display-page,oidcc-display-popup,oidcc-prompt-none-not-logged-in,oidcc-prompt-none-logged-in,' +
-          'oidcc-max-age-10000,oidcc-ensure-request-with-unknown-parameter-succeeds,oidcc-id-token-hint,' +
-          'oidcc-login-hint,oidcc-ui-locales,oidcc-claims-locales,oidcc-ensure-request-with-acr-values-succeeds,' +
-          'oidcc-ensure-post-request-succeeds,' +
-          'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported,' +
-          'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported,oidcc-claims-essential,' +
-          'oidcc-ensure-request-object-with-redirect-uri',
+          // response_type=id_token
+          `${perResponseType},` +
+          // response_type=id_token token
+          `${perResponseType},` +
+          'oidcc-userinfo-get,oidcc-userinfo-post-header,oidcc-userinfo-post-body,oidcc-response-type-missing',
       );
     });
 

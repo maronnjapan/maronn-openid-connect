@@ -59,22 +59,14 @@ const BASIC_OP_MODULES = [
 ];
 
 /**
- * The modules of the Implicit OP plan (OIDCCImplicitTestPlan of the
- * conformance suite), in the order of the Basic OP plan it derives from. The
- * modules of the code flow are not in it: code reuse, the refresh token, PKCE,
- * client_secret_post at the token endpoint and the unsigned ID Token (OIDC Core
- * 1.0 §2 forbids alg none for an ID Token the authorization endpoint returns).
- * A request without nonce must fail instead of succeeding (OIDC Core 1.0
- * §3.2.2.1). As for the Basic OP plan, the list only leaves the manual review
- * modules out of a run.
+ * The modules the Implicit OP plan (OIDCCImplicitTestPlan of the conformance
+ * suite) runs for each of its response types, in its order. The modules of the
+ * code flow are not in it (code reuse, the refresh token, PKCE, the token
+ * endpoint), and a request without nonce must fail instead of succeeding (OIDC
+ * Core 1.0 §3.2.2.1).
  */
-const IMPLICIT_OP_MODULES = [
+const IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE = [
   'oidcc-server',
-  'oidcc-response-type-missing',
-  'oidcc-idtoken-signature',
-  'oidcc-userinfo-get',
-  'oidcc-userinfo-post-header',
-  'oidcc-userinfo-post-body',
   'oidcc-ensure-request-without-nonce-fails',
   'oidcc-scope-profile',
   'oidcc-scope-email',
@@ -96,11 +88,28 @@ const IMPLICIT_OP_MODULES = [
   'oidcc-claims-locales',
   'oidcc-ensure-request-with-acr-values-succeeds',
   'oidcc-ensure-registered-redirect-uri',
-  'oidcc-ensure-post-request-succeeds',
-  'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported',
   'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported',
-  'oidcc-claims-essential',
   'oidcc-ensure-request-object-with-redirect-uri',
+  'oidcc-claims-essential',
+];
+
+/**
+ * The module runs of the Implicit OP plan, one name per run, in its order: the
+ * modules above with response_type=id_token, again with id_token token, then
+ * the ones it runs only with id_token token (the UserInfo endpoint needs the
+ * access token, and response_type-missing needs one run).
+ *
+ * run-test-plan.py runs a plan entry once per occurrence of its name in the
+ * selection: a name listed once runs only its first entry (the id_token one),
+ * so a module of both response types is named twice.
+ */
+const IMPLICIT_OP_MODULES = [
+  ...IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE,
+  ...IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE,
+  'oidcc-userinfo-get',
+  'oidcc-userinfo-post-header',
+  'oidcc-userinfo-post-body',
+  'oidcc-response-type-missing',
 ];
 
 /**

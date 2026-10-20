@@ -355,6 +355,22 @@ describe('run-op.sh', () => {
   });
 });
 
+describe('docker-compose.yml', () => {
+  describe('op service', () => {
+    // The OP runs on the workspace mounted read-only: wrangler dev
+    // (hono-cloudflare) keeps D1 under OIDC_D1_PERSIST_PATH, and the node:sqlite
+    // samples (express-flyio, fastify-flyio, nextjs-vercel) keep their database
+    // in OIDC_SQLITE_PATH, .data/oidc.sqlite of the workspace by default.
+    it('should keep the data of every sample OP outside the read-only workspace', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(compose, /\n      - \.\.\/\.\.:\/workspace:ro\n/);
+      assert.match(compose, /\n      OIDC_D1_PERSIST_PATH: \/tmp\/maronn-openid-connect-d1\n/);
+      assert.match(compose, /\n      OIDC_SQLITE_PATH: \/tmp\/maronn-openid-connect\.sqlite\n/);
+    });
+  });
+});
+
 describe('resolveSampleApp', () => {
   describe('sample app selection', () => {
     it('should resolve supported sample app metadata', () => {

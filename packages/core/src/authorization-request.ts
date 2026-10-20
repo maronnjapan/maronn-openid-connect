@@ -7,6 +7,11 @@ import { clientAllowsRefreshTokenGrant } from './client-grant-types.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 import { isLoopbackHostname } from './loopback.js';
 import { parseRequestObject, RequestObjectError } from './request-object.js';
+import {
+  normalizeResponseType,
+  responseTypeIncludes,
+  type AuthorizationResponseType,
+} from './response-type.js';
 import { findUnregisteredClientScopes, parseScope } from './scope.js';
 import type { JwkSet } from './jwks.js';
 import type { ClaimsParameter, ClaimRequestValue } from './userinfo.js';
@@ -117,6 +122,8 @@ export interface ClientInfo {
    * このクライアントが認可エンドポイントで使用してよい response_type の一覧。
    * OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: 省略時の既定は `["code"]`。
    * 登録外の response_type は OAuth 2.1 §4.1.2.1 の `unauthorized_client` で拒否される。
+   * Implicit Flow（OIDC Core 1.0 §3.2）を使わせるクライアントには `id_token` /
+   * `id_token token` を登録する。値の順序は問わない（`token id_token` でもよい）。
    */
   responseTypes?: string[];
   /**
@@ -220,7 +227,12 @@ export const DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH = 16384;
  * バリデーション済みの認可リクエスト
  */
 export interface ValidatedAuthorizationRequest {
-  responseType: 'code';
+  /**
+   * 検証済みの response_type（{@link normalizeResponseType} の形）。`code` は
+   * Authorization Code Flow、`id_token` / `id_token token` は Implicit Flow
+   * （OIDC Core 1.0 §3.2）。
+   */
+  responseType: AuthorizationResponseType;
   clientId: string;
   redirectUri: string;
   /**
@@ -972,7 +984,13 @@ export function validateRequestObjectConsistency(
     typeof requestObjectClaims['response_type'] === 'string'
       ? (requestObjectClaims['response_type'] as string)
       : undefined;
-  if (roResponseType !== undefined && roResponseType !== params.response_type) {
+  // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the order of the
+  // values does not matter, so `token id_token` matches `id_token token`.
+  if (
+    roResponseType !== undefined &&
+    (params.response_type === undefined ||
+      normalizeResponseType(roResponseType) !== normalizeResponseType(params.response_type))
+  ) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
       'request object response_type does not match the request',
@@ -999,9 +1017,14 @@ export function validateRequestObjectConsistency(
  * response_type を検証する（機能単位のステップ関数）。
  *
  * - 欠落は invalid_request（OAuth 2.1 §4.1.2.1）
- * - `code` 以外は unsupported_response_type（OP 全体での未サポート）
+ * - supportedResponseTypes に無い値は unsupported_response_type（OP 全体での未サポート）。
+ *   既定は `["code"]`（Authorization Code Flow だけ）。Implicit Flow（OIDC Core 1.0 §3.2）
+ *   にも答える OP は `id_token` / `id_token token` を加えて渡す
  * - クライアント登録外の response_type は unauthorized_client（クライアント単位の認可。
  *   既定 `["code"]`: OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）
+ *
+ * 値の順序は問わず（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）、
+ * {@link normalizeResponseType} の形で返す（`token id_token` は `id_token token`）。
  *
  * OIDC Core 1.0 §6.1: response_type は OAuth 2.0 request syntax 側を正とするため、
  * Request Object 適用前のクエリパラメータ（params）を渡すこと。
@@ -1011,8 +1034,14 @@ export function validateResponseType(
   client: Pick<ClientInfo, 'responseTypes'>,
   redirectUri: string,
   state?: string,
-): 'code' {
-  const responseType = validateSupportedResponseType(params.response_type, redirectUri, state);
+  supportedResponseTypes: readonly AuthorizationResponseType[] = ['code'],
+): AuthorizationResponseType {
+  const responseType = validateSupportedResponseType(
+    params.response_type,
+    redirectUri,
+    state,
+    supportedResponseTypes,
+  );
   validateClientResponseType(responseType, client.responseTypes, redirectUri, state);
   return responseType;
 }
@@ -1049,6 +1078,10 @@ export function validateAuthorizationScope(
  * （scope から除外する）。既定条件は `prompt=consent`
  * （{@link defaultIsOfflineAccessGranted}）。isOfflineAccessGranted を差し替える
  * ことで独自の許可条件を差し込める。
+ * ただし response_type が認可コードを返さない場合（Implicit Flow の `id_token` /
+ * `id_token token`）は、コールバックに関わらず必ず除外する（同 §11: "The OP MUST ignore
+ * the offline_access request unless the Client is using a response_type value that
+ * would result in an Authorization Code being returned"）。
  * scope に `offline_access` が無い場合は何もせずそのまま返す。引数は変更しない。
  */
 export async function applyOfflineAccessPolicy(
@@ -1060,6 +1093,12 @@ export async function applyOfflineAccessPolicy(
 ): Promise<string[]> {
   if (!scope.includes('offline_access')) {
     return scope;
+  }
+
+  // The Implicit Flow never returns a refresh token (RFC 6749 §4.2.2), so no
+  // granting condition can make offline_access meaningful there.
+  if (!responseTypeIncludes(effectiveParams.response_type, 'code')) {
+    return filterOfflineAccessScope(scope, false);
   }
 
   const granted = await isOfflineAccessGranted(effectiveParams, {
@@ -1312,14 +1351,17 @@ function sanitizeClaimsMember(
 }
 
 /**
- * OAuth 2.1 §4.1.2.1: response_type があり、OP が対応する code であることを検証する。
+ * OAuth 2.1 §4.1.2.1: response_type があり、OP が対応する値（supportedResponseTypes。
+ * 既定は `["code"]`）であることを検証する。値の順序は問わず（OAuth 2.0 Multiple Response
+ * Type Encoding Practices §1.2）、{@link normalizeResponseType} の形で返す。
  * クライアント登録との照合は {@link validateClientResponseType} が行う。
  */
 export function validateSupportedResponseType(
   responseType: string | undefined,
   redirectUri: string,
   state?: string,
-): 'code' {
+  supportedResponseTypes: readonly AuthorizationResponseType[] = ['code'],
+): AuthorizationResponseType {
   if (!responseType) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -1329,7 +1371,9 @@ export function validateSupportedResponseType(
     );
   }
 
-  if (responseType !== 'code') {
+  const normalized = normalizeResponseType(responseType);
+  const supported = supportedResponseTypes.find((candidate) => candidate === normalized);
+  if (supported === undefined) {
     throw new AuthorizationError(
       AuthorizationErrorCode.UnsupportedResponseType,
       `Unsupported response_type: ${responseType}`,
@@ -1338,12 +1382,13 @@ export function validateSupportedResponseType(
     );
   }
 
-  return responseType;
+  return supported;
 }
 
 /**
  * response_type がクライアントに登録されていることを検証する。
  * 登録が無ければ code だけを許す（OIDC Dynamic Client Registration 1.0 §2）。
+ * 登録値も値の順序を問わずに照合する（`token id_token` の登録は `id_token token` に一致する）。
  */
 export function validateClientResponseType(
   responseType: string,
@@ -1355,8 +1400,8 @@ export function validateClientResponseType(
   // RFC 6749 §4.1.2.1 / OAuth 2.1 §4.1.2.1: "The client is not authorized to request
   // an authorization code using this method." → unauthorized_client。
   // OP 全体での未サポート（unsupported_response_type）とは区別する。
-  const allowedResponseTypes = responseTypes ?? ['code'];
-  if (!allowedResponseTypes.includes(responseType)) {
+  const allowedResponseTypes = (responseTypes ?? ['code']).map(normalizeResponseType);
+  if (!allowedResponseTypes.includes(normalizeResponseType(responseType))) {
     throw new AuthorizationError(
       AuthorizationErrorCode.UnauthorizedClient,
       `Client is not authorized to use response_type: ${responseType}`,

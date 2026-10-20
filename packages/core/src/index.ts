@@ -52,6 +52,29 @@ export {
   mergeRequestObjectParams,
 } from './authorization-request.js';
 
+export {
+  // response_type の比較と分類（OAuth 2.0 Multiple Response Type Encoding Practices §1.2 / §2.1）
+  normalizeResponseType,
+  responseTypeIncludes,
+  isImplicitResponseType,
+  defaultResponseModeOf,
+  IMPLICIT_RESPONSE_TYPES,
+} from './response-type.js';
+
+export type { AuthorizationResponseType, ResponseTypeValue } from './response-type.js';
+
+export {
+  // Implicit Flow（OIDC Core 1.0 §3.2）: 認可リクエストの検証と認可レスポンスの組み立て
+  requireNonce,
+  validateImplicitRedirectUri,
+  validateImplicitResponseMode,
+  returnsScopeClaimsInIdToken,
+  buildImplicitResponseParameters,
+  buildFragmentResponseUrl,
+} from './implicit-flow.js';
+
+export type { ImplicitResponseParametersInput } from './implicit-flow.js';
+
 export { parseScope, findUnregisteredClientScopes } from './scope.js';
 
 export { parseAcrValues } from './acr.js';

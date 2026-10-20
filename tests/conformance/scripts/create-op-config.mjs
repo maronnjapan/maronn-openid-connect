@@ -350,7 +350,7 @@ export function createOpConformanceArtifacts(options = {}) {
       ...Object.fromEntries(
         plan.clients.map((client) => [client.configKey, createSuiteClient(client)]),
       ),
-      browser: createBrowserAutomation(opIssuer),
+      browser: createBrowserAutomation({ opIssuer, suiteBaseUrl }),
     },
     clients: plan.clients.map((client) =>
       createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks }),
@@ -443,7 +443,7 @@ function createStaticClient({
   return client;
 }
 
-function createBrowserAutomation(opIssuer) {
+function createBrowserAutomation({ opIssuer, suiteBaseUrl }) {
   return [
     {
       match: `${opIssuer}/authorize*`,
@@ -475,9 +475,15 @@ function createBrowserAutomation(opIssuer) {
           // module would be reported INTERRUPTED / WebRunner timeout, masking the
           // fact that the OP behaved correctly. Marking it optional lets those
           // modules fall through to manual review instead of failing automation.
+          //
+          // The pattern is anchored to the suite: the authorization request
+          // carries the callback in its redirect_uri query parameter, so
+          // '*/test/*/callback*' also matches the URL of the OP, and on the
+          // error page of ensure-registered-redirect-uri the browser would wait
+          // for a submission that never comes (INTERRUPTED, not manual review).
           task: 'Verify Complete',
           optional: true,
-          match: '*/test/*/callback*',
+          match: `${suiteBaseUrl}/test/*/callback*`,
           commands: [
             ['wait', 'id', 'submission_complete', 10],
           ],

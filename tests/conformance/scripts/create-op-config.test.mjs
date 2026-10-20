@@ -88,7 +88,7 @@ describe('createOpConformanceArtifacts', () => {
                 // callback. See create-op-config.mjs for the rationale.
                 task: 'Verify Complete',
                 optional: true,
-                match: '*/test/*/callback*',
+                match: 'https://conformance-nginx:8443/test/*/callback*',
                 commands: [
                   ['wait', 'id', 'submission_complete', 10],
                 ],
@@ -203,6 +203,29 @@ describe('createOpConformanceArtifacts', () => {
       assert.equal(REQUEST_OBJECT_PUBLIC_JWK.kid, REQUEST_OBJECT_PRIVATE_JWK.kid);
       assert.equal(REQUEST_OBJECT_PUBLIC_JWK.n, REQUEST_OBJECT_PRIVATE_JWK.n);
       assert.equal(REQUEST_OBJECT_SIGNING_ALG, 'RS256');
+    });
+
+    // The authorization request carries the callback in its redirect_uri
+    // query parameter, so a pattern that is not anchored to the suite also
+    // matches the URL of the OP: on the error page of
+    // oidcc-ensure-registered-redirect-uri the browser would wait for a
+    // submission that never comes, and the module would be INTERRUPTED instead
+    // of waiting for its screenshot.
+    it('should look for the end of the flow on the callback of the suite only', () => {
+      const artifacts = createOpConformanceArtifacts({
+        opIssuer: 'https://op-tls:3443',
+        suiteBaseUrl: 'https://conformance-nginx:8443/',
+      });
+
+      const [automation] = artifacts.config.browser;
+      assert.deepEqual(
+        automation.tasks.map(({ task, match }) => [task, match]),
+        [
+          ['Login', 'https://op-tls:3443/login*'],
+          ['Consent', 'https://op-tls:3443/consent*'],
+          ['Verify Complete', 'https://conformance-nginx:8443/test/*/callback*'],
+        ],
+      );
     });
 
     it('should normalize base URLs before deriving discovery and callbacks', () => {

@@ -40,7 +40,8 @@ Hybrid OP のプランは、Basic OP と同じ種類の module を、`response_t
 `oidcc-response-type-missing`、`oidcc-alternate-happy-flow`、`oidcc-ensure-request-with-valid-pkce-succeeds` は `code id_token` の回だけで実行します。
 nonce の module は response type で変わります。
 認可エンドポイントが ID Token を返す `code id_token` と `code id_token token` では、nonce の無い要求を拒否する `oidcc-ensure-request-without-nonce-fails` を、ID Token を返さない `code token` では、nonce の無い要求が成功する `oidcc-ensure-request-without-nonce-succeeds-for-code-flow` を実行します（OpenID Connect Core 1.0 §3.3.2.11 と errata の NonceNotes）。
-manual review が必要な module は、後述の3つを response type ごとに実行するので9個になります。
+`oidcc-idtoken-signature` と `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported` は、Implicit OP と同じく static client を対象にしないので、Suite はプランから外します。
+そのため1回の実行は、自動で完了する87個の module（`code id_token` で31個、`code token` と `code id_token token` で28個ずつ）と、manual review が必要な9個の module（後述の3つを response type ごとに）からなります。
 
 このプランの module が使うクライアントは、Basic OP と同じく Suite の設定の `client`、`client2`（`oidcc-refresh-token` の2つ目のクライアント）、`client_secret_post`（`oidcc-server-client-secret-post` のクライアント）です。
 `create-op-config.mjs` は、OP に次の static client を3つ登録します。
@@ -52,8 +53,7 @@ manual review が必要な module は、後述の3つを response type ごとに
 
 Hybrid OP のプランは Basic OP と同じく PKCE 無しで認可コードを交換するので、`pnpm run conformance:hybrid-op` は Basic OP 向けPKCE互換モードを有効にします。
 unsigned Request Object の互換モードも Basic OP と同じく有効にします。
-このプランは、まだこのリポジトリでは実行していません。
-`run-conformance` label を付けた Pull Request か、手動実行で確認します（後述）。
+CI での結果は、後述の「Hybrid OP（2026-10-20、CI）」に記します。
 
 ## ローカル実行
 
@@ -378,6 +378,30 @@ WARNING は `response_type=id_token` の `oidcc-claims-essential` で、`claims`
 
 - `oidcc-ensure-registered-redirect-uri` が WebRunner の timeout で INTERRUPTED になっていた。browser automation の `Verify Complete` の URL パターン `*/test/*/callback*` が、`redirect_uri` クエリにコールバック URL を含む OP の error page の URL にも一致していたためである。パターンを Suite のベース URL から始めるようにしてからは、Basic OP の同じ module も screenshot 提出待ちで止まる
 - `express-flyio`、`fastify-flyio`、`nextjs-vercel` の OP が起動しなかった。読み取り専用でマウントしたリポジトリの中に、node:sqlite のデータベース（`.data/oidc.sqlite`）を作ろうとしたためである。`OIDC_SQLITE_PATH` で `/tmp` に置くようにしてから、上表の結果になった（`express-flyio` の Basic OP も、manual review を除く32 module が PASSED）
+
+### Hybrid OP（2026-10-20、CI）
+
+`oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]` は、Pull Request #148 に `run-conformance` label を付けて、GitHub Actions の `OpenID Conformance` workflow で確認した。
+Conformance Suite は、`registry.gitlab.com/openid/conformance-suite:latest` の Docker image を使った。
+
+`samples/hono-cloudflare` に対する結果は、manual review を除く87個の module がすべて PASSED だった。
+Suite が数えた condition は 6264 個の SUCCESS で、FAILURE と WARNING は 0 だった。
+module の実行には合計 130 秒かかり、そのうち 90 秒は `oidcc-codereuse-30seconds` が3回待つ時間である。
+
+| response type | 自動の module | 結果 |
+|---|---|---|
+| `code id_token` | 31 | 31 PASSED（FAILURE 0、WARNING 0） |
+| `code token` | 28 | 28 PASSED（FAILURE 0、WARNING 0） |
+| `code id_token token` | 28 | 28 PASSED（FAILURE 0、WARNING 0） |
+
+Hybrid Flow に固有の検査も、この実行で通った。
+`oidcc-server` は、認可エンドポイントが返した ID Token の `c_hash` と `at_hash`、認可レスポンスがフラグメントだけに載ること、両エンドポイントの ID Token の `sub` が一致することを検査する。
+`oidcc-codereuse` は、再利用された認可コードを `invalid_grant` で拒否し、フラグメントで返した Access Token も失効することを検査する。
+nonce の module は、`code id_token` と `code id_token token` で nonce の無い要求が `invalid_request` になり、`code token` で成功することを検査する。
+
+manual review が必要な9個の module は、CI では `CONFORMANCE_SKIP_MANUAL_REVIEW=1` で除いている。
+screenshot の提出までは、まだ確かめていない。
+手順は `manual-review-screenshots.md` にある。
 
 ## 実行時間
 

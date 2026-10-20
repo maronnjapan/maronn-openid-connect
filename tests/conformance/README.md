@@ -381,18 +381,29 @@ WARNING は `response_type=id_token` の `oidcc-claims-essential` で、`claims`
 
 ### Hybrid OP（2026-10-20、CI）
 
-`oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]` は、Pull Request #148 に `run-conformance` label を付けて、GitHub Actions の `OpenID Conformance` workflow で確認した。
+`oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]` は、GitHub Actions の `OpenID Conformance` workflow で確認した。
+`samples/hono-cloudflare` は Pull Request #148 に `run-conformance` label を付けた実行で、ほかの3つのサンプルは `plan: hybrid` の手動実行で確かめた。
 Conformance Suite は、`registry.gitlab.com/openid/conformance-suite:latest` の Docker image を使った。
 
-`samples/hono-cloudflare` に対する結果は、manual review を除く87個の module がすべて PASSED だった。
-Suite が数えた condition は 6264 個の SUCCESS で、FAILURE と WARNING は 0 だった。
-module の実行には合計 130 秒かかり、そのうち 90 秒は `oidcc-codereuse-30seconds` が3回待つ時間である。
+4つのサンプルのどれでも、manual review を除く87個の module がすべて PASSED だった。
+Suite が数えた condition は、どのサンプルでも 6264 個の SUCCESS で、FAILURE と WARNING は 0 だった。
+
+| サンプル | 自動の87 module | manual review の9 module |
+|---|---|---|
+| `hono-cloudflare` | 87 PASSED（FAILURE 0、WARNING 0） | 未実行 |
+| `express-flyio` | 87 PASSED（FAILURE 0、WARNING 0） | 未実行 |
+| `fastify-flyio` | 87 PASSED（FAILURE 0、WARNING 0） | 未実行 |
+| `nextjs-vercel` | 87 PASSED（FAILURE 0、WARNING 0） | 未実行 |
+
+response type ごとの内訳は、次のとおり。
 
 | response type | 自動の module | 結果 |
 |---|---|---|
 | `code id_token` | 31 | 31 PASSED（FAILURE 0、WARNING 0） |
 | `code token` | 28 | 28 PASSED（FAILURE 0、WARNING 0） |
 | `code id_token token` | 28 | 28 PASSED（FAILURE 0、WARNING 0） |
+
+module の実行には合計 130 秒ほどかかり、そのうち 90 秒は `oidcc-codereuse-30seconds` が3回待つ時間である。
 
 Hybrid Flow に固有の検査も、この実行で通った。
 `oidcc-server` は、認可エンドポイントが返した ID Token の `c_hash` と `at_hash`、認可レスポンスがフラグメントだけに載ること、両エンドポイントの ID Token の `sub` が一致することを検査する。

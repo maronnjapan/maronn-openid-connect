@@ -3,6 +3,15 @@ name: OpenID Conformance
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: "Certification profile to test (all runs every profile)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - basic-op
+          - implicit-op
       sample_app:
         description: "Sample OP app to test"
         required: false
@@ -30,10 +39,17 @@ on:
       - "pnpm-lock.yaml"
 
 jobs:
-  basic-op:
+  conformance:
+    name: ${{ matrix.profile }}
     if: github.event_name == 'workflow_dispatch' || contains(join(github.event.pull_request.labels.*.name, ','), 'run-conformance')
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # A workflow_dispatch run can pick one profile; the run-conformance
+        # label (and profile "all") runs every profile.
+        profile: ${{ fromJSON((github.event.inputs.profile && github.event.inputs.profile != 'all') && format('["{0}"]', github.event.inputs.profile) || '["basic-op","implicit-op"]') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -49,20 +65,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run Basic OP conformance suite
+      - name: Run ${{ matrix.profile }} conformance suite
         env:
           CONFORMANCE_SAMPLE_APP: ${{ github.event.inputs.sample_app || 'hono-cloudflare' }}
           CONFORMANCE_SUITE_IMAGE_TAG: ${{ github.event.inputs.suite_image_tag || 'latest' }}
           # The modules that wait for a screenshot never finish unattended, and
           # the runner waits 240 s for each (tests/conformance/README.md).
           CONFORMANCE_SKIP_MANUAL_REVIEW: "1"
-        run: pnpm run conformance:basic-op
+        # The run writes the outcome of every module to the job summary, with
+        # an annotation per module that did not pass
+        # (tests/conformance/scripts/summarize-results.mjs).
+        run: pnpm run conformance:${{ matrix.profile }}
 
       - name: Upload conformance artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: oidf-basic-op-conformance
+          name: oidf-${{ matrix.profile }}-conformance
           path: |
             tests/conformance/results
             tests/conformance/.generated

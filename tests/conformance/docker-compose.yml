@@ -43,7 +43,7 @@ services:
       - ../..:/workspace:ro
     # wrangler dev (hono-cloudflare) writes its bundles under the project's
     # .wrangler/. The workspace is read-only, so that one directory is a tmpfs
-    # (run-basic-op.sh creates it as the mount point).
+    # (run-op.sh creates it as the mount point).
     tmpfs:
       - /workspace/samples/${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}/.wrangler
     # The suite only starts once the OP answers Discovery, so an OP that does

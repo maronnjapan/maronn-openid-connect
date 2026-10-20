@@ -5,20 +5,64 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BASIC_OP_TEST_PLAN,
-  basicOpTestPlan,
+  IMPLICIT_OP_TEST_PLAN,
+  opTestPlan,
   REQUEST_OBJECT_PUBLIC_JWK,
   REQUEST_OBJECT_PRIVATE_JWK,
   REQUEST_OBJECT_SIGNING_ALG,
-  createBasicOpConformanceArtifacts,
+  createOpConformanceArtifacts,
+  resolveProfile,
   resolveSampleApp,
-} from './create-basic-op-config.mjs';
+} from './create-op-config.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
-describe('createBasicOpConformanceArtifacts', () => {
+// The browser automation the suite drives the OP's login and consent screens
+// with. The Basic OP and the Implicit OP plans share it: the suite's callback
+// page posts the fragment of an implicit response back to the suite, and shows
+// submission_complete for the code flow and the Implicit Flow alike.
+const EXPECTED_BROWSER_AUTOMATION = [
+  {
+    match: 'https://op-tls:3443/authorize*',
+    tasks: [
+      {
+        task: 'Login',
+        optional: true,
+        match: 'https://op-tls:3443/login*',
+        commands: [
+          ['text', 'name', 'username', 'testuser', 'optional'],
+          ['text', 'name', 'password', 'password', 'optional'],
+          ['click', 'css', 'button[type="submit"]'],
+        ],
+      },
+      {
+        task: 'Consent',
+        optional: true,
+        match: 'https://op-tls:3443/consent*',
+        commands: [
+          ['click', 'css', 'button[name="action"][value="approve"]'],
+        ],
+      },
+      {
+        // Optional so manual-review / error-page modules
+        // (ensure-registered-redirect-uri, prompt-login, max-age-1) are
+        // not reported INTERRUPTED when the browser never reaches a suite
+        // callback. See create-op-config.mjs for the rationale.
+        task: 'Verify Complete',
+        optional: true,
+        match: '*/test/*/callback*',
+        commands: [
+          ['wait', 'id', 'submission_complete', 10],
+        ],
+      },
+    ],
+  },
+];
+
+describe('createOpConformanceArtifacts', () => {
   describe('OIDF Basic OP static client configuration', () => {
     it('should generate static clients matching the OIDF callback URI', () => {
-      const artifacts = createBasicOpConformanceArtifacts({
+      const artifacts = createOpConformanceArtifacts({
         alias: 'maronn-basic-op',
         opIssuer: 'https://op-tls:3443',
         suiteBaseUrl: 'https://conformance-nginx:8443',
@@ -26,6 +70,7 @@ describe('createBasicOpConformanceArtifacts', () => {
       });
 
       assert.equal(BASIC_OP_TEST_PLAN, 'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]');
+      assert.equal(artifacts.profile.name, 'basic-op');
       assert.deepEqual(artifacts.config, {
         alias: 'maronn-basic-op',
         description: 'maronn-openid-connect Basic OP certification check for the Hono Cloudflare sample',
@@ -55,43 +100,7 @@ describe('createBasicOpConformanceArtifacts', () => {
           jwks: { keys: [REQUEST_OBJECT_PRIVATE_JWK] },
           request_object_signing_alg: 'RS256',
         },
-        browser: [
-          {
-            match: 'https://op-tls:3443/authorize*',
-            tasks: [
-              {
-                task: 'Login',
-                optional: true,
-                match: 'https://op-tls:3443/login*',
-                commands: [
-                  ['text', 'name', 'username', 'testuser', 'optional'],
-                  ['text', 'name', 'password', 'password', 'optional'],
-                  ['click', 'css', 'button[type="submit"]'],
-                ],
-              },
-              {
-                task: 'Consent',
-                optional: true,
-                match: 'https://op-tls:3443/consent*',
-                commands: [
-                  ['click', 'css', 'button[name="action"][value="approve"]'],
-                ],
-              },
-              {
-                // Optional so manual-review / error-page modules
-                // (ensure-registered-redirect-uri, prompt-login, max-age-1) are
-                // not reported INTERRUPTED when the browser never reaches a suite
-                // callback. See create-basic-op-config.mjs for the rationale.
-                task: 'Verify Complete',
-                optional: true,
-                match: '*/test/*/callback*',
-                commands: [
-                  ['wait', 'id', 'submission_complete', 10],
-                ],
-              },
-            ],
-          },
-        ],
+        browser: EXPECTED_BROWSER_AUTOMATION,
       });
       assert.deepEqual(artifacts.clients, [
         {
@@ -154,7 +163,7 @@ describe('createBasicOpConformanceArtifacts', () => {
         ],
       };
 
-      const artifacts = createBasicOpConformanceArtifacts({
+      const artifacts = createOpConformanceArtifacts({
         alias: 'maronn-basic-op',
         opIssuer: 'https://op-tls:3443',
         suiteBaseUrl: 'https://conformance-nginx:8443',
@@ -171,7 +180,7 @@ describe('createBasicOpConformanceArtifacts', () => {
       // OIDC Core 1.0 §6.1 / RFC 9101: with no override, the OP trusts the public
       // half and the suite signs with the private half of the same keypair, so the
       // Basic OP Request Object modules run as a real automated test target.
-      const artifacts = createBasicOpConformanceArtifacts({
+      const artifacts = createOpConformanceArtifacts({
         alias: 'maronn-basic-op',
         opIssuer: 'https://op-tls:3443',
         suiteBaseUrl: 'https://conformance-nginx:8443',
@@ -202,7 +211,7 @@ describe('createBasicOpConformanceArtifacts', () => {
     });
 
     it('should normalize base URLs before deriving discovery and callbacks', () => {
-      const artifacts = createBasicOpConformanceArtifacts({
+      const artifacts = createOpConformanceArtifacts({
         alias: 'alias-with-trailing-slashes',
         opIssuer: 'https://op-tls:3443/',
         suiteBaseUrl: 'https://conformance-nginx:8443/',
@@ -216,13 +225,98 @@ describe('createBasicOpConformanceArtifacts', () => {
       ]);
       assert.equal(artifacts.config.description, 'maronn-openid-connect Basic OP certification check for the Express sample');
     });
+
+    it('should use the Basic OP alias when no alias is given', () => {
+      const artifacts = createOpConformanceArtifacts({ profile: 'basic-op' });
+
+      assert.equal(artifacts.config.alias, 'maronn-basic-op');
+    });
+  });
+
+  describe('OIDF Implicit OP static client configuration', () => {
+    // OIDC Core 1.0 §3.2: the Implicit OP plan sends response_type=id_token and
+    // id_token token. The OP answers them only for a client that registered
+    // those response types (unauthorized_client otherwise), so the static
+    // clients register both, with the implicit grant type they go with (OIDC
+    // Dynamic Client Registration 1.0 §2). The plan uses no token endpoint, so
+    // the suite needs no client_secret_post client.
+    it('should generate Implicit Flow clients matching the OIDF callback URI', () => {
+      const artifacts = createOpConformanceArtifacts({
+        profile: 'implicit-op',
+        opIssuer: 'https://op-tls:3443',
+        suiteBaseUrl: 'https://conformance-nginx:8443',
+        sampleApp: 'hono-cloudflare',
+      });
+
+      assert.equal(
+        IMPLICIT_OP_TEST_PLAN,
+        'oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]',
+      );
+      assert.equal(artifacts.profile.name, 'implicit-op');
+      assert.deepEqual(artifacts.config, {
+        alias: 'maronn-implicit-op',
+        description: 'maronn-openid-connect Implicit OP certification check for the Hono Cloudflare sample',
+        server: {
+          discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration',
+        },
+        client: {
+          client_id: 'oidf-implicit-client',
+          client_secret: 'oidf-implicit-client-secret',
+          scope: 'openid',
+          jwks: { keys: [REQUEST_OBJECT_PRIVATE_JWK] },
+          request_object_signing_alg: 'RS256',
+        },
+        client2: {
+          client_id: 'oidf-implicit-client-2',
+          client_secret: 'oidf-implicit-client-2-secret',
+          scope: 'openid',
+          jwks: { keys: [REQUEST_OBJECT_PRIVATE_JWK] },
+          request_object_signing_alg: 'RS256',
+        },
+        browser: EXPECTED_BROWSER_AUTOMATION,
+      });
+      assert.deepEqual(artifacts.clients, [
+        {
+          clientId: 'oidf-implicit-client',
+          clientSecret: 'oidf-implicit-client-secret',
+          redirectUris: [
+            'https://conformance-nginx:8443/test/a/maronn-implicit-op/callback',
+            'https://conformance-nginx:8443/test/a/maronn-implicit-op/callback?dummy1=lorem&dummy2=ipsum',
+          ],
+          clientType: 'confidential',
+          grantTypes: ['implicit'],
+          tokenEndpointAuthMethods: ['client_secret_basic'],
+          responseTypes: ['id_token', 'id_token token'],
+          keys: { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } },
+        },
+        {
+          clientId: 'oidf-implicit-client-2',
+          clientSecret: 'oidf-implicit-client-2-secret',
+          redirectUris: [
+            'https://conformance-nginx:8443/test/a/maronn-implicit-op/callback',
+            'https://conformance-nginx:8443/test/a/maronn-implicit-op/callback?dummy1=lorem&dummy2=ipsum',
+          ],
+          clientType: 'confidential',
+          grantTypes: ['implicit'],
+          tokenEndpointAuthMethods: ['client_secret_basic'],
+          responseTypes: ['id_token', 'id_token token'],
+          keys: { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } },
+        },
+      ]);
+    });
+
+    it('should name the sample app in the description of the Implicit OP plan', () => {
+      const artifacts = createOpConformanceArtifacts({ profile: 'implicit-op', sampleApp: 'nextjs-vercel' });
+
+      assert.equal(artifacts.config.description, 'maronn-openid-connect Implicit OP certification check for the Next.js sample');
+    });
   });
 });
 
 describe('Basic OP PKCE compatibility mode', () => {
   describe('sample OP startup environment', () => {
     it('should enable non-PKCE authorization code flow only for conformance runs', () => {
-      const runScript = readFileSync(join(scriptDir, 'run-basic-op.sh'), 'utf8');
+      const runScript = readFileSync(join(scriptDir, 'run-op.sh'), 'utf8');
       const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
 
       assert.match(
@@ -259,17 +353,46 @@ describe('resolveSampleApp', () => {
   });
 });
 
-describe('basicOpTestPlan', () => {
+describe('resolveProfile', () => {
+  describe('certification profile selection', () => {
+    it('should resolve the Basic OP profile by default', () => {
+      const profile = resolveProfile();
+
+      assert.equal(profile.name, 'basic-op');
+      assert.equal(profile.displayName, 'Basic OP');
+      assert.equal(profile.testPlan, BASIC_OP_TEST_PLAN);
+    });
+
+    it('should resolve the Implicit OP profile', () => {
+      const profile = resolveProfile(' Implicit-OP ');
+
+      assert.equal(profile.name, 'implicit-op');
+      assert.equal(profile.displayName, 'Implicit OP');
+      assert.equal(profile.testPlan, IMPLICIT_OP_TEST_PLAN);
+    });
+
+    it('should reject unsupported profile names', () => {
+      assert.throws(
+        () => resolveProfile('hybrid-op'),
+        {
+          message: 'Unsupported CONFORMANCE_PROFILE "hybrid-op". Expected one of: basic-op, implicit-op',
+        },
+      );
+    });
+  });
+});
+
+describe('opTestPlan', () => {
   describe('manual review modules', () => {
-    it('should run every module of the plan by default', () => {
-      assert.equal(basicOpTestPlan(), BASIC_OP_TEST_PLAN);
+    it('should run every module of the Basic OP plan by default', () => {
+      assert.equal(opTestPlan('basic-op'), BASIC_OP_TEST_PLAN);
     });
 
     // The three modules wait for a screenshot (manual review), which an
     // unattended run never uploads: the runner gives each of them 240 s.
-    it('should select every module but the manual review ones when they are skipped', () => {
+    it('should select every Basic OP module but the manual review ones when they are skipped', () => {
       assert.equal(
-        basicOpTestPlan({ skipManualReview: true }),
+        opTestPlan('basic-op', { skipManualReview: true }),
         'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]:' +
           'oidcc-server,oidcc-response-type-missing,oidcc-idtoken-signature,oidcc-idtoken-unsigned,' +
           'oidcc-userinfo-get,oidcc-userinfo-post-header,oidcc-userinfo-post-body,' +
@@ -286,10 +409,37 @@ describe('basicOpTestPlan', () => {
       );
     });
 
-    it('should put the plan of the run into the artifacts', () => {
-      const artifacts = createBasicOpConformanceArtifacts({ skipManualReview: true });
+    it('should run every module of the Implicit OP plan by default', () => {
+      assert.equal(opTestPlan('implicit-op'), IMPLICIT_OP_TEST_PLAN);
+    });
 
-      assert.equal(artifacts.testPlan, basicOpTestPlan({ skipManualReview: true }));
+    // The Implicit OP plan runs each module once for response_type=id_token and
+    // once for id_token token, so leaving out a manual review module saves twice
+    // the runner's 240 s. The code flow modules of the Basic OP plan
+    // (code reuse, refresh token, PKCE, client_secret_post at the token
+    // endpoint) are not in it, and nonce is required (OIDC Core 1.0 §3.2.2.1).
+    it('should select every Implicit OP module but the manual review ones when they are skipped', () => {
+      assert.equal(
+        opTestPlan('implicit-op', { skipManualReview: true }),
+        'oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]:' +
+          'oidcc-server,oidcc-response-type-missing,oidcc-idtoken-signature,' +
+          'oidcc-userinfo-get,oidcc-userinfo-post-header,oidcc-userinfo-post-body,' +
+          'oidcc-ensure-request-without-nonce-fails,oidcc-scope-profile,oidcc-scope-email,' +
+          'oidcc-scope-address,oidcc-scope-phone,oidcc-scope-all,oidcc-alternate-happy-flow,' +
+          'oidcc-display-page,oidcc-display-popup,oidcc-prompt-none-not-logged-in,oidcc-prompt-none-logged-in,' +
+          'oidcc-max-age-10000,oidcc-ensure-request-with-unknown-parameter-succeeds,oidcc-id-token-hint,' +
+          'oidcc-login-hint,oidcc-ui-locales,oidcc-claims-locales,oidcc-ensure-request-with-acr-values-succeeds,' +
+          'oidcc-ensure-post-request-succeeds,' +
+          'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported,' +
+          'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported,oidcc-claims-essential,' +
+          'oidcc-ensure-request-object-with-redirect-uri',
+      );
+    });
+
+    it('should put the plan of the run into the artifacts', () => {
+      const artifacts = createOpConformanceArtifacts({ profile: 'implicit-op', skipManualReview: true });
+
+      assert.equal(artifacts.testPlan, opTestPlan('implicit-op', { skipManualReview: true }));
     });
   });
 });

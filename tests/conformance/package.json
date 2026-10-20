@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test scripts/*.test.mjs",
     "typecheck": "node --check scripts/*.mjs",
-    "generate": "node scripts/create-basic-op-config.mjs",
-    "basic-op": "bash scripts/run-basic-op.sh"
+    "generate": "node scripts/create-op-config.mjs",
+    "basic-op": "bash scripts/run-op.sh basic-op",
+    "implicit-op": "bash scripts/run-op.sh implicit-op"
   }
 }

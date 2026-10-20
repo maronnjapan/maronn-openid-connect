@@ -8,6 +8,17 @@ GENERATED_DIR="${CONFORMANCE_DIR}/.generated"
 RESULTS_DIR="${CONFORMANCE_DIR}/results"
 COMPOSE_FILE="${CONFORMANCE_DIR}/docker-compose.yml"
 
+# The certification profile to check: the first argument, or
+# CONFORMANCE_PROFILE (basic-op by default).
+PROFILE="${1:-${CONFORMANCE_PROFILE:-basic-op}}"
+case "${PROFILE}" in
+  basic-op|implicit-op) ;;
+  *)
+    echo "Unsupported CONFORMANCE_PROFILE \"${PROFILE}\". Expected one of: basic-op, implicit-op" >&2
+    exit 1
+    ;;
+esac
+
 SAMPLE_APP="${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}"
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER:-https://op-tls:3443}"
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL:-https://conformance-nginx:8443}"
@@ -54,7 +65,10 @@ cd "${ROOT_DIR}"
 pnpm --filter @maronn-openid-connect/cli build
 pnpm --filter "${SAMPLE_PACKAGE}" build
 
-CONFORMANCE_ALIAS="${CONFORMANCE_ALIAS:-maronn-basic-op}" \
+# CONFORMANCE_ALIAS left unset takes the alias of the profile
+# (maronn-basic-op / maronn-implicit-op).
+CONFORMANCE_PROFILE="${PROFILE}" \
+CONFORMANCE_ALIAS="${CONFORMANCE_ALIAS:-}" \
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER}" \
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL}" \
 CONFORMANCE_SAMPLE_APP="${SAMPLE_APP}" \
@@ -68,23 +82,25 @@ mkdir -p "${ROOT_DIR}/samples/${SAMPLE_APP}/.wrangler"
 cp "${CONFORMANCE_DIR}/nginx/op-tls.conf" "${GENERATED_DIR}/nginx/op-tls.conf"
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-maronn_oidf_conformance}"
+export CONFORMANCE_PROFILE="${PROFILE}"
 export CONFORMANCE_SAMPLE_APP="${SAMPLE_APP}"
 export CONFORMANCE_SAMPLE_START_COMMAND="${CONFORMANCE_SAMPLE_START_COMMAND:-${DEFAULT_START_COMMAND}}"
 export CONFORMANCE_OP_ISSUER
 export CONFORMANCE_SUITE_BASE_URL
 export CONFORMANCE_SERVER="${CONFORMANCE_SUITE_BASE_URL}/"
 export CONFORMANCE_SERVER_MTLS="${CONFORMANCE_SERVER_MTLS:-${CONFORMANCE_SERVER}}"
-export CONFORMANCE_CONFIG_PATH="/workspace/tests/conformance/.generated/basic-op-config.json"
+export CONFORMANCE_CONFIG_PATH="/workspace/tests/conformance/.generated/${PROFILE}-config.json"
 export CONFORMANCE_RESULTS_DIR="/workspace/tests/conformance/results"
-# The Basic OP plan, without the manual review modules when
-# CONFORMANCE_SKIP_MANUAL_REVIEW=1 (create-basic-op-config.mjs writes it).
+# The plan of the profile, without the manual review modules when
+# CONFORMANCE_SKIP_MANUAL_REVIEW=1 (create-op-config.mjs writes it).
 export CONFORMANCE_TEST_PLAN="${CONFORMANCE_TEST_PLAN:-$(cat "${GENERATED_DIR}/test-plan.txt")}"
 export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-1}"
-# OIDC Core 1.0 §6.1 / RFC 9101: the Basic OP plan skips the Request Object modules
-# (oidcc-unsigned-request-object-... / oidcc-ensure-request-object-with-redirect-uri)
-# unless the OP advertises 'none' in request_object_signing_alg_values_supported, i.e.
-# accepts unsigned Request Objects. Enable that compatibility for the conformance OP so
-# both modules run (and pass) instead of being skipped.
+# OIDC Core 1.0 §6.1 / RFC 9101: the Basic OP and Implicit OP plans skip the Request
+# Object modules (oidcc-unsigned-request-object-... /
+# oidcc-ensure-request-object-with-redirect-uri) unless the OP advertises 'none' in
+# request_object_signing_alg_values_supported, i.e. accepts unsigned Request Objects.
+# Enable that compatibility for the conformance OP so both modules run (and pass)
+# instead of being skipped.
 export OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT="${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-1}"
 export OIDC_CLIENTS_JSON
 OIDC_CLIENTS_JSON="$(tr -d '\n' < "${GENERATED_DIR}/oidc-clients.json")"
@@ -94,7 +110,17 @@ docker compose -f "${COMPOSE_FILE}" up --build --abort-on-container-exit --exit-
 status=$?
 set -e
 
-docker compose -f "${COMPOSE_FILE}" logs --no-color > "${RESULTS_DIR}/docker-compose.log" 2>/dev/null || true
+# Read the outcome of every module from the suite before it is removed
+# (results/<profile>-summary.md, and the job summary and annotations on GitHub
+# Actions). The suite normally outlives the runner; start it again in case
+# --abort-on-container-exit stopped it (its database volume stays until down -v).
+# The exit status stays the runner's.
+docker compose -f "${COMPOSE_FILE}" start mongodb conformance-server conformance-nginx >/dev/null 2>&1 || true
+CONFORMANCE_RESULTS_DIR="${RESULTS_DIR}" \
+CONFORMANCE_SUITE_URL="https://localhost:${CONFORMANCE_SUITE_PORT:-8443}/" \
+node "${SCRIPT_DIR}/summarize-results.mjs" || true
+
+docker compose -f "${COMPOSE_FILE}" logs --no-color > "${RESULTS_DIR}/${PROFILE}-docker-compose.log" 2>/dev/null || true
 
 if [[ "${CONFORMANCE_KEEP_SERVICES:-0}" != "1" ]]; then
   docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || true

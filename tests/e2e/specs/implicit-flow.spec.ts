@@ -82,6 +82,31 @@ test.describe('Implicit Flow', () => {
     expect(idToken.payload['at_hash']).toBe(undefined);
   });
 
+  // OIDC Core 1.0 §5.5: the id_token member of the claims parameter asks for a
+  // claim the scope does not cover, in the ID Token (as the OIDF
+  // oidcc-claims-essential module of the Implicit OP plan does).
+  test('should put the claims that claims.id_token requests into the ID Token', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    test.skip(!(await supportsImplicitFlow(request, issuer)), 'This sample OP was generated without implicit-flow');
+    const { url, state, nonce } = authorizationRequest(issuer, 'id_token', {
+      scope: 'openid',
+      claims: JSON.stringify({ id_token: { name: { essential: true } } }),
+    });
+
+    await page.goto(url);
+    await login(page, issuer);
+    await page.getByRole('button', { name: 'Approve' }).click();
+    const response = fragmentOf(await landOnRedirectUri(page));
+
+    expect(response['state']).toBe(state);
+    const idToken = parseJwt(requireString(response['id_token'], 'id_token'));
+    expect(idToken.payload).toMatchObject({ sub: 'testuser', aud: clientId, nonce, name: 'Test User' });
+  });
+
   // OIDC Core 1.0 §3.1.2.1: the authorization endpoint itself returns the
   // tokens when it needs no screen.
   test('should return the tokens from the authorization endpoint for prompt=none', async ({
@@ -215,7 +240,7 @@ interface ParsedJwt {
 function authorizationRequest(
   issuer: string,
   responseType: 'id_token token' | 'id_token',
-  extra: { prompt?: string; response_mode?: string; nonce?: string } = {},
+  extra: { prompt?: string; response_mode?: string; nonce?: string; scope?: string; claims?: string } = {},
 ): { url: string; state: string; nonce: string } {
   const state = randomValue();
   const nonce = extra.nonce ?? randomValue();
@@ -223,11 +248,12 @@ function authorizationRequest(
     response_type: responseType,
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: 'openid profile',
+    scope: extra.scope ?? 'openid profile',
     state,
     ...(nonce === '' ? {} : { nonce }),
     ...(extra.prompt === undefined ? {} : { prompt: extra.prompt }),
     ...(extra.response_mode === undefined ? {} : { response_mode: extra.response_mode }),
+    ...(extra.claims === undefined ? {} : { claims: extra.claims }),
   });
   return { url: `${issuer}/authorize?${params.toString()}`, state, nonce };
 }

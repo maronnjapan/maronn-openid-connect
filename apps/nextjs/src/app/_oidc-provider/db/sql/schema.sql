@@ -156,10 +156,26 @@ CREATE TABLE IF NOT EXISTS authentication_requests (
   code_challenge_method VARCHAR(5000),
   response_type         VARCHAR(5000) NOT NULL,
   scope                 TEXT,
+  -- Not in the ER model: the other parameters of OpenID Connect Core 1.0
+  -- (§3.1.2.1, claims_locales §5.2, claims §5.5), each NULL when the request
+  -- did not send it. response_mode is the response mode the OP answers in:
+  -- form_post, or query.jwt for JARM's query.jwt and jwt. It is NULL for the
+  -- query response, response_mode=query included. prompt is space-delimited,
+  -- max_age is in seconds and claims is the claims request as JSON.
+  response_mode         VARCHAR(5000),
+  prompt                VARCHAR(5000),
+  max_age               BIGINT,
+  ui_locales            VARCHAR(5000),
+  claims_locales        VARCHAR(5000),
+  id_token_hint         TEXT,
+  login_hint            VARCHAR(5000),
+  acr_values            VARCHAR(5000),
+  claims                TEXT,
   -- Always NULL: the OP verifies a Request Object and keeps its parameters in
   -- the other columns, not the object itself.
   request_object        TEXT,
-  -- Not in the ER model: the other parameters (prompt, max_age, claims, ...) as JSON.
+  -- Not in the ER model: the rest of the request (whether redirect_uri was
+  -- sent, the audience, and the values a feature adds) as JSON.
   payload               TEXT NOT NULL
 );
 

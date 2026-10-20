@@ -4,9 +4,10 @@ import { ErrorView } from '../_oidc-provider/error-view';
 
 /**
  * Error boundary of the consent page (Next.js error.js): the screen for an
- * exception nobody expected while rendering the page or running consentAction —
- * a store outage, a bug. Expected outcomes never land here: they redirect to the
- * OP's error page or call notFound().
+ * exception nobody expected while rendering the page — a store outage, a bug.
+ * Expected outcomes never land here: they call notFound(). The consent
+ * decision is a Route Handler (decision/route.ts), which this boundary does
+ * not cover.
  *
  * In production Next.js withholds the error message from the browser and passes
  * error.digest instead, which matches the entry in the server log. retry()

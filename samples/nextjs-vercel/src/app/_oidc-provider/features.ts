@@ -13,6 +13,7 @@ import { refreshToken } from './features/refresh-token/feature';
 import { introspection } from './features/introspection/feature';
 import { revocation } from './features/revocation/feature';
 import { requestObject } from './features/request-object/feature';
+import { formPostResponseMode } from './features/form-post-response-mode/feature';
 import { deviceAuthorizationGrant } from './features/device-authorization-grant/feature';
 import { ciba } from './features/ciba/feature';
 import { googleLogin } from './features/google-login/feature';
@@ -23,6 +24,7 @@ export const features: readonly Feature[] = [
   introspection,
   revocation,
   requestObject,
+  formPostResponseMode,
   deviceAuthorizationGrant,
   ciba,
   googleLogin,

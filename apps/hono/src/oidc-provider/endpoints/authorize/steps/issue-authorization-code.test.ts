@@ -1,6 +1,7 @@
 import type { OidcProviderOptions } from '../../../app.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  RECORDED_RESPONSE,
   authorizationRedirectOf,
   CLIENT_ID,
   CODE_CHALLENGE,
@@ -62,12 +63,12 @@ describe('issueAuthorizationCodeResponse', () => {
     });
 
     it('should hand the code and the state to the response mode the request asked for', async () => {
-      const { responseMode, redirect } = recordingResponseMode();
+      const { responseMode, respond } = recordingResponseMode();
 
       const { db, outcome } = await issue({ responseMode });
 
-      expect(outcome).toEqual({ kind: 'authorization_response', location: 'https://rp.example.com/callback?response=recorded' });
-      expect(redirect.mock.calls).toEqual([[REDIRECT_URI, { code: [...db.codes.keys()][0], state: STATE }]]);
+      expect(outcome).toEqual({ kind: 'authorization_response', response: RECORDED_RESPONSE });
+      expect(respond.mock.calls).toEqual([[REDIRECT_URI, { code: [...db.codes.keys()][0], state: STATE }]]);
     });
   });
 

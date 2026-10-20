@@ -34,6 +34,7 @@ import {
   type AuthTransactionStore,
   type AuthorizationCodeData,
   type AuthorizationCodeInfo,
+  type ClaimsParameter,
   type RefreshTokenInfo,
   type UserClaims,
 } from '@maronn-openid-connect/core';
@@ -67,13 +68,15 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         sql:
           'SELECT t.created_at, t.expired_at, t.payload AS transaction_payload, r.client_id, ' +
           'r.redirect_uri, r.state, r.nonce, r.code_challenge, r.code_challenge_method, ' +
-          'r.response_type, r.scope, r.payload AS request_payload FROM transactions t ' +
+          'r.response_type, r.scope, r.response_mode, r.prompt, r.max_age, r.ui_locales, ' +
+          'r.claims_locales, r.id_token_hint, r.login_hint, r.acr_values, r.claims, ' +
+          'r.payload AS request_payload FROM transactions t ' +
           'JOIN authentication_requests r ON r.transaction_id = t.transaction_id ' +
           'WHERE t.transaction_id = ? AND t.status IN ' + IN_PROGRESS + ' AND t.expired_at > ?',
         params: [withoutPrefix(key, TRANSACTION_KEY_PREFIX), nowSeconds()],
       });
       if (!row) return null;
-      const transaction: AuthTransaction = {
+      const transaction: StoredTransaction = {
         ...(JSON.parse(row.request_payload) as OtherRequestParameters),
         ...(JSON.parse(row.transaction_payload) as TransactionPayload),
         clientId: row.client_id,
@@ -89,6 +92,15 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
       if (row.code_challenge_method !== null) {
         transaction.codeChallengeMethod = row.code_challenge_method as 'S256';
       }
+      if (row.response_mode !== null) transaction.responseMode = row.response_mode;
+      if (row.prompt !== null) transaction.prompt = row.prompt;
+      if (row.max_age !== null) transaction.maxAge = Number(row.max_age);
+      if (row.ui_locales !== null) transaction.uiLocales = row.ui_locales;
+      if (row.claims_locales !== null) transaction.claimsLocales = row.claims_locales;
+      if (row.id_token_hint !== null) transaction.idTokenHint = row.id_token_hint;
+      if (row.login_hint !== null) transaction.loginHint = row.login_hint;
+      if (row.acr_values !== null) transaction.acrValues = row.acr_values;
+      if (row.claims !== null) transaction.claims = JSON.parse(row.claims) as ClaimsParameter;
       return transaction;
     },
     // The expiry is the transaction's own expiresAt (milliseconds, rounded up
@@ -104,13 +116,22 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         codeChallengeMethod,
         responseType,
         scope,
+        responseMode,
+        prompt,
+        maxAge,
+        uiLocales,
+        claimsLocales,
+        idTokenHint,
+        loginHint,
+        acrValues,
+        claims,
         createdAt,
         expiresAt,
         csrfToken,
         failedAttempts,
         bindingHash,
         ...otherParameters
-      } = value;
+      } = value as StoredTransaction;
       // A new transaction starts as requested. Saving it again (a failed login
       // attempt) keeps its status.
       await db.run({
@@ -128,12 +149,17 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
       await db.run({
         sql:
           'INSERT INTO authentication_requests (transaction_id, client_id, redirect_uri, state, nonce, ' +
-          'code_challenge, code_challenge_method, response_type, scope, payload) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'code_challenge, code_challenge_method, response_type, scope, response_mode, prompt, max_age, ' +
+          'ui_locales, claims_locales, id_token_hint, login_hint, acr_values, claims, payload) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
           'ON CONFLICT (transaction_id) DO UPDATE SET client_id = excluded.client_id, ' +
           'redirect_uri = excluded.redirect_uri, state = excluded.state, nonce = excluded.nonce, ' +
           'code_challenge = excluded.code_challenge, code_challenge_method = excluded.code_challenge_method, ' +
-          'response_type = excluded.response_type, scope = excluded.scope, payload = excluded.payload',
+          'response_type = excluded.response_type, scope = excluded.scope, ' +
+          'response_mode = excluded.response_mode, prompt = excluded.prompt, max_age = excluded.max_age, ' +
+          'ui_locales = excluded.ui_locales, claims_locales = excluded.claims_locales, ' +
+          'id_token_hint = excluded.id_token_hint, login_hint = excluded.login_hint, ' +
+          'acr_values = excluded.acr_values, claims = excluded.claims, payload = excluded.payload',
         params: [
           transactionId,
           clientId,
@@ -144,6 +170,15 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
           codeChallengeMethod ?? null,
           responseType,
           scope,
+          responseMode ?? null,
+          prompt ?? null,
+          maxAge ?? null,
+          uiLocales ?? null,
+          claimsLocales ?? null,
+          idTokenHint ?? null,
+          loginHint ?? null,
+          acrValues ?? null,
+          claims === undefined ? null : JSON.stringify(claims),
           JSON.stringify(otherParameters),
         ],
       });
@@ -592,12 +627,19 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
   };
 }
 
+/**
+ * A transaction as the authorization endpoint stores it: with the name of the
+ * response mode it answers in, when that is not the query response
+ * (ResponseModeTransaction of endpoints/authorize/response-mode.ts).
+ */
+type StoredTransaction = AuthTransaction & { responseMode?: string };
+
 /** The values of an AuthTransaction kept in transactions.payload. */
 type TransactionPayload = Pick<AuthTransaction, 'csrfToken' | 'failedAttempts' | 'bindingHash'>;
 
 /** The values of an AuthTransaction kept in authentication_requests.payload. */
 type OtherRequestParameters = Omit<
-  AuthTransaction,
+  StoredTransaction,
   | keyof TransactionPayload
   | 'clientId'
   | 'redirectUri'
@@ -607,6 +649,15 @@ type OtherRequestParameters = Omit<
   | 'codeChallengeMethod'
   | 'responseType'
   | 'scope'
+  | 'responseMode'
+  | 'prompt'
+  | 'maxAge'
+  | 'uiLocales'
+  | 'claimsLocales'
+  | 'idTokenHint'
+  | 'loginHint'
+  | 'acrValues'
+  | 'claims'
   | 'createdAt'
   | 'expiresAt'
 >;
@@ -638,6 +689,15 @@ interface TransactionRow {
   code_challenge_method: string | null;
   response_type: string;
   scope: string | null;
+  response_mode: string | null;
+  prompt: string | null;
+  max_age: number | string | null;
+  ui_locales: string | null;
+  claims_locales: string | null;
+  id_token_hint: string | null;
+  login_hint: string | null;
+  acr_values: string | null;
+  claims: string | null;
   request_payload: string;
 }
 

@@ -63,7 +63,7 @@ describe('buildDiscoveryMetadata', () => {
       const metadata = await metadataFor();
 
       expect(metadata.scopes_supported).toEqual(['openid', 'profile', 'email', 'address', 'phone', 'offline_access']);
-      expect(metadata.response_modes_supported).toEqual(['query', 'query.jwt', 'jwt']);
+      expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'query.jwt', 'jwt']);
     });
 
     // OIDC Core 1.0 §6.1: the request-object feature replaces request_parameter_supported: false.

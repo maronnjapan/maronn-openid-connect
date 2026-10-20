@@ -9,6 +9,7 @@ const ALL_FEATURES: OidcFeatureConfig = {
   introspection: true,
   revocation: true,
   requestObject: true,
+  formPostResponseMode: true,
   par: true,
   tokenExchange: true,
   jarm: true,
@@ -213,6 +214,7 @@ describe('buildOpFlow', () => {
         'resolve-client',
         'resolve-request-object',
         'resolve-redirect-uri',
+        'resolve-form-post-response-mode',
         'validate-request',
         'create-transaction',
         'validate-prompt-combination',
@@ -228,13 +230,26 @@ describe('buildOpFlow', () => {
     it('should add the PAR and JARM steps when those features are enabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, par: true, jarm: true } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');
-      expect(authorize?.steps.map((s) => s.id).slice(0, 7)).toEqual([
+      expect(authorize?.steps.map((s) => s.id).slice(0, 8)).toEqual([
         'parse-request',
         'resolve-pushed-request',
         'resolve-client',
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-jarm-response-mode',
+        'resolve-form-post-response-mode',
+        'validate-request',
+      ]);
+    });
+
+    it('should leave out the form_post step when form-post-response-mode is disabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, formPostResponseMode: false } });
+      const authorize = flow.endpoints.find((e) => e.id === 'authorize');
+      expect(authorize?.steps.map((s) => s.id).slice(0, 5)).toEqual([
+        'parse-request',
+        'resolve-client',
+        'resolve-request-object',
+        'resolve-redirect-uri',
         'validate-request',
       ]);
     });

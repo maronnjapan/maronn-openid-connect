@@ -30,7 +30,7 @@ function clientResolver(name: string): ClientResolver & TokenClientResolver {
 function responseMode(name: string): AuthorizationResponseModeHandler {
   return {
     names: [name],
-    restore: async () => ({ name, redirect: async (redirectUri) => redirectUri }),
+    restore: async () => ({ name, respond: async (redirectUri) => ({ method: 'redirect', location: redirectUri }) }),
   };
 }
 

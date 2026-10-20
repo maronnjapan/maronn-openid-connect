@@ -4,7 +4,7 @@ import {
   IdTokenHintError,
   type JwkSet,
 } from '@maronn-openid-connect/core';
-import { type AuthorizationOutcome, buildErrorRedirect } from '../outcome.js';
+import { type AuthorizationOutcome, buildErrorResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { step } from '../../step.js';
 
@@ -50,7 +50,7 @@ export async function verifyIdTokenHint(
     await transactionStore.delete('auth_txn:' + transactionId);
     return {
       kind: 'authorization_response',
-      location: await buildErrorRedirect(responseMode, transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer),
+      response: await buildErrorResponse(responseMode, transaction.redirectUri, 'login_required', transaction.state, 'jwksProvider is not configured; cannot verify id_token_hint', issuer),
     };
   }
   try {
@@ -66,7 +66,7 @@ export async function verifyIdTokenHint(
     const code = hintError instanceof IdTokenHintError ? hintError.error : 'login_required';
     return {
       kind: 'authorization_response',
-      location: await buildErrorRedirect(responseMode, transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer),
+      response: await buildErrorResponse(responseMode, transaction.redirectUri, code, transaction.state, hintError instanceof Error && hintError.message ? hintError.message : 'id_token_hint verification failed', issuer),
     };
   }
 }

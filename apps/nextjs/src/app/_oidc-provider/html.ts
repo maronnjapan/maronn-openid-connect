@@ -1,7 +1,8 @@
 /**
  * HTML responses for the screens that are served by Route Handlers instead of
- * React pages: the device verification UI, the CIBA authentication device UI
- * and the RP-Initiated Logout screens.
+ * React pages: the device verification UI, the CIBA authentication device UI,
+ * the RP-Initiated Logout screens and the form of a form_post authorization
+ * response.
  *
  * Those screens set a cookie on the very response that renders them (a browser
  * binding, or a confirmation secret), and their failures carry a status code
@@ -51,4 +52,34 @@ ${descriptionHtml}</body>
 </html>`,
     { status: statusCode },
   );
+}
+
+/**
+ * OAuth 2.0 Form Post Response Mode §2: the authorization response as an HTML
+ * form whose action is the client's redirect URI and whose method is POST,
+ * one hidden field per parameter. The script submits it as soon as it is
+ * parsed (Appendix A does the same from body onload), and the button inside
+ * noscript lets a browser without JavaScript continue. The response is used
+ * only once, so the User Agent and any intermediaries are told not to store
+ * it, with the headers of Appendix A.
+ */
+export function formPostPage(action: string, fields: Readonly<Record<string, string>>): Response {
+  const inputs = Object.entries(fields)
+    .map(([name, value]) => `    <input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}"/>\n`)
+    .join('');
+  const response = htmlResponse(
+    `<!DOCTYPE html>
+<html>
+<head><title>Submit This Form</title></head>
+<body>
+  <form method="post" action="${escapeHtml(action)}">
+${inputs}    <noscript><button type="submit">Continue</button></noscript>
+  </form>
+  <script>document.forms[0].submit();</script>
+</body>
+</html>`,
+  );
+  response.headers.set('Cache-Control', 'no-cache, no-store');
+  response.headers.set('Pragma', 'no-cache');
+  return response;
 }

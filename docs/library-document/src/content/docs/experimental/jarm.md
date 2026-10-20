@@ -79,7 +79,7 @@ Hono / Express / Fastify では、この機能のコードはすべて `features
 | `features/jarm/response-mode.ts` | 応答 JWT を組んで `response` パラメータだけを付けたリダイレクト先を作る応答モードと、同意エンドポイントが記録済みのモードを戻すためのハンドラー |
 | `features/jarm/feature.ts` | 同意エンドポイントへの応答モードの登録、`response_modes_supported` の拡張と `authorization_signing_alg_values_supported` の広告 |
 
-Next.js では、同じ役割を `_oidc-provider/features/jarm/`（設定、`authorize/route.ts` から呼ばれる `authorize.ts`、応答モード、機能の宣言）が担います。Server Action は Route Handler と別のモジュール層にバンドルされますが、署名鍵プロバイダは `globalThis` で共有しているため、同意画面を経由する応答も `/.well-known/jwks.json` が公開する鍵で署名した JARM 応答になります。
+Next.js では、同じ役割を `_oidc-provider/features/jarm/`（設定、`authorize/route.ts` から呼ばれる `authorize.ts`、応答モード、機能の宣言）が担います。同意の判断を受けるのも Route Handler（`consent/decision/route.ts`）なので、同意画面を経由する応答も `/.well-known/jwks.json` が公開する鍵で署名した JARM 応答になります。
 
 ## 設定
 
@@ -270,7 +270,7 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 - `fragment.jwt` / `form_post.jwt`（§2.3.2 / §2.3.3）は非対応です。指定すると `invalid_request` になります
 - 応答 JWT の暗号化（JWE, §2.2）は非対応です。署名のみで、ペイロードは base64url デコードすれば誰でも読めます
 - 署名アルゴリズムは RS256 固定です。クライアント別 `authorization_signed_response_alg`（§3）や PS256 / ES256 は非対応です
-- `.jwt` 系以外の `response_mode`（`form_post` / `fragment` など）は従来どおり**無視**します。JARM は `.jwt` 系にだけ意味を足す拡張であり、有効化によって他の値の扱いは変わりません
+- JARM が解釈するのは `.jwt` 系の `response_mode` だけで、有効化によって他の値の扱いは変わりません。`form_post` は安定機能 `form-post-response-mode` が受け持ち、`fragment` などは従来どおり**無視**します
 - Dynamic Client Registration がないため、クライアントメタデータによる JARM 設定はできません
 
 ## core 機能との違い

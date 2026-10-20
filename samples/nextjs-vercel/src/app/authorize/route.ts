@@ -1,8 +1,9 @@
 /**
  * Authorization Endpoint (OIDC Core 1.0 §3.1.2).
  *
- * The browser's entry into the flow, so every answer is a redirect: back to the
- * client with the authorization response, on to the login or consent screen,
+ * The browser's entry into the flow, so every answer is a redirect or a page:
+ * back to the client with the authorization response (a redirect, or the form
+ * a form_post response is posted from), on to the login or consent screen,
  * or — for an error that must not go back to the client — to the OP's own
  * error page (app/oidc-error).
  */
@@ -39,6 +40,7 @@ import {
   IdTokenHintError,
   type AuthorizationRequestParams,
 } from '@maronn-openid-connect/core';
+import { resolveFormPostResponseContext } from '../_oidc-provider/features/form-post-response-mode/authorize';
 import { resolveRequestObject } from '../_oidc-provider/features/request-object/authorize';
 import { tokenGrantsOf } from '../_oidc-provider/feature';
 import { features } from '../_oidc-provider/features';
@@ -60,7 +62,8 @@ import {
 import { buildTransactionCookie } from '../_oidc-provider/cookies';
 import { findUnsupportedScopes, resolveGrantableScopes } from '../_oidc-provider/scopes';
 import {
-  authorizationResponseUrl,
+  authorizationResponseOf,
+  respondToClient,
   type AuthorizationResponseMode,
   type ResponseModeTransaction,
 } from './response-mode';
@@ -100,9 +103,11 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
   let params: Record<string, string> & AuthorizationRequestParams = parsed.params;
 
   // The response mode the request asked for, when a feature answers in one
-  // (JARM). Set once redirect_uri is verified; undefined means the plain query
-  // response. Declared before the try block so the catch can answer in the
-  // mode the request asked for.
+  // (JARM, form_post). Set once redirect_uri is verified, by the first block
+  // of a feature that answers the request's response_mode (each assigns it
+  // only while it is still unset); undefined means the plain query response.
+  // Declared before the try block so the catch can answer in the mode the
+  // request asked for.
   let responseMode: AuthorizationResponseMode | undefined;
   // RFC 9207 §2: every authorization response (success and error) carries the
   // issuer identifier, so clients can pin the issuer that produced it.
@@ -130,6 +135,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     const redirectUri = resolveAuthorizationRedirectUri(requestParams, client);
     // RFC 6749 §4.1.2.1: state is echoed only on redirectable errors from here on.
     const state = requestParams.state;
+
+    // [resolve-form-post-response-mode] (feature: form-post-response-mode) Interpret response_mode=form_post — OAuth 2.0 Form Post Response Mode §2
+    responseMode ??= resolveFormPostResponseContext(requestParams, issuer);
 
     // [validate-request] Validate the request parameters — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
     // OIDC Core 1.0 §6.3: request_uri / registration are not supported, and
@@ -521,15 +529,15 @@ function nonRedirectableError(request: Request, error: string, errorDescription?
 
 /**
  * Send an authorization response back to the client: in the response mode the
- * request asked for (JARM's query.jwt), or with the parameters in the query
- * and iss appended (RFC 9207 §2).
+ * request asked for (JARM's query.jwt, the form of form_post), or with the
+ * parameters in the query and iss appended (RFC 9207 §2).
  */
 async function redirectToClient(
   responseMode: AuthorizationResponseMode | undefined,
   redirectUri: string,
   parameters: Record<string, string | undefined>,
 ): Promise<Response> {
-  return NextResponse.redirect(await authorizationResponseUrl(responseMode, redirectUri, parameters, config.issuer), 302);
+  return respondToClient(await authorizationResponseOf(responseMode, redirectUri, parameters, config.issuer));
 }
 
 /**

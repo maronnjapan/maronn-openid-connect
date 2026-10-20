@@ -174,6 +174,7 @@ pnpm --filter <package-name> <command>
 
 - OpenID Connect Core 1.0
 - OAuth 2.1（PKCE 必須）
+- OAuth 2.0 Form Post Response Mode（`response_mode=form_post`）
 - OpenID Connect Conformance Profiles v3.0（Basic OP）
 
 ### Basic OPの必須機能

@@ -71,6 +71,19 @@ export interface ConsentPageParams {
   clientId: string;
 }
 
+/**
+ * OAuth 2.0 Form Post Response Mode §2: the authorization response the browser
+ * posts to the client. The view must keep the form as it is — method POST,
+ * action and the fields exactly as given — and may only change what is
+ * around it.
+ */
+export interface FormPostPageParams {
+  /** The client's redirect URI: the action of the form. */
+  action: string;
+  /** The authorization response parameters, one hidden field each. */
+  fields: Record<string, string>;
+}
+
 export interface ErrorPageParams {
   /** Error message to display (OAuth error code for authorization errors) */
   error: string;
@@ -105,6 +118,8 @@ export interface Views {
   consentPage(params: ConsentPageParams): ViewResult;
   /** Render a generic error page */
   errorPage(params: ErrorPageParams): ViewResult;
+  /** Render the auto-submitting form of a form_post authorization response */
+  formPostPage(params: FormPostPageParams): ViewResult;
 }
 
 /** Options applied when renderView turns a view into a Response. */
@@ -277,6 +292,27 @@ function defaultErrorPage(params: ErrorPageParams): JSX.Element {
   );
 }
 
+// OAuth 2.0 Form Post Response Mode §2: the action of the form MUST be the
+// client's redirect URI and its method MUST be POST; any technique may submit
+// it. The script submits it as soon as it is parsed (Appendix A does the same
+// from body onload), and the button inside noscript lets a browser without
+// JavaScript continue. The script is a fixed literal, never input.
+function defaultFormPostPage(params: FormPostPageParams): JSX.Element {
+  return (
+    <Layout title="Submit This Form">
+      <form method="post" action={params.action}>
+        {Object.entries(params.fields).map(([name, value]) => (
+          <input type="hidden" name={name} value={value} />
+        ))}
+        <noscript>
+          <button type="submit">Continue</button>
+        </noscript>
+      </form>
+      {raw('<script>document.forms[0].submit();</script>')}
+    </Layout>
+  );
+}
+
 /**
  * Default Views used when no custom views are injected.
  * These render minimal, unstyled HTML so the flow works out of the box.
@@ -285,6 +321,7 @@ export const defaultViews: Views = {
   loginPage: defaultLoginPage,
   consentPage: defaultConsentPage,
   errorPage: defaultErrorPage,
+  formPostPage: defaultFormPostPage,
 };
 
 /**

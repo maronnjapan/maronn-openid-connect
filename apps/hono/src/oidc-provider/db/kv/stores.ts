@@ -148,7 +148,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       // A transaction that ended (failed, code_issued, token_issued) is gone for the OP.
       if (!record || result !== null) return null;
       const request = record.authentication_request;
-      const transaction: AuthTransaction = {
+      const transaction: StoredTransaction = {
         ...(request.payload as OtherRequestParameters),
         ...(record.payload as TransactionPayload),
         clientId: request.client_id,
@@ -164,6 +164,15 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       if (request.code_challenge_method !== null) {
         transaction.codeChallengeMethod = request.code_challenge_method as 'S256';
       }
+      if (request.response_mode !== null) transaction.responseMode = request.response_mode;
+      if (request.prompt !== null) transaction.prompt = request.prompt;
+      if (request.max_age !== null) transaction.maxAge = request.max_age;
+      if (request.ui_locales !== null) transaction.uiLocales = request.ui_locales;
+      if (request.claims_locales !== null) transaction.claimsLocales = request.claims_locales;
+      if (request.id_token_hint !== null) transaction.idTokenHint = request.id_token_hint;
+      if (request.login_hint !== null) transaction.loginHint = request.login_hint;
+      if (request.acr_values !== null) transaction.acrValues = request.acr_values;
+      if (request.claims !== null) transaction.claims = request.claims;
       return transaction;
     },
     // The expiry is the transaction's own expiresAt (milliseconds, rounded up
@@ -179,13 +188,22 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         codeChallengeMethod,
         responseType,
         scope,
+        responseMode,
+        prompt,
+        maxAge,
+        uiLocales,
+        claimsLocales,
+        idTokenHint,
+        loginHint,
+        acrValues,
+        claims,
         createdAt,
         expiresAt,
         csrfToken,
         failedAttempts,
         bindingHash,
         ...otherParameters
-      } = value;
+      } = value as StoredTransaction;
       // A new transaction starts as requested. Saving it again (a failed
       // sign-in attempt) keeps its status.
       const current = await readTransaction(transactionId);
@@ -202,6 +220,15 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
           code_challenge_method: codeChallengeMethod ?? null,
           response_type: responseType,
           scope,
+          response_mode: responseMode ?? null,
+          prompt: prompt ?? null,
+          max_age: maxAge ?? null,
+          ui_locales: uiLocales ?? null,
+          claims_locales: claimsLocales ?? null,
+          id_token_hint: idTokenHint ?? null,
+          login_hint: loginHint ?? null,
+          acr_values: acrValues ?? null,
+          claims: claims ?? null,
           payload: otherParameters,
         },
         payload: { csrfToken, failedAttempts, bindingHash },
@@ -640,12 +667,19 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
   };
 }
 
+/**
+ * A transaction as the authorization endpoint stores it: with the name of the
+ * response mode it answers in, when that is not the query response
+ * (ResponseModeTransaction of endpoints/authorize/response-mode.ts).
+ */
+type StoredTransaction = AuthTransaction & { responseMode?: string };
+
 /** The values of an AuthTransaction kept in the payload of the transaction record. */
 type TransactionPayload = Pick<AuthTransaction, 'csrfToken' | 'failedAttempts' | 'bindingHash'>;
 
 /** The values of an AuthTransaction kept in the payload of its authentication request. */
 type OtherRequestParameters = Omit<
-  AuthTransaction,
+  StoredTransaction,
   | keyof TransactionPayload
   | 'clientId'
   | 'redirectUri'
@@ -655,6 +689,15 @@ type OtherRequestParameters = Omit<
   | 'codeChallengeMethod'
   | 'responseType'
   | 'scope'
+  | 'responseMode'
+  | 'prompt'
+  | 'maxAge'
+  | 'uiLocales'
+  | 'claimsLocales'
+  | 'idTokenHint'
+  | 'loginHint'
+  | 'acrValues'
+  | 'claims'
   | 'createdAt'
   | 'expiresAt'
 >;

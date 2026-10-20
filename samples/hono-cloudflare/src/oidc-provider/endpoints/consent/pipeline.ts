@@ -20,7 +20,7 @@ import { validateConsentDecision } from './steps/validate-decision.js';
  * (describeConsentScreen), the authorization decision
  * (validateConsentDecision, denyAuthorizationRequest), the authorization code
  * (issueConsentedAuthorizationCode), the consent record
- * (recordConsentDecision) and the authorization response URL
+ * (recordConsentDecision) and the authorization response
  * (buildConsentRedirect: RFC 6749 §4.1.2 / RFC 9207 iss, or the response mode
  * of a feature). None of them builds a Response — each returns an outcome,
  * and page.tsx turns that outcome into a screen or a redirect.

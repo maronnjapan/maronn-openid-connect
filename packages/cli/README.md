@@ -145,7 +145,7 @@ Express と Fastify の生成物も画面は hono/jsx のままなので、`hono
 | `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応） |
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
-| `/login`, `/consent` | ログイン画面と同意画面。ルート（GET / POST）と描画は `endpoints/login/page.tsx` と `endpoints/consent/page.tsx`、認証と同意の判断は同じディレクトリの `pipeline.ts` が呼ぶステップが担当する（差し替え可能なデフォルト UI 付き。Next.js はページと Server Action） |
+| `/login`, `/consent` | ログイン画面と同意画面。ルート（GET / POST）と描画は `endpoints/login/page.tsx` と `endpoints/consent/page.tsx`、認証と同意の判断は同じディレクトリの `pipeline.ts` が呼ぶステップが担当する（差し替え可能なデフォルト UI 付き。Next.js はページと、ログインは Server Action、同意は Route Handler） |
 | `/login/google` | Sign in with Google の `login_uri`（Google が ID トークンを POST する先。`google-login` 有効時） |
 | `/.well-known/openid-configuration` | Discovery メタデータ |
 | `/.well-known/jwks.json` | JWKS（公開鍵） |
@@ -357,7 +357,7 @@ src/app/
 ├── login/not-found.tsx             # トランザクションが無いとき（notFound()）の画面。HTTP 404
 ├── login/error.tsx                 # 想定外の例外のときの画面（error boundary）
 ├── consent/page.tsx                # 同意画面
-├── consent/actions.ts              # 同意の Server Action（認可コードを発行してクライアントへリダイレクト）
+├── consent/decision/route.ts       # 同意の判断を受ける Route Handler（認可コードを発行し、認可レスポンスを返す）
 ├── consent/not-found.tsx / consent/error.tsx  # 同意画面の not-found / error（ログイン画面と同じ役割）
 ├── oidc-error/page.tsx             # クライアントへ返してはいけないエラーの表示先
 ├── (introspection)/introspect/route.ts / endpoint.ts  # POST /introspect（introspection 有効時）
@@ -377,11 +377,11 @@ src/app/
 
 ### 画面とエラーの表し方
 
-各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export する。ログイン画面と同意画面は React のページと Server Action なので、見た目は `page.tsx`、判断は `actions.ts` を書き換える。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要がある。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成する。機能の設定は `_oidc-provider/features/<id>/config.ts` にある（例: PAR の `parConfig`、Token Exchange の `tokenExchangeConfig`、JARM の `jarmConfig`）。
+各 `route.ts` は `GET` / `POST` / `OPTIONS` などの HTTP メソッドを自分で export する。ログイン画面と同意画面は React のページなので、見た目は `page.tsx` を書き換える。判断はログインが Server Action の `login/actions.ts`、同意が Route Handler の `consent/decision/route.ts` にある。同意だけ Route Handler にしているのは、`form_post` の認可レスポンスが HTML のページで、Server Action はリダイレクトしか返せないためである。device / CIBA / RP-Initiated Logout の画面は、表示と同時に Cookie を発行し、403 や 429 などのステータスを返す必要がある。Server Component はどちらもできないため、これらは HTML を返す Route Handler（描画は各ディレクトリの `screens.ts`）として生成する。機能の設定は `_oidc-provider/features/<id>/config.ts` にある（例: PAR の `parConfig`、Token Exchange の `tokenExchangeConfig`、JARM の `jarmConfig`）。
 
 OP がブラウザを止める場面は、Next.js の機能で表す。
 
-- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明か、完了済みか、期限切れ）: ページと Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示する。利用者はクライアントからやり直すしかない
+- 進行中の認可リクエストが無い（トランザクション Cookie が無い、または Cookie が指すトランザクションが不明か、完了済みか、期限切れ）: ページとログインの Server Action が `notFound()` を呼び、隣の `not-found.tsx` を HTTP 404 で表示する。同意の判断を受ける Route Handler は、`oidc-error/page.tsx` へ 303 で送る。どちらの場合も、利用者はクライアントからやり直すしかない
 - クライアントへ返してはいけないエラー（OIDC Core 1.0 §3.1.2.2。未登録の `redirect_uri`、CSRF トークンの不一致、ログイン試行回数の上限、判断を含まない同意の POST、Google ログインのコールバックの失敗など）: `redirect()` で `oidc-error/page.tsx` へ送る。Route Handler からは 303 でリダイレクトする
 - 想定外の例外（ストアの障害など）: `error.tsx`（error boundary）が表示する。本番の Next.js はエラーメッセージをブラウザへ渡さないので、画面にはサーバーログと突き合わせられる `digest` だけを出す
 
@@ -454,6 +454,7 @@ maronn-oidc generate express --disable pkce
 | `introspection` | 有効 | RFC 7662 introspection エンドポイント（`/introspect`）を生成しない |
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
+| `form-post-response-mode` | 有効 | `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）を解釈せず、認可レスポンスを従来どおりリダイレクト URI のクエリで返す。discovery の `response_modes_supported` から `form_post` を除く |
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
@@ -518,7 +519,7 @@ export async function resolveGrantableScopes(
 | `endpoints/authorize/steps/reuse-session.ts` / `endpoints/authorize/steps/authenticate-silently.ts` | SSO fast path と `prompt=none`（同意画面を出さずに付与する経路）。どちらも**保存済み同意を引く前**に適用する。絞る前の scope で同意を探すと、そのユーザーが持てないスコープをキーに検索することになり永久に一致しない |
 | `features/device-authorization-grant/endpoints/device/steps/` / `features/ciba/endpoints/ciba/` | device / CIBA の承認ステップ（該当機能を有効にした場合） |
 
-Next.js では、`consent/page.tsx` と `consent/actions.ts`、`authorize/route.ts`、`(device-authorization-grant)/device/` と `(ciba)/ciba/` の下のファイルが、同じ場面で呼ぶ。
+Next.js では、`consent/page.tsx` と `consent/decision/route.ts`、`authorize/route.ts`、`(device-authorization-grant)/device/` と `(ciba)/ciba/` の下のファイルが、同じ場面で呼ぶ。
 
 落としたスコープはリクエストを失敗させず、付与スコープを狭めるだけになる（RFC 6749 §3.3 は要求より狭いスコープの発行を認めており、トークンレスポンスの `scope` に実際の付与内容が載る）。リクエストごと拒否したい場合は、呼び出し元で throw する。
 
@@ -712,7 +713,7 @@ export function createDatabase(): SqlDatabase {
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_scopes` | リダイレクト URI、使ってよい grant type、要求してよいスコープ |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
-| `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
+| `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
 | `codes`、`access_tokens`、`refresh_tokens` | 認可コードとトークン。値そのものは保存せず、SHA-256 のハッシュで引く |
 | `browser_sessions`、`consent_scopes`、`consent_grants` | SSO、`prompt=none`、`max_age` に使うブラウザセッションと、ユーザーが与えた同意 |

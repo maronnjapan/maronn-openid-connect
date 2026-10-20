@@ -3,12 +3,14 @@
  *
  * GET|POST /authorize is the browser's entry into the flow, and every answer it
  * gives is a redirect or a screen: back to the client with the authorization
- * response, on to /login or /consent, or the OP's own error page. Deciding
+ * response (a redirect, or the form a form_post response is posted from), on
+ * to /login or /consent, or the OP's own error page. Deciding
  * WHICH of those applies — the whole OIDC Core 1.0 §3.1.2 validation pipeline,
  * SSO, prompt=none — is processAuthorizationRequest() in pipeline.ts; this
  * file only turns its outcome into HTTP.
  */
 import { WebRouter } from '../../web-router.js';
+import { respondToClient } from '../../pages/authorization-response.js';
 import { renderAuthorizationErrorPage } from '../../pages/errors.js';
 import { redirectWithCookies } from '../../pages/respond.js';
 import type { AuthorizationOutcome } from './outcome.js';
@@ -43,8 +45,8 @@ function respond(c: any, outcome: AuthorizationOutcome): Response {
   }
   if (outcome.kind === 'authorization_response') {
     // Back to the client: the authorization code or a redirectable error, in
-    // the response mode the request asked for — already in the URL.
-    return c.redirect(outcome.location);
+    // the response mode the request asked for.
+    return respondToClient(c, outcome.response);
   }
   if (outcome.kind === 'login') {
     return redirectWithCookies(screenUrl(c, '/login'), outcome.cookies);

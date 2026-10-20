@@ -9,6 +9,7 @@ export const endpoint = defineEndpoint({
     { id: 'resolve-client', consumes: ['params'], produces: ['client'] },
     { id: 'resolve-request-object', feature: 'request-object', consumes: ['params', 'client'], produces: ['effectiveParams', 'requestObjectClaims'] },
     { id: 'resolve-redirect-uri', consumes: ['effectiveParams', 'params', 'client'], produces: ['requestParams', 'redirectUri', 'state'] },
+    { id: 'resolve-form-post-response-mode', feature: 'form-post-response-mode', consumes: ['requestParams', 'issuer'], produces: ['responseMode'] },
     { id: 'validate-request', consumes: ['params', 'requestParams', 'effectiveParams', 'requestObjectClaims', 'client', 'redirectUri', 'state'], produces: ['validatedRequest'] },
     { id: 'create-transaction', consumes: ['validatedRequest', 'responseMode'], produces: ['transactionId', 'transaction', 'transactionTtlSeconds'] },
     { id: 'validate-prompt-combination', consumes: ['transaction', 'transactionId', 'responseMode'], produces: ['promptValues'] },

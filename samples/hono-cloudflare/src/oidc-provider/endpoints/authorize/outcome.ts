@@ -7,7 +7,11 @@ import {
   type AuthorizationRequestParams,
   type AuthTransaction,
 } from '@maronn-openid-connect/core';
-import type { AuthorizationResponseMode } from './response-mode.js';
+import {
+  plainQueryResponse,
+  type AuthorizationResponse,
+  type AuthorizationResponseMode,
+} from './response-mode.js';
 
 /** What the authorization endpoint decided; page.ts turns it into HTTP. */
 export type AuthorizationOutcome =
@@ -15,9 +19,10 @@ export type AuthorizationOutcome =
   | { kind: 'bad_request'; error: string; errorDescription: string }
   /**
    * The authorization response for the client — code or redirectable error,
-   * in the response mode the request asked for — ready in the URL.
+   * in the response mode the request asked for: a redirect, or a form the
+   * browser posts.
    */
-  | { kind: 'authorization_response'; location: string }
+  | { kind: 'authorization_response'; response: AuthorizationResponse }
   /**
    * Interactive authentication is needed: continue on the login screen. cookies
    * carries the transaction cookie, the only place the transaction id goes.
@@ -57,69 +62,59 @@ export function isAuthorizationRequestParams(
 }
 
 /**
- * Builds a redirect URL with an OAuth error response.
+ * Builds the OAuth error response for the client.
  * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
  *
  * errorDescription is optional; when supplied it is sanitized to the RFC 6749
- * Section 5.2 allowed character set before being appended so user-controlled
- * fragments cannot smuggle control bytes into the redirect URL.
+ * Section 5.2 allowed character set, so user-controlled fragments cannot
+ * smuggle control bytes into the response.
  *
- * RFC 9207 Section 2: when issuer is provided, the iss parameter is appended so
- * the client can pin the issuer that produced this authorization response.
+ * In the plain query response the parameters are added to the redirect URI,
+ * with iss (RFC 9207 Section 2) so the client can pin the issuer that
+ * produced it.
  *
  * When the request asked for a response mode of a feature (responseMode),
- * that mode carries the very same parameters instead, and no plain error /
- * error_description / state / iss parameter is added — a JARM response JWT,
+ * that mode carries the very same parameters instead — a JARM response JWT,
  * for one, identifies the issuer with its iss claim (RFC 9700 Section 2.1
- * accepts JARM as the issuer-identification mechanism).
+ * accepts JARM as the issuer-identification mechanism), and the Form Post
+ * Response Mode posts them, iss included, from an HTML form.
  */
-export async function buildErrorRedirect(
+export async function buildErrorResponse(
   responseMode: AuthorizationResponseMode | undefined,
   redirectUri: string,
   error: string,
-  state?: string,
-  errorDescription?: string,
-  issuer?: string,
-): Promise<string> {
+  state: string | undefined,
+  errorDescription: string | undefined,
+  issuer: string,
+): Promise<AuthorizationResponse> {
   // RFC 6749 Section 5.2: sanitize once, for every response mode.
   const description = errorDescription
     ? sanitizeErrorDescription(errorDescription)
     : undefined;
+  const parameters = { error, error_description: description, state };
   if (responseMode) {
-    return responseMode.redirect(redirectUri, { error, error_description: description, state });
+    return responseMode.respond(redirectUri, parameters);
   }
-  const url = new URL(redirectUri);
-  url.searchParams.set('error', error);
-  if (description) {
-    url.searchParams.set('error_description', description);
-  }
-  if (state) url.searchParams.set('state', state);
-  if (issuer) url.searchParams.set('iss', issuer);
-  return url.toString();
+  return plainQueryResponse(redirectUri, parameters, issuer);
 }
 
 /**
- * Builds the success redirect URL carrying the authorization code.
+ * Builds the success response carrying the authorization code.
  * OIDC Core 1.0 Section 3.1.2.5 / RFC 9207 Section 2 (iss).
  *
  * When the request asked for a response mode of a feature (responseMode),
- * that mode carries the code and state instead; no plain code / state / iss
- * parameter is added.
+ * that mode carries the code and state instead.
  */
-export async function buildSuccessRedirect(
+export async function buildSuccessResponse(
   responseMode: AuthorizationResponseMode | undefined,
   redirectUri: string,
   code: string,
   state: string | undefined,
   issuer: string,
-): Promise<string> {
+): Promise<AuthorizationResponse> {
+  const parameters = { code, state };
   if (responseMode) {
-    return responseMode.redirect(redirectUri, { code, state });
+    return responseMode.respond(redirectUri, parameters);
   }
-  const url = new URL(redirectUri);
-  url.searchParams.set('code', code);
-  if (state) url.searchParams.set('state', state);
-  // RFC 9207 Section 2: include iss in success responses.
-  url.searchParams.set('iss', issuer);
-  return url.toString();
+  return plainQueryResponse(redirectUri, parameters, issuer);
 }

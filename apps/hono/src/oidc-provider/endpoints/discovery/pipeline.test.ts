@@ -77,7 +77,7 @@ describe('discoveryApp', () => {
         'urn:openid:params:grant-type:ciba',
       ],
       token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
-      response_modes_supported: ['query', 'query.jwt', 'jwt'],
+      response_modes_supported: ['query', 'form_post', 'query.jwt', 'jwt'],
       claims_parameter_supported: true,
       request_parameter_supported: true,
       request_uri_parameter_supported: false,

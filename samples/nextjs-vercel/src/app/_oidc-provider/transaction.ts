@@ -21,12 +21,13 @@ export interface CurrentTransaction {
 
 /**
  * The authorization transaction this browser is in the middle of, for the login
- * and consent pages and their Server Actions.
+ * and consent pages and the login Server Action.
  *
  * /authorize hands the transaction id to the browser only in the HttpOnly
  * transaction cookie (buildTransactionCookie() in cookies.ts) — never in a URL or
  * in the HTML — so this is where it is read from. The forms carry just the
- * csrf_token, which the Server Actions accept only for this transaction.
+ * csrf_token, which the login Server Action and the consent decision
+ * (consent/decision/route.ts) accept only for this transaction.
  *
  * When there is none — no cookie, or a transaction that is unknown, already
  * finished, or expired — the request ends in notFound(), which renders the
@@ -48,7 +49,7 @@ export async function requireTransaction(): Promise<CurrentTransaction> {
 }
 
 /**
- * Stop a login or consent Server Action that the browser says was not
+ * Stop the login Server Action when the browser says it was not
  * submitted from the OP's own pages (isSameOriginFormPost() in cookies.ts): the
  * OP's error page, never the client. It depends on neither the transaction
  * cookie nor the csrf_token, so it still holds when a sibling subdomain planted

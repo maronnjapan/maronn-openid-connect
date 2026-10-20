@@ -2,6 +2,7 @@ import { AuthorizationError, type AuthorizationRequestParams, type ClientInfo } 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeJwt, verifyRs256Jwt } from '../../../../test-support/jwt';
 import { es256Key, providerSigningKeys, rs256Key } from '../../../../test-support/keys';
+import { locationOf } from '../../../../test-support/responses';
 import { resolveJarmResponseContext } from './authorize';
 
 const ISSUER = 'https://op.example.com';
@@ -37,7 +38,7 @@ describe('resolveJarmResponseContext', () => {
       const keys = providerSigningKeys(await es256Key(), signingKey);
 
       const mode = resolveJarmResponseContext(paramsWith('query.jwt'), client, REDIRECT_URI, 'state-1', ISSUER, keys);
-      const location = new URL((await mode?.redirect(REDIRECT_URI, { code: 'code-1', state: 'state-1' })) ?? '');
+      const location = new URL(locationOf(await mode?.respond(REDIRECT_URI, { code: 'code-1', state: 'state-1' })));
       const jwt = location.searchParams.get('response') ?? '';
 
       expect(mode?.name).toBe('query.jwt');

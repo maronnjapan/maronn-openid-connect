@@ -114,6 +114,32 @@ describe('authorizePage', () => {
     });
   });
 
+  // OAuth 2.0 Form Post Response Mode §2 / Appendix A
+  describe('Form post response', () => {
+    it('should answer response_mode=form_post with the form that posts the code to the client', async () => {
+      const db = await databaseWithClient();
+      const stores = createProviderStores(db);
+      const cookie = await signIn(stores);
+      await stores.consentStore.grant(SUBJECT, CLIENT_ID, ['openid']);
+      const app = await providerApp(db);
+
+      const response = await app.request(
+        requestTo(authorizePath(authorizationParams({ response_mode: 'form_post' })), { headers: { Cookie: cookie } }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Location')).toBe(null);
+      expect(response.headers.get('Cache-Control')).toBe('no-cache, no-store');
+      expect(response.headers.get('Pragma')).toBe('no-cache');
+      expect(await response.text()).toContain(
+        '<form method="post" action="https://rp.example.com/callback">' +
+          `<input type="hidden" name="code" value="${[...db.codes.keys()][0]}"/>` +
+          '<input type="hidden" name="state" value="state-1"/>' +
+          '<input type="hidden" name="iss" value="https://op.example.com"/>',
+      );
+    });
+  });
+
   describe('Errors', () => {
     it('should answer a request without client_id with 400 and the OAuth error JSON', async () => {
       const app = await providerApp(await databaseWithClient());

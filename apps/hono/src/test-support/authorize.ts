@@ -17,6 +17,7 @@ import type { ClientRegistration } from '../oidc-provider/config.js';
 import { registerClient } from '../oidc-provider/db/memory/clients.js';
 import type { MemoryDatabase } from '../oidc-provider/db/memory/database.js';
 import type {
+  AuthorizationResponse,
   AuthorizationResponseMode,
   AuthorizationResponseParameters,
 } from '../oidc-provider/endpoints/authorize/response-mode.js';
@@ -143,9 +144,21 @@ export function redirectOf(location: string): { target: string; params: Record<s
  * return its redirect target and query parameters.
  */
 export function authorizationRedirectOf(outcome: unknown): { target: string; params: Record<string, string> } {
-  expect(outcome).toMatchObject({ kind: 'authorization_response', location: expect.any(String) });
-  return redirectOf((outcome as { location: string }).location);
+  expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
+  return redirectOf((outcome as { response: { location: string } }).response.location);
 }
+
+/** Assert that the authorization response is a redirect and return its location. */
+export function locationOf(response: AuthorizationResponse): string {
+  expect(response).toMatchObject({ method: 'redirect', location: expect.any(String) });
+  return (response as { location: string }).location;
+}
+
+/** The redirect a response mode answered with, as the location the outcome would carry. */
+export const RECORDED_RESPONSE = {
+  method: 'redirect',
+  location: 'https://rp.example.com/callback?response=recorded',
+} as const;
 
 /** The claims of a JWT, unverified. */
 export function jwtClaimsOf(jwt: string): Record<string, unknown> {
@@ -153,12 +166,12 @@ export function jwtClaimsOf(jwt: string): Record<string, unknown> {
   return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
 }
 
-/** A response mode that answers with a fixed URL and records the parameters it was asked to carry. */
+/** A response mode that answers with a fixed redirect and records the parameters it was asked to carry. */
 export function recordingResponseMode(name = 'test.mode') {
-  const redirect = vi.fn(
-    async (_redirectUri: string, _parameters: AuthorizationResponseParameters) =>
-      'https://rp.example.com/callback?response=recorded',
+  const respond = vi.fn(
+    async (_redirectUri: string, _parameters: AuthorizationResponseParameters): Promise<AuthorizationResponse> =>
+      RECORDED_RESPONSE,
   );
-  const responseMode: AuthorizationResponseMode = { name, redirect };
-  return { responseMode, redirect };
+  const responseMode: AuthorizationResponseMode = { name, respond };
+  return { responseMode, respond };
 }

@@ -1,5 +1,5 @@
 import { AuthorizationError } from '@maronn-openid-connect/core';
-import { type AuthorizationOutcome, buildErrorRedirect } from '../outcome.js';
+import { type AuthorizationOutcome, buildErrorResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { step } from '../../step.js';
 
@@ -24,7 +24,8 @@ export const meta = step({
  * anything else is a server_error.
  *
  * When the request asked for a response mode of a feature (JARM §2.1 signs
- * the error members into one JWT), the error goes back in that mode.
+ * the error members into one JWT, the Form Post Response Mode posts them),
+ * the error goes back in that mode.
  * responseMode is undefined for errors thrown before response_mode was
  * interpreted (unknown client, unsupported JWT mode), which is why those stay plain.
  */
@@ -37,7 +38,7 @@ export async function authorizationErrorOutcome(
     if (error.redirectUri) {
       return {
         kind: 'authorization_response',
-        location: await buildErrorRedirect(
+        response: await buildErrorResponse(
           responseMode,
           error.redirectUri,
           error.error,

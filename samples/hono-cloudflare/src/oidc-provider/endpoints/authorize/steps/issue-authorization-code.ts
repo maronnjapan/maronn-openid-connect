@@ -4,7 +4,7 @@ import {
   completeAuthTransaction,
   createAuthorizationCode,
 } from '@maronn-openid-connect/core';
-import { type AuthorizationOutcome, buildSuccessRedirect } from '../outcome.js';
+import { type AuthorizationOutcome, buildSuccessResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
 import { step } from '../../step.js';
 
@@ -12,7 +12,7 @@ export const meta = step({
   id: 'issue-authorization-code',
   endpoint: 'authorize',
   kind: 'issue',
-  label: 'Issue the authorization code and build the response URL',
+  label: 'Issue the authorization code and build the authorization response',
   spec: 'OIDC Core 1.0 §3.1.2.5 / RFC 9207 §2',
   function: 'issueAuthorizationCodeResponse',
   calls: ['completeAuthTransaction', 'createAuthorizationCode', 'consentResolver.recordGrant'],
@@ -26,7 +26,7 @@ export const meta = step({
 /**
  * Issue the authorization code for a session that needs no interaction
  * (prompt=none, or SSO with prior consent) and build the authorization
- * response URL. OIDC Core 1.0 §3.1.2.5 / §3.1.3.1 / RFC 9207 §2
+ * response. OIDC Core 1.0 §3.1.2.5 / §3.1.3.1 / RFC 9207 §2
  *
  * transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
  * 後の値。offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、
@@ -76,7 +76,7 @@ export async function issueAuthorizationCodeResponse(
 
   return {
     kind: 'authorization_response',
-    location: await buildSuccessRedirect(
+    response: await buildSuccessResponse(
       responseMode, transaction.redirectUri,
       authCodeData.code,
       transaction.state,

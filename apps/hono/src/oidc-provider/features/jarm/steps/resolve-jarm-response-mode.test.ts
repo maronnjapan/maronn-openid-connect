@@ -1,6 +1,7 @@
 import { AuthorizationError, type AuthorizationRequestParams, type ClientInfo } from '@maronn-openid-connect/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, contextOf } from '../../../../test-support/context.js';
+import { locationOf } from '../../../../test-support/authorize.js';
 import { decodeJwt } from '../../../../test-support/feature-endpoints.js';
 import { rs256Key } from '../../../../test-support/keys.js';
 import { resolveJarmResponseContext } from './resolve-jarm-response-mode.js';
@@ -38,8 +39,9 @@ describe('resolveJarmResponseContext', () => {
       expect(resolveJarmResponseContext(c, paramsWith(), client, REDIRECT_URI, 'state-1', TEST_ISSUER)).toBeUndefined();
     });
 
-    // JARM extends only the .jwt values; other response_mode values stay ignored as before.
-    it('should answer in the plain query response for response_mode=form_post', async () => {
+    // JARM extends only the .jwt values; form_post is left to the Form Post
+    // Response Mode (the step after this one in the pipeline).
+    it('should answer in no JARM response mode for response_mode=form_post', async () => {
       const c = await contextWithKeys();
 
       expect(
@@ -54,7 +56,7 @@ describe('resolveJarmResponseContext', () => {
       const c = await contextWithKeys();
 
       const mode = resolveJarmResponseContext(c, paramsWith('query.jwt'), client, REDIRECT_URI, 'state-1', TEST_ISSUER);
-      const location = new URL((await mode?.redirect(REDIRECT_URI, { code: 'code-1' })) ?? REDIRECT_URI);
+      const location = new URL(locationOf(await mode!.respond(REDIRECT_URI, { code: 'code-1' })));
 
       expect(mode?.name).toBe('query.jwt');
       expect(decodeJwt(location.searchParams.get('response') ?? '').payload).toEqual({

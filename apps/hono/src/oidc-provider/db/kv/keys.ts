@@ -21,6 +21,8 @@
  * browser sessions and consent do not expire; remove them yourself once they
  * are no longer needed.
  */
+import type { ClaimsParameter } from '@maronn-openid-connect/core';
+
 export const KEY_PREFIX = 'oidc:';
 
 function key(...parts: string[]): string {
@@ -161,7 +163,27 @@ export interface TransactionRecord {
     code_challenge_method: string | null;
     response_type: string;
     scope: string | null;
-    /** Not in the ER model: the other parameters of the request (prompt, max_age, claims, ...). */
+    /**
+     * Not in the ER model: the other parameters of OpenID Connect Core 1.0
+     * (§3.1.2.1, claims_locales §5.2, claims §5.5), each null when the request
+     * did not send it. response_mode is the response mode the OP answers in:
+     * form_post, or query.jwt for JARM's query.jwt and jwt. It is null for the
+     * query response, response_mode=query included. prompt is space-delimited,
+     * max_age is in seconds and claims is the claims request.
+     */
+    response_mode: string | null;
+    prompt: string | null;
+    max_age: number | null;
+    ui_locales: string | null;
+    claims_locales: string | null;
+    id_token_hint: string | null;
+    login_hint: string | null;
+    acr_values: string | null;
+    claims: ClaimsParameter | null;
+    /**
+     * Not in the ER model: the rest of the request (whether redirect_uri was
+     * sent, the audience, and the values a feature adds).
+     */
     payload: Record<string, unknown>;
   };
   /** Not in the ER model: the CSRF token, the failed sign-in attempts and the browser binding. */

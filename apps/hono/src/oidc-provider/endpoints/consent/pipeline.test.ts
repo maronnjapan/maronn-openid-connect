@@ -100,7 +100,7 @@ describe('submitConsent', () => {
 
     expect(await submitConsent(c, { csrfToken: CSRF_TOKEN, action: 'deny' })).toEqual({
       kind: 'authorization_response',
-      location: 'https://rp.example.com/callback?error=access_denied&state=state-1&iss=https%3A%2F%2Fop.example.com',
+      response: { method: 'redirect', location: 'https://rp.example.com/callback?error=access_denied&state=state-1&iss=https%3A%2F%2Fop.example.com' },
       cookies: [CLEARED_TRANSACTION_COOKIE],
     });
     expect(db.transactions.has('auth_txn:' + TRANSACTION_ID)).toBe(false);
@@ -115,7 +115,7 @@ describe('submitConsent', () => {
 
     expect(outcome).toEqual({
       kind: 'authorization_response',
-      location: `https://rp.example.com/callback?code=${code}&state=state-1&iss=https%3A%2F%2Fop.example.com`,
+      response: { method: 'redirect', location: `https://rp.example.com/callback?code=${code}&state=state-1&iss=https%3A%2F%2Fop.example.com` },
       cookies: [CLEARED_TRANSACTION_COOKIE],
     });
     expect(db.codes.get(code)).toMatchObject({ subject: 'alice', sessionId: 'sid-1', scope: ['openid', 'profile'] });

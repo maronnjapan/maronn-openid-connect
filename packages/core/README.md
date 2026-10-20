@@ -21,8 +21,9 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 ## 準拠仕様
 
-- OpenID Connect Core 1.0（Authorization Code Flow）
+- OpenID Connect Core 1.0（Authorization Code Flow、Implicit Flow）
 - OpenID Connect Discovery 1.0
+- OAuth 2.0 Multiple Response Type Encoding Practices（`response_type` の値の組み合わせ、`response_mode=fragment`）
 - OAuth 2.1（PKCE S256 必須、refresh token は absolute lifetime で失効）
 - RFC 7662 Token Introspection
 - RFC 7009 Token Revocation
@@ -37,7 +38,9 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`、PKCE（S256）、`scope` / `prompt` / `display` / `max_age` / `claims` / `acr_values` / `request` などのパラメータを、`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter` が機能単位で検証する。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵（`jwks` オプション）で検証する。CLI 生成コードはこれらを個別に呼び出すため、検証ステップを消したり独自処理を足したりできる |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`response_type=code`（呼び出し側が `validateResponseType` に渡せば Implicit Flow の `id_token token` と `id_token` も）、PKCE（S256）、`scope` / `prompt` / `display` / `max_age` / `claims` / `acr_values` / `request` などのパラメータを、`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter` が機能単位で検証する。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵（`jwks` オプション）で検証する。CLI 生成コードはこれらを個別に呼び出すため、検証ステップを消したり独自処理を足したりできる |
+| Implicit Flow のステップ関数 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可レスポンスの組み立て。`validateResponseType` の最後の引数に `IMPLICIT_RESPONSE_TYPES` を加えて渡すと、この 2 つも受け付ける。`requireNonce` は `nonce` を必須にし、`validateImplicitResponseMode` は `response_mode=query` を拒否し、`validateImplicitRedirectUri` は https 以外の redirect_uri を public client のループバックの http に限る（§3.2.2.1）。`returnsScopeClaimsInIdToken` は scope のクレームを ID Token に載せるか（`id_token` のとき。§5.4）を返し、`buildImplicitResponseParameters` がレスポンスのパラメータを、`buildFragmentResponseUrl` がそれをフラグメントに載せた URL を作る |
+| `normalizeResponseType` / `responseTypeIncludes` / `isImplicitResponseType` / `defaultResponseModeOf` | `response_type` の値の正規化（値の順序を問わない。OAuth 2.0 Multiple Response Type Encoding Practices §1.2）と判定、既定の response mode（トークンを返す response type はフラグメント。同 §2.1 / §3 / §5） |
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務。OAuth 2.1 §4.1.2） |

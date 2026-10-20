@@ -405,6 +405,7 @@ maronn-oidc generate express --disable pkce
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
 | `form-post-response-mode` | 有効 | `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）を解釈せず、認可レスポンスを従来どおりリダイレクト URI のクエリで返す。discovery の `response_modes_supported` から `form_post` を除く |
+| `implicit-flow` | 有効 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2 の Implicit Flow）を `unsupported_response_type` で拒否し、`response_type=code` だけに答える。discovery の `response_types_supported` からこの 2 つを、`response_modes_supported` から `fragment` を、`grant_types_supported` から `implicit` を除く |
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成されます。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになります。
@@ -679,7 +680,7 @@ export function createDatabase(): SqlDatabase {
 | `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
 | `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post。1 つのクライアントに両方を登録できる）と、シークレットのハッシュ |
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[Client Keys](#client-keys) を参照） |
-| `client_redirect_uris`、`client_grant_types`、`client_scopes` | リダイレクト URI、使ってよい grant type、要求してよいスコープ |
+| `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -704,9 +705,13 @@ private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK �
 ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 ```
 
+`client_response_types` は列ではなくテーブルなので、そのテーブルが加わる前の CLI で作ったデータベースでも、`schema.sql` を実行し直せば作られます。
+行の無いクライアントは、これまでどおり `response_type=code` だけを使えます。
+
 `transactions.status` は、認可リクエストがどこまで進んだかを表します。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進みます。
-同意の拒否や `prompt=none` のエラーのように、コードを発行せずに終わったトランザクションは `failed` になります。
+Implicit Flow（`implicit-flow`）でトークンを認可エンドポイントから返したトランザクションは、コードを経ずに `token_issued` になります。
+同意の拒否や `prompt=none` のエラーのように、コードもトークンも発行せずに終わったトランザクションは `failed` になります。
 OP は終わったトランザクションの行を消さず、`codes` と `access_tokens` から `transaction_id` で参照するので、どの認可リクエストからどのコードとトークンが出たかを後から追えます。
 期限切れの行も OP は消さないので、必要なら定期的に削除してください。
 
@@ -774,7 +779,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 
 レコードは、`--db sql` のテーブルと同じ ER モデルのエンティティごとにキーを分け、属性の名前もそろえています。
 1 つのエンティティに属するものは、そのレコードの中に入れます。
-たとえばクライアントのレコードは、認証の方式、シークレットのハッシュ、リダイレクト URI、grant type、スコープを持ち、1 回の `set` で書きます。
+たとえばクライアントのレコードは、認証の方式、シークレットのハッシュ、リダイレクト URI、grant type、response type、スコープを持ち、1 回の `set` で書きます。
 
 | キー | 保存するもの |
 |---|---|
@@ -848,7 +853,7 @@ Hono（Cloudflare D1）では、管理用のスクリプトから `registerClien
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行います（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js の生成コードは、クライアントを環境変数から読みません。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
-テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
+テーブルやレコードに無い登録メタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
 クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに `client_jwks` から読みます（[Client Keys](#client-keys) を参照）。
 
 ユーザーは、`users.ts` の `registerUser()` で DB に入れます。

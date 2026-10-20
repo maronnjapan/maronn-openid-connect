@@ -39,7 +39,7 @@ Location: https://client.example.com/cb?response=eyJhbGciOiJSUzI1NiIsImtpZCI6...
 | JARM §2.3.4 | 省略形 `jwt`（`response_type=code` では `query.jwt` と同義） |
 | JARM §3 | 署名アルゴリズムは **RS256 固定**（未登録クライアントの既定値と一致） |
 | JARM §4 | Provider Metadata（`response_modes_supported` / `authorization_signing_alg_values_supported`） |
-| JARM §2.3.2 | **非対応**（`fragment.jwt`。この OP は `response_type=code` のみ）。指定すると `invalid_request` |
+| JARM §2.3.2 | **非対応**（`fragment.jwt`）。指定すると `invalid_request` |
 | JARM §2.3.3 | **非対応**（`form_post.jwt`）。指定すると `invalid_request` |
 | JARM §2.2（JWE） | **非対応**（署名のみ。`authorization_encrypted_response_alg` / `_enc` は解釈しません） |
 | JARM §3（クライアント別 alg） | **非対応**（`authorization_signed_response_alg` の登録は解釈しません） |
@@ -99,7 +99,7 @@ export const jarmConfig = {
 |---|---|---|
 | 署名アルゴリズム | `RS256` | JARM §3 の未登録クライアント既定値。設定不能にすることで `alg: none` を構造的に生成しません |
 | 応答パラメータ名 | `response` | JARM §2.3.1 |
-| 対応 `response_mode` | `query.jwt` / `jwt` | この OP は `response_type=code` 専用 |
+| 対応 `response_mode` | `query.jwt` / `jwt` | JWT で保護するのは `response_type=code` だけ（JARM §2.3.1） |
 
 署名鍵は OP の汎用 `signingKeyProvider` が返す**登録鍵セットの中の RS256 鍵**です。ID Token 用に別の鍵を設定している場合でも、JARM 応答は汎用鍵で署名されます（JARM は応答 JWT の鍵用途を分けていません）。公開鍵は `/.well-known/jwks.json` に同じ `kid` で載るため、クライアントは `kid` で検証鍵を解決できます。
 
@@ -270,7 +270,8 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 - `fragment.jwt` / `form_post.jwt`（§2.3.2 / §2.3.3）は非対応です。指定すると `invalid_request` になります
 - 応答 JWT の暗号化（JWE, §2.2）は非対応です。署名のみで、ペイロードは base64url デコードすれば誰でも読めます
 - 署名アルゴリズムは RS256 固定です。クライアント別 `authorization_signed_response_alg`（§3）や PS256 / ES256 は非対応です
-- JARM が解釈するのは `.jwt` 系の `response_mode` だけで、有効化によって他の値の扱いは変わりません。`form_post` は安定機能 `form-post-response-mode` が受け持ち、`fragment` などは従来どおり**無視**します
+- JARM が解釈するのは `.jwt` 系の `response_mode` だけで、有効化によって他の値の扱いは変わりません。`form_post` は安定機能 `form-post-response-mode` が、`fragment` は安定機能 `implicit-flow` が受け持ちます
+- JWT で保護するのは、トークンを返さない `response_type=code` だけです。§2.3.1 は暗号化しない `query.jwt` をトークンを含む response type に使うことを禁じ、§2.3.4 はその `jwt` を本実装が非対応の `fragment.jwt` と解釈します。そのため Implicit Flow（`id_token token`、`id_token`）の要求に `.jwt` 系を指定すると、フラグメントで `invalid_request` を返します
 - Dynamic Client Registration がないため、クライアントメタデータによる JARM 設定はできません
 
 ## core 機能との違い

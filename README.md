@@ -176,7 +176,7 @@ pnpm --filter <package-name> <command>
 - OAuth 2.1（PKCE 必須）
 - OAuth 2.0 Form Post Response Mode（`response_mode=form_post`）
 - OAuth 2.0 Multiple Response Type Encoding Practices（`response_type` の値の組み合わせと `response_mode=fragment`）
-- OpenID Connect Conformance Profiles v3.0（Basic OP、Implicit OP）
+- OpenID Connect Conformance Profiles v3.0（Basic OP、Implicit OP、Hybrid OP）
 
 ### Basic OPの必須機能
 
@@ -190,6 +190,7 @@ pnpm --filter <package-name> <command>
 ### Authorization Code Flow 以外のフロー
 
 - Implicit Flow（`response_type=id_token token` と `id_token`。OpenID Connect Core 1.0 §3.2）。認可エンドポイントが ID Token（`id_token token` では Access Token も）を、リダイレクト URI のフラグメントで返す
+- Hybrid Flow（`response_type=code id_token`、`code token`、`code id_token token`。OpenID Connect Core 1.0 §3.3）。認可エンドポイントが認可コードと一緒に ID Token と Access Token の一方または両方をフラグメントで返し、クライアントはその認可コードをトークンエンドポイントで交換する
 
 ## ディレクトリの構成
 

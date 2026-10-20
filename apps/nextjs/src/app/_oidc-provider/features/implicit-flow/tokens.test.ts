@@ -45,7 +45,10 @@ function responseParamsOf(overrides: Partial<AuthorizationResponseParams> = {}):
 }
 
 /** Issue the tokens of the response type for the End-User, who registered with a name and an email. */
-async function issue(responseType: string, input: { responseParams?: Partial<AuthorizationResponseParams> } = {}) {
+async function issue(
+  responseType: string,
+  input: { responseParams?: Partial<AuthorizationResponseParams>; grantedScope?: string[] } = {},
+) {
   const signingKey = await rs256Key();
   await registerClient(createDatabase(), {
     clientId: CLIENT_ID,
@@ -57,7 +60,7 @@ async function issue(responseType: string, input: { responseParams?: Partial<Aut
     responseType,
     responseParams: responseParamsOf(input.responseParams),
     session: { subject: SUBJECT, authTime: AUTH_TIME },
-    grantedScope: ['openid', 'profile'],
+    grantedScope: input.grantedScope ?? ['openid', 'profile'],
     keys: providerSigningKeys(signingKey),
   });
   return { ...issued, signingKey };
@@ -153,6 +156,57 @@ describe('issueImplicitTokens', () => {
         nonce: 'nonce-1',
         auth_time: AUTH_TIME,
       });
+    });
+  });
+
+  // OIDC Core 1.0 §5.5: the id_token member of the claims parameter requests
+  // claims to be added to the ID Token, whatever the scope and the response type.
+  describe('claims parameter', () => {
+    it('should add the claims requested by claims.id_token to the ID Token of id_token', async () => {
+      const { parameters } = await issue('id_token', {
+        responseParams: { scope: ['openid'], claims: { id_token: { name: { essential: true } } } },
+        grantedScope: ['openid'],
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).toEqual({
+        name: 'Alice',
+        iss: ISSUER,
+        sub: SUBJECT,
+        aud: CLIENT_ID,
+        exp: NOW + 3600,
+        iat: NOW,
+        nonce: 'nonce-1',
+        auth_time: AUTH_TIME,
+      });
+    });
+
+    // The claims of the scope values stay with the UserInfo endpoint (§5.4);
+    // the claim requested for the ID Token is added to it.
+    it('should add only the claims requested by claims.id_token to the ID Token of id_token token', async () => {
+      const { parameters } = await issue('id_token token', {
+        responseParams: { claims: { id_token: { email: null } } },
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).toEqual({
+        email: 'alice@example.com',
+        iss: ISSUER,
+        sub: SUBJECT,
+        aud: CLIENT_ID,
+        exp: NOW + 3600,
+        iat: NOW,
+        at_hash: await leftHalfSha256(parameters['access_token'] ?? ''),
+        nonce: 'nonce-1',
+        auth_time: AUTH_TIME,
+      });
+    });
+
+    // The userinfo member asks the UserInfo endpoint for the claims (§5.5).
+    it('should leave the claims requested by claims.userinfo out of the ID Token', async () => {
+      const { parameters } = await issue('id_token token', {
+        responseParams: { claims: { userinfo: { email: { essential: true } } } },
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).not.toHaveProperty('email');
     });
   });
 

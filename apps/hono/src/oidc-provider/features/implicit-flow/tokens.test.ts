@@ -226,6 +226,57 @@ describe('issueImplicitTokens', () => {
     });
   });
 
+  // OIDC Core 1.0 §5.5: the id_token member of the claims parameter requests
+  // claims to be added to the ID Token, whatever the scope and the response type.
+  describe('claims parameter', () => {
+    it('should add the claims requested by claims.id_token to the ID Token of id_token', async () => {
+      const { parameters } = await issue('id_token', {
+        responseParams: { scope: ['openid'], claims: { id_token: { name: { essential: true } } } },
+        grantedScope: ['openid'],
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).toEqual({
+        name: 'Alice',
+        iss: TEST_ISSUER,
+        sub: SUBJECT,
+        aud: CLIENT_ID,
+        exp: NOW + 3600,
+        iat: NOW,
+        nonce: NONCE,
+        auth_time: AUTH_TIME,
+      });
+    });
+
+    // The claims of the scope values stay with the UserInfo endpoint (§5.4);
+    // the claim requested for the ID Token is added to it.
+    it('should add only the claims requested by claims.id_token to the ID Token of id_token token', async () => {
+      const { parameters } = await issue('id_token token', {
+        responseParams: { claims: { id_token: { email: null } } },
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).toEqual({
+        email: 'alice@example.com',
+        iss: TEST_ISSUER,
+        sub: SUBJECT,
+        aud: CLIENT_ID,
+        exp: NOW + 3600,
+        iat: NOW,
+        at_hash: await leftHalfSha256(parameters['access_token'] ?? ''),
+        nonce: NONCE,
+        auth_time: AUTH_TIME,
+      });
+    });
+
+    // The userinfo member asks the UserInfo endpoint for the claims (§5.5).
+    it('should leave the claims requested by claims.userinfo out of the ID Token', async () => {
+      const { parameters } = await issue('id_token token', {
+        responseParams: { claims: { userinfo: { email: { essential: true } } } },
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).not.toHaveProperty('email');
+    });
+  });
+
   describe('acr / amr', () => {
     // OIDC Core 1.0 §2: the acrResolver of the app decides acr and amr.
     it('should put the acr and amr the acrResolver returns into the tokens', async () => {

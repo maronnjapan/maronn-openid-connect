@@ -1,8 +1,11 @@
 import {
   type SigningKey,
+  type UserClaims,
   buildIdTokenPayload,
   computeAtHash,
   generateIdToken,
+  hasRequestedIdTokenClaims,
+  selectRequestedIdTokenClaims,
   type ValidatedTokenRequest,
 } from '@maronn-openid-connect/core';
 import { step } from '../../step.js';
@@ -12,9 +15,9 @@ export const meta = step({
   endpoint: 'token',
   kind: 'issue',
   label: 'Issue the ID Token',
-  spec: 'OIDC Core 1.0 §3.1.3.6 / §12.1',
+  spec: 'OIDC Core 1.0 §3.1.3.6 / §5.5 / §12.1',
   function: 'issueIdToken',
-  calls: ['computeAtHash', 'buildIdTokenPayload', 'generateIdToken'],
+  calls: ['computeAtHash', 'hasRequestedIdTokenClaims', 'selectRequestedIdTokenClaims', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['idTokenSigningKey', 'accessToken', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'acr', 'amr'],
   produces: ['idToken'],
   removable: true,
@@ -23,10 +26,11 @@ export const meta = step({
 
 /**
  * Issue the ID Token when the grant carries the openid scope: at_hash binds
- * it to the access token (§3.1.3.6), and acr / amr are the ones
+ * it to the access token (§3.1.3.6), acr / amr are the ones
  * resolveTokenAcrAmr() settled on (kept from the first authentication on a
- * refresh, §12.1).
- * OIDC Core 1.0 §3.1.3.6 / §12.1
+ * refresh, §12.1), and the claims the id_token member of the claims parameter
+ * of the authorization request asks for are added (§5.5).
+ * OIDC Core 1.0 §3.1.3.6 / §5.5 / §12.1
  */
 export async function issueIdToken(
   c: any,
@@ -56,6 +60,15 @@ export async function issueIdToken(
   // The hash function follows the ID Token signing alg.
   const atHash = await computeAtHash(accessToken, idTokenSigningKey.privateKey);
 
+  // OIDC Core 1.0 §5.5: the claims the id_token member of the claims parameter
+  // of the authorization request asks for, whatever the scope (the claims of
+  // the scope values stay with the UserInfo endpoint, §5.4). A refresh carries
+  // no claims request.
+  const claims = validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined;
+  const userClaims = hasRequestedIdTokenClaims(claims)
+    ? ((await c.get('userClaimsResolver').findUserClaims(subject)) as UserClaims | null) ?? undefined
+    : undefined;
+
   const idTokenPayload = buildIdTokenPayload({
     issuer: config.issuer,
     subject,
@@ -68,6 +81,7 @@ export async function issueIdToken(
     authTime,
     acr,
     amr,
+    requestedClaims: userClaims === undefined ? undefined : selectRequestedIdTokenClaims(userClaims, claims),
   });
 
   // Add your own ID Token claims here, e.g.:

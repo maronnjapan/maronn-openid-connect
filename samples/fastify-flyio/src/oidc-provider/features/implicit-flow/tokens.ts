@@ -11,7 +11,8 @@
  * the ID Token (§3.2.2.10), at_hash binds it to the access token when there
  * is one, and for response_type=id_token, which issues no access token for
  * the UserInfo endpoint, the ID Token carries the claims of the scope values
- * (§5.4).
+ * (§5.4). As from the token endpoint, the ID Token also carries the claims the
+ * id_token member of the claims parameter requests (§5.5).
  */
 import {
   AuthorizationError,
@@ -25,10 +26,12 @@ import {
   createOpaqueAccessTokenIssuer,
   generateIdToken,
   generateRandomString,
+  hasRequestedIdTokenClaims,
   resolveAcrAmr,
   responseTypeIncludes,
   returnsScopeClaimsInIdToken,
   selectPreferredAcr,
+  selectRequestedIdTokenClaims,
   selectRequestedAcrValues,
   selectSigningKeyByAlg,
   type AcrResolver,
@@ -105,7 +108,10 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
 
   // OIDC Core 1.0 §5.4: response_type=id_token issues no access token for the
   // UserInfo endpoint, so the claims of the scope values go into the ID Token.
-  const userClaims = returnsScopeClaimsInIdToken(responseType)
+  // §5.5: the claims the id_token member of the claims parameter requests go
+  // into the ID Token of either response type.
+  const scopeClaimsInIdToken = returnsScopeClaimsInIdToken(responseType);
+  const userClaims = scopeClaimsInIdToken || hasRequestedIdTokenClaims(responseParams.claims)
     ? ((await c.get('userClaimsResolver').findUserClaims(session.subject)) as UserClaims | null) ?? undefined
     : undefined;
 
@@ -124,7 +130,8 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
     authTime: session.authTime,
     acr,
     amr,
-    userClaims,
+    userClaims: scopeClaimsInIdToken ? userClaims : undefined,
+    requestedClaims: userClaims === undefined ? undefined : selectRequestedIdTokenClaims(userClaims, responseParams.claims),
   });
 
   // Add your own ID Token claims here, as in the issue-id-token step of endpoints/token/.

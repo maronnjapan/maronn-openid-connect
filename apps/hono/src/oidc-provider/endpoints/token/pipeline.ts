@@ -93,7 +93,7 @@ tokenApp.post('/', async (c) => {
     const issuedAt = Math.floor(Date.now() / 1000);
     const { accessToken, accessTokenPayload, audience } = await issueAccessToken(c, { signingKey, subject, validatedRequest, issuedAt, acr });
 
-    // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §12.1
+    // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §5.5 / §12.1
     const idToken = await issueIdToken(c, { idTokenSigningKey, accessToken, subject, authTime, nonce, validatedRequest, issuedAt, acr, amr });
 
     // [persist-access-token] Store the access token record — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2

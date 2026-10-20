@@ -26,6 +26,8 @@ import {
   resolveAcrAmr,
   buildIdTokenPayload,
   generateIdToken,
+  hasRequestedIdTokenClaims,
+  selectRequestedIdTokenClaims,
   buildAccessTokenAudience,
   extractClientCredentials,
   validateClientAuthMethod,
@@ -270,7 +272,7 @@ async function token(request: Request): Promise<Response> {
       keyId: keys.general[0].keyId,
     });
 
-    // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §12.1
+    // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §5.5 / §12.1
     // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
     // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / acr / amr / azp で再発行する。
     // （§12.2 は nonce を再発行 ID Token の保持クレームに挙げないため nonce は refresh では undefined）
@@ -279,6 +281,15 @@ async function token(request: Request): Promise<Response> {
       // OIDC Core 1.0 §3.1.3.6: at_hash binds the ID Token to this access token.
       // The hash function follows the ID Token signing alg.
       const atHash = await computeAtHash(accessToken, idTokenKey.privateKey);
+
+      // OIDC Core 1.0 §5.5: the claims the id_token member of the claims
+      // parameter of the authorization request asks for, whatever the scope
+      // (the claims of the scope values stay with the UserInfo endpoint, §5.4).
+      // A refresh carries no claims request.
+      const claims = validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined;
+      const userClaims = hasRequestedIdTokenClaims(claims)
+        ? (await resolvers.userClaimsResolver.findUserClaims(subject)) ?? undefined
+        : undefined;
 
       const idTokenPayload = buildIdTokenPayload({
         issuer: config.issuer,
@@ -292,6 +303,7 @@ async function token(request: Request): Promise<Response> {
         authTime,
         acr,
         amr,
+        requestedClaims: userClaims === undefined ? undefined : selectRequestedIdTokenClaims(userClaims, claims),
       });
 
       // Add your own ID Token claims here, e.g.:

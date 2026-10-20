@@ -7,6 +7,8 @@ import {
   resolveUserInfoClaims,
   filterClaimsByScope,
   applyRequestedClaims,
+  selectRequestedIdTokenClaims,
+  hasRequestedIdTokenClaims,
   generateUserInfoJwt,
   UserInfoError,
   UserInfoErrorCode,
@@ -395,6 +397,112 @@ describe('filterClaimsByScope', () => {
 // OIDC Core 1.0 Section 5.5: claims request parameter
 // Tests that do not chain filterClaimsByScope pass { sub } as the scoped response,
 // which is what filterClaimsByScope returns when only the openid scope is granted.
+// OIDC Core 1.0 Section 5.5: the id_token member of the claims parameter
+// requests individual Claims to be added to the default Claims of the ID Token.
+describe('selectRequestedIdTokenClaims', () => {
+  const fullClaims = createFullUserClaims();
+
+  describe('Requested Claims', () => {
+    it('should select the standard claims requested by claims.id_token', () => {
+      const result = selectRequestedIdTokenClaims(fullClaims, {
+        id_token: {
+          name: { essential: true },
+          email: null,
+        },
+      });
+      expect(result).toEqual({ name: 'Jane Doe', email: 'janedoe@example.com' });
+    });
+
+    it('should select an object claim requested by claims.id_token', () => {
+      const result = selectRequestedIdTokenClaims(fullClaims, { id_token: { address: null } });
+      expect(result).toEqual({
+        address: {
+          formatted: '123 Main St\nAnytown, CA 12345\nUSA',
+          street_address: '123 Main St',
+          locality: 'Anytown',
+          region: 'CA',
+          postal_code: '12345',
+          country: 'USA',
+        },
+      });
+    });
+
+    // The userinfo member requests the claims of the UserInfo response, not of the ID Token.
+    it('should not select claims requested only by claims.userinfo', () => {
+      const result = selectRequestedIdTokenClaims(fullClaims, { userinfo: { name: { essential: true } } });
+      expect(result).toEqual({});
+    });
+
+    it('should return no claims when the claims parameter is absent', () => {
+      expect(selectRequestedIdTokenClaims(fullClaims, undefined)).toEqual({});
+    });
+
+    // OIDC Core 1.0 Section 5.5.1: a requested Claim the OP cannot return is
+    // omitted, not an error.
+    it('should omit a requested claim the End-User does not have', () => {
+      const result = selectRequestedIdTokenClaims({ sub: 'user-123', name: 'Jane Doe' }, {
+        id_token: { name: null, email: { essential: true } },
+      });
+      expect(result).toEqual({ name: 'Jane Doe' });
+    });
+  });
+
+  describe('Claims of the ID Token itself', () => {
+    // OIDC Core 1.0 Section 2: sub identifies the authenticated End-User, and
+    // the OP sets it from the session.
+    it('should not select sub', () => {
+      const result = selectRequestedIdTokenClaims(fullClaims, { id_token: { sub: null, name: null } });
+      expect(result).toEqual({ name: 'Jane Doe' });
+    });
+
+    // acr is settled from the requested acr values (selectRequestedAcrValues),
+    // and auth_time from the session: they are not End-User claims.
+    it('should not select claims that are not standard End-User claims', () => {
+      const claimsWithExtras = { ...fullClaims, acr: 'spoofed', nonce: 'spoofed' } as UserClaims;
+      const result = selectRequestedIdTokenClaims(claimsWithExtras, {
+        id_token: { acr: { essential: true }, auth_time: { essential: true }, nonce: null },
+      });
+      expect(result).toEqual({});
+    });
+  });
+
+  // OIDC Core 1.0 Section 5.5.1: value / values request the Claim with specific values.
+  describe('value / values matching (OIDC Core Section 5.5.1)', () => {
+    it('should select a claim whose value matches the requested value', () => {
+      const result = selectRequestedIdTokenClaims(fullClaims, {
+        id_token: { email: { value: 'janedoe@example.com' } },
+      });
+      expect(result).toEqual({ email: 'janedoe@example.com' });
+    });
+
+    it('should omit a claim whose value is not among the requested values', () => {
+      const result = selectRequestedIdTokenClaims(fullClaims, {
+        id_token: { email: { values: ['a@example.com', 'b@example.com'] } },
+      });
+      expect(result).toEqual({});
+    });
+  });
+});
+
+describe('hasRequestedIdTokenClaims', () => {
+  it('should be true when claims.id_token requests a standard End-User claim', () => {
+    expect(hasRequestedIdTokenClaims({ id_token: { name: { essential: true } } })).toBe(true);
+  });
+
+  // Requesting acr or auth_time needs no End-User claims.
+  it('should be false when claims.id_token requests only claims of the ID Token itself', () => {
+    expect(hasRequestedIdTokenClaims({ id_token: { acr: { values: ['urn:loa:1'] }, auth_time: null } })).toBe(false);
+  });
+
+  it('should be false when only claims.userinfo requests claims', () => {
+    expect(hasRequestedIdTokenClaims({ userinfo: { name: null } })).toBe(false);
+  });
+
+  it('should be false when the claims parameter is absent', () => {
+    expect(hasRequestedIdTokenClaims(undefined)).toBe(false);
+  });
+});
+
 describe('applyRequestedClaims', () => {
   const fullClaims = createFullUserClaims();
 

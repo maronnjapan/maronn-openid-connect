@@ -491,6 +491,64 @@ export function applyRequestedClaims(
 }
 
 /**
+ * claims パラメータの id_token メンバーで ID Token に追加できるクレームの名前。
+ * OIDC Core 1.0 Section 5.1 の End-User の標準クレーム（{@link SCOPE_CLAIMS_MAP} が scope 値に
+ * 割り当てるクレーム）に限る。sub と ID Token 自体のクレーム（iss / aud / exp / iat / auth_time /
+ * nonce / acr / amr / azp など）は、OP が認証の結果から決める（acr は selectRequestedAcrValues()）。
+ */
+const ID_TOKEN_REQUESTABLE_CLAIM_NAMES: ReadonlySet<string> = new Set(Object.values(SCOPE_CLAIMS_MAP).flat());
+
+/**
+ * {@link selectRequestedIdTokenClaims} が選ぶクレーム（sub を除く End-User のクレーム）。
+ */
+export type RequestedIdTokenClaims = Partial<Omit<UserClaims, 'sub'>>;
+
+/**
+ * claims パラメータの id_token メンバーで個別に要求された End-User のクレームを選ぶ
+ * OIDC Core 1.0 Section 5.5 / 5.5.1
+ *
+ * id_token メンバーは、ID Token の既定のクレームに加えるクレームを、scope 値とは別に要求する。
+ * 認可コードの交換で発行する ID Token にも、Implicit Flow の認可エンドポイントが返す ID Token にも使う。
+ *
+ * - 選ぶのは End-User の標準クレーム（profile / email / address / phone の各 scope 値が表すクレーム）だけ
+ * - End-User が持たないクレームは選ばない（§5.5.1: 返せない要求はエラーにしない）
+ * - value / values の制約に一致しない値は選ばない（{@link matchesRequestedClaimValue}）
+ *
+ * 入力は変更しない。
+ *
+ * @param userClaims End-User の全クレーム
+ * @param claimsParameter Authorization Request の claims パラメータ
+ * @returns ID Token に追加するクレーム（buildIdTokenPayload() の requestedClaims に渡す）
+ */
+export function selectRequestedIdTokenClaims(
+  userClaims: UserClaims,
+  claimsParameter: ClaimsParameter | undefined,
+): RequestedIdTokenClaims {
+  const result: Record<string, unknown> = {};
+  for (const [claimName, entry] of Object.entries(claimsParameter?.id_token ?? {})) {
+    if (!ID_TOKEN_REQUESTABLE_CLAIM_NAMES.has(claimName)) continue;
+    const value = userClaims[claimName as keyof UserClaims];
+    if (value === undefined || value === null) continue;
+    if (!matchesRequestedClaimValue(value, entry ?? null)) continue;
+    result[claimName] = value;
+  }
+  return result as RequestedIdTokenClaims;
+}
+
+/**
+ * claims パラメータの id_token メンバーが End-User の標準クレームを要求しているかを返す
+ * OIDC Core 1.0 Section 5.5
+ *
+ * false なら、ID Token のために End-User のクレームを読まなくてよい（acr や auth_time だけを
+ * 要求する場合など）。
+ */
+export function hasRequestedIdTokenClaims(claimsParameter: ClaimsParameter | undefined): boolean {
+  return Object.keys(claimsParameter?.id_token ?? {}).some((claimName) =>
+    ID_TOKEN_REQUESTABLE_CLAIM_NAMES.has(claimName),
+  );
+}
+
+/**
  * UserInfo を JWT 形式で発行するためのオプション
  * OIDC Core 1.0 Section 5.3.2
  */

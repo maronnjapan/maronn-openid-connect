@@ -55,7 +55,7 @@ core の純関数            ← このパッケージ
 | 共通ステップ関数 | `validateGrantTypeSupported` / `resolveAuthenticatedTokenClient` / `validateClientGrantType` |
 | authorization_code のステップ関数 | `resolveAuthorizationCode` / `validateAuthorizationCodeUnused` / `validateAuthorizationCodeClient` / `validateAuthorizationCodeExpiration` / `validateAuthorizationCodeRedirectUri` / `verifyAuthorizationCodePkce` / `consumeAuthorizationCode` / `buildValidatedAuthorizationCodeRequest` |
 | refresh_token のステップ関数 | `resolveRefreshToken` / `validateRefreshTokenUnused` / `validateRefreshTokenClient` / `validateRefreshTokenExpiration` / `validateRefreshTokenIdleTimeout` / `validateRefreshTokenSession` / `validateRefreshTokenScope` / `buildValidatedRefreshTokenRequest` |
-| トークンレスポンス生成のステップ関数 | アクセストークンと ID トークンの発行。`buildAccessTokenPayload` / `computeAtHash` / `resolveAcrAmr` / `selectPreferredAcr` / `buildIdTokenPayload` / `generateIdToken`。`buildAccessTokenPayload` の `acr` を指定すると、アクセストークンにも ID トークンと同じ `acr` が入る（RFC 9068 §2.2.1） |
+| トークンレスポンス生成のステップ関数 | アクセストークンと ID トークンの発行。`buildAccessTokenPayload` / `computeAtHash` / `resolveAcrAmr` / `selectPreferredAcr` / `buildIdTokenPayload` / `selectRequestedIdTokenClaims` / `hasRequestedIdTokenClaims` / `generateIdToken`。`buildAccessTokenPayload` の `acr` を指定すると、アクセストークンにも ID トークンと同じ `acr` が入る（RFC 9068 §2.2.1）。claims パラメータの `id_token` メンバーが要求したクレーム（OIDC Core 1.0 §5.5）は、`selectRequestedIdTokenClaims` で選んで `buildIdTokenPayload` の `requestedClaims` に渡すと、ID トークンに入る |
 | `createJwtAccessTokenIssuer` / `createOpaqueAccessTokenIssuer` | アクセストークン形式（JWT / Opaque）の切り替え |
 
 ### UserInfo Endpoint

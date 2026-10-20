@@ -2,7 +2,7 @@ import type { IdTokenPayload } from './id-token.js';
 import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJwaAlgorithm, jwaToHashName } from './crypto-utils.js';
 import type { AccessTokenPayload } from './access-token.js';
 import { filterClaimsByScope } from './userinfo.js';
-import type { UserClaims, ClaimsParameter } from './userinfo.js';
+import type { UserClaims, ClaimsParameter, RequestedIdTokenClaims } from './userinfo.js';
 import { parseAcrValues } from './acr.js';
 
 /**
@@ -302,6 +302,11 @@ export interface IdTokenPayloadInput {
   idTokenAudiences?: string[];
   /** scope に応じて含めるユーザクレーム */
   userClaims?: UserClaims;
+  /**
+   * OIDC Core 1.0 §5.5: claims パラメータの id_token メンバーで個別に要求されたクレーム。
+   * scope とは別に含める。selectRequestedIdTokenClaims() が選んだ値を渡す
+   */
+  requestedClaims?: RequestedIdTokenClaims;
 }
 
 /**
@@ -325,6 +330,7 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
     amr,
     idTokenAudiences,
     userClaims,
+    requestedClaims,
   } = input;
   const issuedAt = input.issuedAt ?? Math.floor(Date.now() / 1000);
 
@@ -335,6 +341,11 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
   // ここではユーザクレーム由来の sub などによる spoof を防げる。
   if (userClaims) {
     Object.assign(payload, filterClaimsByScope(userClaims, scope));
+  }
+  // OIDC Core 1.0 §5.5: claims.id_token で個別に要求されたクレームを scope のクレームに加える。
+  // 必須クレームより先に入れるので、要求で必須クレームを上書きすることはできない。
+  if (requestedClaims) {
+    Object.assign(payload, requestedClaims);
   }
 
   payload.iss = issuer;

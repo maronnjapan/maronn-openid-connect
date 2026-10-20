@@ -152,6 +152,31 @@ test.describe('Authorization Code Flow', () => {
       email_verified: true,
     });
   });
+
+  // OIDC Core 1.0 §5.5: the id_token member of the claims parameter adds the
+  // claims it requests to the ID Token, whatever the scope. The claims of the
+  // scope values stay with the UserInfo endpoint (§5.4).
+  test('should add the claims requested by claims.id_token to the ID Token', async ({
+    page,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const claims = JSON.stringify({ id_token: { phone_number: { essential: true } } });
+
+    await page.goto(`${clientBaseURL}/start?claims=${encodeURIComponent(claims)}`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    await page.getByLabel('Username:').fill('testuser');
+    await page.getByLabel('Password:').fill('password');
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByTestId('token-type')).toHaveText('Bearer');
+
+    const idToken = parseJwt(await locatorText(page.getByTestId('token-id-token'), 'ID Token'));
+    expect(idToken.payload.phone_number).toBe('+81-3-0000-0000');
+    // scope=openid profile email: the profile claims are not requested for the ID Token.
+    expect(idToken.payload.name).toBe(undefined);
+  });
 });
 
 interface ProviderMetadata {

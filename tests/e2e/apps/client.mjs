@@ -137,6 +137,8 @@ async function startAuthorization(requestUrl, res, options = {}) {
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'prompt');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'id_token_hint');
   copyOptionalSearchParam(requestUrl, authorizationUrl, 'acr_values');
+  // OIDC Core 1.0 §5.5: the claims request parameter (JSON).
+  copyOptionalSearchParam(requestUrl, authorizationUrl, 'claims');
   // EXPERIMENTAL (JARM §2.3): query.jwt / jwt select the JWT-secured response,
   // and form_post (Form Post Response Mode §2) a response posted from a form.
   // The request itself is otherwise identical to the plain code flow.

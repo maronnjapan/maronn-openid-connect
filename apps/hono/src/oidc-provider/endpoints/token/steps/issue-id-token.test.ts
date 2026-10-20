@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER, providerContext } from '../../../../test-support/context.js';
 import { rs256Key } from '../../../../test-support/keys.js';
+import { registerUser } from '../../../db/memory/users.js';
 import {
   AUTH_TIME,
   CLIENT_ID,
@@ -94,6 +95,70 @@ describe('issueIdToken', () => {
       auth_time: AUTH_TIME,
       acr: 'urn:acr:mfa',
       amr: ['pwd', 'otp'],
+    });
+  });
+
+  // OIDC Core 1.0 §5.5: the id_token member of the claims parameter of the
+  // authorization request adds those claims to the ID Token, whatever the scope.
+  // The claims of the scope values stay with the UserInfo endpoint (§5.4).
+  it('should add the claims requested by claims.id_token of the authorization request', async () => {
+    const { c, db, signingKey } = await providerContext();
+    await registerUser(db, { sub: SUBJECT, name: 'Alice', email: 'alice@example.com' });
+
+    const idToken = await issueIdToken(c, {
+      idTokenSigningKey: signingKey,
+      accessToken: ACCESS_TOKEN,
+      subject: SUBJECT,
+      authTime: AUTH_TIME,
+      nonce: 'nonce-1',
+      validatedRequest: authorizationCodeRequest({
+        scope: ['openid', 'profile'],
+        claims: { id_token: { email: { essential: true } } },
+      }),
+      issuedAt: NOW,
+      acr: undefined,
+      amr: undefined,
+    });
+
+    expect(decodeJwt(idToken ?? '').payload).toEqual({
+      email: 'alice@example.com',
+      iss: TEST_ISSUER,
+      sub: SUBJECT,
+      aud: CLIENT_ID,
+      exp: NOW + 3600,
+      iat: NOW,
+      at_hash: await leftHalfSha256(ACCESS_TOKEN),
+      nonce: 'nonce-1',
+      auth_time: AUTH_TIME,
+    });
+  });
+
+  // The userinfo member asks the UserInfo endpoint for the claims (OIDC Core 1.0 §5.5).
+  it('should leave the claims requested by claims.userinfo out of the ID Token', async () => {
+    const { c, db, signingKey } = await providerContext();
+    await registerUser(db, { sub: SUBJECT, name: 'Alice', email: 'alice@example.com' });
+
+    const idToken = await issueIdToken(c, {
+      idTokenSigningKey: signingKey,
+      accessToken: ACCESS_TOKEN,
+      subject: SUBJECT,
+      authTime: AUTH_TIME,
+      nonce: 'nonce-1',
+      validatedRequest: authorizationCodeRequest({ claims: { userinfo: { email: { essential: true } } } }),
+      issuedAt: NOW,
+      acr: undefined,
+      amr: undefined,
+    });
+
+    expect(decodeJwt(idToken ?? '').payload).toEqual({
+      iss: TEST_ISSUER,
+      sub: SUBJECT,
+      aud: CLIENT_ID,
+      exp: NOW + 3600,
+      iat: NOW,
+      at_hash: await leftHalfSha256(ACCESS_TOKEN),
+      nonce: 'nonce-1',
+      auth_time: AUTH_TIME,
     });
   });
 

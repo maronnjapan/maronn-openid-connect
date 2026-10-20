@@ -316,6 +316,8 @@ export {
   resolveUserInfoClaims,
   applyRequestedClaims,
   matchesRequestedClaimValue,
+  selectRequestedIdTokenClaims,
+  hasRequestedIdTokenClaims,
 } from './userinfo.js';
 
 export type {
@@ -329,6 +331,7 @@ export type {
   ClaimRequestValue,
   UserInfoResponse,
   UserInfoJwtOptions,
+  RequestedIdTokenClaims,
 } from './userinfo.js';
 
 export {

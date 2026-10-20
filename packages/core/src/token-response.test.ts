@@ -861,6 +861,63 @@ describe('buildIdTokenPayload', () => {
       });
     });
   });
+
+  // OIDC Core 1.0 §5.5: the claims of the id_token member of the claims
+  // parameter are added to the default claims of the ID Token, whatever the
+  // scope (selectRequestedIdTokenClaims picks them from the End-User's claims).
+  describe('ID Token claims requested by the claims parameter', () => {
+    it('should add the requested claims to an ID Token without scope claims', () => {
+      const payload = buildIdTokenPayload(
+        idTokenInput({ scope: ['openid'], requestedClaims: { name: 'Alice' } }),
+      );
+      expect(payload).toStrictEqual({
+        iss: 'https://op.example.com',
+        sub: 'user-123',
+        aud: 'client-456',
+        exp: NOW + 3600,
+        iat: NOW,
+        name: 'Alice',
+      });
+    });
+
+    it('should add the requested claims beside the scope claims', () => {
+      const payload = buildIdTokenPayload(
+        idTokenInput({
+          scope: ['openid', 'email'],
+          userClaims: { sub: 'user-123', name: 'Alice', email: 'alice@example.com', email_verified: true },
+          requestedClaims: { name: 'Alice' },
+        }),
+      );
+      expect(payload).toStrictEqual({
+        iss: 'https://op.example.com',
+        sub: 'user-123',
+        aud: 'client-456',
+        exp: NOW + 3600,
+        iat: NOW,
+        email: 'alice@example.com',
+        email_verified: true,
+        name: 'Alice',
+      });
+    });
+
+    it('should not let requested claims override required ID Token claims', () => {
+      const payload = buildIdTokenPayload(
+        idTokenInput({
+          subject: 'user-required',
+          scope: ['openid'],
+          requestedClaims: { name: 'Alice', iss: 'https://spoofed.example', sub: 'spoofed-sub' } as IdTokenPayloadInput['requestedClaims'],
+        }),
+      );
+      expect(payload).toStrictEqual({
+        iss: 'https://op.example.com',
+        sub: 'user-required',
+        aud: 'client-456',
+        exp: NOW + 3600,
+        iat: NOW,
+        name: 'Alice',
+      });
+    });
+  });
 });
 
 describe('generateIdToken', () => {

@@ -536,6 +536,17 @@ describe('validateSupportedResponseType', () => {
       }),
     );
   });
+
+  // RFC 6749 §3.1.1: the values are separated by single spaces.
+  it('should reject values separated by more than one space, or with a leading or trailing space', () => {
+    const validate = (responseType: string) => () =>
+      validateSupportedResponseType(responseType, 'https://client.example/cb', undefined, ['code', 'id_token token']);
+    const unsupported = expect.objectContaining({ error: 'unsupported_response_type' });
+
+    expect(validate('code ')).toThrow(unsupported);
+    expect(validate(' code')).toThrow(unsupported);
+    expect(validate('id_token  token')).toThrow(unsupported);
+  });
 });
 
 describe('validateClientResponseType', () => {

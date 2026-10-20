@@ -36,13 +36,15 @@ describe('normalizeResponseType', () => {
     });
   });
 
+  // RFC 6749 §3.1.1: the values are separated by single spaces. A malformed
+  // value keeps its empty values, so it matches no response type the OP knows.
   describe('delimiters', () => {
-    it('should drop the empty values of repeated, leading and trailing spaces', () => {
-      expect(normalizeResponseType(' id_token  token ')).toBe('id_token token');
+    it('should keep the empty values of repeated, leading and trailing spaces after the known values', () => {
+      expect(normalizeResponseType(' id_token  token ')).toBe('id_token token   ');
     });
 
-    it('should return an empty string for a value of spaces only', () => {
-      expect(normalizeResponseType('   ')).toBe('');
+    it('should keep a trailing space after code', () => {
+      expect(normalizeResponseType('code ')).toBe('code ');
     });
   });
 

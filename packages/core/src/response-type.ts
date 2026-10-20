@@ -31,7 +31,9 @@ const RESPONSE_TYPE_VALUE_ORDER: readonly string[] = ['code', 'id_token', 'token
  * 値を code、id_token、token の順に並べ直し、1 つの空白で連結した文字列を返す。
  * 知らない値はその後ろに文字コード順で並べる。
  *
- * 同じ値の重複は取り除かない。重複のある response_type は、OP が扱うどの値とも一致しない。
+ * 同じ値の重複は取り除かない。空白の重なりや前後の空白（RFC 6749 §3.1.1 の 1 つの空白で
+ * 区切る形に反する値）が作る空の値も、知らない値として残す。どちらの response_type も、
+ * OP が扱うどの値とも一致しない。
  */
 export function normalizeResponseType(responseType: string): string {
   const rank = (value: string): number => {
@@ -40,7 +42,6 @@ export function normalizeResponseType(responseType: string): string {
   };
   return responseType
     .split(' ')
-    .filter((value) => value.length > 0)
     .sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))
     .join(' ');
 }

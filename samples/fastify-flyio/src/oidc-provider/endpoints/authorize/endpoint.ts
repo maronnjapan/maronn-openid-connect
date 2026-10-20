@@ -13,8 +13,8 @@ export const endpoint = defineEndpoint({
   rearrangeable: true,
   // Defined before the first step: the issuer of the provider. The response
   // mode is declared there too (undefined unless a step of a feature, such as
-  // JARM's or form_post's, sets it), so the error step can read it whichever
-  // step failed.
+  // JARM's, form_post's or the Implicit Flow's, sets it), so the error step
+  // can read it whichever step failed.
   initial: ['issuer'],
   steps: [
     'parse-request',
@@ -22,7 +22,9 @@ export const endpoint = defineEndpoint({
     'resolve-request-object',
     'resolve-redirect-uri',
     'resolve-form-post-response-mode',
+    'resolve-fragment-response-mode',
     'validate-request',
+    'validate-implicit-request',
     'create-transaction',
     'validate-prompt-combination',
     'verify-id-token-hint',

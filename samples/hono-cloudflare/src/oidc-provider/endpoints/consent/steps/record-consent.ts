@@ -27,7 +27,8 @@ export async function recordConsentDecision(
   transactionId: string,
   transaction: AuthTransaction,
   session: AuthSessionInfo,
-  authCodeData: AuthorizationCodeData,
+  // The grant of the code — or of the tokens the Implicit Flow returns in its place.
+  grant: Pick<AuthorizationCodeData, 'grantId'>,
   grantedScope: string[],
 ): Promise<void> {
   const authSessionStore = c.get('authSessionStore');
@@ -36,7 +37,7 @@ export async function recordConsentDecision(
   await consentResolver.recordGrant?.(
     session.subject,
     transaction.clientId,
-    authCodeData.grantId,
+    grant.grantId,
   );
   await authSessionStore.delete(transactionId);
 }

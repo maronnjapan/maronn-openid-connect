@@ -5,9 +5,10 @@
  * feature.ts describes it with defineFeature(): the discovery metadata it
  * advertises, the defaults it adds to the provider settings, the values of
  * provider.ts it replaces, the grants it answers at the token endpoint, the
- * response modes it restores at /consent and the login methods it shows on
- * the login page. These are the hooks; the rest of the provider reads them
- * through the functions below and never imports a feature.
+ * response types it answers at /authorize besides code, the response modes it
+ * restores at /consent and the login methods it shows on the login page.
+ * These are the hooks; the rest of the provider reads them through the
+ * functions below and never imports a feature.
  *
  * The endpoints of a feature are Route Handlers in its route group,
  * app/(<feature-id>)/, which URLs do not see. Logic that runs inside a Route
@@ -19,7 +20,7 @@
  * owner blocks that name it in the route.ts files and the lines of its steps
  * in the endpoint.ts beside them.
  */
-import type { ClientResolver, TokenClientResolver } from '@maronn-openid-connect/core';
+import type { AuthorizationResponseType, ClientResolver, TokenClientResolver } from '@maronn-openid-connect/core';
 import type { AuthorizationResponseModeHandler } from '../authorize/response-mode';
 import type { LoginMethod } from '../login/login-method';
 import type { ProviderConfig } from './config';
@@ -56,6 +57,14 @@ export interface Feature {
      * authorization request asked for from the stored transaction.
      */
     readonly responseModes?: readonly AuthorizationResponseModeHandler[];
+    /**
+     * The response_type values the feature answers besides code (OIDC Core
+     * 1.0 §3), as core's normalizeResponseType() writes them: the
+     * authorization endpoint accepts them and discovery advertises them
+     * (response_types_supported). The feature answers them in its blocks of
+     * authorize/route.ts and consent/decision/route.ts.
+     */
+    readonly responseTypes?: readonly AuthorizationResponseType[];
   };
   /** Ways to sign in that the login page offers next to the password form. */
   readonly loginMethods?: readonly LoginMethod[];
@@ -108,6 +117,11 @@ export function tokenGrantsOf(features: readonly Feature[]): string[] {
 
 export function responseModesOf(features: readonly Feature[]): AuthorizationResponseModeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseModes ?? []);
+}
+
+/** The response_type values the features answer besides code, each once. */
+export function responseTypesOf(features: readonly Feature[]): AuthorizationResponseType[] {
+  return [...new Set(features.flatMap((feature) => feature.authorize?.responseTypes ?? []))];
 }
 
 export function loginMethodsOf(features: readonly Feature[]): LoginMethod[] {

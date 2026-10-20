@@ -19,8 +19,11 @@
  *   A request for a scope outside scope is rejected with invalid_scope
  *   (validateClientScope() in core). A client without scopes may request every
  *   scope the OP accepts.
- * - Metadata without a field (response_types, default_max_age, the ID Token
- *   and UserInfo signing algs) keeps its default.
+ * - response_types: responseTypes, the response types the client may use at
+ *   the authorization endpoint (id_token and id_token token for the Implicit
+ *   Flow). A client without them may use code only.
+ * - Metadata without a field (default_max_age, the ID Token and UserInfo
+ *   signing algs) keeps its default.
  *
  * The client's public keys (keys.clientJwks(), one record per purpose) are not
  * part of the RegisteredClient. A process that needs them asks the
@@ -61,6 +64,7 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       };
       if (client.grant_types.length > 0) registered.grantTypes = client.grant_types;
       if (client.scopes.length > 0) registered.scope = client.scopes;
+      if ((client.response_types ?? []).length > 0) registered.responseTypes = client.response_types;
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
       } else if (client.client_auths[0]) {
@@ -151,6 +155,7 @@ export async function registerClient(
     redirect_uris: [...client.redirectUris],
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],
+    response_types: [...(client.responseTypes ?? [])],
   };
   await writeRecord(db, keys.client(client.clientId), record);
 

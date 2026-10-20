@@ -6,6 +6,7 @@ import {
 } from '@maronn-openid-connect/core';
 import { type AuthorizationOutcome, buildSuccessResponse } from '../outcome.js';
 import type { AuthorizationResponseMode } from '../response-mode.js';
+import { responseTypeHandlerOf } from '../response-type.js';
 import { step } from '../../step.js';
 
 export const meta = step({
@@ -15,7 +16,7 @@ export const meta = step({
   label: 'Issue the authorization code and build the authorization response',
   spec: 'OIDC Core 1.0 §3.1.2.5 / RFC 9207 §2',
   function: 'issueAuthorizationCodeResponse',
-  calls: ['completeAuthTransaction', 'createAuthorizationCode', 'consentResolver.recordGrant'],
+  calls: ['responseTypeHandlerOf', 'completeAuthTransaction', 'createAuthorizationCode', 'consentResolver.recordGrant'],
   consumes: ['transactionId', 'transaction', 'session', 'issuer', 'responseMode'],
   optional: ['responseMode'],
   produces: [],
@@ -44,6 +45,13 @@ export async function issueAuthorizationCodeResponse(
   },
 ): Promise<AuthorizationOutcome> {
   const { transactionId, transaction, session, issuer, responseMode } = input;
+
+  // A response type a feature answers (the Implicit Flow's id_token and
+  // id_token token, OIDC Core 1.0 §3.2) returns its tokens in place of the
+  // code: the authorize.responseTypes entry of that feature's feature.ts.
+  const responseType = responseTypeHandlerOf(transaction.responseType);
+  if (responseType) return responseType.respond(c, input);
+
   const transactionStore = c.get('transactionStore');
   const authCodeStore = c.get('authCodeStore');
   const consentResolver = c.get('consentResolver');

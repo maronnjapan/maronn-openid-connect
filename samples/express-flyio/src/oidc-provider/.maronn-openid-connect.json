@@ -8,6 +8,7 @@
     "revocation": true,
     "requestObject": true,
     "formPostResponseMode": true,
+    "implicitFlow": true,
     "par": false,
     "tokenExchange": false,
     "jarm": false,

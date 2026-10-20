@@ -48,6 +48,33 @@ function transaction(overrides: Partial<AuthTransaction> = {}): AuthTransaction 
   };
 }
 
+/**
+ * A transaction with every parameter of the authorization request, and the
+ * response mode the authorization endpoint records beside them.
+ */
+function everyParameter(): AuthTransaction & { responseMode: string } {
+  return {
+    ...transaction({
+      state: 'state-1',
+      nonce: 'nonce-1',
+      codeChallenge: 'challenge-1',
+      codeChallengeMethod: 'S256',
+      prompt: 'consent',
+      maxAge: 300,
+      acrValues: 'urn:acr:1',
+      loginHint: 'alice',
+      uiLocales: 'ja en',
+      claimsLocales: 'en',
+      idTokenHint: 'id-token-1',
+      audience: ['https://api.example.com'],
+      claims: { userinfo: { email: { essential: true } } },
+      bindingHash: 'binding-1',
+      failedAttempts: 2,
+    }),
+    responseMode: 'form_post',
+  };
+}
+
 function code(overrides: Partial<AuthorizationCodeInfo> = {}): AuthorizationCodeInfo {
   return {
     code: 'code-1',
@@ -119,24 +146,62 @@ describe('createProviderStores', () => {
     });
 
     it('should return every parameter of the authorization request it was stored with', async () => {
-      const stored = transaction({
-        state: 'state-1',
-        nonce: 'nonce-1',
-        codeChallenge: 'challenge-1',
-        codeChallengeMethod: 'S256',
-        prompt: 'consent',
-        maxAge: 300,
-        acrValues: 'urn:acr:1',
-        loginHint: 'alice',
-        uiLocales: 'ja en',
-        audience: ['https://api.example.com'],
-        claims: { userinfo: { email: { essential: true } } },
-        bindingHash: 'binding-1',
-        failedAttempts: 2,
-      });
+      const stored = everyParameter();
       await stores.transactionStore.put('auth_txn:txn-1', stored, 60);
 
       expect(await stores.transactionStore.get('auth_txn:txn-1')).toEqual(stored);
+    });
+
+    // OpenID Connect Core 1.0 §3.1.2.1 / §5.2 / §5.5: each parameter of the
+    // authentication request has a column of its own.
+    it('should keep each OpenID Connect Core parameter in a column of its own and the rest in payload', async () => {
+      await stores.transactionStore.put('auth_txn:txn-1', everyParameter(), 60);
+
+      expect(
+        await rows(
+          'SELECT state, nonce, response_mode, prompt, max_age, ui_locales, claims_locales, id_token_hint, ' +
+            'login_hint, acr_values, claims, payload FROM authentication_requests',
+        ),
+      ).toEqual([
+        {
+          state: 'state-1',
+          nonce: 'nonce-1',
+          response_mode: 'form_post',
+          prompt: 'consent',
+          max_age: 300,
+          ui_locales: 'ja en',
+          claims_locales: 'en',
+          id_token_hint: 'id-token-1',
+          login_hint: 'alice',
+          acr_values: 'urn:acr:1',
+          claims: '{"userinfo":{"email":{"essential":true}}}',
+          payload: '{"redirectUriExplicit":true,"audience":["https://api.example.com"]}',
+        },
+      ]);
+    });
+
+    it('should leave the column of a parameter the request did not send NULL', async () => {
+      await stores.transactionStore.put('auth_txn:txn-1', transaction(), 60);
+
+      expect(
+        await rows(
+          'SELECT response_mode, prompt, max_age, ui_locales, claims_locales, id_token_hint, login_hint, ' +
+            'acr_values, claims FROM authentication_requests',
+        ),
+      ).toEqual([
+        {
+          response_mode: null,
+          prompt: null,
+          max_age: null,
+          ui_locales: null,
+          claims_locales: null,
+          id_token_hint: null,
+          login_hint: null,
+          acr_values: null,
+          claims: null,
+        },
+      ]);
+      expect(await stores.transactionStore.get('auth_txn:txn-1')).toEqual(transaction());
     });
 
     it('should save a new transaction as requested under its id without the auth_txn: prefix', async () => {

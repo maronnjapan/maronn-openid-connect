@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   defaultResponseModeOf,
+  HYBRID_RESPONSE_TYPES,
   IMPLICIT_RESPONSE_TYPES,
+  isHybridResponseType,
   isImplicitResponseType,
   normalizeResponseType,
   responseTypeIncludes,
@@ -12,6 +14,14 @@ describe('IMPLICIT_RESPONSE_TYPES', () => {
   // token alone returns no ID Token, so OpenID Connect does not use it.
   it('should list id_token and id_token token', () => {
     expect(IMPLICIT_RESPONSE_TYPES).toEqual(['id_token', 'id_token token']);
+  });
+});
+
+describe('HYBRID_RESPONSE_TYPES', () => {
+  // OIDC Core 1.0 §3.3.1.1: the Hybrid Flow uses code id_token, code token or
+  // code id_token token, in the order normalizeResponseType() writes them.
+  it('should list code id_token, code token and code id_token token', () => {
+    expect(HYBRID_RESPONSE_TYPES).toEqual(['code id_token', 'code token', 'code id_token token']);
   });
 });
 
@@ -106,6 +116,35 @@ describe('isImplicitResponseType', () => {
   });
 });
 
+describe('isHybridResponseType', () => {
+  // OIDC Core 1.0 §3.3.1.1
+  it('should accept code id_token, code token and code id_token token', () => {
+    expect([
+      isHybridResponseType('code id_token'),
+      isHybridResponseType('code token'),
+      isHybridResponseType('code id_token token'),
+    ]).toEqual([true, true, true]);
+  });
+
+  // OAuth 2.0 Multiple Response Type Encoding Practices §1.2
+  it('should accept the values in any order', () => {
+    expect([isHybridResponseType('id_token code'), isHybridResponseType('token id_token code')]).toEqual([true, true]);
+  });
+
+  it('should reject code alone, token alone and the Implicit Flow response types', () => {
+    expect([
+      isHybridResponseType('code'),
+      isHybridResponseType('token'),
+      isHybridResponseType('id_token'),
+      isHybridResponseType('id_token token'),
+    ]).toEqual([false, false, false, false]);
+  });
+
+  it('should reject a missing response type', () => {
+    expect(isHybridResponseType(undefined)).toBe(false);
+  });
+});
+
 describe('defaultResponseModeOf', () => {
   // OAuth 2.0 Multiple Response Type Encoding Practices §2.1.
   it('should answer code in the query', () => {
@@ -119,7 +158,9 @@ describe('defaultResponseModeOf', () => {
       defaultResponseModeOf('id_token token'),
       defaultResponseModeOf('token'),
       defaultResponseModeOf('code id_token'),
-    ]).toEqual(['fragment', 'fragment', 'fragment', 'fragment']);
+      defaultResponseModeOf('code token'),
+      defaultResponseModeOf('code id_token token'),
+    ]).toEqual(['fragment', 'fragment', 'fragment', 'fragment', 'fragment', 'fragment']);
   });
 
   it('should answer a response type it does not know in the query', () => {

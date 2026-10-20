@@ -57,8 +57,10 @@ export {
   normalizeResponseType,
   responseTypeIncludes,
   isImplicitResponseType,
+  isHybridResponseType,
   defaultResponseModeOf,
   IMPLICIT_RESPONSE_TYPES,
+  HYBRID_RESPONSE_TYPES,
 } from './response-type.js';
 
 export type { AuthorizationResponseType, ResponseTypeValue } from './response-type.js';
@@ -74,6 +76,15 @@ export {
 } from './implicit-flow.js';
 
 export type { ImplicitResponseParametersInput } from './implicit-flow.js';
+
+export {
+  // Hybrid Flow（OIDC Core 1.0 §3.3）: 認可リクエストの検証と認可レスポンスの組み立て
+  requireHybridNonce,
+  validateHybridResponseMode,
+  buildHybridResponseParameters,
+} from './hybrid-flow.js';
+
+export type { HybridResponseParametersInput } from './hybrid-flow.js';
 
 export { parseScope, findUnregisteredClientScopes } from './scope.js';
 
@@ -194,6 +205,8 @@ export {
   // トークンレスポンス生成のステップ関数
   buildAccessTokenPayload,
   computeAtHash,
+  // OIDC Core 1.0 §3.3.2.11: Hybrid Flow で認可コードと一緒に返す ID Token の c_hash
+  computeCHash,
   resolveAcrAmr,
   selectRequestedAcrValues,
   selectPreferredAcr,

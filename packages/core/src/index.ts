@@ -198,6 +198,7 @@ export {
   selectRequestedAcrValues,
   selectPreferredAcr,
   buildIdTokenPayload,
+  applyRequestedIdTokenClaims,
 } from './token-response.js';
 
 export type {

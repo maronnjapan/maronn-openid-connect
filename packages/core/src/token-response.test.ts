@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import {
+  applyRequestedIdTokenClaims,
   buildAccessTokenAudience,
   buildAccessTokenPayload,
   buildIdTokenAudience,
@@ -860,6 +861,157 @@ describe('buildIdTokenPayload', () => {
         name: 'Alice',
       });
     });
+  });
+});
+
+// OIDC Core 1.0 §5.5: the id_token member of the claims parameter requests
+// individual claims in the ID Token, added to its default claims. It is the
+// only way to get a claim the scope does not cover when no UserInfo endpoint
+// call follows (response_type=id_token, §5.4).
+describe('applyRequestedIdTokenClaims', () => {
+  const userClaims: UserClaims = {
+    sub: 'user-123',
+    name: 'Jane Doe',
+    email: 'janedoe@example.com',
+    email_verified: true,
+    address: { country: 'JP' },
+  };
+
+  function basePayload() {
+    return buildIdTokenPayload(idTokenInput({ subject: 'user-123', scope: ['openid'] }));
+  }
+
+  describe('Requested Claims', () => {
+    // OIDF oidcc-claims-essential (response_type=id_token) requests name this way.
+    it('should add a claim requested as essential', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        id_token: { name: { essential: true } },
+      });
+
+      expect(payload).toStrictEqual({
+        iss: 'https://op.example.com',
+        sub: 'user-123',
+        aud: 'client-456',
+        exp: NOW + 3600,
+        iat: NOW,
+        name: 'Jane Doe',
+      });
+    });
+
+    it('should add a claim requested with a null entry', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        id_token: { email: null },
+      });
+
+      expect(payload.email).toBe('janedoe@example.com');
+    });
+
+    // OIDC Core 1.0 §5.5.1: value / values ask for the claim with a particular value
+    it('should add a claim requested by value when the value of the End-User matches', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        id_token: { address: { value: { country: 'JP' } }, email_verified: { values: [true] } },
+      });
+
+      expect(payload.address).toStrictEqual({ country: 'JP' });
+      expect(payload.email_verified).toBe(true);
+    });
+
+    // OIDC Core 1.0 §5.5.1: a claim that is not returned is not an error
+    it('should omit a claim requested by value when the value of the End-User differs', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        id_token: { email: { value: 'other@example.com' } },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+
+    it('should omit a requested claim the End-User does not have', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        id_token: { phone_number: { essential: true } },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+
+    it('should ignore the userinfo member of the claims parameter', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        userinfo: { name: { essential: true } },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+
+    it('should return the payload unchanged when no claims parameter is given', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, undefined);
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+
+    it('should return the payload unchanged when the claims of the End-User are unknown', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), undefined, {
+        id_token: { name: { essential: true } },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+  });
+
+  // The ID Token's own claims come from the authentication and the issuance,
+  // never from the End-User's profile.
+  describe('Claims of the ID Token itself', () => {
+    it('should not overwrite a claim the payload already has', () => {
+      const payload = applyRequestedIdTokenClaims(
+        basePayload(),
+        { ...userClaims, sub: 'spoofed-sub' },
+        { id_token: { sub: null, iss: null } },
+      );
+
+      expect(payload.sub).toBe('user-123');
+      expect(payload.iss).toBe('https://op.example.com');
+    });
+
+    it('should not take a claim of the ID Token itself from the claims of the End-User', () => {
+      const profile = {
+        ...userClaims,
+        auth_time: NOW - 10,
+        nonce: 'spoofed-nonce',
+        acr: 'urn:spoofed:loa',
+        amr: ['spoofed'],
+        azp: 'spoofed-client',
+        at_hash: 'spoofed-at-hash',
+        c_hash: 'spoofed-c-hash',
+      } as UserClaims;
+
+      const payload = applyRequestedIdTokenClaims(basePayload(), profile, {
+        id_token: {
+          auth_time: { essential: true },
+          nonce: null,
+          acr: null,
+          amr: null,
+          azp: null,
+          at_hash: null,
+          c_hash: null,
+        },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+
+    it('should not take a property the claims of the End-User inherit', () => {
+      const payload = applyRequestedIdTokenClaims(basePayload(), userClaims, {
+        id_token: { constructor: null, toString: null },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+  });
+
+  it('should not mutate the payload passed in', () => {
+    const payload = basePayload();
+
+    applyRequestedIdTokenClaims(payload, userClaims, { id_token: { name: null } });
+
+    expect(payload).toStrictEqual(basePayload());
   });
 });
 

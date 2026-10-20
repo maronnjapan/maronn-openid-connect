@@ -5,6 +5,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const BASIC_OP_TEST_PLAN =
   'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
 
+export const IMPLICIT_OP_TEST_PLAN =
+  'oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
+
 /**
  * The modules of the Basic OP plan, in its order (OIDCCBasicTestPlan of the
  * conformance suite). A run names them only to leave the manual review ones
@@ -52,9 +55,61 @@ const BASIC_OP_MODULES = [
 ];
 
 /**
+ * The modules the Implicit OP plan runs once with response_type=id_token and
+ * once with id_token token, in its order (OIDCCImplicitTestPlan of the
+ * conformance suite).
+ */
+const IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE = [
+  'oidcc-server',
+  'oidcc-idtoken-signature',
+  'oidcc-ensure-request-without-nonce-fails',
+  'oidcc-scope-profile',
+  'oidcc-scope-email',
+  'oidcc-scope-address',
+  'oidcc-scope-phone',
+  'oidcc-scope-all',
+  'oidcc-alternate-happy-flow',
+  'oidcc-display-page',
+  'oidcc-display-popup',
+  'oidcc-prompt-login',
+  'oidcc-prompt-none-not-logged-in',
+  'oidcc-prompt-none-logged-in',
+  'oidcc-max-age-1',
+  'oidcc-max-age-10000',
+  'oidcc-ensure-request-with-unknown-parameter-succeeds',
+  'oidcc-id-token-hint',
+  'oidcc-login-hint',
+  'oidcc-ui-locales',
+  'oidcc-claims-locales',
+  'oidcc-ensure-request-with-acr-values-succeeds',
+  'oidcc-ensure-registered-redirect-uri',
+  'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported',
+  'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported',
+  'oidcc-ensure-request-object-with-redirect-uri',
+  'oidcc-claims-essential',
+];
+
+/**
+ * The modules of the Implicit OP plan, in its order: those of
+ * IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE for id_token and again for id_token
+ * token, then the UserInfo modules and oidcc-response-type-missing, which it
+ * runs once, with id_token token. run-test-plan.py takes one module of the
+ * plan for each time a selection names it, so a module is named once for each
+ * response type it runs with.
+ */
+const IMPLICIT_OP_MODULES = [
+  ...IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE,
+  ...IMPLICIT_OP_MODULES_PER_RESPONSE_TYPE,
+  'oidcc-userinfo-get',
+  'oidcc-userinfo-post-header',
+  'oidcc-userinfo-post-body',
+  'oidcc-response-type-missing',
+];
+
+/**
  * The modules that wait for a screenshot (manual review; see the README). An
  * unattended run never uploads one, and run-test-plan.py waits 240 s for each
- * before it gives up.
+ * before it gives up. Both plans have them.
  */
 export const MANUAL_REVIEW_MODULES = [
   'oidcc-prompt-login',
@@ -63,24 +118,115 @@ export const MANUAL_REVIEW_MODULES = [
 ];
 
 /**
- * The test plan argument of run-test-plan.py: the whole Basic OP plan, or,
- * with skipManualReview, its modules without the manual review ones
- * (`<plan>:<module>,<module>`).
+ * What the clients of the Basic OP plan share: confidential clients of the
+ * Authorization Code Flow (response_type=code), which authenticate at the
+ * token endpoint with their secret.
  */
-export function basicOpTestPlan({ skipManualReview = false } = {}) {
-  if (!skipManualReview) return BASIC_OP_TEST_PLAN;
-  const automated = BASIC_OP_MODULES.filter((module) => !MANUAL_REVIEW_MODULES.includes(module));
-  return `${BASIC_OP_TEST_PLAN}:${automated.join(',')}`;
+const CODE_FLOW_CLIENT = {
+  clientType: 'confidential',
+  grantTypes: ['authorization_code', 'refresh_token'],
+  responseTypes: ['code'],
+};
+
+/**
+ * The plans of OpenID Connect Core certification a run can check
+ * (CONFORMANCE_PLAN), and the static clients each needs. A client is
+ * registered on the OP (oidc-clients.json) and configured on the suite under
+ * configKey.
+ */
+const PLANS = new Map([
+  [
+    'basic',
+    {
+      name: 'basic',
+      displayName: 'Basic OP',
+      testPlan: BASIC_OP_TEST_PLAN,
+      modules: BASIC_OP_MODULES,
+      defaultAlias: 'maronn-basic-op',
+      // client2 is the second client of oidcc-refresh-token, and
+      // client_secret_post the client of oidcc-server-client-secret-post.
+      clients: [
+        {
+          configKey: 'client',
+          clientId: 'oidf-basic-client',
+          clientSecret: 'oidf-basic-client-secret',
+          ...CODE_FLOW_CLIENT,
+          tokenEndpointAuthMethod: 'client_secret_basic',
+        },
+        {
+          configKey: 'client2',
+          clientId: 'oidf-basic-client-2',
+          clientSecret: 'oidf-basic-client-2-secret',
+          ...CODE_FLOW_CLIENT,
+          tokenEndpointAuthMethod: 'client_secret_basic',
+        },
+        {
+          configKey: 'client_secret_post',
+          clientId: 'oidf-post-client',
+          clientSecret: 'oidf-post-client-secret',
+          ...CODE_FLOW_CLIENT,
+          tokenEndpointAuthMethod: 'client_secret_post',
+        },
+      ],
+    },
+  ],
+  [
+    'implicit',
+    {
+      name: 'implicit',
+      displayName: 'Implicit OP',
+      testPlan: IMPLICIT_OP_TEST_PLAN,
+      modules: IMPLICIT_OP_MODULES,
+      defaultAlias: 'maronn-implicit-op',
+      // OIDC Core 1.0 §3.2: the client of both response types of the Implicit
+      // Flow and of the implicit grant type that pairs with them (OIDC Dynamic
+      // Client Registration 1.0 §2). It never calls the token endpoint, so it
+      // is a public (browser-based) client without a secret; the plan's
+      // client_auth_type=client_secret_basic is not used by any of its modules.
+      clients: [
+        {
+          configKey: 'client',
+          clientId: 'oidf-implicit-client',
+          clientType: 'public',
+          grantTypes: ['implicit'],
+          responseTypes: ['id_token', 'id_token token'],
+          tokenEndpointAuthMethod: 'none',
+        },
+      ],
+    },
+  ],
+]);
+
+export function resolvePlan(plan = 'basic') {
+  const normalized = String(plan).trim().toLowerCase();
+  const metadata = PLANS.get(normalized);
+  if (!metadata) {
+    throw new Error(
+      `Unsupported CONFORMANCE_PLAN "${plan}". Expected one of: ${[...PLANS.keys()].join(', ')}`,
+    );
+  }
+  return metadata;
 }
 
-const DEFAULT_ALIAS = 'maronn-basic-op';
+/**
+ * The test plan argument of run-test-plan.py: the whole plan, or, with
+ * skipManualReview, its modules without the manual review ones
+ * (`<plan>:<module>,<module>`).
+ */
+export function opTestPlan({ plan = 'basic', skipManualReview = false } = {}) {
+  const { testPlan, modules } = resolvePlan(plan);
+  if (!skipManualReview) return testPlan;
+  const automated = modules.filter((module) => !MANUAL_REVIEW_MODULES.includes(module));
+  return `${testPlan}:${automated.join(',')}`;
+}
+
 const DEFAULT_OP_ISSUER = 'https://op-tls:3443';
 const DEFAULT_SUITE_BASE_URL = 'https://conformance-nginx:8443';
 const DEFAULT_OUT_DIR = fileURLToPath(new URL('../.generated', import.meta.url));
 
 // OIDC Core 1.0 §6.1 / RFC 9101 (JAR): a fixed RS256 keypair so the Request
-// Object modules in the Basic OP plan become a real automated test target rather
-// than a manual-review / skipped path.
+// Object modules of the Basic OP and Implicit OP plans become a real automated
+// test target rather than a manual-review / skipped path.
 //
 // The OIDF Conformance Suite signs the Request Object with the PRIVATE half
 // (registered on the suite-side static client config below) and the sample OP
@@ -174,8 +320,9 @@ export function resolveSampleApp(sampleApp = 'hono-cloudflare') {
   return metadata;
 }
 
-export function createBasicOpConformanceArtifacts(options = {}) {
-  const alias = options.alias ?? DEFAULT_ALIAS;
+export function createOpConformanceArtifacts(options = {}) {
+  const plan = resolvePlan(options.plan ?? 'basic');
+  const alias = options.alias ?? plan.defaultAlias;
   const opIssuer = normalizeBaseUrl(options.opIssuer ?? DEFAULT_OP_ISSUER, 'opIssuer');
   const suiteBaseUrl = normalizeBaseUrl(
     options.suiteBaseUrl ?? DEFAULT_SUITE_BASE_URL,
@@ -189,32 +336,25 @@ export function createBasicOpConformanceArtifacts(options = {}) {
   // conformance key so signed Request Objects are exercised out of the box; an
   // explicit clientJwks overrides the OP-trusted public set.
   const clientJwks = options.clientJwks ?? REQUEST_OBJECT_PUBLIC_JWKS;
-  const clients = createStaticClients(redirectUris, clientJwks);
 
   return {
-    testPlan: basicOpTestPlan({ skipManualReview: options.skipManualReview }),
+    plan: plan.name,
+    testPlan: opTestPlan({ plan: plan.name, skipManualReview: options.skipManualReview }),
     sampleApp,
     config: {
       alias,
-      description: `maronn-openid-connect Basic OP certification check for the ${sampleApp.displayName} sample`,
+      description: `maronn-openid-connect ${plan.displayName} certification check for the ${sampleApp.displayName} sample`,
       server: {
         discoveryUrl: `${opIssuer}/.well-known/openid-configuration`,
       },
-      client: createSuiteClient({
-        clientId: 'oidf-basic-client',
-        clientSecret: 'oidf-basic-client-secret',
-      }),
-      client2: createSuiteClient({
-        clientId: 'oidf-basic-client-2',
-        clientSecret: 'oidf-basic-client-2-secret',
-      }),
-      client_secret_post: createSuiteClient({
-        clientId: 'oidf-post-client',
-        clientSecret: 'oidf-post-client-secret',
-      }),
-      browser: createBrowserAutomation(opIssuer),
+      ...Object.fromEntries(
+        plan.clients.map((client) => [client.configKey, createSuiteClient(client)]),
+      ),
+      browser: createBrowserAutomation({ opIssuer, suiteBaseUrl }),
     },
-    clients,
+    clients: plan.clients.map((client) =>
+      createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks }),
+    ),
   };
 }
 
@@ -223,22 +363,23 @@ export function createBasicOpConformanceArtifacts(options = {}) {
 // OIDF Request Object modules (oidcc-ensure-request-object-with-redirect-uri /
 // oidcc-unsigned-request-object-...) sign a Request Object the OP can verify
 // against the registered public JWKS instead of falling back to manual review.
+// A public client has no client_secret.
 function createSuiteClient({ clientId, clientSecret }) {
   return {
     client_id: clientId,
-    client_secret: clientSecret,
+    ...(clientSecret === undefined ? {} : { client_secret: clientSecret }),
     scope: 'openid',
     jwks: REQUEST_OBJECT_PRIVATE_JWKS,
     request_object_signing_alg: REQUEST_OBJECT_SIGNING_ALG,
   };
 }
 
-export async function writeBasicOpConformanceArtifacts(options = {}) {
+export async function writeOpConformanceArtifacts(options = {}) {
   const outDir = options.outDir ?? DEFAULT_OUT_DIR;
-  const artifacts = createBasicOpConformanceArtifacts(options);
+  const artifacts = createOpConformanceArtifacts(options);
   await mkdir(outDir, { recursive: true });
 
-  const configPath = join(outDir, 'basic-op-config.json');
+  const configPath = join(outDir, `${artifacts.plan}-op-config.json`);
   const clientsPath = join(outDir, 'oidc-clients.json');
   const metadataPath = join(outDir, 'metadata.json');
   const testPlanPath = join(outDir, 'test-plan.txt');
@@ -246,6 +387,7 @@ export async function writeBasicOpConformanceArtifacts(options = {}) {
   await writeJsonFile(configPath, artifacts.config);
   await writeJsonFile(clientsPath, artifacts.clients);
   await writeJsonFile(metadataPath, {
+    plan: artifacts.plan,
     testPlan: artifacts.testPlan,
     sampleApp: artifacts.sampleApp,
     configPath,
@@ -272,47 +414,25 @@ function createRedirectUris({ suiteBaseUrl, alias }) {
   ];
 }
 
-function createStaticClients(redirectUris, clientJwks) {
-  return [
-    createStaticClient({
-      clientId: 'oidf-basic-client',
-      clientSecret: 'oidf-basic-client-secret',
-      redirectUris,
-      tokenEndpointAuthMethod: 'client_secret_basic',
-      requestObjectJwks: clientJwks,
-    }),
-    createStaticClient({
-      clientId: 'oidf-basic-client-2',
-      clientSecret: 'oidf-basic-client-2-secret',
-      redirectUris,
-      tokenEndpointAuthMethod: 'client_secret_basic',
-      requestObjectJwks: clientJwks,
-    }),
-    createStaticClient({
-      clientId: 'oidf-post-client',
-      clientSecret: 'oidf-post-client-secret',
-      redirectUris,
-      tokenEndpointAuthMethod: 'client_secret_post',
-      requestObjectJwks: clientJwks,
-    }),
-  ];
-}
-
 function createStaticClient({
   clientId,
   clientSecret,
   redirectUris,
+  clientType,
+  grantTypes,
   tokenEndpointAuthMethod,
+  responseTypes,
   requestObjectJwks,
 }) {
   const client = {
     clientId,
-    clientSecret,
+    // A public client has no clientSecret.
+    ...(clientSecret === undefined ? {} : { clientSecret }),
     redirectUris,
-    clientType: 'confidential',
-    grantTypes: ['authorization_code', 'refresh_token'],
+    clientType,
+    grantTypes,
     tokenEndpointAuthMethods: [tokenEndpointAuthMethod],
-    responseTypes: ['code'],
+    responseTypes,
   };
   // OIDC Core 1.0 §6.1: register the client JWKS as the keys of the
   // request_object purpose, the ones the OP verifies signed Request Objects
@@ -323,7 +443,7 @@ function createStaticClient({
   return client;
 }
 
-function createBrowserAutomation(opIssuer) {
+function createBrowserAutomation({ opIssuer, suiteBaseUrl }) {
   return [
     {
       match: `${opIssuer}/authorize*`,
@@ -347,17 +467,23 @@ function createBrowserAutomation(opIssuer) {
           ],
         },
         {
-          // optional: some Basic OP modules legitimately do not end on a suite
-          // callback. ensure-registered-redirect-uri lands on the OP's invalid
+          // optional: some modules of both plans legitimately do not end on a
+          // suite callback. ensure-registered-redirect-uri lands on the OP's invalid
           // redirect_uri error page (no callback), and prompt-login / max-age-1
           // pause on a screenshot/manual-review placeholder before any callback.
           // Without optional, the browser runner would block on this task and the
           // module would be reported INTERRUPTED / WebRunner timeout, masking the
           // fact that the OP behaved correctly. Marking it optional lets those
           // modules fall through to manual review instead of failing automation.
+          //
+          // The pattern is anchored to the suite: the authorization request
+          // carries the callback in its redirect_uri query parameter, so
+          // '*/test/*/callback*' also matches the URL of the OP, and on the
+          // error page of ensure-registered-redirect-uri the browser would wait
+          // for a submission that never comes (INTERRUPTED, not manual review).
           task: 'Verify Complete',
           optional: true,
-          match: '*/test/*/callback*',
+          match: `${suiteBaseUrl}/test/*/callback*`,
           commands: [
             ['wait', 'id', 'submission_complete', 10],
           ],
@@ -381,7 +507,9 @@ async function writeJsonFile(path, value) {
 }
 
 async function main() {
-  const artifacts = await writeBasicOpConformanceArtifacts({
+  const artifacts = await writeOpConformanceArtifacts({
+    // CONFORMANCE_PLAN: basic (the default) or implicit.
+    plan: process.env.CONFORMANCE_PLAN,
     alias: process.env.CONFORMANCE_ALIAS,
     opIssuer: process.env.CONFORMANCE_OP_ISSUER,
     suiteBaseUrl: process.env.CONFORMANCE_SUITE_BASE_URL,
@@ -398,6 +526,7 @@ async function main() {
   });
 
   console.log(JSON.stringify({
+    plan: artifacts.plan,
     testPlan: artifacts.testPlan,
     sampleApp: artifacts.sampleApp.name,
     configPath: artifacts.paths.configPath,

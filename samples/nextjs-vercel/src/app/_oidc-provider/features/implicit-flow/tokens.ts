@@ -11,9 +11,11 @@
  * the ID Token (§3.2.2.10), at_hash binds it to the access token when there
  * is one, and for response_type=id_token, which issues no access token for
  * the UserInfo endpoint, the ID Token carries the claims of the scope values
- * (§5.4).
+ * (§5.4). With either response type it carries the claims that the id_token
+ * member of the claims parameter requests (§5.5).
  */
 import {
+  applyRequestedIdTokenClaims,
   AuthorizationError,
   AuthorizationErrorCode,
   buildAccessTokenAudience,
@@ -126,27 +128,34 @@ export async function issueImplicitTokens(input: ImplicitTokensInput): Promise<I
 
   // OIDC Core 1.0 §5.4: response_type=id_token issues no access token for the
   // UserInfo endpoint, so the claims of the scope values go into the ID Token.
-  const userClaims = returnsScopeClaimsInIdToken(responseType)
+  // §5.5: the id_token member of the claims parameter asks for individual
+  // claims in the ID Token, whatever the response type.
+  const scopeClaimsInIdToken = returnsScopeClaimsInIdToken(responseType);
+  const userClaims = scopeClaimsInIdToken || responseParams.claims?.id_token !== undefined
     ? (await resolvers.userClaimsResolver.findUserClaims(session.subject)) ?? undefined
     : undefined;
 
-  const idTokenPayload = buildIdTokenPayload({
-    issuer: config.issuer,
-    subject: session.subject,
-    clientId: responseParams.clientId,
-    scope: grantedScope,
-    expiresIn: config.idTokenExpiresIn,
-    issuedAt,
-    // OIDC Core 1.0 §3.2.2.10: at_hash is REQUIRED with an access token, and
-    // follows the ID Token signing alg (§3.1.3.6).
-    atHash: accessToken === undefined ? undefined : await computeAtHash(accessToken, idTokenKey.privateKey),
-    // OIDC Core 1.0 §3.2.2.10: nonce is REQUIRED in this flow (validateImplicitRequest() made sure the request had one).
-    nonce: responseParams.nonce,
-    authTime: session.authTime,
-    acr,
-    amr,
+  const idTokenPayload = applyRequestedIdTokenClaims(
+    buildIdTokenPayload({
+      issuer: config.issuer,
+      subject: session.subject,
+      clientId: responseParams.clientId,
+      scope: grantedScope,
+      expiresIn: config.idTokenExpiresIn,
+      issuedAt,
+      // OIDC Core 1.0 §3.2.2.10: at_hash is REQUIRED with an access token, and
+      // follows the ID Token signing alg (§3.1.3.6).
+      atHash: accessToken === undefined ? undefined : await computeAtHash(accessToken, idTokenKey.privateKey),
+      // OIDC Core 1.0 §3.2.2.10: nonce is REQUIRED in this flow (validateImplicitRequest() made sure the request had one).
+      nonce: responseParams.nonce,
+      authTime: session.authTime,
+      acr,
+      amr,
+      userClaims: scopeClaimsInIdToken ? userClaims : undefined,
+    }),
     userClaims,
-  });
+    responseParams.claims,
+  );
 
   // Add your own ID Token claims here, as in the issue-id-token step of token/route.ts.
 

@@ -176,7 +176,7 @@ pnpm --filter <package-name> <command>
 - OAuth 2.1（PKCE 必須）
 - OAuth 2.0 Form Post Response Mode（`response_mode=form_post`）
 - OAuth 2.0 Multiple Response Type Encoding Practices（`response_type` の値の組み合わせと `response_mode=fragment`）
-- OpenID Connect Conformance Profiles v3.0（Basic OP）
+- OpenID Connect Conformance Profiles v3.0（Basic OP、Implicit OP）
 
 ### Basic OPの必須機能
 

@@ -8,11 +8,30 @@ GENERATED_DIR="${CONFORMANCE_DIR}/.generated"
 RESULTS_DIR="${CONFORMANCE_DIR}/results"
 COMPOSE_FILE="${CONFORMANCE_DIR}/docker-compose.yml"
 
+# The certification plan of the run: basic (the default) or implicit
+# (create-op-config.mjs).
+PLAN="${1:-${CONFORMANCE_PLAN:-basic}}"
 SAMPLE_APP="${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}"
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER:-https://op-tls:3443}"
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL:-https://conformance-nginx:8443}"
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER%/}"
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL%/}"
+
+case "${PLAN}" in
+  basic)
+    # The Basic OP plan has modules of the authorization code flow without
+    # PKCE (README).
+    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1
+    ;;
+  implicit)
+    # The Implicit OP plan issues no authorization code.
+    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0
+    ;;
+  *)
+    echo "Unsupported CONFORMANCE_PLAN \"${PLAN}\". Expected one of: basic, implicit" >&2
+    exit 1
+    ;;
+esac
 
 case "${SAMPLE_APP}" in
   hono-cloudflare)
@@ -54,7 +73,8 @@ cd "${ROOT_DIR}"
 pnpm --filter @maronn-openid-connect/cli build
 pnpm --filter "${SAMPLE_PACKAGE}" build
 
-CONFORMANCE_ALIAS="${CONFORMANCE_ALIAS:-maronn-basic-op}" \
+CONFORMANCE_PLAN="${PLAN}" \
+CONFORMANCE_ALIAS="${CONFORMANCE_ALIAS:-maronn-${PLAN}-op}" \
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER}" \
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL}" \
 CONFORMANCE_SAMPLE_APP="${SAMPLE_APP}" \
@@ -74,13 +94,13 @@ export CONFORMANCE_OP_ISSUER
 export CONFORMANCE_SUITE_BASE_URL
 export CONFORMANCE_SERVER="${CONFORMANCE_SUITE_BASE_URL}/"
 export CONFORMANCE_SERVER_MTLS="${CONFORMANCE_SERVER_MTLS:-${CONFORMANCE_SERVER}}"
-export CONFORMANCE_CONFIG_PATH="/workspace/tests/conformance/.generated/basic-op-config.json"
+export CONFORMANCE_CONFIG_PATH="/workspace/tests/conformance/.generated/${PLAN}-op-config.json"
 export CONFORMANCE_RESULTS_DIR="/workspace/tests/conformance/results"
-# The Basic OP plan, without the manual review modules when
-# CONFORMANCE_SKIP_MANUAL_REVIEW=1 (create-basic-op-config.mjs writes it).
+# The plan, without the manual review modules when
+# CONFORMANCE_SKIP_MANUAL_REVIEW=1 (create-op-config.mjs writes it).
 export CONFORMANCE_TEST_PLAN="${CONFORMANCE_TEST_PLAN:-$(cat "${GENERATED_DIR}/test-plan.txt")}"
-export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-1}"
-# OIDC Core 1.0 §6.1 / RFC 9101: the Basic OP plan skips the Request Object modules
+export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-${DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW}}"
+# OIDC Core 1.0 §6.1 / RFC 9101: both plans skip the Request Object modules
 # (oidcc-unsigned-request-object-... / oidcc-ensure-request-object-with-redirect-uri)
 # unless the OP advertises 'none' in request_object_signing_alg_values_supported, i.e.
 # accepts unsigned Request Objects. Enable that compatibility for the conformance OP so

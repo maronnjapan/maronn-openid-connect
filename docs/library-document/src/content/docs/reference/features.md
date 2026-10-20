@@ -76,7 +76,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 - RS256 で署名（JOSE ヘッダーに `kid` を含む）
 - 必須クレーム: `iss` / `sub` / `aud` / `exp` / `iat`
 - 条件付きクレーム: `nonce`（リクエスト時）、`at_hash`（アクセストークン発行時）、`auth_time`（`max_age` / `claims` 要求時）、`acr`（`acr_values` 要求時、または `AcrResolver` が返したとき）、`amr`（`AcrResolver` が返したとき）
-- Implicit Flow（`implicit-flow` 有効時）は、認可エンドポイントが ID Token を発行する。`nonce` と `auth_time` は常に含め、`response_type=id_token token` では `at_hash` も含める（OIDC Core 1.0 §3.2.2.10）。アクセストークンを返さない `response_type=id_token` では、許可された scope の標準クレーム（`profile` の `name` など）を ID Token に含める（OIDC Core 1.0 §5.4）
+- Implicit Flow（`implicit-flow` 有効時）は、認可エンドポイントが ID Token を発行する。`nonce` と `auth_time` は常に含め、`response_type=id_token token` では `at_hash` も含める（OIDC Core 1.0 §3.2.2.10）。アクセストークンを返さない `response_type=id_token` では、許可された scope の標準クレーム（`profile` の `name` など）を ID Token に含める（OIDC Core 1.0 §5.4）。どちらの response type でも、`claims` パラメータの `id_token` で個別に要求されたクレームを ID Token に含める（OIDC Core 1.0 §5.5）
 
 ### Refresh Token
 

@@ -175,6 +175,27 @@ describe('issueImplicitTokens', () => {
 
       expect(decodeJwt(parameters['id_token'] ?? '').payload).not.toHaveProperty('name');
     });
+
+    // OIDC Core 1.0 §5.5: claims.id_token asks for individual claims in the ID
+    // Token whatever the response type; those of the scope values still come
+    // from the UserInfo endpoint (§5.4).
+    it('should put only the claims that claims.id_token requests into the ID Token', async () => {
+      const { parameters } = await issue('id_token token', {
+        responseParams: { claims: { id_token: { email: null } } },
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).toEqual({
+        iss: TEST_ISSUER,
+        sub: SUBJECT,
+        aud: CLIENT_ID,
+        exp: NOW + 3600,
+        iat: NOW,
+        at_hash: await leftHalfSha256(parameters['access_token'] ?? ''),
+        nonce: NONCE,
+        auth_time: AUTH_TIME,
+        email: 'alice@example.com',
+      });
+    });
   });
 
   describe('id_token', () => {
@@ -200,6 +221,26 @@ describe('issueImplicitTokens', () => {
         iat: NOW,
         nonce: NONCE,
         auth_time: AUTH_TIME,
+      });
+    });
+
+    // OIDC Core 1.0 §5.5: claims.id_token asks for a claim the scope does not
+    // cover (OIDF oidcc-claims-essential requests name with scope=openid).
+    it('should put the claims that claims.id_token requests into the ID Token', async () => {
+      const { parameters } = await issue('id_token', {
+        grantedScope: ['openid'],
+        responseParams: { scope: ['openid'], claims: { id_token: { name: { essential: true } } } },
+      });
+
+      expect(decodeJwt(parameters['id_token'] ?? '').payload).toEqual({
+        iss: TEST_ISSUER,
+        sub: SUBJECT,
+        aud: CLIENT_ID,
+        exp: NOW + 3600,
+        iat: NOW,
+        nonce: NONCE,
+        auth_time: AUTH_TIME,
+        name: 'Alice',
       });
     });
 

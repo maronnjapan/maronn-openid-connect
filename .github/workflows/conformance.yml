@@ -3,6 +3,14 @@ name: OpenID Conformance
 on:
   workflow_dispatch:
     inputs:
+      plan:
+        description: "OpenID Connect Core certification plan to run"
+        required: false
+        default: "basic"
+        type: choice
+        options:
+          - basic
+          - implicit
       sample_app:
         description: "Sample OP app to test"
         required: false
@@ -30,10 +38,17 @@ on:
       - "pnpm-lock.yaml"
 
 jobs:
-  basic-op:
+  op-plan:
+    name: ${{ matrix.plan }}-op
     if: github.event_name == 'workflow_dispatch' || contains(join(github.event.pull_request.labels.*.name, ','), 'run-conformance')
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # A manual run checks the plan it chose; a labelled pull request
+        # checks the Basic OP and the Implicit OP plans.
+        plan: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.plan) || '["basic","implicit"]') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -49,20 +64,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run Basic OP conformance suite
+      - name: Run ${{ matrix.plan }} OP conformance suite
         env:
           CONFORMANCE_SAMPLE_APP: ${{ github.event.inputs.sample_app || 'hono-cloudflare' }}
           CONFORMANCE_SUITE_IMAGE_TAG: ${{ github.event.inputs.suite_image_tag || 'latest' }}
           # The modules that wait for a screenshot never finish unattended, and
           # the runner waits 240 s for each (tests/conformance/README.md).
           CONFORMANCE_SKIP_MANUAL_REVIEW: "1"
-        run: pnpm run conformance:basic-op
+        run: pnpm run conformance:${{ matrix.plan }}-op
 
       - name: Upload conformance artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: oidf-basic-op-conformance
+          name: oidf-${{ matrix.plan }}-op-conformance
           path: |
             tests/conformance/results
             tests/conformance/.generated

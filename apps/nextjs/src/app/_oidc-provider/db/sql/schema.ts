@@ -96,6 +96,17 @@ CREATE TABLE IF NOT EXISTS client_grant_types (
 );
 CREATE INDEX IF NOT EXISTS client_grant_types_client_id_idx ON client_grant_types (client_id);
 
+-- Not in the ER model: the response types the client may use at the
+-- authorization endpoint (OpenID Connect Dynamic Client Registration 1.0):
+-- code, or id_token and id_token token for the Implicit Flow. A client
+-- without rows may use code only.
+CREATE TABLE IF NOT EXISTS client_response_types (
+  id            TEXT PRIMARY KEY,
+  client_id     TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  response_type VARCHAR(1000) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_response_types_client_id_idx ON client_response_types (client_id);
+
 -- Scope: the scopes the client may request. A request for any other scope is
 -- rejected with invalid_scope. A client without rows may request every scope
 -- the OP accepts.
@@ -137,7 +148,9 @@ CREATE INDEX IF NOT EXISTS federated_identities_user_id_idx ON federated_identit
 
 -- Transaction: one authorization request, from /authorize until its code is
 -- exchanged. status moves requested -> upstream_pending -> authenticated ->
--- code_issued -> token_issued, or ends as failed without a code.
+-- code_issued -> token_issued, or ends as failed without a code. The
+-- Implicit Flow, whose authorization endpoint returns the tokens itself,
+-- moves from authenticated to token_issued.
 CREATE TABLE IF NOT EXISTS transactions (
   transaction_id VARCHAR(5000) PRIMARY KEY,
   status         VARCHAR(1000) NOT NULL CHECK (status IN
@@ -164,9 +177,10 @@ CREATE TABLE IF NOT EXISTS authentication_requests (
   -- Not in the ER model: the other parameters of OpenID Connect Core 1.0
   -- (§3.1.2.1, claims_locales §5.2, claims §5.5), each NULL when the request
   -- did not send it. response_mode is the response mode the OP answers in:
-  -- form_post, or query.jwt for JARM's query.jwt and jwt. It is NULL for the
-  -- query response, response_mode=query included. prompt is space-delimited,
-  -- max_age is in seconds and claims is the claims request as JSON.
+  -- form_post, fragment (the Implicit Flow, and response_mode=fragment), or
+  -- query.jwt for JARM's query.jwt and jwt. It is NULL for the query response,
+  -- response_mode=query included. prompt is space-delimited, max_age is in
+  -- seconds and claims is the claims request as JSON.
   response_mode         VARCHAR(5000),
   prompt                VARCHAR(5000),
   max_age               BIGINT,

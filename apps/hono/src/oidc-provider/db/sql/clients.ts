@@ -17,8 +17,11 @@
  *   grantTypes and scope. A request for a scope outside scope is rejected with
  *   invalid_scope (validateClientScope() in core). A client without
  *   client_scopes rows may request every scope the OP accepts.
- * - Metadata without a column (response_types, default_max_age, the ID Token
- *   and UserInfo signing algs) keeps its default.
+ * - client_response_types: responseTypes, the response types the client may
+ *   use at the authorization endpoint (id_token and id_token token for the
+ *   Implicit Flow). A client without rows may use code only.
+ * - Metadata without a column (default_max_age, the ID Token and UserInfo
+ *   signing algs) keeps its default.
  *
  * The client's public keys (client_jwks) are not part of the RegisteredClient.
  * A process that needs them asks the ClientKeyResolver for the keys of its own
@@ -77,6 +80,10 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
         sql: 'SELECT value FROM client_scopes WHERE client_id = ? ORDER BY id',
         params: [clientId],
       });
+      const responseTypes = await db.all<{ response_type: string }>({
+        sql: 'SELECT response_type FROM client_response_types WHERE client_id = ? ORDER BY id',
+        params: [clientId],
+      });
 
       const registered: RegisteredClient = {
         clientId: client.id,
@@ -85,6 +92,7 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       };
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
+      if (responseTypes.length > 0) registered.responseTypes = responseTypes.map((row) => row.response_type);
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
@@ -162,8 +170,9 @@ function parseJwk(clientId: string, json: string): Jwk {
  * are, so every instance of the OP may register its clients at startup, even
  * at the same moment: each row's id comes from the values it holds, so two
  * registrations write the same rows instead of adding copies. When the values
- * change, the new redirect URIs, grant types and scopes go in before the old
- * ones are removed, so requests in between still find the client.
+ * change, the new redirect URIs, grant types, scopes and response types go in
+ * before the old ones are removed, so requests in between still find the
+ * client.
  *
  * clientSecret is saved as its hash (hashClientSecret()). The statements run
  * one at a time (SqlDatabase has no transactions), so run it again if it stops
@@ -252,6 +261,7 @@ export async function registerClient(
     ['client_redirect_uris', 'value', client.redirectUris],
     ['client_grant_types', 'grant_type', client.grantTypes ?? []],
     ['client_scopes', 'value', client.scope ?? []],
+    ['client_response_types', 'response_type', client.responseTypes ?? []],
   ];
   for (const [table, column, values] of childValues) {
     const ids: string[] = [];

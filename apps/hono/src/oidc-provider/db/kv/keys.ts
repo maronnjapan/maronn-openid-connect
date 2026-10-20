@@ -98,6 +98,13 @@ export interface ClientRecord {
    * rejected with invalid_scope. Empty: every scope the OP accepts.
    */
   scopes: string[];
+  /**
+   * Not in the ER model: the response types the client may use at the
+   * authorization endpoint (id_token and id_token token for the Implicit
+   * Flow). Empty or absent (a record written before the field existed): code
+   * only.
+   */
+  response_types?: string[];
 }
 
 /** One Client_auth of ClientRecord.client_auths, with its Client_secret. */
@@ -167,8 +174,9 @@ export interface TransactionRecord {
      * Not in the ER model: the other parameters of OpenID Connect Core 1.0
      * (§3.1.2.1, claims_locales §5.2, claims §5.5), each null when the request
      * did not send it. response_mode is the response mode the OP answers in:
-     * form_post, or query.jwt for JARM's query.jwt and jwt. It is null for the
-     * query response, response_mode=query included. prompt is space-delimited,
+     * form_post, fragment (the Implicit Flow, and response_mode=fragment), or
+     * query.jwt for JARM's query.jwt and jwt. It is null for the query
+     * response, response_mode=query included. prompt is space-delimited,
      * max_age is in seconds and claims is the claims request.
      */
     response_mode: string | null;
@@ -193,7 +201,8 @@ export interface TransactionRecord {
 /**
  * Not in the ER model: failed when the transaction ended without a code,
  * code_issued once a code was issued from it, and token_issued once that code
- * was exchanged for tokens.
+ * was exchanged for tokens, or once the authorization endpoint issued the
+ * tokens itself (the Implicit Flow).
  */
 export interface TransactionResultRecord {
   status: 'failed' | 'code_issued' | 'token_issued';
@@ -256,7 +265,11 @@ export interface AccessTokenRecord {
    * asked for no acr (acr_values).
    */
   acr: string | null;
-  /** The transaction of the code the grant came from. null for the device flow and CIBA. */
+  /**
+   * The transaction the token was issued from: the one the Implicit Flow
+   * names, or that of the code the grant came from. null for the device flow
+   * and CIBA.
+   */
   transaction_id: string | null;
   grant_id: string | null;
   /** Not in the ER model: the other values the OP needs (audience, auth_time, ...). */

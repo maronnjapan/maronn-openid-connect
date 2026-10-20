@@ -38,6 +38,7 @@ describe('SCHEMA_SQL', () => {
         'client_grant_types',
         'client_jwks',
         'client_redirect_uris',
+        'client_response_types',
         'client_scopes',
         'client_secrets',
         'clients',
@@ -134,16 +135,18 @@ describe('SCHEMA_SQL', () => {
         .run();
       sqlite.prepare("INSERT INTO client_redirect_uris (id, client_id, value) VALUES ('uri-1', 'rp-1', 'https://rp.example.com/cb')").run();
       sqlite.prepare("INSERT INTO client_jwks (id, client_id, purpose, jwk) VALUES ('jwk-1', 'rp-1', 'request_object', '{}')").run();
+      sqlite.prepare("INSERT INTO client_response_types (id, client_id, response_type) VALUES ('rt-1', 'rp-1', 'id_token')").run();
 
       sqlite.prepare("DELETE FROM clients WHERE id = 'rp-1'").run();
 
       const counts = sqlite
         .prepare(
           'SELECT (SELECT COUNT(*) FROM client_auths) AS auths, (SELECT COUNT(*) FROM client_secrets) AS secrets, ' +
-            '(SELECT COUNT(*) FROM client_redirect_uris) AS redirect_uris, (SELECT COUNT(*) FROM client_jwks) AS jwks',
+            '(SELECT COUNT(*) FROM client_redirect_uris) AS redirect_uris, (SELECT COUNT(*) FROM client_jwks) AS jwks, ' +
+            '(SELECT COUNT(*) FROM client_response_types) AS response_types',
         )
         .all();
-      expect(counts).toEqual([{ auths: 0, secrets: 0, redirect_uris: 0, jwks: 0 }]);
+      expect(counts).toEqual([{ auths: 0, secrets: 0, redirect_uris: 0, jwks: 0, response_types: 0 }]);
     });
 
     it('should keep a code without its transaction when the transaction is deleted', () => {

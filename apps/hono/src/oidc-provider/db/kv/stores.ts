@@ -26,7 +26,9 @@
  * 8. transactionStore.get returns a transaction only while it is in progress,
  *    and delete ends it with a transaction_result key that put never changes,
  *    so an ended transaction cannot start again: failed, then code_issued if a
- *    code is issued from it, and token_issued once that code is exchanged.
+ *    code is issued from it, and token_issued once that code is exchanged, or
+ *    once recordTokenIssued records the tokens the Implicit Flow returns from
+ *    the authorization endpoint.
  *
  * A few records are read, changed and written back: a grant, a consent, and
  * the status of a transaction in progress. Two requests that change the same
@@ -41,7 +43,6 @@ import {
   TokenErrorCode,
   type AccessTokenInfo,
   type AuthTransaction,
-  type AuthTransactionStore,
   type AuthorizationCodeData,
   type AuthorizationCodeInfo,
   type RefreshTokenInfo,
@@ -56,6 +57,7 @@ import {
   type ConsentStorage,
   type ProviderStores,
   type RefreshTokenStorage,
+  type TransactionStorage,
   type UpstreamLoginStorage,
   type UserStorage,
 } from '../../store.js';
@@ -138,7 +140,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
   };
 
   // Transaction + Authentication_request: one record, written in one set.
-  const transactionStore: AuthTransactionStore = {
+  const transactionStore: TransactionStorage = {
     async get(key) {
       const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
       const [record, result] = await Promise.all([
@@ -248,6 +250,13 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         ttlUntil(record.expired_at),
       );
     },
+    // The Implicit Flow ended the transaction (delete) and then issued its tokens.
+    async recordTokenIssued(transactionId) {
+      const record = await readTransaction(transactionId);
+      if (!record) return;
+      const result: TransactionResultRecord = { status: 'token_issued' };
+      await db.set(keys.transactionResult(transactionId), JSON.stringify(result), ttlUntil(record.expired_at));
+    },
   };
 
   const authCodeStore: AuthorizationCodeStorage = {
@@ -322,12 +331,13 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
 
   const accessTokenStore: AccessTokenStorage = {
     async set(token, info) {
-      const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, acr, ...payload } = info;
+      const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, acr, transactionId, ...payload } = info;
       const tokenHash = await hashKey(token);
       // A token issued without a jti is kept under its hash.
       const id = jti ?? tokenHash;
       // The grant also names the transaction of the code it came from. A grant
-      // without a code (the device flow, CIBA) has none.
+      // without a code names none: the Implicit Flow names the transaction on
+      // the token itself, and the device flow and CIBA have none.
       const grant =
         grantId === undefined
           ? undefined
@@ -344,7 +354,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         client_id: clientId,
         scope: joinScope(scope),
         acr: acr ?? null,
-        transaction_id: grant?.transaction_id ?? null,
+        transaction_id: transactionId ?? grant?.transaction_id ?? null,
         grant_id: grantId ?? null,
         payload,
       };

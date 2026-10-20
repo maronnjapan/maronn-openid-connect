@@ -192,6 +192,7 @@ describe('registerDevelopmentData', () => {
       redirectUris: ['http://127.0.0.1:3020/callback'],
       grantTypes: ['authorization_code', 'refresh_token'],
       tokenEndpointAuthMethods: ['client_secret_post'],
+      responseTypes: ['code'],
       clientSecretHash: await hashClientSecret('e2e-client-secret'),
     });
     expect(await resolver.findClient('e2e-resource-server')).toEqual({
@@ -200,6 +201,7 @@ describe('registerDevelopmentData', () => {
       redirectUris: ['http://127.0.0.1:3030/unused-callback'],
       grantTypes: ['authorization_code', 'refresh_token'],
       tokenEndpointAuthMethods: ['client_secret_basic'],
+      responseTypes: ['code'],
       clientSecretHash: await hashClientSecret('e2e-resource-server-secret'),
     });
   });

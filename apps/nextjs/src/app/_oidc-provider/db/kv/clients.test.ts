@@ -44,6 +44,7 @@ describe('registerClient', () => {
         redirect_uris: ['https://rp.example.com/callback'],
         grant_types: [],
         scopes: [],
+        response_types: [],
       });
     });
 
@@ -96,6 +97,7 @@ describe('registerClient', () => {
         redirect_uris: ['https://spa.example.com/cb'],
         grant_types: [],
         scopes: [],
+        response_types: [],
       });
     });
 
@@ -110,6 +112,7 @@ describe('registerClient', () => {
         redirect_uris: ['https://rp.example.com/callback'],
         grant_types: [],
         scopes: [],
+        response_types: [],
       });
     });
 
@@ -140,6 +143,22 @@ describe('registerClient', () => {
         scopes: ['openid', 'profile'],
       });
     });
+
+    // OIDC Core 1.0 §3.2.2.1: a client of the Implicit Flow registers its response types.
+    it('should save the response types in the order they are given', async () => {
+      await registerClient(db, {
+        clientId: 'spa',
+        redirectUris: ['https://spa.example.com/cb'],
+        grantTypes: ['implicit'],
+        responseTypes: ['id_token token', 'id_token'],
+        tokenEndpointAuthMethods: ['none'],
+      });
+
+      expect(await clientRecord('spa')).toMatchObject({
+        grant_types: ['implicit'],
+        response_types: ['id_token token', 'id_token'],
+      });
+    });
   });
 
   describe('Registering Again', () => {
@@ -161,6 +180,7 @@ describe('registerClient', () => {
         redirect_uris: ['https://new.example.com/cb'],
         grant_types: [],
         scopes: [],
+        response_types: [],
       });
     });
 
@@ -253,6 +273,47 @@ describe('createClientResolver', () => {
       redirectUris: ['https://rp.example.com/callback'],
       tokenEndpointAuthMethods: ['client_secret_post'],
     });
+
+    expect(await createClientResolver(db).findClient('rp-1')).toEqual({
+      clientId: 'rp-1',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: response_types decides which
+  // response types the authorization endpoint accepts from the client.
+  it('should find the response types a client registered', async () => {
+    await registerClient(db, {
+      clientId: 'spa',
+      redirectUris: ['https://spa.example.com/cb'],
+      grantTypes: ['implicit'],
+      responseTypes: ['id_token token', 'id_token'],
+      tokenEndpointAuthMethods: ['none'],
+    });
+
+    expect(await createClientResolver(db).findClient('spa')).toEqual({
+      clientId: 'spa',
+      clientType: 'public',
+      redirectUris: ['https://spa.example.com/cb'],
+      grantTypes: ['implicit'],
+      responseTypes: ['id_token token', 'id_token'],
+      tokenEndpointAuthMethods: ['none'],
+    });
+  });
+
+  // A record written before response_types existed keeps the default of code only.
+  it('should leave responseTypes out for a record without response_types', async () => {
+    const record: ClientRecord = {
+      name: null,
+      client_type: 'confidential',
+      is_deleted: false,
+      client_auths: [],
+      redirect_uris: ['https://rp.example.com/callback'],
+      grant_types: [],
+      scopes: [],
+    };
+    await writeRecord(db, keys.client('rp-1'), record);
 
     expect(await createClientResolver(db).findClient('rp-1')).toEqual({
       clientId: 'rp-1',

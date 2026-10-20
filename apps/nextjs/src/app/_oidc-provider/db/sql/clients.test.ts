@@ -120,6 +120,28 @@ describe('registerClient', () => {
         { client_id: 'rp-1', value: 'profile' },
       ]);
     });
+
+    // OIDC Core 1.0 §3.2.2.1: a client of the Implicit Flow registers its response types.
+    it('should save the response types as rows of the client', async () => {
+      await registerClient(db, {
+        clientId: 'spa',
+        redirectUris: ['https://spa.example.com/cb'],
+        grantTypes: ['implicit'],
+        responseTypes: ['id_token token', 'id_token'],
+        tokenEndpointAuthMethods: ['none'],
+      });
+
+      expect(await rows('SELECT client_id, response_type FROM client_response_types ORDER BY response_type')).toEqual([
+        { client_id: 'spa', response_type: 'id_token' },
+        { client_id: 'spa', response_type: 'id_token token' },
+      ]);
+    });
+
+    it('should save no response type rows for a client registered without response types', async () => {
+      await registerClient(db, { clientId: 'rp-1', redirectUris: ['https://rp.example.com/callback'] });
+
+      expect(await rows('SELECT response_type FROM client_response_types')).toEqual([]);
+    });
   });
 
   describe('Registering Again', () => {
@@ -299,6 +321,22 @@ describe('createClientResolver', () => {
       clientType: 'confidential',
       redirectUris: ['https://rp.example.com/callback'],
     });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: response_types decides which
+  // response types the authorization endpoint accepts from the client.
+  it('should find the response types a client registered', async () => {
+    await registerClient(db, {
+      clientId: 'spa',
+      redirectUris: ['https://spa.example.com/cb'],
+      responseTypes: ['id_token token', 'id_token'],
+      tokenEndpointAuthMethods: ['none'],
+    });
+
+    const client = await createClientResolver(db).findClient('spa');
+
+    // The rows come back in the order of their ids, which is not the order they were registered in.
+    expect([...(client?.responseTypes ?? [])].sort()).toEqual(['id_token', 'id_token token']);
   });
 
   it('should find a registered client without its public keys', async () => {

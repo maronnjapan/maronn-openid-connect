@@ -232,6 +232,18 @@ describe('createProviderStores', () => {
       expect(await stateOf('txn-1')).toEqual({ status: 'requested', result: 'failed' });
     });
 
+    // The Implicit Flow returns its tokens from the authorization endpoint
+    // after it ended the transaction (OIDC Core 1.0 §3.2.2.5).
+    it('should end a transaction whose tokens the authorization endpoint issued as token_issued', async () => {
+      await stores.transactionStore.put('auth_txn:txn-1', transaction({ responseType: 'id_token' }), 60);
+      await stores.transactionStore.delete('auth_txn:txn-1');
+
+      await stores.transactionStore.recordTokenIssued?.('txn-1');
+
+      expect(await stateOf('txn-1')).toEqual({ status: 'requested', result: 'token_issued' });
+      expect(await stores.transactionStore.get('auth_txn:txn-1')).toBeNull();
+    });
+
     it('should not start a deleted transaction again when it is saved again', async () => {
       await stores.transactionStore.put('auth_txn:txn-1', transaction(), 60);
       await stores.transactionStore.delete('auth_txn:txn-1');
@@ -477,6 +489,18 @@ describe('createProviderStores', () => {
       await stores.accessTokenStore.delete('at-1');
 
       expect(await stores.accessTokenStore.get('at-1')).toBeUndefined();
+    });
+
+    // The Implicit Flow issues the token without a code and names its transaction.
+    it('should link an access token to the transaction it names', async () => {
+      await stores.transactionStore.put('auth_txn:txn-1', transaction({ responseType: 'id_token token' }), 60);
+
+      await stores.accessTokenStore.set('at-1', accessToken({ grantId: 'grant-implicit', transactionId: 'txn-1' }));
+
+      expect(await readRecord<AccessTokenRecord>(db, keys.accessToken(await sha256('at-1')))).toMatchObject({
+        transaction_id: 'txn-1',
+      });
+      expect(await stores.accessTokenStore.get('at-1')).toEqual(accessToken({ grantId: 'grant-implicit' }));
     });
 
     it('should end the transaction of the code of its grant as token_issued', async () => {

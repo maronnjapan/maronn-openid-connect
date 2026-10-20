@@ -98,6 +98,28 @@ describe('issueAuthorizationCodeResponse', () => {
       ]);
       expect(db.codes.size).toBe(0);
     });
+
+    // OIDC Core 1.0 §3.3.2.5: the Hybrid Flow returns the code together with the tokens.
+    it('should hand a transaction of response_type=code id_token token to the Hybrid Flow, which answers with the code and the tokens in the fragment', async () => {
+      const { c, db, stores } = await providerContext();
+      const transaction = transactionOf({ responseType: 'code id_token token' });
+      await storeTransaction(stores, transaction);
+
+      const outcome = await issueAuthorizationCodeResponse(c, {
+        transactionId: TRANSACTION_ID,
+        transaction,
+        session: { subject: SUBJECT, authTime: AUTH_TIME, sessionId: SESSION_ID },
+        issuer: TEST_ISSUER,
+        responseMode: undefined,
+      });
+
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect' } });
+      const location = new URL((outcome as { response: { location: string } }).response.location);
+      expect(location.origin + location.pathname + location.search).toBe(REDIRECT_URI);
+      const params = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+      expect(Object.keys(params)).toEqual(['code', 'access_token', 'token_type', 'expires_in', 'scope', 'id_token', 'state', 'iss']);
+      expect([...db.codes.keys()]).toEqual([params['code']]);
+    });
   });
 
   describe('Stored code', () => {

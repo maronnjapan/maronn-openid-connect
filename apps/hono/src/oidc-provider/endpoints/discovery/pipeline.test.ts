@@ -29,7 +29,7 @@ describe('discoveryApp', () => {
       authorization_endpoint: 'https://op.example.com/authorize',
       token_endpoint: 'https://op.example.com/token',
       jwks_uri: 'https://op.example.com/.well-known/jwks.json',
-      response_types_supported: ['code', 'id_token', 'id_token token'],
+      response_types_supported: ['code', 'id_token', 'id_token token', 'code id_token', 'code token', 'code id_token token'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['RS256'],
       userinfo_endpoint: 'https://op.example.com/userinfo',
@@ -65,6 +65,8 @@ describe('discoveryApp', () => {
         'address',
         'phone_number',
         'phone_number_verified',
+        // OIDC Core 1.0 §3.3.2.11: the hybrid-flow feature adds c_hash.
+        'c_hash',
       ],
       claim_types_supported: ['normal'],
       userinfo_signing_alg_values_supported: ['RS256'],

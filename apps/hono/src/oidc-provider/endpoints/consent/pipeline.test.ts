@@ -176,4 +176,56 @@ describe('submitConsent', () => {
       expect(db.accessTokens.size).toBe(0);
     });
   });
+
+  // OIDC Core 1.0 §3.3: /authorize stored the fragment response mode for a
+  // request of the Hybrid Flow.
+  describe('Hybrid Flow', () => {
+    const hybridTransaction = sampleTransaction({
+      responseType: 'code id_token token',
+      nonce: 'nonce-1',
+      codeChallenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+      codeChallengeMethod: 'S256',
+      responseMode: 'fragment',
+    } as Partial<AuthTransaction>);
+
+    // OIDC Core 1.0 §3.3.2.5 / RFC 9207 §2: the code with the tokens.
+    it('should issue the code and the tokens, record the consent and answer in the fragment when the End-User approves', async () => {
+      const { c, db } = await postContext({ transaction: hybridTransaction });
+
+      const outcome = await submitConsent(c, { csrfToken: CSRF_TOKEN, action: 'approve' });
+      const [code = ''] = [...db.codes.keys()];
+      const [accessToken = ''] = [...db.accessTokens.keys()];
+
+      expect(outcome).toEqual({
+        kind: 'authorization_response',
+        response: {
+          method: 'redirect',
+          location: expect.stringMatching(
+            new RegExp(
+              `^https://rp\\.example\\.com/callback#code=${code}&access_token=${accessToken}&token_type=Bearer&expires_in=3600&scope=openid\\+profile&id_token=[^&]+&state=state-1&iss=https%3A%2F%2Fop\\.example\\.com$`,
+            ),
+          ),
+        },
+        cookies: [CLEARED_TRANSACTION_COOKIE],
+      });
+      expect(db.codes.get(code)).toMatchObject({ subject: 'alice', sessionId: 'sid-1', scope: ['openid', 'profile'], nonce: 'nonce-1' });
+      expect(await createProviderStores(db).consentStore.hasConsent('alice', 'client-1', ['openid', 'profile'])).toBe(
+        true,
+      );
+      expect(db.authSessions.has(TRANSACTION_ID)).toBe(false);
+    });
+
+    // OIDC Core 1.0 §3.3.2.6: the error goes back in the fragment.
+    it('should answer access_denied in the fragment when the End-User denies', async () => {
+      const { c, db } = await postContext({ transaction: hybridTransaction });
+
+      expect(await submitConsent(c, { csrfToken: CSRF_TOKEN, action: 'deny' })).toEqual({
+        kind: 'authorization_response',
+        response: { method: 'redirect', location: 'https://rp.example.com/callback#error=access_denied&state=state-1&iss=https%3A%2F%2Fop.example.com' },
+        cookies: [CLEARED_TRANSACTION_COOKIE],
+      });
+      expect(db.codes.size).toBe(0);
+      expect(db.accessTokens.size).toBe(0);
+    });
+  });
 });

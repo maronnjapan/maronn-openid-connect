@@ -64,6 +64,21 @@ function implicitParams(overrides: Record<string, string> = {}): Record<string, 
   return params;
 }
 
+/** A database with the test client registered for the response types of the Hybrid Flow. */
+async function providerWithHybridClient() {
+  const db = createEmptyDatabase();
+  await registerTestClient(db, {
+    grantTypes: ['authorization_code', 'implicit'],
+    responseTypes: ['code id_token token', 'code id_token', 'code token'],
+  });
+  return { db, stores: createProviderStores(db) };
+}
+
+/** The parameters of a valid Hybrid Flow request (PKCE binds its code), with the given changes. */
+function hybridParams(overrides: Record<string, string> = {}): Record<string, string> {
+  return authorizationParams({ response_type: 'code id_token token', ...overrides });
+}
+
 /** Assert that the outcome redirects to the client and return the target and the parameters of its fragment. */
 function fragmentRedirectOf(outcome: unknown): { target: string; params: Record<string, string> } {
   expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect', location: expect.any(String) } });
@@ -378,6 +393,130 @@ describe('processAuthorizationRequest', () => {
       expect(fragmentRedirectOf(outcome).params).toEqual({
         error: 'unsupported_response_type',
         error_description: 'Unsupported response_type: token',
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+    });
+  });
+
+  // OIDC Core 1.0 §3.3: the code comes with the ID Token and/or the access
+  // token from the authorization endpoint, in the fragment (OAuth 2.0 Multiple
+  // Response Type Encoding Practices §5).
+  describe('Hybrid Flow', () => {
+    it('should redirect with the code, the tokens, the state and iss in the fragment for SSO with prior consent', async () => {
+      const { db, stores } = await providerWithHybridClient();
+      const cookie = await signIn(stores);
+      await stores.consentStore.grant(SUBJECT, CLIENT_ID, ['openid']);
+
+      const outcome = await authorize(db, hybridParams(), { cookie });
+
+      const { target, params } = fragmentRedirectOf(outcome);
+      expect(target).toBe(REDIRECT_URI);
+      expect(params).toEqual({
+        code: [...db.codes.keys()][0],
+        access_token: [...db.accessTokens.keys()][0],
+        token_type: 'Bearer',
+        expires_in: '3600',
+        scope: 'openid',
+        id_token: expect.any(String),
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+      expect(jwtClaimsOf(params['id_token']!)).toMatchObject({ sub: SUBJECT, aud: CLIENT_ID, nonce: NONCE, c_hash: expect.any(String) });
+      // One grant for the code and the access token (OAuth 2.1 §4.1.2).
+      expect([...db.codes.values()][0]).toMatchObject({ grantId: [...db.accessTokens.values()][0]?.grantId, codeChallenge: CODE_CHALLENGE });
+      expect(db.transactions.size).toBe(0);
+    });
+
+    // OIDC Core 1.0 §3.3.2.6: errors go back in the fragment too.
+    it('should redirect login_required in the fragment for prompt=none without a session', async () => {
+      const { db } = await providerWithHybridClient();
+
+      const outcome = await authorize(db, hybridParams({ response_type: 'code id_token', prompt: 'none' }));
+
+      expect(fragmentRedirectOf(outcome)).toEqual({
+        target: REDIRECT_URI,
+        params: {
+          error: 'login_required',
+          error_description: 'No active session found. Silent authentication failed.',
+          state: STATE,
+          iss: TEST_ISSUER,
+        },
+      });
+    });
+
+    // The response mode is recorded so /consent answers in it (restoreResponseMode()).
+    it('should record the fragment and the PKCE challenge on the transaction it continues on the login screen with', async () => {
+      const { db } = await providerWithHybridClient();
+
+      const outcome = await authorize(db, hybridParams());
+
+      const [transactionId] = transactionIdsOf(db);
+      expect(outcome).toEqual({ kind: 'login', cookies: [transactionCookie(transactionId!)] });
+      expect(db.transactions.get('auth_txn:' + transactionId)?.value).toMatchObject({
+        responseType: 'code id_token token',
+        responseMode: 'fragment',
+        nonce: NONCE,
+        codeChallenge: CODE_CHALLENGE,
+        codeChallengeMethod: 'S256',
+      });
+    });
+
+    // OIDC Core 1.0 §3.3.2.11: nonce is REQUIRED when the authorization
+    // endpoint returns an ID Token, and stays optional for code token.
+    it('should redirect invalid_request in the fragment for code id_token token without nonce and continue code token without nonce', async () => {
+      const { db } = await providerWithHybridClient();
+      const { nonce: _nonce, ...withoutNonce } = hybridParams();
+
+      expect(fragmentRedirectOf(await authorize(db, withoutNonce)).params).toEqual({
+        error: 'invalid_request',
+        error_description: 'Missing required parameter: nonce',
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+      expect(db.transactions.size).toBe(0);
+      expect(await authorize(db, { ...withoutNonce, response_type: 'code token' })).toMatchObject({ kind: 'login' });
+    });
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices §5: never the query.
+    it('should redirect invalid_request in the fragment for response_mode=query', async () => {
+      const { db } = await providerWithHybridClient();
+
+      const outcome = await authorize(db, hybridParams({ response_mode: 'query' }));
+
+      expect(fragmentRedirectOf(outcome).params).toEqual({
+        error: 'invalid_request',
+        error_description: 'response_mode=query must not be used with the Hybrid Flow',
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+    });
+
+    // OAuth 2.1 §4.1.1: PKCE binds the code the Hybrid Flow returns.
+    it('should redirect invalid_request in the fragment for a request without code_challenge', async () => {
+      const { db } = await providerWithHybridClient();
+      const { code_challenge: _challenge, code_challenge_method: _method, ...params } = hybridParams();
+
+      const outcome = await authorize(db, params);
+
+      expect(fragmentRedirectOf(outcome).params).toEqual({
+        error: 'invalid_request',
+        error_description: 'Missing required parameter: code_challenge',
+        state: STATE,
+        iss: TEST_ISSUER,
+      });
+      expect(db.transactions.size).toBe(0);
+    });
+
+    // RFC 6749 §4.1.2.1: a client must be registered for the response type.
+    it('should redirect unauthorized_client in the fragment for a client registered only for code', async () => {
+      const { db } = await providerWithClient();
+
+      const outcome = await authorize(db, hybridParams({ response_type: 'code id_token' }));
+
+      expect(fragmentRedirectOf(outcome).params).toEqual({
+        error: 'unauthorized_client',
+        error_description: 'Client is not authorized to use response_type: code id_token',
         state: STATE,
         iss: TEST_ISSUER,
       });

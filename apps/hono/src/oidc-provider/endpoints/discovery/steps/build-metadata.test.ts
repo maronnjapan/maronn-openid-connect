@@ -61,9 +61,24 @@ describe('buildDiscoveryMetadata', () => {
       ]);
     });
 
-    // OIDC Core 1.0 §3.2.2.1 (implicit-flow feature): authorize.responseTypes of the features.
+    // OIDC Core 1.0 §3.2.2.1 (implicit-flow feature) / §3.3.1.1 (hybrid-flow
+    // feature): authorize.responseTypes of the features, in their order.
     it('should advertise code and the response types the features answer', async () => {
-      expect((await metadataFor()).response_types_supported).toEqual(['code', 'id_token', 'id_token token']);
+      expect((await metadataFor()).response_types_supported).toEqual([
+        'code',
+        'id_token',
+        'id_token token',
+        'code id_token',
+        'code token',
+        'code id_token token',
+      ]);
+    });
+
+    // OIDC Core 1.0 §3.3.2.11 (hybrid-flow feature): c_hash joins the claims of the provider.
+    it('should merge the claims the features advertise after those of the provider', async () => {
+      const claims = (await metadataFor()).claims_supported as string[];
+
+      expect(claims.slice(-3)).toEqual(['phone_number', 'phone_number_verified', 'c_hash']);
     });
 
     // OIDC Core 1.0 §11 (refresh-token feature) / Form Post Response Mode, the

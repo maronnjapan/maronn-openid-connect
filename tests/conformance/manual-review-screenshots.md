@@ -30,6 +30,11 @@ FAILURE は 0 件**、かつ **screenshot 提出以外のスキップ・エラ�
 下表の 3 module はいずれも OP が正しく動作したうえで screenshot 提出待ち / manual review に
 落ちたものです。本手順で screenshot を提出すれば各 module を pass にできます。
 
+> `oidcc-ensure-registered-redirect-uri` の WebRunner timeout は、OP ではなく browser automation の設定が原因でした。
+> `Verify Complete` の URL パターン `*/test/*/callback*` は、`redirect_uri` クエリにコールバック URL を含む認可リクエストの URL（OP の error page の URL）にも一致します。
+> そのため browser automation は error page の上で、届かない `submission_complete` を待っていました。
+> 現在のパターンは Suite のベース URL から始まる（`https://conformance-nginx:8443/test/*/callback*`）ので、この module もほかの 2 つと同じく screenshot 提出待ちで止まります。
+
 ## 対象 module
 
 `samples/hono-cloudflare`（および他 sample）の OP に対する Basic OP static-client plan で、manual
@@ -50,11 +55,16 @@ review が必要なのは次の module です。
 
 - error page module: OP は未登録／不正 `redirect_uri` に **redirect せず** error page を
   表示する（redirect すると open redirect になるため正しい）。ブラウザは Suite の callback
-  （`*/test/*/callback*`）に到達しないので、browser automation の `Verify Complete` は
+  （`https://conformance-nginx:8443/test/*/callback*`）に到達しないので、browser automation の `Verify Complete` は
   optional 化してある（README 参照）。そのため module は INTERRUPTED ではなく manual
   review 待ち（FAILED/UNKNOWN 表示のまま screenshot 提出待ち）で止まる。
 - login 画面 module: 2回目の認可・token exchange までは自動で成功するが、Suite は
   「2回目に確かに login 画面が再表示されたこと」の視覚的証跡として screenshot を要求する。
+
+Implicit OP static-client plan（`pnpm run conformance:implicit-op`）にも同じ 3 つの module があります。
+Suite はそれぞれを `response_type=id_token` と `id_token token` で実行するので、manual review が必要な module は 6 つになります。
+OP が表示する画面は上表と同じです。
+login 画面 module では token exchange の代わりに、2回目の認可でフラグメントに返った ID Token（`id_token token` では Access Token も）を Suite が自動で検証し、screenshot だけが残ります。
 
 ## 手順
 
@@ -65,6 +75,12 @@ runner 終了後も Conformance Suite の Web UI を残すため、`CONFORMANCE_
 
 ```bash
 CONFORMANCE_KEEP_SERVICES=1 pnpm run conformance:basic-op
+```
+
+Implicit OP のプランでは、次のコマンドで実行します。
+
+```bash
+CONFORMANCE_KEEP_SERVICES=1 pnpm run conformance:implicit-op
 ```
 
 - 自動 module（authorization code / token / userinfo / scope / prompt=none / id_token_hint /

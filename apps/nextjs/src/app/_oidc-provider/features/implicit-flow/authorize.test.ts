@@ -1,7 +1,7 @@
 import {
   createAuthTransaction,
   type AuthorizationRequestParams,
-  type AuthTransaction,
+  type AuthorizationResponseType,
   type ClientInfo,
 } from '@maronn-openid-connect/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -156,7 +156,7 @@ describe('issueImplicitResponse', () => {
   /** Store a transaction of the response type for the client and answer it for the End-User. */
   async function respond(
     transactionId: string,
-    responseType: string,
+    responseType: AuthorizationResponseType,
     responseMode: AuthorizationResponseMode | undefined = fragment,
   ) {
     await registerClient(createDatabase(), {
@@ -164,9 +164,9 @@ describe('issueImplicitResponse', () => {
       redirectUris: [REDIRECT_URI],
       responseTypes: ['id_token token', 'id_token'],
     });
-    const transaction: AuthTransaction = createAuthTransaction(
+    const transaction = createAuthTransaction(
       {
-        responseType: responseType as AuthTransaction['responseType'],
+        responseType,
         clientId: CLIENT_ID,
         redirectUri: REDIRECT_URI,
         redirectUriExplicit: true,

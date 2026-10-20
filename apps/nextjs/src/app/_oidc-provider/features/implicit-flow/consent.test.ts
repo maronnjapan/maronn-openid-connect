@@ -1,4 +1,4 @@
-import { createAuthTransaction, type AuthTransaction } from '@maronn-openid-connect/core';
+import { createAuthTransaction, type AuthorizationResponseType } from '@maronn-openid-connect/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeJwt } from '../../../../test-support/jwt';
 import type { AuthorizationResponse, AuthorizationResponseMode } from '../../../authorize/response-mode';
@@ -31,16 +31,21 @@ afterEach(() => {
 
 /** Store a transaction of the response type, sign the End-User in for it and approve it. */
 async function approve(
-  input: { transactionId: string; subject: string; responseType: string; responseMode?: AuthorizationResponseMode },
+  input: {
+    transactionId: string;
+    subject: string;
+    responseType: AuthorizationResponseType;
+    responseMode?: AuthorizationResponseMode;
+  },
 ) {
   await registerClient(createDatabase(), {
     clientId: CLIENT_ID,
     redirectUris: [REDIRECT_URI],
     responseTypes: ['id_token token', 'id_token'],
   });
-  const transaction: AuthTransaction = createAuthTransaction(
+  const transaction = createAuthTransaction(
     {
-      responseType: input.responseType as AuthTransaction['responseType'],
+      responseType: input.responseType,
       clientId: CLIENT_ID,
       redirectUri: REDIRECT_URI,
       redirectUriExplicit: true,

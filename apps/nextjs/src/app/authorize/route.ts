@@ -38,13 +38,21 @@ import {
   AuthorizationError,
   AuthorizationErrorCode,
   IdTokenHintError,
+  responseTypeIncludes,
   type AuthorizationRequestParams,
+  type AuthTransaction,
+  type SessionInfo,
 } from '@maronn-openid-connect/core';
 import { resolveFormPostResponseContext } from '../_oidc-provider/features/form-post-response-mode/authorize';
+import {
+  issueImplicitResponse,
+  resolveFragmentResponseContext,
+  validateImplicitRequest,
+} from '../_oidc-provider/features/implicit-flow/authorize';
 import { resolveJarmResponseContext } from '../_oidc-provider/features/jarm/authorize';
 import { resolvePushedAuthorizationRequest } from '../_oidc-provider/features/par/authorize';
 import { resolveRequestObject } from '../_oidc-provider/features/request-object/authorize';
-import { tokenGrantsOf } from '../_oidc-provider/feature';
+import { responseTypesOf, tokenGrantsOf } from '../_oidc-provider/feature';
 import { features } from '../_oidc-provider/features';
 import {
   clientResolver,
@@ -105,11 +113,12 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
   let params: Record<string, string> & AuthorizationRequestParams = parsed.params;
 
   // The response mode the request asked for, when a feature answers in one
-  // (JARM, form_post). Set once redirect_uri is verified, by the first block
-  // of a feature that answers the request's response_mode (each assigns it
-  // only while it is still unset); undefined means the plain query response.
-  // Declared before the try block so the catch can answer in the mode the
-  // request asked for.
+  // (JARM, form_post, the fragment of the Implicit Flow). Set once
+  // redirect_uri is verified, by the first block of a feature that answers
+  // the request's response_mode or response_type (each assigns it only while
+  // it is still unset); undefined means the plain query response. Declared
+  // before the try block so the catch can answer in the mode the request
+  // asked for.
   let responseMode: AuthorizationResponseMode | undefined;
   // RFC 9207 §2: every authorization response (success and error) carries the
   // issuer identifier, so clients can pin the issuer that produced it.
@@ -147,6 +156,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // [resolve-form-post-response-mode] (feature: form-post-response-mode) Interpret response_mode=form_post — OAuth 2.0 Form Post Response Mode §2
     responseMode ??= resolveFormPostResponseContext(requestParams, issuer);
 
+    // [resolve-fragment-response-mode] (feature: implicit-flow) Answer the Implicit Flow in the fragment — OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5
+    responseMode ??= resolveFragmentResponseContext(requestParams, issuer);
+
     // [validate-request] Validate the request parameters — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
     // OIDC Core 1.0 §6.3: request_uri / registration are not supported, and
     // request only when a Request Object was resolved above.
@@ -158,8 +170,12 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // must match the OAuth query parameters.
     validateRequestObjectConsistency(params, requestObjectClaims, redirectUri, state);
 
-    // response_type=code and per-client response_type authorization.
-    const responseType = validateResponseType(params, client, redirectUri, state);
+    // response_type: code, and the response types the features answer (the
+    // authorize.responseTypes entry of their feature.ts), registered for the client.
+    const responseType = validateResponseType(params, client, redirectUri, state, [
+      'code',
+      ...responseTypesOf(features),
+    ]);
 
     // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
     let scope = validateAuthorizationScope(params, requestParams, redirectUri, state);
@@ -170,9 +186,13 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
 
     // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
     // exists only for the OIDF Basic OP static-client compatibility target).
-    const pkce = validateAuthorizationCodePkce(requestParams, client, redirectUri, state, {
-      allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
-    });
+    // PKCE binds the authorization code, so a response type that returns none
+    // (the Implicit Flow, OIDC Core 1.0 §3.2) has nothing to bind.
+    const pkce = responseTypeIncludes(responseType, 'code')
+      ? validateAuthorizationCodePkce(requestParams, client, redirectUri, state, {
+        allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
+      })
+      : { codeChallenge: undefined, codeChallengeMethod: undefined };
 
     // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
     const prompt = validatePromptParameter(requestParams, redirectUri, state);
@@ -182,6 +202,8 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // - RFC 7591 §2: クライアント登録の grant_types に refresh_token があること
     //   （既定は ["authorization_code"]）。無いまま offline_access を通すと、発行した
     //   Refresh Token が unauthorized_client で拒否されるだけの死んだ資格情報になる。
+    // 認可コードを返さない response_type（Implicit Flow）の offline_access は、
+    // applyOfflineAccessPolicy がコールバックに関わらず無視する（同 §11）。
     // 独自の許可条件を差し込むならコールバックを渡す（client も受け取れる）:
     //   scope = await applyOfflineAccessPolicy(scope, requestParams, prompt, client,
     //     (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req));
@@ -230,6 +252,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // The token endpoint puts the acr it settles on into the ID Token and the
     // access token (token/route.ts).
     const acrValues = validateAcrValuesParameter(requestParams, redirectUri, state);
+
+    // [validate-implicit-request] (feature: implicit-flow) Validate the Implicit Flow request (response_mode, nonce, redirect_uri) — OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §5
+    validateImplicitRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, client, responseMode);
 
     // [create-transaction] Create and store the authorization transaction — OIDC Core 1.0 §3.1.2.3
     // Assemble the validated request from each step's result. This is core's
@@ -361,31 +386,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
         return await errorRedirect(responseMode, transaction.redirectUri, 'login_required', transaction.state, 'Session exceeds the requested max_age; re-authentication required');
       }
 
-      // transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
-      // 後の値。offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、
-      // クライアント登録 grant_types に refresh_token があるか）はそこで判定済みなので、
-      // ここで再フィルタしない。
-      const grantedScope = transaction.scope.split(' ').filter(Boolean);
-
-      const responseParams = await completeAuthTransaction(
-        transactionId,
-        transaction,
-        transactionStore,
-      );
-      const authCodeData = await createAuthorizationCode({
-        authorizationResponse: { ...responseParams, scope: grantedScope },
-        subject: session.subject,
-        authTime: session.authTime,
-        // online refresh token をこのログインセッションへ束縛するために引き継ぐ。
-        // セッションが終われば、その RT は invalid_grant になる。
-        sessionId: session.sessionId,
-        // OIDC Core 1.0 §3.1.3.1: TTL は ProviderConfig から設定可能（既定 300 秒）。
-        ttlSeconds: config.authorizationCodeTtl,
-      });
-      await authCodeStore.set(authCodeData.code, authCodeData);
-      await consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
-
-      return await successRedirect(responseMode, transaction.redirectUri, authCodeData.code, transaction.state);
+      return await issueAuthorizationResponse(transactionId, transaction, session, responseMode);
     }
 
     // [reuse-session] Single Sign-On: reuse the active OP session — OIDC Core 1.0 §3.1.2.3
@@ -429,32 +430,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
           ));
 
         if (consentAlreadyGranted) {
-          // transaction.scope は applyOfflineAccessPolicy 通過後の値（prompt=consent と
-          // クライアントの grant_types で offline_access の可否は判定済み）。再フィルタしない。
-          const grantedScope = transaction.scope.split(' ').filter(Boolean);
-
-          const responseParams = await completeAuthTransaction(
-            transactionId,
-            transaction,
-            transactionStore,
-          );
-          const authCodeData = await createAuthorizationCode({
-            authorizationResponse: { ...responseParams, scope: grantedScope },
-            subject: existingSession.subject,
-            authTime: existingSession.authTime,
-            // online refresh token を、この SSO で再利用したログインセッションへ束縛する。
-            sessionId: existingSession.sessionId,
-            // OIDC Core 1.0 §3.1.3.1: TTL は ProviderConfig から設定可能（既定 300 秒）。
-            ttlSeconds: config.authorizationCodeTtl,
-          });
-          await authCodeStore.set(authCodeData.code, authCodeData);
-          await consentResolver.recordGrant(
-            existingSession.subject,
-            transaction.clientId,
-            authCodeData.grantId,
-          );
-
-          return await successRedirect(responseMode, transaction.redirectUri, authCodeData.code, transaction.state);
+          return await issueAuthorizationResponse(transactionId, transaction, existingSession, responseMode);
         }
 
         // Signed in already: hand the subject to the consent step.
@@ -485,6 +461,48 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     }
     return Response.json({ error: 'server_error' }, { status: 500 });
   }
+}
+
+/**
+ * The authorization response for an End-User who needs no screen
+ * (prompt=none, or SSO with prior consent): finish the transaction and answer
+ * the client with what the response type returns. OIDC Core 1.0 §3.1.2.5 /
+ * §3.1.3.1 / RFC 9207 §2
+ *
+ * transaction.scope は認可リクエスト検証時に applyOfflineAccessPolicy を通した
+ * 後の値。offline_access の可否（OIDC Core 1.0 §11 の prompt=consent と、
+ * クライアント登録 grant_types に refresh_token があるか）はそこで判定済みなので、
+ * ここで再フィルタしない。
+ */
+async function issueAuthorizationResponse(
+  transactionId: string,
+  transaction: AuthTransaction,
+  session: SessionInfo,
+  responseMode: AuthorizationResponseMode | undefined,
+): Promise<Response> {
+  // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
+  const implicitResponse = await issueImplicitResponse({ transactionId, transaction, session, responseMode });
+  if (implicitResponse) return implicitResponse;
+
+  // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5 / §3.1.3.1
+  const grantedScope = transaction.scope.split(' ').filter(Boolean);
+  const responseParams = await completeAuthTransaction(transactionId, transaction, transactionStore);
+  const authCodeData = await createAuthorizationCode({
+    authorizationResponse: { ...responseParams, scope: grantedScope },
+    subject: session.subject,
+    authTime: session.authTime,
+    // online refresh token を、このログインセッション（prompt=none や SSO で
+    // 再利用したもの）へ束縛するために引き継ぐ。セッションが終われば、その RT は
+    // invalid_grant になる。
+    sessionId: session.sessionId,
+    // OIDC Core 1.0 §3.1.3.1: TTL は ProviderConfig から設定可能（既定 300 秒）。
+    ttlSeconds: config.authorizationCodeTtl,
+  });
+  await authCodeStore.set(authCodeData.code, authCodeData);
+  // Withdrawing the consent revokes the tokens issued from this grant.
+  await consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
+
+  return successRedirect(responseMode, transaction.redirectUri, authCodeData.code, transaction.state);
 }
 
 /**

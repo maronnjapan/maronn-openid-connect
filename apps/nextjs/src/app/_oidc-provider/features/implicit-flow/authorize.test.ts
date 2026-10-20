@@ -68,7 +68,7 @@ describe('resolveFragmentResponseContext', () => {
     });
   });
 
-  // The order of the values does not matter (§5), and an unsupported value
+  // The order of the values does not matter (§1.2), and an unsupported value
   // such as token alone gets its error in the fragment too (§2.1).
   it('should answer every response type that returns a token in the fragment', () => {
     const names = ['id_token token', 'token id_token', 'token', 'code id_token'].map(

@@ -26,7 +26,7 @@ describe('resolveFragmentResponseContext', () => {
     });
 
     // The order of the values does not matter (OAuth 2.0 Multiple Response
-    // Type Encoding Practices §5), and an unsupported value such as token
+    // Type Encoding Practices §1.2), and an unsupported value such as token
     // alone gets its error in the fragment too (§2.1).
     it('should answer in the fragment for every response type that returns a token', () => {
       const names = ['id_token token', 'token id_token', 'token', 'code id_token', 'code token'].map(

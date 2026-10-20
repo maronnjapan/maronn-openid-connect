@@ -184,8 +184,9 @@ describe('validateAuthorizationRequestParams', () => {
       responseTypes: ['id_token token', 'id_token'],
     };
 
-    // OAuth 2.0 Multiple Response Type Encoding Practices §5: the order of the
-    // values does not matter. There is no code, so no PKCE either (RFC 7636 §4.3).
+    // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the order of
+    // the values does not matter. PKCE protects the authorization code (RFC
+    // 7636 §1), and this response type returns none.
     it('should accept response_type=token id_token without code_challenge as id_token token', async () => {
       const params = paramsWith({ response_type: 'token id_token' });
       delete params.code_challenge;

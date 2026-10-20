@@ -10,6 +10,7 @@ const ALL_FEATURES: OidcFeatureConfig = {
   revocation: true,
   requestObject: true,
   formPostResponseMode: true,
+  implicitFlow: true,
   par: true,
   tokenExchange: true,
   jarm: true,
@@ -215,7 +216,9 @@ describe('buildOpFlow', () => {
         'resolve-request-object',
         'resolve-redirect-uri',
         'resolve-form-post-response-mode',
+        'resolve-fragment-response-mode',
         'validate-request',
+        'validate-implicit-request',
         'create-transaction',
         'validate-prompt-combination',
         'verify-id-token-hint',
@@ -230,7 +233,7 @@ describe('buildOpFlow', () => {
     it('should add the PAR and JARM steps when those features are enabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, par: true, jarm: true } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');
-      expect(authorize?.steps.map((s) => s.id).slice(0, 8)).toEqual([
+      expect(authorize?.steps.map((s) => s.id).slice(0, 9)).toEqual([
         'parse-request',
         'resolve-pushed-request',
         'resolve-client',
@@ -238,6 +241,7 @@ describe('buildOpFlow', () => {
         'resolve-redirect-uri',
         'resolve-jarm-response-mode',
         'resolve-form-post-response-mode',
+        'resolve-fragment-response-mode',
         'validate-request',
       ]);
     });
@@ -245,12 +249,41 @@ describe('buildOpFlow', () => {
     it('should leave out the form_post step when form-post-response-mode is disabled', () => {
       const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, formPostResponseMode: false } });
       const authorize = flow.endpoints.find((e) => e.id === 'authorize');
-      expect(authorize?.steps.map((s) => s.id).slice(0, 5)).toEqual([
+      expect(authorize?.steps.map((s) => s.id).slice(0, 6)).toEqual([
         'parse-request',
         'resolve-client',
         'resolve-request-object',
         'resolve-redirect-uri',
+        'resolve-fragment-response-mode',
         'validate-request',
+      ]);
+    });
+
+    // OIDC Core 1.0 §3.2: without the feature, the authorization endpoint
+    // answers response_type=code only, and /consent always issues a code.
+    it('should leave out the Implicit Flow steps of /authorize and /consent when implicit-flow is disabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, implicitFlow: false } });
+      const stepsOf = (id: string) => flow.endpoints.find((e) => e.id === id)?.steps.map((s) => s.id);
+      expect(stepsOf('authorize')?.slice(0, 7)).toEqual([
+        'parse-request',
+        'resolve-client',
+        'resolve-request-object',
+        'resolve-redirect-uri',
+        'resolve-form-post-response-mode',
+        'validate-request',
+        'create-transaction',
+      ]);
+      expect(stepsOf('consent')).toEqual([
+        'load-transaction',
+        'describe-consent-screen',
+        'reject-cross-origin-post',
+        'validate-csrf-token',
+        'deny-authorization',
+        'validate-decision',
+        'require-authenticated-subject',
+        'issue-authorization-code',
+        'record-consent',
+        'build-authorization-response',
       ]);
     });
 

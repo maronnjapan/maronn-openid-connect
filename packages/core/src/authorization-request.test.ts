@@ -1129,6 +1129,20 @@ describe('validateRequestObjectConsistency', () => {
       'request object response_type does not match the request',
     );
   });
+
+  // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the same values
+  // in another order are the same response type.
+  it('should accept a request object response_type that lists the query values in another order', () => {
+    const error = captureStepError(() =>
+      validateRequestObjectConsistency(
+        roQueryParams({ response_type: 'id_token token' }),
+        { response_type: 'token id_token', client_id: 'ro-client' },
+        REDIRECT_URI,
+      ),
+    );
+
+    expect(error).toBe(undefined);
+  });
 });
 
 describe('validateResponseType', () => {
@@ -1172,6 +1186,133 @@ describe('validateResponseType', () => {
       expect(error?.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
       expect(error?.errorDescription).toBe('Unsupported response_type: token');
       expect(error?.redirectable).toBe(true);
+    });
+
+    // Without a list of supported response types the OP answers the
+    // Authorization Code Flow only.
+    it('should reject response_type=id_token when the supported response types are not given', () => {
+      const error = captureStepError(() =>
+        validateResponseType(
+          validParams({ response_type: 'id_token' }),
+          { ...defaultClient, responseTypes: ['id_token'] },
+          REDIRECT_URI,
+        ),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
+      expect(error?.errorDescription).toBe('Unsupported response_type: id_token');
+    });
+  });
+
+  // OIDC Core 1.0 §3.2.2.1: the Implicit Flow uses response_type=id_token token
+  // or id_token. The OP accepts them when it lists them as supported.
+  describe('Implicit Flow response types', () => {
+    const implicitClient: ClientInfo = {
+      clientId: 'client123',
+      redirectUris: ['https://client.example.org/cb'],
+      responseTypes: ['id_token', 'id_token token'],
+    };
+    const supported = ['code', 'id_token', 'id_token token'] as const;
+
+    it('should accept response_type=id_token token when it is supported and registered', () => {
+      const responseType = validateResponseType(
+        validParams({ response_type: 'id_token token' }),
+        implicitClient,
+        REDIRECT_URI,
+        undefined,
+        supported,
+      );
+
+      expect(responseType).toBe('id_token token');
+    });
+
+    it('should accept response_type=id_token when it is supported and registered', () => {
+      const responseType = validateResponseType(
+        validParams({ response_type: 'id_token' }),
+        implicitClient,
+        REDIRECT_URI,
+        undefined,
+        supported,
+      );
+
+      expect(responseType).toBe('id_token');
+    });
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the order of
+    // the values does not matter.
+    it('should accept token id_token and return it as id_token token', () => {
+      const responseType = validateResponseType(
+        validParams({ response_type: 'token id_token' }),
+        implicitClient,
+        REDIRECT_URI,
+        undefined,
+        supported,
+      );
+
+      expect(responseType).toBe('id_token token');
+    });
+
+    it('should accept a client registered with token id_token for response_type=id_token token', () => {
+      const responseType = validateResponseType(
+        validParams({ response_type: 'id_token token' }),
+        { ...implicitClient, responseTypes: ['token id_token'] },
+        REDIRECT_URI,
+        undefined,
+        supported,
+      );
+
+      expect(responseType).toBe('id_token token');
+    });
+
+    // OIDC Core 1.0 §3.2.2.1 NOTE: OpenID Connect does not use token alone.
+    it('should reject response_type=token with unsupported_response_type', () => {
+      const error = captureStepError(() =>
+        validateResponseType(
+          validParams({ response_type: 'token' }),
+          implicitClient,
+          REDIRECT_URI,
+          undefined,
+          supported,
+        ),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
+      expect(error?.errorDescription).toBe('Unsupported response_type: token');
+    });
+
+    it('should reject a repeated value with unsupported_response_type', () => {
+      const error = captureStepError(() =>
+        validateResponseType(
+          validParams({ response_type: 'id_token id_token' }),
+          implicitClient,
+          REDIRECT_URI,
+          undefined,
+          supported,
+        ),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.UnsupportedResponseType);
+      expect(error?.errorDescription).toBe('Unsupported response_type: id_token id_token');
+    });
+
+    // OIDC Dynamic Client Registration 1.0 §2: response_types defaults to ["code"].
+    it('should reject response_type=id_token token with unauthorized_client for a client registered without it', () => {
+      const params = validParams({ response_type: 'id_token token', state: STATE });
+
+      const error = captureStepError(() =>
+        validateResponseType(params, defaultClient, REDIRECT_URI, params.state, supported),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.UnauthorizedClient);
+      expect(error?.errorDescription).toBe(
+        'Client is not authorized to use response_type: id_token token',
+      );
+      expect(error?.redirectUri).toBe(REDIRECT_URI);
+      expect(error?.state).toBe(STATE);
     });
   });
 
@@ -1971,6 +2112,52 @@ describe('applyOfflineAccessPolicy', () => {
       );
 
       expect(scope).toEqual(['openid', 'offline_access']);
+    });
+  });
+
+  // OIDC Core 1.0 §11: the OP MUST ignore the offline_access request unless the
+  // client uses a response_type that returns an authorization code. The
+  // Implicit Flow returns its tokens from the authorization endpoint and never
+  // a refresh token (RFC 6749 §4.2.2).
+  describe('offline_access gating by response_type', () => {
+    it('should drop offline_access for response_type=id_token token even with prompt=consent', async () => {
+      const scope = await applyOfflineAccessPolicy(
+        ['openid', 'offline_access'],
+        validParams({ response_type: 'id_token token', scope: 'openid offline_access', prompt: 'consent' }),
+        ['consent'],
+        refreshGrantClient,
+      );
+
+      expect(scope).toEqual(['openid']);
+    });
+
+    it('should drop offline_access for response_type=id_token even when a custom callback grants it', async () => {
+      const scope = await applyOfflineAccessPolicy(
+        ['openid', 'offline_access'],
+        validParams({ response_type: 'id_token', scope: 'openid offline_access', prompt: 'consent' }),
+        ['consent'],
+        refreshGrantClient,
+        () => true,
+      );
+
+      expect(scope).toEqual(['openid']);
+    });
+
+    it('should not ask the custom callback when the response type returns no code', async () => {
+      let asked = false;
+
+      await applyOfflineAccessPolicy(
+        ['openid', 'offline_access'],
+        validParams({ response_type: 'id_token', scope: 'openid offline_access', prompt: 'consent' }),
+        ['consent'],
+        refreshGrantClient,
+        () => {
+          asked = true;
+          return true;
+        },
+      );
+
+      expect(asked).toBe(false);
     });
   });
 });

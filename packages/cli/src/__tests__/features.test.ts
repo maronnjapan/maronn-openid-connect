@@ -16,6 +16,7 @@ describe('AVAILABLE_FEATURES', () => {
       'revocation',
       'request-object',
       'form-post-response-mode',
+      'implicit-flow',
     ]);
   });
 });
@@ -51,6 +52,7 @@ describe('DEFAULT_FEATURES', () => {
       revocation: true,
       requestObject: true,
       formPostResponseMode: true,
+      implicitFlow: true,
       par: false,
       tokenExchange: false,
       jarm: false,
@@ -75,6 +77,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: false,
         tokenExchange: false,
         jarm: false,
@@ -98,6 +101,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: false,
         tokenExchange: false,
         jarm: false,
@@ -121,6 +125,7 @@ describe('resolveFeatures', () => {
         revocation: false,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: false,
         tokenExchange: false,
         jarm: false,
@@ -148,6 +153,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: false,
         tokenExchange: false,
         jarm: false,
@@ -169,6 +175,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: true,
         tokenExchange: false,
         jarm: false,
@@ -205,6 +212,7 @@ describe('resolveFeatures', () => {
         revocation: true,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: true,
         tokenExchange: true,
         jarm: true,
@@ -226,6 +234,7 @@ describe('resolveFeatures', () => {
         revocation: false,
         requestObject: true,
         formPostResponseMode: true,
+        implicitFlow: true,
         par: true,
         tokenExchange: false,
         jarm: false,
@@ -243,13 +252,13 @@ describe('resolveFeatures', () => {
   describe('validation errors', () => {
     it('should reject an unknown feature name in disable', () => {
       expect(() => resolveFeatures({ disable: ['dpop'] })).toThrow(
-        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode. Experimental features (disabled by default): par',
+        'Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow. Experimental features (disabled by default): par',
       );
     });
 
     it('should reject an unknown feature name in enable', () => {
-      expect(() => resolveFeatures({ enable: ['implicit'] })).toThrow(
-        'Unknown feature: "implicit". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode. Experimental features (disabled by default): par',
+      expect(() => resolveFeatures({ enable: ['hybrid-flow'] })).toThrow(
+        'Unknown feature: "hybrid-flow". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow. Experimental features (disabled by default): par',
       );
     });
 

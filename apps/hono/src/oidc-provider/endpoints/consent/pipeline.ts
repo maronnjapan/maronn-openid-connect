@@ -1,3 +1,4 @@
+import { issueImplicitConsentResponse } from '../../features/implicit-flow/steps/issue-implicit-response.js';
 import type { ConsentError, ConsentOutcome, ConsentScreen, ConsentSubmission } from './screen.js';
 import { buildConsentRedirect } from './steps/build-authorization-response.js';
 import { denyAuthorizationRequest } from './steps/deny-authorization.js';
@@ -22,7 +23,9 @@ import { validateConsentDecision } from './steps/validate-decision.js';
  * (issueConsentedAuthorizationCode), the consent record
  * (recordConsentDecision) and the authorization response
  * (buildConsentRedirect: RFC 6749 §4.1.2 / RFC 9207 iss, or the response mode
- * of a feature). None of them builds a Response — each returns an outcome,
+ * of a feature). A request of a response type a feature answers in place of
+ * the code (the Implicit Flow) ends in that feature's block instead of the
+ * code. None of them builds a Response — each returns an outcome,
  * and page.tsx turns that outcome into a screen or a redirect.
  * prepareConsent() (GET) and submitConsent() (POST) run them in the order the
  * screen needs, so the UI can be changed without touching this file.
@@ -86,6 +89,10 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
   if (!session) {
     return { kind: 'session_missing' };
   }
+
+  // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
+  const implicitResponse = await issueImplicitConsentResponse(c, { transactionId, transaction, session, issuer });
+  if (implicitResponse) return implicitResponse;
 
   // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5
   const { responseParams, authCodeData, grantedScope } = await issueConsentedAuthorizationCode(

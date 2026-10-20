@@ -72,6 +72,34 @@ describe('issueAuthorizationCodeResponse', () => {
     });
   });
 
+  // OIDC Core 1.0 §3.2.2.5: a response type a feature answers gets its
+  // tokens from the feature in place of a code.
+  describe('Response types of the features', () => {
+    it('should hand a transaction of response_type=id_token to the Implicit Flow, which answers in the fragment without a code', async () => {
+      const { c, db, stores } = await providerContext();
+      const transaction = transactionOf({ responseType: 'id_token' });
+      await storeTransaction(stores, transaction);
+
+      const outcome = await issueAuthorizationCodeResponse(c, {
+        transactionId: TRANSACTION_ID,
+        transaction,
+        session: { subject: SUBJECT, authTime: AUTH_TIME, sessionId: SESSION_ID },
+        issuer: TEST_ISSUER,
+        responseMode: undefined,
+      });
+
+      expect(outcome).toMatchObject({ kind: 'authorization_response', response: { method: 'redirect' } });
+      const location = new URL((outcome as { response: { location: string } }).response.location);
+      expect(location.origin + location.pathname + location.search).toBe(REDIRECT_URI);
+      expect(Object.keys(Object.fromEntries(new URLSearchParams(location.hash.slice(1))))).toEqual([
+        'id_token',
+        'state',
+        'iss',
+      ]);
+      expect(db.codes.size).toBe(0);
+    });
+  });
+
   describe('Stored code', () => {
     // OIDC Core 1.0 §3.1.3.1: the code carries the request for the token endpoint
     // and is short-lived (authorizationCodeTtl, 300 seconds by default).

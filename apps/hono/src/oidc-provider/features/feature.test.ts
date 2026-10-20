@@ -6,6 +6,7 @@ import { createProviderConfig } from '../config.js';
 import { createEmptyDatabase } from '../db/memory/database.js';
 import { createProviderStores } from '../db/memory/stores.js';
 import type { AuthorizationResponseModeHandler } from '../endpoints/authorize/response-mode.js';
+import type { AuthorizationResponseTypeHandler } from '../endpoints/authorize/response-type.js';
 import type { LoginMethod } from '../endpoints/login/login-method.js';
 import {
   applyContextOf,
@@ -14,6 +15,7 @@ import {
   discoveryOf,
   loginMethodsOf,
   responseModesOf,
+  responseTypesOf,
   routesOf,
   tokenGrantsOf,
   type Feature,
@@ -37,6 +39,10 @@ function responseMode(name: string): AuthorizationResponseModeHandler {
     names: [name],
     restore: () => ({ name, respond: async (redirectUri) => ({ method: 'redirect', location: redirectUri }) }),
   };
+}
+
+function responseType(names: AuthorizationResponseTypeHandler['names']): AuthorizationResponseTypeHandler {
+  return { names, respond: async () => ({ kind: 'server_error' }) };
 }
 
 function loginMethod(id: string): LoginMethod {
@@ -238,6 +244,20 @@ describe('responseModesOf', () => {
     ];
 
     expect(responseModesOf(features)).toEqual([queryJwt, formPostJwt]);
+  });
+});
+
+describe('responseTypesOf', () => {
+  it('should list the response types of every feature in the order of the features', () => {
+    const idToken = responseType(['id_token']);
+    const idTokenToken = responseType(['id_token token']);
+    const features = [
+      defineFeature({ id: 'a', authorize: { responseTypes: [idToken] } }),
+      defineFeature({ id: 'b', authorize: { responseModes: [responseMode('fragment')] } }),
+      defineFeature({ id: 'c', authorize: { responseTypes: [idTokenToken] } }),
+    ];
+
+    expect(responseTypesOf(features)).toEqual([idToken, idTokenToken]);
   });
 });
 

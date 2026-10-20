@@ -17,12 +17,14 @@ import {
   parseAudienceParameter,
   parseClaimsRequestParameter,
   validateAcrValuesParameter,
+  responseTypeIncludes,
   type ValidatedAuthorizationRequest,
 } from '@maronn-openid-connect/core';
 import { features } from '../../../features/enabled.js';
 import { tokenGrantsOf } from '../../../features/feature.js';
 import { findUnsupportedScopes } from '../../../scopes.js';
 import type { AuthorizationRequestInput } from '../outcome.js';
+import { supportedResponseTypes } from '../response-type.js';
 import { step } from '../../step.js';
 
 export const meta = step({
@@ -32,7 +34,7 @@ export const meta = step({
   label: 'Validate the request parameters',
   spec: 'OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5',
   function: 'validateAuthorizationRequestParams',
-  calls: ['rejectUnsupportedRequestParams', 'validateRequestObjectConsistency', 'validateResponseType', 'validateAuthorizationScope', 'validateClientScope', 'validateAuthorizationCodePkce', 'validatePromptParameter', 'applyOfflineAccessPolicy', 'findUnsupportedScopes', 'validateDisplayParameter', 'resolveMaxAge', 'parseAudienceParameter', 'parseClaimsRequestParameter', 'validateAcrValuesParameter'],
+  calls: ['rejectUnsupportedRequestParams', 'validateRequestObjectConsistency', 'supportedResponseTypes', 'validateResponseType', 'validateAuthorizationScope', 'validateClientScope', 'responseTypeIncludes', 'validateAuthorizationCodePkce', 'validatePromptParameter', 'applyOfflineAccessPolicy', 'findUnsupportedScopes', 'validateDisplayParameter', 'resolveMaxAge', 'parseAudienceParameter', 'parseClaimsRequestParameter', 'validateAcrValuesParameter'],
   consumes: ['params', 'effectiveParams', 'requestObjectClaims', 'client', 'redirectUri', 'state'],
   optional: ['effectiveParams', 'requestObjectClaims'],
   produces: ['validatedRequest'],
@@ -80,8 +82,9 @@ export async function validateAuthorizationRequestParams(
   // must match the OAuth query parameters.
   validateRequestObjectConsistency(params, requestObjectClaims, redirectUri, state);
 
-  // response_type=code and per-client response_type authorization.
-  const responseType = validateResponseType(params, client, redirectUri, state);
+  // response_type: code, and the response types the features answer
+  // (supportedResponseTypes() in response-type.ts), registered for the client.
+  const responseType = validateResponseType(params, client, redirectUri, state, supportedResponseTypes());
 
   // scope must be in the query (OIDC Core 1.0 §6.1) and contain openid (§3.1.2.1).
   let scope = validateAuthorizationScope(params, effectiveParams, redirectUri, state);
@@ -92,9 +95,13 @@ export async function validateAuthorizationRequestParams(
 
   // OAuth 2.1 §4.1.1 / §7.5: PKCE with S256 (allowNonPkceAuthorizationCodeFlow
   // exists only for the OIDF Basic OP static-client compatibility target).
-  const pkce = validateAuthorizationCodePkce(effectiveParams, client, redirectUri, state, {
-    allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
-  });
+  // PKCE binds the authorization code, so a response type that returns none
+  // (the Implicit Flow, OIDC Core 1.0 §3.2) has nothing to bind.
+  const pkce = responseTypeIncludes(responseType, 'code')
+    ? validateAuthorizationCodePkce(effectiveParams, client, redirectUri, state, {
+      allowNonPkceAuthorizationCodeFlow: config.allowNonPkceAuthorizationCodeFlow,
+    })
+    : { codeChallenge: undefined, codeChallengeMethod: undefined };
 
   // OIDC Core 1.0 §3.1.2.1: prompt is none|login|consent|select_account.
   const prompt = validatePromptParameter(effectiveParams, redirectUri, state);
@@ -106,6 +113,8 @@ export async function validateAuthorizationRequestParams(
   //   Refresh Token が unauthorized_client で拒否されるだけの死んだ資格情報になる。
   // どちらも、この OP が refresh_token grant を受け付ける（refresh-token 機能がある）
   // ときに限る。受け付けないなら offline_access は常に無視する（OIDC Core 1.0 §11）。
+  // 認可コードを返さない response_type（Implicit Flow）の offline_access は、
+  // applyOfflineAccessPolicy がコールバックに関わらず無視する（同 §11）。
   // 独自の許可条件を差し込むならコールバックを渡す（client も受け取れる）:
   //   scope = await applyOfflineAccessPolicy(scope, effectiveParams, prompt, client,
   //     (req, { promptValues }) => promptValues.includes('consent') || hasStoredConsent(req));

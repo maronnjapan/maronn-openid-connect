@@ -142,7 +142,7 @@ Express と Fastify の生成物も画面は hono/jsx のままなので、`hono
 
 | パス | 役割 |
 |---|---|
-| `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応） |
+| `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応。`implicit-flow` 有効時は `response_type=id_token token` と `id_token` にも答える） |
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
 | `/login`, `/consent` | ログイン画面と同意画面。ルート（GET / POST）と描画は `endpoints/login/page.tsx` と `endpoints/consent/page.tsx`、認証と同意の判断は同じディレクトリの `pipeline.ts` が呼ぶステップが担当する（差し替え可能なデフォルト UI 付き。Next.js はページと、ログインは Server Action、同意は Route Handler） |
@@ -192,6 +192,7 @@ UI を変える場所は、変えたい範囲で選ぶ。
 | `config` | `ProviderConfig` の既定値。`config.ts` の既定値の上に重なる |
 | `token.grants` | トークンエンドポイントで答える `grant_type`。受け付ける grant と `grant_types_supported` に入る |
 | `authorize.responseModes` | 機能が答える response mode。`/consent` は保存したトランザクションから、認可リクエストが求めた mode を戻す |
+| `authorize.responseTypes` | 機能が `code` のほかに答える `response_type` と、それを答えるハンドラ。`validate-request` が受け付け、`response_types_supported` に入る。画面を出さない要求（`prompt=none` と同意済みの SSO）は、`issue-authorization-code` のステップが認可コードの代わりにハンドラへ渡す |
 | `loginMethods` | ログイン画面のパスワードのフォームの隣に出すログイン手段 |
 
 機能の設定、クライアントのメタデータ、オプション、画面の型は、機能のディレクトリから型を拡張して足す（`declare module '../../config.js'` で `ProviderConfig` と `RegisteredClient` に、`'../../app.js'` で `OidcProviderOptions` に、`'../../views.js'` で `Views` に。たとえば ciba は `features/ciba/config.ts` で `RegisteredClient` に `backchannelTokenDeliveryMode` を足す）。機能ごとの設定オブジェクト（`parConfig`、`rpInitiatedLogoutConfig` など）は `features/<id>/config.ts` にある。機能を外すと、これらはディレクトリごと消える。
@@ -357,7 +358,7 @@ src/app/
 ├── login/not-found.tsx             # トランザクションが無いとき（notFound()）の画面。HTTP 404
 ├── login/error.tsx                 # 想定外の例外のときの画面（error boundary）
 ├── consent/page.tsx                # 同意画面
-├── consent/decision/route.ts       # 同意の判断を受ける Route Handler（認可コードを発行し、認可レスポンスを返す）
+├── consent/decision/route.ts / endpoint.ts  # 同意の判断を受ける Route Handler（認可コードを発行し、認可レスポンスを返す）
 ├── consent/not-found.tsx / consent/error.tsx  # 同意画面の not-found / error（ログイン画面と同じ役割）
 ├── oidc-error/page.tsx             # クライアントへ返してはいけないエラーの表示先
 ├── (introspection)/introspect/route.ts / endpoint.ts  # POST /introspect（introspection 有効時）
@@ -371,7 +372,7 @@ src/app/
 
 機能のエンドポイントは、機能 ID を名前にしたルートグループ `(<feature-id>)/` に入る。ルートグループの名前は URL に現れないので、`(introspection)/introspect/route.ts` は `POST /introspect` に、`(google-login)/login/google/route.ts` は `POST /login/google` になる。実験的機能と拡張機能のルートグループは `(par)`、`(device-authorization-grant)`、`(ciba)`、`(rp-initiated-logout)`、`(dynamic-client-registration)`、`(google-login)` で、`generate` は有効な機能のルートグループと `_oidc-provider/features/<id>/` だけを写す。
 
-機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`loginMethods` がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`token/route.ts`、`(introspection)/introspect/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。
+機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`authorize.responseTypes`（`code` のほかに答える `response_type` の名前）、`loginMethods` がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`consent/decision/route.ts`、`token/route.ts`、`(introspection)/introspect/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。Implicit Flow のトークンは、`authorize/route.ts` の `issueAuthorizationResponse()`（`prompt=none` と同意済みの SSO が認可コードを発行する関数）と `consent/decision/route.ts` にある `implicit-flow` のブロックが、認可コードの代わりに返す。
 
 `generate` は、無効な機能のブロックとその import を `route.ts` から取り除き、そのブロックが作っていた値を後のブロックが読むなら、`endpoint.ts` の `produces` から決めた名前で `const <name> = undefined;` を残す。`endpoint.ts` からも、無効な機能のステップの行を消す。生成した後で機能を手で外すときは、`_oidc-provider/features.ts` にあるその機能の import の行と一覧の行、`_oidc-provider/features/<id>/`、ルートグループ `(<id>)/` に加えて、Route Handler にあるその機能のブロックも消す。
 
@@ -455,6 +456,7 @@ maronn-oidc generate express --disable pkce
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
 | `form-post-response-mode` | 有効 | `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）を解釈せず、認可レスポンスを従来どおりリダイレクト URI のクエリで返す。discovery の `response_modes_supported` から `form_post` を除く |
+| `implicit-flow` | 有効 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2 の Implicit Flow）を `unsupported_response_type` で拒否し、`response_type=code` だけに答える。discovery の `response_types_supported` からこの 2 つを、`response_modes_supported` から `fragment` を、`grant_types_supported` から `implicit` を除く |
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
@@ -711,7 +713,7 @@ export function createDatabase(): SqlDatabase {
 | `clients` | 登録クライアント（`id` が client_id）。`is_deleted` を立てたクライアントは OP から見えなくなる |
 | `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post。1 つのクライアントに両方を登録できる）と、シークレットのハッシュ |
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[クライアントの公開鍵](#クライアントの公開鍵)を参照） |
-| `client_redirect_uris`、`client_grant_types`、`client_scopes` | リダイレクト URI、使ってよい grant type、要求してよいスコープ |
+| `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -737,9 +739,13 @@ private_key_jwt を足すときは、`client_auths.client_auth_type` の CHECK �
 ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 ```
 
+`client_response_types` は列ではなくテーブルなので、そのテーブルが加わる前の CLI で作ったデータベースでも、`schema.sql` を実行し直せば作られる。
+行の無いクライアントは、これまでどおり `response_type=code` だけを使える。
+
 `transactions.status` は、認可リクエストがどこまで進んだかを表す。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進む。
-同意の拒否や `prompt=none` のエラーのように、コードを発行せずに終わったトランザクションは `failed` になる。
+Implicit Flow（`implicit-flow`）でトークンを認可エンドポイントから返したトランザクションは、コードを経ずに `token_issued` になる。
+同意の拒否や `prompt=none` のエラーのように、コードもトークンも発行せずに終わったトランザクションは `failed` になる。
 OP は終わったトランザクションの行を消さず、`codes` と `access_tokens` から `transaction_id` で参照するので、どの認可リクエストからどのコードとトークンが出たかを後から追える。
 期限切れの行も OP は消さないので、必要なら定期的に削除する。
 
@@ -876,7 +882,7 @@ await registerUser(db, {
 Hono（Cloudflare D1）では、管理用のスクリプトから `registerClient()` を呼ぶか、`hashClientSecret()` で作ったハッシュを使って `INSERT` 文で登録する。
 Workers はリクエストの処理中にしか D1 を使えないので、起動のたびに登録するなら、isolate ごとの最初のリクエストで行う（`samples/hono-cloudflare` の `src/app.ts`）。
 Next.js は、`instrumentation.ts` の `register()` で登録する（[クライアントとユーザーの登録（instrumentation.ts）](#クライアントとユーザーの登録instrumentationts)を参照）。
-`--db sql` と `--db kv` では、テーブルやレコードに無い登録メタデータ（`response_types`、`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
+`--db sql` と `--db kv` では、テーブルやレコードに無い登録メタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になる。
 クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに読む（`--db sql` は `client_jwks` から。[クライアントの公開鍵](#クライアントの公開鍵)を参照）。
 
 ユーザーは、`db/users.ts` の `registerUser()` で `db/` に入れる。

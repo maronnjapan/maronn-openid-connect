@@ -14,6 +14,7 @@ import { introspection } from './introspection/feature.js';
 import { revocation } from './revocation/feature.js';
 import { requestObject } from './request-object/feature.js';
 import { formPostResponseMode } from './form-post-response-mode/feature.js';
+import { implicitFlow } from './implicit-flow/feature.js';
 import { deviceAuthorizationGrant } from './device-authorization-grant/feature.js';
 import { ciba } from './ciba/feature.js';
 import { dynamicClientRegistration } from './dynamic-client-registration/feature.js';
@@ -26,6 +27,7 @@ export const features: readonly Feature[] = [
   revocation,
   requestObject,
   formPostResponseMode,
+  implicitFlow,
   deviceAuthorizationGrant,
   ciba,
   dynamicClientRegistration,

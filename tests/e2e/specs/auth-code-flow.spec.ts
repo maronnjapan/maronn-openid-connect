@@ -26,7 +26,9 @@ test.describe('Authorization Code Flow', () => {
     expect(discovery.jwks_uri).toBe(`${issuer}/.well-known/jwks.json`);
     expect(discovery.userinfo_endpoint).toBe(`${issuer}/userinfo`);
     expect(discovery.introspection_endpoint).toBe(`${issuer}/introspect`);
-    expect(discovery.response_types_supported).toEqual(['code']);
+    // code, and the response types of the Implicit Flow for an OP generated
+    // with implicit-flow (specs/implicit-flow.spec.ts).
+    expect([['code'], ['code', 'id_token', 'id_token token']]).toContainEqual(discovery.response_types_supported);
     expect(discovery.code_challenge_methods_supported).toEqual(['S256']);
 
     await page.goto(

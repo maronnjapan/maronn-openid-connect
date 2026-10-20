@@ -512,6 +512,41 @@ describe('validateSupportedResponseType', () => {
       validateSupportedResponseType('token', 'https://client.example/cb'),
     ).toThrow(expect.objectContaining({ error: 'unsupported_response_type' }));
   });
+
+  // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the values are
+  // compared regardless of their order.
+  it('should accept a response type of the given list and return it with its values in order', () => {
+    expect(
+      validateSupportedResponseType('token id_token', 'https://client.example/cb', undefined, [
+        'code',
+        'id_token token',
+      ]),
+    ).toBe('id_token token');
+  });
+
+  it('should reject a response type outside the given list with the request state', () => {
+    expect(() =>
+      validateSupportedResponseType('id_token', 'https://client.example/cb', 'state-1', ['code']),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'unsupported_response_type',
+        errorDescription: 'Unsupported response_type: id_token',
+        redirectUri: 'https://client.example/cb',
+        state: 'state-1',
+      }),
+    );
+  });
+
+  // RFC 6749 §3.1.1: the values are separated by single spaces.
+  it('should reject values separated by more than one space, or with a leading or trailing space', () => {
+    const validate = (responseType: string) => () =>
+      validateSupportedResponseType(responseType, 'https://client.example/cb', undefined, ['code', 'id_token token']);
+    const unsupported = expect.objectContaining({ error: 'unsupported_response_type' });
+
+    expect(validate('code ')).toThrow(unsupported);
+    expect(validate(' code')).toThrow(unsupported);
+    expect(validate('id_token  token')).toThrow(unsupported);
+  });
 });
 
 describe('validateClientResponseType', () => {
@@ -531,6 +566,25 @@ describe('validateClientResponseType', () => {
     expect(() =>
       validateClientResponseType('code', [], 'https://client.example/cb'),
     ).toThrow(expect.objectContaining({ error: 'unauthorized_client' }));
+  });
+
+  // OAuth 2.0 Multiple Response Type Encoding Practices §1.2.
+  it('should match a registered response type that lists the values in another order', () => {
+    expect(
+      validateClientResponseType('id_token token', ['token id_token'], 'https://client.example/cb'),
+    ).toBeUndefined();
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: response_types defaults to ["code"].
+  it('should reject id_token when the client has no registered response types', () => {
+    expect(() =>
+      validateClientResponseType('id_token', undefined, 'https://client.example/cb'),
+    ).toThrow(
+      expect.objectContaining({
+        error: 'unauthorized_client',
+        errorDescription: 'Client is not authorized to use response_type: id_token',
+      }),
+    );
   });
 });
 

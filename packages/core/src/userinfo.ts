@@ -89,6 +89,13 @@ export interface AccessTokenInfo {
    * UserInfo 検証ロジック自体はこのフィールドを参照せず、生成コードが伝播に使う。
    */
   claims?: ClaimsParameter;
+  /**
+   * このアクセストークンを認可コードを経ずに発行した Auth Transaction の ID（任意）。
+   * Implicit Flow（OIDC Core 1.0 §3.2）は認可エンドポイントでトークンを発行するため、
+   * ストアがトークンと認可リクエストを結び付けて記録するのに使う。認可コードから
+   * 発行したトークンは、コードの transactionId でたどれるので設定しない。
+   */
+  transactionId?: string;
 }
 
 /**

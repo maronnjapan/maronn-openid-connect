@@ -24,14 +24,15 @@
  * 8. transactionStore.get returns a transaction only while it is in progress
  *    (requested, upstream_pending, authenticated), and delete ends it instead
  *    of removing the row: its status becomes failed, then code_issued if a code
- *    is issued from it, and token_issued once that code is exchanged.
+ *    is issued from it, and token_issued once that code is exchanged, or once
+ *    recordTokenIssued records the tokens the Implicit Flow returns from the
+ *    authorization endpoint.
  */
 import {
   TokenError,
   TokenErrorCode,
   type AccessTokenInfo,
   type AuthTransaction,
-  type AuthTransactionStore,
   type AuthorizationCodeData,
   type AuthorizationCodeInfo,
   type ClaimsParameter,
@@ -47,6 +48,7 @@ import type {
   ConsentStorage,
   ProviderStores,
   RefreshTokenStorage,
+  TransactionStorage,
   UpstreamLoginStorage,
   UserStorage,
 } from '../store.js';
@@ -62,7 +64,7 @@ const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 export function createProviderStores(db: SqlDatabase): ProviderStores {
   // Transaction + Authentication_request: what the authorization request asked
   // for goes to authentication_requests, the state of the flow to transactions.
-  const transactionStore: AuthTransactionStore = {
+  const transactionStore: TransactionStorage = {
     async get(key) {
       const [row] = await db.all<TransactionRow>({
         sql:
@@ -190,6 +192,13 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
         params: [withoutPrefix(key, TRANSACTION_KEY_PREFIX)],
       });
     },
+    // The Implicit Flow ended the transaction (delete) and then issued its tokens.
+    async recordTokenIssued(transactionId) {
+      await db.run({
+        sql: "UPDATE transactions SET status = 'token_issued' WHERE transaction_id = ?",
+        params: [transactionId],
+      });
+    },
   };
 
   const authCodeStore: AuthorizationCodeStorage = {
@@ -255,15 +264,16 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
 
   const accessTokenStore: AccessTokenStorage = {
     async set(token, info) {
-      const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, acr, ...payload } = info;
+      const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, acr, transactionId, ...payload } = info;
       const tokenHash = await hashKey(token);
       await db.run({
         sql:
           'INSERT INTO access_tokens (id, sub, exp, iat, iss, client_id, scope, acr, transaction_id, ' +
           'token_hash, grant_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ' +
-          // The transaction of the code the grant came from. A grant without a
-          // code (the device flow, CIBA) has none.
-          '(SELECT transaction_id FROM codes WHERE grant_id = ? LIMIT 1), ?, ?, ?)',
+          // The transaction the token was issued from: the one the Implicit
+          // Flow names, or that of the code the grant came from. A grant
+          // without either (the device flow, CIBA) has none.
+          'COALESCE(?, (SELECT transaction_id FROM codes WHERE grant_id = ? LIMIT 1)), ?, ?, ?)',
         params: [
           // A token issued without a jti is kept under its hash.
           jti ?? tokenHash,
@@ -274,6 +284,7 @@ export function createProviderStores(db: SqlDatabase): ProviderStores {
           clientId,
           joinScope(scope),
           acr ?? null,
+          transactionId ?? null,
           grantId ?? null,
           tokenHash,
           grantId ?? null,

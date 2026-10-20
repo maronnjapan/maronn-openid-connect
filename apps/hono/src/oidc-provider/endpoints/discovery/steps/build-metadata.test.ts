@@ -47,6 +47,8 @@ describe('buildDiscoveryMetadata', () => {
       expect((await metadataFor()).id_token_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
     });
 
+    // The implicit grant of the implicit-flow feature is not a grant of the
+    // token endpoint, so it comes after them, from the discovery entry of its feature.ts.
     it('should merge the grants of the features after authorization_code, each once', async () => {
       expect((await metadataFor()).grant_types_supported).toEqual([
         'authorization_code',
@@ -55,15 +57,22 @@ describe('buildDiscoveryMetadata', () => {
         'urn:ietf:params:oauth:grant-type:device_code',
         'urn:ietf:params:oauth:grant-type:jwt-bearer',
         'urn:openid:params:grant-type:ciba',
+        'implicit',
       ]);
     });
 
-    // OIDC Core 1.0 §11 (refresh-token feature) / JARM §4 (jarm feature).
+    // OIDC Core 1.0 §3.2.2.1 (implicit-flow feature): authorize.responseTypes of the features.
+    it('should advertise code and the response types the features answer', async () => {
+      expect((await metadataFor()).response_types_supported).toEqual(['code', 'id_token', 'id_token token']);
+    });
+
+    // OIDC Core 1.0 §11 (refresh-token feature) / Form Post Response Mode, the
+    // fragment of the Implicit Flow and JARM §4.
     it('should merge the scopes and response modes the features advertise', async () => {
       const metadata = await metadataFor();
 
       expect(metadata.scopes_supported).toEqual(['openid', 'profile', 'email', 'address', 'phone', 'offline_access']);
-      expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'query.jwt', 'jwt']);
+      expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'fragment', 'query.jwt', 'jwt']);
     });
 
     // OIDC Core 1.0 §6.1: the request-object feature replaces request_parameter_supported: false.

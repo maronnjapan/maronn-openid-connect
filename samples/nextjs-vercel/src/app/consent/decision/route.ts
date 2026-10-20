@@ -2,11 +2,13 @@
  * Consent decision: the Route Handler the consent form of consent/page.tsx
  * posts to. It records the End-User's decision and answers with the
  * authorization response for the client (OIDC Core 1.0 §3.1.2.5 / §3.1.2.6).
+ * A request of a response type a feature answers in place of the code (the
+ * Implicit Flow) ends in that feature's block instead of the code.
  *
  * A Route Handler, not a Server Action: the authorization response is a
- * redirect in the query response modes, but an HTML page in the Form Post
- * Response Mode (OAuth 2.0 Form Post Response Mode §2), and a Server Action
- * can only redirect.
+ * redirect in the query and fragment response modes, but an HTML page in the
+ * Form Post Response Mode (OAuth 2.0 Form Post Response Mode §2), and a
+ * Server Action can only redirect.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import {
@@ -23,6 +25,7 @@ import {
   type AuthorizationResponseMode,
   type ResponseModeTransaction,
 } from '../../authorize/response-mode';
+import { issueImplicitConsentResponse } from '../../_oidc-provider/features/implicit-flow/consent';
 import { readFormFields, redirectToErrorPage } from '../../_oidc-provider/http';
 import { config, loadSigningKeys, resolvers, stores } from '../../_oidc-provider/provider';
 import {
@@ -37,6 +40,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest): Promise<Response> {
+  // [reject-cross-origin-post] Reject a form POST from another origin — OIDC Core 1.0 §3.1.2.4
   // First the browser's own statement of where the form was submitted from
   // (isSameOriginFormPost() in _oidc-provider/cookies.ts): independent of the
   // cookie and the csrf_token below. This handler mints the authorization
@@ -47,6 +51,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
   if (!sameOrigin) return redirectToErrorPage('cross_origin_request', CROSS_ORIGIN_FORM_POST_MESSAGE);
 
+  // [load-transaction] Load the transaction named by the cookie
   const form = await readFormFields(request);
   const action = String(form.get('action') ?? '');
 
@@ -62,6 +67,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
+  // [validate-csrf-token] Check csrf_token against the transaction
   // ... and the CSRF token proves the decision came from the form this browser
   // was shown for exactly that transaction. Checked before any decision is acted
   // on: this handler mints the authorization code.
@@ -72,9 +78,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     throw error;
   }
 
+  // [restore-response-mode] Restore the response mode of the authorization request — OAuth 2.0 Multiple Response Type Encoding Practices §2.1
   // The response mode the authorization request asked for (JARM's query.jwt,
-  // form_post), restored before anything is recorded, so a key outage stops
-  // here instead of after the code and the consent were stored.
+  // form_post, the fragment of the Implicit Flow), restored before anything is
+  // recorded, so a key outage stops here instead of after the code and the
+  // consent were stored.
   let responseMode: AuthorizationResponseMode | undefined;
   try {
     responseMode = await restoreResponseMode(transaction, { issuer: config.issuer, loadSigningKeys });
@@ -82,6 +90,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return redirectToErrorPage('server_error', 'Failed to load the response signing key');
   }
 
+  // [deny-authorization] Deny: answer access_denied — OIDC Core 1.0 §3.1.2.6
   if (action === 'deny') {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
@@ -95,6 +104,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
+  // [validate-decision] Require an explicit approve decision — OIDC Core 1.0 §3.1.2.4
   // OIDC Core 1.0 §3.1.2.4: "the Authorization Server MUST obtain an
   // authorization decision before releasing information to the Relying Party."
   // This handler mints the authorization code, so the affirmative decision is
@@ -112,6 +122,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
+  // [require-authenticated-subject] Require the subject the login step stored
   // The login step's hand-off: no authenticated subject means the login step
   // was skipped or has expired.
   const session = await stores.authSessionStore.get(transactionId);
@@ -119,6 +130,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.redirect(new URL('/login', config.issuer), 303);
   }
 
+  // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
+  const implicitResponse = await issueImplicitConsentResponse({ transactionId, transaction, session, responseMode });
+  if (implicitResponse) return implicitResponse;
+
+  // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5 / §3.1.3.1
   const responseParams = await completeAuthTransaction(
     transactionId,
     transaction,
@@ -146,6 +162,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   });
   await stores.authCodeStore.set(authCodeData.code, authCodeData);
 
+  // [record-consent] Record the consent and the grant — OIDC Core 1.0 §3.1.2.4
   // Record the consent so a later prompt=none (or SSO) request can confirm it
   // without UI (OIDC Core 1.0 §3.1.2.1 / §3.1.2.4), and the grant, so
   // withdrawing that consent revokes the tokens issued from it. Only the
@@ -154,6 +171,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
   await stores.authSessionStore.delete(transactionId);
 
+  // [build-authorization-response] Build the authorization response — RFC 9207 §2
   // The transaction is over; drop the cookie that named it.
   return respondToClient(
     await authorizationResponseOf(responseMode, transaction.redirectUri, {

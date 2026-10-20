@@ -23,7 +23,9 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 
 ## Authorization Endpoint
 
-- `response_type` は `code` のみ対応（Authorization Code Flow）
+- `response_type` は `code`（Authorization Code Flow）に対応。`implicit-flow` 有効時は、`id_token token` と `id_token`（Implicit Flow。OIDC Core 1.0 §3.2）にも対応する。値の順序は問わない（`token id_token` は `id_token token` と同じ）
+- Implicit Flow は、クライアント登録の `response_types` にその値があるクライアントだけが使える（無ければ `unauthorized_client`）。認可エンドポイントが認可コードの代わりに ID Token（`id_token token` では Access Token も）を返し、トークンエンドポイントもリフレッシュトークンも使わない
+- Implicit Flow の要求は `nonce` 必須（OIDC Core 1.0 §3.2.2.1）。redirect_uri は https か、public client のループバックの http に限る。PKCE は認可コードに結び付く仕組みなので、Implicit Flow では検証しない。`offline_access` は無視する（OIDC Core 1.0 §11）
 - PKCE は S256 のみ対応で既定必須。`allowNonPkceAuthorizationCodeFlow: true` の場合のみ、明示的な confidential client の完全な非 PKCE リクエストを許可（public client は常に PKCE 必須）
 - redirect_uri は登録値との完全一致で検証し、fragment 付き URI は拒否
 
@@ -33,8 +35,8 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 |---|---|
 | `scope` | `openid` 必須。`profile` / `email` / `address` / `phone` / `offline_access` に対応 |
 | `state` | 認可レスポンスでそのまま返却 |
-| `response_mode` | `form_post` に対応（OAuth 2.0 Form Post Response Mode）。認可レスポンス（成功もリダイレクト可能なエラーも）を、リダイレクト URI を `action` とする HTML フォームの hidden フィールドにして、ブラウザから POST させる。応答には `Cache-Control: no-cache, no-store` を付ける。`iss`（RFC 9207）もフィールドに含める。未指定と `query` は従来どおりクエリで返す。それ以外の値は、Experimental 機能 JARM を有効にしたときの `.jwt` 系を除いて無視する。トグル `form-post-response-mode` で無効化できる |
-| `nonce` | ID Token の `nonce` クレームとして返却 |
+| `response_mode` | `form_post` に対応（OAuth 2.0 Form Post Response Mode）。認可レスポンス（成功もリダイレクト可能なエラーも）を、リダイレクト URI を `action` とする HTML フォームの hidden フィールドにして、ブラウザから POST させる。応答には `Cache-Control: no-cache, no-store` を付ける。`iss`（RFC 9207）もフィールドに含める。トグル `form-post-response-mode` で無効化できる。`implicit-flow` 有効時は `fragment` にも対応し（OAuth 2.0 Multiple Response Type Encoding Practices §2.1）、パラメータと `iss` をリダイレクト URI のフラグメントで返す。Implicit Flow の既定はフラグメントで、`query` と JARM の `.jwt` 系の指定は `invalid_request` になる（同 §3 / §5）。`response_type=code` の要求は、`response_mode` が未指定か `query` なら従来どおりクエリで返す。それ以外の値は、Experimental 機能 JARM を有効にしたときの `.jwt` 系を除いて無視する |
+| `nonce` | ID Token の `nonce` クレームとして返却。Implicit Flow では必須 |
 | `prompt` | `none` / `login` / `consent` / `select_account` に対応。`none` と他値の併用は拒否 |
 | `display` | `page` / `popup` / `touch` / `wap` のみ受理し、それ以外は拒否（OIDC Core 1.0 §3.1.2.1） |
 | `max_age` | 経過時間超過時に再認証を要求。ID Token に `auth_time` を含める |
@@ -74,6 +76,7 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 - RS256 で署名（JOSE ヘッダーに `kid` を含む）
 - 必須クレーム: `iss` / `sub` / `aud` / `exp` / `iat`
 - 条件付きクレーム: `nonce`（リクエスト時）、`at_hash`（アクセストークン発行時）、`auth_time`（`max_age` / `claims` 要求時）、`acr`（`acr_values` 要求時、または `AcrResolver` が返したとき）、`amr`（`AcrResolver` が返したとき）
+- Implicit Flow（`implicit-flow` 有効時）は、認可エンドポイントが ID Token を発行する。`nonce` と `auth_time` は常に含め、`response_type=id_token token` では `at_hash` も含める（OIDC Core 1.0 §3.2.2.10）。アクセストークンを返さない `response_type=id_token` では、許可された scope の標準クレーム（`profile` の `name` など）を ID Token に含める（OIDC Core 1.0 §5.4）
 
 ### Refresh Token
 
@@ -126,7 +129,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 
 ## Feature Toggles
 
-CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` / `form-post-response-mode` を機能単位で増減できます。詳細は [CLI Guide](../../guides/cli/) を参照してください。
+CLI の `--enable` / `--disable` で `pkce` / `refresh-token` / `introspection` / `revocation` / `request-object` / `form-post-response-mode` / `implicit-flow` を機能単位で増減できます。詳細は [CLI Guide](../../guides/cli/) を参照してください。
 
 ログイン・同意画面が認可トランザクションを引き継ぐ仕組みはトグル対象外で、常に同じです。トランザクションの ID は HttpOnly Cookie（`__Host-oidc_txn`）だけでブラウザに渡し、URL にも HTML にも載せません。フォームには `csrf_token` だけを埋め込み、Cookie が指すトランザクションに対して照合します。`POST /login`・`POST /consent` は、ブラウザが付ける `Sec-Fetch-Site` / `Origin` で OP 自身の画面から送られたことも確かめます（OIDC Core 1.0 §3.1.2.3 / §3.1.2.4。詳細は [CLI Guide の Auth Transaction](../../guides/cli/#auth-transaction-cookie--csrf_token)）。
 

@@ -9,7 +9,7 @@ import {
   signingKeysUnavailable,
   withCors,
 } from '../../_oidc-provider/http';
-import { discoveryOf, tokenGrantsOf } from '../../_oidc-provider/feature';
+import { discoveryOf, responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
 import { ADVERTISED_SCOPES } from '../../_oidc-provider/scopes';
 import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';
@@ -41,9 +41,13 @@ async function providerMetadata(): Promise<Response> {
     authorizationEndpoint: `${issuer}/authorize`,
     tokenEndpoint: `${issuer}/token`,
     jwksUri: `${issuer}/.well-known/jwks.json`,
-    responseTypesSupported: ['code'],
-    // OAuth 2.0 Multiple Response Type Encoding Practices §2 / OIDC Discovery 1.0
-    // §3: the code flow answers via query.
+    // code, and the response types the features answer (the Implicit Flow's
+    // id_token and id_token token: authorize.responseTypes of its feature.ts).
+    responseTypesSupported: ['code', ...responseTypesOf(features)],
+    // OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / OIDC Discovery
+    // 1.0 §3: the code flow answers via query. A feature that answers in
+    // another response mode (the fragment of the Implicit Flow, form_post,
+    // JARM) adds it to this list.
     responseModesSupported: ['query'],
     subjectTypesSupported: ['public'],
     // OIDC Core 1.0 §15.1: id_token_signing_alg_values_supported is derived from
@@ -61,8 +65,10 @@ async function providerMetadata(): Promise<Response> {
       'aud',
       'exp',
       'iat',
-      // OIDC Core 1.0 §2 / §3.1.3.6: ID Token protocol claims the OP issues.
-      // c_hash is omitted on purpose: the Hybrid flow is not implemented.
+      // OIDC Core 1.0 §2 / §3.1.3.6: ID Token protocol claims the OP issues
+      // (at_hash for the access token issued with the ID Token, §3.1.3.6 /
+      // §3.2.2.10). c_hash is omitted on purpose: the Hybrid flow is not
+      // implemented.
       'auth_time',
       'nonce',
       'acr',
@@ -89,6 +95,10 @@ async function providerMetadata(): Promise<Response> {
       'phone_number',
       'phone_number_verified',
     ],
+    // The authorization_code grant, and the grants the features answer at the
+    // token endpoint (the token entry of their feature.ts). A feature that
+    // answers a grant at the authorization endpoint (implicit) adds it
+    // through the discovery entry of its feature.ts.
     grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
     // (no client_secret) are accepted at the token endpoint.

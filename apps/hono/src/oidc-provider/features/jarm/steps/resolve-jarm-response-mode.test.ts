@@ -11,10 +11,10 @@ const REDIRECT_URI = 'https://rp.example.com/callback';
 const NOW_SECONDS = 1767225600;
 const client: ClientInfo = { clientId: 'client-1', redirectUris: [REDIRECT_URI] };
 
-function paramsWith(responseMode?: string): AuthorizationRequestParams {
+function paramsWith(responseMode?: string, responseType = 'code'): AuthorizationRequestParams {
   return {
     client_id: 'client-1',
-    response_type: 'code',
+    response_type: responseType,
     ...(responseMode === undefined ? {} : { response_mode: responseMode }),
   } as AuthorizationRequestParams;
 }
@@ -92,6 +92,26 @@ describe('resolveJarmResponseContext', () => {
           state: 'state-1',
         }),
       );
+    });
+  });
+
+  describe('Response Types with Tokens', () => {
+    // JARM §2.3.1 forbids query.jwt for a response type that contains token or
+    // id_token (unencrypted), and §2.3.4 answers jwt for them with
+    // fragment.jwt: the Implicit Flow refuses those modes in the fragment.
+    it('should leave every JWT response mode of id_token and id_token token to the feature of the response type', async () => {
+      const c = await contextWithKeys();
+
+      const modes = [
+        ['query.jwt', 'id_token'],
+        ['jwt', 'id_token token'],
+        ['fragment.jwt', 'token id_token'],
+        ['jwt', 'token'],
+      ].map(([responseMode, responseType]) =>
+        resolveJarmResponseContext(c, paramsWith(responseMode, responseType), client, REDIRECT_URI, 'state-1', TEST_ISSUER),
+      );
+
+      expect(modes).toEqual([undefined, undefined, undefined, undefined]);
     });
   });
 });

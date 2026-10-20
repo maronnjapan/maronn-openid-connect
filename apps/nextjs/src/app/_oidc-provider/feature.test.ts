@@ -10,6 +10,7 @@ import {
   discoveryOf,
   loginMethodsOf,
   responseModesOf,
+  responseTypesOf,
   tokenGrantsOf,
   type Feature,
   type ProviderContext,
@@ -232,6 +233,22 @@ describe('responseModesOf', () => {
 
   it('should return no response mode when no feature answers in one', () => {
     expect(responseModesOf([defineFeature({ id: 'a' }), defineFeature({ id: 'b', authorize: {} })])).toEqual([]);
+  });
+});
+
+describe('responseTypesOf', () => {
+  it('should list each response type once, in the order the features name them', () => {
+    const features = [
+      defineFeature({ id: 'a', authorize: { responseTypes: ['id_token'] } }),
+      defineFeature({ id: 'b', authorize: { responseModes: [responseMode('fragment')] } }),
+      defineFeature({ id: 'c', authorize: { responseTypes: ['id_token token', 'id_token'] } }),
+    ];
+
+    expect(responseTypesOf(features)).toEqual(['id_token', 'id_token token']);
+  });
+
+  it('should return no response type when no feature answers one', () => {
+    expect(responseTypesOf([defineFeature({ id: 'a' }), defineFeature({ id: 'b', authorize: {} })])).toEqual([]);
   });
 });
 

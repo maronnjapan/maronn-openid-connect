@@ -60,6 +60,22 @@ export interface UpstreamLogin {
   expiresAt: number;
 }
 
+/**
+ * The authorization transactions: core's AuthTransactionStore, and how a
+ * transaction ended when the authorization endpoint returned its tokens
+ * itself.
+ */
+export interface TransactionStorage extends AuthTransactionStore {
+  /**
+   * Record that the tokens of the transaction were issued from the
+   * authorization endpoint without a code: the Implicit Flow (OIDC Core 1.0
+   * §3.2.2.5) returns its ID Token there. A transaction of the code flow gets
+   * to the same point when its code is exchanged. Optional: a store that does
+   * not keep how a transaction ended leaves it out.
+   */
+  recordTokenIssued?(transactionId: string): Awaitable<void>;
+}
+
 export interface AuthorizationCodeStorage {
   set(code: string, info: AuthorizationCodeInfo): Awaitable<void>;
   /** undefined for an expired code; a used one is returned, with used: true. */
@@ -145,7 +161,7 @@ export interface UpstreamLoginStorage {
 }
 
 export interface ProviderStores {
-  transactionStore: AuthTransactionStore;
+  transactionStore: TransactionStorage;
   authCodeStore: AuthorizationCodeStorage;
   accessTokenStore: AccessTokenStorage;
   refreshTokenStore: RefreshTokenStorage;

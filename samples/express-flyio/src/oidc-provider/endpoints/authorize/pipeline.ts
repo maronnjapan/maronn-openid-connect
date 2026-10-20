@@ -1,4 +1,5 @@
 import { resolveFormPostResponseContext } from '../../features/form-post-response-mode/steps/resolve-form-post-response-mode.js';
+import { validateHybridRequest } from '../../features/hybrid-flow/steps/validate-hybrid-request.js';
 import { resolveFragmentResponseContext } from '../../features/implicit-flow/steps/resolve-fragment-response-mode.js';
 import { validateImplicitRequest } from '../../features/implicit-flow/steps/validate-implicit-request.js';
 import { resolveRequestObject } from '../../features/request-object/steps/resolve-request-object.js';
@@ -36,7 +37,7 @@ import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
  */
 export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
   // The response mode the request asked for, when a feature answers in one
-  // (JARM, form_post, the fragment of the Implicit Flow). Set once
+  // (JARM, form_post, the fragment of the Implicit and Hybrid Flows). Set once
   // redirect_uri is verified, by the first block of a feature that answers
   // the request's response_mode or response_type (each assigns it only while
   // it is still unset); undefined means the plain query response. Declared
@@ -74,6 +75,9 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
 
     // [validate-implicit-request] (feature: implicit-flow) Validate the Implicit Flow request (response_mode, nonce, redirect_uri) — OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5
     validateImplicitRequest(validatedRequest, effectiveParams ?? params, client, responseMode);
+
+    // [validate-hybrid-request] (feature: hybrid-flow) Validate the Hybrid Flow request (response_mode, nonce) — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
+    validateHybridRequest(validatedRequest, effectiveParams ?? params, responseMode);
 
     // [create-transaction] Create and store the authorization transaction — OIDC Core 1.0 §3.1.2.3
     const { transactionId, transaction, transactionTtlSeconds } = await createAuthorizationTransaction(c, validatedRequest, responseMode);

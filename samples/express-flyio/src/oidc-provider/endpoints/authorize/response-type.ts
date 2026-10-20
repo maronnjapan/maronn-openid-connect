@@ -3,8 +3,9 @@
  *
  * Every provider answers response_type=code with an authorization code (OIDC
  * Core 1.0 §3.1.2.5). A feature that answers other response types — the
- * Implicit Flow's id_token and id_token token (OIDC Core 1.0 §3.2) — adds an
- * AuthorizationResponseTypeHandler to the authorize.responseTypes entry of its
+ * Implicit Flow's id_token and id_token token (OIDC Core 1.0 §3.2), the
+ * Hybrid Flow's code id_token, code token and code id_token token (§3.3) —
+ * adds an AuthorizationResponseTypeHandler to the authorize.responseTypes entry of its
  * feature.ts: validate-request accepts its response types, discovery
  * advertises them, and the issue-authorization-code step hands an
  * authenticated request of one of them to the handler.

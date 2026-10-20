@@ -25,9 +25,11 @@ import { issueImplicitTokens } from './tokens';
 /**
  * Answer in the fragment response mode when that is the default of the
  * request's response_type — any response type that returns an ID Token or an
- * access token, the Implicit Flow's id_token and id_token token among them
- * (Multiple Response Type Encoding Practices §3 / §5) — or when the request
- * asked for response_mode=fragment (§2.1).
+ * access token: the Implicit Flow's id_token and id_token token, and the
+ * Hybrid Flow's code id_token, code token and code id_token token of the
+ * hybrid-flow feature, which requires this one (Multiple Response Type
+ * Encoding Practices §3 / §5) — or when the request asked for
+ * response_mode=fragment (§2.1).
  *
  * Its block runs after those of the response modes a request asks for by
  * name (JARM, form_post), each of which assigns the response mode only while

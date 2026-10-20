@@ -15,6 +15,7 @@ export const endpoint = defineEndpoint({
     { id: 'resolve-fragment-response-mode', feature: 'implicit-flow', consumes: ['requestParams', 'issuer'], produces: ['responseMode'] },
     { id: 'validate-request', consumes: ['params', 'requestParams', 'effectiveParams', 'requestObjectClaims', 'client', 'redirectUri', 'state'], produces: ['validatedRequest'] },
     { id: 'validate-implicit-request', feature: 'implicit-flow', consumes: ['validatedRequest', 'requestParams', 'client', 'responseMode'], produces: [] },
+    { id: 'validate-hybrid-request', feature: 'hybrid-flow', consumes: ['validatedRequest', 'requestParams', 'responseMode'], produces: [] },
     { id: 'create-transaction', consumes: ['validatedRequest', 'responseMode'], produces: ['transactionId', 'transaction', 'transactionTtlSeconds'] },
     { id: 'validate-prompt-combination', consumes: ['transaction', 'transactionId', 'responseMode'], produces: ['promptValues'] },
     { id: 'verify-id-token-hint', consumes: ['transaction', 'transactionId', 'issuer', 'keys', 'responseMode'], produces: ['verifiedHintSubject'] },
@@ -24,6 +25,7 @@ export const endpoint = defineEndpoint({
     { id: 'respond-error', consumes: ['responseMode'], produces: [] },
     // issueAuthorizationResponse(), which authenticate-silently and reuse-session call.
     { id: 'issue-implicit-response', feature: 'implicit-flow', consumes: ['transactionId', 'transaction', 'session', 'responseMode'], produces: [] },
+    { id: 'issue-hybrid-response', feature: 'hybrid-flow', consumes: ['transactionId', 'transaction', 'session', 'responseMode'], produces: [] },
     { id: 'issue-authorization-code', consumes: ['transactionId', 'transaction', 'session', 'responseMode'], produces: [] },
   ],
 });

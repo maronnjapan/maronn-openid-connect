@@ -15,6 +15,7 @@ import { revocation } from './features/revocation/feature';
 import { requestObject } from './features/request-object/feature';
 import { formPostResponseMode } from './features/form-post-response-mode/feature';
 import { implicitFlow } from './features/implicit-flow/feature';
+import { hybridFlow } from './features/hybrid-flow/feature';
 import { par } from './features/par/feature';
 import { tokenExchange } from './features/token-exchange/feature';
 import { jarm } from './features/jarm/feature';
@@ -34,6 +35,7 @@ export const features: readonly Feature[] = [
   requestObject,
   formPostResponseMode,
   implicitFlow,
+  hybridFlow,
   par,
   tokenExchange,
   jarm,

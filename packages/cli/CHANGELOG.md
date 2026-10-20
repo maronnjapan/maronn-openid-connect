@@ -1,5 +1,114 @@
 # @maronn-openid-connect/cli
 
+## 0.14.0
+
+### Minor Changes
+
+- da0de14: 生成する OP で、クライアントの公開鍵を用途ごとに置き、1 つのクライアントに複数のクライアント認証方式を登録できるようにする
+  
+  - クライアントの公開鍵は、鍵を使う処理が用途ごとに `ClientKeyResolver`（core）から引く。生成 OP は、署名付き Request Object の検証に `request_object` の用途の鍵を読む。用途は文字列なので、private_key_jwt（`private_key_jwt`）や DPoP（`dpop`）などの用途の鍵も、スキーマを変えずに登録できる。生成 OP は private_key_jwt によるクライアント認証も DPoP も実装しておらず、`request_object` 以外の用途の鍵を読む処理を持たない
+  - `--db sql` に、クライアントの公開鍵を 1 行に用途（`purpose`）1 つと JWK 1 つで持つ `client_jwks` を加えた。`purpose` には CHECK を付けていない。`--db kv` には、用途ごとの鍵を JWK Set で持つ `client_jwks:<client_id>:<purpose>` のキーを加えた
+  - `config.ts` に、`RegisteredClient` と用途ごとの公開鍵（`keys`）を持つ `ClientRegistration` を加えた。`db/` の `registerClient()` は `ClientRegistration` を受け取る。クライアントの resolver は鍵を含まないクライアントを返し、鍵は `ClientKeyResolver` だけが返す
+  - `createApp` / `applyOidc` に `clientKeyResolver` オプションを加えた。既定は、`--db` の有無にかかわらず `db/index.ts` の `createClientKeyResolver()` である。Next.js は `_oidc-provider/provider.ts` の `clientKeyResolver` を書き換える
+  - 鍵はリクエストのたびに DB から読むので、DB に足した公開鍵も消した公開鍵も、OP を再起動せずに次のリクエストから効く。OP は鍵を発行せず、公開鍵を登録するエンドポイントも持たないので、運用者が `registerClient()` か DB への書き込みで登録する
+  - `--db sql` と `--db kv` の `registerClient()` は、渡したクライアントの `keys` の鍵をそれぞれの用途で DB に足すが、DB にある鍵を消さない。起動のたびに登録し直しても、運用中に DB へ足した鍵は残る。`--db` 無しの `registerClient()` は、同じ `client_id` の登録を鍵ごと置き換える
+  - 1 つのクライアントに、client_secret_basic と client_secret_post の両方を登録できる（core の `tokenEndpointAuthMethods`）。`--db sql` は `client_auths` に方式ごとの行を、`--db kv` はクライアントのレコードの `client_auths` に方式ごとの要素を持ち、どれも同じシークレットのハッシュを持つ。シークレットの異なる行（要素）を持つクライアントは、設定の誤りとして例外にする
+  - これまで `--db` 付きの生成物は署名付き Request Object を検証できずに拒否していたが、`request_object` の用途の鍵を登録したクライアントの Request Object は検証して受け付ける
+  
+  ## 破壊的変更
+  
+  - **CLI 生成コード: クライアントの `tokenEndpointAuthMethod` を、一覧の `tokenEndpointAuthMethods` に置き換えた**（core の `TokenClientInfo` の変更による）。`registerClient()` に渡すクライアントは、`tokenEndpointAuthMethods: ['client_secret_post']` のように書く
+  - **CLI 生成コード: クライアントの `jwks` を、用途ごとの `keys`（`ClientRegistration.keys`）に置き換えた**。署名付き Request Object を検証する鍵は、`registerClient()` に渡すクライアントの `keys.request_object` に書く。`clientResolver` を渡し、鍵をクライアントの `jwks` で返していた場合は、その鍵を返す `clientKeyResolver` も渡す（クライアントの `jwks` は読まれない）
+  - **`--db kv`: クライアントのレコードの `client_auth` を、認証方式の一覧 `client_auths` に置き換えた**。以前の CLI で書いたクライアントのレコードは、`registerClient()` で書き直す
+- c466e1e: hono、express、fastify の生成コードを、文字列のテンプレートから組み立てるのをやめ、動くアプリ `apps/hono` から抽出するようにする
+  
+  生成コードのファイル構成と、生成コードが export する名前が変わるので、0.x の semver に従って minor で上げる。CLI のコマンドとオプション（`generate`、`setup`、`graph`、`--enable`、`--disable`、`--scope`、`--db`、`--flow`、`--output`、`--force`、`--dry-run`）の名前と意味は変えていない。
+  
+  - 生成コードは `apps/hono/src/oidc-provider`（express と fastify は `apps/hono/src/web` の `apply.ts`、`web-router.ts`、`node-adapter.ts` も）を `packages/cli/extract.json` に従って抽出したもので、npm のパッケージは build 時に集めた写し（`templates/`）を同梱する。生成コードを直すときは `apps/hono` の実コードと隣のテストを直す
+  - エンドポイントは `endpoints/<endpoint>/pipeline.ts`（機能のエンドポイントは `features/<feature-id>/endpoints/<endpoint>/pipeline.ts`）がステップを `// [step-id] ラベル — 仕様` の印付きで呼ぶ構成になり、ステップはエンドポイントの `steps/<step>.ts` に 1 つずつ置かれる（機能が base のエンドポイントに足すステップは `features/<feature-id>/steps/`）。device、ciba、logout の画面は `pipeline.ts` を持たず、`page.tsx` が `steps/` のステップを呼ぶ。`routes/*.ts` は無くなり、`pages/` に残るのは `pages/errors.tsx` と `pages/respond.ts` だけになった
+  - 機能は `features/<feature-id>/` のディレクトリになり、`features/enabled.ts` が有効な機能を並べる。機能は `features/feature.ts` のフック（routes、discovery、context、config、token の grants、authorize の responseModes、loginMethods）か、パイプラインの `(feature: <feature-id>)` のブロックで base に入る。無効にした機能はディレクトリごと出力されず、そのブロックと import も消える
+  - DB は `--db` の有無にかかわらず `db/` に置かれ、`db/index.ts` がどの種類でも `createDatabase`、`createProviderStores`、`createClientResolver`、`createClientKeyResolver`、`registerClient`、`registerUser` を export する。`--db` 無しはプロセスのメモリ（`db/database.ts` の Map）に置く。`db/instance.ts` は今まで通り利用者のファイルで上書きされず、`createDatabase()` はリクエストの文脈を受け取っても受け取らなくてもよい
+  - `maronn-oidc graph` と `--flow` は、アプリのステップとエンドポイントが自分を記述する `meta`（build 時に `catalog.json` へ焼く）から図と検証を作る。箱と矢印は前と同じで、token の図は refresh_token の検証を authorization_code の検証より前に描く。`--flow` の並べ替えはパイプラインのブロックの並べ替えになる
+  - express と fastify の画面も hono/jsx で描くので、`hono` のインストールと `tsconfig.json` の JSX 設定（`"jsx": "react-jsx"`, `"jsxImportSource": "hono/jsx"`）が要る。インストールの案内にも `hono` が加わった
+  - `config.ts` の `RegisteredClient` は、機能が自分のディレクトリから項目を足す interface になった（`ProviderConfig` と同じ）。ciba は `features/ciba/config.ts` で `backchannelTokenDeliveryMode` を足す
+  - `--enable id-jag` を付け、token-exchange を有効にしていない出力は、以前の生成コードと同じく、ID-JAG 以外の `requested_token_type` の Token Exchange に、ID-JAG だけを受け付けると述べる `invalid_request` を返す
+  
+  ## 破壊的変更
+  
+  - **生成コードのファイル構成**：`routes/` と、`pages/` の `errors` と `respond` 以外のファイル（hono の `pages/authorize.ts`、`pages/login.tsx`、`pages/consent.tsx` など）は無くなった。express と fastify の `views.ts` と `pages/errors.ts` は、hono/jsx の `views.tsx` と `pages/errors.tsx` になった。機能の設定は `features/<feature-id>/config.ts`（例：`idJagConfig` は `features/id-jag/config.ts`、`rpInitiatedLogoutConfig` は `features/rp-initiated-logout/config.ts`）に移った
+  - **無くなった export**：`store.ts` のインメモリストアと機能のストア、自前の保存先から `ProviderStores` を作る `JsonStoreBackend` と `createJsonProviderStores()`、`resolvers.ts` の既定の resolver（`clientResolver`、`accessTokenResolver` など）と `revokeConsentAndTokens()`、`config.ts` の `defaultProviderConfig` とクライアント一覧（`defaultRegisteredClients`、`createInMemoryClientResolver()`）は無くなった。`resolvers.ts` には `createStoreResolvers()` が残る。`store.ts` にあった Cookie の関数（`buildSessionCookie()`、`isSameOriginFormPost()` など）は `cookies.ts` に移った
+  - **hono の export 名**：`app.ts` の `CreateAppOptions` は、express と fastify と同じ `OidcProviderOptions` に改名された。`apply.ts` は `CorsOrigins` と `validateSigningKeySet()` を export しなくなったので、`app.ts` から import する
+  - **`storage` に渡す `ProviderStores`**：`store.ts` の `ProviderStores` に `upstreamLoginStore`（`UpstreamLoginStorage`）が、`UserStorage` に `linkFederatedIdentity()` が加わり、google-login を有効にしなくても必須になった。google-login のときに要った `googleLoginNonceStore` と `linkGoogleAccount()` は、この 2 つに置き換わった。`createApp()` / `applyOidc()` の `storage` に自前のストアを渡している場合（Next.js では `_oidc-provider/provider.ts` の `stores` を書き換えている場合）は、この 2 つを実装する
+  - **db の名前**：`createSqlProviderStores()` / `createKvProviderStores()` などの種類ごとの名前は、`db/index.ts` の共通の名前に置き換わった
+  - **開発用ユーザー**：`UserStore` が持っていた開発用ユーザー（testuser / otheruser）は `development.ts` の `developmentUsers` と `registerDevelopmentUsers()` に移り、メモリの DB にも自動では入らない
+  - **既定のクライアント**：`--db` 無しの生成コードが最初から受け付けていたクライアント `example-client`（`config.ts` の `defaultRegisteredClients`）は無くなり、生成した直後の OP にはクライアントが 1 つも登録されていない。OP がリクエストを受ける前に、`db/index.ts` の `registerClient()` でクライアントを登録する（`clientResolver` を渡す場合は要らない）
+  - **Google でログインしたユーザーの subject**：`--db` 無しの生成コードが JIT 登録するユーザーの subject は、`google:<Google の sub>` から、初めてのログインで作るランダムな ID に変わった（`--db sql` / `--db kv` と同じ）。Google の sub はメモリの DB に Federated_identity として記録し、同じ人かの判断に使う。メモリの DB はプロセスの再起動で消えるので、再起動の後は同じ Google アカウントにも新しい subject が付く
+  - **`--db sql` のテーブル**：`schema.sql` は、`--enable google-login` を付けなくても Sign in with Google のテーブル（`federated_identities`、`upstream_auth_requests`）を作り、クライアントの公開鍵の `client_jwks` も作る。パスワードでのログインも `auth_users.auth_type` を決めるために `federated_identities` を読み、Request Object を含む認可リクエストは `client_jwks` を読むので、以前の CLI で作った DB には、google-login の有無にかかわらず、再生成した `schema.sql` を適用してから新しい生成コードを動かす（`CREATE TABLE IF NOT EXISTS` なので、既存のテーブルとデータはそのまま残る）。`--db kv` の `keys.ts` にも Sign in with Google の記録のキーが載るが、OP がそれを書くのは google-login を有効にしたときだけである
+  - **express / fastify**：`hono` が必要になった。fastify の `applyOidc()` は、OP のルートを専用のプラグインに登録して生のボディを OP へ渡すようになり、インスタンスへ form のパーサーを足さなくなった
+  - **express / fastify の `createDatabase()`**：`--db` 付きの生成コードは、`db/instance.ts` の `createDatabase()` を `applyOidc()` で 1 回だけ呼ぶのをやめ、Hono と同じく OP のパスへのリクエストごとに呼ぶ（`storage`、`clientResolver`、`clientKeyResolver` を渡さなければ 1 リクエストで 3 回）。未実装の `createDatabase()` は起動を止めず、OP のパスへのリクエストがすべて 500 になる。`instance.ts` は再生成しても上書きされないので、`createDatabase()` の中で接続を開いている実装（以前の `instance.ts` にあった node:sqlite の例もそう書いていた）は、接続をモジュールの変数に移してから再生成する
+  - **以前の CLI のフロー文書**：token のステップの順番が変わったので、以前の CLI の `graph --format json` が書いたフロー文書は、refresh-token を有効にしたままだと、`--flow` で `step "validate-authorization-code-grant" reads "refreshTokenRequest", which no earlier step produces` のエラーになる。新しい CLI の `graph --format json` で書き出し直すか、token の `validate-refresh-token-grant` を `validate-authorization-code-grant` の前に移す
+  - **以前の出力への上書き**：以前の CLI の出力先に `--force` で生成し直しても、無くなったファイル（`routes/`、`pages/` の `errors` と `respond` 以外のファイル、express と fastify の `views.ts` と `pages/errors.ts`）は消えずに残る。残ったファイルは無くなった名前（`resolvers.ts` の `tokenClientResolver` など）を import するので、型検査が通らない。express と fastify では、新しいコードの `views.js` と `pages/errors.js` の import も、新しい `.tsx` ではなく残った `.ts` に解決される。以前の CLI が書いたファイルを、`db/instance.ts` を残して消してから生成し直す
+- c466e1e: Next.js の生成コードを、文字列のテンプレートから組み立てるのをやめ、動くアプリ `apps/nextjs` から抽出するようにする
+  
+  Next.js の生成コードのファイル構成と、`--db` 無しのときのデータの置き場所が変わるので、0.x の semver に従って minor で上げる。CLI のコマンドとオプションの名前と意味は変えていない。テンプレートの生成器（`src/frameworks/`）と旧来の図の定義（`src/flow/catalog.ts`）はこれで無くなり、すべてのフレームワークが `apps/` から抽出される。
+  
+  - 生成コードは `apps/nextjs/src/app` を抽出したもので、App Router の作法のまま書いてある。機能のルートはその機能の route group `(<feature-id>)/` の下に、ルート以外の機能のコード（設定、ストア、base のルートから呼ぶ処理）は `_oidc-provider/features/<feature-id>/` に置かれ、`_oidc-provider/features.ts` が有効な機能を並べる
+  - `authorize`、`token`、`introspect`、`.well-known/openid-configuration` の `route.ts` はステップに `// [step-id] ラベル — 仕様` の印を持ち、機能は `(feature: <feature-id>)` のブロックで入る。隣の `endpoint.ts` はステップと各ステップの読み書きする値の一覧で、CLI は無効にした機能のブロックを消すとき、残ったコードが読む値をこの一覧に従って `const <name> = undefined;` で残す。`--flow` でステップを消したり並べ替えたりした文書は、今まで通り Next.js では受け付けない
+  - DB は hono と同じ `_oidc-provider/db/` の構成になり、`db/index.ts` がどの種類でも同じ名前を export する。`--db kv` の `instance.ts` は、`UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` があれば Upstash Redis に、無ければ node:sqlite（`OIDC_SQLITE_PATH`、既定は `.data/oidc.sqlite`）に置く実装として生成され、そのまま動く
+  - 機能の設定は `shared()` で Next.js のモジュールの層（Route Handler、Server Action、instrumentation.ts）をまたいで 1 つになり、`instrumentation.ts` で設定した値がリクエストに届く
+  
+  ## 破壊的変更
+  
+  - **Next.js の生成コードのファイル構成**：機能のルートが route group の下に移った（例：`login/google/route.ts` は `(google-login)/login/google/route.ts`）。`token/` の横にあった機能のモジュール（`token-exchange.ts`、`id-jag.ts`、`device-code.ts`、`ciba.ts`）、`_oidc-provider/jarm.ts`、ルートの横にあった機能の設定（`par/config.ts`、`register/config.ts`、`device_authorization/config.ts`、`backchannel_authentication/config.ts`、`logout/config.ts`）は `_oidc-provider/features/<feature-id>/` に移り、設定は `shared()` の値になった。`_oidc-provider/store.ts` のストアの実装は `_oidc-provider/db/` と各機能のディレクトリに移った
+  - **`--db` 無しの Next.js**：データの置き場所が、node:sqlite か Upstash Redis の JSON ストア（`_oidc-provider/storage-backend.ts`）から、プロセスのメモリ（`_oidc-provider/db/database.ts` が globalThis に置く Map）に変わった。Vercel では `--db kv` で生成する。Google でログインしたユーザーの subject も、`google:<Google の sub>` から、初めてのログインで作るランダムな ID に変わった
+  - **`--db sql` のテーブル**：`_oidc-provider/db/schema.sql` は、hono と同じく `--enable google-login` を付けなくても Sign in with Google のテーブル（`federated_identities`、`upstream_auth_requests`）を作り、`client_jwks` も作る。パスワードでのログインも `federated_identities` を、Request Object を含む認可リクエストは `client_jwks` を読むので、以前の CLI で作った DB には、google-login の有無にかかわらず、再生成した `schema.sql` を適用してから新しい生成コードを動かす
+  - **クライアントの登録**：`--db` 無しの Next.js の生成コードは、`OIDC_CLIENTS_JSON`、`OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_CLIENT_REDIRECT_URI`（別名の `CLIENT_ID` / `CLIENT_SECRET` / `CLIENT_REDIRECT_URI`）、`OIDC_RESOURCE_SERVER_CLIENT_ID` / `OIDC_RESOURCE_SERVER_CLIENT_SECRET` / `OIDC_RESOURCE_SERVER_REDIRECT_URI`（別名の `RESOURCE_SERVER_*`）を読まなくなった。環境変数が無いときに登録していた `example-client` は無くなり、ログインで受け付けていた testuser / otheruser も自動では登録されなくなった（`development.ts` の `registerDevelopmentUsers()` で登録できる）。クライアントとユーザーは `_oidc-provider/db` の `registerClient()` と `registerUser()` で登録する。起動時に 1 回だけ動く `instrumentation.ts` の `register()` から呼ぶとよい
+  - **以前の出力への上書き**：以前の CLI の出力先に `--force` で生成し直しても、route group の外にあった機能のルートとその横のファイル（`introspect/route.ts`、`revoke/route.ts`、`login/google/route.ts`、`par/route.ts`、`par/config.ts` など）、`token/` の横の機能のモジュール（`token/token-exchange.ts` など）、`_oidc-provider/jarm.ts`、`_oidc-provider/storage-backend.ts` は消えずに残る。既定の機能だけの出力でも `introspect/route.ts` と `revoke/route.ts` が残る。残った `route.ts` は route group の下の新しい `route.ts` と同じパスになり、Turbopack の `next build` は `Conflicting routes` のエラーで止まる（`--webpack` ではエラーにならず、残った古い `route.ts` が応答する）。以前の CLI が書いたファイルを、`_oidc-provider/db/instance.ts` を残して消してから生成し直す
+- f078f6c: `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）に対応する安定機能 `form-post-response-mode` を追加する
+  
+  既定で生成され、`--disable form-post-response-mode` で外せる。
+  
+  - `response_mode=form_post` の認可リクエストには、認可エンドポイントと同意画面が、リダイレクト URI を `action` とする HTML フォームで認可レスポンスを返し、ブラウザがそれを POST する（Form Post Response Mode §2）。認可コードの応答も、リダイレクト可能なエラー（`access_denied`、`login_required` など）も同じ形で返し、`iss`（RFC 9207 §2）もフィールドに含める。応答には `Cache-Control: no-cache, no-store` と `Pragma: no-cache` を付ける
+  - `response_mode` は Request Object の中にあっても読む。`form_post` 以外の値は今まで通り無視し、クエリで返す（JARM の `query.jwt` / `jwt` は JARM が受け持つ）
+  - discovery の `response_modes_supported` は `["query", "form_post"]` になる（JARM を有効にすると `["query", "form_post", "query.jwt", "jwt"]`）
+  - フォームの画面は hono / express / fastify では `views.tsx` の `formPostPage`（`views` オプションで差し替えられる）、Next.js では `_oidc-provider/html.ts` の `formPostPage()` が描く
+  
+  ## 破壊的変更
+  
+  - **既定の挙動**：`response_mode=form_post` を送るクライアントへの応答が、クエリ付きのリダイレクトから、フォームの POST に変わる。以前の挙動のままにするには `--disable form-post-response-mode` で生成する
+  - **認可レスポンスの型**：`endpoints/authorize/response-mode.ts`（Next.js は `authorize/response-mode.ts`）の `AuthorizationResponseMode` は、リダイレクト URL を返す `redirect()` の代わりに、リダイレクトかフォームの POST かを表す `AuthorizationResponse` を返す `respond()` を持つ。認可エンドポイントの結果（`AuthorizationOutcome`）と同意の結果（`ConsentOutcome`）の `authorization_response` は、`location` の代わりに `response` を持つ。`outcome.ts` の `buildErrorRedirect()` / `buildSuccessRedirect()` は `buildErrorResponse()` / `buildSuccessResponse()` になり、Next.js の `authorizationResponseUrl()` は `authorizationResponseOf()` になった。自前の応答モードを書いている場合は、`respond()` から `{ method: 'redirect', location }` を返すように直す
+  - **`Views`**：`views.tsx` の `Views` に `formPostPage` が加わった。`views` オプションは既定の画面と合わせて使うので、渡しているオブジェクトはそのままでよい
+  - **Next.js の同意の判断**：`consent/actions.ts`（Server Action）は無くなり、同意画面のフォームは Route Handler の `consent/decision/route.ts`（`POST /consent/decision`）へ送る。`form_post` の認可レスポンスは HTML のページで、Server Action はリダイレクトしか返せないためである。トランザクションが見つからない同意の POST は、`not-found.tsx` の 404 ではなく、`oidc-error` のページへの 303 で終わる。以前の出力に `--force` で生成し直しても `consent/actions.ts` は残るので、消してから生成し直す
+  - **`--db sql` の `authentication_requests`**：OpenID Connect Core 1.0 の認可リクエストのパラメータが、それぞれ専用の列になった（`response_mode`、`prompt`、`max_age`、`ui_locales`、`claims_locales`、`id_token_hint`、`login_hint`、`acr_values`、`claims`）。これまでは `payload` 列の JSON に入っていた。`payload` に残るのは、`redirect_uri` を明示したかどうか、`audience`、機能が足す値だけである。`response_mode` 列には OP が答える応答モードの名前（`form_post`、JARM の `query.jwt`）が入り、クエリ応答のときは NULL になる。以前の CLI で作った DB は `CREATE TABLE IF NOT EXISTS` では列が増えないので、テーブルを作り直すか列を足してから新しい生成コードを動かす。`--db kv` のトランザクションの記録も、同じパラメータを `authentication_request` の同名のフィールドに持つ
+- eb08dd6: Implicit Flow（OIDC Core 1.0 §3.2）の `response_type=id_token token` と `id_token` に答える安定機能 `implicit-flow` を追加する
+  
+  既定で生成され、`--disable implicit-flow` で外せる。
+  
+  - 使えるのは、登録の `responseTypes` に `id_token token` や `id_token` を持つクライアントだけである。登録の無いクライアントはこれまでどおり `code` だけを使え、ほかの値には `unauthorized_client` を返す
+  - 認可エンドポイントは、認可コードの代わりに ID Token（`id_token token` では Access Token と `at_hash` も）を、リダイレクト URI のフラグメントで返す（OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5）。`prompt=none` と同意済みの SSO の要求には認可エンドポイントが、同意画面を経た要求には同意の判断が返す。`response_mode=form_post` を指定した要求には、フォームの POST で返す。トークンエンドポイントもリフレッシュトークンも使わない
+  - `nonce` は必須で（OIDC Core 1.0 §3.2.2.1）、`response_mode=query` と JARM の `.jwt` 系は `invalid_request` になる。エラーもフラグメントで返す。redirect_uri は https か、public client のループバックの http に限る。PKCE は検証せず、`offline_access` は無視する（OIDC Core 1.0 §11）
+  - `response_type=id_token` の ID Token には、許可された scope の標準クレームを入れる（OIDC Core 1.0 §5.4）
+  - 発行した Access Token は、認可コードの交換で出たものと同じく保存し、UserInfo、Introspection、Revocation で使える。同意を取り消すと失効する
+  - discovery の `response_types_supported` は `["code", "id_token", "id_token token"]` になり、`response_modes_supported` には `fragment` が、`grant_types_supported` には `implicit` が加わる
+  
+  ## 破壊的変更
+  
+  - **既定の挙動と discovery**：`implicit-flow` は既定で生成されるので、discovery の `response_types_supported`、`response_modes_supported`、`grant_types_supported` が変わる。`code` だけを広告する OP のままにするには、`--disable implicit-flow` で生成する
+  - **`response_mode=fragment`**：`response_type=code` の要求の `response_mode=fragment` は、これまで無視してクエリで返していた。今後は認可コードをフラグメントで返す
+  - **JARM**：`--enable jarm` の OP は、トークンを返す response type の要求の `.jwt` 系の `response_mode` を JARM で解釈しない（JARM §2.3.1 / §2.3.4）。Implicit Flow の要求では、フラグメントで `invalid_request` を返す
+  - **`--db sql` と `--db kv` のクライアント**：`--db sql` にクライアントの response type を持つ `client_response_types` テーブルが加わり、`--db kv` のクライアントのレコードは `response_types` を持つ。これまで両者は登録の `responseTypes` を保存せず、どのクライアントも `code` だけを使えた。以前の CLI で作った SQL のデータベースには、`schema.sql` を実行し直せばテーブルが作られる
+  - **トランザクションの状態**：Implicit Flow でトークンを返したトランザクションは、`authenticated` から `token_issued` に進む。`--db sql` の `access_tokens.transaction_id`（`--db kv` は `access_token:<hash>` の `transaction_id`）には、認可コードを経ずに発行したトークンでもトランザクションの ID が入る
+  - **生成コードの構造（hono / express / fastify）**：`features/feature.ts` のフックに `authorize.responseTypes` が加わり、`endpoints/authorize/response-type.ts` が増えた。`issue-authorization-code` のステップは、機能が答える response type の要求を、認可コードを発行せずに機能へ渡す。`validate-request` は、PKCE を `code` を含む response type の要求だけで検証する。`endpoints/consent/steps/record-consent.ts` の `recordConsentDecision()` は、認可コードの代わりに `grantId` を持つ値を受け取る
+  - **生成コードの構造（Next.js）**：`authorize/route.ts` で `prompt=none` と SSO が別々に発行していた認可コードは、`issueAuthorizationResponse()` が発行する。`consent/decision/route.ts` にはステップのマーカーが付き、それを並べる `endpoint.ts` が隣に増えた。`_oidc-provider/feature.ts` のフックに `authorize.responseTypes`（`code` のほかに答える `response_type` の名前）が加わった
+  - **`store.ts`**：`ProviderStores.transactionStore` の型は、任意の `recordTokenIssued()` を足した `TransactionStorage` になった。自前のストアは、このメソッドを持たなくてもよい
+
+### Patch Changes
+
+- 61248a4: `implicit-flow` が発行する ID Token に、`claims` パラメータの `id_token` メンバーで個別に要求されたクレームを含める（OIDC Core 1.0 §5.5）
+  
+  - `response_type=id_token` と `id_token token` のどちらでも、`claims={"id_token":{"name":{"essential":true}}}` のように要求されたクレームを、End-User のクレームから ID Token に加える。`response_type=id_token` では、許可された scope の標準クレーム（§5.4）に加えて含める
+  - OpenID Foundation の Implicit OP 認定プラン（`oidcc-implicit-certification-test-plan`）の `oidcc-claims-essential` は、`response_type=id_token` でこの要求を送り、ID Token に `name` が無いと WARNING にする
+
 ## 0.13.0
 
 ### Minor Changes

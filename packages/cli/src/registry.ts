@@ -54,6 +54,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'revocation', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Token Revocation endpoint (RFC 7009)' },
   { id: 'request-object', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'signed Request Objects passed by value (OIDC Core 1.0 §6.1)' },
   { id: 'form-post-response-mode', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'response_mode=form_post (OAuth 2.0 Form Post Response Mode)' },
+  { id: 'implicit-flow', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Implicit Flow: response_type=id_token token / id_token (OIDC Core 1.0 §3.2)' },
   { id: 'par', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Pushed Authorization Requests (RFC 9126)' },
   { id: 'token-exchange', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'OAuth 2.0 Token Exchange (RFC 8693)' },
   { id: 'jarm', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'JWT Secured Authorization Response Mode (signed query.jwt)' },
@@ -115,6 +116,7 @@ export const AVAILABLE_FEATURES = [
   'revocation',
   'request-object',
   'form-post-response-mode',
+  'implicit-flow',
 ] as const;
 
 export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
@@ -207,6 +209,12 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   (OAuth 2.0 Form Post Response Mode §2), and discovery advertises
  *   `form_post` in `response_modes_supported`. When false, `response_mode` is
  *   ignored as before and the response is the plain query one.
+ * - implicitFlow: when true (the default), the authorization endpoint answers
+ *   `response_type=id_token token` and `id_token` (OIDC Core 1.0 §3.2) for a
+ *   client registered for them: the ID Token (and the access token) in the
+ *   fragment of the redirect URI, without a code. Discovery advertises the
+ *   two response types, `fragment` and the `implicit` grant type. When
+ *   false, the authorization endpoint answers `response_type=code` only.
  * - par: experimental, disabled by default. When true, the PAR endpoint
  *   (RFC 9126) is generated and the authorization endpoint resolves URN-form
  *   `request_uri` values through `@maronn-openid-connect/experimental/par`.
@@ -280,6 +288,7 @@ export interface OidcFeatureConfig {
   revocation: boolean;
   requestObject: boolean;
   formPostResponseMode: boolean;
+  implicitFlow: boolean;
   par: boolean;
   tokenExchange: boolean;
   jarm: boolean;
@@ -300,6 +309,7 @@ const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
   revocation: 'revocation',
   'request-object': 'requestObject',
   'form-post-response-mode': 'formPostResponseMode',
+  'implicit-flow': 'implicitFlow',
 };
 
 /** Mapping from CLI experimental feature names to OidcFeatureConfig keys. */
@@ -331,6 +341,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   revocation: true,
   requestObject: true,
   formPostResponseMode: true,
+  implicitFlow: true,
   par: false,
   tokenExchange: false,
   jarm: false,

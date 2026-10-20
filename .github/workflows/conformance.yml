@@ -11,6 +11,7 @@ on:
         options:
           - basic
           - implicit
+          - hybrid
       sample_app:
         description: "Sample OP app to test"
         required: false
@@ -47,8 +48,8 @@ jobs:
       fail-fast: false
       matrix:
         # A manual run checks the plan it chose; a labelled pull request
-        # checks the Basic OP and the Implicit OP plans.
-        plan: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.plan) || '["basic","implicit"]') }}
+        # checks the Basic OP, the Implicit OP and the Hybrid OP plans.
+        plan: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.plan) || '["basic","implicit","hybrid"]') }}
     steps:
       - uses: actions/checkout@v7
 

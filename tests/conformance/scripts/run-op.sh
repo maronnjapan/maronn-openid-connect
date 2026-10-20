@@ -8,7 +8,7 @@ GENERATED_DIR="${CONFORMANCE_DIR}/.generated"
 RESULTS_DIR="${CONFORMANCE_DIR}/results"
 COMPOSE_FILE="${CONFORMANCE_DIR}/docker-compose.yml"
 
-# The certification plan of the run: basic (the default) or implicit
+# The certification plan of the run: basic (the default), implicit or hybrid
 # (create-op-config.mjs).
 PLAN="${1:-${CONFORMANCE_PLAN:-basic}}"
 SAMPLE_APP="${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}"
@@ -27,8 +27,13 @@ case "${PLAN}" in
     # The Implicit OP plan issues no authorization code.
     DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0
     ;;
+  hybrid)
+    # The Hybrid OP plan exchanges the code of every module without PKCE,
+    # as the Basic OP plan does (README).
+    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1
+    ;;
   *)
-    echo "Unsupported CONFORMANCE_PLAN \"${PLAN}\". Expected one of: basic, implicit" >&2
+    echo "Unsupported CONFORMANCE_PLAN \"${PLAN}\". Expected one of: basic, implicit, hybrid" >&2
     exit 1
     ;;
 esac

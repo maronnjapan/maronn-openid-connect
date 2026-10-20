@@ -5,14 +5,15 @@ OpenID Foundation Conformance Suiteを実行するためのものです。
 
 ## 対象のテストプラン
 
-OpenID Connect Core の認定プランのうち、次の2つを static client で実行できます。
+OpenID Connect Core の認定プランのうち、次の3つを static client で実行できます。
 
 | プラン | コマンド | OIDF テストプラン |
 |---|---|---|
 | Basic OP | `pnpm run conformance:basic-op` | `oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]` |
 | Implicit OP | `pnpm run conformance:implicit-op` | `oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]` |
+| Hybrid OP | `pnpm run conformance:hybrid-op` | `oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]` |
 
-どちらも、選択したサンプルOPが OpenID Connect Conformance Profiles の static client profile を満たすかを確認します。
+どれも、選択したサンプルOPが OpenID Connect Conformance Profiles の static client profile を満たすかを確認します。
 Suite本体は公式のprebuilt Docker imageを使い、公式の `run-test-plan.py` runner scriptで実行します。
 
 ## Implicit OP
@@ -32,6 +33,27 @@ UserInfo の3つの module と `oidcc-response-type-missing` は、`id_token tok
 
 Implicit OP のプランは認可コードを発行しないので、`pnpm run conformance:implicit-op` は Basic OP 向けPKCE互換モード（後述）を有効にしません。
 Request Object の module はこのプランにもあるので、unsigned Request Object の互換モードは Basic OP と同じく有効にします。
+
+## Hybrid OP
+
+Hybrid OP のプランは、Basic OP と同じ種類の module を、`response_type=code id_token`、`code token`、`code id_token token` の3通りで実行します（OpenID Connect Core 1.0 §3.3）。
+`oidcc-response-type-missing`、`oidcc-alternate-happy-flow`、`oidcc-ensure-request-with-valid-pkce-succeeds` は `code id_token` の回だけで実行します。
+nonce の module は response type で変わります。
+認可エンドポイントが ID Token を返す `code id_token` と `code id_token token` では、nonce の無い要求を拒否する `oidcc-ensure-request-without-nonce-fails` を、ID Token を返さない `code token` では、nonce の無い要求が成功する `oidcc-ensure-request-without-nonce-succeeds-for-code-flow` を実行します（OpenID Connect Core 1.0 §3.3.2.11 と errata の NonceNotes）。
+manual review が必要な module は、後述の3つを response type ごとに実行するので9個になります。
+
+このプランの module が使うクライアントは、Basic OP と同じく Suite の設定の `client`、`client2`（`oidcc-refresh-token` の2つ目のクライアント）、`client_secret_post`（`oidcc-server-client-secret-post` のクライアント）です。
+`create-op-config.mjs` は、OP に次の static client を3つ登録します。
+
+- `clientId`：`oidf-hybrid-client`、`oidf-hybrid-client-2`、`oidf-hybrid-post-client`
+- `responseTypes`：`code id_token`、`code token`、`code id_token token`
+- `grantTypes`：`authorization_code`、`implicit`、`refresh_token`（OpenID Connect Dynamic Client Registration 1.0 §2 で Hybrid Flow の response type と組になる grant type）
+- `tokenEndpointAuthMethods`：`client_secret_basic`（`oidf-hybrid-post-client` は `client_secret_post`）。認可コードをトークンエンドポイントで交換するので、client secret を持つ confidential client として登録する
+
+Hybrid OP のプランは Basic OP と同じく PKCE 無しで認可コードを交換するので、`pnpm run conformance:hybrid-op` は Basic OP 向けPKCE互換モードを有効にします。
+unsigned Request Object の互換モードも Basic OP と同じく有効にします。
+このプランは、まだこのリポジトリでは実行していません。
+`run-conformance` label を付けた Pull Request か、手動実行で確認します（後述）。
 
 ## ローカル実行
 
@@ -54,6 +76,12 @@ Implicit OP static-client planは次のコマンドで実行します。
 
 ```bash
 pnpm run conformance:implicit-op
+```
+
+Hybrid OP static-client planは次のコマンドで実行します。
+
+```bash
+pnpm run conformance:hybrid-op
 ```
 
 ランナーは公式のprebuilt Conformance Suite imageを使い、サンプルOPをHTTPSリバース
@@ -98,19 +126,19 @@ Implicit OP のプランも同じ指定でサンプルOPを選べます（例：
 
 ### 環境変数
 
-- `CONFORMANCE_PLAN`: `basic` または `implicit`。`pnpm run conformance:basic-op` と `pnpm run conformance:implicit-op` は、それぞれのプランを `scripts/run-op.sh` の引数で渡します。
+- `CONFORMANCE_PLAN`: `basic`、`implicit`、`hybrid` のいずれか。`pnpm run conformance:basic-op`、`pnpm run conformance:implicit-op`、`pnpm run conformance:hybrid-op` は、それぞれのプランを `scripts/run-op.sh` の引数で渡します。
 - `CONFORMANCE_SAMPLE_APP`: `hono-cloudflare`, `express-flyio`, `fastify-flyio`, `nextjs-vercel` のいずれか。
 - `CONFORMANCE_SUITE_IMAGE_TAG`: OpenID Foundation image tag。デフォルトは `latest`。
 - `CONFORMANCE_SUITE_REF`: `run-test-plan.py` 用にcloneする `openid/conformance-suite` のGit ref。デフォルトは `master`。
 - `CONFORMANCE_SUITE_PORT`: Conformance Suite HTTPSエンドポイントのhost port。デフォルトは `8443`。
 - `CONFORMANCE_OP_TLS_PORT`: サンプルOP HTTPS proxyのhost port。デフォルトは `3443`。
-- `CONFORMANCE_SKIP_MANUAL_REVIEW`: `1` のとき、manual review が必要な3つの module（下記。Implicit OP では response type ごとに実行される6個）を除いてプランを実行します。CI（`.github/workflows/conformance.yml`）は `1` で実行します。デフォルトはすべての module を実行します。
+- `CONFORMANCE_SKIP_MANUAL_REVIEW`: `1` のとき、manual review が必要な3つの module（下記。Implicit OP では response type ごとに実行される6個、Hybrid OP では9個）を除いてプランを実行します。CI（`.github/workflows/conformance.yml`）は `1` で実行します。デフォルトはすべての module を実行します。
 - `CONFORMANCE_KEEP_SERVICES=1`: runner終了後もDocker Composeサービスを残す。
-- `CONFORMANCE_ALIAS`: コールバックURLに使うOIDF test alias。デフォルトは `maronn-basic-op`（Implicit OP では `maronn-implicit-op`）。
+- `CONFORMANCE_ALIAS`: コールバックURLに使うOIDF test alias。デフォルトは `maronn-basic-op`（Implicit OP では `maronn-implicit-op`、Hybrid OP では `maronn-hybrid-op`）。
 - `CONFORMANCE_OP_ISSUER`: Compose内でサンプルOPが使うissuer。デフォルトは `https://op-tls:3443`。
 - `CONFORMANCE_SUITE_BASE_URL`: Compose内でcallback URI生成に使うSuite base URL。デフォルトは `https://conformance-nginx:8443`。
-- `OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW`: サンプルOPのBasic OP互換モード。`pnpm run conformance:basic-op` ではデフォルト `1`、`pnpm run conformance:implicit-op` ではデフォルト `0`。
-- `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT`: サンプルOPで unsigned（`alg:none`）Request Object を受理し、discovery の `request_object_signing_alg_values_supported` に `none` を広告する互換モード。`pnpm run conformance:basic-op` と `pnpm run conformance:implicit-op` ではデフォルト `1`（通常利用と E2E では未設定＝署名必須）。`oidcc-unsigned-request-object-...` / `oidcc-ensure-request-object-with-redirect-uri` は OP が unsigned 非対応を広告すると skip されるため、conformance run でのみ有効化する。
+- `OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW`: サンプルOPのBasic OP互換モード。`pnpm run conformance:basic-op` と `pnpm run conformance:hybrid-op` ではデフォルト `1`、`pnpm run conformance:implicit-op` ではデフォルト `0`。
+- `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT`: サンプルOPで unsigned（`alg:none`）Request Object を受理し、discovery の `request_object_signing_alg_values_supported` に `none` を広告する互換モード。`pnpm run conformance:basic-op`、`pnpm run conformance:implicit-op`、`pnpm run conformance:hybrid-op` ではデフォルト `1`（通常利用と E2E では未設定＝署名必須）。`oidcc-unsigned-request-object-...` / `oidcc-ensure-request-object-with-redirect-uri` は OP が unsigned 非対応を広告すると skip されるため、conformance run でのみ有効化する。
 
 host portを変えて実行する例:
 
@@ -200,7 +228,7 @@ GitHub Actions workflowは `.github/workflows/conformance.yml` に定義して�
 
 GitHub Actionsの `OpenID Conformance` workflowを選び、以下を指定して実行します。
 
-- `plan`: `basic` または `implicit`。デフォルトは `basic`。
+- `plan`: `basic`、`implicit`、`hybrid` のいずれか。デフォルトは `basic`。
 - `sample_app`: `hono-cloudflare`, `express-flyio`, `fastify-flyio`, `nextjs-vercel` のいずれか。
 - `suite_image_tag`: OpenID Foundation Conformance Suite image tag。通常は `latest`。
 
@@ -221,7 +249,7 @@ Suiteが失敗した場合でも、以下を `oidf-<plan>-op-conformance` artifa
 Pull Requestに `run-conformance` labelが付いている場合もworkflowを実行します。
 Conformance Suiteは重いので通常のPR経路からは外し、必要な変更に対してmaintainerが
 Basic OP checkを要求できるようにしています。
-このときは Basic OP と Implicit OP の両方のプランを、別々のjob（`basic-op` と `implicit-op`）で実行します。
+このときは Basic OP、Implicit OP、Hybrid OP の3つのプランを、別々のjob（`basic-op`、`implicit-op`、`hybrid-op`）で実行します。
 
 PR triggerの対象pathは以下に限定しています。
 
@@ -356,7 +384,7 @@ WARNING は `response_type=id_token` の `oidcc-claims-essential` で、`claims`
 - `op` サービスは Discovery に応答するまで healthy にならず、`op-tls` と `runner` は healthy になってから起動します。OP が起動しない場合は、約3分で `docker compose up` が失敗します。
 - `op` サービスはリポジトリを読み取り専用でマウントするので、`wrangler dev`（`hono-cloudflare`）が書き込む `samples/<サンプル>/.wrangler/` だけを tmpfs にしています。マウントポイントは `run-op.sh` が作ります。
 - OP のデータは `/tmp` に置きます。`hono-cloudflare` の D1 は `OIDC_D1_PERSIST_PATH`、node:sqlite を使う `express-flyio`、`fastify-flyio`、`nextjs-vercel` のデータベースは `OIDC_SQLITE_PATH` で指定します（既定の `.data/oidc.sqlite` は読み取り専用のリポジトリの中なので、OP が起動しません）。
-- manual review が必要な module は screenshot の提出を待つので、`run-test-plan.py` は1つにつき240秒待ってから打ち切ります。`CONFORMANCE_SKIP_MANUAL_REVIEW=1` はこの待ち時間（Basic OP は3つで約12分、Implicit OP は6つで約24分）を省きます。
+- manual review が必要な module は screenshot の提出を待つので、`run-test-plan.py` は1つにつき240秒待ってから打ち切ります。`CONFORMANCE_SKIP_MANUAL_REVIEW=1` はこの待ち時間（Basic OP は3つで約12分、Implicit OP は6つで約24分、Hybrid OP は9つで約36分）を省きます。
 - static client の設定は `alias` を持つので、`run-test-plan.py` は module を並列に実行しません。
 
 ## Manual review が必要な module の扱い
@@ -370,6 +398,7 @@ manual review を前提とする module があります。
 - `oidcc-prompt-login` / `oidcc-max-age-1`: 2回目の認可画面の screenshot 提出を待ちます。
 
 Implicit OP のプランにも同じ3つの module があり、Suite はそれぞれを `response_type=id_token` と `id_token token` で実行します。
+Hybrid OP のプランでは、`response_type=code id_token`、`code token`、`code id_token token` の3通りで実行します。
 
 > `oidcc-ensure-request-object-with-redirect-uri` はかつて error page の screenshot 提出
 > 待ち（manual review）でしたが、`OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT=1` を有効化すると
@@ -385,7 +414,7 @@ module でも automation 全体を `INTERRUPTED` にせず、manual review 待�
 このパターンを Suite のベース URL から始めるのは、認可リクエストの `redirect_uri` クエリにもコールバック URL が入るためです。
 `*/test/*/callback*` だと OP の error page の URL にも一致し、browser automation は届かない `submission_complete` を待って timeout します。
 
-manual review を人手で完了する場合は、サービスを残したまま実行します（Implicit OP では `conformance:implicit-op`）。
+manual review を人手で完了する場合は、サービスを残したまま実行します（Implicit OP では `conformance:implicit-op`、Hybrid OP では `conformance:hybrid-op`）。
 
 ```bash
 CONFORMANCE_KEEP_SERVICES=1 pnpm run conformance:basic-op

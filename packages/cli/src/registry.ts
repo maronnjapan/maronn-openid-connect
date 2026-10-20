@@ -55,6 +55,7 @@ export const FEATURE_REGISTRY: readonly FeatureEntry[] = [
   { id: 'request-object', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'signed Request Objects passed by value (OIDC Core 1.0 §6.1)' },
   { id: 'form-post-response-mode', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'response_mode=form_post (OAuth 2.0 Form Post Response Mode)' },
   { id: 'implicit-flow', tier: 'stable', requires: [], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Implicit Flow: response_type=id_token token / id_token (OIDC Core 1.0 §3.2)' },
+  { id: 'hybrid-flow', tier: 'stable', requires: ['implicit-flow'], packages: [], frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Hybrid Flow: response_type=code id_token / code token / code id_token token (OIDC Core 1.0 §3.3)', requiresReason: 'the Hybrid Flow answers in the fragment response mode and issues its tokens with the code of the implicit-flow feature, which is not generated when implicit-flow is disabled' },
   { id: 'par', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'Pushed Authorization Requests (RFC 9126)' },
   { id: 'token-exchange', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'OAuth 2.0 Token Exchange (RFC 8693)' },
   { id: 'jarm', tier: 'experimental', requires: [], packages: EXPERIMENTAL, frameworks: ALL_FRAMEWORKS, runtimes: ALL_RUNTIMES, summary: 'JWT Secured Authorization Response Mode (signed query.jwt)' },
@@ -117,6 +118,7 @@ export const AVAILABLE_FEATURES = [
   'request-object',
   'form-post-response-mode',
   'implicit-flow',
+  'hybrid-flow',
 ] as const;
 
 export type FeatureName = (typeof AVAILABLE_FEATURES)[number];
@@ -214,7 +216,17 @@ export type ExtensionFeatureName = (typeof EXTENSION_FEATURES)[number];
  *   client registered for them: the ID Token (and the access token) in the
  *   fragment of the redirect URI, without a code. Discovery advertises the
  *   two response types, `fragment` and the `implicit` grant type. When
- *   false, the authorization endpoint answers `response_type=code` only.
+ *   false, the authorization endpoint answers `response_type=code` only
+ *   (and hybrid-flow, which requires this feature, must be disabled too).
+ * - hybridFlow: when true (the default), the authorization endpoint answers
+ *   `response_type=code id_token`, `code token` and `code id_token token`
+ *   (OIDC Core 1.0 §3.3) for a client registered for them: the authorization
+ *   code together with the ID Token and/or the access token in the fragment
+ *   of the redirect URI, the code then exchanged at the token endpoint as in
+ *   the code flow. The ID Token of the authorization endpoint carries c_hash
+ *   (§3.3.2.11). Discovery advertises the three response types and `c_hash`.
+ *   Requires implicit-flow, whose fragment response mode and token issuance
+ *   it uses. When false, those response types are `unsupported_response_type`.
  * - par: experimental, disabled by default. When true, the PAR endpoint
  *   (RFC 9126) is generated and the authorization endpoint resolves URN-form
  *   `request_uri` values through `@maronn-openid-connect/experimental/par`.
@@ -289,6 +301,7 @@ export interface OidcFeatureConfig {
   requestObject: boolean;
   formPostResponseMode: boolean;
   implicitFlow: boolean;
+  hybridFlow: boolean;
   par: boolean;
   tokenExchange: boolean;
   jarm: boolean;
@@ -310,6 +323,7 @@ const FEATURE_KEYS: Record<FeatureName, keyof OidcFeatureConfig> = {
   'request-object': 'requestObject',
   'form-post-response-mode': 'formPostResponseMode',
   'implicit-flow': 'implicitFlow',
+  'hybrid-flow': 'hybridFlow',
 };
 
 /** Mapping from CLI experimental feature names to OidcFeatureConfig keys. */
@@ -342,6 +356,7 @@ export const DEFAULT_FEATURES: OidcFeatureConfig = {
   requestObject: true,
   formPostResponseMode: true,
   implicitFlow: true,
+  hybridFlow: true,
   par: false,
   tokenExchange: false,
   jarm: false,

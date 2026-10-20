@@ -66,6 +66,9 @@ Suite はそれぞれを `response_type=id_token` と `id_token token` で実行
 OP が表示する画面は上表と同じです。
 login 画面 module では token exchange の代わりに、2回目の認可でフラグメントに返った ID Token（`id_token token` では Access Token も）を Suite が自動で検証し、screenshot だけが残ります。
 
+Hybrid OP static-client plan（`pnpm run conformance:hybrid-op`）でも同じ 3 つの module を、`response_type=code id_token`、`code token`、`code id_token token` で実行するので、manual review が必要な module は 9 つになります。
+login 画面 module では、2回目の認可でフラグメントに返った認可コードとトークンの検証と token exchange を Suite が自動で行い、screenshot だけが残ります。
+
 ## 手順
 
 ### 1. サービスを残したまま Suite を実行する
@@ -81,6 +84,12 @@ Implicit OP のプランでは、次のコマンドで実行します。
 
 ```bash
 CONFORMANCE_KEEP_SERVICES=1 pnpm run conformance:implicit-op
+```
+
+Hybrid OP のプランでは、次のコマンドで実行します。
+
+```bash
+CONFORMANCE_KEEP_SERVICES=1 pnpm run conformance:hybrid-op
 ```
 
 - 自動 module（authorization code / token / userinfo / scope / prompt=none / id_token_hint /

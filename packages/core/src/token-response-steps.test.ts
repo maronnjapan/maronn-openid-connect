@@ -12,6 +12,7 @@ import {
   buildAccessTokenPayload,
   buildIdTokenPayload,
   computeAtHash,
+  computeCHash,
   resolveAcrAmr,
   selectPreferredAcr,
   selectRequestedAcrValues,
@@ -127,6 +128,24 @@ describe('computeAtHash', () => {
   });
 });
 
+describe('computeCHash', () => {
+  // OIDC Core 1.0 Section 3.3.2.11: c_hash is computed like at_hash, over the
+  // ASCII representation of the code, so the same value hashes to the same
+  // left half (the Appendix A.3 value of the access token above).
+  it('should compute the base64url left half of the SHA-256 digest of the code for an RS256 key', async () => {
+    const result = await computeCHash('jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KF0Y', rsaKeyPair.privateKey);
+
+    expect(result).toBe('77QmUPtjPfzWtF2AnpK9RQ');
+  });
+
+  it('should hash the code, not the access token', async () => {
+    const result = await computeCHash('SplxlOBeZQQYbYS6WxSbIA', rsaKeyPair.privateKey);
+
+    expect(result).not.toBe('77QmUPtjPfzWtF2AnpK9RQ');
+    expect(result).toHaveLength(22);
+  });
+});
+
 describe('resolveAcrAmr', () => {
   it('should seed the resolver with claims.id_token.acr.values when acr_values is absent', async () => {
     const seen: (string | undefined)[] = [];
@@ -194,6 +213,33 @@ describe('buildIdTokenPayload', () => {
       auth_time: NOW - 60,
       acr: 'urn:example:loa:2',
       amr: ['pwd'],
+    });
+  });
+
+  // OIDC Core 1.0 §3.3.2.11: the ID Token the Hybrid Flow returns beside a code
+  // carries c_hash, next to at_hash when an access token is returned too.
+  it('should include c_hash when supplied', () => {
+    const result = buildIdTokenPayload({
+      issuer: 'https://op.example.com',
+      subject: 'user-1',
+      clientId: 'client-1',
+      scope: ['openid'],
+      expiresIn: 3600,
+      issuedAt: NOW,
+      atHash: 'at-hash-value',
+      cHash: 'c-hash-value',
+      nonce: 'nonce-1',
+    });
+
+    expect(result).toEqual({
+      iss: 'https://op.example.com',
+      sub: 'user-1',
+      aud: 'client-1',
+      exp: NOW + 3600,
+      iat: NOW,
+      at_hash: 'at-hash-value',
+      c_hash: 'c-hash-value',
+      nonce: 'nonce-1',
     });
   });
 

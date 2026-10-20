@@ -185,9 +185,11 @@ export async function issueImplicitTokens(input: ImplicitTokensInput): Promise<I
  * Issue the access token of response_type=id_token token and store its
  * record, as the issue-access-token and persist-access-token steps of
  * token/route.ts do for a code (RFC 9068 §2.2 / RFC 7662 §2.2). The record
- * names the transaction it was issued from, which no code names here.
+ * names the transaction it was issued from, which no code names here. The
+ * hybrid-flow feature issues the access token it returns beside a code with
+ * it, under the grant of that code.
  */
-async function issueImplicitAccessToken(input: {
+export async function issueImplicitAccessToken(input: {
   signingKey: SigningKey;
   subject: string;
   responseParams: AuthorizationResponseParams;

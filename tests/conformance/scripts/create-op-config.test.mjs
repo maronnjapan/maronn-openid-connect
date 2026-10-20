@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BASIC_OP_TEST_PLAN,
+  HYBRID_OP_TEST_PLAN,
   IMPLICIT_OP_TEST_PLAN,
   opTestPlan,
   REQUEST_OBJECT_PUBLIC_JWK,
@@ -306,11 +307,78 @@ describe('createOpConformanceArtifacts', () => {
 
     it('should reject a plan the conformance runs do not configure', () => {
       assert.throws(
-        () => createOpConformanceArtifacts({ plan: 'hybrid' }),
+        () => createOpConformanceArtifacts({ plan: 'fapi' }),
         {
-          message: 'Unsupported CONFORMANCE_PLAN "hybrid". Expected one of: basic, implicit',
+          message: 'Unsupported CONFORMANCE_PLAN "fapi". Expected one of: basic, implicit, hybrid',
         },
       );
+    });
+  });
+
+  describe('OIDF Hybrid OP static client configuration', () => {
+    it('should register the three confidential clients of the plan for the response types of the Hybrid Flow', () => {
+      // OIDC Core 1.0 §3.3: the plan runs its modules with response_type=code
+      // id_token, code token and code id_token token, so every client registers
+      // the three, with the authorization_code and implicit grant types that
+      // pair with them (OIDC Dynamic Client Registration 1.0 §2). The clients
+      // exchange the code at the token endpoint, so they have secrets.
+      const artifacts = createOpConformanceArtifacts({
+        plan: 'hybrid',
+        opIssuer: 'https://op-tls:3443',
+        suiteBaseUrl: 'https://conformance-nginx:8443',
+        sampleApp: 'hono-cloudflare',
+      });
+
+      const hybridClient = (clientId, clientSecret, tokenEndpointAuthMethod) => ({
+        clientId,
+        clientSecret,
+        redirectUris: [
+          'https://conformance-nginx:8443/test/a/maronn-hybrid-op/callback',
+          'https://conformance-nginx:8443/test/a/maronn-hybrid-op/callback?dummy1=lorem&dummy2=ipsum',
+        ],
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'implicit', 'refresh_token'],
+        tokenEndpointAuthMethods: [tokenEndpointAuthMethod],
+        responseTypes: ['code id_token', 'code token', 'code id_token token'],
+        keys: { request_object: { keys: [REQUEST_OBJECT_PUBLIC_JWK] } },
+      });
+      assert.deepEqual(artifacts.clients, [
+        hybridClient('oidf-hybrid-client', 'oidf-hybrid-client-secret', 'client_secret_basic'),
+        hybridClient('oidf-hybrid-client-2', 'oidf-hybrid-client-2-secret', 'client_secret_basic'),
+        hybridClient('oidf-hybrid-post-client', 'oidf-hybrid-post-client-secret', 'client_secret_post'),
+      ]);
+    });
+
+    it('should configure the suite clients of the plan like those of the Basic OP plan', () => {
+      // The Hybrid OP plan runs oidcc-refresh-token (client2) and
+      // oidcc-server-client-secret-post (client_secret_post) for each response type.
+      const options = {
+        opIssuer: 'https://op-tls:3443',
+        suiteBaseUrl: 'https://conformance-nginx:8443',
+        sampleApp: 'nextjs-vercel',
+      };
+      const artifacts = createOpConformanceArtifacts({ ...options, plan: 'hybrid' });
+      const basicArtifacts = createOpConformanceArtifacts({ ...options, plan: 'basic' });
+
+      const suiteClient = (clientId, clientSecret) => ({
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: 'openid',
+        jwks: { keys: [REQUEST_OBJECT_PRIVATE_JWK] },
+        request_object_signing_alg: 'RS256',
+      });
+      assert.deepEqual(artifacts.config, {
+        alias: 'maronn-hybrid-op',
+        description: 'maronn-openid-connect Hybrid OP certification check for the Next.js sample',
+        server: {
+          discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration',
+        },
+        client: suiteClient('oidf-hybrid-client', 'oidf-hybrid-client-secret'),
+        client2: suiteClient('oidf-hybrid-client-2', 'oidf-hybrid-client-2-secret'),
+        client_secret_post: suiteClient('oidf-hybrid-post-client', 'oidf-hybrid-post-client-secret'),
+        // The same login and consent screens answer every plan.
+        browser: basicArtifacts.config.browser,
+      });
     });
   });
 });
@@ -335,14 +403,16 @@ describe('writeOpConformanceArtifacts', () => {
 
 describe('run-op.sh', () => {
   describe('sample OP startup environment', () => {
-    // The Basic OP plan has modules of the authorization code flow without
-    // PKCE (README); the Implicit OP plan issues no authorization code.
-    it('should enable non-PKCE authorization code flow only for the Basic OP plan', () => {
+    // The Basic OP and Hybrid OP plans have modules that exchange an
+    // authorization code without PKCE (README); the Implicit OP plan issues no
+    // authorization code.
+    it('should enable non-PKCE authorization code flow for the Basic OP and Hybrid OP plans only', () => {
       const runScript = readFileSync(join(scriptDir, 'run-op.sh'), 'utf8');
       const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
 
       assert.match(runScript, /\n  basic\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
       assert.match(runScript, /\n  implicit\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=0\n/);
+      assert.match(runScript, /\n  hybrid\)\n(?:    #.*\n)*    DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW=1\n/);
       assert.match(
         runScript,
         /export OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW="\$\{OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-\$\{DEFAULT_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW\}\}"/,
@@ -460,6 +530,64 @@ describe('opTestPlan', () => {
       const artifacts = createOpConformanceArtifacts({ plan: 'implicit', skipManualReview: true });
 
       assert.equal(artifacts.testPlan, opTestPlan({ plan: 'implicit', skipManualReview: true }));
+    });
+  });
+
+  describe('Hybrid OP plan', () => {
+    it('should run every module of the plan when the manual review ones are kept', () => {
+      assert.equal(HYBRID_OP_TEST_PLAN, 'oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]');
+      assert.equal(opTestPlan({ plan: 'hybrid' }), HYBRID_OP_TEST_PLAN);
+    });
+
+    // run-test-plan.py takes one module of the plan for each time the selection
+    // names it, so a module the plan runs with each response type is named
+    // three times. The run of code id_token also has the modules the plan runs
+    // once (oidcc-response-type-missing, oidcc-alternate-happy-flow,
+    // oidcc-ensure-request-with-valid-pkce-succeeds), and code token runs
+    // oidcc-ensure-request-without-nonce-succeeds-for-code-flow in place of
+    // oidcc-ensure-request-without-nonce-fails (OIDC Core 1.0 §3.3.2.11).
+    it('should select each automated module once for each response type it runs with when the manual review ones are skipped', () => {
+      const shared = () =>
+        'oidcc-scope-profile,oidcc-scope-email,oidcc-scope-address,oidcc-scope-phone,oidcc-scope-all,' +
+        'oidcc-display-page,oidcc-display-popup,oidcc-prompt-none-not-logged-in,oidcc-prompt-none-logged-in,' +
+        'oidcc-max-age-10000,oidcc-ensure-request-with-unknown-parameter-succeeds,oidcc-id-token-hint,' +
+        'oidcc-login-hint,oidcc-ui-locales,oidcc-claims-locales,oidcc-ensure-request-with-acr-values-succeeds,' +
+        'oidcc-codereuse,oidcc-codereuse-30seconds,oidcc-server-client-secret-post,' +
+        'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported,' +
+        'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported,oidcc-claims-essential,' +
+        'oidcc-ensure-request-object-with-redirect-uri,oidcc-refresh-token';
+
+      const userInfo = 'oidcc-userinfo-get,oidcc-userinfo-post-header,oidcc-userinfo-post-body';
+      const codeIdToken =
+        `oidcc-server,oidcc-response-type-missing,oidcc-idtoken-signature,${userInfo},` +
+        'oidcc-ensure-request-without-nonce-fails,' +
+        'oidcc-scope-profile,oidcc-scope-email,oidcc-scope-address,oidcc-scope-phone,oidcc-scope-all,' +
+        'oidcc-alternate-happy-flow,oidcc-display-page,oidcc-display-popup,oidcc-prompt-none-not-logged-in,' +
+        'oidcc-prompt-none-logged-in,oidcc-max-age-10000,oidcc-ensure-request-with-unknown-parameter-succeeds,' +
+        'oidcc-id-token-hint,oidcc-login-hint,oidcc-ui-locales,oidcc-claims-locales,' +
+        'oidcc-ensure-request-with-acr-values-succeeds,oidcc-codereuse,oidcc-codereuse-30seconds,' +
+        'oidcc-server-client-secret-post,' +
+        'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported,' +
+        'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported,oidcc-claims-essential,' +
+        'oidcc-ensure-request-object-with-redirect-uri,oidcc-refresh-token,' +
+        'oidcc-ensure-request-with-valid-pkce-succeeds';
+      const codeToken =
+        `oidcc-server,oidcc-idtoken-signature,${userInfo},` +
+        `oidcc-ensure-request-without-nonce-succeeds-for-code-flow,${shared()}`;
+      const codeIdTokenToken =
+        `oidcc-server,oidcc-idtoken-signature,${userInfo},oidcc-ensure-request-without-nonce-fails,${shared()}`;
+
+      assert.equal(
+        opTestPlan({ plan: 'hybrid', skipManualReview: true }),
+        'oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]:' +
+          `${codeIdToken},${codeToken},${codeIdTokenToken}`,
+      );
+    });
+
+    it('should put the plan of the run into the artifacts', () => {
+      const artifacts = createOpConformanceArtifacts({ plan: 'hybrid', skipManualReview: true });
+
+      assert.equal(artifacts.testPlan, opTestPlan({ plan: 'hybrid', skipManualReview: true }));
     });
   });
 });

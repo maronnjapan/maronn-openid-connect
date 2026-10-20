@@ -4,8 +4,15 @@ import { responseTypeHandlerOf, supportedResponseTypes } from './response-type.j
 
 describe('supportedResponseTypes', () => {
   // OIDC Discovery 1.0 §3: code, then the response types of the enabled features.
-  it('should return code followed by the response types of the Implicit Flow', () => {
-    expect(supportedResponseTypes()).toEqual(['code', 'id_token', 'id_token token']);
+  it('should return code followed by the response types of the Implicit Flow and of the Hybrid Flow', () => {
+    expect(supportedResponseTypes()).toEqual([
+      'code',
+      'id_token',
+      'id_token token',
+      'code id_token',
+      'code token',
+      'code id_token token',
+    ]);
   });
 });
 

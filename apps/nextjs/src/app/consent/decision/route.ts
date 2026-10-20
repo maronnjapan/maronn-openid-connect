@@ -2,8 +2,9 @@
  * Consent decision: the Route Handler the consent form of consent/page.tsx
  * posts to. It records the End-User's decision and answers with the
  * authorization response for the client (OIDC Core 1.0 §3.1.2.5 / §3.1.2.6).
- * A request of a response type a feature answers in place of the code (the
- * Implicit Flow) ends in that feature's block instead of the code.
+ * A request of a response type a feature answers in place of the code alone
+ * (the Implicit Flow, the Hybrid Flow) ends in that feature's block instead
+ * of the code.
  *
  * A Route Handler, not a Server Action: the authorization response is a
  * redirect in the query and fragment response modes, but an HTML page in the
@@ -25,6 +26,7 @@ import {
   type AuthorizationResponseMode,
   type ResponseModeTransaction,
 } from '../../authorize/response-mode';
+import { issueHybridConsentResponse } from '../../_oidc-provider/features/hybrid-flow/consent';
 import { issueImplicitConsentResponse } from '../../_oidc-provider/features/implicit-flow/consent';
 import { readFormFields, redirectToErrorPage } from '../../_oidc-provider/http';
 import { config, loadSigningKeys, resolvers, stores } from '../../_oidc-provider/provider';
@@ -133,6 +135,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
   const implicitResponse = await issueImplicitConsentResponse({ transactionId, transaction, session, responseMode });
   if (implicitResponse) return implicitResponse;
+
+  // [issue-hybrid-response] (feature: hybrid-flow) Issue the code together with the ID Token and/or the access token — OIDC Core 1.0 §3.3.2.5
+  const hybridResponse = await issueHybridConsentResponse({ transactionId, transaction, session, responseMode });
+  if (hybridResponse) return hybridResponse;
 
   // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5 / §3.1.3.1
   const responseParams = await completeAuthTransaction(

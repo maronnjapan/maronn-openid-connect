@@ -117,9 +117,15 @@ export function validateImplicitResponseMode(
  * OIDC Core 1.0 §5.4: アクセストークンを発行しない response_type（`id_token`）では、
  * scope 値（profile / email / address / phone）が要求するクレームを ID Token で返す。
  * アクセストークンを発行する response_type では、それらは UserInfo エンドポイントが返す。
+ * `token` を含む response_type は認可エンドポイントが、`code` を含む response_type
+ * （Hybrid Flow の `code id_token` など）はトークンエンドポイントがアクセストークンを発行する。
  */
 export function returnsScopeClaimsInIdToken(responseType: string): boolean {
-  return responseTypeIncludes(responseType, 'id_token') && !responseTypeIncludes(responseType, 'token');
+  return (
+    responseTypeIncludes(responseType, 'id_token') &&
+    !responseTypeIncludes(responseType, 'token') &&
+    !responseTypeIncludes(responseType, 'code')
+  );
 }
 
 /**

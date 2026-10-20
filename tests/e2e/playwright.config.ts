@@ -152,6 +152,23 @@ const oidcClientsJson = JSON.stringify([
     tokenEndpointAuthMethods: ['none'],
     responseTypes: ['id_token token', 'id_token'],
   },
+  {
+    // OIDC Core 1.0 §3.3: a client of the Hybrid Flow. A confidential client,
+    // as it exchanges the code at the token endpoint (OIDC Dynamic Client
+    // Registration 1.0 §2 pairs the hybrid response types with the
+    // authorization_code and implicit grant types). Nothing serves the
+    // redirect URI: the hybrid-flow spec reads the authorization response from
+    // the fragment of the URL the browser lands on and exchanges the code
+    // itself. An OP generated without hybrid-flow keeps the registration and
+    // answers code only.
+    clientId: 'e2e-hybrid-client',
+    clientSecret: 'e2e-hybrid-client-secret',
+    redirectUris: [`${clientBaseURL}/hybrid-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code', 'implicit', 'refresh_token'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code id_token token', 'code id_token', 'code token'],
+  },
 ]);
 
 // EXPERIMENTAL (ID-JAG draft §4.4): the client registrations of the SECOND OP

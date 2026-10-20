@@ -1019,7 +1019,8 @@ export function validateRequestObjectConsistency(
  * - 欠落は invalid_request（OAuth 2.1 §4.1.2.1）
  * - supportedResponseTypes に無い値は unsupported_response_type（OP 全体での未サポート）。
  *   既定は `["code"]`（Authorization Code Flow だけ）。Implicit Flow（OIDC Core 1.0 §3.2）
- *   にも答える OP は `id_token` / `id_token token` を加えて渡す
+ *   にも答える OP は `id_token` / `id_token token` を、Hybrid Flow（同 §3.3）にも答える OP は
+ *   `code id_token` / `code token` / `code id_token token` を加えて渡す
  * - クライアント登録外の response_type は unauthorized_client（クライアント単位の認可。
  *   既定 `["code"]`: OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）
  *

@@ -11,6 +11,7 @@ const ALL_FEATURES: OidcFeatureConfig = {
   requestObject: true,
   formPostResponseMode: true,
   implicitFlow: true,
+  hybridFlow: true,
   par: true,
   tokenExchange: true,
   jarm: true,
@@ -219,6 +220,7 @@ describe('buildOpFlow', () => {
         'resolve-fragment-response-mode',
         'validate-request',
         'validate-implicit-request',
+        'validate-hybrid-request',
         'create-transaction',
         'validate-prompt-combination',
         'verify-id-token-hint',
@@ -259,10 +261,11 @@ describe('buildOpFlow', () => {
       ]);
     });
 
-    // OIDC Core 1.0 §3.2: without the feature, the authorization endpoint
-    // answers response_type=code only, and /consent always issues a code.
-    it('should leave out the Implicit Flow steps of /authorize and /consent when implicit-flow is disabled', () => {
-      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, implicitFlow: false } });
+    // OIDC Core 1.0 §3.2 / §3.3: without the two features, the authorization
+    // endpoint answers response_type=code only, and /consent always issues a
+    // code (hybrid-flow requires implicit-flow, so both go together).
+    it('should leave out the Implicit Flow and Hybrid Flow steps of /authorize and /consent when both are disabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, implicitFlow: false, hybridFlow: false } });
       const stepsOf = (id: string) => flow.endpoints.find((e) => e.id === id)?.steps.map((s) => s.id);
       expect(stepsOf('authorize')?.slice(0, 7)).toEqual([
         'parse-request',
@@ -284,6 +287,41 @@ describe('buildOpFlow', () => {
         'issue-authorization-code',
         'record-consent',
         'build-authorization-response',
+      ]);
+    });
+
+    // OIDC Core 1.0 §3.3: the Hybrid Flow steps leave with their feature; the
+    // Implicit Flow keeps its own (the fragment response mode among them).
+    it('should leave out the Hybrid Flow steps of /authorize and /consent when hybrid-flow is disabled', () => {
+      const flow = buildOpFlow({ features: { ...DEFAULT_FEATURES, hybridFlow: false } });
+      const stepsOf = (id: string) => flow.endpoints.find((e) => e.id === id)?.steps.map((s) => s.id);
+      expect(stepsOf('authorize')?.slice(0, 9)).toEqual([
+        'parse-request',
+        'resolve-client',
+        'resolve-request-object',
+        'resolve-redirect-uri',
+        'resolve-form-post-response-mode',
+        'resolve-fragment-response-mode',
+        'validate-request',
+        'validate-implicit-request',
+        'create-transaction',
+      ]);
+      expect(stepsOf('consent')?.slice(6, 9)).toEqual([
+        'require-authenticated-subject',
+        'issue-implicit-response',
+        'issue-authorization-code',
+      ]);
+    });
+
+    // The default: both flows, the Hybrid Flow after the Implicit Flow it requires.
+    it('should list the Implicit Flow and Hybrid Flow steps of /consent by default', () => {
+      const flow = buildOpFlow({ features: DEFAULT_FEATURES });
+      const consent = flow.endpoints.find((e) => e.id === 'consent');
+      expect(consent?.steps.map((s) => s.id).slice(6, 10)).toEqual([
+        'require-authenticated-subject',
+        'issue-implicit-response',
+        'issue-hybrid-response',
+        'issue-authorization-code',
       ]);
     });
 

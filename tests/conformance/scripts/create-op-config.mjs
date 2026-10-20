@@ -8,6 +8,9 @@ export const BASIC_OP_TEST_PLAN =
 export const IMPLICIT_OP_TEST_PLAN =
   'oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
 
+export const HYBRID_OP_TEST_PLAN =
+  'oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
+
 /**
  * The modules of the Basic OP plan, in its order (OIDCCBasicTestPlan of the
  * conformance suite). A run names them only to leave the manual review ones
@@ -107,9 +110,143 @@ const IMPLICIT_OP_MODULES = [
 ];
 
 /**
+ * The modules the Hybrid OP plan runs for each of its response types, in its
+ * order (OIDCCHybridTestPlan of the conformance suite): the modules of the
+ * Basic OP plan, with oidcc-ensure-request-without-nonce-fails for the
+ * response types that return an ID Token from the authorization endpoint
+ * (OIDC Core 1.0 §3.3.2.11) and
+ * oidcc-ensure-request-without-nonce-succeeds-for-code-flow for code token.
+ * The first run (code id_token) also has the modules the plan runs once:
+ * oidcc-response-type-missing, oidcc-alternate-happy-flow and
+ * oidcc-ensure-request-with-valid-pkce-succeeds.
+ */
+const HYBRID_OP_MODULES_PER_RESPONSE_TYPE = {
+  'code id_token': [
+    'oidcc-server',
+    'oidcc-response-type-missing',
+    'oidcc-idtoken-signature',
+    'oidcc-userinfo-get',
+    'oidcc-userinfo-post-header',
+    'oidcc-userinfo-post-body',
+    'oidcc-ensure-request-without-nonce-fails',
+    'oidcc-scope-profile',
+    'oidcc-scope-email',
+    'oidcc-scope-address',
+    'oidcc-scope-phone',
+    'oidcc-scope-all',
+    'oidcc-alternate-happy-flow',
+    'oidcc-display-page',
+    'oidcc-display-popup',
+    'oidcc-prompt-login',
+    'oidcc-prompt-none-not-logged-in',
+    'oidcc-prompt-none-logged-in',
+    'oidcc-max-age-1',
+    'oidcc-max-age-10000',
+    'oidcc-ensure-request-with-unknown-parameter-succeeds',
+    'oidcc-id-token-hint',
+    'oidcc-login-hint',
+    'oidcc-ui-locales',
+    'oidcc-claims-locales',
+    'oidcc-ensure-request-with-acr-values-succeeds',
+    'oidcc-codereuse',
+    'oidcc-codereuse-30seconds',
+    'oidcc-ensure-registered-redirect-uri',
+    'oidcc-server-client-secret-post',
+    'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported',
+    'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported',
+    'oidcc-claims-essential',
+    'oidcc-ensure-request-object-with-redirect-uri',
+    'oidcc-refresh-token',
+    'oidcc-ensure-request-with-valid-pkce-succeeds',
+  ],
+  'code token': [
+    'oidcc-server',
+    'oidcc-idtoken-signature',
+    'oidcc-userinfo-get',
+    'oidcc-userinfo-post-header',
+    'oidcc-userinfo-post-body',
+    'oidcc-ensure-request-without-nonce-succeeds-for-code-flow',
+    'oidcc-scope-profile',
+    'oidcc-scope-email',
+    'oidcc-scope-address',
+    'oidcc-scope-phone',
+    'oidcc-scope-all',
+    'oidcc-display-page',
+    'oidcc-display-popup',
+    'oidcc-prompt-login',
+    'oidcc-prompt-none-not-logged-in',
+    'oidcc-prompt-none-logged-in',
+    'oidcc-max-age-1',
+    'oidcc-max-age-10000',
+    'oidcc-ensure-request-with-unknown-parameter-succeeds',
+    'oidcc-id-token-hint',
+    'oidcc-login-hint',
+    'oidcc-ui-locales',
+    'oidcc-claims-locales',
+    'oidcc-ensure-request-with-acr-values-succeeds',
+    'oidcc-codereuse',
+    'oidcc-codereuse-30seconds',
+    'oidcc-ensure-registered-redirect-uri',
+    'oidcc-server-client-secret-post',
+    'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported',
+    'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported',
+    'oidcc-claims-essential',
+    'oidcc-ensure-request-object-with-redirect-uri',
+    'oidcc-refresh-token',
+  ],
+  'code id_token token': [
+    'oidcc-server',
+    'oidcc-idtoken-signature',
+    'oidcc-userinfo-get',
+    'oidcc-userinfo-post-header',
+    'oidcc-userinfo-post-body',
+    'oidcc-ensure-request-without-nonce-fails',
+    'oidcc-scope-profile',
+    'oidcc-scope-email',
+    'oidcc-scope-address',
+    'oidcc-scope-phone',
+    'oidcc-scope-all',
+    'oidcc-display-page',
+    'oidcc-display-popup',
+    'oidcc-prompt-login',
+    'oidcc-prompt-none-not-logged-in',
+    'oidcc-prompt-none-logged-in',
+    'oidcc-max-age-1',
+    'oidcc-max-age-10000',
+    'oidcc-ensure-request-with-unknown-parameter-succeeds',
+    'oidcc-id-token-hint',
+    'oidcc-login-hint',
+    'oidcc-ui-locales',
+    'oidcc-claims-locales',
+    'oidcc-ensure-request-with-acr-values-succeeds',
+    'oidcc-codereuse',
+    'oidcc-codereuse-30seconds',
+    'oidcc-ensure-registered-redirect-uri',
+    'oidcc-server-client-secret-post',
+    'oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported',
+    'oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported',
+    'oidcc-claims-essential',
+    'oidcc-ensure-request-object-with-redirect-uri',
+    'oidcc-refresh-token',
+  ],
+};
+
+/**
+ * The modules of the Hybrid OP plan, in its order: those of code id_token,
+ * then code token, then code id_token token. run-test-plan.py takes one
+ * module of the plan for each time a selection names it, so a module is named
+ * once for each response type it runs with.
+ */
+const HYBRID_OP_MODULES = [
+  ...HYBRID_OP_MODULES_PER_RESPONSE_TYPE['code id_token'],
+  ...HYBRID_OP_MODULES_PER_RESPONSE_TYPE['code token'],
+  ...HYBRID_OP_MODULES_PER_RESPONSE_TYPE['code id_token token'],
+];
+
+/**
  * The modules that wait for a screenshot (manual review; see the README). An
  * unattended run never uploads one, and run-test-plan.py waits 240 s for each
- * before it gives up. Both plans have them.
+ * before it gives up. Every plan has them.
  */
 export const MANUAL_REVIEW_MODULES = [
   'oidcc-prompt-login',
@@ -126,6 +263,19 @@ const CODE_FLOW_CLIENT = {
   clientType: 'confidential',
   grantTypes: ['authorization_code', 'refresh_token'],
   responseTypes: ['code'],
+};
+
+/**
+ * What the clients of the Hybrid OP plan share: confidential clients of the
+ * three response types of the Hybrid Flow (OIDC Core 1.0 §3.3), which
+ * exchange the code at the token endpoint with their secret. OIDC Dynamic
+ * Client Registration 1.0 §2 pairs those response types with the
+ * authorization_code and implicit grant types.
+ */
+const HYBRID_FLOW_CLIENT = {
+  clientType: 'confidential',
+  grantTypes: ['authorization_code', 'implicit', 'refresh_token'],
+  responseTypes: ['code id_token', 'code token', 'code id_token token'],
 };
 
 /**
@@ -191,6 +341,43 @@ const PLANS = new Map([
           grantTypes: ['implicit'],
           responseTypes: ['id_token', 'id_token token'],
           tokenEndpointAuthMethod: 'none',
+        },
+      ],
+    },
+  ],
+  [
+    'hybrid',
+    {
+      name: 'hybrid',
+      displayName: 'Hybrid OP',
+      testPlan: HYBRID_OP_TEST_PLAN,
+      modules: HYBRID_OP_MODULES,
+      defaultAlias: 'maronn-hybrid-op',
+      // The same three clients as the Basic OP plan, registered for the hybrid
+      // response types: client2 is the second client of oidcc-refresh-token,
+      // and client_secret_post the client of oidcc-server-client-secret-post,
+      // both of which the plan runs for each response type.
+      clients: [
+        {
+          configKey: 'client',
+          clientId: 'oidf-hybrid-client',
+          clientSecret: 'oidf-hybrid-client-secret',
+          ...HYBRID_FLOW_CLIENT,
+          tokenEndpointAuthMethod: 'client_secret_basic',
+        },
+        {
+          configKey: 'client2',
+          clientId: 'oidf-hybrid-client-2',
+          clientSecret: 'oidf-hybrid-client-2-secret',
+          ...HYBRID_FLOW_CLIENT,
+          tokenEndpointAuthMethod: 'client_secret_basic',
+        },
+        {
+          configKey: 'client_secret_post',
+          clientId: 'oidf-hybrid-post-client',
+          clientSecret: 'oidf-hybrid-post-client-secret',
+          ...HYBRID_FLOW_CLIENT,
+          tokenEndpointAuthMethod: 'client_secret_post',
         },
       ],
     },
@@ -508,7 +695,7 @@ async function writeJsonFile(path, value) {
 
 async function main() {
   const artifacts = await writeOpConformanceArtifacts({
-    // CONFORMANCE_PLAN: basic (the default) or implicit.
+    // CONFORMANCE_PLAN: basic (the default), implicit or hybrid.
     plan: process.env.CONFORMANCE_PLAN,
     alias: process.env.CONFORMANCE_ALIAS,
     opIssuer: process.env.CONFORMANCE_OP_ISSUER,

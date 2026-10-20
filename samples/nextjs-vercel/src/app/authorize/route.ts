@@ -44,6 +44,7 @@ import {
   type SessionInfo,
 } from '@maronn-openid-connect/core';
 import { resolveFormPostResponseContext } from '../_oidc-provider/features/form-post-response-mode/authorize';
+import { issueHybridResponse, validateHybridRequest } from '../_oidc-provider/features/hybrid-flow/authorize';
 import {
   issueImplicitResponse,
   resolveFragmentResponseContext,
@@ -111,7 +112,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
   let params: Record<string, string> & AuthorizationRequestParams = parsed.params;
 
   // The response mode the request asked for, when a feature answers in one
-  // (JARM, form_post, the fragment of the Implicit Flow). Set once
+  // (JARM, form_post, the fragment of the Implicit and Hybrid Flows). Set once
   // redirect_uri is verified, by the first block of a feature that answers
   // the request's response_mode or response_type (each assigns it only while
   // it is still unset); undefined means the plain query response. Declared
@@ -247,6 +248,9 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
 
     // [validate-implicit-request] (feature: implicit-flow) Validate the Implicit Flow request (response_mode, nonce, redirect_uri) — OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5
     validateImplicitRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, client, responseMode);
+
+    // [validate-hybrid-request] (feature: hybrid-flow) Validate the Hybrid Flow request (response_mode, nonce) — OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5
+    validateHybridRequest({ responseType, nonce: requestParams.nonce, redirectUri, state }, requestParams, responseMode);
 
     // [create-transaction] Create and store the authorization transaction — OIDC Core 1.0 §3.1.2.3
     // Assemble the validated request from each step's result. This is core's
@@ -475,6 +479,10 @@ async function issueAuthorizationResponse(
   // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
   const implicitResponse = await issueImplicitResponse({ transactionId, transaction, session, responseMode });
   if (implicitResponse) return implicitResponse;
+
+  // [issue-hybrid-response] (feature: hybrid-flow) Issue the code together with the ID Token and/or the access token — OIDC Core 1.0 §3.3.2.5
+  const hybridResponse = await issueHybridResponse({ transactionId, transaction, session, responseMode });
+  if (hybridResponse) return hybridResponse;
 
   // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5 / §3.1.3.1
   const grantedScope = transaction.scope.split(' ').filter(Boolean);

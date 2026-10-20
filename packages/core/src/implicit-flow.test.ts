@@ -191,6 +191,16 @@ describe('returnsScopeClaimsInIdToken', () => {
       false,
     ]);
   });
+
+  // OIDC Core 1.0 §3.3 / §5.4: the code of the Hybrid Flow is exchanged for an
+  // access token at the token endpoint, which reaches the UserInfo endpoint.
+  it('should return false for the Hybrid Flow response types', () => {
+    expect([
+      returnsScopeClaimsInIdToken('code id_token'),
+      returnsScopeClaimsInIdToken('code token'),
+      returnsScopeClaimsInIdToken('code id_token token'),
+    ]).toEqual([false, false, false]);
+  });
 });
 
 // OIDC Core 1.0 §3.2.2.5: the parameters of a successful Implicit Flow response.

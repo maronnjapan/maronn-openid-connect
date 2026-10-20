@@ -142,7 +142,7 @@ Express と Fastify の生成物も画面は hono/jsx のままなので、`hono
 
 | パス | 役割 |
 |---|---|
-| `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応。`implicit-flow` 有効時は `response_type=id_token token` と `id_token` にも答える） |
+| `/authorize` | 認可エンドポイント（`response_type=code`、PKCE S256、`prompt` / `max_age` / `claims` / `acr_values` / Request Object 対応。`implicit-flow` 有効時は `response_type=id_token token` と `id_token` に、`hybrid-flow` 有効時は `code id_token` / `code token` / `code id_token token` にも答える） |
 | `/token` | トークンエンドポイント（`authorization_code` / `refresh_token` グラント、`client_secret_basic` / `client_secret_post` / public client） |
 | `/userinfo` | UserInfo エンドポイント（Bearer トークン、scope 別クレーム） |
 | `/login`, `/consent` | ログイン画面と同意画面。ルート（GET / POST）と描画は `endpoints/login/page.tsx` と `endpoints/consent/page.tsx`、認証と同意の判断は同じディレクトリの `pipeline.ts` が呼ぶステップが担当する（差し替え可能なデフォルト UI 付き。Next.js はページと、ログインは Server Action、同意は Route Handler） |
@@ -372,7 +372,7 @@ src/app/
 
 機能のエンドポイントは、機能 ID を名前にしたルートグループ `(<feature-id>)/` に入る。ルートグループの名前は URL に現れないので、`(introspection)/introspect/route.ts` は `POST /introspect` に、`(google-login)/login/google/route.ts` は `POST /login/google` になる。実験的機能と拡張機能のルートグループは `(par)`、`(device-authorization-grant)`、`(ciba)`、`(rp-initiated-logout)`、`(dynamic-client-registration)`、`(google-login)` で、`generate` は有効な機能のルートグループと `_oidc-provider/features/<id>/` だけを写す。
 
-機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`authorize.responseTypes`（`code` のほかに答える `response_type` の名前）、`loginMethods` がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`consent/decision/route.ts`、`token/route.ts`、`(introspection)/introspect/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。Implicit Flow のトークンは、`authorize/route.ts` の `issueAuthorizationResponse()`（`prompt=none` と同意済みの SSO が認可コードを発行する関数）と `consent/decision/route.ts` にある `implicit-flow` のブロックが、認可コードの代わりに返す。
+機能がどの OP にもある処理に入る方法は 2 つある。1 つは `_oidc-provider/feature.ts` のフックで、`discovery`、`config`、`context`（`provider.ts` が作る `clientResolver` の置き換え）、`token.grants`、`authorize.responseModes`、`authorize.responseTypes`（`code` のほかに答える `response_type` の名前）、`loginMethods` がある。エンドポイントはルートグループの Route Handler になるので、Hono の生成物の `routes` に当たるフックは無い。もう 1 つは Route Handler の中の所有者付きブロックである。`authorize/route.ts`、`consent/decision/route.ts`、`token/route.ts`、`(introspection)/introspect/route.ts`、`.well-known/openid-configuration/route.ts` の処理は、マーカーコメント（`// [step-id] Label — Spec`、機能のブロックは `// [step-id] (feature: <id>) Label — Spec`）で区切られ、隣の `endpoint.ts` が `defineEndpoint()` でブロックごとのステップ ID、機能、読む値と作る値（`consumes` / `produces`）を並べる。Implicit Flow のトークンは、`authorize/route.ts` の `issueAuthorizationResponse()`（`prompt=none` と同意済みの SSO が認可コードを発行する関数）と `consent/decision/route.ts` にある `implicit-flow` のブロックが、認可コードの代わりに返す。Hybrid Flow の認可コードとトークンは、同じ 2 か所にある `hybrid-flow` のブロックが返す。
 
 `generate` は、無効な機能のブロックとその import を `route.ts` から取り除き、そのブロックが作っていた値を後のブロックが読むなら、`endpoint.ts` の `produces` から決めた名前で `const <name> = undefined;` を残す。`endpoint.ts` からも、無効な機能のステップの行を消す。生成した後で機能を手で外すときは、`_oidc-provider/features.ts` にあるその機能の import の行と一覧の行、`_oidc-provider/features/<id>/`、ルートグループ `(<id>)/` に加えて、Route Handler にあるその機能のブロックも消す。
 
@@ -456,7 +456,8 @@ maronn-oidc generate express --disable pkce
 | `revocation` | 有効 | RFC 7009 revocation エンドポイント（`/revoke`）を生成しない |
 | `request-object` | 有効 | `request` パラメータ（Request Object by value, OIDC Core 1.0 §6.1）を `request_not_supported` で拒否。discovery は `request_parameter_supported: false` を広告する |
 | `form-post-response-mode` | 有効 | `response_mode=form_post`（OAuth 2.0 Form Post Response Mode）を解釈せず、認可レスポンスを従来どおりリダイレクト URI のクエリで返す。discovery の `response_modes_supported` から `form_post` を除く |
-| `implicit-flow` | 有効 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2 の Implicit Flow）を `unsupported_response_type` で拒否し、`response_type=code` だけに答える。discovery の `response_types_supported` からこの 2 つを、`response_modes_supported` から `fragment` を、`grant_types_supported` から `implicit` を除く |
+| `implicit-flow` | 有効 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2 の Implicit Flow）を `unsupported_response_type` で拒否し、`response_type=code` だけに答える。discovery の `response_types_supported` からこの 2 つを、`response_modes_supported` から `fragment` を、`grant_types_supported` から `implicit` を除く。`hybrid-flow` が必要とする機能なので、外すときは `hybrid-flow` も一緒に `--disable` に指定する |
+| `hybrid-flow` | 有効 | `response_type=code id_token`、`code token`、`code id_token token`（OIDC Core 1.0 §3.3 の Hybrid Flow）を `unsupported_response_type` で拒否する。discovery の `response_types_supported` からこの 3 つを、`claims_supported` から `c_hash` を除く。有効なときは、認可エンドポイントが認可コードと一緒に ID Token と Access Token の一方または両方をフラグメントで返し、認可コードは Authorization Code Flow と同じくトークンエンドポイントで交換する。`implicit-flow` のフラグメント応答とトークン発行を使うので、`implicit-flow` を有効にしたまま使う |
 
 Basic OP に必須の機能（authorize / token / userinfo / discovery / jwks / login / consent）はトグル対象外で、常に生成される。
 未知の機能名や、同じ機能を `--enable` と `--disable` の両方に指定した場合はエラーになる。
@@ -745,6 +746,7 @@ ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 `transactions.status` は、認可リクエストがどこまで進んだかを表す。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進む。
 Implicit Flow（`implicit-flow`）でトークンを認可エンドポイントから返したトランザクションは、コードを経ずに `token_issued` になる。
+Hybrid Flow（`hybrid-flow`）のトランザクションは認可コードを発行するので `code_issued` になり、認可エンドポイントが Access Token も返したときはその保存で、返さなかったときは認可コードの交換で `token_issued` に進む。
 同意の拒否や `prompt=none` のエラーのように、コードもトークンも発行せずに終わったトランザクションは `failed` になる。
 OP は終わったトランザクションの行を消さず、`codes` と `access_tokens` から `transaction_id` で参照するので、どの認可リクエストからどのコードとトークンが出たかを後から追える。
 期限切れの行も OP は消さないので、必要なら定期的に削除する。

@@ -187,9 +187,36 @@ export async function computeAtHash(
   accessToken: string,
   idTokenPrivateKey: CryptoKey,
 ): Promise<string> {
+  return computeLeftHalfHash(accessToken, idTokenPrivateKey);
+}
+
+/**
+ * ステップ: c_hash を計算する
+ * OIDC Core 1.0 Section 3.3.2.11:
+ * Hybrid Flow で認可エンドポイントが認可コードと一緒に ID Token を返すとき
+ * （`code id_token` / `code id_token token`）、ID Token は c_hash を含まなければならない。
+ * 値は at_hash と同じ求め方で、対象が認可コードの ASCII 表現になる: ID Token の JOSE Header
+ * `alg` で使われるハッシュ関数でコードをハッシュし、左半分を取り出して base64url エンコードする。
+ *
+ * @param code ハッシュ対象の認可コード
+ * @param idTokenPrivateKey ID Token の署名鍵。この鍵の alg からハッシュ関数を決める
+ */
+export async function computeCHash(
+  code: string,
+  idTokenPrivateKey: CryptoKey,
+): Promise<string> {
+  return computeLeftHalfHash(code, idTokenPrivateKey);
+}
+
+/**
+ * OIDC Core 1.0 §3.1.3.6 / §3.3.2.11 のハッシュクレーム（at_hash / c_hash）の共通の求め方:
+ * 値の ASCII 表現を ID Token の署名鍵の alg に対応するハッシュ関数でハッシュし、
+ * 左半分を base64url エンコードする。
+ */
+async function computeLeftHalfHash(value: string, idTokenPrivateKey: CryptoKey): Promise<string> {
   const hashName = jwaToHashName(getJwaAlgorithm(idTokenPrivateKey));
-  const tokenBytes = stringToArrayBuffer(accessToken);
-  const hashBuffer = await crypto.subtle.digest(hashName, tokenBytes);
+  const valueBytes = stringToArrayBuffer(value);
+  const hashBuffer = await crypto.subtle.digest(hashName, valueBytes);
   const leftHalf = hashBuffer.slice(0, hashBuffer.byteLength / 2);
   return arrayBufferToBase64Url(leftHalf);
 }
@@ -294,6 +321,8 @@ export interface IdTokenPayloadInput {
   issuedAt?: number;
   /** OIDC Core 1.0 §3.1.3.6: アクセストークンとの結合を示す at_hash */
   atHash?: string;
+  /** OIDC Core 1.0 §3.3.2.11: Hybrid Flow で一緒に返す認可コードとの結合を示す c_hash */
+  cHash?: string;
   nonce?: string;
   authTime?: number;
   acr?: string;
@@ -306,7 +335,7 @@ export interface IdTokenPayloadInput {
 
 /**
  * ステップ: ID Token の payload を組み立てる
- * OIDC Core 1.0 Section 2 / 3.1.3.6 / 5.4
+ * OIDC Core 1.0 Section 2 / 3.1.3.6 / 3.3.2.11 / 5.4
  *
  * 署名は {@link generateIdToken} の責務。独自クレームを載せたい場合は
  * 戻り値へ追加してから署名すること（必須クレームは上書きされない）。
@@ -319,6 +348,7 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
     scope,
     expiresIn,
     atHash,
+    cHash,
     nonce,
     authTime,
     acr,
@@ -353,6 +383,9 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
   payload.iat = issuedAt;
   if (atHash !== undefined) {
     payload.at_hash = atHash;
+  }
+  if (cHash !== undefined) {
+    payload.c_hash = cHash;
   }
   if (nonce !== undefined) {
     payload.nonce = nonce;

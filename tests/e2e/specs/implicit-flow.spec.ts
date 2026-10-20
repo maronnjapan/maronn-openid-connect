@@ -215,7 +215,9 @@ test.describe('Implicit Flow', () => {
       'This sample OP was generated without implicit-flow',
     );
 
-    expect(metadata.response_types_supported).toEqual(['code', 'id_token', 'id_token token']);
+    // code and the two response types of this flow come first; those of the
+    // Hybrid Flow follow when hybrid-flow is generated (specs/hybrid-flow.spec.ts).
+    expect(metadata.response_types_supported.slice(0, 3)).toEqual(['code', 'id_token', 'id_token token']);
     expect(metadata.response_modes_supported).toContain('fragment');
     expect(metadata.grant_types_supported).toContain('implicit');
   });

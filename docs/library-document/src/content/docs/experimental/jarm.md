@@ -270,8 +270,8 @@ const transaction = (await getAuthTransaction(id, transactionStore)) as
 - `fragment.jwt` / `form_post.jwt`（§2.3.2 / §2.3.3）は非対応です。指定すると `invalid_request` になります
 - 応答 JWT の暗号化（JWE, §2.2）は非対応です。署名のみで、ペイロードは base64url デコードすれば誰でも読めます
 - 署名アルゴリズムは RS256 固定です。クライアント別 `authorization_signed_response_alg`（§3）や PS256 / ES256 は非対応です
-- JARM が解釈するのは `.jwt` 系の `response_mode` だけで、有効化によって他の値の扱いは変わりません。`form_post` は安定機能 `form-post-response-mode` が、`fragment` は安定機能 `implicit-flow` が受け持ちます
-- JWT で保護するのは、トークンを返さない `response_type=code` だけです。§2.3.1 は暗号化しない `query.jwt` をトークンを含む response type に使うことを禁じ、§2.3.4 はその `jwt` を本実装が非対応の `fragment.jwt` と解釈します。そのため Implicit Flow（`id_token token`、`id_token`）の要求に `.jwt` 系を指定すると、フラグメントで `invalid_request` を返します
+- JARM が解釈するのは `.jwt` 系の `response_mode` だけで、有効化によって他の値の扱いは変わりません。`form_post` は安定機能 `form-post-response-mode` が、`fragment` は安定機能 `implicit-flow` が受け持ちます（Hybrid Flow の `hybrid-flow` もこのフラグメント応答を使います）
+- JWT で保護するのは、トークンを返さない `response_type=code` だけです。§2.3.1 は暗号化しない `query.jwt` をトークンを含む response type に使うことを禁じ、§2.3.4 はその `jwt` を本実装が非対応の `fragment.jwt` と解釈します。そのため Implicit Flow（`id_token token`、`id_token`）と Hybrid Flow（`code id_token`、`code token`、`code id_token token`）の要求に `.jwt` 系を指定すると、フラグメントで `invalid_request` を返します
 - Dynamic Client Registration がないため、クライアントメタデータによる JARM 設定はできません
 
 ## core 機能との違い

@@ -71,7 +71,7 @@ describe('run', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     run(['generate', 'hono', '-o', join(testDir, 'unused'), '--disable', 'dpop']);
     expect(consoleSpy).toHaveBeenCalledWith(
-      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration. Extension features (disabled by default): google-login',
+      'Error: Unknown feature: "dpop". Available features: pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow. Experimental features (disabled by default): par, token-exchange, jarm, device-authorization-grant, id-jag, ciba, jwt-introspection-response, rp-initiated-logout, dynamic-client-registration. Extension features (disabled by default): google-login',
     );
     expect(process.exitCode).toBe(1);
     vi.restoreAllMocks();
@@ -96,7 +96,7 @@ describe('run', () => {
     const output = consoleSpy.mock.calls.map((c) => c[0]).join('\n');
     expect(output).toContain('--enable');
     expect(output).toContain('--disable');
-    expect(output).toContain('pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow');
+    expect(output).toContain('pkce, refresh-token, introspection, revocation, request-object, form-post-response-mode, implicit-flow, hybrid-flow');
     consoleSpy.mockRestore();
   });
 

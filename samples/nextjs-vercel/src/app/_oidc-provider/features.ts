@@ -15,6 +15,7 @@ import { revocation } from './features/revocation/feature';
 import { requestObject } from './features/request-object/feature';
 import { formPostResponseMode } from './features/form-post-response-mode/feature';
 import { implicitFlow } from './features/implicit-flow/feature';
+import { hybridFlow } from './features/hybrid-flow/feature';
 import { deviceAuthorizationGrant } from './features/device-authorization-grant/feature';
 import { ciba } from './features/ciba/feature';
 import { googleLogin } from './features/google-login/feature';
@@ -27,6 +28,7 @@ export const features: readonly Feature[] = [
   requestObject,
   formPostResponseMode,
   implicitFlow,
+  hybridFlow,
   deviceAuthorizationGrant,
   ciba,
   googleLogin,

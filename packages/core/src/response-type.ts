@@ -10,14 +10,28 @@
  * この OP が認可エンドポイントで扱う response_type（{@link normalizeResponseType} の形）。
  * - `code`: Authorization Code Flow（OIDC Core 1.0 §3.1）
  * - `id_token` / `id_token token`: Implicit Flow（OIDC Core 1.0 §3.2）
+ * - `code id_token` / `code token` / `code id_token token`: Hybrid Flow（OIDC Core 1.0 §3.3）
  */
-export type AuthorizationResponseType = 'code' | 'id_token' | 'id_token token';
+export type AuthorizationResponseType =
+  | 'code'
+  | 'id_token'
+  | 'id_token token'
+  | 'code id_token'
+  | 'code token'
+  | 'code id_token token';
 
 /**
  * OIDC Core 1.0 §3.2.2.1: Implicit Flow の response_type。
  * OAuth 2.0 の `token` 単独は ID Token を返さないため、OpenID Connect では使わない。
  */
 export const IMPLICIT_RESPONSE_TYPES = ['id_token', 'id_token token'] as const satisfies readonly AuthorizationResponseType[];
+
+/**
+ * OIDC Core 1.0 §3.3.1.1: Hybrid Flow の response_type。認可コードと一緒に、認可エンドポイントが
+ * ID Token（`code id_token`）、アクセストークン（`code token`）、または両方（`code id_token token`）
+ * を返す（OAuth 2.0 Multiple Response Type Encoding Practices §5）。
+ */
+export const HYBRID_RESPONSE_TYPES = ['code id_token', 'code token', 'code id_token token'] as const satisfies readonly AuthorizationResponseType[];
 
 /** response_type を構成する値のうち、OAuth 2.0 と OIDC Core 1.0 が定義するもの。 */
 export type ResponseTypeValue = 'code' | 'id_token' | 'token';
@@ -68,13 +82,22 @@ export function isImplicitResponseType(responseType: string | undefined): boolea
 }
 
 /**
+ * OIDC Core 1.0 §3.3: response_type が Hybrid Flow のもの（`code id_token`、`code token`、
+ * `code id_token token`。値の順序は問わない）かを返す。
+ */
+export function isHybridResponseType(responseType: string | undefined): boolean {
+  if (responseType === undefined) return false;
+  return (HYBRID_RESPONSE_TYPES as readonly string[]).includes(normalizeResponseType(responseType));
+}
+
+/**
  * response_type の既定の応答モード（response_mode を指定しないリクエストへの返し方）。
  *
  * - `code`: query（Multiple Response Type Encoding Practices §2.1）
- * - `token` または `id_token` を含む response_type: fragment。query で返してはならない
- *   （同 §3 / §5 / §7。アクセストークンと ID Token はクエリに載せない）
+ * - `token` または `id_token` を含む response_type（Implicit Flow と Hybrid Flow）: fragment。
+ *   query で返してはならない（同 §3 / §5 / §7。アクセストークンと ID Token はクエリに載せない）
  *
- * 成功の応答もエラーの応答もこの応答モードで返す（同 §3 / §5、OIDC Core 1.0 §3.2.2.6）。
+ * 成功の応答もエラーの応答もこの応答モードで返す（同 §3 / §5、OIDC Core 1.0 §3.2.2.6 / §3.3.2.6）。
  */
 export function defaultResponseModeOf(responseType: string): 'query' | 'fragment' {
   return responseTypeIncludes(responseType, 'token') || responseTypeIncludes(responseType, 'id_token')

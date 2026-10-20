@@ -234,6 +234,64 @@ describe('validateAuthorizationRequestParams', () => {
     });
   });
 
+  // OIDC Core 1.0 §3.3.1.1: the Hybrid Flow feature answers code id_token,
+  // code token and code id_token token for a client registered for them.
+  describe('Hybrid Flow', () => {
+    const hybridClient: ClientInfo = {
+      ...client,
+      grantTypes: ['authorization_code', 'implicit', 'refresh_token'],
+      responseTypes: ['code id_token token', 'code id_token', 'code token'],
+    };
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the order of
+    // the values does not matter. PKCE binds the code the response returns.
+    it('should accept response_type=token id_token code with code_challenge as code id_token token', async () => {
+      const validated = await validate(paramsWith({ response_type: 'token id_token code' }), { client: hybridClient });
+
+      expect(validated).toMatchObject({
+        responseType: 'code id_token token',
+        codeChallenge: CODE_CHALLENGE,
+        codeChallengeMethod: 'S256',
+        nonce: NONCE,
+      });
+    });
+
+    // OAuth 2.1 §4.1.1 / §7.5: the code of the Hybrid Flow needs PKCE like any code.
+    it('should reject response_type=code id_token without code_challenge with invalid_request', async () => {
+      const params = paramsWith({ response_type: 'code id_token' });
+      delete params.code_challenge;
+      delete params.code_challenge_method;
+
+      await expect(validate(params, { client: hybridClient })).rejects.toMatchObject({
+        error: 'invalid_request',
+        errorDescription: 'Missing required parameter: code_challenge',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+
+    // OIDC Core 1.0 §11: the code returns a refresh token, so offline_access
+    // is granted under the rules of the code flow.
+    it('should keep offline_access for a request of code id_token with prompt=consent', async () => {
+      const validated = await validate(
+        paramsWith({ response_type: 'code id_token', scope: 'openid offline_access', prompt: 'consent' }),
+        { client: hybridClient },
+      );
+
+      expect(validated.scope).toEqual(['openid', 'offline_access']);
+    });
+
+    // RFC 6749 §4.1.2.1: a client not registered for the response type.
+    it('should reject response_type=code id_token of a client registered only for code with unauthorized_client', async () => {
+      await expect(validate(paramsWith({ response_type: 'code id_token' }))).rejects.toMatchObject({
+        error: 'unauthorized_client',
+        errorDescription: 'Client is not authorized to use response_type: code id_token',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+  });
+
   // OIDC Core 1.0 §11: offline_access needs prompt=consent and a client
   // registered for the refresh_token grant; otherwise it is ignored.
   describe('offline_access', () => {

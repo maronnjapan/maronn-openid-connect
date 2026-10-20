@@ -42,12 +42,13 @@ export function buildDiscoveryMetadata(
     tokenEndpoint: `${issuer}/token`,
     jwksUri: `${issuer}/.well-known/jwks.json`,
     // code, and the response types a feature answers (the Implicit Flow's
-    // id_token and id_token token: authorize.responseTypes of its feature.ts).
+    // id_token and id_token token, the Hybrid Flow's code id_token, code token
+    // and code id_token token: authorize.responseTypes of its feature.ts).
     responseTypesSupported: supportedResponseTypes(),
     // OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / OIDC Discovery 1.0 §3:
     // the authorization code flow returns its authorization response via
     // query. A feature that answers in another response mode (the fragment of
-    // the Implicit Flow, form_post, JARM) adds it to this list.
+    // the Implicit and Hybrid Flows, form_post, JARM) adds it to this list.
     responseModesSupported: ['query'],
     subjectTypesSupported: ['public'],
     idTokenSigningKeys,
@@ -69,7 +70,8 @@ export function buildDiscoveryMetadata(
       // (the issue-id-token step of endpoints/token/). auth_time/nonce/acr/amr
       // are set from the auth context, azp for multi-audience tokens, at_hash
       // for the access token issued with the ID Token (§3.1.3.6 / §3.2.2.10).
-      // c_hash is intentionally omitted (Hybrid flow is not implemented).
+      // c_hash (§3.3.2.11) comes with the hybrid-flow feature, which
+      // advertises it through the discovery entry of its feature.ts.
       'auth_time',
       'nonce',
       'acr',
@@ -98,8 +100,9 @@ export function buildDiscoveryMetadata(
     ],
     // The authorization_code grant, and the grants the features answer at the
     // token endpoint (the token entry of their feature.ts). A feature that
-    // answers a grant at the authorization endpoint (implicit) adds it
-    // through the discovery entry of its feature.ts.
+    // answers a grant at the authorization endpoint (the implicit grant of
+    // the Implicit and Hybrid Flows) adds it through the discovery entry of
+    // its feature.ts.
     grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
     // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
     // (no client_secret) are accepted at the token endpoint.

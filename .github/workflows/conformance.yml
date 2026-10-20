@@ -43,9 +43,7 @@ jobs:
     name: ${{ matrix.plan }}-op
     if: github.event_name == 'workflow_dispatch' || contains(join(github.event.pull_request.labels.*.name, ','), 'run-conformance')
     runs-on: ubuntu-latest
-    # The Hybrid OP plan runs 93 automated modules (three response types),
-    # against 32 for the Basic OP plan and 48 for the Implicit OP plan.
-    timeout-minutes: 90
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

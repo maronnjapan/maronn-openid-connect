@@ -1,5 +1,44 @@
 # @maronn-openid-connect/experimental
 
+## 0.0.15
+
+### Patch Changes
+
+- 16f795b: クライアントが用途ごとに登録した公開鍵を引く `ClientKeyResolver` を追加し、1 つのクライアントに複数のクライアント認証方式を登録できるようにする
+  
+  - クライアントの認証方式は、使ってよい方式の一覧 `TokenClientInfo.tokenEndpointAuthMethods` で登録する。`client_secret_basic` と `client_secret_post` を並べると、どちらの方式でも同じシークレットで認証できる。省略すると `['client_secret_basic']` になり、`['none']` は public client を表す。`none` をほかの方式と並べた登録は、public client かどうかが決まらないので例外を投げる。`validateClientAuthMethod()` は、使われた方式が一覧のどれかであれば通す。方式の型 `ClientAuthMethod`、一覧を返す `selectRegisteredClientAuthMethods()`、public client かどうかを返す `isPublicTokenClient()`、照合だけを行う `validateClientAuthMethodAllowed()` も追加した
+  - クライアントが用途ごとに登録した公開鍵を返す `ClientKeyResolver`（`findClientKeys(clientId, purpose)`）と、用途の型 `ClientKeyPurpose` を追加した。用途は鍵を使う処理の名前で、`request_object`（署名付き Request Object、OIDC Core 1.0 §6.3.2）、`private_key_jwt`（OIDC Core 1.0 §9）、`dpop`（RFC 9449）などの文字列で、ほかの用途も足せる。鍵を使う処理は、保存先を知らずに自分の用途の鍵だけを受け取る。core で鍵を受け取るのは `resolveRequestObjectParams()` だけで、private_key_jwt と DPoP の検証は持たない
+  - クライアントごとの「用途から JWK Set への対応」（`ClientKeysByPurpose`）を返す関数から `ClientKeyResolver` を作る `createClientKeyResolver()` を追加した。呼ばれるたびにその関数を呼ぶので、返す鍵を変えれば次の呼び出しから効く
+  
+  ## 破壊的変更
+  
+  - **core: `TokenClientInfo.tokenEndpointAuthMethod` を削除した**。認証方式は一覧の `tokenEndpointAuthMethods` で登録する。`tokenEndpointAuthMethod: 'client_secret_post'` は `tokenEndpointAuthMethods: ['client_secret_post']` に、public client の `tokenEndpointAuthMethod: 'none'` は `tokenEndpointAuthMethods: ['none']` になる
+  - **core: `selectRegisteredClientAuthMethod()` と `validateClientAuthMethodMatch()` を削除した**。一覧を返す `selectRegisteredClientAuthMethods()` と、一覧と照合する `validateClientAuthMethodAllowed()` を使う。public client かどうかは `isPublicTokenClient()` で確かめる。登録していない方式を使ったリクエストの `error_description` は `Client authentication method is not registered for the client` になった
+  - **core: `ClientInfo.jwks` を削除した**。クライアントの公開鍵はクライアント情報に入れず、鍵を使う処理が `ClientKeyResolver` から用途ごとに引く。`resolveRequestObjectParams()` は第 2 引数のクライアントを受け取らず、`request_object` の用途の鍵を `options.jwks` で受け取る
+  - **core: `requireConfidentialIntrospectionCaller()` は、クライアントの `tokenEndpointAuthMethods` を見る**
+  - **experimental: Dynamic Client Registration の `DynamicallyRegisteredClient` は、`tokenEndpointAuthMethod` の代わりに `tokenEndpointAuthMethods` を持つ**。登録時の `token_endpoint_auth_method` を 1 つだけ入れた一覧で、登録応答の `token_endpoint_auth_method` はその値になる
+  
+  experimental の CIBA、Token Exchange、ID-JAG は、public client を `isPublicTokenClient()` で判定する。google-login は core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+- eb08dd6: Implicit Flow（OIDC Core 1.0 §3.2）の `response_type=id_token token` と `id_token` を検証し、認可レスポンスを組み立てる関数を追加する
+  
+  - `response_type` の値を比べる関数を追加した。`normalizeResponseType()` は値を `code`、`id_token`、`token` の順に並べ直す（値の順序は問わない。OAuth 2.0 Multiple Response Type Encoding Practices §1.2）。`responseTypeIncludes()` は値を含むかを、`isImplicitResponseType()` は Implicit Flow の response type かを、`defaultResponseModeOf()` は既定の応答モード（トークンを返す response type はフラグメント。同 §2.1 / §3 / §5）を返す。型 `AuthorizationResponseType` と定数 `IMPLICIT_RESPONSE_TYPES` も追加した
+  - Implicit Flow の要求が満たすべき条件を確かめる `requireNonce()`（`nonce` は必須）、`validateImplicitResponseMode()`（`response_mode=query` を拒否する）、`validateImplicitRedirectUri()`（https か、public client のループバックの http に限る）と、レスポンスを組み立てる `returnsScopeClaimsInIdToken()`、`buildImplicitResponseParameters()`、`buildFragmentResponseUrl()` を追加した
+  - `validateResponseType()` と `validateSupportedResponseType()` は、OP が答える response type の一覧を最後の引数で受け取る。既定は `['code']` で、これまでと同じく `code` だけを受け付ける。クライアントの登録と Request Object の `response_type` は、値の順序を問わずに照合する
+  - `applyOfflineAccessPolicy()` は、認可コードを返さない response type の要求から、許可条件のコールバックに関わらず `offline_access` を取り除く（OIDC Core 1.0 §11）
+  - `AccessTokenInfo` に `transactionId` を追加した。認可コードを経ずに発行したトークン（Implicit Flow）が、どのトランザクションから出たかを表す
+  
+  ## 破壊的変更
+  
+  - **`ValidatedAuthorizationRequest.responseType` の型**：`'code'` から `AuthorizationResponseType`（`'code' | 'id_token' | 'id_token token'`）に広がった。`validateResponseType()` と `validateSupportedResponseType()` の戻り値の型も同じである。`'code'` を前提にした代入や比較は、型を `AuthorizationResponseType` にするか、`responseTypeIncludes(responseType, 'code')` で分ける
+  
+  experimental と google-login は、core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+- 61248a4: `claims` リクエストパラメータの `id_token` メンバー（OIDC Core 1.0 §5.5）で個別に要求されたクレームを、ID Token の payload に加える `applyRequestedIdTokenClaims()` を追加する
+  
+  - `applyRequestedIdTokenClaims(payload, userClaims, claims)` は、`buildIdTokenPayload()` が組み立てた payload に、`claims.id_token` が要求するクレームを End-User のクレームから足した新しい payload を返す。`value` / `values` を指定したクレームは実値が一致するときだけ足し、値の無いクレームと一致しないクレームはエラーにせず省く（§5.5.1）
+  - ID Token 自身のクレーム（`iss` / `sub` / `aud` / `exp` / `iat` / `auth_time` / `nonce` / `acr` / `amr` / `azp` / `at_hash` / `c_hash`）は End-User のクレームから取らず、payload がすでに持つクレームも置き換えない。`acr` の要求はこれまでどおり `resolveAcrAmr()` が扱う（§5.5.1.1）
+  
+  experimental と google-login は、core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+
 ## 0.0.14
 
 ### Patch Changes

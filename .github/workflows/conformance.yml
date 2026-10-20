@@ -26,6 +26,11 @@ on:
         description: "OpenID conformance suite Docker image tag"
         required: false
         default: "latest"
+      skip_manual_review:
+        description: "Leave out the modules that wait for a screenshot (each makes the runner wait 240 s)"
+        required: false
+        default: true
+        type: boolean
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled]
@@ -70,8 +75,10 @@ jobs:
           CONFORMANCE_SAMPLE_APP: ${{ github.event.inputs.sample_app || 'hono-cloudflare' }}
           CONFORMANCE_SUITE_IMAGE_TAG: ${{ github.event.inputs.suite_image_tag || 'latest' }}
           # The modules that wait for a screenshot never finish unattended, and
-          # the runner waits 240 s for each (tests/conformance/README.md).
-          CONFORMANCE_SKIP_MANUAL_REVIEW: "1"
+          # the runner waits 240 s for each (tests/conformance/README.md). A
+          # workflow_dispatch run can keep them to see that they reach the
+          # screenshot wait.
+          CONFORMANCE_SKIP_MANUAL_REVIEW: ${{ github.event.inputs.skip_manual_review == 'false' && '0' || '1' }}
         # The run writes the outcome of every module to the job summary, with
         # an annotation per module that did not pass
         # (tests/conformance/scripts/summarize-results.mjs).

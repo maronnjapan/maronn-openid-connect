@@ -331,6 +331,21 @@ describe('Basic OP PKCE compatibility mode', () => {
   });
 });
 
+describe('Sample OP container', () => {
+  describe('storage of the sample OP', () => {
+    // The op service mounts the workspace read-only. express-flyio,
+    // fastify-flyio and nextjs-vercel open their node:sqlite database at
+    // OIDC_SQLITE_PATH (.data/oidc.sqlite under the working directory by
+    // default), and an OP that cannot create it never answers Discovery.
+    it('should keep the node:sqlite database of the sample OP in a writable directory', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(compose, /^ {6}OIDC_SQLITE_PATH: \/tmp\/maronn-openid-connect-sqlite\/oidc\.sqlite$/m);
+      assert.match(compose, /^ {6}- \.\.\/\.\.:\/workspace:ro$/m);
+    });
+  });
+});
+
 describe('resolveSampleApp', () => {
   describe('sample app selection', () => {
     it('should resolve supported sample app metadata', () => {

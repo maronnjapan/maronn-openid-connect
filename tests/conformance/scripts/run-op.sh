@@ -116,9 +116,19 @@ set -e
 # --abort-on-container-exit stopped it (its database volume stays until down -v).
 # The exit status stays the runner's.
 docker compose -f "${COMPOSE_FILE}" start mongodb conformance-server conformance-nginx >/dev/null 2>&1 || true
-CONFORMANCE_RESULTS_DIR="${RESULTS_DIR}" \
-CONFORMANCE_SUITE_URL="https://localhost:${CONFORMANCE_SUITE_PORT:-8443}/" \
-node "${SCRIPT_DIR}/summarize-results.mjs" || true
+if ! CONFORMANCE_RESULTS_DIR="${RESULTS_DIR}" \
+  CONFORMANCE_SUITE_URL="https://localhost:${CONFORMANCE_SUITE_PORT:-8443}/" \
+  node "${SCRIPT_DIR}/summarize-results.mjs"; then
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    # No plan ran, most often because the sample OP did not come up: show the
+    # last lines it logged on the run page (escaped as a workflow command).
+    op_log="$(docker compose -f "${COMPOSE_FILE}" logs --no-color --tail 20 op 2>&1 || true)"
+    op_log="${op_log//'%'/'%25'}"
+    op_log="${op_log//$'\r'/'%0D'}"
+    op_log="${op_log//$'\n'/'%0A'}"
+    echo "::error title=${PROFILE} (${SAMPLE_APP})%3A no conformance results (last lines of the op service)::${op_log}"
+  fi
+fi
 
 docker compose -f "${COMPOSE_FILE}" logs --no-color > "${RESULTS_DIR}/${PROFILE}-docker-compose.log" 2>/dev/null || true
 

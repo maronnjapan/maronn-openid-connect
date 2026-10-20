@@ -67,6 +67,11 @@ services:
       OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW: ${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}
       OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT: ${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-0}
       OIDC_D1_PERSIST_PATH: /tmp/maronn-openid-connect-d1
+      # express-flyio, fastify-flyio and nextjs-vercel keep their node:sqlite
+      # database in the file OIDC_SQLITE_PATH names (.data/oidc.sqlite under
+      # the working directory by default), which the read-only workspace
+      # cannot hold.
+      OIDC_SQLITE_PATH: /tmp/maronn-openid-connect-sqlite/oidc.sqlite
 
   op-tls:
     image: nginx:1.27-alpine

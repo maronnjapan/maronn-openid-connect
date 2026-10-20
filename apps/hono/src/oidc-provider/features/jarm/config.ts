@@ -17,8 +17,9 @@
  * Not configurable: the signing algorithm (RS256, JARM Section 3's default for a
  * client with no registered authorization_signed_response_alg), the response
  * parameter name (`response`, JARM Section 2.3.1) and the supported response
- * modes (`query.jwt` / `jwt` — this OP implements response_type=code only, so
- * `fragment.jwt` and `form_post.jwt` are rejected with invalid_request).
+ * modes (`query.jwt` / `jwt` for response_type=code only, so `fragment.jwt` and
+ * `form_post.jwt` are rejected with invalid_request; a response type that
+ * returns tokens, such as the Implicit Flow's, is never JWT-secured here).
  */
 import { assertJarmLifetimeSeconds } from '@maronn-openid-connect/experimental/jarm';
 

@@ -175,6 +175,64 @@ describe('validateAuthorizationRequestParams', () => {
     });
   });
 
+  // OIDC Core 1.0 §3.2.2.1: the Implicit Flow feature answers id_token and
+  // id_token token for a client registered for them.
+  describe('Implicit Flow', () => {
+    const implicitClient: ClientInfo = {
+      ...client,
+      grantTypes: ['implicit', 'refresh_token'],
+      responseTypes: ['id_token token', 'id_token'],
+    };
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices §5: the order of the
+    // values does not matter. There is no code, so no PKCE either (RFC 7636 §4.3).
+    it('should accept response_type=token id_token without code_challenge as id_token token', async () => {
+      const params = paramsWith({ response_type: 'token id_token' });
+      delete params.code_challenge;
+      delete params.code_challenge_method;
+
+      const validated = await validate(params, { client: implicitClient });
+
+      expect(validated).toMatchObject({
+        responseType: 'id_token token',
+        codeChallenge: undefined,
+        codeChallengeMethod: undefined,
+        nonce: NONCE,
+      });
+    });
+
+    // RFC 6749 §4.2.2.1: a client not registered for the response type.
+    it('should reject response_type=id_token of a client registered only for code with unauthorized_client', async () => {
+      await expect(validate(paramsWith({ response_type: 'id_token' }))).rejects.toMatchObject({
+        error: 'unauthorized_client',
+        errorDescription: 'Client is not authorized to use response_type: id_token',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+
+    // RFC 6749 §4.2.2.1: the OP does not answer token alone (OIDC Core 1.0
+    // §3.2.2.1 names id_token and id_token token).
+    it('should reject response_type=token with unsupported_response_type', async () => {
+      await expect(validate(paramsWith({ response_type: 'token' }), { client: implicitClient })).rejects.toMatchObject({
+        error: 'unsupported_response_type',
+        errorDescription: 'Unsupported response_type: token',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+
+    // OIDC Core 1.0 §11: offline_access is ignored unless the response type returns a code.
+    it('should drop offline_access from a request of id_token token, even with prompt=consent', async () => {
+      const validated = await validate(
+        paramsWith({ response_type: 'id_token token', scope: 'openid offline_access', prompt: 'consent' }),
+        { client: implicitClient },
+      );
+
+      expect(validated.scope).toEqual(['openid']);
+    });
+  });
+
   // OIDC Core 1.0 §11: offline_access needs prompt=consent and a client
   // registered for the refresh_token grant; otherwise it is ignored.
   describe('offline_access', () => {

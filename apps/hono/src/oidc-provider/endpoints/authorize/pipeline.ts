@@ -1,4 +1,6 @@
 import { resolveFormPostResponseContext } from '../../features/form-post-response-mode/steps/resolve-form-post-response-mode.js';
+import { resolveFragmentResponseContext } from '../../features/implicit-flow/steps/resolve-fragment-response-mode.js';
+import { validateImplicitRequest } from '../../features/implicit-flow/steps/validate-implicit-request.js';
 import { resolveJarmResponseContext } from '../../features/jarm/steps/resolve-jarm-response-mode.js';
 import { resolvePushedAuthorizationRequest } from '../../features/par/steps/resolve-pushed-request.js';
 import { resolveRequestObject } from '../../features/request-object/steps/resolve-request-object.js';
@@ -36,11 +38,12 @@ import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
  */
 export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
   // The response mode the request asked for, when a feature answers in one
-  // (JARM, form_post). Set once redirect_uri is verified, by the first block
-  // of a feature that answers the request's response_mode (each assigns it
-  // only while it is still unset); undefined means the plain query response.
-  // Declared before the try block so the catch can answer in the mode the
-  // request asked for.
+  // (JARM, form_post, the fragment of the Implicit Flow). Set once
+  // redirect_uri is verified, by the first block of a feature that answers
+  // the request's response_mode or response_type (each assigns it only while
+  // it is still unset); undefined means the plain query response. Declared
+  // before the try block so the catch can answer in the mode the request
+  // asked for.
   let responseMode: AuthorizationResponseMode | undefined;
   try {
     // RFC 9207 §2: include the issuer identifier on every authorization
@@ -71,8 +74,14 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
     // [resolve-form-post-response-mode] (feature: form-post-response-mode) Interpret response_mode=form_post — OAuth 2.0 Form Post Response Mode §2
     responseMode ??= resolveFormPostResponseContext(effectiveParams ?? params, issuer);
 
+    // [resolve-fragment-response-mode] (feature: implicit-flow) Answer the Implicit Flow in the fragment — OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5
+    responseMode ??= resolveFragmentResponseContext(effectiveParams ?? params, issuer);
+
     // [validate-request] Validate the request parameters — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
     const validatedRequest = await validateAuthorizationRequestParams(c, { params, effectiveParams, requestObjectClaims, client, redirectUri, state });
+
+    // [validate-implicit-request] (feature: implicit-flow) Validate the Implicit Flow request (response_mode, nonce, redirect_uri) — OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §5
+    validateImplicitRequest(validatedRequest, effectiveParams ?? params, client, responseMode);
 
     // [create-transaction] Create and store the authorization transaction — OIDC Core 1.0 §3.1.2.3
     const { transactionId, transaction, transactionTtlSeconds } = await createAuthorizationTransaction(c, validatedRequest, responseMode);

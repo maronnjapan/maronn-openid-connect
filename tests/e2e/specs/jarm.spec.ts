@@ -141,7 +141,9 @@ test.describe('JWT Secured Authorization Response Mode (JARM)', () => {
     );
 
     // JARM §4: both AS metadata members the specification defines for JARM.
-    expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'query.jwt', 'jwt']);
+    // The JWT modes follow query and the modes of the other features
+    // (form_post, the fragment of the Implicit Flow).
+    expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'fragment', 'query.jwt', 'jwt']);
     expect(metadata.authorization_signing_alg_values_supported).toEqual(['RS256']);
   });
 

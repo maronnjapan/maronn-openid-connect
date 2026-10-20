@@ -138,6 +138,20 @@ const oidcClientsJson = JSON.stringify([
     tokenEndpointAuthMethods: ['client_secret_post'],
     responseTypes: ['code'],
   },
+  {
+    // OIDC Core 1.0 §3.2: a client of the Implicit Flow. A public client, as
+    // the redirect URI is http on a loopback host (§3.2.2.1). Nothing serves
+    // the redirect URI: the implicit-flow spec reads the authorization
+    // response from the fragment of the URL the browser lands on. An OP
+    // generated without implicit-flow keeps the registration and answers
+    // code only.
+    clientId: 'e2e-implicit-client',
+    redirectUris: [`${clientBaseURL}/implicit-callback`],
+    clientType: 'public',
+    grantTypes: ['implicit'],
+    tokenEndpointAuthMethods: ['none'],
+    responseTypes: ['id_token token', 'id_token'],
+  },
 ]);
 
 // EXPERIMENTAL (ID-JAG draft §4.4): the client registrations of the SECOND OP

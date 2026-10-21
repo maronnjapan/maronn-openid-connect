@@ -37,6 +37,27 @@ describe('InMemoryDynamicallyRegisteredClientStore', () => {
     expect(await store.get('dcr-1')).toEqual(client('dcr-1', 'https://new.example.com/cb'));
     expect(await store.count()).toBe(1);
   });
+
+  it('should delete a registration and leave the others', async () => {
+    const store = new InMemoryDynamicallyRegisteredClientStore();
+    await store.save(client('dcr-1'));
+    await store.save(client('dcr-2'));
+
+    await store.delete('dcr-1');
+
+    expect(await store.get('dcr-1')).toBeUndefined();
+    expect(await store.get('dcr-2')).toEqual(client('dcr-2'));
+    expect(await store.count()).toBe(1);
+  });
+
+  it('should leave the store unchanged when deleting an unknown client_id', async () => {
+    const store = new InMemoryDynamicallyRegisteredClientStore();
+    await store.save(client('dcr-1'));
+
+    await store.delete('dcr-unknown');
+
+    expect(await store.count()).toBe(1);
+  });
 });
 
 describe('withDynamicallyRegisteredClients', () => {

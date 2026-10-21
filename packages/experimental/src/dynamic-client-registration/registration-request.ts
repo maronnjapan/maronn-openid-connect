@@ -119,10 +119,11 @@ export function validateClientRegistrationRequest(
 /**
  * redirect_uris は REQUIRED（OIDC Dynamic Client Registration 1.0 §2）。
  * URI の規則そのもの（フラグメント禁止・危険スキーム拒否・非ループバック
- * 平文 http 拒否）は core の validateRegisteredRedirectUris に委ね、静的
- * クライアントと同一の登録基準を適用する。core の例外は違反 URI を
- * メッセージへ埋め込んだ server_error なので、コードを invalid_redirect_uri
- * （RFC 7591 §3.2.2）へ、文言を URI を含まない固定 ASCII へ差し替える。
+ * 平文 http 拒否。ネイティブアプリ向けのカスタムスキームは通る）は core の
+ * validateRegisteredRedirectUris に委ね、静的クライアントと同一の登録基準を
+ * 適用する。core の例外は違反 URI をメッセージへ埋め込んだ server_error
+ * なので、コードを invalid_redirect_uri（RFC 7591 §3.2.2）へ、文言を URI を
+ * 含まない固定 ASCII へ差し替える。
  */
 function validateRedirectUris(value: unknown): string[] {
   if (
@@ -140,7 +141,7 @@ function validateRedirectUris(value: unknown): string[] {
   } catch {
     throw new ClientRegistrationError(
       'invalid_redirect_uri',
-      'redirect_uris must only contain https or loopback http URIs without fragments',
+      'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
     );
   }
   return [...value];
@@ -232,12 +233,15 @@ function pickClientName(value: unknown): { clientName?: string } {
       'client_name must be at most 128 characters',
     );
   }
-  // C0 制御文字と DEL。改行やエスケープでログ・画面を汚す値を登録させない。
+  // C0 / C1 制御文字と DEL、bidi 制御文字（U+200E–U+200F / U+202A–U+202E /
+  // U+2066–U+2069）、ゼロ幅文字（U+200B–U+200D / U+FEFF）。改行やエスケープで
+  // ログ・画面を汚す値に加え、表示順の反転や見えない文字で表示名を偽装する
+  // 値も登録させない。
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
+  if (/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/.test(value)) {
     throw new ClientRegistrationError(
       'invalid_client_metadata',
-      'client_name must not contain control characters',
+      'client_name must not contain control or invisible formatting characters',
     );
   }
   return { clientName: value };

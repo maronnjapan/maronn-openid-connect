@@ -194,7 +194,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(await response.json()).toEqual({
       error: 'invalid_redirect_uri',
       error_description:
-        'redirect_uris must only contain https or loopback http URIs without fragments',
+        'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
     });
   });
 

@@ -20,6 +20,7 @@
  * trust: what an issued client can do stays bounded by the same validation as
  * a static client (PKCE, exact redirect_uri match, client authentication).
  */
+import { hashClientSecret } from '@maronn-openid-connect/core';
 import {
   ClientRegistrationError,
   buildClientRegistrationResponse,
@@ -70,8 +71,24 @@ async function registerClient(request: Request): Promise<Response> {
     );
   }
 
-  const rawBody = await request.text();
+  // A Content-Length that already declares more than maxRegistrationBodyBytes
+  // is refused before the body is read, so an oversized request is not
+  // buffered first. The header can lie, so the authoritative check stays the
+  // UTF-8 byte count on the body itself (validateClientRegistrationRequest).
+  const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
+  if (Number.isFinite(declaredLength) && declaredLength > config.maxRegistrationBodyBytes) {
+    return registrationJson(
+      { error: 'invalid_client_metadata', error_description: 'request body must not exceed the configured maximum size' },
+      400,
+    );
+  }
+
   try {
+    // The body read sits inside the try so that an aborted or malformed
+    // transfer still gets the fixed server_error JSON with no-store, like the
+    // hono pipeline, instead of the framework's default 500.
+    const rawBody = await request.text();
+
     // (3)–(8) Body size, JSON shape, allowlist-pick of the understood fields,
     // value checks and RFC 7591 §2 defaults — pure functions from
     // @maronn-openid-connect/experimental/dynamic-client-registration. Unknown metadata is
@@ -92,7 +109,26 @@ async function registerClient(request: Request): Promise<Response> {
         429,
       );
     }
-    await dynamicClientStore.save(client);
+
+    // The stored record keeps the client_secret only as its hash, like the
+    // statically registered clients (_oidc-provider/db registerClient): the 201
+    // response below is built from the in-memory record, so the plaintext never
+    // needs to rest in the store.
+    const { clientSecret, ...registration } = client;
+    await dynamicClientStore.save({
+      ...registration,
+      ...(clientSecret === undefined ? {} : { clientSecretHash: await hashClientSecret(clientSecret) }),
+    });
+    // Concurrent requests can pass the cap check together (the awaits above let
+    // them interleave), so re-check after saving and withdraw this registration
+    // when the save overshot the cap: the cap is never exceeded, only approached.
+    if ((await dynamicClientStore.count()) > config.maxRegisteredClients) {
+      await dynamicClientStore.delete(client.clientId);
+      return registrationJson(
+        { error: 'too_many_registrations', error_description: 'registration limit reached' },
+        429,
+      );
+    }
 
     // Never log the registration metadata or the issued client_secret.
 

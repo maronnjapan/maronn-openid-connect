@@ -7,11 +7,14 @@ import type { RegisteredClient } from '../../config';
  * - save(client): persist the registration under client.clientId.
  * - count(): how many dynamic registrations exist, for the
  *   maxRegisteredClients inventory cap (RFC 7591 §5 DoS consideration).
+ * - delete(clientId): remove one registration — the register endpoint
+ *   withdraws its own save when concurrent requests overshot the cap.
  */
 export interface DynamicallyRegisteredClientStore {
   get(clientId: string): Promise<RegisteredClient | undefined>;
   save(client: RegisteredClient): Promise<void>;
   count(): Promise<number>;
+  delete(clientId: string): Promise<void>;
 }
 
 /**
@@ -38,6 +41,10 @@ export class InMemoryDynamicallyRegisteredClientStore
 
   async count(): Promise<number> {
     return this.clients.size;
+  }
+
+  async delete(clientId: string): Promise<void> {
+    this.clients.delete(clientId);
   }
 }
 

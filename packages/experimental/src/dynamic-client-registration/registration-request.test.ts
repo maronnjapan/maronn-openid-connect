@@ -178,7 +178,7 @@ describe('validateClientRegistrationRequest', () => {
       ).toThrowError(
         new ClientRegistrationError(
           'invalid_redirect_uri',
-          'redirect_uris must only contain https or loopback http URIs without fragments',
+          'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
         ),
       );
     });
@@ -189,7 +189,7 @@ describe('validateClientRegistrationRequest', () => {
       ).toThrowError(
         new ClientRegistrationError(
           'invalid_redirect_uri',
-          'redirect_uris must only contain https or loopback http URIs without fragments',
+          'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
         ),
       );
     });
@@ -200,7 +200,7 @@ describe('validateClientRegistrationRequest', () => {
       ).toThrowError(
         new ClientRegistrationError(
           'invalid_redirect_uri',
-          'redirect_uris must only contain https or loopback http URIs without fragments',
+          'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
         ),
       );
     });
@@ -212,7 +212,7 @@ describe('validateClientRegistrationRequest', () => {
       ).toThrowError(
         new ClientRegistrationError(
           'invalid_redirect_uri',
-          'redirect_uris must only contain https or loopback http URIs without fragments',
+          'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
         ),
       );
     });
@@ -234,6 +234,17 @@ describe('validateClientRegistrationRequest', () => {
         'http://[::1]:8080/cb',
         'https://app.example.com/cb',
       ]);
+    });
+
+    // RFC 8252 §7.1: native apps register private-use (custom) URI schemes.
+    // The registration rule equals the static one (core
+    // validateRegisteredRedirectUris), which accepts any scheme outside its
+    // dangerous-scheme list.
+    it('should accept a private-use scheme redirect_uri', () => {
+      const validated = validateClientRegistrationRequest(
+        body({ redirect_uris: ['com.example.app:/oauth2redirect'] }),
+      );
+      expect(validated.redirectUris).toEqual(['com.example.app:/oauth2redirect']);
     });
   });
 
@@ -381,7 +392,42 @@ describe('validateClientRegistrationRequest', () => {
       ).toThrowError(
         new ClientRegistrationError(
           'invalid_client_metadata',
-          'client_name must not contain control characters',
+          'client_name must not contain control or invisible formatting characters',
+        ),
+      );
+    });
+
+    it('should reject a client_name containing a C1 control character', () => {
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, client_name: 'bad\u0085name' })),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'client_name must not contain control or invisible formatting characters',
+        ),
+      );
+    });
+
+    // U+202E (RIGHT-TO-LEFT OVERRIDE) can reverse the rendered order of a
+    // display name and disguise what the user approves.
+    it('should reject a client_name containing a bidi override character', () => {
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, client_name: 'bad\u202ename' })),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'client_name must not contain control or invisible formatting characters',
+        ),
+      );
+    });
+
+    it('should reject a client_name containing a zero-width character', () => {
+      expect(() =>
+        validateClientRegistrationRequest(body({ ...MINIMAL, client_name: 'bad\u200bname' })),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'client_name must not contain control or invisible formatting characters',
         ),
       );
     });

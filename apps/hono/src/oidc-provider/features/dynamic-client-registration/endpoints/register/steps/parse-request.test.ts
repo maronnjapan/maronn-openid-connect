@@ -41,4 +41,38 @@ describe('parseRegistrationRequest', () => {
       body: { error: 'invalid_client_metadata' },
     });
   });
+
+  // The declared size is refused before the body is read; the authoritative
+  // check stays the UTF-8 byte count on the body itself.
+  it('should reject a Content-Length above maxRegistrationBodyBytes before reading the body', async () => {
+    const { c } = await providerContext({
+      options: { dynamicClientRegistration: { maxRegistrationBodyBytes: 16 } },
+      request: requestTo('/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': '17' },
+        body: BODY,
+      }),
+    });
+
+    const error = await parseRegistrationRequest(c).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(RegistrationEndpointError);
+    expect((error as RegistrationEndpointError).response).toEqual({
+      status: 400,
+      body: { error: 'invalid_client_metadata', error_description: 'request body must not exceed the configured maximum size' },
+    });
+  });
+
+  it('should read the body when the Content-Length equals maxRegistrationBodyBytes', async () => {
+    const { c } = await providerContext({
+      options: { dynamicClientRegistration: { maxRegistrationBodyBytes: BODY.length } },
+      request: requestTo('/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': String(BODY.length) },
+        body: BODY,
+      }),
+    });
+
+    expect(await parseRegistrationRequest(c)).toBe(BODY);
+  });
 });

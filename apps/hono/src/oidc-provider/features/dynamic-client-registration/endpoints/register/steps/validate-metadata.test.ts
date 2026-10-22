@@ -72,7 +72,7 @@ describe('validateRegistrationMetadata', () => {
       expect.objectContaining({
         name: 'ClientRegistrationError',
         error: 'invalid_redirect_uri',
-        errorDescription: 'redirect_uris must only contain https or loopback http URIs without fragments',
+        errorDescription: 'each redirect_uri must be an absolute URI without a fragment and must not use a dangerous scheme or non-loopback http',
       }),
     );
   });

@@ -135,12 +135,18 @@ export interface RenderViewInit {
  * serializes to a Promise; its HTML is streamed once it resolves, so the
  * Response (and the cookies a page attaches to it) is still built
  * synchronously.
+ *
+ * Every screen is rendered for the transaction or session of this browser's
+ * cookie, at a URL that names neither (/login and /consent are the same URL for
+ * every transaction). A stored copy would show one transaction's csrf_token,
+ * login_hint or client to another browser or to a later flow, so the page tells
+ * the browser and any intermediary not to store it (RFC 9111 §5.2.2.5).
  */
 export function renderView(view: ViewResult, init?: RenderViewInit): Response {
   const html = serializeView(view);
   return new Response(typeof html === 'string' ? html : streamWhenResolved(html), {
     status: init?.status ?? 200,
-    headers: { 'Content-Type': 'text/html; charset=UTF-8' },
+    headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' },
   });
 }
 

@@ -22,7 +22,8 @@ export const consentPage = new WebRouter();
 
 /**
  * Render the consent form. Swap the view, return a framework-rendered Response,
- * or redirect to a UI of your own — here only.
+ * or redirect to a UI of your own — here only. A Response of your own keeps
+ * Cache-Control: no-store, as renderView() sets it (views.tsx says why).
  */
 export function renderConsentPage(c: any, params: ConsentPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;

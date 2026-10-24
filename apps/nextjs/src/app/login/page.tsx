@@ -5,7 +5,10 @@ import { requireTransaction } from '../_oidc-provider/transaction';
 import { loginAction } from './actions';
 
 // The page renders the transaction named by this browser's transaction cookie,
-// so it must always render dynamically (never from a static cache).
+// so it must always render dynamically (never from a static cache). A dynamic
+// page is sent with Cache-Control: private, no-cache, no-store, max-age=0,
+// must-revalidate by Next.js itself, so no browser or intermediary stores the
+// csrf_token of this transaction either.
 export const dynamic = 'force-dynamic';
 
 interface LoginPageProps {

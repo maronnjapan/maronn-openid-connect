@@ -22,12 +22,21 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** An HTML page, with the Set-Cookie values the step that rendered it decided on. */
+/**
+ * An HTML page, with the Set-Cookie values the step that rendered it decided on.
+ *
+ * Every screen is rendered for the binding or session of this browser's cookie,
+ * at a URL that names neither. A stored copy would show one browser's
+ * csrf_token to another browser or to a later flow, so the page tells the
+ * browser and any intermediary not to store it (RFC 9111 §5.2.2.5). Next.js
+ * sends the React pages (login, consent) with no-store itself, because they
+ * render dynamically, but leaves the headers of a Route Handler to the handler.
+ */
 export function htmlResponse(
   html: string,
   init: { status?: number; cookies?: readonly string[] } = {},
 ): Response {
-  const headers = new Headers({ 'Content-Type': 'text/html; charset=UTF-8' });
+  const headers = new Headers({ 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' });
   for (const cookie of init.cookies ?? []) {
     headers.append('Set-Cookie', cookie);
   }

@@ -117,6 +117,28 @@ test.describe('Auth transaction cookie', () => {
     await expect(page.getByTestId('token-type')).toHaveText('Bearer');
   });
 
+  // /login and /consent are the same URL for every transaction, so a stored
+  // copy would show the csrf_token of one transaction to another browser or to
+  // a later flow (RFC 9111 §5.2.2.5). The apps word the header differently
+  // (Next.js sends its own for dynamic pages), so only no-store is checked.
+  test('should forbid caches from storing the login and consent pages', async ({ page, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+
+    const loginResponse = await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    expect(cacheDirectives(loginResponse?.headers()['cache-control'])).toContain('no-store');
+
+    await login(page);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    // Next.js renders the consent page from the login Server Action without a
+    // document request of its own; a reload fetches /consent as a document.
+    const consentResponse = await page.reload();
+    expect(cacheDirectives(consentResponse?.headers()['cache-control'])).toContain('no-store');
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByTestId('token-type')).toHaveText('Bearer');
+  });
+
   test('should clear the transaction cookie once the flow is finished', async ({ page, baseURL }) => {
     requireBaseUrl(baseURL);
 
@@ -227,6 +249,11 @@ async function login(page: Page): Promise<void> {
   await page.getByLabel('Username:').fill('testuser');
   await page.getByLabel('Password:').fill('password');
   await page.getByRole('button', { name: 'Login' }).click();
+}
+
+/** The directives of a Cache-Control header value, lowercased. */
+function cacheDirectives(value: string | undefined): string[] {
+  return (value ?? '').split(',').map((directive) => directive.trim().toLowerCase());
 }
 
 function requireBaseUrl(baseURL: string | undefined): string {

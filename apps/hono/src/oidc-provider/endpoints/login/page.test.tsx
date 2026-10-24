@@ -72,6 +72,16 @@ describe('loginPage', () => {
       expect(html).toContain('<input type="text" id="username" name="username" value="alice" required=""/>');
     });
 
+    // /login is the same URL for every transaction: a stored copy would hand
+    // the csrf_token (and login_hint) of one transaction to another.
+    it('should forbid caches from storing the form', async () => {
+      const { app } = await setUp();
+
+      const response = await app.request(requestTo('/login', { headers: { Cookie: transactionCookie() } }));
+
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+    });
+
     it('should answer the error page with 400 when the browser is in no transaction', async () => {
       const { app } = await setUp();
 

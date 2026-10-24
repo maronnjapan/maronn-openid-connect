@@ -3,10 +3,52 @@ import { describe, it } from 'node:test';
 
 import {
   assertMainVersionsArePublished,
+  findReasonToSkipRegistryCheck,
   parsePublishedVersions,
+  parseReleaseStage,
   selectPendingChangesets,
   selectUnpublishedPackages,
 } from './verify-release-published.mjs';
+
+describe('parseReleaseStage', () => {
+  it('should read the publish stage when changesets/action found no changeset', () => {
+    assert.equal(parseReleaseStage('false'), 'publish');
+  });
+
+  it('should read the version stage when changesets/action found a changeset', () => {
+    assert.equal(parseReleaseStage('true'), 'version');
+  });
+
+  // 出力名が変わるなどして値が届かないまま検査を飛ばすと、publish 漏れを黙って見逃す。
+  it('should throw when the hasChangesets output did not arrive', () => {
+    assert.throws(() => parseReleaseStage(undefined), /hasChangesets 出力を読めません/);
+    assert.throws(() => parseReleaseStage(''), /hasChangesets 出力を読めません/);
+  });
+});
+
+describe('findReasonToSkipRegistryCheck', () => {
+  // npm は publish を受け付けてから数分はバージョンを返さない（実測 1〜7 分）。
+  // publish 段階で照会すると、publish に成功した run が毎回赤くなる。
+  it('should skip the registry when this run entered the publish stage', () => {
+    assert.match(findReasonToSkipRegistryCheck({ stage: 'publish', pendingChangesets: [] }), /publish 段階/);
+  });
+
+  // main に changeset が残っている間は version 段階が正しい挙動で、publish は次の
+  // Version Packages PR のマージまで起きない。Version Packages PR のマージと changeset の
+  // 追加が競合すると、バージョンだけ先に進んだ状態が一時的に生まれるため、ここで弾かない。
+  it('should skip the registry while main still carries an unconsumed changeset', () => {
+    assert.match(
+      findReasonToSkipRegistryCheck({ stage: 'version', pendingChangesets: ['.changeset/brave-pans-shave.md'] }),
+      /未消化の changeset/,
+    );
+  });
+
+  // main に changeset が無いのに version 段階へ入ったのは、Ensure ステップが changeset を作ったとき。
+  // main のバージョンはそれより前の publish 段階で npm に出ているはずなので突き合わせる。
+  it('should check the registry when the version stage ran without a changeset on main', () => {
+    assert.equal(findReasonToSkipRegistryCheck({ stage: 'version', pendingChangesets: [] }), null);
+  });
+});
 
 describe('selectPendingChangesets', () => {
   it('should select changeset markdown files', () => {
@@ -87,7 +129,6 @@ describe('assertMainVersionsArePublished', () => {
       assertMainVersionsArePublished({
         packages: [{ name: '@maronn-openid-connect/core', version: '0.1.0' }],
         publishedVersionsByName: { '@maronn-openid-connect/core': ['0.1.0'] },
-        pendingChangesets: [],
       }),
     );
   });
@@ -98,14 +139,15 @@ describe('assertMainVersionsArePublished', () => {
         assertMainVersionsArePublished({
           packages: [{ name: '@maronn-openid-connect/core', version: '0.1.0' }],
           publishedVersionsByName: { '@maronn-openid-connect/core': ['0.0.1'] },
-          pendingChangesets: [],
         }),
       {
         message:
           'main のバージョンが npm に出ていません: @maronn-openid-connect/core@0.1.0 (npm の最新は 0.0.1)\n' +
-          'main に未消化の changeset は無いので、この push は publish 段階に入るはずでした。\n' +
-          'release job の "Ensure experimental release changeset" が changeset を作り直して' +
-          ' version 段階へ入り直していないかを確認してください' +
+          'main に未消化の changeset は無いので、このバージョンは Version Packages PR のマージで走った' +
+          ' Release の publish 段階で npm に出ているはずです。\n' +
+          'その run が version 段階に入っていたら、"Ensure experimental release changeset" が changeset を' +
+          '作り直しています。\n' +
+          'publish した直後なら npm の公開待ち（数分）なので、npm view で出たことを確かめてから re-run してください' +
           '（RELEASE.md「publish に到達したことを検証する」）。',
       },
     );
@@ -120,22 +162,8 @@ describe('assertMainVersionsArePublished', () => {
             { name: '@maronn-openid-connect/cli', version: '0.1.0' },
           ],
           publishedVersionsByName: { '@maronn-openid-connect/core': ['0.0.1'], '@maronn-openid-connect/cli': ['0.0.1'] },
-          pendingChangesets: [],
         }),
       /@maronn-openid-connect\/core@0\.1\.0 \(npm の最新は 0\.0\.1\), @maronn-openid-connect\/cli@0\.1\.0 \(npm の最新は 0\.0\.1\)/,
-    );
-  });
-
-  // main に changeset が残っている間は version 段階が正しい挙動で、publish は次の
-  // Version Packages PR のマージまで起きない。Version Packages PR のマージと changeset の
-  // 追加が競合すると、バージョンだけ先に進んだ状態が一時的に生まれるため、ここで弾かない。
-  it('should pass while main still carries an unconsumed changeset', () => {
-    assert.doesNotThrow(() =>
-      assertMainVersionsArePublished({
-        packages: [{ name: '@maronn-openid-connect/core', version: '0.1.0' }],
-        publishedVersionsByName: { '@maronn-openid-connect/core': ['0.0.1'] },
-        pendingChangesets: ['.changeset/brave-pans-shave.md'],
-      }),
     );
   });
 });

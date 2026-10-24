@@ -548,8 +548,8 @@ run 49 では `@maronn-openid-connect/cli@0.4.0` / `core@0.2.0` / `experimental@
 `experimental@0.0.6` だけ見失って release job が失敗した（npm registry を直接照会すると
 3 つとも publish 済みで、tarball にも中身は入っていた）。そこで
 `installAndAuditWithRegistryPropagationRetry`（`.github/scripts/verify-npm-provenance.mjs`）が
-`verify-release-published.mjs` と同じ間隔（5s / 10s / 20s、合計 35 秒）で `npm install` から
-引き直す。**publish 自体は成功しているのに release job だけ赤くなる**ため、この症状を
+5s / 10s / 20s の間隔（合計 35 秒）で `npm install` から引き直す。
+**publish 自体は成功しているのに release job だけ赤くなる**ため、この症状を
 「publish が失敗した」と誤解しないこと。全リトライを使い切ってなお失敗する場合は、
 下のトラブルシューティング表にある Trusted Publisher 設定などの本来の原因を疑う。
 
@@ -567,20 +567,45 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 [なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)の循環で
 33 run にわたって気づけなかったので、分岐の実装ではなく **結果**を検査する形にしてある。
 
-判定の細かい約束は 4 つ。
+判定の細かい約束は 6 つ。
 
 - 比較対象は main の commit に入っている `package.json`（`git show <sha>:...`）。
   `changesets/action` は version 段階でリリースブランチへ checkout するため、
   ワークツリーを読むとバンプ後のバージョンを読んでしまう
+- **publish 段階に入った run では registry を照会しない**。`changeset publish` は registry に無い
+  バージョンをすべて publish し、1 つでも失敗すれば `changesets/action` のステップごと落ちるので、
+  このステップまで来た時点で publish には到達している（理由は下の
+  [publish 直後の registry を照会しない理由](#publish-直後の-registry-を照会しない理由)）。
+  段階は `changesets/action` の `hasChangesets` 出力（`false` が publish 段階）で判断し、
+  値が読めなければ検査を飛ばさずに落とす
 - **main の commit に未消化の changeset が残っているときは検査しない**。version 段階が
   正しい状態であり、publish は次の Version Packages PR のマージまで起きない。
   Version Packages PR のマージと changeset 追加が競合すると、バージョンだけ先に進んだ
   状態が一時的に生まれるため、ここを弾かないようにしてある。
   changeset も commit から読む（ワークツリーには `Ensure experimental release changeset` が
   書き出した changeset が居るので、それを数えると検出したい状態を見逃す）
+- **それ以外（version 段階で、main の commit に changeset が無い）は registry を 1 回だけ照会する**。
+  このとき version 段階へ入るのは `Ensure experimental release changeset` が changeset を作ったときで、
+  main のバージョンはそれより前の publish 段階で npm に出ているはずだから。待って引き直すことはしない
 - registry のほうが新しいのは publish 漏れではないので通す
 - publish 実績がまったく無いパッケージは対象外。初回 publish は Trusted Publishing の
   chicken-and-egg で手動になるため（[初回 publish（手動ブートストラップ）](#初回-publish手動ブートストラップ)）
+
+#### publish 直後の registry を照会しない理由
+
+npm は publish を受け付けてから、そのバージョンを packument（`GET /<name>`）に載せるまで数分かかる。
+2026-10-22 の run 121 では `changeset publish` が 07:59:45 に 4 パッケージとも成功を返したが、
+registry の `time` に記録された時刻は `google-login@0.0.11` が 08:00:50、`core@0.10.0` が 08:04:53 だった
+（2026-10-20 の run 118 では `core@0.9.0` が 7 分後）。
+
+以前はこの検査が publish 直後に registry を照会し、5s / 10s / 20s（合計 35 秒）引き直しても
+見つからずに落ちていた。そのため Version Packages PR をマージした Release run は、publish に
+成功していてもこの検査で赤くなっていた（2026-09-10 の run 61、2026-10-20 の run 118、run 121 など）。
+遅れには上限が無く、待って引き直す方式では解消しないので、publish 段階では照会自体をやめている。
+
+version 段階の run でも、publish した直後（Version Packages PR のマージ直後に experimental の
+実装変更をマージした場合など）は同じ遅れに当たりうる。このときは `npm view <name>@<version>` で
+出たことを確かめてから re-run する。
 
 ---
 
@@ -604,7 +629,7 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
 | Version Packages PR に experimental の変更が 1 つしか載っていない | `auto-experimental-patch.md` は毎回上書きされるので通常は起きない。手書きの experimental changeset が残っていると自動生成がスキップされるため、`.changeset/` に手書きのものが無いか確認する |
 | Version Packages PR に `sample-*` など publish しないパッケージのバージョンアップが並ぶ | `.changeset/config.json` の `privatePackages.version` が `false` になっているか確認する（[samples / tests / docs はバージョニングしない](#samples--tests--docs-はバージョニングしない)）。CI では `pnpm run test:release-contract` が同じ設定を検査している |
 | Version Packages PR をマージしたのに publish されず、また Version Packages PR が立つ | release job の `Ensure experimental release changeset` のログを見る。「未リリースの変更が N 件あるため」と出ているなら比較基準の判定が壊れている（[なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)）。マージ直後の main では「変更がないため changeset を作成しない」になるのが正しい |
-| CI で `main のバージョンが npm に出ていません` で落ちる | publish 段階へ到達しないまま run が終わっている。上の行と同じ調査をする（[publish に到達したことを検証する](#publish-に到達したことを検証する)） |
+| CI で `main のバージョンが npm に出ていません` で落ちる | version 段階の run で、main のバージョンが npm に無い。直前の Release run で publish したばかりなら npm の公開待ちなので、`npm view <name>@<version>` で出たことを確かめて re-run する。そうでなければ Version Packages PR のマージで走った Release run を見る。version 段階に入っていたら上の行と同じ調査をし、キャンセルされていたらその run を re-run する（[publish に到達したことを検証する](#publish-に到達したことを検証する)） |
 
 
 ---

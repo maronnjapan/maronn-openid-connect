@@ -8,7 +8,7 @@ const SLSA_PROVENANCE_V1 = 'https://slsa.dev/provenance/v1';
 /**
  * publish 直後は packument への反映に遅れがあり、`npm install` がバージョン未検出
  * （ETARGET）で失敗することがある（verify-release-published.mjs と同じ現象）。
- * 実測では 1 回目の照会から 10 秒足らずで解消しているが、余裕を見て同じ間隔・
+ * 実測では 1 回目の照会から 10 秒足らずで解消しているが、余裕を見て 5 秒・10 秒・20 秒の間隔で
  * 合計 35 秒まで引き直す。
  */
 const REGISTRY_PROPAGATION_RETRY_DELAYS_MS = [5000, 10000, 20000];

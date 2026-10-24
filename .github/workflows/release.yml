@@ -136,5 +136,10 @@ jobs:
             # version 段階と publish 段階の分岐が壊れると、Version Packages PR をマージしても
             # publish されないまま run は成功で終わり、npm だけが古いまま誰も気づけない。
             # main のバージョンが registry に出ているかを突き合わせて、その状態を赤くする。
+            # publish 段階に入った run では registry を照会しない。changeset publish が成功した時点で
+            # publish には到達しており、npm は publish を受け付けてから数分はバージョンを返さないため
+            # （RELEASE.md「publish に到達したことを検証する」）。段階は hasChangesets で渡す。
             - name: Verify npm reflects the versions on main
+              env:
+                  HAS_CHANGESETS: ${{ steps.changesets.outputs.hasChangesets }}
               run: node .github/scripts/verify-release-published.mjs

@@ -523,11 +523,17 @@ Version Packages PR に現れず、publish されないまま main に埋もれ�
 
 ### provenance の自動検証と手動確認
 
-`release.yml` は publish が発生したとき、Changesets の `publishedPackages` に含まれる
+`release.yml` は publish が発生したとき、changesets/action の `published-packages` 出力に含まれる
 正確な `name@version` を一時ディレクトリへインストールし、`npm audit signatures --json
 --include-attestations` を実行する。署名検証に加えて、対象の各 `name@version` に
 SLSA provenance v1 attestation が存在することを明示的に検査するため、registry signature
 だけが有効で provenance が欠落している場合も release job は失敗する。
+
+この検証は changesets/action が publish を検出したとき（`published` 出力が `true`）だけ走る。
+2026-09-03 から 10-24 までは検出が壊れていて、一度も走っていない
+（[@changesets/cli と changesets/action は major を揃えて上げる](#changesetscli-と-changesetsaction-は-major-を揃えて上げる)）。
+publish したのにこのステップが skipped になっている run は、
+[changesets/action が publish を検出したことを検証する](#changesetsaction-が-publish-を検出したことを検証する)の検査で赤くなる。
 
 リリース担当者は job の成功に加え、npm の各バージョンページに provenance の緑色チェックが
 表示され、次の4項目が意図した GitHub Actions 実行と一致することを確認する。
@@ -576,7 +582,7 @@ provenance 検証（publish が起きたときだけ走る）でも changeset-co
   バージョンをすべて publish し、1 つでも失敗すれば `changesets/action` のステップごと落ちるので、
   このステップまで来た時点で publish には到達している（理由は下の
   [publish 直後の registry を照会しない理由](#publish-直後の-registry-を照会しない理由)）。
-  段階は `changesets/action` の `hasChangesets` 出力（`false` が publish 段階）で判断し、
+  段階は `changesets/action` の `has-changesets` 出力（`false` が publish 段階）で判断し、
   値が読めなければ検査を飛ばさずに落とす
 - **main の commit に未消化の changeset が残っているときは検査しない**。version 段階が
   正しい状態であり、publish は次の Version Packages PR のマージまで起きない。
@@ -607,6 +613,111 @@ version 段階の run でも、publish した直後（Version Packages PR のマ
 実装変更をマージした場合など）は同じ遅れに当たりうる。このときは `npm view <name>@<version>` で
 出たことを確かめてから re-run する。
 
+### @changesets/cli と changesets/action は major を揃えて上げる
+
+`release.yml` の `changesets/action` は、`changeset publish` が何を publish したかを CLI の出力から読み取り、
+それをもとに**タグの push・GitHub Release の作成・`published` / `published-packages` 出力**を行う。
+[provenance の自動検証](#provenance-の自動検証と手動確認)は `published` が `true` のときだけ走るので、
+これも読み取りに依存している。
+
+読み取り方は major ごとに違い、組み合わせが決まっている。
+
+| @changesets/cli | changesets/action | publish の読み取り方 |
+|---|---|---|
+| v2 | v1 | `changeset publish` が stdout に出す `New tag: <name>@<version>` 行 |
+| v3 | v2 | 環境変数 `CHANGESETS_OUTPUT` のファイルに CLI が書く `git-tag` イベント（CLI v3 は `New tag:` 行を出さない） |
+
+組み合わせが外れると、publish 自体は成功したまま action は「何も publish されなかった」と判断する。
+run は成功で終わり、タグ・GitHub Release・provenance 検証の 3 つが黙って止まる。
+
+#### 実際に起きたこと（2026-09-03〜10-24）
+
+changesets/action を v2 に上げる Dependabot PR（#53）は、v2 が CLI v3 を要求するため CLI の更新と同時に
+入れるつもりで 2026-08-24 に閉じられたが、両方をまとめた統合ブランチは main に入らなかった。
+閉じた更新を Dependabot は再提案しないので、2026-09-03 に CLI の更新（#64、2.31.1 → 3.0.1）だけが
+マージされ、changesets/action@v1 のまま CLI v3 で publish する状態になった。
+
+2026-09-10 から 10-22 までの 12 回の publish で次の 38 バージョンが npm に出たが、どれにもタグと
+GitHub Release が無く、provenance の自動検証も一度も走っていない。最後にタグと Release が作られたのは
+2026-08-30 の core 0.2.0 / cli 0.4.0 / experimental 0.0.6。
+
+| パッケージ | タグと GitHub Release が無いバージョン |
+|---|---|
+| `@maronn-openid-connect/core` | 0.3.0, 0.4.0, 0.4.1, 0.5.0, 0.6.0, 0.7.0, 0.8.0, 0.9.0, 0.10.0 |
+| `@maronn-openid-connect/cli` | 0.5.0, 0.7.0, 0.7.1, 0.8.0, 0.9.0, 0.10.0, 0.11.0, 0.12.0, 0.13.0, 0.14.0, 0.15.0 |
+| `@maronn-openid-connect/experimental` | 0.0.7〜0.0.16 |
+| `@maronn-openid-connect/google-login` | 0.0.4〜0.0.11（最初の 0.0.2 は provenance の無い手動 publish） |
+
+Release の run のログには `Successfully published:` と `Created git tags.`（CLI がローカルに打ったタグ）が
+出ているが、`New tag:` 行は無く、action v1 は publish を 1 件も拾っていない（2026-10-22 の run 121 など）。
+registry のメタデータ上は 38 バージョンすべてに SLSA provenance v1 の attestation が付いている
+（`npm audit signatures` での署名検証はしていない）。タグと GitHub Release は後から作っていない。
+
+#### changesets/action v2 への移行で変えたこと
+
+- 入力名: `version` → `version-script`、`publish` → `publish-script`
+- 出力名: `publishedPackages` → `published-packages`、`hasChangesets` → `has-changesets`
+- `GITHUB_TOKEN` 環境変数を渡すのをやめた。v2 はトークンを `github-token` 入力（既定値は `github.token`）から読み、
+  入力と食い違う `GITHUB_TOKEN` が env にあると失敗する
+- `push-with-git-cli: true` で v1 と同じ git CLI での push を続けている。v2 の既定は GitHub API での push だが、
+  この移行で変えるのは publish の検出方法だけにして、Version Packages PR のコミットとタグの push 経路は動かさない
+- `ci:publish`（`pnpm run build && changeset publish`）は、action が渡す `CHANGESETS_OUTPUT` を pnpm の環境経由で
+  そのまま `changeset publish` に届ける。publish スクリプトを書き換えるときも、この環境変数を落とさないこと
+
+検証用のレジストリ（verdaccio）に `pnpm run ci:publish` と同じ構成で publish させると、changesets/action v1.9.0 は
+`published=false`・`publishedPackages=[]` のまま成功で終わり、v2.1.2 は `published=true` と publish した
+`name@version` を `published-packages` に出す（どちらも CLI は 3.0.3）。
+
+#### 再発を防ぐ検査
+
+- `pnpm run test:release-contract`（`.github/scripts/verify-release-contract.mjs` の `assertChangesetsActionMatchesCli`）が、
+  ルートの `package.json` の `@changesets/cli` と `release.yml` の `changesets/action` が上の表どおりの major で組んでいるか、
+  `release.yml` がその major の action に無い入力・出力を使っていないかを CI で検査する。
+  Dependabot は 2 つを別々の PR で上げるので、片方だけを上げた PR はここで赤くなる。その PR の上でもう片方も移行する
+- 表に無い major（CLI v4 など）も赤くする。changesets/action の CHANGELOG で対応する major を確かめ、その `action.yml` の
+  inputs / outputs を `CHANGESETS_ACTION_INTERFACES` に足してから移行する
+- それでも検出が壊れたとき（`ci:publish` が `CHANGESETS_OUTPUT` を落とす、action の不具合など）は、
+  [次の節](#changesetsaction-が-publish-を検出したことを検証する)の検査が publish した run を赤くする
+
+### changesets/action が publish を検出したことを検証する
+
+`release.yml` は provenance 検証の後に `.github/scripts/verify-release-tags.mjs` を実行し、
+**この run の `changeset publish` が作ったタグが origin に push されていること**を確認する。
+push されていなければ release job を赤くする。provenance 検証より後に置くのは、publish の検出はできて
+タグの push だけが失敗した run でも provenance 検証を走らせるため。
+
+action が publish を検出できないと、publish は成功したまま run も成功で終わり、provenance 検証も黙って飛ぶ
+（[前の節](#changesetscli-と-changesetsaction-は-major-を揃えて上げる)）。
+[publish に到達したことを検証する](#publish-に到達したことを検証する)は「publish が起きたか」を見るので、
+「publish は起きたが action が拾っていない」状態は検出できない。そこで action の出力ではなく、
+CLI が実際に打ったタグと origin のタグを突き合わせる。
+
+判定の約束は 4 つ。
+
+- `changeset publish` は publish できたパッケージのタグ（`<name>@<version>`）をローカルの HEAD に打つ。
+  checkout は origin のタグしか持ってこないので、HEAD にあって origin に無い `<name>@<main のバージョン>` のタグは
+  「この run の CLI が打ったのに action が push しなかったタグ」になる
+- origin のタグは `git ls-remote` で照会する。npm registry は照会しないので、
+  [publish 直後の反映の遅れ](#publish-直後の-registry-を照会しない理由)に左右されない
+- この run が publish しなかったバージョンは対象外。HEAD にタグが打たれないので、
+  2026-09-03〜10-24 にタグ無しで publish されたバージョンでは落ちない
+- version 段階の run は対象外。段階は `has-changesets` 出力で判断し、値が読めなければ検査を飛ばさずに落とす
+
+この検査で落ちたときも publish 自体は成功している。re-run しても `changeset publish` は publish 済みの
+バージョンを publish し直さず、タグも作り直さない。原因を直したうえで、落ちた run が publish した
+バージョンのタグと GitHub Release を手で作り、provenance を確認する。
+action のログに `Failed to create git tag` の警告があれば、検出はできていてタグの push に失敗している。
+
+```bash
+# <commit> は落ちた run の commit（Version Packages PR のマージコミット）
+git tag -a '@maronn-openid-connect/cli@0.15.1' -m '@maronn-openid-connect/cli@0.15.1' <commit>
+git push origin '@maronn-openid-connect/cli@0.15.1'
+# 本文は packages/cli/CHANGELOG.md の該当バージョンのエントリ
+gh release create '@maronn-openid-connect/cli@0.15.1' --title '@maronn-openid-connect/cli@0.15.1' --notes-file notes.md
+# release.yml の provenance 検証と同じものを手元で実行する
+PUBLISHED_PACKAGES='[{"name":"@maronn-openid-connect/cli","version":"0.15.1"}]' node .github/scripts/verify-npm-provenance.mjs
+```
+
 ---
 
 ## トラブルシューティング
@@ -630,6 +741,10 @@ version 段階の run でも、publish した直後（Version Packages PR のマ
 | Version Packages PR に `sample-*` など publish しないパッケージのバージョンアップが並ぶ | `.changeset/config.json` の `privatePackages.version` が `false` になっているか確認する（[samples / tests / docs はバージョニングしない](#samples--tests--docs-はバージョニングしない)）。CI では `pnpm run test:release-contract` が同じ設定を検査している |
 | Version Packages PR をマージしたのに publish されず、また Version Packages PR が立つ | release job の `Ensure experimental release changeset` のログを見る。「未リリースの変更が N 件あるため」と出ているなら比較基準の判定が壊れている（[なぜ version 確定コミットを基準にするのか](#なぜ-version-確定コミットを基準にするのか)）。マージ直後の main では「変更がないため changeset を作成しない」になるのが正しい |
 | CI で `main のバージョンが npm に出ていません` で落ちる | version 段階の run で、main のバージョンが npm に無い。直前の Release run で publish したばかりなら npm の公開待ちなので、`npm view <name>@<version>` で出たことを確かめて re-run する。そうでなければ Version Packages PR のマージで走った Release run を見る。version 段階に入っていたら上の行と同じ調査をし、キャンセルされていたらその run を re-run する（[publish に到達したことを検証する](#publish-に到達したことを検証する)） |
+| CI で `release.yml は changesets/action@vX を使っていますが、@changesets/cli vY と組むのは…` で落ちる | 意図した挙動。Dependabot が @changesets/cli か changesets/action の片方だけを上げた PR。同じ PR でもう片方も移行する（[@changesets/cli と changesets/action は major を揃えて上げる](#changesetscli-と-changesetsaction-は-major-を揃えて上げる)） |
+| CI で `@changesets/cli vN と組む changesets/action の major が登録されていません` で落ちる | 意図した挙動。新しい CLI の major に対応する changesets/action の major を確かめ、`verify-release-contract.mjs` の `CHANGESETS_ACTION_INTERFACES` に足してから release.yml を移行する |
+| release job が `changeset publish が作ったタグが origin にありません` で落ちる | publish は成功している。changesets/action が publish を検出していない（タグ・GitHub Release・provenance 検証が飛んでいる）か、action のログに `Failed to create git tag` の警告があればタグの push に失敗している。原因を直し、タグと Release を手で作って provenance を確認する（[changesets/action が publish を検出したことを検証する](#changesetsaction-が-publish-を検出したことを検証する)） |
+| publish したのに git タグと GitHub Release が作られず、`Verify published package provenance` が skipped になっている | changesets/action が publish を検出していない。上の行と同じ。2026-09-03〜10-24 の publish はこの状態だった |
 
 
 ---

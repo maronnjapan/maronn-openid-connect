@@ -7,10 +7,16 @@
  * 拡張パッケージが、まだ組み合わせて試していない新しい core をそのまま受け入れる」
  * 状態になる。そこで core の minor / major リリース時は、core を peer 参照する
  * パッケージも同時にリリースすることを CI で強制する。
+ *
+ * あわせて、release.yml の changesets/action が @changesets/cli と組む major であることも検査する
+ * （{@link assertChangesetsActionMatchesCli}）。組み合わせが外れると publish は成功したまま、
+ * タグ・GitHub Release・provenance 検証が黙って止まる。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { parseWorkflow } from './verify-ci-gate.mjs';
 
 const CORE = '@maronn-openid-connect/core';
 const EXPERIMENTAL = '@maronn-openid-connect/experimental';
@@ -245,6 +251,203 @@ export function assertCorePeerRangeCoversNextCore(packageJson, nextCoreVersion) 
   }
 }
 
+const CHANGESETS_CLI = '@changesets/cli';
+const CHANGESETS_ACTION = 'changesets/action';
+
+/**
+ * changesets/action の major ごとの、組み合わせる @changesets/cli の major と入出力名。
+ *
+ * changesets/action は changeset publish が何を publish したかを CLI の出力から読み取り、
+ * それをもとにタグの push・GitHub Release の作成・published / published-packages 出力を行う。
+ * 読み取り方は major ごとに違う。
+ *
+ * - v1 は CLI v2 が stdout に出す `New tag: <name>@<version>` 行を拾う
+ * - v2 は CLI v3 が環境変数 CHANGESETS_OUTPUT のファイルに書く git-tag イベントを読む
+ *   （CLI v3 は `New tag:` 行を出さない）
+ *
+ * 組み合わせを外すと publish は成功したまま action が「何も publish されなかった」と判断し、
+ * run は成功で終わってタグ・GitHub Release・provenance 検証が黙って止まる。Dependabot が
+ * @changesets/cli だけを 2.31.1 → 3.0.1 に上げた 2026-09-03 から、changesets/action@v1 のまま
+ * 7 週間この状態が続いた（RELEASE.md「@changesets/cli と changesets/action は major を揃えて上げる」）。
+ *
+ * 入出力名は v2 で kebab-case に改名された。存在しない入力は警告だけで無視され、存在しない出力の
+ * 参照は空文字列に評価されるので、どちらも major ごとの action.yml の名前と突き合わせる。
+ * changesets/action の major を上げるときは、その action.yml の inputs / outputs をここへ足す。
+ */
+export const CHANGESETS_ACTION_INTERFACES = {
+  1: {
+    cliMajor: 2,
+    inputs: [
+      'github-token',
+      'publish',
+      'version',
+      'cwd',
+      'commit',
+      'title',
+      'setupGitUser',
+      'createGithubReleases',
+      'commitMode',
+      'branch',
+      'prDraft',
+    ],
+    outputs: ['published', 'publishedPackages', 'hasChangesets', 'pullRequestNumber'],
+  },
+  2: {
+    cliMajor: 3,
+    inputs: [
+      'github-token',
+      'publish-script',
+      'version-script',
+      'commit-message',
+      'pr-title',
+      'pr-draft',
+      'pr-base-branch',
+      'create-github-releases',
+      'push-git-tags',
+      'push-with-git-cli',
+      'cwd',
+    ],
+    outputs: ['published', 'published-packages', 'has-changesets', 'pr-number'],
+  },
+};
+
+/**
+ * ルートの package.json が宣言する @changesets/cli の range（`^3.0.2` など）から major を読む。
+ * 複数の major にまたがる range は、どの changesets/action と組むかが決まらないので読まない。
+ */
+export function parseChangesetsCliMajor(range) {
+  const match =
+    typeof range === 'string' ? range.trim().match(/^[\^~]?(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/) : null;
+
+  if (match === null) {
+    throw new Error(
+      `ルートの package.json の ${CHANGESETS_CLI} "${range}" から major を読み取れません。` +
+        '`^X.Y.Z` の形で宣言してください（組み合わせる changesets/action の major が決まらないため）。',
+    );
+  }
+  return Number(match[1]);
+}
+
+/** release.yml の中で changesets/action を使うステップを 1 つ探す。 */
+export function findChangesetsActionStep(workflow) {
+  const steps = Object.values(workflow?.jobs ?? {}).flatMap((job) =>
+    Array.isArray(job?.steps) ? job.steps : [],
+  );
+  const found = steps.filter(
+    (step) => typeof step?.uses === 'string' && step.uses.startsWith(`${CHANGESETS_ACTION}@`),
+  );
+
+  if (found.length === 0) {
+    throw new Error(
+      `release.yml に ${CHANGESETS_ACTION} を使うステップがありません。` +
+        'sub-action（changesets/action/publish など）へ移したなら、assertChangesetsActionMatchesCli を' +
+        'その構成に合わせて書き換えてください。',
+    );
+  }
+  if (found.length > 1) {
+    throw new Error(
+      `release.yml に ${CHANGESETS_ACTION} を使うステップが ${found.length} 個あります。` +
+        'assertChangesetsActionMatchesCli は 1 個を前提にしているので、構成に合わせて書き換えてください。',
+    );
+  }
+  return found[0];
+}
+
+/** `changesets/action@v2`・`changesets/action@v2.1.2` から major を読む。commit SHA で固定した参照からは読めない。 */
+export function parseChangesetsActionMajor(uses) {
+  const match = uses.match(/^changesets\/action@v(\d+)(?:\.\d+){0,2}$/);
+
+  if (match === null) {
+    throw new Error(
+      `release.yml の "${uses}" から ${CHANGESETS_ACTION} の major を読み取れません。` +
+        `\`${CHANGESETS_ACTION}@vN\` の形で参照してください。`,
+    );
+  }
+  return Number(match[1]);
+}
+
+/** workflow の本文から `steps.<id>.outputs.<name>` の形で参照している出力名を集める。コメント行は見ない。 */
+export function collectStepOutputReferences(workflowText, stepId) {
+  const body = workflowText
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n');
+  const escapedStepId = stepId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`steps\\.${escapedStepId}\\.outputs\\.([A-Za-z0-9_-]+)`, 'g');
+
+  return [...new Set([...body.matchAll(pattern)].map((match) => match[1]))];
+}
+
+/**
+ * release.yml の changesets/action が、ルートの package.json の @changesets/cli と組む major であり、
+ * その major の action.yml にある入出力だけを使っていることを強制する。
+ *
+ * Dependabot は @changesets/cli と changesets/action を別々の PR で上げる。片方だけをマージしても
+ * CI もリリースも緑のまま壊れるので、組み合わせが外れた PR をここで赤くする。
+ *
+ * @param cliRange ルートの package.json が宣言する @changesets/cli の range
+ * @param workflow `parseWorkflow` で読んだ release.yml
+ * @param workflowText release.yml の本文（出力の参照を拾うため）
+ */
+export function assertChangesetsActionMatchesCli({ cliRange, workflow, workflowText }) {
+  const cliMajor = parseChangesetsCliMajor(cliRange);
+  const step = findChangesetsActionStep(workflow);
+  const actionMajor = parseChangesetsActionMajor(step.uses);
+  const pairedActionMajor = Object.entries(CHANGESETS_ACTION_INTERFACES)
+    .filter(([, actionInterface]) => actionInterface.cliMajor === cliMajor)
+    .map(([major]) => Number(major))[0];
+
+  if (pairedActionMajor === undefined) {
+    throw new Error(
+      `${CHANGESETS_CLI} v${cliMajor} と組む ${CHANGESETS_ACTION} の major が登録されていません。` +
+        `${CHANGESETS_ACTION} の CHANGELOG で ${CHANGESETS_CLI} v${cliMajor} に対応する major を確かめ、` +
+        'その action.yml の inputs / outputs を CHANGESETS_ACTION_INTERFACES に足したうえで release.yml を移行してください。' +
+        '移行しないまま publish すると、action が publish を検出できずにタグ・GitHub Release・provenance 検証が止まります' +
+        '（RELEASE.md「@changesets/cli と changesets/action は major を揃えて上げる」）。',
+    );
+  }
+
+  if (actionMajor !== pairedActionMajor) {
+    throw new Error(
+      `release.yml は ${step.uses} を使っていますが、${CHANGESETS_CLI} v${cliMajor} と組むのは ` +
+        `${CHANGESETS_ACTION}@v${pairedActionMajor} です。` +
+        'changesets/action は changeset publish の出力から publish を検出するので、組み合わせが外れると' +
+        ' publish は成功したまま、タグの push・GitHub Release の作成・provenance 検証が黙って止まります。' +
+        'Dependabot が片方だけを上げた PR なら、もう片方も同じ PR で移行してください' +
+        '（RELEASE.md「@changesets/cli と changesets/action は major を揃えて上げる」）。',
+    );
+  }
+
+  const { inputs, outputs } = CHANGESETS_ACTION_INTERFACES[actionMajor];
+
+  const unknownInputs = Object.keys(step.with ?? {}).filter((name) => !inputs.includes(name));
+  if (unknownInputs.length > 0) {
+    throw new Error(
+      `release.yml が ${step.uses} に無い入力を渡しています: ${unknownInputs.join(', ')}。` +
+        'GitHub Actions は未知の入力を警告だけで無視するため、publish-script などが渡らないまま run が成功します。' +
+        `v${actionMajor} の入力は ${inputs.join(', ')} です。`,
+    );
+  }
+
+  if (typeof step.id !== 'string' || step.id.length === 0) {
+    throw new Error(
+      `release.yml の ${step.uses} のステップに id がありません。` +
+        'provenance 検証と publish の到達チェックは、このステップの出力を steps.<id>.outputs で読みます。',
+    );
+  }
+
+  const unknownOutputs = collectStepOutputReferences(workflowText, step.id).filter(
+    (name) => !outputs.includes(name),
+  );
+  if (unknownOutputs.length > 0) {
+    throw new Error(
+      `release.yml が ${step.uses} に無い出力を参照しています: ${unknownOutputs.join(', ')}。` +
+        '存在しない出力は空文字列に評価されるので、provenance 検証などが前提とする値が届きません。' +
+        `v${actionMajor} の出力は ${outputs.join(', ')} です。`,
+    );
+  }
+}
+
 export function readChangesets(changesetDirectory) {
   return readdirSync(changesetDirectory)
     .filter((file) => file.endsWith('.md') && file !== 'README.md')
@@ -276,9 +479,19 @@ function verifyReleaseContract() {
     assertCorePeerRangeCoversNextCore(packageJson, nextCoreVersion);
   }
 
+  const rootPackageJson = JSON.parse(readFileSync(join(repositoryRoot, 'package.json'), 'utf8'));
+  const releaseWorkflowText = readFileSync(join(repositoryRoot, '.github/workflows/release.yml'), 'utf8');
+  assertChangesetsActionMatchesCli({
+    cliRange:
+      rootPackageJson.devDependencies?.[CHANGESETS_CLI] ?? rootPackageJson.dependencies?.[CHANGESETS_CLI],
+    workflow: parseWorkflow(releaseWorkflowText),
+    workflowText: releaseWorkflowText,
+  });
+
   console.log(
     `Release contract verified: core peer dependency shape and peer range lower bound for ${CORE_DEPENDENT_NAMES.join(', ')}, ` +
-      'release pairing on core minor / major, experimental patch-only bumps and private packages excluded from versioning',
+      'release pairing on core minor / major, experimental patch-only bumps, private packages excluded from versioning ' +
+      `and ${CHANGESETS_ACTION} paired with ${CHANGESETS_CLI}`,
   );
 }
 

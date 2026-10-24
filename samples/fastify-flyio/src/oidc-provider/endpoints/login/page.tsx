@@ -23,7 +23,9 @@ export const loginPage = new WebRouter();
 
 /**
  * Render the login form. Swap the view, return a framework-rendered Response,
- * or redirect to a UI of your own — here only.
+ * or redirect to a UI of your own — here only. renderView() answers with
+ * Cache-Control: no-store unless its headers say otherwise (views.tsx says
+ * why); a Response of your own keeps it too.
  */
 export function renderLoginPage(c: any, params: LoginPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;

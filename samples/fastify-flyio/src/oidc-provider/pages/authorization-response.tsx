@@ -22,11 +22,11 @@ export function respondToClient(
     return redirectWithCookies(response.location, cookies);
   }
   const views: Views = c.get('views') ?? defaultViews;
-  const page = renderView(<views.formPostPage action={response.action} fields={response.fields} />);
   // OAuth 2.0 Form Post Response Mode §2: the response is used only once, so
   // the User Agent and any intermediaries MUST NOT store or reuse it. These
   // are the headers of Appendix A.
-  page.headers.set('Cache-Control', 'no-cache, no-store');
-  page.headers.set('Pragma', 'no-cache');
+  const page = renderView(<views.formPostPage action={response.action} fields={response.fields} />, {
+    headers: { 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' },
+  });
   return withCookies(page, cookies);
 }

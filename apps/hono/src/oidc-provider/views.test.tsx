@@ -20,6 +20,22 @@ describe('renderView', () => {
     expect(renderView(<p>locked</p>, { status: 429 }).status).toBe(429);
   });
 
+  // RFC 9111 §5.2.2.5: every screen is rendered for the cookie of this browser
+  // at a URL that names nothing, so no cache may store it.
+  it('should forbid the browser and any intermediary from storing the page', () => {
+    expect(renderView(<p>hello</p>).headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('should set the headers of init over the defaults', () => {
+    const response = renderView(<p>hello</p>, {
+      headers: { 'Cache-Control': 'private, max-age=60', 'X-Frame-Options': 'DENY' },
+    });
+
+    expect(response.headers.get('Cache-Control')).toBe('private, max-age=60');
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(response.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+  });
+
   it('should stream the HTML of a view that contains an async component once it resolves', async () => {
     const response = renderView(
       <div>

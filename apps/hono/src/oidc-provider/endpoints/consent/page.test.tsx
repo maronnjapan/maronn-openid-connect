@@ -72,6 +72,16 @@ describe('consentPage', () => {
       expect(html).toContain(`<input type="hidden" name="csrf_token" value="${CSRF_TOKEN}"/>`);
     });
 
+    // /consent is the same URL for every transaction: a stored copy would hand
+    // the csrf_token of one transaction to another.
+    it('should forbid caches from storing the form', async () => {
+      const { app } = await setUp();
+
+      const response = await app.request(requestTo('/consent', { headers: { Cookie: transactionCookie() } }));
+
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+    });
+
     it('should answer the error page with 400 when the browser is in no transaction', async () => {
       const { app } = await setUp();
 

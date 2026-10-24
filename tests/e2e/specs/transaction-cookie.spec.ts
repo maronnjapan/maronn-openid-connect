@@ -117,6 +117,29 @@ test.describe('Auth transaction cookie', () => {
     await expect(page.getByTestId('token-type')).toHaveText('Bearer');
   });
 
+  // /login and /consent are the same URL for every transaction, so a stored
+  // copy would show the csrf_token of one transaction to another browser or to
+  // a later flow (RFC 9111 §5.2.2.5). Every OP sends the same header: on
+  // Next.js, next.config.mjs sets it over the one Next.js sends for dynamic
+  // pages.
+  test('should forbid caches from storing the login and consent pages', async ({ page, baseURL }) => {
+    const issuer = requireBaseUrl(baseURL);
+
+    const loginResponse = await page.goto(`${clientBaseURL}/start`);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    expect(loginResponse?.headers()['cache-control']).toBe('no-store');
+
+    await login(page);
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+    // Next.js renders the consent page from the login Server Action without a
+    // document request of its own; a reload fetches /consent as a document.
+    const consentResponse = await page.reload();
+    expect(consentResponse?.headers()['cache-control']).toBe('no-store');
+
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await expect(page.getByTestId('token-type')).toHaveText('Bearer');
+  });
+
   test('should clear the transaction cookie once the flow is finished', async ({ page, baseURL }) => {
     requireBaseUrl(baseURL);
 

@@ -121,6 +121,8 @@ oidc-provider/
 
 Hono、Express、Fastify の画面は [hono/jsx](https://hono.dev/docs/guides/jsx) で書かれている。画面のマークアップ（`views.tsx`、機能の画面は `features/<id>/views.tsx`）は hono/jsx のコンポーネントで、画面のルートを持つ `page.tsx`（`endpoints/login/`、`endpoints/consent/`、機能有効時は `features/<id>/endpoints/` の `device`、`ciba`、`logout`）とエラー画面の `pages/errors.tsx` が、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画する。自分ではビューを JSX で描かない `endpoints/authorize/page.ts`、google-login の `features/google-login/endpoints/login-google/page.ts`（どちらもエラー画面は `pages/errors.tsx` に任せる）と `pages/respond.ts` は `.ts` のまま。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できる。
 
+画面はどれも、ブラウザの Cookie が指すトランザクションやセッションのために描くが、URL にはそれが現れない（`/login` と `/consent` はどの認可リクエストでも同じ URL である）。保存された画面が別のトランザクションやブラウザに `csrf_token` や `login_hint` を見せないよう、`renderView()` は画面を `Cache-Control: no-store` で返す。キャッシュの扱いを変える画面では、`renderView(<views.loginPage {...params} />, { headers: { 'Cache-Control': '...' } })` のように `headers` を渡して上書きする。`form_post` の認可レスポンスは、この方法で Form Post Response Mode の Appendix A のヘッダー（`Cache-Control: no-cache, no-store` と `Pragma: no-cache`）を返している。
+
 ビューは JSX 要素を返すコンポーネントで、`createApp` / `applyOidc` の `views` オプションで差し替えるときも `loginPage: (params) => <MyLoginPage {...params} />` のように書く。別の手段で組み立てた HTML を返すときは `hono/html` の `html` タグか `raw()` で包む（`raw()` は渡した文字列をそのまま信頼するので、エスケープ済みの HTML だけを渡す）。ステータスやヘッダーなど Response そのものを変えたいときは、その画面の `page.tsx` の `render*Page()`（エラー画面は `pages/errors.tsx` の `renderErrorPage()`）を書き換える。
 
 Express と Fastify の生成物も画面は hono/jsx のままなので、`hono` もインストールする（`generate` の最後に、`pnpm add express hono @maronn-openid-connect/core` のようなフレームワークごとのコマンドが表示される）。3 つのどれでも、コンパイルには `tsconfig.json` で JSX を有効にしておく必要がある。
@@ -367,6 +369,25 @@ src/app/
 ```
 
 生成物に `layout.tsx` は含まれないので、プロジェクトのルートレイアウトがそのまま使われる。
+
+Next.js の生成物でも、画面はブラウザにも中間のキャッシュにも保存させない。Route Handler が返す画面（device、CIBA、RP-Initiated Logout とそのエラー）は、`_oidc-provider/html.ts` の `htmlResponse()` が `Cache-Control: no-store` を付ける（`headers` を渡せば上書きできる）。ログイン、同意、`oidc-error` の各ページは React のページなので、ページからはレスポンスヘッダーを設定できない。Next.js が動的に描くページに `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` を付けるので、そのままでも保存はされない。ほかの画面と同じ `no-store` を明示するには、プロジェクトの `next.config.mjs` の `headers()` で指定する。Next.js は、ここで指定した `Cache-Control` を動的なページに付ける値より優先する。`apps/nextjs` と `samples/nextjs-vercel` はこの設定を持つ。
+
+```js
+// next.config.mjs
+const NO_STORE_PAGES = ['/login', '/consent', '/oidc-error'];
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  async headers() {
+    return NO_STORE_PAGES.map((source) => ({
+      source,
+      headers: [{ key: 'Cache-Control', value: 'no-store' }],
+    }));
+  },
+};
+
+export default nextConfig;
+```
 
 ### 機能のルートグループとブロック
 

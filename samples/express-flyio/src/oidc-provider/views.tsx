@@ -126,6 +126,12 @@ export interface Views {
 export interface RenderViewInit {
   /** HTTP status code for the generated Response (defaults to 200). */
   status?: number;
+  /**
+   * Headers of the generated Response, set over the defaults
+   * (Content-Type: text/html; charset=UTF-8 and Cache-Control: no-store).
+   * Cookies are attached with withCookies() (pages/respond.ts) instead.
+   */
+  headers?: HeadersInit;
 }
 
 /**
@@ -135,12 +141,22 @@ export interface RenderViewInit {
  * serializes to a Promise; its HTML is streamed once it resolves, so the
  * Response (and the cookies a page attaches to it) is still built
  * synchronously.
+ *
+ * Every screen is rendered for the transaction or session of this browser's
+ * cookie, at a URL that names neither (/login and /consent are the same URL for
+ * every transaction). A stored copy would show one transaction's csrf_token,
+ * login_hint or client to another browser or to a later flow, so by default the
+ * page tells the browser and any intermediary not to store it (RFC 9111
+ * §5.2.2.5). A screen with other caching rules passes its own Cache-Control in
+ * init.headers.
  */
 export function renderView(view: ViewResult, init?: RenderViewInit): Response {
   const html = serializeView(view);
+  const headers = new Headers({ 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' });
+  new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   return new Response(typeof html === 'string' ? html : streamWhenResolved(html), {
     status: init?.status ?? 200,
-    headers: { 'Content-Type': 'text/html; charset=UTF-8' },
+    headers,
   });
 }
 

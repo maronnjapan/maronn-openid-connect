@@ -27,16 +27,19 @@ export function escapeHtml(value: string): string {
  *
  * Every screen is rendered for the binding or session of this browser's cookie,
  * at a URL that names neither. A stored copy would show one browser's
- * csrf_token to another browser or to a later flow, so the page tells the
- * browser and any intermediary not to store it (RFC 9111 §5.2.2.5). Next.js
- * sends the React pages (login, consent) with no-store itself, because they
- * render dynamically, but leaves the headers of a Route Handler to the handler.
+ * csrf_token to another browser or to a later flow, so by default the page
+ * tells the browser and any intermediary not to store it (RFC 9111 §5.2.2.5).
+ * init.headers are set over the defaults, so a screen with other caching rules
+ * passes its own Cache-Control there. The React pages (login, consent,
+ * oidc-error) cannot set response headers, so the headers() of next.config.mjs
+ * send them with the same no-store.
  */
 export function htmlResponse(
   html: string,
-  init: { status?: number; cookies?: readonly string[] } = {},
+  init: { status?: number; cookies?: readonly string[]; headers?: HeadersInit } = {},
 ): Response {
   const headers = new Headers({ 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' });
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value));
   for (const cookie of init.cookies ?? []) {
     headers.append('Set-Cookie', cookie);
   }
@@ -76,7 +79,7 @@ export function formPostPage(action: string, fields: Readonly<Record<string, str
   const inputs = Object.entries(fields)
     .map(([name, value]) => `    <input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}"/>\n`)
     .join('');
-  const response = htmlResponse(
+  return htmlResponse(
     `<!DOCTYPE html>
 <html>
 <head><title>Submit This Form</title></head>
@@ -87,8 +90,6 @@ ${inputs}    <noscript><button type="submit">Continue</button></noscript>
   <script>document.forms[0].submit();</script>
 </body>
 </html>`,
+    { headers: { 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' } },
   );
-  response.headers.set('Cache-Control', 'no-cache, no-store');
-  response.headers.set('Pragma', 'no-cache');
-  return response;
 }

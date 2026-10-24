@@ -62,6 +62,17 @@
 #   そのため各パッケージの最初の 1 回だけは、ローカルから手動 publish するか、
 #   organization 単位の Trusted Publisher 設定を使う必要がある。
 #   2 回目以降は本ワークフローの OIDC publish だけで完結する。
+#
+# 【changesets/action と @changesets/cli は major を揃える】
+#   changesets/action は changeset publish が何を publish したかを CLI の出力から読み取り、
+#   それをもとにタグの push・GitHub Release の作成・published / published-packages 出力を行う。
+#   読み取り方は major ごとに違う。CLI v2 と組む action v1 は stdout の `New tag:` 行を拾い、
+#   CLI v3 と組む action v2 は環境変数 CHANGESETS_OUTPUT のファイルに CLI が書く git-tag イベントを読む
+#   （CLI v3 は `New tag:` 行を出さない）。
+#   組み合わせを外すと publish は成功したまま action が「何も publish されなかった」と判断し、
+#   タグ・Release・provenance 検証が黙って止まる。2026-09-03 に CLI だけが 3 系へ上がってから
+#   7 週間この状態だった（RELEASE.md「@changesets/cli と changesets/action は major を揃えて上げる」）。
+#   組み合わせは `pnpm run test:release-contract` が CI で検査する。
 
 name: Release
 
@@ -83,6 +94,10 @@ jobs:
             contents: write # Version Packages PR の作成・タグ push に必要
             pull-requests: write # Version Packages PR の作成に必要
             id-token: write # npm Trusted Publishing (OIDC) のトークン取得に必須
+        # 下の verify-provenance ジョブが、この run で publish したものを検証するために読む
+        outputs:
+            published: ${{ steps.changesets.outputs.published }}
+            published-packages: ${{ steps.changesets.outputs.published-packages }}
         steps:
             - name: Checkout
               uses: actions/checkout@v7
@@ -114,32 +129,77 @@ jobs:
 
             - name: Create Release PR or Publish to npm
               id: changesets
-              uses: changesets/action@v1
+              # @changesets/cli 3 系と組む major（冒頭の【changesets/action と @changesets/cli は major を揃える】）。
+              # 入出力名は v2 で kebab-case に改名されている（version → version-script、
+              # publishedPackages → published-packages、hasChangesets → has-changesets など）。
+              uses: changesets/action@v2
               with:
                   # 未消化の changeset があれば Version Packages PR を作成/更新する。
-                  version: pnpm run ci:version
+                  version-script: pnpm run ci:version
                   # その PR がマージされ changeset が無くなった push で publish する。
                   # ci:publish は build 後に `changeset publish`（実体は pnpm publish）を実行する。
-                  publish: pnpm run ci:publish
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  # action が渡す CHANGESETS_OUTPUT は pnpm run の環境をそのまま通って changeset publish に届く。
+                  # ci:publish を書き換えるときもこの環境変数を落とさないこと。落とすと action は publish を検出できない。
+                  publish-script: pnpm run ci:publish
+                  # v2 の既定は GitHub API での push だが、v1 と同じ git CLI での push を続ける。
+                  # 変えるのは publish の検出方法だけにして、Version Packages PR のコミットとタグを
+                  # push する経路は v1 で動いていたものから動かさない。
+                  push-with-git-cli: true
+                  # GitHub トークンは github-token 入力の既定値（github.token）を使う。v2 は GITHUB_TOKEN
+                  # 環境変数を設定として読まず、入力と食い違う値が env にあると失敗するので env では渡さない。
 
-            # npm Trusted Publishing automatically creates provenance for public
-            # packages. Verify signatures, then require a verified SLSA provenance
-            # attestation for every exact name/version reported by Changesets.
-            - name: Verify published package provenance
-              if: steps.changesets.outputs.published == 'true'
+            # changesets/action が publish を検出できないと、publish は成功したままタグの push・
+            # GitHub Release の作成・provenance 検証（verify-provenance ジョブ）が 3 つとも黙って飛び、
+            # run は成功で終わる（RELEASE.md「changesets/action が publish を検出したことを検証する」）。
+            # changeset publish は publish したパッケージのタグを HEAD に作るので、それが origin に
+            # push されているかを突き合わせて、検出漏れを赤くする。段階は has-changesets で渡す。
+            - name: Verify changesets/action pushed the release tags
               env:
-                  PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
-              run: node .github/scripts/verify-npm-provenance.mjs
+                  HAS_CHANGESETS: ${{ steps.changesets.outputs.has-changesets }}
+              run: node .github/scripts/verify-release-tags.mjs
 
             # version 段階と publish 段階の分岐が壊れると、Version Packages PR をマージしても
             # publish されないまま run は成功で終わり、npm だけが古いまま誰も気づけない。
             # main のバージョンが registry に出ているかを突き合わせて、その状態を赤くする。
             # publish 段階に入った run では registry を照会しない。changeset publish が成功した時点で
             # publish には到達しており、npm は publish を受け付けてから数分はバージョンを返さないため
-            # （RELEASE.md「publish に到達したことを検証する」）。段階は hasChangesets で渡す。
+            # （RELEASE.md「publish に到達したことを検証する」）。段階は has-changesets で渡す。
             - name: Verify npm reflects the versions on main
               env:
-                  HAS_CHANGESETS: ${{ steps.changesets.outputs.hasChangesets }}
+                  HAS_CHANGESETS: ${{ steps.changesets.outputs.has-changesets }}
               run: node .github/scripts/verify-release-published.mjs
+
+    # provenance は publish の直後には検証できない。npm は publish を受け付けてから packument に
+    # 載せるまで数分かかり（実測 1〜7 分）、載る前は npm install も npm audit signatures も
+    # そのバージョンを見つけられない。そこで release ジョブとは別にして、registry に載るのを待ってから
+    # 検証する（RELEASE.md「registry に載るのを待ってから検証する」）。
+    # 待ちきれずに落ちたら、このジョブだけを re-run（このジョブの Re-run job）する。publish をやり直さずに、
+    # release ジョブが出した同じ published-packages を検証し直せる。release ジョブごと re-run すると、
+    # changeset publish は何も publish しないので published が立たず、このジョブは skipped になる。
+    # release ジョブの後半のステップが落ちても、publish したものは検証する（!cancelled()）。
+    verify-provenance:
+        needs: release
+        if: ${{ !cancelled() && needs.release.outputs.published == 'true' }}
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version: "22"
+
+            - name: Update npm to a pinned stable version
+              run: npm install -g npm@11.17.0
+
+            # npm Trusted Publishing automatically creates provenance for public
+            # packages. Verify signatures, then require a verified SLSA provenance
+            # attestation for every exact name/version reported by Changesets.
+            - name: Verify published package provenance
+              env:
+                  PUBLISHED_PACKAGES: ${{ needs.release.outputs.published-packages }}
+              run: node .github/scripts/verify-npm-provenance.mjs

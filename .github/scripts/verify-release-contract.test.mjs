@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { parseWorkflow } from './verify-ci-gate.mjs';
 import {
+  assertChangesetsActionMatchesCli,
   assertCoreBreakingChangeReleasesCoreDependents,
   assertCorePeerDependencyShape,
   assertCorePeerRangeCoversNextCore,
   assertExperimentalReleasesAreAlwaysPatch,
   assertPrivatePackagesAreNotVersioned,
+  collectStepOutputReferences,
   CORE_DEPENDENT_PACKAGES,
   computeNextVersion,
+  findChangesetsActionStep,
   parseChangesetBumps,
+  parseChangesetsActionMajor,
+  parseChangesetsCliMajor,
   parseMinimumCoreVersion,
   resolveNextCoreVersion,
 } from './verify-release-contract.mjs';
@@ -495,5 +501,194 @@ describe('assertPrivatePackagesAreNotVersioned', () => {
       () => assertPrivatePackagesAreNotVersioned({ privatePackages: { tag: false } }),
       /`privatePackages\.version` を false にしてください/,
     );
+  });
+});
+
+/** release.yml の changesets/action まわりだけを抜き出した workflow を組み立てる。`id: null` で id を省く。 */
+const releaseWorkflowText = ({
+  uses = 'changesets/action@v2',
+  id = 'changesets',
+  withLines = [
+    'version-script: pnpm run ci:version',
+    'publish-script: pnpm run ci:publish',
+    'push-with-git-cli: true',
+  ],
+  outputReferences = ['published', 'published-packages', 'has-changesets'],
+} = {}) =>
+  [
+    'name: Release',
+    '',
+    'jobs:',
+    '  release:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - name: Checkout',
+    '        uses: actions/checkout@v7',
+    '',
+    '      - name: Create Release PR or Publish to npm',
+    ...(id === null ? [] : [`        id: ${id}`]),
+    `        uses: ${uses}`,
+    '        with:',
+    '          # 未消化の changeset があれば Version Packages PR を作成/更新する。',
+    ...withLines.map((line) => `          ${line}`),
+    '',
+    ...outputReferences.flatMap((name, index) => [
+      `      - name: Read output ${index}`,
+      '        env:',
+      `          VALUE: \${{ steps.changesets.outputs.${name} }}`,
+      '        run: node check.mjs',
+      '',
+    ]),
+  ].join('\n');
+
+const assertPairing = ({ cliRange = '^3.0.2', ...workflowOptions } = {}) => {
+  const workflowText = releaseWorkflowText(workflowOptions);
+  assertChangesetsActionMatchesCli({ cliRange, workflow: parseWorkflow(workflowText), workflowText });
+};
+
+const V1_WITH_LINES = ['version: pnpm run ci:version', 'publish: pnpm run ci:publish'];
+const V1_OUTPUT_REFERENCES = ['published', 'publishedPackages', 'hasChangesets'];
+
+describe('parseChangesetsCliMajor', () => {
+  it('should read the major of a caret range', () => {
+    assert.equal(parseChangesetsCliMajor('^3.0.2'), 3);
+  });
+
+  it('should read the major of a tilde range and an exact version', () => {
+    assert.equal(parseChangesetsCliMajor('~2.31.1'), 2);
+    assert.equal(parseChangesetsCliMajor('3.0.3'), 3);
+  });
+
+  it('should reject a range that spans several majors', () => {
+    assert.throws(() => parseChangesetsCliMajor('>=2.0.0 <4.0.0'), /major を読み取れません/);
+  });
+
+  it('should reject a missing declaration', () => {
+    assert.throws(() => parseChangesetsCliMajor(undefined), /major を読み取れません/);
+  });
+});
+
+describe('parseChangesetsActionMajor', () => {
+  it('should read the major of a major ref and of a full version ref', () => {
+    assert.equal(parseChangesetsActionMajor('changesets/action@v2'), 2);
+    assert.equal(parseChangesetsActionMajor('changesets/action@v2.1.2'), 2);
+  });
+
+  it('should reject a commit SHA because its major cannot be read', () => {
+    assert.throws(
+      () => parseChangesetsActionMajor('changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51'),
+      /major を読み取れません/,
+    );
+  });
+});
+
+describe('findChangesetsActionStep', () => {
+  it('should find the step that uses changesets/action', () => {
+    const step = findChangesetsActionStep(parseWorkflow(releaseWorkflowText()));
+
+    assert.equal(step.id, 'changesets');
+    assert.equal(step.uses, 'changesets/action@v2');
+  });
+
+  // sub-action（changesets/action/publish など）へ移すと、この検査は何も見なくなる。
+  // 黙って通さずに、検査を書き換えるよう求める。
+  it('should reject a workflow without the changesets/action step', () => {
+    const workflow = parseWorkflow(releaseWorkflowText({ uses: 'changesets/action/publish@v2' }));
+
+    assert.throws(() => findChangesetsActionStep(workflow), /changesets\/action を使うステップがありません/);
+  });
+});
+
+describe('collectStepOutputReferences', () => {
+  it('should collect each referenced output name once', () => {
+    const text = [
+      "if: steps.changesets.outputs.published == 'true'",
+      'PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}',
+      'HAS_CHANGESETS: ${{ steps.changesets.outputs.has-changesets }}',
+      'OTHER: ${{ steps.changesets.outputs.published }}',
+    ].join('\n');
+
+    assert.deepEqual(collectStepOutputReferences(text, 'changesets'), [
+      'published',
+      'published-packages',
+      'has-changesets',
+    ]);
+  });
+
+  // 改名の経緯をコメントに残しても、存在しない出力の参照として数えない。
+  it('should skip comment lines', () => {
+    const text = '# v1 の steps.changesets.outputs.publishedPackages は v2 で改名された\n';
+
+    assert.deepEqual(collectStepOutputReferences(text, 'changesets'), []);
+  });
+
+  it('should not collect the outputs of another step', () => {
+    assert.deepEqual(collectStepOutputReferences('${{ steps.build.outputs.published }}', 'changesets'), []);
+  });
+});
+
+describe('assertChangesetsActionMatchesCli', () => {
+  it('should accept changesets/action@v2 with @changesets/cli 3 and the v2 inputs and outputs', () => {
+    assert.doesNotThrow(() => assertPairing());
+  });
+
+  it('should accept changesets/action@v1 with @changesets/cli 2 and the v1 inputs and outputs', () => {
+    assert.doesNotThrow(() =>
+      assertPairing({
+        cliRange: '^2.31.1',
+        uses: 'changesets/action@v1',
+        withLines: V1_WITH_LINES,
+        outputReferences: V1_OUTPUT_REFERENCES,
+      }),
+    );
+  });
+
+  // 2026-09-03 に Dependabot が @changesets/cli だけを 3 系に上げ、changesets/action@v1 のまま
+  // CLI 3 の publish を検出できない状態が 7 週間続いた。その PR を赤くする。
+  it('should reject changesets/action@v1 with @changesets/cli 3', () => {
+    assert.throws(
+      () =>
+        assertPairing({
+          uses: 'changesets/action@v1',
+          withLines: V1_WITH_LINES,
+          outputReferences: V1_OUTPUT_REFERENCES,
+        }),
+      /changesets\/action@v1 を使っていますが、@changesets\/cli v3 と組むのは changesets\/action@v2 です/,
+    );
+  });
+
+  it('should reject changesets/action@v2 with @changesets/cli 2', () => {
+    assert.throws(
+      () => assertPairing({ cliRange: '^2.31.1' }),
+      /@changesets\/cli v2 と組むのは changesets\/action@v1 です/,
+    );
+  });
+
+  // 次の major の組み合わせは、action 側の対応を確かめるまで分からない。黙って通さない。
+  it('should reject a @changesets/cli major that has no registered changesets/action', () => {
+    assert.throws(
+      () => assertPairing({ cliRange: '^4.0.0' }),
+      /@changesets\/cli v4 と組む changesets\/action の major が登録されていません/,
+    );
+  });
+
+  // v1 の入力名のまま v2 に上げると、publish-script が渡らない。
+  it('should reject an input that changesets/action@v2 does not have', () => {
+    assert.throws(
+      () => assertPairing({ withLines: ['version: pnpm run ci:version', 'publish: pnpm run ci:publish'] }),
+      /changesets\/action@v2 に無い入力を渡しています: version, publish/,
+    );
+  });
+
+  // v1 の出力名のままだと空文字列が届き、provenance 検証の対象が空になる。
+  it('should reject an output that changesets/action@v2 does not have', () => {
+    assert.throws(
+      () => assertPairing({ outputReferences: ['published', 'publishedPackages', 'hasChangesets'] }),
+      /changesets\/action@v2 に無い出力を参照しています: publishedPackages, hasChangesets/,
+    );
+  });
+
+  it('should reject a changesets/action step without an id', () => {
+    assert.throws(() => assertPairing({ id: null, outputReferences: [] }), /ステップに id がありません/);
   });
 });

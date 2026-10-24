@@ -24,7 +24,7 @@
  *   npm は publish を受け付けてから packument に載せるまで数分かかり（実測 1〜7 分）、
  *   直後に照会すると publish に成功した run を落としてしまう。遅れに上限が無いので、
  *   待って引き直す方式では解消しない。
- *   段階は changesets/action の `hasChangesets` 出力で判断する（`false` が publish 段階）。
+ *   段階は changesets/action の `has-changesets` 出力で判断する（`false` が publish 段階）。
  * - version 段階に入った run では、main のバージョンはそれより前の publish 段階で
  *   npm に出ているはずなので、registry を 1 回照会して突き合わせる。
  * - main の commit に未消化の changeset が残っているときは検査しない。version 段階が
@@ -50,17 +50,18 @@ export function parsePublishedVersions(registryDocument) {
 }
 
 /**
- * changesets/action の `hasChangesets` 出力から、この run が入った段階を読む。
+ * changesets/action の `has-changesets` 出力から、この run が入った段階を読む。
  * action は changeset が 1 つも無いときだけ publish スクリプトを実行する。
  * 値が読めないとき（出力名が変わったなど）に検査を黙って飛ばすと publish 漏れを見逃すので落とす。
+ * 出力名は changesets/action v2 で `hasChangesets` から改名された。
  */
 export function parseReleaseStage(hasChangesets) {
   if (hasChangesets === 'false') return 'publish';
   if (hasChangesets === 'true') return 'version';
 
   throw new Error(
-    `changesets/action の hasChangesets 出力を読めません: ${JSON.stringify(hasChangesets)}\n` +
-      'release.yml の "Verify npm reflects the versions on main" に HAS_CHANGESETS として渡してください。',
+    `changesets/action の has-changesets 出力を読めません: ${JSON.stringify(hasChangesets)}\n` +
+      'release.yml でこの検証ステップに steps.changesets.outputs.has-changesets を HAS_CHANGESETS として渡してください。',
   );
 }
 

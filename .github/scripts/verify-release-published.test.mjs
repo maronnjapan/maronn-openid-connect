@@ -20,9 +20,9 @@ describe('parseReleaseStage', () => {
   });
 
   // 出力名が変わるなどして値が届かないまま検査を飛ばすと、publish 漏れを黙って見逃す。
-  it('should throw when the hasChangesets output did not arrive', () => {
-    assert.throws(() => parseReleaseStage(undefined), /hasChangesets 出力を読めません/);
-    assert.throws(() => parseReleaseStage(''), /hasChangesets 出力を読めません/);
+  it('should throw when the has-changesets output did not arrive', () => {
+    assert.throws(() => parseReleaseStage(undefined), /has-changesets 出力を読めません/);
+    assert.throws(() => parseReleaseStage(''), /has-changesets 出力を読めません/);
   });
 });
 

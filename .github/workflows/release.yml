@@ -94,6 +94,10 @@ jobs:
             contents: write # Version Packages PR の作成・タグ push に必要
             pull-requests: write # Version Packages PR の作成に必要
             id-token: write # npm Trusted Publishing (OIDC) のトークン取得に必須
+        # 下の verify-provenance ジョブが、この run で publish したものを検証するために読む
+        outputs:
+            published: ${{ steps.changesets.outputs.published }}
+            published-packages: ${{ steps.changesets.outputs.published-packages }}
         steps:
             - name: Checkout
               uses: actions/checkout@v7
@@ -144,22 +148,11 @@ jobs:
                   # GitHub トークンは github-token 入力の既定値（github.token）を使う。v2 は GITHUB_TOKEN
                   # 環境変数を設定として読まず、入力と食い違う値が env にあると失敗するので env では渡さない。
 
-            # npm Trusted Publishing automatically creates provenance for public
-            # packages. Verify signatures, then require a verified SLSA provenance
-            # attestation for every exact name/version reported by Changesets.
-            - name: Verify published package provenance
-              if: steps.changesets.outputs.published == 'true'
-              env:
-                  PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
-              run: node .github/scripts/verify-npm-provenance.mjs
-
             # changesets/action が publish を検出できないと、publish は成功したままタグの push・
-            # GitHub Release の作成・上の provenance 検証が 3 つとも黙って飛び、run は成功で終わる
-            # （RELEASE.md「changesets/action が publish を検出したことを検証する」）。
+            # GitHub Release の作成・provenance 検証（verify-provenance ジョブ）が 3 つとも黙って飛び、
+            # run は成功で終わる（RELEASE.md「changesets/action が publish を検出したことを検証する」）。
             # changeset publish は publish したパッケージのタグを HEAD に作るので、それが origin に
             # push されているかを突き合わせて、検出漏れを赤くする。段階は has-changesets で渡す。
-            # provenance 検証より後に置くのは、検出はできてタグの push だけが失敗した run でも
-            # provenance 検証を走らせるため。
             - name: Verify changesets/action pushed the release tags
               env:
                   HAS_CHANGESETS: ${{ steps.changesets.outputs.has-changesets }}
@@ -175,3 +168,38 @@ jobs:
               env:
                   HAS_CHANGESETS: ${{ steps.changesets.outputs.has-changesets }}
               run: node .github/scripts/verify-release-published.mjs
+
+    # provenance は publish の直後には検証できない。npm は publish を受け付けてから packument に
+    # 載せるまで数分かかり（実測 1〜7 分）、載る前は npm install も npm audit signatures も
+    # そのバージョンを見つけられない。そこで release ジョブとは別にして、registry に載るのを待ってから
+    # 検証する（RELEASE.md「registry に載るのを待ってから検証する」）。
+    # 待ちきれずに落ちたら、このジョブだけを re-run（このジョブの Re-run job）する。publish をやり直さずに、
+    # release ジョブが出した同じ published-packages を検証し直せる。release ジョブごと re-run すると、
+    # changeset publish は何も publish しないので published が立たず、このジョブは skipped になる。
+    # release ジョブの後半のステップが落ちても、publish したものは検証する（!cancelled()）。
+    verify-provenance:
+        needs: release
+        if: ${{ !cancelled() && needs.release.outputs.published == 'true' }}
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version: "22"
+
+            - name: Update npm to a pinned stable version
+              run: npm install -g npm@11.17.0
+
+            # npm Trusted Publishing automatically creates provenance for public
+            # packages. Verify signatures, then require a verified SLSA provenance
+            # attestation for every exact name/version reported by Changesets.
+            - name: Verify published package provenance
+              env:
+                  PUBLISHED_PACKAGES: ${{ needs.release.outputs.published-packages }}
+              run: node .github/scripts/verify-npm-provenance.mjs

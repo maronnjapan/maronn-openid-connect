@@ -18,6 +18,15 @@
  * - 比較対象は main の commit に入っている package.json（`git show <sha>:...`）。
  *   changesets/action は version 段階で release ブランチへ checkout するため、
  *   ワークツリーを読むとバンプ後のバージョンを読んでしまう。
+ * - この run が publish 段階に入ったときは registry を照会しない。changeset publish は
+ *   registry に無いバージョンをすべて publish し、1 つでも失敗すれば changesets/action の
+ *   ステップごと落ちるので、ここまで来た時点で publish には到達している。
+ *   npm は publish を受け付けてから packument に載せるまで数分かかり（実測 1〜7 分）、
+ *   直後に照会すると publish に成功した run を落としてしまう。遅れに上限が無いので、
+ *   待って引き直す方式では解消しない。
+ *   段階は changesets/action の `hasChangesets` 出力で判断する（`false` が publish 段階）。
+ * - version 段階に入った run では、main のバージョンはそれより前の publish 段階で
+ *   npm に出ているはずなので、registry を 1 回照会して突き合わせる。
  * - main の commit に未消化の changeset が残っているときは検査しない。version 段階が
  *   正しい状態であり、publish は次の Version Packages PR のマージまで起きない。
  *   changeset も commit から読む。ワークツリーには `Ensure experimental release changeset`
@@ -25,7 +34,6 @@
  * - registry のほうが新しいのは publish 漏れではないので通す。
  * - publish 実績がまったく無い package は対象外。初回 publish は Trusted Publishing の
  *   chicken-and-egg で手動になる（RELEASE.md「初回 publish の注意」）。
- * - publish 直後は packument への反映に遅れがあるため、見つからないうちは間隔を空けて引き直す。
  */
 import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
@@ -34,13 +42,26 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REGISTRY_ORIGIN = 'https://registry.npmjs.org';
 const PACKAGE_GLOB_ROOT = 'packages';
-/** publish 直後の packument 反映待ち。合計 35 秒まで引き直す。 */
-const REGISTRY_RETRY_DELAYS_MS = [5000, 10000, 20000];
 
 /** registry のパッケージドキュメントから publish 済みバージョンを取り出す。未公開なら空配列。 */
 export function parsePublishedVersions(registryDocument) {
   const versions = registryDocument?.versions;
   return versions === undefined || versions === null ? [] : Object.keys(versions);
+}
+
+/**
+ * changesets/action の `hasChangesets` 出力から、この run が入った段階を読む。
+ * action は changeset が 1 つも無いときだけ publish スクリプトを実行する。
+ * 値が読めないとき（出力名が変わったなど）に検査を黙って飛ばすと publish 漏れを見逃すので落とす。
+ */
+export function parseReleaseStage(hasChangesets) {
+  if (hasChangesets === 'false') return 'publish';
+  if (hasChangesets === 'true') return 'version';
+
+  throw new Error(
+    `changesets/action の hasChangesets 出力を読めません: ${JSON.stringify(hasChangesets)}\n` +
+      'release.yml の "Verify npm reflects the versions on main" に HAS_CHANGESETS として渡してください。',
+  );
 }
 
 export function selectUnpublishedPackages(packages, publishedVersionsByName) {
@@ -61,11 +82,23 @@ export function selectPendingChangesets(changesetDirectoryEntries) {
   return changesetDirectoryEntries.filter((path) => path.endsWith('.md') && !path.endsWith('/README.md'));
 }
 
-export function assertMainVersionsArePublished({ packages, publishedVersionsByName, pendingChangesets }) {
+/** registry と突き合わせずに通してよい理由を返す。突き合わせる必要があるときは null。 */
+export function findReasonToSkipRegistryCheck({ stage, pendingChangesets }) {
+  // changeset publish は registry に無いバージョンをすべて publish し、1 つでも失敗すれば
+  // changesets/action のステップごと落ちる。publish 段階でここまで来たなら publish には到達している。
+  // npm は publish を受け付けてから数分はバージョンを返さないので、照会すると成功した run を落とす。
+  if (stage === 'publish') {
+    return 'この run は publish 段階に入り changeset publish が成功しています（npm の公開は数分遅れるため照会しない）';
+  }
+
   // changeset が残っているうちは version 段階が正しい。publish は次の Version Packages PR の
   // マージまで起きないので、この時点でバージョンが npm より先に進んでいても異常ではない。
-  if (pendingChangesets.length > 0) return;
+  if (pendingChangesets.length > 0) return '未消化の changeset があるため version 段階が正しい状態です';
 
+  return null;
+}
+
+export function assertMainVersionsArePublished({ packages, publishedVersionsByName }) {
   const unpublished = selectUnpublishedPackages(packages, publishedVersionsByName);
   if (unpublished.length === 0) return;
 
@@ -75,9 +108,11 @@ export function assertMainVersionsArePublished({ packages, publishedVersionsByNa
 
   throw new Error(
     `main のバージョンが npm に出ていません: ${detail}\n` +
-      'main に未消化の changeset は無いので、この push は publish 段階に入るはずでした。\n' +
-      'release job の "Ensure experimental release changeset" が changeset を作り直して' +
-      ' version 段階へ入り直していないかを確認してください' +
+      'main に未消化の changeset は無いので、このバージョンは Version Packages PR のマージで走った' +
+      ' Release の publish 段階で npm に出ているはずです。\n' +
+      'その run が version 段階に入っていたら、"Ensure experimental release changeset" が changeset を' +
+      '作り直しています。\n' +
+      'publish した直後なら npm の公開待ち（数分）なので、npm view で出たことを確かめてから re-run してください' +
       '（RELEASE.md「publish に到達したことを検証する」）。',
   );
 }
@@ -136,44 +171,26 @@ async function fetchPublishedVersions(name) {
   return parsePublishedVersions(await response.json());
 }
 
-/**
- * publish 直後は packument への反映に少し遅れがある。1 回の照会で「無い」と断じると
- * publish が成功した run を落としてしまうので、見つからないうちは間隔を空けて引き直す。
- */
-async function fetchPublishedVersionsUntilSettled(packages) {
-  let publishedVersionsByName = {};
-
-  for (const [attempt, delay] of [0, ...REGISTRY_RETRY_DELAYS_MS].entries()) {
-    if (attempt > 0) {
-      console.log(`npm registry に未反映のバージョンがあるため ${delay / 1000} 秒待って引き直します`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-
-    publishedVersionsByName = Object.fromEntries(
-      await Promise.all(packages.map(async ({ name }) => [name, await fetchPublishedVersions(name)])),
-    );
-
-    if (selectUnpublishedPackages(packages, publishedVersionsByName).length === 0) break;
-  }
-
-  return publishedVersionsByName;
+async function fetchPublishedVersionsByName(packages) {
+  return Object.fromEntries(
+    await Promise.all(packages.map(async ({ name }) => [name, await fetchPublishedVersions(name)])),
+  );
 }
 
 async function verifyReleasePublished() {
   const repositoryRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
   const commit = process.env.GITHUB_SHA ?? 'HEAD';
+  const stage = parseReleaseStage(process.env.HAS_CHANGESETS);
 
-  const packages = readPublishablePackagesAt(repositoryRoot, commit);
   const pendingChangesets = selectPendingChangesets(listChangesetEntriesAt(repositoryRoot, commit));
-  const publishedVersionsByName =
-    pendingChangesets.length > 0 ? {} : await fetchPublishedVersionsUntilSettled(packages);
-
-  assertMainVersionsArePublished({ packages, publishedVersionsByName, pendingChangesets });
-
-  if (pendingChangesets.length > 0) {
-    console.log('Release published check skipped: 未消化の changeset があるため version 段階が正しい状態です');
+  const reasonToSkip = findReasonToSkipRegistryCheck({ stage, pendingChangesets });
+  if (reasonToSkip !== null) {
+    console.log(`Release published check skipped: ${reasonToSkip}`);
     return;
   }
+
+  const packages = readPublishablePackagesAt(repositoryRoot, commit);
+  assertMainVersionsArePublished({ packages, publishedVersionsByName: await fetchPublishedVersionsByName(packages) });
 
   console.log(
     `Release published verified: ${packages.map(({ name, version }) => `${name}@${version}`).join(', ')}`,

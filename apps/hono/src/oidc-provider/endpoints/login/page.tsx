@@ -23,8 +23,9 @@ export const loginPage = new Hono<{ Variables: Record<string, any> }>();
 
 /**
  * Render the login form. Swap the view, return a framework-rendered Response,
- * or redirect to a UI of your own — here only. A Response of your own keeps
- * Cache-Control: no-store, as renderView() sets it (views.tsx says why).
+ * or redirect to a UI of your own — here only. renderView() answers with
+ * Cache-Control: no-store unless its headers say otherwise (views.tsx says
+ * why); a Response of your own keeps it too.
  */
 export function renderLoginPage(c: any, params: LoginPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;

@@ -179,6 +179,25 @@ OP がブラウザを止める場面は、Next.js の機能で表します。
 
 これらの画面はどれも `_oidc-provider/error-view.tsx` の `ErrorView` で描くので、見た目はそこを書き換えれば揃って変わります。device / CIBA / RP-Initiated Logout の画面のエラーは、ステータスコード（403 / 429 など）を保つため、画面と同じく `_oidc-provider/html.ts` の HTML で返します。
 
+画面は、ブラウザにも中間のキャッシュにも保存させません。Route Handler が返す画面は、`_oidc-provider/html.ts` の `htmlResponse()` が `Cache-Control: no-store` を付けます（`headers` を渡せば上書きできます）。ログイン、同意、`oidc-error` の各ページは React のページなので、ページからはレスポンスヘッダーを設定できません。Next.js が動的に描くページに `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` を付けるので、そのままでも保存はされません。ほかの画面と同じ `no-store` を明示するには、プロジェクトの `next.config.mjs` の `headers()` で指定します。Next.js は、ここで指定した `Cache-Control` を動的なページに付ける値より優先します。
+
+```js
+// next.config.mjs
+const NO_STORE_PAGES = ['/login', '/consent', '/oidc-error'];
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  async headers() {
+    return NO_STORE_PAGES.map((source) => ({
+      source,
+      headers: [{ key: 'Cache-Control', value: 'no-store' }],
+    }));
+  },
+};
+
+export default nextConfig;
+```
+
 Next.js は Route Handler とページ・Server Action（と `instrumentation.ts`）を別々のモジュール層にバンドルします。どの層からも同じインスタンスを参照する必要がある署名鍵、データ、機能の設定は、`globalThis` に保持しています（署名鍵は `provider.ts`、`--db` 無しのデータは `_oidc-provider/db/database.ts`、機能の設定は `shared.ts` の `shared()`）。そのため、`instrumentation.ts` で書き換えた機能の設定もリクエストに届きます。
 
 設定は環境変数から読みます。
@@ -196,6 +215,8 @@ Next.js は Route Handler とページ・Server Action（と `instrumentation.ts
 ### Screens (hono/jsx)
 
 Hono / Express / Fastify の出力は TSX 前提で生成されます。画面のマークアップ（`views.tsx`、機能の画面は `features/<feature-id>/views.tsx`）は [hono/jsx](https://hono.dev/docs/guides/jsx) のコンポーネントで、画面を描く `endpoints/login/page.tsx` / `endpoints/consent/page.tsx` / `pages/errors.tsx`（機能有効時は device / CIBA / RP-Initiated Logout の `page.tsx`）も `.tsx` になり、`renderView(<views.loginPage {...params} />)` のように JSX でビューを描画します。自分ではビューを JSX で描かない `endpoints/authorize/page.ts`、google-login の `features/google-login/endpoints/login-google/page.ts`（どちらもエラー画面は `pages/errors.tsx` に任せる）と `pages/respond.ts` は `.ts` のままです。Express と Fastify の画面も hono/jsx で描くので、`hono` のインストールが要ります。JSX は `{...}` で埋め込んだ値をすべてエスケープするので、`login_hint` や `error_description` のような信頼できない値も手でエスケープせずに描画できます。
+
+画面はどれも、ブラウザの Cookie が指すトランザクションやセッションのために描きますが、URL にはそれが現れません（`/login` と `/consent` はどの認可リクエストでも同じ URL です）。保存された画面が別のトランザクションやブラウザに `csrf_token` や `login_hint` を見せないよう、`renderView()` は画面を `Cache-Control: no-store` で返します。キャッシュの扱いを変える画面では、`renderView(<views.loginPage {...params} />, { headers: { 'Cache-Control': '...' } })` のように `headers` を渡して上書きします。
 
 ビューは JSX 要素を返すコンポーネントです。`createApp` / `applyOidc` の `views` オプションで差し替えるときも、JSX で書きます。
 

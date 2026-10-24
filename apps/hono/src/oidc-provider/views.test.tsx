@@ -26,6 +26,16 @@ describe('renderView', () => {
     expect(renderView(<p>hello</p>).headers.get('Cache-Control')).toBe('no-store');
   });
 
+  it('should set the headers of init over the defaults', () => {
+    const response = renderView(<p>hello</p>, {
+      headers: { 'Cache-Control': 'private, max-age=60', 'X-Frame-Options': 'DENY' },
+    });
+
+    expect(response.headers.get('Cache-Control')).toBe('private, max-age=60');
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(response.headers.get('Content-Type')).toBe('text/html; charset=UTF-8');
+  });
+
   it('should stream the HTML of a view that contains an async component once it resolves', async () => {
     const response = renderView(
       <div>

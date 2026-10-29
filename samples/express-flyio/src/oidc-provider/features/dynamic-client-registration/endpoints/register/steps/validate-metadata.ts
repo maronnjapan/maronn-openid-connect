@@ -8,7 +8,7 @@ import { supportedResponseTypes } from '../../../../../endpoints/authorize/respo
 import { step } from '../../../../../endpoints/step.js';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../../../../scopes.js';
 import { features } from '../../../../enabled.js';
-import { tokenGrantsOf } from '../../../../feature.js';
+import { discoveryOf, tokenGrantsOf } from '../../../../feature.js';
 import type { DynamicClientRegistrationConfig } from '../../../config.js';
 
 export const meta = step({
@@ -19,7 +19,7 @@ export const meta = step({
   label: 'Validate the metadata and build the client',
   spec: 'RFC 7591 §2 / §2.1',
   function: 'validateRegistrationMetadata',
-  calls: ['supportedResponseTypes', 'tokenGrantsOf', 'getJwaAlgorithm', 'validateClientMetadata', 'buildRegisteredClient'],
+  calls: ['supportedResponseTypes', 'tokenGrantsOf', 'discoveryOf', 'getJwaAlgorithm', 'validateClientMetadata', 'buildRegisteredClient'],
   consumes: ['metadata'],
   produces: ['client'],
   removable: false,
@@ -43,6 +43,11 @@ export const meta = step({
  *   standard and the declared ones
  * - id_token_signed_response_alg / userinfo_signed_response_alg: the algs of
  *   the registered signing keys, as discovery advertises them
+ * - request_uris: https URLs (loopback http for development) the client may
+ *   use as request_uri (OIDC Core 1.0 §6.2); the OP fetches them only at
+ *   authorization time, never here
+ * - request_object_signing_alg: the algs the request-object feature advertises
+ *   (request_object_signing_alg_values_supported), RS256 without the feature
  * - the custom metadata of the registration config (config.ts)
  *
  * Unknown metadata is silently ignored (§2 MUST), and every error_description
@@ -61,9 +66,23 @@ export function validateRegistrationMetadata(
     scopes: registrableScopes(),
     idTokenSigningAlgValuesSupported: signingAlgsOf(c.get('idTokenSigningKeys')),
     userinfoSigningAlgValuesSupported: signingAlgsOf(c.get('userinfoSigningKeys')),
+    requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs(c),
     customMetadata: config.customClientMetadata,
   });
   return buildRegisteredClient(validated);
+}
+
+/**
+ * The request_object_signing_alg values a registration may name: what the
+ * request-object feature advertises as request_object_signing_alg_values_supported
+ * (RS256, and none while unsigned Request Objects are accepted), so a client
+ * cannot register an alg the authorization endpoint would then reject. RS256
+ * alone without the feature.
+ */
+function requestObjectSigningAlgs(c: any): readonly string[] {
+  const config = c.get('config');
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_object_signing_alg_values_supported'];
+  return Array.isArray(advertised) ? (advertised as string[]) : ['RS256'];
 }
 
 /**

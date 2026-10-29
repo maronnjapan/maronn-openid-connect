@@ -28,7 +28,7 @@ HTTP 配線込みの OP を手早く立てたい場合は、[`@maronn-openid-con
 - RFC 7662 Token Introspection
 - RFC 7009 Token Revocation
 - RFC 9068 JWT Access Token（`jwt` 形式選択時）
-- OIDC Core 1.0 §6.1 Request Object（by value・署名付き JWS。`request_uri` は非対応として仕様通り `request_uri_not_supported` を返す）
+- OIDC Core 1.0 §6.1 / §6.2 Request Object（by value の `request` と by reference の `request_uri`。署名付き JWS を、クライアントが登録した公開鍵で検証する。`request_uri` は `validateRequestUri` で検査し（既定では登録した `request_uris` との完全一致を要する）、`fetchRequestObjectByReference` で GET する。`request_uri` を解決しない構成では仕様通り `request_uri_not_supported` を返す）
 
 ## 提供機能（API 概要）
 

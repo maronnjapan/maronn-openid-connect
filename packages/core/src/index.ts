@@ -103,10 +103,19 @@ export type {
 export {
   parseRequestObject,
   RequestObjectError,
+  // OIDC Core 1.0 §6.2: Request Object passed by reference (request_uri)
+  validateRequestUri,
+  fetchRequestObjectByReference,
+  RequestUriError,
+  REQUEST_URI_MAX_LENGTH,
+  DEFAULT_REQUEST_OBJECT_MAX_BYTES,
+  DEFAULT_REQUEST_URI_FETCH_TIMEOUT_MS,
 } from './request-object.js';
 
 export type {
   ParseRequestObjectOptions,
+  ValidateRequestUriOptions,
+  FetchRequestObjectOptions,
 } from './request-object.js';
 
 export type {
@@ -114,6 +123,7 @@ export type {
   ClientInfo,
   ClientResolver,
   ResolvedRequestObjectParams,
+  ResolveRequestUriOptions,
   ValidatedAuthorizationRequest,
   OfflineAccessGrantedCallback,
 } from './authorization-request.js';

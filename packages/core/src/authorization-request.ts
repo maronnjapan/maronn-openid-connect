@@ -6,7 +6,13 @@ import { parseAcrValues } from './acr.js';
 import { clientAllowsRefreshTokenGrant } from './client-grant-types.js';
 import { sanitizeErrorDescription } from './error-utils.js';
 import { isLoopbackHostname } from './loopback.js';
-import { parseRequestObject, RequestObjectError } from './request-object.js';
+import {
+  fetchRequestObjectByReference,
+  parseRequestObject,
+  RequestObjectError,
+  RequestUriError,
+  validateRequestUri,
+} from './request-object.js';
 import {
   normalizeResponseType,
   responseTypeIncludes,
@@ -81,9 +87,14 @@ export interface AuthorizationRequestParams {
    */
   request?: string;
   /**
-   * OIDC Core 1.0 §6.2: Request Object passed by reference. Unsupported here
-   * (`request_uri_parameter_supported` is false), so a present `request_uri` is
-   * rejected with `request_uri_not_supported` (§6.3).
+   * OIDC Core 1.0 §6.2: Request Object passed by reference, an https URL the OP
+   * fetches the Request Object from. Supported when the caller hands
+   * resolveRequestObjectParams the `requestUri` option: the URL is validated
+   * (and, by default, matched against the `request_uris` the client
+   * registered), fetched with a GET, and the retrieved JWT is verified exactly
+   * as one passed by value. Without the option a present `request_uri` is
+   * rejected with `request_uri_not_supported` (§6.3). A pushed request_uri of
+   * RFC 9126 (a URN) is resolved before this by the PAR feature.
    */
   request_uri?: string;
   /**
@@ -151,6 +162,25 @@ export interface ClientInfo {
    * `default_max_age` は OPTIONAL なメタデータであり、未指定の場合はフォールバックを行わない。
    */
   defaultMaxAge?: number;
+  /**
+   * クライアント登録メタデータ `request_uris`（OIDC Dynamic Client Registration 1.0 §2）:
+   * このクライアントが認可リクエストの `request_uri`（OIDC Core 1.0 §6.2）に使う
+   * と事前登録した URL の一覧。`require_request_uri_registration` を有効にした OP
+   * （{@link resolveRequestObjectParams} の `requestUri.requireRegistration`）は、
+   * この一覧とフラグメントを含めて完全一致する `request_uri` だけを取得しに行く。
+   * 省略時は何も登録していない扱いで、事前登録を要する OP ではそのクライアントは
+   * `request_uri` を使えない。
+   */
+  requestUris?: string[];
+  /**
+   * クライアント登録メタデータ `request_object_signing_alg`（OIDC Dynamic Client
+   * Registration 1.0 §2）: このクライアントの Request Object（by value / by
+   * reference）に必須の JWS alg。登録すると、その alg で署名されていない Request
+   * Object は拒否する（同 §2: "All Request Objects from this Client MUST be
+   * rejected, if not signed with this algorithm"）。`none` を登録したクライアントは
+   * 署名無しの Request Object だけを送れる。省略時は OP が受理するどの alg でもよい。
+   */
+  requestObjectSigningAlg?: string;
 }
 
 /**
@@ -847,16 +877,50 @@ export interface ResolvedRequestObjectParams {
 }
 
 /**
- * Request Object by value（OIDC Core 1.0 §6.1）を解決する（機能単位のステップ関数）。
+ * {@link resolveRequestObjectParams} の `requestUri` オプション: Request Object by
+ * reference（OIDC Core 1.0 §6.2）をどう解決するか。渡した場合だけ `request_uri` を
+ * 解決する。
+ */
+export interface ResolveRequestUriOptions {
+  /** クライアントが登録した `request_uris`（{@link ClientInfo.requestUris}）。 */
+  registeredRequestUris?: readonly string[];
+  /**
+   * 事前登録した `request_uri` だけを受理するか（`require_request_uri_registration`）。
+   * 既定 true。
+   */
+  requireRegistration?: boolean;
+  /** 取得に使う fetch。既定は globalThis.fetch。 */
+  fetch?: typeof fetch;
+  /** 取得する Request Object の上限（UTF-8 バイト）。既定 16384。 */
+  maxBytes?: number;
+  /** 取得のタイムアウト（ミリ秒）。既定 5000。 */
+  timeoutMs?: number;
+}
+
+/**
+ * Request Object（OIDC Core 1.0 §6.1 by value / §6.2 by reference）を解決する
+ * （機能単位のステップ関数）。
  *
- * `request` パラメータが無い場合はクエリパラメータのコピーをそのまま返す。
- * ある場合は署名付き JWS Request Object を、クライアントが request_object の用途に登録した
- * 公開鍵（`options.jwks`。ClientKeyResolver で引く）で検証し、claim をクエリ値に supersede
- * した有効パラメータ集合を返す。鍵を引く呼び出し側は、`request` パラメータがあるときだけ
- * 引けば足りる。
+ * `request` も `request_uri` も無い場合はクエリパラメータのコピーをそのまま返す。
+ * `request` がある場合は署名付き JWS Request Object を、クライアントが request_object
+ * の用途に登録した公開鍵（`options.jwks`。ClientKeyResolver で引く）で検証し、claim を
+ * クエリ値に supersede した有効パラメータ集合を返す。鍵を引く呼び出し側は、`request`
+ * か `request_uri` があるときだけ引けば足りる。
  * 検証失敗（壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
  * 内部の redirect_uri も信用せず非リダイレクトの invalid_request_object
  * （OIDC Core 1.0 §6.3）とする。
+ *
+ * `request_uri` は `options.requestUri` を渡したときだけ解決する（§6.2）: 値を
+ * {@link validateRequestUri} で検査し（既定では登録した `request_uris` との完全一致を
+ * 要する）、{@link fetchRequestObjectByReference} で GET して、取得した JWT を by value
+ * と同じ規則で検証する。検査と取得の失敗は非リダイレクトの invalid_request_uri
+ * （§3.1.2.6）で、`request` と `request_uri` の併用は invalid_request。
+ * `options.requestUri` を渡さない OP では `request_uri` をここで扱わず、後段の
+ * {@link rejectUnsupportedRequestParams} が request_uri_not_supported で拒否する。
+ *
+ * `options.requiredSigningAlg`（クライアントが登録した `request_object_signing_alg`）
+ * があるときは、その alg で署名された Request Object だけを受理する（OIDC Dynamic
+ * Client Registration 1.0 §2）。`none` なら署名無しだけを受理する。
  *
  * `response_type` / `client_id` は OAuth 2.0 request syntax 側を正とするため
  * 上書きしない（後段の {@link validateRequestObjectConsistency} で一致検証する）。
@@ -879,21 +943,70 @@ export async function resolveRequestObjectParams(
      * OIDF Conformance Suite 互換の場合のみ true にする。
      */
     allowUnsigned?: boolean;
+    /**
+     * クライアントが登録した `request_object_signing_alg`（{@link ClientInfo.requestObjectSigningAlg}）。
+     * あれば、この alg で署名された Request Object だけを受理する（`none` は署名無しだけ）。
+     */
+    requiredSigningAlg?: string;
+    /** `request_uri`（OIDC Core 1.0 §6.2）を解決するときの設定。渡さなければ解決しない。 */
+    requestUri?: ResolveRequestUriOptions;
   } = {},
 ): Promise<ResolvedRequestObjectParams> {
-  if (params.request === undefined) {
+  const requestUriSupported = options.requestUri !== undefined;
+  if (requestUriSupported && params.request !== undefined && params.request_uri !== undefined) {
+    // OIDC Core 1.0 §6: a request carries its Request Object either by value
+    // or by reference. Neither has been verified yet, so no redirect.
+    throw new AuthorizationError(
+      AuthorizationErrorCode.InvalidRequest,
+      'request and request_uri must not both be present',
+    );
+  }
+
+  let requestObject = params.request;
+  if (requestObject === undefined && requestUriSupported && params.request_uri !== undefined) {
+    const requestUriOptions = options.requestUri ?? {};
+    try {
+      validateRequestUri(params.request_uri, {
+        registeredRequestUris: requestUriOptions.registeredRequestUris,
+        requireRegistration: requestUriOptions.requireRegistration,
+      });
+      requestObject = await fetchRequestObjectByReference(params.request_uri, {
+        fetch: requestUriOptions.fetch,
+        maxBytes: requestUriOptions.maxBytes,
+        timeoutMs: requestUriOptions.timeoutMs,
+      });
+    } catch (e) {
+      if (e instanceof RequestUriError) {
+        // OIDC Core 1.0 §3.1.2.6: "The request_uri in the Authorization Request
+        // returns an error or contains invalid data." Nothing of the request
+        // is verified at this point, so the error stays on the OP.
+        throw new AuthorizationError(AuthorizationErrorCode.InvalidRequestUri, e.message);
+      }
+      throw e;
+    }
+  }
+
+  if (requestObject === undefined) {
     return { effectiveParams: { ...params } };
   }
 
+  // OIDC Dynamic Client Registration 1.0 §2: a registered
+  // request_object_signing_alg pins the alg; none pins "unsigned only".
+  const requiredAlg = options.requiredSigningAlg;
+  const supportedSigningAlgs =
+    requiredAlg === undefined
+      ? options.supportedSigningAlgs ?? [...DEFAULT_REQUEST_OBJECT_SIGNING_ALGS]
+      : requiredAlg === 'none'
+        ? []
+        : [requiredAlg];
+  const allowUnsigned = requiredAlg === undefined ? options.allowUnsigned ?? false : requiredAlg === 'none';
+
   let requestObjectClaims: Record<string, unknown>;
   try {
-    requestObjectClaims = await parseRequestObject(params.request, {
+    requestObjectClaims = await parseRequestObject(requestObject, {
       jwks: options.jwks,
-      supportedSigningAlgs:
-        options.supportedSigningAlgs ?? [
-          ...DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
-        ],
-      allowUnsigned: options.allowUnsigned ?? false,
+      supportedSigningAlgs,
+      allowUnsigned,
     });
   } catch (e) {
     if (e instanceof RequestObjectError) {
@@ -917,7 +1030,9 @@ export async function resolveRequestObjectParams(
 /**
  * 未サポートのリクエストパラメータを拒否する（機能単位のステップ関数）。
  *
- * - `request_uri`（OIDC Core 1.0 §6.2 / §6.3）: 未対応のため request_uri_not_supported
+ * - `request_uri`（OIDC Core 1.0 §6.2 / §6.3）: `requestUriParameterSupported: true` の
+ *   構成（{@link resolveRequestObjectParams} が `requestUri` オプション付きで解決済み）
+ *   以外では request_uri_not_supported で拒否する（既定は未対応扱い）
  * - `registration`（§3.1.2.1 / §7.2.1）: 未対応のため registration_not_supported（§3.1.2.6）
  * - `request`（§6.1 / §6.3）: `requestParameterSupported: false` の構成でのみ
  *   request_not_supported で拒否する（既定はサポート扱いで拒否しない）
@@ -928,7 +1043,7 @@ export function rejectUnsupportedRequestParams(
   params: Pick<AuthorizationRequestParams, 'request' | 'request_uri' | 'registration'>,
   redirectUri: string,
   state?: string,
-  options: { requestParameterSupported?: boolean } = {},
+  options: { requestParameterSupported?: boolean; requestUriParameterSupported?: boolean } = {},
 ): void {
   if (
     params.request !== undefined &&
@@ -942,7 +1057,7 @@ export function rejectUnsupportedRequestParams(
     );
   }
 
-  if (params.request_uri !== undefined) {
+  if (params.request_uri !== undefined && options.requestUriParameterSupported !== true) {
     throw new AuthorizationError(
       AuthorizationErrorCode.RequestUriNotSupported,
       'request_uri parameter (Request Object by reference) is not supported',

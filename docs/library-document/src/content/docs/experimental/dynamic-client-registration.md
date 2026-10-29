@@ -177,7 +177,7 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 ## 受理するメタデータ
 
 理解するフィールドは次のとおりで、それ以外は RFC 7591 §2 のとおり黙って無視します（登録はエラーになりません）。
-既定値を適用した値と、OP が補った値（`jwks` の `alg` / `use`）は、201 応答にそのまま現れます。
+既定値を適用した値と、OP が補った値（`jwks` の `alg` / `use`）は、201 応答にそのまま現れます（OIDC Registration 1.0 §3.2 は、AS が適用した既定値を応答に含めることを求めます）。
 
 | フィールド | 扱い |
 |---|---|
@@ -190,9 +190,9 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 | `client_uri` / `logo_uri` / `tos_uri` / `policy_uri` | 絶対 URL（http / https）。取得しに行かず、保持して返すだけです |
 | `contacts` | 1 〜 32 件の文字列の配列 |
 | `software_id` / `software_version` | 128 / 64 文字以内の文字列 |
-| `application_type` | `web` か `native`。`native` は `redirect_uris` をカスタムスキームとループバックの http に限り、`web` で `implicit` を使う登録は https かつ `localhost` 以外に限ります（OIDC Registration 1.0 §2）。省略時はこれらの制約を掛けません |
+| `application_type` | `web` か `native`、既定 `web`。`native` は `redirect_uris` をカスタムスキームとループバックの http に限り、`web` で `implicit` を使う登録は https かつ `localhost` 以外に限ります（OIDC Registration 1.0 §2）。省略時も `web` として検査し、`application_type: "web"` を登録して返します |
 | `default_max_age` | 非負整数（秒） |
-| `id_token_signed_response_alg` / `userinfo_signed_response_alg` | OP の署名鍵の alg（discovery の `*_signing_alg_values_supported`）のみ |
+| `id_token_signed_response_alg` / `userinfo_signed_response_alg` | OP の署名鍵の alg（discovery の `*_signing_alg_values_supported`）のみ。`id_token_signed_response_alg` は既定 `RS256` で、省略時も登録して返します。`userinfo_signed_response_alg` に既定は無く、省略すると UserInfo は署名しない JSON です |
 | `jwks` | RSA（RS256 / RS384 / RS512）か EC（P-256 / P-384 / P-521）の署名用公開鍵、1 〜 16 件。秘密鍵パラメータを含む鍵は拒否します。`alg` と `use` が無い鍵には既定を補います。`jwks_uri` との併記は拒否します |
 | `software_statement` | 次節 |
 
@@ -256,7 +256,6 @@ RFC 7591 §3.1.1 は software statement に対応しない OP がそれを無視
 - RFC 7592 を実装しないため、登録の参照・更新・削除はできません。失効の手段は再起動だけです
 - initial access token は単一の固定文字列で、発行・ローテーション・複数管理はありません。別の方式は `verifyRegistrationInitialAccessToken` を書き換えて実装します
 - `jwks_uri`、`sector_identifier_uri`、`request_uris`、暗号化系のメタデータは理解せず、無視します
-- `application_type` を省略した登録には、OIDC Registration 1.0 §2 の `application_type` ごとの制約を掛けません（core の `redirect_uris` の規則だけが掛かります）
 
 ## core の静的登録との違い
 

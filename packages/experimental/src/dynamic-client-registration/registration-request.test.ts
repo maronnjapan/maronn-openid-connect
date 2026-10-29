@@ -13,17 +13,25 @@ function body(metadata: Record<string, unknown>): string {
 
 const MINIMAL = { redirect_uris: ['https://app.example.com/cb'] };
 
-/** 既定値だけが適用された最小登録の検証結果。 */
+/**
+ * 既定値だけが適用された最小登録の検証結果。RFC 7591 §2 の 3 つの既定値と、
+ * OIDC Dynamic Client Registration 1.0 §2 の application_type（web）と
+ * id_token_signed_response_alg（RS256）は、登録メタデータとして応答に現れる。
+ */
 const MINIMAL_VALIDATED = {
   redirectUris: ['https://app.example.com/cb'],
   tokenEndpointAuthMethod: 'client_secret_basic',
   grantTypes: ['authorization_code'],
   responseTypes: ['code'],
+  applicationType: 'web',
+  idTokenSignedResponseAlg: 'RS256',
   metadata: {
     redirect_uris: ['https://app.example.com/cb'],
     token_endpoint_auth_method: 'client_secret_basic',
     grant_types: ['authorization_code'],
     response_types: ['code'],
+    application_type: 'web',
+    id_token_signed_response_alg: 'RS256',
   },
 };
 
@@ -146,12 +154,16 @@ describe('validateClientMetadata', () => {
         tokenEndpointAuthMethod: 'client_secret_post',
         grantTypes: ['authorization_code', 'refresh_token'],
         responseTypes: ['code'],
+        applicationType: 'web',
+        idTokenSignedResponseAlg: 'RS256',
         metadata: {
           redirect_uris: ['https://app.example.com/cb', 'http://127.0.0.1:8080/cb'],
           token_endpoint_auth_method: 'client_secret_post',
           grant_types: ['authorization_code', 'refresh_token'],
           response_types: ['code'],
+          application_type: 'web',
           client_name: 'My Test App',
+          id_token_signed_response_alg: 'RS256',
         },
       });
     });
@@ -583,6 +595,20 @@ describe('validateClientMetadata', () => {
   });
 
   describe('application_type (OIDC Dynamic Client Registration 1.0 Section 2)', () => {
+    // §2: the default, if omitted, is web; §3.2: a default the AS applied is
+    // part of the registered metadata it returns.
+    it('should default application_type to web and register the default', () => {
+      const validated = validateClientMetadata(MINIMAL);
+      expect(validated.applicationType).toBe('web');
+      expect(validated.metadata['application_type']).toBe('web');
+    });
+
+    it('should reject a null application_type instead of treating it as omitted', () => {
+      expect(() => validateClientMetadata({ ...MINIMAL, application_type: null })).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'application_type must be web or native'),
+      );
+    });
+
     it('should register web and native', () => {
       expect(validateClientMetadata({ ...MINIMAL, application_type: 'web' }).metadata['application_type']).toBe('web');
       expect(
@@ -627,6 +653,27 @@ describe('validateClientMetadata', () => {
       expect(validated.redirectUris).toEqual(['http://localhost:3000/cb']);
     });
 
+    // §2: the AS MUST verify that all registered redirect_uris conform to the
+    // constraints of the application type, so the omitted type is checked as web.
+    it('should apply the web constraints to a registration that omits application_type and uses the implicit grant', () => {
+      const options = { grantTypes: ['authorization_code', 'implicit'], responseTypes: ['code', 'id_token'] };
+      const implicitClient = { grant_types: ['implicit'], response_types: ['id_token'] };
+
+      const registered = validateClientMetadata(
+        { redirect_uris: ['https://app.example.com/cb'], ...implicitClient },
+        options,
+      );
+      expect(registered.metadata['application_type']).toBe('web');
+      expect(() =>
+        validateClientMetadata({ redirect_uris: ['http://127.0.0.1:8080/cb'], ...implicitClient }, options),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'a web client using the implicit grant must register https redirect_uris that do not use localhost',
+        ),
+      );
+    });
+
     it('should reject a localhost redirect_uri of a web client using the implicit grant', () => {
       expect(() =>
         validateClientMetadata(
@@ -666,6 +713,23 @@ describe('validateClientMetadata', () => {
   });
 
   describe('id_token_signed_response_alg and userinfo_signed_response_alg', () => {
+    // OIDC Dynamic Client Registration 1.0 §2: the default, if omitted, is
+    // RS256; §3.2: the AS returns the defaults it applied. userinfo has no
+    // default alg: an omitted value means an unsigned JSON response.
+    it('should default id_token_signed_response_alg to RS256 and register the default', () => {
+      const validated = validateClientMetadata(MINIMAL);
+      expect(validated.idTokenSignedResponseAlg).toBe('RS256');
+      expect(validated.metadata['id_token_signed_response_alg']).toBe('RS256');
+      expect(validated.userinfoSignedResponseAlg).toBeUndefined();
+      expect(Object.hasOwn(validated.metadata, 'userinfo_signed_response_alg')).toBe(false);
+    });
+
+    it('should reject the omitted id_token_signed_response_alg when the OP cannot sign RS256', () => {
+      expect(() => validateClientMetadata(MINIMAL, { idTokenSigningAlgValuesSupported: ['ES256'] })).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'id_token_signed_response_alg must be one of ES256'),
+      );
+    });
+
     it('should accept RS256 by default and echo it', () => {
       const validated = validateClientMetadata({
         ...MINIMAL,

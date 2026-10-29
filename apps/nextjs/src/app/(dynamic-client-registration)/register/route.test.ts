@@ -32,7 +32,8 @@ function register(metadata: unknown, headers: Record<string, string> = {}): Prom
 }
 
 describe('POST /register', () => {
-  // RFC 7591 §3.1 / §3.2.1: the registration answer, with the defaults applied.
+  // RFC 7591 §3.1 / §3.2.1: the registration answer, with the RFC 7591 §2 and
+  // OIDC Dynamic Client Registration 1.0 §2 defaults applied and returned (§3.2).
   it('should register a client and answer 201 with the issued values and the registered metadata', async () => {
     const response = await register({ redirect_uris: REDIRECT_URIS, client_name: 'Example RP', scope: 'openid profile' });
 
@@ -47,8 +48,28 @@ describe('POST /register', () => {
       token_endpoint_auth_method: 'client_secret_basic',
       grant_types: ['authorization_code'],
       response_types: ['code'],
+      application_type: 'web',
       client_name: 'Example RP',
       scope: 'openid profile',
+      id_token_signed_response_alg: 'RS256',
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: application_type defaults to web,
+  // and a web client using the implicit grant may register only https
+  // redirect_uris, so the omitted type is checked against the loopback URI.
+  it('should refuse a loopback redirect_uri for an implicit client that omits application_type', async () => {
+    const response = await register({
+      redirect_uris: ['http://127.0.0.1:8080/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['implicit'],
+      response_types: ['id_token'],
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'a web client using the implicit grant must register https redirect_uris that do not use localhost',
     });
   });
 

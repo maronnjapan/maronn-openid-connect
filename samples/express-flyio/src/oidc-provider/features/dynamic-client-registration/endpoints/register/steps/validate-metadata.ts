@@ -26,9 +26,12 @@ export const meta = step({
 });
 
 /**
- * Allowlist-pick of the understood fields, value checks, RFC 7591 §2 defaults
- * and the §2.1 consistency of grant_types and response_types — pure functions
- * from the experimental package, bounded to what this provider answers:
+ * Allowlist-pick of the understood fields, value checks, the RFC 7591 §2 and
+ * OIDC Dynamic Client Registration 1.0 §2 defaults (application_type web,
+ * id_token_signed_response_alg RS256 — registered and returned, §3.2), the
+ * redirect_uris constraints of the application type and the §2.1 consistency
+ * of grant_types and response_types — pure functions from the experimental
+ * package, bounded to what this provider answers:
  *
  * - token_endpoint_auth_method: the methods of the registration config
  * - grant_types: the grants of the config that this provider answers

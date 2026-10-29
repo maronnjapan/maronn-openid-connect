@@ -120,14 +120,17 @@ async function registerClient(request: Request): Promise<Response> {
             await config.verifySoftwareStatement(registration.softwareStatement, config),
           );
 
-    // (5) Allowlist-pick of the understood fields, value checks, RFC 7591 §2
-    // defaults and the §2.1 consistency of grant_types and response_types —
-    // pure functions from @maronn-openid-connect/experimental/dynamic-client-registration,
-    // bounded to what this provider answers: the methods and grants of the
-    // config, the response types of the features, the scopes of scopes.ts, the
-    // algs of the signing keys and the custom metadata of the policy. Unknown
-    // metadata is silently ignored (§2 MUST), and every error_description is a
-    // fixed ASCII string that never reflects request values.
+    // (5) Allowlist-pick of the understood fields, value checks, the RFC 7591
+    // §2 and OIDC Dynamic Client Registration 1.0 §2 defaults (application_type
+    // web, id_token_signed_response_alg RS256 — registered and returned, §3.2),
+    // the redirect_uris constraints of the application type and the §2.1
+    // consistency of grant_types and response_types — pure functions from
+    // @maronn-openid-connect/experimental/dynamic-client-registration, bounded
+    // to what this provider answers: the methods and grants of the config, the
+    // response types of the features, the scopes of scopes.ts, the algs of the
+    // signing keys and the custom metadata of the policy. Unknown metadata is
+    // silently ignored (§2 MUST), and every error_description is a fixed ASCII
+    // string that never reflects request values.
     const responseTypes = ['code', ...responseTypesOf(features)];
     const validated = validateClientMetadata(metadata, {
       tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,

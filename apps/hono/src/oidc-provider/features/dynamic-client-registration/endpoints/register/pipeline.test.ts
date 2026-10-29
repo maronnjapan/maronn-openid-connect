@@ -76,7 +76,9 @@ describe('registerApp', () => {
       token_endpoint_auth_method: 'client_secret_basic',
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
+      application_type: 'web',
       client_name: 'Example RP',
+      id_token_signed_response_alg: 'RS256',
     });
     expect(authorize.status).toBe(302);
     expect(authorize.headers.get('Location')).toBe(`${TEST_ISSUER}/login`);
@@ -98,6 +100,26 @@ describe('registerApp', () => {
       token_endpoint_auth_method: 'none',
       grant_types: ['implicit'],
       response_types: ['id_token token', 'id_token'],
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: application_type defaults to web,
+  // and a web client using the implicit grant may register only https
+  // redirect_uris, so the omitted type is checked against the loopback URI.
+  it('should refuse a loopback redirect_uri for an implicit client that omits application_type', async () => {
+    const app = await providerApp();
+
+    const response = await register(app, {
+      redirect_uris: ['http://127.0.0.1:8080/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['implicit'],
+      response_types: ['id_token'],
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'a web client using the implicit grant must register https redirect_uris that do not use localhost',
     });
   });
 

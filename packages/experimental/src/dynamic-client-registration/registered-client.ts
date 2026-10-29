@@ -35,6 +35,11 @@ export interface DynamicallyRegisteredClient {
   tokenEndpointAuthMethods: [string];
   scope?: string[];
   defaultMaxAge?: number;
+  /**
+   * 登録した id_token_signed_response_alg。buildRegisteredClient は省略時の既定
+   * RS256（OIDC Dynamic Client Registration 1.0 §2）を含めて必ず持たせる。
+   * ほかで組み立てたレコードが欠くときも、core は RS256 として扱う。
+   */
   idTokenSignedResponseAlg?: string;
   userinfoSignedResponseAlg?: string;
   jwks?: JwkSet;
@@ -107,9 +112,7 @@ export function buildRegisteredClient(
     tokenEndpointAuthMethods: [metadata.tokenEndpointAuthMethod],
     ...(metadata.scope === undefined ? {} : { scope: [...metadata.scope] }),
     ...(metadata.defaultMaxAge === undefined ? {} : { defaultMaxAge: metadata.defaultMaxAge }),
-    ...(metadata.idTokenSignedResponseAlg === undefined
-      ? {}
-      : { idTokenSignedResponseAlg: metadata.idTokenSignedResponseAlg }),
+    idTokenSignedResponseAlg: metadata.idTokenSignedResponseAlg,
     ...(metadata.userinfoSignedResponseAlg === undefined
       ? {}
       : { userinfoSignedResponseAlg: metadata.userinfoSignedResponseAlg }),

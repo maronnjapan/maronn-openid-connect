@@ -18,7 +18,8 @@ afterEach(() => {
 });
 
 describe('validateRegistrationMetadata', () => {
-  // RFC 7591 §2: the defaults of the metadata the client left out.
+  // RFC 7591 §2 and OIDC Dynamic Client Registration 1.0 §2: the defaults of
+  // the metadata the client left out, registered so the response carries them (§3.2).
   it('should build a confidential client with a new client_id, a secret and the RFC 7591 defaults', async () => {
     const { c } = await providerContext();
 
@@ -32,12 +33,15 @@ describe('validateRegistrationMetadata', () => {
       grantTypes: ['authorization_code'],
       responseTypes: ['code'],
       tokenEndpointAuthMethods: ['client_secret_basic'],
+      idTokenSignedResponseAlg: 'RS256',
       clientIdIssuedAt: NOW,
       metadata: {
         redirect_uris: REDIRECT_URIS,
         token_endpoint_auth_method: 'client_secret_basic',
         grant_types: ['authorization_code'],
         response_types: ['code'],
+        application_type: 'web',
+        id_token_signed_response_alg: 'RS256',
       },
     });
   });
@@ -62,14 +66,17 @@ describe('validateRegistrationMetadata', () => {
       responseTypes: ['code'],
       tokenEndpointAuthMethods: ['none'],
       scope: ['openid', 'profile'],
+      idTokenSignedResponseAlg: 'RS256',
       clientIdIssuedAt: NOW,
       metadata: {
         redirect_uris: ['http://127.0.0.1:8080/callback'],
         token_endpoint_auth_method: 'none',
         grant_types: ['refresh_token', 'authorization_code'],
         response_types: ['code'],
+        application_type: 'web',
         client_name: 'Example App',
         scope: 'openid profile',
+        id_token_signed_response_alg: 'RS256',
       },
     });
   });

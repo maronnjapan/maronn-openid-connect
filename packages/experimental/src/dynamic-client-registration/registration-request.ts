@@ -144,7 +144,11 @@ export interface ValidateClientMetadataOptions {
    * 受理する。
    */
   scopes?: readonly string[];
-  /** id_token_signed_response_alg に受理する alg。既定は RS256 のみ。 */
+  /**
+   * id_token_signed_response_alg に受理する alg。既定は RS256 のみ。省略時の
+   * 既定値 RS256（OIDC Dynamic Client Registration 1.0 §2）もこの一覧に照合する
+   * ので、RS256 で署名できない OP は省略した登録を拒否する。
+   */
   idTokenSigningAlgValuesSupported?: readonly string[];
   /** userinfo_signed_response_alg に受理する alg。既定は RS256 のみ。 */
   userinfoSigningAlgValuesSupported?: readonly string[];
@@ -155,17 +159,24 @@ export interface ValidateClientMetadataOptions {
   customMetadata?: Readonly<Record<string, CustomClientMetadataValidator>>;
 }
 
-/** 検証済み登録メタデータ（RFC 7591 §2 の既定値適用後）。 */
+/**
+ * 検証済み登録メタデータ（RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2
+ * の既定値適用後）。
+ */
 export interface ValidatedClientRegistration {
   redirectUris: string[];
   tokenEndpointAuthMethod: string;
   grantTypes: string[];
   responseTypes: string[];
+  /** OIDC Dynamic Client Registration 1.0 §2 の application_type。省略時の既定は web。 */
+  applicationType: 'web' | 'native';
   /** RFC 7591 §2 の scope。登録したときだけ持つ（core の ClientInfo.scope と同じ意味）。 */
   scope?: string[];
   /** OIDC Dynamic Client Registration 1.0 §2 の default_max_age。登録したときだけ持つ。 */
   defaultMaxAge?: number;
-  idTokenSignedResponseAlg?: string;
+  /** OIDC Dynamic Client Registration 1.0 §2 の id_token_signed_response_alg。省略時の既定は RS256。 */
+  idTokenSignedResponseAlg: string;
+  /** userinfo_signed_response_alg。登録したときだけ持つ（無ければ UserInfo は署名しない JSON）。 */
   userinfoSignedResponseAlg?: string;
   /** RFC 7591 §2 の jwks（正規化済み）。登録したときだけ持つ。 */
   jwks?: JwkSet;
@@ -226,6 +237,11 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
 /**
  * 登録メタデータを検証し、既定値を適用して返す。
  *
+ * 既定値は RFC 7591 §2（token_endpoint_auth_method、grant_types、response_types）と
+ * OIDC Dynamic Client Registration 1.0 §2（application_type、
+ * id_token_signed_response_alg）のもので、AS が適用した既定値は応答に含めなければ
+ * ならない（同 §3.2 MUST）ため、どれも登録メタデータ（metadata）に書き込む。
+ *
  * 未知フィールドは黙って捨てる（RFC 7591 §2 MUST ignore）。実装は「理解する
  * フィールドだけを新しいオブジェクトへ選び取る」allowlist-pick 方式で、
  * パース結果のスプレッドや Object.assign によるコピーをしない。`__proto__`
@@ -252,18 +268,36 @@ export function validateClientMetadata(
   const grantTypes = validateGrantTypes(metadata['grant_types'], grantTypesSupported);
   const responseTypes = validateResponseTypes(metadata['response_types'], responseTypesSupported);
   validateGrantAndResponseTypeConsistency(grantTypes, responseTypes);
+  // OIDC Dynamic Client Registration 1.0 §2: application_type は省略時 web。
+  // AS は登録するすべての redirect_uris がその種別の制約（web で implicit grant を
+  // 使うなら https かつ localhost 以外、native ならカスタムスキームかループバックの
+  // http）に従うことを確かめなければならない（MUST）ので、省略時も web として検査する。
+  const applicationType = validateApplicationType(
+    metadata['application_type'] === undefined ? 'web' : metadata['application_type'],
+  );
+  validateRedirectUrisForApplicationType(redirectUris, applicationType, grantTypes);
+  // OIDC Dynamic Client Registration 1.0 §2: id_token_signed_response_alg は省略時
+  // RS256。既定値も OP が署名できる alg の一覧に照合する。
+  const idTokenSignedResponseAlg = validateSigningAlg(
+    metadata['id_token_signed_response_alg'] === undefined ? 'RS256' : metadata['id_token_signed_response_alg'],
+    'id_token_signed_response_alg',
+    options?.idTokenSigningAlgValuesSupported ?? DEFAULT_SIGNING_ALGS,
+  );
 
   const registered: Record<string, unknown> = {
     redirect_uris: [...redirectUris],
     token_endpoint_auth_method: tokenEndpointAuthMethod,
     grant_types: [...grantTypes],
     response_types: [...responseTypes],
+    application_type: applicationType,
   };
   const validated: ValidatedClientRegistration = {
     redirectUris,
     tokenEndpointAuthMethod,
     grantTypes,
     responseTypes,
+    applicationType,
+    idTokenSignedResponseAlg,
     metadata: registered,
   };
 
@@ -293,11 +327,6 @@ export function validateClientMetadata(
       SOFTWARE_VERSION_MAX_LENGTH,
     );
   }
-  if (metadata['application_type'] !== undefined) {
-    const applicationType = validateApplicationType(metadata['application_type']);
-    validateRedirectUrisForApplicationType(redirectUris, applicationType, grantTypes);
-    registered['application_type'] = applicationType;
-  }
   if (metadata['jwks'] !== undefined && metadata['jwks_uri'] !== undefined) {
     // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。jwks_uri 単独は
     // この OP が取得しに行かない（理解しない）メタデータとして無視する。
@@ -313,15 +342,7 @@ export function validateClientMetadata(
     validated.defaultMaxAge = defaultMaxAge;
     registered['default_max_age'] = defaultMaxAge;
   }
-  if (metadata['id_token_signed_response_alg'] !== undefined) {
-    const alg = validateSigningAlg(
-      metadata['id_token_signed_response_alg'],
-      'id_token_signed_response_alg',
-      options?.idTokenSigningAlgValuesSupported ?? DEFAULT_SIGNING_ALGS,
-    );
-    validated.idTokenSignedResponseAlg = alg;
-    registered['id_token_signed_response_alg'] = alg;
-  }
+  registered['id_token_signed_response_alg'] = idTokenSignedResponseAlg;
   if (metadata['userinfo_signed_response_alg'] !== undefined) {
     const alg = validateSigningAlg(
       metadata['userinfo_signed_response_alg'],

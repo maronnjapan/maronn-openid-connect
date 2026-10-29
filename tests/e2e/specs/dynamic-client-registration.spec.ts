@@ -72,6 +72,10 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(registered.token_endpoint_auth_method).toBe('client_secret_basic');
     expect(registered.grant_types).toEqual(['authorization_code']);
     expect(registered.response_types).toEqual(['code']);
+    // OIDC Dynamic Client Registration 1.0 §2 defaults the OP applied, returned
+    // as registered metadata (§3.2).
+    expect(registered.application_type).toBe('web');
+    expect(registered.id_token_signed_response_alg).toBe('RS256');
     expect(registered.client_name).toBe('E2E Minimal Client');
   });
 
@@ -156,7 +160,9 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
   });
 
   // OIDC Dynamic Client Registration 1.0 §2: the response types the OP
-  // advertises are registrable, and the implicit grant pairs with them.
+  // advertises are registrable, and the implicit grant pairs with them. The
+  // loopback http redirect target of this suite is what a native client may
+  // register (a web client using the implicit grant is held to https).
   test('should register an implicit client and return its ID Token in the fragment (OIDC Core 1.0 §3.2)', async ({
     page,
     request,
@@ -173,6 +179,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
 
     const registered = await registerClient(request, issuer, {
       redirect_uris: [registeredRedirectUri],
+      application_type: 'native',
       token_endpoint_auth_method: 'none',
       grant_types: ['implicit'],
       response_types: ['token id_token'],
@@ -182,6 +189,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     // The response type comes back normalized (OAuth 2.0 Multiple Response Type Encoding Practices §1.2).
     expect(registered.response_types).toEqual(['id_token token']);
     expect(registered.grant_types).toEqual(['implicit']);
+    expect(registered.application_type).toBe('native');
 
     const { fragment, nonce } = await authorizeImplicitInBrowser(page, issuer, clientId);
 
@@ -189,6 +197,46 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     const idToken = decodeJwtPayload(requireString(fragment['id_token'], 'id_token'));
     expect(idToken.aud).toBe(clientId);
     expect(idToken.nonce).toBe(nonce);
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: application_type defaults to web,
+  // and the OP MUST verify that every registered redirect_uri conforms to the
+  // constraints of that type — for a web client using the implicit grant,
+  // https only and never localhost — so the omitted type is checked too.
+  test('should default application_type to web and hold an implicit client to https redirect_uris (OIDC Registration 1.0 §2)', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+    const metadata = await discoveryMetadata(request, issuer);
+    test.skip(
+      !(metadata.response_types_supported as string[] | undefined)?.includes('id_token'),
+      'This sample OP was generated without implicit-flow',
+    );
+    const implicitClient = {
+      token_endpoint_auth_method: 'none',
+      grant_types: ['implicit'],
+      response_types: ['id_token'],
+    };
+
+    const refused = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { ...implicitClient, redirect_uris: [registeredRedirectUri] },
+    });
+    const registered = await registerClient(request, issuer, {
+      ...implicitClient,
+      redirect_uris: ['https://implicit-client.e2e.example.com/cb'],
+    });
+
+    expect(refused.status()).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'a web client using the implicit grant must register https redirect_uris that do not use localhost',
+    });
+    expect(registered.application_type).toBe('web');
+    expect(registered.redirect_uris).toEqual(['https://implicit-client.e2e.example.com/cb']);
   });
 
   // RFC 7591 §2: the scope metadata becomes the client's scope list, so a

@@ -11,11 +11,15 @@ const CONFIDENTIAL: ValidatedClientRegistration = {
   tokenEndpointAuthMethod: 'client_secret_basic',
   grantTypes: ['authorization_code'],
   responseTypes: ['code'],
+  applicationType: 'web',
+  idTokenSignedResponseAlg: 'RS256',
   metadata: {
     redirect_uris: ['https://app.example.com/cb'],
     token_endpoint_auth_method: 'client_secret_basic',
     grant_types: ['authorization_code'],
     response_types: ['code'],
+    application_type: 'web',
+    id_token_signed_response_alg: 'RS256',
   },
 };
 
@@ -58,6 +62,7 @@ describe('buildRegisteredClient', () => {
         grantTypes: ['authorization_code'],
         responseTypes: ['code'],
         tokenEndpointAuthMethods: ['client_secret_basic'],
+        idTokenSignedResponseAlg: 'RS256',
         clientIdIssuedAt: 1_790_812_800,
         metadata: CONFIDENTIAL.metadata,
       });
@@ -74,6 +79,7 @@ describe('buildRegisteredClient', () => {
         grantTypes: ['authorization_code'],
         responseTypes: ['code'],
         tokenEndpointAuthMethods: ['none'],
+        idTokenSignedResponseAlg: 'RS256',
         clientIdIssuedAt: 1_790_812_800,
         metadata: PUBLIC.metadata,
       });
@@ -125,6 +131,8 @@ describe('buildRegisteredClient', () => {
       });
     });
 
+    // id_token_signed_response_alg is never left out: it always carries at
+    // least its default (OIDC Dynamic Client Registration 1.0 §2).
     it('should leave the optional record fields out when they were not registered', () => {
       const client = buildRegisteredClient(CONFIDENTIAL, FIXED);
       expect(Object.keys(client)).toEqual([
@@ -135,6 +143,7 @@ describe('buildRegisteredClient', () => {
         'grantTypes',
         'responseTypes',
         'tokenEndpointAuthMethods',
+        'idTokenSignedResponseAlg',
         'clientIdIssuedAt',
         'metadata',
       ]);

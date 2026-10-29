@@ -13,5 +13,6 @@ Request Object by reference（`request_uri`。OpenID Connect Core 1.0 §6.2）�
 - `rejectUnsupportedRequestParams` に `requestUriParameterSupported` オプションを足す。true のとき `request_uri` を `request_uri_not_supported` で拒否しない（既定 false）
 - `ClientInfo` に `requestUris`（登録した `request_uris`）と `requestObjectSigningAlg` を足す
 - `buildProviderMetadata` に `requireRequestUriRegistration` を足し、discovery の `require_request_uri_registration` を出す
+- クライアントの `jwks_uri`（RFC 7591 §2 / OpenID Connect Dynamic Client Registration 1.0 §2）のための `validateJwksUri`（https。ループバックの http は開発用に可。2048 文字以内。資格情報無し）、`fetchJwksFromUri`（GET。リダイレクトに従わず、既定 64 KiB と 5 秒で打ち切る。秘密鍵か対称鍵を含む文書は `JwksUriError` で拒否し、署名に使える RSA / EC の公開鍵だけを `alg` と `use` の既定を補って返す）、`createJwksUriResolver`（取得結果を TTL 付きで覚える。既定 5 分。失敗は 30 秒。`cache` を渡すと resolver 間で共有する）を追加する
 
-experimental の dynamic-client-registration は、`request_uris`（1 〜 32 件。core の `validateRequestUri` と同じ規則で検査し、登録時には取得しない）と `request_object_signing_alg`（`requestObjectSigningAlgValuesSupported` オプションの alg のみ。既定は RS256）を受理して `DynamicallyRegisteredClient` に持つ。google-login は core の minor リリースに合わせた同時リリースのみで、機能変更はない。
+experimental の dynamic-client-registration は、`request_uris`（1 〜 32 件。core の `validateRequestUri` と同じ規則で検査し、登録時には取得しない）、`request_object_signing_alg`（`requestObjectSigningAlgValuesSupported` オプションの alg のみ。既定は RS256）、`jwks_uri`（core の `validateJwksUri` と同じ規則で検査し、登録時には取得しない。`allowJwksUri: false` のオプションで拒否できる）を受理して `DynamicallyRegisteredClient` に持つ。google-login は core の minor リリースに合わせた同時リリースのみで、機能変更はない。

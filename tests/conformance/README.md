@@ -106,12 +106,12 @@ OpenID Connect Conformance Profiles v3.0 の Dynamic OP は、Basic OP、Implici
 `oidcc-dynamic-certification-test-plan` の module のうち、この OP がまだ満たさないものは次のとおりです。
 
 - `private_key_jwt`。プランの大半の module は `client_auth_type=private_key_jwt` で走るが、生成コードのトークンエンドポイントは `client_secret_basic` / `client_secret_post` / `none` だけを検証する
-- `oidcc-registration-jwks-uri`。`jwks_uri` を登録して OP が鍵を取得しに行くことを求めるが、登録エンドポイントは `jwks_uri` を理解しないメタデータとして無視する
+- `oidcc-registration-jwks-uri`。`jwks_uri` を登録して OP が鍵を取得しに行くことを求める。登録エンドポイントは `jwks_uri` を受理し、OP は署名の検証のときにその URL から鍵を取得するので、この点は満たす。ただし module は `client_auth_type=private_key_jwt` でだけ走る
 - `oidcc-registration-sector-uri` / `oidcc-registration-sector-bad`。`sector_identifier_uri` と pairwise の `subject_type` を求めるが、OP は `public` だけを広告する
 - `oidcc-server-rotate-keys`。OP の署名鍵の手動ローテーションを求める
 - `oidcc-refresh-token-rp-key-rotation`。`private_key_jwt` のクライアント鍵のローテーションを求める
 
-`oidcc-request-uri-signed-rs256`（RS256 で署名した Request Object を `request_uri` で渡す）、`oidcc-request-uri-unsigned`、`oidcc-ensure-request-object-with-redirect-uri`、`oidcc-registration-logo-uri` / `-policy-uri` / `-tos-uri`（登録した URL を同意画面に表示する SHOULD）は、`private_key_jwt` を除けばこの OP の実装で満たせます。
+`oidcc-request-uri-signed-rs256`（RS256 で署名した Request Object を `request_uri` で渡す）、`oidcc-request-uri-unsigned`、`oidcc-ensure-request-object-with-redirect-uri`、`oidcc-registration-jwks-uri`、`oidcc-registration-logo-uri` / `-policy-uri` / `-tos-uri`（登録した URL を同意画面に表示する SHOULD）は、`private_key_jwt` を除けばこの OP の実装で満たせます。
 
 ## ローカル実行
 

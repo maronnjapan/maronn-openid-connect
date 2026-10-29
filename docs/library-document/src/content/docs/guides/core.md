@@ -34,6 +34,7 @@ core の純関数            ← このパッケージ
 | `validateRegisteredRedirectUris` | 登録 redirect_uri の妥当性検証（完全一致・fragment 拒否） |
 | `parseRequestObject` | Request Object（署名付き JWS）のパースと署名検証（OIDC Core 1.0 §6.1） |
 | `validateRequestUri` / `fetchRequestObjectByReference` | `request_uri`（OIDC Core 1.0 §6.2）の検査（https。ループバックの http は開発用に可。512 文字以内の表示可能 ASCII。資格情報無し。既定では登録した `request_uris` との完全一致）と取得（GET。フラグメントは送らず、リダイレクトに従わず、既定 16 KiB と 5 秒で打ち切る）。失敗は `RequestUriError` で、`resolveRequestObjectParams` が `invalid_request_uri` にする |
+| `validateJwksUri` / `fetchJwksFromUri` / `createJwksUriResolver` | クライアントの `jwks_uri`（RFC 7591 §2）の検査（https。ループバックの http は開発用に可。2048 文字以内。資格情報無し）と取得（GET。リダイレクトに従わず、既定 64 KiB と 5 秒で打ち切る。秘密鍵か対称鍵を含む文書は拒否し、署名に使える RSA / EC の公開鍵だけを返す）、取得結果を TTL 付き（既定 5 分。失敗は 30 秒）で覚える resolver。`ClientKeyResolver` の実装が `jwks_uri` を登録したクライアントの鍵を引くのに使う |
 | `createAuthorizationCode` | 認可コードデータの生成（保存は呼び出し側の責務） |
 
 ### Auth Transaction (Login / Consent)

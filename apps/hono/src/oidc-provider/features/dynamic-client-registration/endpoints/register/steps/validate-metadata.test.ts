@@ -111,6 +111,43 @@ describe('validateRegistrationMetadata', () => {
     );
   });
 
+  // OIDC Dynamic Client Registration 1.0 §2 / OIDC Core 1.0 §6.2: the request_uri
+  // values the client may use, kept for the authorization endpoint to match.
+  it('should register request_uris and carry them into the client', async () => {
+    const { c } = await providerContext();
+    const requestUris = ['https://rp.example.com/requests/a#NjYz', 'https://rp.example.com/requests/b'];
+
+    const client = validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, request_uris: requestUris });
+
+    expect(client.requestUris).toEqual(requestUris);
+    expect(client.metadata['request_uris']).toEqual(requestUris);
+  });
+
+  // The algs the request-object feature advertises: RS256, and none only while
+  // unsigned Request Objects are accepted.
+  it('should bound request_object_signing_alg to the algs the request-object feature advertises', async () => {
+    const { c } = await providerContext();
+    const { c: unsignedAllowed } = await providerContext({ options: { config: { allowUnsignedRequestObject: true } } });
+
+    const client = validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'RS256' });
+    const noneClient = validateRegistrationMetadata(unsignedAllowed, {
+      redirect_uris: REDIRECT_URIS,
+      request_object_signing_alg: 'none',
+    });
+
+    expect(client.requestObjectSigningAlg).toBe('RS256');
+    expect(noneClient.requestObjectSigningAlg).toBe('none');
+    expect(() =>
+      validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'none' }),
+    ).toThrow(
+      expect.objectContaining({
+        name: 'ClientRegistrationError',
+        error: 'invalid_client_metadata',
+        errorDescription: 'request_object_signing_alg must be one of RS256',
+      }),
+    );
+  });
+
   it('should bound the auth methods to those of the registration settings', async () => {
     const { c } = await providerContext({
       options: { dynamicClientRegistration: { tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'] } },

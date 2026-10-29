@@ -95,6 +95,8 @@ export function toClientRegistration(
     ...(client.userinfoSignedResponseAlg === undefined
       ? {}
       : { userinfoSignedResponseAlg: client.userinfoSignedResponseAlg as RegisteredClient['userinfoSignedResponseAlg'] }),
+    ...(client.requestUris === undefined ? {} : { requestUris: [...client.requestUris] }),
+    ...(client.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: client.requestObjectSigningAlg }),
     ...(options.clientSecretHash === undefined ? {} : { clientSecretHash: options.clientSecretHash }),
     ...(client.jwks === undefined ? {} : { keys: keysByPurpose(client.jwks, options.jwksPurposes) }),
     registrationMetadata: { ...client.metadata },

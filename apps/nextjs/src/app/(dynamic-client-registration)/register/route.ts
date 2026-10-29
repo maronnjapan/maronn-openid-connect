@@ -36,7 +36,7 @@ import {
   validateClientMetadata,
   type ParsedClientRegistration,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
-import { responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
+import { discoveryOf, responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
 import {
   dynamicClientRegistrationConfig,
@@ -47,7 +47,7 @@ import {
   toClientRegistration,
 } from '../../_oidc-provider/features/dynamic-client-registration/store';
 import { clientCors, corsPreflight, signingKeysUnavailable, withCors } from '../../_oidc-provider/http';
-import { loadSigningKeys } from '../../_oidc-provider/provider';
+import { config as providerConfig, loadSigningKeys } from '../../_oidc-provider/provider';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../_oidc-provider/scopes';
 
 export const dynamic = 'force-dynamic';
@@ -135,7 +135,9 @@ async function registerClient(request: Request): Promise<Response> {
     // @maronn-openid-connect/experimental/dynamic-client-registration, bounded
     // to what this provider answers: the methods and grants of the config, the
     // response types of the features, the scopes of scopes.ts, the algs of the
-    // signing keys and the custom metadata of the config. Unknown metadata is
+    // signing keys, the Request Object signing algs the request-object feature
+    // advertises (request_uris are kept for /authorize to match, never fetched
+    // here) and the custom metadata of the config. Unknown metadata is
     // silently ignored (§2 MUST), and every error_description is a fixed ASCII
     // string that never reflects request values.
     const responseTypes = ['code', ...responseTypesOf(features)];
@@ -146,6 +148,7 @@ async function registerClient(request: Request): Promise<Response> {
       scopes: registrableScopes(),
       idTokenSigningAlgValuesSupported: signingAlgsOf(keys.idToken),
       userinfoSigningAlgValuesSupported: signingAlgsOf(keys.userinfo),
+      requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs(),
       customMetadata: config.customClientMetadata,
     });
     const client = buildRegisteredClient(validated);
@@ -248,6 +251,20 @@ export function registrableScopes(): readonly string[] | undefined {
 /** The JWA algs of a registered signing key set, each once (what discovery advertises for it). */
 function signingAlgsOf(keys: readonly SigningKey[]): string[] {
   return [...new Set(keys.map((key) => getJwaAlgorithm(key.privateKey)))];
+}
+
+/**
+ * The request_object_signing_alg values a registration may name: what the
+ * request-object feature advertises as request_object_signing_alg_values_supported
+ * (RS256, and none while unsigned Request Objects are accepted), so a client
+ * cannot register an alg the authorization endpoint would then reject. RS256
+ * alone without the feature.
+ */
+export function requestObjectSigningAlgs(): readonly string[] {
+  const advertised = discoveryOf(features, {}, providerConfig.issuer, providerConfig)[
+    'request_object_signing_alg_values_supported'
+  ];
+  return Array.isArray(advertised) ? (advertised as string[]) : ['RS256'];
 }
 
 /** RFC 7591 §3.1: the registration request body MUST be application/json. */

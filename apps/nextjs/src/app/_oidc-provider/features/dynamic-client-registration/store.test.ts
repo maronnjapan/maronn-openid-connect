@@ -147,6 +147,23 @@ describe('toClientRegistration', () => {
     expect(Object.hasOwn(record, 'keys')).toBe(false);
   });
 
+  // OIDC Dynamic Client Registration 1.0 §2: request_uris and
+  // request_object_signing_alg reach the authorization endpoint through the client.
+  it('should carry request_uris and request_object_signing_alg into the record', () => {
+    const record = toClientRegistration(
+      registeredClient({
+        requestUris: ['https://rp.example.com/requests/a#NjYz'],
+        requestObjectSigningAlg: 'RS256',
+      }),
+      { clientSecretHash: 'hash', jwksPurposes: ['request_object'] },
+    );
+
+    expect(record).toMatchObject({
+      requestUris: ['https://rp.example.com/requests/a#NjYz'],
+      requestObjectSigningAlg: 'RS256',
+    });
+  });
+
   // RFC 7591 §2 jwks: the keys serve every purpose of the config (ClientKeyResolver).
   it('should put the keys of the jwks under every configured purpose', () => {
     const record = toClientRegistration(registeredClient({ jwks: { keys: [RSA_KEY] } }), {

@@ -16,8 +16,10 @@ describe('createProviderConfig', () => {
       authorizationCodeTtl: 300,
       // The pkce feature makes PKCE required of confidential clients too (OAuth 2.1 §4.1.1).
       allowNonPkceAuthorizationCodeFlow: false,
-      // The request-object feature requires signed Request Objects (OIDC Core 1.0 §6.1).
+      // The request-object feature requires signed Request Objects (OIDC Core 1.0 §6.1)
+      // and pre-registered request_uri values (§6.2).
       allowUnsignedRequestObject: false,
+      requireRequestUriRegistration: true,
     });
   });
 

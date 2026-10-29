@@ -90,11 +90,13 @@ describe('buildDiscoveryMetadata', () => {
       expect(metadata.response_modes_supported).toEqual(['query', 'form_post', 'fragment', 'query.jwt', 'jwt']);
     });
 
-    // OIDC Core 1.0 §6.1: the request-object feature replaces request_parameter_supported: false.
+    // OIDC Core 1.0 §6.1 / §6.2: the request-object feature replaces
+    // request_parameter_supported and request_uri_parameter_supported: false.
     it('should let a feature replace a member that is not an array', async () => {
       expect(await metadataFor()).toMatchObject({
         request_parameter_supported: true,
-        request_uri_parameter_supported: false,
+        request_uri_parameter_supported: true,
+        require_request_uri_registration: true,
         request_object_signing_alg_values_supported: ['RS256'],
       });
     });

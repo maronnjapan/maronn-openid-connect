@@ -20,8 +20,11 @@
  * - client_response_types: responseTypes, the response types the client may
  *   use at the authorization endpoint (id_token and id_token token for the
  *   Implicit Flow). A client without rows may use code only.
+ * - client_request_uris: requestUris, the request_uri values the client
+ *   pre-registered (OIDC Core 1.0 §6.2). While the OP requires registration,
+ *   a client without rows cannot pass request_uri.
  * - Metadata without a column (default_max_age, the ID Token and UserInfo
- *   signing algs) keeps its default.
+ *   signing algs, request_object_signing_alg) keeps its default.
  *
  * The client's public keys (client_jwks) are not part of the RegisteredClient.
  * A process that needs them asks the ClientKeyResolver for the keys of its own
@@ -84,6 +87,10 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
         sql: 'SELECT response_type FROM client_response_types WHERE client_id = ? ORDER BY id',
         params: [clientId],
       });
+      const requestUris = await db.all<{ value: string }>({
+        sql: 'SELECT value FROM client_request_uris WHERE client_id = ? ORDER BY id',
+        params: [clientId],
+      });
 
       const registered: RegisteredClient = {
         clientId: client.id,
@@ -93,6 +100,7 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
       if (responseTypes.length > 0) registered.responseTypes = responseTypes.map((row) => row.response_type);
+      if (requestUris.length > 0) registered.requestUris = requestUris.map((row) => row.value);
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
@@ -255,11 +263,15 @@ export async function registerClient(
     }
   }
 
+  // The scope rows, the response type rows and the request_uri rows of OIDC
+  // Dynamic Client Registration 1.0 §2 are kept the same way as the redirect
+  // URIs and grant types.
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [
     ['client_redirect_uris', 'value', client.redirectUris],
     ['client_grant_types', 'grant_type', client.grantTypes ?? []],
     ['client_scopes', 'value', client.scope ?? []],
     ['client_response_types', 'response_type', client.responseTypes ?? []],
+    ['client_request_uris', 'value', client.requestUris ?? []],
   ];
   for (const [table, column, values] of childValues) {
     const ids: string[] = [];

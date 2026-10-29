@@ -54,6 +54,34 @@ describe('POST /register', () => {
     });
   });
 
+  // OIDC Dynamic Client Registration 1.0 §2 / OIDC Core 1.0 §6.2: the registered
+  // request_uris come back with the registration, and /authorize fetches only them.
+  it('should register request_uris and request_object_signing_alg and return them', async () => {
+    const response = await register({
+      redirect_uris: REDIRECT_URIS,
+      request_uris: ['https://rp.example.com/requests/a#NjYz'],
+      request_object_signing_alg: 'RS256',
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      request_uris: ['https://rp.example.com/requests/a#NjYz'],
+      request_object_signing_alg: 'RS256',
+    });
+  });
+
+  // The algs the request-object feature advertises: none only while unsigned
+  // Request Objects are accepted.
+  it('should bound request_object_signing_alg to the algs the request-object feature advertises', async () => {
+    const response = await register({ redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'none' });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'request_object_signing_alg must be one of RS256',
+    });
+  });
+
   // OIDC Dynamic Client Registration 1.0 §2: application_type defaults to web,
   // and a web client using the implicit grant may register only https
   // redirect_uris, so the omitted type is checked against the loopback URI.

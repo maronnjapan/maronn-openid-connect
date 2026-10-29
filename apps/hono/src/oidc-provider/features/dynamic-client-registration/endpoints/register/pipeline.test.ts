@@ -102,6 +102,24 @@ describe('registerApp', () => {
     });
   });
 
+  // OIDC Dynamic Client Registration 1.0 §2 / OIDC Core 1.0 §6.2: the registered
+  // request_uris come back with the registration, and /authorize fetches only them.
+  it('should register request_uris and request_object_signing_alg and return them', async () => {
+    const app = await providerApp();
+
+    const response = await register(app, {
+      redirect_uris: ['https://rp.example.com/callback'],
+      request_uris: ['https://rp.example.com/requests/a#NjYz'],
+      request_object_signing_alg: 'RS256',
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      request_uris: ['https://rp.example.com/requests/a#NjYz'],
+      request_object_signing_alg: 'RS256',
+    });
+  });
+
   // OIDC Dynamic Client Registration 1.0 §2: application_type defaults to web,
   // and a web client using the implicit grant may register only https
   // redirect_uris, so the omitted type is checked against the loopback URI.

@@ -7,7 +7,6 @@
  * (HOST, PORT), and the issuer from OIDC_ISSUER or ISSUER
  * (_oidc-provider/provider.ts).
  */
-import type { SoftwareStatementPublisher } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import type { ClientRegistration } from './app/_oidc-provider/config';
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -72,48 +71,15 @@ export function readPostLogoutRedirectUris(env: Environment): Record<string, str
 }
 
 /**
- * EXPERIMENTAL (RFC 7591): an initial access token, an inventory cap and the
- * trusted software statement publishers for dynamic client registration.
- * Unset variables keep the defaults of the code: open registration, cap 100,
- * no publisher (every software_statement is unapproved).
- *
- * OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON is a JSON array of
- * { issuer, jwks, algorithms? } (SoftwareStatementPublisher of the experimental
- * package); a malformed value stops the app instead of being half-read.
+ * EXPERIMENTAL (RFC 7591): the inventory cap of dynamic client registration.
+ * An unset variable keeps the default of the code (100). The verifier
+ * functions of the registration config (initial access token, software
+ * statement) are code, not environment: set them with
+ * extendDynamicClientRegistrationConfig() where the app starts.
  */
-export function readDynamicClientRegistration(env: Environment): {
-  initialAccessToken?: string;
-  maxRegisteredClients?: number;
-  trustedSoftwarePublishers?: SoftwareStatementPublisher[];
-} {
-  const initialAccessToken = env['OIDC_DCR_INITIAL_ACCESS_TOKEN'];
+export function readDynamicClientRegistration(env: Environment): { maxRegisteredClients?: number } {
   const maxRegisteredClients = readPositiveInteger(env, 'OIDC_DCR_MAX_CLIENTS');
-  const trustedSoftwarePublishers = readSoftwareStatementPublishers(env, 'OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON');
-  return {
-    ...(initialAccessToken ? { initialAccessToken } : {}),
-    ...(maxRegisteredClients === undefined ? {} : { maxRegisteredClients }),
-    ...(trustedSoftwarePublishers === undefined ? {} : { trustedSoftwarePublishers }),
-  };
-}
-
-function readSoftwareStatementPublishers(env: Environment, name: string): SoftwareStatementPublisher[] | undefined {
-  const encoded = env[name];
-  if (encoded === undefined || encoded === '') return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(encoded);
-  } catch {
-    throw new Error(`${name} must be a JSON array of { issuer, jwks }`);
-  }
-  const isPublisher = (entry: unknown): entry is SoftwareStatementPublisher =>
-    typeof entry === 'object' &&
-    entry !== null &&
-    typeof (entry as { issuer?: unknown }).issuer === 'string' &&
-    Array.isArray((entry as { jwks?: { keys?: unknown } }).jwks?.keys);
-  if (!Array.isArray(parsed) || !parsed.every(isPublisher)) {
-    throw new Error(`${name} must be a JSON array of { issuer, jwks }`);
-  }
-  return parsed;
+  return maxRegisteredClients === undefined ? {} : { maxRegisteredClients };
 }
 
 /**

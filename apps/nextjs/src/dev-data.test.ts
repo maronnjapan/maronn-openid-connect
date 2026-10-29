@@ -60,24 +60,11 @@ describe('applyFeatureSettings', () => {
     expect(rpInitiatedLogoutConfig.postLogoutRedirectUris).toEqual({ 'rp-1': ['https://rp.example.com/logged-out'] });
   });
 
-  // RFC 7591 / OIDC Dynamic Client Registration 1.0 §3: the initial access token and the inventory cap.
-  it('should set the initial access token and the cap of OIDC_DCR_INITIAL_ACCESS_TOKEN and OIDC_DCR_MAX_CLIENTS', () => {
-    applyFeatureSettings({ OIDC_DCR_INITIAL_ACCESS_TOKEN: 'iat-1', OIDC_DCR_MAX_CLIENTS: '5' }, createMapKvDatabase());
+  // RFC 7591 §5: the inventory cap.
+  it('should set the cap of OIDC_DCR_MAX_CLIENTS', () => {
+    applyFeatureSettings({ OIDC_DCR_MAX_CLIENTS: '5' }, createMapKvDatabase());
 
-    expect(dynamicClientRegistrationConfig).toEqual({
-      ...defaults.dynamicClientRegistration,
-      initialAccessToken: 'iat-1',
-      maxRegisteredClients: 5,
-    });
-  });
-
-  // RFC 7591 §2.3: the publishers whose software statements are trusted.
-  it('should trust the software statement publishers of OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON', () => {
-    const publishers = [{ issuer: 'https://publisher.example.com', jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB', alg: 'RS256' }] } }];
-
-    applyFeatureSettings({ OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: JSON.stringify(publishers) }, createMapKvDatabase());
-
-    expect(dynamicClientRegistrationConfig.trustedSoftwarePublishers).toEqual(publishers);
+    expect(dynamicClientRegistrationConfig).toEqual({ ...defaults.dynamicClientRegistration, maxRegisteredClients: 5 });
   });
 
   it('should set the audiences an ID-JAG may be issued for from XAA_ALLOWED_AUDIENCES', () => {

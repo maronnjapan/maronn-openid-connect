@@ -21,7 +21,7 @@ export const meta = step({
  * statement that is not accepted (invalid_software_statement,
  * unapproved_software_statement); the fixed responses of the earlier steps
  * (401, 429) as they are. The registration errors are told apart by shape
- * (isClientRegistrationError), not by class: a policy function of the
+ * (isClientRegistrationError), not by class: a verifier function of the
  * dynamicClientRegistration option may come from another copy of the
  * experimental package.
  */

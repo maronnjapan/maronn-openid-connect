@@ -10,19 +10,24 @@
  * `--enable dynamic-client-registration` を明示したときのみ生成コードから
  * 利用される。
  *
- * このモジュールは「登録リクエストの解析・software statement の検証と適用・
+ * このモジュールは「登録リクエストの解析・software statement の適用・
  * 登録メタデータの検証と既定値適用・登録レコードと 201 応答の組み立て・
- * initial access token の照合」だけを持つ純関数群で、HTTP にもストアにも
- * 触れない。`redirect_uris` の検査規則、response_type の正規化、JWS の検証、
- * 乱数生成は core 公開 API（validateRegisteredRedirectUris /
- * normalizeResponseType / parseRequestObject / generateRandomString）を使い、
- * クライアントの保存・総数上限・Content-Type 検査・登録できる値の一覧の決定は
- * 生成コード側の責務のまま変えない。
+ * Authorization ヘッダの Bearer トークンの読み取り」だけを持つ純関数群で、
+ * HTTP にもストアにも触れない。`redirect_uris` の検査規則、response_type の
+ * 正規化、乱数生成は core 公開 API（validateRegisteredRedirectUris /
+ * normalizeResponseType / generateRandomString）を使い、クライアントの保存・
+ * 総数上限・Content-Type 検査・登録できる値の一覧の決定は生成コード側の
+ * 責務のまま変えない。
+ *
+ * initial access token と software statement の検証は持たない。どちらも
+ * RFC 7591 が検証の基準を定めないもので、OP の設定に渡した関数の責務である。
+ * 生成コードは、関数が設定されているときだけ対応する値（Bearer トークン、
+ * software_statement）の提示を要求し、無ければ要求しない。
  *
  * スコープ外（非目標）: RFC 7592（登録後の参照・更新・削除、
  * registration_access_token / registration_client_uri はどちらも返さない）、
- * initial access token と software statement の発行、URL 参照系メタデータ
- * （jwks_uri / sector_identifier_uri など）の取得。
+ * initial access token と software statement の発行と検証、URL 参照系
+ * メタデータ（jwks_uri / sector_identifier_uri など）の取得。
  */
 export {
   ClientRegistrationError,
@@ -46,14 +51,7 @@ export {
   type ValidatedClientRegistration,
 } from './registration-request.js';
 
-export {
-  applySoftwareStatement,
-  verifySoftwareStatement,
-  DEFAULT_SOFTWARE_STATEMENT_ALGORITHMS,
-  type SoftwareStatementPublisher,
-  type VerifiedSoftwareStatement,
-  type VerifySoftwareStatementOptions,
-} from './software-statement.js';
+export { applySoftwareStatement, type VerifiedSoftwareStatement } from './software-statement.js';
 
 export {
   buildRegisteredClient,
@@ -63,4 +61,4 @@ export {
   type DynamicallyRegisteredClient,
 } from './registered-client.js';
 
-export { verifyInitialAccessToken } from './initial-access-token.js';
+export { readBearerToken } from './bearer-token.js';

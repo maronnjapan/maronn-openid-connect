@@ -74,15 +74,13 @@ describe('readPostLogoutRedirectUris', () => {
   });
 });
 
-// RFC 7591: the initial access token and the inventory cap.
+// RFC 7591 §5: the inventory cap.
 describe('readDynamicClientRegistration', () => {
-  it('should read the initial access token and the cap', () => {
-    const env = { OIDC_DCR_INITIAL_ACCESS_TOKEN: 'iat-1', OIDC_DCR_MAX_CLIENTS: '5' };
-
-    expect(readDynamicClientRegistration(env)).toEqual({ initialAccessToken: 'iat-1', maxRegisteredClients: 5 });
+  it('should read the cap', () => {
+    expect(readDynamicClientRegistration({ OIDC_DCR_MAX_CLIENTS: '5' })).toEqual({ maxRegisteredClients: 5 });
   });
 
-  it('should leave both out when the variables are unset', () => {
+  it('should leave the cap out when the variable is unset', () => {
     expect(readDynamicClientRegistration({})).toEqual({});
   });
 
@@ -91,25 +89,6 @@ describe('readDynamicClientRegistration', () => {
   it('should reject a cap that is not a positive integer', () => {
     expect(() => readDynamicClientRegistration({ OIDC_DCR_MAX_CLIENTS: 'abc' })).toThrow(
       'OIDC_DCR_MAX_CLIENTS must be a positive integer, not "abc"',
-    );
-  });
-
-  // RFC 7591 §2.3: the publishers whose software statements are trusted, as JSON.
-  it('should read the trusted software statement publishers', () => {
-    const publishers = [{ issuer: 'https://publisher.example.com', jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB', alg: 'RS256' }] } }];
-
-    expect(readDynamicClientRegistration({ OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: JSON.stringify(publishers) })).toEqual({
-      trustedSoftwarePublishers: publishers,
-    });
-  });
-
-  it.each([
-    ['not JSON', '{'],
-    ['not an array', '{"issuer":"https://publisher.example.com"}'],
-    ['an entry without jwks', '[{"issuer":"https://publisher.example.com"}]'],
-  ])('should reject trusted publishers that are %s', (_label, value) => {
-    expect(() => readDynamicClientRegistration({ OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: value })).toThrow(
-      'OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON must be a JSON array of { issuer, jwks }',
     );
   });
 });

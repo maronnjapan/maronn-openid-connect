@@ -43,7 +43,7 @@ export const meta = step({
  *   standard and the declared ones
  * - id_token_signed_response_alg / userinfo_signed_response_alg: the algs of
  *   the registered signing keys, as discovery advertises them
- * - the custom metadata of the registration policy (policy.ts)
+ * - the custom metadata of the registration config (config.ts)
  *
  * Unknown metadata is silently ignored (§2 MUST), and every error_description
  * is a fixed ASCII string that never reflects request values.

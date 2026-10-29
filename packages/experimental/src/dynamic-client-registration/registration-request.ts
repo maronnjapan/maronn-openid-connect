@@ -10,7 +10,7 @@
  *
  * 1. parseClientRegistrationBody: ボディ長・JSON・オブジェクト形式の検査。
  *    software_statement（RFC 7591 §2.3）を平文のメタデータから切り離す
- * 2. （software-statement.ts）verifySoftwareStatement で発行者の署名を検証し、
+ * 2. （software-statement.ts）OP の設定に渡した検証関数で statement を検証し、
  *    applySoftwareStatement で主張されたメタデータを平文の値へ優先して重ねる
  * 3. validateClientMetadata: 理解するフィールドの値検査と既定値の適用、
  *    grant_types と response_types の整合検査、カスタムメタデータの検証
@@ -64,9 +64,11 @@ const DEFAULT_MAX_BODY_BYTES = 16384;
  * 登録リクエストボディ（文字列）を読み取る。
  *
  * ボディ長、JSON 構文、オブジェクト形式を検査し、software_statement メンバー
- * （文字列でなければ invalid_software_statement）を平文のメタデータから切り離して
- * 返す。返す metadata はパース結果そのものではなく、software_statement 以外の
- * 自身のプロパティを選び取った新しいオブジェクトである。
+ * （RFC 7591 §3.1.1 は JWT の文字列と定める。文字列でなければ
+ * invalid_software_statement）を平文のメタデータから切り離して返す。文字列の
+ * 中身は見ない。検証は OP の設定に渡した関数の責務である。返す metadata は
+ * パース結果そのものではなく、software_statement 以外の自身のプロパティを
+ * 選び取った新しいオブジェクトである。
  */
 export function parseClientRegistrationBody(
   rawBody: string,
@@ -99,11 +101,8 @@ export function parseClientRegistrationBody(
   if (softwareStatement === undefined) {
     return { metadata };
   }
-  if (typeof softwareStatement !== 'string' || softwareStatement.length === 0) {
-    throw new ClientRegistrationError(
-      'invalid_software_statement',
-      'software_statement must be a JWS compact serialization',
-    );
+  if (typeof softwareStatement !== 'string') {
+    throw new ClientRegistrationError('invalid_software_statement', 'software_statement must be a string');
   }
   return { metadata, softwareStatement };
 }
@@ -356,10 +355,7 @@ export function validateClientMetadata(
     // RFC 7591 §3.2.1: 登録に使った software_statement は、そのまま応答に返す。
     const softwareStatement = metadata['software_statement'];
     if (typeof softwareStatement !== 'string') {
-      throw new ClientRegistrationError(
-        'invalid_software_statement',
-        'software_statement must be a JWS compact serialization',
-      );
+      throw new ClientRegistrationError('invalid_software_statement', 'software_statement must be a string');
     }
     registered['software_statement'] = softwareStatement;
   }
@@ -386,8 +382,8 @@ export interface ValidateClientRegistrationOptions
  *
  * parseClientRegistrationBody と validateClientMetadata を直結し、
  * software_statement は検証せずに無視する（RFC 7591 §3.1.1）。software statement
- * を受け付ける OP は、両関数の間に verifySoftwareStatement と
- * applySoftwareStatement（software-statement.ts）を挟む。
+ * を受け付ける OP は、両関数の間に設定の検証関数と applySoftwareStatement
+ * （software-statement.ts）を挟む。
  */
 export function validateClientRegistrationRequest(
   rawBody: string,

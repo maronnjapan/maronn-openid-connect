@@ -6,7 +6,6 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
-import type { SoftwareStatementPublisher } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { applyOidc } from './oidc-provider/apply.js';
 import type { ClientRegistration } from './oidc-provider/config.js';
 import { createDatabase, registerClient, registerUser } from './oidc-provider/db/index.js';
@@ -85,24 +84,15 @@ app.get('/health', (_req, res) => {
 });
 
 // EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
-// sample with an initial access token, a small inventory cap and a trusted
-// software statement publisher, so the restricted-registration paths (401 /
-// 429) and the software statement path can be exercised over real HTTP. With
-// the vars unset the generated defaults stay: open registration, cap 100, no
-// trusted publisher.
+// sample with a small inventory cap, so the 429 path can be exercised over
+// real HTTP. With the var unset the generated default stays (cap 100). The
+// verifier functions of the registration config (initial access token,
+// software statement) are code, not environment: pass them here as
+// verifyInitialAccessToken / verifySoftwareStatement when a deployment needs
+// them; the generated code verifies neither on its own.
 const dynamicClientRegistration = {
-  ...(process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN
-    ? { initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN }
-    : {}),
   ...(process.env.OIDC_DCR_MAX_CLIENTS
     ? { maxRegisteredClients: Number(process.env.OIDC_DCR_MAX_CLIENTS) }
-    : {}),
-  ...(process.env.OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON
-    ? {
-        trustedSoftwarePublishers: JSON.parse(
-          process.env.OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON,
-        ) as SoftwareStatementPublisher[],
-      }
     : {}),
 };
 

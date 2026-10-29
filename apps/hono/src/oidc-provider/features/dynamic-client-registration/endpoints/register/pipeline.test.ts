@@ -2,7 +2,6 @@ import { ClientRegistrationError } from '@maronn-openid-connect/experimental/dyn
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER } from '../../../../../test-support/context.js';
 import { rs256Key, staticKeyProvider } from '../../../../../test-support/keys.js';
-import { publisherKey, signSoftwareStatement, TEST_PUBLISHER } from '../../../../../test-support/software-statement.js';
 import { createApp, type OidcProviderOptions } from '../../../../app.js';
 import { createClientKeyResolver, createClientResolver } from '../../../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../../../db/memory/database.js';
@@ -163,25 +162,31 @@ describe('registerApp', () => {
     });
   });
 
-  // OIDC Dynamic Client Registration 1.0 §3: the initial access token of the dynamicClientRegistration option.
-  it('should refuse a registration without the initial access token the option requires', async () => {
-    const app = await providerApp({ dynamicClientRegistration: { initialAccessToken: 'iat-secret' } });
+  // OIDC Dynamic Client Registration 1.0 §3 / RFC 6750 §3.1: once the option
+  // sets verifyInitialAccessToken, a request without a Bearer token is refused
+  // with a bare challenge, before the function is asked anything.
+  it('should require a Bearer token once the option sets verifyInitialAccessToken', async () => {
+    const app = await providerApp({ dynamicClientRegistration: { verifyInitialAccessToken: () => true } });
 
-    const refused = await register(app, { redirect_uris: ['https://rp.example.com/callback'] });
-    const accepted = await register(
+    const missing = await register(app, { redirect_uris: ['https://rp.example.com/callback'] });
+    const otherScheme = await register(
       app,
       { redirect_uris: ['https://rp.example.com/callback'] },
-      { Authorization: 'Bearer iat-secret' },
+      { Authorization: 'Basic dXNlcjpwYXNz' },
     );
 
-    expect([refused.status, refused.headers.get('WWW-Authenticate')]).toEqual([401, 'Bearer']);
-    expect(accepted.status).toBe(201);
+    expect([missing.status, missing.headers.get('WWW-Authenticate')]).toEqual([401, 'Bearer']);
+    expect([otherScheme.status, otherScheme.headers.get('WWW-Authenticate')]).toEqual([401, 'Bearer']);
   });
 
-  it('should let a verifyInitialAccessToken of the option decide who may register', async () => {
+  it('should let the verifyInitialAccessToken of the option decide who may register, from the Bearer token', async () => {
+    const seen: string[] = [];
     const app = await providerApp({
       dynamicClientRegistration: {
-        verifyInitialAccessToken: async (authorization) => authorization === 'Bearer custom-ticket',
+        verifyInitialAccessToken: async (token) => {
+          seen.push(token);
+          return token === 'custom-ticket';
+        },
       },
     });
 
@@ -194,24 +199,44 @@ describe('registerApp', () => {
 
     expect([refused.status, refused.headers.get('WWW-Authenticate')]).toEqual([401, 'Bearer error="invalid_token"']);
     expect(accepted.status).toBe(201);
+    expect(seen).toEqual(['other', 'custom-ticket']);
   });
 
-  // RFC 7591 §3.1.1 / §3.2.1: the metadata of a trusted software statement wins
-  // over the plain values, and the statement comes back unmodified.
-  it('should apply the metadata of a trusted software statement and return the statement', async () => {
-    const publisher = await publisherKey();
-    const app = await providerApp({
-      dynamicClientRegistration: { trustedSoftwarePublishers: [{ issuer: TEST_PUBLISHER, jwks: publisher.jwks }] },
-    });
-    const statement = await signSoftwareStatement(
-      { client_name: 'Published App', software_id: 'sw-1', software_version: '2.0' },
-      publisher.signingKey,
-    );
+  // RFC 7591 §3.1.1: a provider without a verifier does not support software
+  // statements and ignores the member; the plain values register and nothing
+  // is echoed as software_statement.
+  it('should ignore a software_statement while the option sets no verifySoftwareStatement', async () => {
+    const app = await providerApp();
 
     const response = await register(app, {
       redirect_uris: ['https://rp.example.com/callback'],
       client_name: 'Plain Name',
-      software_statement: statement,
+      software_statement: 'eyJhbGciOiJSUzI1NiJ9.e30.sig',
+    });
+
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(response.status).toBe(201);
+    expect(body['client_name']).toBe('Plain Name');
+    expect(Object.hasOwn(body, 'software_statement')).toBe(false);
+  });
+
+  // RFC 7591 §3.1.1 / §3.2.1: the metadata the verifier of the option returns
+  // wins over the plain values, and the statement comes back unmodified.
+  it('should apply the metadata the verifySoftwareStatement of the option returns and return the statement', async () => {
+    const seen: string[] = [];
+    const app = await providerApp({
+      dynamicClientRegistration: {
+        verifySoftwareStatement: (statement) => {
+          seen.push(statement);
+          return { metadata: { client_name: 'Published App', software_id: 'sw-1', software_version: '2.0' } };
+        },
+      },
+    });
+
+    const response = await register(app, {
+      redirect_uris: ['https://rp.example.com/callback'],
+      client_name: 'Plain Name',
+      software_statement: 'eyJhbGciOiJSUzI1NiJ9.e30.sig',
     });
 
     expect(response.status).toBe(201);
@@ -219,30 +244,33 @@ describe('registerApp', () => {
       client_name: 'Published App',
       software_id: 'sw-1',
       software_version: '2.0',
-      software_statement: statement,
+      software_statement: 'eyJhbGciOiJSUzI1NiJ9.e30.sig',
     });
+    expect(seen).toEqual(['eyJhbGciOiJSUzI1NiJ9.e30.sig']);
   });
 
-  // RFC 7591 §3.2.2: the two software statement error codes.
-  it('should answer unapproved_software_statement for an unknown publisher and invalid_software_statement for a broken statement', async () => {
-    const publisher = await publisherKey();
-    const app = await providerApp();
+  // RFC 7591 §3.2.2: a verifier makes the statement required, and its rejection is the answer.
+  it('should require a software_statement once the option sets verifySoftwareStatement, and answer the rejection of the verifier', async () => {
+    const app = await providerApp({
+      dynamicClientRegistration: {
+        verifySoftwareStatement: () => {
+          throw new ClientRegistrationError('unapproved_software_statement', 'publisher not approved');
+        },
+      },
+    });
 
-    const unapproved = await register(app, {
+    const missing = await register(app, { redirect_uris: ['https://rp.example.com/callback'] });
+    const rejected = await register(app, {
       redirect_uris: ['https://rp.example.com/callback'],
-      software_statement: await signSoftwareStatement({ client_name: 'Published App' }, publisher.signingKey),
+      software_statement: 'eyJhbGciOiJSUzI1NiJ9.e30.sig',
     });
-    const invalid = await register(app, { redirect_uris: ['https://rp.example.com/callback'], software_statement: 'not-a-jwt' });
 
-    expect(unapproved.status).toBe(400);
-    expect(await unapproved.json()).toEqual({
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ error: 'invalid_client_metadata', error_description: 'software_statement is required' });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({
       error: 'unapproved_software_statement',
-      error_description: 'the issuer of the software_statement is not approved by this authorization server',
-    });
-    expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toEqual({
-      error: 'invalid_software_statement',
-      error_description: 'software_statement must be a JWS compact serialization',
+      error_description: 'publisher not approved',
     });
   });
 

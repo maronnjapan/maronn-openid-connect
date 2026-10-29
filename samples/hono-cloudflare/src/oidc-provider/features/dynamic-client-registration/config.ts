@@ -1,29 +1,28 @@
 import type {
   CustomClientMetadataValidator,
-  SoftwareStatementPublisher,
   VerifiedSoftwareStatement,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
-import {
-  customClientMetadata,
-  verifyRegistrationInitialAccessToken,
-  verifyRegistrationSoftwareStatement,
-} from './policy.js';
 
 /**
- * Decides whether a registration request may register, from its Authorization
- * header (OIDC Dynamic Client Registration 1.0 §3). true accepts the request;
- * false answers 401 (a bare Bearer challenge without a header, error="invalid_token"
- * with one; RFC 6750 §3.1).
+ * Decides whether a registration request may register, from the Bearer token
+ * of its Authorization header (OIDC Dynamic Client Registration 1.0 §3; RFC
+ * 6750 §2.1). true accepts the request; false answers 401 with
+ * error="invalid_token" (RFC 6750 §3.1). A request without a Bearer token is
+ * answered 401 with a bare challenge before this function runs.
  */
 export type InitialAccessTokenVerifier = (
-  authorization: string | undefined,
+  token: string,
   config: DynamicClientRegistrationConfig,
 ) => Promise<boolean> | boolean;
 
 /**
  * Verifies a software_statement (RFC 7591 §2.3) and returns the metadata it
- * asserts. Throw ClientRegistrationError with invalid_software_statement or
- * unapproved_software_statement to reject it (RFC 7591 §3.2.2).
+ * asserts, which the register endpoint applies over the plain JSON values
+ * (RFC 7591 §3.1.1). Throw ClientRegistrationError with
+ * invalid_software_statement or unapproved_software_statement to reject it
+ * (§3.2.2). RFC 7591 leaves the trust criteria to the server, so this function
+ * alone decides them: which issuers it accepts, how it verifies the signature,
+ * which claims it reads. Nothing in the generated code examines the statement.
  */
 export type SoftwareStatementVerifier = (
   softwareStatement: string,
@@ -34,14 +33,8 @@ export type SoftwareStatementVerifier = (
  * Dynamic client registration settings. The dynamicClientRegistration option of
  * createApp() / applyOidc() extends these defaults (feature.ts,
  * extendDynamicClientRegistrationConfig below), so change them here or per
- * deployment there — the policy functions included.
+ * deployment there — the verifier functions included.
  *
- * - initialAccessToken: when set, POST /register requires
- *   `Authorization: Bearer <value>` (OIDC Dynamic Client Registration 1.0 §3).
- *   Unset means open registration (RFC 7591 §3.1 SHOULD). This is one static
- *   secret for PoC use — there is no issuance or rotation. verifyInitialAccessToken
- *   (policy.ts) is the function that reads it; replace it to check tokens of
- *   your own issuance.
  * - maxRegisteredClients: inventory cap on dynamic registrations
  *   (RFC 7591 §5 DoS consideration). The cap answers 429, not
  *   invalid_client_metadata: nothing about the metadata is wrong, so a
@@ -61,38 +54,57 @@ export type SoftwareStatementVerifier = (
  * - jwksPurposes: the ClientKeyResolver purposes the jwks of a registration
  *   serves — a registered key verifies signed Request Objects (request_object),
  *   and stands ready for private_key_jwt and DPoP once a project adds them.
- * - trustedSoftwarePublishers: the issuers whose software statements
- *   (RFC 7591 §2.3) are accepted, with the public keys that verify them.
- *   Empty as generated (fail safe): a software_statement is then answered with
- *   unapproved_software_statement.
- * - verifyInitialAccessToken / verifySoftwareStatement / customClientMetadata:
- *   the registration policy, generated into policy.ts. Edit the functions
- *   there, or pass your own through the dynamicClientRegistration option.
+ * - verifyInitialAccessToken: undefined as generated, which leaves registration
+ *   open (RFC 7591 §3.1 SHOULD). Set a function to require an initial access
+ *   token (OIDC Dynamic Client Registration 1.0 §3): POST /register then answers
+ *   401 to a request without a Bearer token, and the function decides whether
+ *   the presented token may register. The generated code verifies no token of
+ *   its own — the token format, its issuance and its lookup are the function's.
+ * - verifySoftwareStatement: undefined as generated, which ignores a
+ *   software_statement (RFC 7591 §3.1.1 lets a server that does not support
+ *   them do so). Set a function to accept software statements: POST /register
+ *   then requires one (invalid_client_metadata without it), and the function
+ *   verifies it and returns the metadata it asserts. The generated code
+ *   verifies no statement of its own.
+ * - customClientMetadata: metadata beyond the standard fields that a
+ *   registration may carry (RFC 7591 §2 lets a provider understand more). Each
+ *   entry names one field and validates its value: return the value to register
+ *   (it is echoed in the 201 response and kept in
+ *   RegisteredClient.registrationMetadata), return undefined to leave the field
+ *   out, or throw ClientRegistrationError with invalid_client_metadata to reject
+ *   the registration. The validator also runs when the field is absent, so it
+ *   can return a default. Empty as generated: every field outside the standard
+ *   ones is ignored (RFC 7591 §2 MUST). Example — a tenant identifier of at
+ *   most 64 characters:
+ *
+ *     tenant_id: (value) => {
+ *       if (value === undefined) return undefined;
+ *       if (typeof value !== 'string' || !/^[a-z0-9-]{1,64}$/.test(value)) {
+ *         throw new ClientRegistrationError('invalid_client_metadata', 'tenant_id must be a lowercase identifier');
+ *       }
+ *       return value;
+ *     },
  */
 export interface DynamicClientRegistrationConfig {
-  initialAccessToken: string | undefined;
   maxRegisteredClients: number;
   maxRegistrationBodyBytes: number;
   tokenEndpointAuthMethods: readonly string[];
   grantTypes: readonly string[];
   jwksPurposes: readonly string[];
-  trustedSoftwarePublishers: readonly SoftwareStatementPublisher[];
-  verifyInitialAccessToken: InitialAccessTokenVerifier;
-  verifySoftwareStatement: SoftwareStatementVerifier;
+  verifyInitialAccessToken: InitialAccessTokenVerifier | undefined;
+  verifySoftwareStatement: SoftwareStatementVerifier | undefined;
   customClientMetadata: Readonly<Record<string, CustomClientMetadataValidator>>;
 }
 
 export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = {
-  initialAccessToken: undefined,
   maxRegisteredClients: 100,
   maxRegistrationBodyBytes: 16384,
   tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none'],
   grantTypes: ['authorization_code', 'refresh_token', 'implicit'],
   jwksPurposes: ['request_object', 'private_key_jwt', 'dpop'],
-  trustedSoftwarePublishers: [],
-  verifyInitialAccessToken: verifyRegistrationInitialAccessToken,
-  verifySoftwareStatement: verifyRegistrationSoftwareStatement,
-  customClientMetadata,
+  verifyInitialAccessToken: undefined,
+  verifySoftwareStatement: undefined,
+  customClientMetadata: {},
 };
 
 /**
@@ -102,25 +114,17 @@ export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = 
  * The option adds to the lists and the table instead of replacing them, so a
  * deployment extends what the generated code allows without repeating it:
  * tokenEndpointAuthMethods, grantTypes and jwksPurposes gain the given values
- * (each once), trustedSoftwarePublishers gains the given publishers (one
- * with the issuer of a generated publisher replaces it), and
- * customClientMetadata gains the given validators (one with the name of a
- * generated validator replaces it). The scalar settings and the policy
- * functions replace the defaults; a field left out or undefined keeps them.
- * To take a value out of a generated list, edit it in config.ts.
+ * (each once), and customClientMetadata gains the given validators (one with
+ * the name of a generated validator replaces it). The scalar settings and the
+ * verifier functions replace the defaults; a field left out or undefined keeps
+ * them. To take a value out of a generated list, or to drop a verifier set
+ * above, edit it in config.ts.
  */
 export function extendDynamicClientRegistrationConfig(
   base: DynamicClientRegistrationConfig,
   additions: Partial<DynamicClientRegistrationConfig> = {},
 ): DynamicClientRegistrationConfig {
-  const {
-    tokenEndpointAuthMethods,
-    grantTypes,
-    jwksPurposes,
-    trustedSoftwarePublishers,
-    customClientMetadata: customMetadata,
-    ...replaced
-  } = additions;
+  const { tokenEndpointAuthMethods, grantTypes, jwksPurposes, customClientMetadata: customMetadata, ...replaced } = additions;
   const config: DynamicClientRegistrationConfig = { ...base };
   for (const [name, value] of Object.entries(replaced)) {
     if (value !== undefined) (config as unknown as Record<string, unknown>)[name] = value;
@@ -128,11 +132,6 @@ export function extendDynamicClientRegistrationConfig(
   config.tokenEndpointAuthMethods = [...new Set([...base.tokenEndpointAuthMethods, ...(tokenEndpointAuthMethods ?? [])])];
   config.grantTypes = [...new Set([...base.grantTypes, ...(grantTypes ?? [])])];
   config.jwksPurposes = [...new Set([...base.jwksPurposes, ...(jwksPurposes ?? [])])];
-  const added = trustedSoftwarePublishers ?? [];
-  config.trustedSoftwarePublishers = [
-    ...base.trustedSoftwarePublishers.filter((publisher) => !added.some((entry) => entry.issuer === publisher.issuer)),
-    ...added,
-  ];
   config.customClientMetadata = { ...base.customClientMetadata, ...customMetadata };
   return config;
 }
@@ -146,7 +145,7 @@ declare module '../../app.js' {
      * example from environment variables — without editing the generated
      * file (extendDynamicClientRegistrationConfig). The lists and the custom
      * metadata table gain the given values, the scalar settings and the
-     * policy functions (verifyInitialAccessToken, verifySoftwareStatement)
+     * verifier functions (verifyInitialAccessToken, verifySoftwareStatement)
      * replace the generated ones, and an unset field keeps them.
      */
     dynamicClientRegistration?: Partial<DynamicClientRegistrationConfig>;

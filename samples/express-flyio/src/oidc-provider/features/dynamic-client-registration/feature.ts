@@ -13,8 +13,9 @@ import {
  * (store.ts) and resolved after the configured clients, so a static
  * registration always wins; the public keys a registration carried (jwks)
  * are handed out by the ClientKeyResolver the same way. Registration
- * management (RFC 7592) is not implemented. Settings and the registration
- * policy are in config.ts and policy.ts.
+ * management (RFC 7592) is not implemented. The settings, the optional
+ * verifier functions (initial access token, software statement) and the
+ * custom metadata are in config.ts.
  *
  * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it
  * may change in a breaking way between releases.

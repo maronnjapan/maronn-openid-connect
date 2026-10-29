@@ -107,22 +107,22 @@ describe('parseClientRegistrationBody', () => {
       });
     });
 
+    // RFC 7591 §3.1.1 defines the member as a JWT string; its content is for the verifier of the OP.
     it('should reject a software_statement that is not a string with invalid_software_statement', () => {
       expect(() => parseClientRegistrationBody(body({ ...MINIMAL, software_statement: { iss: 'x' } }))).toThrowError(
-        new ClientRegistrationError(
-          'invalid_software_statement',
-          'software_statement must be a JWS compact serialization',
-        ),
+        new ClientRegistrationError('invalid_software_statement', 'software_statement must be a string'),
       );
     });
 
-    it('should reject an empty software_statement with invalid_software_statement', () => {
-      expect(() => parseClientRegistrationBody(body({ ...MINIMAL, software_statement: '' }))).toThrowError(
-        new ClientRegistrationError(
-          'invalid_software_statement',
-          'software_statement must be a JWS compact serialization',
-        ),
-      );
+    it('should hand any string through unexamined, an empty one included', () => {
+      expect(parseClientRegistrationBody(body({ ...MINIMAL, software_statement: '' }))).toEqual({
+        metadata: MINIMAL,
+        softwareStatement: '',
+      });
+      expect(parseClientRegistrationBody(body({ ...MINIMAL, software_statement: 'not-a-jwt' }))).toEqual({
+        metadata: MINIMAL,
+        softwareStatement: 'not-a-jwt',
+      });
     });
   });
 
@@ -859,10 +859,7 @@ describe('validateClientMetadata', () => {
 
     it('should reject a software_statement that is not a string', () => {
       expect(() => validateClientMetadata({ ...MINIMAL, software_statement: 1 })).toThrowError(
-        new ClientRegistrationError(
-          'invalid_software_statement',
-          'software_statement must be a JWS compact serialization',
-        ),
+        new ClientRegistrationError('invalid_software_statement', 'software_statement must be a string'),
       );
     });
   });

@@ -20,9 +20,11 @@ import { resolveRegistrationMetadata } from './steps/verify-software-statement.j
  * software statement of a publisher this OP trusts — and receives a freshly
  * minted client_id (and, for confidential clients, a client_secret) that works
  * on /authorize and /token right away. Registration is open by default
- * (RFC 7591 §3.1 SHOULD); set initialAccessToken to require a Bearer token.
- * The registration policy (who may register, which publishers are trusted,
- * which metadata beyond the standard fields is accepted) is in ../../policy.ts.
+ * (RFC 7591 §3.1 SHOULD) and a software_statement is ignored (§3.1.1); set
+ * verifyInitialAccessToken / verifySoftwareStatement of ../../config.ts to
+ * require them and verify them with functions of your own — this code
+ * verifies neither. Metadata beyond the standard fields is accepted through
+ * customClientMetadata of the same config.
  * Each block below calls one step (one box of
  * `maronn-oidc graph --detail steps --endpoint register`).
  *

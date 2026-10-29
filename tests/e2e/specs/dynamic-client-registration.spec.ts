@@ -1,19 +1,17 @@
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { signSoftwareStatement } from '../support/software-publisher';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
 const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
 // EXPERIMENTAL (RFC 7591): a second OP instance started by playwright.config.ts
-// with an initial access token, a small inventory cap and a trusted software
-// statement publisher, so the restricted registration paths (401 / 429) and
-// the software statement path can be exercised without touching the open
-// registration the other tests rely on.
+// with a small inventory cap, so the 429 path can be exercised without filling
+// the open registration the other tests rely on. The verifier functions of the
+// registration config (initial access token, software statement) are code, not
+// environment, so their paths are covered by the in-process tests of the apps.
 const dcrOpPort = Number(process.env.E2E_DCR_OP_PORT ?? '3050');
 const restrictedIssuer = process.env.E2E_DCR_ISSUER ?? `http://${host}:${dcrOpPort}`;
-const initialAccessToken = 'e2e-dcr-initial-access-token';
 const restrictedMaxClients = 3;
 
 // The registered redirect target only has to be a page the browser can land on
@@ -467,9 +465,31 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(Object.hasOwn(registered, 'require_auth_time')).toBe(false);
   });
 
-  // RFC 7591 §3.2.2: a software statement this OP cannot verify, and one from
-  // a publisher it does not trust (the open instance trusts none).
-  test('should answer invalid_software_statement for a software_statement that is not a JWS', async ({
+  // RFC 7591 §3.1.1: a provider without a verifySoftwareStatement in its config
+  // does not support software statements and ignores the member — the plain
+  // values register, and nothing comes back as software_statement. Nothing in
+  // the OP examines the statement, so any string is ignored the same way.
+  test('should ignore a software_statement when the provider has no verifier for it (RFC 7591 §3.1.1)', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      client_name: 'E2E Plain Name',
+      software_statement: 'not-a-jws',
+    });
+
+    expect(registered.client_name).toBe('E2E Plain Name');
+    expect(Object.hasOwn(registered, 'software_statement')).toBe(false);
+  });
+
+  // RFC 7591 §3.1.1 defines the member as a JWT string: another JSON type is a
+  // malformed request, whether or not the provider supports statements.
+  test('should answer invalid_software_statement for a software_statement that is not a string', async ({
     request,
     baseURL,
   }) => {
@@ -479,109 +499,18 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
 
     const response = await request.post(`${issuer}/register`, {
       headers: { 'Content-Type': 'application/json' },
-      data: { redirect_uris: [registeredRedirectUri], software_statement: 'not-a-jws' },
+      data: { redirect_uris: [registeredRedirectUri], software_statement: { iss: 'https://publisher.example.com' } },
     });
     expect(response.status()).toBe(400);
     expect(await response.json()).toEqual({
       error: 'invalid_software_statement',
-      error_description: 'software_statement must be a JWS compact serialization',
+      error_description: 'software_statement must be a string',
     });
   });
 
-  test('should answer unapproved_software_statement for a publisher this provider does not trust', async ({
-    request,
-    baseURL,
-  }) => {
-    const issuer = requireBaseUrl(baseURL);
-    const endpoint = await registrationEndpoint(request, issuer);
-    test.skip(endpoint === undefined, SKIP_REASON);
+  // --- The capped instance: the inventory cap ---
 
-    const response = await request.post(`${issuer}/register`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: {
-        redirect_uris: [registeredRedirectUri],
-        software_statement: signSoftwareStatement({ client_name: 'E2E Published Client' }),
-      },
-    });
-    expect(response.status()).toBe(400);
-    expect(await response.json()).toEqual({
-      error: 'unapproved_software_statement',
-      error_description: 'the issuer of the software_statement is not approved by this authorization server',
-    });
-  });
-
-  // --- The restricted instance: initial access token, software statements and the inventory cap ---
-
-  test('should answer 401 without an error code when no credentials accompany the request (RFC 6750 §3.1)', async ({
-    request,
-  }) => {
-    const endpoint = await registrationEndpoint(request, restrictedIssuer);
-    test.skip(endpoint === undefined, RESTRICTED_SKIP_REASON);
-
-    const response = await request.post(`${restrictedIssuer}/register`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: { redirect_uris: [registeredRedirectUri] },
-    });
-    expect(response.status()).toBe(401);
-    expect(requireHeader(response.headers(), 'www-authenticate')).toBe('Bearer');
-  });
-
-  test('should answer 401 invalid_token for a presented but wrong initial access token', async ({
-    request,
-  }) => {
-    const endpoint = await registrationEndpoint(request, restrictedIssuer);
-    test.skip(endpoint === undefined, RESTRICTED_SKIP_REASON);
-
-    const response = await request.post(`${restrictedIssuer}/register`, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer not-the-registered-token',
-      },
-      data: { redirect_uris: [registeredRedirectUri] },
-    });
-    expect(response.status()).toBe(401);
-    expect(requireHeader(response.headers(), 'www-authenticate')).toBe(
-      'Bearer error="invalid_token"',
-    );
-  });
-
-  // RFC 7591 §3.1.1 / §3.2.1: the metadata of a trusted publisher's statement
-  // takes precedence over the plain values, and the statement comes back as
-  // it was sent. This registration takes one of the three slots of the
-  // instance; the cap test below counts from whatever is left.
-  test('should register the metadata a trusted software statement asserts and return the statement unmodified', async ({
-    request,
-  }) => {
-    const endpoint = await registrationEndpoint(request, restrictedIssuer);
-    test.skip(endpoint === undefined, RESTRICTED_SKIP_REASON);
-    const softwareStatement = signSoftwareStatement({
-      client_name: 'E2E Published Client',
-      software_id: 'e2e-published-software',
-      software_version: '1.0.0',
-    });
-
-    const response = await request.post(`${restrictedIssuer}/register`, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${initialAccessToken}`,
-      },
-      data: {
-        redirect_uris: [registeredRedirectUri],
-        client_name: 'E2E Plain Name',
-        software_statement: softwareStatement,
-      },
-    });
-
-    expect(response.status()).toBe(201);
-    expect(await response.json()).toMatchObject({
-      client_name: 'E2E Published Client',
-      software_id: 'e2e-published-software',
-      software_version: '1.0.0',
-      software_statement: softwareStatement,
-    });
-  });
-
-  test('should register with the initial access token and answer 429 once the inventory cap is reached', async ({
+  test('should answer 429 once the inventory cap is reached', async ({
     request,
   }) => {
     const endpoint = await registrationEndpoint(request, restrictedIssuer);
@@ -594,10 +523,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     let lastResponse;
     for (let attempt = 0; attempt < restrictedMaxClients + 1; attempt++) {
       lastResponse = await request.post(`${restrictedIssuer}/register`, {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${initialAccessToken}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         data: { redirect_uris: [registeredRedirectUri] },
       });
       statuses.push(lastResponse.status());
@@ -620,7 +546,7 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
 const SKIP_REASON =
   'This sample OP was generated without --enable dynamic-client-registration';
 const RESTRICTED_SKIP_REASON =
-  'The restricted-registration OP instance is not running for this sample';
+  'The capped-registration OP instance is not running for this sample';
 
 interface AuthorizeState {
   codeVerifier: string;

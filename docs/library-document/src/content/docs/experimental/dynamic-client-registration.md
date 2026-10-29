@@ -53,7 +53,7 @@ Cache-Control: no-store
 次はスコープ外です。
 
 - RFC 7592（登録後の参照・更新・削除）。`registration_access_token` と `registration_client_uri` は、両方返すか両方返さないかの MUST に従い、どちらも返しません
-- initial access token と software statement の発行。どちらも照合だけを提供します
+- initial access token と software statement の発行と検証。どちらも、設定に渡した関数が判定します。関数を渡さない既定ではオープン登録で、`software_statement` は無視します（RFC 7591 §3.1.1）
 - URL を参照しに行くメタデータの解釈（`jwks_uri`、`sector_identifier_uri`、`request_uris` など。未知フィールドとして無視します）
 
 ## ユースケース
@@ -85,32 +85,34 @@ pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental
 
 | 設定 | 既定値 | 意味 |
 |---|---|---|
-| `initialAccessToken` | `undefined` | 設定すると `POST /register` に `Authorization: Bearer <値>` の提示を要求します。未設定ならオープン登録（RFC 7591 §3.1 の SHOULD） |
 | `maxRegisteredClients` | `100` | 動的登録クライアントの総数上限。超過時は `429` |
 | `maxRegistrationBodyBytes` | `16384` | リクエストボディの上限（UTF-8 バイト長） |
 | `tokenEndpointAuthMethods` | `client_secret_basic` / `client_secret_post` / `none` | 登録できる `token_endpoint_auth_method`。トークンエンドポイントに `private_key_jwt` などの認証を足したら、ここにも足します |
 | `grantTypes` | `authorization_code` / `refresh_token` / `implicit` | 登録できる `grant_type`。OP が答える grant（`authorization_code`、生成した機能の grant、implicit-flow があるときの `implicit`）に絞られます。Token Exchange や CIBA の URN を足すと、動的登録クライアントにもその grant を許します |
 | `jwksPurposes` | `request_object` / `private_key_jwt` / `dpop` | 登録された `jwks` の鍵を `ClientKeyResolver` のどの用途に置くか |
-| `trustedSoftwarePublishers` | `[]` | software statement を受け入れる発行者（`issuer` と公開鍵の `jwks`）。空なら、`software_statement` を送る登録はすべて `unapproved_software_statement` になります |
-| `verifyInitialAccessToken` / `verifySoftwareStatement` / `customClientMetadata` | `policy.ts` の関数 | 登録の判定（次節） |
+| `verifyInitialAccessToken` | `undefined` | 設定すると `POST /register` に Bearer トークンの提示を要求し、関数がそのトークンで登録の可否を決めます。未設定ならオープン登録（RFC 7591 §3.1 の SHOULD） |
+| `verifySoftwareStatement` | `undefined` | 設定すると `POST /register` に `software_statement` を要求し、関数が検証して主張するメタデータを返します。未設定なら `software_statement` を無視します（RFC 7591 §3.1.1） |
+| `customClientMetadata` | `{}` | 標準外のメタデータの検証関数の表（次節） |
 
 Hono / Express / Fastify では、生成ファイルを編集せずに `applyOidc` のオプションから設定を足せます。
-一覧（`tokenEndpointAuthMethods`、`grantTypes`、`jwksPurposes`、`trustedSoftwarePublishers`）とカスタムメタデータの表は、渡した値が生成コードの既定に**追加**されます。
+一覧（`tokenEndpointAuthMethods`、`grantTypes`、`jwksPurposes`）とカスタムメタデータの表は、渡した値が生成コードの既定に**追加**されます。
 生成コードが許す値を書き写す必要はありません。
-数値や文字列の設定と判定関数は置き換わり、渡さなかった項目は既定のままです。
+数値の設定と判定関数は置き換わり、渡さなかった項目は既定のままです。
 既定の一覧から値を外すときは `config.ts` を編集します。
 
 ```typescript
 applyOidc(app, {
   // ...
   dynamicClientRegistration: {
-    initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN,
     maxRegisteredClients: 10,
     // 既定の authorization_code / refresh_token / implicit に加わる
     grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
     // トークンエンドポイントに private_key_jwt の検証を足したうえで
     tokenEndpointAuthMethods: ['private_key_jwt'],
-    trustedSoftwarePublishers: [{ issuer: 'https://publisher.example.com', jwks: publisherJwks }],
+    // 登録に initial access token を要求し、可否は自分の関数で決める
+    verifyInitialAccessToken: async (token) => await registrationTickets.isValid(token),
+    // software statement を要求し、自分の関数で検証して主張を返す
+    verifySoftwareStatement: async (statement) => ({ metadata: await publisherRegistry.verify(statement) }),
     customClientMetadata: { tenant_id: validateTenantId },
   },
 });
@@ -123,33 +125,66 @@ Next.js では、アプリの起動時（`instrumentation.ts`）に `config.ts` 
 import { extendDynamicClientRegistrationConfig } from './app/_oidc-provider/features/dynamic-client-registration/config';
 
 extendDynamicClientRegistrationConfig({
-  initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN,
-  trustedSoftwarePublishers: [{ issuer: 'https://publisher.example.com', jwks: publisherJwks }],
+  verifyInitialAccessToken: async (token) => await registrationTickets.isValid(token),
+  verifySoftwareStatement: async (statement) => ({ metadata: await publisherRegistry.verify(statement) }),
 });
 ```
 
-initial access token は生成コードの設定に置く固定文字列 1 つで、発行 API やローテーションはありません。
-PoC の検証用と割り切り、本番の審査付き登録には使わないでください。
+生成コードは、initial access token も software statement も自分では検証しません。
+要求するかどうかと、何を正しいとするかは、渡した関数だけが決めます。
 
-## 登録の判定を変える
+## 登録の判定を渡す
 
-誰が登録できるか、どの software statement を信頼するか、標準外のどのメタデータを受理するかは、生成された `features/dynamic-client-registration/policy.ts`（Next.js は `_oidc-provider/features/dynamic-client-registration/policy.ts`）の 3 つの export が決めます。
-関数の本体を書き換えるか、同じ形の関数を `dynamicClientRegistration` オプションで差し込みます。
+誰が登録できるか、software statement をどう検証するか、標準外のどのメタデータを受理するかは、`dynamicClientRegistrationConfig` の 3 つの設定が決めます。
+`config.ts` に書くか、同じ形の値を `dynamicClientRegistration` オプション（Next.js は `extendDynamicClientRegistrationConfig()`）で渡します。
+生成コードは判定の既定実装を持ちません。
+関数を渡さない項目は、要求も検証もしません。
 
-| export | 既定の判定 | 差し替える場面 |
+| 設定 | 未設定（既定） | 設定したとき |
 |---|---|---|
-| `verifyRegistrationInitialAccessToken(authorization, config)` | `initialAccessToken` が未設定なら許可。設定時は `Authorization: Bearer` の値と定数時間比較 | 自分で発行した JWT や使い捨てトークンをストアで照合する |
-| `verifyRegistrationSoftwareStatement(softwareStatement, config)` | `trustedSoftwarePublishers` の鍵で署名を検証し（RS256 / ES256）、`iss` の一致と `exp` / `nbf` を確かめて、主張されたメタデータを返す | 発行者をデータベースやフェデレーションから引く |
-| `customClientMetadata` | 空。標準外のフィールドはすべて無視 | 標準にない項目（テナント ID など）を検証して登録し、応答に返す |
+| `verifyInitialAccessToken(token, config)` | オープン登録。`Authorization` ヘッダは読みません | Bearer トークン（RFC 6750 §2.1）の無い登録は `401` + `WWW-Authenticate: Bearer`。トークンがあれば関数に渡し、`false` なら `401` + `error="invalid_token"`。トークンの形式、発行、照合はすべて関数の責務です |
+| `verifySoftwareStatement(softwareStatement, config)` | `software_statement` を無視し、平文の値だけで登録します（RFC 7591 §3.1.1） | `software_statement` の無い登録は `400` + `invalid_client_metadata`。あれば JWT 文字列をそのまま関数に渡し、返った `metadata` を平文の値に優先して適用します。拒否は `ClientRegistrationError` を `invalid_software_statement` か `unapproved_software_statement` で投げます |
+| `customClientMetadata` | 空。標準外のフィールドはすべて無視 | 標準にない項目（テナント ID など）を検証して登録し、応答に返します |
+
+`verifyInitialAccessToken` が受け取るのは `Authorization: Bearer <token>` の `<token>` だけです。
+ヘッダの解析（RFC 6750 §2.1 の形式、スキーム名の大文字小文字）は生成コードが行い、形式に合わないヘッダは「トークンの提示なし」として扱います。
+
+`verifySoftwareStatement` の例として、承認した発行者の公開鍵で署名を検証し、ペイロードをそのまま主張として返す関数を示します。
+core の `parseRequestObject` は compact JWS を解析し、渡した JWK Set で署名を検証して、ペイロードを返します。
+検証前に読む `iss` は鍵を選ぶためだけに使い、返す値は検証後のペイロードから取ります。
+
+```typescript
+import { parseRequestObject } from '@maronn-openid-connect/core';
+import { ClientRegistrationError } from '@maronn-openid-connect/experimental/dynamic-client-registration';
+
+const publishers = new Map([['https://publisher.example.com', publisherJwks]]);
+
+const verifySoftwareStatement = async (statement: string) => {
+  const jwks = publishers.get(unverifiedIssuerOf(statement) ?? '');
+  if (jwks === undefined) {
+    throw new ClientRegistrationError('unapproved_software_statement', 'the issuer is not approved');
+  }
+  try {
+    const claims = await parseRequestObject(statement, { jwks, supportedSigningAlgs: ['RS256'], allowUnsigned: false });
+    return { metadata: claims };
+  } catch {
+    throw new ClientRegistrationError('invalid_software_statement', 'the signature could not be verified');
+  }
+};
+```
+
+関数が返した `metadata` は平文のメタデータと同じ検査を通ります。
+理解しないクレーム（`iss` や `exp` などの JWT 標準クレームを含む）は無視するので、取り除く必要はありません。
+RFC 7591 が statement の中身に定める必須項目は `iss` だけで（§2.3）、生成コードは中身を検査しません。
 
 `customClientMetadata` はメタデータ名をキーに検証関数を置く表です。
 関数はリクエストの値（無ければ `undefined`）とリクエスト全体を受け取り、登録する値を返します。
 `undefined` を返した項目は登録せず、拒否するときは `ClientRegistrationError` を `invalid_client_metadata` で投げます。
 登録した値は 201 応答に現れ、`RegisteredClient.registrationMetadata` からも読めます。
-`policy.ts` に書いた表に、`dynamicClientRegistration` オプション（Next.js は `extendDynamicClientRegistrationConfig()`）で渡した表が追加されます。
+`config.ts` に書いた表に、`dynamicClientRegistration` オプション（Next.js は `extendDynamicClientRegistrationConfig()`）で渡した表が追加されます。
 
 ```typescript
-export const customClientMetadata: Record<string, CustomClientMetadataValidator> = {
+customClientMetadata: {
   tenant_id: (value) => {
     if (value === undefined) return undefined;
     if (typeof value !== 'string' || !/^[a-z0-9-]{1,64}$/.test(value)) {
@@ -157,7 +192,7 @@ export const customClientMetadata: Record<string, CustomClientMetadataValidator>
     }
     return value;
   },
-};
+},
 ```
 
 ## 生成されるもの
@@ -168,11 +203,10 @@ Hono / Express / Fastify では、この機能のコードはすべて `features
 |---|---|
 | `features/dynamic-client-registration/endpoints/register/` | 登録エンドポイント（`POST /register`）。`pipeline.ts` がステップ（`steps/`）を順に呼ぶ |
 | `features/dynamic-client-registration/config.ts` | 設定オブジェクト `dynamicClientRegistrationConfig`、オプションを既定へ足す `extendDynamicClientRegistrationConfig()`、`createApp` / `applyOidc` に足す `dynamicClientRegistration` オプション、`RegisteredClient.registrationMetadata` の宣言 |
-| `features/dynamic-client-registration/policy.ts` | 登録の判定（initial access token、software statement、カスタムメタデータ） |
 | `features/dynamic-client-registration/store.ts` | 動的登録クライアントの in-memory ストア、保存するレコードの組み立て、設定済みのクライアント解決と鍵解決へ合成する `withDynamicallyRegisteredClients()` / `withDynamicallyRegisteredClientKeys()` |
 | `features/dynamic-client-registration/feature.ts` | `/register` のルート、`registration_endpoint` メタデータ、リクエストのコンテキストでのクライアント解決と鍵解決への合成 |
 
-Next.js では、`(dynamic-client-registration)/register/route.ts` がエンドポイントで、設定・判定・ストアは `_oidc-provider/features/dynamic-client-registration/` にあります。
+Next.js では、`(dynamic-client-registration)/register/route.ts` がエンドポイントで、設定とストアは `_oidc-provider/features/dynamic-client-registration/` にあります。
 
 ## 受理するメタデータ
 
@@ -202,8 +236,11 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 ## software statement
 
 `software_statement`（RFC 7591 §2.3）は、ソフトウェアの発行者が署名した JWT で、クライアントメタデータの集合をまとめて主張します。
-OP は `trustedSoftwarePublishers` に置いた発行者の公開鍵で署名を検証し、`iss` が一致し `exp` / `nbf` の範囲内であれば、主張されたメタデータを平文の値に優先して適用します（§3.1.1）。
-登録に使った statement は、201 応答の `software_statement` にそのまま返します（§3.2.1）。
+どの発行者を信頼し、どう署名を確かめるかは RFC 7591 の対象外で、この OP は statement を自分では検証しません。
+
+- `verifySoftwareStatement` が未設定（既定）の OP は、`software_statement` を無視して平文の値だけで登録します。RFC 7591 §3.1.1 が対応しない AS に許す挙動で、応答に `software_statement` は現れません
+- 設定した OP は、すべての登録に `software_statement` を要求し（無ければ `invalid_client_metadata`）、関数が検証して返したメタデータを平文の値に優先して適用します（§3.1.1）。登録に使った statement は 201 応答の `software_statement` にそのまま返し、statement から使った要素もトップレベルの値として返します（§3.2.1）
+- 関数は `ClientRegistrationError` を `invalid_software_statement`（検証できない）か `unapproved_software_statement`（発行者を承認しない）で投げて拒否します（§3.2.2）
 
 ```text
 POST /register
@@ -214,28 +251,28 @@ POST /register
 }
 （statement の中身: {"iss": "https://publisher.example.com", "client_name": "Published App", "software_id": "4NRB1-0XZABZI9E6-5SM3R"}）
 
-201 Created
+201 Created（verifySoftwareStatement を設定した OP）
 { ..., "client_name": "Published App", "software_id": "4NRB1-0XZABZI9E6-5SM3R", "software_statement": "eyJhbGciOi..." }
 ```
 
-発行者を 1 つも承認していない OP（既定）では、`software_statement` を送る登録は `unapproved_software_statement` になります。
-RFC 7591 §3.1.1 は software statement に対応しない OP がそれを無視することも許していますが、この OP は検証の機構を持つため、検証できない statement を黙って通しません。
-無視する挙動が必要なら `verifyRegistrationSoftwareStatement` を書き換えます。
+statement の中のクレームに、RFC 7591 が定める必須項目は `iss` だけです（§2.3）。
+§2 のクライアントメタデータはどれもクレームとして送れるので、OP は中身に許可リストを置かず、関数が返したメタデータを平文と同じ検査に通します。
 
 ## エラー処理
 
 | 応答 | 条件 |
 |---|---|
 | `400` + `invalid_redirect_uri` | `redirect_uris` の欠落・空・非文字列要素・URI 規則違反 |
-| `400` + `invalid_client_metadata` | `Content-Type` が `application/json` でない、ボディが JSON オブジェクトでない、ボディ長超過、理解するフィールドの不正値、`grant_types` と `response_types` の不整合、`application_type` の制約違反、カスタムメタデータの検証失敗 |
-| `400` + `invalid_software_statement` | `software_statement` が compact JWS でない、`iss` が無い、署名が検証できない、`exp` / `nbf` の範囲外 |
-| `400` + `unapproved_software_statement` | `software_statement` の発行者が `trustedSoftwarePublishers` に無い |
-| `401` + `WWW-Authenticate: Bearer` | 登録の判定が拒否し、`Authorization` ヘッダが無い（RFC 6750 §3.1 に従いエラーコードは付きません） |
-| `401` + `WWW-Authenticate: Bearer error="invalid_token"` | 登録の判定が拒否し、ヘッダはある |
+| `400` + `invalid_client_metadata` | `Content-Type` が `application/json` でない、ボディが JSON オブジェクトでない、ボディ長超過、理解するフィールドの不正値、`grant_types` と `response_types` の不整合、`application_type` の制約違反、カスタムメタデータの検証失敗、`verifySoftwareStatement` を設定した OP で `software_statement` が無い |
+| `400` + `invalid_software_statement` | `software_statement` が文字列でない。または `verifySoftwareStatement` がこのコードで拒否した |
+| `400` + `unapproved_software_statement` | `verifySoftwareStatement` がこのコードで拒否した |
+| `401` + `WWW-Authenticate: Bearer` | `verifyInitialAccessToken` を設定した OP で、Bearer トークンが無い（`Authorization` ヘッダが無いか、Bearer 以外のスキーム。RFC 6750 §3.1 に従いエラーコードは付きません） |
+| `401` + `WWW-Authenticate: Bearer error="invalid_token"` | `verifyInitialAccessToken` が Bearer トークンを拒否した |
 | `429` + `too_many_registrations` | `maxRegisteredClients` 超過。メタデータの不備ではないため `invalid_client_metadata` は使いません |
 
 `error_description` は固定の ASCII 文言で、送られた URI やメタデータの値、JWT のヘッダ値を反映しません。
 許可一覧を示す文言（`token_endpoint_auth_method must be one of ...` など）は設定由来の値だけを含みます。
+渡した関数が投げる `ClientRegistrationError` の文言も、同じ方針で書くことを推奨します。
 
 ## セキュリティ上の注意
 
@@ -245,8 +282,7 @@ RFC 7591 §3.1.1 は software statement に対応しない OP がそれを無視
 - 在庫の上限（`maxRegisteredClients`）とボディ長上限で、メモリ消費に天井を付けています。IP 単位の流量制御は持たないので、公開するならリバースプロキシや PaaS 側でレート制限を掛けてください（RFC 7591 §5）
 - `client_id` は `dcr-` プレフィックス付きの乱数で、リクエストから指定できません。人間が命名する静的クライアントと名前空間が分かれ、上書きは構造的に起きません
 - `client_secret` は 256 ビットの乱数で、201 応答に一度だけ現れます。応答には `Cache-Control: no-store` が付き、ログには出力されません。ストアにはハッシュだけを保存します
-- initial access token の照合は定数時間比較で行い、期待トークンの情報（長さ、部分一致）は応答に現れません
-- software statement の署名検証は、`iss` で選んだ発行者の鍵と、その発行者に許したアルゴリズムだけで行います。`alg: none` は受理せず、鍵の選択を statement のヘッダに任せません
+- initial access token と software statement の検証は、渡した関数の責務です。生成コードが応答に反映するのは、Bearer トークンの有無と関数の返り値だけです。関数を書くときは、トークンの比較を定数時間で行い、statement の署名を `iss` で選んだ鍵と許したアルゴリズムだけで検証し、`alg: none` を受理しないでください
 - URL を参照しにいくメタデータ（`jwks_uri` など）を受理しないため、登録処理が外部へリクエストを発行する経路はありません（SSRF の面が開きません）。`logo_uri` などの表示用 URL は構文だけを検査し、取得しません
 - `grantTypes` に experimental grant の URN を足すのは、未認証の登録者にその grant を開くことだと意識してください。CIBA のように利用者へ働きかける grant は、initial access token と組み合わせるか、静的登録に留めるのが安全です
 
@@ -254,7 +290,7 @@ RFC 7591 §3.1.1 は software statement に対応しない OP がそれを無視
 
 - 動的登録クライアントは in-memory ストアにだけ入り、**プロセス再起動で消えます**。`--db` で生成しても同じで、クライアント表に入る静的クライアントと違い永続化されません（PAR や Device の experimental ストアと同じ割り切りです）
 - RFC 7592 を実装しないため、登録の参照・更新・削除はできません。失効の手段は再起動だけです
-- initial access token は単一の固定文字列で、発行・ローテーション・複数管理はありません。別の方式は `verifyRegistrationInitialAccessToken` を書き換えて実装します
+- initial access token と software statement の検証は生成コードに含まれません。関数を渡さない既定ではオープン登録で、`software_statement` は無視します
 - `jwks_uri`、`sector_identifier_uri`、`request_uris`、暗号化系のメタデータは理解せず、無視します
 
 ## core の静的登録との違い
@@ -267,8 +303,9 @@ RFC 7591 §3.1.1 は software statement に対応しない OP がそれを無視
 ## トラブルシューティング
 
 - **`/register` が 404**：`--enable dynamic-client-registration` を付けて生成したかを discovery の `registration_endpoint` で確認してください
-- **401 が返る**：`dynamicClientRegistrationConfig.initialAccessToken` が設定されています。`Authorization: Bearer <値>` を付けるか、オープン登録に戻してください
-- **`unapproved_software_statement` が返る**：`trustedSoftwarePublishers` に statement の `iss` と公開鍵を登録してください。RSA の公開鍵には `alg`（`RS256` など）が要ります
+- **401 が返る**：`verifyInitialAccessToken` が設定されています。`Authorization: Bearer <トークン>` を付けるか、関数を外してオープン登録に戻してください
+- **`software_statement is required` が返る**：`verifySoftwareStatement` を設定した OP は、すべての登録に `software_statement` を要求します
+- **`software_statement` を送ったのに応答に無い**：`verifySoftwareStatement` が未設定の OP は statement を無視します（RFC 7591 §3.1.1）。受け付けるには関数を設定してください
 - **`response_types` が拒否される**：`implicit-flow` / `hybrid-flow` を生成していない OP は `code` しか答えません。discovery の `response_types_supported` を確認してください
 - **登録したクライアントが再起動後に消えた**：既知の制約のとおり in-memory です。恒久的なクライアントは `registerClient()` で静的に登録してください（再起動をまたいで残るのは `--db sql` / `--db kv` で生成した `db/` への登録だけです）
 - **`text/plain` で送った JSON が 400 になる**：RFC 7591 §3.1 のとおり `Content-Type: application/json` だけを受理します

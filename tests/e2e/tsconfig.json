@@ -19,6 +19,6 @@
     "noImplicitReturns": true,
     "skipLibCheck": true
   },
-  "include": ["playwright.config.ts", "specs/**/*.ts", "support/**/*.ts"],
+  "include": ["playwright.config.ts", "specs/**/*.ts"],
   "exclude": ["node_modules", "test-results", "playwright-report"]
 }

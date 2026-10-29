@@ -23,57 +23,64 @@ async function failureOf(promise: Promise<unknown>): Promise<RegistrationEndpoin
   return error as RegistrationEndpointError;
 }
 
+const BARE_CHALLENGE = { status: 401, body: null, headers: { 'WWW-Authenticate': 'Bearer' } };
+const INVALID_TOKEN = { status: 401, body: null, headers: { 'WWW-Authenticate': 'Bearer error="invalid_token"' } };
+
 describe('verifyRegistrationAccess', () => {
-  // RFC 7591 §3.1: open registration when no initial access token is configured.
-  it('should let any request through when no initial access token is configured', async () => {
-    const c = await registrationContext({});
-
-    await expect(verifyRegistrationAccess(c)).resolves.toBeUndefined();
+  // RFC 7591 §3.1: open registration while no verifier is configured — a token, if sent, is not even read.
+  it('should let any request through when no verifyInitialAccessToken is configured', async () => {
+    await expect(verifyRegistrationAccess(await registrationContext({}))).resolves.toBeUndefined();
+    await expect(
+      verifyRegistrationAccess(await registrationContext({ Authorization: 'Bearer anything' })),
+    ).resolves.toBeUndefined();
   });
 
-  // OIDC Dynamic Client Registration 1.0 §3: the configured token as a Bearer token.
-  it('should let a request through that presents the initial access token', async () => {
-    const c = await registrationContext({ Authorization: 'Bearer iat-secret' }, { initialAccessToken: 'iat-secret' });
+  // RFC 6750 §3.1: no error code when the request carries no Bearer credentials.
+  it('should answer 401 with a bare Bearer challenge when a verifier is configured and no Bearer token is sent', async () => {
+    const verifyInitialAccessToken = () => true;
 
-    await expect(verifyRegistrationAccess(c)).resolves.toBeUndefined();
+    const missing = await failureOf(verifyRegistrationAccess(await registrationContext({}, { verifyInitialAccessToken })));
+    const otherScheme = await failureOf(
+      verifyRegistrationAccess(await registrationContext({ Authorization: 'Basic dXNlcjpwYXNz' }, { verifyInitialAccessToken })),
+    );
+
+    expect(missing.response).toEqual(BARE_CHALLENGE);
+    expect(otherScheme.response).toEqual(BARE_CHALLENGE);
   });
 
-  // RFC 6750 §3.1: no error code when the request carries no credentials.
-  it('should answer 401 with a bare Bearer challenge when no Authorization header is sent', async () => {
-    const c = await registrationContext({}, { initialAccessToken: 'iat-secret' });
-
-    const error = await failureOf(verifyRegistrationAccess(c));
-
-    expect(error.response).toEqual({ status: 401, body: null, headers: { 'WWW-Authenticate': 'Bearer' } });
-  });
-
-  // RFC 6750 §3.1: error="invalid_token" for credentials that were presented but are wrong.
-  it('should answer 401 with error="invalid_token" for a wrong token', async () => {
-    const c = await registrationContext({ Authorization: 'Bearer wrong-token' }, { initialAccessToken: 'iat-secret' });
-
-    const error = await failureOf(verifyRegistrationAccess(c));
-
-    expect(error.response).toEqual({
-      status: 401,
-      body: null,
-      headers: { 'WWW-Authenticate': 'Bearer error="invalid_token"' },
-    });
-  });
-
-  it('should hand the header and the settings to the verifyInitialAccessToken of the settings', async () => {
+  // OIDC Dynamic Client Registration 1.0 §3: the Bearer token is the initial access token; the configured function judges it.
+  it('should hand the Bearer token and the settings to the verifier and let the request through when it accepts', async () => {
     const seen: unknown[] = [];
     const c = await registrationContext(
-      { Authorization: 'Bearer ticket' },
+      { Authorization: 'Bearer ticket-1' },
       {
-        initialAccessToken: 'unused',
-        verifyInitialAccessToken: (authorization, config) => {
-          seen.push(authorization, config.initialAccessToken);
+        maxRegisteredClients: 7,
+        verifyInitialAccessToken: (token, config) => {
+          seen.push(token, config.maxRegisteredClients);
           return true;
         },
       },
     );
 
     await expect(verifyRegistrationAccess(c)).resolves.toBeUndefined();
-    expect(seen).toEqual(['Bearer ticket', 'unused']);
+    expect(seen).toEqual(['ticket-1', 7]);
+  });
+
+  // RFC 6750 §3.1: error="invalid_token" for credentials that were presented but refused.
+  it('should answer 401 with error="invalid_token" when the verifier refuses the token', async () => {
+    const c = await registrationContext({ Authorization: 'Bearer wrong-token' }, { verifyInitialAccessToken: async () => false });
+
+    const error = await failureOf(verifyRegistrationAccess(c));
+
+    expect(error.response).toEqual(INVALID_TOKEN);
+  });
+
+  it('should not call the verifier when no Bearer token is sent', async () => {
+    let calls = 0;
+    const c = await registrationContext({}, { verifyInitialAccessToken: () => (calls += 1) > 0 });
+
+    await failureOf(verifyRegistrationAccess(c));
+
+    expect(calls).toBe(0);
   });
 });

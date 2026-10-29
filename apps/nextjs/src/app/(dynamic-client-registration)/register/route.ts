@@ -10,12 +10,13 @@
  * software statement of a publisher this OP trusts — and receives a freshly
  * minted client_id (and, for confidential clients, a client_secret) that works
  * on /authorize and /token right away. Registration is open by default
- * (RFC 7591 §3.1 SHOULD); set initialAccessToken of
+ * (RFC 7591 §3.1 SHOULD) and a software_statement is ignored (§3.1.1); set
+ * verifyInitialAccessToken / verifySoftwareStatement of
  * dynamicClientRegistrationConfig
- * (_oidc-provider/features/dynamic-client-registration/config.ts) to require a
- * Bearer token. The registration policy (who may register, which publishers
- * are trusted, which metadata beyond the standard fields is accepted) is in
- * _oidc-provider/features/dynamic-client-registration/policy.ts.
+ * (_oidc-provider/features/dynamic-client-registration/config.ts) to require
+ * them and verify them with functions of your own — this code verifies
+ * neither. Metadata beyond the standard fields is accepted through
+ * customClientMetadata of the same config.
  *
  * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
  * deployment layer (reverse proxy / platform); this endpoint only enforces the
@@ -28,13 +29,19 @@ import {
   applySoftwareStatement,
   buildClientRegistrationResponse,
   buildRegisteredClient,
+  ClientRegistrationError,
   isClientRegistrationError,
   parseClientRegistrationBody,
+  readBearerToken,
   validateClientMetadata,
+  type ParsedClientRegistration,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
-import { dynamicClientRegistrationConfig } from '../../_oidc-provider/features/dynamic-client-registration/config';
+import {
+  dynamicClientRegistrationConfig,
+  type DynamicClientRegistrationConfig,
+} from '../../_oidc-provider/features/dynamic-client-registration/config';
 import {
   dynamicClientStore,
   toClientRegistration,
@@ -57,15 +64,19 @@ export function OPTIONS(request: Request): Response {
 async function registerClient(request: Request): Promise<Response> {
   const config = dynamicClientRegistrationConfig;
 
-  // (1) May the request register? The policy decides (policy.ts as generated:
-  // open registration until initialAccessToken is set, then the configured
-  // Bearer token in constant time), before the body is read. The two 401
-  // shapes follow RFC 6750 §3.1: no error code without credentials, and
-  // error="invalid_token" for presented-but-refused ones. Neither reflects
-  // anything about the expected token.
-  const authorization = request.headers.get('Authorization');
-  if (!(await config.verifyInitialAccessToken(authorization, config))) {
-    return registration401(authorization === null ? 'Bearer' : 'Bearer error="invalid_token"');
+  // (1) May the request register? Open registration while the config sets no
+  // verifyInitialAccessToken (RFC 7591 §3.1 SHOULD). With one, the request
+  // must carry a Bearer token (RFC 6750 §2.1) — a bare 401 challenge without
+  // one, as RFC 6750 §3.1 asks for a request without credentials — and the
+  // configured function decides whether that token may register (401
+  // error="invalid_token" when it says no). Nothing here verifies the token
+  // itself, and neither response reflects anything about the expected token.
+  if (config.verifyInitialAccessToken !== undefined) {
+    const token = readBearerToken(request.headers.get('Authorization'));
+    if (token === undefined) return registration401('Bearer');
+    if (!(await config.verifyInitialAccessToken(token, config))) {
+      return registration401('Bearer error="invalid_token"');
+    }
   }
 
   // (2) RFC 7591 §3.1: application/json only (parameters such as charset are
@@ -105,20 +116,16 @@ async function registerClient(request: Request): Promise<Response> {
     // from the plain metadata.
     const registration = parseClientRegistrationBody(rawBody, { maxBodyBytes: config.maxRegistrationBodyBytes });
 
-    // (4) RFC 7591 §3.1.1: a software statement the policy verifies (policy.ts
-    // as generated: signed by a publisher of trustedSoftwarePublishers) has its
-    // metadata applied over the plain values — unapproved_software_statement
-    // for an unknown issuer, invalid_software_statement for one that does not
-    // verify (§3.2.2) — and the statement comes back unmodified in the response
-    // (§3.2.1).
-    const metadata =
-      registration.softwareStatement === undefined
-        ? registration.metadata
-        : applySoftwareStatement(
-            registration.metadata,
-            registration.softwareStatement,
-            await config.verifySoftwareStatement(registration.softwareStatement, config),
-          );
+    // (4) RFC 7591 §3.1.1: without a verifySoftwareStatement in the config this
+    // provider does not support software statements and ignores the member, as
+    // §3.1.1 allows. With one, every registration must carry a
+    // software_statement (invalid_client_metadata without it); the function
+    // verifies it — RFC 7591 leaves the trust criteria to the server, so
+    // nothing here examines the statement — and rejects with
+    // invalid_software_statement or unapproved_software_statement (§3.2.2).
+    // The metadata it returns is applied over the plain values, and the
+    // statement comes back unmodified in the response (§3.2.1).
+    const metadata = await resolveRegistrationMetadata(config, registration);
 
     // (5) Allowlist-pick of the understood fields, value checks, the RFC 7591
     // §2 and OIDC Dynamic Client Registration 1.0 §2 defaults (application_type
@@ -128,7 +135,7 @@ async function registerClient(request: Request): Promise<Response> {
     // @maronn-openid-connect/experimental/dynamic-client-registration, bounded
     // to what this provider answers: the methods and grants of the config, the
     // response types of the features, the scopes of scopes.ts, the algs of the
-    // signing keys and the custom metadata of the policy. Unknown metadata is
+    // signing keys and the custom metadata of the config. Unknown metadata is
     // silently ignored (§2 MUST), and every error_description is a fixed ASCII
     // string that never reflects request values.
     const responseTypes = ['code', ...responseTypesOf(features)];
@@ -180,15 +187,35 @@ async function registerClient(request: Request): Promise<Response> {
     return registrationJson(buildClientRegistrationResponse(client), 201);
   } catch (error) {
     // RFC 7591 §3.2.2: 400 with error / error_description JSON. The error is
-    // told apart by shape, not by class: the policy functions of config.ts are
-    // created where the app starts (instrumentation.ts), which Next.js bundles
-    // apart from this Route Handler, so their ClientRegistrationError is
-    // another copy of the class.
+    // told apart by shape, not by class: the verifier functions of config.ts
+    // may be set where the app starts (instrumentation.ts), which Next.js
+    // bundles apart from this Route Handler, so their ClientRegistrationError
+    // is another copy of the class.
     if (isClientRegistrationError(error)) {
       return registrationJson({ error: error.error, error_description: error.errorDescription }, 400);
     }
     return registrationJson({ error: 'server_error' }, 500);
   }
+}
+
+/**
+ * The metadata to register: the plain values, with those a verified software
+ * statement asserts taking precedence (RFC 7591 §3.1.1). Without a verifier the
+ * provider does not support software statements and ignores the member; with
+ * one the statement is required and the verifier alone judges it.
+ */
+async function resolveRegistrationMetadata(
+  config: DynamicClientRegistrationConfig,
+  registration: ParsedClientRegistration,
+): Promise<Record<string, unknown>> {
+  if (config.verifySoftwareStatement === undefined) {
+    return registration.metadata;
+  }
+  if (registration.softwareStatement === undefined) {
+    throw new ClientRegistrationError('invalid_client_metadata', 'software_statement is required');
+  }
+  const verified = await config.verifySoftwareStatement(registration.softwareStatement, config);
+  return applySoftwareStatement(registration.metadata, registration.softwareStatement, verified);
 }
 
 /**

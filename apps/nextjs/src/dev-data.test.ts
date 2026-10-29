@@ -45,11 +45,7 @@ describe('applyFeatureSettings', () => {
     applyFeatureSettings({}, createMapKvDatabase());
 
     expect(rpInitiatedLogoutConfig).toEqual({ postLogoutRedirectUris: {} });
-    expect(dynamicClientRegistrationConfig).toEqual({
-      initialAccessToken: undefined,
-      maxRegisteredClients: 100,
-      maxRegistrationBodyBytes: 16384,
-    });
+    expect(dynamicClientRegistrationConfig).toEqual(defaults.dynamicClientRegistration);
     expect(idJagConfig).toEqual(defaults.idJag);
     expect(idJagConfig.actorTokenResolver).toBe(defaults.idJag.actorTokenResolver);
   });
@@ -64,15 +60,11 @@ describe('applyFeatureSettings', () => {
     expect(rpInitiatedLogoutConfig.postLogoutRedirectUris).toEqual({ 'rp-1': ['https://rp.example.com/logged-out'] });
   });
 
-  // RFC 7591 / OIDC Dynamic Client Registration 1.0 §3: the initial access token and the inventory cap.
-  it('should set the initial access token and the cap of OIDC_DCR_INITIAL_ACCESS_TOKEN and OIDC_DCR_MAX_CLIENTS', () => {
-    applyFeatureSettings({ OIDC_DCR_INITIAL_ACCESS_TOKEN: 'iat-1', OIDC_DCR_MAX_CLIENTS: '5' }, createMapKvDatabase());
+  // RFC 7591 §5: the inventory cap.
+  it('should set the cap of OIDC_DCR_MAX_CLIENTS', () => {
+    applyFeatureSettings({ OIDC_DCR_MAX_CLIENTS: '5' }, createMapKvDatabase());
 
-    expect(dynamicClientRegistrationConfig).toEqual({
-      initialAccessToken: 'iat-1',
-      maxRegisteredClients: 5,
-      maxRegistrationBodyBytes: 16384,
-    });
+    expect(dynamicClientRegistrationConfig).toEqual({ ...defaults.dynamicClientRegistration, maxRegisteredClients: 5 });
   });
 
   it('should set the audiences an ID-JAG may be issued for from XAA_ALLOWED_AUDIENCES', () => {

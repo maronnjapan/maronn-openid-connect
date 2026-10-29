@@ -83,20 +83,15 @@ export function readPostLogoutRedirectUris(env: Environment): Record<string, str
 }
 
 /**
- * EXPERIMENTAL (RFC 7591): an initial access token and an inventory cap for
- * dynamic client registration. Unset variables keep the defaults of the code:
- * open registration, cap 100.
+ * EXPERIMENTAL (RFC 7591): the inventory cap of dynamic client registration.
+ * An unset variable keeps the default of the code (100). The verifier
+ * functions of the registration config (initial access token, software
+ * statement) are code, not environment: set them through the
+ * dynamicClientRegistration option of createApp() / applyOidc().
  */
-export function readDynamicClientRegistration(env: Environment): {
-  initialAccessToken?: string;
-  maxRegisteredClients?: number;
-} {
-  const initialAccessToken = env['OIDC_DCR_INITIAL_ACCESS_TOKEN'];
+export function readDynamicClientRegistration(env: Environment): { maxRegisteredClients?: number } {
   const maxRegisteredClients = readPositiveInteger(env, 'OIDC_DCR_MAX_CLIENTS');
-  return {
-    ...(initialAccessToken ? { initialAccessToken } : {}),
-    ...(maxRegisteredClients === undefined ? {} : { maxRegisteredClients }),
-  };
+  return maxRegisteredClients === undefined ? {} : { maxRegisteredClients };
 }
 
 /**

@@ -15,6 +15,7 @@ export const endpoint = defineEndpoint({
   steps: [
     'verify-initial-access-token',
     'parse-request',
+    'verify-software-statement',
     'validate-metadata',
     'store-client',
     'respond',

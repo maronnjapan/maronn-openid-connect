@@ -20,7 +20,12 @@
  * owner blocks that name it in the route.ts files and the lines of its steps
  * in the endpoint.ts beside them.
  */
-import type { AuthorizationResponseType, ClientResolver, TokenClientResolver } from '@maronn-openid-connect/core';
+import type {
+  AuthorizationResponseType,
+  ClientKeyResolver,
+  ClientResolver,
+  TokenClientResolver,
+} from '@maronn-openid-connect/core';
 import type { AuthorizationResponseModeHandler } from '../authorize/response-mode';
 import type { LoginMethod } from '../login/login-method';
 import type { ProviderConfig } from './config';
@@ -28,6 +33,8 @@ import type { ProviderConfig } from './config';
 /** The values provider.ts builds once that a feature may replace (the context hook). */
 export interface ProviderContext {
   clientResolver: ClientResolver & TokenClientResolver;
+  /** The public keys of the clients by purpose (core's ClientKeyResolver). */
+  clientKeyResolver: ClientKeyResolver;
 }
 
 export interface Feature {

@@ -1,5 +1,5 @@
 {
-  "cliVersion": "0.14.0",
+  "cliVersion": "0.15.1",
   "framework": "nextjs",
   "features": {
     "pkce": true,

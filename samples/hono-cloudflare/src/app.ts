@@ -28,7 +28,6 @@ interface Bindings {
   XAA_ALLOW_ACTOR_TOKENS?: string;
   XAA_ACTOR_TOKEN_RESOLVER?: string;
   OIDC_POST_LOGOUT_REDIRECT_URIS_JSON?: string;
-  OIDC_DCR_INITIAL_ACCESS_TOKEN?: string;
   OIDC_DCR_MAX_CLIENTS?: string;
 }
 
@@ -96,13 +95,13 @@ if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
 }
 
 // EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
-// sample with an initial access token and a small inventory cap, so the
-// restricted-registration paths (401 / 429) can be exercised over real HTTP.
-// With the vars unset the generated defaults stay: open registration, cap 100.
+// sample with a small inventory cap, so the 429 path can be exercised over
+// real HTTP. With the var unset the generated default stays (cap 100). The
+// verifier functions of the registration config (initial access token,
+// software statement) are code, not environment: pass them here as
+// verifyInitialAccessToken / verifySoftwareStatement when a deployment needs
+// them; the generated code verifies neither on its own.
 const dynamicClientRegistration = {
-  ...(bindings.OIDC_DCR_INITIAL_ACCESS_TOKEN
-    ? { initialAccessToken: bindings.OIDC_DCR_INITIAL_ACCESS_TOKEN }
-    : {}),
   ...(bindings.OIDC_DCR_MAX_CLIENTS
     ? { maxRegisteredClients: Number(bindings.OIDC_DCR_MAX_CLIENTS) }
     : {}),

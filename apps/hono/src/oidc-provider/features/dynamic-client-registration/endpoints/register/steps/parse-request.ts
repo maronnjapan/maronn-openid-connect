@@ -1,3 +1,7 @@
+import {
+  parseClientRegistrationBody,
+  type ParsedClientRegistration,
+} from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { RegistrationEndpointError } from '../response.js';
 import { step } from '../../../../../endpoints/step.js';
 
@@ -9,8 +13,9 @@ export const meta = step({
   label: 'Read the JSON metadata',
   spec: 'RFC 7591 §3.1',
   function: 'parseRegistrationRequest',
+  calls: ['parseClientRegistrationBody'],
   consumes: [],
-  produces: ['rawBody'],
+  produces: ['registration'],
   removable: false,
 });
 
@@ -31,9 +36,11 @@ function isJson(contentType: string): boolean {
  * A Content-Length that already declares more than maxRegistrationBodyBytes is
  * refused before the body is read, so an oversized request is not buffered
  * first. The header can lie, so the authoritative check stays the UTF-8 byte
- * count on the body itself (validateClientRegistrationRequest).
+ * count on the body itself (parseClientRegistrationBody), which also checks
+ * the JSON shape and splits a software_statement (RFC 7591 §2.3) from the
+ * plain metadata for the next step.
  */
-export async function parseRegistrationRequest(c: any): Promise<string> {
+export async function parseRegistrationRequest(c: any): Promise<ParsedClientRegistration> {
   if (!isJson(c.req.header('Content-Type') ?? '')) {
     throw new RegistrationEndpointError({
       status: 400,
@@ -48,5 +55,6 @@ export async function parseRegistrationRequest(c: any): Promise<string> {
       body: { error: 'invalid_client_metadata', error_description: 'request body must not exceed the configured maximum size' },
     });
   }
-  return c.req.text();
+  const rawBody = await c.req.text();
+  return parseClientRegistrationBody(rawBody, { maxBodyBytes: config.maxRegistrationBodyBytes });
 }

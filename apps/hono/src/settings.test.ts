@@ -74,15 +74,13 @@ describe('readPostLogoutRedirectUris', () => {
   });
 });
 
-// RFC 7591: the initial access token and the inventory cap.
+// RFC 7591 §5: the inventory cap.
 describe('readDynamicClientRegistration', () => {
-  it('should read the initial access token and the cap', () => {
-    const env = { OIDC_DCR_INITIAL_ACCESS_TOKEN: 'iat-1', OIDC_DCR_MAX_CLIENTS: '5' };
-
-    expect(readDynamicClientRegistration(env)).toEqual({ initialAccessToken: 'iat-1', maxRegisteredClients: 5 });
+  it('should read the cap', () => {
+    expect(readDynamicClientRegistration({ OIDC_DCR_MAX_CLIENTS: '5' })).toEqual({ maxRegisteredClients: 5 });
   });
 
-  it('should leave both out when the variables are unset', () => {
+  it('should leave the cap out when the variable is unset', () => {
     expect(readDynamicClientRegistration({})).toEqual({});
   });
 

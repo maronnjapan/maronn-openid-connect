@@ -1,4 +1,4 @@
-import type { ClientResolver, TokenClientResolver } from '@maronn-openid-connect/core';
+import type { ClientKeyResolver, ClientResolver, TokenClientResolver } from '@maronn-openid-connect/core';
 import { describe, expect, it } from 'vitest';
 import type { AuthorizationResponseModeHandler } from '../authorize/response-mode';
 import type { LoginMethod } from '../login/login-method';
@@ -27,6 +27,13 @@ function clientResolver(name: string): ClientResolver & TokenClientResolver {
     },
   };
 }
+
+/** A ClientKeyResolver for the tests of the context hook, which hands out no key. */
+const keyResolver: ClientKeyResolver = {
+  async findClientKeys() {
+    return { keys: [] };
+  },
+};
 
 function responseMode(name: string): AuthorizationResponseModeHandler {
   return {
@@ -163,7 +170,7 @@ describe('contextOf', () => {
       }),
     ];
 
-    const context = contextOf(features, { clientResolver: base });
+    const context = contextOf(features, { clientResolver: base, clientKeyResolver: keyResolver });
 
     expect(seen).toHaveLength(2);
     expect(seen[0]).toBe(base);
@@ -174,14 +181,14 @@ describe('contextOf', () => {
   it('should return the values it is given when no feature has a context hook', () => {
     const base = clientResolver('base');
 
-    const context = contextOf([defineFeature({ id: 'a' })], { clientResolver: base });
+    const context = contextOf([defineFeature({ id: 'a' })], { clientResolver: base, clientKeyResolver: keyResolver });
 
     expect(context.clientResolver).toBe(base);
   });
 
   it('should leave the values it is given unchanged', () => {
     const base = clientResolver('base');
-    const provider: ProviderContext = { clientResolver: base };
+    const provider: ProviderContext = { clientResolver: base, clientKeyResolver: keyResolver };
     const features = [defineFeature({ id: 'a', context: () => ({ clientResolver: clientResolver('replaced') }) })];
 
     contextOf(features, provider);

@@ -13,10 +13,9 @@ const clientBaseURL =
 const resourceServerURL =
   process.env.E2E_RESOURCE_SERVER_URL ?? `http://${host}:${resourceServerPort}`;
 const xaaIssuer = process.env.E2E_XAA_ISSUER ?? `http://${host}:${xaaOpPort}`;
-// EXPERIMENTAL (RFC 7591): a further OP instance with an initial access token
-// and a small registration inventory cap, so the dynamic-client-registration
-// spec can exercise the 401 and 429 paths without restricting the open
-// registration the main instance offers.
+// EXPERIMENTAL (RFC 7591): a further OP instance with a small registration
+// inventory cap, so the dynamic-client-registration spec can exercise the 429
+// path without filling up the open registration of the main instance.
 const dcrOpPort = Number(process.env.E2E_DCR_OP_PORT ?? '3050');
 const dcrIssuer = process.env.E2E_DCR_ISSUER ?? `http://${host}:${dcrOpPort}`;
 // apps/hono, the app the CLI extracts the generated code from, by default;
@@ -291,11 +290,13 @@ export default defineConfig({
           },
         ]
       : []),
-    // EXPERIMENTAL (RFC 7591): the restricted-registration OP instance. It
-    // requires the initial access token below on POST /register and caps the
-    // dynamic registrations at 3, so the 401 and 429 paths of the
-    // dynamic-client-registration spec run against real HTTP. The values are
-    // mirrored as constants in specs/dynamic-client-registration.spec.ts.
+    // EXPERIMENTAL (RFC 7591): the capped-registration OP instance. It caps
+    // the dynamic registrations at 3, so the 429 path of the
+    // dynamic-client-registration spec runs against real HTTP without filling
+    // the main instance. The cap is mirrored as a constant in
+    // specs/dynamic-client-registration.spec.ts. The verifier functions of the
+    // registration config are code, not environment, so the 401 and software
+    // statement paths are covered by the in-process tests of the apps.
     ...(startDcrOp
       ? [
           {
@@ -308,7 +309,6 @@ export default defineConfig({
               PORT: String(dcrOpPort),
               ISSUER: dcrIssuer,
               OIDC_SIGNING_KEY_ID: 'e2e-dcr-rs256-key',
-              OIDC_DCR_INITIAL_ACCESS_TOKEN: 'e2e-dcr-initial-access-token',
               OIDC_DCR_MAX_CLIENTS: '3',
               OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
                 ? `${process.env.OIDC_D1_PERSIST_PATH}-dcr`

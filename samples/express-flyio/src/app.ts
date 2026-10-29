@@ -84,13 +84,13 @@ app.get('/health', (_req, res) => {
 });
 
 // EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
-// sample with an initial access token and a small inventory cap, so the
-// restricted-registration paths (401 / 429) can be exercised over real HTTP.
-// With the vars unset the generated defaults stay: open registration, cap 100.
+// sample with a small inventory cap, so the 429 path can be exercised over
+// real HTTP. With the var unset the generated default stays (cap 100). The
+// verifier functions of the registration config (initial access token,
+// software statement) are code, not environment: pass them here as
+// verifyInitialAccessToken / verifySoftwareStatement when a deployment needs
+// them; the generated code verifies neither on its own.
 const dynamicClientRegistration = {
-  ...(process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN
-    ? { initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN }
-    : {}),
   ...(process.env.OIDC_DCR_MAX_CLIENTS
     ? { maxRegisteredClients: Number(process.env.OIDC_DCR_MAX_CLIENTS) }
     : {}),

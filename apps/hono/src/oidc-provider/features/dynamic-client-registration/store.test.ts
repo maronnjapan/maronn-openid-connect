@@ -1,18 +1,58 @@
+import type { ClientKeyResolver } from '@maronn-openid-connect/core';
+import type { DynamicallyRegisteredClient } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { describe, expect, it } from 'vitest';
-import type { RegisteredClient } from '../../config.js';
-import { dynamicClientStore, InMemoryDynamicallyRegisteredClientStore, withDynamicallyRegisteredClients } from './store.js';
+import type { ClientRegistration } from '../../config.js';
+import {
+  dynamicClientStore,
+  InMemoryDynamicallyRegisteredClientStore,
+  toClientRegistration,
+  withDynamicallyRegisteredClientKeys,
+  withDynamicallyRegisteredClients,
+} from './store.js';
 
-function client(clientId: string, redirectUri = 'https://rp.example.com/callback'): RegisteredClient {
+const RSA_KEY = { kty: 'RSA', use: 'sig', alg: 'RS256', kid: 'client-key', n: 'AQAB', e: 'AQAB' };
+
+function client(clientId: string, redirectUri = 'https://rp.example.com/callback'): ClientRegistration {
   return { clientId, redirectUris: [redirectUri], grantTypes: ['authorization_code'] };
 }
 
 /** A configured resolver that knows the given clients. */
-function staticResolver(...clients: RegisteredClient[]) {
+function staticResolver(...clients: ClientRegistration[]) {
   return {
     label: 'static',
-    async findClient(clientId: string): Promise<RegisteredClient | null> {
+    async findClient(clientId: string): Promise<ClientRegistration | null> {
       return clients.find((candidate) => candidate.clientId === clientId) ?? null;
     },
+  };
+}
+
+/** A configured key resolver that knows the keys of one client. */
+function staticKeyResolver(clientId: string, keys: Record<string, { keys: unknown[] }>): ClientKeyResolver {
+  return {
+    async findClientKeys(candidate, purpose) {
+      return candidate === clientId ? ((keys[purpose] as { keys: [] }) ?? { keys: [] }) : { keys: [] };
+    },
+  };
+}
+
+function registeredClient(overrides: Partial<DynamicallyRegisteredClient> = {}): DynamicallyRegisteredClient {
+  return {
+    clientId: 'dcr-record',
+    clientSecret: 'secret',
+    clientType: 'confidential',
+    redirectUris: ['https://rp.example.com/callback'],
+    grantTypes: ['authorization_code'],
+    responseTypes: ['code'],
+    tokenEndpointAuthMethods: ['client_secret_basic'],
+    clientIdIssuedAt: 1_767_225_600,
+    metadata: {
+      redirect_uris: ['https://rp.example.com/callback'],
+      token_endpoint_auth_method: 'client_secret_basic',
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      client_name: 'Example RP',
+    },
+    ...overrides,
   };
 }
 
@@ -60,6 +100,64 @@ describe('InMemoryDynamicallyRegisteredClientStore', () => {
   });
 });
 
+describe('toClientRegistration', () => {
+  // Parity with registerClient() of db/: the record holds the hash, never the plaintext secret.
+  it('should build the record of db/ with the secret hash and the registered metadata', () => {
+    expect(toClientRegistration(registeredClient(), { clientSecretHash: 'hash', jwksPurposes: ['request_object'] })).toEqual({
+      clientId: 'dcr-record',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      grantTypes: ['authorization_code'],
+      responseTypes: ['code'],
+      tokenEndpointAuthMethods: ['client_secret_basic'],
+      clientSecretHash: 'hash',
+      registrationMetadata: {
+        redirect_uris: ['https://rp.example.com/callback'],
+        token_endpoint_auth_method: 'client_secret_basic',
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        client_name: 'Example RP',
+      },
+    });
+  });
+
+  it('should carry scope, default_max_age and the signed response algs, and leave the secret hash out for a public client', () => {
+    const record = toClientRegistration(
+      registeredClient({
+        clientSecret: undefined,
+        clientType: 'public',
+        tokenEndpointAuthMethods: ['none'],
+        scope: ['openid', 'profile'],
+        defaultMaxAge: 60,
+        idTokenSignedResponseAlg: 'ES256',
+        userinfoSignedResponseAlg: 'RS256',
+      }),
+      { jwksPurposes: ['request_object'] },
+    );
+
+    expect(record).toMatchObject({
+      clientType: 'public',
+      tokenEndpointAuthMethods: ['none'],
+      scope: ['openid', 'profile'],
+      defaultMaxAge: 60,
+      idTokenSignedResponseAlg: 'ES256',
+      userinfoSignedResponseAlg: 'RS256',
+    });
+    expect(Object.hasOwn(record, 'clientSecretHash')).toBe(false);
+    expect(Object.hasOwn(record, 'keys')).toBe(false);
+  });
+
+  // RFC 7591 §2 jwks: the keys serve every purpose of the config (ClientKeyResolver).
+  it('should put the keys of the jwks under every configured purpose', () => {
+    const record = toClientRegistration(registeredClient({ jwks: { keys: [RSA_KEY] } }), {
+      clientSecretHash: 'hash',
+      jwksPurposes: ['request_object', 'private_key_jwt'],
+    });
+
+    expect(record.keys).toEqual({ request_object: { keys: [RSA_KEY] }, private_key_jwt: { keys: [RSA_KEY] } });
+  });
+});
+
 describe('withDynamicallyRegisteredClients', () => {
   it('should find a dynamically registered client the configured resolver does not know', async () => {
     await dynamicClientStore.save(client('dcr-store-test-1'));
@@ -67,6 +165,15 @@ describe('withDynamicallyRegisteredClients', () => {
     const resolver = withDynamicallyRegisteredClients(staticResolver());
 
     expect(await resolver.findClient('dcr-store-test-1')).toEqual(client('dcr-store-test-1'));
+  });
+
+  // The keys stay with the ClientKeyResolver, as for the clients of db/.
+  it('should hand out the client without the keys of its registration', async () => {
+    await dynamicClientStore.save({ ...client('dcr-store-test-keys'), keys: { request_object: { keys: [RSA_KEY] } } });
+
+    const resolver = withDynamicallyRegisteredClients(staticResolver());
+
+    expect(await resolver.findClient('dcr-store-test-keys')).toEqual(client('dcr-store-test-keys'));
   });
 
   it('should answer with the configured client when a dynamic registration has the same client_id', async () => {
@@ -85,5 +192,31 @@ describe('withDynamicallyRegisteredClients', () => {
 
   it('should keep the other members of the configured resolver', () => {
     expect(withDynamicallyRegisteredClients(staticResolver()).label).toBe('static');
+  });
+});
+
+describe('withDynamicallyRegisteredClientKeys', () => {
+  it('should hand out the keys of a dynamic registration by purpose when the configured resolver has none', async () => {
+    await dynamicClientStore.save({ ...client('dcr-keys-1'), keys: { request_object: { keys: [RSA_KEY] } } });
+
+    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}));
+
+    expect(await resolver.findClientKeys('dcr-keys-1', 'request_object')).toEqual({ keys: [RSA_KEY] });
+    expect(await resolver.findClientKeys('dcr-keys-1', 'dpop')).toEqual({ keys: [] });
+  });
+
+  it('should keep the keys of the configured resolver for a client it knows', async () => {
+    await dynamicClientStore.save({ ...client('static-rp'), keys: { request_object: { keys: [RSA_KEY] } } });
+    const staticKey = { ...RSA_KEY, kid: 'static-key' };
+
+    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', { request_object: { keys: [staticKey] } }));
+
+    expect(await resolver.findClientKeys('static-rp', 'request_object')).toEqual({ keys: [staticKey] });
+  });
+
+  it('should answer an empty key set for a client known to neither', async () => {
+    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}));
+
+    expect(await resolver.findClientKeys('dcr-nobody', 'request_object')).toEqual({ keys: [] });
   });
 });

@@ -67,9 +67,12 @@ const database = createDatabase();
 /**
  * What the features may replace (their context hook): the registered
  * clients, the client records of db/ put there with registerClient()
- * (db/clients.ts).
+ * (db/clients.ts), and their public keys.
  */
-const context = contextOf(features, { clientResolver: createClientResolver(database) });
+const context = contextOf(features, {
+  clientResolver: createClientResolver(database),
+  clientKeyResolver: createClientKeyResolver(database),
+});
 
 /** Registered clients. */
 export const clientResolver = context.clientResolver;
@@ -79,7 +82,7 @@ export const clientResolver = context.clientResolver;
  * verifies signed Request Objects with those of request_object), read from
  * db/ for each request.
  */
-export const clientKeyResolver: ClientKeyResolver = createClientKeyResolver(database);
+export const clientKeyResolver: ClientKeyResolver = context.clientKeyResolver;
 
 /** The stores of the authorization flows, on the same database. */
 export const stores = createProviderStores(database);

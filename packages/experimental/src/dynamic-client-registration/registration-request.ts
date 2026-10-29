@@ -36,6 +36,8 @@ import {
   validateHttpUrl,
   validateJwks,
   validateRedirectUrisForApplicationType,
+  validateRequestObjectSigningAlg,
+  validateRequestUris,
   validateScope,
   validateSigningAlg,
 } from './metadata-values.js';
@@ -152,6 +154,12 @@ export interface ValidateClientMetadataOptions {
   /** userinfo_signed_response_alg に受理する alg。既定は RS256 のみ。 */
   userinfoSigningAlgValuesSupported?: readonly string[];
   /**
+   * request_object_signing_alg に受理する alg（OIDC Dynamic Client Registration 1.0 §2）。
+   * 既定は RS256 のみ。署名無しの Request Object を受理する OP は none を足す
+   * （discovery の request_object_signing_alg_values_supported と同じ一覧を渡す）。
+   */
+  requestObjectSigningAlgValuesSupported?: readonly string[];
+  /**
    * カスタムメタデータ。キーがメタデータ名、値がその検証関数。標準フィールド
    * （本モジュールが理解する名前）と同じ名前は設定の誤りとして TypeError になる。
    */
@@ -179,6 +187,16 @@ export interface ValidatedClientRegistration {
   userinfoSignedResponseAlg?: string;
   /** RFC 7591 §2 の jwks（正規化済み）。登録したときだけ持つ。 */
   jwks?: JwkSet;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §2 の request_uris: 認可リクエストの
+   * `request_uri`（OIDC Core 1.0 §6.2）に使うと事前登録した URL。登録したときだけ持つ。
+   */
+  requestUris?: string[];
+  /**
+   * OIDC Dynamic Client Registration 1.0 §2 の request_object_signing_alg: この
+   * クライアントの Request Object に必須の JWS alg。登録したときだけ持つ。
+   */
+  requestObjectSigningAlg?: string;
   /**
    * 登録した全メタデータの RFC 7591 のワイヤ形式（スネークケース）。既定値の
    * 適用後の値、software_statement、カスタムメタデータを含み、201 応答の
@@ -226,6 +244,8 @@ export const STANDARD_CLIENT_METADATA_NAMES: readonly string[] = [
   'default_max_age',
   'id_token_signed_response_alg',
   'userinfo_signed_response_alg',
+  'request_uris',
+  'request_object_signing_alg',
   'software_statement',
 ];
 
@@ -350,6 +370,21 @@ export function validateClientMetadata(
     );
     validated.userinfoSignedResponseAlg = alg;
     registered['userinfo_signed_response_alg'] = alg;
+  }
+  if (metadata['request_uris'] !== undefined) {
+    // OIDC Dynamic Client Registration 1.0 §2 / Core 1.0 §6.2: the request_uri
+    // values the client may use; the OP fetches them only at authorization time.
+    const requestUris = validateRequestUris(metadata['request_uris']);
+    validated.requestUris = requestUris;
+    registered['request_uris'] = [...requestUris];
+  }
+  if (metadata['request_object_signing_alg'] !== undefined) {
+    const alg = validateRequestObjectSigningAlg(
+      metadata['request_object_signing_alg'],
+      options?.requestObjectSigningAlgValuesSupported ?? DEFAULT_SIGNING_ALGS,
+    );
+    validated.requestObjectSigningAlg = alg;
+    registered['request_object_signing_alg'] = alg;
   }
   if (metadata['software_statement'] !== undefined) {
     // RFC 7591 §3.2.1: 登録に使った software_statement は、そのまま応答に返す。

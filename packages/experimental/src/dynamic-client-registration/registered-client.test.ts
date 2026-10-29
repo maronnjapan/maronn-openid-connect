@@ -110,7 +110,7 @@ describe('buildRegisteredClient', () => {
   });
 
   describe('registered metadata', () => {
-    it('should carry scope, default_max_age, the signed response algs and jwks into the record', () => {
+    it('should carry scope, default_max_age, the signed response algs, jwks, request_uris and request_object_signing_alg into the record', () => {
       const client = buildRegisteredClient(
         {
           ...CONFIDENTIAL,
@@ -119,6 +119,8 @@ describe('buildRegisteredClient', () => {
           idTokenSignedResponseAlg: 'RS256',
           userinfoSignedResponseAlg: 'ES256',
           jwks: { keys: [{ kty: 'RSA', use: 'sig', alg: 'RS256', n: 'AQAB', e: 'AQAB' }] },
+          requestUris: ['https://app.example.com/requests/a#NjYz'],
+          requestObjectSigningAlg: 'RS256',
         },
         FIXED,
       );
@@ -128,6 +130,8 @@ describe('buildRegisteredClient', () => {
         idTokenSignedResponseAlg: 'RS256',
         userinfoSignedResponseAlg: 'ES256',
         jwks: { keys: [{ kty: 'RSA', use: 'sig', alg: 'RS256', n: 'AQAB', e: 'AQAB' }] },
+        requestUris: ['https://app.example.com/requests/a#NjYz'],
+        requestObjectSigningAlg: 'RS256',
       });
     });
 

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { trustedSoftwarePublishersJson } from './support/software-publisher';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const opPort = Number(process.env.E2E_OP_PORT ?? '3010');
@@ -292,10 +293,12 @@ export default defineConfig({
         ]
       : []),
     // EXPERIMENTAL (RFC 7591): the restricted-registration OP instance. It
-    // requires the initial access token below on POST /register and caps the
-    // dynamic registrations at 3, so the 401 and 429 paths of the
-    // dynamic-client-registration spec run against real HTTP. The values are
-    // mirrored as constants in specs/dynamic-client-registration.spec.ts.
+    // requires the initial access token below on POST /register, caps the
+    // dynamic registrations at 3 and trusts the software statement publisher of
+    // support/software-publisher.ts, so the 401 and 429 paths and the software
+    // statement path of the dynamic-client-registration spec run against real
+    // HTTP. The values are mirrored as constants in
+    // specs/dynamic-client-registration.spec.ts.
     ...(startDcrOp
       ? [
           {
@@ -310,6 +313,7 @@ export default defineConfig({
               OIDC_SIGNING_KEY_ID: 'e2e-dcr-rs256-key',
               OIDC_DCR_INITIAL_ACCESS_TOKEN: 'e2e-dcr-initial-access-token',
               OIDC_DCR_MAX_CLIENTS: '3',
+              OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: trustedSoftwarePublishersJson(),
               OIDC_D1_PERSIST_PATH: process.env.OIDC_D1_PERSIST_PATH
                 ? `${process.env.OIDC_D1_PERSIST_PATH}-dcr`
                 : '.wrangler/state-dcr',

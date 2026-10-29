@@ -6,13 +6,16 @@
  * whose API is NOT stable: it may change in a breaking way between releases.
  * Do not build production code on it without pinning the version.
  *
- * The client POSTs its metadata here as JSON and receives a freshly minted
- * client_id (and, for confidential clients, a client_secret) that works on
- * /authorize and /token right away. Registration is open by default
+ * The client POSTs its metadata here as JSON — optionally bundled in a signed
+ * software statement of a publisher this OP trusts — and receives a freshly
+ * minted client_id (and, for confidential clients, a client_secret) that works
+ * on /authorize and /token right away. Registration is open by default
  * (RFC 7591 §3.1 SHOULD); set initialAccessToken of
  * dynamicClientRegistrationConfig
  * (_oidc-provider/features/dynamic-client-registration/config.ts) to require a
- * Bearer token.
+ * Bearer token. The registration policy (who may register, which publishers
+ * are trusted, which metadata beyond the standard fields is accepted) is in
+ * _oidc-provider/features/dynamic-client-registration/policy.ts.
  *
  * NOTE (RFC 7591 §5): per-IP rate limiting is deliberately left to the
  * deployment layer (reverse proxy / platform); this endpoint only enforces the
@@ -20,17 +23,25 @@
  * trust: what an issued client can do stays bounded by the same validation as
  * a static client (PKCE, exact redirect_uri match, client authentication).
  */
-import { hashClientSecret } from '@maronn-openid-connect/core';
+import { getJwaAlgorithm, hashClientSecret, responseTypeIncludes, type SigningKey } from '@maronn-openid-connect/core';
 import {
-  ClientRegistrationError,
+  applySoftwareStatement,
   buildClientRegistrationResponse,
   buildRegisteredClient,
-  validateClientRegistrationRequest,
-  verifyInitialAccessToken,
+  isClientRegistrationError,
+  parseClientRegistrationBody,
+  validateClientMetadata,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
-import { dynamicClientStore } from '../../_oidc-provider/features/dynamic-client-registration/store';
-import { clientCors, corsPreflight, withCors } from '../../_oidc-provider/http';
+import { responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
+import { features } from '../../_oidc-provider/features';
 import { dynamicClientRegistrationConfig } from '../../_oidc-provider/features/dynamic-client-registration/config';
+import {
+  dynamicClientStore,
+  toClientRegistration,
+} from '../../_oidc-provider/features/dynamic-client-registration/store';
+import { clientCors, corsPreflight, signingKeysUnavailable, withCors } from '../../_oidc-provider/http';
+import { loadSigningKeys } from '../../_oidc-provider/provider';
+import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../_oidc-provider/scopes';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -46,19 +57,15 @@ export function OPTIONS(request: Request): Response {
 async function registerClient(request: Request): Promise<Response> {
   const config = dynamicClientRegistrationConfig;
 
-  // (1) Initial access token, checked before the body is read. The two 401
+  // (1) May the request register? The policy decides (policy.ts as generated:
+  // open registration until initialAccessToken is set, then the configured
+  // Bearer token in constant time), before the body is read. The two 401
   // shapes follow RFC 6750 §3.1: no error code without credentials, and
-  // error="invalid_token" for presented-but-wrong ones. Neither reflects
+  // error="invalid_token" for presented-but-refused ones. Neither reflects
   // anything about the expected token.
-  if (config.initialAccessToken !== undefined) {
-    const authorization = request.headers.get('Authorization');
-    if (authorization === null) {
-      return registration401('Bearer');
-    }
-    const accepted = await verifyInitialAccessToken(authorization, config.initialAccessToken);
-    if (!accepted) {
-      return registration401('Bearer error="invalid_token"');
-    }
+  const authorization = request.headers.get('Authorization');
+  if (!(await config.verifyInitialAccessToken(authorization, config))) {
+    return registration401(authorization === null ? 'Bearer' : 'Bearer error="invalid_token"');
   }
 
   // (2) RFC 7591 §3.1: application/json only (parameters such as charset are
@@ -74,7 +81,7 @@ async function registerClient(request: Request): Promise<Response> {
   // A Content-Length that already declares more than maxRegistrationBodyBytes
   // is refused before the body is read, so an oversized request is not
   // buffered first. The header can lie, so the authoritative check stays the
-  // UTF-8 byte count on the body itself (validateClientRegistrationRequest).
+  // UTF-8 byte count on the body itself (parseClientRegistrationBody).
   const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
   if (Number.isFinite(declaredLength) && declaredLength > config.maxRegistrationBodyBytes) {
     return registrationJson(
@@ -83,23 +90,57 @@ async function registerClient(request: Request): Promise<Response> {
     );
   }
 
+  // The signed response algs a client may register are those of the signing
+  // keys, as discovery advertises them.
+  const keys = await loadSigningKeys().catch(() => null);
+  if (!keys) return signingKeysUnavailable();
+
   try {
     // The body read sits inside the try so that an aborted or malformed
     // transfer still gets the fixed server_error JSON with no-store, like the
     // hono pipeline, instead of the framework's default 500.
     const rawBody = await request.text();
 
-    // (3)–(8) Body size, JSON shape, allowlist-pick of the understood fields,
-    // value checks and RFC 7591 §2 defaults — pure functions from
-    // @maronn-openid-connect/experimental/dynamic-client-registration. Unknown metadata is
-    // silently ignored (§2 MUST), and every error_description is a fixed ASCII
-    // string that never reflects request values.
-    const metadata = validateClientRegistrationRequest(rawBody, {
-      maxBodyBytes: config.maxRegistrationBodyBytes,
-    });
-    const client = buildRegisteredClient(metadata);
+    // (3) Body size, JSON shape; a software_statement (RFC 7591 §2.3) is split
+    // from the plain metadata.
+    const registration = parseClientRegistrationBody(rawBody, { maxBodyBytes: config.maxRegistrationBodyBytes });
 
-    // (9) Inventory cap (RFC 7591 §5). 429 with a fixed body: the metadata is
+    // (4) RFC 7591 §3.1.1: a software statement the policy verifies (policy.ts
+    // as generated: signed by a publisher of trustedSoftwarePublishers) has its
+    // metadata applied over the plain values — unapproved_software_statement
+    // for an unknown issuer, invalid_software_statement for one that does not
+    // verify (§3.2.2) — and the statement comes back unmodified in the response
+    // (§3.2.1).
+    const metadata =
+      registration.softwareStatement === undefined
+        ? registration.metadata
+        : applySoftwareStatement(
+            registration.metadata,
+            registration.softwareStatement,
+            await config.verifySoftwareStatement(registration.softwareStatement, config),
+          );
+
+    // (5) Allowlist-pick of the understood fields, value checks, RFC 7591 §2
+    // defaults and the §2.1 consistency of grant_types and response_types —
+    // pure functions from @maronn-openid-connect/experimental/dynamic-client-registration,
+    // bounded to what this provider answers: the methods and grants of the
+    // config, the response types of the features, the scopes of scopes.ts, the
+    // algs of the signing keys and the custom metadata of the policy. Unknown
+    // metadata is silently ignored (§2 MUST), and every error_description is a
+    // fixed ASCII string that never reflects request values.
+    const responseTypes = ['code', ...responseTypesOf(features)];
+    const validated = validateClientMetadata(metadata, {
+      tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
+      grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
+      responseTypes,
+      scopes: registrableScopes(),
+      idTokenSigningAlgValuesSupported: signingAlgsOf(keys.idToken),
+      userinfoSigningAlgValuesSupported: signingAlgsOf(keys.userinfo),
+      customMetadata: config.customClientMetadata,
+    });
+    const client = buildRegisteredClient(validated);
+
+    // (6) Inventory cap (RFC 7591 §5). 429 with a fixed body: the metadata is
     // fine, so answering invalid_client_metadata would invite a retry loop that
     // amplifies the very DoS surface the cap is here to close. No Retry-After —
     // the cap is a stock ceiling, not a rate, so no recovery time is promised.
@@ -110,15 +151,13 @@ async function registerClient(request: Request): Promise<Response> {
       );
     }
 
-    // The stored record keeps the client_secret only as its hash, like the
-    // statically registered clients (_oidc-provider/db registerClient): the 201
-    // response below is built from the in-memory record, so the plaintext never
-    // needs to rest in the store.
-    const { clientSecret, ...registration } = client;
-    await dynamicClientStore.save({
-      ...registration,
-      ...(clientSecret === undefined ? {} : { clientSecretHash: await hashClientSecret(clientSecret) }),
-    });
+    // The stored record (toClientRegistration) keeps the client_secret only as
+    // its hash, like the statically registered clients (_oidc-provider/db
+    // registerClient), and the keys of the jwks under the purposes of the
+    // config: the 201 response below is built from the in-memory record, so the
+    // plaintext never needs to rest in the store.
+    const clientSecretHash = client.clientSecret === undefined ? undefined : await hashClientSecret(client.clientSecret);
+    await dynamicClientStore.save(toClientRegistration(client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
     // Concurrent requests can pass the cap check together (the awaits above let
     // them interleave), so re-check after saving and withdraw this registration
     // when the save overshot the cap: the cap is never exceeded, only approached.
@@ -137,12 +176,48 @@ async function registerClient(request: Request): Promise<Response> {
     // secret does not expire.
     return registrationJson(buildClientRegistrationResponse(client), 201);
   } catch (error) {
-    if (error instanceof ClientRegistrationError) {
-      // RFC 7591 §3.2.2: 400 with error / error_description JSON.
+    // RFC 7591 §3.2.2: 400 with error / error_description JSON. The error is
+    // told apart by shape, not by class: the policy functions of config.ts are
+    // created where the app starts (instrumentation.ts), which Next.js bundles
+    // apart from this Route Handler, so their ClientRegistrationError is
+    // another copy of the class.
+    if (isClientRegistrationError(error)) {
       return registrationJson({ error: error.error, error_description: error.errorDescription }, 400);
     }
     return registrationJson({ error: 'server_error' }, 500);
   }
+}
+
+/**
+ * The grant_type values of the registration config that this provider answers
+ * (RFC 7591 §2): authorization_code always, the grants the generated features
+ * answer at the token endpoint, and implicit while a feature answers a token or
+ * id_token response type at /authorize (OIDC Dynamic Client Registration 1.0 §2
+ * pairs them). A grant the provider does not answer is never registrable: a
+ * client registered for it could not use it.
+ */
+export function registrableGrantTypes(configured: readonly string[], responseTypes: readonly string[]): string[] {
+  const offered = ['authorization_code', ...tokenGrantsOf(features)];
+  const answersImplicit = responseTypes.some(
+    (responseType) => responseTypeIncludes(responseType, 'token') || responseTypeIncludes(responseType, 'id_token'),
+  );
+  if (answersImplicit) offered.push('implicit');
+  return configured.filter((grantType) => offered.includes(grantType));
+}
+
+/**
+ * scopes.ts: once a custom scope is declared, a registration may name only the
+ * standard and the declared scopes (what findUnsupportedScopes() accepts at
+ * /authorize); without one there is no list, and any syntactically valid value
+ * registers.
+ */
+export function registrableScopes(): readonly string[] | undefined {
+  return CUSTOM_SCOPES.length === 0 ? undefined : [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
+}
+
+/** The JWA algs of a registered signing key set, each once (what discovery advertises for it). */
+function signingAlgsOf(keys: readonly SigningKey[]): string[] {
+  return [...new Set(keys.map((key) => getJwaAlgorithm(key.privateKey)))];
 }
 
 /** RFC 7591 §3.1: the registration request body MUST be application/json. */

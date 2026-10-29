@@ -45,11 +45,7 @@ describe('applyFeatureSettings', () => {
     applyFeatureSettings({}, createMapKvDatabase());
 
     expect(rpInitiatedLogoutConfig).toEqual({ postLogoutRedirectUris: {} });
-    expect(dynamicClientRegistrationConfig).toEqual({
-      initialAccessToken: undefined,
-      maxRegisteredClients: 100,
-      maxRegistrationBodyBytes: 16384,
-    });
+    expect(dynamicClientRegistrationConfig).toEqual(defaults.dynamicClientRegistration);
     expect(idJagConfig).toEqual(defaults.idJag);
     expect(idJagConfig.actorTokenResolver).toBe(defaults.idJag.actorTokenResolver);
   });
@@ -69,10 +65,19 @@ describe('applyFeatureSettings', () => {
     applyFeatureSettings({ OIDC_DCR_INITIAL_ACCESS_TOKEN: 'iat-1', OIDC_DCR_MAX_CLIENTS: '5' }, createMapKvDatabase());
 
     expect(dynamicClientRegistrationConfig).toEqual({
+      ...defaults.dynamicClientRegistration,
       initialAccessToken: 'iat-1',
       maxRegisteredClients: 5,
-      maxRegistrationBodyBytes: 16384,
     });
+  });
+
+  // RFC 7591 §2.3: the publishers whose software statements are trusted.
+  it('should trust the software statement publishers of OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON', () => {
+    const publishers = [{ issuer: 'https://publisher.example.com', jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB', alg: 'RS256' }] } }];
+
+    applyFeatureSettings({ OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: JSON.stringify(publishers) }, createMapKvDatabase());
+
+    expect(dynamicClientRegistrationConfig.trustedSoftwarePublishers).toEqual(publishers);
   });
 
   it('should set the audiences an ID-JAG may be issued for from XAA_ALLOWED_AUDIENCES', () => {

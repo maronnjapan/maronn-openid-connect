@@ -93,6 +93,25 @@ describe('readDynamicClientRegistration', () => {
       'OIDC_DCR_MAX_CLIENTS must be a positive integer, not "abc"',
     );
   });
+
+  // RFC 7591 §2.3: the publishers whose software statements are trusted, as JSON.
+  it('should read the trusted software statement publishers', () => {
+    const publishers = [{ issuer: 'https://publisher.example.com', jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB', alg: 'RS256' }] } }];
+
+    expect(readDynamicClientRegistration({ OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: JSON.stringify(publishers) })).toEqual({
+      trustedSoftwarePublishers: publishers,
+    });
+  });
+
+  it.each([
+    ['not JSON', '{'],
+    ['not an array', '{"issuer":"https://publisher.example.com"}'],
+    ['an entry without jwks', '[{"issuer":"https://publisher.example.com"}]'],
+  ])('should reject trusted publishers that are %s', (_label, value) => {
+    expect(() => readDynamicClientRegistration({ OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON: value })).toThrow(
+      'OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON must be a JSON array of { issuer, jwks }',
+    );
+  });
 });
 
 describe('readCrossAppAccess', () => {

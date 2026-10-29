@@ -1,13 +1,15 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { signSoftwareStatement } from '../support/software-publisher';
 
 const host = process.env.E2E_HOST ?? '127.0.0.1';
 const clientPort = Number(process.env.E2E_CLIENT_PORT ?? '3020');
 const clientBaseURL =
   process.env.E2E_CLIENT_BASE_URL ?? `http://${host}:${clientPort}`;
 // EXPERIMENTAL (RFC 7591): a second OP instance started by playwright.config.ts
-// with an initial access token and a small inventory cap, so the restricted
-// registration paths (401 / 429) can be exercised without touching the open
+// with an initial access token, a small inventory cap and a trusted software
+// statement publisher, so the restricted registration paths (401 / 429) and
+// the software statement path can be exercised without touching the open
 // registration the other tests rely on.
 const dcrOpPort = Number(process.env.E2E_DCR_OP_PORT ?? '3050');
 const restrictedIssuer = process.env.E2E_DCR_ISSUER ?? `http://${host}:${dcrOpPort}`;
@@ -153,6 +155,138 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(tokens.token_type).toBe('Bearer');
   });
 
+  // OIDC Dynamic Client Registration 1.0 §2: the response types the OP
+  // advertises are registrable, and the implicit grant pairs with them.
+  test('should register an implicit client and return its ID Token in the fragment (OIDC Core 1.0 §3.2)', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+    const metadata = await discoveryMetadata(request, issuer);
+    test.skip(
+      !(metadata.response_types_supported as string[] | undefined)?.includes('id_token token'),
+      'This sample OP was generated without implicit-flow',
+    );
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['implicit'],
+      response_types: ['token id_token'],
+      client_name: 'E2E Implicit Client',
+    });
+    const clientId = requireString(registered.client_id, 'client_id');
+    // The response type comes back normalized (OAuth 2.0 Multiple Response Type Encoding Practices §1.2).
+    expect(registered.response_types).toEqual(['id_token token']);
+    expect(registered.grant_types).toEqual(['implicit']);
+
+    const { fragment, nonce } = await authorizeImplicitInBrowser(page, issuer, clientId);
+
+    expect(fragment['token_type']).toBe('Bearer');
+    const idToken = decodeJwtPayload(requireString(fragment['id_token'], 'id_token'));
+    expect(idToken.aud).toBe(clientId);
+    expect(idToken.nonce).toBe(nonce);
+  });
+
+  // RFC 7591 §2: the scope metadata becomes the client's scope list, so a
+  // request for any other scope is invalid_scope at /authorize.
+  test('should register the scope and refuse an authorization request outside it with invalid_scope', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      scope: 'openid profile openid',
+    });
+    expect(registered.scope).toBe('openid profile');
+    const clientId = requireString(registered.client_id, 'client_id');
+
+    const url = new URL('/authorize', issuer);
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', registeredRedirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'openid email');
+    url.searchParams.set('state', 'e2e-scope-state');
+    url.searchParams.set('code_challenge', base64Url(createHash('sha256').update('e2e-verifier-e2e-verifier-e2e-verifier-e2e-verifier').digest()));
+    url.searchParams.set('code_challenge_method', 'S256');
+    const response = await request.get(url.toString(), { maxRedirects: 0 });
+
+    expect(response.status()).toBe(302);
+    const location = new URL(requireHeader(response.headers(), 'location'));
+    expect(`${location.origin}${location.pathname}`).toBe(registeredRedirectUri);
+    expect(location.searchParams.get('error')).toBe('invalid_scope');
+    expect(location.searchParams.get('state')).toBe('e2e-scope-state');
+  });
+
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: the metadata the OP
+  // keeps for display and policy comes back with the registration (§3.2.1).
+  test('should register the informational metadata of RFC 7591 §2 and return it', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      application_type: 'web',
+      client_name: 'E2E Described Client',
+      client_uri: 'https://app.example.com/',
+      logo_uri: 'https://app.example.com/logo.png',
+      tos_uri: 'https://app.example.com/tos',
+      policy_uri: 'https://app.example.com/privacy',
+      contacts: ['ops@example.com', 'dev@example.com'],
+      software_id: '4NRB1-0XZABZI9E6-5SM3R',
+      software_version: '2.0.1',
+      default_max_age: 3600,
+      id_token_signed_response_alg: 'RS256',
+    });
+
+    expect(registered).toMatchObject({
+      application_type: 'web',
+      client_name: 'E2E Described Client',
+      client_uri: 'https://app.example.com/',
+      logo_uri: 'https://app.example.com/logo.png',
+      tos_uri: 'https://app.example.com/tos',
+      policy_uri: 'https://app.example.com/privacy',
+      contacts: ['ops@example.com', 'dev@example.com'],
+      software_id: '4NRB1-0XZABZI9E6-5SM3R',
+      software_version: '2.0.1',
+      default_max_age: 3600,
+      id_token_signed_response_alg: 'RS256',
+    });
+  });
+
+  // RFC 7591 §2 jwks: the public keys register with the client; the OP fills
+  // in the alg and use it will verify with.
+  test('should register the public keys of jwks and return the normalized key set', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const { n, e } = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      jwks: { keys: [{ kty: 'RSA', kid: 'e2e-client-key', n, e }] },
+    });
+
+    expect(registered.jwks).toEqual({
+      keys: [{ kty: 'RSA', kid: 'e2e-client-key', use: 'sig', alg: 'RS256', n, e }],
+    });
+  });
+
   test('should reject an unregistered dcr- client_id at the authorization endpoint', async ({
     request,
     baseURL,
@@ -218,6 +352,28 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     });
   });
 
+  // RFC 7591 §2.1: a registration whose grant_types and response_types do not
+  // pair is refused instead of landing the client in an inconsistent state.
+  test('should answer invalid_client_metadata for grant_types inconsistent with response_types (RFC 7591 §2.1)', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { redirect_uris: [registeredRedirectUri], grant_types: ['refresh_token'] },
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description:
+        'grant_types and response_types must be consistent: code requires authorization_code, token and id_token require implicit',
+    });
+  });
+
   test('should reject a request body that is not application/json (RFC 7591 §3.1)', async ({
     request,
     baseURL,
@@ -251,17 +407,62 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         redirect_uris: [registeredRedirectUri],
-        logo_uri: 'https://app.example.com/logo.png',
-        software_statement: 'eyJhbGciOiJSUzI1NiJ9.e30.sig',
+        jwks_uri: 'https://app.example.com/jwks.json',
+        sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
+        require_auth_time: true,
       },
     });
     expect(response.status()).toBe(201);
     const registered = await response.json() as Record<string, unknown>;
-    expect(Object.hasOwn(registered, 'logo_uri')).toBe(false);
-    expect(Object.hasOwn(registered, 'software_statement')).toBe(false);
+    expect(Object.hasOwn(registered, 'jwks_uri')).toBe(false);
+    expect(Object.hasOwn(registered, 'sector_identifier_uri')).toBe(false);
+    expect(Object.hasOwn(registered, 'require_auth_time')).toBe(false);
   });
 
-  // --- The restricted instance: initial access token and the inventory cap ---
+  // RFC 7591 §3.2.2: a software statement this OP cannot verify, and one from
+  // a publisher it does not trust (the open instance trusts none).
+  test('should answer invalid_software_statement for a software_statement that is not a JWS', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { redirect_uris: [registeredRedirectUri], software_statement: 'not-a-jws' },
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_software_statement',
+      error_description: 'software_statement must be a JWS compact serialization',
+    });
+  });
+
+  test('should answer unapproved_software_statement for a publisher this provider does not trust', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+
+    const response = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        redirect_uris: [registeredRedirectUri],
+        software_statement: signSoftwareStatement({ client_name: 'E2E Published Client' }),
+      },
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'unapproved_software_statement',
+      error_description: 'the issuer of the software_statement is not approved by this authorization server',
+    });
+  });
+
+  // --- The restricted instance: initial access token, software statements and the inventory cap ---
 
   test('should answer 401 without an error code when no credentials accompany the request (RFC 6750 §3.1)', async ({
     request,
@@ -294,6 +495,42 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
     expect(requireHeader(response.headers(), 'www-authenticate')).toBe(
       'Bearer error="invalid_token"',
     );
+  });
+
+  // RFC 7591 §3.1.1 / §3.2.1: the metadata of a trusted publisher's statement
+  // takes precedence over the plain values, and the statement comes back as
+  // it was sent. This registration takes one of the three slots of the
+  // instance; the cap test below counts from whatever is left.
+  test('should register the metadata a trusted software statement asserts and return the statement unmodified', async ({
+    request,
+  }) => {
+    const endpoint = await registrationEndpoint(request, restrictedIssuer);
+    test.skip(endpoint === undefined, RESTRICTED_SKIP_REASON);
+    const softwareStatement = signSoftwareStatement({
+      client_name: 'E2E Published Client',
+      software_id: 'e2e-published-software',
+      software_version: '1.0.0',
+    });
+
+    const response = await request.post(`${restrictedIssuer}/register`, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${initialAccessToken}`,
+      },
+      data: {
+        redirect_uris: [registeredRedirectUri],
+        client_name: 'E2E Plain Name',
+        software_statement: softwareStatement,
+      },
+    });
+
+    expect(response.status()).toBe(201);
+    expect(await response.json()).toMatchObject({
+      client_name: 'E2E Published Client',
+      software_id: 'e2e-published-software',
+      software_version: '1.0.0',
+      software_statement: softwareStatement,
+    });
   });
 
   test('should register with the initial access token and answer 429 once the inventory cap is reached', async ({
@@ -360,7 +597,7 @@ async function registerClient(
  * client_id and return the code (plus the PKCE verifier the request used).
  */
 async function authorizeInBrowser(
-  page: import('@playwright/test').Page,
+  page: Page,
   issuer: string,
   clientId: string,
 ): Promise<{ code: string; state: AuthorizeState }> {
@@ -379,15 +616,7 @@ async function authorizeInBrowser(
   authorizeUrl.searchParams.set('code_challenge_method', 'S256');
 
   await page.goto(authorizeUrl.toString());
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
-  await page.getByLabel('Username:').fill('testuser');
-  await page.getByLabel('Password:').fill('password');
-  await page.getByRole('button', { name: 'Login' }).click();
-
-  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
-  // The consent screen names the dynamically registered client.
-  await expect(page.locator('strong')).toHaveText(clientId);
-  await page.getByRole('button', { name: 'Approve' }).click();
+  await loginAndApprove(page, issuer, clientId);
 
   await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(registeredRedirectUri)}\\?`));
   const callbackUrl = new URL(page.url());
@@ -399,6 +628,52 @@ async function authorizeInBrowser(
 }
 
 /**
+ * Drive an Implicit Flow request (response_type=id_token token) in the real
+ * browser with the issued client_id and return the fragment of the redirect
+ * the browser landed on, with the nonce the request used.
+ */
+async function authorizeImplicitInBrowser(
+  page: Page,
+  issuer: string,
+  clientId: string,
+): Promise<{ fragment: Record<string, string>; nonce: string }> {
+  const requestState = base64Url(randomBytes(16));
+  const nonce = base64Url(randomBytes(16));
+
+  const authorizeUrl = new URL('/authorize', issuer);
+  authorizeUrl.searchParams.set('client_id', clientId);
+  authorizeUrl.searchParams.set('redirect_uri', registeredRedirectUri);
+  authorizeUrl.searchParams.set('response_type', 'id_token token');
+  authorizeUrl.searchParams.set('scope', 'openid');
+  authorizeUrl.searchParams.set('state', requestState);
+  authorizeUrl.searchParams.set('nonce', nonce);
+
+  await page.goto(authorizeUrl.toString());
+  await loginAndApprove(page, issuer, clientId);
+
+  // OIDC Core 1.0 §3.2.2.5: the tokens ride in the fragment, never in the query.
+  await page.waitForURL((url) => url.href.startsWith(registeredRedirectUri));
+  const callbackUrl = new URL(page.url());
+  expect(callbackUrl.search).toBe('');
+  const fragment = Object.fromEntries(new URLSearchParams(callbackUrl.hash.slice(1)));
+  expect(fragment['state']).toBe(requestState);
+  return { fragment, nonce };
+}
+
+/** Log in as testuser and approve the consent screen, which names the registered client. */
+async function loginAndApprove(page: Page, issuer: string, clientId: string): Promise<void> {
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+  await page.getByLabel('Username:').fill('testuser');
+  await page.getByLabel('Password:').fill('password');
+  await page.getByRole('button', { name: 'Login' }).click();
+
+  await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/consent$`));
+  // The consent screen names the dynamically registered client.
+  await expect(page.locator('strong')).toHaveText(clientId);
+  await page.getByRole('button', { name: 'Approve' }).click();
+}
+
+/**
  * registration_endpoint from discovery, or undefined when the OP does not
  * advertise it — or, for the restricted instance, is not running at all.
  */
@@ -407,13 +682,17 @@ async function registrationEndpoint(
   issuer: string,
 ): Promise<string | undefined> {
   try {
-    const response = await request.get(`${issuer}/.well-known/openid-configuration`);
-    expect(response.status()).toBe(200);
-    const metadata = await response.json() as Record<string, string | undefined>;
-    return metadata.registration_endpoint;
+    const metadata = await discoveryMetadata(request, issuer);
+    return metadata.registration_endpoint as string | undefined;
   } catch {
     return undefined;
   }
+}
+
+async function discoveryMetadata(request: APIRequestContext, issuer: string): Promise<Record<string, unknown>> {
+  const response = await request.get(`${issuer}/.well-known/openid-configuration`);
+  expect(response.status()).toBe(200);
+  return await response.json() as Record<string, unknown>;
 }
 
 function escapeRegExp(value: string): string {

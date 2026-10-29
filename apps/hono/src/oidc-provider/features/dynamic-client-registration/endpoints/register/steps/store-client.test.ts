@@ -6,7 +6,9 @@ import { InMemoryDynamicallyRegisteredClientStore } from '../../../store.js';
 import { RegistrationEndpointError } from '../response.js';
 import { storeRegisteredClient } from './store-client.js';
 
-function registeredClient(clientId: string): DynamicallyRegisteredClient {
+const RSA_KEY = { kty: 'RSA', use: 'sig', alg: 'RS256', kid: 'client-key', n: 'AQAB', e: 'AQAB' };
+
+function registeredClient(clientId: string, overrides: Partial<DynamicallyRegisteredClient> = {}): DynamicallyRegisteredClient {
   return {
     clientId,
     clientSecret: 'secret',
@@ -16,18 +18,13 @@ function registeredClient(clientId: string): DynamicallyRegisteredClient {
     responseTypes: ['code'],
     tokenEndpointAuthMethods: ['client_secret_basic'],
     clientIdIssuedAt: 1_767_225_600,
-  };
-}
-
-function publicClient(clientId: string): DynamicallyRegisteredClient {
-  return {
-    clientId,
-    clientType: 'public',
-    redirectUris: ['https://rp.example.com/callback'],
-    grantTypes: ['authorization_code'],
-    responseTypes: ['code'],
-    tokenEndpointAuthMethods: ['none'],
-    clientIdIssuedAt: 1_767_225_600,
+    metadata: {
+      redirect_uris: ['https://rp.example.com/callback'],
+      token_endpoint_auth_method: 'client_secret_basic',
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+    },
+    ...overrides,
   };
 }
 
@@ -42,15 +39,20 @@ async function registrationContext(maxRegisteredClients: number) {
 describe('storeRegisteredClient', () => {
   // Parity with the statically registered clients (db/memory/clients.ts
   // registerClient): the store holds the hash, never the plaintext secret.
-  it('should store the client with the client_secret replaced by its hash', async () => {
+  it('should store the record of db/ with the client_secret replaced by its hash', async () => {
     const { c, store } = await registrationContext(2);
 
     await storeRegisteredClient(c, registeredClient('dcr-new'));
 
-    const { clientSecret: _clientSecret, ...withoutSecret } = registeredClient('dcr-new');
     expect(await store.get('dcr-new')).toEqual({
-      ...withoutSecret,
+      clientId: 'dcr-new',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      grantTypes: ['authorization_code'],
+      responseTypes: ['code'],
+      tokenEndpointAuthMethods: ['client_secret_basic'],
       clientSecretHash: await hashClientSecret('secret'),
+      registrationMetadata: registeredClient('dcr-new').metadata,
     });
     expect(await store.count()).toBe(1);
   });
@@ -58,15 +60,32 @@ describe('storeRegisteredClient', () => {
   it('should store a public client without a secret or a hash', async () => {
     const { c, store } = await registrationContext(2);
 
-    await storeRegisteredClient(c, publicClient('dcr-public'));
+    await storeRegisteredClient(
+      c,
+      registeredClient('dcr-public', { clientSecret: undefined, clientType: 'public', tokenEndpointAuthMethods: ['none'] }),
+    );
 
-    expect(await store.get('dcr-public')).toEqual(publicClient('dcr-public'));
+    expect(await store.get('dcr-public')).toMatchObject({ clientType: 'public', tokenEndpointAuthMethods: ['none'] });
+    expect(Object.hasOwn((await store.get('dcr-public')) ?? {}, 'clientSecretHash')).toBe(false);
+  });
+
+  // RFC 7591 §2 jwks: stored under the purposes of the settings (ClientKeyResolver).
+  it('should store the keys of the jwks under the configured purposes', async () => {
+    const { c, store } = await registrationContext(2);
+
+    await storeRegisteredClient(c, registeredClient('dcr-keys', { jwks: { keys: [RSA_KEY] } }));
+
+    expect((await store.get('dcr-keys'))?.keys).toEqual({
+      request_object: { keys: [RSA_KEY] },
+      private_key_jwt: { keys: [RSA_KEY] },
+      dpop: { keys: [RSA_KEY] },
+    });
   });
 
   // RFC 7591 §5: the cap answers 429, not invalid_client_metadata, so no metadata retry loop is invited.
   it('should answer 429 and store nothing once the inventory reaches the cap', async () => {
     const { c, store } = await registrationContext(1);
-    await store.save(registeredClient('dcr-existing'));
+    await store.save({ clientId: 'dcr-existing', redirectUris: ['https://rp.example.com/callback'] });
 
     const error = await storeRegisteredClient(c, registeredClient('dcr-new')).catch((reason: unknown) => reason);
 

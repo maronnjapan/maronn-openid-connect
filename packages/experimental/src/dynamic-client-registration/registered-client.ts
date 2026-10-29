@@ -8,14 +8,19 @@
  * §3.2.1 応答の形だけを持つ。保存と上限検査は生成コードの責務。
  */
 
-import { generateRandomString } from '@maronn-openid-connect/core';
+import { generateRandomString, type JwkSet } from '@maronn-openid-connect/core';
 import type { ValidatedClientRegistration } from './registration-request.js';
 
 /**
- * 発行値を含む登録レコード。生成コードの RegisteredClient 型
- * （core の ClientInfo & TokenClientInfo を合成した型）へそのまま適合する。
- * clientName と clientIdIssuedAt は core が解釈しない付加情報で、応答の
- * 組み立てだけに使われる。
+ * 発行値を含む登録レコード。
+ *
+ * core が解釈するフィールド（clientId / clientSecret / clientType / redirectUris /
+ * grantTypes / responseTypes / tokenEndpointAuthMethods / scope / defaultMaxAge /
+ * idTokenSignedResponseAlg / userinfoSignedResponseAlg）は生成コードの
+ * RegisteredClient 型（core の ClientInfo & TokenClientInfo を合成した型）と同じ
+ * 名前で持つ。jwks は生成コードが ClientKeyResolver の用途別の鍵へ写す。
+ * metadata は登録した全メタデータのワイヤ形式で、201 応答の組み立てと、
+ * client_name や logo_uri、カスタムメタデータを後から読むために保持する。
  *
  * tokenEndpointAuthMethods は、登録した token_endpoint_auth_method（RFC 7591 §2 は 1 つ）を
  * core の TokenClientInfo.tokenEndpointAuthMethods と同じ一覧の形で持つ。
@@ -27,9 +32,14 @@ export interface DynamicallyRegisteredClient {
   redirectUris: string[];
   grantTypes: string[];
   responseTypes: string[];
-  tokenEndpointAuthMethods: [ValidatedClientRegistration['tokenEndpointAuthMethod']];
-  clientName?: string;
+  tokenEndpointAuthMethods: [string];
+  scope?: string[];
+  defaultMaxAge?: number;
+  idTokenSignedResponseAlg?: string;
+  userinfoSignedResponseAlg?: string;
+  jwks?: JwkSet;
   clientIdIssuedAt: number;
+  metadata: Record<string, unknown>;
 }
 
 export interface BuildRegisteredClientOptions {
@@ -42,6 +52,12 @@ export interface BuildRegisteredClientOptions {
   generateClientSecret?: () => string;
   /** 現在時刻（ミリ秒）。省略時は Date.now。 */
   now?: () => number;
+  /**
+   * client_secret で認証する token_endpoint_auth_method。これらを登録した
+   * クライアントにだけ client_secret を発行する。既定は client_secret_basic /
+   * client_secret_post / client_secret_jwt。
+   */
+  clientSecretAuthMethods?: readonly string[];
 }
 
 /**
@@ -52,13 +68,21 @@ export interface BuildRegisteredClientOptions {
  */
 const CLIENT_ID_PREFIX = 'dcr-';
 
+/** RFC 7591 §2 のうち client_secret を使う認証方式。 */
+export const CLIENT_SECRET_AUTH_METHODS: readonly string[] = [
+  'client_secret_basic',
+  'client_secret_post',
+  'client_secret_jwt',
+];
+
 /**
  * 検証済みメタデータから登録レコードを組み立てる。
  *
  * token_endpoint_auth_method が none のクライアントはシークレットを持てない
- * （RFC 6749 §2.1 の public client）ため、clientType: 'public' とし
- * client_secret を発行しない。それ以外は confidential として 256 ビットの
- * シークレットを発行する。
+ * （RFC 6749 §2.1 の public client）ため、clientType: 'public' とする。それ以外は
+ * confidential で、client_secret で認証する方式（clientSecretAuthMethods）にだけ
+ * 256 ビットのシークレットを発行する。private_key_jwt のように鍵で認証する方式は
+ * confidential だがシークレットを持たない。
  */
 export function buildRegisteredClient(
   metadata: ValidatedClientRegistration,
@@ -69,25 +93,37 @@ export function buildRegisteredClient(
   const generateClientSecret =
     options?.generateClientSecret ?? (() => generateRandomString(32));
   const now = options?.now ?? Date.now;
+  const clientSecretAuthMethods = options?.clientSecretAuthMethods ?? CLIENT_SECRET_AUTH_METHODS;
 
   const isPublic = metadata.tokenEndpointAuthMethod === 'none';
+  const issuesSecret = clientSecretAuthMethods.includes(metadata.tokenEndpointAuthMethod);
   return {
     clientId: generateClientId(),
-    ...(isPublic ? {} : { clientSecret: generateClientSecret() }),
+    ...(issuesSecret ? { clientSecret: generateClientSecret() } : {}),
     clientType: isPublic ? 'public' : 'confidential',
     redirectUris: [...metadata.redirectUris],
     grantTypes: [...metadata.grantTypes],
     responseTypes: [...metadata.responseTypes],
     tokenEndpointAuthMethods: [metadata.tokenEndpointAuthMethod],
-    ...(metadata.clientName === undefined ? {} : { clientName: metadata.clientName }),
+    ...(metadata.scope === undefined ? {} : { scope: [...metadata.scope] }),
+    ...(metadata.defaultMaxAge === undefined ? {} : { defaultMaxAge: metadata.defaultMaxAge }),
+    ...(metadata.idTokenSignedResponseAlg === undefined
+      ? {}
+      : { idTokenSignedResponseAlg: metadata.idTokenSignedResponseAlg }),
+    ...(metadata.userinfoSignedResponseAlg === undefined
+      ? {}
+      : { userinfoSignedResponseAlg: metadata.userinfoSignedResponseAlg }),
+    ...(metadata.jwks === undefined ? {} : { jwks: { keys: metadata.jwks.keys.map((key) => ({ ...key })) } }),
     clientIdIssuedAt: Math.floor(now() / 1000),
+    metadata: { ...metadata.metadata },
   };
 }
 
 /**
  * 201 応答ボディ（RFC 7591 §3.2.1。スネークケースの JSON オブジェクト）を
- * 組み立てる。§3.2.1 は「登録済みの全メタデータを返す MUST」なので、既定値
- * 適用後の値もすべて載せる。client_secret_expires_at は client_secret を
+ * 組み立てる。§3.2.1 は「登録済みの全メタデータを返す MUST」なので、発行値の
+ * 後に登録メタデータ（既定値適用後の値、software_statement、カスタム
+ * メタデータを含む）をすべて載せる。client_secret_expires_at は client_secret を
  * 発行した場合のみの REQUIRED で、0 は「無期限」を意味する。
  *
  * registration_access_token / registration_client_uri は返さない（RFC 7592 は
@@ -103,10 +139,6 @@ export function buildClientRegistrationResponse(
       ? {}
       : { client_secret: client.clientSecret, client_secret_expires_at: 0 }),
     client_id_issued_at: client.clientIdIssuedAt,
-    redirect_uris: [...client.redirectUris],
-    token_endpoint_auth_method: client.tokenEndpointAuthMethods[0],
-    grant_types: [...client.grantTypes],
-    response_types: [...client.responseTypes],
-    ...(client.clientName === undefined ? {} : { client_name: client.clientName }),
+    ...client.metadata,
   };
 }

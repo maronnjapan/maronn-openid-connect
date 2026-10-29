@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { providerContext } from '../../../test-support/context.js';
 import { registerClient } from '../../db/memory/clients.js';
 import { createEmptyDatabase } from '../../db/memory/database.js';
+import { dynamicClientRegistrationConfig } from './config.js';
 import { registerApp } from './endpoints/register/pipeline.js';
 import { dynamicClientRegistration } from './feature.js';
 import { dynamicClientStore } from './store.js';
+
+const RSA_KEY = { kty: 'RSA', use: 'sig', alg: 'RS256', kid: 'dynamic-key', n: 'AQAB', e: 'AQAB' };
 
 describe('dynamicClientRegistration', () => {
   // RFC 7591 §3: POST /register, with the CORS policy of the token endpoint.
@@ -22,13 +25,16 @@ describe('dynamicClientRegistration', () => {
   });
 
   describe('context', () => {
-    it('should merge the dynamicClientRegistration option over the defaults of config.ts', async () => {
-      const { c } = await providerContext({ options: { dynamicClientRegistration: { maxRegisteredClients: 5 } } });
+    it('should merge the dynamicClientRegistration option over the defaults of config.ts, the policy functions included', async () => {
+      const verifyInitialAccessToken = async () => true;
+      const { c } = await providerContext({
+        options: { dynamicClientRegistration: { maxRegisteredClients: 5, verifyInitialAccessToken } },
+      });
 
       expect(c.get('dynamicClientRegistrationConfig')).toEqual({
-        initialAccessToken: undefined,
+        ...dynamicClientRegistrationConfig,
         maxRegisteredClients: 5,
-        maxRegistrationBodyBytes: 16384,
+        verifyInitialAccessToken,
       });
       expect(c.get('dynamicClientStore')).toBe(dynamicClientStore);
     });
@@ -50,6 +56,30 @@ describe('dynamicClientRegistration', () => {
         { clientId: 'dcr-feature-test', redirectUris: ['https://dynamic.example.com/cb'] },
         { clientId: 'dcr-feature-test', redirectUris: ['https://dynamic.example.com/cb'] },
       ]);
+    });
+
+    // RFC 7591 §2 jwks: the keys of a registration reach the processes that verify with them.
+    it('should resolve the keys of a dynamic registration after those of the configured clients', async () => {
+      const db = createEmptyDatabase();
+      await registerClient(db, {
+        clientId: 'static-rp',
+        redirectUris: ['https://static.example.com/cb'],
+        keys: { request_object: { keys: [{ ...RSA_KEY, kid: 'static-key' }] } },
+      });
+      await dynamicClientStore.save({
+        clientId: 'dcr-feature-keys',
+        redirectUris: ['https://dynamic.example.com/cb'],
+        keys: { request_object: { keys: [RSA_KEY] } },
+      });
+      const { c } = await providerContext({ db });
+
+      const found = await Promise.all([
+        c.get('clientKeyResolver').findClientKeys('static-rp', 'request_object'),
+        c.get('clientKeyResolver').findClientKeys('dcr-feature-keys', 'request_object'),
+        c.get('clientKeyResolver').findClientKeys('dcr-feature-keys', 'dpop'),
+      ]);
+
+      expect(found).toEqual([{ keys: [{ ...RSA_KEY, kid: 'static-key' }] }, { keys: [RSA_KEY] }, { keys: [] }]);
     });
   });
 });

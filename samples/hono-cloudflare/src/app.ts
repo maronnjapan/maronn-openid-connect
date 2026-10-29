@@ -7,6 +7,7 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
+import type { SoftwareStatementPublisher } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { applyOidc } from './oidc-provider/apply.js';
 import type { ClientRegistration } from './oidc-provider/config.js';
 import { createProviderStores, registerClient, type Database } from './oidc-provider/db/index.js';
@@ -30,6 +31,7 @@ interface Bindings {
   OIDC_POST_LOGOUT_REDIRECT_URIS_JSON?: string;
   OIDC_DCR_INITIAL_ACCESS_TOKEN?: string;
   OIDC_DCR_MAX_CLIENTS?: string;
+  OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON?: string;
 }
 
 const bindings = env as Bindings;
@@ -96,15 +98,24 @@ if (bindings.XAA_ACTOR_TOKEN_RESOLVER === 'access-token') {
 }
 
 // EXPERIMENTAL (RFC 7591): the E2E suite starts a second instance of this
-// sample with an initial access token and a small inventory cap, so the
-// restricted-registration paths (401 / 429) can be exercised over real HTTP.
-// With the vars unset the generated defaults stay: open registration, cap 100.
+// sample with an initial access token, a small inventory cap and a trusted
+// software statement publisher, so the restricted-registration paths (401 /
+// 429) and the software statement path can be exercised over real HTTP. With
+// the vars unset the generated defaults stay: open registration, cap 100, no
+// trusted publisher.
 const dynamicClientRegistration = {
   ...(bindings.OIDC_DCR_INITIAL_ACCESS_TOKEN
     ? { initialAccessToken: bindings.OIDC_DCR_INITIAL_ACCESS_TOKEN }
     : {}),
   ...(bindings.OIDC_DCR_MAX_CLIENTS
     ? { maxRegisteredClients: Number(bindings.OIDC_DCR_MAX_CLIENTS) }
+    : {}),
+  ...(bindings.OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON
+    ? {
+        trustedSoftwarePublishers: JSON.parse(
+          bindings.OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON,
+        ) as SoftwareStatementPublisher[],
+      }
     : {}),
 };
 

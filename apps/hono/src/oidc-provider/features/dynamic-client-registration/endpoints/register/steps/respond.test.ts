@@ -11,8 +11,14 @@ const confidentialClient: DynamicallyRegisteredClient = {
   grantTypes: ['authorization_code', 'refresh_token'],
   responseTypes: ['code'],
   tokenEndpointAuthMethods: ['client_secret_post'],
-  clientName: 'Example RP',
   clientIdIssuedAt: 1_767_225_600,
+  metadata: {
+    redirect_uris: ['https://rp.example.com/callback'],
+    token_endpoint_auth_method: 'client_secret_post',
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    client_name: 'Example RP',
+  },
 };
 
 describe('respondRegistration', () => {
@@ -37,12 +43,14 @@ describe('respondRegistration', () => {
 
   // RFC 7591 §3.2.1: client_secret_expires_at is required only when a secret is issued.
   it('should leave the secret and its expiry out for a public client', async () => {
-    const { clientSecret: _secret, clientName: _name, ...publicClient } = confidentialClient;
+    const { clientSecret: _secret, ...publicClient } = confidentialClient;
+    const { client_name: _name, ...metadata } = confidentialClient.metadata;
 
     const response = respondRegistration(contextOf(), {
       ...publicClient,
       clientType: 'public',
       tokenEndpointAuthMethods: ['none'],
+      metadata: { ...metadata, token_endpoint_auth_method: 'none' },
     });
 
     expect(await response.json()).toEqual({

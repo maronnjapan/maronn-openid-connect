@@ -12,6 +12,7 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
+import type { SoftwareStatementPublisher } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import type { ClientRegistration } from './oidc-provider/config.js';
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -83,20 +84,48 @@ export function readPostLogoutRedirectUris(env: Environment): Record<string, str
 }
 
 /**
- * EXPERIMENTAL (RFC 7591): an initial access token and an inventory cap for
- * dynamic client registration. Unset variables keep the defaults of the code:
- * open registration, cap 100.
+ * EXPERIMENTAL (RFC 7591): an initial access token, an inventory cap and the
+ * trusted software statement publishers for dynamic client registration.
+ * Unset variables keep the defaults of the code: open registration, cap 100,
+ * no publisher (every software_statement is unapproved).
+ *
+ * OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON is a JSON array of
+ * { issuer, jwks, algorithms? } (SoftwareStatementPublisher of the experimental
+ * package); a malformed value stops the app instead of being half-read.
  */
 export function readDynamicClientRegistration(env: Environment): {
   initialAccessToken?: string;
   maxRegisteredClients?: number;
+  trustedSoftwarePublishers?: SoftwareStatementPublisher[];
 } {
   const initialAccessToken = env['OIDC_DCR_INITIAL_ACCESS_TOKEN'];
   const maxRegisteredClients = readPositiveInteger(env, 'OIDC_DCR_MAX_CLIENTS');
+  const trustedSoftwarePublishers = readSoftwareStatementPublishers(env, 'OIDC_DCR_TRUSTED_SOFTWARE_PUBLISHERS_JSON');
   return {
     ...(initialAccessToken ? { initialAccessToken } : {}),
     ...(maxRegisteredClients === undefined ? {} : { maxRegisteredClients }),
+    ...(trustedSoftwarePublishers === undefined ? {} : { trustedSoftwarePublishers }),
   };
+}
+
+function readSoftwareStatementPublishers(env: Environment, name: string): SoftwareStatementPublisher[] | undefined {
+  const encoded = env[name];
+  if (encoded === undefined || encoded === '') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(encoded);
+  } catch {
+    throw new Error(`${name} must be a JSON array of { issuer, jwks }`);
+  }
+  const isPublisher = (entry: unknown): entry is SoftwareStatementPublisher =>
+    typeof entry === 'object' &&
+    entry !== null &&
+    typeof (entry as { issuer?: unknown }).issuer === 'string' &&
+    Array.isArray((entry as { jwks?: { keys?: unknown } }).jwks?.keys);
+  if (!Array.isArray(parsed) || !parsed.every(isPublisher)) {
+    throw new Error(`${name} must be a JSON array of { issuer, jwks }`);
+  }
+  return parsed;
 }
 
 /**

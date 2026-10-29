@@ -2,6 +2,7 @@ import { hashClientSecret } from '@maronn-openid-connect/core';
 import type { DynamicallyRegisteredClient } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { RegistrationEndpointError } from '../response.js';
 import { step } from '../../../../../endpoints/step.js';
+import { toClientRegistration } from '../../../store.js';
 
 export const meta = step({
   id: 'store-client',
@@ -11,6 +12,7 @@ export const meta = step({
   label: 'Enforce the inventory cap and store the client',
   spec: 'RFC 7591 §5',
   function: 'storeRegisteredClient',
+  calls: ['hashClientSecret', 'toClientRegistration'],
   consumes: ['client'],
   produces: [],
   removable: false,
@@ -23,10 +25,11 @@ export const meta = step({
  * close. No Retry-After — the cap is a stock ceiling, not a rate, so no
  * recovery time is promised.
  *
- * The stored record keeps the client_secret only as its hash, like the
- * statically registered clients (db/memory/clients.ts registerClient): the 201
- * response is built from the in-memory record this step receives, so the
- * plaintext never needs to rest in the store.
+ * The stored record (toClientRegistration) keeps the client_secret only as its
+ * hash, like the statically registered clients (db/memory/clients.ts
+ * registerClient), and the keys of the jwks under the purposes of the config:
+ * the 201 response is built from the in-memory record this step receives, so
+ * the plaintext never needs to rest in the store.
  */
 export async function storeRegisteredClient(c: any, client: DynamicallyRegisteredClient): Promise<void> {
   const config = c.get('dynamicClientRegistrationConfig');
@@ -34,11 +37,8 @@ export async function storeRegisteredClient(c: any, client: DynamicallyRegistere
   if ((await store.count()) >= config.maxRegisteredClients) {
     throw inventoryCapError();
   }
-  const { clientSecret, ...registration } = client;
-  await store.save({
-    ...registration,
-    ...(clientSecret === undefined ? {} : { clientSecretHash: await hashClientSecret(clientSecret) }),
-  });
+  const clientSecretHash = client.clientSecret === undefined ? undefined : await hashClientSecret(client.clientSecret);
+  await store.save(toClientRegistration(client, { clientSecretHash, jwksPurposes: config.jwksPurposes }));
   // Concurrent requests can pass the cap check together (the awaits above let
   // them interleave), so re-check after saving and withdraw this registration
   // when the save overshot the cap: the cap is never exceeded, only approached.

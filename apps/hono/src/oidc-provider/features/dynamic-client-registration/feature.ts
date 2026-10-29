@@ -1,14 +1,20 @@
 import { defineFeature } from '../feature.js';
 import { dynamicClientRegistrationConfig } from './config.js';
 import { registerApp } from './endpoints/register/pipeline.js';
-import { dynamicClientStore, withDynamicallyRegisteredClients } from './store.js';
+import {
+  dynamicClientStore,
+  withDynamicallyRegisteredClientKeys,
+  withDynamicallyRegisteredClients,
+} from './store.js';
 
 /**
  * EXPERIMENTAL — OAuth 2.0 Dynamic Client Registration (RFC 7591): POST
  * /register. The clients it issues are kept in an in-memory store
  * (store.ts) and resolved after the configured clients, so a static
- * registration always wins. Registration management (RFC 7592) is not
- * implemented. Settings are in config.ts.
+ * registration always wins; the public keys a registration carried (jwks)
+ * are handed out by the ClientKeyResolver the same way. Registration
+ * management (RFC 7592) is not implemented. Settings and the registration
+ * policy are in config.ts and policy.ts.
  *
  * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it
  * may change in a breaking way between releases.
@@ -21,8 +27,9 @@ export const dynamicClientRegistration = defineFeature({
   context: ({ c, options }) => ({
     dynamicClientStore,
     dynamicClientRegistrationConfig: { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration },
-    // Dynamically registered clients resolve after the configured clients.
+    // Dynamically registered clients, and their keys, resolve after the configured clients.
     clientResolver: withDynamicallyRegisteredClients(c.get('clientResolver')),
     tokenClientResolver: withDynamicallyRegisteredClients(c.get('tokenClientResolver')),
+    clientKeyResolver: withDynamicallyRegisteredClientKeys(c.get('clientKeyResolver')),
   }),
 });

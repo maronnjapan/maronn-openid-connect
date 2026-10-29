@@ -17,7 +17,7 @@ describe('respondRegistrationError', () => {
 
   // RFC 7591 §3.2.2: 400 with error and error_description for invalid metadata.
   it('should answer invalid metadata with 400 and the error of the validation', async () => {
-    const error = new ClientRegistrationError('invalid_client_metadata', 'response_types must be exactly ["code"]');
+    const error = new ClientRegistrationError('invalid_client_metadata', 'application_type must be web or native');
 
     const response = respondRegistrationError(contextOf(), error);
 
@@ -25,8 +25,33 @@ describe('respondRegistrationError', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(await response.json()).toEqual({
       error: 'invalid_client_metadata',
-      error_description: 'response_types must be exactly ["code"]',
+      error_description: 'application_type must be web or native',
     });
+  });
+
+  // RFC 7591 §3.2.2: the software statement codes are 400 too.
+  it('should answer a refused software statement with 400 and its code', async () => {
+    const error = new ClientRegistrationError('unapproved_software_statement', 'fixed description');
+
+    const response = respondRegistrationError(contextOf(), error);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'unapproved_software_statement', error_description: 'fixed description' });
+  });
+
+  // The policy functions may come from another copy of the experimental
+  // package (another bundle), whose ClientRegistrationError is another class.
+  it('should answer a registration error of the same shape from another copy of the package with 400', async () => {
+    const error = Object.assign(new Error('fixed description'), {
+      name: 'ClientRegistrationError',
+      error: 'invalid_software_statement',
+      errorDescription: 'fixed description',
+    });
+
+    const response = respondRegistrationError(contextOf(), error);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_software_statement', error_description: 'fixed description' });
   });
 
   it('should answer any other failure with 500 server_error and nothing about it', async () => {

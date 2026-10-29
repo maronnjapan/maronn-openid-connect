@@ -17,7 +17,7 @@
     "@maronn-openid-connect/google-login": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "google-auth-library": "^11.2.0",

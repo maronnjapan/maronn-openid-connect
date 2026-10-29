@@ -1,4 +1,10 @@
-import type { ClientKeyResolver, ClientKeysByPurpose, JwkSet } from '@maronn-openid-connect/core';
+import {
+  createJwksUriResolver,
+  type CachedJwks,
+  type ClientKeyResolver,
+  type ClientKeysByPurpose,
+  type JwkSet,
+} from '@maronn-openid-connect/core';
 import type { DynamicallyRegisteredClient } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import type { ClientRegistration, RegisteredClient } from '../../config';
 
@@ -99,6 +105,7 @@ export function toClientRegistration(
     ...(client.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: client.requestObjectSigningAlg }),
     ...(options.clientSecretHash === undefined ? {} : { clientSecretHash: options.clientSecretHash }),
     ...(client.jwks === undefined ? {} : { keys: keysByPurpose(client.jwks, options.jwksPurposes) }),
+    ...(client.jwksUri === undefined ? {} : { jwksUri: client.jwksUri }),
     registrationMetadata: { ...client.metadata },
   };
 }
@@ -144,14 +151,46 @@ export function withDynamicallyRegisteredClients<
 }
 
 /**
+ * The JWK Set documents fetched from the jwks_uri of dynamic registrations,
+ * by URL, kept on globalThis like the store so every module layer shares
+ * them: one fetch per jwksUriCacheTtlSeconds (config.ts) for each URL,
+ * whichever request needs the keys.
+ */
+const jwksUriCacheRegistry = globalThis as typeof globalThis & {
+  __oidcDynamicallyRegisteredJwksCache?: Map<string, CachedJwks>;
+};
+
+export const jwksUriCache: Map<string, CachedJwks> = (jwksUriCacheRegistry.__oidcDynamicallyRegisteredJwksCache ??=
+  new Map<string, CachedJwks>());
+
+/** How the keys of a jwks_uri (RFC 7591 §2) are fetched: the settings of config.ts that decide it. */
+export interface JwksUriKeyOptions {
+  /** The purposes the keys of a jwks_uri serve (jwksPurposes of config.ts). */
+  jwksPurposes: readonly string[];
+  /** How long a fetched JWK Set is kept (jwksUriCacheTtlSeconds of config.ts). */
+  jwksUriCacheTtlSeconds: number;
+  /** The fetch to retrieve it with (jwksUriFetch of config.ts); globalThis.fetch while undefined. */
+  jwksUriFetch: typeof fetch | undefined;
+}
+
+/**
  * EXPERIMENTAL — hand out the public keys a dynamic registration carried in its
  * jwks (RFC 7591 §2) by purpose, after the keys of the configured resolver: a
  * client db/ knows keeps its own keys, and a dynamically registered one gets
  * those of its registration (under the purposes of jwksPurposes). A client
  * neither knows, or a purpose without keys, resolves to an empty key set, as
  * core's ClientKeyResolver contract asks.
+ *
+ * A registration that named a jwks_uri instead has its JWK Set document
+ * fetched (core's createJwksUriResolver, cached in jwksUriCache for
+ * jwksUriCacheTtlSeconds, 30 s after a failed fetch) for every purpose of
+ * jwksPurposes. options is read on each call, so the settings of config.ts
+ * that instrumentation.ts changes apply from the next request.
  */
-export function withDynamicallyRegisteredClientKeys(base: ClientKeyResolver): ClientKeyResolver {
+export function withDynamicallyRegisteredClientKeys(
+  base: ClientKeyResolver,
+  options: () => JwksUriKeyOptions,
+): ClientKeyResolver {
   return {
     ...base,
     async findClientKeys(clientId, purpose): Promise<JwkSet> {
@@ -160,7 +199,22 @@ export function withDynamicallyRegisteredClientKeys(base: ClientKeyResolver): Cl
         return registered;
       }
       const registration = await dynamicClientStore.get(clientId);
-      return { keys: [...(registration?.keys?.[purpose]?.keys ?? [])] };
+      if (registration === undefined) {
+        return { keys: [] };
+      }
+      const inline = registration.keys?.[purpose]?.keys;
+      if (inline !== undefined && inline.length > 0) {
+        return { keys: [...inline] };
+      }
+      const { jwksPurposes, jwksUriCacheTtlSeconds, jwksUriFetch } = options();
+      if (registration.jwksUri === undefined || !jwksPurposes.includes(purpose)) {
+        return { keys: [] };
+      }
+      return createJwksUriResolver({
+        fetch: jwksUriFetch,
+        ttlMs: jwksUriCacheTtlSeconds * 1000,
+        cache: jwksUriCache,
+      }).resolve(registration.jwksUri);
     },
   };
 }

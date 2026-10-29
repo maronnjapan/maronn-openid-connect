@@ -48,6 +48,9 @@ export const meta = step({
  *   authorization time, never here
  * - request_object_signing_alg: the algs the request-object feature advertises
  *   (request_object_signing_alg_values_supported), RS256 without the feature
+ * - jwks_uri: an https URL (loopback http for development) while allowJwksUri
+ *   of the registration config is on; the OP fetches the keys only when it
+ *   needs them (store.ts), never here
  * - the custom metadata of the registration config (config.ts)
  *
  * Unknown metadata is silently ignored (§2 MUST), and every error_description
@@ -67,6 +70,7 @@ export function validateRegistrationMetadata(
     idTokenSigningAlgValuesSupported: signingAlgsOf(c.get('idTokenSigningKeys')),
     userinfoSigningAlgValuesSupported: signingAlgsOf(c.get('userinfoSigningKeys')),
     requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs(c),
+    allowJwksUri: config.allowJwksUri,
     customMetadata: config.customClientMetadata,
   });
   return buildRegisteredClient(validated);

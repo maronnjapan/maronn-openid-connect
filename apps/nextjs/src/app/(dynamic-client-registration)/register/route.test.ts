@@ -70,6 +70,21 @@ describe('POST /register', () => {
     });
   });
 
+  // RFC 7591 §2 jwks_uri: kept for the key resolver, never fetched here; closed by allowJwksUri.
+  it('should register jwks_uri while allowJwksUri is on and reject it once it is off', async () => {
+    const accepted = await register({ redirect_uris: REDIRECT_URIS, jwks_uri: 'https://rp.example.com/jwks.json' });
+    configure({ allowJwksUri: false });
+    const refused = await register({ redirect_uris: REDIRECT_URIS, jwks_uri: 'https://rp.example.com/jwks.json' });
+
+    expect(accepted.status).toBe(201);
+    expect(await accepted.json()).toMatchObject({ jwks_uri: 'https://rp.example.com/jwks.json' });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'jwks_uri is not accepted by this provider; register jwks instead',
+    });
+  });
+
   // The algs the request-object feature advertises: none only while unsigned
   // Request Objects are accepted.
   it('should bound request_object_signing_alg to the algs the request-object feature advertises', async () => {

@@ -148,6 +148,26 @@ describe('validateRegistrationMetadata', () => {
     );
   });
 
+  // RFC 7591 §2 jwks_uri: kept for the key resolver, never fetched here; closed by allowJwksUri.
+  it('should register jwks_uri while allowJwksUri is on and reject it once it is off', async () => {
+    const { c } = await providerContext();
+    const { c: closed } = await providerContext({ options: { dynamicClientRegistration: { allowJwksUri: false } } });
+
+    const client = validateRegistrationMetadata(c, { redirect_uris: REDIRECT_URIS, jwks_uri: 'https://rp.example.com/jwks.json' });
+
+    expect(client.jwksUri).toBe('https://rp.example.com/jwks.json');
+    expect(client.metadata['jwks_uri']).toBe('https://rp.example.com/jwks.json');
+    expect(() =>
+      validateRegistrationMetadata(closed, { redirect_uris: REDIRECT_URIS, jwks_uri: 'https://rp.example.com/jwks.json' }),
+    ).toThrow(
+      expect.objectContaining({
+        name: 'ClientRegistrationError',
+        error: 'invalid_client_metadata',
+        errorDescription: 'jwks_uri is not accepted by this provider; register jwks instead',
+      }),
+    );
+  });
+
   it('should bound the auth methods to those of the registration settings', async () => {
     const { c } = await providerContext({
       options: { dynamicClientRegistration: { tokenEndpointAuthMethods: ['client_secret_basic', 'private_key_jwt'] } },

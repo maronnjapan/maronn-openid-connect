@@ -136,8 +136,9 @@ async function registerClient(request: Request): Promise<Response> {
     // to what this provider answers: the methods and grants of the config, the
     // response types of the features, the scopes of scopes.ts, the algs of the
     // signing keys, the Request Object signing algs the request-object feature
-    // advertises (request_uris are kept for /authorize to match, never fetched
-    // here) and the custom metadata of the config. Unknown metadata is
+    // advertises (request_uris are kept for /authorize to match, and a
+    // jwks_uri for the key resolver to fetch; neither is fetched here) and the
+    // custom metadata of the config. Unknown metadata is
     // silently ignored (§2 MUST), and every error_description is a fixed ASCII
     // string that never reflects request values.
     const responseTypes = ['code', ...responseTypesOf(features)];
@@ -149,6 +150,7 @@ async function registerClient(request: Request): Promise<Response> {
       idTokenSigningAlgValuesSupported: signingAlgsOf(keys.idToken),
       userinfoSigningAlgValuesSupported: signingAlgsOf(keys.userinfo),
       requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs(),
+      allowJwksUri: config.allowJwksUri,
       customMetadata: config.customClientMetadata,
     });
     const client = buildRegisteredClient(validated);

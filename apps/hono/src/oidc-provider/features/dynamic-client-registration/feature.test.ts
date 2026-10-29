@@ -25,16 +25,23 @@ describe('dynamicClientRegistration', () => {
   });
 
   describe('context', () => {
-    it('should merge the dynamicClientRegistration option over the defaults of config.ts, the policy functions included', async () => {
+    it('should extend the defaults of config.ts with the dynamicClientRegistration option: scalars and policy functions replaced, lists added to', async () => {
       const verifyInitialAccessToken = async () => true;
       const { c } = await providerContext({
-        options: { dynamicClientRegistration: { maxRegisteredClients: 5, verifyInitialAccessToken } },
+        options: {
+          dynamicClientRegistration: {
+            maxRegisteredClients: 5,
+            verifyInitialAccessToken,
+            tokenEndpointAuthMethods: ['private_key_jwt'],
+          },
+        },
       });
 
       expect(c.get('dynamicClientRegistrationConfig')).toEqual({
         ...dynamicClientRegistrationConfig,
         maxRegisteredClients: 5,
         verifyInitialAccessToken,
+        tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none', 'private_key_jwt'],
       });
       expect(c.get('dynamicClientStore')).toBe(dynamicClientStore);
     });

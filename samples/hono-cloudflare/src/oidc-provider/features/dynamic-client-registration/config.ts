@@ -32,8 +32,9 @@ export type SoftwareStatementVerifier = (
 
 /**
  * Dynamic client registration settings. The dynamicClientRegistration option of
- * createApp() / applyOidc() is merged over these defaults (feature.ts), so change
- * them here or per deployment there — the policy functions included.
+ * createApp() / applyOidc() extends these defaults (feature.ts,
+ * extendDynamicClientRegistrationConfig below), so change them here or per
+ * deployment there — the policy functions included.
  *
  * - initialAccessToken: when set, POST /register requires
  *   `Authorization: Bearer <value>` (OIDC Dynamic Client Registration 1.0 §3).
@@ -94,16 +95,59 @@ export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = 
   customClientMetadata,
 };
 
+/**
+ * The settings of a deployment: the generated defaults with the
+ * dynamicClientRegistration option of createApp() / applyOidc() applied.
+ *
+ * The option adds to the lists and the table instead of replacing them, so a
+ * deployment extends what the generated code allows without repeating it:
+ * tokenEndpointAuthMethods, grantTypes and jwksPurposes gain the given values
+ * (each once), trustedSoftwarePublishers gains the given publishers (one
+ * with the issuer of a generated publisher replaces it), and
+ * customClientMetadata gains the given validators (one with the name of a
+ * generated validator replaces it). The scalar settings and the policy
+ * functions replace the defaults; a field left out or undefined keeps them.
+ * To take a value out of a generated list, edit it in config.ts.
+ */
+export function extendDynamicClientRegistrationConfig(
+  base: DynamicClientRegistrationConfig,
+  additions: Partial<DynamicClientRegistrationConfig> = {},
+): DynamicClientRegistrationConfig {
+  const {
+    tokenEndpointAuthMethods,
+    grantTypes,
+    jwksPurposes,
+    trustedSoftwarePublishers,
+    customClientMetadata: customMetadata,
+    ...replaced
+  } = additions;
+  const config: DynamicClientRegistrationConfig = { ...base };
+  for (const [name, value] of Object.entries(replaced)) {
+    if (value !== undefined) (config as unknown as Record<string, unknown>)[name] = value;
+  }
+  config.tokenEndpointAuthMethods = [...new Set([...base.tokenEndpointAuthMethods, ...(tokenEndpointAuthMethods ?? [])])];
+  config.grantTypes = [...new Set([...base.grantTypes, ...(grantTypes ?? [])])];
+  config.jwksPurposes = [...new Set([...base.jwksPurposes, ...(jwksPurposes ?? [])])];
+  const added = trustedSoftwarePublishers ?? [];
+  config.trustedSoftwarePublishers = [
+    ...base.trustedSoftwarePublishers.filter((publisher) => !added.some((entry) => entry.issuer === publisher.issuer)),
+    ...added,
+  ];
+  config.customClientMetadata = { ...base.customClientMetadata, ...customMetadata };
+  return config;
+}
+
 declare module '../../app.js' {
   interface OidcProviderOptions {
     /**
-     * EXPERIMENTAL (RFC 7591): override the dynamic client registration
+     * EXPERIMENTAL (RFC 7591): extend the dynamic client registration
      * settings (dynamicClientRegistrationConfig in
      * features/dynamic-client-registration/config.ts) per deployment — for
      * example from environment variables — without editing the generated
-     * file. Unset fields keep the generated defaults. The policy functions
-     * (verifyInitialAccessToken, verifySoftwareStatement, customClientMetadata)
-     * can be replaced here too.
+     * file (extendDynamicClientRegistrationConfig). The lists and the custom
+     * metadata table gain the given values, the scalar settings and the
+     * policy functions (verifyInitialAccessToken, verifySoftwareStatement)
+     * replace the generated ones, and an unset field keeps them.
      */
     dynamicClientRegistration?: Partial<DynamicClientRegistrationConfig>;
   }

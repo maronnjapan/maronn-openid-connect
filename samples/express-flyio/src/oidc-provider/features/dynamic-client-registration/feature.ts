@@ -1,5 +1,5 @@
 import { defineFeature } from '../feature.js';
-import { dynamicClientRegistrationConfig } from './config.js';
+import { dynamicClientRegistrationConfig, extendDynamicClientRegistrationConfig } from './config.js';
 import { registerApp } from './endpoints/register/pipeline.js';
 import {
   dynamicClientStore,
@@ -26,7 +26,7 @@ export const dynamicClientRegistration = defineFeature({
   discovery: (issuer) => ({ registration_endpoint: `${issuer}/register` }),
   context: ({ c, options }) => ({
     dynamicClientStore,
-    dynamicClientRegistrationConfig: { ...dynamicClientRegistrationConfig, ...options.dynamicClientRegistration },
+    dynamicClientRegistrationConfig: extendDynamicClientRegistrationConfig(dynamicClientRegistrationConfig, options.dynamicClientRegistration),
     // Dynamically registered clients, and their keys, resolve after the configured clients.
     clientResolver: withDynamicallyRegisteredClients(c.get('clientResolver')),
     tokenClientResolver: withDynamicallyRegisteredClients(c.get('tokenClientResolver')),

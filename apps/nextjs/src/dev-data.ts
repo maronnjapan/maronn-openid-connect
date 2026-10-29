@@ -9,7 +9,7 @@
  */
 import { createDatabase, createProviderStores, registerClient } from './app/_oidc-provider/db';
 import { registerDevelopmentUsers } from './app/_oidc-provider/development';
-import { dynamicClientRegistrationConfig } from './app/_oidc-provider/features/dynamic-client-registration/config';
+import { extendDynamicClientRegistrationConfig } from './app/_oidc-provider/features/dynamic-client-registration/config';
 import { idJagConfig } from './app/_oidc-provider/features/id-jag/config';
 import { rpInitiatedLogoutConfig } from './app/_oidc-provider/features/rp-initiated-logout/config';
 import {
@@ -42,7 +42,7 @@ export function applyFeatureSettings(env: Environment, db: ReturnType<typeof cre
   if (postLogoutRedirectUris) {
     rpInitiatedLogoutConfig.postLogoutRedirectUris = postLogoutRedirectUris;
   }
-  Object.assign(dynamicClientRegistrationConfig, readDynamicClientRegistration(env));
+  extendDynamicClientRegistrationConfig(readDynamicClientRegistration(env));
 
   const crossAppAccess = readCrossAppAccess(env);
   if (crossAppAccess.allowedAudiences.length > 0) {

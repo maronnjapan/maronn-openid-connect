@@ -3,8 +3,9 @@
  *
  * Read by the registration endpoint (register/route.ts), so it lives in its
  * own module. The policy functions are generated into policy.ts beside it;
- * edit them there, or assign your own to this object where the app starts
- * (instrumentation.ts), as dev-data.ts does for the environment variables.
+ * edit them there, or extend this object where the app starts
+ * (instrumentation.ts) with extendDynamicClientRegistrationConfig() below, as
+ * dev-data.ts does for the environment variables.
  *
  * - initialAccessToken: when set, POST /register requires
  *   `Authorization: Bearer <value>` (OIDC Dynamic Client Registration 1.0 §3).
@@ -111,4 +112,41 @@ declare module '../../config' {
      */
     registrationMetadata?: Readonly<Record<string, unknown>>;
   }
+}
+
+/**
+ * Extend the settings of this process where the app starts (instrumentation.ts).
+ *
+ * The additions add to the lists and the table instead of replacing them, so a
+ * deployment extends what the generated code allows without repeating it:
+ * tokenEndpointAuthMethods, grantTypes and jwksPurposes gain the given values
+ * (each once), trustedSoftwarePublishers gains the given publishers (one with
+ * the issuer of a generated publisher replaces it), and customClientMetadata
+ * gains the given validators (one with the name of a generated validator
+ * replaces it). The scalar settings and the policy functions replace the
+ * defaults; a field left out or undefined keeps them. To take a value out of a
+ * generated list, edit it above.
+ */
+export function extendDynamicClientRegistrationConfig(additions: Partial<DynamicClientRegistrationConfig>): void {
+  const {
+    tokenEndpointAuthMethods,
+    grantTypes,
+    jwksPurposes,
+    trustedSoftwarePublishers,
+    customClientMetadata: customMetadata,
+    ...replaced
+  } = additions;
+  const config = dynamicClientRegistrationConfig;
+  for (const [name, value] of Object.entries(replaced)) {
+    if (value !== undefined) (config as unknown as Record<string, unknown>)[name] = value;
+  }
+  config.tokenEndpointAuthMethods = [...new Set([...config.tokenEndpointAuthMethods, ...(tokenEndpointAuthMethods ?? [])])];
+  config.grantTypes = [...new Set([...config.grantTypes, ...(grantTypes ?? [])])];
+  config.jwksPurposes = [...new Set([...config.jwksPurposes, ...(jwksPurposes ?? [])])];
+  const added = trustedSoftwarePublishers ?? [];
+  config.trustedSoftwarePublishers = [
+    ...config.trustedSoftwarePublishers.filter((publisher) => !added.some((entry) => entry.issuer === publisher.issuer)),
+    ...added,
+  ];
+  config.customClientMetadata = { ...config.customClientMetadata, ...customMetadata };
 }

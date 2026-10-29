@@ -102,14 +102,15 @@ describe('registerApp', () => {
   });
 
   // RFC 7591 §2: a grant the provider answers (device code of the generated
-  // feature) stays unregistrable until the registration config lists it.
-  it('should register an experimental grant only once the dynamicClientRegistration option lists it', async () => {
+  // feature) stays unregistrable until the registration config lists it; the
+  // option adds it beside the generated grants.
+  it('should register an experimental grant only once the dynamicClientRegistration option adds it', async () => {
     const deviceCode = 'urn:ietf:params:oauth:grant-type:device_code';
     const metadata = { redirect_uris: ['https://rp.example.com/callback'], grant_types: ['authorization_code', deviceCode] };
 
     const refused = await register(await providerApp(), metadata);
     const accepted = await register(
-      await providerApp({ dynamicClientRegistration: { grantTypes: ['authorization_code', deviceCode] } }),
+      await providerApp({ dynamicClientRegistration: { grantTypes: [deviceCode] } }),
       metadata,
     );
 

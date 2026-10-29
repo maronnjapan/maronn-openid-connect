@@ -94,8 +94,11 @@ pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `trustedSoftwarePublishers` | `[]` | software statement を受け入れる発行者（`issuer` と公開鍵の `jwks`）。空なら、`software_statement` を送る登録はすべて `unapproved_software_statement` になります |
 | `verifyInitialAccessToken` / `verifySoftwareStatement` / `customClientMetadata` | `policy.ts` の関数 | 登録の判定（次節） |
 
-Hono / Express / Fastify では、生成ファイルを編集せずに `applyOidc` のオプションからも上書きできます。
-関数の設定も同じオプションで差し込めます。
+Hono / Express / Fastify では、生成ファイルを編集せずに `applyOidc` のオプションから設定を足せます。
+一覧（`tokenEndpointAuthMethods`、`grantTypes`、`jwksPurposes`、`trustedSoftwarePublishers`）とカスタムメタデータの表は、渡した値が生成コードの既定に**追加**されます。
+生成コードが許す値を書き写す必要はありません。
+数値や文字列の設定と判定関数は置き換わり、渡さなかった項目は既定のままです。
+既定の一覧から値を外すときは `config.ts` を編集します。
 
 ```typescript
 applyOidc(app, {
@@ -103,13 +106,27 @@ applyOidc(app, {
   dynamicClientRegistration: {
     initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN,
     maxRegisteredClients: 10,
-    grantTypes: ['authorization_code', 'refresh_token', 'implicit', 'urn:ietf:params:oauth:grant-type:device_code'],
+    // 既定の authorization_code / refresh_token / implicit に加わる
+    grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+    // トークンエンドポイントに private_key_jwt の検証を足したうえで
+    tokenEndpointAuthMethods: ['private_key_jwt'],
     trustedSoftwarePublishers: [{ issuer: 'https://publisher.example.com', jwks: publisherJwks }],
+    customClientMetadata: { tenant_id: validateTenantId },
   },
 });
 ```
 
-Next.js では、アプリの起動時（`instrumentation.ts`）に `dynamicClientRegistrationConfig` へ代入します。
+Next.js では、アプリの起動時（`instrumentation.ts`）に `config.ts` の `extendDynamicClientRegistrationConfig()` を呼びます。
+引数と追加の意味は `applyOidc` のオプションと同じです。
+
+```typescript
+import { extendDynamicClientRegistrationConfig } from './app/_oidc-provider/features/dynamic-client-registration/config';
+
+extendDynamicClientRegistrationConfig({
+  initialAccessToken: process.env.OIDC_DCR_INITIAL_ACCESS_TOKEN,
+  trustedSoftwarePublishers: [{ issuer: 'https://publisher.example.com', jwks: publisherJwks }],
+});
+```
 
 initial access token は生成コードの設定に置く固定文字列 1 つで、発行 API やローテーションはありません。
 PoC の検証用と割り切り、本番の審査付き登録には使わないでください。
@@ -129,6 +146,7 @@ PoC の検証用と割り切り、本番の審査付き登録には使わない�
 関数はリクエストの値（無ければ `undefined`）とリクエスト全体を受け取り、登録する値を返します。
 `undefined` を返した項目は登録せず、拒否するときは `ClientRegistrationError` を `invalid_client_metadata` で投げます。
 登録した値は 201 応答に現れ、`RegisteredClient.registrationMetadata` からも読めます。
+`policy.ts` に書いた表に、`dynamicClientRegistration` オプション（Next.js は `extendDynamicClientRegistrationConfig()`）で渡した表が追加されます。
 
 ```typescript
 export const customClientMetadata: Record<string, CustomClientMetadataValidator> = {
@@ -149,7 +167,7 @@ Hono / Express / Fastify では、この機能のコードはすべて `features
 | ファイル | 内容 |
 |---|---|
 | `features/dynamic-client-registration/endpoints/register/` | 登録エンドポイント（`POST /register`）。`pipeline.ts` がステップ（`steps/`）を順に呼ぶ |
-| `features/dynamic-client-registration/config.ts` | 設定オブジェクト `dynamicClientRegistrationConfig` と、`createApp` / `applyOidc` に足す `dynamicClientRegistration` オプション、`RegisteredClient.registrationMetadata` の宣言 |
+| `features/dynamic-client-registration/config.ts` | 設定オブジェクト `dynamicClientRegistrationConfig`、オプションを既定へ足す `extendDynamicClientRegistrationConfig()`、`createApp` / `applyOidc` に足す `dynamicClientRegistration` オプション、`RegisteredClient.registrationMetadata` の宣言 |
 | `features/dynamic-client-registration/policy.ts` | 登録の判定（initial access token、software statement、カスタムメタデータ） |
 | `features/dynamic-client-registration/store.ts` | 動的登録クライアントの in-memory ストア、保存するレコードの組み立て、設定済みのクライアント解決と鍵解決へ合成する `withDynamicallyRegisteredClients()` / `withDynamicallyRegisteredClientKeys()` |
 | `features/dynamic-client-registration/feature.ts` | `/register` のルート、`registration_endpoint` メタデータ、リクエストのコンテキストでのクライアント解決と鍵解決への合成 |

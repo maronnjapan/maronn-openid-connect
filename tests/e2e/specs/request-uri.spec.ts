@@ -119,6 +119,84 @@ test.describe('Request Object by reference (OIDC Core 1.0 §6.2)', () => {
     expect(idToken.aud).toBe(clientId);
   });
 
+  // RFC 7591 §2 jwks_uri: the OP fetches the client's JWK Set document from
+  // the registered URL when it has to verify the client's signed Request Object.
+  test('should verify a signed Request Object with the keys fetched from the registered jwks_uri', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const metadata = await discoveryMetadata(request, issuer);
+    test.skip(metadata.request_parameter_supported !== true, 'This sample OP does not advertise request_parameter_supported');
+    test.skip(metadata.registration_endpoint === undefined, REGISTRATION_SKIP_REASON);
+
+    const key = generateRs256Key('e2e-jwks-uri-key');
+    const jwksUri = `${clientBaseURL}/jwks/${base64Url(randomBytes(16))}`;
+    const hosted = await request.put(jwksUri, {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ keys: [key.publicJwk] }),
+    });
+    expect(hosted.status()).toBe(204);
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [registeredRedirectUri],
+      token_endpoint_auth_method: 'client_secret_post',
+      client_name: 'E2E jwks_uri Client',
+      jwks_uri: jwksUri,
+    });
+    const clientId = requireString(registered.client_id, 'client_id');
+    const clientSecret = requireString(registered.client_secret, 'client_secret');
+    expect(registered.jwks_uri).toBe(jwksUri);
+    expect(Object.hasOwn(registered, 'jwks')).toBe(false);
+
+    const codeVerifier = base64Url(randomBytes(32));
+    const requestState = base64Url(randomBytes(16));
+    const nonce = base64Url(randomBytes(16));
+    const requestObject = signRs256Jwt(
+      {
+        iss: clientId,
+        aud: issuer,
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: registeredRedirectUri,
+        scope: 'openid',
+        state: requestState,
+        nonce,
+        code_challenge: base64Url(createHash('sha256').update(codeVerifier).digest()),
+        code_challenge_method: 'S256',
+      },
+      key,
+    );
+
+    // OIDC Core 1.0 §6.1: the Request Object by value, verified with the keys of the jwks_uri.
+    const authorizeUrl = new URL('/authorize', issuer);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('scope', 'openid');
+    authorizeUrl.searchParams.set('request', requestObject);
+    await page.goto(authorizeUrl.toString());
+    await loginAndApprove(page, issuer, clientId);
+
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(registeredRedirectUri)}\\?`));
+    const callbackUrl = new URL(page.url());
+    expect(callbackUrl.searchParams.get('state')).toBe(requestState);
+    const code = requireString(callbackUrl.searchParams.get('code'), 'code');
+
+    const tokenResponse = await request.post(`${issuer}/token`, {
+      form: {
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: registeredRedirectUri,
+        client_id: clientId,
+        client_secret: clientSecret,
+        code_verifier: codeVerifier,
+      },
+    });
+    expect(tokenResponse.status()).toBe(200);
+    const tokens = await tokenResponse.json() as Record<string, unknown>;
+    expect(decodeJwtPayload(requireString(tokens.id_token, 'id_token')).nonce).toBe(nonce);
+  });
+
   // OIDC Core 1.0 §3.1.2.6: invalid_request_uri, and nothing is fetched or
   // redirected to — the request_uri was never registered for the client.
   test('should keep a request_uri the client did not register on the OP with invalid_request_uri', async ({

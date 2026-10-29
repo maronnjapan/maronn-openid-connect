@@ -15,6 +15,9 @@ const cibaFlows = new Map();
 // OIDC Core 1.0 §6.2: the Request Objects the request-uri spec hosts here, by
 // the id of their URL (PUT /request-objects/<id> stores one, GET serves it).
 const requestObjects = new Map();
+// RFC 7591 §2 jwks_uri: the JWK Set documents the request-uri spec hosts here,
+// by the id of their URL (PUT /jwks/<id> stores one, GET serves it).
+const jwksDocuments = new Map();
 
 const server = createServer(async (req, res) => {
   try {
@@ -97,6 +100,12 @@ const server = createServer(async (req, res) => {
     // first, so the client app never signs anything itself.
     if (url.pathname.startsWith('/request-objects/')) {
       await handleRequestObject(req, url, res);
+      return;
+    }
+    // RFC 7591 §2 jwks_uri: host a JWK Set document the OP fetches with a GET
+    // when it needs the keys of the client the spec registered with its URL.
+    if (url.pathname.startsWith('/jwks/')) {
+      await handleJwksDocument(req, url, res);
       return;
     }
     if (req.method === 'GET' && url.pathname === '/callback') {
@@ -412,6 +421,33 @@ function reportDeviceResult(url, res) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * RFC 7591 §2 jwks_uri: a JWK Set document. PUT stores the JSON of the request
+ * body under the id of the URL; GET serves it as application/json, 404 for an
+ * unknown id.
+ */
+async function handleJwksDocument(req, url, res) {
+  const id = url.pathname.slice('/jwks/'.length);
+  if (req.method === 'PUT') {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    jwksDocuments.set(id, Buffer.concat(chunks).toString('utf8'));
+    sendJson(res, 204, {});
+    return;
+  }
+  if (req.method === 'GET') {
+    const document = jwksDocuments.get(id);
+    if (document === undefined) {
+      sendJson(res, 404, { error: 'not_found' });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(document);
+    return;
+  }
+  sendJson(res, 405, { error: 'method_not_allowed' });
 }
 
 /**

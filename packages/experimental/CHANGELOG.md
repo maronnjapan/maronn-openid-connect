@@ -1,5 +1,23 @@
 # @maronn-openid-connect/experimental
 
+## 0.0.17
+
+### Patch Changes
+
+- `packages/experimental/src` の変更をリリースする。experimental のバージョンは変更内容に関わらず patch を 1 つ上げるだけに固定しており、未リリースの変更が複数たまっている場合も 1 回の patch に吸収する。
+  
+  このリリースに含まれる変更:
+  
+  - packages/experimental/src/dynamic-client-registration/bearer-token.ts
+  - packages/experimental/src/dynamic-client-registration/index.ts
+  - packages/experimental/src/dynamic-client-registration/initial-access-token.ts
+  - packages/experimental/src/dynamic-client-registration/metadata-values.ts
+  - packages/experimental/src/dynamic-client-registration/registered-client.ts
+  - packages/experimental/src/dynamic-client-registration/registration-error.ts
+  - packages/experimental/src/dynamic-client-registration/registration-request.ts
+  - packages/experimental/src/dynamic-client-registration/software-statement.ts
+  - packages/experimental/src/dynamic-client-registration/test-helpers.ts
+
 ## 0.0.16
 
 ### Patch Changes

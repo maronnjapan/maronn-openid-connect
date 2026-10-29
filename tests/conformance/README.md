@@ -16,6 +16,15 @@ OpenID Connect Core の認定プランのうち、次の3つを static client �
 どれも、選択したサンプルOPが OpenID Connect Conformance Profiles の static client profile を満たすかを確認します。
 Suite本体は公式のprebuilt Docker imageを使い、公式の `run-test-plan.py` runner scriptで実行します。
 
+同じ3つのプランを、Suite が自分でクライアントを登録する dynamic client registration の変種でも実行できます（後述の「Dynamic client registration で実行する」）。
+`CONFORMANCE_CLIENT_REGISTRATION=dynamic` を付けると、テストプランの `client_registration` が `dynamic_client` になります。
+
+| プラン | コマンド | OIDF テストプラン |
+|---|---|---|
+| Basic OP | `CONFORMANCE_CLIENT_REGISTRATION=dynamic pnpm run conformance:basic-op` | `oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]` |
+| Implicit OP | `CONFORMANCE_CLIENT_REGISTRATION=dynamic pnpm run conformance:implicit-op` | `oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]` |
+| Hybrid OP | `CONFORMANCE_CLIENT_REGISTRATION=dynamic pnpm run conformance:hybrid-op` | `oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]` |
+
 ## Implicit OP
 
 Implicit OP のプランは、Basic OP と同じ種類の module の多くを、`response_type=id_token` と `id_token token` の2通りで実行します（OpenID Connect Core 1.0 §3.2）。
@@ -54,6 +63,55 @@ nonce の module は response type で変わります。
 Hybrid OP のプランは Basic OP と同じく PKCE 無しで認可コードを交換するので、`pnpm run conformance:hybrid-op` は Basic OP 向けPKCE互換モードを有効にします。
 unsigned Request Object の互換モードも Basic OP と同じく有効にします。
 CI での結果は、後述の「Hybrid OP（2026-10-20、CI）」に記します。
+
+## Dynamic client registration で実行する
+
+`CONFORMANCE_CLIENT_REGISTRATION=dynamic` を付けた実行では、`create-op-config.mjs` は OP に static client を登録しません（`oidc-clients.json` は空の配列になります）。
+Suite は module ごとに、OP の discovery が公表する `registration_endpoint`（`POST /register`）へ自分のクライアントを登録してから module を実行します（OpenID Connect Dynamic Client Registration 1.0）。
+Suite の設定の `client`、`client2`、`client_secret_post` には `client_name` だけを置き、`client_secret` と `jwks` はこの変種では Suite が自分で用意します。
+`initial_access_token` は置かないので、OP は open registration（既定）で受け付けます。
+
+Suite が登録リクエストに載せるメタデータは、`OIDCCCreateDynamicClientRegistrationRequest` が組み立てる次のものです。
+
+- `client_name`、`redirect_uris`（Suite のコールバック URL）、`contacts`
+- `response_types` と `token_endpoint_auth_method`（module の変種の値）
+- `grant_types`。`code` を含む response type では `authorization_code`、`token` か `id_token` を含む response type では `implicit`。`oidcc-refresh-token` はこれに `refresh_token` を足す
+- `jwks`。Suite が module ごとに生成した RS256 の公開鍵で、OP はこれを `request_object` の用途の鍵として登録し、Request Object の module ではこの鍵で署名を検証する
+- `request_uris`。`oidcc-request-uri-*` の module が、Request Object を置く Suite の URL（`<Suite のベース URL>/test/a/<alias>/requesturi/<乱数>#<乱数の SHA-256>`）を登録する
+- `id_token_signed_response_alg: none`。`oidcc-idtoken-unsigned` だけが足すが、この module は OP の `id_token_signing_alg_values_supported` に `none` が無ければ登録の前に自分を skip する
+
+static client では Suite がプランから外す次の module が、この変種では実行されます。
+
+| module | 内容 | この OP の挙動 |
+|---|---|---|
+| `oidcc-idtoken-signature` | alg を指定せずに登録したクライアントの ID Token が RS256 で署名され、ヘッダに `kid` を持つこと | 既定の `id_token_signed_response_alg` は RS256 で、署名鍵の `kid` をヘッダに載せるので PASS する |
+| `oidcc-idtoken-unsigned` | `id_token_signed_response_alg: none` を登録して署名無しの ID Token を受け取ること | OP は `none` を広告せず登録も拒否するので、Suite は登録前に SKIPPED にする（認定上は許容される） |
+| `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported` | 登録した `request_uris` の URL に置いた unsigned Request Object を `request_uri` で渡して認可が完了するか、`request_uri_not_supported` で拒否されること | OP は登録済みの `request_uri` を GET して Request Object を検証し、認可を完了する（OIDC Core 1.0 §6.2）。unsigned を受理する互換モード `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT=1` は static client と同じく既定で有効 |
+
+そのため1回の実行の自動の module は、Basic OP で 35 個（static client の 32 個に `oidcc-idtoken-signature` と `oidcc-request-uri-unsigned-...` が加わり、`oidcc-idtoken-unsigned` は skip）、Implicit OP で 52 個、Hybrid OP で 93 個になります。
+manual review の module は static client と同じ 3 個（Implicit OP は 6 個、Hybrid OP は 9 個）です。
+
+この変種で OP 側に必要な設定は、`docker-compose.yml` が `op` サービスに渡します。
+
+- `OIDC_DCR_MAX_CLIENTS=1000`。Suite は module ごとにクライアントを登録し（`oidcc-refresh-token` は 2 つ）、登録を削除しない（OP は RFC 7592 を実装せず、Suite は `registration_client_uri` が無ければ削除を飛ばす）ので、生成コードの既定の上限 100 を Hybrid OP の実行が超える
+- `NODE_EXTRA_CA_CERTS=/workspace/tests/conformance/.generated/certs/conformance-nginx.crt`。`request_uri` の module では OP が Suite の nginx（`https://conformance-nginx:8443`）から Request Object を GET する。Suite の nginx image の証明書は `CN=localhost` で subject alternative name を持たないので、`ensure-op-tls-cert.sh` が `conformance-nginx` 向けの自己署名証明書を作り、`docker-compose.yml` が nginx image の証明書と鍵（`/etc/ssl/certs/nginx-selfsigned.crt`、`/etc/ssl/private/nginx-selfsigned.key`）の上にマウントする。Node.js の fetch も `wrangler dev`（miniflare は `NODE_EXTRA_CA_CERTS` の証明書を workerd の trusted certificates に渡す）もこの証明書を信頼する
+
+この変種を実行できるのは、`--enable dynamic-client-registration` で生成した `hono-cloudflare` と `express-flyio` です。
+`fastify-flyio` と `nextjs-vercel` を指定すると `create-op-config.mjs` がエラーで止まります。
+
+### Dynamic OP の認定プランとの関係
+
+OpenID Connect Conformance Profiles v3.0 の Dynamic OP は、Basic OP、Implicit OP、Config OP に加えて、OpenID Connect Discovery 1.0 と Dynamic Client Registration 1.0 の OP 機能（OpenID Connect Core 1.0 §15.2 の Mandatory to Implement Features for Dynamic OpenID Providers）を要求する別のプロファイルで、Suite では `oidcc-dynamic-certification-test-plan` です。
+上の変種はこのプランではなく、Basic / Implicit / Hybrid OP の認定プランを dynamic client で通すものです。
+`oidcc-dynamic-certification-test-plan` の module のうち、この OP がまだ満たさないものは次のとおりです。
+
+- `private_key_jwt`。プランの大半の module は `client_auth_type=private_key_jwt` で走るが、生成コードのトークンエンドポイントは `client_secret_basic` / `client_secret_post` / `none` だけを検証する
+- `oidcc-registration-jwks-uri`。`jwks_uri` を登録して OP が鍵を取得しに行くことを求めるが、登録エンドポイントは `jwks_uri` を理解しないメタデータとして無視する
+- `oidcc-registration-sector-uri` / `oidcc-registration-sector-bad`。`sector_identifier_uri` と pairwise の `subject_type` を求めるが、OP は `public` だけを広告する
+- `oidcc-server-rotate-keys`。OP の署名鍵の手動ローテーションを求める
+- `oidcc-refresh-token-rp-key-rotation`。`private_key_jwt` のクライアント鍵のローテーションを求める
+
+`oidcc-request-uri-signed-rs256`（RS256 で署名した Request Object を `request_uri` で渡す）、`oidcc-request-uri-unsigned`、`oidcc-ensure-request-object-with-redirect-uri`、`oidcc-registration-logo-uri` / `-policy-uri` / `-tos-uri`（登録した URL を同意画面に表示する SHOULD）は、`private_key_jwt` を除けばこの OP の実装で満たせます。
 
 ## ローカル実行
 
@@ -111,7 +169,7 @@ Implicit OP のプランも同じ指定でサンプルOPを選べます（例：
 1. `@maronn-openid-connect/cli` をビルドする。
 2. 選択したサンプルpackageをビルドする。
 3. プランのOIDF static-client設定を `tests/conformance/.generated/` に生成する（`scripts/create-op-config.mjs`）。
-4. OP TLSリバースプロキシ用のローカル自己署名証明書を生成する。
+4. OP TLSリバースプロキシ用と、Suite の nginx 用のローカル自己署名証明書を生成する（`scripts/ensure-op-tls-cert.sh`）。
 5. Docker Composeサービスを起動する。
    - `mongodb`
    - `conformance-server`
@@ -127,6 +185,7 @@ Implicit OP のプランも同じ指定でサンプルOPを選べます（例：
 ### 環境変数
 
 - `CONFORMANCE_PLAN`: `basic`、`implicit`、`hybrid` のいずれか。`pnpm run conformance:basic-op`、`pnpm run conformance:implicit-op`、`pnpm run conformance:hybrid-op` は、それぞれのプランを `scripts/run-op.sh` の引数で渡します。
+- `CONFORMANCE_CLIENT_REGISTRATION`: `static`（デフォルト）か `dynamic`。`dynamic` はテストプランの `client_registration` を `dynamic_client` にし、OP に static client を登録せず、Suite が `POST /register` で登録したクライアントで module を実行します（「Dynamic client registration で実行する」を参照）。`hono-cloudflare` と `express-flyio` だけが指定できます。
 - `CONFORMANCE_SAMPLE_APP`: `hono-cloudflare`, `express-flyio`, `fastify-flyio`, `nextjs-vercel` のいずれか。
 - `CONFORMANCE_SUITE_IMAGE_TAG`: OpenID Foundation image tag。デフォルトは `latest`。
 - `CONFORMANCE_SUITE_REF`: `run-test-plan.py` 用にcloneする `openid/conformance-suite` のGit ref。デフォルトは `master`。
@@ -138,7 +197,8 @@ Implicit OP のプランも同じ指定でサンプルOPを選べます（例：
 - `CONFORMANCE_OP_ISSUER`: Compose内でサンプルOPが使うissuer。デフォルトは `https://op-tls:3443`。
 - `CONFORMANCE_SUITE_BASE_URL`: Compose内でcallback URI生成に使うSuite base URL。デフォルトは `https://conformance-nginx:8443`。
 - `OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW`: サンプルOPのBasic OP互換モード。`pnpm run conformance:basic-op` と `pnpm run conformance:hybrid-op` ではデフォルト `1`、`pnpm run conformance:implicit-op` ではデフォルト `0`。
-- `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT`: サンプルOPで unsigned（`alg:none`）Request Object を受理し、discovery の `request_object_signing_alg_values_supported` に `none` を広告する互換モード。`pnpm run conformance:basic-op`、`pnpm run conformance:implicit-op`、`pnpm run conformance:hybrid-op` ではデフォルト `1`（通常利用と E2E では未設定＝署名必須）。`oidcc-unsigned-request-object-...` / `oidcc-ensure-request-object-with-redirect-uri` は OP が unsigned 非対応を広告すると skip されるため、conformance run でのみ有効化する。
+- `OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT`: サンプルOPで unsigned（`alg:none`）Request Object を受理し、discovery の `request_object_signing_alg_values_supported` に `none` を広告する互換モード。`pnpm run conformance:basic-op`、`pnpm run conformance:implicit-op`、`pnpm run conformance:hybrid-op` ではデフォルト `1`（通常利用と E2E では未設定＝署名必須）。`oidcc-unsigned-request-object-...` / `oidcc-ensure-request-object-with-redirect-uri` は OP が unsigned 非対応を広告すると skip されるため、conformance run でのみ有効化する。dynamic client registration では `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported` も同じ条件で実行される。
+- `OIDC_DCR_MAX_CLIENTS`: サンプルOPの動的登録クライアントの上限。`docker-compose.yml` のデフォルトは `1000`（生成コードの既定は 100。dynamic client registration では Suite が module ごとに登録するため）。
 
 host portを変えて実行する例:
 
@@ -229,17 +289,18 @@ GitHub Actions workflowは `.github/workflows/conformance.yml` に定義して�
 GitHub Actionsの `OpenID Conformance` workflowを選び、以下を指定して実行します。
 
 - `plan`: `basic`、`implicit`、`hybrid` のいずれか。デフォルトは `basic`。
+- `client_registration`: `static`（デフォルト）か `dynamic`。`dynamic` は `hono-cloudflare` と `express-flyio` だけで実行できます。
 - `sample_app`: `hono-cloudflare`, `express-flyio`, `fastify-flyio`, `nextjs-vercel` のいずれか。
 - `suite_image_tag`: OpenID Foundation Conformance Suite image tag。通常は `latest`。
 
-workflowでは以下を実行します（`<plan>` は選んだプラン）。manual review が必要な module は除きます（`CONFORMANCE_SKIP_MANUAL_REVIEW=1`、[実行時間](#実行時間)を参照）。
+workflowでは以下を実行します（`<plan>` は選んだプラン、`<client_registration>` は選んだクライアント登録）。manual review が必要な module は除きます（`CONFORMANCE_SKIP_MANUAL_REVIEW=1`、[実行時間](#実行時間)を参照）。
 
 ```bash
 pnpm install --frozen-lockfile
-CONFORMANCE_SKIP_MANUAL_REVIEW=1 pnpm run conformance:<plan>-op
+CONFORMANCE_SKIP_MANUAL_REVIEW=1 CONFORMANCE_CLIENT_REGISTRATION=<client_registration> pnpm run conformance:<plan>-op
 ```
 
-Suiteが失敗した場合でも、以下を `oidf-<plan>-op-conformance` artifactとしてアップロードします。
+Suiteが失敗した場合でも、以下を `oidf-<plan>-op-<client_registration>-conformance` artifactとしてアップロードします。
 
 - `tests/conformance/results`
 - `tests/conformance/.generated`
@@ -249,7 +310,8 @@ Suiteが失敗した場合でも、以下を `oidf-<plan>-op-conformance` artifa
 Pull Requestに `run-conformance` labelが付いている場合もworkflowを実行します。
 Conformance Suiteは重いので通常のPR経路からは外し、必要な変更に対してmaintainerが
 Basic OP checkを要求できるようにしています。
-このときは Basic OP、Implicit OP、Hybrid OP の3つのプランを、別々のjob（`basic-op`、`implicit-op`、`hybrid-op`）で実行します。
+このときは Basic OP、Implicit OP、Hybrid OP の3つのプランを、static client と dynamic client registration の両方で、別々のjob（`basic-op-static`、`basic-op-dynamic`、`implicit-op-static`、`implicit-op-dynamic`、`hybrid-op-static`、`hybrid-op-dynamic`）で実行します。
+sample_app は `hono-cloudflare` です。
 
 PR triggerの対象pathは以下に限定しています。
 
@@ -414,6 +476,17 @@ manual review が必要な9個の module は、CI では `CONFORMANCE_SKIP_MANUA
 screenshot の提出までは、まだ確かめていない。
 手順は `manual-review-screenshots.md` にある。
 
+### Dynamic client registration（未実行）
+
+dynamic client registration の変種は、この README を書いた時点ではまだ実行していません（実装した環境に Docker が無かったためです）。
+`run-conformance` label を付けた Pull Request、または `client_registration: dynamic` の手動実行で結果を確かめ、ここに記録してください。
+確かめる点は次のとおりです。
+
+- Suite の登録リクエストを `POST /register` が 201 で受け付け、`request_uris` と `jwks` が登録されること
+- `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported` が、OP が Suite の `request_uri` を取得して PASSED になること（`request_uri_not_supported` で SKIPPED にならないこと）
+- `oidcc-idtoken-signature` が PASSED、`oidcc-idtoken-unsigned` が SKIPPED になること
+- static client で PASSED だった module が、dynamic client でも同じ結果になること
+
 ## 実行時間
 
 - `op` サービスは Discovery に応答するまで healthy にならず、`op-tls` と `runner` は healthy になってから起動します。OP が起動しない場合は、約3分で `docker compose up` が失敗します。
@@ -466,6 +539,10 @@ screenshot をアップロードして module を完了させてください。�
 ## トラブルシューティング
 
 Dockerが起動していない場合は、Dockerを起動してから再実行してください。
+
+dynamic client registration の `oidcc-request-uri-*` module で OP が `invalid_request_uri`（`request_uri could not be retrieved`）を返す場合は、OP が Suite の nginx の証明書を信頼できていません。
+`tests/conformance/.generated/certs/conformance-nginx.crt` があること、`docker-compose.yml` が `conformance-nginx` にその証明書と鍵をマウントし、`op` に `NODE_EXTRA_CA_CERTS` で渡していることを確認してください。
+証明書は 30 日で失効するので、古い `.generated/certs/` を消して作り直します。
 
 portが既に使われている場合は、`CONFORMANCE_SUITE_PORT` と `CONFORMANCE_OP_TLS_PORT`
 を上書きしてください。

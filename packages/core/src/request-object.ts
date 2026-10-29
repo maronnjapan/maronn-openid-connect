@@ -14,6 +14,7 @@
  */
 import { verify, base64UrlToArrayBuffer, extractAlgorithmParamsFromJwk } from './crypto-utils.js';
 import type { Jwk, JwkSet } from './jwks.js';
+import { fetchTextWithLimits, LimitedFetchError, type LimitedFetchFailure } from './limited-fetch.js';
 import { isLoopbackHostname } from './loopback.js';
 
 /**
@@ -292,83 +293,29 @@ export async function fetchRequestObjectByReference(
   requestUri: string,
   options: FetchRequestObjectOptions = {},
 ): Promise<string> {
-  const fetchFn = options.fetch ?? globalThis.fetch;
-  const maxBytes = options.maxBytes ?? DEFAULT_REQUEST_OBJECT_MAX_BYTES;
-  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_URI_FETCH_TIMEOUT_MS;
-
   const url = new URL(requestUri);
   url.hash = '';
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
   try {
-    response = await fetchFn(url.toString(), {
-      method: 'GET',
-      headers: {
-        // RFC 9101 §4: application/oauth-authz-req+jwt; application/jwt and
-        // application/jose are what servers commonly serve the JWT as.
-        Accept: 'application/oauth-authz-req+jwt, application/jwt, application/jose;q=0.9, text/plain;q=0.8, */*;q=0.5',
-      },
-      redirect: 'manual',
-      signal: controller.signal,
+    return await fetchTextWithLimits(url, {
+      fetch: options.fetch,
+      // RFC 9101 §4: application/oauth-authz-req+jwt; application/jwt and
+      // application/jose are what servers commonly serve the JWT as.
+      accept: 'application/oauth-authz-req+jwt, application/jwt, application/jose;q=0.9, text/plain;q=0.8, */*;q=0.5',
+      maxBytes: options.maxBytes ?? DEFAULT_REQUEST_OBJECT_MAX_BYTES,
+      timeoutMs: options.timeoutMs ?? DEFAULT_REQUEST_URI_FETCH_TIMEOUT_MS,
     });
-  } catch {
-    clearTimeout(timer);
-    throw new RequestUriError('request_uri could not be retrieved');
-  }
-
-  try {
-    if (response.status !== 200) {
-      throw new RequestUriError('request_uri did not return 200 OK');
-    }
-    const declaredLength = Number(response.headers.get('Content-Length') ?? '0');
-    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-      throw new RequestUriError('request_uri content exceeds the maximum size');
-    }
-    const body = (await readBodyWithLimit(response, maxBytes)).trim();
-    if (body.length === 0) {
-      throw new RequestUriError('request_uri returned no content');
-    }
-    return body;
   } catch (error) {
-    if (error instanceof RequestUriError) throw error;
-    throw new RequestUriError('request_uri could not be retrieved');
-  } finally {
-    clearTimeout(timer);
+    if (error instanceof LimitedFetchError) {
+      throw new RequestUriError(REQUEST_URI_FETCH_FAILURES[error.reason]);
+    }
+    throw error;
   }
 }
 
-/**
- * 応答ボディを上限まで読む。上限を超えた時点で読むのをやめて拒否するので、
- * 大きな応答をメモリへ丸ごと載せない。
- */
-async function readBodyWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > maxBytes) {
-      throw new RequestUriError('request_uri content exceeds the maximum size');
-    }
-    return new TextDecoder().decode(buffer);
-  }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw new RequestUriError('request_uri content exceeds the maximum size');
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
-}
+/** The fixed description of each way the retrieval can fail. */
+const REQUEST_URI_FETCH_FAILURES: Record<LimitedFetchFailure, string> = {
+  network: 'request_uri could not be retrieved',
+  status: 'request_uri did not return 200 OK',
+  size: 'request_uri content exceeds the maximum size',
+  empty: 'request_uri returned no content',
+};

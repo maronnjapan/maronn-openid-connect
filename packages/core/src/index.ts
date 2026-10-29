@@ -118,6 +118,26 @@ export type {
   FetchRequestObjectOptions,
 } from './request-object.js';
 
+export {
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: the jwks_uri of a client
+  validateJwksUri,
+  fetchJwksFromUri,
+  createJwksUriResolver,
+  JwksUriError,
+  JWKS_URI_MAX_LENGTH,
+  DEFAULT_JWKS_MAX_BYTES,
+  DEFAULT_JWKS_FETCH_TIMEOUT_MS,
+  DEFAULT_JWKS_CACHE_TTL_MS,
+  DEFAULT_JWKS_FAILURE_TTL_MS,
+} from './jwks-uri.js';
+
+export type {
+  FetchJwksOptions,
+  JwksUriResolver,
+  JwksUriResolverOptions,
+  CachedJwks,
+} from './jwks-uri.js';
+
 export type {
   AuthorizationRequestParams,
   ClientInfo,

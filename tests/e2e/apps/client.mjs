@@ -12,6 +12,9 @@ const redirectUri = new URL('/callback', clientBaseUrl).toString();
 const transactions = new Map();
 const deviceFlows = new Map();
 const cibaFlows = new Map();
+// OIDC Core 1.0 §6.2: the Request Objects the request-uri spec hosts here, by
+// the id of their URL (PUT /request-objects/<id> stores one, GET serves it).
+const requestObjects = new Map();
 
 const server = createServer(async (req, res) => {
   try {
@@ -87,6 +90,13 @@ const server = createServer(async (req, res) => {
     // wait for the outcome instead of reimplementing the poll loop.
     if (req.method === 'GET' && url.pathname === '/ciba-result') {
       reportCibaResult(url, res);
+      return;
+    }
+    // OIDC Core 1.0 §6.2 / §6.2.3: host a Request Object the OP fetches with a
+    // GET when the spec sends its URL as request_uri. The spec PUTs the JWT
+    // first, so the client app never signs anything itself.
+    if (url.pathname.startsWith('/request-objects/')) {
+      await handleRequestObject(req, url, res);
       return;
     }
     if (req.method === 'GET' && url.pathname === '/callback') {
@@ -402,6 +412,36 @@ function reportDeviceResult(url, res) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * OIDC Core 1.0 §6.2: a Request Object by reference. PUT stores the compact
+ * JWS of the request body under the id of the URL; GET serves it as
+ * application/oauth-authz-req+jwt (RFC 9101 §4), 404 for an unknown id.
+ */
+async function handleRequestObject(req, url, res) {
+  const id = url.pathname.slice('/request-objects/'.length);
+  if (req.method === 'PUT') {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestObjects.set(id, Buffer.concat(chunks).toString('utf8').trim());
+    sendJson(res, 204, {});
+    return;
+  }
+  if (req.method === 'GET') {
+    const requestObject = requestObjects.get(id);
+    if (requestObject === undefined) {
+      sendJson(res, 404, { error: 'not_found' });
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/oauth-authz-req+jwt',
+      'Cache-Control': 'no-store',
+    });
+    res.end(requestObject);
+    return;
+  }
+  sendJson(res, 405, { error: 'method_not_allowed' });
 }
 
 /**

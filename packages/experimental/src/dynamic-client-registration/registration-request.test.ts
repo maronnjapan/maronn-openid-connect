@@ -181,9 +181,9 @@ describe('validateClientMetadata', () => {
     it('should silently drop metadata this provider does not understand', () => {
       const validated = validateClientMetadata({
         ...MINIMAL,
-        jwks_uri: 'https://app.example.com/jwks.json',
         sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
         require_auth_time: true,
+        tls_client_auth_subject_dn: 'CN=app',
       });
       expect(validated).toEqual(MINIMAL_VALIDATED);
     });
@@ -838,6 +838,139 @@ describe('validateClientMetadata', () => {
     });
 
     // RFC 7591 §2: jwks_uri and jwks MUST NOT both be present.
+    it('should reject jwks together with jwks_uri', () => {
+      // (kept below)
+      return;
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2 / Core 1.0 §6.2: the request_uri
+  // values the client pre-registers; the OP fetches them at authorization time.
+  describe('request_uris (OIDC Dynamic Client Registration 1.0 Section 2)', () => {
+    const description = 'request_uris must be an array of 1 to 32 absolute https URLs of at most 512 ASCII characters';
+
+    it('should register https request_uris, fragments included, and echo them', () => {
+      const requestUris = ['https://app.example.com/requests/a#NjYz', 'https://app.example.com/requests/b'];
+      const validated = validateClientMetadata({ ...MINIMAL, request_uris: requestUris });
+      expect(validated.requestUris).toEqual(requestUris);
+      expect(validated.metadata['request_uris']).toEqual(requestUris);
+      expect(validated.metadata['request_uris']).not.toBe(validated.requestUris);
+    });
+
+    it('should accept a loopback http request_uri for development', () => {
+      const validated = validateClientMetadata({ ...MINIMAL, request_uris: ['http://127.0.0.1:3020/request-objects/1'] });
+      expect(validated.requestUris).toEqual(['http://127.0.0.1:3020/request-objects/1']);
+    });
+
+    it('should normalize a duplicated request_uri to one entry', () => {
+      const validated = validateClientMetadata({
+        ...MINIMAL,
+        request_uris: ['https://app.example.com/requests/a', 'https://app.example.com/requests/a'],
+      });
+      expect(validated.requestUris).toEqual(['https://app.example.com/requests/a']);
+    });
+
+    it('should omit the requestUris key when request_uris is not provided', () => {
+      const validated = validateClientMetadata(MINIMAL);
+      expect(Object.hasOwn(validated, 'requestUris')).toBe(false);
+      expect(Object.hasOwn(validated.metadata, 'request_uris')).toBe(false);
+    });
+
+    it.each([
+      ['a string instead of an array', 'https://app.example.com/requests/a'],
+      ['an empty array', []],
+      ['33 entries', Array.from({ length: 33 }, (_, i) => `https://app.example.com/requests/${i}`)],
+      ['a non-loopback http URL', ['http://app.example.com/requests/a']],
+      ['a URN', ['urn:ietf:params:oauth:request_uri:abc']],
+      ['a URL with credentials', ['https://user:pw@app.example.com/requests/a']],
+      ['a URL over 512 characters', [`https://app.example.com/${'a'.repeat(500)}`]],
+      ['a non-string element', [42]],
+    ])('should reject request_uris that is %s without reflecting it', (_label, value) => {
+      expect(() => validateClientMetadata({ ...MINIMAL, request_uris: value })).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', description),
+      );
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2: the alg every Request Object of
+  // the client must be signed with, among those the OP accepts.
+  describe('request_object_signing_alg (OIDC Dynamic Client Registration 1.0 Section 2)', () => {
+    it('should register RS256 by default and echo it', () => {
+      const validated = validateClientMetadata({ ...MINIMAL, request_object_signing_alg: 'RS256' });
+      expect(validated.requestObjectSigningAlg).toBe('RS256');
+      expect(validated.metadata['request_object_signing_alg']).toBe('RS256');
+    });
+
+    it('should omit the requestObjectSigningAlg key when it is not provided', () => {
+      const validated = validateClientMetadata(MINIMAL);
+      expect(Object.hasOwn(validated, 'requestObjectSigningAlg')).toBe(false);
+      expect(Object.hasOwn(validated.metadata, 'request_object_signing_alg')).toBe(false);
+    });
+
+    it('should reject none unless the requestObjectSigningAlgValuesSupported option lists it', () => {
+      expect(() => validateClientMetadata({ ...MINIMAL, request_object_signing_alg: 'none' })).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'request_object_signing_alg must be one of RS256'),
+      );
+      const validated = validateClientMetadata(
+        { ...MINIMAL, request_object_signing_alg: 'none' },
+        { requestObjectSigningAlgValuesSupported: ['RS256', 'none'] },
+      );
+      expect(validated.requestObjectSigningAlg).toBe('none');
+    });
+
+    it.each([
+      ['an alg the OP does not accept', 'HS256'],
+      ['a non-string value', 256],
+    ])('should reject request_object_signing_alg that is %s', (_label, value) => {
+      expect(() => validateClientMetadata({ ...MINIMAL, request_object_signing_alg: value })).toThrowError(
+        new ClientRegistrationError('invalid_client_metadata', 'request_object_signing_alg must be one of RS256'),
+      );
+    });
+  });
+
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: the URL of the
+  // client's JWK Set document, fetched by the OP when it needs the keys.
+  describe('jwks_uri (RFC 7591 Section 2)', () => {
+    it('should register an https jwks_uri and echo it without fetching it', () => {
+      const validated = validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' });
+      expect(validated.jwksUri).toBe('https://app.example.com/jwks.json');
+      expect(validated.metadata['jwks_uri']).toBe('https://app.example.com/jwks.json');
+      expect(Object.hasOwn(validated, 'jwks')).toBe(false);
+    });
+
+    it('should omit the jwksUri key when jwks_uri is not provided', () => {
+      const validated = validateClientMetadata(MINIMAL);
+      expect(Object.hasOwn(validated, 'jwksUri')).toBe(false);
+      expect(Object.hasOwn(validated.metadata, 'jwks_uri')).toBe(false);
+    });
+
+    it.each([
+      ['a non-loopback http URL', 'http://app.example.com/jwks.json'],
+      ['a relative URL', '/jwks.json'],
+      ['a URL with credentials', 'https://user:pw@app.example.com/jwks.json'],
+      ['a non-string value', 42],
+    ])('should reject jwks_uri that is %s without reflecting it', (_label, value) => {
+      expect(() => validateClientMetadata({ ...MINIMAL, jwks_uri: value })).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'jwks_uri must be an absolute https URL of at most 2048 ASCII characters',
+        ),
+      );
+    });
+
+    it('should reject jwks_uri when the allowJwksUri option is false', () => {
+      expect(() =>
+        validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' }, { allowJwksUri: false }),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'jwks_uri is not accepted by this provider; register jwks instead',
+        ),
+      );
+    });
+  });
+
+  describe('jwks together with jwks_uri (RFC 7591 Section 2)', () => {
     it('should reject jwks together with jwks_uri', () => {
       expect(() =>
         validateClientMetadata({

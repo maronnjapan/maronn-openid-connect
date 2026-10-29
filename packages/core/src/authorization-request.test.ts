@@ -1008,6 +1008,18 @@ describe('rejectUnsupportedRequestParams', () => {
       expect(error?.redirectUri).toBe(REDIRECT_URI);
       expect(error?.state).toBe('st-2');
     });
+
+    // OIDC Core 1.0 §6.2: an OP that resolves request_uri (resolveRequestObjectParams
+    // with the requestUri option) lets the parameter through.
+    it('should accept the request_uri parameter when requestUriParameterSupported is true', () => {
+      const params = validParams({ request_uri: 'https://client.example.org/req.jwt' });
+
+      const error = captureStepError(() =>
+        rejectUnsupportedRequestParams(params, REDIRECT_URI, params.state, { requestUriParameterSupported: true }),
+      );
+
+      expect(error).toBeUndefined();
+    });
   });
 
   // OIDC Core 1.0 §3.1.2.1 / §3.1.2.6: the `registration` parameter is unsupported and
@@ -2680,6 +2692,208 @@ describe('parseClaimsRequestParameter', () => {
       expect(error).toBeInstanceOf(AuthorizationError);
       expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
       expect(error?.errorDescription).toBe('claims parameter must be a JSON object');
+    });
+  });
+});
+
+// OIDC Core 1.0 §6.2 (Passing a Request Object by Reference): with the
+// requestUri option, the request_uri is validated against the request_uris the
+// client registered, the Request Object is fetched with a GET, and the
+// retrieved JWT is verified and applied exactly as one passed by value.
+describe('resolveRequestObjectParams', () => {
+  const REQUEST_URI = 'https://rp.example.com/requests/abc#NjYzYWI';
+  const RO_CLAIMS = {
+    response_type: 'code',
+    client_id: 'ro-client',
+    redirect_uri: REDIRECT_URI,
+    scope: 'openid profile',
+    state: 'ro-state',
+    nonce: 'ro-nonce',
+  };
+
+  function fetchStub(body: string | (() => Response)): { fetch: typeof fetch; urls: string[] } {
+    const urls: string[] = [];
+    const stub = (async (input: string | URL | Request) => {
+      urls.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      return typeof body === 'string' ? new Response(body, { status: 200 }) : body();
+    }) as typeof fetch;
+    return { fetch: stub, urls };
+  }
+
+  describe('request_uri (OIDC Core 1.0 §6.2)', () => {
+    it('should fetch the registered request_uri and apply the signed Request Object it returns', async () => {
+      const request = await buildSignedRequestObject(RO_CLAIMS, rsaKeyPair.privateKey, roKid);
+      const { fetch, urls } = fetchStub(request);
+
+      const resolved = await resolveRequestObjectParams(roQueryParams({ request_uri: REQUEST_URI }), {
+        jwks: roJwks,
+        requestUri: { registeredRequestUris: [REQUEST_URI], fetch },
+      });
+
+      // The fragment is a cache key for the OP, not part of the resource.
+      expect(urls).toEqual(['https://rp.example.com/requests/abc']);
+      expect(resolved.requestObjectClaims).toEqual(RO_CLAIMS);
+      expect(resolved.effectiveParams).toEqual({
+        ...roQueryParams({ request_uri: REQUEST_URI }),
+        redirect_uri: REDIRECT_URI,
+        scope: 'openid profile',
+        state: 'ro-state',
+        nonce: 'ro-nonce',
+      });
+    });
+
+    it('should leave request_uri to rejectUnsupportedRequestParams when the requestUri option is absent', async () => {
+      const { fetch, urls } = fetchStub('never');
+      const params = roQueryParams({ request_uri: REQUEST_URI });
+
+      const resolved = await resolveRequestObjectParams(params, { jwks: roJwks });
+
+      expect(resolved).toEqual({ effectiveParams: params });
+      expect(urls).toEqual([]);
+      expect(fetch).toBeDefined();
+    });
+
+    // OIDC Core 1.0 §3.1.2.6: invalid_request_uri, kept on the OP — nothing of
+    // the request is verified yet, so its redirect_uri is not trusted.
+    it('should reject an unregistered request_uri with a non-redirectable invalid_request_uri without fetching it', async () => {
+      const { fetch, urls } = fetchStub('never');
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request_uri: REQUEST_URI, state: STATE }), {
+          jwks: roJwks,
+          requestUri: { registeredRequestUris: ['https://rp.example.com/requests/other'], fetch },
+        }),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestUri);
+      expect(error?.errorDescription).toBe('request_uri is not registered for this client');
+      expect(error?.redirectable).toBe(false);
+      expect(error?.state).toBeUndefined();
+      expect(urls).toEqual([]);
+    });
+
+    it('should fetch an unregistered request_uri when registration is not required', async () => {
+      const request = await buildSignedRequestObject(RO_CLAIMS, rsaKeyPair.privateKey, roKid);
+      const { fetch, urls } = fetchStub(request);
+
+      const resolved = await resolveRequestObjectParams(roQueryParams({ request_uri: REQUEST_URI }), {
+        jwks: roJwks,
+        requestUri: { requireRegistration: false, fetch },
+      });
+
+      expect(urls).toEqual(['https://rp.example.com/requests/abc']);
+      expect(resolved.requestObjectClaims).toEqual(RO_CLAIMS);
+    });
+
+    it('should reject a request_uri that does not return the Request Object with invalid_request_uri', async () => {
+      const { fetch } = fetchStub(() => new Response('gone', { status: 404 }));
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request_uri: REQUEST_URI }), {
+          jwks: roJwks,
+          requestUri: { registeredRequestUris: [REQUEST_URI], fetch },
+        }),
+      );
+
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestUri);
+      expect(error?.errorDescription).toBe('request_uri did not return 200 OK');
+      expect(error?.redirectable).toBe(false);
+    });
+
+    // OIDC Core 1.0 §6.3.2: the retrieved Request Object is verified like one
+    // passed by value, so a bad signature is invalid_request_object.
+    it('should reject a retrieved Request Object whose signature does not verify with invalid_request_object', async () => {
+      const request = await buildSignedRequestObject(RO_CLAIMS, otherKeyPair.privateKey, roKid);
+      const { fetch } = fetchStub(request);
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request_uri: REQUEST_URI }), {
+          jwks: roJwks,
+          requestUri: { registeredRequestUris: [REQUEST_URI], fetch },
+        }),
+      );
+
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(error?.errorDescription).toBe('request object signature verification failed');
+      expect(error?.redirectable).toBe(false);
+    });
+
+    it('should apply an unsigned retrieved Request Object only when allowUnsigned is on', async () => {
+      const { fetch } = fetchStub(buildUnsignedRequestObject(RO_CLAIMS));
+      const params = roQueryParams({ request_uri: REQUEST_URI });
+      const requestUri = { registeredRequestUris: [REQUEST_URI], fetch };
+
+      const rejected = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(params, { jwks: roJwks, requestUri }),
+      );
+      const resolved = await resolveRequestObjectParams(params, { jwks: roJwks, allowUnsigned: true, requestUri });
+
+      expect(rejected?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(resolved.requestObjectClaims).toEqual(RO_CLAIMS);
+    });
+
+    it('should reject a request carrying both request and request_uri with a non-redirectable invalid_request', async () => {
+      const request = await buildSignedRequestObject(RO_CLAIMS, rsaKeyPair.privateKey, roKid);
+      const { fetch, urls } = fetchStub(request);
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request, request_uri: REQUEST_URI, state: STATE }), {
+          jwks: roJwks,
+          requestUri: { registeredRequestUris: [REQUEST_URI], fetch },
+        }),
+      );
+
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequest);
+      expect(error?.errorDescription).toBe('request and request_uri must not both be present');
+      expect(error?.redirectable).toBe(false);
+      expect(error?.state).toBeUndefined();
+      expect(urls).toEqual([]);
+    });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2 request_object_signing_alg: "All
+  // Request Objects from this Client MUST be rejected, if not signed with this
+  // algorithm."
+  describe('requiredSigningAlg (request_object_signing_alg)', () => {
+    it('should accept a Request Object signed with the registered alg', async () => {
+      const request = await buildSignedRequestObject(RO_CLAIMS, rsaKeyPair.privateKey, roKid);
+
+      const resolved = await resolveRequestObjectParams(roQueryParams({ request }), {
+        jwks: roJwks,
+        requiredSigningAlg: 'RS256',
+      });
+
+      expect(resolved.requestObjectClaims).toEqual(RO_CLAIMS);
+    });
+
+    it('should reject an unsigned Request Object of a client registered for RS256 even when unsigned ones are allowed', async () => {
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request: buildUnsignedRequestObject(RO_CLAIMS) }), {
+          jwks: roJwks,
+          allowUnsigned: true,
+          requiredSigningAlg: 'RS256',
+        }),
+      );
+
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(error?.errorDescription).toBe('unsigned request object (alg=none) is not supported');
+    });
+
+    it('should accept only unsigned Request Objects of a client registered for none', async () => {
+      const signed = await buildSignedRequestObject(RO_CLAIMS, rsaKeyPair.privateKey, roKid);
+
+      const resolved = await resolveRequestObjectParams(
+        roQueryParams({ request: buildUnsignedRequestObject(RO_CLAIMS) }),
+        { jwks: roJwks, requiredSigningAlg: 'none' },
+      );
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request: signed }), { jwks: roJwks, requiredSigningAlg: 'none' }),
+      );
+
+      expect(resolved.requestObjectClaims).toEqual(RO_CLAIMS);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(error?.errorDescription).toBe('unsupported request object signing alg: RS256');
     });
   });
 });

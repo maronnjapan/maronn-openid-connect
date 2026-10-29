@@ -147,6 +147,34 @@ describe('toClientRegistration', () => {
     expect(Object.hasOwn(record, 'keys')).toBe(false);
   });
 
+  // OIDC Dynamic Client Registration 1.0 §2: request_uris and
+  // request_object_signing_alg reach the authorization endpoint through the client.
+  it('should carry request_uris and request_object_signing_alg into the record', () => {
+    const record = toClientRegistration(
+      registeredClient({
+        requestUris: ['https://rp.example.com/requests/a#NjYz'],
+        requestObjectSigningAlg: 'RS256',
+      }),
+      { clientSecretHash: 'hash', jwksPurposes: ['request_object'] },
+    );
+
+    expect(record).toMatchObject({
+      requestUris: ['https://rp.example.com/requests/a#NjYz'],
+      requestObjectSigningAlg: 'RS256',
+    });
+  });
+
+  // RFC 7591 §2 jwks_uri: the URL is kept for the key resolver to fetch from.
+  it('should carry jwks_uri into the record', () => {
+    const record = toClientRegistration(registeredClient({ jwksUri: 'https://rp.example.com/jwks.json' }), {
+      clientSecretHash: 'hash',
+      jwksPurposes: ['request_object'],
+    });
+
+    expect(record.jwksUri).toBe('https://rp.example.com/jwks.json');
+    expect(Object.hasOwn(record, 'keys')).toBe(false);
+  });
+
   // RFC 7591 §2 jwks: the keys serve every purpose of the config (ClientKeyResolver).
   it('should put the keys of the jwks under every configured purpose', () => {
     const record = toClientRegistration(registeredClient({ jwks: { keys: [RSA_KEY] } }), {
@@ -195,11 +223,26 @@ describe('withDynamicallyRegisteredClients', () => {
   });
 });
 
+/** A fetch that answers every GET with the JWK Set, recording the URLs. */
+function jwksFetchStub(keys: unknown[], status = 200): { fetch: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const stub = (async (input: string | URL | Request) => {
+    urls.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+    return new Response(JSON.stringify({ keys }), { status, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  return { fetch: stub, urls };
+}
+
+/** The key settings of config.ts, with the given fetch. */
+function keyOptions(jwksUriFetch?: typeof fetch, jwksPurposes: readonly string[] = ['request_object', 'private_key_jwt']) {
+  return () => ({ jwksPurposes, jwksUriCacheTtlSeconds: 300, jwksUriFetch });
+}
+
 describe('withDynamicallyRegisteredClientKeys', () => {
   it('should hand out the keys of a dynamic registration by purpose when the configured resolver has none', async () => {
     await dynamicClientStore.save({ ...client('dcr-keys-1'), keys: { request_object: { keys: [RSA_KEY] } } });
 
-    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}));
+    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}), keyOptions());
 
     expect(await resolver.findClientKeys('dcr-keys-1', 'request_object')).toEqual({ keys: [RSA_KEY] });
     expect(await resolver.findClientKeys('dcr-keys-1', 'dpop')).toEqual({ keys: [] });
@@ -209,14 +252,69 @@ describe('withDynamicallyRegisteredClientKeys', () => {
     await dynamicClientStore.save({ ...client('static-rp'), keys: { request_object: { keys: [RSA_KEY] } } });
     const staticKey = { ...RSA_KEY, kid: 'static-key' };
 
-    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', { request_object: { keys: [staticKey] } }));
+    const resolver = withDynamicallyRegisteredClientKeys(
+      staticKeyResolver('static-rp', { request_object: { keys: [staticKey] } }),
+      keyOptions(),
+    );
 
     expect(await resolver.findClientKeys('static-rp', 'request_object')).toEqual({ keys: [staticKey] });
   });
 
   it('should answer an empty key set for a client known to neither', async () => {
-    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}));
+    const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}), keyOptions());
 
     expect(await resolver.findClientKeys('dcr-nobody', 'request_object')).toEqual({ keys: [] });
+  });
+
+  // RFC 7591 §2 jwks_uri: the keys come from the client's JWK Set document,
+  // fetched with the jwksUriFetch of the config for every configured purpose.
+  describe('jwks_uri', () => {
+    it('should fetch the JWK Set of a registration that named a jwks_uri, once for every purpose of the config', async () => {
+      const jwksUri = 'https://rp.example.com/jwks/dcr-jwks-uri-1';
+      await dynamicClientStore.save({ ...client('dcr-jwks-uri-1'), jwksUri });
+      const { fetch, urls } = jwksFetchStub([{ kty: 'RSA', kid: 'remote-key', n: 'AQAB', e: 'AQAB' }]);
+
+      const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}), keyOptions(fetch));
+      const requestObjectKeys = await resolver.findClientKeys('dcr-jwks-uri-1', 'request_object');
+      const privateKeyJwtKeys = await resolver.findClientKeys('dcr-jwks-uri-1', 'private_key_jwt');
+      const dpopKeys = await resolver.findClientKeys('dcr-jwks-uri-1', 'dpop');
+
+      expect(requestObjectKeys).toEqual({ keys: [{ kty: 'RSA', kid: 'remote-key', use: 'sig', alg: 'RS256', n: 'AQAB', e: 'AQAB' }] });
+      expect(privateKeyJwtKeys).toEqual(requestObjectKeys);
+      // dpop is not among the purposes of this config.
+      expect(dpopKeys).toEqual({ keys: [] });
+      // The document is fetched once and kept (jwksUriCache).
+      expect(urls).toEqual([jwksUri]);
+    });
+
+    it('should answer an empty key set while the jwks_uri cannot be fetched', async () => {
+      const jwksUri = 'https://rp.example.com/jwks/dcr-jwks-uri-2';
+      await dynamicClientStore.save({ ...client('dcr-jwks-uri-2'), jwksUri });
+      const { fetch } = jwksFetchStub([], 404);
+
+      const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}), keyOptions(fetch));
+
+      expect(await resolver.findClientKeys('dcr-jwks-uri-2', 'request_object')).toEqual({ keys: [] });
+    });
+
+    it('should read the settings on every call', async () => {
+      const jwksUri = 'https://rp.example.com/jwks/dcr-jwks-uri-3';
+      await dynamicClientStore.save({ ...client('dcr-jwks-uri-3'), jwksUri });
+      const { fetch, urls } = jwksFetchStub([{ kty: 'RSA', kid: 'remote-key', n: 'AQAB', e: 'AQAB' }]);
+      let purposes: readonly string[] = [];
+      const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}), () => ({
+        jwksPurposes: purposes,
+        jwksUriCacheTtlSeconds: 300,
+        jwksUriFetch: fetch,
+      }));
+
+      const before = await resolver.findClientKeys('dcr-jwks-uri-3', 'request_object');
+      purposes = ['request_object'];
+      const after = await resolver.findClientKeys('dcr-jwks-uri-3', 'request_object');
+
+      expect(before).toEqual({ keys: [] });
+      expect(after.keys).toHaveLength(1);
+      expect(urls).toEqual([jwksUri]);
+    });
   });
 });

@@ -9,7 +9,7 @@
  * error_description は固定の ASCII 文言に限り、リクエスト由来の値を埋め込まない。
  */
 
-import type { Jwk, JwkSet } from '@maronn-openid-connect/core';
+import { validateJwksUri as validateJwksUriValue, validateRequestUri, type Jwk, type JwkSet } from '@maronn-openid-connect/core';
 import { ClientRegistrationError } from './registration-error.js';
 
 /**
@@ -196,6 +196,58 @@ export function validateSigningAlg(value: unknown, name: string, supported: read
     throw invalidMetadata(`${name} must be one of ${supported.join(', ')}`);
   }
   return value;
+}
+
+const REQUEST_URIS_MAX_ENTRIES = 32;
+const REQUEST_URIS_DESCRIPTION =
+  'request_uris must be an array of 1 to 32 absolute https URLs of at most 512 ASCII characters';
+
+/**
+ * request_uris: クライアントが認可リクエストの `request_uri`（OIDC Core 1.0 §6.2）に
+ * 使うと事前登録する URL の配列（OIDC Dynamic Client Registration 1.0 §2）。
+ * 各値は core の validateRequestUri と同じ規則（https。ループバックの http は開発用に
+ * 可。512 文字以内の表示可能 ASCII。資格情報無し。フラグメント可）で検査し、
+ * 登録段階では取得しに行かない。重複は 1 つに正規化し、出現順を保つ。
+ */
+export function validateRequestUris(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > REQUEST_URIS_MAX_ENTRIES) {
+    throw invalidMetadata(REQUEST_URIS_DESCRIPTION);
+  }
+  for (const uri of value) {
+    try {
+      validateRequestUri(uri, { requireRegistration: false });
+    } catch {
+      throw invalidMetadata(REQUEST_URIS_DESCRIPTION);
+    }
+  }
+  return [...new Set(value as string[])];
+}
+
+/**
+ * request_object_signing_alg: このクライアントの Request Object に必須の JWS alg
+ * （OIDC Dynamic Client Registration 1.0 §2）。OP が受理する alg の一覧（discovery の
+ * request_object_signing_alg_values_supported）に含まれる値だけを受理する。
+ * `none` は一覧にあるときだけ受理する（署名無しの Request Object を受理する OP）。
+ */
+export function validateRequestObjectSigningAlg(value: unknown, supported: readonly string[]): string {
+  if (typeof value !== 'string' || !supported.includes(value)) {
+    throw invalidMetadata(`request_object_signing_alg must be one of ${supported.join(', ')}`);
+  }
+  return value;
+}
+
+/**
+ * jwks_uri: クライアントの JWK Set 文書の URL（RFC 7591 §2 / OIDC Dynamic Client
+ * Registration 1.0 §2）。core の validateJwksUri と同じ規則（https。ループバックの
+ * http は開発用に可。2048 文字以内の表示可能 ASCII。資格情報無し）で検査し、
+ * 登録段階では取得しに行かない。鍵は OP が検証のときに取得する。
+ */
+export function validateJwksUri(value: unknown): string {
+  try {
+    return validateJwksUriValue(value);
+  } catch {
+    throw invalidMetadata('jwks_uri must be an absolute https URL of at most 2048 ASCII characters');
+  }
 }
 
 const JWKS_MAX_KEYS = 16;

@@ -126,6 +126,29 @@ describe('validateAuthorizationRequestParams', () => {
       });
     });
 
+    // OIDC Core 1.0 §6.2 / §6.3: the same for request_uri.
+    it('should reject the request_uri parameter with request_uri_not_supported when there is no Request Object overlay', async () => {
+      await expect(validate(paramsWith({ request_uri: 'https://rp.example.com/requests/abc' }))).rejects.toMatchObject({
+        error: 'request_uri_not_supported',
+        errorDescription: 'request_uri parameter (Request Object by reference) is not supported',
+        redirectUri: REDIRECT_URI,
+        state: STATE,
+      });
+    });
+
+    // OIDC Core 1.0 §6.2: the request-object feature resolved the request_uri
+    // already, so the parameter passes with the overlay.
+    it('should accept the request_uri parameter with the Request Object overlay', async () => {
+      const params = paramsWith({ request_uri: 'https://rp.example.com/requests/abc' });
+
+      const validated = await validate(params, {
+        effectiveParams: { ...params, nonce: 'nonce-from-request-object' },
+        requestObjectClaims: { nonce: 'nonce-from-request-object' },
+      });
+
+      expect(validated).toMatchObject({ nonce: 'nonce-from-request-object' });
+    });
+
     // OAuth 2.1 §4.1.1 / §7.5: the pkce feature requires PKCE of confidential clients too.
     it('should reject a request of a confidential client without code_challenge with invalid_request', async () => {
       const params = paramsWith();

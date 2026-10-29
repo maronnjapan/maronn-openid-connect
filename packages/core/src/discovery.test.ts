@@ -320,6 +320,14 @@ describe('buildProviderMetadata', () => {
       expect(metadata.request_uri_parameter_supported).toEqual(false);
     });
 
+    // OIDC Discovery 1.0 §3 / Core 1.0 §6.2: whether request_uri values must be
+    // pre-registered with the request_uris registration parameter.
+    it('should include require_request_uri_registration when provided', () => {
+      const config = createValidConfig({ requestUriParameterSupported: true, requireRequestUriRegistration: true });
+      const metadata = buildProviderMetadata(config);
+      expect(metadata.require_request_uri_registration).toEqual(true);
+    });
+
     // OIDC Discovery 1.0 §3: advertise the signing algs accepted for signed
     // Request Objects when request_parameter_supported is true.
     it('should include request_object_signing_alg_values_supported when provided', () => {
@@ -348,6 +356,7 @@ describe('buildProviderMetadata', () => {
       expect(metadata.claims_parameter_supported).toBeUndefined();
       expect(metadata.request_parameter_supported).toBeUndefined();
       expect(metadata.request_uri_parameter_supported).toBeUndefined();
+      expect(metadata.require_request_uri_registration).toBeUndefined();
       expect(
         metadata.request_object_signing_alg_values_supported,
       ).toBeUndefined();

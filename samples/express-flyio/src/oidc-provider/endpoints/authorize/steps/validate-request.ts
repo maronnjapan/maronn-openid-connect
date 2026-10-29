@@ -56,10 +56,11 @@ export async function validateAuthorizationRequestParams(
     /** The parameters as sent (OAuth query parameters). */
     params: AuthorizationRequestInput;
     /**
-     * The parameters after the Request Object overlay (OIDC Core 1.0 §6.1).
-     * undefined when the provider has no request-object feature: the query
-     * parameters are then the request, and a `request` parameter is rejected
-     * with request_not_supported (§6.3).
+     * The parameters after the Request Object overlay (OIDC Core 1.0 §6.1 /
+     * §6.2). undefined when the provider has no request-object feature: the
+     * query parameters are then the request, and a `request` or `request_uri`
+     * parameter is rejected with request_not_supported /
+     * request_uri_not_supported (§6.3).
      */
     effectiveParams: AuthorizationRequestParams | undefined;
     requestObjectClaims: ResolvedRequestObjectParams['requestObjectClaims'];
@@ -72,10 +73,11 @@ export async function validateAuthorizationRequestParams(
   const effectiveParams = input.effectiveParams ?? params;
   const config = c.get('config');
 
-  // OIDC Core 1.0 §6.3: request_uri / registration are not supported here, and
-  // request only with the request-object feature, which resolved it already.
+  // OIDC Core 1.0 §6.3: registration is not supported here, and request /
+  // request_uri only with the request-object feature, which resolved them already.
   rejectUnsupportedRequestParams(params, redirectUri, state, {
     requestParameterSupported: input.effectiveParams !== undefined,
+    requestUriParameterSupported: input.effectiveParams !== undefined,
   });
 
   // OIDC Core 1.0 §6.1: response_type / client_id inside the Request Object

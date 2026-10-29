@@ -1,6 +1,7 @@
 import { ClientRegistrationError } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_ISSUER } from '../../../../../test-support/context.js';
+import { signRs256Jwt } from '../../../../../test-support/feature-endpoints.js';
 import { rs256Key, staticKeyProvider } from '../../../../../test-support/keys.js';
 import { createApp, type OidcProviderOptions } from '../../../../app.js';
 import { createClientKeyResolver, createClientResolver } from '../../../../db/memory/clients.js';
@@ -100,6 +101,66 @@ describe('registerApp', () => {
       grant_types: ['implicit'],
       response_types: ['id_token token', 'id_token'],
     });
+  });
+
+  // OIDC Dynamic Client Registration 1.0 §2 / OIDC Core 1.0 §6.2: the registered
+  // request_uris come back with the registration, and /authorize fetches only them.
+  it('should register request_uris and request_object_signing_alg and return them', async () => {
+    const app = await providerApp();
+
+    const response = await register(app, {
+      redirect_uris: ['https://rp.example.com/callback'],
+      request_uris: ['https://rp.example.com/requests/a#NjYz'],
+      request_object_signing_alg: 'RS256',
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      request_uris: ['https://rp.example.com/requests/a#NjYz'],
+      request_object_signing_alg: 'RS256',
+    });
+  });
+
+  // RFC 7591 §2 jwks_uri: the OP fetches the client's JWK Set when it has to
+  // verify the client's signed Request Object, and uses the keys it finds there.
+  it('should verify a signed Request Object with the keys fetched from the registered jwks_uri', async () => {
+    const clientKey = await rs256Key('dcr-jwks-uri-key');
+    const fetched: string[] = [];
+    const jwksUriFetch = (async (input: string | URL | Request) => {
+      fetched.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      return Response.json({ keys: [clientKey.publicJwk] });
+    }) as typeof fetch;
+    const app = await providerApp({ dynamicClientRegistration: { jwksUriFetch } });
+
+    const registration = await register(app, {
+      redirect_uris: ['https://rp.example.com/callback'],
+      jwks_uri: 'https://rp.example.com/jwks.json',
+    });
+    const body = (await registration.json()) as Record<string, unknown>;
+    const clientId = body['client_id'] as string;
+    const request = await signRs256Jwt(
+      {
+        iss: clientId,
+        aud: TEST_ISSUER,
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: 'https://rp.example.com/callback',
+        scope: 'openid',
+        state: 'state-1',
+        code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        code_challenge_method: 'S256',
+      },
+      clientKey,
+    );
+    const authorize = await app.request(
+      `${TEST_ISSUER}/authorize?${new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'openid', request }).toString()}`,
+    );
+
+    expect(registration.status).toBe(201);
+    expect(body['jwks_uri']).toBe('https://rp.example.com/jwks.json');
+    expect(fetched).toEqual(['https://rp.example.com/jwks.json']);
+    expect(authorize.status).toBe(302);
+    expect(authorize.headers.get('Location')).toBe(`${TEST_ISSUER}/login`);
   });
 
   // OIDC Dynamic Client Registration 1.0 §2: application_type defaults to web,

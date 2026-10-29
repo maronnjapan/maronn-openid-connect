@@ -105,6 +105,15 @@ export interface ClientRecord {
    * only.
    */
   response_types?: string[];
+  /**
+   * Not in the ER model: the request_uri values the client pre-registered
+   * (request_uris of OpenID Connect Dynamic Client Registration 1.0 §2). While
+   * the OP requires registration, an authorization request may only pass a
+   * request_uri (OIDC Core 1.0 §6.2) that equals one of them, fragment
+   * included. Empty or absent (a record written before the field existed):
+   * none, so the client cannot use request_uri then.
+   */
+  request_uris?: string[];
 }
 
 /** One Client_auth of ClientRecord.client_auths, with its Client_secret. */

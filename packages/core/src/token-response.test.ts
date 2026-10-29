@@ -1006,6 +1006,33 @@ describe('applyRequestedIdTokenClaims', () => {
     });
   });
 
+  // OIDC Core 1.0 §5.5.1: the OP MUST NOT return an error for a claim it will not
+  // return, so narrowing the readable names to the OP's vocabulary (§5.1) is always
+  // conformant. The claims parameter keys are attacker-controlled, so they must
+  // never be used as free property reads on whatever findUserClaims() returned.
+  describe('Claim name allowlist (OIDC Core Section 5.5.1)', () => {
+    it('should not add a non-standard property present on the claims of the End-User', () => {
+      // A resolver that returns its DB row as-is carries extra fields.
+      const rowLikeClaims = { ...userClaims, password_hash: '$2b$10$secret' } as UserClaims;
+      const payload = applyRequestedIdTokenClaims(basePayload(), rowLikeClaims, {
+        id_token: { password_hash: { essential: true } },
+      });
+
+      expect(payload).toStrictEqual(basePayload());
+    });
+
+    it('should add only claims within an explicitly supplied allowlist', () => {
+      const payload = applyRequestedIdTokenClaims(
+        basePayload(),
+        userClaims,
+        { id_token: { email: null, name: null } },
+        new Set(['email']),
+      );
+
+      expect(payload).toStrictEqual({ ...basePayload(), email: 'janedoe@example.com' });
+    });
+  });
+
   it('should not mutate the payload passed in', () => {
     const payload = basePayload();
 

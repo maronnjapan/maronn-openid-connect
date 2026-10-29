@@ -153,6 +153,16 @@ export interface UserClaims {
  * ユーザークレームを解決するインターフェース
  */
 export interface UserClaimsResolver {
+  /**
+   * subject の End-User クレームを返す。
+   *
+   * 契約: 返したオブジェクトは外部開示されうる面である。UserInfo レスポンスと
+   * ID Token は、ここが返したプロパティを scope（{@link filterClaimsByScope}）と
+   * `claims` パラメータのアロウリスト（{@link DEFAULT_REQUESTABLE_CLAIMS}）で絞って
+   * 開示する。アロウリストが既定で守るのは標準クレーム名だけなので、アロウリストを
+   * 広げる構成では、DB の行や内部ユーザーモデルをそのまま返さず、開示してよい
+   * クレームだけを持つオブジェクトへ写して返すこと。
+   */
   findUserClaims(sub: string): Promise<UserClaims | null>;
 }
 
@@ -215,6 +225,25 @@ export const SCOPE_CLAIMS_MAP: Record<string, (keyof UserClaims)[]> = {
 };
 
 /**
+ * `claims` パラメータで要求できるクレーム名の既定アロウリスト。
+ * `sub` と、スコープが対応付ける標準クレーム（{@link SCOPE_CLAIMS_MAP}）の全名前。
+ *
+ * OIDC Core 1.0 §5.5.1: 要求されたクレームを返せない場合でも OP はエラーを
+ * 返してはならない（MUST NOT）。したがって未知のクレーム名を黙って返さないことは
+ * 常に仕様適合である。§5.1 / §5.1.2 のとおり、クレーム名の語彙は OP が定義する。
+ *
+ * `claims` のキー名は RP が任意に指定できる。これを resolver が返したオブジェクトの
+ * プロパティ名として無検査で読み出すと、利用者が `findUserClaims` から余剰フィールド
+ * （DB の行など）を返した場合に、scope を迂回してそのフィールドが開示される。
+ * 読み出せるキーを OP が宣言した語彙に限定するのがこのアロウリストの役割で、
+ * {@link applyRequestedClaims} と `applyRequestedIdTokenClaims` の既定値になる。
+ */
+export const DEFAULT_REQUESTABLE_CLAIMS: ReadonlySet<string> = new Set([
+  'sub',
+  ...Object.values(SCOPE_CLAIMS_MAP).flat(),
+]);
+
+/**
  * スコープに基づいてクレームをフィルタリングする
  *
  * @param userClaims ユーザーの全クレーム
@@ -245,12 +274,14 @@ export function filterClaimsByScope(
 
 /**
  * claimsパラメータで要求されたクレーム名を取得する
+ *
+ * キー名は RP が任意に指定できるため、戻り値は `keyof UserClaims` ではなく
+ * ただの文字列である。読み出してよい名前かどうかは呼び出し側がアロウリストで
+ * 判定する（{@link applyRequestedClaims}）。
  */
-function getRequestedClaimNames(
-  claimsParameter?: ClaimsParameter
-): (keyof UserClaims)[] {
+function getRequestedClaimNames(claimsParameter?: ClaimsParameter): string[] {
   if (!claimsParameter?.userinfo) return [];
-  return Object.keys(claimsParameter.userinfo) as (keyof UserClaims)[];
+  return Object.keys(claimsParameter.userinfo);
 }
 
 /**
@@ -461,24 +492,38 @@ export async function resolveUserInfoClaims(
  * クレームだけを返し、一致しない場合は省略する（エラーにはしない）。
  * `sub` はアクセストークンの subject で確定済みのため上書きしない。
  *
+ * 要求されたキー名はアロウリスト（既定 {@link DEFAULT_REQUESTABLE_CLAIMS}）に
+ * 載っている名前だけを読み出す。`claims` のキー名は RP が任意に指定できるため、
+ * 無検査で読むと resolver が返した余剰フィールド（DB の行など）が scope を迂回して
+ * 開示される。アロウリスト外のクレームは黙って省く（§5.5.1 の MUST NOT のとおり
+ * エラーにはしない）。読み出しは own プロパティに限り、プロトタイプチェーン上の
+ * プロパティ（getter を持つクラスインスタンスを resolver が返した場合など）は読まない。
+ *
  * 入力のレスポンスは変更せず、新しいオブジェクトを返す。
  *
  * @param response スコープでフィルタ済みの UserInfo レスポンス
  * @param userClaims ユーザーの全クレーム
  * @param claimsParameter Authorization Request の claims パラメータ
+ * @param allowedClaimNames `claims` 経由で読み出してよいクレーム名。既定は標準クレーム。
+ *   Discovery の `claims_supported` と同じ語彙を公開する OP は、その一覧をここへ注入する
  * @returns 要求クレームを追加した UserInfo レスポンス
  */
 export function applyRequestedClaims(
   response: UserInfoResponse,
   userClaims: UserClaims,
-  claimsParameter?: ClaimsParameter
+  claimsParameter?: ClaimsParameter,
+  allowedClaimNames: ReadonlySet<string> = DEFAULT_REQUESTABLE_CLAIMS
 ): UserInfoResponse {
   const result: Record<string, unknown> = { ...response };
 
   const requestedClaims = getRequestedClaimNames(claimsParameter);
   for (const claimName of requestedClaims) {
     if (claimName === 'sub') continue;
-    const value = userClaims[claimName];
+    if (!allowedClaimNames.has(claimName)) continue;
+    // Only the End-User's own claims, not what the object inherits (constructor, toString...).
+    if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;
+
+    const value = (userClaims as unknown as Record<string, unknown>)[claimName];
     if (value === undefined || value === null) continue;
 
     const entry = claimsParameter?.userinfo?.[claimName] ?? null;

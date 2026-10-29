@@ -135,6 +135,11 @@ describe('buildRegisteredClient', () => {
       });
     });
 
+    it('should carry jwks_uri into the record', () => {
+      const client = buildRegisteredClient({ ...CONFIDENTIAL, jwksUri: 'https://app.example.com/jwks.json' }, FIXED);
+      expect(client.jwksUri).toBe('https://app.example.com/jwks.json');
+    });
+
     // id_token_signed_response_alg is never left out: it always carries at
     // least its default (OIDC Dynamic Client Registration 1.0 §2).
     it('should leave the optional record fields out when they were not registered', () => {

@@ -181,9 +181,9 @@ describe('validateClientMetadata', () => {
     it('should silently drop metadata this provider does not understand', () => {
       const validated = validateClientMetadata({
         ...MINIMAL,
-        jwks_uri: 'https://app.example.com/jwks.json',
         sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
         require_auth_time: true,
+        tls_client_auth_subject_dn: 'CN=app',
       });
       expect(validated).toEqual(MINIMAL_VALIDATED);
     });
@@ -924,6 +924,48 @@ describe('validateClientMetadata', () => {
     ])('should reject request_object_signing_alg that is %s', (_label, value) => {
       expect(() => validateClientMetadata({ ...MINIMAL, request_object_signing_alg: value })).toThrowError(
         new ClientRegistrationError('invalid_client_metadata', 'request_object_signing_alg must be one of RS256'),
+      );
+    });
+  });
+
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: the URL of the
+  // client's JWK Set document, fetched by the OP when it needs the keys.
+  describe('jwks_uri (RFC 7591 Section 2)', () => {
+    it('should register an https jwks_uri and echo it without fetching it', () => {
+      const validated = validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' });
+      expect(validated.jwksUri).toBe('https://app.example.com/jwks.json');
+      expect(validated.metadata['jwks_uri']).toBe('https://app.example.com/jwks.json');
+      expect(Object.hasOwn(validated, 'jwks')).toBe(false);
+    });
+
+    it('should omit the jwksUri key when jwks_uri is not provided', () => {
+      const validated = validateClientMetadata(MINIMAL);
+      expect(Object.hasOwn(validated, 'jwksUri')).toBe(false);
+      expect(Object.hasOwn(validated.metadata, 'jwks_uri')).toBe(false);
+    });
+
+    it.each([
+      ['a non-loopback http URL', 'http://app.example.com/jwks.json'],
+      ['a relative URL', '/jwks.json'],
+      ['a URL with credentials', 'https://user:pw@app.example.com/jwks.json'],
+      ['a non-string value', 42],
+    ])('should reject jwks_uri that is %s without reflecting it', (_label, value) => {
+      expect(() => validateClientMetadata({ ...MINIMAL, jwks_uri: value })).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'jwks_uri must be an absolute https URL of at most 2048 ASCII characters',
+        ),
+      );
+    });
+
+    it('should reject jwks_uri when the allowJwksUri option is false', () => {
+      expect(() =>
+        validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' }, { allowJwksUri: false }),
+      ).toThrowError(
+        new ClientRegistrationError(
+          'invalid_client_metadata',
+          'jwks_uri is not accepted by this provider; register jwks instead',
+        ),
       );
     });
   });

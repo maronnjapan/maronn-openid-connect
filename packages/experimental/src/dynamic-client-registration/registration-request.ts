@@ -35,6 +35,7 @@ import {
   validateDisplayString,
   validateHttpUrl,
   validateJwks,
+  validateJwksUri,
   validateRedirectUrisForApplicationType,
   validateRequestObjectSigningAlg,
   validateRequestUris,
@@ -160,6 +161,12 @@ export interface ValidateClientMetadataOptions {
    */
   requestObjectSigningAlgValuesSupported?: readonly string[];
   /**
+   * jwks_uri（RFC 7591 §2）を受理するか。既定 true。false にすると jwks_uri の登録を
+   * invalid_client_metadata で拒否し、鍵は jwks でだけ登録できる（OP が登録者の URL を
+   * 取得しに行く経路を閉じたいとき）。
+   */
+  allowJwksUri?: boolean;
+  /**
    * カスタムメタデータ。キーがメタデータ名、値がその検証関数。標準フィールド
    * （本モジュールが理解する名前）と同じ名前は設定の誤りとして TypeError になる。
    */
@@ -187,6 +194,11 @@ export interface ValidatedClientRegistration {
   userinfoSignedResponseAlg?: string;
   /** RFC 7591 §2 の jwks（正規化済み）。登録したときだけ持つ。 */
   jwks?: JwkSet;
+  /**
+   * RFC 7591 §2 の jwks_uri: クライアントの JWK Set 文書の URL。登録したときだけ持つ。
+   * OP は鍵が要るときに取得する（登録時には取得しない）。
+   */
+  jwksUri?: string;
   /**
    * OIDC Dynamic Client Registration 1.0 §2 の request_uris: 認可リクエストの
    * `request_uri`（OIDC Core 1.0 §6.2）に使うと事前登録した URL。登録したときだけ持つ。
@@ -347,14 +359,23 @@ export function validateClientMetadata(
     );
   }
   if (metadata['jwks'] !== undefined && metadata['jwks_uri'] !== undefined) {
-    // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。jwks_uri 単独は
-    // この OP が取得しに行かない（理解しない）メタデータとして無視する。
+    // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。
     throw new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present');
   }
   if (metadata['jwks'] !== undefined) {
     const jwks = validateJwks(metadata['jwks']);
     validated.jwks = jwks;
     registered['jwks'] = { keys: jwks.keys.map((key) => ({ ...key })) };
+  }
+  if (metadata['jwks_uri'] !== undefined) {
+    // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: the URL of the
+    // client's JWK Set document. The OP fetches it when it needs the keys.
+    if (options?.allowJwksUri === false) {
+      throw new ClientRegistrationError('invalid_client_metadata', 'jwks_uri is not accepted by this provider; register jwks instead');
+    }
+    const jwksUri = validateJwksUri(metadata['jwks_uri']);
+    validated.jwksUri = jwksUri;
+    registered['jwks_uri'] = jwksUri;
   }
   if (metadata['default_max_age'] !== undefined) {
     const defaultMaxAge = validateDefaultMaxAge(metadata['default_max_age']);

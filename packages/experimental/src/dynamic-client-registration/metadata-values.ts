@@ -9,7 +9,7 @@
  * error_description は固定の ASCII 文言に限り、リクエスト由来の値を埋め込まない。
  */
 
-import { validateRequestUri, type Jwk, type JwkSet } from '@maronn-openid-connect/core';
+import { validateJwksUri as validateJwksUriValue, validateRequestUri, type Jwk, type JwkSet } from '@maronn-openid-connect/core';
 import { ClientRegistrationError } from './registration-error.js';
 
 /**
@@ -234,6 +234,20 @@ export function validateRequestObjectSigningAlg(value: unknown, supported: reado
     throw invalidMetadata(`request_object_signing_alg must be one of ${supported.join(', ')}`);
   }
   return value;
+}
+
+/**
+ * jwks_uri: クライアントの JWK Set 文書の URL（RFC 7591 §2 / OIDC Dynamic Client
+ * Registration 1.0 §2）。core の validateJwksUri と同じ規則（https。ループバックの
+ * http は開発用に可。2048 文字以内の表示可能 ASCII。資格情報無し）で検査し、
+ * 登録段階では取得しに行かない。鍵は OP が検証のときに取得する。
+ */
+export function validateJwksUri(value: unknown): string {
+  try {
+    return validateJwksUriValue(value);
+  } catch {
+    throw invalidMetadata('jwks_uri must be an absolute https URL of at most 2048 ASCII characters');
+  }
 }
 
 const JWKS_MAX_KEYS = 16;

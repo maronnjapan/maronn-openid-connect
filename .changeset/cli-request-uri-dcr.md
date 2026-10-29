@@ -1,0 +1,12 @@
+---
+'@maronn-openid-connect/cli': minor
+---
+
+`request-object` 機能が `request_uri`（Request Object by reference。OpenID Connect Core 1.0 §6.2）を解決し、`--enable dynamic-client-registration` の登録エンドポイントが `request_uris` と `request_object_signing_alg`（OpenID Connect Dynamic Client Registration 1.0 §2）を登録できるようにする。OpenID Foundation Conformance Suite の Basic OP / Implicit OP / Hybrid OP の認定プランを `client_registration=dynamic_client` で実行するための変更で、Suite が `request_uris` を登録して `request_uri` で渡す Request Object の module がこれで動く
+
+- 認可エンドポイントの `resolve-request-object` ステップが `request_uri` を解決する。値を検査し（https。ループバックの http は開発用に可。512 文字以内）、クライアントが登録した `request_uris`（静的クライアントは `RegisteredClient.requestUris`、動的登録は `request_uris` メタデータ）と完全一致するものだけを GET して、取得した Request Object を `request` と同じ鍵で検証する。検査と取得の失敗は OP 上の `invalid_request_uri`、`request` との併用は `invalid_request`。`request-object` を無効にした OP はこれまでどおり `request_uri_not_supported` で拒否する
+- `ProviderConfig` に `requireRequestUriRegistration`（既定 true）を足す。false にすると、構文を満たすどの `request_uri` も取得しに行く（SSRF の面が開くので信頼できる環境に限る）。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する
+- Hono / Express / Fastify の `applyOidc` に `requestUriFetch` オプション（`request_uri` の取得に使う fetch。既定は `globalThis.fetch`）を足す。Next.js では `_oidc-provider/features/request-object/config.ts` の `requestObjectConfig.requestUriFetch` に置く。Next.js は環境変数 `OIDC_REQUIRE_REQUEST_URI_REGISTRATION=0` でも事前登録の要求を外せる
+- クライアントが登録した `request_object_signing_alg` を `/authorize` が守る。その alg で署名されていない Request Object（`none` を登録したクライアントでは署名付きのもの）を `invalid_request_object` で拒否する
+- `--db sql` のスキーマに `client_request_uris` テーブルを、`--db kv` のクライアントレコードに `request_uris` を足し、`registerClient()` が `requestUris` を保存する。既存のデータベースには `CREATE TABLE IF NOT EXISTS client_request_uris ...`（`db/schema.sql`）を適用する。`request_object_signing_alg` は `default_max_age` などと同じく sql / kv には保存されず、既定のまま
+- 登録エンドポイントが `request_uris`（1 〜 32 件の https URL。登録時には取得しない）と `request_object_signing_alg`（`request-object` 機能が広告する alg のみ）を受理して 201 応答に返し、登録レコードに持つ

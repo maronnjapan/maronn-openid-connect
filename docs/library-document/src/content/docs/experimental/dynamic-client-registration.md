@@ -48,17 +48,17 @@ Cache-Control: no-store
 ## 対応仕様
 
 - [RFC 7591: OAuth 2.0 Dynamic Client Registration Protocol](https://datatracker.ietf.org/doc/html/rfc7591)（§2 のメタデータ、§2.1 の grant と response の対応、§2.3 / §3.1.1 の software statement、§3.2.2 のエラーコード 4 種）
-- [OpenID Connect Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html)（`redirect_uris` を必須にする制約、`application_type` ごとの `redirect_uris` の制約、`default_max_age` と `*_signed_response_alg`）
+- [OpenID Connect Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html)（`redirect_uris` を必須にする制約、`application_type` ごとの `redirect_uris` の制約、`default_max_age` と `*_signed_response_alg`、`request_uris` と `request_object_signing_alg`）
 
 次はスコープ外です。
 
 - RFC 7592（登録後の参照・更新・削除）。`registration_access_token` と `registration_client_uri` は、両方返すか両方返さないかの MUST に従い、どちらも返しません
 - initial access token と software statement の発行と検証。どちらも、設定に渡した関数が判定します。関数を渡さない既定ではオープン登録で、`software_statement` は無視します（RFC 7591 §3.1.1）
-- URL を参照しに行くメタデータの解釈（`jwks_uri`、`sector_identifier_uri`、`request_uris` など。未知フィールドとして無視します）
+- 登録時に URL を参照しに行くメタデータの解釈（`jwks_uri`、`sector_identifier_uri` など。未知フィールドとして無視します）。`request_uris` は URL の形だけを検査して登録し、取得は認可リクエストで `request_uri` が使われたときに行います
 
 ## ユースケース
 
-- OIDF Conformance Suite の動的登録前提のテストプラン（Basic OP に加え、Implicit OP と Hybrid OP）を、この OP に向けて実行する
+- OIDF Conformance Suite の動的登録前提のテストプラン（Basic OP に加え、Implicit OP と Hybrid OP の `client_registration=dynamic_client`）を、この OP に向けて実行する。Suite は module ごとに `POST /register` でクライアントを登録し、`jwks` と `request_uris` を使って Request Object の module（`request` と `request_uri`）も走らせる（`tests/conformance/README.md` の「Dynamic client registration で実行する」）
 - MCP（Model Context Protocol）クライアントのように、接続時に DCR で自分を登録するエコシステムのクライアント実装を手元の OP で受け止める
 - 複数のテストアプリを静的設定の編集なしに素早く繋ぐ
 - `token_endpoint_auth_method` や `grant_types` の既定値がどう適用されるか、software statement のメタデータが平文の値にどう優先するかなど、RFC 7591 の素の挙動を確認する
@@ -228,6 +228,8 @@ Next.js では、`(dynamic-client-registration)/register/route.ts` がエンド�
 | `default_max_age` | 非負整数（秒） |
 | `id_token_signed_response_alg` / `userinfo_signed_response_alg` | OP の署名鍵の alg（discovery の `*_signing_alg_values_supported`）のみ。`id_token_signed_response_alg` は既定 `RS256` で、省略時も登録して返します。`userinfo_signed_response_alg` に既定は無く、省略すると UserInfo は署名しない JSON です |
 | `jwks` | RSA（RS256 / RS384 / RS512）か EC（P-256 / P-384 / P-521）の署名用公開鍵、1 〜 16 件。秘密鍵パラメータを含む鍵は拒否します。`alg` と `use` が無い鍵には既定を補います。`jwks_uri` との併記は拒否します |
+| `request_uris` | 認可リクエストの `request_uri`（OIDC Core 1.0 §6.2）に使う URL、1 〜 32 件。https（ループバックの http は開発用に可）、512 文字以内の表示可能 ASCII、資格情報無し。フラグメントは値の一部として登録します。登録時には取得しに行かず、`/authorize` が `request_uri` をこの一覧と完全一致で照合してから GET します（`requireRequestUriRegistration`。[Features](../../reference/features/) を参照） |
+| `request_object_signing_alg` | このクライアントの Request Object に必須の JWS alg。OP が discovery の `request_object_signing_alg_values_supported` に広告する値（`RS256`。`allowUnsignedRequestObject` のときは `none` も）のみ。登録すると、その alg で署名されていない Request Object を `/authorize` が拒否します |
 | `software_statement` | 次節 |
 
 `grant_types` に Token Exchange や CIBA などの URN を登録できるのは、`grantTypes` に足した場合だけです。
@@ -283,7 +285,7 @@ statement の中のクレームに、RFC 7591 が定める必須項目は `iss` 
 - `client_id` は `dcr-` プレフィックス付きの乱数で、リクエストから指定できません。人間が命名する静的クライアントと名前空間が分かれ、上書きは構造的に起きません
 - `client_secret` は 256 ビットの乱数で、201 応答に一度だけ現れます。応答には `Cache-Control: no-store` が付き、ログには出力されません。ストアにはハッシュだけを保存します
 - initial access token と software statement の検証は、渡した関数の責務です。生成コードが応答に反映するのは、Bearer トークンの有無と関数の返り値だけです。関数を書くときは、トークンの比較を定数時間で行い、statement の署名を `iss` で選んだ鍵と許したアルゴリズムだけで検証し、`alg: none` を受理しないでください
-- URL を参照しにいくメタデータ（`jwks_uri` など）を受理しないため、登録処理が外部へリクエストを発行する経路はありません（SSRF の面が開きません）。`logo_uri` などの表示用 URL は構文だけを検査し、取得しません
+- 登録時に URL を参照しにいくメタデータ（`jwks_uri` など）を受理しないため、登録処理が外部へリクエストを発行する経路はありません（SSRF の面が開きません）。`logo_uri` などの表示用 URL は構文だけを検査し、取得しません。`request_uris` も登録時には取得せず、`/authorize` が `request_uri` を登録した値と完全一致で照合してから GET します。未認証の登録者が登録できるのは自分の URL なので、OP に取得させられるのはその URL だけです。`requireRequestUriRegistration: false` にすると、どの URL でも取得しに行くようになるので注意してください
 - `grantTypes` に experimental grant の URN を足すのは、未認証の登録者にその grant を開くことだと意識してください。CIBA のように利用者へ働きかける grant は、initial access token と組み合わせるか、静的登録に留めるのが安全です
 
 ## 既知の制約
@@ -291,7 +293,7 @@ statement の中のクレームに、RFC 7591 が定める必須項目は `iss` 
 - 動的登録クライアントは in-memory ストアにだけ入り、**プロセス再起動で消えます**。`--db` で生成しても同じで、クライアント表に入る静的クライアントと違い永続化されません（PAR や Device の experimental ストアと同じ割り切りです）
 - RFC 7592 を実装しないため、登録の参照・更新・削除はできません。失効の手段は再起動だけです
 - initial access token と software statement の検証は生成コードに含まれません。関数を渡さない既定ではオープン登録で、`software_statement` は無視します
-- `jwks_uri`、`sector_identifier_uri`、`request_uris`、暗号化系のメタデータは理解せず、無視します
+- `jwks_uri`、`sector_identifier_uri`、暗号化系のメタデータは理解せず、無視します
 
 ## core の静的登録との違い
 

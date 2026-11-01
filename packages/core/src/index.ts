@@ -330,6 +330,7 @@ export {
   resolveUserInfoClaims,
   applyRequestedClaims,
   matchesRequestedClaimValue,
+  DEFAULT_REQUESTABLE_CLAIMS,
 } from './userinfo.js';
 
 export type {

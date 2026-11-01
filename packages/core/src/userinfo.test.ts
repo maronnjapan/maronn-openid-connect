@@ -11,6 +11,7 @@ import {
   UserInfoError,
   UserInfoErrorCode,
   SCOPE_CLAIMS_MAP,
+  DEFAULT_REQUESTABLE_CLAIMS,
 } from './userinfo.js';
 import type {
   AccessTokenInfo,
@@ -565,6 +566,84 @@ describe('applyRequestedClaims', () => {
         expect(result.address).toBeUndefined();
       });
     });
+  });
+
+  // OIDC Core 1.0 Section 5.5.1: the OP MUST NOT return an error when a requested
+  // claim cannot be returned, so narrowing the readable names to the vocabulary the
+  // OP defines (Section 5.1 standard claims) is always conformant. The claims
+  // parameter keys are attacker-controlled, so they must never be used as free
+  // property reads on whatever object findUserClaims() returned.
+  describe('Claim name allowlist (OIDC Core Section 5.5.1)', () => {
+    it('should return a standard claim requested via the claims parameter', () => {
+      const result = applyRequestedClaims(
+        { sub: 'user-123' },
+        { sub: 'user-123', email: 'janedoe@example.com' },
+        { userinfo: { email: null } }
+      );
+      expect(result).toEqual({ sub: 'user-123', email: 'janedoe@example.com' });
+    });
+
+    it('should not return a non-standard property present on the resolved user claims', () => {
+      // A resolver that returns its DB row as-is carries extra fields.
+      const rowLikeClaims = {
+        sub: 'user-123',
+        email: 'janedoe@example.com',
+        password_hash: '$2b$10$secret',
+      } as UserClaims;
+      const result = applyRequestedClaims({ sub: 'user-123' }, rowLikeClaims, {
+        userinfo: { email: null, password_hash: null },
+      });
+      expect(result).toEqual({ sub: 'user-123', email: 'janedoe@example.com' });
+    });
+
+    it('should not return a prototype chain property when requested as a claim', () => {
+      const result = applyRequestedClaims({ sub: 'user-123' }, { sub: 'user-123' }, {
+        userinfo: { constructor: null, toString: null },
+      });
+      expect(result).toEqual({ sub: 'user-123' });
+    });
+
+    it('should not alter the response prototype when __proto__ is requested as a claim', () => {
+      // JSON.parse creates __proto__ as an own key, like a parsed claims parameter does.
+      const claimsParameter = JSON.parse('{"userinfo":{"__proto__":{"polluted":true}}}');
+      const result = applyRequestedClaims({ sub: 'user-123' }, createFullUserClaims(), claimsParameter);
+      expect(result).toEqual({ sub: 'user-123' });
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    });
+
+    it('should return only claims within an explicitly supplied allowlist', () => {
+      const result = applyRequestedClaims(
+        { sub: 'user-123' },
+        createFullUserClaims(),
+        { userinfo: { email: null, name: null } },
+        new Set(['sub', 'email'])
+      );
+      expect(result).toEqual({ sub: 'user-123', email: 'janedoe@example.com' });
+    });
+
+    // OIDC Core 1.0 Section 5.5.1: MUST NOT return an error for a claim it will not return
+    it('should not return an error when a requested claim is not allowed', () => {
+      const rowLikeClaims = { sub: 'user-123', password_hash: '$2b$10$secret' } as UserClaims;
+      const error = captureError(() =>
+        applyRequestedClaims({ sub: 'user-123' }, rowLikeClaims, {
+          userinfo: { password_hash: { essential: true } },
+        })
+      );
+      expect(error).toBeUndefined();
+      expect(
+        applyRequestedClaims({ sub: 'user-123' }, rowLikeClaims, {
+          userinfo: { password_hash: { essential: true } },
+        })
+      ).toEqual({ sub: 'user-123' });
+    });
+  });
+});
+
+describe('DEFAULT_REQUESTABLE_CLAIMS', () => {
+  it('should contain sub and every scope-mapped claim name exactly once', () => {
+    expect([...DEFAULT_REQUESTABLE_CLAIMS].sort()).toEqual(
+      ['sub', ...Object.values(SCOPE_CLAIMS_MAP).flat()].sort()
+    );
   });
 });
 

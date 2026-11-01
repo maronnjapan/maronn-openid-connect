@@ -1,7 +1,7 @@
 import type { IdTokenPayload } from './id-token.js';
 import { arrayBufferToBase64Url, stringToArrayBuffer, generateRandomString, getJwaAlgorithm, jwaToHashName } from './crypto-utils.js';
 import type { AccessTokenPayload } from './access-token.js';
-import { filterClaimsByScope, matchesRequestedClaimValue } from './userinfo.js';
+import { DEFAULT_REQUESTABLE_CLAIMS, filterClaimsByScope, matchesRequestedClaimValue } from './userinfo.js';
 import type { UserClaims, ClaimsParameter } from './userinfo.js';
 import { parseAcrValues } from './acr.js';
 
@@ -437,17 +437,26 @@ const ID_TOKEN_OWN_CLAIMS: ReadonlySet<string> = new Set([
  * azp / at_hash / c_hash）は End-User のクレームから取らず、payload がすでに持つクレームも
  * 置き換えない。acr の要求は acr_values と同じく {@link resolveAcrAmr} が扱う（§5.5.1.1）。
  *
+ * 要求されたキー名はアロウリスト（既定 {@link DEFAULT_REQUESTABLE_CLAIMS}）に
+ * 載っている名前だけを読み出す。`claims` のキー名は RP が任意に指定できるため、
+ * 無検査で読むと resolver が返した余剰フィールド（DB の行など）が scope を迂回して
+ * ID Token から開示される。アロウリスト外のクレームは黙って省く（§5.5.1 の
+ * MUST NOT のとおりエラーにはしない）。
+ *
  * 入力の payload は変更せず、新しいオブジェクトを返す。
  *
  * @param payload {@link buildIdTokenPayload} が組み立てた payload
  * @param userClaims End-User のクレーム。undefined なら payload をそのまま返す
  * @param claimsParameter 認可リクエストの claims パラメータ
+ * @param allowedClaimNames `claims` 経由で読み出してよいクレーム名。既定は標準クレーム。
+ *   Discovery の `claims_supported` と同じ語彙を公開する OP は、その一覧をここへ注入する
  * @returns 要求されたクレームを足した payload
  */
 export function applyRequestedIdTokenClaims(
   payload: IdTokenPayload,
   userClaims: UserClaims | undefined,
   claimsParameter?: ClaimsParameter,
+  allowedClaimNames: ReadonlySet<string> = DEFAULT_REQUESTABLE_CLAIMS,
 ): IdTokenPayload {
   const requested = claimsParameter?.id_token;
   if (userClaims === undefined || requested === undefined) return payload;
@@ -455,6 +464,7 @@ export function applyRequestedIdTokenClaims(
   const result: IdTokenPayload = { ...payload };
   for (const [claimName, entry] of Object.entries(requested)) {
     if (ID_TOKEN_OWN_CLAIMS.has(claimName)) continue;
+    if (!allowedClaimNames.has(claimName)) continue;
     if (Object.prototype.hasOwnProperty.call(result, claimName)) continue;
     // Only the End-User's own claims, not what the object inherits (constructor, toString...).
     if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;

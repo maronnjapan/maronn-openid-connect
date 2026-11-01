@@ -138,6 +138,45 @@ const oidcClientsJson = JSON.stringify([
     responseTypes: ['code'],
   },
   {
+    // RFC 7591 §2 jwks_uri: the client publishes the keys it signs Request
+    // Objects with at the E2E RP (apps/client.mjs, /jwks.json), and the OP
+    // fetches them from there. Nothing serves the redirect URI: the
+    // client-jwks-uri spec reads the code from the URL the browser lands on
+    // and redeems it itself.
+    clientId: 'e2e-client-jwks-uri',
+    clientSecret: 'e2e-client-jwks-uri-secret',
+    redirectUris: [`${clientBaseURL}/request-object-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+    jwksUri: `${clientBaseURL}/jwks.json`,
+  },
+  {
+    // OIDC Dynamic Client Registration 1.0 §2: every Request Object of this
+    // client must be signed with ES256 (the P-256 key of the same jwks_uri).
+    clientId: 'e2e-client-jwks-uri-es256',
+    clientSecret: 'e2e-client-jwks-uri-es256-secret',
+    redirectUris: [`${clientBaseURL}/request-object-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+    jwksUri: `${clientBaseURL}/jwks.json`,
+    requestObjectSigningAlg: 'ES256',
+  },
+  {
+    // A jwks_uri the E2E RP answers with 404, so the OP cannot get the keys.
+    clientId: 'e2e-client-jwks-uri-broken',
+    clientSecret: 'e2e-client-jwks-uri-broken-secret',
+    redirectUris: [`${clientBaseURL}/request-object-callback`],
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    tokenEndpointAuthMethods: ['client_secret_post'],
+    responseTypes: ['code'],
+    jwksUri: `${clientBaseURL}/jwks-missing.json`,
+  },
+  {
     // OIDC Core 1.0 §3.2: a client of the Implicit Flow. A public client, as
     // the redirect URI is http on a loopback host (§3.2.2.1). Nothing serves
     // the redirect URI: the implicit-flow spec reads the authorization
@@ -221,6 +260,12 @@ export default defineConfig({
         ISSUER: baseURL,
         OIDC_SIGNING_KEY_ID: 'e2e-rs256-key',
         OIDC_CLIENTS_JSON: oidcClientsJson,
+        // RFC 7591 §2 jwks_uri: the E2E RP serves its keys over http on
+        // 127.0.0.1, which only the development flag lets the OP fetch, and an
+        // unknown kid fetches the jwks_uri again at once (the client-jwks-uri
+        // spec rotates a key and signs with it right away).
+        OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI: '1',
+        OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS: '0',
         CLIENT_ID: 'e2e-client',
         CLIENT_SECRET: 'e2e-client-secret',
         CLIENT_REDIRECT_URI: `${clientBaseURL}/callback`,

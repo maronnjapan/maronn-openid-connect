@@ -39,6 +39,22 @@ export class ClientJwksUriError extends Error {
 }
 
 /**
+ * error が {@link ClientJwksUriError} か（形で判定する）。
+ *
+ * instanceof は、core を 2 度読み込む構成で偽になる。Next.js の本番ビルドは
+ * instrumentation と Route Handler を別のバンドルにするため、プロセスで共有する
+ * キャッシュをどちらかの core で作ると、そのキャッシュが投げたエラーのクラスは、
+ * もう一方が import したクラスと別のオブジェクトになる。
+ */
+export function isClientJwksUriError(error: unknown): error is ClientJwksUriError {
+  return (
+    error instanceof Error &&
+    error.name === 'ClientJwksUriError' &&
+    typeof error.message === 'string'
+  );
+}
+
+/**
  * `jwks_uri` の取得とキャッシュの既定値。
  *
  * - timeoutMs: 取得のタイムアウト（ミリ秒）

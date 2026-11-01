@@ -465,6 +465,21 @@ describe('parseRequestObject', () => {
       );
     });
 
+    it('should reject with the fixed message for a ClientJwksUriError of another copy of core', async () => {
+      const request = await buildSigned({ scope: 'openid' }, rsaKeyPair.privateKey, kid);
+
+      await expectRequestObjectError(
+        parseRequestObject(request, {
+          loadJwks: async () => {
+            throw Object.assign(new Error('the jwks_uri answered HTTP 404'), { name: 'ClientJwksUriError' });
+          },
+          supportedSigningAlgs: ['RS256'],
+          allowUnsigned: false,
+        }),
+        'the client jwks_uri could not be retrieved',
+      );
+    });
+
     it('should let another error of loadJwks through', async () => {
       const request = await buildSigned({ scope: 'openid' }, rsaKeyPair.privateKey, kid);
       const failure = new Error('the client store is unavailable');

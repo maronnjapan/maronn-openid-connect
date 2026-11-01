@@ -1,4 +1,10 @@
-import { ClientJwksUriError, createClientJwksUriCache, type ClientResolver, type Jwk } from '@maronn-openid-connect/core';
+import {
+  ClientJwksUriError,
+  createClientJwksUriCache,
+  type ClientJwksUriCache,
+  type ClientResolver,
+  type Jwk,
+} from '@maronn-openid-connect/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clientJwksUriCache, withRegisteredClientJwksUri } from './client-jwks-uri';
 import { createProviderConfig, type ProviderConfig, type RegisteredClient } from './config';
@@ -34,13 +40,20 @@ function clientsOf(...clients: RegisteredClient[]): ClientResolver {
   };
 }
 
-function setUp(input: { config?: Partial<ProviderConfig>; clients?: RegisteredClient[]; fetch?: typeof fetch } = {}) {
+function setUp(
+  input: {
+    config?: Partial<ProviderConfig>;
+    clients?: RegisteredClient[];
+    fetch?: typeof fetch;
+    cache?: ClientJwksUriCache;
+  } = {},
+) {
   const base = { findClientKeys: vi.fn(async () => ({ keys: [storedKey] })) };
   const fetch = vi.fn(input.fetch ?? (async () => jwkSetResponse(['k1'])));
   let clientResolver = clientsOf(...(input.clients ?? []));
   const resolver = withRegisteredClientJwksUri(createProviderConfig(input.config), () => clientResolver, base, {
     fetch,
-    cache: createClientJwksUriCache(),
+    cache: input.cache ?? createClientJwksUriCache(),
   });
   return {
     base,
@@ -169,6 +182,27 @@ describe('withRegisteredClientJwksUri', () => {
     await expect(resolver.findClientKeys('rp', 'request_object')).rejects.toThrow(
       new ClientJwksUriError('the jwks_uri answered HTTP 404'),
     );
+    expect(warn.mock.calls).toEqual([
+      ['[oidc-provider] could not use the jwks_uri at rp.example.com: the jwks_uri answered HTTP 404'],
+    ]);
+  });
+
+  // A cache shared by the process may come from another copy of core (Next.js
+  // bundles instrumentation.ts apart from the Route Handlers), so its errors
+  // are told apart by shape.
+  it('should log a failure the cache throws from another copy of core', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failure = Object.assign(new Error('the jwks_uri answered HTTP 404'), { name: 'ClientJwksUriError' });
+    const { resolver } = setUp({
+      clients: [{ clientId: 'rp', redirectUris: ['https://rp.example.com/cb'], jwksUri: JWKS_URI }],
+      cache: {
+        load: async () => {
+          throw failure;
+        },
+      },
+    });
+
+    await expect(resolver.findClientKeys('rp', 'request_object')).rejects.toBe(failure);
     expect(warn.mock.calls).toEqual([
       ['[oidc-provider] could not use the jwks_uri at rp.example.com: the jwks_uri answered HTTP 404'],
     ]);

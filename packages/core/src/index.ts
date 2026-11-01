@@ -407,6 +407,7 @@ export {
   // クライアントの jwks_uri（RFC 7591 §2）: 宛先の検査、取得、Cache-Control を反映するキャッシュ、
   // 未知の kid での取り直し（OIDC Core 1.0 §10.1.1）、ClientKeyResolver への合成
   ClientJwksUriError,
+  isClientJwksUriError,
   DEFAULT_CLIENT_JWKS_URI_OPTIONS,
   validateClientJwksUri,
   parseClientJwkSet,

@@ -17,8 +17,8 @@
  * is not used: wrap it with withClientJwksUriKeys() of core to keep jwks_uri.
  */
 import {
-  ClientJwksUriError,
   createClientJwksUriCache,
+  isClientJwksUriError,
   validateClientJwksUri,
   withClientJwksUriKeys,
   type ClientJwksUriCache,
@@ -73,7 +73,9 @@ export function withRegisteredClientJwksUri(
       try {
         return await cache.load(uri, hint, loadOptions);
       } catch (error) {
-        if (error instanceof ClientJwksUriError) {
+        // Told apart by shape: the cache of the process may come from another
+        // copy of core (isClientJwksUriError).
+        if (isClientJwksUriError(error)) {
           console.warn(`[oidc-provider] could not use the jwks_uri at ${hostOf(uri)}: ${error.message}`);
         }
         throw error;

@@ -9,6 +9,7 @@ import {
   createClientJwksUriCache,
   DEFAULT_CLIENT_JWKS_URI_OPTIONS,
   fetchClientJwkSet,
+  isClientJwksUriError,
   parseClientJwkSet,
   resolveClientJwksTtlSeconds,
   validateClientJwksUri,
@@ -71,6 +72,28 @@ function jwkSetResponse(keys: unknown[], headers: Record<string, string> = {}): 
 function stubFetch(respond: () => Response | Promise<Response>) {
   return vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => respond());
 }
+
+describe('isClientJwksUriError', () => {
+  it('should recognize a ClientJwksUriError', () => {
+    expect(isClientJwksUriError(new ClientJwksUriError('the jwks_uri answered HTTP 404'))).toBe(true);
+  });
+
+  // A framework that loads core twice (Next.js bundles instrumentation.ts apart
+  // from the Route Handlers) makes another copy of the class, which instanceof
+  // does not recognize.
+  it('should recognize the ClientJwksUriError of another copy of core by its name', () => {
+    const copy = Object.assign(new Error('the jwks_uri answered HTTP 404'), { name: 'ClientJwksUriError' });
+
+    expect(isClientJwksUriError(copy)).toBe(true);
+  });
+
+  it.each([[new Error('fetch failed')], [new TypeError('boom')], ['ClientJwksUriError'], [{ name: 'ClientJwksUriError' }], [null]])(
+    'should not recognize %j',
+    (value) => {
+      expect(isClientJwksUriError(value)).toBe(false);
+    },
+  );
+});
 
 describe('DEFAULT_CLIENT_JWKS_URI_OPTIONS', () => {
   it('should hold the defaults of the jwks_uri retrieval', () => {

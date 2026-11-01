@@ -7,7 +7,7 @@
  * the signature against the client's registered keys, and returns the decoded
  * claim set so the caller can merge it into the Authorization Request.
  */
-import { ClientJwksUriError } from './client-jwks-uri.js';
+import { isClientJwksUriError } from './client-jwks-uri.js';
 import {
   base64UrlToArrayBuffer,
   importJwkForJwsVerification,
@@ -219,7 +219,9 @@ async function loadVerificationKeys(
   try {
     return await loadJwks(kid === undefined ? { alg } : { alg, kid });
   } catch (e) {
-    if (e instanceof ClientJwksUriError) {
+    // Told apart by shape, not by class: a cache shared by the process may come
+    // from another copy of core (isClientJwksUriError).
+    if (isClientJwksUriError(e)) {
       throw new RequestObjectError('the client jwks_uri could not be retrieved');
     }
     throw e;

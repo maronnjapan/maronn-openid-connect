@@ -453,16 +453,92 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         redirect_uris: [registeredRedirectUri],
-        jwks_uri: 'https://app.example.com/jwks.json',
         sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
         require_auth_time: true,
       },
     });
     expect(response.status()).toBe(201);
     const registered = await response.json() as Record<string, unknown>;
-    expect(Object.hasOwn(registered, 'jwks_uri')).toBe(false);
     expect(Object.hasOwn(registered, 'sector_identifier_uri')).toBe(false);
     expect(Object.hasOwn(registered, 'require_auth_time')).toBe(false);
+  });
+
+  // RFC 7591 §2 jwks_uri and OIDC Dynamic Client Registration 1.0 §2
+  // request_object_signing_alg: both register and come back in the 201
+  // response (§3.2.1). The OP fetches the jwks_uri only when it verifies a
+  // Request Object of the client, here one the E2E RP (apps/client.mjs) signed
+  // with the P-256 key it publishes at /jwks.json. playwright.config.ts lets
+  // the OP fetch the RP over http on 127.0.0.1 (OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI).
+  test('should register jwks_uri and request_object_signing_alg and verify the Request Objects of the client with the keys of its jwks_uri', async ({
+    page,
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+    const jwksUri = `${clientBaseURL}/jwks.json`;
+
+    const registered = await registerClient(request, issuer, {
+      redirect_uris: [`${clientBaseURL}/request-object-callback`],
+      jwks_uri: jwksUri,
+      request_object_signing_alg: 'ES256',
+    });
+    expect(registered.jwks_uri).toBe(jwksUri);
+    expect(registered.request_object_signing_alg).toBe('ES256');
+    const clientId = requireString(registered.client_id, 'client_id');
+
+    // OIDC Core 1.0 §6.3.2: an ES256 Request Object verifies with the P-256 key
+    // of the jwks_uri, so the OP goes on to sign the user in.
+    await page.goto(await requestObjectAuthorizationUrl(request, clientId, 'ES256'));
+    await expect(page).toHaveURL(new RegExp(`^${escapeRegExp(issuer)}/login$`));
+    // An RS256 one is refused: the client registered ES256.
+    const refused = await request.get(await requestObjectAuthorizationUrl(request, clientId, 'RS256'), {
+      maxRedirects: 0,
+      headers: { Accept: 'application/json' },
+    });
+    expect(refused.status()).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: 'invalid_request_object',
+      error_description: 'request object alg does not match the registered request_object_signing_alg',
+    });
+  });
+
+  // RFC 7591 §2: jwks_uri and jwks MUST NOT both be present; OIDC Dynamic
+  // Client Registration 1.0 §3.3: an alg the OP does not accept is invalid metadata.
+  test('should answer invalid_client_metadata for jwks with jwks_uri and for a request_object_signing_alg the OP does not accept', async ({
+    request,
+    baseURL,
+  }) => {
+    const issuer = requireBaseUrl(baseURL);
+    const endpoint = await registrationEndpoint(request, issuer);
+    test.skip(endpoint === undefined, SKIP_REASON);
+    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const { n, e } = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+
+    const both = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        redirect_uris: [registeredRedirectUri],
+        jwks: { keys: [{ kty: 'RSA', n, e }] },
+        jwks_uri: `${clientBaseURL}/jwks.json`,
+      },
+    });
+    const pss = await request.post(`${issuer}/register`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { redirect_uris: [registeredRedirectUri], request_object_signing_alg: 'PS256' },
+    });
+
+    expect(both.status()).toBe(400);
+    expect(await both.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'jwks and jwks_uri must not both be present',
+    });
+    expect(pss.status()).toBe(400);
+    expect(await pss.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'request_object_signing_alg must be one of RS256, RS384, RS512, ES256, ES384, ES512',
+    });
   });
 
   // RFC 7591 §3.1.1: a provider without a verifySoftwareStatement in its config
@@ -550,6 +626,19 @@ const RESTRICTED_SKIP_REASON =
 
 interface AuthorizeState {
   codeVerifier: string;
+}
+
+/** The authorization URL of a Request Object the E2E RP signed for the client with its key of alg. */
+async function requestObjectAuthorizationUrl(
+  request: APIRequestContext,
+  clientId: string,
+  alg: 'RS256' | 'ES256',
+): Promise<string> {
+  const url = new URL('/request-object', clientBaseURL);
+  url.search = new URLSearchParams({ client_id: clientId, alg }).toString();
+  const response = await request.get(url.toString());
+  expect(response.status()).toBe(200);
+  return ((await response.json()) as { authorizationUrl: string }).authorizationUrl;
 }
 
 /** Register a client and return the parsed 201 body. */

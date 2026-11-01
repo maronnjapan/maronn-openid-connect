@@ -453,16 +453,16 @@ test.describe('Dynamic Client Registration (RFC 7591)', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         redirect_uris: [registeredRedirectUri],
-        jwks_uri: 'https://app.example.com/jwks.json',
         sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
         require_auth_time: true,
+        tls_client_auth_subject_dn: 'CN=app',
       },
     });
     expect(response.status()).toBe(201);
     const registered = await response.json() as Record<string, unknown>;
-    expect(Object.hasOwn(registered, 'jwks_uri')).toBe(false);
     expect(Object.hasOwn(registered, 'sector_identifier_uri')).toBe(false);
     expect(Object.hasOwn(registered, 'require_auth_time')).toBe(false);
+    expect(Object.hasOwn(registered, 'tls_client_auth_subject_dn')).toBe(false);
   });
 
   // RFC 7591 §3.1.1: a provider without a verifySoftwareStatement in its config

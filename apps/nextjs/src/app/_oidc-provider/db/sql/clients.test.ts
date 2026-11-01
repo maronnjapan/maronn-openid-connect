@@ -142,6 +142,19 @@ describe('registerClient', () => {
 
       expect(await rows('SELECT response_type FROM client_response_types')).toEqual([]);
     });
+
+    // OIDC Core 1.0 §6.2: the request_uri values the client pre-registered.
+    it('should save the request URIs as rows of the client', async () => {
+      await registerClient(db, {
+        clientId: 'rp-1',
+        redirectUris: ['https://rp.example.com/callback'],
+        requestUris: ['https://rp.example.com/requests/a#NjYz'],
+      });
+
+      expect(await rows('SELECT client_id, value FROM client_request_uris')).toEqual([
+        { client_id: 'rp-1', value: 'https://rp.example.com/requests/a#NjYz' },
+      ]);
+    });
   });
 
   describe('Registering Again', () => {
@@ -337,6 +350,22 @@ describe('createClientResolver', () => {
 
     // The rows come back in the order of their ids, which is not the order they were registered in.
     expect([...(client?.responseTypes ?? [])].sort()).toEqual(['id_token', 'id_token token']);
+  });
+
+  // OIDC Core 1.0 §6.2: the request_uri values the client pre-registered, and
+  // none for a client that registered none.
+  it('should find the request URIs a client registered', async () => {
+    await registerClient(db, {
+      clientId: 'rp-1',
+      redirectUris: ['https://rp.example.com/callback'],
+      requestUris: ['https://rp.example.com/requests/a#NjYz'],
+    });
+    await registerClient(db, { clientId: 'rp-2', redirectUris: ['https://rp.example.com/callback'] });
+
+    expect((await createClientResolver(db).findClient('rp-1'))?.requestUris).toEqual([
+      'https://rp.example.com/requests/a#NjYz',
+    ]);
+    expect(Object.hasOwn((await createClientResolver(db).findClient('rp-2')) ?? {}, 'requestUris')).toBe(false);
   });
 
   it('should find a registered client without its public keys', async () => {

@@ -38,6 +38,7 @@ describe('SCHEMA_SQL', () => {
         'client_grant_types',
         'client_jwks',
         'client_redirect_uris',
+        'client_request_uris',
         'client_response_types',
         'client_scopes',
         'client_secrets',

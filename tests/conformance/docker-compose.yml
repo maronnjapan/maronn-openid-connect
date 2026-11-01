@@ -25,6 +25,14 @@ services:
     image: registry.gitlab.com/openid/conformance-suite/nginx:${CONFORMANCE_SUITE_IMAGE_TAG:-latest}
     ports:
       - "${CONFORMANCE_SUITE_PORT:-8443}:8443"
+    # The certificate of ensure-op-tls-cert.sh replaces the one baked into the
+    # image (CN=localhost, no subject alternative name): the OP fetches the
+    # request_uri modules' Request Objects from this host (OIDC Core 1.0
+    # §6.2.3) and verifies its certificate, which NODE_EXTRA_CA_CERTS of the
+    # op service points at. nginx.conf of the image reads these two paths.
+    volumes:
+      - ./.generated/certs/conformance-nginx.crt:/etc/ssl/certs/nginx-selfsigned.crt:ro
+      - ./.generated/certs/conformance-nginx.key:/etc/ssl/private/nginx-selfsigned.key:ro
     depends_on:
       - conformance-server
     networks:
@@ -66,6 +74,14 @@ services:
       OIDC_CLIENTS_JSON: ${OIDC_CLIENTS_JSON:?OIDC_CLIENTS_JSON must be generated before running compose}
       OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW: ${OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW:-0}
       OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT: ${OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT:-0}
+      # Dynamic client registration (CONFORMANCE_CLIENT_REGISTRATION=dynamic):
+      # the suite registers a client per module, two for oidcc-refresh-token,
+      # which exceeds the generated inventory cap of 100 over a Hybrid OP run.
+      OIDC_DCR_MAX_CLIENTS: ${OIDC_DCR_MAX_CLIENTS:-1000}
+      # The certificate the suite's nginx serves (ensure-op-tls-cert.sh), so
+      # the OP can fetch a request_uri from the suite over HTTPS (OIDC Core 1.0
+      # §6.2.3). Node.js and wrangler dev (miniflare) both read it.
+      NODE_EXTRA_CA_CERTS: /workspace/tests/conformance/.generated/certs/conformance-nginx.crt
       # The workspace is read-only, so the OP keeps its data under /tmp:
       # D1 of wrangler dev (hono-cloudflare), and the node:sqlite database of
       # express-flyio, fastify-flyio and nextjs-vercel (.data/oidc.sqlite of

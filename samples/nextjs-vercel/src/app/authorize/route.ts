@@ -135,7 +135,7 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     // schemes, non-loopback http) — OIDC Core 1.0 §3.1.2.1 / RFC 8252 §8.
     validateRegisteredRedirectUris(client.redirectUris);
 
-    // [resolve-request-object] (feature: request-object) Verify the Request Object and overlay its claims — OIDC Core 1.0 §6.1
+    // [resolve-request-object] (feature: request-object) Verify the Request Object and overlay its claims — OIDC Core 1.0 §6.1 / §6.2
     const { effectiveParams, requestObjectClaims } = await resolveRequestObject(params, client);
 
     // [resolve-redirect-uri] Resolve redirect_uri (errors become redirectable) — OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1
@@ -153,10 +153,11 @@ async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Re
     responseMode ??= resolveFragmentResponseContext(requestParams, issuer);
 
     // [validate-request] Validate the request parameters — OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5
-    // OIDC Core 1.0 §6.3: request_uri / registration are not supported, and
-    // request only when a Request Object was resolved above.
+    // OIDC Core 1.0 §6.3: registration is not supported, and request /
+    // request_uri only when a Request Object was resolved above.
     rejectUnsupportedRequestParams(params, redirectUri, state, {
       requestParameterSupported: effectiveParams !== undefined,
+      requestUriParameterSupported: effectiveParams !== undefined,
     });
 
     // OIDC Core 1.0 §6.1: response_type / client_id inside the Request Object

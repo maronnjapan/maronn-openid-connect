@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS client_response_types (
 );
 CREATE INDEX IF NOT EXISTS client_response_types_client_id_idx ON client_response_types (client_id);
 
+-- Not in the ER model: the request_uri values the client pre-registered
+-- (request_uris of OpenID Connect Dynamic Client Registration 1.0 §2). While
+-- the OP requires registration (its default), an authorization request may
+-- only pass a request_uri (OIDC Core 1.0 §6.2) that equals one of these rows,
+-- fragment included. A client without rows cannot use request_uri then.
+CREATE TABLE IF NOT EXISTS client_request_uris (
+  id        TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+  value     VARCHAR(5000) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_request_uris_client_id_idx ON client_request_uris (client_id);
+
 -- Scope: the scopes the client may request. A request for any other scope is
 -- rejected with invalid_scope. A client without rows may request every scope
 -- the OP accepts.

@@ -12,6 +12,14 @@ on:
           - basic
           - implicit
           - hybrid
+      client_registration:
+        description: "How the suite gets its client: the static clients of the run, or dynamic client registration at POST /register (hono-cloudflare and express-flyio only)"
+        required: false
+        default: "static"
+        type: choice
+        options:
+          - static
+          - dynamic
       sample_app:
         description: "Sample OP app to test"
         required: false
@@ -40,16 +48,19 @@ on:
 
 jobs:
   op-plan:
-    name: ${{ matrix.plan }}-op
+    name: ${{ matrix.plan }}-op-${{ matrix.client_registration }}
     if: github.event_name == 'workflow_dispatch' || contains(join(github.event.pull_request.labels.*.name, ','), 'run-conformance')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        # A manual run checks the plan it chose; a labelled pull request
-        # checks the Basic OP, the Implicit OP and the Hybrid OP plans.
+        # A manual run checks the plan and the client registration it chose; a
+        # labelled pull request checks the Basic OP, the Implicit OP and the
+        # Hybrid OP plans, each with the static clients and with dynamic client
+        # registration (the hono-cloudflare sample has the registration endpoint).
         plan: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.plan) || '["basic","implicit","hybrid"]') }}
+        client_registration: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.client_registration) || '["static","dynamic"]') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -65,9 +76,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run ${{ matrix.plan }} OP conformance suite
+      - name: Run ${{ matrix.plan }} OP conformance suite (${{ matrix.client_registration }} client)
         env:
           CONFORMANCE_SAMPLE_APP: ${{ github.event.inputs.sample_app || 'hono-cloudflare' }}
+          CONFORMANCE_CLIENT_REGISTRATION: ${{ matrix.client_registration }}
           CONFORMANCE_SUITE_IMAGE_TAG: ${{ github.event.inputs.suite_image_tag || 'latest' }}
           # The modules that wait for a screenshot never finish unattended, and
           # the runner waits 240 s for each (tests/conformance/README.md).
@@ -78,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: oidf-${{ matrix.plan }}-op-conformance
+          name: oidf-${{ matrix.plan }}-op-${{ matrix.client_registration }}-conformance
           path: |
             tests/conformance/results
             tests/conformance/.generated

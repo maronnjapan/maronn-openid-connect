@@ -24,10 +24,15 @@
  * 生成コードは、関数が設定されているときだけ対応する値（Bearer トークン、
  * software_statement）の提示を要求し、無ければ要求しない。
  *
+ * request_uris（OIDC Dynamic Client Registration 1.0 §2）と jwks_uri（RFC 7591 §2）は
+ * URL の形だけを検査して登録し、取得は OP が要るときに行う（request_uri が使われた
+ * 認可リクエスト、鍵が要る検証。OIDC Core 1.0 §6.2 / §6.3.2）。
+ * request_object_signing_alg は OP が受理する alg の一覧に照合して登録する。
+ *
  * スコープ外（非目標）: RFC 7592（登録後の参照・更新・削除、
  * registration_access_token / registration_client_uri はどちらも返さない）、
- * initial access token と software statement の発行と検証、URL 参照系
- * メタデータ（jwks_uri / sector_identifier_uri など）の取得。
+ * initial access token と software statement の発行と検証、sector_identifier_uri
+ * など登録時に URL を参照しに行く必要のあるメタデータの解釈。
  */
 export {
   ClientRegistrationError,

@@ -58,6 +58,12 @@ export interface ProviderMetadataConfig {
   requestParameterSupported?: boolean;
   requestUriParameterSupported?: boolean;
   /**
+   * OIDC Discovery 1.0 §3: whether the OP requires any request_uri value used
+   * to be pre-registered with the request_uris registration parameter (OIDC
+   * Core 1.0 §6.2). Omitted means false.
+   */
+  requireRequestUriRegistration?: boolean;
+  /**
    * OIDC Discovery 1.0 §3: JWS `alg` values the OP supports for signed Request
    * Objects (`request` parameter). Advertise when `requestParameterSupported` is
    * true so clients know which signing algorithms to use (e.g. `["RS256"]`).
@@ -105,6 +111,7 @@ export interface ProviderMetadata {
   claims_parameter_supported?: boolean;
   request_parameter_supported?: boolean;
   request_uri_parameter_supported?: boolean;
+  require_request_uri_registration?: boolean;
   request_object_signing_alg_values_supported?: string[];
 
   // RFC 9207 §3
@@ -250,6 +257,9 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
   }
   if (config.requestUriParameterSupported !== undefined) {
     metadata.request_uri_parameter_supported = config.requestUriParameterSupported;
+  }
+  if (config.requireRequestUriRegistration !== undefined) {
+    metadata.require_request_uri_registration = config.requireRequestUriRegistration;
   }
   if (
     config.requestObjectSigningAlgValuesSupported &&

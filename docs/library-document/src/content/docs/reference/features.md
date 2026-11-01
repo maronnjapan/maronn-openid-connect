@@ -47,8 +47,8 @@ CLI 生成 OP が公開するエンドポイントです（core を直接使う�
 | `login_hint` | ログイン画面のユーザー名欄に事前入力（OIDC Core 1.0 §3.1.2.1） |
 | `id_token_hint` | 署名・クレームを検証（OIDC Core 1.0 §3.1.2.2）。既定では OP 自身の署名鍵で検証 |
 | `claims` | JSON をパースし `userinfo` / `id_token` の個別クレーム要求に対応（OIDC Core 1.0 §5.5） |
-| `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理 |
-| `request_uri` | 未対応。仕様通り `request_uri_not_supported` で拒否（OIDC Core 1.0 §6.3） |
+| `request` | 署名付き Request Object（by value）を検証しクエリパラメータより優先（OIDC Core 1.0 §6.1）。`allowUnsignedRequestObject: true` で `alg: none` も互換受理。クライアントが `request_object_signing_alg` を登録していれば、その alg で署名された Request Object だけを受理する |
+| `request_uri` | Request Object by reference（OIDC Core 1.0 §6.2）。クライアントが登録した `request_uris`（静的クライアントは `requestUris`、動的登録は `request_uris` メタデータ）と完全一致する https の URL を GET し、取得した JWT を `request` と同じ規則で検証する。`requireRequestUriRegistration: false` にすると未登録の URL も取得する。検査と取得の失敗は OP 上の `invalid_request_uri`、`request` との併用は `invalid_request`。discovery は `request_uri_parameter_supported: true` と `require_request_uri_registration` を広告する |
 | `registration` | 未対応。仕様通り `registration_not_supported` で拒否（OIDC Core 1.0 §3.1.2.6） |
 
 ## Token Endpoint
@@ -129,6 +129,7 @@ CLI 生成コードの `ProviderConfig` で設定できる項目です。
 | `authorizationCodeTtl` | `300` | 認可コード有効期間（秒） |
 | `allowNonPkceAuthorizationCodeFlow` | `false` | confidential client の非 PKCE フローを許可（conformance 互換モード） |
 | `allowUnsignedRequestObject` | `false` | 署名なし（`alg: none`）Request Object の互換受理 |
+| `requireRequestUriRegistration` | `true` | `request_uri` を、クライアントが登録した `request_uris` と完全一致するものに限る（OIDC Core 1.0 §6.2 / discovery の `require_request_uri_registration`）。`false` にすると構文を満たす https の URL をどれでも取得しに行くので、OP から到達できる内部サービスを探られる面（SSRF）が開く |
 
 ## Feature Toggles
 

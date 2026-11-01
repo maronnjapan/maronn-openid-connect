@@ -22,8 +22,11 @@
  * - response_types: responseTypes, the response types the client may use at
  *   the authorization endpoint (id_token and id_token token for the Implicit
  *   Flow). A client without them may use code only.
+ * - request_uris: requestUris, the request_uri values the client
+ *   pre-registered (OIDC Core 1.0 §6.2). While the OP requires registration,
+ *   a client without them cannot pass request_uri.
  * - Metadata without a field (default_max_age, the ID Token and UserInfo
- *   signing algs) keeps its default.
+ *   signing algs, request_object_signing_alg) keeps its default.
  *
  * The client's public keys (keys.clientJwks(), one record per purpose) are not
  * part of the RegisteredClient. A process that needs them asks the
@@ -65,6 +68,7 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       if (client.grant_types.length > 0) registered.grantTypes = client.grant_types;
       if (client.scopes.length > 0) registered.scope = client.scopes;
       if ((client.response_types ?? []).length > 0) registered.responseTypes = client.response_types;
+      if ((client.request_uris ?? []).length > 0) registered.requestUris = client.request_uris;
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
       } else if (client.client_auths[0]) {
@@ -156,6 +160,7 @@ export async function registerClient(
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],
     response_types: [...(client.responseTypes ?? [])],
+    request_uris: [...(client.requestUris ?? [])],
   };
   await writeRecord(db, keys.client(client.clientId), record);
 

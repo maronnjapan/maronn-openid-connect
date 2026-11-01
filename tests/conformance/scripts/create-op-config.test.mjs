@@ -6,14 +6,19 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  BASIC_OP_DYNAMIC_TEST_PLAN,
   BASIC_OP_TEST_PLAN,
+  HYBRID_OP_DYNAMIC_TEST_PLAN,
   HYBRID_OP_TEST_PLAN,
+  IMPLICIT_OP_DYNAMIC_TEST_PLAN,
   IMPLICIT_OP_TEST_PLAN,
   opTestPlan,
+  opTestPlanName,
   REQUEST_OBJECT_PUBLIC_JWK,
   REQUEST_OBJECT_PRIVATE_JWK,
   REQUEST_OBJECT_SIGNING_ALG,
   createOpConformanceArtifacts,
+  resolveClientRegistration,
   resolveSampleApp,
   writeOpConformanceArtifacts,
 } from './create-op-config.mjs';
@@ -383,8 +388,108 @@ describe('createOpConformanceArtifacts', () => {
   });
 });
 
+describe('createOpConformanceArtifacts', () => {
+  // OpenID Connect Dynamic Client Registration 1.0: the suite registers its
+  // own client at POST /register before each module, so the OP starts without
+  // the static clients and the suite only needs a client_name per client slot.
+  describe('OIDF dynamic client registration configuration', () => {
+    const options = {
+      opIssuer: 'https://op-tls:3443',
+      suiteBaseUrl: 'https://conformance-nginx:8443',
+      sampleApp: 'hono-cloudflare',
+      clientRegistration: 'dynamic',
+    };
+
+    it('should name the dynamic_client variant of every plan', () => {
+      assert.equal(opTestPlanName('basic', 'dynamic'), BASIC_OP_DYNAMIC_TEST_PLAN);
+      assert.equal(opTestPlanName('implicit', 'dynamic'), IMPLICIT_OP_DYNAMIC_TEST_PLAN);
+      assert.equal(opTestPlanName('hybrid', 'dynamic'), HYBRID_OP_DYNAMIC_TEST_PLAN);
+      assert.equal(opTestPlanName('basic', 'static'), BASIC_OP_TEST_PLAN);
+      assert.equal(opTestPlanName('basic'), BASIC_OP_TEST_PLAN);
+      assert.equal(
+        BASIC_OP_DYNAMIC_TEST_PLAN,
+        'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]',
+      );
+    });
+
+    it('should configure a client_name for each client slot of the plan and register no static client', () => {
+      const artifacts = createOpConformanceArtifacts({ ...options, plan: 'basic' });
+      const staticArtifacts = createOpConformanceArtifacts({ ...options, clientRegistration: 'static', plan: 'basic' });
+
+      assert.equal(artifacts.clientRegistration, 'dynamic');
+      assert.equal(artifacts.testPlan, BASIC_OP_DYNAMIC_TEST_PLAN);
+      assert.deepEqual(artifacts.config, {
+        alias: 'maronn-basic-op',
+        description:
+          'maronn-openid-connect Basic OP certification check for the Hono Cloudflare sample (dynamic client registration)',
+        server: {
+          discoveryUrl: 'https://op-tls:3443/.well-known/openid-configuration',
+        },
+        client: { client_name: 'maronn-openid-connect Basic OP conformance client', scope: 'openid' },
+        client2: { client_name: 'maronn-openid-connect Basic OP conformance client2', scope: 'openid' },
+        client_secret_post: {
+          client_name: 'maronn-openid-connect Basic OP conformance client_secret_post',
+          scope: 'openid',
+        },
+        // The same login and consent screens answer both client registrations.
+        browser: staticArtifacts.config.browser,
+      });
+      assert.deepEqual(artifacts.clients, []);
+    });
+
+    it('should keep the static clients and the static_client variant by default', () => {
+      const artifacts = createOpConformanceArtifacts({ ...options, clientRegistration: undefined, plan: 'implicit' });
+
+      assert.equal(artifacts.clientRegistration, 'static');
+      assert.equal(artifacts.testPlan, IMPLICIT_OP_TEST_PLAN);
+      assert.equal(artifacts.clients.length, 1);
+      assert.equal(artifacts.config.client.client_id, 'oidf-implicit-client');
+    });
+
+    it('should select the modules of the dynamic plan when the manual review ones are skipped', () => {
+      const testPlan = opTestPlan({ plan: 'implicit', skipManualReview: true, clientRegistration: 'dynamic' });
+
+      assert.ok(testPlan.startsWith(`${IMPLICIT_OP_DYNAMIC_TEST_PLAN}:oidcc-server,oidcc-idtoken-signature,`));
+      assert.equal(testPlan.includes('oidcc-prompt-login'), false);
+    });
+
+    // The registration endpoint exists only in a sample generated with
+    // --enable dynamic-client-registration.
+    it('should reject a sample generated without the registration endpoint', () => {
+      assert.throws(
+        () => createOpConformanceArtifacts({ ...options, sampleApp: 'fastify-flyio' }),
+        {
+          message:
+            'CONFORMANCE_CLIENT_REGISTRATION=dynamic needs a sample generated with --enable dynamic-client-registration; fastify-flyio was not',
+        },
+      );
+      assert.equal(resolveSampleApp('express-flyio').dynamicClientRegistration, true);
+      assert.equal(resolveSampleApp('nextjs-vercel').dynamicClientRegistration, false);
+    });
+
+    it('should reject a client registration the conformance runs do not configure', () => {
+      assert.throws(() => resolveClientRegistration('mtls'), {
+        message: 'Unsupported CONFORMANCE_CLIENT_REGISTRATION "mtls". Expected one of: static, dynamic',
+      });
+    });
+  });
+});
+
 describe('writeOpConformanceArtifacts', () => {
   describe('generated files', () => {
+    it('should write the client registration of the run into the metadata', async () => {
+      const outDir = await mkdtemp(join(tmpdir(), 'maronn-conformance-'));
+      try {
+        const written = await writeOpConformanceArtifacts({ plan: 'basic', clientRegistration: 'dynamic', outDir });
+
+        assert.equal(JSON.parse(await readFile(join(outDir, 'metadata.json'), 'utf8')).clientRegistration, 'dynamic');
+        assert.deepEqual(JSON.parse(await readFile(join(outDir, 'oidc-clients.json'), 'utf8')), []);
+        assert.equal(await readFile(join(outDir, 'test-plan.txt'), 'utf8'), `${BASIC_OP_DYNAMIC_TEST_PLAN}\n`);
+      } finally {
+        await rm(outDir, { recursive: true, force: true });
+      }
+    });
+
     it('should write the suite configuration of the plan under the name of the plan', async () => {
       const outDir = await mkdtemp(join(tmpdir(), 'maronn-conformance-'));
       try {
@@ -425,8 +530,60 @@ describe('run-op.sh', () => {
   });
 });
 
+describe('run-op.sh', () => {
+  describe('client registration', () => {
+    // CONFORMANCE_CLIENT_REGISTRATION picks the client_registration variant
+    // (create-op-config.mjs); static is the default.
+    it('should hand the client registration of the run to the configuration generator, static by default', () => {
+      const runScript = readFileSync(join(scriptDir, 'run-op.sh'), 'utf8');
+
+      assert.match(runScript, /\nCLIENT_REGISTRATION="\$\{CONFORMANCE_CLIENT_REGISTRATION:-static\}"\n/);
+      assert.match(runScript, /\n  static\|dynamic\)\n/);
+      assert.match(runScript, /\nCONFORMANCE_CLIENT_REGISTRATION="\$\{CLIENT_REGISTRATION\}" \\\n/);
+    });
+  });
+});
+
+describe('ensure-op-tls-cert.sh', () => {
+  // OIDC Core 1.0 §6.2.3: the OP fetches the request_uri of the suite over
+  // HTTPS, so the suite's nginx serves a certificate for its host name.
+  it('should generate a certificate for the host name of the suite nginx', () => {
+    const script = readFileSync(join(scriptDir, 'ensure-op-tls-cert.sh'), 'utf8');
+
+    assert.match(script, /ensure_cert op-tls "DNS:op-tls,DNS:localhost,IP:127\.0\.0\.1"/);
+    assert.match(script, /ensure_cert conformance-nginx "DNS:conformance-nginx,DNS:nginx,DNS:localhost,IP:127\.0\.0\.1"/);
+  });
+});
+
 describe('docker-compose.yml', () => {
+  describe('conformance-nginx service', () => {
+    it('should serve the generated certificate instead of the one of the image', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(
+        compose,
+        /\n      - \.\/\.generated\/certs\/conformance-nginx\.crt:\/etc\/ssl\/certs\/nginx-selfsigned\.crt:ro\n/,
+      );
+      assert.match(
+        compose,
+        /\n      - \.\/\.generated\/certs\/conformance-nginx\.key:\/etc\/ssl\/private\/nginx-selfsigned\.key:ro\n/,
+      );
+    });
+  });
+
   describe('op service', () => {
+    // With dynamic client registration the OP fetches request_uri values from
+    // the suite (OIDC Core 1.0 §6.2.3) and registers a client per module.
+    it('should trust the certificate of the suite nginx and raise the registration cap', () => {
+      const compose = readFileSync(join(scriptDir, '../docker-compose.yml'), 'utf8');
+
+      assert.match(
+        compose,
+        /\n      NODE_EXTRA_CA_CERTS: \/workspace\/tests\/conformance\/\.generated\/certs\/conformance-nginx\.crt\n/,
+      );
+      assert.match(compose, /\n      OIDC_DCR_MAX_CLIENTS: \$\{OIDC_DCR_MAX_CLIENTS:-1000\}\n/);
+    });
+
     // The OP runs on the workspace mounted read-only: wrangler dev
     // (hono-cloudflare) keeps D1 under OIDC_D1_PERSIST_PATH, and the node:sqlite
     // samples (express-flyio, fastify-flyio, nextjs-vercel) keep their database
@@ -449,6 +606,7 @@ describe('resolveSampleApp', () => {
         displayName: 'Fastify',
         packageName: '@maronn-openid-connect/sample-fastify-flyio',
         defaultStartCommand: 'node samples/fastify-flyio/dist/server.js',
+        dynamicClientRegistration: false,
       });
     });
 

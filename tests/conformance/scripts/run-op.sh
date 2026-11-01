@@ -11,6 +11,11 @@ COMPOSE_FILE="${CONFORMANCE_DIR}/docker-compose.yml"
 # The certification plan of the run: basic (the default), implicit or hybrid
 # (create-op-config.mjs).
 PLAN="${1:-${CONFORMANCE_PLAN:-basic}}"
+# How the suite gets its client: static (the default), the clients
+# create-op-config.mjs registers on the OP, or dynamic, a client the suite
+# registers itself at POST /register of the sample OP before each module
+# (client_registration=dynamic_client).
+CLIENT_REGISTRATION="${CONFORMANCE_CLIENT_REGISTRATION:-static}"
 SAMPLE_APP="${CONFORMANCE_SAMPLE_APP:-hono-cloudflare}"
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER:-https://op-tls:3443}"
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL:-https://conformance-nginx:8443}"
@@ -34,6 +39,15 @@ case "${PLAN}" in
     ;;
   *)
     echo "Unsupported CONFORMANCE_PLAN \"${PLAN}\". Expected one of: basic, implicit, hybrid" >&2
+    exit 1
+    ;;
+esac
+
+case "${CLIENT_REGISTRATION}" in
+  static|dynamic)
+    ;;
+  *)
+    echo "Unsupported CONFORMANCE_CLIENT_REGISTRATION \"${CLIENT_REGISTRATION}\". Expected one of: static, dynamic" >&2
     exit 1
     ;;
 esac
@@ -79,6 +93,7 @@ pnpm --filter @maronn-openid-connect/cli build
 pnpm --filter "${SAMPLE_PACKAGE}" build
 
 CONFORMANCE_PLAN="${PLAN}" \
+CONFORMANCE_CLIENT_REGISTRATION="${CLIENT_REGISTRATION}" \
 CONFORMANCE_ALIAS="${CONFORMANCE_ALIAS:-maronn-${PLAN}-op}" \
 CONFORMANCE_OP_ISSUER="${CONFORMANCE_OP_ISSUER}" \
 CONFORMANCE_SUITE_BASE_URL="${CONFORMANCE_SUITE_BASE_URL}" \
@@ -94,6 +109,7 @@ cp "${CONFORMANCE_DIR}/nginx/op-tls.conf" "${GENERATED_DIR}/nginx/op-tls.conf"
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-maronn_oidf_conformance}"
 export CONFORMANCE_SAMPLE_APP="${SAMPLE_APP}"
+export CONFORMANCE_CLIENT_REGISTRATION="${CLIENT_REGISTRATION}"
 export CONFORMANCE_SAMPLE_START_COMMAND="${CONFORMANCE_SAMPLE_START_COMMAND:-${DEFAULT_START_COMMAND}}"
 export CONFORMANCE_OP_ISSUER
 export CONFORMANCE_SUITE_BASE_URL

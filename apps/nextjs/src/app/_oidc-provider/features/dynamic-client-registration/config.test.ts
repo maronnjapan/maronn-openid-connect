@@ -24,6 +24,15 @@ describe('dynamicClientRegistrationConfig', () => {
       customClientMetadata: {},
     });
   });
+
+  // RFC 7591 §2 jwks_uri: accepted, fetched with globalThis.fetch and kept for 5 minutes.
+  it('should accept jwks_uri, keep a fetched JWK Set for 300 seconds and fetch with the global fetch, by default', () => {
+    expect(dynamicClientRegistrationConfig).toMatchObject({
+      allowJwksUri: true,
+      jwksUriCacheTtlSeconds: 300,
+      jwksUriFetch: undefined,
+    });
+  });
 });
 
 describe('extendDynamicClientRegistrationConfig', () => {

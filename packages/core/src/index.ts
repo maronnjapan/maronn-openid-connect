@@ -103,17 +103,47 @@ export type {
 export {
   parseRequestObject,
   RequestObjectError,
+  // OIDC Core 1.0 §6.2: Request Object passed by reference (request_uri)
+  validateRequestUri,
+  fetchRequestObjectByReference,
+  RequestUriError,
+  REQUEST_URI_MAX_LENGTH,
+  DEFAULT_REQUEST_OBJECT_MAX_BYTES,
+  DEFAULT_REQUEST_URI_FETCH_TIMEOUT_MS,
 } from './request-object.js';
 
 export type {
   ParseRequestObjectOptions,
+  ValidateRequestUriOptions,
+  FetchRequestObjectOptions,
 } from './request-object.js';
+
+export {
+  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: the jwks_uri of a client
+  validateJwksUri,
+  fetchJwksFromUri,
+  createJwksUriResolver,
+  JwksUriError,
+  JWKS_URI_MAX_LENGTH,
+  DEFAULT_JWKS_MAX_BYTES,
+  DEFAULT_JWKS_FETCH_TIMEOUT_MS,
+  DEFAULT_JWKS_CACHE_TTL_MS,
+  DEFAULT_JWKS_FAILURE_TTL_MS,
+} from './jwks-uri.js';
+
+export type {
+  FetchJwksOptions,
+  JwksUriResolver,
+  JwksUriResolverOptions,
+  CachedJwks,
+} from './jwks-uri.js';
 
 export type {
   AuthorizationRequestParams,
   ClientInfo,
   ClientResolver,
   ResolvedRequestObjectParams,
+  ResolveRequestUriOptions,
   ValidatedAuthorizationRequest,
   OfflineAccessGrantedCallback,
 } from './authorization-request.js';

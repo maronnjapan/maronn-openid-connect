@@ -11,8 +11,9 @@ import {
  * EXPERIMENTAL — OAuth 2.0 Dynamic Client Registration (RFC 7591): POST
  * /register. The clients it issues are kept in an in-memory store
  * (store.ts) and resolved after the configured clients, so a static
- * registration always wins; the public keys a registration carried (jwks)
- * are handed out by the ClientKeyResolver the same way. Registration
+ * registration always wins; the public keys a registration carried (jwks),
+ * or named (jwks_uri, fetched when needed and cached), are handed out by the
+ * ClientKeyResolver the same way. Registration
  * management (RFC 7592) is not implemented. The settings, the optional
  * verifier functions (initial access token, software statement) and the
  * custom metadata are in config.ts.
@@ -25,12 +26,15 @@ export const dynamicClientRegistration = defineFeature({
   routes: [{ path: '/register', app: registerApp, methods: ['POST'], cors: 'protected' }],
   // OIDC Discovery 1.0 §3: registration_endpoint.
   discovery: (issuer) => ({ registration_endpoint: `${issuer}/register` }),
-  context: ({ c, options }) => ({
-    dynamicClientStore,
-    dynamicClientRegistrationConfig: extendDynamicClientRegistrationConfig(dynamicClientRegistrationConfig, options.dynamicClientRegistration),
-    // Dynamically registered clients, and their keys, resolve after the configured clients.
-    clientResolver: withDynamicallyRegisteredClients(c.get('clientResolver')),
-    tokenClientResolver: withDynamicallyRegisteredClients(c.get('tokenClientResolver')),
-    clientKeyResolver: withDynamicallyRegisteredClientKeys(c.get('clientKeyResolver')),
-  }),
+  context: ({ c, options }) => {
+    const config = extendDynamicClientRegistrationConfig(dynamicClientRegistrationConfig, options.dynamicClientRegistration);
+    return {
+      dynamicClientStore,
+      dynamicClientRegistrationConfig: config,
+      // Dynamically registered clients, and their keys, resolve after the configured clients.
+      clientResolver: withDynamicallyRegisteredClients(c.get('clientResolver')),
+      tokenClientResolver: withDynamicallyRegisteredClients(c.get('tokenClientResolver')),
+      clientKeyResolver: withDynamicallyRegisteredClientKeys(c.get('clientKeyResolver'), () => config),
+    };
+  },
 });

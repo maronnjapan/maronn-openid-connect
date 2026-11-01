@@ -2,6 +2,7 @@ import type { ClientKeyResolver, ClientResolver, TokenClientResolver } from '@ma
 import { describe, expect, it, vi } from 'vitest';
 import { createMapKvDatabase } from '../../../../test-support/databases';
 import { createClientKeyResolver, createClientResolver, registerClient } from '../../db/kv/clients';
+import { dynamicClientRegistrationConfig } from './config';
 import { dynamicClientRegistration } from './feature';
 import { dynamicClientStore } from './store';
 
@@ -105,6 +106,33 @@ describe('dynamicClientRegistration', () => {
       expect((clientResolver as unknown as { extra: unknown }).extra).toBe(extra);
       expect(base.findClient).toBe(findClient);
       expect(findClient).toHaveBeenCalledWith('dcr-feature-asked');
+    });
+
+    // RFC 7591 §2 jwks_uri: the keys are fetched from the document the
+    // registration named, with the jwksUriFetch of the config.
+    it('should resolve the keys of a dynamic registration from its jwks_uri', async () => {
+      const previousFetch = dynamicClientRegistrationConfig.jwksUriFetch;
+      const fetched: string[] = [];
+      dynamicClientRegistrationConfig.jwksUriFetch = (async (input: string | URL | Request) => {
+        fetched.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+        return Response.json({ keys: [{ ...RSA_KEY, kid: 'remote-key' }] });
+      }) as typeof fetch;
+      try {
+        await dynamicClientStore.save({
+          clientId: 'dcr-feature-jwks-uri',
+          redirectUris: ['https://dynamic.example.com/cb'],
+          jwksUri: 'https://dynamic.example.com/jwks/feature-test',
+        });
+
+        const { clientKeyResolver } = contextOver(createMapKvDatabase());
+
+        expect(await clientKeyResolver?.findClientKeys('dcr-feature-jwks-uri', 'request_object')).toEqual({
+          keys: [{ ...RSA_KEY, kid: 'remote-key' }],
+        });
+        expect(fetched).toEqual(['https://dynamic.example.com/jwks/feature-test']);
+      } finally {
+        dynamicClientRegistrationConfig.jwksUriFetch = previousFetch;
+      }
     });
   });
 });

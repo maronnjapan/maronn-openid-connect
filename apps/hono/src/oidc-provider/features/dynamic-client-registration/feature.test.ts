@@ -88,5 +88,26 @@ describe('dynamicClientRegistration', () => {
 
       expect(found).toEqual([{ keys: [{ ...RSA_KEY, kid: 'static-key' }] }, { keys: [RSA_KEY] }, { keys: [] }]);
     });
+
+    // RFC 7591 §2 jwks_uri: the keys are fetched from the document the
+    // registration named, with the jwksUriFetch of the option.
+    it('should resolve the keys of a dynamic registration from its jwks_uri with the fetch of the option', async () => {
+      const fetched: string[] = [];
+      const jwksUriFetch = (async (input: string | URL | Request) => {
+        fetched.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+        return Response.json({ keys: [{ ...RSA_KEY, kid: 'remote-key' }] });
+      }) as typeof fetch;
+      await dynamicClientStore.save({
+        clientId: 'dcr-feature-jwks-uri',
+        redirectUris: ['https://dynamic.example.com/cb'],
+        jwksUri: 'https://dynamic.example.com/jwks/feature-test',
+      });
+      const { c } = await providerContext({ options: { dynamicClientRegistration: { jwksUriFetch } } });
+
+      const keys = await c.get('clientKeyResolver').findClientKeys('dcr-feature-jwks-uri', 'request_object');
+
+      expect(keys).toEqual({ keys: [{ ...RSA_KEY, kid: 'remote-key' }] });
+      expect(fetched).toEqual(['https://dynamic.example.com/jwks/feature-test']);
+    });
   });
 });

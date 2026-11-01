@@ -51,9 +51,24 @@ export type SoftwareStatementVerifier = (
  *   grant the provider does not answer is never registrable, whatever is listed
  *   here. Add the URN of an experimental grant (token exchange, device code,
  *   CIBA) to let dynamically registered clients use it.
- * - jwksPurposes: the ClientKeyResolver purposes the jwks of a registration
- *   serves — a registered key verifies signed Request Objects (request_object),
- *   and stands ready for private_key_jwt and DPoP once a project adds them.
+ * - jwksPurposes: the ClientKeyResolver purposes the jwks or jwks_uri of a
+ *   registration serves — a registered key verifies signed Request Objects
+ *   (request_object), and stands ready for private_key_jwt and DPoP once a
+ *   project adds them.
+ * - allowJwksUri: whether a registration may name a jwks_uri (RFC 7591 §2)
+ *   instead of inline jwks. The OP then fetches the client's JWK Set document
+ *   from that URL when it needs the keys (never at registration), over https
+ *   only, without following redirects, with a size cap and a timeout. The
+ *   URL is the registrant's, so an open registration lets anyone make the OP
+ *   GET a URL of their choice at verification time (blind SSRF: nothing of the
+ *   response reaches the registrant). Set false to close that and accept
+ *   inline jwks only.
+ * - jwksUriCacheTtlSeconds: how long a fetched JWK Set is kept before the OP
+ *   fetches it again (OIDC Core 1.0 §10.1.1: a client rotating its keys keeps
+ *   the old ones published that long). A failed fetch is retried after 30 s.
+ * - jwksUriFetch: the fetch the OP retrieves a jwks_uri with; globalThis.fetch
+ *   while undefined. Pass one to add a trust store, a proxy or an allow-list
+ *   of your own, or to record what the OP retrieves in tests.
  * - verifyInitialAccessToken: undefined as generated, which leaves registration
  *   open (RFC 7591 §3.1 SHOULD). Set a function to require an initial access
  *   token (OIDC Dynamic Client Registration 1.0 §3): POST /register then answers
@@ -91,6 +106,9 @@ export interface DynamicClientRegistrationConfig {
   tokenEndpointAuthMethods: readonly string[];
   grantTypes: readonly string[];
   jwksPurposes: readonly string[];
+  allowJwksUri: boolean;
+  jwksUriCacheTtlSeconds: number;
+  jwksUriFetch: typeof fetch | undefined;
   verifyInitialAccessToken: InitialAccessTokenVerifier | undefined;
   verifySoftwareStatement: SoftwareStatementVerifier | undefined;
   customClientMetadata: Readonly<Record<string, CustomClientMetadataValidator>>;
@@ -102,6 +120,9 @@ export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = 
   tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none'],
   grantTypes: ['authorization_code', 'refresh_token', 'implicit'],
   jwksPurposes: ['request_object', 'private_key_jwt', 'dpop'],
+  allowJwksUri: true,
+  jwksUriCacheTtlSeconds: 300,
+  jwksUriFetch: undefined,
   verifyInitialAccessToken: undefined,
   verifySoftwareStatement: undefined,
   customClientMetadata: {},
@@ -162,5 +183,12 @@ declare module '../../config.js' {
      * clients of db/.
      */
     registrationMetadata?: Readonly<Record<string, unknown>>;
+    /**
+     * EXPERIMENTAL (RFC 7591 §2): the jwks_uri a dynamic registration named.
+     * The keys of the client come from that document, fetched when a process
+     * needs them (withDynamicallyRegisteredClientKeys of store.ts). Absent for
+     * the clients of db/, whose keys are registered directly (client_jwks).
+     */
+    jwksUri?: string;
   }
 }

@@ -2,6 +2,39 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/**
+ * How the suite gets its client (CONFORMANCE_CLIENT_REGISTRATION): static,
+ * the clients create-op-config.mjs registers on the OP (oidc-clients.json)
+ * and configures on the suite, or dynamic, a client the suite registers at the
+ * OP's registration endpoint (OpenID Connect Dynamic Client Registration 1.0)
+ * before each module. The suite names them static_client / dynamic_client in
+ * the client_registration variant of the plan.
+ */
+const CLIENT_REGISTRATIONS = new Map([
+  ['static', { name: 'static', variant: 'static_client', displayName: 'static client' }],
+  ['dynamic', { name: 'dynamic', variant: 'dynamic_client', displayName: 'dynamic client registration' }],
+]);
+
+export function resolveClientRegistration(clientRegistration = 'static') {
+  const normalized = String(clientRegistration).trim().toLowerCase();
+  const metadata = CLIENT_REGISTRATIONS.get(normalized);
+  if (!metadata) {
+    throw new Error(
+      `Unsupported CONFORMANCE_CLIENT_REGISTRATION "${clientRegistration}". Expected one of: ${[
+        ...CLIENT_REGISTRATIONS.keys(),
+      ].join(', ')}`,
+    );
+  }
+  return metadata;
+}
+
+/** The test plan of a certification plan with its server_metadata and client_registration variants. */
+export function opTestPlanName(plan = 'basic', clientRegistration = 'static') {
+  const { testPlanBase } = resolvePlan(plan);
+  const { variant } = resolveClientRegistration(clientRegistration);
+  return `${testPlanBase}[server_metadata=discovery][client_registration=${variant}]`;
+}
+
 export const BASIC_OP_TEST_PLAN =
   'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
 
@@ -12,9 +45,30 @@ export const HYBRID_OP_TEST_PLAN =
   'oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=static_client]';
 
 /**
+ * The same plans with dynamic client registration. The suite then also runs
+ * the modules it leaves out for a static client: oidcc-idtoken-signature (an
+ * ID Token signed with the default alg, with a kid), oidcc-idtoken-unsigned
+ * (skips itself unless the OP advertises none for ID Tokens) and
+ * oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported
+ * (a request_uri the suite registers as request_uris, OIDC Core 1.0 §6.2).
+ */
+export const BASIC_OP_DYNAMIC_TEST_PLAN =
+  'oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]';
+
+export const IMPLICIT_OP_DYNAMIC_TEST_PLAN =
+  'oidcc-implicit-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]';
+
+export const HYBRID_OP_DYNAMIC_TEST_PLAN =
+  'oidcc-hybrid-certification-test-plan[server_metadata=discovery][client_registration=dynamic_client]';
+
+/**
  * The modules of the Basic OP plan, in its order (OIDCCBasicTestPlan of the
  * conformance suite). A run names them only to leave the manual review ones
- * out; the suite ignores a name its plan does not have.
+ * out; the suite ignores a name its plan does not have. With a static client
+ * the suite leaves out oidcc-idtoken-signature, oidcc-idtoken-unsigned and
+ * oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported
+ * (VariantNotApplicable static_client); with dynamic client registration it
+ * runs them.
  */
 const BASIC_OP_MODULES = [
   'oidcc-server',
@@ -291,6 +345,7 @@ const PLANS = new Map([
       name: 'basic',
       displayName: 'Basic OP',
       testPlan: BASIC_OP_TEST_PLAN,
+      testPlanBase: 'oidcc-basic-certification-test-plan',
       modules: BASIC_OP_MODULES,
       defaultAlias: 'maronn-basic-op',
       // client2 is the second client of oidcc-refresh-token, and
@@ -326,6 +381,7 @@ const PLANS = new Map([
       name: 'implicit',
       displayName: 'Implicit OP',
       testPlan: IMPLICIT_OP_TEST_PLAN,
+      testPlanBase: 'oidcc-implicit-certification-test-plan',
       modules: IMPLICIT_OP_MODULES,
       defaultAlias: 'maronn-implicit-op',
       // OIDC Core 1.0 §3.2: the client of both response types of the Implicit
@@ -351,6 +407,7 @@ const PLANS = new Map([
       name: 'hybrid',
       displayName: 'Hybrid OP',
       testPlan: HYBRID_OP_TEST_PLAN,
+      testPlanBase: 'oidcc-hybrid-certification-test-plan',
       modules: HYBRID_OP_MODULES,
       defaultAlias: 'maronn-hybrid-op',
       // The same three clients as the Basic OP plan, registered for the hybrid
@@ -396,12 +453,14 @@ export function resolvePlan(plan = 'basic') {
 }
 
 /**
- * The test plan argument of run-test-plan.py: the whole plan, or, with
+ * The test plan argument of run-test-plan.py: the whole plan (with the
+ * client_registration variant of clientRegistration), or, with
  * skipManualReview, its modules without the manual review ones
  * (`<plan>:<module>,<module>`).
  */
-export function opTestPlan({ plan = 'basic', skipManualReview = false } = {}) {
-  const { testPlan, modules } = resolvePlan(plan);
+export function opTestPlan({ plan = 'basic', skipManualReview = false, clientRegistration = 'static' } = {}) {
+  const { modules } = resolvePlan(plan);
+  const testPlan = opTestPlanName(plan, clientRegistration);
   if (!skipManualReview) return testPlan;
   const automated = modules.filter((module) => !MANUAL_REVIEW_MODULES.includes(module));
   return `${testPlan}:${automated.join(',')}`;
@@ -455,6 +514,9 @@ export const REQUEST_OBJECT_PRIVATE_JWK = {
 const REQUEST_OBJECT_PUBLIC_JWKS = { keys: [REQUEST_OBJECT_PUBLIC_JWK] };
 const REQUEST_OBJECT_PRIVATE_JWKS = { keys: [REQUEST_OBJECT_PRIVATE_JWK] };
 
+// dynamicClientRegistration: whether the sample was generated with
+// --enable dynamic-client-registration (its package.json generate script), the
+// registration endpoint the dynamic client registration runs need.
 const SAMPLE_APPS = new Map([
   [
     'hono-cloudflare',
@@ -463,6 +525,7 @@ const SAMPLE_APPS = new Map([
       displayName: 'Hono Cloudflare',
       packageName: '@maronn-openid-connect/sample-hono-cloudflare',
       defaultStartCommand: 'corepack enable && pnpm --dir samples/hono-cloudflare start',
+      dynamicClientRegistration: true,
     },
   ],
   [
@@ -472,6 +535,7 @@ const SAMPLE_APPS = new Map([
       displayName: 'Express',
       packageName: '@maronn-openid-connect/sample-express-flyio',
       defaultStartCommand: 'node samples/express-flyio/dist/server.js',
+      dynamicClientRegistration: true,
     },
   ],
   [
@@ -481,6 +545,7 @@ const SAMPLE_APPS = new Map([
       displayName: 'Fastify',
       packageName: '@maronn-openid-connect/sample-fastify-flyio',
       defaultStartCommand: 'node samples/fastify-flyio/dist/server.js',
+      dynamicClientRegistration: false,
     },
   ],
   [
@@ -490,6 +555,7 @@ const SAMPLE_APPS = new Map([
       displayName: 'Next.js',
       packageName: '@maronn-openid-connect/sample-nextjs-vercel',
       defaultStartCommand: 'corepack enable && pnpm --dir samples/nextjs-vercel start',
+      dynamicClientRegistration: false,
     },
   ],
 ]);
@@ -509,6 +575,7 @@ export function resolveSampleApp(sampleApp = 'hono-cloudflare') {
 
 export function createOpConformanceArtifacts(options = {}) {
   const plan = resolvePlan(options.plan ?? 'basic');
+  const clientRegistration = resolveClientRegistration(options.clientRegistration ?? 'static');
   const alias = options.alias ?? plan.defaultAlias;
   const opIssuer = normalizeBaseUrl(options.opIssuer ?? DEFAULT_OP_ISSUER, 'opIssuer');
   const suiteBaseUrl = normalizeBaseUrl(
@@ -516,6 +583,11 @@ export function createOpConformanceArtifacts(options = {}) {
     'suiteBaseUrl',
   );
   const sampleApp = resolveSampleApp(options.sampleApp ?? 'hono-cloudflare');
+  if (clientRegistration.name === 'dynamic' && !sampleApp.dynamicClientRegistration) {
+    throw new Error(
+      `CONFORMANCE_CLIENT_REGISTRATION=dynamic needs a sample generated with --enable dynamic-client-registration; ${sampleApp.name} was not`,
+    );
+  }
   const redirectUris = createRedirectUris({ suiteBaseUrl, alias });
   // OIDC Core 1.0 §6.1 / RFC 9101: the suite signs Request Objects with the
   // private half of REQUEST_OBJECT_*_JWK; register the matching public JWKS on the
@@ -523,25 +595,51 @@ export function createOpConformanceArtifacts(options = {}) {
   // conformance key so signed Request Objects are exercised out of the box; an
   // explicit clientJwks overrides the OP-trusted public set.
   const clientJwks = options.clientJwks ?? REQUEST_OBJECT_PUBLIC_JWKS;
+  const dynamic = clientRegistration.name === 'dynamic';
 
   return {
     plan: plan.name,
-    testPlan: opTestPlan({ plan: plan.name, skipManualReview: options.skipManualReview }),
+    clientRegistration: clientRegistration.name,
+    testPlan: opTestPlan({
+      plan: plan.name,
+      skipManualReview: options.skipManualReview,
+      clientRegistration: clientRegistration.name,
+    }),
     sampleApp,
     config: {
       alias,
-      description: `maronn-openid-connect ${plan.displayName} certification check for the ${sampleApp.displayName} sample`,
+      description:
+        `maronn-openid-connect ${plan.displayName} certification check for the ${sampleApp.displayName} sample` +
+        (dynamic ? ` (${clientRegistration.displayName})` : ''),
       server: {
         discoveryUrl: `${opIssuer}/.well-known/openid-configuration`,
       },
       ...Object.fromEntries(
-        plan.clients.map((client) => [client.configKey, createSuiteClient(client)]),
+        plan.clients.map((client) => [
+          client.configKey,
+          dynamic ? createSuiteDynamicClient(client, plan) : createSuiteClient(client),
+        ]),
       ),
       browser: createBrowserAutomation({ opIssuer, suiteBaseUrl }),
     },
-    clients: plan.clients.map((client) =>
-      createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks }),
-    ),
+    // With dynamic client registration the suite registers its clients at
+    // POST /register before each module, so the OP starts without any.
+    clients: dynamic
+      ? []
+      : plan.clients.map((client) => createStaticClient({ ...client, redirectUris, requestObjectJwks: clientJwks })),
+  };
+}
+
+// OpenID Connect Dynamic Client Registration 1.0: a suite-side client the suite
+// registers itself. The suite reads client_name (and initial_access_token,
+// unset here: the sample OPs register openly) from this object, generates its
+// own RS256 keys for the Request Object modules and registers them as jwks,
+// and registers the request_uri of the request_uri modules as request_uris.
+// client_secret and jwks are hidden fields of this variant.
+function createSuiteDynamicClient({ configKey }, plan) {
+  return {
+    client_name: `maronn-openid-connect ${plan.displayName} conformance ${configKey}`,
+    scope: 'openid',
   };
 }
 
@@ -575,6 +673,7 @@ export async function writeOpConformanceArtifacts(options = {}) {
   await writeJsonFile(clientsPath, artifacts.clients);
   await writeJsonFile(metadataPath, {
     plan: artifacts.plan,
+    clientRegistration: artifacts.clientRegistration,
     testPlan: artifacts.testPlan,
     sampleApp: artifacts.sampleApp,
     configPath,
@@ -697,6 +796,8 @@ async function main() {
   const artifacts = await writeOpConformanceArtifacts({
     // CONFORMANCE_PLAN: basic (the default), implicit or hybrid.
     plan: process.env.CONFORMANCE_PLAN,
+    // CONFORMANCE_CLIENT_REGISTRATION: static (the default) or dynamic.
+    clientRegistration: process.env.CONFORMANCE_CLIENT_REGISTRATION,
     alias: process.env.CONFORMANCE_ALIAS,
     opIssuer: process.env.CONFORMANCE_OP_ISSUER,
     suiteBaseUrl: process.env.CONFORMANCE_SUITE_BASE_URL,
@@ -714,6 +815,7 @@ async function main() {
 
   console.log(JSON.stringify({
     plan: artifacts.plan,
+    clientRegistration: artifacts.clientRegistration,
     testPlan: artifacts.testPlan,
     sampleApp: artifacts.sampleApp.name,
     configPath: artifacts.paths.configPath,

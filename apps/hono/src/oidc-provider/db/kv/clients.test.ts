@@ -45,6 +45,7 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        request_uris: [],
       });
     });
 
@@ -98,6 +99,7 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        request_uris: [],
       });
     });
 
@@ -113,6 +115,7 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        request_uris: [],
       });
     });
 
@@ -159,6 +162,17 @@ describe('registerClient', () => {
         response_types: ['id_token token', 'id_token'],
       });
     });
+
+    // OIDC Core 1.0 §6.2: the request_uri values the client pre-registered.
+    it('should save the request URIs in the record', async () => {
+      await registerClient(db, {
+        clientId: 'rp-1',
+        redirectUris: ['https://rp.example.com/callback'],
+        requestUris: ['https://rp.example.com/requests/a#NjYz'],
+      });
+
+      expect(await clientRecord('rp-1')).toMatchObject({ request_uris: ['https://rp.example.com/requests/a#NjYz'] });
+    });
   });
 
   describe('Registering Again', () => {
@@ -181,6 +195,7 @@ describe('registerClient', () => {
         grant_types: [],
         scopes: [],
         response_types: [],
+        request_uris: [],
       });
     });
 
@@ -299,6 +314,22 @@ describe('createClientResolver', () => {
       grantTypes: ['implicit'],
       responseTypes: ['id_token token', 'id_token'],
       tokenEndpointAuthMethods: ['none'],
+    });
+  });
+
+  // OIDC Core 1.0 §6.2: the request_uri values the client pre-registered.
+  it('should find the request URIs a client registered', async () => {
+    await registerClient(db, {
+      clientId: 'rp-1',
+      redirectUris: ['https://rp.example.com/callback'],
+      requestUris: ['https://rp.example.com/requests/a#NjYz'],
+    });
+
+    expect(await createClientResolver(db).findClient('rp-1')).toEqual({
+      clientId: 'rp-1',
+      clientType: 'confidential',
+      redirectUris: ['https://rp.example.com/callback'],
+      requestUris: ['https://rp.example.com/requests/a#NjYz'],
     });
   });
 

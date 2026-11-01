@@ -118,7 +118,7 @@ export function validateClientJwksUri(uri: string, policy: ClientJwksUriPolicy =
   // The URL parser strips or drops some of these silently, so the URI that would
   // be fetched could differ from the one that was registered.
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000- \u007f]/.test(uri)) {
+  if (/[\u0000-\u0020\u007f]/.test(uri)) {
     throw new ClientJwksUriError('jwks_uri must not contain whitespace or control characters');
   }
 

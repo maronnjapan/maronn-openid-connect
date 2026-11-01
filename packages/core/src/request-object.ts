@@ -7,7 +7,13 @@
  * the signature against the client's registered keys, and returns the decoded
  * claim set so the caller can merge it into the Authorization Request.
  */
-import { verify, base64UrlToArrayBuffer, extractAlgorithmParamsFromJwk } from './crypto-utils.js';
+import { ClientJwksUriError } from './client-jwks-uri.js';
+import {
+  base64UrlToArrayBuffer,
+  importJwkForJwsVerification,
+  resolveJwkSigningAlg,
+  verify,
+} from './crypto-utils.js';
 import type { Jwk, JwkSet } from './jwks.js';
 
 /**
@@ -29,9 +35,19 @@ export class RequestObjectError extends Error {
 export interface ParseRequestObjectOptions {
   /**
    * 署名検証に使うクライアント登録の公開鍵集合（JWKS）。
-   * 署名付き（`alg !== "none"`）Request Object の検証に必須。
+   * 署名付き（`alg !== "none"`）Request Object の検証に、これか `loadJwks` が必須。
    */
   jwks?: JwkSet;
+  /**
+   * JOSE ヘッダーを検査した後で、署名検証に使う鍵を読む。あれば `jwks` より優先する。
+   *
+   * 登録した alg との不一致、`alg: "none"`、受け付けない alg、壊れた JWT を拒否した後でだけ
+   * 呼ぶので、`jwks_uri` からの取得のような外部への読み込みは、受け付ける alg で署名された
+   * Request Object が届いたときにだけ起きる。`kid` はヘッダーにあるときだけ渡す
+   * （OIDC Core 1.0 §10.1.1: 見慣れない kid は鍵を取り直す合図になる）。
+   * `ClientJwksUriError` を投げると、理由を応答に出さない固定文言の `RequestObjectError` になる。
+   */
+  loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
   /**
    * 受理する JWS 署名アルゴリズム。OIDC Core 1.0 §6.1 / OIDC Basic OP の既定は `RS256`。
    */
@@ -43,6 +59,14 @@ export interface ParseRequestObjectOptions {
    * Basic OP conformance 互換目的でのみ true にする。署名付きが本実装の主対象。
    */
   allowUnsigned: boolean;
+  /**
+   * クライアントが登録した `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）。
+   *
+   * あれば、ヘッダーの `alg` が一致しない Request Object をほかのどの検査よりも先に拒否する
+   * （OIDC Core 1.0 §6.3.2 MUST）。`none` を登録したクライアントの署名無し Request Object は、
+   * `allowUnsigned` が true のときだけ受理する。
+   */
+  requiredSigningAlg?: string;
 }
 
 function decodeJwtSegment(segment: string): unknown {
@@ -54,10 +78,19 @@ function decodeJwtSegment(segment: string): unknown {
  * compact JWS としてシリアライズされた Request Object をパース・検証し、
  * payload（Authorization Request パラメータの JSON オブジェクト）を返す。
  *
- * - JWE（5 セグメント）や、3 セグメントでない壊れた compact 表現は拒否する。
- * - `alg: "none"` は `allowUnsigned` が true のときだけ受理し、署名部が空であることを要求する。
- * - 署名付きは `supportedSigningAlgs` に含まれる `alg` のみ受理し、
- *   JOSE header の `kid` で鍵を一意特定（無ければ `alg` 一致鍵を順次試行）して署名検証する。
+ * 次の順で判定する。
+ *
+ * 1. 構造（JWE（5 セグメント）や、3 セグメントでない壊れた compact 表現は拒否する）、
+ *    ヘッダー、ペイロード、`alg` の有無を検査する
+ * 2. `requiredSigningAlg` があり、ヘッダーの `alg` と違えば拒否する（`none` も含む。
+ *    OIDC Core 1.0 §6.3.2）
+ * 3. `alg: "none"` は `allowUnsigned` が true のときだけ受理し、署名部が空であることを要求する
+ * 4. `supportedSigningAlgs` に無い `alg` を拒否する（RFC 8725 §3.2）
+ * 5. `loadJwks` があれば呼び、無ければ `jwks` を使う
+ * 6. `kid` があれば一致する鍵に絞り、その中から `use` が無いか `sig` で、使える alg
+ *    （{@link resolveJwkSigningAlg}）がヘッダーの `alg` と同じ鍵だけを候補にする（RFC 8725 §3.1）
+ * 7. 候補を `alg` のとおりに import して（{@link importJwkForJwsVerification}。2048 ビット未満の
+ *    RSA 鍵は使わない。RFC 7518 §3.3）、署名を検証する
  *
  * @throws {RequestObjectError} 構造不正・未対応 alg・鍵不一致・署名不一致など
  */
@@ -105,6 +138,15 @@ export async function parseRequestObject(
     throw new RequestObjectError('request object header is missing alg');
   }
 
+  // OIDC Core 1.0 §6.3.2 / OIDC Dynamic Client Registration 1.0 §2: every Request
+  // Object of a client that registered request_object_signing_alg MUST be signed
+  // with it, so this check comes before alg=none is even considered.
+  if (options.requiredSigningAlg !== undefined && alg !== options.requiredSigningAlg) {
+    throw new RequestObjectError(
+      'request object alg does not match the registered request_object_signing_alg',
+    );
+  }
+
   if (alg === 'none') {
     if (!options.allowUnsigned) {
       throw new RequestObjectError('unsigned request object (alg=none) is not supported');
@@ -120,32 +162,36 @@ export async function parseRequestObject(
     throw new RequestObjectError(`unsupported request object signing alg: ${alg}`);
   }
 
-  const jwks = options.jwks;
+  const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
+
+  const jwks = options.loadJwks ? await loadVerificationKeys(options.loadJwks, alg, kid) : options.jwks;
   if (!jwks || jwks.keys.length === 0) {
     throw new RequestObjectError('no JWKS registered to verify the request object signature');
   }
 
-  const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
-  // kid wins (unique key selection); otherwise try every registered key whose
-  // advertised alg is compatible. RFC 7515 §4.1.1: a key pins its alg when present.
-  const candidates: Jwk[] = kid
-    ? jwks.keys.filter((k) => k.kid === kid)
-    : jwks.keys.slice();
-
-  if (candidates.length === 0) {
+  // kid wins (unique key selection); otherwise try every registered key.
+  const keysOfKid: Jwk[] = kid === undefined ? jwks.keys.slice() : jwks.keys.filter((k) => k.kid === kid);
+  if (keysOfKid.length === 0) {
     throw new RequestObjectError('no JWK matched the request object header (kid)');
+  }
+
+  // RFC 8725 §3.1: the alg of the header MUST be the algorithm the key is used
+  // with, and each key is used with exactly one algorithm (resolveJwkSigningAlg).
+  // RFC 7517 §4.2: a key published for another use than sig does not verify.
+  const candidates = keysOfKid.filter(
+    (jwk) => (jwk.use === undefined || jwk.use === 'sig') && resolveJwkSigningAlg(jwk) === alg,
+  );
+  if (candidates.length === 0) {
+    throw new RequestObjectError('no signing JWK matched the request object header (alg)');
   }
 
   const signingInput = `${headerB64}.${payloadB64}`;
   for (const jwk of candidates) {
-    if (jwk.alg && jwk.alg !== alg) {
-      continue;
-    }
     let publicKey: CryptoKey;
     try {
-      const algParams = extractAlgorithmParamsFromJwk(jwk);
-      publicKey = await crypto.subtle.importKey('jwk', jwk, algParams, false, ['verify']);
+      publicKey = await importJwkForJwsVerification(jwk, alg);
     } catch {
+      // An RSA key under 2048 bits (RFC 7518 §3.3) or a key WebCrypto refuses.
       continue;
     }
     try {
@@ -158,4 +204,24 @@ export async function parseRequestObject(
   }
 
   throw new RequestObjectError('request object signature verification failed');
+}
+
+/**
+ * loadJwks で鍵を読む。jwks_uri の取得の失敗（ClientJwksUriError）は理由を応答に出さない
+ * 固定文言の RequestObjectError に変え（失敗の理由は内部ネットワークを探る手がかりになる）、
+ * ほかのエラーはそのまま投げる。
+ */
+async function loadVerificationKeys(
+  loadJwks: NonNullable<ParseRequestObjectOptions['loadJwks']>,
+  alg: string,
+  kid: string | undefined,
+): Promise<JwkSet> {
+  try {
+    return await loadJwks(kid === undefined ? { alg } : { alg, kid });
+  } catch (e) {
+    if (e instanceof ClientJwksUriError) {
+      throw new RequestObjectError('the client jwks_uri could not be retrieved');
+    }
+    throw e;
+  }
 }

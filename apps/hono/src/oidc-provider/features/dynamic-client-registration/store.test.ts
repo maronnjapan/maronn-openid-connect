@@ -147,6 +147,17 @@ describe('toClientRegistration', () => {
     expect(Object.hasOwn(record, 'keys')).toBe(false);
   });
 
+  // RFC 7591 §2 jwks_uri / OIDC Dynamic Client Registration 1.0 §2 request_object_signing_alg.
+  it('should carry the jwks_uri and the request_object_signing_alg without keys', () => {
+    const record = toClientRegistration(
+      registeredClient({ jwksUri: 'https://rp.example.com/jwks.json', requestObjectSigningAlg: 'ES256' }),
+      { clientSecretHash: 'hash', jwksPurposes: ['request_object'] },
+    );
+
+    expect(record).toMatchObject({ jwksUri: 'https://rp.example.com/jwks.json', requestObjectSigningAlg: 'ES256' });
+    expect(Object.hasOwn(record, 'keys')).toBe(false);
+  });
+
   // RFC 7591 §2 jwks: the keys serve every purpose of the config (ClientKeyResolver).
   it('should put the keys of the jwks under every configured purpose', () => {
     const record = toClientRegistration(registeredClient({ jwks: { keys: [RSA_KEY] } }), {
@@ -218,5 +229,20 @@ describe('withDynamicallyRegisteredClientKeys', () => {
     const resolver = withDynamicallyRegisteredClientKeys(staticKeyResolver('static-rp', {}));
 
     expect(await resolver.findClientKeys('dcr-nobody', 'request_object')).toEqual({ keys: [] });
+  });
+
+  // OIDC Core 1.0 §10.1.1: the kid reaches the jwks_uri of a dynamically registered client.
+  it('should pass the hint to the configured resolver', async () => {
+    const calls: unknown[][] = [];
+    const resolver = withDynamicallyRegisteredClientKeys({
+      async findClientKeys(...args) {
+        calls.push(args);
+        return { keys: [] };
+      },
+    });
+
+    await resolver.findClientKeys('dcr-uri', 'request_object', { kid: 'k2' });
+
+    expect(calls).toEqual([['dcr-uri', 'request_object', { kid: 'k2' }]]);
   });
 });

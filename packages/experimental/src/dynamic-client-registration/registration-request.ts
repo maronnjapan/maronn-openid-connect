@@ -22,6 +22,7 @@
 
 import {
   normalizeResponseType,
+  resolveJwkSigningAlg,
   responseTypeIncludes,
   validateRegisteredRedirectUris,
   type JwkSet,
@@ -35,7 +36,9 @@ import {
   validateDisplayString,
   validateHttpUrl,
   validateJwks,
+  validateJwksUri,
   validateRedirectUrisForApplicationType,
+  validateRequestObjectSigningAlg,
   validateScope,
   validateSigningAlg,
 } from './metadata-values.js';
@@ -152,6 +155,23 @@ export interface ValidateClientMetadataOptions {
   /** userinfo_signed_response_alg に受理する alg。既定は RS256 のみ。 */
   userinfoSigningAlgValuesSupported?: readonly string[];
   /**
+   * jwks_uri（RFC 7591 §2）を登録できるか。既定 false で、そのときは理解しないメタデータとして
+   * 無視する（§2 MUST ignore）。true のときは宛先を検査して登録し、201 応答に返す。登録時には
+   * 取得しない。jwks との併記は、この設定によらず拒否する。
+   */
+  acceptJwksUri?: boolean;
+  /**
+   * jwks_uri に http と、ループバック・私設・リンクローカルのアドレスと localhost を許す
+   * （開発用）。既定 false。
+   */
+  allowInsecureJwksUri?: boolean;
+  /**
+   * request_object_signing_alg（OIDC Dynamic Client Registration 1.0 §2）に受理する alg。
+   * discovery の request_object_signing_alg_values_supported と同じ一覧を渡す。省略時は
+   * このメタデータを理解しないものとして無視する（Request Object を扱わない OP）。
+   */
+  requestObjectSigningAlgValuesSupported?: readonly string[];
+  /**
    * カスタムメタデータ。キーがメタデータ名、値がその検証関数。標準フィールド
    * （本モジュールが理解する名前）と同じ名前は設定の誤りとして TypeError になる。
    */
@@ -179,6 +199,13 @@ export interface ValidatedClientRegistration {
   userinfoSignedResponseAlg?: string;
   /** RFC 7591 §2 の jwks（正規化済み）。登録したときだけ持つ。 */
   jwks?: JwkSet;
+  /** RFC 7591 §2 の jwks_uri。acceptJwksUri の OP で登録したときだけ持つ。 */
+  jwksUri?: string;
+  /**
+   * OIDC Dynamic Client Registration 1.0 §2 の request_object_signing_alg。
+   * requestObjectSigningAlgValuesSupported を渡した OP で登録したときだけ持つ。
+   */
+  requestObjectSigningAlg?: string;
   /**
    * 登録した全メタデータの RFC 7591 のワイヤ形式（スネークケース）。既定値の
    * 適用後の値、software_statement、カスタムメタデータを含み、201 応答の
@@ -226,6 +253,7 @@ export const STANDARD_CLIENT_METADATA_NAMES: readonly string[] = [
   'default_max_age',
   'id_token_signed_response_alg',
   'userinfo_signed_response_alg',
+  'request_object_signing_alg',
   'software_statement',
 ];
 
@@ -327,14 +355,21 @@ export function validateClientMetadata(
     );
   }
   if (metadata['jwks'] !== undefined && metadata['jwks_uri'] !== undefined) {
-    // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。jwks_uri 単独は
-    // この OP が取得しに行かない（理解しない）メタデータとして無視する。
+    // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。acceptJwksUri の
+    // 有無によらず拒否する。
     throw new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present');
   }
   if (metadata['jwks'] !== undefined) {
     const jwks = validateJwks(metadata['jwks']);
     validated.jwks = jwks;
     registered['jwks'] = { keys: jwks.keys.map((key) => ({ ...key })) };
+  }
+  // acceptJwksUri の無い OP では、jwks_uri は理解しないメタデータとして無視する。
+  // 登録時には取得しない（宛先の検査だけ）。
+  if (metadata['jwks_uri'] !== undefined && options?.acceptJwksUri === true) {
+    const jwksUri = validateJwksUri(metadata['jwks_uri'], options.allowInsecureJwksUri === true);
+    validated.jwksUri = jwksUri;
+    registered['jwks_uri'] = jwksUri;
   }
   if (metadata['default_max_age'] !== undefined) {
     const defaultMaxAge = validateDefaultMaxAge(metadata['default_max_age']);
@@ -350,6 +385,22 @@ export function validateClientMetadata(
     );
     validated.userinfoSignedResponseAlg = alg;
     registered['userinfo_signed_response_alg'] = alg;
+  }
+  // requestObjectSigningAlgValuesSupported の無い OP（Request Object を扱わない OP）では、
+  // request_object_signing_alg は理解しないメタデータとして無視する。
+  const requestObjectSigningAlgs = options?.requestObjectSigningAlgValuesSupported;
+  if (metadata['request_object_signing_alg'] !== undefined && requestObjectSigningAlgs !== undefined) {
+    const alg = validateRequestObjectSigningAlg(metadata['request_object_signing_alg'], requestObjectSigningAlgs);
+    // 検証できない登録を、Request Object を送る前に気づかせる。jwks_uri の鍵は登録時に
+    // 取得しないので照らさない。
+    if (alg !== 'none' && validated.jwks !== undefined && !validated.jwks.keys.some((key) => resolveJwkSigningAlg(key) === alg)) {
+      throw new ClientRegistrationError(
+        'invalid_client_metadata',
+        'jwks must contain a key that can be used with the request_object_signing_alg',
+      );
+    }
+    validated.requestObjectSigningAlg = alg;
+    registered['request_object_signing_alg'] = alg;
   }
   if (metadata['software_statement'] !== undefined) {
     // RFC 7591 §3.2.1: 登録に使った software_statement は、そのまま応答に返す。

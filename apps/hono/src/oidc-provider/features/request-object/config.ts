@@ -12,6 +12,15 @@ declare module '../../config.js' {
      * "none" も広告される。
      */
     allowUnsignedRequestObject: boolean;
+    /**
+     * The JWS algs a signed Request Object may use (OIDC Discovery 1.0 §3
+     * request_object_signing_alg_values_supported, RFC 9101 §4). Discovery
+     * advertises them (with none when allowUnsignedRequestObject is on), and
+     * dynamic client registration accepts them as request_object_signing_alg.
+     * By default the algs core verifies: RS256, RS384, RS512 (RFC 7518 §3.3)
+     * and ES256, ES384, ES512 (§3.4). Set ['RS256'] to accept RS256 only.
+     */
+    requestObjectSigningAlgValuesSupported: readonly string[];
   }
 }
 

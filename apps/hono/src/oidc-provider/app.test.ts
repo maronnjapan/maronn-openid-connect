@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { formPost, requestTo } from '../test-support/context.js';
-import { rs256Key } from '../test-support/keys.js';
+import { describe, expect, it, vi } from 'vitest';
+import { contextOf, formPost, requestTo, TEST_ISSUER } from '../test-support/context.js';
+import { rs256Key, staticKeyProvider } from '../test-support/keys.js';
 import { es256Key, providerApp } from '../test-support/screens.js';
-import { providerRoutes, validateSigningKeySet } from './app.js';
+import { providerRoutes, setRequestContext, validateSigningKeySet } from './app.js';
+import { createClientResolver, registerClient } from './db/memory/clients.js';
 import { createEmptyDatabase } from './db/memory/database.js';
 
 const RP_ORIGIN = 'https://rp.example.com';
@@ -162,6 +163,52 @@ describe('createApp', () => {
         error: 'server_error',
         error_description: 'Failed to load signing key',
       });
+    });
+  });
+});
+
+describe('setRequestContext', () => {
+  // RFC 7591 §2: the default ClientKeyResolver hands out the keys of a client's jwks_uri.
+  describe('ClientKeyResolver', () => {
+    async function contextWithJwksUriClient(jwksUri: string, options: Record<string, unknown> = {}) {
+      const db = createEmptyDatabase();
+      await registerClient(db, { clientId: 'rp-uri', redirectUris: ['https://rp.example.com/cb'], jwksUri });
+      const c = contextOf();
+      await setRequestContext(c, {
+        signingKeyProvider: staticKeyProvider(await rs256Key()),
+        clientResolver: createClientResolver(db),
+        config: { issuer: TEST_ISSUER },
+        ...options,
+      });
+      return c;
+    }
+
+    it('should fetch the jwks_uri of a client with clientJwksFetch when no ClientKeyResolver is passed in', async () => {
+      const jwk = { kty: 'RSA', kid: 'rp-key', n: (await rs256Key()).publicJwk.n, e: 'AQAB' };
+      const clientJwksFetch = vi.fn(
+        async (_input: string | URL | Request, _init?: RequestInit) =>
+          new Response(JSON.stringify({ keys: [jwk] }), { status: 200 }),
+      );
+      const c = await contextWithJwksUriClient('https://default-resolver.example.com/jwks.json', { clientJwksFetch });
+
+      const jwks = await c.get('clientKeyResolver').findClientKeys('rp-uri', 'request_object', { kid: 'rp-key' });
+
+      expect(jwks).toEqual({ keys: [{ ...jwk, use: 'sig', alg: 'RS256' }] });
+      expect(clientJwksFetch.mock.calls.map(([input]) => input)).toEqual(['https://default-resolver.example.com/jwks.json']);
+    });
+
+    // A ClientKeyResolver passed in is used as it is (wrap it with withClientJwksUriKeys() of core).
+    it('should not fetch the jwks_uri of a client with a ClientKeyResolver passed in', async () => {
+      const clientKeyResolver = { findClientKeys: vi.fn(async () => ({ keys: [] })) };
+      const clientJwksFetch = vi.fn(async () => new Response('{}', { status: 500 }));
+      const c = await contextWithJwksUriClient('https://own-resolver.example.com/jwks.json', {
+        clientKeyResolver,
+        clientJwksFetch,
+      });
+
+      expect(await c.get('clientKeyResolver').findClientKeys('rp-uri', 'request_object')).toEqual({ keys: [] });
+      expect(clientKeyResolver.findClientKeys).toHaveBeenCalledWith('rp-uri', 'request_object', undefined);
+      expect(clientJwksFetch).not.toHaveBeenCalled();
     });
   });
 });

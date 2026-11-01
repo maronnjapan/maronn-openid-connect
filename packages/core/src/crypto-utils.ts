@@ -379,6 +379,147 @@ export function extractAlgorithmParamsFromJwk(
   throw new Error(`Unsupported kty: ${jwk.kty ?? '(missing)'}`);
 }
 
+/** RS256 / RS384 / RS512 のハッシュ（RFC 7518 §3.3）。ほかの alg は undefined。 */
+function rsaSigningHashOf(alg: string): 'SHA-256' | 'SHA-384' | 'SHA-512' | undefined {
+  switch (alg) {
+    case 'RS256':
+      return 'SHA-256';
+    case 'RS384':
+      return 'SHA-384';
+    case 'RS512':
+      return 'SHA-512';
+    default:
+      return undefined;
+  }
+}
+
+/** ES256 / ES384 / ES512 の曲線（RFC 7518 §3.4）。ほかの alg は undefined。 */
+function ecSigningCurveOf(alg: string): 'P-256' | 'P-384' | 'P-521' | undefined {
+  switch (alg) {
+    case 'ES256':
+      return 'P-256';
+    case 'ES384':
+      return 'P-384';
+    case 'ES512':
+      return 'P-521';
+    default:
+      return undefined;
+  }
+}
+
+/** 曲線で署名する ES 系の alg（RFC 7518 §3.4）。ほかの曲線は undefined。 */
+function ecSigningAlgOfCurve(crv: string | undefined): 'ES256' | 'ES384' | 'ES512' | undefined {
+  switch (crv) {
+    case 'P-256':
+      return 'ES256';
+    case 'P-384':
+      return 'ES384';
+    case 'P-521':
+      return 'ES512';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * RFC 7518 §3.3: RS256 / RS384 / RS512 には 2048 ビット以上の鍵を使わなければならない（MUST）。
+ */
+const MIN_RSA_VERIFICATION_MODULUS_BITS = 2048;
+
+/**
+ * JWK が使える唯一の JWS 署名アルゴリズムを決める純粋関数。
+ *
+ * RFC 8725 §3.1: 各鍵はちょうど 1 つのアルゴリズムで使い、それを処理時に確かめなければならない
+ * （MUST）。署名を検証する側は、JOSE ヘッダーの `alg` がこの関数の返す値と一致する鍵だけを使う。
+ *
+ * - RSA 鍵: `alg` が RS256 / RS384 / RS512 ならその値。`alg` が無ければ RS256
+ *   （`alg` は OPTIONAL（RFC 7517 §4.4）で、省く JWK Set が多いため。DCR の
+ *   `validateJwks()` の正規化と同じ規則）。それ以外の `alg`（PS256 など）は undefined
+ * - EC 鍵: `crv` が P-256 / P-384 / P-521 ならそれぞれ ES256 / ES384 / ES512（RFC 7518 §3.4）。
+ *   `alg` があって `crv` と食い違えば undefined
+ * - ほかの鍵（`oct`、`OKP` など）は undefined
+ *
+ * @param jwk 公開鍵の JWK
+ * @returns その鍵で検証してよい alg。決められなければ undefined
+ */
+export function resolveJwkSigningAlg(jwk: webcrypto.JsonWebKey): string | undefined {
+  if (jwk.kty === 'RSA') {
+    if (jwk.alg === undefined) {
+      return 'RS256';
+    }
+    return rsaSigningHashOf(jwk.alg) === undefined ? undefined : jwk.alg;
+  }
+  if (jwk.kty === 'EC') {
+    const curveAlg = ecSigningAlgOfCurve(jwk.crv);
+    if (curveAlg === undefined || (jwk.alg !== undefined && jwk.alg !== curveAlg)) {
+      return undefined;
+    }
+    return curveAlg;
+  }
+  return undefined;
+}
+
+/**
+ * JWS の `alg` のとおりに、公開鍵の JWK を署名検証用の CryptoKey として import する。
+ *
+ * import の引数は JWK ではなく `alg` から組み立てる。RS 系は RSASSA-PKCS1-v1_5 と対応する
+ * ハッシュ（RFC 7518 §3.3）、ES 系は対応する曲線の ECDSA（RFC 7518 §3.4）である。`verify()` は
+ * EC の曲線からハッシュを選ぶので、曲線を alg に固定すれば検証のアルゴリズムは `alg` と一致する。
+ *
+ * - {@link resolveJwkSigningAlg} が `alg` と同じ値を返さない鍵（kty / crv / alg の食い違い、
+ *   alg の無い RSA 鍵を RS384 で使う場合など）は拒否する（RFC 8725 §3.1）
+ * - 2048 ビット未満の RSA 鍵は拒否する（RFC 7518 §3.3 MUST）
+ * - import するのは公開鍵のメンバー（RSA は kty / n / e、EC は kty / crv / x / y）だけで、
+ *   `use`、`key_ops`、秘密鍵のメンバーは渡さない
+ *
+ * @param jwk 公開鍵の JWK
+ * @param alg 検証する JWS の JOSE ヘッダーの `alg`
+ * @returns 検証にだけ使える、エクスポートできない公開鍵
+ * @throws alg と鍵が対応しない場合、RSA 鍵が短い場合、WebCrypto が鍵を受け付けない場合
+ */
+export async function importJwkForJwsVerification(
+  jwk: webcrypto.JsonWebKey,
+  alg: string,
+): Promise<CryptoKey> {
+  if (resolveJwkSigningAlg(jwk) !== alg) {
+    throw new Error(`The JWK cannot be used with ${alg}`);
+  }
+
+  const hash = rsaSigningHashOf(alg);
+  if (hash !== undefined) {
+    if (typeof jwk.n !== 'string' || typeof jwk.e !== 'string') {
+      throw new Error('The RSA JWK has no n or e');
+    }
+    if (rsaModulusBitLength(jwk.n) < MIN_RSA_VERIFICATION_MODULUS_BITS) {
+      throw new Error('RSA keys shorter than 2048 bits are not accepted (RFC 7518 §3.3)');
+    }
+    return crypto.subtle.importKey(
+      'jwk',
+      { kty: 'RSA', n: jwk.n, e: jwk.e },
+      { name: 'RSASSA-PKCS1-v1_5', hash },
+      false,
+      ['verify'],
+    );
+  }
+
+  const namedCurve = ecSigningCurveOf(alg);
+  if (namedCurve !== undefined) {
+    if (typeof jwk.x !== 'string' || typeof jwk.y !== 'string') {
+      throw new Error('The EC JWK has no x or y');
+    }
+    return crypto.subtle.importKey(
+      'jwk',
+      { kty: 'EC', crv: namedCurve, x: jwk.x, y: jwk.y },
+      { name: 'ECDSA', namedCurve },
+      false,
+      ['verify'],
+    );
+  }
+
+  // resolveJwkSigningAlg() returns RS* / ES* only, so this is unreachable.
+  throw new Error(`The JWK cannot be used with ${alg}`);
+}
+
 /**
  * JWA 署名アルゴリズム名から、ハッシュクレーム (at_hash / c_hash) で使うハッシュ関数名を導出する。
  *

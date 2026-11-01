@@ -38,6 +38,8 @@ import {
   AuthorizationError,
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
+  DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
+  SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS,
 } from './authorization-request.js';
 import type {
   AuthorizationRequestParams,
@@ -46,6 +48,7 @@ import type {
 } from './authorization-request.js';
 import { exportPublicJwk, type JwkSet } from './jwks.js';
 import { sign, arrayBufferToBase64Url, stringToArrayBuffer } from './crypto-utils.js';
+import { ClientJwksUriError } from './client-jwks-uri.js';
 
 // Helpers for building compact-JWS Request Objects (OIDC Core 1.0 §6.1).
 function encodeSegment(value: unknown): string {
@@ -704,6 +707,146 @@ describe('resolveRequestObjectParams', () => {
       expect(error?.errorDescription).toBe(
         'unsigned request object (alg=none) is not supported',
       );
+    });
+  });
+
+  describe('signing algs', () => {
+    // core を直接使う利用者の挙動を変えないため、既定は RS256 のまま。
+    it('should accept RS256 only when supportedSigningAlgs is omitted', async () => {
+      const ecKeyPair = (await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      )) as CryptoKeyPair;
+      const request = await buildSignedRequestObject(
+        { response_type: 'code', client_id: 'ro-client', scope: 'openid' },
+        ecKeyPair.privateKey,
+        'ec-key',
+        'ES256',
+      );
+
+      const ecJwks = { keys: [await exportPublicJwk(ecKeyPair.publicKey, 'ec-key')] };
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request }), { jwks: ecJwks }),
+      );
+
+      expect(DEFAULT_REQUEST_OBJECT_SIGNING_ALGS).toEqual(['RS256']);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(error?.errorDescription).toBe('unsupported request object signing alg: ES256');
+    });
+
+    it('should accept an alg of supportedSigningAlgs', async () => {
+      const ecKeyPair = (await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      )) as CryptoKeyPair;
+      const request = await buildSignedRequestObject(
+        { response_type: 'code', client_id: 'ro-client', scope: 'openid', state: 'es-state' },
+        ecKeyPair.privateKey,
+        'ec-key',
+        'ES256',
+      );
+
+      const { effectiveParams } = await resolveRequestObjectParams(roQueryParams({ request }), {
+        jwks: { keys: [await exportPublicJwk(ecKeyPair.publicKey, 'ec-key')] },
+        supportedSigningAlgs: [...SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS],
+      });
+
+      expect(effectiveParams.state).toBe('es-state');
+    });
+
+    // The algs core verifies: RSASSA-PKCS1-v1_5 and ECDSA (RFC 7518 §3.3 / §3.4).
+    it('should list the algs core verifies in SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS', () => {
+      expect(SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS).toEqual(['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']);
+    });
+  });
+
+  // OIDC Core 1.0 §6.3.2: the alg MUST match the request_object_signing_alg the client registered.
+  describe('requestObjectSigningAlg', () => {
+    it('should reject a request object signed with another alg than the registered one with invalid_request_object', async () => {
+      const request = await buildSignedRequestObject(
+        { response_type: 'code', client_id: 'ro-client', scope: 'openid', state: 'st-alg' },
+        rsaKeyPair.privateKey,
+        roKid,
+      );
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request }), {
+          jwks: roJwks,
+          supportedSigningAlgs: [...SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS],
+          requestObjectSigningAlg: 'ES256',
+        }),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(error?.errorDescription).toBe(
+        'request object alg does not match the registered request_object_signing_alg',
+      );
+      expect(error?.redirectable).toBe(false);
+      expect(error?.state).toBeUndefined();
+    });
+
+    it('should accept a request object signed with the registered alg', async () => {
+      const request = await buildSignedRequestObject(
+        { response_type: 'code', client_id: 'ro-client', scope: 'openid', state: 'rs-state' },
+        rsaKeyPair.privateKey,
+        roKid,
+      );
+
+      const { effectiveParams } = await resolveRequestObjectParams(roQueryParams({ request }), {
+        jwks: roJwks,
+        requestObjectSigningAlg: 'RS256',
+      });
+
+      expect(effectiveParams.state).toBe('rs-state');
+    });
+  });
+
+  describe('loadJwks', () => {
+    it('should verify with the keys loadJwks returns for the header', async () => {
+      const request = await buildSignedRequestObject(
+        { response_type: 'code', client_id: 'ro-client', scope: 'openid', state: 'loaded-state' },
+        rsaKeyPair.privateKey,
+        roKid,
+      );
+      const headers: Array<{ alg: string; kid?: string }> = [];
+
+      const { effectiveParams } = await resolveRequestObjectParams(roQueryParams({ request }), {
+        loadJwks: async (header) => {
+          headers.push(header);
+          return roJwks;
+        },
+      });
+
+      expect(effectiveParams.state).toBe('loaded-state');
+      expect(headers).toEqual([{ alg: 'RS256', kid: roKid }]);
+    });
+
+    // UC-16 / D-14: the reason the jwks_uri failed is not returned to the client.
+    it('should reject with a non-redirectable invalid_request_object when the jwks_uri cannot be retrieved', async () => {
+      const request = await buildSignedRequestObject(
+        { response_type: 'code', client_id: 'ro-client', scope: 'openid', state: 'st-uri' },
+        rsaKeyPair.privateKey,
+        roKid,
+      );
+
+      const error = await captureAsyncStepError(() =>
+        resolveRequestObjectParams(roQueryParams({ request }), {
+          loadJwks: async () => {
+            throw new ClientJwksUriError('the jwks_uri answered 500');
+          },
+        }),
+      );
+
+      expect(error).toBeInstanceOf(AuthorizationError);
+      expect(error?.error).toBe(AuthorizationErrorCode.InvalidRequestObject);
+      expect(error?.errorDescription).toBe('the client jwks_uri could not be retrieved');
+      expect(error?.redirectable).toBe(false);
+      expect(error?.redirectUri).toBeUndefined();
+      expect(error?.state).toBeUndefined();
     });
   });
 

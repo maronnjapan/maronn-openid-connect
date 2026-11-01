@@ -19,8 +19,28 @@ import type { ClaimsParameter, ClaimRequestValue } from './userinfo.js';
 /**
  * OIDC Core 1.0 §6.1 / OIDC Basic OP の既定 Request Object 署名アルゴリズム。
  * 署名付き Request Object では少なくとも RS256 を必須対応とする。
+ *
+ * core を直接使う利用者の挙動を変えないため、既定は RS256 だけにしておく。ほかの alg を
+ * 受け付けるときは {@link resolveRequestObjectParams} の `supportedSigningAlgs` に
+ * {@link SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS} などを渡す。
  */
 export const DEFAULT_REQUEST_OBJECT_SIGNING_ALGS = ['RS256'] as const;
+
+/**
+ * core が Request Object の署名検証に使える JWS アルゴリズム。
+ *
+ * RSASSA-PKCS1-v1_5（RFC 7518 §3.3）と ECDSA（RFC 7518 §3.4）。RSA-PSS（PS256 など）は
+ * 検証できないので含まない。discovery の `request_object_signing_alg_values_supported`
+ * （OIDC Discovery 1.0 §3）に広告する値の上限でもある。
+ */
+export const SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS = [
+  'RS256',
+  'RS384',
+  'RS512',
+  'ES256',
+  'ES384',
+  'ES512',
+] as const;
 
 /**
  * 認可エンドポイントのエラーコード
@@ -851,10 +871,11 @@ export interface ResolvedRequestObjectParams {
  *
  * `request` パラメータが無い場合はクエリパラメータのコピーをそのまま返す。
  * ある場合は署名付き JWS Request Object を、クライアントが request_object の用途に登録した
- * 公開鍵（`options.jwks`。ClientKeyResolver で引く）で検証し、claim をクエリ値に supersede
- * した有効パラメータ集合を返す。鍵を引く呼び出し側は、`request` パラメータがあるときだけ
- * 引けば足りる。
- * 検証失敗（壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
+ * 公開鍵（`options.jwks` か `options.loadJwks`。ClientKeyResolver で引く）で検証し、claim を
+ * クエリ値に supersede した有効パラメータ集合を返す。鍵を引く呼び出し側は、`request`
+ * パラメータがあるときだけ引けば足りる（`loadJwks` は JOSE ヘッダーの検査を通った後でだけ呼ぶ）。
+ * 検証失敗（壊れた JWT / 未対応 alg / 登録した alg との不一致 / 鍵不一致 / 署名不一致 /
+ * `jwks_uri` の取得失敗）は信頼できないため、
  * 内部の redirect_uri も信用せず非リダイレクトの invalid_request_object
  * （OIDC Core 1.0 §6.3）とする。
  *
@@ -870,6 +891,13 @@ export async function resolveRequestObjectParams(
      */
     jwks?: JwkSet;
     /**
+     * JOSE ヘッダーを検査した後で、署名の検証に使う鍵を読む（`parseRequestObject()` の
+     * `loadJwks`）。あれば `jwks` より優先する。ヘッダーの `alg` と `kid` を受け取るので、
+     * `ClientKeyResolver.findClientKeys()` の第 3 引数（`{ kid }`）に渡せば、`jwks_uri` を
+     * 登録したクライアントの見慣れない kid で鍵を取り直せる（OIDC Core 1.0 §10.1.1）。
+     */
+    loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
+    /**
      * 受理する JWS 署名アルゴリズム。
      * 未指定なら {@link DEFAULT_REQUEST_OBJECT_SIGNING_ALGS}（`["RS256"]`）。
      */
@@ -879,6 +907,12 @@ export async function resolveRequestObjectParams(
      * OIDF Conformance Suite 互換の場合のみ true にする。
      */
     allowUnsigned?: boolean;
+    /**
+     * クライアントが登録した `request_object_signing_alg`（OIDC Dynamic Client Registration 1.0 §2）。
+     * あれば、ヘッダーの `alg` がこれと違う Request Object を invalid_request_object で拒否する
+     * （OIDC Core 1.0 §6.3.2）。
+     */
+    requestObjectSigningAlg?: string;
   } = {},
 ): Promise<ResolvedRequestObjectParams> {
   if (params.request === undefined) {
@@ -889,11 +923,15 @@ export async function resolveRequestObjectParams(
   try {
     requestObjectClaims = await parseRequestObject(params.request, {
       jwks: options.jwks,
+      ...(options.loadJwks === undefined ? {} : { loadJwks: options.loadJwks }),
       supportedSigningAlgs:
         options.supportedSigningAlgs ?? [
           ...DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
         ],
       allowUnsigned: options.allowUnsigned ?? false,
+      ...(options.requestObjectSigningAlg === undefined
+        ? {}
+        : { requiredSigningAlg: options.requestObjectSigningAlg }),
     });
   } catch (e) {
     if (e instanceof RequestObjectError) {

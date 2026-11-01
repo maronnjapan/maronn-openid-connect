@@ -144,6 +144,45 @@ describe('registerApp', () => {
     expect(((await accepted.json()) as Record<string, unknown>)['grant_types']).toEqual(['authorization_code', deviceCode]);
   });
 
+  // UC-3 / UC-9 / UC-10 / UC-12: RFC 7591 §2 / §3.2.1, OIDC Dynamic Client Registration 1.0 §2.
+  it('should register a jwks_uri and a request_object_signing_alg and return them in the response', async () => {
+    const app = await providerApp();
+
+    const response = await register(app, {
+      redirect_uris: ['https://rp.example.com/callback'],
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      request_object_signing_alg: 'ES256',
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      request_object_signing_alg: 'ES256',
+    });
+  });
+
+  it('should answer jwks with jwks_uri and an alg the provider does not accept with invalid_client_metadata', async () => {
+    const app = await providerApp();
+
+    const both = await register(app, {
+      redirect_uris: ['https://rp.example.com/callback'],
+      jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] },
+      jwks_uri: 'https://rp.example.com/jwks.json',
+    });
+    const pss = await register(app, { redirect_uris: ['https://rp.example.com/callback'], request_object_signing_alg: 'PS256' });
+
+    expect(both.status).toBe(400);
+    expect(await both.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'jwks and jwks_uri must not both be present',
+    });
+    expect(pss.status).toBe(400);
+    expect(await pss.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'request_object_signing_alg must be one of RS256, RS384, RS512, ES256, ES384, ES512',
+    });
+  });
+
   it('should register the signed response algs of the provider signing keys and reject another', async () => {
     const app = await providerApp();
 

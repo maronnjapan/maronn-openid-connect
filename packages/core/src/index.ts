@@ -30,6 +30,8 @@ export {
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
   DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
+  // core が Request Object の署名検証に使える alg（RFC 7518 §3.3 / §3.4）
+  SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS,
   validateSupportedResponseType,
   validateClientResponseType,
   // RFC 7591 §2: クライアントに登録された scope の照合
@@ -265,6 +267,9 @@ export {
   generateRandomString,
   extractAlgorithmParamsFromJwk,
   getJwaAlgorithm,
+  // RFC 8725 §3.1: 鍵ごとに使える alg を 1 つに決め、その alg のとおりに import する
+  resolveJwkSigningAlg,
+  importJwkForJwsVerification,
 } from './crypto-utils.js';
 
 export {
@@ -391,7 +396,34 @@ export {
   createClientKeyResolver,
 } from './client-keys.js';
 
-export type { ClientKeyPurpose, ClientKeyResolver, ClientKeysByPurpose } from './client-keys.js';
+export type {
+  ClientKeyLookupHint,
+  ClientKeyPurpose,
+  ClientKeyResolver,
+  ClientKeysByPurpose,
+} from './client-keys.js';
+
+export {
+  // クライアントの jwks_uri（RFC 7591 §2）: 宛先の検査、取得、Cache-Control を反映するキャッシュ、
+  // 未知の kid での取り直し（OIDC Core 1.0 §10.1.1）、ClientKeyResolver への合成
+  ClientJwksUriError,
+  DEFAULT_CLIENT_JWKS_URI_OPTIONS,
+  validateClientJwksUri,
+  parseClientJwkSet,
+  resolveClientJwksTtlSeconds,
+  fetchClientJwkSet,
+  createClientJwksUriCache,
+  withClientJwksUriKeys,
+} from './client-jwks-uri.js';
+
+export type {
+  ClientJwksUriPolicy,
+  ClientJwksTtlPolicy,
+  FetchClientJwkSetOptions,
+  FetchedClientJwkSet,
+  ClientJwksUriLoadOptions,
+  ClientJwksUriCache,
+} from './client-jwks-uri.js';
 
 export {
   createAuthorizationCode,

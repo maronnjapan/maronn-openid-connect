@@ -1,8 +1,9 @@
 import {
-  type ClientInfo,
+  type ClientKeyResolver,
   resolveRequestObjectParams,
   type ResolvedRequestObjectParams,
 } from '@maronn-openid-connect/core';
+import type { RegisteredClient } from '../../../config.js';
 import type { AuthorizationRequestInput } from '../../../endpoints/authorize/outcome.js';
 import { step } from '../../../endpoints/step.js';
 
@@ -26,20 +27,26 @@ export const meta = step({
  * onto the query parameters.
  * OIDC Core 1.0 §6.1 / §6.3.2
  *
- * RS256 is required; alg=none is accepted only when
- * config.allowUnsignedRequestObject is enabled (conformance compat).
+ * The alg must be one of config.requestObjectSigningAlgValuesSupported, and
+ * the requestObjectSigningAlg of a client that registered one (OIDC Core 1.0
+ * §6.3.2); alg=none is accepted only when config.allowUnsignedRequestObject is
+ * enabled (conformance compat). The keys are read only after the JOSE header
+ * passed these checks, with the kid of the header as the hint, so a client
+ * with a jwks_uri has it fetched again for a key it added (OIDC Core 1.0
+ * §10.1.1), and a Request Object rejected anyway fetches nothing.
  * effectiveParams is what every later step validates.
  */
 export async function resolveRequestObject(
   c: any,
   params: AuthorizationRequestInput,
-  client: ClientInfo,
+  client: RegisteredClient,
 ): Promise<ResolvedRequestObjectParams> {
   const config = c.get('config');
-  const clientKeyResolver = c.get('clientKeyResolver');
-  // The keys are read only for a request that carries a Request Object.
-  const jwks = params.request === undefined
-    ? undefined
-    : await clientKeyResolver.findClientKeys(client.clientId, 'request_object');
-  return resolveRequestObjectParams(params, { jwks, allowUnsigned: config.allowUnsignedRequestObject });
+  const clientKeyResolver: ClientKeyResolver = c.get('clientKeyResolver');
+  return resolveRequestObjectParams(params, {
+    loadJwks: ({ kid }) => clientKeyResolver.findClientKeys(client.clientId, 'request_object', { kid }),
+    supportedSigningAlgs: [...config.requestObjectSigningAlgValuesSupported],
+    allowUnsigned: config.allowUnsignedRequestObject,
+    requestObjectSigningAlg: client.requestObjectSigningAlg,
+  });
 }

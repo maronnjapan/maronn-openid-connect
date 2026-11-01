@@ -16,6 +16,7 @@ import { createOperatorApp } from './operator.js';
 import {
   createEphemeralSigningKeyProvider,
   echoRequestedAcr,
+  readClientJwksUri,
   readCrossAppAccess,
   readDynamicClientRegistration,
   readPostLogoutRedirectUris,
@@ -56,6 +57,8 @@ export async function createServerApp(env: Environment): Promise<Hono> {
       issuer,
       allowNonPkceAuthorizationCodeFlow: env['OIDC_ALLOW_NON_PKCE_AUTHORIZATION_CODE_FLOW'] === '1',
       allowUnsignedRequestObject: env['OIDC_ALLOW_UNSIGNED_REQUEST_OBJECT'] === '1',
+      // The jwks_uri of the clients (RFC 7591 §2): tests/e2e serves its keys over http on 127.0.0.1.
+      ...readClientJwksUri(env),
       // EXTENSION (google-login): the button appears once a Google OAuth
       // client ID is configured.
       ...(googleClientId ? { googleLogin: { clientId: googleClientId } } : {}),

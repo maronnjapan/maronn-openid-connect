@@ -9,7 +9,7 @@
  * error_description は固定の ASCII 文言に限り、リクエスト由来の値を埋め込まない。
  */
 
-import type { Jwk, JwkSet } from '@maronn-openid-connect/core';
+import { validateClientJwksUri, type Jwk, type JwkSet } from '@maronn-openid-connect/core';
 import { ClientRegistrationError } from './registration-error.js';
 
 /**
@@ -194,6 +194,44 @@ export function validateDefaultMaxAge(value: unknown): number {
 export function validateSigningAlg(value: unknown, name: string, supported: readonly string[]): string {
   if (typeof value !== 'string' || value === 'none' || !supported.includes(value)) {
     throw invalidMetadata(`${name} must be one of ${supported.join(', ')}`);
+  }
+  return value;
+}
+
+const JWKS_URI_DESCRIPTION =
+  'jwks_uri must be an absolute https URL without a fragment or userinfo that does not point to a loopback, private or link-local address';
+
+/**
+ * jwks_uri: クライアントの公開鍵の JWK Set を返す URL（RFC 7591 §2）。
+ *
+ * 宛先の検査（https、フラグメントと userinfo の不在、ループバック・私設・リンクローカルの
+ * IP リテラルと localhost の拒否）は core の validateClientJwksUri に委ね、違反を固定文言の
+ * invalid_client_metadata に変える（文言に URI を埋め込まない）。allowInsecure のときは
+ * http とそれらのアドレスを許す（開発用）。
+ *
+ * 登録時には取得しない。中身は、生成コードが鍵を使うときに初めて取得する。オープン登録の
+ * 受け口を、そのまま外部取得の引き金にしないため。
+ */
+export function validateJwksUri(value: unknown, allowInsecure: boolean): string {
+  if (typeof value !== 'string' || INVISIBLE_CHARACTERS.test(value)) {
+    throw invalidMetadata(JWKS_URI_DESCRIPTION);
+  }
+  try {
+    return validateClientJwksUri(value, { allowInsecure });
+  } catch {
+    throw invalidMetadata(JWKS_URI_DESCRIPTION);
+  }
+}
+
+/**
+ * request_object_signing_alg: このクライアントが Request Object の署名に使う alg
+ * （OIDC Dynamic Client Registration 1.0 §2）。OP が受け付ける alg の一覧（discovery の
+ * request_object_signing_alg_values_supported）にある値だけを受理する。
+ * validateSigningAlg と違い、一覧にあれば none も受理する（§2 は none を使ってよいとする）。
+ */
+export function validateRequestObjectSigningAlg(value: unknown, supported: readonly string[]): string {
+  if (typeof value !== 'string' || !supported.includes(value)) {
+    throw invalidMetadata(`request_object_signing_alg must be one of ${supported.join(', ')}`);
   }
   return value;
 }

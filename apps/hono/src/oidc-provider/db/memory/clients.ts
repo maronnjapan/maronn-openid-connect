@@ -13,6 +13,7 @@ import {
   type ClientResolver,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../../client-jwks-uri.js';
 import type { ClientRegistration, RegisteredClient } from '../../config.js';
 import type { MemoryDatabase } from './database.js';
 
@@ -48,8 +49,20 @@ export function createClientKeyResolver(db: MemoryDatabase): ClientKeyResolver {
  *     grantTypes: ['authorization_code', 'refresh_token'],
  *     tokenEndpointAuthMethods: ['client_secret_basic'],
  *   });
+ *
+ * A client that publishes its keys at a jwks_uri (RFC 7591 §2) registers
+ * jwksUri instead of keys; registerClient() rejects a client with both, and a
+ * jwksUri that is not an absolute http or https URL:
+ *
+ *   await registerClient(db, {
+ *     clientId: 'my-client',
+ *     redirectUris: ['https://rp.example.com/callback'],
+ *     jwksUri: 'https://rp.example.com/jwks.json',
+ *     requestObjectSigningAlg: 'ES256',
+ *   });
  */
 export async function registerClient(db: MemoryDatabase, client: ClientRegistration): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const { clientSecret, ...registration } = client;
   db.clients.set(client.clientId, {
     ...registration,

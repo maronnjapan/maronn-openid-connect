@@ -24,6 +24,11 @@ describe('dynamicClientRegistrationConfig', () => {
       customClientMetadata: {},
     });
   });
+
+  // D-19 / RFC 7591 §2: jwks_uri is registrable as generated.
+  it('should accept jwks_uri by default', () => {
+    expect(dynamicClientRegistrationConfig.acceptJwksUri).toBe(true);
+  });
 });
 
 describe('extendDynamicClientRegistrationConfig', () => {
@@ -39,6 +44,13 @@ describe('extendDynamicClientRegistrationConfig', () => {
     extendDynamicClientRegistrationConfig({});
 
     expect(dynamicClientRegistrationConfig).toEqual(defaults);
+  });
+
+  // UC-6: a deployment that does not want the OP to fetch registered URLs turns jwks_uri off.
+  it('should replace acceptJwksUri', () => {
+    extendDynamicClientRegistrationConfig({ acceptJwksUri: false });
+
+    expect(dynamicClientRegistrationConfig.acceptJwksUri).toBe(false);
   });
 
   // A deployment adds what it allows beside the generated defaults, instead of repeating them.

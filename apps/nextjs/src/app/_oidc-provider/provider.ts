@@ -31,6 +31,7 @@ import {
   type SigningKey,
   type SigningKeyProvider,
 } from '@maronn-openid-connect/core';
+import { withRegisteredClientJwksUri } from './client-jwks-uri';
 import { createProviderConfig, type ProviderConfig } from './config';
 import {
   createClientKeyResolver,
@@ -47,6 +48,13 @@ import { createStoreResolvers } from './resolvers';
  * it is the iss of every token, and the origin every URL the OP builds for
  * itself is based on (OIDC Discovery 1.0 §3). The enabled features add their
  * own settings and defaults (createProviderConfig() in config.ts).
+ *
+ * The jwks_uri of the clients (RFC 7591 §2): OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI=1
+ * lets a jwks_uri use http and loopback or private addresses (development
+ * only), and OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS /
+ * OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS replace how long keys without
+ * max-age are kept and how often an unknown kid fetches the jwks_uri again
+ * (0: every time). The other settings of config.ts keep their defaults.
  */
 export const config: ProviderConfig = createProviderConfig({
   issuer: process.env.OIDC_ISSUER ?? process.env.ISSUER ?? 'http://localhost:3000',
@@ -55,7 +63,26 @@ export const config: ProviderConfig = createProviderConfig({
   refreshTokenAbsoluteLifetime: 7776000,
   accessTokenFormat: 'jwt',
   authorizationCodeTtl: 300,
+  allowInsecureClientJwksUri: process.env.OIDC_ALLOW_INSECURE_CLIENT_JWKS_URI === '1',
+  ...secondsFromEnvironment('clientJwksUriCacheTtlSeconds', 'OIDC_CLIENT_JWKS_URI_CACHE_TTL_SECONDS'),
+  ...secondsFromEnvironment('clientJwksUriRefetchIntervalSeconds', 'OIDC_CLIENT_JWKS_URI_REFETCH_INTERVAL_SECONDS'),
 });
+
+/**
+ * A setting of seconds from an environment variable: a non-negative integer,
+ * 0 included. An unset variable sets nothing, so the default of config.ts stays.
+ */
+function secondsFromEnvironment<Name extends keyof ProviderConfig>(
+  field: Name,
+  variable: string,
+): Partial<Record<Name, number>> {
+  const value = process.env[variable];
+  if (value === undefined || value === '') return {};
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${variable} must be a non-negative integer, not "${value}"`);
+  }
+  return { [field]: Number(value) } as Partial<Record<Name, number>>;
+}
 
 /**
  * The database of db/ (--db): the clients, the users and every record the OP
@@ -80,9 +107,16 @@ export const clientResolver = context.clientResolver;
 /**
  * The public keys of the registered clients, one purpose at a time (the OP
  * verifies signed Request Objects with those of request_object), read from
- * db/ for each request.
+ * db/ for each request — and, for a client that registered a jwksUri, fetched
+ * from its jwks_uri (client-jwks-uri.ts, RFC 7591 §2), the dynamically
+ * registered clients included. Pass { fetch } as the last argument to send
+ * those fetches through an egress proxy.
  */
-export const clientKeyResolver: ClientKeyResolver = context.clientKeyResolver;
+export const clientKeyResolver: ClientKeyResolver = withRegisteredClientJwksUri(
+  config,
+  () => context.clientResolver,
+  context.clientKeyResolver,
+);
 
 /** The stores of the authorization flows, on the same database. */
 export const stores = createProviderStores(database);

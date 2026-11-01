@@ -1,6 +1,7 @@
 import { ClientRegistrationError } from '@maronn-openid-connect/experimental/dynamic-client-registration';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TEST_ISSUER } from '../../../test-support/context';
+import { config as providerConfig } from '../../_oidc-provider/provider';
 import {
   dynamicClientRegistrationConfig,
   type DynamicClientRegistrationConfig,
@@ -9,11 +10,17 @@ import { POST, registrableGrantTypes, registrableScopes } from './route';
 
 const REDIRECT_URIS = ['https://rp.example.com/callback'];
 const defaults: DynamicClientRegistrationConfig = { ...dynamicClientRegistrationConfig };
+const providerDefaults = {
+  allowInsecureClientJwksUri: providerConfig.allowInsecureClientJwksUri,
+  allowUnsignedRequestObject: providerConfig.allowUnsignedRequestObject,
+  requestObjectSigningAlgValuesSupported: providerConfig.requestObjectSigningAlgValuesSupported,
+};
 
-// dynamicClientRegistrationConfig is a shared() object: every test puts the
-// settings it changed back.
+// dynamicClientRegistrationConfig is a shared() object, and config of
+// provider.ts one for the process: every test puts the settings it changed back.
 afterEach(() => {
   Object.assign(dynamicClientRegistrationConfig, defaults);
+  Object.assign(providerConfig, providerDefaults);
 });
 
 function configure(overrides: Partial<DynamicClientRegistrationConfig>): void {
@@ -83,6 +90,74 @@ describe('POST /register', () => {
 
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({ grant_types: ['implicit'], response_types: ['id_token token'] });
+  });
+
+  // UC-3 / UC-9: RFC 7591 §2 / §3.2.1, OIDC Dynamic Client Registration 1.0 §2.
+  it('should register a jwks_uri and a request_object_signing_alg and return them in the response', async () => {
+    const response = await register({
+      redirect_uris: REDIRECT_URIS,
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      request_object_signing_alg: 'ES256',
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      jwks_uri: 'https://rp.example.com/jwks.json',
+      request_object_signing_alg: 'ES256',
+    });
+  });
+
+  // UC-10 / UC-12
+  it('should answer jwks with jwks_uri and an alg the provider does not accept with invalid_client_metadata', async () => {
+    const both = await register({
+      redirect_uris: REDIRECT_URIS,
+      jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] },
+      jwks_uri: 'https://rp.example.com/jwks.json',
+    });
+    const pss = await register({ redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'PS256' });
+
+    expect(both.status).toBe(400);
+    expect(await both.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'jwks and jwks_uri must not both be present',
+    });
+    expect(pss.status).toBe(400);
+    expect(await pss.json()).toEqual({
+      error: 'invalid_client_metadata',
+      error_description: 'request_object_signing_alg must be one of RS256, RS384, RS512, ES256, ES384, ES512',
+    });
+  });
+
+  it('should ignore jwks_uri once the config turns acceptJwksUri off', async () => {
+    configure({ acceptJwksUri: false });
+
+    const response = await register({ redirect_uris: REDIRECT_URIS, jwks_uri: 'https://rp.example.com/jwks.json' });
+
+    expect(response.status).toBe(201);
+    expect(Object.hasOwn((await response.json()) as object, 'jwks_uri')).toBe(false);
+  });
+
+  // UC-11 / UC-7: allowInsecureClientJwksUri decides the destinations a jwks_uri may name.
+  it('should refuse a loopback http jwks_uri unless allowInsecureClientJwksUri is on', async () => {
+    const metadata = { redirect_uris: REDIRECT_URIS, jwks_uri: 'http://127.0.0.1:3020/jwks.json' };
+    const refused = await register(metadata);
+    providerConfig.allowInsecureClientJwksUri = true;
+    const accepted = await register(metadata);
+
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as Record<string, unknown>)['error']).toBe('invalid_client_metadata');
+    expect(accepted.status).toBe(201);
+  });
+
+  // The algs of request_object_signing_alg are those discovery advertises.
+  it('should accept request_object_signing_alg none once unsigned Request Objects are accepted', async () => {
+    const refused = await register({ redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'none' });
+    providerConfig.allowUnsignedRequestObject = true;
+    const accepted = await register({ redirect_uris: REDIRECT_URIS, request_object_signing_alg: 'none' });
+
+    expect(refused.status).toBe(400);
+    expect(accepted.status).toBe(201);
+    expect(((await accepted.json()) as Record<string, unknown>)['request_object_signing_alg']).toBe('none');
   });
 
   it('should bound the signed response algs to the algs of the provider signing keys', async () => {

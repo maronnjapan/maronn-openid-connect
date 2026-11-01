@@ -36,7 +36,8 @@ import {
   validateClientMetadata,
   type ParsedClientRegistration,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
-import { responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
+import type { ProviderConfig } from '../../_oidc-provider/config';
+import { discoveryOf, responseTypesOf, tokenGrantsOf } from '../../_oidc-provider/feature';
 import { features } from '../../_oidc-provider/features';
 import {
   dynamicClientRegistrationConfig,
@@ -47,7 +48,7 @@ import {
   toClientRegistration,
 } from '../../_oidc-provider/features/dynamic-client-registration/store';
 import { clientCors, corsPreflight, signingKeysUnavailable, withCors } from '../../_oidc-provider/http';
-import { loadSigningKeys } from '../../_oidc-provider/provider';
+import { config as providerConfig, loadSigningKeys } from '../../_oidc-provider/provider';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../_oidc-provider/scopes';
 
 export const dynamic = 'force-dynamic';
@@ -135,10 +136,15 @@ async function registerClient(request: Request): Promise<Response> {
     // @maronn-openid-connect/experimental/dynamic-client-registration, bounded
     // to what this provider answers: the methods and grants of the config, the
     // response types of the features, the scopes of scopes.ts, the algs of the
-    // signing keys and the custom metadata of the config. Unknown metadata is
-    // silently ignored (§2 MUST), and every error_description is a fixed ASCII
-    // string that never reflects request values.
+    // signing keys, a jwks_uri while the config accepts it (its destination
+    // checked against allowInsecureClientJwksUri of the provider config, never
+    // fetched here), the request_object_signing_alg values discovery
+    // advertises (ignored without the request-object feature) and the custom
+    // metadata of the config. Unknown metadata is silently ignored (§2 MUST),
+    // and every error_description is a fixed ASCII string that never reflects
+    // request values.
     const responseTypes = ['code', ...responseTypesOf(features)];
+    const requestObjectSigningAlgs = registrableRequestObjectSigningAlgs(providerConfig);
     const validated = validateClientMetadata(metadata, {
       tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
       grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
@@ -146,6 +152,11 @@ async function registerClient(request: Request): Promise<Response> {
       scopes: registrableScopes(),
       idTokenSigningAlgValuesSupported: signingAlgsOf(keys.idToken),
       userinfoSigningAlgValuesSupported: signingAlgsOf(keys.userinfo),
+      acceptJwksUri: config.acceptJwksUri,
+      allowInsecureJwksUri: providerConfig.allowInsecureClientJwksUri,
+      ...(requestObjectSigningAlgs === undefined
+        ? {}
+        : { requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs }),
       customMetadata: config.customClientMetadata,
     });
     const client = buildRegisteredClient(validated);
@@ -243,6 +254,18 @@ export function registrableGrantTypes(configured: readonly string[], responseTyp
  */
 export function registrableScopes(): readonly string[] | undefined {
   return CUSTOM_SCOPES.length === 0 ? undefined : [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
+}
+
+/**
+ * The request_object_signing_alg values a registration may name: what
+ * discovery advertises in request_object_signing_alg_values_supported (OIDC
+ * Discovery 1.0 §3), none included while unsigned Request Objects are
+ * accepted. undefined while no feature advertises the member (a provider
+ * without the request-object feature), so the field is ignored.
+ */
+export function registrableRequestObjectSigningAlgs(config: ProviderConfig): readonly string[] | undefined {
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_object_signing_alg_values_supported'];
+  return Array.isArray(advertised) ? advertised.filter((alg): alg is string => typeof alg === 'string') : undefined;
 }
 
 /** The JWA algs of a registered signing key set, each once (what discovery advertises for it). */

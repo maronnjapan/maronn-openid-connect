@@ -20,6 +20,12 @@
  * - client_response_types: responseTypes, the response types the client may
  *   use at the authorization endpoint (id_token and id_token token for the
  *   Implicit Flow). A client without rows may use code only.
+ * - client_jwks_uris: jwksUri, the jwks_uri the OP fetches the client's keys
+ *   from (RFC 7591 §2). A client with one gets the keys of its jwks_uri, not
+ *   those of client_jwks, for the purposes of clientJwksUriPurposes.
+ * - client_request_object_signing_algs: requestObjectSigningAlg, the alg every
+ *   Request Object of the client must be signed with (OIDC Dynamic Client
+ *   Registration 1.0 §2).
  * - Metadata without a column (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -51,14 +57,24 @@ import {
   type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../../client-jwks-uri';
 import type { ClientRegistration, RegisteredClient } from '../../config';
 import type { SqlDatabase } from './database';
 
 export function createClientResolver(db: SqlDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
-      const [client] = await db.all<{ id: string; client_type: string }>({
-        sql: 'SELECT id, client_type FROM clients WHERE id = ? AND is_deleted = FALSE',
+      const [client] = await db.all<{
+        id: string;
+        client_type: string;
+        jwks_uri: string | null;
+        request_object_signing_alg: string | null;
+      }>({
+        sql:
+          'SELECT c.id, c.client_type, u.value AS jwks_uri, a.alg AS request_object_signing_alg FROM clients c ' +
+          'LEFT JOIN client_jwks_uris u ON u.client_id = c.id ' +
+          'LEFT JOIN client_request_object_signing_algs a ON a.client_id = c.id ' +
+          'WHERE c.id = ? AND c.is_deleted = FALSE',
         params: [clientId],
       });
       if (!client) return null;
@@ -93,6 +109,10 @@ export function createClientResolver(db: SqlDatabase): ClientResolver & TokenCli
       if (grantTypes.length > 0) registered.grantTypes = grantTypes.map((row) => row.grant_type);
       if (scopes.length > 0) registered.scope = scopes.map((row) => row.value);
       if (responseTypes.length > 0) registered.responseTypes = responseTypes.map((row) => row.response_type);
+      if (client.jwks_uri !== null) registered.jwksUri = client.jwks_uri;
+      if (client.request_object_signing_alg !== null) {
+        registered.requestObjectSigningAlg = client.request_object_signing_alg;
+      }
 
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
@@ -185,11 +205,18 @@ function parseJwk(clientId: string, json: string): Jwk {
  * (see the top of this file), and registering the client again at the next
  * start keeps them. To remove a key, delete its row in the database, and drop
  * it from the client passed here too, or the next registration adds it back.
+ *
+ * jwksUri and requestObjectSigningAlg replace the client_jwks_uris and
+ * client_request_object_signing_algs rows of the client, and a registration
+ * without them removes those rows. A client registers jwksUri or keys, never
+ * both: registerClient() rejects such a client, and a jwksUri that is not an
+ * absolute http or https URL, before it writes anything.
  */
 export async function registerClient(
   db: SqlDatabase,
   client: ClientRegistration & { name?: string },
 ): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   await db.run({
     sql:
@@ -253,6 +280,24 @@ export async function registerClient(
         ],
       });
     }
+  }
+
+  // One row per client in each of these tables (client_id is the primary key).
+  const singleValues: Array<[table: string, column: string, value: string | undefined]> = [
+    ['client_jwks_uris', 'value', client.jwksUri],
+    ['client_request_object_signing_algs', 'alg', client.requestObjectSigningAlg],
+  ];
+  for (const [table, column, value] of singleValues) {
+    await db.run(
+      value === undefined
+        ? { sql: 'DELETE FROM ' + table + ' WHERE client_id = ?', params: [client.clientId] }
+        : {
+          sql:
+            'INSERT INTO ' + table + ' (client_id, ' + column + ') VALUES (?, ?) ' +
+            'ON CONFLICT (client_id) DO UPDATE SET ' + column + ' = excluded.' + column,
+          params: [client.clientId, value],
+        },
+    );
   }
 
   const childValues: Array<[table: string, column: string, values: readonly string[]]> = [

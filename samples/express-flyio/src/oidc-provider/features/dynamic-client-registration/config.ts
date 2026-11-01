@@ -54,6 +54,15 @@ export type SoftwareStatementVerifier = (
  * - jwksPurposes: the ClientKeyResolver purposes the jwks of a registration
  *   serves — a registered key verifies signed Request Objects (request_object),
  *   and stands ready for private_key_jwt and DPoP once a project adds them.
+ * - acceptJwksUri: true as generated, which registers a jwks_uri (RFC 7591 §2)
+ *   and returns it in the 201 response. The OP checks the URL at registration
+ *   (https, no fragment or userinfo, no localhost or loopback, private or
+ *   link-local address unless allowInsecureClientJwksUri of config.ts allows
+ *   them) and fetches it only when it needs the keys (client-jwks-uri.ts), for
+ *   the purposes of clientJwksUriPurposes. Set false to ignore jwks_uri as
+ *   metadata this provider does not understand: an open registration endpoint
+ *   then never leads the OP to fetch a URL a stranger registered. A
+ *   registration with both jwks and jwks_uri is refused either way.
  * - verifyInitialAccessToken: undefined as generated, which leaves registration
  *   open (RFC 7591 §3.1 SHOULD). Set a function to require an initial access
  *   token (OIDC Dynamic Client Registration 1.0 §3): POST /register then answers
@@ -91,6 +100,7 @@ export interface DynamicClientRegistrationConfig {
   tokenEndpointAuthMethods: readonly string[];
   grantTypes: readonly string[];
   jwksPurposes: readonly string[];
+  acceptJwksUri: boolean;
   verifyInitialAccessToken: InitialAccessTokenVerifier | undefined;
   verifySoftwareStatement: SoftwareStatementVerifier | undefined;
   customClientMetadata: Readonly<Record<string, CustomClientMetadataValidator>>;
@@ -102,6 +112,7 @@ export const dynamicClientRegistrationConfig: DynamicClientRegistrationConfig = 
   tokenEndpointAuthMethods: ['client_secret_basic', 'client_secret_post', 'none'],
   grantTypes: ['authorization_code', 'refresh_token', 'implicit'],
   jwksPurposes: ['request_object', 'private_key_jwt', 'dpop'],
+  acceptJwksUri: true,
   verifyInitialAccessToken: undefined,
   verifySoftwareStatement: undefined,
   customClientMetadata: {},

@@ -4,11 +4,12 @@ import {
   validateClientMetadata,
   type DynamicallyRegisteredClient,
 } from '@maronn-openid-connect/experimental/dynamic-client-registration';
+import type { ProviderConfig } from '../../../../../config.js';
 import { supportedResponseTypes } from '../../../../../endpoints/authorize/response-type.js';
 import { step } from '../../../../../endpoints/step.js';
 import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../../../../scopes.js';
 import { features } from '../../../../enabled.js';
-import { tokenGrantsOf } from '../../../../feature.js';
+import { discoveryOf, tokenGrantsOf } from '../../../../feature.js';
 import type { DynamicClientRegistrationConfig } from '../../../config.js';
 
 export const meta = step({
@@ -19,7 +20,14 @@ export const meta = step({
   label: 'Validate the metadata and build the client',
   spec: 'RFC 7591 §2 / §2.1',
   function: 'validateRegistrationMetadata',
-  calls: ['supportedResponseTypes', 'tokenGrantsOf', 'getJwaAlgorithm', 'validateClientMetadata', 'buildRegisteredClient'],
+  calls: [
+    'supportedResponseTypes',
+    'tokenGrantsOf',
+    'getJwaAlgorithm',
+    'discoveryOf',
+    'validateClientMetadata',
+    'buildRegisteredClient',
+  ],
   consumes: ['metadata'],
   produces: ['client'],
   removable: false,
@@ -43,6 +51,13 @@ export const meta = step({
  *   standard and the declared ones
  * - id_token_signed_response_alg / userinfo_signed_response_alg: the algs of
  *   the registered signing keys, as discovery advertises them
+ * - jwks_uri (RFC 7591 §2): registered while the registration config accepts
+ *   it (acceptJwksUri), its destination checked against
+ *   allowInsecureClientJwksUri of the provider config; never fetched here
+ * - request_object_signing_alg (OIDC Dynamic Client Registration 1.0 §2): the
+ *   algs discovery advertises in request_object_signing_alg_values_supported
+ *   (the request-object feature); without that feature the field is ignored
+ *   as metadata this provider does not understand
  * - the custom metadata of the registration config (config.ts)
  *
  * Unknown metadata is silently ignored (§2 MUST), and every error_description
@@ -53,7 +68,9 @@ export function validateRegistrationMetadata(
   metadata: Record<string, unknown>,
 ): DynamicallyRegisteredClient {
   const config: DynamicClientRegistrationConfig = c.get('dynamicClientRegistrationConfig');
+  const providerConfig: ProviderConfig = c.get('config');
   const responseTypes = supportedResponseTypes();
+  const requestObjectSigningAlgs = registrableRequestObjectSigningAlgs(providerConfig);
   const validated = validateClientMetadata(metadata, {
     tokenEndpointAuthMethods: config.tokenEndpointAuthMethods,
     grantTypes: registrableGrantTypes(config.grantTypes, responseTypes),
@@ -61,9 +78,26 @@ export function validateRegistrationMetadata(
     scopes: registrableScopes(),
     idTokenSigningAlgValuesSupported: signingAlgsOf(c.get('idTokenSigningKeys')),
     userinfoSigningAlgValuesSupported: signingAlgsOf(c.get('userinfoSigningKeys')),
+    acceptJwksUri: config.acceptJwksUri,
+    allowInsecureJwksUri: providerConfig.allowInsecureClientJwksUri,
+    ...(requestObjectSigningAlgs === undefined
+      ? {}
+      : { requestObjectSigningAlgValuesSupported: requestObjectSigningAlgs }),
     customMetadata: config.customClientMetadata,
   });
   return buildRegisteredClient(validated);
+}
+
+/**
+ * The request_object_signing_alg values a registration may name: what
+ * discovery advertises in request_object_signing_alg_values_supported (OIDC
+ * Discovery 1.0 §3), none included while unsigned Request Objects are
+ * accepted. undefined while no feature advertises the member (a provider
+ * without the request-object feature), so the field is ignored.
+ */
+export function registrableRequestObjectSigningAlgs(config: ProviderConfig): readonly string[] | undefined {
+  const advertised = discoveryOf(features, {}, config.issuer, config)['request_object_signing_alg_values_supported'];
+  return Array.isArray(advertised) ? advertised.filter((alg): alg is string => typeof alg === 'string') : undefined;
 }
 
 /**

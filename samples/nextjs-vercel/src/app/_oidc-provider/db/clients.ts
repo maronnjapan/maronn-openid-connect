@@ -22,6 +22,12 @@
  * - response_types: responseTypes, the response types the client may use at
  *   the authorization endpoint (id_token and id_token token for the Implicit
  *   Flow). A client without them may use code only.
+ * - jwks_uri: jwksUri, the jwks_uri the OP fetches the client's keys from
+ *   (RFC 7591 §2). A client with one gets the keys of its jwks_uri, not those
+ *   of keys.clientJwks(), for the purposes of clientJwksUriPurposes.
+ * - request_object_signing_alg: requestObjectSigningAlg, the alg every Request
+ *   Object of the client must be signed with (OIDC Dynamic Client Registration
+ *   1.0 §2).
  * - Metadata without a field (default_max_age, the ID Token and UserInfo
  *   signing algs) keeps its default.
  *
@@ -48,6 +54,7 @@ import {
   type JwkSet,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { assertClientJwksUriRegistration } from '../client-jwks-uri';
 import type { ClientRegistration, RegisteredClient } from '../config';
 import { readRecord, writeRecord, type KvDatabase } from './database';
 import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord } from './keys';
@@ -65,6 +72,10 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       if (client.grant_types.length > 0) registered.grantTypes = client.grant_types;
       if (client.scopes.length > 0) registered.scope = client.scopes;
       if ((client.response_types ?? []).length > 0) registered.responseTypes = client.response_types;
+      if (typeof client.jwks_uri === 'string') registered.jwksUri = client.jwks_uri;
+      if (typeof client.request_object_signing_alg === 'string') {
+        registered.requestObjectSigningAlg = client.request_object_signing_alg;
+      }
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
       } else if (client.client_auths[0]) {
@@ -130,11 +141,18 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  * file), and registering the client again at the next start keeps them. To
  * remove a key, change it in the store, and drop it from the client passed
  * here too, or the next registration adds it back.
+ *
+ * jwksUri and requestObjectSigningAlg go into the client record (jwks_uri,
+ * request_object_signing_alg), so a registration without them removes them.
+ * A client registers jwksUri or keys, never both: registerClient() rejects
+ * such a client, and a jwksUri that is not an absolute http or https URL,
+ * before it writes anything.
  */
 export async function registerClient(
   db: KvDatabase,
   client: ClientRegistration & { name?: string },
 ): Promise<void> {
+  assertClientJwksUriRegistration(client);
   const clientType = client.clientType ?? (isPublicTokenClient(client) ? 'public' : 'confidential');
   const secretHash =
     client.clientSecretHash ??
@@ -156,6 +174,10 @@ export async function registerClient(
     grant_types: [...(client.grantTypes ?? [])],
     scopes: [...(client.scope ?? [])],
     response_types: [...(client.responseTypes ?? [])],
+    ...(client.jwksUri === undefined ? {} : { jwks_uri: client.jwksUri }),
+    ...(client.requestObjectSigningAlg === undefined
+      ? {}
+      : { request_object_signing_alg: client.requestObjectSigningAlg }),
   };
   await writeRecord(db, keys.client(client.clientId), record);
 

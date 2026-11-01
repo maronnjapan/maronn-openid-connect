@@ -105,6 +105,20 @@ export interface ClientRecord {
    * only.
    */
   response_types?: string[];
+  /**
+   * Not in the ER model: the jwks_uri of the client (RFC 7591 §2), the URL of
+   * the JWK Set the OP fetches its public keys from. A client with one gets the
+   * keys of its jwks_uri for the purposes it serves, not those of
+   * keys.clientJwks(). Absent (a record written before the field existed): no
+   * jwks_uri.
+   */
+  jwks_uri?: string;
+  /**
+   * Not in the ER model: the request_object_signing_alg of the client (OpenID
+   * Connect Dynamic Client Registration 1.0 §2). Every Request Object of the
+   * client must be signed with this alg. Absent: any alg the OP accepts.
+   */
+  request_object_signing_alg?: string;
 }
 
 /** One Client_auth of ClientRecord.client_auths, with its Client_secret. */

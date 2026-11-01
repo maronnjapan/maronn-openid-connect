@@ -14,6 +14,7 @@ import {
   type SigningKeyProvider,
   type TokenClientResolver,
 } from '@maronn-openid-connect/core';
+import { withRegisteredClientJwksUri } from './client-jwks-uri.js';
 import { createProviderConfig, type ProviderConfig } from './config.js';
 import { createCorsMiddleware } from './cors.js';
 import {
@@ -80,9 +81,20 @@ export interface OidcProviderOptions {
    * The public keys each client registered, one purpose at a time
    * (ClientKeyResolver in core). The OP verifies signed Request Objects with
    * the keys of request_object.
-   * Defaults to the keys registerClient() put into db/, read for each request.
+   * Defaults to the keys registerClient() put into db/, read for each request,
+   * and to the keys of the jwks_uri of a client that registered a jwksUri
+   * (client-jwks-uri.ts). A resolver passed here is used as it is: wrap it with
+   * withClientJwksUriKeys() of core to keep the jwks_uri of the clients.
    */
   clientKeyResolver?: ClientKeyResolver;
+  /**
+   * The fetch the default ClientKeyResolver fetches the jwks_uri of the
+   * clients with (RFC 7591 §2). Defaults to globalThis.fetch. Pass a fetch that
+   * goes through an egress proxy to keep the fetches away from the networks of
+   * the OP: the destination check of client-jwks-uri.ts sees the host of a
+   * jwks_uri, not the addresses its name resolves to.
+   */
+  clientJwksFetch?: typeof fetch;
   /**
    * Session resolver used for SSO / prompt=none / max_age
    * (OIDC Core 1.0 Section 3.1.2.1 / 3.1.2.3).
@@ -291,7 +303,13 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('config', createProviderConfig(options.config));
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
-  c.set('clientKeyResolver', options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)));
+  // The default resolver reads the jwks_uri of a client through the
+  // clientResolver and the config set above.
+  c.set(
+    'clientKeyResolver',
+    options.clientKeyResolver ??
+      withRegisteredClientJwksUri(c, createClientKeyResolver(createDatabase(c)), { fetch: options.clientJwksFetch }),
+  );
   c.set('stores', stores);
   c.set('transactionStore', stores.transactionStore);
   c.set('authCodeStore', stores.authCodeStore);

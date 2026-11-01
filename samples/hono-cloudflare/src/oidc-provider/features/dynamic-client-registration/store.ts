@@ -66,8 +66,9 @@ export const dynamicClientStore: DynamicallyRegisteredClientStore =
 /**
  * EXPERIMENTAL — the record the store keeps for a client the register endpoint
  * built (RFC 7591): the fields the provider reads (what registerClient() of db/
- * takes), the public keys of its jwks under every purpose of jwksPurposes, and
- * the registered metadata for a project's own code (RegisteredClient.registrationMetadata).
+ * takes, the jwks_uri and request_object_signing_alg included), the public keys
+ * of its jwks under every purpose of jwksPurposes, and the registered metadata
+ * for a project's own code (RegisteredClient.registrationMetadata).
  *
  * The experimental package types the auth method and the signed response algs
  * as strings, because it does not know the methods and algs of this provider.
@@ -97,6 +98,8 @@ export function toClientRegistration(
       : { userinfoSignedResponseAlg: client.userinfoSignedResponseAlg as RegisteredClient['userinfoSignedResponseAlg'] }),
     ...(options.clientSecretHash === undefined ? {} : { clientSecretHash: options.clientSecretHash }),
     ...(client.jwks === undefined ? {} : { keys: keysByPurpose(client.jwks, options.jwksPurposes) }),
+    ...(client.jwksUri === undefined ? {} : { jwksUri: client.jwksUri }),
+    ...(client.requestObjectSigningAlg === undefined ? {} : { requestObjectSigningAlg: client.requestObjectSigningAlg }),
     registrationMetadata: { ...client.metadata },
   };
 }
@@ -148,12 +151,17 @@ export function withDynamicallyRegisteredClients<
  * those of its registration (under the purposes of jwksPurposes). A client
  * neither knows, or a purpose without keys, resolves to an empty key set, as
  * core's ClientKeyResolver contract asks.
+ *
+ * The hint (the kid of the JWS) goes on to the configured resolver, whose
+ * jwks_uri wrapper (client-jwks-uri.ts) serves the clients with a jwksUri,
+ * the dynamically registered ones included: it finds them through the
+ * clientResolver this feature extends.
  */
 export function withDynamicallyRegisteredClientKeys(base: ClientKeyResolver): ClientKeyResolver {
   return {
     ...base,
-    async findClientKeys(clientId, purpose): Promise<JwkSet> {
-      const registered = await base.findClientKeys(clientId, purpose);
+    async findClientKeys(clientId, purpose, hint): Promise<JwkSet> {
+      const registered = await base.findClientKeys(clientId, purpose, hint);
       if (registered.keys.length > 0) {
         return registered;
       }

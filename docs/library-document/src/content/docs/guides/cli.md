@@ -565,6 +565,7 @@ OP はリクエストが送った資格情報から方式を決め、一覧に�
 クライアントの公開鍵は、鍵を使う処理（用途）ごとに登録します。
 鍵を使う処理は、core の `ClientKeyResolver` の `findClientKeys(clientId, purpose)` で、自分の用途の鍵だけを受け取ります。
 生成 OP が鍵を読むのは署名付き Request Object の検証（OIDC Core 1.0 §6.3.2）で、`request_object` の用途の鍵を使います。
+鍵は値で登録するほかに、クライアントが公開する `jwks_uri` から取得させることもできます（[jwks_uri](#jwks_uri) を参照）。
 
 用途は文字列で、DB の側にも CHECK を付けていないので、ほかの処理の用途も同じ形で登録できます。
 たとえば、private_key_jwt（OIDC Core 1.0 §9）によるクライアント認証を足すなら、`private_key_jwt` の用途で鍵を登録し、その処理から `findClientKeys(clientId, 'private_key_jwt')` を呼びます。
@@ -622,6 +623,61 @@ Hono / Express / Fastify は `createApp` / `applyOidc` の `clientKeyResolver` �
 起動のたびに `registerClient()` で登録し直しても、運用中に DB へ足した鍵は残ります。
 鍵を消すときは、DB から消すのに加えて、`registerClient()` に渡すクライアントの `keys` からも外してください。
 外さなければ、次の登録で足し直されます。
+
+### jwks_uri
+
+クライアントが公開鍵を自分の `jwks_uri`（RFC 7591 §2）で公開しているときは、`registerClient()` に `jwksUri` を登録します。
+OP は、そのクライアントの `clientJwksUriPurposes`（既定は `request_object`、`private_key_jwt`、`dpop`）の用途の鍵を、`jwks_uri` から取得して使います。
+クライアントは `jwks_uri` の鍵を入れ替えるだけで鍵をローテーションでき、OP の DB の更新も再起動も要りません。
+
+```typescript
+await registerClient(createDatabase(), {
+  clientId: 'my-client',
+  clientSecret: '...',
+  redirectUris: ['https://client.example.com/callback'],
+  jwksUri: 'https://client.example.com/jwks.json',
+  // 任意。このクライアントの Request Object は ES256 で署名されたものだけを受け付ける
+  requestObjectSigningAlg: 'ES256',
+});
+```
+
+`jwksUri` と `keys` は、どちらか一方だけを登録します。
+`registerClient()` は両方を持つクライアントと、http(s) の絶対 URL でない `jwksUri` を、何も書き込まずに Error で拒否します。
+`jwksUri` を持つクライアントの対象の用途では、運用中に `client_jwks` へ鍵を足しても読みません。
+
+OP は、鍵が必要になったとき（署名付き Request Object の検証など）に初めて `jwks_uri` を取得し、プロセスで共有するキャッシュに持ちます。
+取得の制限とキャッシュの期間は次のとおりで、どれも `ProviderConfig` の平たいフィールドなので、1 項目だけ上書きしても、ほかの項目は既定値のまま残ります。
+
+| 設定 | 既定値 | 内容 |
+|---|---|---|
+| `allowInsecureClientJwksUri` | `false` | http と、`localhost`、ループバック・私設・リンクローカルの IP アドレスを許す。開発用 |
+| `clientJwksUriCacheTtlSeconds` | `300` | 応答に `Cache-Control: max-age` が無いときに鍵を使う期間（秒） |
+| `clientJwksUriCacheMinTtlSeconds` | `30` | 鍵を使う期間の下限（秒）。`max-age=0`、`no-cache`、`no-store` でもこの期間は使う。0 にすると RFC 9111 のとおりに毎回取得する |
+| `clientJwksUriCacheMaxTtlSeconds` | `300` | 鍵を使う期間の上限（秒）。クライアントが `jwks_uri` から外した鍵は、最長でこの期間だけ検証に通る |
+| `clientJwksUriRefetchIntervalSeconds` | `30` | キャッシュに無い kid の署名が届いたときに取り直す間隔（秒。OIDC Core 1.0 §10.1.1）。期限切れの鍵の取得に失敗したときも、この間は取り直さずに失敗を返す |
+| `clientJwksUriTimeoutMs` | `3000` | 取得のタイムアウト（ミリ秒） |
+| `clientJwksUriMaxBytes` | `65536` | 取得する文書の上限（バイト） |
+| `clientJwksUriMaxKeys` | `32` | JWK Set の鍵の数の上限 |
+| `clientJwksUriCacheMaxEntries` | `1000` | キャッシュに持つ `jwks_uri` の数の上限 |
+| `clientJwksUriPurposes` | `['request_object', 'private_key_jwt', 'dpop']` | `jwks_uri` の鍵を返す用途 |
+
+```typescript
+applyOidc(app, {
+  config: { clientJwksUriCacheMaxTtlSeconds: 3600, clientJwksUriTimeoutMs: 1000 },
+  signingKeyProvider,
+});
+```
+
+OP は https の URL だけを取得し、`localhost` と、ループバック・私設・リンクローカルの IP リテラル（`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`0.0.0.0/8`、`::1`、`fc00::/7`、`fe80::/10`、IPv4 射影の IPv6 など）は拒否します。
+リダイレクトには従わず、秘密鍵か対称鍵を含む JWK Set は全体を拒否し、`use` が `sig` 以外の鍵と 2048 ビット未満の RSA 鍵は使いません。
+DNS 名の解決先までは検査しないので、OP の内部ネットワークへの取得を確実に防ぐには、egress プロキシを通る fetch を渡してください。
+Hono / Express / Fastify は `createApp` / `applyOidc` の `clientJwksFetch` オプションに、Next.js は `_oidc-provider/provider.ts` の `withRegisteredClientJwksUri()` の最後の引数（`{ fetch }`）に渡します。
+
+取得に失敗した Request Object は、非リダイレクトの `invalid_request_object` で拒否し、`error_description` は理由によらず `the client jwks_uri could not be retrieved` です。
+理由（取得先のホスト、応答のステータス、タイムアウトなど）は OP のログ（`console.warn`）に出します。
+
+`clientKeyResolver` に自前の resolver を渡すと、生成 OP はそれをそのまま使い、`jwks_uri` を読みません。
+`jwks_uri` も使うときは、core の `withClientJwksUriKeys()` で包んでから渡してください（[core の Client Keys](../core/#client-keys) を参照）。
 
 ## Database (--db)
 
@@ -703,6 +759,7 @@ export function createDatabase(): SqlDatabase {
 | `client_auths`、`client_secrets` | クライアント認証の方式（client_secret_basic / client_secret_post。1 つのクライアントに両方を登録できる）と、シークレットのハッシュ |
 | `client_jwks` | クライアントの公開鍵。1 行が 1 つの用途（`purpose`）と JWK 1 つを持ち、生成 OP は `request_object` の用途の鍵で署名付き Request Object を検証する（[Client Keys](#client-keys) を参照） |
 | `client_redirect_uris`、`client_grant_types`、`client_response_types`、`client_scopes` | リダイレクト URI、使ってよい grant type と response type、要求してよいスコープ |
+| `client_jwks_uris`、`client_request_object_signing_algs` | クライアントの `jwks_uri`（[jwks_uri](#jwks_uri) を参照）と、Request Object の署名 alg（`request_object_signing_alg`）。どちらもクライアント 1 つにつき 1 行で、`registerClient()` が行を置き換える |
 | `users` | ユーザー。パスワードのハッシュ（`password_hash`）は NULL にでき、`email` と `is_verified` 以外のクレームは `claims` 列に JSON で持つ |
 | `transactions`、`authentication_requests` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ。OpenID Connect Core 1.0 が定める認可リクエストのパラメータ（`response_mode`、`prompt`、`max_age`、`claims` など）は、それぞれ `authentication_requests` の列に持つ |
 | `auth_users` | トランザクションでログインしたユーザー。ログイン画面から同意画面へ渡す |
@@ -729,6 +786,7 @@ ALTER TABLE access_tokens ADD COLUMN acr VARCHAR(5000);
 
 `client_response_types` は列ではなくテーブルなので、そのテーブルが加わる前の CLI で作ったデータベースでも、`schema.sql` を実行し直せば作られます。
 行の無いクライアントは、これまでどおり `response_type=code` だけを使えます。
+`client_jwks_uris` と `client_request_object_signing_algs` も同じで、`schema.sql` を実行し直せば既存のデータベースに足され、行の無いクライアントは `jwks_uri` も署名 alg の指定も持たないものとして読まれます。
 
 `transactions.status` は、認可リクエストがどこまで進んだかを表します。
 `/authorize` で `requested` になり、Google ボタン付きのログイン画面を出すと `upstream_pending`、ログインすると `authenticated`、認可コードを発行すると `code_issued`、そのコードをトークンに交換すると `token_issued` に進みます。
@@ -806,7 +864,7 @@ Cloudflare では D1（`--db sql`）か、Durable Objects の上に作ったス�
 
 | キー | 保存するもの |
 |---|---|
-| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値 |
+| `client:<client_id>` | 登録クライアントと、`--db sql` の `client_*` テーブルに当たる値（`jwks_uri` と `request_object_signing_alg` を含む。この 2 つの項目が無い既存のレコードは、どちらも無いものとして読む） |
 | `client_jwks:<client_id>:<purpose>` | クライアントの 1 つの用途の公開鍵（`{ "keys": [ <JWK>, ... ] }`）。`--db sql` の `client_jwks` に当たる |
 | `user:<id>` | ユーザー |
 | `transaction:<transaction_id>` | 認可リクエスト 1 件の進み具合と、検証済みのパラメータ |
@@ -877,6 +935,7 @@ Workers はリクエストの処理中にしか D1 を使えないので、起�
 Next.js の生成コードは、クライアントを環境変数から読みません。
 Next.js で起動のたびに登録するなら、`instrumentation.ts` の `register()` で行います（`samples/nextjs-vercel` の `src/instrumentation.ts`）。
 テーブルやレコードに無い登録メタデータ（`default_max_age`、ID トークンと UserInfo の署名アルゴリズム）は既定値になります。
+`jwks_uri` と Request Object の署名 alg（`jwksUri`、`requestObjectSigningAlg`）は `client_jwks_uris`、`client_request_object_signing_algs` の行（`--db kv` はクライアントのレコード）に保存します。
 クライアントの公開鍵は `RegisteredClient` に入れず、鍵を使う処理が用途ごとに `client_jwks` から読みます（[Client Keys](#client-keys) を参照）。
 
 ユーザーは、`users.ts` の `registerUser()` で DB に入れます。

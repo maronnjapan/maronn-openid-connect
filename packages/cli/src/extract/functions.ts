@@ -98,6 +98,27 @@ export interface FunctionProject {
   memberOf(call: string): MemberDoc | undefined;
   /** A member by its id, `Type.member` (the `member` of a box of a flow). */
   memberById(id: string): MemberDoc | undefined;
+  /**
+   * The lines the function of a card takes in its file: its JSDoc, its
+   * declaration and its body (the map of a pull request compares them with
+   * the base to tell which functions the pull request changed). Undefined for
+   * an unknown id.
+   */
+  spanOf(id: string): FunctionSpan | undefined;
+}
+
+/**
+ * The lines (1-based, inclusive) of a function in its file. An overload set
+ * counts as one function: from the first signature to the end of the body of
+ * the implementation.
+ */
+export interface FunctionSpan {
+  /** The line where the JSDoc right above the declaration opens; absent without one. */
+  doc?: number;
+  /** The line of the declaration (of the first signature of an overload set). */
+  start: number;
+  /** The line of the brace that closes the body; the line of the declaration for one without a body. */
+  end: number;
 }
 
 /** The JSDoc of a member of an interface or a type literal. */
@@ -518,6 +539,25 @@ class Project implements FunctionProject {
       resolve: (name) => this.resolveName(file, name),
       resolveMember: (receiver, method) => this.memberCalled(receiver, method, parameters, bindings),
     });
+  }
+
+  spanOf(id: string): FunctionSpan | undefined {
+    const card = this.catalog.functions[id];
+    if (card === undefined) return undefined;
+    const file = this.files.get(card.package)?.get(card.module);
+    const declarations = file?.declarations.filter((candidate) => candidate.name === card.name) ?? [];
+    const first = declarations[0];
+    const last = declarations[declarations.length - 1];
+    if (file === undefined || first === undefined || last === undefined) return undefined;
+    const span: FunctionSpan = {
+      start: lineOf(file.source, first.index),
+      end: lineOf(file.source, last.body === undefined ? last.index : last.body.end - 1),
+    };
+    if (first.jsdoc !== undefined) {
+      const doc = file.source.lastIndexOf(first.jsdoc, first.index);
+      if (doc !== -1) span.doc = lineOf(file.source, doc);
+    }
+    return span;
   }
 
   memberById(id: string): MemberDoc | undefined {

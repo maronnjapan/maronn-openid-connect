@@ -1,7 +1,10 @@
 /*
  * The page in three colors: a neutral grey scale (the page, the text, and
  * what the checked cases do not use), one accent (what they use, the
- * selection) and red (an error step, a throw, the arrows of an error).
+ * selection) and red (an error step, a throw, the arrows of an error). The
+ * badges of the changes of a pull request stay in the grey scale, so the
+ * colors of a diagram keep their meaning; a diff adds lines in the accent and
+ * removes them in red.
  *
  * Layout: the header, then the endpoints on the left (they fold away) and the
  * open screen filling the rest. On a screen, the description stays short and
@@ -153,26 +156,76 @@ h1, h2, h3, h4 { margin: 0; }
 
 /* ---- the diagram */
 .diagram { display: block; font-family: var(--font-ui); margin: 4px 0 24px; }
-.diagram .box rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.diagram .box .frame { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 .diagram .box .title { font-size: 12.5px; font-weight: 600; fill: var(--fg); }
 .diagram .box .sub { font-size: 11.5px; fill: var(--muted); }
-.diagram .box.off rect { fill: var(--bg); stroke: var(--line); stroke-dasharray: 3 3; }
+.diagram .box.off .frame { fill: var(--bg); stroke: var(--line); stroke-dasharray: 3 3; }
 .diagram .box.off .title, .diagram .box.off .sub { fill: var(--faint); }
-.diagram .box.on rect { stroke: var(--accent); stroke-width: 1.6; }
-.diagram .box.on.tone-error rect { stroke: var(--danger); }
+.diagram .box.on .frame { stroke: var(--accent); stroke-width: 1.6; }
+.diagram .box.on.tone-error .frame { stroke: var(--danger); }
 .diagram .box.on.tone-error .title { fill: var(--danger); }
-.diagram .box.selected rect { stroke-width: 3; fill: var(--accent-soft); }
+.diagram .box.selected .frame { stroke-width: 3; fill: var(--accent-soft); }
 .diagram .box.clickable { cursor: pointer; }
 .diagram .box:focus { outline: none; }
-.diagram .box:focus-visible rect { stroke: var(--accent); stroke-width: 3; }
-.diagram .box.clickable:hover rect { stroke-width: 2.4; }
+.diagram .box:focus-visible .frame { stroke: var(--accent); stroke-width: 3; }
+.diagram .box.clickable:hover .frame { stroke-width: 2.4; }
 .diagram .box text { pointer-events: none; }
 .diagram .edge path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
 .diagram .edge.error path { stroke: var(--danger); stroke-dasharray: 5 4; }
 .diagram .head.on { fill: var(--accent); }
 .diagram .head.error { fill: var(--danger); }
 .diagram .edge-label { font-size: 11px; fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
-@media (prefers-reduced-motion: no-preference) { .diagram .box rect { transition: stroke-width 120ms; } }
+@media (prefers-reduced-motion: no-preference) { .diagram .box .frame { transition: stroke-width 120ms; } }
+
+/* ---- the changes of a pull request */
+.badge { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11px; line-height: 16px; font-weight: 600; white-space: nowrap; vertical-align: 1px; border: 1px solid var(--fg); background: var(--fg); color: var(--surface); }
+.badge-inside { background: var(--surface); color: var(--fg); }
+.badge-moved, .badge-docs, .badge-noted, .badge-removed { background: var(--surface); color: var(--muted); border-color: var(--faint); font-weight: 500; }
+.diagram .box-badge rect { fill: var(--fg); stroke: var(--fg); stroke-width: 1; }
+.diagram .box-badge text { font-size: 11px; font-weight: 600; fill: var(--surface); }
+.diagram .box-badge.badge-inside rect { fill: var(--surface); }
+.diagram .box-badge.badge-inside text { fill: var(--fg); }
+.diagram .box-badge.badge-moved rect, .diagram .box-badge.badge-docs rect, .diagram .box-badge.badge-noted rect { fill: var(--surface); stroke: var(--faint); }
+.diagram .box-badge.badge-moved text, .diagram .box-badge.badge-docs text, .diagram .box-badge.badge-noted text { fill: var(--muted); font-weight: 500; }
+.endpoint-label .badge { margin-left: 2px; }
+
+.changes-button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 4px 2px 12px; cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
+.changes-button:hover { background: var(--surface-2); }
+.changes-button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.changes-button .count { background: var(--fg); color: var(--surface); border-radius: 999px; padding: 0 7px; font-size: 11.5px; line-height: 18px; }
+
+.changes-body { overflow: auto; min-height: 0; min-width: 0; padding: 12px 16px 32px; display: flex; flex-direction: column; gap: 14px; }
+.changes-body h3 { font-size: 14px; font-weight: 600; }
+.pr-notes { display: flex; flex-direction: column; gap: 8px; max-width: 72em; }
+.pr-note { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+.pr-note h4 { font-size: 13.5px; font-weight: 600; }
+.change-group { max-width: 72em; }
+.change-group > summary { color: var(--fg); font-size: inherit; padding: 2px 0; }
+.change-group > summary h3 { display: inline; }
+.change-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.change-row { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.change-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.where-inline { font-size: 11.5px; overflow-wrap: anywhere; }
+
+.note-text { font-size: 13px; min-width: 0; }
+.note-text p { margin: 0 0 4px; white-space: pre-line; overflow-wrap: anywhere; }
+.note-text p:last-child, .note-text ul:last-child, .note-text pre:last-child { margin-bottom: 0; }
+.note-text ul { margin: 0 0 4px; padding-left: 1.2em; }
+.note-text pre { margin: 0 0 4px; padding: 6px 8px; background: var(--surface-2); border-radius: 4px; overflow-x: auto; font-size: 12px; }
+.note-text code { background: var(--surface-2); border-radius: 3px; padding: 0 3px; }
+
+.change { border: 1px solid var(--line); border-left: 3px solid var(--fg); border-radius: var(--radius); background: var(--bg); padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; max-width: 72em; min-width: 0; }
+.change-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 13px; font-weight: 600; }
+.change-notes { max-height: 22vh; overflow: auto; }
+.diff { font-size: 11.5px; line-height: 1.45; overflow: auto; max-height: 40vh; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); margin-top: 4px; }
+.hunk + .hunk { border-top: 1px dashed var(--line); }
+.diff-line { display: grid; grid-template-columns: 3.4em 3.4em 1.4em max-content; width: max-content; min-width: 100%; white-space: pre; }
+.diff-line .ln { color: var(--faint); text-align: right; padding-right: 6px; user-select: none; }
+.diff-line .op { color: var(--muted); text-align: center; user-select: none; }
+.diff-line.add { background: var(--accent-soft); }
+.diff-line.add .op { color: var(--accent); }
+.diff-line.remove { background: var(--danger-soft); }
+.diff-line.remove .op { color: var(--danger); }
 
 /* ---- narrow screens: the sidebar and the side column lie over the diagram */
 @media (max-width: 899px) {
@@ -181,4 +234,7 @@ h1, h2, h3, h4 { margin: 0; }
   .work.with-panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 45%); }
   .side-panel { border-left: 0; border-top: 1px solid var(--line); }
   .search { order: 5; flex-basis: 100%; max-width: none; }
+  /* The changes of a pull request read as one column: the functions, then the endpoints. */
+  .work.changes-work { display: block; overflow: auto; }
+  .changes-work .changes-body, .changes-work .side-panel { overflow: visible; }
 }

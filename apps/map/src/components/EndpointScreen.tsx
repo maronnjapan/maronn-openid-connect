@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { FlowEndpoint, MapData } from '../types';
+import { stepMark, type ChangeIndex, type Mark } from '../lib/changes';
 import { endpointDiagram, type DiagramNode } from '../lib/diagram';
 import { activeOf } from '../lib/graph';
 import { generatedWhen } from '../lib/model';
@@ -9,6 +10,8 @@ import { StepPanel } from './StepPanel';
 
 export interface EndpointScreenProps {
   data: MapData;
+  /** The changes of the pull request, in the map of one. */
+  changes: ChangeIndex | undefined;
   endpoint: FlowEndpoint;
   selected: string | null;
   /** The labels of the checked cases, or undefined for the default (the first case). */
@@ -23,8 +26,16 @@ export interface EndpointScreenProps {
  * a diagram that takes the rest of the screen. The detail of a step opens
  * beside the diagram only while one is selected.
  */
-export function EndpointScreen({ data, endpoint, selected, checked, onCases, onSelectStep, onOpenFunction }: EndpointScreenProps) {
+export function EndpointScreen({ data, changes, endpoint, selected, checked, onCases, onSelectStep, onOpenFunction }: EndpointScreenProps) {
   const diagram = useMemo(() => endpointDiagram(endpoint, data), [endpoint, data]);
+  const marks = useMemo(() => {
+    const byStep = new Map<string, Mark>();
+    for (const step of endpoint.steps) {
+      const mark = stepMark(changes, data, step);
+      if (mark !== undefined) byStep.set(step.id, mark);
+    }
+    return byStep;
+  }, [changes, data, endpoint]);
   const labels = useMemo(() => checked ?? new Set(diagram.cases.slice(0, 1).map((flowCase) => flowCase.label)), [checked, diagram]);
   const active = useMemo(() => {
     const ids = new Set(diagram.cases.filter((flowCase) => labels.has(flowCase.label)).map((flowCase) => flowCase.id));
@@ -47,14 +58,15 @@ export function EndpointScreen({ data, endpoint, selected, checked, onCases, onS
         {endpoint.summary ? <p className="lead">{endpoint.summary}</p> : null}
         <p className="note">
           {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · ボックスを選ぶとそのステップの詳細を開きます
+          {marks.size > 0 ? ` · このPRの変更の札が付いたステップ ${marks.size} 個` : ''}
         </p>
       </header>
       <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} />
       <div className={`work${step ? ' with-panel' : ''}`}>
         <div className="canvas">
-          <FlowDiagram diagram={diagram} active={active} selected={selected} label={`${endpoint.label} のステップ`} onSelect={onSelect} />
+          <FlowDiagram diagram={diagram} active={active} selected={selected} label={`${endpoint.label} のステップ`} marks={marks} onSelect={onSelect} />
         </div>
-        {step ? <StepPanel data={data} endpoint={endpoint} step={step} onClose={() => onSelectStep(null)} onOpenFunction={onOpenFunction} /> : null}
+        {step ? <StepPanel data={data} changes={changes} endpoint={endpoint} step={step} onClose={() => onSelectStep(null)} onOpenFunction={onOpenFunction} /> : null}
       </div>
     </section>
   );

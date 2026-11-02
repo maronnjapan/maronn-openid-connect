@@ -2,8 +2,9 @@
  * The shape of public/data/map.json: what `maronn-oidc explain --format json`
  * prints (packages/cli/src/explain/map.ts and flow/types.ts), with the flows
  * of every framework side by side, every function of the catalog with the
- * flow of its body (extract/function-flow.ts), and the members of the
- * interfaces the code calls through a resolver or a store.
+ * flow of its body (extract/function-flow.ts), the members of the
+ * interfaces the code calls through a resolver or a store, and, in the map
+ * of a pull request, its changes (scripts/changes.mjs).
  */
 export type StepKind =
   | 'parse'
@@ -137,6 +138,78 @@ export interface MapCommand {
   summary: string;
 }
 
+/**
+ * How the pull request the map is built for changed a function: added,
+ * modified (its code), moved (to another file, its code the same), docs (its
+ * JSDoc only), removed, or noted (its code is the same, a change note
+ * explains it).
+ */
+export type ChangeKind = 'added' | 'modified' | 'moved' | 'docs' | 'removed' | 'noted';
+
+/**
+ * A part of the diff of a function: the lines of a unified diff (` `, `-` or
+ * `+`, then the text), from a line of the base (`base`) and of the head
+ * (`head`).
+ */
+export interface DiffHunk {
+  base: number;
+  head: number;
+  lines: string[];
+}
+
+/** What a change note says about a function: the text of the section that names it. */
+export interface ChangeNoteText {
+  /** The note, from the root of the repository (`apps/map/changes/….md`). */
+  file: string;
+  text: string;
+}
+
+/** A function the pull request changed, or that one of its change notes explains. */
+export interface FunctionChange {
+  /** The id of the card; for a removed function, the id it had in the base. */
+  id: string;
+  name: string;
+  package: string;
+  module: string;
+  line: number;
+  kind: ChangeKind;
+  /** The module the function was in, when it moved (or changed in a renamed file). */
+  from?: string;
+  /** For a removed function: the first paragraph of its JSDoc in the base. */
+  summary?: string;
+  /** The lines of the head the pull request adds or rewrites in the function (its JSDoc included). */
+  changedLines?: number[];
+  hunks?: DiffHunk[];
+  notes?: ChangeNoteText[];
+}
+
+/** A change note of the pull request: what its text before the first heading says the pull request does. */
+export interface ChangeNote {
+  file: string;
+  title?: string;
+  summary: string;
+}
+
+/**
+ * The changes of the pull request the map is built for (apps/map/scripts/changes.mjs):
+ * those of the working tree since it forked from the base.
+ */
+export interface MapChanges {
+  /** The revision compared with, as given (origin/main), and the commit the working tree forked from it at. */
+  base: { ref: string; commit: string };
+  /** The commit the map was built at, and whether the working tree had uncommitted changes. */
+  head: { commit: string; dirty: boolean };
+  pullRequest?: { number: number; title?: string; url?: string };
+  /** The change notes the pull request adds or edits. */
+  notes: ChangeNote[];
+  /** The changed functions, by id. */
+  functions: FunctionChange[];
+  /** The sections of the notes whose heading names no function: text about the whole pull request (背景, for one). */
+  unmatched: Array<{ file: string; heading: string; text: string }>;
+  /** The changed files that hold no function of the catalog: tests, documents, the CLI, the map itself. */
+  otherFiles: number;
+}
+
 export interface MapData {
   version: 3;
   frameworks: string[];
@@ -154,4 +227,6 @@ export interface MapData {
    * with commas → the arrows of that generation.
    */
   edgeSets: Record<string, Record<string, FlowEdge[]>>;
+  /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
+  changes?: MapChanges;
 }

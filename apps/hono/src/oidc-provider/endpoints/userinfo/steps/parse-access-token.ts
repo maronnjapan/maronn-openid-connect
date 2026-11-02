@@ -23,7 +23,7 @@ export const meta = step({
  * クライアントは、1 つのリクエストで複数の方法を使ってはならない（MUST NOT、RFC 6750 §2）。
  * URL のクエリパラメータ（RFC 6750 §2.3）は OAuth 2.1 が禁止しているので、意図して対応していない。
  *
- * @throws {UserInfoEndpointError} トークンがないとき（401 と、`realm` だけを示すチャレンジで応答させる、RFC 6750 §3.1）。
+ * @throws {UserInfoEndpointError} トークンがないとき（401 の `invalid_token` で、チャレンジは `realm` だけを示す、RFC 6750 §3.1）。
  * @throws {UserInfoEndpointError} 二つの方法を同時に使ったとき（400 の `invalid_request`）。
  * @throws {UserInfoEndpointError} ヘッダーやボディを読めないとき（400 の `invalid_request`）。
  */

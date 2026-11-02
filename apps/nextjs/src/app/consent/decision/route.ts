@@ -156,7 +156,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
 
   // スコープの方針（エンドユーザーごとの絞り込みを書く scopes.ts の `resolveGrantableScopes()`）を適用する。
-  // 外したスコープはリクエストを失敗させず、許可するスコープを狭めるだけである。
+  // スコープを外しても、リクエストを失敗にはせず、許可するスコープを狭めるだけである。
   // 認可サーバーは要求より狭いスコープを発行してよく、許可したスコープはトークンレスポンスで伝わるためである（RFC 6749 §3.3）。
   const grantedScope = await resolveGrantableScopes(
     transaction.scope.split(' ').filter(Boolean),

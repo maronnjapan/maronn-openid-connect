@@ -23,7 +23,7 @@ export const meta = step({
 /**
  * 認可コードを発行してストアに保存する。
  *
- * 先にトランザクションをストアから削除して終え、許可するスコープに対して認可コードを発行する。
+ * まずトランザクションをストアから削除し（同じトランザクションで認可コードを二度発行しないため）、許可するスコープに対して認可コードを発行する。
  * 認可コードの有効期間は `config.authorizationCodeTtl` 秒（既定では 300 秒）である。
  * 認可レスポンスのパラメータ、認可コードのデータ、許可したスコープを返す。
  *
@@ -44,7 +44,7 @@ export async function issueConsentedAuthorizationCode(
   const authCodeStore = c.get('authCodeStore');
   const responseParams = await completeAuthTransaction(transactionId, transaction, transactionStore);
   // スコープの方針（エンドユーザーごとの絞り込みを書く scopes.ts の `resolveGrantableScopes()`）を適用する。
-  // 外したスコープはリクエストを失敗させず、許可するスコープを狭めるだけである。
+  // スコープを外しても、リクエストを失敗にはせず、許可するスコープを狭めるだけである。
   // 認可サーバーは要求より狭いスコープを発行してよく、許可したスコープはトークンレスポンスで伝わるためである（RFC 6749 §3.3）。
   const grantedScope = await resolveGrantableScopes(
     transaction.scope.split(' ').filter(Boolean),

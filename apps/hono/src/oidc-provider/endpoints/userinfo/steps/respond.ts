@@ -19,7 +19,7 @@ export const meta = step({
  * `Cache-Control: no-store` と `Pragma: no-cache` に加えて、レスポンスのヘッダーを付ける。
  * `text` があればそのままボディにし、なければ `body` を JSON で返す。
  *
- * UserInfo のレスポンスは成功でもエラーでも個人情報を含むので、プロキシなどの中継者にもキャッシュさせてはならない（RFC 6750 §5.2、OIDC Core 1.0 §16.4）。
+ * UserInfo のレスポンスは成功でもエラーでも個人情報にかかわるので、プロキシなどの中継者にもキャッシュさせてはならない（RFC 6750 §5.2、OIDC Core 1.0 §16.4）。
  *
  * @spec RFC 6750 §5.2
  * @spec OIDC Core 1.0 §16.4

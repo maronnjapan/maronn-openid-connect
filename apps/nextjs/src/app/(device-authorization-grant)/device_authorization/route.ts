@@ -54,7 +54,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * デバイス認可リクエストに応答し、CORS ヘッダーを付ける。
+ * リクエストに応答し、CORS ヘッダーを付ける。
  *
  * `POST /device_authorization` に、`deviceAuthorization()` が作るキャッシュ禁止の JSON（`device_code`、`user_code`、検証用の URI か、OAuth のエラーレスポンス）で応答する。
  * 応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
@@ -156,8 +156,8 @@ async function deviceAuthorization(request: Request): Promise<Response> {
       );
     }
 
-    // RFC 8628 §3.2 / §5.2: mint a 256-bit device_code and a collision-checked
-    // base-20 user_code, then store the pending record under both.
+    // デバイスコード（256 ビットの乱数）と、ストアのレコードと重複しないユーザーコード（20 種類の文字から選んだ 8 文字）を作り、保留中のレコードを保存する（RFC 8628 §3.2、§5.2）。
+    // レコードは、どちらのコードでも引ける。
     const record = await createDeviceAuthorizationRecord({
       clientId: client.clientId,
       scope,
@@ -166,13 +166,14 @@ async function deviceAuthorization(request: Request): Promise<Response> {
       interval: deviceAuthorizationConfig.pollInterval,
     });
 
-    // Never log device_code or user_code: both are live credentials for the
-    // lifetime of the record (RFC 8628 §5.1 / §5.2).
+    // デバイスコードとユーザーコードは、ログに出さない。
+    // どちらも、レコードの有効期間の間はトークンの取得や承認に使える値である（RFC 8628 §5.1、§5.2）。
 
     return noStoreJson(buildDeviceAuthorizationResponse(record, config.issuer));
   } catch (error) {
     if (error instanceof DeviceAuthorizationError) {
-      // RFC 6749 §5.2 shape. Authentication failures are core TokenErrors (401).
+      // experimental パッケージが拒否したリクエストを、RFC 6749 §5.2 の形のエラーレスポンス（400）で返す。
+      // クライアント認証の失敗は core の `TokenError`（`invalid_client` なら 401）なので、次の分岐で返す。
       return oauthError(error.code, error.errorDescription, error.statusCode);
     }
     if (error instanceof TokenError) {

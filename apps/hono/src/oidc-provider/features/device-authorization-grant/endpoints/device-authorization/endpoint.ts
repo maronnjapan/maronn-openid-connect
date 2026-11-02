@@ -1,6 +1,14 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXPERIMENTAL — the device authorization endpoint. RFC 8628 §3.1 / §3.2 */
+/**
+ * Accept a device authorization request: authenticate the client, check the
+ * scopes and answer with a device_code, a user_code and the verification URI
+ * the End-User opens on another device.
+ *
+ * EXPERIMENTAL: generated with --enable device-authorization-grant.
+ *
+ * @spec RFC 8628 §3.1 / §3.2
+ */
 export const endpoint = defineEndpoint({
   id: 'device-authorization',
   order: 130,

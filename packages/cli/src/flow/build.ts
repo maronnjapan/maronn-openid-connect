@@ -133,6 +133,7 @@ function buildEndpoint(
   return {
     id: meta.id,
     label: meta.label,
+    ...(meta.summary === undefined ? {} : { summary: meta.summary }),
     path: meta.path,
     methods: [...meta.methods],
     layer: meta.layer,
@@ -219,6 +220,22 @@ function toEdge(edge: EdgeMeta): FlowEdge {
   return edge.label === undefined
     ? { from: edge.from, to: edge.to, kind: edge.kind }
     : { from: edge.from, to: edge.to, label: edge.label, kind: edge.kind };
+}
+
+/**
+ * The arrows between the given steps of an endpoint of the provider, as a
+ * generation that has just those steps draws them (the steps of features that
+ * are off left out). A viewer that hides the steps of a feature asks for the
+ * arrows this way instead of cutting them out of a diagram with every feature.
+ */
+export function edgesForSteps(endpointId: string, stepIds: readonly string[], catalog: SourceCatalog = providerCatalog()): FlowEdge[] {
+  const meta = catalog.endpoints.find((endpoint) => endpoint.id === endpointId);
+  if (meta === undefined) throw new Error(`Unknown endpoint "${endpointId}"`);
+  const wanted = new Set(stepIds);
+  const steps = meta.steps
+    .map((id) => catalog.steps.find((step) => step.endpoint === meta.id && step.id === id))
+    .filter((step): step is StepMeta & { file: string } => step !== undefined && wanted.has(step.id));
+  return endpointEdges(meta, steps);
 }
 
 /** The arrows of an endpoint, from its edge description (see EndpointEdges of the app). */

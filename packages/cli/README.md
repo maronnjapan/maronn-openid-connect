@@ -367,13 +367,20 @@ maronn-oidc explain hono --format json -o map.json
 
 explain が表示する関数の情報は**関数カタログ**から来る。CLI のビルド（`pnpm run build`）が `packages/core`、`packages/experimental`、`packages/google-login` の `src` と、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` の関数宣言を読み、1 関数 1 枚のカードにして `templates/functions.catalog.json` に焼く（リポジトリの中では生のソースから読む）。カードには、名前と所在（root、ファイル、行）、kind、JSDoc の 1 行目（要約）と残りの本文、`@spec`、`@throws` と本体が `new` するエラー、本体が呼ぶカタログの関数（import を解決した id、最初に呼ぶ順）、呼び元が入る。ステップの meta と同じく、読み方はテキスト解析で、TypeScript のコンパイラも、モジュールの import も使わない。
 
+カタログは関数の本体から、呼ぶ関数を実行順に並べた処理の流れも読む（`src/extract/function-flow.ts`）。
+分岐の条件は矢印のラベルに、`return` と `throw` は終わりの箱になり、resolver や store のメソッドの呼び出しは、そのインターフェースのメンバーの JSDoc で説明する。
+地図の関数のページは、これをエンドポイントのステップと同じ形の図にする。
+本体の読み取りには文字列、コメント、正規表現リテラル、テンプレートリテラルを見分けるトークナイザーを使い、カタログが関数の範囲と呼び出しを読むときも同じものを使う。
+
 ステップの `calls` は手で書かない。ステップの関数のソースから読む（フロー文書 version 2 の `calls` はカードの id、`functionId` がステップの関数のカード）。ソースに呼び出しとして現れないもの（`c.get('consentResolver')` のメソッドなど）だけ、ステップの `meta` の `calls` に `'consentResolver.recordConsent'` の形で書き、フロー文書では `dynamicCalls` になる。機能が `contribute()` で足す `calls` はフック経由の呼び出しなので、これまでどおり名前で書く。
 
 ### 関数コメントの規約
 
 カタログは JSDoc をそのまま使うので、関数のコメントは次の形で書く。`pnpm run lint`（`.github/scripts/lint-function-docs.mjs`）が検査する。
 
-- export する関数には、宣言の直上に JSDoc を置く。1 行目には、その関数が何をするかを 1 文で書く。ステップの番号（「ステップ 3:」）は書かない。順番はステップの meta にあり、同じ関数が複数のパイプラインから呼ばれる
+- 関数にはすべて（export しない関数、Next.js の Route Handler、React コンポーネントを含む）、宣言の直上に JSDoc を置く。1 行目には、その関数の振る舞い（何を受け取り、何を返し、何を書き換え、どんなときに失敗するか）を 1 文で書く。使われる場所や実装の手順は書かない。ステップの番号（「ステップ 3:」）も書かない。順番はステップの meta にあり、同じ関数が複数のパイプラインから呼ばれる
+- resolver や store のインターフェースのメンバーにも、振る舞いを 1 文で書いた JSDoc を置く。地図は関数の中の `consentResolver.recordConsent()` のような呼び出しを、このメンバーの JSDoc で説明する
+- エンドポイントの `endpoint.ts` では、`export const endpoint = defineEndpoint({...})` の直上の JSDoc の 1 段落目に、エンドポイントの振る舞いを書く。`graph --format json` のエンドポイントの `summary` になり、地図の見出しの下に出る
 - 仕様の節は `@spec OIDC Core 1.0 §9` のタグに書く。本文の文章の中で触れるのはよいが、仕様だけの行は書かない。タグが無ければ、本文に現れる参照を拾う
 - kind（parse / resolve / validate / decide / dispatch / issue / persist / transform / respond）は関数名の動詞から決まる。合わないときだけ `@kind resolve` のように書く
 - `@throws {TokenError} invalid_client` はこれまでどおり。本体の `new TokenError(TokenErrorCode.InvalidClient, …)` も拾う
@@ -381,7 +388,12 @@ explain が表示する関数の情報は**関数カタログ**から来る。CL
 
 ### 地図（Provider Map）
 
-同じ地図を、ブラウザでクリックしながらたどるページが `apps/map` にある（React + Vite。Cloudflare Workers に静的アセットとして置く）。`pnpm run build:map` が CLI をビルドし、4 フレームワーク・全機能の `explain --format json` を `apps/map/public/data/map.json` にまとめてページをビルドする。ページでは、機能の切り替えでその構成の `generate` のコマンドラインが出来、エンドポイントのステップを箱と矢印で描き、ステップから core までの呼び出しの木と、関数ごとの呼び元とそれを使うステップをたどれる。PR ごとのプレビューとデプロイは [apps/map/README.md](../../apps/map/README.md) を参照。
+同じ地図を、ブラウザでクリックしながらたどるページが `apps/map` にある（React + Vite。Cloudflare Workers に静的アセットとして置く）。
+`pnpm run build:map` が CLI をビルドし、4 フレームワークについて全機能オンの `explain --format json` を、関数カタログの全関数とその処理の流れとともに `apps/map/public/data/map.json` にまとめて、ページをビルドする。
+ページでは、機能を切り替えるとその構成の `generate` のコマンドラインが出来、エンドポイントのステップを箱と矢印で描く。
+図はケース（`authorization_code` や `POST › authenticated` のような道筋）に分かれ、チェックしたケースで通るステップと矢印だけを表示する。
+関数のページは、関数の中の処理の流れを同じ形の図で描き、その関数に届くエンドポイントのステップと、その関数を呼ぶ関数を並べる。
+PR ごとのプレビューとデプロイは [apps/map/README.md](../../apps/map/README.md) を参照。
 
 ## Next.js の生成物
 

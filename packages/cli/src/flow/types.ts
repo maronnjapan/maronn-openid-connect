@@ -148,6 +148,8 @@ export interface FlowEndpoint {
   /** Stable identifier (kebab-case). */
   id: string;
   label: string;
+  /** What the endpoint does, as a behavior (the JSDoc of its endpoint.ts); absent when it has none. */
+  summary?: string;
   /** The HTTP path, as mounted by the generated app. */
   path: string;
   methods: string[];

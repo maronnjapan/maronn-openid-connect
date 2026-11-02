@@ -93,7 +93,7 @@ export async function createCibaLoginTransaction(
 }
 
 /**
- * ログインの送信を検証し、ログイントランザクションを返す。
+ * ログインの送信を検証し、そのトランザクションを返す。
  *
  * `POST /ciba/login` で受け取った値を、ログイントランザクションがあること、有効期限内であること、Cookie の `bindingSecret` の SHA-256 ハッシュが保存した値と一致すること、CSRF トークンが一致することの順に検証する。
  * どれかに失敗すると、失敗の理由を区別できないように、同じ固定の文言の 403 を投げる。
@@ -125,7 +125,7 @@ export async function validateCibaLoginSubmission(input: {
 }
 
 /**
- * ログインの失敗を数え、再試行できるかと残りの回数を返す。
+ * ログインの失敗を数え、再試行の可否と残り回数を返す。
  *
  * 失敗の回数はログイントランザクションごとに数え、`loginAttempts` を 1 増やす。
  * 回数が上限（`maxLoginAttempts`）未満ならトランザクションを更新し、上限に達したらトランザクションを削除して、同じフォームからの再試行を打ち切る（生成されたコードは 429 で応答する）。
@@ -198,17 +198,20 @@ export async function approveCibaRequest(input: {
   record.authTime = input.authTime;
   record.approvedScope = [...record.scope];
   record.grantId = input.grantId;
-  // 承認後は CSRF トークンは用済み。承認 / 拒否は一方向遷移なので、残して
-  // おく理由がない値をレコードから落とす。
+  // 承認したあとは CSRF トークンを使わない。
+  // 承認と拒否は元に戻らない遷移なので、残しておく理由のない値をレコードから消す。
   record.csrfToken = null;
   await input.store.update(record);
   return record;
 }
 
 /**
- * 拒否（`POST /ciba/approve` の `decision=deny`）。
+ * 認証リクエストを拒否済みにして保存する。
  *
- * @throws {CibaVerificationError} 403
+ * `POST /ciba/approve` で `decision=deny` を受け取ったときに呼ぶ。
+ * {@link approveCibaRequest} と同じ検証を行い、通れば状態を `denied` にし、CSRF トークンを消して保存する。
+ *
+ * @throws {CibaVerificationError} 403: レコードがない、期限切れ、状態が `pending` でない、サブジェクトか CSRF トークンが一致しない、のどれかに当たるとき（どれも同じ文言）。
  */
 export async function denyCibaRequest(input: {
   authReqId: string;
@@ -224,9 +227,13 @@ export async function denyCibaRequest(input: {
 }
 
 /**
- * 承認 / 拒否の共通検証。失敗はすべて同一文言の 403 に落とす。
+ * `auth_req_id` のレコードを検証して返す。
  *
- * @throws {CibaVerificationError} 403
+ * 承認と拒否に共通の検証を、レコードがあること、有効期限内であること、状態が `pending` であること、サブジェクトが一致すること、CSRF トークンが一致することの順に行う。
+ * どれかに失敗すると、同じ文言の 403 を投げる。
+ * 失敗の理由を区別できないようにして、`auth_req_id` の有効性を外から確かめる手段にしないためである。
+ *
+ * @throws {CibaVerificationError} 403: 上の検証のどれかに失敗したとき。
  */
 async function resolveApprovableRecord(input: {
   authReqId: string;
@@ -242,8 +249,7 @@ async function resolveApprovableRecord(input: {
   if (record === null) reject();
   const now = input.now ?? new Date();
   if (now.getTime() >= record.expiresAt.getTime()) reject();
-  // 承認 / 拒否は一方向遷移。approved / denied になったレコードは UI から
-  // 再度操作できない。
+  // 承認と拒否は元に戻らない遷移なので、状態が `approved` か `denied` のレコードは、画面からもう一度操作できない。
   if (record.status !== 'pending') reject();
   if (record.subject !== input.subject) reject();
   if (

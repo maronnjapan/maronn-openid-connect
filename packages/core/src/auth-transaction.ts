@@ -29,7 +29,13 @@ export interface SessionInfo {
 }
 
 export interface SessionResolver {
-  /** リクエストの Cookie などからログイン中の OP セッションを探し、そのセッション情報を返す。セッションが無い・終了しているときは null を返す。 */
+  /**
+   * リクエストからログイン中の OP のセッションを探して返す。
+   *
+   * セッションは、リクエストの Cookie などから探す。
+   * 返す値は、ログインしているエンドユーザーのサブジェクト、認証時刻、セッションの ID（任意）である。
+   * セッションがないとき、または終了しているときは `null` を返す。
+   */
   resolve(request: Request): Promise<SessionInfo | null>;
 }
 

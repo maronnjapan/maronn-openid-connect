@@ -235,8 +235,10 @@ DB は apps/hono と同じ `_oidc-provider/db/{memory,sql,kv}/` で、このア�
 OP 以外の役割（クライアントやリソースサーバー）は置きません。
 
 例外が `apps/map`（`@maronn-openid-connect/map`）で、これは OP ではなく、生成される OP の地図を見るページです。
-`maronn-oidc explain --format json` を全機能オン・4 フレームワーク分まとめたデータから、フレームワークと機能の切り替え、エンドポイントのステップの図、ステップから core までの呼び出しの木、関数の呼び元をたどれます（React + Vite、Cloudflare Workers に静的アセットとして置く）。
-`pnpm run build:map` でビルドし、PR ごとに `map-preview.yml` がプレビューを発行します。詳しくは [apps/map/README.md](apps/map/README.md) を参照してください。
+フレームワークと機能を切り替えると、その構成のエンドポイントのステップを図で描き、ケース（`authorization_code` や `POST › authenticated` のような道筋）ごとに、通るステップと矢印だけを表示します。
+関数のページでは、関数の中の処理の流れを同じ形の図で表示し、その関数を使うエンドポイントと、その関数を呼ぶ関数をたどれます（React + Vite、Cloudflare Workers に静的アセットとして置く）。
+`pnpm run build:map` でビルドし、PR ごとに `map-preview.yml` がプレビューを発行します。
+詳しくは [apps/map/README.md](apps/map/README.md) を参照してください。
 
 ### samples/*
 

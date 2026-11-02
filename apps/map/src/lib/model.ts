@@ -1,11 +1,9 @@
 /**
  * The pure parts of the page: which endpoints and steps a configuration shows,
- * the command line that configuration is, where a function is used, the
- * geometry of the step diagram, and search. Nothing here touches the DOM.
+ * the command line that configuration is, where a function is used and who
+ * calls it, and search. Nothing here touches the DOM.
  */
-import type { FlowEdge, FlowEndpoint, FlowStep, FunctionCard, MapData, MapFeature, OpFlow, StepKind } from '../types';
-
-export const KINDS: readonly StepKind[] = ['parse', 'resolve', 'validate', 'decide', 'dispatch', 'issue', 'persist', 'transform', 'respond'];
+import type { FlowEndpoint, FlowStep, FunctionCard, MapData, MapFeature, MemberDoc, OpFlow } from '../types';
 
 /** The OidcFeatureConfig key of a feature id: refresh-token → refreshToken. */
 export function featureKey(id: string): string {
@@ -18,10 +16,12 @@ export function featureOf(features: readonly MapFeature[], key: string | undefin
   return features.find((feature) => feature.id === key || featureKey(feature.id) === key);
 }
 
-/** The flag that generates a step or an endpoint: the flag of its feature, or "every provider". */
-export function flagOf(features: readonly MapFeature[], key: string | undefined): string {
-  if (key === undefined) return 'every provider';
-  return featureOf(features, key)?.flag ?? `feature: ${key}`;
+/** When a step or an endpoint is generated, in words: always, or with the flag of its feature. */
+export function generatedWhen(features: readonly MapFeature[], key: string | undefined): string {
+  if (key === undefined) return '常に生成される';
+  const feature = featureOf(features, key);
+  if (feature === undefined) return `機能 ${key} で生成される`;
+  return feature.tier === 'stable' ? `既定で生成される（${feature.flag} で外せる）` : `${feature.flag} で生成される`;
 }
 
 /** The ids of the features a fresh page has on: the default set, so the first view is `maronn-oidc generate <framework>`. */
@@ -29,8 +29,17 @@ export function defaultEnabled(features: readonly MapFeature[]): Set<string> {
   return new Set(features.filter((feature) => feature.tier === 'stable').map((feature) => feature.id));
 }
 
-/** The endpoints of a flow the enabled features generate, each with the steps those features generate. */
-export function visibleEndpoints(flow: OpFlow, features: readonly MapFeature[], enabled: ReadonlySet<string>): FlowEndpoint[] {
+/**
+ * The endpoints of a flow the enabled features generate, each with the steps
+ * those features generate and the arrows that generation draws between them
+ * (from edgeSets; without an entry, the arrows between the kept steps).
+ */
+export function visibleEndpoints(
+  flow: OpFlow,
+  features: readonly MapFeature[],
+  enabled: ReadonlySet<string>,
+  edgeSets: MapData['edgeSets'] = {},
+): FlowEndpoint[] {
   const on = (key: string | undefined) => {
     if (key === undefined) return true;
     const feature = featureOf(features, key);
@@ -38,7 +47,14 @@ export function visibleEndpoints(flow: OpFlow, features: readonly MapFeature[], 
   };
   return flow.endpoints
     .filter((endpoint) => on(endpoint.feature))
-    .map((endpoint) => ({ ...endpoint, steps: endpoint.steps.filter((step) => on(step.feature)) }));
+    .map((endpoint) => {
+      const steps = endpoint.steps.filter((step) => on(step.feature));
+      const keys = [...new Set(steps.flatMap((step) => (step.feature === undefined ? [] : [step.feature])))].sort();
+      const edges = edgeSets[endpoint.id]?.[keys.join(',')];
+      if (edges !== undefined) return { ...endpoint, steps, edges };
+      const kept = new Set(steps.map((step) => step.id));
+      return { ...endpoint, steps, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
+    });
 }
 
 /** The `maronn-oidc generate` command line of a configuration. */
@@ -51,13 +67,14 @@ export function commandLine(framework: string, features: readonly MapFeature[], 
   return parts.join(' \\\n  ');
 }
 
-/** Where a function is used in a flow: the step whose function it is, or the steps whose code calls it. */
+/** Where a function is used in a flow: the step whose function it is, or a step whose code calls it. */
 export interface StepUse {
   endpoint: FlowEndpoint;
   step: FlowStep;
   as: 'function' | 'call';
 }
 
+/** The steps of a flow that use a function directly. */
 export function usesOf(flow: OpFlow, id: string): StepUse[] {
   const uses: StepUse[] = [];
   for (const endpoint of flow.endpoints) {
@@ -69,99 +86,93 @@ export function usesOf(flow: OpFlow, id: string): StepUse[] {
   return uses;
 }
 
-/** The marker line of a step, as the generated code writes it: `[id] (feature: f) Label — Spec`. */
-export function markerOf(step: FlowStep, features: readonly MapFeature[]): string {
-  const feature = step.feature === undefined ? '' : ` (feature: ${featureOf(features, step.feature)?.id ?? step.feature})`;
-  return `[${step.id}]${feature} ${step.label}${step.spec === undefined ? '' : ` — ${step.spec}`}`;
-}
-
-export function truncate(text: string, width: number): string {
-  return text.length <= width ? text : `${text.slice(0, width - 1)}…`;
-}
-
-// ---- the step diagram
-
-export const BOX_W = 340;
-export const BOX_H = 46;
-const GAP = 26;
-const PAD = 20;
-const ARC = 70;
-
-export interface FlowBox {
+/** A step of an endpoint that reaches a function, and the functions between them. */
+export interface EndpointUse {
+  endpoint: FlowEndpoint;
   step: FlowStep;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface FlowArrow {
-  edge: FlowEdge;
-  /** The SVG path. */
-  d: string;
-  label?: { text: string; x: number; y: number };
-}
-
-export interface FlowLayout {
-  width: number;
-  height: number;
-  boxes: FlowBox[];
-  arrows: FlowArrow[];
+  /** The step's function itself, a call of its code, or a call further down. */
+  as: 'function' | 'call' | 'indirect';
+  /** The functions from the step down to the one asked about, that one left out (empty unless indirect). */
+  via: FunctionCard[];
 }
 
 /**
- * The steps of an endpoint as a column of boxes, the arrows between
- * consecutive steps straight, the others as arcs on the right (errors on the
- * left, when drawn). The width leaves room for the arcs and their labels.
+ * The steps that reach a function, directly or through the functions that
+ * call it, each once by its shortest way, in the order of the endpoints and
+ * their steps.
  */
-export function layoutFlow(endpoint: FlowEndpoint, showErrors: boolean): FlowLayout {
-  const steps = endpoint.steps;
-  const index = new Map(steps.map((step, i) => [step.id, i]));
-  const drawn = endpoint.edges.filter(
-    (edge) => (edge.kind !== 'error' || showErrors) && index.has(edge.from) && index.has(edge.to),
-  );
-  const bulgeOf = (edge: FlowEdge) => 30 + Math.min(90, Math.abs((index.get(edge.to) ?? 0) - (index.get(edge.from) ?? 0)) * 7);
-  const arcs = drawn.filter((edge) => edge.kind !== 'error' && index.get(edge.to) !== (index.get(edge.from) ?? 0) + 1);
-  const labelWidth = Math.max(0, ...arcs.map((edge) => (edge.label ? edge.label.length * 6 + 8 : 0)));
-  const rightMargin = Math.max(PAD, ...arcs.map((edge) => bulgeOf(edge) + labelWidth + PAD));
-  const x0 = PAD + ARC;
-  const yOf = (i: number) => PAD + i * (BOX_H + GAP);
-  const boxes: FlowBox[] = steps.map((step, i) => ({ step, x: x0, y: yOf(i), width: BOX_W, height: BOX_H }));
-  const arrows: FlowArrow[] = [];
-  for (const edge of drawn) {
-    const a = index.get(edge.from) as number;
-    const b = index.get(edge.to) as number;
-    if (edge.kind === 'flow' && b === a + 1) {
-      arrows.push({ edge, d: `M${x0 + BOX_W / 2},${yOf(a) + BOX_H} L${x0 + BOX_W / 2},${yOf(b)}` });
-      continue;
+export function endpointsUsing(data: MapData, flow: OpFlow, id: string, maxDepth = 8): EndpointUse[] {
+  const found = new Map<string, EndpointUse>();
+  const seen = new Set<string>([id]);
+  let frontier: Array<{ id: string; via: FunctionCard[] }> = [{ id, via: [] }];
+  for (let depth = 0; depth <= maxDepth && frontier.length > 0; depth += 1) {
+    const next: Array<{ id: string; via: FunctionCard[] }> = [];
+    for (const item of frontier) {
+      for (const use of usesOf(flow, item.id)) {
+        const key = `${use.endpoint.id}/${use.step.id}`;
+        if (found.has(key)) continue;
+        const as = item.via.length === 0 ? use.as : 'indirect';
+        found.set(key, { endpoint: use.endpoint, step: use.step, as, via: item.via });
+      }
+      for (const caller of data.functions[item.id]?.calledBy ?? []) {
+        const card = data.functions[caller];
+        if (card === undefined || seen.has(caller)) continue;
+        seen.add(caller);
+        next.push({ id: caller, via: [card, ...item.via] });
+      }
     }
-    const side = edge.kind === 'error' ? -1 : 1;
-    const xEdge = side > 0 ? x0 + BOX_W : x0;
-    const ya = yOf(a) + BOX_H / 2;
-    const yb = yOf(b) + BOX_H / 2;
-    const bulge = side * bulgeOf(edge);
-    const arrow: FlowArrow = { edge, d: `M${xEdge},${ya} C${xEdge + bulge},${ya} ${xEdge + bulge},${yb} ${xEdge},${yb}` };
-    // The apex of the curve sits at 3/4 of the bulge; the label starts just past it.
-    if (edge.label && edge.kind !== 'error') arrow.label = { text: edge.label, x: xEdge + bulge * 0.75 + 4, y: (ya + yb) / 2 + 3 };
-    arrows.push(arrow);
+    frontier = next;
   }
-  return {
-    width: PAD + ARC + BOX_W + rightMargin,
-    height: Math.max(PAD * 2 + BOX_H, PAD * 2 + steps.length * (BOX_H + GAP) - GAP),
-    boxes,
-    arrows,
-  };
+  const endpointOrder = new Map(flow.endpoints.map((endpoint, index) => [endpoint.id, index]));
+  return [...found.values()].sort(
+    (a, b) =>
+      (endpointOrder.get(a.endpoint.id) ?? 0) - (endpointOrder.get(b.endpoint.id) ?? 0) ||
+      a.endpoint.steps.indexOf(a.step) - b.endpoint.steps.indexOf(b.step),
+  );
+}
+
+/**
+ * The endpoints whose own file holds a function: the Route Handler of a
+ * Next.js endpoint and the functions beside it (`app/token/route.ts`), or a
+ * function of the pipeline.ts of a Hono endpoint. Their steps are blocks of
+ * that file, so no step calls the function by name.
+ */
+export function endpointsInModule(flow: OpFlow, card: FunctionCard): FlowEndpoint[] {
+  const root = card.package === 'nextjs' ? 'app/' : card.package === 'hono' ? 'oidc-provider/' : undefined;
+  if (root === undefined) return [];
+  return flow.endpoints.filter((endpoint) => endpoint.module !== undefined && `${root}${endpoint.module}` === card.module);
+}
+
+/** The functions whose body calls a function, by name. */
+export function callersOf(data: MapData, card: FunctionCard): FunctionCard[] {
+  return card.calledBy
+    .map((id) => data.functions[id])
+    .filter((caller): caller is FunctionCard => caller !== undefined)
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** What a call a step names beside its source does: the member of the interface it reaches. */
+export function memberOfCall(data: MapData, call: string): MemberDoc | undefined {
+  const id = data.memberOfCall[call];
+  return id === undefined ? undefined : data.members[id];
+}
+
+/** Where a card lives, for a developer to open it: `core client-auth.ts:123`. */
+export function locationOf(card: Pick<FunctionCard, 'package' | 'module' | 'line'>): string {
+  return `${card.package} ${card.module}:${card.line}`;
 }
 
 // ---- search
 
 export interface SearchHit {
+  /** ステップ or the package of a function. */
   what: string;
   text: string;
   sub: string;
   target: { endpoint: string; step: string } | { fn: string };
 }
 
+/** Steps whose id, label or function name and functions whose name hold the query (two characters or more). */
 export function search(data: MapData, endpoints: readonly FlowEndpoint[], query: string, limit = 40): SearchHit[] {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return [];
@@ -169,12 +180,12 @@ export function search(data: MapData, endpoints: readonly FlowEndpoint[], query:
   for (const endpoint of endpoints) {
     for (const step of endpoint.steps) {
       if (step.id.includes(q) || step.label.toLowerCase().includes(q) || step.function.toLowerCase().includes(q)) {
-        hits.push({ what: 'step', text: `[${step.id}] ${step.label}`, sub: `${endpoint.methods.join('|')} ${endpoint.path}`, target: { endpoint: endpoint.id, step: step.id } });
+        hits.push({ what: 'ステップ', text: step.label, sub: `${endpoint.methods.join('|')} ${endpoint.path}`, target: { endpoint: endpoint.id, step: step.id } });
       }
     }
   }
   for (const card of Object.values(data.functions)) {
-    if (card.name.toLowerCase().includes(q)) hits.push({ what: card.package, text: `${card.name}()`, sub: card.module, target: { fn: card.id } });
+    if (card.name.toLowerCase().includes(q)) hits.push({ what: card.package, text: `${card.name}()`, sub: card.summary, target: { fn: card.id } });
   }
   return hits.slice(0, limit);
 }

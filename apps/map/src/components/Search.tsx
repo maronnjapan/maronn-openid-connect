@@ -8,7 +8,7 @@ export interface SearchProps {
   onPick: (hit: SearchHit) => void;
 }
 
-/** Find a step or a function by name. */
+/** Find a step or a function by name, and open it. */
 export function Search({ data, endpoints, onPick }: SearchProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -26,9 +26,9 @@ export function Search({ data, endpoints, onPick }: SearchProps) {
       <input
         id="search"
         type="search"
-        placeholder="Search a step or a function…"
+        placeholder="ステップや関数を検索…"
         autoComplete="off"
-        aria-label="Search a step or a function"
+        aria-label="ステップや関数を検索"
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
@@ -41,7 +41,7 @@ export function Search({ data, endpoints, onPick }: SearchProps) {
       />
       {open && query.trim().length >= 2 ? (
         <ul>
-          {hits.length === 0 ? <li className="note">nothing matches</li> : null}
+          {hits.length === 0 ? <li className="note">見つかりません</li> : null}
           {hits.map((hit, index) => (
             <li key={index}>
               <button
@@ -53,8 +53,10 @@ export function Search({ data, endpoints, onPick }: SearchProps) {
                 }}
               >
                 <span className="what">{hit.what}</span>
-                <span className="mono">{hit.text}</span>
-                <span className="what">{hit.sub}</span>
+                <span className="hit">
+                  <span className="mono">{hit.text}</span>
+                  <span className="sub">{hit.sub}</span>
+                </span>
               </button>
             </li>
           ))}

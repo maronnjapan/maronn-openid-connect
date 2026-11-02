@@ -942,4 +942,8 @@ maronn-oidc explain hono --format json -o map.json    # UI 向けの JSON
 
 関数の情報は、CLI のビルドが core / experimental / google-login と apps の関数宣言から作る関数カタログ（JSDoc の 1 行目、`@spec`、`@throws`、本体が呼ぶ関数、呼び元）から来ます。ステップが呼ぶ関数はステップのソースから読むので、手で書く一覧はありません。
 
-同じ地図を、ブラウザでクリックしながらたどるページ（Provider Map、リポジトリの `apps/map`）があります。フレームワークと機能を切り替えるとその構成の `generate` のコマンドラインになり、エンドポイントのステップを箱と矢印で、ステップから core までを呼び出しの木で表示します。Cloudflare Workers に置いた URL はこのサイトのサイドバー（Reference › Provider Map）にあり、PR ごとに GitHub Actions（`map-preview.yml`）が同じページをビルドしてプレビュー URL を PR にコメントします。
+同じ地図を、ブラウザでクリックしながらたどるページ（Provider Map、リポジトリの `apps/map`）があります。
+フレームワークと機能を切り替えるとその構成の `generate` のコマンドラインになり、エンドポイントのステップを箱と矢印で表示します。
+図はケース（`authorization_code` や `POST › authenticated` のような道筋）に分かれ、チェックしたケースで通るステップと矢印だけを描きます。
+関数のページでは、関数の中の処理の流れを同じ形の図で表示し、その関数を使うエンドポイントと、その関数を呼ぶ関数をたどれます。
+Cloudflare Workers に置いた URL はこのサイトのサイドバー（Reference › Provider Map）にあり、PR ごとに GitHub Actions（`map-preview.yml`）が同じページをビルドしてプレビュー URL を PR にコメントします。

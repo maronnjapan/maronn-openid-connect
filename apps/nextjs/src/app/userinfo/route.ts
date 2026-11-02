@@ -32,6 +32,7 @@ import {
   clientCors,
   corsPreflight,
   noStoreJson,
+  readBearerToken,
   signingKeysUnavailable,
   withCors,
 } from '../_oidc-provider/http';
@@ -206,13 +207,7 @@ async function signedUserInfo(
  * methodCount lets the caller refuse a request that used more than one.
  */
 async function extractAccessToken(request: Request): Promise<{ token: string; methodCount: number }> {
-  const authHeader = request.headers.get('Authorization') ?? '';
-  // RFC 7235 §2.1: the auth scheme is case-insensitive; the token value is kept verbatim.
-  const spaceIndex = authHeader.indexOf(' ');
-  const headerToken =
-    spaceIndex !== -1 && authHeader.slice(0, spaceIndex).toLowerCase() === 'bearer'
-      ? authHeader.slice(spaceIndex + 1)
-      : '';
+  const headerToken = readBearerToken(request.headers.get('Authorization') ?? '');
 
   let bodyToken = '';
   if (request.method === 'POST') {

@@ -27,15 +27,7 @@ export async function parseUserInfoRequest(c: any): Promise<string> {
   let headerToken = '';
   let bodyToken = '';
   try {
-    const authHeader = c.req.header('Authorization') ?? '';
-    // RFC 7235 Section 2.1: HTTP authentication scheme is case-insensitive.
-    // Match the "Bearer" scheme case-insensitively but preserve the token value verbatim.
-    const bearerSpaceIndex = authHeader.indexOf(' ');
-    headerToken =
-      bearerSpaceIndex !== -1 &&
-      authHeader.slice(0, bearerSpaceIndex).toLowerCase() === 'bearer'
-        ? authHeader.slice(bearerSpaceIndex + 1)
-        : '';
+    headerToken = readBearerToken(c.req.header('Authorization') ?? '');
 
     if (c.req.method === 'POST') {
       const contentType = c.req.header('Content-Type') ?? '';
@@ -74,4 +66,16 @@ export async function parseUserInfoRequest(c: any): Promise<string> {
     });
   }
   return accessToken;
+}
+
+/**
+ * Return the token of an Authorization header value of the Bearer scheme, or
+ * '' for another scheme or a Bearer value without a token. The scheme matches
+ * without regard to case (RFC 7235 §2.1), every space after it is skipped
+ * (`"Bearer" 1*SP b64token`), and the token is kept as it is.
+ *
+ * @spec RFC 6750 §2.1
+ */
+function readBearerToken(authorizationHeader: string): string {
+  return /^Bearer +(.*)$/i.exec(authorizationHeader)?.[1] ?? '';
 }

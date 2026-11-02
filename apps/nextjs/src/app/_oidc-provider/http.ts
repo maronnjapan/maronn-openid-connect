@@ -122,6 +122,18 @@ export function signingKeysUnavailable(): Response {
 }
 
 /**
+ * Return the token of an Authorization header value of the Bearer scheme, or
+ * '' for another scheme or a Bearer value without a token. The scheme matches
+ * without regard to case (RFC 7235 §2.1), every space after it is skipped
+ * (`"Bearer" 1*SP b64token`), and the token is kept as it is.
+ *
+ * @spec RFC 6750 §2.1
+ */
+export function readBearerToken(authorizationHeader: string): string {
+  return /^Bearer +(.*)$/i.exec(authorizationHeader)?.[1] ?? '';
+}
+
+/**
  * Is the request body application/x-www-form-urlencoded? Media types are
  * case-insensitive and may carry parameters such as "; charset=UTF-8"
  * (RFC 9110 §8.3.1).

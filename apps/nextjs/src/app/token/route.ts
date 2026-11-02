@@ -262,10 +262,11 @@ async function token(request: Request): Promise<Response> {
     // トークンに入れる `acr` と `amr` を決める。
     // ID トークンには両方を、アクセストークンには `acr` を入れ、エンドユーザーがどう認証されたかをリソースサーバーが判断できるようにする（RFC 9068 §2.2.1）。
     // - `authorization_code`: `acrResolver`（`provider.ts`）に問い合わせる。
-    //   `acr_values` と `claims` の要求も渡し、リゾルバがそれに沿った値を返せるようにする。
+    //   クライアントが要求した `acr` の値（`acr_values`、なければ `claims.id_token.acr.values`）を渡し、リゾルバがそれに沿った値を返せるようにする。
     // - `refresh_token`: 保存済みの `acr` と `amr` をそのまま使い、リゾルバは呼ばない。
     //   最初の認証の情報を保つためである（OIDC Core 1.0 §12.1）。
-    // 以下の処理はそれぞれ core の独立した関数で、ID トークンに独自のクレームを加えるときは、署名する前に `idTokenPayload` を書き換える。
+    // 以下の処理はそれぞれ core の独立した関数なので、一つずつ差し替えられる。
+    // ID トークンに独自のクレームを加えるときは、署名する前に `idTokenPayload` を書き換える。
     const { acr, amr } = await resolveAcrAmr({
       subject,
       clientId: validatedRequest.clientId,

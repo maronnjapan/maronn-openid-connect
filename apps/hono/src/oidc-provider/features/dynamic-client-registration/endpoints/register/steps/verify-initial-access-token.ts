@@ -18,7 +18,7 @@ export const meta = step({
 /**
  * 登録を許すかを確かめ、許さなければ 401 を投げる。
  *
- * 設定の `verifyInitialAccessToken` に、ボディを読む前に問い合わせる（OIDC Registration 1.0 §3）。
+ * ボディを読む前に、設定の `verifyInitialAccessToken` で確かめる（OIDC Registration 1.0 §3）。
  * 関数を設定していなければ、誰でも登録できる状態として、すべてのリクエストを通す（RFC 7591 §3.1 の SHOULD）。
  * 設定していれば、リクエストは `Bearer` トークン（初期アクセストークン）を送らなければならない（RFC 6750 §2.1）。
  * トークンがなければ、エラーコードのない `WWW-Authenticate: Bearer` を付けた 401 を投げる。

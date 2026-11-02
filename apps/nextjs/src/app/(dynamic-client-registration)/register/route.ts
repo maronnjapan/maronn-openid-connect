@@ -143,7 +143,7 @@ async function registerClient(request: Request): Promise<Response> {
     // 設定にあれば、すべての登録に `software_statement` を求め、なければ `invalid_client_metadata` で拒否する。
     // 検証は設定の関数が行い、拒否するときは `ClientRegistrationError`（`invalid_software_statement` か `unapproved_software_statement`）を投げる（RFC 7591 §3.2.2）。
     // RFC 7591 は信頼の基準をサーバーに任せているので、ここではソフトウェアステートメントの中身を確かめない。
-    // 関数が返したメタデータは JSON の値より優先し、ソフトウェアステートメントそのものはレスポンスで変えずに返す（RFC 7591 §3.2.1）。
+    // ソフトウェアステートメントそのものは、レスポンスで変えずに返す（RFC 7591 §3.2.1）。
     const metadata = await resolveRegistrationMetadata(config, registration);
 
     // メタデータを検証して既定値を適用し、登録するクライアントを作る。
@@ -218,7 +218,7 @@ async function registerClient(request: Request): Promise<Response> {
  * 設定にあれば、すべての登録に `software_statement` を求め、なければ `invalid_client_metadata` を投げる。
  * `software_statement` は設定の関数が検証し、拒否するときは `ClientRegistrationError`（`invalid_software_statement` か `unapproved_software_statement`）を投げる（RFC 7591 §3.2.2）。
  * RFC 7591 は信頼の基準をサーバーに任せているので、この関数はソフトウェアステートメントの中身を確かめない。
- * 関数が返したメタデータを JSON の値より優先して適用し、ソフトウェアステートメントそのものも残すので、201 のレスポンスはそれを変えずに返す（RFC 7591 §3.2.1）。
+ * ソフトウェアステートメントそのものも登録するメタデータに残すので、201 のレスポンスはそれを変えずに返す（RFC 7591 §3.2.1）。
  *
  * @spec RFC 7591 §3.1.1
  * @throws {ClientRegistrationError} `invalid_client_metadata`: 設定に関数があり、`software_statement` がないとき
@@ -290,7 +290,7 @@ function isJson(contentType: string): boolean {
 /**
  * キャッシュを禁止した JSON のレスポンスを返す。
  *
- * 201 のボディには `client_secret` が含まれるので、登録エンドポイントのレスポンスはどれも `Cache-Control: no-store` と `Pragma: no-cache` を付けてキャッシュさせない。
+ * 201 のボディには `client_secret` が含まれることがあるので、登録エンドポイントのレスポンスはどれも `Cache-Control: no-store` と `Pragma: no-cache` を付けてキャッシュさせない。
  */
 function registrationJson(body: unknown, status: number): Response {
   return Response.json(body, {

@@ -27,7 +27,7 @@ export const meta = step({
  * 設定にあれば、すべての登録に `software_statement` を求め、なければ `invalid_client_metadata` を投げる。
  * `software_statement` は設定の関数が検証し、拒否するときは `ClientRegistrationError`（`invalid_software_statement` か `unapproved_software_statement`）を投げる（RFC 7591 §3.2.2）。
  * RFC 7591 は信頼の基準をサーバーに任せているので、この関数はソフトウェアステートメントの中身を確かめない。
- * 関数が返したメタデータを JSON の値より優先して適用し、ソフトウェアステートメントそのものも残すので、201 のレスポンスはそれを変えずに返す（RFC 7591 §3.2.1）。
+ * ソフトウェアステートメントそのものも登録するメタデータに残すので、201 のレスポンスはそれを変えずに返す（RFC 7591 §3.2.1）。
  *
  * @spec RFC 7591 §3.1.1
  * @throws {ClientRegistrationError} `invalid_client_metadata`: 設定に関数があり、`software_statement` がないとき

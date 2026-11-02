@@ -80,7 +80,7 @@ export const dynamicClientStore: DynamicallyRegisteredClientStore =
  * `client_secret` は平文では入れず、`clientSecretHash` に渡されたハッシュだけを入れる。
  *
  * experimental パッケージは、認証方式と署名アルゴリズムを文字列の型で表す。
- * この OP の方式とアルゴリズムを知らないためである。
+ * パッケージの側には、この OP の認証方式とアルゴリズムの一覧がないためである。
  * 登録エンドポイントがそれらを登録の設定とこの OP の署名鍵に照らして検証済みなので、ここでは検証し直さずに `RegisteredClient` の型に絞り込む。
  *
  * 実験的な機能（RFC 7591）である。
@@ -162,7 +162,7 @@ export function withDynamicallyRegisteredClients<
  * `base` になければ動的登録の鍵を返すリゾルバを作る。
  *
  * 作るリゾルバの `findClientKeys()` は、まず `base` に問い合わせ、鍵が 1 つ以上あればそれを返す。
- * そのため、db/ にあるクライアントには db/ の鍵を返す。
+ * そのため、db/ に鍵があるクライアントには、db/ の鍵を返す。
  * `base` に鍵がなければ動的登録のストアを探し、登録の `jwks`（RFC 7591 §2）の鍵のうち、その用途（`jwksPurposes` の用途）に割り当てた鍵を返す。
  * どちらにもないクライアントや、鍵のない用途には、空の鍵の集合を返す（core の `ClientKeyResolver` の約束どおり）。
  *

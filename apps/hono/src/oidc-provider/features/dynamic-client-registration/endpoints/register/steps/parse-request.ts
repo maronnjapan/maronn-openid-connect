@@ -40,7 +40,7 @@ function isJson(contentType: string): boolean {
  *
  * `Content-Length` が `maxRegistrationBodyBytes` より大きい値を宣言していれば、ボディを読む前に拒否するので、大きすぎるリクエストをメモリに読み込まずに済む。
  * ヘッダーの値は偽れるので、最終的な判定は、ボディそのものの UTF-8 のバイト数で `parseClientRegistrationBody()` が行う。
- * `parseClientRegistrationBody()` は JSON の形も確かめ、`software_statement`（RFC 7591 §2.3）をそれ以外のメタデータから分けて、次のステップに渡す。
+ * `parseClientRegistrationBody()` は JSON の形も確かめ、`software_statement`（RFC 7591 §2.3）をそれ以外のメタデータから分けて返す。
  *
  * @spec RFC 7591 §3.1
  * @throws {RegistrationEndpointError} 400 の `invalid_client_metadata`: `Content-Type` が `application/json` でないとき、または `Content-Length` が上限を超えるとき

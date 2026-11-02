@@ -34,16 +34,17 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Sign the End-User in during device verification (POST /device/login): start
- * a new OP session and render the approve / deny screen for the device, with
- * the session cookie set.
+ * エンドユーザーをログインさせ、承認画面を返す。
  *
- * The user_code, the browser binding cookie and the csrf_token are checked
- * before the credentials: an unknown, expired or used user_code re-renders the
- * code entry form with 400, and a missing or wrong binding or csrf_token
- * answers the OP's error page with 403. Wrong credentials re-render the
- * sign-in form with the remaining attempts; the last allowed failure denies
- * the device's request and answers 429.
+ * `POST /device/login` の処理で、`user_code`、バインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
+ * バインディング Cookie は、このブラウザが `user_code` を送信したブラウザであることを示す。
+ * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
+ *
+ * `user_code` が未知、期限切れ、使用済みのどれかなら、ユーザーコードの入力フォームを 400 で返す。
+ * バインディング Cookie か `csrf_token` がないか一致しなければ、403 の OP のエラーページを返す。
+ * 認証情報が誤っていれば、残りの試行回数を添えたログインフォームを返す。
+ * 上限に達するとデバイスのリクエストを拒否の状態にし、429 のエラーページを返す。
+ * 成功すると新しい ID の OP のセッションを保存し、デバイスの承認画面を、セッションの Cookie を付けて返す。
  *
  * @spec RFC 8628 §3.3
  */
@@ -67,8 +68,8 @@ export async function POST(request: Request): Promise<Response> {
     return verificationFailureScreen(error);
   }
 
-  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
-  // upstream IdP) without touching anything above or below it.
+  // ユーザー名とパスワードでエンドユーザーを認証する。
+  // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
   const user = await stores.userStore.authenticate(
     String(form.get('username') ?? ''),
     String(form.get('password') ?? ''),

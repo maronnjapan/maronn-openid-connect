@@ -14,6 +14,11 @@ import type {
 /** The response_mode value (Form Post Response Mode §2), and the name the transaction stores. */
 export const FORM_POST_RESPONSE_MODE_NAME = 'form_post';
 
+/**
+ * The form_post response mode: the authorization response as an HTML page whose form posts the parameters to the redirect URI.
+ *
+ * @spec OAuth 2.0 Form Post Response Mode §2
+ */
 export function createFormPostResponseMode(input: { issuer: string }): AuthorizationResponseMode {
   return {
     name: FORM_POST_RESPONSE_MODE_NAME,

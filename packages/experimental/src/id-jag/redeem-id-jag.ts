@@ -152,7 +152,7 @@ export interface IdJagRedemptionContext {
 const FORBIDDEN_KEY_HEADERS = ['jku', 'x5u', 'jwk', 'x5c'] as const;
 
 /**
- * ステップ 1: クライアントが jwt-bearer grant を使ってよいかを検証する。
+ * クライアントが jwt-bearer grant を使ってよいかを検証する。
  *
  * RFC 7521 §4.1 は authorization grant の assertion でクライアント認証を必須と
  * しないが、draft §4.4.1 は ID-JAG の client_id クレームと「リクエストの認証
@@ -180,7 +180,7 @@ export function authorizeIdJagRedemptionClient(client: TokenClientInfo): void {
 }
 
 /**
- * ステップ 2: 必須・非対応パラメータを検証して型付けする（RFC 7523 §2.1）。
+ * 必須・非対応パラメータを検証して型付けする（RFC 7523 §2.1）。
  *
  * @throws {IdJagError} invalid_request
  */
@@ -207,7 +207,7 @@ export function parseIdJagRedemptionParams(
 }
 
 /**
- * ステップ 3: assertion（ID-JAG）を検証し、ペイロードを返す。
+ * assertion（ID-JAG）を検証し、ペイロードを返す。
  *
  * RFC 7521 §5.2 の一般規則に加え、draft §4.4.1 の処理規則を適用する:
  *
@@ -415,7 +415,7 @@ export async function verifyIdJagAssertion(options: {
 }
 
 /**
- * ステップ 4: 実効 scope を導出する。
+ * 実効 scope を導出する。
  *
  * 許可の上限は ID-JAG の scope クレーム（IdP が許可した範囲。draft §4.4.1 は
  * リソース AS がさらに部分集合へ絞ることを認める）。要求 scope があれば

@@ -27,10 +27,13 @@ export const meta = step({
 
 /**
  * Validate the authorization_code grant.
- * OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2
  *
  * Each security rule is a separate core call so it can be removed, replaced,
  * or surrounded with experiment-specific logic.
+ *
+ * @spec OAuth 2.1 §4.1.2
+ * @spec RFC 7636
+ * @spec OIDC Core 1.0 §3.1.3.2
  */
 export async function validateAuthorizationCodeGrant(
   c: any,

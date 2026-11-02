@@ -7,6 +7,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 
+/** Turn a Node.js IncomingMessage into a Fetch Request: the path of the incoming request on the origin of baseUrl (the advertised issuer), with its headers and body. */
 export function toWebRequest(
   incoming: IncomingMessage & { originalUrl?: string },
   baseUrl = 'http://localhost',
@@ -44,6 +45,7 @@ export function toWebRequest(
   return new Request(url, init);
 }
 
+/** Write a Fetch Response to a Node.js ServerResponse: status, headers (Set-Cookie one per header) and body. */
 export async function writeWebResponse(
   outgoing: ServerResponse,
   response: Response,

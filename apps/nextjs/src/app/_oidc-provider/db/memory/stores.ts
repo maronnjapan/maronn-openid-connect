@@ -37,6 +37,7 @@ import type {
 import { federatedIdentityKey, type MemoryDatabase } from './database';
 import { verifyPassword } from './users';
 
+/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on the in-memory database, with expiry checked on read. */
 export function createProviderStores(db: MemoryDatabase): ProviderStores {
   const transactionStore: AuthTransactionStore = {
     async get(key) {

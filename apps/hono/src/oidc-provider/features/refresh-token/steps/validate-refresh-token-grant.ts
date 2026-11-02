@@ -28,10 +28,12 @@ export const meta = step({
 /**
  * Validate the refresh_token grant. Returns undefined for any other grant,
  * which the validate-authorization-code-grant step validates.
- * OAuth 2.1 §4.3.1 / RFC 6749 §6
  *
  * Each security rule is a separate core call so it can be removed, replaced,
  * or surrounded with experiment-specific logic.
+ *
+ * @spec OAuth 2.1 §4.3.1
+ * @spec RFC 6749 §6
  */
 export async function validateRefreshTokenGrant(
   c: any,

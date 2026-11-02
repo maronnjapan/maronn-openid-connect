@@ -41,7 +41,7 @@ export interface DeviceCodeGrantResult {
 }
 
 /**
- * ステップ 1: クライアントがデバイス認可グラントを許可されているか検証する。
+ * クライアントがデバイス認可グラントを許可されているか検証する。
  *
  * @throws {DeviceAuthorizationError} unauthorized_client
  */
@@ -55,7 +55,7 @@ export function validateDeviceCodeGrantAllowed(client: DeviceCodeGrantClient): v
 }
 
 /**
- * ステップ 2: `device_code` パラメータを取り出し、発行先クライアントのレコードを解決する。
+ * `device_code` パラメータを取り出し、発行先クライアントのレコードを解決する。
  *
  * RFC 8628 §3.4: device_code は発行先クライアントに紐づく。存在しない場合も
  * クライアント不一致の場合も同一文言の `invalid_grant` にする。
@@ -82,7 +82,7 @@ export async function resolveDeviceCodeRecord(
 }
 
 /**
- * ステップ 3: RFC 8628 §3.5 の状態機械を評価する。
+ * RFC 8628 §3.5 の状態機械を評価する。
  *
  * 判定順序（上から評価し、最初に該当したものを返す）:
  *

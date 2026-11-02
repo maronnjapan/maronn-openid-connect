@@ -24,7 +24,8 @@ export const meta = step({
 /**
  * Issue the access token: decide its audience, build the RFC 9068 payload
  * and sign it (JWT) or mint an opaque reference, as config.accessTokenFormat says.
- * RFC 9068 §2.2 / §2.2.1 / §3
+ *
+ * @spec RFC 9068 §2.2 / §2.2.1 / §3
  */
 export async function issueAccessToken(
   c: any,

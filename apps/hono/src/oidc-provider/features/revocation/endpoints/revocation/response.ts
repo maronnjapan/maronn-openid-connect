@@ -19,6 +19,11 @@ export class RevocationEndpointError extends Error {
   }
 }
 
+/**
+ * Forbid caching of the revocation response.
+ *
+ * @spec RFC 7009 §2.2
+ */
 export function noStore(c: any): void {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');

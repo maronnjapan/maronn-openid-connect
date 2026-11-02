@@ -23,11 +23,12 @@ export const meta = step({
  * Verify the signed Request Object (request parameter) against the keys the
  * client registered for the request_object purpose and overlay its claims
  * onto the query parameters.
- * OIDC Core 1.0 §6.1 / §6.3.2
  *
  * RS256 is required; alg=none is accepted only when
  * config.allowUnsignedRequestObject is enabled (conformance compat).
  * effectiveParams is what every later step validates.
+ *
+ * @spec OIDC Core 1.0 §6.1 / §6.3.2
  */
 export async function resolveRequestObject(
   c: any,

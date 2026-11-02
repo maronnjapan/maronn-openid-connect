@@ -8,6 +8,7 @@ import type {
 } from '@maronn-openid-connect/core';
 import type { ProviderStores } from '../../store';
 
+/** The resolvers the introspection endpoint reads tokens through, on top of the access token and refresh token stores. */
 export function createIntrospectionResolvers(stores: ProviderStores): {
   introspectionAccessTokenResolver: IntrospectionAccessTokenResolver;
   introspectionRefreshTokenResolver: IntrospectionRefreshTokenResolver;

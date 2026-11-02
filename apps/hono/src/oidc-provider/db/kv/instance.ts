@@ -24,6 +24,7 @@
 import type { Context } from 'hono';
 import type { KvDatabase } from './database.js';
 
+/** Open the key-value store the provider keeps its data in. Written by you: the generated file throws until it returns a KvDatabase. */
 export function createDatabase(_c: Context): KvDatabase {
   throw new Error(
     'db/instance.ts: createDatabase() is not implemented yet. ' +

@@ -27,11 +27,12 @@ export const meta = step({
 
 /**
  * Device login (POST /device/login)
- * RFC 8628 §3.3
  *
  * Binding first, then CSRF, then credentials: the binding is what proves this is
  * the browser that submitted the user_code, and it must gate the step that would
  * otherwise let a forged POST establish an OP session in the victim's browser.
+ *
+ * @spec RFC 8628 §3.3
  */
 export async function submitDeviceLogin(c: any, input: DeviceLoginSubmission): Promise<DeviceOutcome> {
   const { userCode: submittedUserCode, csrfToken, username, password } = input;

@@ -19,6 +19,11 @@ export class RegistrationEndpointError extends Error {
   }
 }
 
+/**
+ * Send the registration response: no caching, the headers the step set, and the JSON body with its status (201 for a registered client, an error otherwise).
+ *
+ * @spec RFC 7591 §3.2
+ */
 export function sendRegistrationResponse(c: any, response: RegistrationEndpointResponse): Response {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');

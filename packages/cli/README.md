@@ -45,6 +45,9 @@ maronn-oidc setup <framework> [options]
 
 # 生成される OP を箱と矢印の図（Mermaid）か、その元になる JSON のフロー文書にする
 maronn-oidc graph [framework] [options]
+
+# 生成される OP の地図をたどる: エンドポイント、その中のステップ、ステップが呼ぶ関数（core まで）、関数の呼び元
+maronn-oidc explain [framework] [<endpoint>[/<step>] | fn <name>] [options]
 ```
 
 対応フレームワーク: `hono`, `express`, `fastify`, `nextjs`
@@ -52,6 +55,8 @@ maronn-oidc graph [framework] [options]
 `setup` は生成に加えて、エントリファイル内のプレースホルダーコメント（`// <!-- OIDC_IMPORT_PLACEHOLDER -->` と `// <!-- OIDC_SETUP_PLACEHOLDER -->`）を `applyOidc` の import と呼び出しに置換する。Next.js は App Router のファイル規約に従うため `setup` 非対応で、`maronn-oidc generate nextjs --output ./src/app` を使う。
 
 `graph` はコードを生成しない。`generate` と同じ `--enable` / `--disable` / `--scope` / `--db`（または `--flow`）から、生成される OP の図を標準出力（`--output` を付ければそのファイル）に書く。framework を付けると、JSON のフロー文書に各エンドポイントと各ステップの生成先ファイル（`module`）が入る。詳しくは[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照。
+
+`explain` もコードを生成しない。`graph` の箱の下にある層、つまりステップの関数が呼ぶ関数とその役割を、core の関数までたどって表示する。詳しくは[地図と関数カタログ（explain）](#地図と関数カタログexplain)を参照。
 
 ### オプション
 
@@ -64,10 +69,12 @@ maronn-oidc graph [framework] [options]
 | `--scope <scopes>` | 生成 OP が受け付けるカスタムスコープ（カンマ区切り・複数回指定可） |
 | `--db <sql\|kv>` | クライアント、ユーザー、認可コード、トークンなどのデータを、SQL のテーブル（`sql`）かキー・バリューストア（`kv`）に保存する。指定しなければ、データは `db/` のメモリに入る（[DB に保存する（--db）](#db-に保存する--db)を参照） |
 | `--flow <file>` | `graph --format json` が書いたフロー文書（編集済みでもよい）から生成、または描画する。`--enable` / `--disable` / `--scope` / `--db` の代わりになり、同時には指定できない（[フロー図とフロー文書（graph / --flow）](#フロー図とフロー文書graph----flow)を参照） |
-| `--format <mermaid\|json>` | `graph` のみ。Mermaid の flowchart（既定）か、JSON のフロー文書 |
+| `--format <mermaid\|json>` | `graph` のみ。Mermaid の flowchart（既定）か、JSON のフロー文書。`explain` では `text`（既定）か `json` |
 | `--detail <endpoints\|steps>` | `graph` のみ。エンドポイントごとに 1 箱（既定）か、各エンドポイントの中のステップを関数 1 つにつき 1 箱で描く |
 | `--endpoint <ids>` | `graph` のみ。描くエンドポイントの ID（カンマ区切り・複数回指定可。既定は全部） |
 | `--no-error-edges` | `graph` のみ。エラー応答のステップへ向かう破線の矢印を省く |
+| `--depth <n>` | `explain` のみ。ステップや関数の下に呼び出しを何段まで表示するか（既定: 2） |
+| `--callers` | `explain fn` のみ。その関数を呼ぶ関数と、それを使うステップ・エンドポイント・機能も表示する |
 | `--force` | 出力先に既にあるファイルを上書きする |
 | `--dry-run` | 書き込みを行わず、出力予定のファイル一覧（新規か上書きか）を表示する |
 | `--help, -h` | ヘルプ表示 |
@@ -326,6 +333,57 @@ maronn-oidc generate hono --flow op-flow.json -o ./oidc-provider
 並べ替えたステップは Hono / Express / Fastify の生成コードに反映される。Next.js は App Router の Route Handler に処理を直接書く構成のため、`steps` を変えた文書を渡すとエラーになり、エンドポイントと機能の変更だけを受け付ける。
 
 フロー文書は、図を UI 上で編集して（箱をドラッグ&ドロップで並べ替えて）生成する、という使い方のための入出力である。CLI だけで使うときは、`graph --format json` の出力を手で編集する。
+
+## 地図と関数カタログ（explain）
+
+`maronn-oidc explain` は、生成される OP を CLI のコマンドから core の関数までたどる。`graph` が描く箱（エンドポイントとステップ）の下には、ステップの関数が呼ぶ関数、その関数が呼ぶ関数、と続く層がある。explain はそれぞれの役割（JSDoc の 1 行目）、根拠になる仕様の節、投げるエラーを表示し、逆に、ある関数がどのステップ・エンドポイント・機能から使われているかも引く。
+
+```bash
+# コマンド、フレームワーク、この構成のエンドポイント、機能の一覧
+maronn-oidc explain
+
+# /token のステップの一覧（kind、関数名、仕様の節、読む値と作る値、呼ぶ関数）
+maronn-oidc explain token
+
+# ステップの関数から core まで、呼び出しの木を 3 段（既定は 2 段）
+maronn-oidc explain token/authenticate-client --depth 3
+
+# Next.js の生成物では、ステップは route.ts のブロックなので、そのブロックが呼ぶ関数を表示する
+maronn-oidc explain nextjs token/authenticate-client
+
+# 関数 1 つ: 役割、呼ぶ関数、--callers で呼び元とそれを使うステップ・エンドポイント・--enable
+maronn-oidc explain fn verifyClientSecret --callers
+
+# 同名の関数が複数の root にあるときは <root>:<name>（root は core / experimental / google-login / hono / nextjs）
+maronn-oidc explain fn hono:issueImplicitTokens
+
+# UI 向けの JSON（地図）
+maronn-oidc explain hono --format json -o map.json
+```
+
+`--enable` / `--disable` / `--scope` / `--db` / `--flow` は `graph` と同じで、その構成のエンドポイントとステップだけを対象にする。`explain fn` の呼び元だけは構成に関わらず全機能を対象にし、機能のステップには `--enable <id>` を添える。
+
+### 関数カタログ
+
+explain が表示する関数の情報は**関数カタログ**から来る。CLI のビルド（`pnpm run build`）が `packages/core`、`packages/experimental`、`packages/google-login` の `src` と、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` の関数宣言を読み、1 関数 1 枚のカードにして `templates/functions.catalog.json` に焼く（リポジトリの中では生のソースから読む）。カードには、名前と所在（root、ファイル、行）、kind、JSDoc の 1 行目（要約）と残りの本文、`@spec`、`@throws` と本体が `new` するエラー、本体が呼ぶカタログの関数（import を解決した id、最初に呼ぶ順）、呼び元が入る。ステップの meta と同じく、読み方はテキスト解析で、TypeScript のコンパイラも、モジュールの import も使わない。
+
+ステップの `calls` は手で書かない。ステップの関数のソースから読む（フロー文書 version 2 の `calls` はカードの id、`functionId` がステップの関数のカード）。ソースに呼び出しとして現れないもの（`c.get('consentResolver')` のメソッドなど）だけ、ステップの `meta` の `calls` に `'consentResolver.recordConsent'` の形で書き、フロー文書では `dynamicCalls` になる。機能が `contribute()` で足す `calls` はフック経由の呼び出しなので、これまでどおり名前で書く。
+
+### 関数コメントの規約
+
+カタログは JSDoc をそのまま使うので、関数のコメントは次の形で書く。`pnpm run lint`（`.github/scripts/lint-function-docs.mjs`）が検査する。
+
+- export する関数には、宣言の直上に JSDoc を置く。1 行目には、その関数が何をするかを 1 文で書く。ステップの番号（「ステップ 3:」）は書かない。順番はステップの meta にあり、同じ関数が複数のパイプラインから呼ばれる
+- 仕様の節は `@spec OIDC Core 1.0 §9` のタグに書く。本文の文章の中で触れるのはよいが、仕様だけの行は書かない。タグが無ければ、本文に現れる参照を拾う
+- kind（parse / resolve / validate / decide / dispatch / issue / persist / transform / respond）は関数名の動詞から決まる。合わないときだけ `@kind resolve` のように書く
+- `@throws {TokenError} invalid_client` はこれまでどおり。本体の `new TokenError(TokenErrorCode.InvalidClient, …)` も拾う
+- 関数は `function` 宣言で書く。アロー関数を入れた `export const` は読まない
+
+### 地図（Provider Map）
+
+`pnpm run build:map` は、4 つのフレームワークの explain の JSON を全機能オンで 1 枚の静的ページ `dist-map/index.html`（元は `packages/cli/map/template.html`）に埋め込む。ページでは、機能の切り替えでその構成の `generate` のコマンドラインが出来、エンドポイントのステップを箱と矢印で描き、ステップから core までの呼び出しの木と、関数ごとの呼び元とそれを使うステップをたどれる。
+
+PR では `.github/workflows/map-preview.yml` がこのページをビルドして Actions の artifact（`oidc-provider-map`）に残す。Cloudflare Pages のシークレット（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`。プロジェクト名は変数 `CLOUDFLARE_PAGES_PROJECT`、既定 `maronn-oidc-map`）があれば PR ごとのプレビュー URL にデプロイし、その URL を PR にコメントする。main の地図はドキュメントサイトの `/map/` にもある。
 
 ## Next.js の生成物
 

@@ -24,7 +24,8 @@ export const meta = step({
 /**
  * Build the response in the format the client registered: a signed JWT when
  * userinfo_signed_response_alg is set, JSON otherwise.
- * OIDC Core 1.0 §5.3.2
+ *
+ * @spec OIDC Core 1.0 §5.3.2
  */
 export async function buildUserInfoResponse(
   c: any,

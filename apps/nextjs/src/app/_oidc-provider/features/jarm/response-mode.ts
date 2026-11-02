@@ -15,6 +15,11 @@ import { jarmConfig } from './config';
 
 export const JARM_RESPONSE_MODE_NAME = 'query.jwt';
 
+/**
+ * The query.jwt response mode of JARM: the authorization response signed as a JWT for the client, returned in the query of the redirect URI.
+ *
+ * @spec JARM §2.3.1
+ */
 export function jarmResponseMode(input: {
   issuer: string;
   clientId: string;

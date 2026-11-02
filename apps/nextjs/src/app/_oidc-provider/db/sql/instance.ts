@@ -24,6 +24,7 @@
  */
 import type { SqlDatabase } from './database';
 
+/** Open the SQL database the provider keeps its data in. Written by you: the generated file throws until it returns a SqlDatabase. */
 export function createDatabase(): SqlDatabase {
   throw new Error(
     'db/instance.ts: createDatabase() is not implemented yet. ' +

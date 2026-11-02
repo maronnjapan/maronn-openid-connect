@@ -93,6 +93,7 @@ const FALLBACK_TTL_SECONDS = 600;
 /** The value of a single-use marker (code_used, refresh_token_used) and of a revocation marker. */
 const MARKER = 'true';
 
+/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on a key-value store: one record per key, with a TTL where the data expires. */
 export function createProviderStores(db: KvDatabase): ProviderStores {
   const read = <T>(key: string) => readRecord<T>(db, key);
   const write = (key: string, record: unknown, ttlSeconds?: number) =>

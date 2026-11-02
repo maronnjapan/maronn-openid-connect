@@ -21,10 +21,11 @@ export const meta = step({
 
 /**
  * Resolve the presented token (access or refresh token); null when unknown.
- * RFC 7662 §2.1
  *
  * Each check is an independent core function. token_type_hint only reorders
  * the lookup — the other token type is still searched when the hint misses.
+ *
+ * @spec RFC 7662 §2.1
  */
 export async function resolveIntrospectedToken(
   c: any,

@@ -61,6 +61,7 @@ const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 /** The statuses of a transaction in progress. */
 const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 
+/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on the SQL tables of schema.sql. */
 export function createProviderStores(db: SqlDatabase): ProviderStores {
   // Transaction + Authentication_request: what the authorization request asked
   // for goes to authentication_requests, the state of the flow to transactions.

@@ -926,3 +926,20 @@ Sign in with Google のユーザーはパスワードを持たず、Google の `
 Next.js では 1 と 2 を `_oidc-provider/provider.ts` で行います（クライアント・署名鍵・ストアの差し替え先がこのファイルに集まっています）。
 
 具体的な組み込み手順は [Quick Start](../../quick-start/) を参照してください。
+
+## Explain / Provider Map
+
+`maronn-oidc explain` は、生成される OP を CLI のコマンドから core の関数までたどります。`graph` が描く箱（エンドポイントとステップ）の下にある層、つまりステップの関数が呼ぶ関数とその役割（JSDoc の 1 行目）、根拠になる仕様の節、投げるエラーを表示し、逆に、ある関数がどのステップ・エンドポイント・機能から使われているかも引けます。
+
+```bash
+maronn-oidc explain                                   # コマンド、フレームワーク、エンドポイント、機能
+maronn-oidc explain token                             # /token のステップ
+maronn-oidc explain token/authenticate-client         # ステップの関数から core までの呼び出しの木（--depth で深さ）
+maronn-oidc explain nextjs token/authenticate-client  # Next.js は route.ts のブロックが呼ぶ関数
+maronn-oidc explain fn verifyClientSecret --callers   # 関数の役割、呼ぶ関数、呼び元とそれを使うステップ・--enable
+maronn-oidc explain hono --format json -o map.json    # UI 向けの JSON
+```
+
+関数の情報は、CLI のビルドが core / experimental / google-login と apps の関数宣言から作る関数カタログ（JSDoc の 1 行目、`@spec`、`@throws`、本体が呼ぶ関数、呼び元）から来ます。ステップが呼ぶ関数はステップのソースから読むので、手で書く一覧はありません。
+
+同じ地図を、[Provider Map](/map/) のページでクリックしながらたどれます。フレームワークと機能を切り替えるとその構成の `generate` のコマンドラインになり、エンドポイントのステップを箱と矢印で、ステップから core までを呼び出しの木で表示します。PR ごとに GitHub Actions（`map-preview.yml`）が同じページをビルドして artifact に残し、Cloudflare Pages のシークレットがあればプレビュー URL にデプロイして PR にコメントします。

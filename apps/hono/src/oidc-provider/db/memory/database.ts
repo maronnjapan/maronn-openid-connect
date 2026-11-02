@@ -45,6 +45,7 @@ export function federatedIdentityKey(provider: string, subject: string): string 
   return JSON.stringify([provider, subject]);
 }
 
+/** A new in-memory database with every table empty. */
 export function createEmptyDatabase(): MemoryDatabase {
   return {
     transactions: new Map(),

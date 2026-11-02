@@ -27,13 +27,14 @@ export const meta = step({
 
 /**
  * prompt=none: silent authentication without any user interaction.
- * OIDC Core 1.0 §3.1.2.1
  *
  * Returns undefined when the request did not ask for prompt=none (the
  * pipeline goes on to SSO and the login screen). Otherwise the session the
  * code is issued for, or the redirectable error (login_required /
  * consent_required / server_error) and the transaction is dropped: the OP
  * must not show a login or consent screen for prompt=none.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export async function completePromptNoneRequest(
   c: any,

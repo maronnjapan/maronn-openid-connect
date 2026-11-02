@@ -20,12 +20,14 @@ export const meta = step({
 
 /**
  * Build the provider metadata document.
- * OIDC Discovery 1.0 §3 / RFC 8414
  *
  * Every endpoint URL is built on config.issuer. The members below are those
  * of every provider; each feature adds its own (its endpoint, the grants it
  * answers, the response modes it signs) through the discovery entry of its
  * feature.ts.
+ *
+ * @spec OIDC Discovery 1.0 §3
+ * @spec RFC 8414
  */
 export function buildDiscoveryMetadata(
   c: any,

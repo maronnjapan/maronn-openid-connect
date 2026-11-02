@@ -203,6 +203,11 @@ export function selectIdTokenSigningKey(
   }
 }
 
+/**
+ * Check the signing key set the provider starts with: at least one key (the first signs new tokens), and an RS256 key when requireRs256 asks for one.
+ *
+ * @spec OIDC Core 1.0 §10.1
+ */
 export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,

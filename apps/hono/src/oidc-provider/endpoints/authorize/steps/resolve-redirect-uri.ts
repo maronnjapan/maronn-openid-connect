@@ -20,10 +20,12 @@ export const meta = step({
 
 /**
  * Resolve redirect_uri against the registered URIs.
- * OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1
  *
  * From here on an error is redirectable: it is sent to the client together
  * with the request's state. Everything before this step stays on the OP.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec RFC 6749 §4.1.2.1
  */
 export function resolveRedirectTarget(
   params: AuthorizationRequestParams,

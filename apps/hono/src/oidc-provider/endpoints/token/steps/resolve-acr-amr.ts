@@ -24,7 +24,6 @@ export const meta = step({
  * Resolve the acr / amr the tokens carry: the ID Token gets both, and the
  * access token gets the acr, so a resource server can tell how the End-User
  * authenticated (RFC 9068 §2.2.1).
- * OIDC Core 1.0 §2 / §3.1.2.1 / §12.1
  *
  * - authorization_code: the acrResolver option of the app decides from the
  *   acr values the client requested (acr_values, or claims.id_token.acr.values,
@@ -32,6 +31,8 @@ export const meta = step({
  *   preferred requested value and no amr, and no acr when none was requested.
  * - refresh_token: the acr / amr of the first authentication are kept
  *   (OIDC Core 1.0 §12.1); the resolver is not asked again.
+ *
+ * @spec OIDC Core 1.0 §2 / §3.1.2.1 / §12.1
  */
 export async function resolveTokenAcrAmr(
   c: any,

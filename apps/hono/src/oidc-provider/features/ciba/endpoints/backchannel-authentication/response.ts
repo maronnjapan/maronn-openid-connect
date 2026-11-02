@@ -19,6 +19,11 @@ export class BackchannelAuthenticationEndpointError extends Error {
   }
 }
 
+/**
+ * Forbid caching of the response: auth_req_id is a credential, so the response follows the token response rules.
+ *
+ * @spec RFC 6749 §5.1 / §5.2
+ */
 export function noStore(c: any): void {
   // auth_req_id is a credential, so the response follows the token response
   // rules of RFC 6749 §5.1 / §5.2.

@@ -26,10 +26,11 @@ export const meta = step({
 
 /**
  * Approve or deny (POST /device/approve)
- * RFC 8628 §3.3
  *
  * The only state-changing step of the UI, so it demands all three: an OP
  * session, the binding cookie, and the csrf_token.
+ *
+ * @spec RFC 8628 §3.3
  */
 export async function submitDeviceDecision(
   c: any,

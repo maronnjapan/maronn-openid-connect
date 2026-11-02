@@ -28,6 +28,7 @@ export interface LogoutConfirmation {
   redirectTo: string | null;
 }
 
+/** Build the Set-Cookie value of the logout confirmation: the CSRF secret of the form and the resolved redirect URL (base64url), HttpOnly and short-lived. */
 export function buildLogoutConfirmationCookie(confirmation: LogoutConfirmation): string {
   const bytes = new TextEncoder().encode(confirmation.redirectTo ?? '');
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');

@@ -1,0 +1,31 @@
+{
+  "name": "@maronn-openid-connect/map",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The map of the generated OpenID Provider: commands, endpoints, steps and functions down to core, as a page on Cloudflare Workers",
+  "type": "module",
+  "scripts": {
+    "data": "node scripts/build-data.mjs",
+    "dev": "pnpm run data && vite --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
+    "build": "pnpm run data && vite build",
+    "preview": "vite preview --host ${HOST:-127.0.0.1} --port ${PORT:-3610}",
+    "deploy": "pnpm run build && wrangler deploy",
+    "deploy:preview": "pnpm run build && wrangler versions upload",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@maronn-openid-connect/cli": "workspace:*",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.147.0"
+  }
+}

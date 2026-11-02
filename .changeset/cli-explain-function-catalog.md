@@ -9,4 +9,4 @@
 - フロー文書は version 2 になる。ステップの `calls` は関数カタログの id（手書きの名前ではなく、ステップの関数のソースから読む）、`functionId` はステップの関数、`dynamicCalls` はソースに現れない呼び出し（resolver のメソッドなど）。version 1 の文書も `--flow` に渡せる
 - 生成コードのステップの `meta` から手書きの `calls` を外す。残るのは `'consentResolver.recordConsent'` のような、ソースに呼び出しとして現れないものだけ
 - 生成コードの関数の JSDoc から「ステップ N:」の番号を外し、仕様だけの行を `@spec` タグに移す。JSDoc の無かった補助関数（`createStoreResolvers`、`applyOidc`、db の `createProviderStores` など）に 1 行目を書く
-- `pnpm run build:map` が、4 フレームワーク・全機能の地図を 1 枚の静的ページにする（PR ごとのプレビューは `map-preview.yml`）
+- `explain --format json` は、リポジトリの地図ページ（`apps/map`。Cloudflare Workers に置く）の入力になる

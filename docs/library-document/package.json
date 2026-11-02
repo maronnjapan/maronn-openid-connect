@@ -4,9 +4,8 @@
   "private": true,
   "scripts": {
     "dev:doc": "astro dev",
-    "build:doc": "pnpm run build:map && astro build",
-    "preview:doc": "astro preview",
-    "build:map": "node ../../packages/cli/scripts/build-map.mjs --out public/map"
+    "build:doc": "astro build",
+    "preview:doc": "astro preview"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.42.6",

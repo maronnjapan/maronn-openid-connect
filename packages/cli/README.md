@@ -381,9 +381,7 @@ explain が表示する関数の情報は**関数カタログ**から来る。CL
 
 ### 地図（Provider Map）
 
-`pnpm run build:map` は、4 つのフレームワークの explain の JSON を全機能オンで 1 枚の静的ページ `dist-map/index.html`（元は `packages/cli/map/template.html`）に埋め込む。ページでは、機能の切り替えでその構成の `generate` のコマンドラインが出来、エンドポイントのステップを箱と矢印で描き、ステップから core までの呼び出しの木と、関数ごとの呼び元とそれを使うステップをたどれる。
-
-PR では `.github/workflows/map-preview.yml` がこのページをビルドして Actions の artifact（`oidc-provider-map`）に残す。Cloudflare Pages のシークレット（`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`。プロジェクト名は変数 `CLOUDFLARE_PAGES_PROJECT`、既定 `maronn-oidc-map`）があれば PR ごとのプレビュー URL にデプロイし、その URL を PR にコメントする。main の地図はドキュメントサイトの `/map/` にもある。
+同じ地図を、ブラウザでクリックしながらたどるページが `apps/map` にある（React + Vite。Cloudflare Workers に静的アセットとして置く）。`pnpm run build:map` が CLI をビルドし、4 フレームワーク・全機能の `explain --format json` を `apps/map/public/data/map.json` にまとめてページをビルドする。ページでは、機能の切り替えでその構成の `generate` のコマンドラインが出来、エンドポイントのステップを箱と矢印で描き、ステップから core までの呼び出しの木と、関数ごとの呼び元とそれを使うステップをたどれる。PR ごとのプレビューとデプロイは [apps/map/README.md](../../apps/map/README.md) を参照。
 
 ## Next.js の生成物
 

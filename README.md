@@ -234,6 +234,10 @@ DB は apps/hono と同じ `_oidc-provider/db/{memory,sql,kv}/` で、このア�
 生成コードを直すときは、この二つのアプリの実コードと隣のテストを直します。
 OP 以外の役割（クライアントやリソースサーバー）は置きません。
 
+例外が `apps/map`（`@maronn-openid-connect/map`）で、これは OP ではなく、生成される OP の地図を見るページです。
+`maronn-oidc explain --format json` を全機能オン・4 フレームワーク分まとめたデータから、フレームワークと機能の切り替え、エンドポイントのステップの図、ステップから core までの呼び出しの木、関数の呼び元をたどれます（React + Vite、Cloudflare Workers に静的アセットとして置く）。
+`pnpm run build:map` でビルドし、PR ごとに `map-preview.yml` がプレビューを発行します。詳しくは [apps/map/README.md](apps/map/README.md) を参照してください。
+
 ### samples/*
 
 `packages/core` などの機能を実際に試すための OpenID Provider 専用サンプルです。

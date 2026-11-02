@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // An assets-only Worker: the built page (dist/) is served as static assets, no script runs.
+  // `wrangler deploy` puts it at https://maronn-oidc-map.<your-subdomain>.workers.dev;
+  // `wrangler versions upload` gives a preview URL per upload (the PR previews of map-preview.yml).
+  "name": "maronn-oidc-map",
+  "compatibility_date": "2026-07-23",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "preview_urls": true,
+  "workers_dev": true
+}

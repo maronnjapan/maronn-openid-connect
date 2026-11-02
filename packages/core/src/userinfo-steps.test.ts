@@ -88,12 +88,24 @@ describe('validateUserInfoTokenExpiration', () => {
     expect(error).toBeUndefined();
   });
 
-  it('should accept a token whose expiresAt equals now', () => {
+  it('should accept a token in the second before it expires', () => {
+    const error = captureError(() =>
+      validateUserInfoTokenExpiration({ ...defaultTokenInfo, expiresAt: NOW + 1 }, NOW),
+    );
+
+    expect(error).toBeUndefined();
+  });
+
+  // RFC 7519 §4.1.4: a token is not accepted on or after its expiry time. isIntrospectionTokenActive
+  // and the refresh token grant draw the same boundary, so the endpoints agree about one token.
+  it('should reject a token whose expiresAt equals now with invalid_token', () => {
     const error = captureError(() =>
       validateUserInfoTokenExpiration({ ...defaultTokenInfo, expiresAt: NOW }, NOW),
     );
 
-    expect(error).toBeUndefined();
+    expect(error).toBeInstanceOf(UserInfoError);
+    expect(error?.error).toBe(UserInfoErrorCode.InvalidToken);
+    expect(error?.errorDescription).toBe('The access token expired');
   });
 
   it('should reject an expired token with invalid_token', () => {

@@ -392,9 +392,12 @@ export async function resolveUserInfoAccessToken(
 }
 
 /**
- * アクセストークンの有効期限を検証する
+ * アクセストークンが期限切れ（expiresAt が now 以下）なら invalid_token を投げる。
  *
  * RFC 6750 Section 3.1: 期限切れトークンは invalid_token（401）。
+ * RFC 7519 §4.1.4 の exp と同じく、期限の時刻ちょうどから受け付けない。
+ * イントロスペクション（{@link isIntrospectionTokenActive}）とリフレッシュトークンの
+ * 判定も expiresAt <= now を期限切れとするので、同じトークンへの答えがそろう。
  *
  * @param tokenInfo アクセストークン情報
  * @param now 現在時刻（Unix epoch 秒）。省略時はシステム時刻
@@ -404,7 +407,7 @@ export function validateUserInfoTokenExpiration(
   tokenInfo: Pick<AccessTokenInfo, 'expiresAt'>,
   now: number = Math.floor(Date.now() / 1000)
 ): void {
-  if (tokenInfo.expiresAt < now) {
+  if (tokenInfo.expiresAt <= now) {
     throw new UserInfoError(
       UserInfoErrorCode.InvalidToken,
       'The access token expired'

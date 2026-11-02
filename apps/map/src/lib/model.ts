@@ -57,6 +57,28 @@ export function visibleEndpoints(
     });
 }
 
+/**
+ * The features that must be on to show an endpoint and one of its steps (a
+ * link, or a caller that names them, may point at those of a feature that is
+ * off): their ids, empty when everything is shown already.
+ */
+export function featuresToShow(
+  flow: OpFlow,
+  features: readonly MapFeature[],
+  enabled: ReadonlySet<string>,
+  endpointId: string | null,
+  stepId: string | null,
+): string[] {
+  const endpoint = flow.endpoints.find((candidate) => candidate.id === endpointId);
+  if (endpoint === undefined) return [];
+  const step = endpoint.steps.find((candidate) => candidate.id === stepId);
+  const needed = [endpoint.feature, step?.feature]
+    .map((key) => featureOf(features, key))
+    .filter((feature): feature is MapFeature => feature !== undefined && !enabled.has(feature.id))
+    .map((feature) => feature.id);
+  return [...new Set(needed)];
+}
+
 /** The `maronn-oidc generate` command line of a configuration. */
 export function commandLine(framework: string, features: readonly MapFeature[], enabled: ReadonlySet<string>): string {
   const parts = [`maronn-oidc generate ${framework}`];

@@ -4,7 +4,7 @@ import { FunctionScreen } from './components/FunctionScreen';
 import { Search } from './components/Search';
 import { Sidebar } from './components/Sidebar';
 import { buildHash, parseHash, type View } from './lib/hash';
-import { defaultEnabled, visibleEndpoints, type SearchHit } from './lib/model';
+import { defaultEnabled, featuresToShow, visibleEndpoints, type SearchHit } from './lib/model';
 import type { MapData } from './types';
 
 const FEATURES_KEY = 'oidc-map-features';
@@ -131,6 +131,15 @@ function ProviderMap({ data }: { data: MapData }) {
 
   const flow = data.flows[view.framework] ?? (data.flows[data.frameworks[0] as string] as MapData['flows'][string]);
   const endpoints = useMemo(() => visibleEndpoints(flow, data.features, enabled, data.edgeSets), [flow, data.features, enabled, data.edgeSets]);
+  // A link or a caller may name an endpoint or a step of a feature that is off: turn the feature on to show it.
+  useEffect(() => {
+    if (view.fn !== null) return;
+    const missing = featuresToShow(flow, data.features, enabled, view.endpoint, view.step);
+    if (missing.length === 0) return;
+    const next = new Set([...enabled, ...missing]);
+    save(FEATURES_KEY, JSON.stringify([...next]));
+    setEnabled(next);
+  }, [flow, data.features, enabled, view]);
   const endpoint = endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined);
   const card = view.fn === null ? undefined : data.functions[view.fn];
   const narrow = () => !window.matchMedia('(min-width: 900px)').matches;

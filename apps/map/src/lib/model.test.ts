@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowEndpoint, FunctionCard, MapData, MapFeature, OpFlow } from '../types';
 import { buildHash, parseHash } from './hash';
-import { callersOf, commandLine, defaultEnabled, endpointsInModule, endpointsUsing, featureKey, generatedWhen, search, usesOf, visibleEndpoints } from './model';
+import { callersOf, commandLine, defaultEnabled, endpointsInModule, endpointsUsing, featureKey, featuresToShow, generatedWhen, search, usesOf, visibleEndpoints } from './model';
 
 const features: MapFeature[] = [
   { id: 'pkce', tier: 'stable', summary: 'PKCE', enabled: true, flag: '--disable pkce', endpoints: [], packages: [] },
@@ -159,5 +159,14 @@ describe('endpointsInModule', () => {
     const nextFlow: OpFlow = { ...flow, endpoints: [{ ...token, module: 'token/route.ts' }] };
     expect(endpointsInModule(nextFlow, card('nextjs:app/token/route.ts#token', 'token', [], [])).map((endpoint) => endpoint.id)).toEqual(['token']);
     expect(endpointsInModule(nextFlow, card('core:b.ts#isForm', 'isForm', [], []))).toEqual([]);
+  });
+});
+
+describe('featuresToShow', () => {
+  it('should name the features an endpoint and a step need that are off, and nothing when they are shown', () => {
+    expect(featuresToShow(flow, features, new Set(['pkce']), 'par', null)).toEqual(['par']);
+    expect(featuresToShow(flow, features, new Set(['pkce']), 'token', 'validate-refresh-token-grant')).toEqual(['refresh-token']);
+    expect(featuresToShow(flow, features, new Set(['pkce', 'refresh-token', 'par']), 'token', 'validate-refresh-token-grant')).toEqual([]);
+    expect(featuresToShow(flow, features, new Set(['pkce']), 'nope', null)).toEqual([]);
   });
 });

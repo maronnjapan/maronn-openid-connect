@@ -13,7 +13,7 @@ export const meta = step({
   label: 'Approve or deny a pending request',
   spec: 'CIBA Core 1.0 §7.1 (authentication device)',
   function: 'submitCibaDecision',
-  calls: ['approveCibaRequest', 'denyCibaRequest', 'consentResolver.recordConsent', 'consentResolver.recordGrant'],
+  calls: ['consentResolver.recordConsent', 'consentResolver.recordGrant'],
   consumes: ['session'],
   produces: [],
   removable: false,

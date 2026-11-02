@@ -19,7 +19,8 @@ export const meta = step({
  * Rotation: revoke the refresh token the request presented, now that its
  * successor is stored. Always this order, so a failure never leaves the
  * End-User without a refresh token.
- * OAuth 2.1 §4.3.1
+ *
+ * @spec OAuth 2.1 §4.3.1
  */
 export async function revokeRotatedRefreshToken(
   c: any,

@@ -8,7 +8,6 @@ export const meta = step({
   label: 'Establish the OP browser session',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'establishBrowserSession',
-  calls: ['generateRandomString'],
   consumes: ['user'],
   produces: ['sessionId', 'authTime'],
   removable: false,
@@ -18,7 +17,8 @@ export const meta = step({
  * [establish-session] Establish the persistent browser (OP) session for the
  * authenticated subject. Its cookie travels with the answer so SSO,
  * prompt=none and max_age work on later authorization requests.
- * OIDC Core 1.0 §3.1.2.3
+ *
+ * @spec OIDC Core 1.0 §3.1.2.3
  */
 export async function establishBrowserSession(
   c: any,

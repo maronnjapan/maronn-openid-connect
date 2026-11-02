@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Authenticate the client',
   spec: 'OAuth 2.1 §2.3 / OIDC Core 1.0 §9',
   function: 'authenticateTokenClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
   consumes: ['params', 'authorization'],
   produces: ['tokenClient', 'authenticatedClientId'],
   removable: false,

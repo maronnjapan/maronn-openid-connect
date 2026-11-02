@@ -8,7 +8,6 @@ export const meta = step({
   kind: 'validate',
   label: 'Reject a form POST from another origin',
   function: 'rejectCrossOriginFormPost',
-  calls: ['isSameOriginFormPost'],
   consumes: [],
   produces: [],
   removable: false,

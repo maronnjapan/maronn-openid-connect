@@ -260,6 +260,7 @@ export class WebRouter {
   }
 }
 
+/** Resolve a path (a string starting with /) against http://localhost, returning any other request input unchanged. */
 function resolveRequestInput(input: RequestInfo | URL): RequestInfo | URL {
   if (typeof input === 'string' && input.startsWith('/')) {
     return new URL(input, 'http://localhost');
@@ -267,16 +268,23 @@ function resolveRequestInput(input: RequestInfo | URL): RequestInfo | URL {
   return input;
 }
 
+/** Return a mount prefix with a leading /, or the empty string for the root ('' or '/'). */
 function normalizeMount(prefix: string): string {
   const normalized = normalizePath(prefix);
   return normalized === '/' ? '' : normalized;
 }
 
+/** Prefix a path with / when it does not start with one, turning the empty string into '/'. */
 function normalizePath(path: string): string {
   if (path === '') return '/';
   return path.startsWith('/') ? path : '/' + path;
 }
 
+/**
+ * Return whether a path is the path of a middleware pattern or below it, as
+ * Hono matches /x/*: a trailing /* is ignored, and the root pattern matches
+ * every path.
+ */
 function pathMatches(pattern: string, path: string): boolean {
   // Hono's /x/* matches /x and every path below it; a plain path matches the same.
   const normalized = normalizeMount(pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern);
@@ -284,6 +292,10 @@ function pathMatches(pattern: string, path: string): boolean {
   return path === normalized || path.startsWith(normalized + '/');
 }
 
+/**
+ * Return the part of a path below a mount prefix, starting with / ('/' for the
+ * prefix itself), or undefined when the path is neither the prefix nor below it.
+ */
 function childPathForMount(path: string, prefix: string): string | undefined {
   if (path === prefix) return '/';
   if (path.startsWith(prefix + '/')) {

@@ -1,6 +1,13 @@
 import { defineEndpoint } from '../step.js';
 
-/** The consent screen. OIDC Core 1.0 §3.1.2.4 */
+/**
+ * Show the consent screen of the transaction (GET) and act on the End-User's
+ * decision (POST): approve issues the authorization response (a code, or the
+ * tokens of the implicit and hybrid flows) and records the consent; deny sends
+ * access_denied to the client.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.4
+ */
 export const endpoint = defineEndpoint({
   id: 'consent',
   order: 60,

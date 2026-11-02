@@ -39,18 +39,46 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer a UserInfo request sent as GET /userinfo with the response of
+ * userinfo() — the End-User's claims, or a Bearer error — plus the clientCors
+ * headers.
+ */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, clientCors, await userinfo(request));
 }
 
+/**
+ * Answer a UserInfo request sent as POST /userinfo (the access token in the
+ * Authorization header or the access_token form field) with the response of
+ * userinfo() plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await userinfo(request));
 }
 
+/**
+ * Answer the CORS preflight of /userinfo: 204 with no body and the clientCors
+ * headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
+/**
+ * Return the claims about the access token's End-User that its scopes and
+ * claims request allow: no-store JSON, or a signed JWT (application/jwt) when
+ * the client registered userinfo_signed_response_alg.
+ *
+ * Token errors are no-store JSON with a Bearer WWW-Authenticate challenge: 401
+ * invalid_token without a token or for one that is unknown, expired or not
+ * meant for this endpoint (aud), 403 insufficient_scope for a token without
+ * openid, 400 invalid_request when the token is sent by more than one method.
+ * 503 when the signing keys cannot be loaded, 500 server_error otherwise (no
+ * UserInfo key for the registered alg included).
+ *
+ * @spec OIDC Core 1.0 §5.3
+ */
 async function userinfo(request: Request): Promise<Response> {
   const keys = await loadSigningKeys().catch(() => null);
   if (!keys) return signingKeysUnavailable();

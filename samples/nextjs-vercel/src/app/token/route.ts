@@ -74,14 +74,39 @@ export const runtime = 'nodejs';
 const { authorizationCodeResolver } = resolvers;
 const { authCodeStore, accessTokenStore } = stores;
 
+/**
+ * Answer a token request (POST /token) with the response of token() — the
+ * token response, or an OAuth error — plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await token(request));
 }
 
+/**
+ * Answer the CORS preflight of /token: 204 with no body and the clientCors
+ * headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
+/**
+ * Authenticate the client, validate the grant it presents and answer with the
+ * no-store token response: an access token, an ID Token when openid was
+ * granted, and a refresh token when one is issued.
+ *
+ * The access token is stored for UserInfo, introspection and revocation, and
+ * an authorization code is marked used (presenting it again is refused and
+ * revokes the tokens of its grant). The grants of the enabled features
+ * (ID-JAG, token exchange, device_code, CIBA) are answered by their own blocks
+ * right after client authentication. Errors are no-store OAuth error JSON: 400
+ * for a malformed request or a rejected grant, 401 invalid_client with
+ * WWW-Authenticate when client authentication fails, 500 server_error when no
+ * ID Token key matches the client's alg or anything else fails; 503 when the
+ * signing keys cannot be loaded.
+ *
+ * @spec OIDC Core 1.0 §3.1.3
+ */
 async function token(request: Request): Promise<Response> {
   // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);

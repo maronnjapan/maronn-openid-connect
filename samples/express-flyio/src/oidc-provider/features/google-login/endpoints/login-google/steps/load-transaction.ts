@@ -14,7 +14,6 @@ export const meta = step({
   kind: 'resolve',
   label: 'Load the transaction the nonce was issued for',
   function: 'loadTransactionById',
-  calls: ['getAuthTransaction'],
   consumes: ['transactionId'],
   produces: ['transaction'],
   removable: false,

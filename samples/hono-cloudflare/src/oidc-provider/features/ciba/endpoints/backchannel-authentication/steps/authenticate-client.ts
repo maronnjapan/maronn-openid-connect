@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Authenticate the client',
   spec: 'CIBA Core 1.0 §7.1',
   function: 'authenticateCibaClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
   consumes: ['params', 'authorization'],
   produces: ['client'],
   removable: false,

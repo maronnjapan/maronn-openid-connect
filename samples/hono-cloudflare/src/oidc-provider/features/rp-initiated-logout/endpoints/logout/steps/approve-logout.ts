@@ -11,7 +11,6 @@ export const meta = step({
   label: 'Confirmed: end the session',
   spec: 'RP-Initiated Logout 1.0 §2',
   function: 'approveLogout',
-  calls: ['parseLogoutConfirmation', 'buildClearedSessionCookie'],
   consumes: ['confirmation'],
   produces: [],
   removable: false,

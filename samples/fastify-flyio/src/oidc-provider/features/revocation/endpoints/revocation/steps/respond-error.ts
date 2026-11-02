@@ -17,7 +17,9 @@ export const meta = step({
 
 /**
  * Answer a failure of any step with the OAuth error response.
- * RFC 7009 §2.2.1 / RFC 6749 §5.2
+ *
+ * @spec RFC 7009 §2.2.1
+ * @spec RFC 6749 §5.2
  */
 export function respondRevocationError(c: any, error: unknown): Response {
   noStore(c);

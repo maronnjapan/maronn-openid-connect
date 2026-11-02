@@ -19,6 +19,11 @@ export class DeviceAuthorizationEndpointError extends Error {
   }
 }
 
+/**
+ * Forbid caching of the response: device_code is a credential, so the response follows the token response rules.
+ *
+ * @spec RFC 6749 §5.1
+ */
 export function noStore(c: any): void {
   // RFC 8628 §3.2 has no explicit rule, but device_code is a credential, so the
   // response follows the token response rules of RFC 6749 §5.1.

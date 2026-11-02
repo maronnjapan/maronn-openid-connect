@@ -39,14 +39,38 @@ export const runtime = 'nodejs';
 
 const introspectionResolvers = createIntrospectionResolvers(stores);
 
+/**
+ * Answer an introspection request (POST /introspect) with the response of
+ * introspect() — the token's description, { active: false }, or an OAuth
+ * error — plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await introspect(request));
 }
 
+/**
+ * Answer the CORS preflight of /introspect: 204 with no body and the clientCors
+ * headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
+/**
+ * Authenticate the confidential client and describe the presented token: the
+ * no-store introspection JSON of an active token, or only { active: false }
+ * for a token that is unknown, expired, not yet valid or rotated.
+ *
+ * With the jwt-introspection-response feature, a caller that accepts
+ * application/token-introspection+jwt gets the description as a signed JWT.
+ * Errors are no-store OAuth error JSON: 400 invalid_request for a body that is
+ * not form-urlencoded or has no token, 401 invalid_client (with
+ * WWW-Authenticate) when client authentication fails or the caller is a
+ * public client, 500 server_error otherwise; 503 when the signing keys cannot
+ * be loaded.
+ *
+ * @spec RFC 7662 §2
+ */
 async function introspect(request: Request): Promise<Response> {
   // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);

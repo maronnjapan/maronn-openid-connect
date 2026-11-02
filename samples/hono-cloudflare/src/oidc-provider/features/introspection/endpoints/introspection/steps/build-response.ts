@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Describe the token (active or not)',
   spec: 'RFC 7662 §2.2',
   function: 'describeIntrospectedToken',
-  calls: ['isIntrospectionTokenActive', 'buildIntrospectionResponse'],
   consumes: ['resolved'],
   produces: ['introspection'],
   removable: false,

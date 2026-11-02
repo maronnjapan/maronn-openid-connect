@@ -16,11 +16,15 @@ export const meta = step({
 /**
  * Store the access token record for the UserInfo, introspection and
  * revocation endpoints.
- * RFC 7662 §2.2 / RFC 9068 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
  *
  * iat / nbf / audience / issuer / acr are kept so introspection can echo
  * them. grantId binds this token to the original authorization grant so it can
  * be revoked together with sibling tokens on code reuse (OAuth 2.1 §4.1.2).
+ *
+ * @spec RFC 7662 §2.2
+ * @spec RFC 9068 §2.2
+ * @spec OIDC Core 1.0 §5.5
+ * @spec RFC 9470 §6.2
  */
 export async function persistAccessToken(
   c: any,

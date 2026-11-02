@@ -10,7 +10,6 @@ export const meta = step({
   label: 'Deny: answer access_denied',
   spec: 'OIDC Core 1.0 §3.1.2.6',
   function: 'denyAuthorizationRequest',
-  calls: ['buildConsentRedirect'],
   consumes: ['transactionId', 'transaction', 'issuer'],
   produces: ['outcome'],
   removable: false,

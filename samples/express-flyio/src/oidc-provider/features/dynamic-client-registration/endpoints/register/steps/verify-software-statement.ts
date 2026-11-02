@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Verify the software statement and apply the metadata it asserts',
   spec: 'RFC 7591 §2.3 / §3.1.1',
   function: 'resolveRegistrationMetadata',
-  calls: ['verifySoftwareStatement', 'applySoftwareStatement'],
   consumes: ['registration'],
   produces: ['metadata'],
   removable: false,

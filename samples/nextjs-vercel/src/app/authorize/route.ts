@@ -96,6 +96,21 @@ export async function POST(request: NextRequest): Promise<Response> {
   return authorize(request, uniqueParams(new URLSearchParams(await request.text())));
 }
 
+/**
+ * Validate an authorization request, store it as a transaction and continue
+ * it: answer the client at once with the authorization response when no
+ * screen is needed (prompt=none, or SSO with prior consent), otherwise
+ * redirect (302) to /login or /consent with the transaction cookie.
+ *
+ * An error found once redirect_uri is verified goes back to the client in the
+ * requested response mode, with state and iss; one found before it (unknown
+ * client_id, unregistered redirect_uri) sends the browser (303) to the OP's
+ * error page, or answers 400 JSON to a caller that accepts application/json.
+ * A repeated parameter or a missing client_id answers 400 JSON, 503 when the
+ * signing keys cannot be loaded, 500 server_error otherwise.
+ *
+ * @spec OIDC Core 1.0 §3.1.2
+ */
 async function authorize(request: NextRequest, parsed: UniqueParams): Promise<Response> {
   // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);

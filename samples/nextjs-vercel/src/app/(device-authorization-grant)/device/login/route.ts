@@ -33,6 +33,20 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Sign the End-User in during device verification (POST /device/login): start
+ * a new OP session and render the approve / deny screen for the device, with
+ * the session cookie set.
+ *
+ * The user_code, the browser binding cookie and the csrf_token are checked
+ * before the credentials: an unknown, expired or used user_code re-renders the
+ * code entry form with 400, and a missing or wrong binding or csrf_token
+ * answers the OP's error page with 403. Wrong credentials re-render the
+ * sign-in form with the remaining attempts; the last allowed failure denies
+ * the device's request and answers 429.
+ *
+ * @spec RFC 8628 §3.3
+ */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
   const submittedUserCode = String(form.get('user_code') ?? '');

@@ -18,7 +18,9 @@ export const meta = step({
 
 /**
  * Answer a failure of any step with the OAuth error response.
- * RFC 7662 §2.3 / RFC 6749 §5.2
+ *
+ * @spec RFC 7662 §2.3
+ * @spec RFC 6749 §5.2
  */
 export function respondIntrospectionError(c: any, error: unknown): Response {
   if (error instanceof IntrospectionEndpointError) {

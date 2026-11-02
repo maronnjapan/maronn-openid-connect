@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Respond with the device authorization response (no-store)',
   spec: 'RFC 8628 §3.2',
   function: 'respondDeviceAuthorization',
-  calls: ['buildDeviceAuthorizationResponse'],
   consumes: ['record'],
   produces: [],
   removable: false,

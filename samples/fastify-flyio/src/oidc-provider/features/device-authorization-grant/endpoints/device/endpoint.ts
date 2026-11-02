@@ -1,6 +1,14 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXPERIMENTAL — the device verification screens. RFC 8628 §3.3 */
+/**
+ * Let the End-User activate a device: enter the user_code, sign in when there
+ * is no session, and approve or deny the client, which the device then learns
+ * when it polls the token endpoint.
+ *
+ * EXPERIMENTAL: generated with --enable device-authorization-grant.
+ *
+ * @spec RFC 8628 §3.3
+ */
 export const endpoint = defineEndpoint({
   id: 'device',
   order: 140,

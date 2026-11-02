@@ -77,6 +77,7 @@ export interface TransactionStorage extends AuthTransactionStore {
 }
 
 export interface AuthorizationCodeStorage {
+  /** Store an authorization code with what it was issued for, replacing an entry of the same code. */
   set(code: string, info: AuthorizationCodeInfo): Awaitable<void>;
   /** undefined for an expired code; a used one is returned, with used: true. */
   get(code: string): Awaitable<AuthorizationCodeInfo | undefined>;
@@ -89,6 +90,7 @@ export interface AuthorizationCodeStorage {
 }
 
 export interface AccessTokenStorage {
+  /** Store an issued access token with its subject, client, scope and expiry, for UserInfo, introspection and revocation to find. */
   set(token: string, info: AccessTokenInfo): Awaitable<void>;
   get(token: string): Awaitable<AccessTokenInfo | undefined>;
   delete(token: string): Awaitable<void>;
@@ -99,6 +101,7 @@ export interface AccessTokenStorage {
 }
 
 export interface RefreshTokenStorage {
+  /** Store an issued refresh token with its grant, subject, client, scope and expiry. */
   set(token: string, info: RefreshTokenInfo): Awaitable<void>;
   get(token: string): Awaitable<RefreshTokenInfo | undefined>;
   /**
@@ -114,13 +117,17 @@ export interface RefreshTokenStorage {
 }
 
 export interface AuthSessionStorage {
+  /** Store who signed in for a transaction (the subject and how and when they authenticated), for the consent step to read. */
   set(transactionId: string, info: AuthSessionInfo): Awaitable<void>;
+  /** Return who signed in for a transaction, undefined when nobody did or the entry expired. */
   get(transactionId: string): Awaitable<AuthSessionInfo | undefined>;
   delete(transactionId: string): Awaitable<void>;
 }
 
 export interface BrowserSessionStorage {
+  /** Store the OP session of a browser under its session id: the subject and when and how they authenticated. */
   set(sessionId: string, info: BrowserSessionInfo): Awaitable<void>;
+  /** Return the OP session of a session id, undefined when there is none or it expired. */
   get(sessionId: string): Awaitable<BrowserSessionInfo | undefined>;
   delete(sessionId: string): Awaitable<void>;
 }
@@ -134,16 +141,19 @@ export interface ConsentStorage {
   grant(subject: string, clientId: string, scopes: string[]): Awaitable<void>;
   /** true only when every requested scope was granted. */
   hasConsent(subject: string, clientId: string, scopes: string[]): Awaitable<boolean>;
+  /** Add a grant id to the consent of a subject to a client, once, so revoke() returns it. */
   recordGrant(subject: string, clientId: string, grantId: string): Awaitable<void>;
   /** Remove the consent and return the grant ids whose tokens the caller revokes. */
   revoke(subject: string, clientId: string): Awaitable<string[]>;
 }
 
 export interface UserStorage {
+  /** Return the user's claims when the username and password match, undefined for an unknown user, a wrong password or a user without a password. */
   authenticate(
     username: string,
     password: string,
   ): Awaitable<(UserClaims & { password: string }) | undefined>;
+  /** Return the claims of the user with this subject, undefined for an unknown subject. */
   getClaims(sub: string): Awaitable<UserClaims | undefined>;
   /**
    * Find or create the user of an upstream account (just-in-time

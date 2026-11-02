@@ -1,6 +1,13 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** Token Introspection. RFC 7662 §2 */
+/**
+ * Tell an authenticated client whether a token is active and, when it is,
+ * describe it (scope, client_id, sub, exp and more), as JSON or as a signed
+ * JWT when the client asks for application/token-introspection+jwt; an unknown
+ * or expired token is answered with only active: false.
+ *
+ * @spec RFC 7662 §2
+ */
 export const endpoint = defineEndpoint({
   id: 'introspection',
   order: 90,

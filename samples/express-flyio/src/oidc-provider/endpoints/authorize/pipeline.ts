@@ -20,7 +20,6 @@ import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
 
 /**
  * Authorization endpoint (API layer: logic only).
- * OIDC Core 1.0 Section 3.1.2
  *
  * Each block of processAuthorizationRequest() calls one step (one box of
  * `maronn-oidc graph --detail steps --endpoint authorize`): parse the
@@ -34,6 +33,8 @@ import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
  * consent screen", or an error that must stay on the OP. It never builds a
  * Response; page.ts, which owns GET|POST /authorize, turns the outcome into
  * HTTP. A step that throws ends in authorizationErrorOutcome().
+ *
+ * @spec OIDC Core 1.0 §3.1.2
  */
 export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
   // The response mode the request asked for, when a feature answers in one

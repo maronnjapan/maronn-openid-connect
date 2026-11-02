@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Authenticate the client',
   spec: 'RFC 8628 §3.1 / RFC 6749 §3.2.1',
   function: 'authenticateDeviceClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
   consumes: ['params', 'authorization'],
   produces: ['client'],
   removable: false,

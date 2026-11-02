@@ -142,6 +142,11 @@ export interface OidcProviderOptions {
   views?: Partial<Views>;
 }
 
+/**
+ * Check the signing key set the provider starts with: at least one key (the first signs new tokens), and an RS256 key when requireRs256 asks for one.
+ *
+ * @spec OIDC Core 1.0 §10.1
+ */
 export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
@@ -352,6 +357,13 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   return undefined;
 }
 
+/**
+ * Return the stores of a request: those of the storage option, called with the
+ * request context when it is a factory.
+ *
+ * Without the option, returns the stores of db/ on the database
+ * createDatabase() returns for the request.
+ */
 async function resolveProviderStores(
   storage: OidcProviderOptions['storage'],
   context: any,

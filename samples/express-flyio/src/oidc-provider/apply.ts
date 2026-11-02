@@ -19,6 +19,7 @@ import { toWebRequest, writeWebResponse } from './node-adapter.js';
 
 export type ApplyOidcOptions = OidcProviderOptions;
 
+/** Mount the OpenID Provider on an existing Express app: every request under its paths is turned into a Fetch Request for the Hono app and its Response written back. */
 export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   const oidc = createApp(options);
   // The advertised issuer is the source of truth for the OP's own origin

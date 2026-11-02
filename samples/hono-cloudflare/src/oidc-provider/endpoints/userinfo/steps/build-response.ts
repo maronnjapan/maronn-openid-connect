@@ -16,7 +16,6 @@ export const meta = step({
   label: 'Build the response (JSON or signed JWT)',
   spec: 'OIDC Core 1.0 §5.3.2',
   function: 'buildUserInfoResponse',
-  calls: ['selectSigningKeyByAlg', 'generateUserInfoJwt'],
   consumes: ['tokenInfo', 'claims'],
   produces: ['userInfoResponse'],
   removable: false,
@@ -25,7 +24,8 @@ export const meta = step({
 /**
  * Build the response in the format the client registered: a signed JWT when
  * userinfo_signed_response_alg is set, JSON otherwise.
- * OIDC Core 1.0 §5.3.2
+ *
+ * @spec OIDC Core 1.0 §5.3.2
  */
 export async function buildUserInfoResponse(
   c: any,

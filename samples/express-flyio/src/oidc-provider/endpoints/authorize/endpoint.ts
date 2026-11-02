@@ -1,6 +1,14 @@
 import { defineEndpoint } from '../step.js';
 
-/** The authorization endpoint. OIDC Core 1.0 §3.1.2 */
+/**
+ * Validate an authorization request and continue it: answer the client at once
+ * when no screen is needed (prompt=none with a session and consent, or a
+ * session the End-User already consented under), otherwise send the browser on
+ * to the login or the consent screen. An invalid request is answered with an
+ * error, at the client's redirect URI once that URI is verified.
+ *
+ * @spec OIDC Core 1.0 §3.1.2
+ */
 export const endpoint = defineEndpoint({
   id: 'authorize',
   order: 30,

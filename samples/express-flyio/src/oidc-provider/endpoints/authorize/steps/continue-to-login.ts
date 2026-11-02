@@ -9,7 +9,6 @@ export const meta = step({
   label: 'Continue on the login screen',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'continueToLogin',
-  calls: ['buildTransactionCookie'],
   consumes: ['transactionId', 'transactionTtlSeconds'],
   produces: [],
   removable: false,

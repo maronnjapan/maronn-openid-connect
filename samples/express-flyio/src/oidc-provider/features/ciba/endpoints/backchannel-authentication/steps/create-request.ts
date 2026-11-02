@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Resolve the login_hint and create the pending request',
   spec: 'CIBA Core 1.0 §7.1 - §7.3',
   function: 'createBackchannelAuthenticationRequest',
-  calls: ['processBackchannelAuthenticationRequest'],
   consumes: ['params', 'client'],
   produces: ['cibaResponse'],
   removable: false,

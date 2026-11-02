@@ -1,6 +1,12 @@
 import { defineEndpoint } from '../step.js';
 
-/** OpenID Connect Discovery. OIDC Discovery 1.0 §4 */
+/**
+ * Publish the OpenID Provider metadata as JSON: the issuer, the URLs of the
+ * endpoints, and the response types, grants, scopes, claims and signing
+ * algorithms the provider supports.
+ *
+ * @spec OIDC Discovery 1.0 §4
+ */
 export const endpoint = defineEndpoint({
   id: 'discovery',
   order: 10,

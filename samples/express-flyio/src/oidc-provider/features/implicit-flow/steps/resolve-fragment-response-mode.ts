@@ -11,7 +11,6 @@ export const meta = step({
   label: 'Answer the Implicit Flow in the fragment',
   spec: 'OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5',
   function: 'resolveFragmentResponseContext',
-  calls: ['defaultResponseModeOf'],
   consumes: ['params', 'effectiveParams', 'issuer'],
   optional: ['effectiveParams'],
   produces: ['responseMode'],

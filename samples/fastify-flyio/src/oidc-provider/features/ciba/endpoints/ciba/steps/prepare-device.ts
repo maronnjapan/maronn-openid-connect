@@ -11,7 +11,6 @@ export const meta = step({
   kind: 'resolve',
   label: 'List pending requests, or start a login transaction',
   function: 'prepareCibaDevice',
-  calls: ['listPendingCibaRequests', 'createCibaLoginTransaction', 'buildCibaLoginBindingCookie'],
   consumes: [],
   produces: ['loginTransaction'],
   removable: false,

@@ -53,10 +53,19 @@ import { deviceAuthorizationConfig } from '../../_oidc-provider/features/device-
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer a device authorization request (POST /device_authorization) with the
+ * no-store JSON of deviceAuthorization() — device_code, user_code and the
+ * verification URIs, or an OAuth error — plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await deviceAuthorization(request));
 }
 
+/**
+ * Answer the CORS preflight of /device_authorization: 204 with no body and the
+ * clientCors headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }

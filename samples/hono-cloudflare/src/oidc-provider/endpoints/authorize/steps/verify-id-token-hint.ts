@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Verify id_token_hint',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'verifyIdTokenHint',
-  calls: ['validateIdTokenHint'],
   consumes: ['transactionId', 'transaction', 'issuer', 'responseMode'],
   optional: ['responseMode'],
   produces: ['verifiedHintSubject'],

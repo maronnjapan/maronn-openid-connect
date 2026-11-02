@@ -17,7 +17,10 @@ export const meta = step({
 
 /**
  * Answer a failure of any step with the OAuth error response.
- * RFC 6749 §5.2 / RFC 6750 §3 / OAuth 2.1 §5.2
+ *
+ * @spec RFC 6749 §5.2
+ * @spec RFC 6750 §3
+ * @spec OAuth 2.1 §5.2
  */
 export function respondTokenError(c: any, error: unknown): Response {
   // A step already decided the whole response (malformed request, server

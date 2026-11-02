@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve and validate the access token',
   spec: 'OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4',
   function: 'resolveUserInfoToken',
-  calls: ['resolveUserInfoAccessToken', 'validateUserInfoTokenExpiration', 'validateUserInfoScope', 'validateUserInfoAudience'],
   consumes: ['accessToken'],
   produces: ['tokenInfo'],
   removable: false,
@@ -23,10 +22,13 @@ export const meta = step({
 /**
  * Resolve the presented Bearer token and validate it: known, not expired,
  * carries the openid scope, and names this UserInfo endpoint in its audience.
- * OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
  *
  * Each check is an independent core function that throws UserInfoError, which
  * respondUserInfoError() renders as an RFC 6750 Bearer challenge.
+ *
+ * @spec OIDC Core 1.0 §5.3.1
+ * @spec RFC 6750 §3.1
+ * @spec RFC 9068 §4
  */
 export async function resolveUserInfoToken(c: any, accessToken: string): Promise<AccessTokenInfo> {
   const accessTokenResolver = c.get('accessTokenResolver');

@@ -16,7 +16,6 @@ export const meta = step({
   kind: 'validate',
   label: 'Sign the End-User in on this browser',
   function: 'submitCibaLogin',
-  calls: ['validateCibaLoginSubmission', 'recordCibaLoginFailure', 'buildSessionCookie'],
   consumes: ['loginTransaction'],
   produces: ['session'],
   removable: false,

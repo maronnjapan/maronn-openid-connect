@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Authenticate the client',
   spec: 'RFC 7009 §2.1 / OAuth 2.1 §2.3',
   function: 'authenticateRevocationClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret'],
   consumes: ['params', 'authorization'],
   produces: ['authenticatedClientId'],
   removable: false,

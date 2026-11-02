@@ -107,6 +107,7 @@ export function defineFeature<const F extends Feature>(feature: F): F {
   return feature;
 }
 
+/** The endpoints the features add, in the order of the features (app.ts mounts them after the endpoints of every provider). */
 export function routesOf(features: readonly Feature[]): FeatureRoute[] {
   return features.flatMap((feature) => feature.routes ?? []);
 }
@@ -148,24 +149,29 @@ export async function applyContextOf(
   }
 }
 
+/** The ProviderConfig defaults the features add, merged in the order of the features (a later feature wins). */
 export function configOf(features: readonly Feature[]): Partial<ProviderConfig> {
   return Object.assign({}, ...features.map((feature) => feature.config ?? {}));
 }
 
+/** The grant_type values the features answer at the token endpoint, each once. */
 export function tokenGrantsOf(features: readonly Feature[]): string[] {
   // Two features may answer the same grant_type (token-exchange and id-jag
   // both read the token-exchange URN); it is listed once.
   return [...new Set(features.flatMap((feature) => feature.token?.grants ?? []))];
 }
 
+/** The response modes the features answer at the authorization endpoint. */
 export function responseModesOf(features: readonly Feature[]): AuthorizationResponseModeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseModes ?? []);
 }
 
+/** The response_type handlers the features answer besides code. */
 export function responseTypesOf(features: readonly Feature[]): AuthorizationResponseTypeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseTypes ?? []);
 }
 
+/** The login methods the features add beside the password form of the login screen. */
 export function loginMethodsOf(features: readonly Feature[]): LoginMethod[] {
   return features.flatMap((feature) => feature.loginMethods ?? []);
 }

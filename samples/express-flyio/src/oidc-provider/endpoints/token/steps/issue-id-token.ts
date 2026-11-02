@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Issue the ID Token',
   spec: 'OIDC Core 1.0 §3.1.3.6 / §12.1',
   function: 'issueIdToken',
-  calls: ['computeAtHash', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['idTokenSigningKey', 'accessToken', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'acr', 'amr'],
   produces: ['idToken'],
   removable: true,
@@ -26,7 +25,8 @@ export const meta = step({
  * it to the access token (§3.1.3.6), and acr / amr are the ones
  * resolveTokenAcrAmr() settled on (kept from the first authentication on a
  * refresh, §12.1).
- * OIDC Core 1.0 §3.1.3.6 / §12.1
+ *
+ * @spec OIDC Core 1.0 §3.1.3.6 / §12.1
  */
 export async function issueIdToken(
   c: any,

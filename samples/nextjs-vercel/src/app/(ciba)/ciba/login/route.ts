@@ -21,6 +21,17 @@ import { loginScreen, pendingRequestsScreen, verificationFailureScreen } from '.
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Sign the End-User in at POST /ciba/login: start a new OP session and render
+ * the pending CIBA requests addressed to them, with the session cookie set.
+ *
+ * The login transaction's browser binding cookie and csrf_token are checked
+ * before the credentials; a failure (unknown, expired or foreign transaction)
+ * answers the OP's error page with 403. Wrong credentials re-render the
+ * sign-in form with the remaining attempts, and the last allowed failure
+ * deletes the transaction and answers 429. A successful sign-in consumes the
+ * transaction and clears its binding cookie.
+ */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
   const transactionId = String(form.get('login_transaction_id') ?? '');

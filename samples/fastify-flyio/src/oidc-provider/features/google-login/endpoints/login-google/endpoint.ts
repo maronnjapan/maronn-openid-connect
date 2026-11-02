@@ -1,6 +1,13 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXTENSION — the Google login callback (login_uri) of Sign in with Google. */
+/**
+ * Complete a Sign in with Google login: verify the ID token Google posts back,
+ * link the Google account to a user of the provider, start the session of the
+ * transaction and go on to the consent screen.
+ *
+ * EXTENSION: generated with --enable google-login (the login_uri of Sign in
+ * with Google).
+ */
 export const endpoint = defineEndpoint({
   id: 'login-google',
   order: 50,

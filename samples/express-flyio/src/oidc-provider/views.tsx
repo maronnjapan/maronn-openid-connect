@@ -172,6 +172,12 @@ function serializeView(view: ViewResult): string | Promise<string> {
   return (view as { toString(): string | Promise<string> }).toString();
 }
 
+/**
+ * Return a stream that sends the HTML, UTF-8 encoded, in one chunk once the
+ * promise resolves, and then closes.
+ *
+ * A rejected promise errors the stream.
+ */
 function streamWhenResolved(html: Promise<string>): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
@@ -255,6 +261,14 @@ export function DecisionOutcome(props: { approved: boolean; clientId: string }):
 // Replace the components below to customize the UI.
 // ============================================================
 
+/**
+ * Render the login page: a username and password form that posts to /login
+ * with the hidden csrf_token, followed by the other login methods of the
+ * features (such as Sign in with Google).
+ *
+ * The username is pre-filled with login_hint, and the error of a failed
+ * attempt is shown above the form, with the attempts left when known.
+ */
 function defaultLoginPage(params: LoginPageParams): JSX.Element {
   // OIDC Core 1.0 §3.1.2.1: login_hint pre-fills the username. It is
   // unauthenticated input; the JSX attribute escapes it.
@@ -283,6 +297,13 @@ function defaultLoginPage(params: LoginPageParams): JSX.Element {
 // must keep both button values as they are: renaming 'approve' makes every
 // approval fail, and renaming 'deny' makes the Deny button rejected as well.
 // See the validate-decision step of endpoints/consent/.
+/**
+ * Render the consent page: the client and the scopes it asked for, with
+ * Approve and Deny buttons that post action=approve or action=deny and the
+ * csrf_token to /consent.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.4
+ */
 function defaultConsentPage(params: ConsentPageParams): JSX.Element {
   return (
     <Layout title="Consent">
@@ -298,6 +319,7 @@ function defaultConsentPage(params: ConsentPageParams): JSX.Element {
   );
 }
 
+/** Render the error page: the error and, when given, its description (the status code is not shown). */
 function defaultErrorPage(params: ErrorPageParams): JSX.Element {
   return (
     <Layout title="Error">
@@ -313,6 +335,15 @@ function defaultErrorPage(params: ErrorPageParams): JSX.Element {
 // it. The script submits it as soon as it is parsed (Appendix A does the same
 // from body onload), and the button inside noscript lets a browser without
 // JavaScript continue. The script is a fixed literal, never input.
+/**
+ * Render the form_post authorization response: a form that posts the response
+ * parameters as hidden fields to the client's redirect URI and submits itself
+ * as soon as the page loads.
+ *
+ * Without JavaScript, a Continue button submits it.
+ *
+ * @spec OAuth 2.0 Form Post Response Mode §2
+ */
 function defaultFormPostPage(params: FormPostPageParams): JSX.Element {
   return (
     <Layout title="Submit This Form">

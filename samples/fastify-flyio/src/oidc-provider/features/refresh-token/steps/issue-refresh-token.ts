@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Mint and store the refresh token',
   spec: 'OAuth 2.1 §4.3.1 / §6.1',
   function: 'issueRefreshToken',
-  calls: ['generateRandomString'],
   consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'audience', 'acr', 'amr'],
   produces: ['refreshToken'],
   removable: false,
@@ -24,12 +23,14 @@ export const meta = step({
 /**
  * Mint the refresh token the decision asked for and store its record for
  * rotation. Returns undefined when none is issued.
- * OAuth 2.1 §4.3.1 / §6.1 / OIDC Core 1.0 §12.1
  *
  * The same grantId / audience / authTime / nonce / acr / amr / azp is propagated
  * through rotations so descendants can be revoked on code reuse, the audience
  * never expands, and the ID Token a refresh re-issues keeps the values of the
  * first authentication (OIDC Core 1.0 §12.1).
+ *
+ * @spec OAuth 2.1 §4.3.1 / §6.1
+ * @spec OIDC Core 1.0 §12.1
  */
 export async function issueRefreshToken(
   c: any,

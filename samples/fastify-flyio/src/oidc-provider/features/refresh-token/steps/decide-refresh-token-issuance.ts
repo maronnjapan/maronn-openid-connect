@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Decide whether a refresh token is issued',
   spec: 'OIDC Core 1.0 §11 / RFC 9700 §4.14',
   function: 'decideRefreshTokenIssuance',
-  calls: ['clientAllowsRefreshTokenGrant'],
   consumes: ['tokenClient', 'validatedRequest'],
   produces: ['refreshTokenDecision'],
   removable: false,
@@ -32,7 +31,10 @@ export interface RefreshTokenDecision {
 /**
  * Decide whether a refresh token is issued, and whether it is bound to the
  * login session (online) or outlives it (offline_access).
- * OIDC Core 1.0 §11 / RFC 9700 §4.14 / RFC 6749 §6
+ *
+ * @spec OIDC Core 1.0 §11
+ * @spec RFC 9700 §4.14
+ * @spec RFC 6749 §6
  */
 export function decideRefreshTokenIssuance(
   c: any,

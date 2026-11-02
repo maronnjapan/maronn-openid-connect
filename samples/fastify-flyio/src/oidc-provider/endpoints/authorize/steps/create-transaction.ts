@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Create and store the authorization transaction',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'createAuthorizationTransaction',
-  calls: ['generateRandomString', 'createAuthTransaction'],
   consumes: ['validatedRequest', 'responseMode'],
   optional: ['responseMode'],
   produces: ['transactionId', 'transaction', 'transactionTtlSeconds'],

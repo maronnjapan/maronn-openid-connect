@@ -1,6 +1,13 @@
 import { defineEndpoint } from '../step.js';
 
-/** The token endpoint. OIDC Core 1.0 §3.1.3 */
+/**
+ * Authenticate the client, validate the grant it presents (an authorization
+ * code, a refresh token, or the grant of an enabled feature) and answer with
+ * an access token, an ID Token when openid was granted and a refresh token
+ * when one is issued. Any failure is answered with an OAuth error.
+ *
+ * @spec OIDC Core 1.0 §3.1.3
+ */
 export const endpoint = defineEndpoint({
   id: 'token',
   order: 70,

@@ -14,6 +14,7 @@ export const meta = step({
   removable: false,
 });
 
+/** Return whether a Content-Type value names application/x-www-form-urlencoded, ignoring case and parameters such as charset. */
 function isFormUrlEncoded(contentType: string): boolean {
   return contentType.toLowerCase().split(';')[0]?.trim() === 'application/x-www-form-urlencoded';
 }

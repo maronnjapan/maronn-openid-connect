@@ -21,7 +21,8 @@ export const meta = step({
  * Resolve the subject, auth_time and nonce the tokens are issued for: from the
  * authorization code record (authorization_code), or from the refresh token's
  * stored grant (refresh_token).
- * OIDC Core 1.0 §12.2
+ *
+ * @spec OIDC Core 1.0 §12.2
  */
 export async function resolveTokenSubject(
   c: any,

@@ -37,14 +37,36 @@ export const runtime = 'nodejs';
 
 const revocationResolvers = createRevocationResolvers(stores);
 
+/**
+ * Answer a revocation request (POST /revoke) with the response of revoke() —
+ * 200 with an empty body, or an OAuth error — plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await revoke(request));
 }
 
+/**
+ * Answer the CORS preflight of /revoke: 204 with no body and the clientCors
+ * headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
+/**
+ * Authenticate the client and revoke the presented token when it was issued
+ * to that client — a refresh token together with the access tokens of its
+ * grant — answering 200 with an empty no-store body, also for an unknown
+ * token.
+ *
+ * A public client identifies itself by client_id alone. Errors are no-store
+ * OAuth error JSON: 400 invalid_request for a body that is not form-urlencoded
+ * or has no token, 400 invalid_grant for a token issued to another client, 401
+ * invalid_client (with WWW-Authenticate) when client authentication fails, 500
+ * server_error otherwise.
+ *
+ * @spec RFC 7009 §2
+ */
 async function revoke(request: Request): Promise<Response> {
   if (!isFormUrlEncoded(request)) {
     return oauthError('invalid_request', 'Content-Type must be application/x-www-form-urlencoded');

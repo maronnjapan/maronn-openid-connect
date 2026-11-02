@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve the claims the token may see',
   spec: 'OIDC Core 1.0 §5.4 / §5.5',
   function: 'resolveUserInfoResponseClaims',
-  calls: ['resolveUserInfoClaims', 'filterClaimsByScope', 'applyRequestedClaims'],
   consumes: ['tokenInfo'],
   produces: ['claims'],
   removable: false,

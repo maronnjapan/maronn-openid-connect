@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve the presented token',
   spec: 'RFC 7009 §2.1',
   function: 'resolveRevocationTokenTarget',
-  calls: ['requireRevocationToken', 'requireRevocationClient', 'resolveRevocationTarget'],
   consumes: ['params', 'authenticatedClientId'],
   produces: ['token', 'resolved'],
   removable: false,
@@ -22,10 +21,11 @@ export const meta = step({
 
 /**
  * Resolve the presented token (access or refresh token); null when unknown.
- * RFC 7009 §2.1
  *
  * Each check is an independent core function. token_type_hint only reorders
  * the lookup — the other token type is still searched when the hint misses.
+ *
+ * @spec RFC 7009 §2.1
  */
 export async function resolveRevocationTokenTarget(
   c: any,

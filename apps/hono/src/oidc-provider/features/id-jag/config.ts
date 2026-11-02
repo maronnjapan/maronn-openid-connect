@@ -83,6 +83,11 @@ export const idJagConfig = {
 const idJagJwksCache = new Map<string, { jwks: JwkSet; expiresAt: number }>();
 const ID_JAG_JWKS_CACHE_TTL_MS = 300_000;
 
+/**
+ * The trusted identity providers of ID-JAG with their keys: the configured JWKS, or the one fetched from the issuer and cached for a while.
+ *
+ * @spec ID-JAG draft §4.3
+ */
 export async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIdentityProvider[]> {
   const resolved: IdJagTrustedIdentityProvider[] = [];
   for (const entry of idJagConfig.trustedIdentityProviders) {

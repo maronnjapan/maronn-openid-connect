@@ -78,6 +78,7 @@ export interface DeviceAuthorizationRecord {
  */
 export interface DeviceAuthorizationStore {
   save(record: DeviceAuthorizationRecord): Promise<void>;
+  /** device_code のレコードを返す。無いとき（消費済み・削除済みを含む）は null を返す。 */
   findByDeviceCode(deviceCode: string): Promise<DeviceAuthorizationRecord | null>;
   /** 正規化済みキー（{@link normalizeUserCode} の出力）で照合する。 */
   findByUserCode(userCode: string): Promise<DeviceAuthorizationRecord | null>;

@@ -26,7 +26,6 @@ export const meta = step({
   label: 'Redeem an ID-JAG on the jwt-bearer grant',
   spec: 'ID-JAG draft §4.4 / RFC 7523 §2.1',
   function: 'redeemIdJag',
-  calls: ['processIdJagRedemptionRequest', 'buildAccessTokenAudience', 'buildAccessTokenPayload'],
   consumes: ['params', 'tokenClient'],
   produces: [],
   removable: false,

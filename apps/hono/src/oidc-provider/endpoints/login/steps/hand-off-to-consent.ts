@@ -7,7 +7,6 @@ export const meta = step({
   kind: 'persist',
   label: 'Store the authenticated subject for the consent step',
   function: 'handOffToConsent',
-  calls: ['buildSessionCookie'],
   consumes: ['transactionId', 'user', 'sessionId', 'authTime'],
   produces: ['outcome'],
   removable: false,

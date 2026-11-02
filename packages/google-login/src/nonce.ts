@@ -46,7 +46,9 @@ export interface GoogleLoginNonceRecord {
  * {@link consumeGoogleLoginNonce} が期限切れとして拒否する）。
  */
 export interface GoogleLoginNonceStore {
+  /** key の nonce レコードを返す。無いとき・有効期限が切れたときは null を返す。 */
   get(key: string): Promise<GoogleLoginNonceRecord | null>;
+  /** nonce レコードを key に保存し（既存の値は置き換える）、ttlSeconds 秒後に期限切れにする。 */
   put(key: string, record: GoogleLoginNonceRecord, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
 }

@@ -1,0 +1,154 @@
+# OIDC Provider Map のデプロイ
+#
+# 地図（apps/map。`maronn-oidc explain --format json` を全機能オンで 4 フレームワーク分まとめた
+# データを読む React + Vite のページ）を、PR ごとと main で Cloudflare Workers に出す。
+#
+# - PR（opened / synchronize / reopened）: その PR のコードから地図をビルドし、同じ Worker の
+#   Worker Preview `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに
+#   固定の URL を持つ隔離されたデプロイで、push のたびに同じ URL が新しくなり、複数の PR が同時に
+#   別々の状態で見られる。URL は PR にコメントする（push ごとに同じコメントを書き換える）。
+#   Worker Previews はオープンベータなので、失敗したときは PR ごとの Worker
+#   `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` する（.github/scripts/map-preview.mjs）。
+# - PR（closed）: その Preview（とフォールバックの Worker）を消す。
+# - main への push: `wrangler deploy` で本番（いまは workers.dev。ドメインは後で）を更新する。
+#
+# どの場合も artifact（oidc-provider-map）にビルド結果を残す。fork からの PR はシークレットが
+# 無いのでデプロイもコメントもせず、artifact だけ残る。
+name: Map Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: map-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  build:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # CLI をビルドし（関数カタログをテンプレートに焼く）、その dist から地図のデータとページを作る。
+      - name: Build the map
+        run: pnpm run build:map
+
+      - name: Upload the map
+        uses: actions/upload-artifact@v7
+        with:
+          name: oidc-provider-map
+          path: apps/map/dist
+          if-no-files-found: error
+
+      - name: Create or update the Preview of the pull request
+        id: preview
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && env.CLOUDFLARE_API_TOKEN != ''
+        run: node .github/scripts/map-preview.mjs create --pr "${{ github.event.pull_request.number }}" --sha "${{ github.event.pull_request.head.sha }}"
+
+      - name: Deploy main to production
+        id: production
+        if: github.event_name != 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
+        run: node .github/scripts/map-preview.mjs deploy
+
+      - name: Comment the Preview on the pull request
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v8
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          PREVIEW_MODE: ${{ steps.preview.outputs.mode }}
+          PREVIEW_NOTE: ${{ steps.preview.outputs.note }}
+          PREVIEW_OUTCOME: ${{ steps.preview.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const marker = '<!-- oidc-provider-map-preview -->';
+            const url = process.env.PREVIEW_URL;
+            const outcome = process.env.PREVIEW_OUTCOME;
+            const how = process.env.PREVIEW_MODE === 'worker'
+              ? 'a Worker of this pull request (Worker Previews failed; see the run)'
+              : 'a Worker Preview of this pull request: the same URL follows every push, and it is removed when the pull request is closed';
+            const status = url
+              ? `Preview: ${url}\n\n(${how})`
+              : outcome === 'skipped'
+                ? 'Preview: not deployed (no Cloudflare secrets for this run). Download the `oidc-provider-map` artifact of the run below and serve `dist/` statically.'
+                : `Preview: the deploy failed; see the run below. (${process.env.PREVIEW_NOTE || ''})`;
+            const body = [
+              marker,
+              '## OIDC Provider Map',
+              '',
+              status,
+              '',
+              `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
+              '',
+              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on; the feature toggles narrow it to one \`maronn-oidc generate\` command line.`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Remove the Preview of the pull request
+        id: remove
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: node .github/scripts/map-preview.mjs delete --pr "${{ github.event.pull_request.number }}"
+
+      - name: Note the removal on the pull request
+        uses: actions/github-script@v8
+        env:
+          NOTE: ${{ steps.remove.outputs.note }}
+        with:
+          script: |
+            const marker = '<!-- oidc-provider-map-preview -->';
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (!existing) return;
+            const body = `${marker}\n## OIDC Provider Map\n\nThe preview of this pull request was removed when it was closed (${process.env.NOTE || 'no Cloudflare secrets'}). The map of main is deployed by the push to main.`;
+            await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });

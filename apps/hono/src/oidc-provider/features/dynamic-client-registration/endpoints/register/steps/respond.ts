@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Respond 201 with the registration response',
   spec: 'RFC 7591 §3.2.1',
   function: 'respondRegistration',
-  calls: ['buildClientRegistrationResponse'],
   consumes: ['client'],
   produces: [],
   removable: false,

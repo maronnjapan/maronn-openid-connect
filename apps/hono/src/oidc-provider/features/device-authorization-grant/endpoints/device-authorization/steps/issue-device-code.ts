@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Mint the device_code and user_code',
   spec: 'RFC 8628 §3.2 / §5.2',
   function: 'issueDeviceCodes',
-  calls: ['createDeviceAuthorizationRecord'],
   consumes: ['client', 'scope'],
   produces: ['record'],
   removable: false,

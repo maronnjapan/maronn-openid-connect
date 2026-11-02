@@ -10,7 +10,6 @@ export const meta = step({
   label: 'Select the signing keys',
   spec: 'OIDC Dynamic Client Registration 1.0 §2 (id_token_signed_response_alg)',
   function: 'selectTokenSigningKeys',
-  calls: ['selectSigningKeyByAlg'],
   consumes: ['authenticatedClientId'],
   produces: ['signingKey', 'idTokenSigningKey'],
   removable: false,

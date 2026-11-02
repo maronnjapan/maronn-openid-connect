@@ -186,6 +186,7 @@ export interface ClientInfo {
  * ```
  */
 export interface ClientResolver {
+  /** client_id で登録済みクライアントを探し、認可リクエストの検証に使う情報（redirect_uris、許可された scope など）を返す。未登録なら null を返す。 */
   findClient(clientId: string): Promise<ClientInfo | null>;
 }
 
@@ -516,11 +517,12 @@ export function resolveAuthorizationRedirectUri(
 
 /**
  * prompt パラメータをバリデーションする（機能単位のステップ関数）
- * OIDC Core 1.0 Section 3.1.2.1
  *
  * `prompt` が無い場合は undefined を返す。値がある場合は空白区切りで分割し、
  * none/login/consent/select_account 以外の値、および none と他値の併用を
  * リダイレクト可能な invalid_request として拒否する。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validatePromptParameter(
   effectiveParams: Pick<AuthorizationRequestParams, 'prompt'>,
@@ -535,7 +537,8 @@ export function validatePromptParameter(
 
 /**
  * prompt パラメータをバリデーションする
- * OIDC Core 1.0 Section 3.1.2.1
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validatePrompt(
   promptValue: string,
@@ -1357,6 +1360,15 @@ export function parseClaimsRequestParameter(
   return result;
 }
 
+/**
+ * `claims` パラメータの userinfo / id_token メンバーから、値が null かオブジェクトのクレーム要求だけを残した新しいオブジェクトを返す。
+ *
+ * メンバーが JSON オブジェクトでない（null・配列・文字列など）ときは undefined を返す。
+ * 値が文字列・数値・真偽値・配列のクレーム要求は黙って捨て、オブジェクトの値は中身
+ * （essential / value / values）を検査せずにそのまま残す。
+ *
+ * @spec OIDC Core 1.0 §5.5.1
+ */
 function sanitizeClaimsMember(
   value: unknown,
 ): Record<string, ClaimRequestValue> | undefined {

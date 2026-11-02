@@ -37,6 +37,7 @@ import type {
 import { federatedIdentityKey, type MemoryDatabase } from './database.js';
 import { verifyPassword } from './users.js';
 
+/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on the in-memory database, with expiry checked on read. */
 export function createProviderStores(db: MemoryDatabase): ProviderStores {
   const transactionStore: AuthTransactionStore = {
     async get(key) {
@@ -261,6 +262,7 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
   };
 }
 
+/** Return the current time in whole seconds since the epoch. */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }

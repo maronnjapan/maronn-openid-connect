@@ -59,6 +59,7 @@ import type { ClientRegistration, RegisteredClient } from '../../config.js';
 import { readRecord, writeRecord, type KvDatabase } from './database.js';
 import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord } from './keys.js';
 
+/** The client resolvers of the key-value store: look a client up by client_id for the authorization and token endpoints, and read its keys. */
 export function createClientResolver(db: KvDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {

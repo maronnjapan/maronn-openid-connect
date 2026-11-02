@@ -51,6 +51,14 @@ function matchAuthScheme(
   return authHeader.slice(spaceIndex + 1);
 }
 
+/**
+ * Authorization ヘッダー値の認証スキーム（最初の空白より前）が、scheme と大文字小文字を区別せずに一致するかを返す。
+ *
+ * 空白を含まない値（`Basic` だけや空文字）は false を返す。スキームより後ろの認証情報は
+ * 検査しない（`Basic ` のように空でも true）。
+ *
+ * @spec RFC 7235 §2.1
+ */
 function hasAuthScheme(authHeader: string, scheme: string): boolean {
   return matchAuthScheme(authHeader, scheme) !== null;
 }
@@ -107,8 +115,7 @@ export interface PresentedClientCredentials {
 }
 
 /**
- * ステップ 1: リクエストからクライアント資格情報を抽出する
- * OAuth 2.1 Section 2.3 / OIDC Core 1.0 Section 9
+ * リクエストからクライアント資格情報を抽出する
  *
  * - `Authorization: Basic` → client_secret_basic
  * - ボディの client_id + client_secret → client_secret_post
@@ -117,6 +124,8 @@ export interface PresentedClientCredentials {
  * OAuth 2.1 §2.3: 1リクエストにつき1つの認証方式のみ使用しなければならない。
  * RFC 6749 §4.1.3: 未認証クライアントも client_id を送らなければならない。
  *
+ * @spec OAuth 2.1 §2.3
+ * @spec OIDC Core 1.0 §9
  * @throws {TokenError} invalid_request（複数方式）/ invalid_client（形式不正・client_id 欠落）
  */
 export function extractClientCredentials(
@@ -175,8 +184,7 @@ export function extractClientCredentials(
 }
 
 /**
- * ステップ 3: 使用された認証方式が、クライアントに登録された方式のどれかであることを検証する
- * OIDC Core 1.0 Section 9 / RFC 7591 Section 2
+ * 使用された認証方式が、クライアントに登録された方式のどれかであることを検証する
  *
  * 登録方式の既定は client_secret_basic。
  * - 登録が `none`（public client）: 資格情報を一切提示していないことを要求する。
@@ -184,6 +192,8 @@ export function extractClientCredentials(
  * - 登録が confidential 方式: client_secret 必須。実際に使われた方式が登録方式のどれでも
  *   なければ認証方式ダウングレードを防ぐため拒否する。
  *
+ * @spec OIDC Core 1.0 §9
+ * @spec RFC 7591 §2
  * @throws {TokenError} invalid_client
  * @throws {Error} `none` をほかの方式と並べた登録（{@link selectRegisteredClientAuthMethods}）
  */
@@ -210,12 +220,13 @@ export function validateClientAuthMethod(
 }
 
 /**
- * ステップ 4: client_secret を定数時間比較で検証する
- * OAuth 2.1 Section 7.4.1 / RFC 6749 Section 10.10
+ * client_secret を定数時間比較で検証する
  *
  * public client（登録方式 = none）は検証対象が無いためスキップする。
  * clientSecretHash が登録されていれば、提示値のハッシュをそれと比べ、clientSecret は使わない。
  *
+ * @spec OAuth 2.1 §7.4.1
+ * @spec RFC 6749 §10.10
  * @throws {TokenError} invalid_client
  */
 export async function verifyClientSecret(

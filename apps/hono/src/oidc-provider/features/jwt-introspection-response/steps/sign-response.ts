@@ -20,7 +20,6 @@ export const meta = step({
   label: 'Answer as a signed JWT when asked for one',
   spec: 'RFC 9701 §4 / §5',
   function: 'signIntrospectionResponse',
-  calls: ['acceptsIntrospectionJwt', 'restrictIntrospectionResponseToCaller', 'selectSigningKeyByAlg', 'createIntrospectionResponseJwt'],
   consumes: ['introspection', 'authenticatedClientId'],
   produces: [],
   removable: false,

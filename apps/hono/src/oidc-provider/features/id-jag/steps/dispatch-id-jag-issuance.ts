@@ -24,7 +24,6 @@ export const meta = step({
   label: 'Issue an ID-JAG (Cross-App Access)',
   spec: 'ID-JAG draft §4.3',
   function: 'issueIdJag',
-  calls: ['matchesIdJagIssuanceRequest', 'selectSigningKeyByAlg', 'processIdJagIssuanceRequest'],
   consumes: ['params', 'tokenClient'],
   produces: [],
   removable: false,

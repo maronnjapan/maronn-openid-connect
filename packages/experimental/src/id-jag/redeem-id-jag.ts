@@ -152,7 +152,7 @@ export interface IdJagRedemptionContext {
 const FORBIDDEN_KEY_HEADERS = ['jku', 'x5u', 'jwk', 'x5c'] as const;
 
 /**
- * ステップ 1: クライアントが jwt-bearer grant を使ってよいかを検証する。
+ * クライアントが jwt-bearer grant を使ってよいかを検証する。
  *
  * RFC 7521 §4.1 は authorization grant の assertion でクライアント認証を必須と
  * しないが、draft §4.4.1 は ID-JAG の client_id クレームと「リクエストの認証
@@ -180,7 +180,7 @@ export function authorizeIdJagRedemptionClient(client: TokenClientInfo): void {
 }
 
 /**
- * ステップ 2: 必須・非対応パラメータを検証して型付けする（RFC 7523 §2.1）。
+ * 必須・非対応パラメータを検証して型付けする（RFC 7523 §2.1）。
  *
  * @throws {IdJagError} invalid_request
  */
@@ -207,7 +207,7 @@ export function parseIdJagRedemptionParams(
 }
 
 /**
- * ステップ 3: assertion（ID-JAG）を検証し、ペイロードを返す。
+ * assertion（ID-JAG）を検証し、ペイロードを返す。
  *
  * RFC 7521 §5.2 の一般規則に加え、draft §4.4.1 の処理規則を適用する:
  *
@@ -415,7 +415,7 @@ export async function verifyIdJagAssertion(options: {
 }
 
 /**
- * ステップ 4: 実効 scope を導出する。
+ * 実効 scope を導出する。
  *
  * 許可の上限は ID-JAG の scope クレーム（IdP が許可した範囲。draft §4.4.1 は
  * リソース AS がさらに部分集合へ絞ることを認める）。要求 scope があれば
@@ -515,11 +515,22 @@ function optional(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+/**
+ * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ *
+ * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
+ * 順で 1 つずつ残す。
+ */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
   return [...new Set(scope.split(/\s+/).filter((value) => value.length > 0))];
 }
 
+/**
+ * description を error_description にした invalid_grant の IdJagError を作り、投げずに返す。
+ *
+ * @spec RFC 7521 §4.1
+ */
 function invalidAssertion(description: string): IdJagError {
   return new IdJagError('invalid_grant', description);
 }
@@ -571,6 +582,14 @@ function parseBase64UrlJson(segment: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * base64url（パディングなし）の文字列をデコードし、そのバイト列を ArrayBuffer にして返す。
+ *
+ * 空文字列には空の ArrayBuffer を返す。
+ *
+ * @throws {Error} base64url のアルファベット以外の文字（`+` `/` `=` や空白）を含むとき
+ * @throws {DOMException} InvalidCharacterError（長さが 4 で割って 1 余り、復号できないとき）
+ */
 function base64UrlToArrayBuffer(segment: string): ArrayBuffer {
   if (!/^[A-Za-z0-9_-]*$/.test(segment)) {
     throw new Error('invalid base64url');

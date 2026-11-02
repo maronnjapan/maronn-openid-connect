@@ -71,6 +71,14 @@ declare module '../../views.js' {
   }
 }
 
+/**
+ * Render the sign-in page of the CIBA authentication device: a username and
+ * password form that posts to /ciba/login with the hidden login_transaction_id
+ * and csrf_token.
+ *
+ * The error of a failed attempt is shown above the form, with the attempts
+ * left when known.
+ */
 function defaultCibaLoginPage(params: CibaLoginPageParams): JSX.Element {
   return (
     <Layout title="Sign in">
@@ -87,6 +95,16 @@ function defaultCibaLoginPage(params: CibaLoginPageParams): JSX.Element {
   );
 }
 
+/**
+ * Render the pending sign-in requests of the signed-in End-User: for each, the
+ * client, the scopes it asked for, the binding_message (when the client sent
+ * one) and the seconds left, with Approve and Deny buttons that post the
+ * decision, auth_req_id and csrf_token to /ciba/approve.
+ *
+ * Without requests, the page only says that none is pending.
+ *
+ * @spec CIBA Core 1.0 §7.1
+ */
 function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): JSX.Element {
   if (params.requests.length === 0) {
     return (
@@ -124,6 +142,10 @@ function defaultCibaPendingRequestsPage(params: CibaPendingRequestsPageParams): 
   );
 }
 
+/**
+ * Render the page shown once the End-User decided on a CIBA request: that they
+ * approved or denied the client, and that they can go back to their device.
+ */
 function defaultCibaCompletedPage(params: CibaCompletedPageParams): JSX.Element {
   return (
     <Layout title="Sign-in Requests">

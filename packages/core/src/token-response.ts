@@ -91,6 +91,11 @@ export interface IdTokenAudienceResult {
   azp?: string;
 }
 
+/**
+ * ID Token の aud と azp を決める。クライアント自身だけなら aud はその client_id の文字列、
+ * 追加の audience があれば重複を除いた配列にし、azp にクライアントの client_id を入れる。
+ * @spec OIDC Core 1.0 §2
+ */
 export function buildIdTokenAudience(input: IdTokenAudienceInput): IdTokenAudienceResult {
   const { clientId, additional } = input;
   const deduped = [...new Set([clientId, ...(additional ?? [])])];
@@ -131,7 +136,7 @@ export interface AccessTokenPayloadInput {
 }
 
 /**
- * ステップ: アクセストークンの payload を組み立てる
+ * アクセストークンの payload を組み立てる
  * RFC 9068 §2.2: iss / sub / aud / exp / iat / jti / scope / client_id
  * RFC 9068 §2.2.1: acr（指定時のみ）
  *
@@ -171,7 +176,7 @@ export function buildAccessTokenPayload(
 }
 
 /**
- * ステップ: at_hash を計算する
+ * at_hash を計算する
  * OIDC Core 1.0 Section 3.1.3.6:
  * ID Token の JOSE Header `alg` で使われるハッシュ関数で access_token をハッシュし、
  * 左半分を取り出して base64url エンコードする。
@@ -191,7 +196,7 @@ export async function computeAtHash(
 }
 
 /**
- * ステップ: c_hash を計算する
+ * c_hash を計算する
  * OIDC Core 1.0 Section 3.3.2.11:
  * Hybrid Flow で認可エンドポイントが認可コードと一緒に ID Token を返すとき
  * （`code id_token` / `code id_token token`）、ID Token は c_hash を含まなければならない。
@@ -245,7 +250,7 @@ export interface ResolvedAcrAmr {
 }
 
 /**
- * ステップ: トークンに載せる acr / amr を解決する（ID Token は acr と amr、アクセストークンは acr）
+ * トークンに載せる acr / amr を解決する（ID Token は acr と amr、アクセストークンは acr）
  *
  * 優先順位:
  * 1. 呼び出し側が直接指定した acr / amr（refresh 時に §12.1 の初回値を保持するケース）
@@ -334,11 +339,12 @@ export interface IdTokenPayloadInput {
 }
 
 /**
- * ステップ: ID Token の payload を組み立てる
- * OIDC Core 1.0 Section 2 / 3.1.3.6 / 3.3.2.11 / 5.4
+ * ID Token の payload を組み立てる
  *
  * 署名は {@link generateIdToken} の責務。独自クレームを載せたい場合は
  * 戻り値へ追加してから署名すること（必須クレームは上書きされない）。
+ *
+ * @spec OIDC Core 1.0 §2 / 3.1.3.6 / 3.3.2.11 / 5.4
  */
 export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload {
   const {
@@ -424,9 +430,8 @@ const ID_TOKEN_OWN_CLAIMS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * ステップ: claims リクエストパラメータの id_token メンバーで個別に要求されたクレームを
+ * claims リクエストパラメータの id_token メンバーで個別に要求されたクレームを
  * ID Token の payload に加える
- * OIDC Core 1.0 Section 5.5 / 5.5.1
  *
  * id_token メンバーのクレームは、ID Token の既定のクレームに加えて返すよう要求されたもの
  * である（§5.5）。End-User のクレームにあるものを payload に足す。value / values が
@@ -445,6 +450,7 @@ const ID_TOKEN_OWN_CLAIMS: ReadonlySet<string> = new Set([
  *
  * 入力の payload は変更せず、新しいオブジェクトを返す。
  *
+ * @spec OIDC Core 1.0 §5.5 / 5.5.1
  * @param payload {@link buildIdTokenPayload} が組み立てた payload
  * @param userClaims End-User のクレーム。undefined なら payload をそのまま返す
  * @param claimsParameter 認可リクエストの claims パラメータ

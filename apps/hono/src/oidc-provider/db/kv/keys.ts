@@ -25,6 +25,10 @@ import type { ClaimsParameter } from '@maronn-openid-connect/core';
 
 export const KEY_PREFIX = 'oidc:';
 
+/**
+ * Build a key of the store: KEY_PREFIX followed by the parts, each URI-encoded
+ * (a colon in a part becomes %3A), joined with colons.
+ */
 function key(...parts: string[]): string {
   return KEY_PREFIX + parts.map((part) => encodeURIComponent(part)).join(':');
 }

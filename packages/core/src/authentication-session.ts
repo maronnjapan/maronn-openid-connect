@@ -37,5 +37,6 @@ export interface AuthenticationSessionInfo {
  * 終了済みセッションを返し続けると online refresh token が失効しなくなる。
  */
 export interface AuthenticationSessionResolver {
+  /** sessionId の認証セッション（subject と認証時刻）を返す。無いとき・終了しているときは null を返す。 */
   findSession(sessionId: string): Promise<AuthenticationSessionInfo | null>;
 }

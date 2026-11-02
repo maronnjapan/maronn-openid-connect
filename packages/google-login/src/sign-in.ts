@@ -137,6 +137,7 @@ export function buildGoogleSignInAttributes(options: GoogleSignInOptions): Googl
 /** HTML の属性名として妥当な文字列（属性値ではなく属性名側のインジェクションを防ぐ）。 */
 const HTML_ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
 
+/** 文字列の `&` `<` `>` `"` `'` を文字参照に置き換え、HTML の属性値に埋め込める文字列にして返す。 */
 function escapeHtmlAttribute(value: string): string {
   return value
     .replace(/&/g, '&amp;')

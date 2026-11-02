@@ -16,7 +16,9 @@ import type { ClientRegistration, RegisteredClient } from '../../config.js';
  */
 export interface DynamicallyRegisteredClientStore {
   get(clientId: string): Promise<ClientRegistration | undefined>;
+  /** Store a new registration: the client, its public keys by purpose and the hash of its client_secret. */
   save(registration: ClientRegistration): Promise<void>;
+  /** Return how many clients were registered dynamically (the inventory the cap of maxRegisteredClients counts). */
   count(): Promise<number>;
   delete(clientId: string): Promise<void>;
 }
@@ -104,6 +106,7 @@ export function toClientRegistration(
   };
 }
 
+/** Map each purpose to a JWK Set of its own that holds a copy of every key of jwks. */
 function keysByPurpose(jwks: JwkSet, purposes: readonly string[]): ClientKeysByPurpose {
   const keys: ClientKeysByPurpose = {};
   for (const purpose of purposes) {

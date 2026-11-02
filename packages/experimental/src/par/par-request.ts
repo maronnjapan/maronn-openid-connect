@@ -147,7 +147,7 @@ export function assertParExpiresInSeconds(seconds: number): void {
 }
 
 /**
- * ステップ 1: PAR ボディに含めてはならないパラメータを拒否する。
+ * PAR ボディに含めてはならないパラメータを拒否する。
  *
  * - `request_uri`: RFC 9126 §2.1 の MUST NOT
  * - `request`: PAR と Request Object (JAR) の併用は本機能の非目標
@@ -170,7 +170,7 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
 }
 
 /**
- * ステップ 2: クライアントを認証する（RFC 9126 §2.1: token endpoint と同一規則）。
+ * クライアントを認証する（RFC 9126 §2.1: token endpoint と同一規則）。
  *
  * 資格情報の抽出・多重方式の判定・検証はすべて core の
  * {@link extractClientCredentials} 以降のステップへ委譲し、token endpoint と
@@ -224,7 +224,7 @@ async function runClientAuthentication(context: {
 }
 
 /**
- * ステップ 3: pushed されたパラメータを、認可エンドポイントと同じ規則で検証する。
+ * pushed されたパラメータを、認可エンドポイントと同じ規則で検証する。
  *
  * RFC 9126 §2.1: "The authorization server ... MUST validate the request as it would
  * an authorization request sent to the authorization endpoint."
@@ -278,7 +278,7 @@ export async function validatePushedAuthorizationParams(
 const CLIENT_AUTHENTICATION_PARAMS = ['client_secret', 'client_assertion', 'client_assertion_type'];
 
 /**
- * ステップ 4: 参照値（URN）を生成してレコードを保存する（RFC 9126 §2.2）。
+ * 参照値（URN）を生成してレコードを保存する（RFC 9126 §2.2）。
  *
  * `params` の `client_id` は認証済みクライアントの値に正規化して保存し、クライアント
  * 認証パラメータ（`client_secret` 等）は保存しない。
@@ -313,7 +313,7 @@ export async function createPushedAuthorizationRecord(options: {
   return record;
 }
 
-/** ステップ 5: 201 レスポンスのボディを組み立てる（RFC 9126 §2.2）。 */
+/** 201 レスポンスのボディを組み立てる（RFC 9126 §2.2）。 */
 export function buildPushedAuthorizationResponse(
   record: PushedAuthorizationRecord,
 ): PushedAuthorizationResponse {
@@ -371,6 +371,14 @@ function toParError(error: unknown): unknown {
   return error;
 }
 
+/**
+ * core の TokenError のエラーコードを、PAR エンドポイントのエラーコードに写して返す。
+ *
+ * invalid_client / unauthorized_client / invalid_scope は同じコードを返し、それ以外
+ * （invalid_grant / unsupported_grant_type など）はすべて invalid_request にする。
+ *
+ * @spec RFC 9126 §2.3
+ */
 function toParErrorCodeFromToken(code: TokenErrorCode): ParErrorCode {
   switch (code) {
     case TokenErrorCode.InvalidClient:
@@ -384,6 +392,14 @@ function toParErrorCodeFromToken(code: TokenErrorCode): ParErrorCode {
   }
 }
 
+/**
+ * core の AuthorizationError のエラーコードを、PAR エンドポイントのエラーコードに写して返す。
+ *
+ * invalid_scope / unauthorized_client / unsupported_response_type は同じコードを返し、それ以外
+ * （login_required などのインタラクション系や invalid_request_object など）はすべて invalid_request にする。
+ *
+ * @spec RFC 9126 §2.3
+ */
 function toParErrorCodeFromAuthorization(code: AuthorizationErrorCode): ParErrorCode {
   switch (code) {
     case AuthorizationErrorCode.InvalidScope:

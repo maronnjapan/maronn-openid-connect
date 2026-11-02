@@ -64,7 +64,7 @@ export function readGoogleLoginParam(source: GoogleLoginParamsSource, name: stri
 }
 
 /**
- * ステップ 1: login_uri へ届いた POST 本文から `credential` / `g_csrf_token` / `select_by` を取り出す。
+ * login_uri へ届いた POST 本文から `credential` / `g_csrf_token` / `select_by` を取り出す。
  *
  * @throws {GoogleLoginError} `missing_credential`
  */
@@ -91,7 +91,7 @@ export function parseGoogleRedirectCredential(source: GoogleLoginParamsSource): 
 }
 
 /**
- * ステップ 2: `Cookie` ヘッダーから `g_csrf_token` の値を取り出す。無ければ undefined。
+ * `Cookie` ヘッダーから `g_csrf_token` の値を取り出す。無ければ undefined。
  */
 export function parseGoogleCsrfTokenCookie(cookieHeader: string | null | undefined): string | undefined {
   if (!cookieHeader) return undefined;
@@ -120,7 +120,7 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /**
- * ステップ 3: Double Submit Cookie を検証する。
+ * Double Submit Cookie を検証する。
  *
  * Google のドキュメントのサンプルと同じ順序で判定する。
  *

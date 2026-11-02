@@ -93,6 +93,7 @@ const FALLBACK_TTL_SECONDS = 600;
 /** The value of a single-use marker (code_used, refresh_token_used) and of a revocation marker. */
 const MARKER = 'true';
 
+/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on a key-value store: one record per key, with a TTL where the data expires. */
 export function createProviderStores(db: KvDatabase): ProviderStores {
   const read = <T>(key: string) => readRecord<T>(db, key);
   const write = (key: string, record: unknown, ttlSeconds?: number) =>
@@ -724,6 +725,7 @@ type AccessTokenField =
   | 'grantId'
   | 'acr';
 
+/** Return the current time in whole seconds since the epoch. */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -743,6 +745,7 @@ function userClaims(sub: string, user: UserRecord): UserClaims {
   return claims;
 }
 
+/** Strip a prefix from the start of a key, returning the key unchanged when it does not start with it. */
 function withoutPrefix(key: string, prefix: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
@@ -752,6 +755,7 @@ function joinScope(scope: string[]): string | null {
   return scope.length > 0 ? scope.join(' ') : null;
 }
 
+/** Split the scope field at each space into its scopes, an empty list for null or an empty string. */
 function splitScope(scope: string | null): string[] {
   return scope ? scope.split(' ') : [];
 }

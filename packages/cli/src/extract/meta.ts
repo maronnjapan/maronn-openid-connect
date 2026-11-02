@@ -29,6 +29,7 @@ export interface StepMeta {
   label: string;
   spec?: string;
   function: string;
+  /** Calls the source does not show (`'consentResolver.recordConsent'`); the functions called are read from the source. */
   calls?: string[];
   consumes: string[];
   optional?: string[];
@@ -63,6 +64,12 @@ export interface EndpointMeta {
   id: string;
   order: number;
   label: string;
+  /**
+   * What the endpoint does, as a behavior: the first paragraph of the JSDoc
+   * above `export const endpoint = defineEndpoint({...})`. Read from the
+   * comment, not from the literal, so the generated endpoint.ts is unchanged.
+   */
+  summary?: string;
   path: string;
   methods: string[];
   layer: 'api' | 'browser' | 'metadata';
@@ -118,7 +125,7 @@ export function evaluateLiteral(literal: string): unknown {
  * string ('…', "…") nor inside a comment (// … and /* … *\/). A template
  * literal counts as code, so evaluateLiteral() refuses it.
  */
-function* codeOf(source: string, start: number): Generator<{ char: string; index: number }> {
+export function* codeOf(source: string, start: number): Generator<{ char: string; index: number }> {
   let quote: string | undefined;
   for (let index = start; index < source.length; index += 1) {
     const char = source[index] ?? '';
@@ -151,9 +158,40 @@ export function readStepMeta(source: string): StepMeta | undefined {
   return literal === undefined ? undefined : (evaluateLiteral(literal) as StepMeta);
 }
 
+/** The endpoint meta of an endpoint.ts source, with the summary its JSDoc gives; undefined when it has none. */
 export function readEndpointMeta(source: string): EndpointMeta | undefined {
   const literal = literalArgumentOf(source, 'defineEndpoint');
-  return literal === undefined ? undefined : (evaluateLiteral(literal) as EndpointMeta);
+  if (literal === undefined) return undefined;
+  const meta = evaluateLiteral(literal) as EndpointMeta;
+  const call = /^.*\bdefineEndpoint\(\s*\{/m.exec(source);
+  const summary = call === null ? undefined : jsDocSummaryAbove(source, call.index);
+  return summary === undefined ? meta : { ...meta, summary };
+}
+
+/**
+ * The first paragraph of the JSDoc right above an offset (only whitespace
+ * between), on one line; undefined without one, or when it starts with a tag.
+ */
+export function jsDocSummaryAbove(source: string, index: number): string | undefined {
+  let end = index;
+  while (end > 0 && /\s/.test(source[end - 1] as string)) end -= 1;
+  if (!source.endsWith('*/', end)) return undefined;
+  const start = source.lastIndexOf('/**', end - 2);
+  if (start === -1 || source.indexOf('*/', start + 3) !== end - 2) return undefined;
+  const lines = source
+    .slice(start + 3, end - 2)
+    .split('\n')
+    .map((line) => line.replace(/^\s*\*\s?/, '').trim());
+  const paragraph: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith('@')) break;
+    if (line === '') {
+      if (paragraph.length > 0) break;
+      continue;
+    }
+    paragraph.push(line);
+  }
+  return paragraph.length === 0 ? undefined : paragraph.join(' ');
 }
 
 export function readContribution(source: string): StepContribution | undefined {

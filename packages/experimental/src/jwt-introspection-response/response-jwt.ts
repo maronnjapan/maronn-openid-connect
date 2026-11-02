@@ -35,6 +35,7 @@ const RESPONSE_SIGNING_ALG = 'RS256';
 /** RS256 に対応する Web Crypto のアルゴリズム名。 */
 const WEB_CRYPTO_ALGORITHM = 'RSASSA-PKCS1-v1_5';
 
+/** Uint8Array を base64url（パディングなし）の文字列にして返す。 */
 function base64UrlFromBytes(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) {
@@ -43,6 +44,7 @@ function base64UrlFromBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/** オブジェクトを JSON 文字列にし、その UTF-8 バイト列を base64url（パディングなし）の文字列にして返す。 */
 function base64UrlFromJson(value: Record<string, unknown>): string {
   return base64UrlFromBytes(new TextEncoder().encode(JSON.stringify(value)));
 }

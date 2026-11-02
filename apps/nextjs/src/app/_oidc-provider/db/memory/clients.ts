@@ -17,6 +17,7 @@ import { assertClientJwksUriRegistration } from '../../client-jwks-uri';
 import type { ClientRegistration, RegisteredClient } from '../../config';
 import type { MemoryDatabase } from './database';
 
+/** The client resolvers of the in-memory database: look a client up by client_id for the authorization and token endpoints, and read its keys. */
 export function createClientResolver(db: MemoryDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {

@@ -33,10 +33,20 @@ import type { KvDatabase } from './database';
 
 const registry = globalThis as typeof globalThis & { __oidcKvDatabase?: KvDatabase };
 
+/** The key-value store of this process, opened once: Upstash Redis when its URL and token are set, node:sqlite otherwise. */
 export function createDatabase(): KvDatabase {
   return (registry.__oidcKvDatabase ??= openDatabase());
 }
 
+/**
+ * Open the key-value store the environment names: Upstash Redis when
+ * UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are both set, otherwise
+ * node:sqlite in the file OIDC_SQLITE_PATH names (.data/oidc.sqlite by
+ * default).
+ *
+ * Throws on Vercel (VERCEL set) without the Upstash URL and token, instead of
+ * writing to a file that no other function reads.
+ */
 function openDatabase(): KvDatabase {
   const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
   const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;

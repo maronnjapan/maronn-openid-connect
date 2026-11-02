@@ -53,7 +53,12 @@ export default defineConfig({
         },
         {
           label: 'Reference',
-          items: [{ label: 'Features', slug: 'reference/features' }],
+          items: [
+            { label: 'Features', slug: 'reference/features' },
+            // 生成される OP の地図（apps/map。Cloudflare Workers に置く）。デプロイ先の URL を
+            // 環境変数 MAP_URL（Deploy Docs では リポジトリ変数 MAP_URL）で渡したときだけ出す。
+            ...(process.env.MAP_URL ? [{ label: 'Provider Map', link: process.env.MAP_URL }] : []),
+          ],
         },
         // Experimental 機能は安定機能と混在させず、独立セクションにまとめる。
         {

@@ -171,7 +171,7 @@ export interface TokenExchangeRequestContext {
 }
 
 /**
- * ステップ 1: クライアントが交換を要求してよいかを検証する。
+ * クライアントが交換を要求してよいかを検証する。
  *
  * RFC 8693 §2.1 は「クライアント認証を省くと、窃取されたトークンを STS 経由で
  * 別のトークンへ増幅できてしまう」と注記している。本機能はこれを
@@ -198,7 +198,7 @@ export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
 }
 
 /**
- * ステップ 2: 必須・非対応パラメータを検証して型付けする（RFC 8693 §2.1）。
+ * 必須・非対応パラメータを検証して型付けする（RFC 8693 §2.1）。
  *
  * 空文字・空白のみの任意パラメータは「送られなかった」と同じに扱う
  * （フォームの空フィールドを黙って対象指定・scope 指定に昇格させないため）。
@@ -278,7 +278,7 @@ export function parseTokenExchangeParams(
 }
 
 /**
- * ステップ 3: subject_token を解決し、有効性を検証する。
+ * subject_token を解決し、有効性を検証する。
  *
  * RFC 8693 §2.1: "the authorization server MUST perform the appropriate validation
  * procedures for the indicated token type"。本機能は本 OP 発行のアクセストークンに
@@ -346,7 +346,7 @@ export function composeActClaim(options: {
 }
 
 /**
- * ステップ 4: 要求 scope が subject_token の scope の部分集合であることを検証する。
+ * 要求 scope が subject_token の scope の部分集合であることを検証する。
  *
  * 権限昇格（scope 拡大）の防止が目的。省略時・空白のみの場合は subject の scope を
  * そのまま継承する（拡大はしない）。
@@ -374,7 +374,7 @@ export function validateExchangeScope(
 }
 
 /**
- * ステップ 5: `audience` / `resource` を許可リストで検証し、要求対象を返す。
+ * `audience` / `resource` を許可リストで検証し、要求対象を返す。
  *
  * 戻り値は最終的な `aud` ではなく、生成コードが core の `buildAccessTokenAudience` の
  * `requested` へ渡す入力。UserInfo エンドポイントの恒久メンバ追加・重複除去・
@@ -412,7 +412,7 @@ export function resolveExchangeTarget(options: {
 }
 
 /**
- * ステップ 6: 発行トークンの有効期間（秒）を算出する。
+ * 発行トークンの有効期間（秒）を算出する。
  *
  * `min(configured, subject の残存秒数)`。交換を何度連鎖しても寿命は単調減少し、
  * 交換によるトークン寿命の洗浄（無期限延命）ができない。
@@ -445,7 +445,9 @@ export function computeExchangedTokenLifetime(options: {
   return Math.min(configuredExpiresIn, remaining);
 }
 
-/** ステップ 7: RFC 8693 §2.2.1 の応答ボディを組み立てる。 */
+/**
+ * RFC 8693 §2.2.1 の応答ボディを組み立てる。
+ */
 export function buildTokenExchangeResponse(options: {
   accessToken: string;
   expiresIn: number;
@@ -533,19 +535,40 @@ function optional(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+/**
+ * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ *
+ * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
+ * 順で 1 つずつ残す。
+ */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
   return [...new Set(scope.split(/\s+/).filter((value) => value.length > 0))];
 }
 
+/** now（省略時は現在時刻）を、小数点以下を切り捨てた Unix epoch 秒にして返す。 */
 function toEpochSeconds(now: Date | undefined): number {
   return Math.floor((now ?? new Date()).getTime() / 1000);
 }
 
+/**
+ * subject_token が無効なことを表す invalid_request の TokenExchangeError を作り、投げずに返す。
+ *
+ * error_description は常に固定文言の {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ *
+ * @spec RFC 8693 §2.2.2
+ */
 function invalidSubjectToken(): TokenExchangeError {
   return new TokenExchangeError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION);
 }
 
+/**
+ * actor_token が無効なことを表す invalid_request の TokenExchangeError を作り、投げずに返す。
+ *
+ * error_description は常に固定文言の {@link ACTOR_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ *
+ * @spec RFC 8693 §2.2.2
+ */
 function invalidActorToken(): TokenExchangeError {
   return new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION);
 }

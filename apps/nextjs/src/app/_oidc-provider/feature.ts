@@ -122,6 +122,7 @@ export function tokenGrantsOf(features: readonly Feature[]): string[] {
   return [...new Set(features.flatMap((feature) => feature.token?.grants ?? []))];
 }
 
+/** The response modes the features answer at the authorization endpoint. */
 export function responseModesOf(features: readonly Feature[]): AuthorizationResponseModeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseModes ?? []);
 }
@@ -131,6 +132,7 @@ export function responseTypesOf(features: readonly Feature[]): AuthorizationResp
   return [...new Set(features.flatMap((feature) => feature.authorize?.responseTypes ?? []))];
 }
 
+/** The login methods the features add beside the password form of the login screen. */
 export function loginMethodsOf(features: readonly Feature[]): LoginMethod[] {
   return features.flatMap((feature) => feature.loginMethods ?? []);
 }

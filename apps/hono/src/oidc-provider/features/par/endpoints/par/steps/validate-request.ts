@@ -9,7 +9,6 @@ export const meta = step({
   label: 'Validate the request as /authorize would',
   spec: 'RFC 9126 §2.1',
   function: 'validatePushedRequest',
-  calls: ['validatePushedAuthorizationParams'],
   consumes: ['pushedParams'],
   produces: [],
   removable: false,

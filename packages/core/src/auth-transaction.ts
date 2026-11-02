@@ -29,6 +29,7 @@ export interface SessionInfo {
 }
 
 export interface SessionResolver {
+  /** リクエストの Cookie などからログイン中の OP セッションを探し、そのセッション情報を返す。セッションが無い・終了しているときは null を返す。 */
   resolve(request: Request): Promise<SessionInfo | null>;
 }
 
@@ -161,7 +162,9 @@ export interface AuthTransaction {
  * KVストアの抽象化。環境に応じて実装を差し替える。
  */
 export interface AuthTransactionStore {
+  /** key のトランザクションを返す。無いとき・有効期限が切れたときは null を返す。 */
   get(key: string): Promise<AuthTransaction | null>;
+  /** トランザクションを key に保存し（既存の値は置き換える）、ttlSeconds 秒後に期限切れにする。 */
   put(key: string, transaction: AuthTransaction, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
 }
@@ -388,12 +391,12 @@ export async function handleLoginFailure(
 }
 
 /**
- * prompt=none ステップ 1: アクティブなセッションを解決する
- * OIDC Core 1.0 Section 3.1.2.1
+ * アクティブなセッションを解決する（prompt=none）
  *
  * prompt=none はユーザー操作を一切伴わないため、セッションが無い時点で
  * login_required を返す（ログイン画面へ遷移してはならない）。
  *
+ * @spec OIDC Core 1.0 §3.1.2.1
  * @param transaction Auth Transaction（エラーのリダイレクト先 / state に使用）
  * @param sessionResolver セッションを解決するリゾルバ
  * @param request 元の HTTP リクエスト（cookie/JWT などからセッション解決に使用）
@@ -413,8 +416,7 @@ export async function resolvePromptNoneSession(
 }
 
 /**
- * prompt=none ステップ 2: id_token_hint の subject とセッションの一致を検証する
- * OIDC Core 1.0 Section 3.1.2.1
+ * id_token_hint の subject とセッションの一致を検証する（prompt=none）
  *
  * ID Token の署名・iss・aud・exp 検証は呼び出し側の責務（core を JWT 検証実装から
  * 疎結合に保つため）。ここでは検証済みの subject だけを受け取り、アクティブな
@@ -423,6 +425,7 @@ export async function resolvePromptNoneSession(
  * コンセント確認より前に実行すること: コンセント検索は session.subject をキーに
  * するため、hint 不一致のまま進むと「別ユーザーのコンセント」を見てしまう。
  *
+ * @spec OIDC Core 1.0 §3.1.2.1
  * @param transaction Auth Transaction
  * @param session 解決済みセッション
  * @param verifiedHintSubject 呼び出し側で検証済みの id_token_hint の subject。未指定なら検証しない
@@ -444,12 +447,12 @@ export function validatePromptNoneIdTokenHint(
 }
 
 /**
- * prompt=none ステップ 3: 要求スコープが同意済みであることを検証する
- * OIDC Core 1.0 Section 3.1.2.1
+ * 要求スコープが同意済みであることを検証する（prompt=none）
  *
  * prompt=none では同意画面を表示できないため、未同意なら consent_required を返す。
  * consentResolver 未指定時は検証しない（同意を永続化しない構成向け）。
  *
+ * @spec OIDC Core 1.0 §3.1.2.1
  * @param transaction Auth Transaction
  * @param session 解決済みセッション
  * @param consentResolver コンセント済みかを判定するリゾルバ（任意）
@@ -473,13 +476,13 @@ export async function validatePromptNoneConsent(
 
 /**
  * 再認証が必要かどうかを判定する（max_age チェック）
- * OIDC Core 1.0 Section 3.1.2.1
  *
  * maxAge=0 は「End-User を必ずアクティブに再認証させる」を意味する。
  * auth_time は秒精度の NumericDate（Section 2）のため、ログインと認可が同一の
  * 壁時計秒内で起きると authTime === now となる。strict な `now - authTime > 0`
  * では 0 > 0 === false となり再認証されないので、maxAge<=0 を特別扱いする。
  *
+ * @spec OIDC Core 1.0 §3.1.2.1
  * @param maxAge 最大認証経過秒数（0 以下は常に再認証を強制）
  * @param authTime 最終認証時刻（Unix timestamp 秒）
  * @param now 現在時刻（Unix timestamp 秒）。省略時はシステム時刻

@@ -40,9 +40,12 @@ jobs:
             - name: Install dependencies
               run: pnpm install
 
+            # MAP_URL（リポジトリ変数）は apps/map を Cloudflare Workers に置いた URL。
+            # あればサイドバーに Provider Map のリンクが出る。
             - name: Build docs
               env:
                   BASE_PATH: ${{ steps.pages.outputs.base_path }}
+                  MAP_URL: ${{ vars.MAP_URL }}
               run: pnpm --filter @maronn-openid-connect/docs build:doc
 
             - uses: actions/upload-pages-artifact@v5

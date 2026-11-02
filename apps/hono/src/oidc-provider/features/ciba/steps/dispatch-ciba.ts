@@ -28,7 +28,6 @@ export const meta = step({
   label: 'Redeem an auth_req_id (CIBA)',
   spec: 'CIBA Core 1.0 §10.1 / §11',
   function: 'redeemCibaRequest',
-  calls: ['processCibaGrant', 'selectSigningKeyByAlg', 'buildAccessTokenAudience', 'buildAccessTokenPayload', 'computeAtHash', 'resolveAcrAmr', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['params', 'tokenClient', 'authenticatedClientId'],
   produces: [],
   removable: false,

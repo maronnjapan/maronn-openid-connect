@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Verify the Request Object and overlay its claims',
   spec: 'OIDC Core 1.0 §6.1',
   function: 'resolveRequestObject',
-  calls: ['resolveRequestObjectParams'],
   consumes: ['params', 'client'],
   produces: ['effectiveParams', 'requestObjectClaims'],
   removable: false,
@@ -25,7 +24,6 @@ export const meta = step({
  * Verify the signed Request Object (request parameter) against the keys the
  * client registered for the request_object purpose and overlay its claims
  * onto the query parameters.
- * OIDC Core 1.0 §6.1 / §6.3.2
  *
  * The alg must be one of config.requestObjectSigningAlgValuesSupported, and
  * the requestObjectSigningAlg of a client that registered one (OIDC Core 1.0
@@ -35,6 +33,8 @@ export const meta = step({
  * with a jwks_uri has it fetched again for a key it added (OIDC Core 1.0
  * §10.1.1), and a Request Object rejected anyway fetches nothing.
  * effectiveParams is what every later step validates.
+ *
+ * @spec OIDC Core 1.0 §6.1 / §6.3.2
  */
 export async function resolveRequestObject(
   c: any,

@@ -24,11 +24,13 @@ import type { ProviderStores } from './store';
 
 /** A ConsentResolver that also records the grants issued under a consent. */
 export type GrantAwareConsentResolver = ConsentResolver & {
+  /** Add a grant to the consent of a subject to a client, so revoking that consent also revokes the grant's tokens. */
   recordGrant(subject: string, clientId: string, grantId: string): Promise<void>;
 };
 
 export type StoreResolvers = ReturnType<typeof createStoreResolvers>;
 
+/** Build the resolvers of core (authorization codes, tokens, sessions, consents, users) on top of the stores, so every Route Handler reads and writes through the same contracts. */
 export function createStoreResolvers(stores: ProviderStores) {
   const {
     authCodeStore,

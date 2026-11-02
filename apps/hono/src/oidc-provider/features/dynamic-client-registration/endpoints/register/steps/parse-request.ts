@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Read the JSON metadata',
   spec: 'RFC 7591 §3.1',
   function: 'parseRegistrationRequest',
-  calls: ['parseClientRegistrationBody'],
   consumes: [],
   produces: ['registration'],
   removable: false,

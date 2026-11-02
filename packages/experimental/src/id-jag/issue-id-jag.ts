@@ -310,7 +310,7 @@ export function matchesIdJagIssuanceRequest(params: Record<string, string>): boo
 }
 
 /**
- * ステップ 1: クライアントが ID-JAG の発行を要求してよいかを検証する。
+ * クライアントが ID-JAG の発行を要求してよいかを検証する。
  *
  * draft §9.1 は本仕様を confidential client に限る SHOULD を置く。本機能は
  * これを public client の拒否まで強めている（token-exchange 機能と同じ設計判断。
@@ -338,7 +338,7 @@ export function authorizeIdJagIssuanceClient(client: TokenClientInfo): void {
 }
 
 /**
- * ステップ 2: 必須・非対応パラメータを検証して型付けする（draft §4.3）。
+ * 必須・非対応パラメータを検証して型付けする（draft §4.3）。
  *
  * 空文字・空白のみの任意パラメータは「送られなかった」と同じに扱う
  * （token-exchange 機能と同じ規則）。受理する subject 種別と actor の可否は
@@ -452,7 +452,7 @@ export function parseIdJagIssuanceParams(
 }
 
 /**
- * ステップ 3: subject_token（ID トークン）を検証し、発行素材を返す。
+ * subject_token（ID トークン）を検証し、発行素材を返す。
  *
  * draft §4.3.3: IdP は assertion を検証し、その audience（ID トークンの aud）が
  * リクエストのクライアント認証の client_id と一致することを検証しなければ
@@ -686,7 +686,7 @@ function copyActorChain(value: unknown): IdJagActor | undefined {
 }
 
 /**
- * ステップ 4: audience を検証する。
+ * audience を検証する。
  *
  * - draft §9.3: IdP は自分が発行した ID-JAG に対して同一ドメイン内でアクセス
  *   トークンを発行してはならない。自 OP の issuer と同一の audience 要求は、
@@ -721,7 +721,7 @@ export function validateIdJagAudience(options: {
 }
 
 /**
- * ステップ 5: 要求 scope を検証し、ID-JAG に載せる実効 scope を返す。
+ * 要求 scope を検証し、ID-JAG に載せる実効 scope を返す。
  *
  * draft §4.3.3: IdP はポリシーを評価し、許可 scope は要求の部分集合であってよい。
  * 本機能のポリシーは「`allowedScopes` が設定されていればその部分集合のみ許可、
@@ -751,7 +751,7 @@ export function validateIdJagScope(
 }
 
 /**
- * ステップ 6: ID-JAG のクレームセットを組み立てる（draft §3.1）。
+ * ID-JAG のクレームセットを組み立てる（draft §3.1）。
  *
  * - `client_id` は交換を要求した認証済みクライアントの client_id。draft §5 は
  *   リソース AS 側で別の client_id を使う対応付けも認めるが、本機能は両 AS で
@@ -798,7 +798,7 @@ export function buildIdJagClaims(options: {
 }
 
 /**
- * ステップ 7: ID-JAG を compact JWS として署名する。
+ * ID-JAG を compact JWS として署名する。
  *
  * JOSE ヘッダーは `{ alg: 'RS256', typ: 'oauth-id-jag+jwt', kid }`。
  * `typ` は受領側の必須検証項目（draft §4.4.1 / RFC 8725 §3.11）なので必ず付ける。
@@ -829,7 +829,7 @@ export async function createIdJagJwt(options: {
 }
 
 /**
- * ステップ 8: RFC 8693 §2.2.1 / draft §4.3.4 の応答ボディを組み立てる。
+ * RFC 8693 §2.2.1 / draft §4.3.4 の応答ボディを組み立てる。
  *
  * `token_type` は常に `N_A`（発行物はアクセストークンではない）。`scope` は
  * draft 上「要求と同一なら OPTIONAL」だが、判定分岐を避けるため常に含める
@@ -946,10 +946,23 @@ function optional(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+/**
+ * subject_token が無効なことを表す invalid_request の IdJagError を作り、投げずに返す。
+ *
+ * error_description は常に固定文言の {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ *
+ * @spec RFC 8693 §2.2.2
+ */
 function invalidSubjectToken(): IdJagError {
   return new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION);
 }
 
+/**
+ * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ *
+ * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
+ * 順で 1 つずつ残す。
+ */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
   return [...new Set(scope.split(/\s+/).filter((value) => value.length > 0))];
@@ -970,6 +983,7 @@ function isAbsoluteUriWithoutFragment(value: string): boolean {
   return parsed.protocol.length > 0;
 }
 
+/** Uint8Array を base64url（パディングなし）の文字列にして返す。 */
 function base64UrlFromBytes(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) {
@@ -978,6 +992,7 @@ function base64UrlFromBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/** オブジェクトを JSON 文字列にし、その UTF-8 バイト列を base64url（パディングなし）の文字列にして返す。 */
 function base64UrlFromJson(value: Record<string, unknown>): string {
   return base64UrlFromBytes(new TextEncoder().encode(JSON.stringify(value)));
 }

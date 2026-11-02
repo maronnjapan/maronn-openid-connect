@@ -1,6 +1,15 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXPERIMENTAL — the client registration endpoint. RFC 7591 §3 */
+/**
+ * Register a client from the metadata it posts, after checking the initial
+ * access token and the software statement when the provider asks for them, and
+ * answer 201 with its client_id, its client_secret when it is confidential and
+ * every registered metadata value.
+ *
+ * EXPERIMENTAL: generated with --enable dynamic-client-registration.
+ *
+ * @spec RFC 7591 §3
+ */
 export const endpoint = defineEndpoint({
   id: 'register',
   order: 120,

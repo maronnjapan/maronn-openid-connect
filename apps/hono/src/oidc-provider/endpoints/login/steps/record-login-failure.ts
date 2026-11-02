@@ -7,7 +7,6 @@ export const meta = step({
   kind: 'persist',
   label: 'Count the failed attempt (lockout)',
   function: 'recordLoginFailure',
-  calls: ['handleLoginFailure'],
   consumes: ['transactionId', 'transaction'],
   produces: [],
   removable: false,

@@ -61,6 +61,7 @@ const TRANSACTION_KEY_PREFIX = 'auth_txn:';
 /** The statuses of a transaction in progress. */
 const IN_PROGRESS = "('requested', 'upstream_pending', 'authenticated')";
 
+/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on the SQL tables of schema.sql. */
 export function createProviderStores(db: SqlDatabase): ProviderStores {
   // Transaction + Authentication_request: what the authorization request asked
   // for goes to authentication_requests, the state of the flow to transactions.
@@ -746,6 +747,7 @@ interface UserRow {
   claims: string | null;
 }
 
+/** Return the current time in whole seconds since the epoch. */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -763,6 +765,7 @@ function userClaims(sub: string, row: UserRow): UserClaims {
   return claims;
 }
 
+/** Strip a prefix from the start of a key, returning the key unchanged when it does not start with it. */
 function withoutPrefix(key: string, prefix: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
@@ -772,6 +775,7 @@ function joinScope(scope: string[]): string | null {
   return scope.length > 0 ? scope.join(' ') : null;
 }
 
+/** Split the scope column at each space into its scopes, an empty list for NULL or an empty string. */
 function splitScope(scope: string | null): string[] {
   return scope ? scope.split(' ') : [];
 }

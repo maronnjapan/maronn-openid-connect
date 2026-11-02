@@ -63,8 +63,26 @@ export interface FlowStep {
   spec?: string;
   /** Name of the generated function (hono / express / fastify output). */
   function: string;
-  /** Core or experimental functions the step calls, in order. */
+  /**
+   * The card of that function in the function catalog (`<root>:<module>#<name>`,
+   * see extract/functions.ts); absent for the Next.js output, whose step is a
+   * block of a Route Handler and not a function.
+   */
+  functionId?: string;
+  /**
+   * The functions of the catalog the step calls, by id, in the order of the
+   * first call: read from the source of the step's function (or of the
+   * Route Handler block, for Next.js), not written by hand. The functions a
+   * feature contributes to the step (contribute()) are appended.
+   */
   calls: string[];
+  /**
+   * Calls the source does not show as a call of a function of the catalog: a
+   * method of a resolver or a store the request context holds
+   * (`consentResolver.recordConsent`), or a hook a feature registers. Listed
+   * by the step meta (its `calls`) and by the contributions of the features.
+   */
+  dynamicCalls?: string[];
   /** Pipeline values the step reads: the arrows that come in. */
   consumes: string[];
   /** Pipeline values the step defines: the arrows that go out. */
@@ -130,6 +148,8 @@ export interface FlowEndpoint {
   /** Stable identifier (kebab-case). */
   id: string;
   label: string;
+  /** What the endpoint does, as a behavior (the JSDoc of its endpoint.ts); absent when it has none. */
+  summary?: string;
   /** The HTTP path, as mounted by the generated app. */
   path: string;
   methods: string[];
@@ -159,9 +179,14 @@ export interface FlowEndpoint {
   edges: FlowEdge[];
 }
 
-/** The whole generated OP as a graph. */
+/**
+ * The whole generated OP as a graph.
+ *
+ * version 2 names the functions a step calls by their id in the function
+ * catalog (version 1 named them by their bare name, from a hand-written list).
+ */
 export interface OpFlow {
-  version: 1;
+  version: 2;
   features: OidcFeatureConfig;
   scopes: string[];
   db: DbKind | null;

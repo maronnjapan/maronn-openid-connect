@@ -24,9 +24,10 @@
  * 生成コードは、関数が設定されているときだけ対応する値（Bearer トークン、
  * software_statement）の提示を要求し、無ければ要求しない。
  *
- * jwks_uri は登録だけを受け持ち（validateClientMetadata の acceptJwksUri。宛先を
- * 検査し、取得はしない）、鍵の取得は生成コードが core の部品（fetchClientJwkSet /
- * createClientJwksUriCache / withClientJwksUriKeys）で、鍵を使うときに行う。
+ * jwks_uri は登録だけを受け持ち（既定で登録し、validateClientMetadata の
+ * acceptJwksUri: false で無視する。宛先を検査し、取得はしない）、鍵の取得は生成コードが
+ * core の部品（fetchClientJwkSet / createClientJwksUriCache / withClientJwksUriKeys）で、
+ * 鍵を使うときに行う。
  * request_object_signing_alg は、OP が受け付ける alg の一覧
  * （requestObjectSigningAlgValuesSupported）を渡したときだけ理解する。
  *

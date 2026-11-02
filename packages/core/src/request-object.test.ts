@@ -34,6 +34,11 @@ async function publicJwkOf(key: CryptoKey, members: Record<string, unknown>): Pr
   return { ...keyMembers, ...members } as unknown as Jwk;
 }
 
+/** A loadJwks that answers with the keys the client registered. */
+function keysOf(jwks: JwkSet): () => Promise<JwkSet> {
+  return async () => jwks;
+}
+
 async function expectRequestObjectError(parsing: Promise<unknown>, message: string): Promise<void> {
   await expect(parsing).rejects.toBeInstanceOf(RequestObjectError);
   await expect(parsing).rejects.toThrow(new RequestObjectError(message));
@@ -91,7 +96,7 @@ describe('parseRequestObject', () => {
       );
 
       const claims = await parseRequestObject(request, {
-        jwks,
+        loadJwks: keysOf(jwks),
         supportedSigningAlgs: ['RS256'],
         allowUnsigned: false,
       });
@@ -112,7 +117,7 @@ describe('parseRequestObject', () => {
 
       await expect(
         parseRequestObject(request, {
-          jwks,
+          loadJwks: keysOf(jwks),
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
         }),
@@ -128,7 +133,7 @@ describe('parseRequestObject', () => {
 
       await expect(
         parseRequestObject(request, {
-          jwks,
+          loadJwks: keysOf(jwks),
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
         }),
@@ -145,7 +150,7 @@ describe('parseRequestObject', () => {
 
       await expect(
         parseRequestObject(request, {
-          jwks,
+          loadJwks: keysOf(jwks),
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
         }),
@@ -179,7 +184,7 @@ describe('parseRequestObject', () => {
 
       await expectRequestObjectError(
         parseRequestObject(request, {
-          jwks: { keys: [await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' })] },
+          loadJwks: keysOf({ keys: [await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' })] }),
           supportedSigningAlgs: ['ES256', 'ES384'],
           allowUnsigned: false,
         }),
@@ -192,7 +197,7 @@ describe('parseRequestObject', () => {
       const request = await buildSigned({ scope: 'openid' }, ecKeyPair.privateKey, 'ec-key', 'ES256');
 
       const claims = await parseRequestObject(request, {
-        jwks: { keys: [await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' })] },
+        loadJwks: keysOf({ keys: [await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' })] }),
         supportedSigningAlgs: ['ES256', 'ES384'],
         allowUnsigned: false,
       });
@@ -205,7 +210,7 @@ describe('parseRequestObject', () => {
       const request = await buildSigned({ scope: 'openid' }, rsaKeyPair.privateKey, kid);
 
       const claims = await parseRequestObject(request, {
-        jwks: { keys: [await publicJwkOf(rsaKeyPair.publicKey, { kid })] },
+        loadJwks: keysOf({ keys: [await publicJwkOf(rsaKeyPair.publicKey, { kid })] }),
         supportedSigningAlgs: ['RS256', 'RS384'],
         allowUnsigned: false,
       });
@@ -219,7 +224,7 @@ describe('parseRequestObject', () => {
 
       await expectRequestObjectError(
         parseRequestObject(request, {
-          jwks: { keys: [await publicJwkOf(rs384KeyPair.publicKey, { kid: 'rs384-key' })] },
+          loadJwks: keysOf({ keys: [await publicJwkOf(rs384KeyPair.publicKey, { kid: 'rs384-key' })] }),
           supportedSigningAlgs: ['RS256', 'RS384'],
           allowUnsigned: false,
         }),
@@ -232,7 +237,7 @@ describe('parseRequestObject', () => {
       const request = await buildSigned({ scope: 'openid' }, rs384KeyPair.privateKey, 'rs384-key', 'RS384');
 
       const claims = await parseRequestObject(request, {
-        jwks: { keys: [await publicJwkOf(rs384KeyPair.publicKey, { kid: 'rs384-key', alg: 'RS384' })] },
+        loadJwks: keysOf({ keys: [await publicJwkOf(rs384KeyPair.publicKey, { kid: 'rs384-key', alg: 'RS384' })] }),
         supportedSigningAlgs: ['RS256', 'RS384'],
         allowUnsigned: false,
       });
@@ -246,7 +251,7 @@ describe('parseRequestObject', () => {
 
       await expectRequestObjectError(
         parseRequestObject(request, {
-          jwks: { keys: [await publicJwkOf(rsaKeyPair.publicKey, { kid, use: 'enc' })] },
+          loadJwks: keysOf({ keys: [await publicJwkOf(rsaKeyPair.publicKey, { kid, use: 'enc' })] }),
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
         }),
@@ -261,7 +266,7 @@ describe('parseRequestObject', () => {
 
       await expectRequestObjectError(
         parseRequestObject(request, {
-          jwks: { keys: [await publicJwkOf(shortKeyPair.publicKey, { kid: 'short-key', alg: 'RS256' })] },
+          loadJwks: keysOf({ keys: [await publicJwkOf(shortKeyPair.publicKey, { kid: 'short-key', alg: 'RS256' })] }),
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
         }),
@@ -273,13 +278,15 @@ describe('parseRequestObject', () => {
       const ecKeyPair = await generateEcKeyPair('P-256');
       const request = await buildSigned({ scope: 'openid' }, ecKeyPair.privateKey, undefined, 'ES256');
 
+      const keys = {
+        keys: [
+          await publicJwkOf(rsaKeyPair.publicKey, { kid }),
+          await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' }),
+        ],
+      };
+
       const claims = await parseRequestObject(request, {
-        jwks: {
-          keys: [
-            await publicJwkOf(rsaKeyPair.publicKey, { kid }),
-            await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' }),
-          ],
-        },
+        loadJwks: keysOf(keys),
         supportedSigningAlgs: ['RS256', 'ES256'],
         allowUnsigned: false,
       });
@@ -296,7 +303,7 @@ describe('parseRequestObject', () => {
       const request = await buildSigned({ scope: 'openid' }, ecKeyPair.privateKey, 'ec-key', 'ES256');
 
       const claims = await parseRequestObject(request, {
-        jwks: { keys: [await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' })] },
+        loadJwks: keysOf({ keys: [await publicJwkOf(ecKeyPair.publicKey, { kid: 'ec-key' })] }),
         supportedSigningAlgs: ['RS256', 'ES256'],
         allowUnsigned: false,
         requiredSigningAlg: 'ES256',
@@ -311,7 +318,7 @@ describe('parseRequestObject', () => {
 
       await expectRequestObjectError(
         parseRequestObject(request, {
-          jwks,
+          loadJwks: keysOf(jwks),
           supportedSigningAlgs: ['RS256', 'ES256'],
           allowUnsigned: false,
           requiredSigningAlg: 'ES256',
@@ -366,7 +373,7 @@ describe('parseRequestObject', () => {
 
       await expectRequestObjectError(
         parseRequestObject(request, {
-          jwks: { keys: [await publicJwkOf(rs384KeyPair.publicKey, { kid: 'rs384-key', alg: 'RS384' })] },
+          loadJwks: keysOf({ keys: [await publicJwkOf(rs384KeyPair.publicKey, { kid: 'rs384-key', alg: 'RS384' })] }),
           supportedSigningAlgs: ['RS256'],
           allowUnsigned: false,
           requiredSigningAlg: 'RS384',
@@ -384,7 +391,6 @@ describe('parseRequestObject', () => {
       const loadJwks = vi.fn(async () => jwks);
 
       const claims = await parseRequestObject(request, {
-        jwks: { keys: [] },
         loadJwks,
         supportedSigningAlgs: ['RS256'],
         allowUnsigned: false,

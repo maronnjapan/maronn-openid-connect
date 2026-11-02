@@ -168,11 +168,13 @@ describe('createApp', () => {
 });
 
 describe('setRequestContext', () => {
-  // RFC 7591 §2: the default ClientKeyResolver hands out the keys of a client's jwks_uri.
+  // RFC 7591 §2: the ClientKeyResolver hands out the keys of a client's jwks_uri,
+  // whether it is the one of db/ or one passed in.
   describe('ClientKeyResolver', () => {
     async function contextWithJwksUriClient(jwksUri: string, options: Record<string, unknown> = {}) {
       const db = createEmptyDatabase();
       await registerClient(db, { clientId: 'rp-uri', redirectUris: ['https://rp.example.com/cb'], jwksUri });
+      await registerClient(db, { clientId: 'rp-plain', redirectUris: ['https://rp.example.com/cb'] });
       const c = contextOf();
       await setRequestContext(c, {
         signingKeyProvider: staticKeyProvider(await rs256Key()),
@@ -197,8 +199,28 @@ describe('setRequestContext', () => {
       expect(clientJwksFetch.mock.calls.map(([input]) => input)).toEqual(['https://default-resolver.example.com/jwks.json']);
     });
 
-    // A ClientKeyResolver passed in is used as it is (wrap it with withClientJwksUriKeys() of core).
-    it('should not fetch the jwks_uri of a client with a ClientKeyResolver passed in', async () => {
+    // The jwksUri of RegisteredClient is honored whatever resolver holds the
+    // other keys, as dynamic client registration wraps a resolver passed in too.
+    it('should fetch the jwks_uri of a client with a ClientKeyResolver passed in too', async () => {
+      const jwk = { kty: 'RSA', kid: 'rp-key', n: (await rs256Key()).publicJwk.n, e: 'AQAB' };
+      const clientKeyResolver = { findClientKeys: vi.fn(async () => ({ keys: [] })) };
+      const clientJwksFetch = vi.fn(
+        async (_input: string | URL | Request, _init?: RequestInit) =>
+          new Response(JSON.stringify({ keys: [jwk] }), { status: 200 }),
+      );
+      const c = await contextWithJwksUriClient('https://own-resolver.example.com/jwks.json', {
+        clientKeyResolver,
+        clientJwksFetch,
+      });
+
+      const jwks = await c.get('clientKeyResolver').findClientKeys('rp-uri', 'request_object', { kid: 'rp-key' });
+
+      expect(jwks).toEqual({ keys: [{ ...jwk, use: 'sig', alg: 'RS256' }] });
+      expect(clientJwksFetch.mock.calls.map(([input]) => input)).toEqual(['https://own-resolver.example.com/jwks.json']);
+      expect(clientKeyResolver.findClientKeys).not.toHaveBeenCalled();
+    });
+
+    it('should ask the ClientKeyResolver passed in for a client without a jwks_uri', async () => {
       const clientKeyResolver = { findClientKeys: vi.fn(async () => ({ keys: [] })) };
       const clientJwksFetch = vi.fn(async () => new Response('{}', { status: 500 }));
       const c = await contextWithJwksUriClient('https://own-resolver.example.com/jwks.json', {
@@ -206,8 +228,8 @@ describe('setRequestContext', () => {
         clientJwksFetch,
       });
 
-      expect(await c.get('clientKeyResolver').findClientKeys('rp-uri', 'request_object')).toEqual({ keys: [] });
-      expect(clientKeyResolver.findClientKeys).toHaveBeenCalledWith('rp-uri', 'request_object', undefined);
+      expect(await c.get('clientKeyResolver').findClientKeys('rp-plain', 'request_object')).toEqual({ keys: [] });
+      expect(clientKeyResolver.findClientKeys).toHaveBeenCalledWith('rp-plain', 'request_object', undefined);
       expect(clientJwksFetch).not.toHaveBeenCalled();
     });
   });

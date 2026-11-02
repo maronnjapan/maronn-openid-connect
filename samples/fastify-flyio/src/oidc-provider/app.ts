@@ -81,18 +81,19 @@ export interface OidcProviderOptions {
    * The public keys each client registered, one purpose at a time
    * (ClientKeyResolver in core). The OP verifies signed Request Objects with
    * the keys of request_object.
-   * Defaults to the keys registerClient() put into db/, read for each request,
-   * and to the keys of the jwks_uri of a client that registered a jwksUri
-   * (client-jwks-uri.ts). A resolver passed here is used as it is: wrap it with
-   * withClientJwksUriKeys() of core to keep the jwks_uri of the clients.
+   * Defaults to the keys registerClient() put into db/, read for each request.
+   * Either way, a client that registered a jwksUri gets the keys of its
+   * jwks_uri for the purposes of config.clientJwksUriPurposes
+   * (client-jwks-uri.ts), and this resolver answers for every other client
+   * and purpose.
    */
   clientKeyResolver?: ClientKeyResolver;
   /**
-   * The fetch the default ClientKeyResolver fetches the jwks_uri of the
-   * clients with (RFC 7591 §2). Defaults to globalThis.fetch. Pass a fetch that
-   * goes through an egress proxy to keep the fetches away from the networks of
-   * the OP: the destination check of client-jwks-uri.ts sees the host of a
-   * jwks_uri, not the addresses its name resolves to.
+   * The fetch the OP fetches the jwks_uri of the clients with (RFC 7591 §2).
+   * Defaults to globalThis.fetch. Pass a fetch that goes through an egress
+   * proxy to keep the fetches away from the networks of the OP: the
+   * destination check of client-jwks-uri.ts sees the host of a jwks_uri, not
+   * the addresses its name resolves to.
    */
   clientJwksFetch?: typeof fetch;
   /**
@@ -303,12 +304,13 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('config', createProviderConfig(options.config));
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
-  // The default resolver reads the jwks_uri of a client through the
-  // clientResolver and the config set above.
+  // The jwks_uri of a client is read through the clientResolver and the
+  // config set above, whichever resolver holds the keys of the others.
   c.set(
     'clientKeyResolver',
-    options.clientKeyResolver ??
-      withRegisteredClientJwksUri(c, createClientKeyResolver(createDatabase(c)), { fetch: options.clientJwksFetch }),
+    withRegisteredClientJwksUri(c, options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)), {
+      fetch: options.clientJwksFetch,
+    }),
   );
   c.set('stores', stores);
   c.set('transactionStore', stores.transactionStore);

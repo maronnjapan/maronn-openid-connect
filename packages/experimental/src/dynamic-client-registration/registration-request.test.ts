@@ -178,12 +178,11 @@ describe('validateClientMetadata', () => {
   });
 
   describe('unknown metadata (RFC 7591 Section 2 MUST ignore)', () => {
-    // jwks_uri is understood only with acceptJwksUri, and request_object_signing_alg
-    // only with requestObjectSigningAlgValuesSupported (D-19 / D-23).
+    // request_object_signing_alg is understood only with
+    // requestObjectSigningAlgValuesSupported (a provider without Request Objects).
     it('should silently drop metadata this provider does not understand', () => {
       const validated = validateClientMetadata({
         ...MINIMAL,
-        jwks_uri: 'https://app.example.com/jwks.json',
         request_object_signing_alg: 'RS256',
         sector_identifier_uri: 'https://app.example.com/redirect_uris.json',
         require_auth_time: true,
@@ -858,17 +857,15 @@ describe('validateClientMetadata', () => {
     const jwksUriDescription =
       'jwks_uri must be an absolute https URL without a fragment or userinfo that does not point to a loopback, private or link-local address';
 
-    it('should register jwks_uri and echo it when acceptJwksUri is on', () => {
-      const validated = validateClientMetadata(
-        { ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' },
-        { acceptJwksUri: true },
-      );
+    // RFC 7591 §2 prefers jwks_uri to jwks, and both register by default.
+    it('should register jwks_uri and echo it by default', () => {
+      const validated = validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' });
       expect(validated.jwksUri).toBe('https://app.example.com/jwks.json');
       expect(validated.metadata['jwks_uri']).toBe('https://app.example.com/jwks.json');
       expect(validated.jwks).toBeUndefined();
     });
 
-    // D-19: the pure function keeps ignoring jwks_uri unless the OP opts in.
+    // A provider that does not fetch a jwks_uri turns it off.
     it('should ignore jwks_uri when acceptJwksUri is off', () => {
       const validated = validateClientMetadata(
         { ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' },
@@ -881,15 +878,15 @@ describe('validateClientMetadata', () => {
     it('should not fetch the jwks_uri', () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       try {
-        validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' }, { acceptJwksUri: true });
+        validateClientMetadata({ ...MINIMAL, jwks_uri: 'https://app.example.com/jwks.json' });
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {
         fetchSpy.mockRestore();
       }
     });
 
-    // UC-10: RFC 7591 §2 MUST NOT.
-    it('should reject jwks together with jwks_uri when acceptJwksUri is on', () => {
+    // UC-10: RFC 7591 §2 MUST NOT, whether or not the provider fetches jwks_uri.
+    it('should reject jwks together with jwks_uri even when acceptJwksUri is off', () => {
       expect(() =>
         validateClientMetadata(
           {
@@ -897,7 +894,7 @@ describe('validateClientMetadata', () => {
             jwks: { keys: [{ kty: 'RSA', n: 'AQAB', e: 'AQAB' }] },
             jwks_uri: 'https://app.example.com/jwks.json',
           },
-          { acceptJwksUri: true },
+          { acceptJwksUri: false },
         ),
       ).toThrowError(
         new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present'),
@@ -915,7 +912,7 @@ describe('validateClientMetadata', () => {
       ['a relative URL', '/jwks.json'],
       ['a number', 42],
     ])('should reject a jwks_uri with %s', (_label, jwksUri) => {
-      expect(() => validateClientMetadata({ ...MINIMAL, jwks_uri: jwksUri }, { acceptJwksUri: true })).toThrowError(
+      expect(() => validateClientMetadata({ ...MINIMAL, jwks_uri: jwksUri })).toThrowError(
         new ClientRegistrationError('invalid_client_metadata', jwksUriDescription),
       );
     });
@@ -924,7 +921,7 @@ describe('validateClientMetadata', () => {
     it('should accept an http loopback jwks_uri when allowInsecureJwksUri is on', () => {
       const validated = validateClientMetadata(
         { ...MINIMAL, jwks_uri: 'http://127.0.0.1:3020/jwks.json' },
-        { acceptJwksUri: true, allowInsecureJwksUri: true },
+        { allowInsecureJwksUri: true },
       );
       expect(validated.jwksUri).toBe('http://127.0.0.1:3020/jwks.json');
     });
@@ -1035,7 +1032,7 @@ describe('validateClientMetadata', () => {
     it('should register the alg with a jwks_uri without checking its keys', () => {
       const validated = validateClientMetadata(
         { ...MINIMAL, request_object_signing_alg: 'ES256', jwks_uri: 'https://app.example.com/jwks.json' },
-        { acceptJwksUri: true, requestObjectSigningAlgValuesSupported: SUPPORTED },
+        { requestObjectSigningAlgValuesSupported: SUPPORTED },
       );
       expect(validated).toMatchObject({ requestObjectSigningAlg: 'ES256', jwksUri: 'https://app.example.com/jwks.json' });
       expect(validated.metadata).toMatchObject({

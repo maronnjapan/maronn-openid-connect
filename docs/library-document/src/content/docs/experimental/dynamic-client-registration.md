@@ -91,7 +91,7 @@ pnpm add hono @maronn-openid-connect/core @maronn-openid-connect/experimental
 | `tokenEndpointAuthMethods` | `client_secret_basic` / `client_secret_post` / `none` | 登録できる `token_endpoint_auth_method`。トークンエンドポイントに `private_key_jwt` などの認証を足したら、ここにも足します |
 | `grantTypes` | `authorization_code` / `refresh_token` / `implicit` | 登録できる `grant_type`。OP が答える grant（`authorization_code`、生成した機能の grant、implicit-flow があるときの `implicit`）に絞られます。Token Exchange や CIBA の URN を足すと、動的登録クライアントにもその grant を許します |
 | `jwksPurposes` | `request_object` / `private_key_jwt` / `dpop` | 登録された `jwks` の鍵を `ClientKeyResolver` のどの用途に置くか |
-| `acceptJwksUri` | `true` | `jwks_uri` を登録するか。`false` にすると `jwks_uri` を理解しないメタデータとして無視し、オープン登録の受け口が、外部の URL を OP に取得させる経路にならなくなります |
+| `acceptJwksUri` | `true` | `jwks_uri` を登録するか。`false` にすると `jwks_uri` を理解しないメタデータとして無視し、オープン登録の受け口が、外部の URL を OP に取得させる経路にならなくなります。experimental の `validateClientMetadata()` の `acceptJwksUri` オプションも既定は `true` です |
 | `verifyInitialAccessToken` | `undefined` | 設定すると `POST /register` に Bearer トークンの提示を要求し、関数がそのトークンで登録の可否を決めます。未設定ならオープン登録（RFC 7591 §3.1 の SHOULD） |
 | `verifySoftwareStatement` | `undefined` | 設定すると `POST /register` に `software_statement` を要求し、関数が検証して主張するメタデータを返します。未設定なら `software_statement` を無視します（RFC 7591 §3.1.1） |
 | `customClientMetadata` | `{}` | 標準外のメタデータの検証関数の表（次節） |
@@ -152,7 +152,7 @@ extendDynamicClientRegistrationConfig({
 ヘッダの解析（RFC 6750 §2.1 の形式、スキーム名の大文字小文字）は生成コードが行い、形式に合わないヘッダは「トークンの提示なし」として扱います。
 
 `verifySoftwareStatement` の例として、承認した発行者の公開鍵で署名を検証し、ペイロードをそのまま主張として返す関数を示します。
-core の `parseRequestObject` は compact JWS を解析し、渡した JWK Set で署名を検証して、ペイロードを返します。
+core の `parseRequestObject` は compact JWS を解析し、`loadJwks` が返す JWK Set で署名を検証して、ペイロードを返します。
 検証前に読む `iss` は鍵を選ぶためだけに使い、返す値は検証後のペイロードから取ります。
 
 ```typescript
@@ -167,7 +167,11 @@ const verifySoftwareStatement = async (statement: string) => {
     throw new ClientRegistrationError('unapproved_software_statement', 'the issuer is not approved');
   }
   try {
-    const claims = await parseRequestObject(statement, { jwks, supportedSigningAlgs: ['RS256'], allowUnsigned: false });
+    const claims = await parseRequestObject(statement, {
+      loadJwks: async () => jwks,
+      supportedSigningAlgs: ['RS256'],
+      allowUnsigned: false,
+    });
     return { metadata: claims };
   } catch {
     throw new ClientRegistrationError('invalid_software_statement', 'the signature could not be verified');

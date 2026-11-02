@@ -155,9 +155,10 @@ export interface ValidateClientMetadataOptions {
   /** userinfo_signed_response_alg に受理する alg。既定は RS256 のみ。 */
   userinfoSigningAlgValuesSupported?: readonly string[];
   /**
-   * jwks_uri（RFC 7591 §2）を登録できるか。既定 false で、そのときは理解しないメタデータとして
-   * 無視する（§2 MUST ignore）。true のときは宛先を検査して登録し、201 応答に返す。登録時には
-   * 取得しない。jwks との併記は、この設定によらず拒否する。
+   * jwks_uri（RFC 7591 §2）を登録するか。既定 true で、宛先を検査して登録し、201 応答に返す
+   * （§2 は jwks より jwks_uri を勧める）。登録時には取得しない。jwks_uri を取得しない OP は
+   * false を渡し、理解しないメタデータとして無視させる（§2 MUST ignore）。jwks との併記は、
+   * この設定によらず拒否する。
    */
   acceptJwksUri?: boolean;
   /**
@@ -199,7 +200,7 @@ export interface ValidatedClientRegistration {
   userinfoSignedResponseAlg?: string;
   /** RFC 7591 §2 の jwks（正規化済み）。登録したときだけ持つ。 */
   jwks?: JwkSet;
-  /** RFC 7591 §2 の jwks_uri。acceptJwksUri の OP で登録したときだけ持つ。 */
+  /** RFC 7591 §2 の jwks_uri。登録したときだけ持つ（acceptJwksUri: false の OP では持たない）。 */
   jwksUri?: string;
   /**
    * OIDC Dynamic Client Registration 1.0 §2 の request_object_signing_alg。
@@ -356,7 +357,7 @@ export function validateClientMetadata(
   }
   if (metadata['jwks'] !== undefined && metadata['jwks_uri'] !== undefined) {
     // RFC 7591 §2: jwks_uri と jwks を同時に使ってはならない。acceptJwksUri の
-    // 有無によらず拒否する。
+    // 値によらず拒否する。
     throw new ClientRegistrationError('invalid_client_metadata', 'jwks and jwks_uri must not both be present');
   }
   if (metadata['jwks'] !== undefined) {
@@ -364,10 +365,10 @@ export function validateClientMetadata(
     validated.jwks = jwks;
     registered['jwks'] = { keys: jwks.keys.map((key) => ({ ...key })) };
   }
-  // acceptJwksUri の無い OP では、jwks_uri は理解しないメタデータとして無視する。
+  // acceptJwksUri: false の OP では、jwks_uri は理解しないメタデータとして無視する。
   // 登録時には取得しない（宛先の検査だけ）。
-  if (metadata['jwks_uri'] !== undefined && options?.acceptJwksUri === true) {
-    const jwksUri = validateJwksUri(metadata['jwks_uri'], options.allowInsecureJwksUri === true);
+  if (metadata['jwks_uri'] !== undefined && options?.acceptJwksUri !== false) {
+    const jwksUri = validateJwksUri(metadata['jwks_uri'], options?.allowInsecureJwksUri === true);
     validated.jwksUri = jwksUri;
     registered['jwks_uri'] = jwksUri;
   }

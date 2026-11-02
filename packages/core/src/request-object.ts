@@ -34,17 +34,14 @@ export class RequestObjectError extends Error {
  */
 export interface ParseRequestObjectOptions {
   /**
-   * 署名検証に使うクライアント登録の公開鍵集合（JWKS）。
-   * 署名付き（`alg !== "none"`）Request Object の検証に、これか `loadJwks` が必須。
-   */
-  jwks?: JwkSet;
-  /**
-   * JOSE ヘッダーを検査した後で、署名検証に使う鍵を読む。あれば `jwks` より優先する。
+   * 署名検証に使う、クライアントが登録した公開鍵（JWK Set）を読む。署名付き
+   * （`alg !== "none"`）Request Object の検証に必須で、無ければ署名付き Request Object を拒否する。
    *
    * 登録した alg との不一致、`alg: "none"`、受け付けない alg、壊れた JWT を拒否した後でだけ
    * 呼ぶので、`jwks_uri` からの取得のような外部への読み込みは、受け付ける alg で署名された
    * Request Object が届いたときにだけ起きる。`kid` はヘッダーにあるときだけ渡す
    * （OIDC Core 1.0 §10.1.1: 見慣れない kid は鍵を取り直す合図になる）。
+   * 値で持つ鍵は `async () => jwks` で渡す。
    * `ClientJwksUriError` を投げると、理由を応答に出さない固定文言の `RequestObjectError` になる。
    */
   loadJwks?: (header: { alg: string; kid?: string }) => Promise<JwkSet>;
@@ -86,7 +83,7 @@ function decodeJwtSegment(segment: string): unknown {
  *    OIDC Core 1.0 §6.3.2）
  * 3. `alg: "none"` は `allowUnsigned` が true のときだけ受理し、署名部が空であることを要求する
  * 4. `supportedSigningAlgs` に無い `alg` を拒否する（RFC 8725 §3.2）
- * 5. `loadJwks` があれば呼び、無ければ `jwks` を使う
+ * 5. `loadJwks` で鍵を読む（無ければ署名付き Request Object を拒否する）
  * 6. `kid` があれば一致する鍵に絞り、その中から `use` が無いか `sig` で、使える alg
  *    （{@link resolveJwkSigningAlg}）がヘッダーの `alg` と同じ鍵だけを候補にする（RFC 8725 §3.1）
  * 7. 候補を `alg` のとおりに import して（{@link importJwkForJwsVerification}。2048 ビット未満の
@@ -164,7 +161,7 @@ export async function parseRequestObject(
 
   const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
 
-  const jwks = options.loadJwks ? await loadVerificationKeys(options.loadJwks, alg, kid) : options.jwks;
+  const jwks = options.loadJwks ? await loadVerificationKeys(options.loadJwks, alg, kid) : undefined;
   if (!jwks || jwks.keys.length === 0) {
     throw new RequestObjectError('no JWKS registered to verify the request object signature');
   }

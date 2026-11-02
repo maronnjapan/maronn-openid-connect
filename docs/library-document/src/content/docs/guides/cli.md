@@ -676,8 +676,9 @@ Hono / Express / Fastify は `createApp` / `applyOidc` の `clientJwksFetch` オ
 取得に失敗した Request Object は、非リダイレクトの `invalid_request_object` で拒否し、`error_description` は理由によらず `the client jwks_uri could not be retrieved` です。
 理由（取得先のホスト、応答のステータス、タイムアウトなど）は OP のログ（`console.warn`）に出します。
 
-`clientKeyResolver` に自前の resolver を渡すと、生成 OP はそれをそのまま使い、`jwks_uri` を読みません。
-`jwks_uri` も使うときは、core の `withClientJwksUriKeys()` で包んでから渡してください（[core の Client Keys](../core/#client-keys) を参照）。
+`clientKeyResolver` に自前の resolver を渡したときも、生成 OP はそれを包み、`jwksUri` を持つクライアントの対象の用途では `jwks_uri` の鍵を返します。
+それ以外のクライアントと用途は、渡した resolver が答えます（Next.js の `provider.ts` も同じく、機能の context フックを通った resolver を包みます）。
+core を直接使うときは、`withClientJwksUriKeys()` で同じことができます（[core の Client Keys](../core/#client-keys) を参照）。
 
 ## Database (--db)
 

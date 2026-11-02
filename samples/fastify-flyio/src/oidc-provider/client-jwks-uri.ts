@@ -1,9 +1,9 @@
 /**
  * The jwks_uri of the registered clients (RFC 7591 §2 / OIDC Dynamic Client
- * Registration 1.0 §2): the ClientKeyResolver app.ts uses when none is passed
- * in hands out the keys of a client's jwks_uri for the purposes of
- * config.clientJwksUriPurposes, so a client rotates its keys by changing its
- * jwks_uri, with no change to the OP.
+ * Registration 1.0 §2): app.ts wraps the ClientKeyResolver (that of db/, or
+ * the one passed in) so it hands out the keys of a client's jwks_uri for the
+ * purposes of config.clientJwksUriPurposes, so a client rotates its keys by
+ * changing its jwks_uri, with no change to the OP.
  *
  * The keys are fetched when a process needs them (a signed Request Object, for
  * one), never when the client is registered, and kept in a cache shared by the
@@ -12,9 +12,6 @@
  * clientJwksUriCacheMaxTtlSeconds, and fetched again for a kid the cached keys
  * do not have, at most once per clientJwksUriRefetchIntervalSeconds (OIDC Core
  * 1.0 §10.1.1). config.ts holds every setting.
- *
- * Pass your own ClientKeyResolver to createApp() / applyOidc() and this file
- * is not used: wrap it with withClientJwksUriKeys() of core to keep jwks_uri.
  */
 import {
   createClientJwksUriCache,
@@ -36,11 +33,11 @@ const registry = globalThis as typeof globalThis & { __oidcClientJwksUriCache?: 
 export const clientJwksUriCache: ClientJwksUriCache = (registry.__oidcClientJwksUriCache ??= createClientJwksUriCache());
 
 /**
- * Wrap the ClientKeyResolver of db/ so a client with a jwksUri
- * (RegisteredClient) gets the keys of its jwks_uri for the purposes of
- * config.clientJwksUriPurposes, and only those: keys stored for the client in
- * db/ are not read for these purposes. Every other client and purpose goes to
- * base.
+ * Wrap a ClientKeyResolver (that of db/, or the one passed to createApp() /
+ * applyOidc()) so a client with a jwksUri (RegisteredClient) gets the keys of
+ * its jwks_uri for the purposes of config.clientJwksUriPurposes, and only
+ * those: keys base holds for the client are not read for these purposes.
+ * Every other client and purpose goes to base.
  *
  * The client is looked up when the keys are asked for, with the clientResolver
  * the request context holds then: the one a feature put there (dynamic client

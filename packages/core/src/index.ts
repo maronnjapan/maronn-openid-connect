@@ -29,8 +29,7 @@ export {
   AuthorizationError,
   AuthorizationErrorCode,
   DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH,
-  DEFAULT_REQUEST_OBJECT_SIGNING_ALGS,
-  // core が Request Object の署名検証に使える alg（RFC 7518 §3.3 / §3.4）
+  // core が Request Object の署名検証に使える alg（RFC 7518 §3.3 / §3.4）。resolveRequestObjectParams の既定
   SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS,
   validateSupportedResponseType,
   validateClientResponseType,

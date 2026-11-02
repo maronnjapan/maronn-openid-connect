@@ -27,7 +27,7 @@ core の純関数            ← このパッケージ
 
 | API | 役割 |
 |---|---|
-| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵（`jwks` オプションか、JOSE ヘッダーを検査した後で鍵を読む `loadJwks` オプション）で検証する。`requestObjectSigningAlg` オプションにクライアントが登録した `request_object_signing_alg` を渡すと、ヘッダーの `alg` が違う Request Object を `alg: "none"` も含めて拒否する（OIDC Core 1.0 §6.3.2）。受け付ける alg（`supportedSigningAlgs`）の既定は `DEFAULT_REQUEST_OBJECT_SIGNING_ALGS`（RS256 だけ）で、core が検証できる alg の一覧は `SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS`（RS256、RS384、RS512、ES256、ES384、ES512） |
+| 認可リクエスト検証のステップ関数 | 認可リクエストの検証（OIDC Core 1.0 §3.1.2 / OAuth 2.1）。`resolveClientForAuthorization` / `resolveRequestObjectParams` / `resolveAuthorizationRedirectUri` / `rejectUnsupportedRequestParams` / `validateRequestObjectConsistency` / `validateResponseType` / `validateAuthorizationScope` / `validateClientScope` / `validateAuthorizationCodePkce` / `validatePromptParameter` / `applyOfflineAccessPolicy` / `validateDisplayParameter` / `resolveMaxAge` / `parseAudienceParameter` / `parseClaimsRequestParameter` / `validateAcrValuesParameter`。`validateClientScope` は、クライアントに登録された `scope`（RFC 7591 §2）に無いスコープを `invalid_scope` で拒否する。`validateAcrValuesParameter` は、`acr_values` の空白区切りの各値が RFC 6749 §3.3 の scope-token と同じ文字だけでできていることを確かめ、外れれば `invalid_request` で拒否する。`resolveRequestObjectParams` は、署名付き Request Object を、クライアントが `request_object` の用途に登録した公開鍵で検証する。鍵は `loadJwks` オプションで渡し、JOSE ヘッダーの検査を通った後でだけ、ヘッダーの `alg` と `kid` を引数に呼ぶ（値で持つ鍵は `async () => jwks` で渡す）。`requestObjectSigningAlg` オプションにクライアントが登録した `request_object_signing_alg` を渡すと、ヘッダーの `alg` が違う Request Object を `alg: "none"` も含めて拒否する（OIDC Core 1.0 §6.3.2）。受け付ける alg（`supportedSigningAlgs`）の既定は、core が検証できる `SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS`（RS256、RS384、RS512、ES256、ES384、ES512） |
 | Implicit Flow のステップ関数 | `response_type=id_token token` と `id_token`（OIDC Core 1.0 §3.2）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可レスポンスの組み立て。`validateResponseType` の最後の引数に `IMPLICIT_RESPONSE_TYPES` を加えて渡すと、この 2 つも受け付ける。`requireNonce` は `nonce` を必須にし、`validateImplicitResponseMode` は `response_mode=query` を拒否し、`validateImplicitRedirectUri` は https 以外の redirect_uri を public client のループバックの http に限る（§3.2.2.1）。`returnsScopeClaimsInIdToken` は scope のクレームを ID Token に載せるか（`id_token` のとき。§5.4）を返し、`buildImplicitResponseParameters` がレスポンスのパラメータを、`buildFragmentResponseUrl` がそれをフラグメントに載せた URL を作る |
 | Hybrid Flow のステップ関数 | `response_type=code id_token`、`code token`、`code id_token token`（OIDC Core 1.0 §3.3）の要求が、認可リクエスト検証に加えて満たすべき条件と、認可コードと一緒に返す認可レスポンスの組み立て。`validateResponseType` の最後の引数に `HYBRID_RESPONSE_TYPES` を加えて渡すと、この 3 つも受け付ける。`requireHybridNonce` は、認可エンドポイントが ID Token を返す `code id_token` と `code id_token token` で `nonce` を必須にする（§3.3.2.11。`code token` では任意のまま）。`validateHybridResponseMode` は `response_mode=query` を拒否し（OAuth 2.0 Multiple Response Type Encoding Practices §5）、`buildHybridResponseParameters` が認可コードとトークンを載せたレスポンスのパラメータを作る。ID Token の `c_hash` は `computeCHash` で求め、`buildIdTokenPayload` の `cHash` に渡す |
 | `normalizeResponseType` / `responseTypeIncludes` / `isImplicitResponseType` / `isHybridResponseType` / `defaultResponseModeOf` | `response_type` の値の正規化（値の順序を問わない。OAuth 2.0 Multiple Response Type Encoding Practices §1.2）と判定、既定の response mode（トークンを返す response type はフラグメント。同 §2.1 / §3 / §5） |
@@ -106,7 +106,6 @@ import {
   createClientJwksUriCache,
   createClientKeyResolver,
   resolveRequestObjectParams,
-  SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS,
   withClientJwksUriKeys,
 } from '@maronn-openid-connect/core';
 
@@ -122,7 +121,6 @@ const clientKeyResolver = withClientJwksUriKeys(createClientKeyResolver(lookupSt
 const { effectiveParams } = await resolveRequestObjectParams(params, {
   // JOSE ヘッダーを検査した後で、ヘッダーの kid を手がかりに鍵を読む
   loadJwks: ({ kid }) => clientKeyResolver.findClientKeys(client.clientId, 'request_object', { kid }),
-  supportedSigningAlgs: [...SUPPORTED_REQUEST_OBJECT_SIGNING_ALGS],
   requestObjectSigningAlg: client.requestObjectSigningAlg,
 });
 ```

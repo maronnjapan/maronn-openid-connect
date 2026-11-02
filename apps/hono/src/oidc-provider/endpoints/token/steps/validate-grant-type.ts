@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Validate grant_type',
   spec: 'RFC 6749 §5.2',
   function: 'validateTokenGrantType',
-  calls: ['validateGrantTypeSupported', 'validateClientGrantType'],
   consumes: ['params', 'tokenClient'],
   produces: ['grantType'],
   removable: false,

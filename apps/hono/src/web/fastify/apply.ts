@@ -28,6 +28,7 @@ export type ApplyOidcOptions = OidcProviderOptions;
 /** The methods every provider path is registered for; the provider answers 405 to those it does not serve. */
 const METHODS: HTTPMethods[] = ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT'];
 
+/** Mount the OpenID Provider on an existing Fastify app: every request under its paths is turned into a Fetch Request for the Hono app and its Response written back. */
 export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions): Promise<void> {
   const oidc = createApp(options);
   // The advertised issuer is the source of truth for the OP's own origin

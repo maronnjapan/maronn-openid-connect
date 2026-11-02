@@ -11,7 +11,6 @@ export const meta = step({
   label: 'Check the requested scope against the registration',
   spec: 'RFC 7591 §2 / RFC 6749 §3.3',
   function: 'validateCibaClientScope',
-  calls: ['findUnsupportedScopes', 'findUnregisteredClientScopes'],
   consumes: ['params', 'client'],
   produces: [],
   removable: false,

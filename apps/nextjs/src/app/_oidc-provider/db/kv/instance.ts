@@ -33,6 +33,7 @@ import type { KvDatabase } from './database';
 
 const registry = globalThis as typeof globalThis & { __oidcKvDatabase?: KvDatabase };
 
+/** The key-value store of this process, opened once: Upstash Redis when its URL and token are set, node:sqlite otherwise. */
 export function createDatabase(): KvDatabase {
   return (registry.__oidcKvDatabase ??= openDatabase());
 }

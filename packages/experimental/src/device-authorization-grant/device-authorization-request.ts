@@ -46,7 +46,7 @@ export interface DeviceAuthorizationResponse {
 }
 
 /**
- * ステップ 1: クライアントがデバイス認可グラントを許可されているか検証する。
+ * クライアントがデバイス認可グラントを許可されているか検証する。
  *
  * RFC 6749 §5.2: 登録済み grant_types に含まれないグラントは unauthorized_client。
  *
@@ -63,7 +63,7 @@ export function validateDeviceGrantAllowed(client: DeviceAuthorizationClient): v
 }
 
 /**
- * ステップ 2: scope を検証して正規化する。
+ * scope を検証して正規化する。
  *
  * RFC 8628 §3.1 では scope は OPTIONAL だが、本 OP は認可エンドポイントと同じ
  * プロファイル制限（scope 必須・`openid` 必須）をデバイス認可にも課す。RFC 8628 が
@@ -91,7 +91,7 @@ export function validateDeviceAuthorizationScope(scope: string | undefined): str
 }
 
 /**
- * ステップ 3: 許可条件を満たさない `offline_access` を scope から除去する。
+ * 許可条件を満たさない `offline_access` を scope から除去する。
  *
  * OIDC Core 1.0 §11: 許可条件を満たさない offline_access は無視する（エラーには
  * しない）。デバイスフローでは検証 UI の承認画面が明示同意そのものなので、許可条件は
@@ -110,7 +110,7 @@ export function applyOfflineAccessPolicy(
 }
 
 /**
- * ステップ 4: device_code / user_code を生成してレコードを保存する。
+ * device_code / user_code を生成してレコードを保存する。
  *
  * @throws {Error} user_code が規定回数連続で衝突した場合（生成コードは 500 にする）
  */
@@ -144,7 +144,7 @@ export async function createDeviceAuthorizationRecord(options: {
 }
 
 /**
- * ステップ 5: RFC 8628 §3.2 のレスポンスボディを組み立てる。
+ * RFC 8628 §3.2 のレスポンスボディを組み立てる。
  *
  * `verification_uri_complete` は OPTIONAL だが常に返す。user_code がクエリに載るため
  * ユーザー側ブラウザの履歴や中間プロキシのログに残り得るが、user_code はワンタイム

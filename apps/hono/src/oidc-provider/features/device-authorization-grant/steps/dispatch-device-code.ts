@@ -32,7 +32,6 @@ export const meta = step({
   label: 'Redeem a device_code',
   spec: 'RFC 8628 §3.4 / §3.5',
   function: 'redeemDeviceCode',
-  calls: ['processDeviceCodeGrant', 'selectSigningKeyByAlg', 'buildAccessTokenAudience', 'buildAccessTokenPayload', 'computeAtHash', 'resolveAcrAmr', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['params', 'tokenClient', 'authenticatedClientId'],
   produces: [],
   removable: false,

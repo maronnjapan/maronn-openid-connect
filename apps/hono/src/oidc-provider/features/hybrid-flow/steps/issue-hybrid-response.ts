@@ -26,7 +26,6 @@ export const meta = step({
   label: 'Hybrid Flow: issue the code together with the ID Token and/or the access token',
   spec: 'OIDC Core 1.0 §3.3.2.5',
   function: 'issueHybridConsentResponse',
-  calls: ['isHybridResponseType', 'completeAuthTransaction', 'resolveGrantableScopes', 'issueHybridTokens', 'recordConsentDecision', 'restoreResponseMode'],
   consumes: ['transactionId', 'transaction', 'session', 'issuer'],
   produces: ['outcome'],
   removable: false,

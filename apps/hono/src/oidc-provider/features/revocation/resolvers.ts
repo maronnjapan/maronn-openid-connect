@@ -5,6 +5,7 @@
 import type { RevocationTokenResolvers } from '@maronn-openid-connect/core';
 import type { ProviderStores } from '../../store.js';
 
+/** The resolvers the revocation endpoint finds and revokes tokens through, on top of the access token and refresh token stores. */
 export function createRevocationResolvers(stores: ProviderStores): RevocationTokenResolvers {
   const { accessTokenStore, refreshTokenStore } = stores;
   return {

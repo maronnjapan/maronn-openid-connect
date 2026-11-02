@@ -51,7 +51,12 @@ export interface StepMeta {
   readonly spec?: string;
   /** The exported function of the step. */
   readonly function: string;
-  /** The core / experimental functions the step calls, in order. */
+  /**
+   * Calls the source of the step does not show as a call of a function: a
+   * method of a resolver or a store the request context holds
+   * (`'consentResolver.recordConsent'`). The functions the step calls are read
+   * from its source by `maronn-oidc explain`, and are not listed here.
+   */
   readonly calls?: readonly string[];
   /** The pipeline values the step reads. */
   readonly consumes: readonly string[];

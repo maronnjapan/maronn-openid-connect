@@ -16,7 +16,6 @@ export const meta = step({
   label: 'Validate the Hybrid Flow request (response_mode, nonce)',
   spec: 'OIDC Core 1.0 §3.3.2.1 / §3.3.2.11 / OAuth 2.0 Multiple Response Type Encoding Practices §5',
   function: 'validateHybridRequest',
-  calls: ['isHybridResponseType', 'validateHybridResponseMode', 'requireHybridNonce'],
   consumes: ['validatedRequest', 'params', 'effectiveParams', 'responseMode'],
   optional: ['effectiveParams', 'responseMode'],
   produces: [],

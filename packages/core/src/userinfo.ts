@@ -358,7 +358,7 @@ export function matchesRequestedClaimValue(
 }
 
 /**
- * ステップ 1: 提示されたアクセストークンをストアから解決する
+ * 提示されたアクセストークンをストアから解決する
  *
  * OIDC Core 1.0 Section 5.3.1: UserInfo リクエストは Bearer アクセストークンを伴う。
  * トークン未提示・未知のトークンはいずれも invalid_token（401）で拒否する。
@@ -391,7 +391,7 @@ export async function resolveUserInfoAccessToken(
 }
 
 /**
- * ステップ 2: アクセストークンの有効期限を検証する
+ * アクセストークンの有効期限を検証する
  *
  * RFC 6750 Section 3.1: 期限切れトークンは invalid_token（401）。
  *
@@ -412,7 +412,7 @@ export function validateUserInfoTokenExpiration(
 }
 
 /**
- * ステップ 3: openid スコープの存在を検証する
+ * openid スコープの存在を検証する
  *
  * OIDC Core 1.0 Section 5.3.1: UserInfo エンドポイントは openid スコープを
  * 持つアクセストークンでのみ利用できる。不足時は insufficient_scope（403）。
@@ -430,7 +430,7 @@ export function validateUserInfoScope(tokenInfo: Pick<AccessTokenInfo, 'scope'>)
 }
 
 /**
- * ステップ 4: アクセストークンの audience を検証する（RFC 9068 §4）
+ * アクセストークンの audience を検証する
  *
  * expectedAudience が指定されていれば、UserInfo エンドポイント自身がトークンの aud に
  * 含まれることを検証する。これにより resource indicator (RFC 8707) で別リソース向けに
@@ -439,6 +439,7 @@ export function validateUserInfoScope(tokenInfo: Pick<AccessTokenInfo, 'scope'>)
  * 保存するため、aud 未保存のトークンは当 OP が発行したものではない。よって opaque でも
  * aud 未設定を許容せず、aud 未設定・不一致のいずれも invalid_token で拒否する。
  *
+ * @spec RFC 9068 §4
  * @param tokenInfo アクセストークン情報
  * @param expectedAudience UserInfo エンドポイント自身を指す audience 識別子。未指定なら検証しない。
  *   `buildAccessTokenAudience` の `userInfoEndpoint` と同じ値を渡すこと（異なると自 OP が
@@ -461,7 +462,7 @@ export function validateUserInfoAudience(
 }
 
 /**
- * ステップ 5: アクセストークンの subject に対応するユーザークレームを解決する
+ * アクセストークンの subject に対応するユーザークレームを解決する
  *
  * @param tokenInfo アクセストークン情報
  * @param userClaimsResolver ユーザークレームを解決するリゾルバ
@@ -484,8 +485,7 @@ export async function resolveUserInfoClaims(
 }
 
 /**
- * ステップ 7: claims リクエストパラメータで要求されたクレームを追加する
- * OIDC Core 1.0 Section 5.5 / 5.5.1
+ * claims リクエストパラメータで要求されたクレームを追加する
  *
  * スコープ由来のレスポンス（`filterClaimsByScope` の結果）へ、`claims.userinfo` で
  * 個別要求されたクレームを重ねる。value / values が指定された場合は実値が一致する
@@ -501,6 +501,7 @@ export async function resolveUserInfoClaims(
  *
  * 入力のレスポンスは変更せず、新しいオブジェクトを返す。
  *
+ * @spec OIDC Core 1.0 §5.5 / 5.5.1
  * @param response スコープでフィルタ済みの UserInfo レスポンス
  * @param userClaims ユーザーの全クレーム
  * @param claimsParameter Authorization Request の claims パラメータ
@@ -557,11 +558,11 @@ const DEFAULT_USERINFO_JWT_EXPIRES_IN = 3600;
 
 /**
  * UserInfo レスポンスを署名済み JWT として生成する
- * OIDC Core 1.0 Section 5.3.2
  *
  * クライアントが署名付きレスポンスを要求するか（`userinfo_signed_response_alg`）の判定は
  * クライアントメタデータ層の責務であり、core はこの関数の呼び出し有無を選択するだけで良い。
  *
+ * @spec OIDC Core 1.0 §5.3.2
  * @param userInfoResponse `applyRequestedClaims()` が返した UserInfo レスポンス
  * @param options JWT 生成オプション
  * @returns 署名済み JWT 文字列（content-type: application/jwt として返却する想定）

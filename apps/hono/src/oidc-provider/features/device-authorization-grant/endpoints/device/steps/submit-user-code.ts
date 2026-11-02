@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Match the user_code and bind this browser',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceUserCode',
-  calls: ['findPendingRecordByUserCode', 'issueVerificationBinding', 'buildDeviceBindingCookie'],
   consumes: [],
   produces: ['record', 'bindingCookie'],
   removable: false,
@@ -21,11 +20,12 @@ export const meta = step({
 
 /**
  * User code submission (POST /device)
- * RFC 8628 §3.3
  *
  * On a match this is where the browser binding is minted, so this is also the
  * first answer that may carry a csrf_token. Everything downstream requires the
  * cookie this outcome sets.
+ *
+ * @spec RFC 8628 §3.3
  */
 export async function submitDeviceUserCode(c: any, submittedUserCode: string): Promise<DeviceOutcome> {
   const deviceStore = c.get('deviceAuthorizationStore');

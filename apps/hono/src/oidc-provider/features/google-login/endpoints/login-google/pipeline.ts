@@ -18,6 +18,7 @@ import { verifyGoogleLoginCallback } from './steps/verify-google-callback.js';
 
 export type { GoogleLoginOutcome } from './outcome.js';
 
+/** Run the steps of POST /login/google in order: verify the Google ID token and nonce, resolve the account, establish the browser session and hand off to consent. Returns the outcome page.ts turns into a redirect or a screen. */
 export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   const config = c.get('config');
   if (!config.googleLogin) {

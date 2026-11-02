@@ -173,7 +173,7 @@ function buildRefreshTokenResponse(info: RefreshTokenInfo): IntrospectionRespons
 }
 
 /**
- * ステップ 1: `token` パラメータの存在を検証する
+ * `token` パラメータの存在を検証する
  * RFC 7662 §2.1: token は REQUIRED。
  *
  * @param params イントロスペクションリクエストのパラメータ
@@ -191,7 +191,7 @@ export function requireIntrospectionToken(params: { token?: string }): string {
 }
 
 /**
- * ステップ 2: 呼び出し元がクライアント認証済みであることを検証する
+ * 呼び出し元がクライアント認証済みであることを検証する
  * RFC 7662 §2.1: イントロスペクションエンドポイントはクライアント認証を要求する。
  *
  * @param authenticatedClientId クライアント認証済みの clientId。空文字なら未認証
@@ -237,7 +237,7 @@ export function requireConfidentialIntrospectionCaller(
 }
 
 /**
- * ステップ 3: 提示されたトークンをストアから解決する
+ * 提示されたトークンをストアから解決する
  *
  * RFC 7662 §2.1: `token_type_hint` は検索順のヒントであり、外れても他方の種別を
  * 検索しなければならない。hint=refresh_token のときだけ refresh → access の順、
@@ -269,7 +269,7 @@ export async function resolveIntrospectionToken(
 }
 
 /**
- * ステップ 4: 解決したトークンが active かどうかを判定する
+ * 解決したトークンが active かどうかを判定する
  *
  * RFC 7662 §2.2 の "active" は「まだ有効期限内で、失効・回収されていない」こと。
  * - アクセストークン: `exp` 超過、または `nbf` が未来なら inactive
@@ -288,7 +288,7 @@ export function isIntrospectionTokenActive(
 }
 
 /**
- * ステップ 5: active なトークンの RFC 7662 §2.2 レスポンスクレームを組み立てる
+ * active なトークンの RFC 7662 §2.2 レスポンスクレームを組み立てる
  *
  * 保存されていない optional クレーム（iat / nbf / aud / iss / jti、アクセストークンの
  * acr（RFC 9470 §6.2））は省略する。

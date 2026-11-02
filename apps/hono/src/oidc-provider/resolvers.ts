@@ -29,6 +29,7 @@ export type GrantAwareConsentResolver = ConsentResolver & {
 
 export type StoreResolvers = ReturnType<typeof createStoreResolvers>;
 
+/** Build the resolvers of core (authorization codes, tokens, sessions, consents, users) on top of the stores, so every endpoint reads and writes through the same contracts. */
 export function createStoreResolvers(stores: ProviderStores) {
   const {
     authCodeStore,

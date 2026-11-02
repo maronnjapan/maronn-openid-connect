@@ -155,7 +155,8 @@ function selectSteps(endpoint: FlowEndpoint, requested: string[]): string[] | un
  */
 export function resolveFlowSelection(document: unknown): FlowSelection {
   if (!isRecord(document)) return fail('A flow document must be a JSON object');
-  if (document['version'] !== 1) return fail('A flow document must have "version": 1');
+  // Version 1 named the calls of a step by bare name; nothing the selection reads changed.
+  if (document['version'] !== 1 && document['version'] !== 2) return fail('A flow document must have "version": 2');
 
   let features: OidcFeatureConfig;
   let scopes: string[];

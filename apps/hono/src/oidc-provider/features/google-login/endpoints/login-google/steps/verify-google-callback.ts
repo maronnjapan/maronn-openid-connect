@@ -14,7 +14,6 @@ export const meta = step({
   kind: 'validate',
   label: 'Verify the posted Google ID token and nonce',
   function: 'verifyGoogleLoginCallback',
-  calls: ['handleGoogleLoginRedirect', 'resolveGoogleLoginSubject'],
   consumes: [],
   produces: ['transactionId', 'subject'],
   removable: false,

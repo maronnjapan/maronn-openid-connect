@@ -19,7 +19,6 @@ export const meta = step({
   label: 'Validate the metadata and build the client',
   spec: 'RFC 7591 §2 / §2.1',
   function: 'validateRegistrationMetadata',
-  calls: ['supportedResponseTypes', 'tokenGrantsOf', 'getJwaAlgorithm', 'validateClientMetadata', 'buildRegisteredClient'],
   consumes: ['metadata'],
   produces: ['client'],
   removable: false,

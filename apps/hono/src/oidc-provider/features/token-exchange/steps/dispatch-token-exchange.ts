@@ -27,7 +27,6 @@ export const meta = step({
   label: 'Token Exchange',
   spec: 'RFC 8693 §2.1',
   function: 'exchangeToken',
-  calls: ['processTokenExchangeRequest', 'buildAccessTokenAudience', 'buildAccessTokenPayload', 'buildTokenExchangeResponse'],
   consumes: ['params', 'tokenClient'],
   produces: [],
   removable: false,

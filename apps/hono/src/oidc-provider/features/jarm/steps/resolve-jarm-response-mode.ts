@@ -18,7 +18,6 @@ export const meta = step({
   label: 'Interpret response_mode=query.jwt',
   spec: 'JARM §2.3 / §3',
   function: 'resolveJarmResponseContext',
-  calls: ['responseTypeIncludes', 'resolveJarmResponseMode', 'selectSigningKeyByAlg'],
   consumes: ['params', 'effectiveParams', 'client', 'redirectUri', 'state', 'issuer'],
   produces: ['responseMode'],
   removable: false,

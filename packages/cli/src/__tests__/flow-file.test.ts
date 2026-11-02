@@ -22,8 +22,8 @@ describe('resolveFlowSelection', () => {
     });
 
     it('should reject a document without version 1', () => {
-      expect(() => resolveFlowSelection({ version: 2, endpoints: [] })).toThrow(
-        'A flow document must have "version": 1',
+      expect(() => resolveFlowSelection({ version: 3, endpoints: [] })).toThrow(
+        'A flow document must have "version": 2',
       );
     });
 

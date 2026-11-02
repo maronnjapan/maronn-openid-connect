@@ -171,7 +171,7 @@ export interface TokenExchangeRequestContext {
 }
 
 /**
- * ステップ 1: クライアントが交換を要求してよいかを検証する。
+ * クライアントが交換を要求してよいかを検証する。
  *
  * RFC 8693 §2.1 は「クライアント認証を省くと、窃取されたトークンを STS 経由で
  * 別のトークンへ増幅できてしまう」と注記している。本機能はこれを
@@ -198,7 +198,7 @@ export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
 }
 
 /**
- * ステップ 2: 必須・非対応パラメータを検証して型付けする（RFC 8693 §2.1）。
+ * 必須・非対応パラメータを検証して型付けする（RFC 8693 §2.1）。
  *
  * 空文字・空白のみの任意パラメータは「送られなかった」と同じに扱う
  * （フォームの空フィールドを黙って対象指定・scope 指定に昇格させないため）。
@@ -278,7 +278,7 @@ export function parseTokenExchangeParams(
 }
 
 /**
- * ステップ 3: subject_token を解決し、有効性を検証する。
+ * subject_token を解決し、有効性を検証する。
  *
  * RFC 8693 §2.1: "the authorization server MUST perform the appropriate validation
  * procedures for the indicated token type"。本機能は本 OP 発行のアクセストークンに
@@ -346,7 +346,7 @@ export function composeActClaim(options: {
 }
 
 /**
- * ステップ 4: 要求 scope が subject_token の scope の部分集合であることを検証する。
+ * 要求 scope が subject_token の scope の部分集合であることを検証する。
  *
  * 権限昇格（scope 拡大）の防止が目的。省略時・空白のみの場合は subject の scope を
  * そのまま継承する（拡大はしない）。
@@ -374,7 +374,7 @@ export function validateExchangeScope(
 }
 
 /**
- * ステップ 5: `audience` / `resource` を許可リストで検証し、要求対象を返す。
+ * `audience` / `resource` を許可リストで検証し、要求対象を返す。
  *
  * 戻り値は最終的な `aud` ではなく、生成コードが core の `buildAccessTokenAudience` の
  * `requested` へ渡す入力。UserInfo エンドポイントの恒久メンバ追加・重複除去・
@@ -412,7 +412,7 @@ export function resolveExchangeTarget(options: {
 }
 
 /**
- * ステップ 6: 発行トークンの有効期間（秒）を算出する。
+ * 発行トークンの有効期間（秒）を算出する。
  *
  * `min(configured, subject の残存秒数)`。交換を何度連鎖しても寿命は単調減少し、
  * 交換によるトークン寿命の洗浄（無期限延命）ができない。
@@ -445,7 +445,9 @@ export function computeExchangedTokenLifetime(options: {
   return Math.min(configuredExpiresIn, remaining);
 }
 
-/** ステップ 7: RFC 8693 §2.2.1 の応答ボディを組み立てる。 */
+/**
+ * RFC 8693 §2.2.1 の応答ボディを組み立てる。
+ */
 export function buildTokenExchangeResponse(options: {
   accessToken: string;
   expiresIn: number;

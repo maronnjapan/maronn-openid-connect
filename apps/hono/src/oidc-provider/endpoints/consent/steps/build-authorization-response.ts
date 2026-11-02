@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Build the authorization response',
   spec: 'RFC 9207 §2',
   function: 'buildConsentRedirect',
-  calls: ['restoreResponseMode'],
   consumes: ['transaction', 'responseParams', 'authCodeData', 'issuer'],
   produces: ['outcome'],
   removable: false,

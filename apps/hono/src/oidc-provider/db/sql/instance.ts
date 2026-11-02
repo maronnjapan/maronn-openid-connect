@@ -25,6 +25,7 @@
 import type { Context } from 'hono';
 import type { SqlDatabase } from './database.js';
 
+/** Open the SQL database the provider keeps its data in. Written by you: the generated file throws until it returns a SqlDatabase. */
 export function createDatabase(_c: Context): SqlDatabase {
   throw new Error(
     'db/instance.ts: createDatabase() is not implemented yet. ' +

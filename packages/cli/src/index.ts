@@ -19,6 +19,11 @@ import { renderMermaid, type MermaidDetail } from './flow/mermaid.js';
 import { annotateFlowModules } from './flow/modules.js';
 import { applyFlowSelection, parseFlowFile, type FlowSelection } from './flow/flow-file.js';
 import type { OpFlow } from './flow/types.js';
+import { readFunctionCatalog } from './extract/templates.js';
+import { reachableFunctions } from './explain/map.js';
+import { buildOpMap, endpointOf, functionOf, stepOf, stepRoots, stepUses } from './explain/map.js';
+import { renderEndpoint, renderFunction, renderOverview, renderStep } from './explain/text.js';
+import { FEATURE_CONFIG_KEYS } from './registry.js';
 
 // The screens of every output but Next.js are hono/jsx, so Express and
 // Fastify need hono too (as the JSX runtime).
@@ -93,7 +98,7 @@ function printUsage(): void {
   const experimentalFeatures = EXPERIMENTAL_FEATURES.join(', ');
   const extensionFeatures = EXTENSION_FEATURES.join(', ');
   console.log(`
-Usage: maronn-oidc <command> <framework> [options]
+Usage: maronn-oidc <command> [framework] [options]
 
 Commands:
   generate <framework>  Generate OIDC provider code for the specified framework
@@ -101,6 +106,12 @@ Commands:
   graph [framework]     Draw the provider a generate run produces: its endpoints
                         (boxes), the steps inside each endpoint (one box per
                         generated function) and the arrows between them
+  explain [framework] [<endpoint>[/<step>] | fn <name>]
+                        Walk the map of the provider: without a target, the
+                        commands, frameworks, endpoints and features; an
+                        endpoint lists its steps; a step shows the functions it
+                        calls down to core, each with its role; fn <name> shows
+                        a function, what it calls and (--callers) where it is used
 
 Frameworks: ${frameworks}
 
@@ -121,6 +132,10 @@ Options:
                         graph only: one box per endpoint (default), or the steps inside each
   --endpoint <ids>      graph only: comma-separated endpoint ids to draw (repeatable; default: all)
   --no-error-edges      graph only: leave out the dashed arrows into the error steps
+  --depth <n>           explain only: how many levels of calls to show under a step or
+                        a function (default: 2)
+  --callers             explain fn only: also show the functions, steps and endpoints
+                        that call the function
   --force               Overwrite files that already exist in the output directory
   --dry-run             Show what would be written without writing anything
   --help, -h            Show this help message
@@ -244,6 +259,12 @@ interface ParsedArgs {
   endpoint: string[];
   /** graph: --no-error-edges. */
   errorEdges: boolean;
+  /** The words after the command (the framework, and the target of explain). */
+  positionals: string[];
+  /** explain: --depth; null for --depth without a value. */
+  depth: string | null | undefined;
+  /** explain: --callers. */
+  callers: boolean;
   force: boolean;
   dryRun: boolean;
   help: boolean;
@@ -270,6 +291,9 @@ function parseArgs(args: string[]): ParsedArgs {
   let detail: string | null | undefined;
   const endpoint: string[] = [];
   let errorEdges = true;
+  const positionals: string[] = [];
+  let depth: string | null | undefined;
+  let callers = false;
   let force = false;
   let dryRun = false;
   let help = false;
@@ -316,16 +340,25 @@ function parseArgs(args: string[]): ParsedArgs {
       endpoint.push(...splitFeatureList(args[i]));
     } else if (arg === '--no-error-edges') {
       errorEdges = false;
+    } else if (arg === '--depth') {
+      depth = flagValue(args, i);
+      if (depth !== null) i++;
+    } else if (arg === '--callers') {
+      callers = true;
     } else if (arg === '--force') {
       force = true;
     } else if (arg === '--dry-run') {
       dryRun = true;
+    } else if (arg === undefined) {
+      continue;
     } else if (!command) {
       command = arg;
-    } else if (!framework) {
-      framework = arg;
+    } else {
+      positionals.push(arg);
     }
   }
+  // explain names its target before or after the framework; every other command takes the framework first.
+  if (command !== 'explain') framework = positionals[0];
 
   return {
     command,
@@ -341,6 +374,9 @@ function parseArgs(args: string[]): ParsedArgs {
     detail,
     endpoint,
     errorEdges,
+    positionals,
+    depth,
+    callers,
     force,
     dryRun,
     help,
@@ -467,6 +503,144 @@ function pickEndpoints(flow: OpFlow, ids: string[]): OpFlow {
     endpoints: flow.endpoints.filter((e) => wanted.has(e.id)),
     edges: flow.edges.filter((e) => wanted.has(e.from) && wanted.has(e.to)),
   };
+}
+
+const EXPLAIN_FORMATS = ['text', 'json'] as const;
+type ExplainFormat = (typeof EXPLAIN_FORMATS)[number];
+
+function resolveExplainFormat(value: string | null | undefined): ExplainFormat {
+  if (value === undefined) return 'text';
+  if (value !== null && (EXPLAIN_FORMATS as readonly string[]).includes(value)) return value as ExplainFormat;
+  throw new Error(`--format needs one of ${EXPLAIN_FORMATS.join(', ')}${value === null ? '' : `, not "${value}"`}`);
+}
+
+function resolveDepth(value: string | null | undefined): number {
+  if (value === undefined) return 2;
+  const depth = value === null ? Number.NaN : Number(value);
+  if (!Number.isInteger(depth) || depth < 1) {
+    throw new Error(`--depth needs a whole number of 1 or more${value === null ? '' : `, not "${value}"`}`);
+  }
+  return depth;
+}
+
+/** The target of explain: nothing, an endpoint, a step of an endpoint, or a function. */
+type ExplainTarget =
+  | { kind: 'overview' }
+  | { kind: 'endpoint'; endpoint: string }
+  | { kind: 'step'; endpoint: string; step: string }
+  | { kind: 'function'; name: string };
+
+/** The framework and the target among the words after `explain`. */
+function resolveExplainWords(words: string[]): { framework: string | undefined; target: ExplainTarget } {
+  const frameworks = getAvailableFrameworks();
+  const framework = words.find((word) => frameworks.includes(word));
+  const rest = words.filter((word) => word !== framework);
+  if (rest.length === 0) return { framework, target: { kind: 'overview' } };
+  if (rest[0] === 'fn') {
+    const name = rest[1];
+    if (name === undefined || rest.length > 2) throw new Error('fn needs one function name: explain fn <name>');
+    return { framework, target: { kind: 'function', name } };
+  }
+  if (rest.length > 1) {
+    throw new Error(
+      `explain takes one target, not "${rest.join('" and "')}": an endpoint, <endpoint>/<step>, or fn <name>` +
+        (framework === undefined ? ` (frameworks: ${frameworks.join(', ')})` : ''),
+    );
+  }
+  const [endpoint, step, ...more] = (rest[0] as string).split('/');
+  if (endpoint === undefined || endpoint === '' || more.length > 0 || step === '') {
+    throw new Error(`Name a target as <endpoint> or <endpoint>/<step>, not "${rest[0]}"`);
+  }
+  return { framework, target: step === undefined ? { kind: 'endpoint', endpoint } : { kind: 'step', endpoint, step } };
+}
+
+/** Every feature on: the whole provider, to say where a function is used whatever the configuration. */
+function everyFeature(): OidcFeatureConfig {
+  return Object.fromEntries(FEATURE_CONFIG_KEYS.map((key) => [key, true])) as unknown as OidcFeatureConfig;
+}
+
+/**
+ * `explain [framework] [target]`: print (or write) the map of the provider,
+ * or one endpoint, step or function of it.
+ */
+function runExplain(parsed: ParsedArgs): void {
+  const { framework, target } = resolveExplainWords(parsed.positionals);
+  const format = resolveExplainFormat(parsed.format);
+  const depth = resolveDepth(parsed.depth);
+  const functions = readFunctionCatalog();
+  const flow = resolveOpFlow(resolveGenerationInputs(parsed), framework);
+  const map = buildOpMap({ flow, functions, frameworks: getAvailableFrameworks(), ...(framework === undefined ? {} : { framework }) });
+  let text: string;
+  let json: unknown;
+  switch (target.kind) {
+    case 'overview':
+      text = renderOverview(map);
+      json = map;
+      break;
+    case 'endpoint': {
+      const endpoint = endpointOf(flow, target.endpoint);
+      text = renderEndpoint(map, endpoint);
+      json = {
+        version: 2,
+        ...(framework === undefined ? {} : { framework }),
+        endpoint,
+        functions: reachableFunctions(functions, endpoint.steps.flatMap(stepRoots)),
+      };
+      break;
+    }
+    case 'step': {
+      const endpoint = endpointOf(flow, target.endpoint);
+      const step = stepOf(endpoint, target.step);
+      text = renderStep(map, endpoint, step, depth);
+      json = {
+        version: 2,
+        ...(framework === undefined ? {} : { framework }),
+        endpoint: endpoint.id,
+        step,
+        functions: reachableFunctions(functions, stepRoots(step), depth),
+      };
+      break;
+    }
+    case 'function': {
+      const card = functionOf(functions, target.name);
+      const inputs = { features: everyFeature(), scopes: [], db: undefined, flow: undefined };
+      // Where the function is used, whatever the configuration: the steps of the
+      // hono source (every framework but Next.js generates them) and, without a
+      // framework, the blocks of the Next.js Route Handlers too.
+      const everything: { flow: OpFlow; framework?: string }[] = [
+        { flow: resolveOpFlow(inputs, framework), ...(framework === undefined ? {} : { framework }) },
+        ...(framework === undefined ? [{ flow: resolveOpFlow(inputs, 'nextjs'), framework: 'nextjs' }] : []),
+      ];
+      text = renderFunction(map, functions, card, { depth, callers: parsed.callers, everything });
+      const uses = everything.flatMap(({ flow: whole, framework: of }) => stepUses(whole, of).get(card.id) ?? []);
+      json = {
+        version: 2,
+        ...(framework === undefined ? {} : { framework }),
+        function: card,
+        steps: uses.map((use) => ({
+          endpoint: use.endpoint.id,
+          step: use.step.id,
+          as: use.as,
+          feature: use.step.feature ?? use.endpoint.feature ?? null,
+          ...(use.framework === undefined ? {} : { framework: use.framework }),
+        })),
+        functions: {
+          ...reachableFunctions(functions, card.calls, depth),
+          ...(parsed.callers ? Object.fromEntries(card.calledBy.map((id) => [id, functions.functions[id]]).filter(([, c]) => c !== undefined)) : {}),
+        },
+      };
+      break;
+    }
+  }
+  const output = format === 'json' ? `${JSON.stringify(json, null, 2)}\n` : text;
+  if (parsed.outputDir === undefined) {
+    process.stdout.write(output);
+    return;
+  }
+  const dir = dirname(parsed.outputDir);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(parsed.outputDir, output, 'utf-8');
+  console.log(`Wrote ${parsed.outputDir}`);
 }
 
 function buildManifestFile(
@@ -645,9 +819,10 @@ export function run(args: string[]): void {
     return;
   }
 
-  if (parsed.command === 'graph') {
+  if (parsed.command === 'graph' || parsed.command === 'explain') {
     try {
-      runGraph(parsed);
+      if (parsed.command === 'graph') runGraph(parsed);
+      else runExplain(parsed);
     } catch (error) {
       if (error instanceof Error) {
         console.error(`Error: ${error.message}`);

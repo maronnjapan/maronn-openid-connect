@@ -6,7 +6,7 @@ import type { OpFlow } from '../flow/types.js';
 
 /** A two-endpoint OP, small enough to pin the whole rendering. */
 const tinyFlow: OpFlow = {
-  version: 1,
+  version: 2,
   features: DEFAULT_FEATURES,
   scopes: [],
   db: null,

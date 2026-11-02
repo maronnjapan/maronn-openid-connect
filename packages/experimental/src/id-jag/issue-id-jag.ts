@@ -310,7 +310,7 @@ export function matchesIdJagIssuanceRequest(params: Record<string, string>): boo
 }
 
 /**
- * ステップ 1: クライアントが ID-JAG の発行を要求してよいかを検証する。
+ * クライアントが ID-JAG の発行を要求してよいかを検証する。
  *
  * draft §9.1 は本仕様を confidential client に限る SHOULD を置く。本機能は
  * これを public client の拒否まで強めている（token-exchange 機能と同じ設計判断。
@@ -338,7 +338,7 @@ export function authorizeIdJagIssuanceClient(client: TokenClientInfo): void {
 }
 
 /**
- * ステップ 2: 必須・非対応パラメータを検証して型付けする（draft §4.3）。
+ * 必須・非対応パラメータを検証して型付けする（draft §4.3）。
  *
  * 空文字・空白のみの任意パラメータは「送られなかった」と同じに扱う
  * （token-exchange 機能と同じ規則）。受理する subject 種別と actor の可否は
@@ -452,7 +452,7 @@ export function parseIdJagIssuanceParams(
 }
 
 /**
- * ステップ 3: subject_token（ID トークン）を検証し、発行素材を返す。
+ * subject_token（ID トークン）を検証し、発行素材を返す。
  *
  * draft §4.3.3: IdP は assertion を検証し、その audience（ID トークンの aud）が
  * リクエストのクライアント認証の client_id と一致することを検証しなければ
@@ -686,7 +686,7 @@ function copyActorChain(value: unknown): IdJagActor | undefined {
 }
 
 /**
- * ステップ 4: audience を検証する。
+ * audience を検証する。
  *
  * - draft §9.3: IdP は自分が発行した ID-JAG に対して同一ドメイン内でアクセス
  *   トークンを発行してはならない。自 OP の issuer と同一の audience 要求は、
@@ -721,7 +721,7 @@ export function validateIdJagAudience(options: {
 }
 
 /**
- * ステップ 5: 要求 scope を検証し、ID-JAG に載せる実効 scope を返す。
+ * 要求 scope を検証し、ID-JAG に載せる実効 scope を返す。
  *
  * draft §4.3.3: IdP はポリシーを評価し、許可 scope は要求の部分集合であってよい。
  * 本機能のポリシーは「`allowedScopes` が設定されていればその部分集合のみ許可、
@@ -751,7 +751,7 @@ export function validateIdJagScope(
 }
 
 /**
- * ステップ 6: ID-JAG のクレームセットを組み立てる（draft §3.1）。
+ * ID-JAG のクレームセットを組み立てる（draft §3.1）。
  *
  * - `client_id` は交換を要求した認証済みクライアントの client_id。draft §5 は
  *   リソース AS 側で別の client_id を使う対応付けも認めるが、本機能は両 AS で
@@ -798,7 +798,7 @@ export function buildIdJagClaims(options: {
 }
 
 /**
- * ステップ 7: ID-JAG を compact JWS として署名する。
+ * ID-JAG を compact JWS として署名する。
  *
  * JOSE ヘッダーは `{ alg: 'RS256', typ: 'oauth-id-jag+jwt', kid }`。
  * `typ` は受領側の必須検証項目（draft §4.4.1 / RFC 8725 §3.11）なので必ず付ける。
@@ -829,7 +829,7 @@ export async function createIdJagJwt(options: {
 }
 
 /**
- * ステップ 8: RFC 8693 §2.2.1 / draft §4.3.4 の応答ボディを組み立てる。
+ * RFC 8693 §2.2.1 / draft §4.3.4 の応答ボディを組み立てる。
  *
  * `token_type` は常に `N_A`（発行物はアクセストークンではない）。`scope` は
  * draft 上「要求と同一なら OPTIONAL」だが、判定分岐を避けるため常に含める

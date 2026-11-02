@@ -82,7 +82,7 @@ export interface ResolveRevocationTargetOptions {
 }
 
 /**
- * ステップ 1: `token` パラメータの存在を検証する
+ * `token` パラメータの存在を検証する
  * RFC 7009 §2.1: token は REQUIRED。
  *
  * @throws {RevocationError} invalid_request
@@ -98,7 +98,7 @@ export function requireRevocationToken(params: { token?: string }): string {
 }
 
 /**
- * ステップ 2: 呼び出し元がクライアント認証済み（または client_id 識別済み）であることを検証する
+ * 呼び出し元がクライアント認証済み（または client_id 識別済み）であることを検証する
  * RFC 7009 §2.1: revocation エンドポイントはクライアントを識別しなければならない。
  *
  * @throws {RevocationError} invalid_client
@@ -114,7 +114,7 @@ export function requireRevocationClient(authenticatedClientId: string): string {
 }
 
 /**
- * ステップ 3: 失効対象のトークンをストアから解決する
+ * 失効対象のトークンをストアから解決する
  *
  * RFC 7009 §2.1: `token_type_hint` は検索順のヒントであり、外れても他方の種別を
  * 検索しなければならない。hint=refresh_token のときだけ refresh → access の順、
@@ -151,7 +151,7 @@ export async function resolveRevocationTarget(
 }
 
 /**
- * ステップ 4: 解決したトークンが要求元クライアントに発行されたものか検証する
+ * 解決したトークンが要求元クライアントに発行されたものか検証する
  *
  * RFC 7009 §2.1: "verifies whether the token was issued to the client making the
  * revocation request. If this validation fails, the request is refused and the
@@ -177,7 +177,7 @@ export function validateRevocationTokenClient(
 }
 
 /**
- * ステップ 5: 解決した種別に応じて、提示されたトークン自体を失効させる
+ * 解決した種別に応じて、提示されたトークン自体を失効させる
  *
  * @param token リクエストで提示されたトークン値
  * @param resolved 解決済みトークン
@@ -196,7 +196,7 @@ export async function revokeResolvedToken(
 }
 
 /**
- * ステップ 6: リフレッシュトークン失効時に同 grant のアクセストークンも失効させる
+ * リフレッシュトークン失効時に同 grant のアクセストークンも失効させる
  *
  * RFC 7009 §2.1 SHOULD: refresh token を失効させたら、同じ authorization grant で
  * 発行されたアクセストークンも失効させる（片方向 cascade）。アクセストークンの失効では

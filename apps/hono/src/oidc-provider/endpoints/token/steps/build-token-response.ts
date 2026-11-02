@@ -17,7 +17,9 @@ export const meta = step({
 
 /**
  * Build the token response body.
- * OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
+ *
+ * @spec OIDC Core 1.0 §3.1.3.3
+ * @spec RFC 6749 §5.1
  */
 export function buildTokenResponse(
   c: any,

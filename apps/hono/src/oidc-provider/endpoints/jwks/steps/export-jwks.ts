@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Export the public halves as a JWK Set',
   spec: 'RFC 7517 §5',
   function: 'buildJwksDocument',
-  calls: ['extractAlgorithmParamsFromJwk', 'exportJwks'],
   consumes: ['keys'],
   produces: ['jwks'],
   removable: false,

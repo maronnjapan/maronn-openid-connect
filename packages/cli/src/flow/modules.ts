@@ -8,9 +8,11 @@
  * from apps/nextjs: an endpoint and its steps are its Route Handler.
  */
 import { posix } from 'node:path';
+import type { RouteBlockCalls } from '../extract/blocks.js';
 import type { SourceCatalog } from '../extract/meta.js';
+import { readFrameworkBlockCalls } from '../extract/templates.js';
 import { providerCatalog } from './build.js';
-import type { OpFlow } from './types.js';
+import type { FlowStep, OpFlow } from './types.js';
 
 type ModuleMap = Record<string, string>;
 
@@ -40,19 +42,35 @@ const EXTRACTED_FRAMEWORKS = new Set(['hono', 'express', 'fastify']);
 /**
  * Return a copy of the flow whose endpoints and steps name the generated
  * module of the framework. An unknown framework leaves the flow untouched.
+ *
+ * For Next.js the steps are blocks of the Route Handler, so a step has no
+ * function of its own (no functionId) and its calls are the ones of its
+ * block (extract/blocks.ts); a step the Route Handler has no block for keeps
+ * no calls.
  */
-export function annotateFlowModules(flow: OpFlow, framework: string, catalog?: SourceCatalog): OpFlow {
+export function annotateFlowModules(
+  flow: OpFlow,
+  framework: string,
+  catalog?: SourceCatalog,
+  blockCalls?: RouteBlockCalls,
+): OpFlow {
   if (EXTRACTED_FRAMEWORKS.has(framework)) return annotateExtractedModules(flow, catalog ?? providerCatalog());
   if (framework !== 'nextjs') return flow;
+  const blocks = blockCalls ?? readFrameworkBlockCalls(framework);
   return {
     ...flow,
     endpoints: flow.endpoints.map((endpoint) => {
       const module = APP_ROUTER_LAYOUT[endpoint.id];
       if (module === undefined) return endpoint;
+      const calls = blocks[module] ?? {};
       return {
         ...endpoint,
         module,
-        steps: endpoint.steps.map((step) => ({ ...step, module })),
+        steps: endpoint.steps.map((step) => {
+          const { functionId: _functionId, dynamicCalls: _dynamicCalls, ...rest } = step;
+          const blockStep: FlowStep = { ...rest, calls: [...(calls[step.id] ?? [])], module };
+          return blockStep;
+        }),
       };
     }),
   };

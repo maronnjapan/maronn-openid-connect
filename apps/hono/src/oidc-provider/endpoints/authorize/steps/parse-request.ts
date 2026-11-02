@@ -59,11 +59,13 @@ async function parseAuthorizationRequestParams(
 
 /**
  * Parse the authorization request (GET query or POST form).
- * OIDC Core 1.0 §3.1.2.1 / §13.2 / RFC 6749 §3.1
  *
  * Returns the bad_request outcome for malformed transport: a POST that is not
  * application/x-www-form-urlencoded, a repeated parameter, or no client_id.
  * There is no transaction yet, so those are answered as OAuth error JSON.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1 / §13.2
+ * @spec RFC 6749 §3.1
  */
 export async function parseAuthorizationRequest(
   c: any,

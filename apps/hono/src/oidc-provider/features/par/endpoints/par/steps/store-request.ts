@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Store the request under a fresh request_uri',
   spec: 'RFC 9126 §2.2 / §7.1',
   function: 'storePushedRequest',
-  calls: ['createPushedAuthorizationRecord', 'buildPushedAuthorizationResponse'],
   consumes: ['clientId', 'pushedParams'],
   produces: ['parResponse'],
   removable: false,

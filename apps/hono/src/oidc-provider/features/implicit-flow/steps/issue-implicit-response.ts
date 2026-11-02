@@ -26,7 +26,6 @@ export const meta = step({
   label: 'Implicit Flow: issue the ID Token (and access token) in place of the code',
   spec: 'OIDC Core 1.0 §3.2.2.5',
   function: 'issueImplicitConsentResponse',
-  calls: ['isImplicitResponseType', 'completeAuthTransaction', 'resolveGrantableScopes', 'issueImplicitTokens', 'recordConsentDecision', 'restoreResponseMode'],
   consumes: ['transactionId', 'transaction', 'session', 'issuer'],
   produces: ['outcome'],
   removable: false,

@@ -670,7 +670,7 @@ describe('run', () => {
         endpoints: { id: string; module?: string; steps: { module?: string }[] }[];
       };
       stdout.restore();
-      expect(document.version).toBe(1);
+      expect(document.version).toBe(2);
       const token = document.endpoints.find((e) => e.id === 'token');
       expect(token?.module).toBe('endpoints/token/pipeline.ts');
       expect(token?.steps[0]?.module).toBe('endpoints/token/steps/parse-request.ts');
@@ -926,5 +926,109 @@ describe('run', () => {
       expect(output).toContain('--format <mermaid|json>');
       consoleSpy.mockRestore();
     });
+  });
+});
+
+describe('run explain', () => {
+  function captureStdout(): { output: () => string; restore: () => void } {
+    const chunks: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    return { output: () => chunks.join(''), restore: () => void (process.stdout.write = original) };
+  }
+
+  function explain(args: string[]): { stdout: string; errors: string[] } {
+    const stdout = captureStdout();
+    const errors: string[] = [];
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation((message?: unknown) => void errors.push(String(message)));
+    try {
+      run(['explain', ...args]);
+    } finally {
+      stdout.restore();
+      errorSpy.mockRestore();
+    }
+    return { stdout: stdout.output(), errors };
+  }
+
+  it('should print the overview of the default provider without a target', () => {
+    const { stdout } = explain([]);
+    expect(stdout).toContain('Commands');
+    expect(stdout).toContain('POST /token');
+    expect(stdout).toContain('--enable par');
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('should list the steps of an endpoint', () => {
+    const { stdout } = explain(['token']);
+    expect(stdout).toContain('[authenticate-client] Authenticate the client');
+    expect(stdout).toContain('calls: extractClientCredentials, resolveAuthenticatedTokenClient');
+  });
+
+  it('should draw the functions of a step down to core, as deep as --depth says', () => {
+    expect(explain(['token/authenticate-client', '--depth', '1']).stdout).not.toContain('validateSingleClientAuthMethod()');
+    expect(explain(['token/authenticate-client']).stdout).toContain('validateSingleClientAuthMethod()');
+  });
+
+  it('should take the framework before or after the target and name the Next.js block', () => {
+    expect(explain(['nextjs', 'token/authenticate-client']).stdout).toContain('a block of token/route.ts');
+    expect(explain(['token/authenticate-client', 'nextjs']).stdout).toContain('a block of token/route.ts');
+  });
+
+  it('should show a function and, with --callers, the steps and flags it is reached from', () => {
+    const { stdout } = explain(['fn', 'validateClientAuthMethodAllowed', '--callers']);
+    expect(stdout).toContain('validateClientAuthMethodAllowed()  core client-auth.ts');
+    expect(stdout).toContain('⇐ the function of step [authenticate-client] of POST /token  (every provider)');
+    expect(stdout).toContain('(--enable ciba)');
+  });
+
+  it('should write the map as JSON with the flow and the functions it reaches', () => {
+    const document = JSON.parse(explain(['hono', '--format', 'json']).stdout) as {
+      version: number;
+      framework: string;
+      flow: { endpoints: { id: string; steps: { functionId?: string; calls: string[] }[] }[] };
+      functions: Record<string, { name: string }>;
+    };
+    expect(document.version).toBe(2);
+    expect(document.framework).toBe('hono');
+    const step = document.flow.endpoints.find((e) => e.id === 'token')?.steps.find((s) => s.calls.length > 0);
+    expect(step?.functionId).toMatch(/^hono:oidc-provider\/endpoints\/token\/steps\//);
+    expect(document.functions[step?.calls[0] as string]?.name).toBeDefined();
+  });
+
+  it('should write the output to the --output file', () => {
+    const file = join(tmpdir(), `maronn-explain-${Date.now()}.txt`);
+    const { stdout } = explain(['token', '-o', file]);
+    expect(stdout).toBe('');
+    expect(readFileSync(file, 'utf-8')).toContain('POST /token');
+    rmSync(file, { force: true });
+  });
+
+  it('should error on an unknown endpoint, step or function and on two targets', () => {
+    expect(explain(['nope']).errors.join('\n')).toContain('Unknown endpoint "nope"');
+    expect(explain(['token/nope']).errors.join('\n')).toContain('Unknown step "nope" of endpoint "token"');
+    expect(explain(['fn', 'nope']).errors.join('\n')).toContain('Unknown function "nope"');
+    expect(explain(['token', 'userinfo']).errors.join('\n')).toContain('explain takes one target');
+    expect(explain(['fn']).errors.join('\n')).toContain('fn needs one function name');
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
+  it('should error on a --depth that is not a whole number of 1 or more, and on an unknown --format', () => {
+    expect(explain(['token/respond', '--depth', '0']).errors.join('\n')).toContain('--depth needs a whole number of 1 or more');
+    expect(explain(['--format', 'mermaid']).errors.join('\n')).toContain('--format needs one of text, json');
+    process.exitCode = undefined;
+  });
+
+  it('should list explain and its options in help output', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    run(['--help']);
+    const output = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    logSpy.mockRestore();
+    expect(output).toContain('explain [framework] [<endpoint>[/<step>] | fn <name>]');
+    expect(output).toContain('--depth <n>');
+    expect(output).toContain('--callers');
   });
 });

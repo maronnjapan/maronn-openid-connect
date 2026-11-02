@@ -51,3 +51,6 @@ samples/*/.vercel/
 # packages/cli: the templates the build copies from apps/, and the generated test:matrix combinations
 packages/cli/templates/
 packages/cli/.matrix/
+
+# apps/map: the data of the map, built from the CLI (pnpm run build:map)
+apps/map/public/data/

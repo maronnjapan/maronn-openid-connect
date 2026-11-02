@@ -9,7 +9,6 @@ export const meta = step({
   label: 'Authenticate the pushing client',
   spec: 'RFC 9126 §2.1',
   function: 'authenticatePushingClient',
-  calls: ['rejectForbiddenParParams', 'authenticateParClient'],
   consumes: ['params', 'authorization'],
   produces: ['clientId', 'pushedParams'],
   removable: false,

@@ -96,7 +96,7 @@ describe('buildOpFlow', () => {
 
     it('should copy the generation inputs into the document', () => {
       const flow = buildOpFlow({ features: DEFAULT_FEATURES, scopes: ['reports.read'], db: 'sql' });
-      expect(flow.version).toBe(1);
+      expect(flow.version).toBe(2);
       expect(flow.features).toEqual(DEFAULT_FEATURES);
       expect(flow.scopes).toEqual(['reports.read']);
       expect(flow.db).toBe('sql');
@@ -332,8 +332,8 @@ describe('buildOpFlow', () => {
       const withScopes = buildOpFlow({ features: DEFAULT_FEATURES, scopes: ['reports.read'] });
       const calls = (flow: typeof without) =>
         flow.endpoints.find((e) => e.id === 'authorize')?.steps.find((s) => s.id === 'validate-request')?.calls;
-      expect(calls(without)?.includes('findUnsupportedScopes')).toBe(true);
-      expect(calls(withScopes)?.includes('findUnsupportedScopes')).toBe(true);
+      expect(calls(without)?.includes('hono:oidc-provider/scopes.ts#findUnsupportedScopes')).toBe(true);
+      expect(calls(withScopes)?.includes('hono:oidc-provider/scopes.ts#findUnsupportedScopes')).toBe(true);
     });
   });
 

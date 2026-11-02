@@ -188,6 +188,7 @@ h1, h2, h3, h4 { margin: 0; }
 .diagram .box-badge.badge-moved rect, .diagram .box-badge.badge-docs rect, .diagram .box-badge.badge-noted rect { fill: var(--surface); stroke: var(--faint); }
 .diagram .box-badge.badge-moved text, .diagram .box-badge.badge-docs text, .diagram .box-badge.badge-noted text { fill: var(--muted); font-weight: 500; }
 .endpoint-label .badge { margin-left: 2px; }
+.file-changes { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 
 .changes-button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 4px 2px 12px; cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
 .changes-button:hover { background: var(--surface-2); }

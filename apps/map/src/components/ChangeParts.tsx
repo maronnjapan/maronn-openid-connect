@@ -146,7 +146,11 @@ export function ReachedList({ reached, limit = 8, onOpenFunction }: { reached: r
               <Badge mark={markOf(change.kind)} /> <span className="mono">{card.name}()</span>
             </span>
             <span className="row-text">{via.length === 0 ? '直接呼ぶ' : `${via.map((between) => `${between.name}()`).join(' → ')} を経由して呼ぶ`}</span>
-            {change.notes?.[0] !== undefined ? <span className="row-text">{change.notes[0].text.split('\n')[0]}</span> : null}
+            {change.notes?.[0] !== undefined ? (
+              <span className="row-text">
+                <Inline text={change.notes[0].text.split('\n')[0] ?? ''} />
+              </span>
+            ) : null}
           </button>
         </li>
       ))}

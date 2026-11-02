@@ -205,7 +205,6 @@ function ProviderMap({ data }: { data: MapData }) {
           <Sidebar
             data={data}
             changes={changes}
-            flow={flow}
             framework={view.framework}
             enabled={enabled}
             endpoints={endpoints}

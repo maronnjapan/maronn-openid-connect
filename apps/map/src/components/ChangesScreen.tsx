@@ -75,7 +75,7 @@ export function ChangesScreen({ data, index, flow, onOpenFunction, onOpenEndpoin
   const groups = useMemo(() => groupChanges(changes), [changes]);
   const marked = useMemo(
     () => flow.endpoints.flatMap((endpoint) => {
-      const mark = endpointMark(index, data, flow, endpoint);
+      const mark = endpointMark(index, data, endpoint);
       return mark === undefined ? [] : [{ endpoint, mark }];
     }),
     [index, data, flow],

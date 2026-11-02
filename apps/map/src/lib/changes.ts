@@ -6,8 +6,8 @@
  * numbers, and the blocks of the text of a change note. Nothing here touches
  * the DOM.
  */
-import type { ChangeKind, DiffHunk, FlowEndpoint, FlowStep, FunctionCard, FunctionChange, FunctionFlowNode, MapChanges, MapData, OpFlow } from '../types';
-import { endpointsInModule } from './model';
+import type { ChangeKind, DiffHunk, FlowEndpoint, FlowStep, FunctionCard, FunctionChange, FunctionFlowNode, MapChanges, MapData } from '../types';
+import { holdsFunction } from './model';
 
 /**
  * What a badge says: how a function changed; `inside`, a function it calls
@@ -135,18 +135,20 @@ export function nodeMark(
 }
 
 /**
- * The badge of an endpoint in the list: the strongest badge of its steps, or
- * the change of a function its own file holds (a Route Handler of Next.js
- * and the functions beside it, the pipeline.ts of Hono), whose blocks are not
- * functions of their own.
+ * The changed functions the own file of an endpoint holds (a Route Handler
+ * of Next.js and the functions beside it, the pipeline.ts of Hono), by name.
+ * Its blocks are not functions of their own, so a change there may show in
+ * no step.
  */
-export function endpointMark(index: ChangeIndex | undefined, data: MapData, flow: OpFlow, endpoint: FlowEndpoint): Mark | undefined {
+export function changesInFile(index: ChangeIndex | undefined, endpoint: Pick<FlowEndpoint, 'module'>): FunctionChange[] {
+  if (index === undefined) return [];
+  return [...index.byId.values()].filter((change) => holdsFunction(endpoint, change)).sort((a, b) => compare(a.name, b.name));
+}
+
+/** The badge of an endpoint in the list: the strongest badge of its steps and of the changed functions of its own file. */
+export function endpointMark(index: ChangeIndex | undefined, data: MapData, endpoint: FlowEndpoint): Mark | undefined {
   if (index === undefined) return undefined;
-  const marks = endpoint.steps.map((step) => stepMark(index, data, step));
-  for (const change of index.byId.values()) {
-    if (endpointsInModule(flow, change).some((candidate) => candidate.id === endpoint.id)) marks.push(markOf(change.kind));
-  }
-  return strongest(marks);
+  return strongest([...endpoint.steps.map((step) => stepMark(index, data, step)), ...changesInFile(index, endpoint).map((change) => markOf(change.kind))]);
 }
 
 /** The badge that wins among several (see RANK). */

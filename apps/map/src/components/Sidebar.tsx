@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { FlowEndpoint, MapData, OpFlow } from '../types';
+import type { FlowEndpoint, MapData } from '../types';
 import { endpointMark, type ChangeIndex } from '../lib/changes';
 import { commandLine } from '../lib/model';
 import { Badge } from './ChangeParts';
@@ -8,8 +8,6 @@ export interface SidebarProps {
   data: MapData;
   /** The changes of the pull request, in the map of one: the endpoints they show in get a badge. */
   changes: ChangeIndex | undefined;
-  /** The flow of the framework, every feature on (a change in the file of an endpoint marks it). */
-  flow: OpFlow;
   framework: string;
   enabled: ReadonlySet<string>;
   endpoints: readonly FlowEndpoint[];
@@ -23,8 +21,8 @@ export interface SidebarProps {
  * make the configuration (folded, so the list stays short). In the map of a
  * pull request, an endpoint whose diagram shows a change carries its badge.
  */
-export function Sidebar({ data, changes, flow, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint }: SidebarProps) {
-  const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, data, flow, endpoint)])), [changes, data, flow, endpoints]);
+export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint }: SidebarProps) {
+  const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, data, endpoint)])), [changes, data, endpoints]);
   const rows: React.ReactNode[] = [];
   let group: string | null = null;
   for (const endpoint of endpoints) {

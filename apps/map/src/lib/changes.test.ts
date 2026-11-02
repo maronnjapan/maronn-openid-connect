@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { FlowEndpoint, FlowStep, FunctionCard, FunctionChange, FunctionFlowNode, MapChanges, MapData, OpFlow } from '../types';
 import {
   changesBelow,
+  changesInFile,
   changesOfStep,
   diffStat,
   endpointMark,
@@ -133,11 +134,19 @@ describe('nodeMark', () => {
 
 describe('endpointMark', () => {
   it('should take the strongest badge of the steps of an endpoint', () => {
-    expect(endpointMark(index, data, flow, endpoint)?.kind).toBe('modified');
+    expect(endpointMark(index, data, endpoint)?.kind).toBe('modified');
   });
 
   it('should mark an endpoint whose own file holds a changed function', () => {
-    expect(endpointMark(index, data, flow, quiet)?.kind).toBe('docs');
+    expect(endpointMark(index, data, quiet)?.kind).toBe('docs');
+  });
+});
+
+describe('changesInFile', () => {
+  it('should find the changed functions the own file of an endpoint holds', () => {
+    expect(changesInFile(index, quiet).map((entry) => entry.id)).toEqual(['nextjs:app/quiet/route.ts#POST']);
+    expect(changesInFile(index, endpoint)).toEqual([]);
+    expect(changesInFile(undefined, quiet)).toEqual([]);
   });
 });
 

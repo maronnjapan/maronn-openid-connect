@@ -295,7 +295,7 @@ describe('pullRequestOf', () => {
 });
 
 describe('changesMarkdown', () => {
-  it('should count the kinds, quote the notes and list the functions with what the notes say, counting only the bare JSDoc changes', () => {
+  it('should count the kinds, quote the notes and list the functions with the first line of what the notes say, counting only the bare JSDoc changes', () => {
     const markdown = changesMarkdown({
       base: { ref: 'origin/main', commit: 'abc' },
       head: { commit: 'def', dirty: false },
@@ -321,7 +321,7 @@ describe('changesMarkdown', () => {
         '| | 関数 | 場所 | 説明 |',
         '|---|---|---|---|',
         '| 追加 | `add()` | core b.ts | （説明なし） |',
-        '| 変更 | `run()` | core a.ts | 速く \\| した。 続き。 |',
+        '| 変更 | `run()` | core a.ts | 速く \\| した。 |',
         '| JSDoc だけ変更 | `told()` | core d.ts | 言い換えた。 |',
         '',
         '説明のない、JSDoc だけ変えた関数 1 個は表に入れていません（地図の「このPRの変更」にあります）。',

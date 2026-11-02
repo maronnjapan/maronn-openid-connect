@@ -514,10 +514,19 @@ export function pullRequestOf(env) {
   return pullRequest;
 }
 
+/** A text cut to `limit` characters, with an ellipsis. */
+function cut(text, limit) {
+  return [...text].length <= limit ? text : `${[...text].slice(0, limit - 1).join('')}…`;
+}
+
 /** The first paragraph of a text on one line, cut to `limit` characters. */
 function firstParagraph(text, limit) {
-  const paragraph = (text.split(/\n\s*\n/)[0] ?? '').replace(/\s*\n\s*/g, ' ').trim();
-  return [...paragraph].length <= limit ? paragraph : `${[...paragraph].slice(0, limit - 1).join('')}…`;
+  return cut((text.split(/\n\s*\n/)[0] ?? '').replace(/\s*\n\s*/g, ' ').trim(), limit);
+}
+
+/** The first line of a text (the repository writes a sentence a line), cut to `limit` characters. */
+function firstLine(text, limit) {
+  return cut((text.trim().split('\n')[0] ?? '').trim(), limit);
 }
 
 /** A text for a cell of a Markdown table: no line breaks, no `|` that ends the cell. */
@@ -528,7 +537,7 @@ function cell(text) {
 /**
  * The changes in Markdown, for the comment on the pull request and the
  * summary of the run: the counts by kind, what the notes say the pull request
- * does, and the first `limit` functions with the first paragraph of what the
+ * does, and the first `limit` functions with the first line of what the
  * notes say about each. A function whose JSDoc alone changed and that no note
  * explains is only counted, so a pull request that rewrites many JSDoc
  * blocks does not bury the changes of code.
@@ -552,7 +561,7 @@ export function changesMarkdown(changes, { limit = 30 } = {}) {
     lines.push('', '| | 関数 | 場所 | 説明 |', '|---|---|---|---|');
     for (const change of listed.slice(0, limit)) {
       const note = change.notes?.map((entry) => entry.text).join('\n\n');
-      const text = note === undefined || note === '' ? '（説明なし）' : firstParagraph(note, 160);
+      const text = note === undefined || note === '' ? '（説明なし）' : firstLine(note, 160);
       lines.push(`| ${KIND_WORDS[change.kind]} | \`${change.name}()\` | ${cell(`${change.package} ${change.module}`)} | ${cell(text)} |`);
     }
     if (listed.length > limit) lines.push('', `ほか ${listed.length - limit} 個は地図で見てください。`);

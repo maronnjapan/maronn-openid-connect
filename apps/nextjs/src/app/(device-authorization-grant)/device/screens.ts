@@ -104,9 +104,15 @@ export function loginScreen(
 }
 
 /**
- * The approve / deny screen. RFC 8628 §5.4: the user_code is repeated so the
- * End-User can check it against the device in front of them — the only defense
- * against being lured into approving someone else's device.
+ * 承認と拒否の画面を HTML で返す。
+ *
+ * ユーザーコード、クライアント、要求されたスコープを表示し、承認と拒否のボタンで `decision`、`user_code`、`csrf_token` を `/device/approve` に送る。
+ * `cookies`（バインディング Cookie や OP のセッションの Cookie）は、`Set-Cookie` ヘッダーとして付ける。
+ *
+ * ユーザーコードをもう一度表示するのは、エンドユーザーが手元のデバイスの表示と見比べられるようにするためである（RFC 8628 §5.4）。
+ * 他人のデバイスを承認するよう誘導される攻撃に対しては、この見比べが唯一の防御になる。
+ *
+ * @spec RFC 8628 §5.4
  */
 export function approvalScreen(
   params: { userCode: string; csrfToken: string; clientId: string; scopes: readonly string[] },
@@ -137,7 +143,12 @@ ${scopeListHtml}
   );
 }
 
-/** The "go back to your device" screen. */
+/**
+ * デバイスに戻るよう伝える完了画面を HTML で返す。
+ *
+ * エンドユーザーがクライアントを承認したか拒否したかと、このページを閉じてデバイスに戻ってよいことを表示する。
+ * `cookies`（バインディング Cookie を消す Cookie）は、`Set-Cookie` ヘッダーとして付ける。
+ */
 export function completedScreen(
   params: { approved: boolean; clientId: string },
   cookies: readonly string[] = [],
@@ -160,9 +171,11 @@ ${outcome}
 }
 
 /**
- * A failed binding or CSRF check, shown on the OP's error page with its status
- * (403 for a missing binding). Anything that is not a verification failure is
- * rethrown.
+ * 検証の失敗を、OP のエラーページで応答する。
+ *
+ * `DeviceVerificationError`（バインディング Cookie か CSRF トークンの検証の失敗）なら、そのメッセージとステータスコード（403）で OP のエラーページを返す。
+ * `DeviceAuthorizationError`（承認か拒否の前にレコードが決定済みになっていたとき）なら、その説明（`errorDescription`）で 400 のエラーページを返す。
+ * それ以外のエラーは、そのまま投げ直す。
  */
 export function verificationFailureScreen(error: unknown): Response {
   if (error instanceof DeviceVerificationError) {

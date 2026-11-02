@@ -74,7 +74,7 @@ export function OPTIONS(request: Request): Response {
 /**
  * メタデータでクライアントを登録し、201 で応答する。
  *
- * 201 のボディには、`client_id`、`client_secret` で認証する方式を登録したクライアントには発行した `client_secret`、登録したすべてのメタデータを入れ、キャッシュを禁止して返す。
+ * 201 のボディには `client_id` と登録したすべてのメタデータを入れ、`client_secret` で認証する方式を登録したクライアントには発行した `client_secret` も入れて、キャッシュを禁止して返す。
  * ストアに保存するクライアントは、シークレットをハッシュでだけ持つ。
  *
  * 失敗したときは次のように応答する。
@@ -132,7 +132,8 @@ async function registerClient(request: Request): Promise<Response> {
 
   try {
     // ボディを読む。
-    // 読み取りを `try` の中に置くので、転送が中断されたり壊れていたりしても、Next.js の既定の 500 ではなく、Hono 版のパイプラインと同じく、キャッシュを禁止した固定の `server_error` の JSON で応答する。
+    // 読み取りを `try` の中に置くので、転送が中断されたり壊れていたりしても、Next.js の既定の 500 にはならない。
+    // Hono 版のパイプラインと同じく、キャッシュを禁止した固定の `server_error` の JSON で応答する。
     const rawBody = await request.text();
 
     // ボディの大きさと JSON の形を確かめ、`software_statement`（RFC 7591 §2.3）をそれ以外のメタデータから分ける。

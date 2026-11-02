@@ -54,17 +54,19 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Answer a device authorization request (POST /device_authorization) with the
- * no-store JSON of deviceAuthorization() — device_code, user_code and the
- * verification URIs, or an OAuth error — plus the clientCors headers.
+ * デバイス認可リクエストに応答し、CORS ヘッダーを付ける。
+ *
+ * `POST /device_authorization` に、`deviceAuthorization()` が作るキャッシュ禁止の JSON（`device_code`、`user_code`、検証用の URI か、OAuth のエラーレスポンス）で応答する。
+ * 応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
  */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await deviceAuthorization(request));
 }
 
 /**
- * Answer the CORS preflight of /device_authorization: 204 with no body and the
- * clientCors headers (allowed origin, methods, headers, max age).
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/device_authorization` で、応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);

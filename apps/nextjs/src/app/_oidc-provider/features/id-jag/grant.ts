@@ -48,7 +48,7 @@ import { idJagConfig } from './config';
  * 署名した ID-JAG を発行し、200 で応答する。
  *
  * `subject_token` は、この OP が認証したクライアントに発行した ID トークンでなければならない。
- * `idJagConfig.allowRefreshTokenSubjects` が true なら（既定）、この OP がそのクライアントに発行したリフレッシュトークンも受け付ける。
+ * `idJagConfig.allowRefreshTokenSubjects` が true（既定値）なら、この OP がそのクライアントに発行したリフレッシュトークンも受け付ける。
  * 発行するのは `audience` で指定したリソース側の認可サーバー宛ての署名付きのグラントの JWT で、アクセストークンではない（レスポンスの `token_type` は `N_A`）。
  * レスポンスはキャッシュを禁止して返す。
  *

@@ -39,7 +39,7 @@ export const meta = step({
  * このステップは、クライアントの認証の直後、同じ `grant_type` の URN を使うふつうのトークン交換のステップと `grant_type` の検証より前に実行する。
  *
  * `subject_token` は、この OP が認証したクライアントに発行した ID トークンでなければならない。
- * `idJagConfig.allowRefreshTokenSubjects` が true なら（既定）、この OP がそのクライアントに発行したリフレッシュトークンも受け付ける。
+ * `idJagConfig.allowRefreshTokenSubjects` が true（既定値）なら、この OP がそのクライアントに発行したリフレッシュトークンも受け付ける。
  * 発行するのは `audience` で指定したリソース側の認可サーバー宛ての署名付きのグラントの JWT で、アクセストークンではない（レスポンスの `token_type` は `N_A`）。
  *
  * 実験的な機能である `@maronn-openid-connect/experimental` を使う。

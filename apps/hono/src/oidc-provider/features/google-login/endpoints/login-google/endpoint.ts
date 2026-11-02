@@ -3,7 +3,7 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 /**
  * Google から送られた ID トークンを検証し、OP のセッションを確立して同意画面へリダイレクトする。
  *
- * 「Google でログイン」の `login_uri` であり、ログインを終えたブラウザが ID トークンを POST で送る。
+ * 「Google でログイン」の `login_uri` で、ログインを終えたブラウザから ID トークンが POST で届く。
  * 検証した Google アカウントは OP のユーザーに対応付け（既定では初回のログインでユーザーを作る）、そのユーザーでトランザクションのセッションを始める。
  *
  * 拡張機能なので、`--enable google-login` を付けて生成したときだけ含まれる。

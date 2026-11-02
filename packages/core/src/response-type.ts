@@ -47,8 +47,8 @@ const RESPONSE_TYPE_VALUE_ORDER: readonly string[] = ['code', 'id_token', 'token
  * これら以外の値は、その後ろに文字コード順で並べる。
  *
  * 同じ値が重なっていても取り除かない。
- * 空白が続いているときや前後に空白があるときにできる空の値も、これら以外の値として残す。
- * このような値は、1 つの半角空白で区切るという形（RFC 6749 §3.1.1）に反しており、並べ直した文字列は OP が扱うどの `response_type` とも一致しない。
+ * 空白が続いているときや前後に空白があるとき（1 つの半角空白で区切る形に反する値、RFC 6749 §3.1.1）にできる空の値も、これら以外の値として残す。
+ * どちらの場合も、並べ直した文字列は OP が扱うどの `response_type` とも一致しない。
  *
  * @spec OAuth 2.0 Multiple Response Type Encoding Practices §1.2
  * @spec RFC 6749 §3.1.1
@@ -110,8 +110,7 @@ export function isHybridResponseType(responseType: string | undefined): boolean 
  * - `token` か `id_token` を含む `response_type`（インプリシットフローとハイブリッドフロー）には `fragment` を返す。
  * - それ以外の `response_type`（`code` など）には `query` を返す（OAuth 2.0 Multiple Response Type Encoding Practices §2.1）。
  *
- * `token` か `id_token` を含む `response_type` では、`query` で返してはならない（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
- * アクセストークンと ID トークンをクエリに含めないためである。
+ * `token` か `id_token` を含む `response_type` では、アクセストークンと ID トークンをクエリに含めないように、`query` で返してはならない（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
  * 成功の認可レスポンスもエラーレスポンスも、このレスポンスモードで返す（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、OIDC Core 1.0 §3.2.2.6、§3.3.2.6）。
  *
  * @spec OAuth 2.0 Multiple Response Type Encoding Practices §2.1

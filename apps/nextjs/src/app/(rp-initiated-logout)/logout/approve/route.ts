@@ -40,7 +40,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const confirmation = parseLogoutConfirmation(cookieHeader);
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
-    // 偽造、リプレイ、期限切れのどれかの確認なので、何も削除しない。
+    // 偽造された、リプレイされた、または期限切れの確認なので、何も削除しない。
     // ブラウザに見せる画面なので、OAuth のエラーの JSON ではなくエラーページで応答する。
     return errorPage('Invalid logout confirmation', 400);
   }

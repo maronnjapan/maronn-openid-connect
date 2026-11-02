@@ -300,7 +300,7 @@ function normalizePath(path: string): string {
  */
 function pathMatches(pattern: string, path: string): boolean {
   // 末尾の `/*` を除いてから比べる。
-  // Hono の `/x/*` は `/x` とその下のすべてのパスに一致し、`/*` のないパターンも同じように扱う。
+  // Hono の `/x/*` は `/x` とその下のすべてのパスに一致するので、`/*` のないパターンも同じ範囲に一致させる。
   const normalized = normalizeMount(pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern);
   if (normalized === '') return true;
   return path === normalized || path.startsWith(normalized + '/');

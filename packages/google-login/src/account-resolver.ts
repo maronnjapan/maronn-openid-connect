@@ -30,7 +30,7 @@ export interface GoogleAccountResolver {
  * Google アカウントに対応する OP のサブジェクトを返す。
  *
  * サブジェクトは `resolver.resolveSubject()` で取得する。
- * `resolver` が `null` か空文字を返したときは、対応するユーザーがいないものとして投げる。
+ * `resolver` が `null` か空文字を返したときは、対応するユーザーがいないものとして `account_not_linked` を投げる。
  *
  * 呼び出し側は、返したサブジェクトを core の認証セッション（`SessionInfo.subject`）と同意のステップに渡す。
  *

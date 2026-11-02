@@ -67,7 +67,7 @@ export function renderLogoutCompletedPage(c: any, params: LogoutCompletedPagePar
  */
 function respond(c: any, outcome: LogoutOutcome): Response {
   if (outcome.kind === 'invalid_confirmation') {
-    // 偽造、リプレイ、期限切れのどれかの確認であり、何も削除していない。
+    // 偽造された、リプレイされた、または期限切れの確認であり、何も削除していない。
     // ブラウザに見せる画面なので、OAuth のエラーの JSON ではなくエラーページで応答する。
     return renderErrorPage(c, { error: 'Invalid logout confirmation', statusCode: 400 });
   }

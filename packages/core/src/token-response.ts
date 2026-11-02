@@ -184,7 +184,7 @@ export function buildAccessTokenPayload(
 /**
  * アクセストークンの `at_hash` を計算して返す。
  *
- * ID トークンの JOSE ヘッダーの `alg` が使うハッシュ関数でアクセストークンをハッシュし、左半分を base64url で符号化した値である（OIDC Core 1.0 §3.1.3.6）。
+ * `at_hash` は、ID トークンの JOSE ヘッダーの `alg` が使うハッシュ関数でアクセストークンをハッシュし、左半分を base64url で符号化した値である（OIDC Core 1.0 §3.1.3.6）。
  * ハッシュ関数は `idTokenPrivateKey` のアルゴリズムから決める（RS256 と ES256 なら SHA-256、RS384 と ES384 なら SHA-384、RS512 と ES512 なら SHA-512）。
  * 左半分はハッシュ値の前半のバイト（SHA-256 なら 16 バイト、SHA-384 なら 24 バイト、SHA-512 なら 32 バイト）なので、`alg` によらず同じ計算で求まる。
  * 対応していないアルゴリズムの鍵には `Error` を投げる。
@@ -203,8 +203,7 @@ export async function computeAtHash(
 /**
  * 認可コードの `c_hash` を計算して返す。
  *
- * 求め方は `at_hash` と同じで、対象が認可コードの ASCII 表現になる（{@link computeAtHash}）。
- * つまり、ID トークンの JOSE ヘッダーの `alg` が使うハッシュ関数で認可コードをハッシュし、左半分を base64url で符号化した値である。
+ * `c_hash` は、ID トークンの JOSE ヘッダーの `alg` が使うハッシュ関数で認可コードの ASCII 表現をハッシュし、左半分を base64url で符号化した値で、対象が違うだけで `at_hash` と同じ求め方である（{@link computeAtHash}）。
  * ハイブリッドフローで認可エンドポイントが認可コードと一緒に ID トークンを返すとき（`code id_token` と `code id_token token`）、ID トークンは `c_hash` を含まなければならない（OIDC Core 1.0 §3.3.2.11）。
  *
  * @spec OIDC Core 1.0 §3.3.2.11
@@ -270,7 +269,7 @@ export interface ResolvedAcrAmr {
  * `acrResolver` には、サブジェクト、クライアント ID、要求された `acr` の値を渡す。
  * 要求された値は認可リクエストの `acr_values` で、ないときは `claims` パラメータの `claims.id_token.acr.values` を使う（{@link selectRequestedAcrValues}）。
  * `claims.id_token.acr.values` は、`acr_values` での要求と同じ意味を持つためである（OIDC Core 1.0 §5.5.1.1）。
- * 返した `acr` と `amr` は ID トークンに入れ、`acr` はアクセストークンにも入れる。
+ * 呼び出し側は、返した `acr` と `amr` を ID トークンに入れ、`acr` をアクセストークンにも入れる。
  *
  * @spec OIDC Core 1.0 §12.1
  * @spec OIDC Core 1.0 §5.5.1.1

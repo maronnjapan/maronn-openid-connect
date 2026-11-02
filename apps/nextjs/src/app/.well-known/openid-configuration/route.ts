@@ -18,31 +18,36 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Answer GET /.well-known/openid-configuration with the provider metadata of
- * providerMetadata() and the publicCors headers, which let any origin read it.
+ * OP のメタデータに CORS のヘッダーを付けて応答する。
+ *
+ * GET `/.well-known/openid-configuration` に、`providerMetadata()` のレスポンスで応答する。
+ * 付けるのは `publicCors` のヘッダーなので、どのオリジンからも読める。
  */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, publicCors, await providerMetadata());
 }
 
 /**
- * Answer the CORS preflight of /.well-known/openid-configuration: 204 with no
- * body and the publicCors headers, which let any origin GET it.
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/.well-known/openid-configuration` で、応答には、どのオリジンからも GET できるようにする `publicCors` のヘッダーを付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, publicCors);
 }
 
 /**
- * Answer the OpenID Provider Configuration request with this OP's metadata —
- * its endpoint URLs built on the issuer, the response types, grants, scopes,
- * claims and signing algs it supports, and what each enabled feature adds — as
- * JSON cacheable for an hour (Cache-Control: public, max-age=3600).
+ * OP のメタデータを組み立て、JSON で応答する。
  *
- * 503 server_error when the signing keys cannot be loaded: the ID Token and
- * UserInfo signing algs it advertises come from them.
+ * メタデータには、設定の `issuer` をもとにしたエンドポイントの URL、対応するレスポンスタイプ、グラントタイプ、スコープ、クレーム、署名アルゴリズムと、有効な機能が加える項目を含む。
+ * レスポンスは 1 時間キャッシュしてよい（`Cache-Control: public, max-age=3600`）。
  *
- * @spec OIDC Discovery 1.0 §3 / §4
+ * 署名鍵を読み込めないときは、503 の `server_error` で応答する。
+ * 公開する ID トークンと UserInfo の署名アルゴリズムは、署名鍵から求めるためである。
+ *
+ * @throws {Error} `buildProviderMetadata()` が設定の誤り（`issuer` が正しい URL でないなど）を見つけたとき。
+ * @spec OIDC Discovery 1.0 §3
+ * @spec OIDC Discovery 1.0 §4
  */
 async function providerMetadata(): Promise<Response> {
   // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
@@ -50,34 +55,27 @@ async function providerMetadata(): Promise<Response> {
   if (!keys) return signingKeysUnavailable();
 
   // [build-metadata] Build the provider metadata — OIDC Discovery 1.0 §3 / RFC 8414
-  // Every endpoint URL is built on config.issuer. The members below are those
-  // of every provider; each feature adds its own (its endpoint, the grants it
-  // answers, the response modes it signs) through the discovery entry of its
-  // feature.ts.
+  // エンドポイントの URL は、すべて設定の `issuer` をもとに作る。
+  // ここで書く項目はどの OP にもあるもので、機能はそれぞれ、自分の項目（エンドポイント、扱うグラントタイプ、署名するレスポンスモード）を、その機能の feature.ts の `discovery` で加える。
   const issuer = config.issuer;
   const metadata = buildProviderMetadata({
     issuer,
     authorizationEndpoint: `${issuer}/authorize`,
     tokenEndpoint: `${issuer}/token`,
     jwksUri: `${issuer}/.well-known/jwks.json`,
-    // code, and the response types the features answer (the Implicit Flow's
-    // id_token and id_token token, the Hybrid Flow's code id_token, code token
-    // and code id_token token: authorize.responseTypes of its feature.ts).
+    // `code` と、機能が扱うレスポンスタイプ（その機能の feature.ts の `authorize.responseTypes`）を並べる。
+    // インプリシットフローは `id_token` と `id_token token` を、ハイブリッドフローは `code id_token`、`code token`、`code id_token token` を加える。
     responseTypesSupported: ['code', ...responseTypesOf(features)],
-    // OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / OIDC Discovery
-    // 1.0 §3: the code flow answers via query. A feature that answers in
-    // another response mode (the fragment of the Implicit and Hybrid Flows,
-    // form_post, JARM) adds it to this list.
+    // 認可コードフローは、認可レスポンスをクエリで返す（OAuth 2.0 Multiple Response Type Encoding Practices §2.1、OIDC Discovery 1.0 §3）。
+    // ほかのレスポンスモード（インプリシットフローとハイブリッドフローのフラグメント、`form_post`、JARM）で応答する機能は、そのモードをこの一覧に加える。
     responseModesSupported: ['query'],
     subjectTypesSupported: ['public'],
-    // OIDC Core 1.0 §15.1: id_token_signing_alg_values_supported is derived from
-    // every registered ID Token key, so a mixed RS256 + ES256 set is advertised
-    // as such (buildProviderMetadata enforces that RS256 is present).
+    // `id_token_signing_alg_values_supported` は、登録したすべての ID トークンの鍵から求めるので、RS256 と ES256 が混在する鍵の集合はそのとおりに公開される（OIDC Core 1.0 §15.1）。
+    // RS256 の鍵があることは `buildProviderMetadata()` が確かめる。
     idTokenSigningKeys: keys.idToken.map((key) => key.privateKey),
     userinfoEndpoint: `${issuer}/userinfo`,
     scopesSupported: [...ADVERTISED_SCOPES],
-    // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP produces Normal Claims only
-    // (no _claim_names / _claim_sources).
+    // この OP は通常のクレーム（`normal`）だけを返し、`_claim_names` や `_claim_sources` は使わない（OIDC Core 1.0 §5.6、OIDC Discovery 1.0 §3）。
     claimTypesSupported: ['normal'],
     claimsSupported: [
       'sub',
@@ -85,10 +83,9 @@ async function providerMetadata(): Promise<Response> {
       'aud',
       'exp',
       'iat',
-      // OIDC Core 1.0 §2 / §3.1.3.6: ID Token protocol claims the OP issues
-      // (at_hash for the access token issued with the ID Token, §3.1.3.6 /
-      // §3.2.2.10). c_hash (§3.3.2.11) comes with the hybrid-flow feature,
-      // which advertises it through the discovery entry of its feature.ts.
+      // 以下は、OP が発行する ID トークンのプロトコルのクレームである（OIDC Core 1.0 §2、§3.1.3.6）。
+      // `at_hash` は、ID トークンと一緒に発行するアクセストークンに対して付ける（OIDC Core 1.0 §3.1.3.6、§3.2.2.10）。
+      // `c_hash`（OIDC Core 1.0 §3.3.2.11）は、`hybrid-flow` の機能が feature.ts の `discovery` で加える。
       'auth_time',
       'nonce',
       'acr',
@@ -115,44 +112,37 @@ async function providerMetadata(): Promise<Response> {
       'phone_number',
       'phone_number_verified',
     ],
-    // The authorization_code grant, and the grants the features answer at the
-    // token endpoint (the token entry of their feature.ts). A feature that
-    // answers a grant at the authorization endpoint (the implicit grant of
-    // the Implicit and Hybrid Flows) adds it through the discovery entry of
-    // its feature.ts.
+    // `authorization_code` と、機能がトークンエンドポイントで扱うグラントタイプ（その機能の feature.ts の `token`）を並べる。
+    // 認可エンドポイントで扱うグラントタイプ（インプリシットフローとハイブリッドフローの `implicit`）は、その機能が feature.ts の `discovery` で加える。
     grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
-    // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
-    // (no client_secret) are accepted at the token endpoint.
+    // `none` は、トークンエンドポイントがパブリッククライアント（`client_secret` を持たないクライアント）を受け付けることを示す（RFC 6749 §2.1、OAuth 2.1 §2.4）。
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
       'none',
     ],
-    // OIDC Core 1.0 §5.3.2: the algs the registered UserInfo keys can sign with,
-    // so clients relying on userinfo_signed_response_alg can trust the metadata.
+    // 登録した UserInfo の鍵で署名できるアルゴリズムを、重複を除いて並べる（OIDC Core 1.0 §5.3.2）。
+    // `userinfo_signed_response_alg` を使うクライアントは、メタデータの値をそのまま信頼できる。
     userinfoSigningAlgValuesSupported: [
       ...new Set(keys.userinfo.map((key) => getJwaAlgorithm(key.privateKey))),
     ],
-    // OIDC Core 1.0 §6.1 / §6.2 / OIDC Discovery 1.0 §3: Request Objects are
-    // advertised by the request-object feature. request_uri is not supported,
-    // so it is advertised as false explicitly: Discovery defaults
-    // request_uri_parameter_supported to true when omitted.
+    // リクエストオブジェクトへの対応は、`request-object` の機能が公開する（OIDC Core 1.0 §6.1）。
+    // `request_uri`（OIDC Core 1.0 §6.2）には対応しないので、明示的に `false` を公開する。
+    // 省略すると、ディスカバリーの仕様では `request_uri_parameter_supported` の既定値が `true` になるためである（OIDC Discovery 1.0 §3）。
     requestParameterSupported: false,
     requestUriParameterSupported: false,
-    // OIDC Discovery 1.0 §3 / Core 1.0 §5.5: the claims request parameter is
-    // implemented for both the ID Token and UserInfo.
+    // `claims` リクエストパラメータには、ID トークンと UserInfo の両方で対応している（OIDC Core 1.0 §5.5、OIDC Discovery 1.0 §3）。
     claimsParameterSupported: true,
-    // RFC 9207 §3: every authorization response carries iss.
+    // すべての認可レスポンスに `iss` を含める（RFC 9207 §3）。
     authorizationResponseIssParameterSupported: true,
   });
 
   // [respond] Respond (cacheable) — RFC 8414 §3.2 / RFC 9111 §5.2
-  // Discovery metadata is cacheable; 3600s, the same freshness lifetime as the
-  // JWKS endpoint.
+  // ディスカバリーのメタデータはキャッシュしてよいので、JWKS エンドポイントと同じ 3600 秒の有効期間を付ける。
   return Response.json(
     discoveryOf(
       features,
-      // RFC 7636 / OAuth 2.1: not an OIDC Discovery field, so added here.
+      // `code_challenge_methods_supported` は OIDC Discovery 1.0 の項目ではなく、PKCE（RFC 7636）と OAuth 2.1 の項目なので、ここで加える。
       { ...metadata, code_challenge_methods_supported: ['S256'] },
       issuer,
       config,

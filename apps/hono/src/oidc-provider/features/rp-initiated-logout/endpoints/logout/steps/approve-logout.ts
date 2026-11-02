@@ -35,7 +35,7 @@ export async function approveLogout(c: any, csrfToken: string): Promise<LogoutOu
 
   const confirmation = parseLogoutConfirmation(c.req.header('Cookie') ?? null);
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
-    // 偽造、リプレイ、期限切れのどれかの確認なので、何も削除しない。
+    // 偽造された、リプレイされた、または期限切れの確認なので、何も削除しない。
     return { kind: 'invalid_confirmation' };
   }
 

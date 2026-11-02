@@ -225,7 +225,7 @@ export function parseIdJagRedemptionParams(
  * 4. `iss` が信頼する IdP のどれかと一致し、この OP の `issuer` とは異なること。
  *    同じドメインの中で、ID-JAG をアクセストークンに引き換えないためである（ID-JAG draft §9.3）。
  * 5. 署名が、その IdP の JWKS で検証できること。
- *    `kid` が一致する鍵を優先し、ヘッダーに `kid` がなければ `alg` が一致する鍵を順に試す（鍵ごとに `alg` を固定する規則は、core の ID トークンの検証と同じ）。
+ *    ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ `alg` が一致する鍵を順に試し、鍵の `alg` がヘッダーの `alg` と違う鍵は使わない（core の ID トークンの検証と同じ規則）。
  * 6. `aud` がこの OP の `issuer` と一致すること。
  *    文字列か、要素が一つの配列だけを許し、要素が二つ以上ならオーディエンスの注入として拒否する（ID-JAG draft §4.4.1 の MUST）。
  * 7. `exp`、`iat`、`nbf`（あるとき）が、許容する時刻のずれ（`clockSkewToleranceSec`、既定は 60 秒）の範囲で妥当であること。
@@ -240,7 +240,7 @@ export function parseIdJagRedemptionParams(
  *
  * `jti` によるリプレイの拒否はしない。
  * ID-JAG draft §4.4.3 は、有効期間内に同じ ID-JAG を再び提示すること（リフレッシュトークンの代わり）を想定している。
- * ID-JAG を特定のクライアントに結び付けるのは、クライアント認証と `client_id` の一致と、短い `exp` である。
+ * 再提示を許す代わりに、クライアント認証と `client_id` の一致で ID-JAG を使えるクライアントを限り、短い `exp` で使える期間を限る。
  *
  * @throws {IdJagError} `invalid_grant`: 上のどれかを満たさないとき
  * @spec RFC 7521 §5.2
@@ -304,7 +304,7 @@ export async function verifyIdJagAssertion(options: {
   }
 
   // 検証に使う鍵の候補を選ぶ。
-  // `kid` が一致する鍵を優先し、ヘッダーに `kid` がなければ `alg` が一致する鍵を順に試す（core の `validateIdTokenHint()` と同じ規則）。
+  // ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ `alg` が一致する鍵を候補にする（core の `validateIdTokenHint()` と同じ規則）。
   // 鍵の `alg` がヘッダーの `alg` と違う候補は、検証せずに飛ばす（RFC 7515 §4.1.1 の、鍵ごとに `alg` を固定する規則）。
   const headerKid = typeof header['kid'] === 'string' ? header['kid'] : undefined;
   const candidates = headerKid
@@ -369,7 +369,7 @@ export async function verifyIdJagAssertion(options: {
   }
 
   // `client_id` クレームが、リクエストで認証したクライアントと一致することを確かめる（ID-JAG draft §4.4.1 の MUST）。
-  // ID-JAG の発行を受けたクライアントと、引き換えるクライアントが同じであることを保証する。
+  // ID-JAG の発行を受けたクライアント以外が、その ID-JAG を引き換えられないようにする。
   const clientId = payload['client_id'];
   if (typeof clientId !== 'string' || clientId.length === 0) {
     throw invalidAssertion('The assertion is missing a client_id claim');

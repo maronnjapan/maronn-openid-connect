@@ -393,7 +393,7 @@ export function validateExchangeScope(
 /**
  * `audience` と `resource` を許可リストで検証して返す。
  *
- * 指定された `audience` と `resource` が、どちらも許可リスト（`allowedTargets`）にあれば、重複を除いた配列で返す。
+ * 指定された `audience` と `resource`（片方だけでもよい）が、すべて許可リスト（`allowedTargets`）にあれば、重複を除いた配列で返す。
  * 一つでもなければ、`invalid_target` の {@link TokenExchangeError} を投げる。
  *
  * 返す値は最終的な `aud` ではなく、生成されたコードが core の `buildAccessTokenAudience()` の `requested` に渡す値である。

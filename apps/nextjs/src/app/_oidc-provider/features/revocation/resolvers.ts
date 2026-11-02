@@ -5,7 +5,12 @@
 import type { RevocationTokenResolvers } from '@maronn-openid-connect/core';
 import type { ProviderStores } from '../../store';
 
-/** The resolvers the revocation endpoint finds and revokes tokens through, on top of the access token and refresh token stores. */
+/**
+ * トークンを探して失効させるリゾルバを作って返す。
+ *
+ * 失効エンドポイントが使う。
+ * アクセストークンとリフレッシュトークンをストアから探す関数（なければ `null` を返す）、それぞれを失効させる関数、同じグラントのアクセストークンをまとめて失効させる関数を持つ。
+ */
 export function createRevocationResolvers(stores: ProviderStores): RevocationTokenResolvers {
   const { accessTokenStore, refreshTokenStore } = stores;
   return {

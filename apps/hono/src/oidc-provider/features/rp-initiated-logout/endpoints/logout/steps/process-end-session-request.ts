@@ -31,7 +31,7 @@ export const meta = step({
 /**
  * `id_token_hint` を検証し、ログアウトか確認画面を返す。
  *
- * `id_token_hint` が OP の鍵で検証でき（`client_id` を送ってきたときはヒントのオーディエンスと一致し）、現在の OP のセッションのエンドユーザーを示すときは、すぐにログアウトする。
+ * `id_token_hint` が OP の鍵で検証でき（`client_id` が送られたときは、その値がヒントの `aud` に含まれ）、現在の OP のセッションのエンドユーザーを示すときは、すぐにログアウトする。
  * OP のセッションを削除し、セッションの Cookie を消す Cookie を付けて、リダイレクト先があれば `redirect`、なければ `completed` を返す。
  * リダイレクト先は、要求された `post_logout_redirect_uri` が、ヒントのクライアントの登録した値と完全に一致するときだけ決まり、`state` を付ける。
  *

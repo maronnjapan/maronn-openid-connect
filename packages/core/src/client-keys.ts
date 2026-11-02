@@ -30,7 +30,7 @@ export interface ClientKeyResolver {
   /**
    * クライアントが `purpose` 用に登録した公開鍵を返す。
    *
-   * 返す値は JWK Set で、鍵がないとき（`clientId` のクライアントがないときも含む）は `keys` が空の JWK Set を返す。
+   * 鍵がないとき（`clientId` のクライアントがないときも含む）は、`keys` が空の JWK Set を返す。
    */
   findClientKeys(clientId: string, purpose: ClientKeyPurpose): Promise<JwkSet>;
 }
@@ -51,7 +51,7 @@ export interface ClientKeysByPurpose {
  *
  * 返す {@link ClientKeyResolver} の `findClientKeys()` は、呼ばれるたびに `lookup` を呼び、指定された用途の鍵の配列を複製して返す。
  * `lookup` が `undefined` を返したとき、またはその用途の鍵がないときは、`keys` が空の JWK Set を返す。
- * 呼ばれるたびに `lookup` を呼ぶので、`lookup` が返す値を変えれば、次の呼び出しから新しい鍵が使われる。
+ * そのため、`lookup` が返す値を変えれば、次の呼び出しから新しい鍵が使われる。
  */
 export function createClientKeyResolver(
   lookup: (clientId: string) => ClientKeysByPurpose | undefined | Promise<ClientKeysByPurpose | undefined>,

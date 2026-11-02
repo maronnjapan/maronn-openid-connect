@@ -13,23 +13,23 @@ import { requireSameOriginFormPost, requireTransaction } from '../_oidc-provider
 import { startSession } from './session';
 
 /**
- * Login Server Action.
+ * 認証情報を確かめ、同意画面へリダイレクトする。
  *
- * Checks the credentials, starts the OP session and continues to the consent
- * step. A wrong password goes back to the form with the error in the query, so
- * the page renders the message. A submission the OP refuses ends on the OP's
- * error page (oidc-error/page.tsx), never at the client.
+ * ログインフォームのサーバーアクションである。
+ * 認証に成功すると OP のセッションを始め（`startSession()`）、同意画面へリダイレクトする。
+ * パスワードが誤っていれば、エラーと残りの試行回数をクエリに入れてログイン画面へリダイレクトし、画面がそのメッセージを表示する。
+ * 試行回数を使い切ったとき、フォームが別オリジンから送られたとき、`csrf_token` が一致しないときは、クライアントへは戻さず、OP のエラーページ（oidc-error/page.tsx）へリダイレクトする。
+ * トランザクションが見つからないときは、`notFound()` でページの横の not-found.tsx を表示する。
  */
 export async function loginAction(formData: FormData): Promise<void> {
-  // First the browser's own statement of where the form was submitted from:
-  // independent of the cookie and the csrf_token below.
+  // 最初に、フォームの送信元を、ブラウザ自身が付けるヘッダーで確かめる。
+  // この確認は、後で確かめる Cookie にも `csrf_token` にも依存しない。
   await requireSameOriginFormPost();
 
-  // The transaction cookie says which transaction this browser is in ...
+  // トランザクションの Cookie から、このブラウザが進めているトランザクションを読み込む。
   const { transactionId, transaction } = await requireTransaction();
 
-  // ... and the CSRF token proves the submission came from the form this browser
-  // was shown for exactly that transaction.
+  // `csrf_token` が一致すれば、このトランザクションのためにこのブラウザへ表示したフォームから送られたと分かる。
   try {
     validateCsrfToken(transaction, String(formData.get('csrf_token') ?? ''));
   } catch (error) {
@@ -37,8 +37,8 @@ export async function loginAction(formData: FormData): Promise<void> {
     throw error;
   }
 
-  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
-  // upstream IdP) without touching anything above or below it.
+  // ユーザーストアで認証情報を確かめる。
+  // 独自の確認（LDAP、WebAuthn、上流の ID プロバイダなど）に差し替えるときは、この呼び出しだけを置き換えればよく、前後の処理は変えずに済む。
   const user = await stores.userStore.authenticate(
     String(formData.get('username') ?? ''),
     String(formData.get('password') ?? ''),
@@ -46,7 +46,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   if (!user) {
     const failure = await handleLoginFailure(transactionId, transaction, stores.transactionStore);
     if (!failure.canRetry) {
-      // handleLoginFailure() deleted the transaction: this sign-in cannot continue.
+      // `handleLoginFailure()` がトランザクションを削除したので、このログインは続けられない。
       redirect(
         errorPagePath(
           AuthTransactionErrorCode.MaxAttemptsExceeded,

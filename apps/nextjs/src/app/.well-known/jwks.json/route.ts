@@ -21,8 +21,8 @@ export const runtime = 'nodejs';
 /**
  * JWK Set に CORS のヘッダーを付けて応答する。
  *
- * GET `/.well-known/jwks.json` に、`jwks()` のレスポンスに `publicCors` のヘッダーを付けて応答する。
- * `publicCors` のヘッダーを付けるので、どのオリジンからも読める。
+ * GET `/.well-known/jwks.json` に、`jwks()` のレスポンスで応答する。
+ * 付けるのは `publicCors` のヘッダーなので、どのオリジンからも読める。
  */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, publicCors, await jwks());

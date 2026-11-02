@@ -99,7 +99,7 @@ export async function issueHybridResponse(input: {
   // 同意を取り消すと、このグラントのトークン（認可エンドポイントが発行したものと、トークンエンドポイントがこの認可コードに対して発行するもの）が失効する。
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, grantId);
 
-  // リクエストが要求したレスポンスモード（`form_post` など）で返し、なければフラグメントで返す。
+  // リクエストで要求されたレスポンスモード（`form_post` など）で返し、なければフラグメントで返す。
   // トークンをクエリに含めないためである（OAuth 2.0 Multiple Response Type Encoding Practices §5）。
   const mode = responseMode ?? createFragmentResponseMode({ issuer: config.issuer });
   return respondToClient(await mode.respond(transaction.redirectUri, parameters));

@@ -93,7 +93,7 @@ export interface HybridTokens {
  * `db/sql` と `db/kv` のストアは、認可コードをそのトランザクションに結び付けて記録し、認可コードが交換されたときにトークンを発行したことを記録する。
  *
  * @throws {AuthorizationError} `server_error`: クライアントが登録した `alg` の ID トークンの署名鍵がないとき。
- *   このエラーは何も保存する前に投げ、リクエストのほかのエラーと同じくクライアントへリダイレクトで返る。
+ *   このエラーは何かを保存する前に投げ、リクエストのほかのエラーと同じくクライアントへリダイレクトで返る。
  */
 export async function issueHybridTokens(input: HybridTokensInput): Promise<HybridTokens> {
   const { responseType, responseParams, session, grantedScope, keys } = input;

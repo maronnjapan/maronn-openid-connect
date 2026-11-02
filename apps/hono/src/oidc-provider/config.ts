@@ -101,7 +101,7 @@ export function createProviderConfig(
   overrides: Partial<ProviderConfig> = {},
 ): ProviderConfig {
   // 三つを重ねた設定を `ProviderConfig` として返す。
-  // 機能が宣言した項目は、その機能の `feature.ts` の `config` から既定値を受け取るので、重ねた結果はすべての項目がそろった `ProviderConfig` になる。
+  // 機能が宣言した項目の既定値は、その機能の `feature.ts` の `config` にあるので、重ねた結果はすべての項目がそろった `ProviderConfig` になる。
   return {
     ...baseProviderConfig,
     ...configOf(features),

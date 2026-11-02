@@ -42,7 +42,7 @@ export function createFragmentResponseMode(input: { issuer: string }): Authoriza
 /**
  * 渡されたモードか、なければフラグメントのモードを返す。
  *
- * インプリシットフローのレスポンスは、リクエストが要求したレスポンスモード（`form_post` などの `responseMode`）で送り、要求がなければフラグメントで送る。
+ * インプリシットフローのレスポンスは、リクエストで要求されたレスポンスモード（`form_post` などの `responseMode`）で送り、要求がなければフラグメントで送る。
  * どちらでもトークンはクエリに含まれない（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
  */
 export function implicitResponseModeOf(

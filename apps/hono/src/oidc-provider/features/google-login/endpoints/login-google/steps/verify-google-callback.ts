@@ -39,7 +39,8 @@ export async function verifyGoogleLoginCallback(
   const accountResolver = c.get('googleAccountResolver');
   try {
     // Cookie とボディの `g_csrf_token` の照合、ID トークンの検証、`nonce` によるトランザクションの特定を、この順に行う。
-    // 照合を検証より先に行うのは Google のサーバー側の検証の手引きに従うためで、`nonce` を最後に使うのは検証を通らないトークンで消費させないためである。
+    // 照合を検証より先に行うのは、サーバー側で ID トークンを検証する手順を示した Google のドキュメントに従うためである。
+    // `nonce` を最後に使うのは、検証を通らないトークンでレコードが消費されないようにするためである。
     const login = await handleGoogleLoginRedirect({
       params: await c.req.parseBody(),
       cookieHeader: c.req.header('Cookie') ?? null,

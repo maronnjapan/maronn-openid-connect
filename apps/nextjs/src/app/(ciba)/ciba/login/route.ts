@@ -22,15 +22,16 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Sign the End-User in at POST /ciba/login: start a new OP session and render
- * the pending CIBA requests addressed to them, with the session cookie set.
+ * エンドユーザーをログインさせ、一覧の画面を返す。
  *
- * The login transaction's browser binding cookie and csrf_token are checked
- * before the credentials; a failure (unknown, expired or foreign transaction)
- * answers the OP's error page with 403. Wrong credentials re-render the
- * sign-in form with the remaining attempts, and the last allowed failure
- * deletes the transaction and answers 429. A successful sign-in consumes the
- * transaction and clears its binding cookie.
+ * `POST /ciba/login` の処理で、ログイントランザクションのバインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
+ * バインディング Cookie は、このブラウザがログインフォームを受け取ったブラウザであることを示す。
+ * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
+ *
+ * トランザクションが見つからない、期限切れ、バインディング Cookie か `csrf_token` が一致しない（別のブラウザのトランザクションである）、のどれかに当たると、403 の OP のエラーページを返す。
+ * 認証情報が誤っていれば、残りの試行回数を添えたログインフォームを返す。
+ * 上限に達するとトランザクションを削除し、429 のエラーページを返す。
+ * 成功するとトランザクションを削除して新しい ID の OP のセッションを保存し、自分宛ての保留中のリクエストの一覧を、セッションの Cookie とバインディング Cookie を消す Cookie を付けて返す。
  */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
@@ -48,23 +49,24 @@ export async function POST(request: Request): Promise<Response> {
     return verificationFailureScreen(error);
   }
 
-  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
-  // upstream IdP) without touching anything above or below it.
+  // ユーザー名とパスワードでエンドユーザーを認証する。
+  // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
   const user = await stores.userStore.authenticate(
     String(form.get('username') ?? ''),
     String(form.get('password') ?? ''),
   );
   if (!user) {
-    // Per-transaction throttling only. Anyone can mint fresh login transactions
-    // by reloading /ciba, so the aggregate password-guess budget is the same as
-    // the one on /login. Subject-scoped throttling is a separate concern.
+    // 失敗の回数をログイントランザクションに記録し、上限に達したらトランザクションを削除する。
+    // 回数の制限は、トランザクションごとにしかかからない。
+    // `/ciba` を開き直せば誰でも新しいトランザクションを作れるので、パスワードを試せる合計の回数は `/login` と同じく実質的に制限されない。
+    // ユーザーごとの制限は、別に扱う課題である。
     const failure = await recordCibaLoginFailure(
       transaction,
       cibaLoginTransactionStore,
       cibaConfig.maxLoginAttempts,
     );
     if (!failure.canRetry) {
-      // The transaction is gone: this form cannot be retried at all.
+      // トランザクションは削除されたので、このフォームからは再試行できない。
       return errorPage('Too many login attempts', 429);
     }
     return loginScreen({
@@ -75,9 +77,8 @@ export async function POST(request: Request): Promise<Response> {
     });
   }
 
-  // The transaction is single-use: a successful login consumes it, and the
-  // session is established under a NEWLY minted id (never one the request
-  // brought along — session fixation).
+  // ログイントランザクションは一度しか使えないので、ログインに成功したら削除する。
+  // セッションは新しく作った ID で保存し、リクエストに含まれていた ID は使わない（セッション固定攻撃を防ぐ）。
   await cibaLoginTransactionStore.delete(transaction.id);
   const sessionId = generateRandomString(32);
   await stores.browserSessionStore.set(sessionId, {
@@ -85,8 +86,8 @@ export async function POST(request: Request): Promise<Response> {
     authTime: Math.floor(Date.now() / 1000),
   });
 
-  // Two cookies travel with the listing: the new OP session, and the cleared
-  // login binding (it is single-use and would otherwise linger until Max-Age).
+  // 一覧の画面に、新しい OP のセッションの Cookie と、バインディング Cookie を消す Cookie を付ける。
+  // バインディング Cookie は一度しか使えず、消さなければ `Max-Age` まで残るためである。
   return pendingRequestsScreen(user.sub, [
     buildSessionCookie(sessionId),
     buildClearedCibaLoginBindingCookie(transaction.id),

@@ -58,7 +58,7 @@ const googleAccountResolver: GoogleAccountResolver = {
 /**
  * ID トークンでログインし、同意画面へリダイレクトする。
  *
- * `POST /login/google` のルートハンドラで、「Google でログイン」を終えたブラウザが ID トークンを POST で送る。
+ * `POST /login/google` のルートハンドラで、「Google でログイン」を終えたブラウザから ID トークンが POST で届く。
  * ID トークンと `nonce` を検証して Google アカウントに対応する OP のユーザーを特定し（初回のログインならユーザーを作る）、`nonce` を発行したトランザクションのために OP のセッションを始めて、`/consent` へ 302 でリダイレクトする。
  *
  * 検証（CSRF の Cookie、ID トークン、`nonce`、設定したときは `hd` と `email_verified`）に失敗したときと、トランザクションがないか期限切れのときは、OP のエラーページへ 303 でリダイレクトする。
@@ -73,7 +73,8 @@ export async function POST(request: Request): Promise<Response> {
   let subject: string;
   try {
     // Cookie とボディの `g_csrf_token` の照合、ID トークンの検証、`nonce` によるトランザクションの特定を、この順に行う。
-    // 照合を検証より先に行うのは Google のサーバー側の検証の手引きに従うためで、`nonce` を最後に使うのは検証を通らないトークンで消費させないためである。
+    // 照合を検証より先に行うのは、サーバー側で ID トークンを検証する手順を示した Google のドキュメントに従うためである。
+    // `nonce` を最後に使うのは、検証を通らないトークンでレコードが消費されないようにするためである。
     const login = await handleGoogleLoginRedirect({
       params: await readFormFields(request),
       cookieHeader: request.headers.get('Cookie'),

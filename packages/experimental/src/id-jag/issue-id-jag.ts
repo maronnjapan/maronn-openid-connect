@@ -746,7 +746,7 @@ export function validateIdJagAudience(options: {
  * `allowedScopes` が設定されていなければ、要求された値をそのまま返す。
  *
  * ID-JAG draft §4.3.3 では、IdP はポリシーを評価し、要求の一部だけを許可してもよい。
- * 設定されていないときに要求をそのまま許すのは、`scope` の意味がリソース側の認可サーバーのドメインに属し、受け取る側でも同じ絞り込みの方針が働くためである（設計上の判断で、機能の仕様書の設定値の節に説明がある）。
+ * 設定されていないときに要求をそのまま許すのは、`scope` の意味がリソース側の認可サーバーのドメインに属し、受け取る側でも同じ絞り込みの方針が働くためである（設計上の判断。機能の仕様書の、設定値の節を参照）。
  *
  * @returns ID-JAG に入れる `scope`
  * @throws {IdJagError} `invalid_scope`: `allowedScopes` にない値を要求したとき
@@ -777,7 +777,7 @@ export function validateIdJagScope(
  * クレームは次のように決める。
  * - `iss` はこの OP の `issuer`、`sub` はサブジェクトの `sub`、`aud` は `audience` である。
  * - `client_id` は、交換を要求した認証済みのクライアントの `client_id` である。
- *   ID-JAG draft §5 は、リソース側の認可サーバーで別の `client_id` を使う対応付けも認めているが、この機能は両方の認可サーバーで同じ `client_id` を使う前提に固定している（この機能の対象外）。
+ *   ID-JAG draft §5 は、リソース側の認可サーバーで別の `client_id` を使う対応付けも認めているが、この機能はその対応付けを扱わず、両方の認可サーバーで同じ `client_id` を使う前提に固定している。
  * - `jti` は 32 バイト（256 ビット）の乱数である。
  *   受け取る側はリプレイの拒否には使わないが（ID-JAG draft §4.4.3 の再提示を許すため）、グラントごとの追跡やログの突き合わせに使える。
  * - `iat` は発行時刻（`now`、既定は現在時刻）、`exp` はそれに `lifetimeSeconds` を足した時刻である。
@@ -931,7 +931,7 @@ export async function processIdJagIssuanceRequest(
         });
 
   // `actor_token`（この機能の拡張）は、サブジェクトを検証した後に検証する。
-  // `act` は誰がサブジェクトの代わりに動くかの記録であり、アクターがいても `sub` は変わらない（RFC 8693 §4.1）。
+  // `act` は誰がサブジェクトの代理として振る舞うかの記録であり、アクターがいても `sub` は変わらない（RFC 8693 §4.1）。
   // トークンの種類によらず、同じリゾルバを通す。
   const actor =
     parsed.actorToken === undefined

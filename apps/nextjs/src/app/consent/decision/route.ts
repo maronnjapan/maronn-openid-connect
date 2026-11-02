@@ -42,26 +42,26 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Act on the End-User's consent decision (POST /consent/decision): approve
- * issues the authorization code, records the consent and the grant and sends
- * the code to the client; deny sends it access_denied — either way in the
- * request's response mode, with the transaction cookie cleared.
+ * 同意の決定を処理し、認可レスポンスで応答する。
  *
- * A form posted from another origin, a missing, unknown or expired
- * transaction, a wrong csrf_token, an action other than approve or deny, or a
- * response-mode key that cannot be loaded sends the browser (303) to the OP's
- * error page; an approval without the subject the login step stored redirects
- * (303) to /login. The response types of the implicit-flow and hybrid-flow
- * features are answered by those features instead of the code alone.
+ * POST `/consent/decision` のルートハンドラである。
+ * 承認なら認可コードを発行して同意とグラントを記録し、認可コードをクライアントへ返す。
+ * 拒否なら `access_denied` を返す。
+ * どちらも認可リクエストのレスポンスモードで返し、トランザクションの Cookie を消す。
+ * `implicit-flow` と `hybrid-flow` の機能のレスポンスタイプには、認可コードだけを返す代わりに、その機能が応答する。
  *
- * @spec OIDC Core 1.0 §3.1.2.4 / §3.1.2.5 / §3.1.2.6
+ * フォームが別オリジンから送られたとき、トランザクションがないか見つからないか期限切れのとき、`csrf_token` が一致しないとき、決定の値が `approve` でも `deny` でもないとき、レスポンスモードの鍵を読み込めないときは、ブラウザを OP のエラーページへリダイレクトする（303）。
+ * ログインのステップが保存したサブジェクトがないまま承認されたときは、`/login` へリダイレクトする（303）。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.4
+ * @spec OIDC Core 1.0 §3.1.2.5
+ * @spec OIDC Core 1.0 §3.1.2.6
  */
 export async function POST(request: NextRequest): Promise<Response> {
   // [reject-cross-origin-post] Reject a form POST from another origin — OIDC Core 1.0 §3.1.2.4
-  // First the browser's own statement of where the form was submitted from
-  // (isSameOriginFormPost() in _oidc-provider/cookies.ts): independent of the
-  // cookie and the csrf_token below. This handler mints the authorization
-  // code, so no decision may come from anywhere else.
+  // 最初に、フォームの送信元を、ブラウザ自身が付けるヘッダーで確かめる（_oidc-provider/cookies.ts の `isSameOriginFormPost()`）。
+  // この確認は、後で確かめる Cookie にも `csrf_token` にも依存しない。
+  // このハンドラは認可コードを発行するので、OP 自身が表示したフォーム以外からの決定は受け付けない。
   const sameOrigin = isSameOriginFormPost(
     { origin: request.headers.get('Origin'), secFetchSite: request.headers.get('Sec-Fetch-Site') },
     config.issuer,
@@ -72,9 +72,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   const form = await readFormFields(request);
   const action = String(form.get('action') ?? '');
 
-  // The transaction cookie says which transaction this browser is in. Without
-  // one — no cookie, or a transaction that is unknown, already finished, or
-  // expired — the End-User has to start over from the client application.
+  // トランザクションの Cookie から、このブラウザが進めているトランザクションを読み込む。
+  // Cookie がない、トランザクションが見つからない（すでに終わったものを含む）、期限切れのときは、エンドユーザーがクライアントのアプリケーションからやり直す必要があるので、OP のエラーページへリダイレクトする。
   const transactionId = parseTransactionId(request.headers.get('Cookie'));
   const transaction = transactionId === undefined ? undefined : await findTransaction(transactionId);
   if (transactionId === undefined || transaction === undefined) {
@@ -85,9 +84,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // [validate-csrf-token] Check csrf_token against the transaction
-  // ... and the CSRF token proves the decision came from the form this browser
-  // was shown for exactly that transaction. Checked before any decision is acted
-  // on: this handler mints the authorization code.
+  // `csrf_token` が一致すれば、決定は、このトランザクションのためにこのブラウザへ表示したフォームから送られたと分かる。
+  // このハンドラは認可コードを発行するので、決定を処理する前に確かめる。
   try {
     validateCsrfToken(transaction, String(form.get('csrf_token') ?? ''));
   } catch (error) {
@@ -96,10 +94,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // [restore-response-mode] Restore the response mode of the authorization request — OAuth 2.0 Multiple Response Type Encoding Practices §2.1
-  // The response mode the authorization request asked for (JARM's query.jwt,
-  // form_post, the fragment of the Implicit Flow), restored before anything is
-  // recorded, so a key outage stops here instead of after the code and the
-  // consent were stored.
+  // 認可リクエストが求めたレスポンスモード（JARM の `query.jwt`、`form_post`、インプリシットフローのフラグメントなど）を、何かを記録する前に復元する。
+  // こうしておけば、鍵を読み込めないときに、認可コードと同意を保存した後ではなく、ここで止まる。
   let responseMode: AuthorizationResponseMode | undefined;
   try {
     responseMode = await restoreResponseMode(transaction, { issuer: config.issuer, loadSigningKeys });
@@ -111,7 +107,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (action === 'deny') {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
-    // The transaction is over; drop the cookie that named it.
+    // トランザクションは終わったので、それを指していた Cookie を消す。
     return respondToClient(
       await authorizationResponseOf(responseMode, transaction.redirectUri, {
         error: 'access_denied',
@@ -122,16 +118,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // [validate-decision] Require an explicit approve decision — OIDC Core 1.0 §3.1.2.4
-  // OIDC Core 1.0 §3.1.2.4: "the Authorization Server MUST obtain an
-  // authorization decision before releasing information to the Relying Party."
-  // This handler mints the authorization code, so the affirmative decision is
-  // detected on an allowlist: a missing, empty or unknown 'action' means no
-  // decision was obtained and must not approve. 'approve' MUST stay in sync with
-  // the Approve button in page.tsx.
+  // 決定の値が `approve` でなければ、OP のエラーページへリダイレクトする。
+  // 認可サーバーは、RP に情報を渡す前に認可の決定を得なければならない（MUST、OIDC Core 1.0 §3.1.2.4）。
+  // このハンドラは認可コードを発行するので、承認は許可する値の一覧で判定し、`action` がない、空、未知の値のときは、決定を得られなかったものとして承認しない。
+  // `approve` は、page.tsx の承認ボタンの値と揃えておく必要がある。
   //
-  // §3.1.2.6: access_denied means the End-User denied the request, which is not
-  // the same as no decision at all — an unrecognized value therefore goes to the
-  // OP's own error page instead of back to the client.
+  // `access_denied` はエンドユーザーがリクエストを拒否したことを表し、決定がないこととは違う（OIDC Core 1.0 §3.1.2.6）。
+  // そのため、認識できない値はクライアントへ返さず、OP のエラーページへ送る。
   if (action !== 'approve') {
     return redirectToErrorPage(
       'invalid_request',
@@ -140,8 +133,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // [require-authenticated-subject] Require the subject the login step stored
-  // The login step's hand-off: no authenticated subject means the login step
-  // was skipped or has expired.
+  // ログインのステップから引き渡された認証セッションを読む。
+  // 認証したサブジェクトがなければ、ログインのステップが飛ばされたか期限が切れているので、`/login` へリダイレクトする。
   const session = await stores.authSessionStore.get(transactionId);
   if (!session) {
     return NextResponse.redirect(new URL('/login', config.issuer), 303);
@@ -162,38 +155,37 @@ export async function POST(request: NextRequest): Promise<Response> {
     stores.transactionStore,
   );
 
-  // Apply the scope policy (resolveGrantableScopes in scopes.ts — the place for
-  // per-user filtering). A dropped scope narrows the grant rather than failing
-  // the request: RFC 6749 §3.3 lets the authorization server issue a narrower
-  // scope, and the token response reports what was granted.
+  // スコープの方針（エンドユーザーごとの絞り込みを書く scopes.ts の `resolveGrantableScopes()`）を適用する。
+  // 外したスコープはリクエストを失敗させず、許可するスコープを狭めるだけである。
+  // 認可サーバーは要求より狭いスコープを発行してよく、許可したスコープはトークンレスポンスで伝わるためである（RFC 6749 §3.3）。
   const grantedScope = await resolveGrantableScopes(
     transaction.scope.split(' ').filter(Boolean),
     session.subject,
   );
 
-  // OIDC Core 1.0 §3.1.3.1: TTL is configurable via ProviderConfig (300 seconds by default).
+  // 認可コードを発行してストアに保存する。
+  // 有効期間は `ProviderConfig` の `authorizationCodeTtl` で設定でき、既定では 300 秒である（OIDC Core 1.0 §3.1.3.1）。
   const authCodeData = await createAuthorizationCode({
     authorizationResponse: { ...responseParams, scope: grantedScope },
     subject: session.subject,
     authTime: session.authTime,
-    // online refresh token をこのログインセッションへ束縛する（login step が
-    // authSessionStore へ載せた値）。ログアウトすれば RT も使えなくなる。
+    // `offline_access` のない認可で発行するリフレッシュトークンを、このログインセッション（ログインのステップが `authSessionStore` に載せた `sessionId`）に結び付ける。
+    // ログアウトすると、そのリフレッシュトークンも使えなくなる。
     sessionId: session.sessionId,
     ttlSeconds: config.authorizationCodeTtl,
   });
   await stores.authCodeStore.set(authCodeData.code, authCodeData);
 
   // [record-consent] Record the consent and the grant — OIDC Core 1.0 §3.1.2.4
-  // Record the consent so a later prompt=none (or SSO) request can confirm it
-  // without UI (OIDC Core 1.0 §3.1.2.1 / §3.1.2.4), and the grant, so
-  // withdrawing that consent revokes the tokens issued from it. Only the
-  // per-transaction hand-off is cleared; the OP session persists for SSO.
+  // 同意を記録し、後の `prompt=none` や SSO のリクエストで、画面を出さずに同意を確かめられるようにする（OIDC Core 1.0 §3.1.2.1、§3.1.2.4）。
+  // グラントも記録し、その同意を取り消したときに、グラントから発行したトークンを失効させられるようにする。
+  // 削除するのはトランザクションごとの認証セッションだけで、OP のセッションは SSO のために残す。
   await resolvers.consentResolver.recordConsent?.(session.subject, transaction.clientId, grantedScope);
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
   await stores.authSessionStore.delete(transactionId);
 
   // [build-authorization-response] Build the authorization response — RFC 9207 §2
-  // The transaction is over; drop the cookie that named it.
+  // トランザクションは終わったので、それを指していた Cookie を消す。
   return respondToClient(
     await authorizationResponseOf(responseMode, transaction.redirectUri, {
       code: authCodeData.code,
@@ -203,7 +195,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
 }
 
-/** The transaction stored under the id, or undefined when it is unknown, already finished or expired. */
+/**
+ * ID でトランザクションをストアから読み込んで返す。
+ *
+ * トランザクションが見つからないとき（すでに終わったものを含む）と期限切れのときは `undefined` を返す。
+ *
+ * @throws ストアの読み込みで `AuthTransactionError` 以外のエラーが起きたときは、それをそのまま投げる。
+ */
 async function findTransaction(transactionId: string): Promise<ResponseModeTransaction | undefined> {
   try {
     return await getAuthTransaction(transactionId, stores.transactionStore);

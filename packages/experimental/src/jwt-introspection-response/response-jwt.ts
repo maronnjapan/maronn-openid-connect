@@ -58,7 +58,7 @@ function base64UrlFromJson(value: Record<string, unknown>): string {
  *
  * JOSE ヘッダーは `{ typ: 'token-introspection+jwt', alg: 'RS256', kid }` である。
  * `typ` は RFC 9701 §5 が必須（REQUIRED）とする値である。
- * `kid` には署名鍵の `keyId` を入れ、受け取った側が JWKS から検証鍵を特定できるようにする（RFC 8725 §3.10 の推奨に従う。JARM と同じ）。
+ * `kid` には署名鍵の `keyId` を入れ、受け取った側が JWKS から検証鍵を特定できるようにする（RFC 8725 §3.10。JARM と同じ）。
  *
  * ペイロードには、`iss`、`aud`、`iat`（いずれも RFC 9701 §5 で必須（MUST））と、RFC 7662 のレスポンスのメンバーを収めた `token_introspection` クレームを入れる。
  * トップレベルには `sub` と `exp` を入れない（RFC 9701 §5 の SHOULD NOT）。
@@ -66,7 +66,7 @@ function base64UrlFromJson(value: Record<string, unknown>): string {
  *
  * `token_introspection` には、渡されたレスポンスのオブジェクトをそのまま入れ、メンバーの追加、削除、変更はしない。
  * `active` が false のレスポンスも、同じ形の JWT にする。
- * RFC 9701 §5 は、有効でないトークンについて `active` を false にし、ほかのメンバーを含めないことを求めており、`INACTIVE_INTROSPECTION_RESPONSE` がその形である。
+ * RFC 9701 §5 は、`active` を false にするときはほかのメンバーを含めないことを求めており、`INACTIVE_INTROSPECTION_RESPONSE` がその形である。
  *
  * @param options.issuer `iss` クレームの値（OP の `issuer`）
  * @param options.audience `aud` クレームの値で、認証済みの呼び出し元の `client_id` を渡す。

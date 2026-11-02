@@ -132,7 +132,9 @@ function constantTimeEqual(a: string, b: string): boolean {
  * Cookie とボディの `g_csrf_token` の一致を検証する。
  *
  * ダブルサブミット Cookie による CSRF 対策である。
- * GIS は同じ値を `g_csrf_token` の Cookie と POST のボディの両方に入れるので、両者が一致しない POST を拒否する。
+ * GIS は同じ値を `g_csrf_token` の Cookie と POST のボディの両方に入れる。
+ * 攻撃者がほかのサイトから送らせた POST では、Cookie の値を知らないのでボディの値を合わせられない。
+ * そのため、両者が一致しない POST を拒否する。
  *
  * Google のドキュメントのサンプルと同じ順に、次の三つを確かめる。
  * 1. Cookie に `g_csrf_token` がある。

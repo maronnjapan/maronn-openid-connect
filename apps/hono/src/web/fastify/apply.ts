@@ -33,7 +33,10 @@ const METHODS: HTTPMethods[] = ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'PO
  *
  * OP のパスとその下のパス（`providerRoutes()` の `subpaths`）を、どの HTTP メソッドでも受け付けるルートとして一つずつ登録する。
  * 各リクエストは、ボディをバイト列のまま Web 標準の `Request` に変換して OP のルーターに渡し、返った `Response` を `toFastifyReply()` で書き込む。
- * ルートは専用のプラグインの中に登録し、そのプラグインではボディを解析せずにバイト列のまま渡すので、インスタンスのほかのルートのボディの解析は変わらない。
+ *
+ * ルートは専用のプラグインの中に登録し、そのプラグインでは、ボディをバイト列のまま渡すものだけをボディの解析に使う。
+ * フォームと JSON のボディは、OP が自分で解析するからである。
+ * インスタンスのほかのルートのボディの解析は変わらない。
  */
 export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions): Promise<void> {
   const oidc = createApp(options);

@@ -31,8 +31,8 @@ export const meta = step({
  *
  * 実験的な機能である。
  * `Accept` ヘッダーが `application/token-introspection+jwt` を示す呼び出し元には、イントロスペクションのレスポンスを署名付きの JWT にし、`Content-Type` をそのメディアタイプにして返す。
- * JWT にする前に、レスポンスを呼び出し元に見せてよい内容に絞る。
- * それ以外のリクエスト（`Accept` がない、`application/json`、ワイルドカード）では `undefined` を返し、これまでどおり JSON で応答させる。
+ * JWT にする前に、レスポンスを呼び出し元に見せてよい内容に絞り、レスポンスには `Cache-Control: no-store` を付ける。
+ * それ以外のリクエスト（`Accept` がない、`application/json`、ワイルドカード）では `undefined` を返し、次の `respond` ステップが JSON で応答する。
  * RS256 の署名鍵が登録されていなければ例外を投げ、`server_error` の応答になる。
  *
  * このステップはクライアントの認証とトークンの検索の後に置くので、`Accept` ヘッダーでそのどちらかを飛ばすことはできない（RFC 9701 §8.2 のダウングレードの防止）。

@@ -52,8 +52,8 @@ export type JarmResponseModeResolution =
  */
 export function resolveJarmResponseMode(params: object): JarmResponseModeResolution {
   // `params` から `response_mode` の値を取り出す。
-  // 引数を `object` で受けるのは、core の `AuthorizationRequestParams`（インデックスシグネチャのないインターフェース）も `Record<string, string>` も、そのまま渡せるようにするためである。
-  // 値が文字列でないとき（フレームワークがクエリを解析して配列にしたときなど）は、解釈せずに `{ kind: 'plain' }` として扱う。
+  // 引数を `object` で受けるのは、core の `AuthorizationRequestParams`（インデックスシグネチャがない）も `Record<string, string>` も、そのまま渡せるようにするためである。
+  // 値が文字列でなければ（フレームワークがクエリを配列にしたときなど）、解釈せずに `{ kind: 'plain' }` を返す。
   const responseMode = (params as { response_mode?: unknown })['response_mode'];
   if (typeof responseMode !== 'string') {
     return { kind: 'plain' };

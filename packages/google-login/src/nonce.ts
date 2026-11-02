@@ -127,8 +127,8 @@ export async function consumeGoogleLoginNonce(
     );
   }
 
-  // `nonce` を 1 回しか使えないように、期限を判定する前にレコードを削除する。
-  // 期限切れのレコードもストアに残らない。
+  // `nonce` を 1 回しか使えないように、レコードを削除する。
+  // 期限を判定する前に削除するので、期限切れのレコードもストアに残らない。
   await store.delete(key);
 
   if (record.expiresAt <= (now ?? new Date()).getTime()) {

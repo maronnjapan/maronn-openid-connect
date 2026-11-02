@@ -229,7 +229,7 @@ export async function resolveImplicitAcrAmr(
  *
  * `endpoints/token/` の `issue-access-token` ステップと `persist-access-token` ステップが認可コードに対して行うのと同じ方法で、発行と保存をする（RFC 9068 §2.2、RFC 7662 §2.2）。
  * アクセストークンの形式は `config.accessTokenFormat` に従い、JWT か不透明な文字列になる。
- * `response_type=id_token token` のほか、`hybrid-flow` 機能も、認可コードと一緒に返すアクセストークンをこの関数でその認可コードのグラントに発行する。
+ * `response_type=id_token token` のアクセストークンのほか、`hybrid-flow` 機能も、この関数を使い、認可コードと一緒に返すアクセストークンを認可コードと同じグラントで発行する。
  *
  * レコードには、発行のもとになったトランザクションの ID（`transactionId`）も記録する。
  * インプリシットフローには、トランザクションを指す認可コードがないためである。

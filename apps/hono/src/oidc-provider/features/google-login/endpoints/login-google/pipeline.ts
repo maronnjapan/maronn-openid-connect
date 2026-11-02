@@ -23,6 +23,7 @@ export type { GoogleLoginOutcome } from './outcome.js';
  *
  * `POST /login/google` の処理である。
  * Google の ID トークンと `nonce` を検証してアカウントに対応する OP のユーザーを特定し、`nonce` を発行したトランザクションを読み込んで、OP のセッションを確立し、同意のステップに引き継ぐ。
+ * `prompt` に `login` か `select_account` があれば、セッションを確立する前に既存のセッションを破棄する。
  * トランザクションの読み込みから同意のステップへの引き継ぎまでは、パスワードによるログイン（`POST /login`）と同じ関数を使う。
  *
  * 成功すると、セッションの Cookie を付けた `authenticated` を返す。

@@ -163,7 +163,7 @@ export interface UserClaimsResolver {
    *
    * `sub` で指定したサブジェクトのエンドユーザーのクレームを返す。
    * 返したオブジェクトのプロパティは、外部に開示されることがある。
-   * UserInfo レスポンスと ID トークンは、返されたプロパティを、スコープ（{@link filterClaimsByScope}）と `claims` パラメータの許可リスト（{@link DEFAULT_REQUESTABLE_CLAIMS}）で絞ってから開示する。
+   * UserInfo レスポンスと ID トークンでは、返されたプロパティを、スコープ（{@link filterClaimsByScope}）と `claims` パラメータの許可リスト（{@link DEFAULT_REQUESTABLE_CLAIMS}）で絞ってから開示する。
    * 既定の許可リストに載っているのは標準のクレームの名前だけなので、許可リストを広げる構成では、データベースの行や内部のユーザーのモデルをそのまま返さず、開示してよいクレームだけを持つオブジェクトに移してから返す。
    */
   findUserClaims(sub: string): Promise<UserClaims | null>;
@@ -452,7 +452,7 @@ export function validateUserInfoScope(tokenInfo: Pick<AccessTokenInfo, 'scope'>)
  * `audience` が保存されていないトークンも拒否する。
  * `expectedAudience` が `undefined` なら何も確かめない。
  *
- * この検証は、`resource` パラメータ（RFC 8707）で別のリソース向けに発行されたアクセストークンを使って、UserInfo から個人情報を取得する攻撃を防ぐ。
+ * この検証で、`resource` パラメータ（RFC 8707）で別のリソース向けに発行されたアクセストークンを使って、UserInfo から個人情報を取得する攻撃を防ぐ。
  * 生成された OP は、JWT か不透明な文字列かを問わず、すべてのアクセストークンに UserInfo エンドポイントを含む `aud` を保存するので、`aud` が保存されていないトークンはこの OP が発行したものではない。
  * そのため、不透明なトークンでも `aud` がなければ拒否する。
  *

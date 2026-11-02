@@ -293,7 +293,7 @@ const CLIENT_AUTHENTICATION_PARAMS = ['client_secret', 'client_assertion', 'clie
  * `expiresInSeconds` は {@link assertParExpiresInSeconds} で検証する。
  *
  * `params` の `client_id` は認証したクライアントの値（`clientId`）で置き換えて保存し、クライアント認証のパラメータ（`client_secret`、`client_assertion`、`client_assertion_type`）は保存しない。
- * 保存しないのは、シークレットがストア（永続化の先、ログ、バックアップ）に残ったり、認可エンドポイントで展開したパラメータに混ざったりしないようにするためである。
+ * 保存しないのは、シークレットがストアに残り（ログやバックアップにも残り）、認可エンドポイントで展開したパラメータにも混ざるのを防ぐためである。
  * 認証は保存の前に済んでいるので、保存しておく必要もない。
  * 呼び出し側が渡したオブジェクトは変更しない。
  *
@@ -330,7 +330,7 @@ export async function createPushedAuthorizationRecord(options: {
 /**
  * レコードから 201 レスポンスのボディを組み立てて返す。
  *
- * `requestUri` にはレコードの `request_uri` を、`expiresIn` には有効期限と作成時刻の差を秒に丸めた値を入れる。
+ * `requestUri` にはレコードの `requestUri` を、`expiresIn` には有効期限と作成時刻の差を秒に丸めた値を入れる。
  *
  * @spec RFC 9126 §2.2
  */

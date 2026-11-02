@@ -238,7 +238,7 @@ export function buildValidatedRefreshTokenRequest(
     // ローテーションするかどうかは、縮小した後のスコープではなく、元のグラントのスコープで判定する（RFC 6749 §6、OIDC Core 1.0 §11）。
     // `offline_access` はグラントに与えた権限なので、リクエストでスコープを縮小しても元のグラントの権限は失われない。
     hadOfflineAccess: refreshTokenInfo.scope.includes('offline_access'),
-    // オンラインのリフレッシュトークンのセッションの ID は、ローテーションしても引き継ぐ。
+    // セッションに結び付いた（オンラインの）リフレッシュトークンの `sessionId` は、ローテーションしても引き継ぐ。
     // ここで引き継がないと、1 回リフレッシュしただけで、セッションに結び付かないオフラインのリフレッシュトークンになってしまう。
     sessionId: refreshTokenInfo.sessionId,
   };
@@ -299,7 +299,7 @@ export function validateRefreshTokenNotUsed(used: boolean | undefined): void {
 /**
  * 見つかったセッションを返し、なければ拒否する。
  *
- * オンラインのリフレッシュトークンが結び付いた認証セッションを、呼び出し側がストアから読んで渡す。
+ * `sessionId` を持つ（オンラインの）リフレッシュトークンが結び付いた認証セッションを、呼び出し側がストアから読んで渡す。
  * 渡された値が `null` か `undefined`（セッションがないか、終了している）なら、`TokenError`（`invalid_grant`）を投げる。
  * それ以外は、受け取ったセッションをそのまま返す。
  *

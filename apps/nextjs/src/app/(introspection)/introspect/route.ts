@@ -109,18 +109,17 @@ async function introspect(request: Request): Promise<Response> {
     const authenticatedClientId = presentedCredentials.clientId;
 
     // [resolve-token] Resolve the token — RFC 7662 §2.1
-    // Each step below is an independent core function, called in RFC 7662 §2
-    // order. Delete a call to drop that step, or insert your own logic between
-    // steps.
+    // 以下の呼び出しはそれぞれ core の独立した関数で、RFC 7662 §2 の順に呼ぶ。
+    // 呼び出しを消せばその処理を省け、呼び出しの間に独自の処理を挟める。
 
-    // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
+    // `token` パラメータは必須で、なければ `invalid_request` にする（RFC 7662 §2.1）。
     const token = requireIntrospectionToken({ token: params.token });
 
-    // RFC 7662 §2.1: the caller must be an authenticated client (invalid_client).
+    // 呼び出し元がクライアントとして認証されていることを確かめ、されていなければ `invalid_client` にする（RFC 7662 §2.1）。
     requireIntrospectionClient(authenticatedClientId);
 
-    // RFC 7662 §2.1: token_type_hint only reorders the lookup — the other token
-    // type is still searched when the hint misses.
+    // 提示されたトークンを、アクセストークンとリフレッシュトークンのストアから探す（RFC 7662 §2.1）。
+    // `token_type_hint` は探す順番を変えるだけで、ヒントの種類で見つからなければもう一方の種類も探す。
     const resolved = await resolveIntrospectionToken({
       token,
       tokenTypeHint: params.token_type_hint,
@@ -129,9 +128,8 @@ async function introspect(request: Request): Promise<Response> {
     });
 
     // [build-response] Build the introspection response — RFC 7662 §2.2
-    // RFC 7662 §2.2: an unknown, expired, not-yet-valid or rotated token is
-    // reported as { active: false } and nothing else, so the caller cannot tell
-    // "never existed" from "no longer valid".
+    // トークンが有効ならその内容を、そうでなければ `{ active: false }` だけを返す（RFC 7662 §2.2）。
+    // 登録されていない、期限切れ、まだ有効になっていない、ローテーションで使用済みになったトークンにはほかのメンバーを含めないので、呼び出し元は「存在しなかった」トークンと「もう有効でない」トークンを区別できない。
     let response: IntrospectionResponse = INACTIVE_INTROSPECTION_RESPONSE;
     if (resolved !== null && isIntrospectionTokenActive(resolved)) {
       response = buildIntrospectionResponse(resolved);

@@ -112,7 +112,7 @@ export function buildDiscoveryMetadata(
     // `claims` リクエストパラメータには ID トークンと UserInfo の両方で対応しているので、対応を公開する（OIDC Core 1.0 §5.5、OIDC Discovery 1.0 §3）。
     // この項目の既定値は `false` なので、公開しないと、仕様に従う RP は `claims` パラメータを送らない。
     claimsParameterSupported: true,
-    // 認可エンドポイントは、すべての認可レスポンスに `iss` を加える（RFC 9207 §3）。
+    // すべての認可レスポンスに `iss` を含める（RFC 9207 §3）。
     authorizationResponseIssParameterSupported: true,
   });
 

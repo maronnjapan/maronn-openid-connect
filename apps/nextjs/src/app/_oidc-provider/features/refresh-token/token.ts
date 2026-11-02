@@ -23,10 +23,16 @@ import {
 import { config, resolvers, stores } from '../../provider';
 
 /**
- * Validate the refresh_token grant (OAuth 2.1 §4.3.1 / RFC 6749 §6): the
- * validated request of a refresh, undefined for any other grant. Each security
- * rule is a separate core call so it can be removed, replaced, or surrounded
- * with experiment-specific logic.
+ * `refresh_token` を検証し、検証済みリクエストを返す。
+ *
+ * `grant_type` が `refresh_token` でなければ何もせずに `undefined` を返し、検証は `route.ts` の `validateAuthorizationCodeGrant()` に任せる。
+ * `refresh_token` がない、リフレッシュトークンが見つからない、ローテーションで使用済み、ほかのクライアントに発行された、期限切れ、結び付けたログインセッションがない、要求されたスコープが元のグラントを超えるときは、中で呼ぶ core の関数が `TokenError`（`invalid_grant` など）を投げる。
+ * 使用済みのリフレッシュトークンが再び提示されたときは、同じグラントのトークンを失効させてから拒否する。
+ *
+ * 安全のための規則はそれぞれ core の別々の関数なので、一つずつ取り除いたり、差し替えたり、実験用の処理を前後に挟んだりできる。
+ *
+ * @spec OAuth 2.1 §4.3.1
+ * @spec RFC 6749 §6
  */
 export async function validateRefreshTokenGrant(
   params: TokenRequestParams,
@@ -36,29 +42,30 @@ export async function validateRefreshTokenGrant(
   if (grantType !== 'refresh_token') return undefined;
   const { refreshTokenResolver, authenticationSessionResolver } = resolvers;
 
-  // Resolve the presented refresh token and retain its stored grant context.
+  // `refresh_token` パラメータがあることを確かめ、提示されたリフレッシュトークンのレコード（保存したグラントの情報）をストアから取得する。
   const { refreshTokenInfo } = await resolveRefreshToken(params, refreshTokenResolver);
 
-  // OAuth 2.1 §4.3.1: reject rotation reuse and revoke the token family.
+  // ローテーションで使用済みのリフレッシュトークンなら、同じグラントのトークンを失効させてから拒否する（OAuth 2.1 §4.3.1）。
   await validateRefreshTokenUnused(refreshTokenInfo, refreshTokenResolver);
 
-  // Bind the refresh token to the authenticated client.
+  // リフレッシュトークンが、認証したクライアントに発行されたものであることを確かめる。
   validateRefreshTokenClient(refreshTokenInfo, authenticatedClientId);
 
-  // Absolute lifetime: expiresAt <= now is expired.
+  // 最初の発行から数えた有効期限（`expiresAt`）が現在時刻以前なら、期限切れとして拒否する。
   validateRefreshTokenExpiration(refreshTokenInfo);
 
-  // Optional inactivity policy. Replace undefined with your timeout in seconds
-  // to enable it, or remove this step if your experiment has no idle lifetime.
+  // 一定の時間使われなかったリフレッシュトークンを失効させる確認は任意で、既定では行わない。
+  // 有効にするときは `undefined` を秒数に置き換え、この制限を設けない実験ならこの呼び出しを消す。
   validateRefreshTokenIdleTimeout(refreshTokenInfo, undefined);
 
-  // online refresh token（sessionId を持つ RT）は、束縛先のログインセッションが
-  // 生きている間だけ使える。ログアウト・別ユーザーでの再ログインでセッションが
-  // 消えれば invalid_grant になる。offline_access が付与された RT は sessionId を
-  // 持たないため、このステップを素通りしてログアウト後も使い続けられる。
+  // リフレッシュトークンを結び付けたログインセッションが、まだ続いていることを確かめる。
+  // `sessionId` を持つリフレッシュトークン（オンラインのリフレッシュトークン）は、そのセッションが続いている間だけ使える。
+  // ログアウトや、別のユーザーでの再ログインでセッションがなくなれば、`invalid_grant` になる。
+  // `offline_access` を許可したリフレッシュトークンは `sessionId` を持たないので、この確認を通り、ログアウトした後も使い続けられる。
   await validateRefreshTokenSession(refreshTokenInfo, authenticationSessionResolver);
 
-  // RFC 6749 §6: requested scope may only narrow the original grant.
+  // 要求されたスコープが、元のグラントのスコープに収まることを確かめる（RFC 6749 §6）。
+  // `scope` が省略されたときは、元のグラントのスコープを使う。
   const effectiveScope = validateRefreshTokenScope(params.scope, refreshTokenInfo.scope);
 
   return buildValidatedRefreshTokenRequest(refreshTokenInfo, authenticatedClientId, effectiveScope);
@@ -74,44 +81,50 @@ export interface RefreshTokenDecision {
   issueRefreshToken: boolean;
 }
 
-/** Decide whether a refresh token is issued (OIDC Core 1.0 §11 / RFC 9700 §4.14). */
+/**
+ * リフレッシュトークンを発行するかと、その種類を返す。
+ *
+ * 種類は、ログインセッションに結び付けるもの（オンライン）と、ログインセッションが終わっても使えるもの（`offline_access`）の二つである。
+ * クライアントが `grant_types` に `refresh_token` を登録しているときに限り、次のどちらかが成り立てば発行する。
+ * - グラントが `offline_access` を持つ。
+ * - 設定の `onlineRefreshTokenEnabled` が true で、結び付けるセッションがある。
+ *
+ * @spec OIDC Core 1.0 §11
+ * @spec RFC 9700 §4.14
+ * @spec RFC 6749 §6
+ */
 export function decideRefreshTokenIssuance(
   tokenClient: TokenClientInfo,
   validatedRequest: ValidatedTokenRequest,
 ): RefreshTokenDecision {
-  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: grant_types の既定は
-  // ["authorization_code"]。refresh_token を登録していないクライアントへ RT を渡しても、
-  // 次に grant_type=refresh_token を出した瞬間 validateClientGrantType が
-  // unauthorized_client で拒否する。一度も使えない長期資格情報を保存させるだけなので
-  // （RFC 9700 §4.14）、登録が無ければ発行しない。
+  // クライアントが `grant_types` に `refresh_token` を登録しているかを確かめ、登録していなければリフレッシュトークンを発行しない。
+  // `grant_types` の既定値は `["authorization_code"]` である（RFC 7591 §2、OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // 登録していないクライアントにリフレッシュトークンを渡しても、`grant_type=refresh_token` で使った時点で `validateClientGrantType()` が `unauthorized_client` で拒否する。
+  // 一度も使えない長期の認証情報をクライアントに保存させるだけになるので、発行しない（RFC 9700 §4.14）。
   const clientAllowsRefreshGrant = clientAllowsRefreshTokenGrant(tokenClient);
 
-  // RFC 6749 §6 / OIDC Core 1.0 §11: refresh 時の scope 縮小は当該リクエストの access token /
-  // ID Token の権限縮小として扱い、refresh token rotation の可否とは切り離す。rotation 可否は
-  // 「元の grant が offline_access を持っていたか」で判断する。
-  // - authorization_code grant: 今回付与された scope に offline_access があるか。
-  // - refresh_token grant: 元 refresh token の grant が offline_access を持っていたか
-  //   (validatedRequest.hadOfflineAccess)。縮小後 scope から offline_access を落としても
-  //   元 grant の権限は失われないため rotation を継続する。
+  // グラントが `offline_access` を持つかを決める（RFC 6749 §6、OIDC Core 1.0 §11）。
+  // リフレッシュでスコープを狭めたときは、このリクエストで発行するアクセストークンと ID トークンの権限を狭めるだけにし、リフレッシュトークンのローテーションを続けるかどうかとは切り離す。
+  // ローテーションを続けるかは、元のグラントが `offline_access` を持っていたかで決める。
+  // - `authorization_code` グラント: 今回許可したスコープに `offline_access` があるか。
+  // - `refresh_token` グラント: 元のリフレッシュトークンのグラントが `offline_access` を持っていたか（`validatedRequest.hadOfflineAccess`）。
+  //   狭めたスコープから `offline_access` を外しても、元のグラントの権限は失われないので、ローテーションを続ける。
   const grantHasOfflineAccess =
     clientAllowsRefreshGrant &&
     (validatedRequest.grantType === 'refresh_token'
       ? validatedRequest.hadOfflineAccess
       : validatedRequest.scope.includes('offline_access'));
 
-  // online refresh token の束縛先セッション。
-  // OIDC Core 1.0 §11 は offline_access を「End-User が居ない（not logged in）ときにも
-  // 使える Refresh Token」と定義したうえで、Refresh Token の利用がその用途に限られない
-  // ことも明示している（"The Authorization Server MAY grant Refresh Tokens in other
-  // contexts"）。この OP はその other contexts を online refresh token として実装し、
-  // ログインセッションへ束縛する。offline_access がある grant は束縛しない。
-  // - authorization_code grant: 認可コードが持つ sessionId（ログイン時に確立したもの）。
-  // - refresh_token grant: 元 RT の束縛をそのまま引き継ぎ、rotation で外れないようにする。
+  // オンラインのリフレッシュトークンを結び付けるセッションを決め、`offline_access` を持つグラントでは結び付けない。
+  // OIDC Core 1.0 §11 は、`offline_access` を「エンドユーザーがログインしていないときにも使えるリフレッシュトークン」と定義したうえで、リフレッシュトークンの用途がそれに限られないことも明示している（「認可サーバーは、ほかの状況でもリフレッシュトークンを発行してよい（MAY）」）。
+  // この OP は、その「ほかの状況」をオンラインのリフレッシュトークンとして実装し、ログインセッションに結び付ける。
+  // - `authorization_code` グラント: 認可コードが持つ `sessionId`（ログインしたときに作ったもの）。
+  // - `refresh_token` グラント: 元のリフレッシュトークンの結び付きをそのまま引き継ぎ、ローテーションで外れないようにする。
   const boundSessionId = grantHasOfflineAccess ? undefined : validatedRequest.sessionId;
 
-  // 束縛先が分からなければ online refresh token は発行しない。ブラウザセッションを
-  // 持たない経路（device authorization grant）が該当する。ログアウトで止まる保証を
-  // 付けられない RT を配らないための fail-closed。
+  // 結び付けるセッションが分からなければ、オンラインのリフレッシュトークンは発行しない。
+  // ブラウザのセッションを持たないグラント（デバイス認可グラント）がこれに当たる。
+  // ログアウトしても使えなくならないリフレッシュトークンを渡さないよう、分からないときは発行しない側に倒す。
   const issueRefreshToken =
     clientAllowsRefreshGrant &&
     (grantHasOfflineAccess || (config.onlineRefreshTokenEnabled && boundSessionId !== undefined));
@@ -120,13 +133,20 @@ export function decideRefreshTokenIssuance(
 }
 
 /**
- * Mint the refresh token the decision asked for and store its record for
- * rotation (OAuth 2.1 §4.3.1). Returns undefined when none is issued.
+ * リフレッシュトークンを発行し、保存して返す。
  *
- * grantId / audience / authTime / nonce / acr / amr / azp propagate through
- * rotations, so descendants can be revoked on code reuse, the audience never
- * expands, and the ID Token a refresh re-issues keeps the values of the first
- * authentication (OIDC Core 1.0 §12.1).
+ * 発行しないと決めたときは、何もせずに `undefined` を返す。
+ * 発行するときは、ランダムな文字列のリフレッシュトークンを作り、ローテーションに使うレコードをストアに保存する。
+ * `authTime` が `undefined` なら、`TokenError`（`invalid_grant`）を投げる。
+ * 有効期限は、最初に発行した時刻に設定の `refreshTokenAbsoluteLifetime` を足した時刻で、ローテーションしても延びない。
+ *
+ * `grantId`、`audience`、`authTime`、`acr`、`amr`、`azp` は、ローテーションしても同じ値を引き継ぐ。
+ * 引き継ぐので、認可コードが再利用されたときに後から発行したトークンもまとめて失効させられ、`aud` が広がることもなく、リフレッシュで発行し直す ID トークンは最初の認証のときの値を保つ（OIDC Core 1.0 §12.1）。
+ * `nonce` は最初の発行のときだけ保存し、ローテーションでは引き継がない（リフレッシュでは `undefined` になる）。
+ *
+ * @spec OAuth 2.1 §4.3.1
+ * @spec OAuth 2.1 §6.1
+ * @spec OIDC Core 1.0 §12.1
  */
 export async function issueRefreshToken(input: {
   decision: RefreshTokenDecision;
@@ -142,21 +162,21 @@ export async function issueRefreshToken(input: {
   const { decision, subject, authTime, nonce, validatedRequest, issuedAt, audience, acr, amr } = input;
   if (!decision.issueRefreshToken) return undefined;
 
-  // authTime はここで必ず確定する: authorization_code 経由は authCode.authTime、
-  // refresh_token 経由は validatedRequest.authTime。
+  // `authTime` がなければ、リフレッシュトークンを発行せずに `invalid_grant` で拒否する。
+  // ここでは `authTime` が決まっているはずである（`authorization_code` グラントでは認可コードの `authTime`、`refresh_token` グラントでは `validatedRequest.authTime`）。
   if (authTime === undefined) {
     throw new TokenError(TokenErrorCode.InvalidGrant, 'authTime is required to issue a refresh token');
   }
-  // OAuth 2.1 §6.1: refresh token は initial issuance からの absolute lifetime のみで失効する。
-  // rotation を跨いで originalIssuedAt を引き継ぎ、expiresAt はそこからの絶対的な期限で固定する。
-  // sliding expiry は持たないため、リフレッシュを繰り返しても失効時刻は前に進まず、
-  // 漏洩 RT の長期 abuse を防ぐ。
+  // リフレッシュトークンの有効期限は、最初に発行した時刻から数えた絶対的な期間だけで決める（OAuth 2.1 §6.1）。
+  // ローテーションしても最初の発行時刻（`originalIssuedAt`）を引き継ぎ、`expiresAt` をそこから数えた期限に固定する。
+  // 使うたびに期限を延ばす方式はとらないので、リフレッシュを繰り返しても有効期限は先に延びず、漏れたリフレッシュトークンを長く使われることを防ぐ。
+  // - `authorization_code` グラント: 今回が最初の発行なので、`originalIssuedAt` は `issuedAt` と同じ。
+  // - `refresh_token` グラント: 元のリフレッシュトークンの `originalIssuedAt` をそのまま引き継ぐ。
   const originalIssuedAt =
     validatedRequest.grantType === 'refresh_token' ? validatedRequest.originalIssuedAt : issuedAt;
-  // RFC 6749 §6: 縮小後 scope（validatedRequest.scope）から offline_access が落ちても、
-  // grant が offline_access を持つ限り次回以降の rotation を継続できるよう、永続化する
-  // refresh token の scope には offline_access を保持する。access token は
-  // validatedRequest.scope をそのまま使うため、当該リクエストの権限は縮小されたままになる。
+  // 保存するリフレッシュトークンのスコープには、グラントが `offline_access` を持つ限り `offline_access` を残す（RFC 6749 §6）。
+  // 狭めたスコープ（`validatedRequest.scope`）から `offline_access` が外れても、次のローテーションを続けられるようにするためである。
+  // アクセストークンには `validatedRequest.scope` をそのまま使うので、このリクエストで発行するトークンの権限は狭めたままになる。
   const refreshTokenScope =
     decision.grantHasOfflineAccess && !validatedRequest.scope.includes('offline_access')
       ? [...validatedRequest.scope, 'offline_access']
@@ -175,21 +195,27 @@ export async function issueRefreshToken(input: {
     audience,
     authTime,
     nonce,
-    // OIDC Core 1.0 §12.1: refresh で再発行する ID Token は初回認証時の acr / amr を保持する。
-    // refresh_token grant では、route.ts の resolveAcrAmr() が保存済みの値を返している。
+    // リフレッシュで発行し直す ID トークンには、最初の認証のときの `acr` と `amr` を入れる（OIDC Core 1.0 §12.1）。
+    // `refresh_token` グラントでは、`route.ts` の `resolveAcrAmr()` が保存済みの値を返している。
     acr,
     amr,
     azp: validatedRequest.grantType === 'refresh_token' ? validatedRequest.azp : undefined,
-    // online refresh token の束縛。undefined なら offline refresh token として
-    // セッションから独立し、ログアウト後も使える。
+    // オンラインのリフレッシュトークンを結び付けるセッションを保存する。
+    // `undefined` なら、セッションに結び付かないオフラインのリフレッシュトークンになり、ログアウトした後も使える。
     sessionId: decision.boundSessionId,
   });
   return refreshToken;
 }
 
 /**
- * OAuth 2.1 §4.3.1: ローテーションは新トークン保存成功後に旧 RT を失効する。
- * 失敗時にユーザーがリフレッシュ不能になることを防ぐため、必ずこの順序にする。
+ * 提示されたリフレッシュトークンを失効させる。
+ *
+ * `refresh_token` グラントで、リクエストに `refresh_token` があるときだけ失効させ、ほかのグラントでは何もしない。
+ * 新しいリフレッシュトークンを発行したかどうかにかかわらず、提示されたものは失効させる。
+ * ローテーションでは、新しいリフレッシュトークンを保存した後に、古いものを失効させる。
+ * 順番を逆にすると、新しいトークンの保存に失敗したときに、エンドユーザーが使えるリフレッシュトークンがなくなるためである。
+ *
+ * @spec OAuth 2.1 §4.3.1
  */
 export async function revokeRotatedRefreshToken(
   params: TokenRequestParams,

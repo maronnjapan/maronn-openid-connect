@@ -145,7 +145,7 @@ export function validateSigningKeySet(
   requireRs256 = false,
 ): void {
   // 鍵が一つもなければ投げる。
-  // 集合の最初の鍵が新しいトークンに署名するので、鍵が少なくとも一つ要る。
+  // 新しいトークンには集合の最初の鍵で署名するので、鍵が少なくとも一つ要る。
   if (keys.length === 0) {
     throw new Error('Signing key set must contain at least one key');
   }
@@ -285,7 +285,7 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
 /**
  * エンドポイント用の値をリクエストコンテキストに入れる。
  *
- * 入れる値は、設定、用途ごとの署名鍵の集合、ストア、ストアの上に作ったリゾルバ、クライアントのリゾルバ、ビュー、各機能のコンテキストのフックが返す値である（`c.set()`）。
+ * `c.set()` で入れるのは、設定、用途ごとの署名鍵の集合、ストア、ストアの上に作ったリゾルバ、クライアントのリゾルバ、ビュー、各機能のコンテキストのフックが返す値などである。
  * オプションでリゾルバやストアが渡されていれば、`db/` のものの代わりにそれを使う。
  *
  * 署名鍵を読み込めないとき、または読み込んだ集合が `validateSigningKeySet()` の検証に通らないときは、何も入れずに `server_error` の 503 のレスポンスを返す。
@@ -294,7 +294,7 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
  */
 export async function setRequestContext(c: any, options: OidcProviderOptions): Promise<Response | undefined> {
   // 各プロバイダは、登録した鍵の集合を返す（T-022）。
-  // 集合の最初の鍵が新しいトークンに署名し、すべての鍵を JWKS エンドポイントで公開するので、ローテーションで外した鍵や別のアルゴリズムの鍵の署名も検証できる。
+  // 新しいトークンには集合の最初の鍵で署名し、すべての鍵を JWKS エンドポイントで公開するので、ローテーションで外した鍵や別のアルゴリズムの鍵の署名も検証できる。
   let signingKeys: SigningKey[];
   let idTokenSigningKeys: SigningKey[];
   let userinfoSigningKeys: SigningKey[];
@@ -365,7 +365,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
  * リクエストで使うストアを返す。
  *
  * `storage` オプションがストアそのものならそれを返し、関数ならリクエストコンテキストを渡して呼んだ結果を返す。
- * オプションがなければ、`createDatabase()` がリクエストに返すデータベースの上に `db/` のストアを作って返す。
+ * オプションがなければ、`createDatabase()` でリクエストのデータベースを作り、その上に `db/` のストアを作って返す。
  */
 async function resolveProviderStores(
   storage: OidcProviderOptions['storage'],

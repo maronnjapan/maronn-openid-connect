@@ -38,6 +38,7 @@ export async function buildGoogleSignIn(input: {
     clientId: googleLogin.clientId,
     // Google の OAuth クライアントに登録した、承認済みのリダイレクト URI と一致する必要がある。
     // OP が自分の URL を作るときと同じく、リクエストの URL ではなく `config.issuer` から組み立てる。
+    // リクエストの URL はランタイムによっては `Host` ヘッダーから作られ、送信者がオリジンを選べてしまうためである（RFC 9700 §2.1）。
     loginUri: new URL('/login/google', config.issuer).toString(),
     nonce: await issueGoogleLoginNonce({
       transactionId,

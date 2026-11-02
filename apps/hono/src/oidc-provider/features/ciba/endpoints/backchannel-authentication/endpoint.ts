@@ -1,11 +1,12 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Accept a client's CIBA authentication request (poll mode): authenticate the
- * client, check the requested scopes and answer with the auth_req_id the
- * client then polls the token endpoint with.
+ * クライアントから CIBA の認証リクエスト（ポーリングモード）を受け付け、`auth_req_id` を JSON で返す。
+ * クライアントを認証し、要求されたスコープとパラメータを検証してから、`login_hint` で示されたユーザー宛ての保留中のリクエストを保存する。
+ * クライアントは `auth_req_id` でトークンエンドポイントをポーリングし、エンドユーザーが `/ciba` の画面で承認するとトークンを受け取る。
+ * 検証に失敗すると、OAuth のエラーレスポンスを返す。
  *
- * EXPERIMENTAL: generated with --enable ciba.
+ * 実験的な機能であり、`--enable ciba` を付けて生成したときだけ作られる。
  *
  * @spec CIBA Core 1.0 §7
  */

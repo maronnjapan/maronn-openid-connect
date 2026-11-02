@@ -16,7 +16,10 @@ export const meta = step({
 });
 
 /**
- * Build the token response body.
+ * トークンレスポンスのボディを組み立てて返す。
+ *
+ * ステータスは 200 で、ボディには `access_token`、`token_type`（`Bearer`）、`expires_in`（設定の `accessTokenExpiresIn`）、`id_token`、`scope`（許可したスコープを空白で区切った文字列）、`refresh_token` を入れる。
+ * ID トークンやリフレッシュトークンを発行しなかったときは、その値が `undefined` になり、JSON にするときにメンバーごと省かれる。
  *
  * @spec OIDC Core 1.0 §3.1.3.3
  * @spec RFC 6749 §5.1

@@ -1,10 +1,11 @@
 import { defineEndpoint } from '../step.js';
 
 /**
- * Show the consent screen of the transaction (GET) and act on the End-User's
- * decision (POST): approve issues the authorization response (a code, or the
- * tokens of the implicit and hybrid flows) and records the consent; deny sends
- * access_denied to the client.
+ * GET ではトランザクションの同意画面を描画し、POST ではエンドユーザーの決定に応じた認可レスポンスをクライアントへ返す。
+ * 承認なら認可コード（インプリシットフローとハイブリッドフローでは ID トークンやアクセストークン）を発行して同意を記録し、拒否なら `access_denied` を返す。
+ *
+ * 認可レスポンスは、認可リクエストが求めたレスポンスモードで返す。
+ * フォームが別オリジンから送られたとき、トランザクションが見つからないとき、`csrf_token` が一致しないとき、決定の値が `approve` でも `deny` でもないとき、ログインが済んでいないときは、クライアントへリダイレクトせず、OP のエラーページで応答する。
  *
  * @spec OIDC Core 1.0 §3.1.2.4
  */

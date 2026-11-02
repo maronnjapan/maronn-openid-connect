@@ -7,17 +7,21 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 
-/** Turn a Node.js IncomingMessage into a Fetch Request: the path of the incoming request on the origin of baseUrl (the advertised issuer), with its headers and body. */
+/**
+ * Node.js のリクエストを `Request` に変換して返す。
+ *
+ * URL は、受け取ったリクエストのパス（Express では `originalUrl`）を、`baseUrl`（公開している `issuer`）のオリジンにつなげたものである。
+ * ヘッダーはすべて写し、同じ名前に複数の値があれば一つずつ加える。
+ * GET と HEAD 以外では、`bodyOverride` が渡されればそれを、渡されなければ受け取ったリクエストのストリームをボディにする。
+ */
 export function toWebRequest(
   incoming: IncomingMessage & { originalUrl?: string },
   baseUrl = 'http://localhost',
   bodyOverride?: BodyInit | null,
 ): Request {
   const path = incoming.originalUrl ?? incoming.url ?? '/';
-  // Only the path is taken from the incoming request; the origin comes from
-  // baseUrl (config.issuer via applyOidc). URLs the OP builds for itself —
-  // the /login and /consent redirect Locations — therefore never depend on
-  // the Host header (OIDC Discovery 1.0 §3 / RFC 9700 §2.1).
+  // 受け取ったリクエストからはパスだけを使い、オリジンは `baseUrl`（`applyOidc()` が渡す `issuer`）から取る。
+  // そのため、OP が自分のために作る URL（`/login` と `/consent` へのリダイレクトの `Location`）は `Host` ヘッダーに左右されない（OIDC Discovery 1.0 §3、RFC 9700 §2.1）。
   const url = new URL(path, baseUrl);
   const headers = new Headers();
   for (const [name, value] of Object.entries(incoming.headers)) {
@@ -45,7 +49,11 @@ export function toWebRequest(
   return new Request(url, init);
 }
 
-/** Write a Fetch Response to a Node.js ServerResponse: status, headers (Set-Cookie one per header) and body. */
+/**
+ * `Response` を Node.js のレスポンスに書き込む。
+ *
+ * ステータスコード、ヘッダー（`Set-Cookie` は一つずつ別のヘッダーにする）、ボディを `ServerResponse` に書き込み、レスポンスを終える。
+ */
 export async function writeWebResponse(
   outgoing: ServerResponse,
   response: Response,

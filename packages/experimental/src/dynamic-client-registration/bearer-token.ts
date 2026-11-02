@@ -17,11 +17,14 @@
 const BEARER_HEADER = /^Bearer +([A-Za-z0-9\-._~+/]+=*)$/i;
 
 /**
- * Authorization ヘッダの Bearer トークンを返す。
+ * `Authorization` ヘッダーの `Bearer` トークンを返す。
  *
- * ヘッダが無い（undefined / null）、Bearer 以外のスキーム、形式不正のときは
- * undefined を返し、「トークンの提示なし」として扱う（RFC 6750 §3.1 は、認証
- * 情報を持たない要求にエラーコードを付けないことを求める）。
+ * スキーム名の大文字と小文字は区別せず、トークンの形式は RFC 6750 §2.1 の `b64token` に従って確かめる。
+ * ヘッダーがないとき（`undefined` か `null`）、スキームが `Bearer` でないとき、値の形式が正しくないときは `undefined` を返し、トークンが提示されなかったものとして扱う。
+ * 認証情報を含まないリクエストへのエラーレスポンスにはエラーコードを付けないことを、RFC 6750 §3.1 が求めるからである。
+ *
+ * @spec RFC 6750 §2.1
+ * @spec RFC 6750 §3.1
  */
 export function readBearerToken(authorizationHeader: string | null | undefined): string | undefined {
   if (authorizationHeader === undefined || authorizationHeader === null) {

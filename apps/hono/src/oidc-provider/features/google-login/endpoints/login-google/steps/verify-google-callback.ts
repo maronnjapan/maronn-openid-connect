@@ -20,10 +20,15 @@ export const meta = step({
 });
 
 /**
- * [verify-google-callback] EXTENSION (google-login): run the callback checks
- * and map the Google account to an OP subject. Returns the error to show on
- * failure so a failed Google callback is never redirected to a client — until
- * the nonce is verified the OP cannot tell whose transaction this is.
+ * POST を検証し、ユーザーとトランザクションを特定する。
+ *
+ * `handleGoogleLoginRedirect()` で POST を検証してトランザクション ID と Google アカウントを取り出し、`resolveGoogleLoginSubject()` でアカウントに対応する OP のサブジェクトを取得して、その二つを返す。
+ * 検証器、`nonce` のストア、アカウントのリゾルバはリクエストコンテキストから取り出す。
+ *
+ * 検証に失敗して `GoogleLoginError` が投げられたときは、エラーコード、メッセージ、ステータスコードを入れたエラー（`kind: 'error'`）を返す。
+ * 呼び出し側はこのエラーをクライアントにリダイレクトせず、OP のエラーページに表示する。
+ * `nonce` を検証するまでは、どのトランザクションの POST なのか OP には分からないためである。
+ * `GoogleLoginError` 以外のエラーはそのまま投げる。
  */
 export async function verifyGoogleLoginCallback(
   c: any,
@@ -33,8 +38,8 @@ export async function verifyGoogleLoginCallback(
   const verifier = c.get('googleIdTokenVerifier');
   const accountResolver = c.get('googleAccountResolver');
   try {
-    // Double Submit Cookie -> google-auth-library verification -> nonce lookup,
-    // in the order Google's server-side verification guide prescribes.
+    // Cookie とボディの `g_csrf_token` の照合、ID トークンの検証、`nonce` によるトランザクションの特定を、この順に行う。
+    // 照合を検証より先に行うのは Google のサーバー側の検証の手引きに従うためで、`nonce` を最後に使うのは検証を通らないトークンで消費させないためである。
     const login = await handleGoogleLoginRedirect({
       params: await c.req.parseBody(),
       cookieHeader: c.req.header('Cookie') ?? null,

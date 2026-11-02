@@ -1,10 +1,9 @@
 import { defineEndpoint } from '../step.js';
 
 /**
- * Authenticate the client, validate the grant it presents (an authorization
- * code, a refresh token, or the grant of an enabled feature) and answer with
- * an access token, an ID Token when openid was granted and a refresh token
- * when one is issued. Any failure is answered with an OAuth error.
+ * クライアントを認証し、提示されたグラント（認可コード、リフレッシュトークン、有効にした機能が扱うグラント）を検証して、トークンレスポンスで応答する。
+ * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
+ * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
  *
  * @spec OIDC Core 1.0 §3.1.3
  */

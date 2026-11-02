@@ -18,7 +18,18 @@ import { verifyGoogleLoginCallback } from './steps/verify-google-callback.js';
 
 export type { GoogleLoginOutcome } from './outcome.js';
 
-/** Run the steps of POST /login/google in order: verify the Google ID token and nonce, resolve the account, establish the browser session and hand off to consent. Returns the outcome page.ts turns into a redirect or a screen. */
+/**
+ * ステップを順に実行し、ログインの結果を返す。
+ *
+ * `POST /login/google` の処理である。
+ * Google の ID トークンと `nonce` を検証してアカウントに対応する OP のユーザーを特定し、`nonce` を発行したトランザクションを読み込んで、OP のセッションを確立し、同意のステップに引き継ぐ。
+ * トランザクションの読み込みから同意のステップへの引き継ぎまでは、パスワードによるログイン（`POST /login`）と同じ関数を使う。
+ *
+ * 成功すると、セッションの Cookie を付けた `authenticated` を返す。
+ * 検証かトランザクションの読み込みに失敗すると、そのステップが返したエラーを返し、セッションは作らない。
+ * `config.googleLogin` が設定されていなければ、何もせずに `not_configured` を返す。
+ * `page.ts` がこの結果を、同意画面へのリダイレクトかエラーページにして応答する。
+ */
 export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
   const config = c.get('config');
   if (!config.googleLogin) {

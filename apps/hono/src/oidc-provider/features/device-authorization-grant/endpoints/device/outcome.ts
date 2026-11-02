@@ -81,16 +81,23 @@ export interface DeviceDecisionSubmission {
 }
 
 /**
- * Remaining lifetime of a record, in whole seconds, never negative.
+ * レコードの有効期限までの残りの秒数を返す。
  *
- * Rounded up so the cookie always outlives the record it binds: a cookie that
- * expired first would turn a still-valid verification into an unexplained 403.
+ * 1 秒未満の端数は切り上げ、期限を過ぎていれば 0 を返す。
+ * 切り上げるのは、バインディング Cookie がレコードより先に期限切れにならないようにするためである。
+ * Cookie が先に切れると、まだ有効な検証が、理由のわからない 403 で拒否されてしまう。
  */
 export function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
   return Math.max(0, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));
 }
 
-/** Map a verification failure to the error to show; anything else is re-thrown. */
+/**
+ * 検証の失敗を、エラーページに出す結果に変えて返す。
+ *
+ * `DeviceVerificationError`（バインディング Cookie か CSRF トークンの検証の失敗）なら、そのメッセージとステータスコード（403）を持つ `error` の結果を返す。
+ * `DeviceAuthorizationError`（承認か拒否の前にレコードが決定済みになっていたとき）なら、その説明（`errorDescription`）とステータスコード 400 を持つ `error` の結果を返す。
+ * それ以外のエラーは、そのまま投げ直す。
+ */
 export function verificationFailure(error: unknown): DeviceOutcome {
   if (error instanceof DeviceVerificationError) {
     return { kind: 'error', error: error.message, statusCode: error.statusCode };

@@ -81,7 +81,11 @@ export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'n
  * クライアント情報を解決するインターフェース
  */
 export interface TokenClientResolver {
-  /** client_id で登録済みクライアントを探し、認証に使う情報（シークレットのハッシュ、登録した認証方式など）を返す。未登録なら null を返す。 */
+  /**
+   * 登録済みのクライアントを返す（なければ `null`）。
+   *
+   * `clientId` で登録済みのクライアントを探し、クライアント認証に使う情報（シークレットのハッシュ、登録した認証方式など）を返す。
+   */
   findClient(clientId: string): Promise<TokenClientInfo | null>;
 }
 
@@ -130,32 +134,33 @@ export interface AuthorizationCodeInfo {
  * 認可コードを解決するインターフェース
  */
 export interface AuthorizationCodeResolver {
-  /** 提示された認可コードの保存済み情報（クライアント、redirect_uri、PKCE、使用済みかどうかなど）を返す。知らないコードなら null を返す。 */
+  /**
+   * 認可コードの保存済みの情報を返す（なければ `null`）。
+   *
+   * 返す情報には、発行先のクライアント、`redirect_uri`、PKCE の値、使用済みかどうかなどが含まれる。
+   * 使用済みのコードも、少なくとも認可コードの元の有効期間のあいだは返し続ける（{@link AuthorizationCodeResolver.revokeAuthorizationCode}）。
+   */
   findAuthorizationCode(code: string): Promise<AuthorizationCodeInfo | null>;
   /**
-   * 認可コードを「使用済み」にする。**物理削除ではなく `used=true` への状態遷移として
-   * 実装しなければならない。**
+   * 認可コードを使用済みにする。
    *
-   * 理由（OAuth 2.1 Section 4.1.2 / RFC 9700 §4.13）: 認可コードが再提示されたら、
-   * 漏洩の可能性を見て同 grantId の発行済みトークンをすべて失効したい
-   * （`revokeTokensByGrantId`）。この失効を発火させるには、再提示されたコードを
-   * 「存在するが used:true」として検知できる必要がある。
+   * **実装は、レコードを削除せず、`used` を `true` に更新しなければならない**（できればアトミックに）。
+   * `findAuthorizationCode` は、少なくとも認可コードの元の有効期間のあいだは、使用済みのレコードを返し続ける。
+   * 有効期間を過ぎた後にレコードを消すのは構わない。
    *
-   * したがって実装は次を満たすこと:
-   * - このメソッドはレコードを削除せず `used=true` に更新する（できればアトミックに）。
-   * - `findAuthorizationCode` は**少なくとも元の認可コード TTL の間は、used:true の
-   *   レコードを返し続ける**（TTL 経過後の eviction は許容）。
-   *
-   * 物理削除で実装すると、再提示は `not found`（invalid_grant）にはなるが
-   * `revokeTokensByGrantId` が**呼ばれず**、漏洩コードから発行済みのトークンが生き残る
-   * （SHOULD 違反）。生成 OP では `store.ts` の `consume()`（used 更新）を使い、
-   * `delete()`（物理削除）は使わないこと。
+   * 削除してはならないのは、使用済みのコードが再び提示されたことを検知するためである（OAuth 2.1 §4.1.2、RFC 9700 §4.13）。
+   * 認可コードが再び提示されたら、漏洩した可能性があるので、同じグラント ID で発行したトークンをすべて失効させたい（`revokeTokensByGrantId`）。
+   * この失効は、再び提示されたコードを「存在するが使用済み」と判定できたときにしか行えない。
+   * レコードを削除する実装では、再提示は「見つからない」として `invalid_grant` で拒否されるだけで `revokeTokensByGrantId` は呼ばれず、漏洩したコードで発行したトークンが有効なまま残る（SHOULD に反する）。
+   * 生成された OP では、`store.ts` の `consume()`（`used` の更新）を使い、`delete()`（レコードの削除）は使わない。
    */
   revokeAuthorizationCode(code: string): Promise<void>;
   /**
-   * コード再利用が検知された際に、同 grantId を持つアクセストークン・リフレッシュトークンを
-   * すべて失効する（OAuth 2.1 Section 4.1.2: SHOULD revoke previously issued tokens）。
-   * 未提供の場合、コード自体は invalid_grant として拒否されるが、発行済みトークンは失効されない。
+   * グラント ID が同じトークンをすべて失効させる。
+   *
+   * 認可コードの再利用を検知したときに、同じグラント ID のアクセストークンとリフレッシュトークンを失効させるために呼ぶ。
+   * 認可サーバーは、再利用されたコードをもとに発行済みのトークンを失効させるべきである（SHOULD、OAuth 2.1 §4.1.2）。
+   * このメソッドがなければ、再利用されたコードは `invalid_grant` で拒否されるが、発行済みのトークンは失効しない。
    */
   revokeTokensByGrantId?(grantId: string): Promise<void>;
 }
@@ -254,33 +259,32 @@ export interface RefreshTokenInfo {
  * リフレッシュトークンを解決するインターフェース
  */
 export interface RefreshTokenResolver {
-  /** 提示されたリフレッシュトークンの保存済み情報（クライアント、scope、有効期限、使用済みかどうかなど）を返す。知らないトークンなら null を返す。 */
+  /**
+   * リフレッシュトークンの情報を返す（なければ `null`）。
+   *
+   * 返す情報には、発行先のクライアント、スコープ、有効期限、使用済みかどうかなどが含まれる。
+   * 使用済みのトークンも、少なくとも最初の発行から数える有効期間のあいだは返し続ける（{@link RefreshTokenResolver.revokeRefreshToken}）。
+   */
   resolve(token: string): Promise<RefreshTokenInfo | null>;
   /**
-   * リフレッシュトークンを「使用済み」にする。**物理削除ではなく `used=true` への状態遷移
-   * として実装しなければならない。**
+   * リフレッシュトークンを使用済みにする。
    *
-   * 理由（OAuth 2.1 Section 4.3.1 / RFC 9700 §4.14）: rotation 済みの古い
-   * リフレッシュトークンが再提示されたら、token family 全体（同 grantId）を失効したい
-   * （`revokeTokensByGrantId`）。この失効を発火させるには、再提示されたトークンを
-   * 「存在するが used:true」として検知できる必要がある。
+   * **実装は、レコードを削除せず、`used` を `true` に更新しなければならない**（できればアトミックに）。
+   * `resolve` は、少なくともリフレッシュトークンの最初の発行から数える有効期間のあいだは、使用済みのレコードを返し続ける。
+   * 有効期間を過ぎた後にレコードを消すのは構わない。
    *
-   * したがって実装は次を満たすこと:
-   * - このメソッドはレコードを削除せず `used=true` に更新する（できればアトミックに）。
-   * - `resolve` は**少なくともリフレッシュトークンの absolute lifetime 相当の間は、
-   *   used:true のレコードを返し続ける**（lifetime 経過後の eviction は許容）。
-   *
-   * 物理削除で実装すると、再提示は `not found`（invalid_grant）にはなるが
-   * `revokeTokensByGrantId` が**呼ばれず**、漏洩トークンから派生した token family が
-   * 生き残る（SHOULD 違反）。
+   * 削除してはならないのは、ローテーション済みの古いリフレッシュトークンが再び提示されたことを検知するためである（OAuth 2.1 §4.3.1、RFC 9700 §4.14）。
+   * 古いトークンが再び提示されたら、同じグラント ID のトークンをすべて失効させたい（`revokeTokensByGrantId`）。
+   * この失効は、再び提示されたトークンを「存在するが使用済み」と判定できたときにしか行えない。
+   * レコードを削除する実装では、再提示は「見つからない」として `invalid_grant` で拒否されるだけで `revokeTokensByGrantId` は呼ばれず、漏洩したトークンからローテーションで発行したトークンが有効なまま残る（SHOULD に反する）。
    */
   revokeRefreshToken(token: string): Promise<void>;
   /**
-   * リフレッシュトークンの再利用が検知された際に、同 grantId を持つアクセストークン・
-   * リフレッシュトークンをすべて失効する（OAuth 2.1 Section 4.3.1: SHOULD revoke
-   * the refresh token along with all access tokens previously issued based on it）。
-   * 未提供の場合、リフレッシュトークン自体は invalid_grant として拒否されるが、
-   * 発行済みの兄弟トークンは失効されない。
+   * グラント ID が同じトークンをすべて失効させる。
+   *
+   * リフレッシュトークンの再利用を検知したときに、同じグラント ID のアクセストークンとリフレッシュトークンを失効させるために呼ぶ。
+   * 認可サーバーは、そのリフレッシュトークンと、それをもとに発行したすべてのアクセストークンを失効させるべきである（SHOULD、OAuth 2.1 §4.3.1）。
+   * このメソッドがなければ、再利用されたリフレッシュトークンは `invalid_grant` で拒否されるが、同じグラントで発行済みのほかのトークンは失効しない。
    */
   revokeTokensByGrantId?(grantId: string): Promise<void>;
 }
@@ -378,15 +382,17 @@ export interface ValidatedRefreshTokenRequest {
 export type ValidatedTokenRequest = ValidatedAuthorizationCodeRequest | ValidatedRefreshTokenRequest;
 
 /**
- * grant_type の存在と OP 全体でのサポート有無を検証する（機能単位のステップ関数）。
+ * `grant_type` が OP の対応する値か検証して返す。
  *
- * - 欠落は invalid_request
- * - 実装として扱える grant_type（authorization_code / refresh_token）であっても、
- *   supportedGrantTypes から除外されていれば unsupported_grant_type として拒否する
- *   （RFC 6749 §5.2。機能トグル）
+ * `grant_type` がないか空文字列なら、`TokenError`（`invalid_request`）を投げる。
+ * `authorization_code` と `refresh_token` 以外の値と、`supportedGrantTypes` にない値には、`TokenError`（`unsupported_grant_type`）を投げる（RFC 6749 §5.2）。
+ * `supportedGrantTypes` の既定値は `authorization_code` と `refresh_token` で、ここから外したグラントタイプは、実装されていても拒否する（機能を止める切り替えとして使う）。
  *
- * クライアント単位の許可（{@link validateClientGrantType} → unauthorized_client）とは
- * 別軸の「OP 全体でのサポート有無」を表す。
+ * ここで確かめるのは OP 全体で対応しているかどうかで、クライアントごとの許可（{@link validateClientGrantType}、`unauthorized_client`）とは別に確かめる。
+ *
+ * @spec RFC 6749 §5.2
+ * @throws {TokenError} `invalid_request`: `grant_type` がないとき
+ * @throws {TokenError} `unsupported_grant_type`: OP が対応していないグラントタイプのとき
  */
 export function validateGrantTypeSupported(
   grantType: string | undefined,
@@ -413,11 +419,14 @@ export function validateGrantTypeSupported(
 }
 
 /**
- * クライアント認証で提示された clientId からクライアント情報を解決する（機能単位のステップ関数）。
+ * 提示された `client_id` の登録済みクライアントを返す。
  *
- * `extractClientCredentials` が抽出した clientId を受け取り、TokenClientResolver から
- * クライアント情報を取得する。空の clientId（資格情報の提示なし）、および解決できない
- * クライアントは invalid_client として拒否する（RFC 6749 §5.2）。
+ * `authenticatedClientId` には、`extractClientCredentials()` がリクエストから取り出したクライアント ID を渡す。
+ * クライアント ID が空のとき（認証情報が提示されていないとき）と、`clientResolver.findClient()` がクライアントを返さないときは、`TokenError`（`invalid_client`）を投げる（RFC 6749 §5.2）。
+ * シークレットの照合は、ここでは行わない。
+ *
+ * @spec RFC 6749 §5.2
+ * @throws {TokenError} `invalid_client`: クライアント ID が空のとき、またはクライアントが登録されていないとき
  */
 export async function resolveAuthenticatedTokenClient(
   authenticatedClientId: string,
@@ -442,12 +451,18 @@ export async function resolveAuthenticatedTokenClient(
 }
 
 /**
- * クライアント単位の grant_type 認可を検証する（機能単位のステップ関数）。
+ * クライアントが登録していない `grant_type` を拒否する。
  *
- * RFC 6749 §5.2: "The authenticated client is not authorized to use this authorization
- * grant type." → unauthorized_client。OP 全体での未サポート（unsupported_grant_type →
- * {@link validateGrantTypeSupported}）とは区別する。
- * 既定 ["authorization_code"]（OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）。
+ * クライアントの `grantTypes` に `grantType` がなければ、`TokenError`（`unauthorized_client`）を投げる。
+ * 認証したクライアントがそのグラントタイプを使う許可を持たないときのエラーコードは `unauthorized_client` である（RFC 6749 §5.2）。
+ * `grantTypes` を登録していないクライアントには、既定値の `["authorization_code"]` を当てはめる（OIDC Registration 1.0 §2、RFC 7591 §2）。
+ *
+ * OP 全体で対応していないグラントタイプは {@link validateGrantTypeSupported} が `unsupported_grant_type` で拒否するので、ここではクライアントごとの許可だけを確かめる。
+ *
+ * @spec RFC 6749 §5.2
+ * @spec OIDC Registration 1.0 §2
+ * @spec RFC 7591 §2
+ * @throws {TokenError} `unauthorized_client`: クライアントがそのグラントタイプを登録していないとき
  */
 export function validateClientGrantType(
   client: Pick<TokenClientInfo, 'grantTypes'>,

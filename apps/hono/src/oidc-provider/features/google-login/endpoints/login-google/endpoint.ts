@@ -1,12 +1,12 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Complete a Sign in with Google login: verify the ID token Google posts back,
- * link the Google account to a user of the provider, start the session of the
- * transaction and go on to the consent screen.
+ * Google から送られた ID トークンを検証し、OP のセッションを確立して同意画面へリダイレクトする。
  *
- * EXTENSION: generated with --enable google-login (the login_uri of Sign in
- * with Google).
+ * 「Google でログイン」の `login_uri` であり、ログインを終えたブラウザが ID トークンを POST で送る。
+ * 検証した Google アカウントは OP のユーザーに対応付け（既定では初回のログインでユーザーを作る）、そのユーザーでトランザクションのセッションを始める。
+ *
+ * 拡張機能なので、`--enable google-login` を付けて生成したときだけ含まれる。
  */
 export const endpoint = defineEndpoint({
   id: 'login-google',

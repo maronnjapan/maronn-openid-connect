@@ -19,10 +19,13 @@ export const meta = step({
 });
 
 /**
- * RFC 7591 §3.2.1: 201 Created with the issued values and every registered
- * metadata value (defaults applied). client_secret_expires_at: 0 means the
- * secret does not expire. The body carries the client_secret, so it is never
- * cached.
+ * 登録したクライアントの情報を 201 で返す。
+ *
+ * ボディには、発行した値（`client_id`、`client_id_issued_at`、発行したときは `client_secret` と `client_secret_expires_at`）と、登録したすべてのメタデータ（既定値を適用したもの）を含める（RFC 7591 §3.2.1）。
+ * `client_secret_expires_at` の 0 は、シークレットに有効期限がないことを表す。
+ * ボディに `client_secret` が含まれるので、キャッシュを禁止して返す。
+ *
+ * @spec RFC 7591 §3.2.1
  */
 export function respondRegistration(c: any, client: DynamicallyRegisteredClient): Response {
   return sendRegistrationResponse(c, { status: 201, body: buildClientRegistrationResponse(client) });

@@ -24,12 +24,23 @@ export const meta = step({
 });
 
 /**
- * Validate the grant registration and the requested scope, and apply the
- * offline_access policy. RFC 8628 §3.1 / RFC 7591 §2 / OIDC Core 1.0 §11
+ * グラントの登録とスコープを検証し、記録するスコープを返す。
  *
- * Each check is an independent function from the experimental package or
- * core. Delete a call to drop that validation, or insert your own logic
- * between steps.
+ * 次の順に確かめ、最初に満たさなかったものの `DeviceAuthorizationError` を投げる。
+ * - クライアントがデバイス認可グラントを登録している（`unauthorized_client`）。
+ * - `scope` があり、`openid` を含む（`invalid_request` か `invalid_scope`）。
+ * - スコープの一覧を登録したクライアントなら、一覧にあるスコープだけを要求している（`invalid_scope`）。
+ * - OP が宣言したスコープだけを要求している（`invalid_scope`）。
+ *
+ * 最後の検証の前に、許可できない `offline_access` を取り除く（OIDC Core 1.0 §11）。
+ * 返すのは、取り除いた後のスコープである。
+ *
+ * それぞれの検証は experimental パッケージか core の独立した関数なので、呼び出しを消せばその検証を外せ、間に独自の処理を入れることもできる。
+ *
+ * @spec RFC 8628 §3.1
+ * @spec RFC 7591 §2
+ * @spec OIDC Core 1.0 §11
+ * @throws {DeviceAuthorizationError} `unauthorized_client`、`invalid_request`、`invalid_scope`: 上の検証のどれかを満たさないとき。
  */
 export function validateDeviceAuthorizationRequest(
   params: Record<string, string>,

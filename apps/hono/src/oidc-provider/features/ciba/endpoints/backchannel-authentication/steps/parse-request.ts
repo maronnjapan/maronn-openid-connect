@@ -16,8 +16,13 @@ export const meta = step({
 });
 
 /**
- * CIBA §7.1: the backchannel authentication request body MUST be
- * application/x-www-form-urlencoded.
+ * フォーム形式の `Content-Type` なら true を返す。
+ *
+ * `contentType`（`Content-Type` ヘッダーの値）の `;` より前を小文字にし、前後の空白を除いてから `application/x-www-form-urlencoded` と比べる。
+ * そのため、`charset` などのパラメータが付いていても true を返す。
+ * バックチャネル認証リクエストのボディは、この形式でなければならない（CIBA Core 1.0 §7.1 の MUST）。
+ *
+ * @spec CIBA Core 1.0 §7.1
  */
 function isFormUrlEncoded(contentType: string): boolean {
   const [mediaType = ''] = contentType.toLowerCase().split(';');
@@ -25,8 +30,13 @@ function isFormUrlEncoded(contentType: string): boolean {
 }
 
 /**
- * Parse the backchannel authentication request: the form body and the
- * Authorization header. CIBA Core 1.0 §7.1 / RFC 6749 §3.1
+ * ボディと `Authorization` ヘッダーを読み取って返す。
+ *
+ * リクエストボディのパラメータを `params` に、`Authorization` ヘッダーの値（ないときは空文字列）を `authorization` に入れて返す。
+ *
+ * @spec CIBA Core 1.0 §7.1
+ * @spec RFC 6749 §3.1
+ * @throws {BackchannelAuthenticationEndpointError} `invalid_request`: `Content-Type` が `application/x-www-form-urlencoded` でないとき、または同じパラメータが 2 回以上あるとき（ステータスは 400）。
  */
 export async function parseBackchannelAuthenticationRequest(
   c: any,
@@ -39,8 +49,8 @@ export async function parseBackchannelAuthenticationRequest(
     });
   }
 
-  // RFC 6749 §3.1: request parameters MUST NOT be repeated. Read the raw body so
-  // URLSearchParams iteration exposes duplicates instead of silently keeping the last.
+  // 同じパラメータの繰り返しは禁じられている（RFC 6749 §3.1 の MUST NOT）ので、ボディを文字列のまま読む。
+  // `URLSearchParams` の要素を順にたどれば重複を検出でき、最後の値だけが黙って残ることもない。
   const rawBody = await c.req.text();
   const params: Record<string, string> = {};
   const seen = new Set<string>();

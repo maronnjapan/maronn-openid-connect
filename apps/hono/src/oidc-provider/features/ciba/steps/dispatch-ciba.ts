@@ -35,16 +35,25 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — CIBA grant (CIBA Core 1.0 §10.1, poll mode).
+ * グラントタイプが CIBA なら、トークンを発行して応答する。
  *
- * Dispatched right after client authentication and BEFORE the grant_type
- * validation, which does not know the URN and would reject it with
- * unsupported_grant_type. Answers the request itself and never falls through
- * to the standard grants; returns undefined for any other grant_type.
+ * `grant_type` が CIBA の URN でなければ、何もせず `undefined` を返す。
+ * トークンエンドポイントのパイプラインは、このステップをクライアント認証の直後、`grant_type` の検証より前に実行する。
+ * `grant_type` の検証はこの URN を知らず、`unsupported_grant_type` で拒否してしまうためである。
+ * CIBA のグラントなら、このステップが応答まで行い、標準のグラントの処理には進まない。
  *
- * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
- * in a breaking way between releases. Do not build production code on it
- * without pinning the version.
+ * `auth_req_id` のリクエストが承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンスで応答する。
+ * 承認済みでなければ、`processCibaGrant()` が投げる `CibaGrantError` を、同じコードとステータス（400）の `TokenEndpointError` にして投げる。
+ * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` を表す `TokenEndpointError` を投げる。
+ * 投げた `TokenEndpointError` は、トークンエンドポイントのエラー応答のステップがそのまま返す。
+ *
+ * experimental パッケージの API は安定しておらず、リリースの間で互換性のない変更が入ることがある。
+ * 本番のコードで使うときは、バージョンを固定する。
+ *
+ * @spec CIBA Core 1.0 §10.1
+ * @spec CIBA Core 1.0 §11
+ * @throws {TokenEndpointError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `auth_req_id` のリクエストが承認済みでないか、使えないとき（ステータスは 400）。
+ * @throws {TokenEndpointError} `server_error`: クライアントの `alg` に合う ID トークンの署名鍵がないとき（ステータスは 500）。
  */
 export async function redeemCibaRequest(
   c: any,
@@ -59,9 +68,8 @@ export async function redeemCibaRequest(
     const accessTokenStore = c.get('accessTokenStore');
     const cibaStore = c.get('cibaAuthenticationRequestStore');
 
-    // CIBA §11 state machine. Everything except "approved" throws:
-    // authorization_pending / slow_down / access_denied / expired_token, plus
-    // invalid_request / invalid_grant.
+    // `auth_req_id` のリクエストの状態を判定し、承認済みならトークンの発行に必要な値を受け取る（CIBA §11 の状態機械）。
+    // 承認済み以外では `CibaGrantError`（`authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`）が投げられる。
     const cibaGrant = await processCibaGrant({
       params,
       client: tokenClient,
@@ -69,16 +77,14 @@ export async function redeemCibaRequest(
     });
 
     const cibaConfig = c.get('config');
-    // The first registered key signs new tokens (SigningKeyProvider contract).
+    // 新しいトークンには、登録された最初の鍵で署名する（`SigningKeyProvider` の契約）。
     const cibaSigningKey: SigningKey = c.get('signingKeys')[0];
     const cibaPrivateKey = cibaSigningKey.privateKey;
     const cibaKeyId = cibaSigningKey.keyId;
-    // T-022: the ID Token this grant issues follows the SAME key-selection rule
-    // as the standard grants — pick a registered ID Token key whose alg matches
-    // the client's id_token_signed_response_alg (OIDC Dynamic Client
-    // Registration 1.0 §2), not simply the first key of the set. Using the
-    // first key would hand an ES256-registered client an RS256 ID Token, which
-    // it rejects, and would hash at_hash with the wrong algorithm.
+    // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ（T-022）。
+    // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OpenID Connect Dynamic Client Registration 1.0 §2）。
+    // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
+    // `at_hash` も誤ったアルゴリズムで計算してしまう。
     const cibaIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];
     const cibaRegisteredClient = (await tokenClientResolver.findClient(
       authenticatedClientId,
@@ -103,9 +109,9 @@ export async function redeemCibaRequest(
         ? createOpaqueAccessTokenIssuer()
         : createJwtAccessTokenIssuer();
 
-    // Same aud policy as the standard grants: the UserInfo endpoint stays a
-    // permanent member (RFC 9068 §3). CIBA §7.1 has no resource parameter,
-    // so nothing else is requested.
+    // アクセストークンの `aud` を、標準のグラントと同じ方針で組み立てる。
+    // UserInfo エンドポイントを常に含める（RFC 9068 §3）。
+    // CIBA §7.1 には `resource` パラメータがないので、ほかのオーディエンスは要求されない。
     const cibaAudience = buildAccessTokenAudience({
       userInfoEndpoint: `${cibaConfig.issuer}/userinfo`,
       issuer: cibaConfig.issuer,
@@ -127,12 +133,11 @@ export async function redeemCibaRequest(
       keyId: cibaKeyId,
     });
 
-    // The backchannel authentication endpoint requires the openid scope, so
-    // an ID Token is always issued. It carries no nonce (CIBA §7.1 defines no
-    // such parameter, and OIDC Core 1.0 §2 only requires nonce when the
-    // authentication request carried one) and no c_hash (there is no code).
-    // Poll mode adds no CIBA-specific claims either — the auth_req_id claim
-    // of §10.3.1 belongs to the push-mode token delivery message.
+    // ID トークンは必ず発行する。
+    // バックチャネル認証エンドポイントが `openid` スコープを必須にしているためである。
+    // CIBA §7.1 には `nonce` パラメータがなく、OIDC Core 1.0 §2 が `nonce` を求めるのは認証リクエストに `nonce` があったときだけなので、`nonce` は含めない。
+    // 認可コードがないので、`c_hash` も含めない。
+    // ポーリングモードでは CIBA 固有のクレームも加えない（§10.3.1 の `auth_req_id` クレームは、プッシュモードでトークンを配信するメッセージのものである）。
     const cibaAtHash = await computeAtHash(cibaAccessToken, cibaIdTokenPrivateKey);
     const cibaAcrResolver = c.get('acrResolver') as AcrResolver | undefined;
     const { acr: cibaAcr, amr: cibaAmr } = await resolveAcrAmr({
@@ -163,8 +168,7 @@ export async function redeemCibaRequest(
       clientId: cibaGrant.clientId,
       scope: cibaGrant.scope,
       expiresAt: cibaIssuedAt + cibaConfig.accessTokenExpiresIn,
-      // Inherit the grantId minted at approval so revoking the grant kills
-      // every token issued from this backchannel authentication.
+      // 承認のときに作ったグラント ID を引き継ぎ、そのグラントを失効させれば、このバックチャネル認証から発行したトークンがすべて失効するようにする。
       grantId: cibaGrant.grantId,
       iat: cibaIssuedAt,
       nbf: cibaIssuedAt,
@@ -173,10 +177,9 @@ export async function redeemCibaRequest(
       jti: cibaAccessTokenPayload.jti,
     });
 
-    // OIDC Core 1.0 §11: offline_access survived the backchannel
-    // authentication endpoint's policy check only if this client may hold
-    // refresh tokens, and the approval screen the user just went through IS
-    // the explicit consent that §11 asks for. Nothing further to gate on here.
+    // `scope` に `offline_access` があれば、リフレッシュトークンを発行する（OIDC Core 1.0 §11）。
+    // `offline_access` がここまで残るのは、バックチャネル認証エンドポイントの方針の確認で、このクライアントがリフレッシュトークンを持てると判定されたときだけである。
+    // エンドユーザーが通った承認画面が §11 の求める明示的な同意にあたるので、ここで確かめることはほかにない。
     const cibaRefreshToken = cibaGrant.scope.includes('offline_access')
       ? generateRandomString(32)
       : undefined;
@@ -186,8 +189,8 @@ export async function redeemCibaRequest(
         subject: cibaGrant.subject,
         clientId: cibaGrant.clientId,
         scope: cibaGrant.scope,
-        // OAuth 2.1 §6.1: absolute lifetime from initial issuance; rotations
-        // inherit originalIssuedAt so the deadline never slides forward.
+        // 有効期限は、最初の発行から数えた絶対的な期間で決める（OAuth 2.1 §6.1）。
+        // ローテーションでは `originalIssuedAt` を引き継ぐので、期限が後ろにずれることはない。
         expiresAt: cibaIssuedAt + cibaConfig.refreshTokenAbsoluteLifetime,
         originalIssuedAt: cibaIssuedAt,
         used: false,
@@ -196,8 +199,7 @@ export async function redeemCibaRequest(
         issuer: cibaConfig.issuer,
         audience: cibaAudience,
         authTime: cibaGrant.authTime,
-        // CIBA §7.1 defines no nonce parameter, so the re-issued ID Token has
-        // none to preserve either.
+        // CIBA §7.1 には `nonce` パラメータがないので、再発行する ID トークンにも引き継ぐ `nonce` はない。
         nonce: undefined,
         acr: cibaAcr,
         amr: cibaAmr,
@@ -217,10 +219,9 @@ export async function redeemCibaRequest(
       },
     });
   } catch (error) {
-    // CIBA §11: authorization_pending / slow_down / access_denied /
-    // expired_token use the RFC 6749 §5.2 shape and are always 400. A 401 can
-    // only come from client authentication, which runs before the branch and
-    // throws core's TokenError.
+    // `CibaGrantError` を、同じコードとステータスの `TokenEndpointError` にして投げ直す。
+    // `authorization_pending`、`slow_down`、`access_denied`、`expired_token` は RFC 6749 §5.2 の形のエラーで、ステータスは常に 400 である（CIBA §11）。
+    // 401 になるのはクライアント認証の失敗だけで、それはこの分岐より前に core の `TokenError` として投げられる。
     if (error instanceof CibaGrantError) {
       throw new TokenEndpointError({
         status: error.statusCode,

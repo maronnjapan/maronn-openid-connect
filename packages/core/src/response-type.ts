@@ -40,14 +40,18 @@ export type ResponseTypeValue = 'code' | 'id_token' | 'token';
 const RESPONSE_TYPE_VALUE_ORDER: readonly string[] = ['code', 'id_token', 'token'];
 
 /**
- * OAuth 2.0 Multiple Response Type Encoding Practices §1.2: response_type は空白区切りの
- * 値の並びで、順序は問わない（`token id_token` と `id_token token` は同じ）。比較できるよう、
- * 値を code、id_token、token の順に並べ直し、1 つの空白で連結した文字列を返す。
- * 知らない値はその後ろに文字コード順で並べる。
+ * `response_type` の値を決まった順に並べ直して返す。
  *
- * 同じ値の重複は取り除かない。空白の重なりや前後の空白（RFC 6749 §3.1.1 の 1 つの空白で
- * 区切る形に反する値）が作る空の値も、知らない値として残す。どちらの response_type も、
- * OP が扱うどの値とも一致しない。
+ * `response_type` は半角空白で区切った値の並びで、値の順序は問わない（`token id_token` と `id_token token` は同じ）。
+ * 比べられるように、値を `code`、`id_token`、`token` の順に並べ、半角空白 1 つでつないだ文字列を返す。
+ * これら以外の値は、その後ろに文字コード順で並べる。
+ *
+ * 同じ値が重なっていても取り除かない。
+ * 空白が続いているときや前後に空白があるときにできる空の値も、これら以外の値として残す。
+ * このような値は、1 つの半角空白で区切るという形（RFC 6749 §3.1.1）に反しており、並べ直した文字列は OP が扱うどの `response_type` とも一致しない。
+ *
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §1.2
+ * @spec RFC 6749 §3.1.1
  */
 export function normalizeResponseType(responseType: string): string {
   const rank = (value: string): number => {
@@ -61,9 +65,10 @@ export function normalizeResponseType(responseType: string): string {
 }
 
 /**
- * response_type が value を含むかを返す。response_type が無ければ false。
- * 「code を含む response_type」（OIDC Core 1.0 §11）、「token または id_token を含む
- * response_type」（Multiple Response Type Encoding Practices §3 / §5）を判定するのに使う。
+ * `response_type` が `value` を含むなら true を返す。
+ *
+ * `responseType` を半角空白で分けた値のどれかが `value` と一致すれば true を返し、`responseType` が `undefined` なら false を返す。
+ * 「`code` を含む `response_type`」（OIDC Core 1.0 §11）や、「`token` か `id_token` を含む `response_type`」（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5）を判定するのに使う。
  */
 export function responseTypeIncludes(
   responseType: string | undefined,
@@ -73,8 +78,12 @@ export function responseTypeIncludes(
 }
 
 /**
- * OIDC Core 1.0 §3.2: response_type が Implicit Flow のもの（`id_token` または
- * `id_token token`。値の順序は問わない）かを返す。
+ * インプリシットフローの値なら true を返す。
+ *
+ * `responseType` が、値の順序を問わずに `id_token` か `id_token token` と一致すれば true を返す。
+ * `responseType` が `undefined` なら false を返す。
+ *
+ * @spec OIDC Core 1.0 §3.2
  */
 export function isImplicitResponseType(responseType: string | undefined): boolean {
   if (responseType === undefined) return false;
@@ -82,8 +91,12 @@ export function isImplicitResponseType(responseType: string | undefined): boolea
 }
 
 /**
- * OIDC Core 1.0 §3.3: response_type が Hybrid Flow のもの（`code id_token`、`code token`、
- * `code id_token token`。値の順序は問わない）かを返す。
+ * ハイブリッドフローの値なら true を返す。
+ *
+ * `responseType` が、値の順序を問わずに `code id_token`、`code token`、`code id_token token` のどれかと一致すれば true を返す。
+ * `responseType` が `undefined` なら false を返す。
+ *
+ * @spec OIDC Core 1.0 §3.3
  */
 export function isHybridResponseType(responseType: string | undefined): boolean {
   if (responseType === undefined) return false;
@@ -91,13 +104,19 @@ export function isHybridResponseType(responseType: string | undefined): boolean 
 }
 
 /**
- * response_type の既定の応答モード（response_mode を指定しないリクエストへの返し方）。
+ * `response_type` の既定のレスポンスモードを返す。
  *
- * - `code`: query（Multiple Response Type Encoding Practices §2.1）
- * - `token` または `id_token` を含む response_type（Implicit Flow と Hybrid Flow）: fragment。
- *   query で返してはならない（同 §3 / §5 / §7。アクセストークンと ID Token はクエリに載せない）
+ * 既定のレスポンスモードは、`response_mode` を指定しないリクエストに認可レスポンスを返すときの返し方である。
+ * - `token` か `id_token` を含む `response_type`（インプリシットフローとハイブリッドフロー）には `fragment` を返す。
+ * - それ以外の `response_type`（`code` など）には `query` を返す（OAuth 2.0 Multiple Response Type Encoding Practices §2.1）。
  *
- * 成功の応答もエラーの応答もこの応答モードで返す（同 §3 / §5、OIDC Core 1.0 §3.2.2.6 / §3.3.2.6）。
+ * `token` か `id_token` を含む `response_type` では、`query` で返してはならない（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
+ * アクセストークンと ID トークンをクエリに含めないためである。
+ * 成功の認可レスポンスもエラーレスポンスも、このレスポンスモードで返す（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、OIDC Core 1.0 §3.2.2.6、§3.3.2.6）。
+ *
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §2.1
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §3
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §5
  */
 export function defaultResponseModeOf(responseType: string): 'query' | 'fragment' {
   return responseTypeIncludes(responseType, 'token') || responseTypeIncludes(responseType, 'id_token')

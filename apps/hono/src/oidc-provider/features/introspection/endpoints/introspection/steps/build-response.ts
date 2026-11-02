@@ -21,9 +21,13 @@ export const meta = step({
 });
 
 /**
- * Describe the token. RFC 7662 §2.2: an unknown, expired, not-yet-valid or
- * rotated token is reported as { active: false } with no other member, so the
- * caller cannot distinguish "never existed" from "no longer valid".
+ * トークンの内容か `{ active: false }` を返す。
+ *
+ * 有効なトークンには、`active: true` と、`scope`、`client_id`、`token_type`、`exp`、`sub` などのメンバーを返す。
+ * 登録されていない、期限切れ、まだ有効になっていない、ローテーションで使用済みになったトークンは、ほかのメンバーを含めない `{ active: false }` として報告する（RFC 7662 §2.2）。
+ * ほかのメンバーを含めないので、呼び出し元は「存在しなかった」トークンと「もう有効でない」トークンを区別できない。
+ *
+ * @spec RFC 7662 §2.2
  */
 export function describeIntrospectedToken(resolved: ResolvedIntrospectionToken | null): IntrospectionResponse {
   if (resolved !== null && isIntrospectionTokenActive(resolved)) {

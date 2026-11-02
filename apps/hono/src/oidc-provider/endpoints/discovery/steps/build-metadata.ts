@@ -19,13 +19,13 @@ export const meta = step({
 });
 
 /**
- * Build the provider metadata document.
+ * OP のメタデータを組み立てて返す。
  *
- * Every endpoint URL is built on config.issuer. The members below are those
- * of every provider; each feature adds its own (its endpoint, the grants it
- * answers, the response modes it signs) through the discovery entry of its
- * feature.ts.
+ * エンドポイントの URL は、すべて設定の `issuer` をもとに作る。
+ * ここで書く項目はどの OP にもあるもので、機能はそれぞれ、自分の項目（エンドポイント、扱うグラントタイプ、署名するレスポンスモード）を、その機能の feature.ts の `discovery` で加える。
+ * 配列の項目は値を重複させずにつなぎ、それ以外の項目は機能の値で置き換える（`discoveryOf()`）。
  *
+ * @throws {Error} `buildProviderMetadata()` が設定の誤り（`issuer` が正しい URL でない、ID トークンの署名鍵がないか RS256 の鍵を含まないなど）を見つけたとき。
  * @spec OIDC Discovery 1.0 §3
  * @spec RFC 8414
  */
@@ -42,24 +42,20 @@ export function buildDiscoveryMetadata(
     authorizationEndpoint: `${issuer}/authorize`,
     tokenEndpoint: `${issuer}/token`,
     jwksUri: `${issuer}/.well-known/jwks.json`,
-    // code, and the response types a feature answers (the Implicit Flow's
-    // id_token and id_token token, the Hybrid Flow's code id_token, code token
-    // and code id_token token: authorize.responseTypes of its feature.ts).
+    // `code` と、機能が扱うレスポンスタイプ（その機能の feature.ts の `authorize.responseTypes`）を並べる。
+    // インプリシットフローは `id_token` と `id_token token` を、ハイブリッドフローは `code id_token`、`code token`、`code id_token token` を加える。
     responseTypesSupported: supportedResponseTypes(),
-    // OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / OIDC Discovery 1.0 §3:
-    // the authorization code flow returns its authorization response via
-    // query. A feature that answers in another response mode (the fragment of
-    // the Implicit and Hybrid Flows, form_post, JARM) adds it to this list.
+    // 認可コードフローは、認可レスポンスをクエリで返す（OAuth 2.0 Multiple Response Type Encoding Practices §2.1、OIDC Discovery 1.0 §3）。
+    // ほかのレスポンスモード（インプリシットフローとハイブリッドフローのフラグメント、`form_post`、JARM）で応答する機能は、そのモードをこの一覧に加える。
     responseModesSupported: ['query'],
     subjectTypesSupported: ['public'],
     idTokenSigningKeys,
     userinfoEndpoint: `${issuer}/userinfo`,
-    // scopes.ts: the scopes of OIDC Core and the declared custom scopes.
-    // offline_access comes with the refresh-token feature, which grants it.
+    // OIDC Core 1.0 のスコープと、宣言した独自のスコープを並べる（scopes.ts の `ADVERTISED_SCOPES`）。
+    // `offline_access` は、それを許可する `refresh-token` の機能が加える。
     scopesSupported: [...ADVERTISED_SCOPES],
-    // OIDC Discovery 1.0 §3 / Core 1.0 §5.6: this OP produces Normal Claims only
-    // (no _claim_names / _claim_sources), so advertise ['normal'] explicitly to make
-    // the lack of Aggregated/Distributed support machine-readable.
+    // この OP は通常のクレーム（`normal`）だけを返し、`_claim_names` や `_claim_sources` は使わない（OIDC Core 1.0 §5.6）。
+    // 集約クレームと分散クレームに対応しないことを機械で読めるように、`['normal']` を明示する（OIDC Discovery 1.0 §3）。
     claimTypesSupported: ['normal'],
     claimsSupported: [
       'sub',
@@ -67,12 +63,9 @@ export function buildDiscoveryMetadata(
       'aud',
       'exp',
       'iat',
-      // OIDC Core 1.0 §2 / §3.1.3.6: ID Token protocol claims the OP issues
-      // (the issue-id-token step of endpoints/token/). auth_time/nonce/acr/amr
-      // are set from the auth context, azp for multi-audience tokens, at_hash
-      // for the access token issued with the ID Token (§3.1.3.6 / §3.2.2.10).
-      // c_hash (§3.3.2.11) comes with the hybrid-flow feature, which
-      // advertises it through the discovery entry of its feature.ts.
+      // 以下は、OP が発行する ID トークンのプロトコルのクレームである（endpoints/token/ の `issue-id-token` のステップ、OIDC Core 1.0 §2、§3.1.3.6）。
+      // `auth_time`、`nonce`、`acr`、`amr` は認証の状況から付け、`azp` はオーディエンスが複数のトークンに、`at_hash` は ID トークンと一緒に発行するアクセストークンに対して付ける（OIDC Core 1.0 §3.1.3.6、§3.2.2.10）。
+      // `c_hash`（OIDC Core 1.0 §3.3.2.11）は、`hybrid-flow` の機能が feature.ts の `discovery` で加える。
       'auth_time',
       'nonce',
       'acr',
@@ -99,40 +92,32 @@ export function buildDiscoveryMetadata(
       'phone_number',
       'phone_number_verified',
     ],
-    // The authorization_code grant, and the grants the features answer at the
-    // token endpoint (the token entry of their feature.ts). A feature that
-    // answers a grant at the authorization endpoint (the implicit grant of
-    // the Implicit and Hybrid Flows) adds it through the discovery entry of
-    // its feature.ts.
+    // `authorization_code` と、機能がトークンエンドポイントで扱うグラントタイプ（その機能の feature.ts の `token`）を並べる。
+    // 認可エンドポイントで扱うグラントタイプ（インプリシットフローとハイブリッドフローの `implicit`）は、その機能が feature.ts の `discovery` で加える。
     grantTypesSupported: ['authorization_code', ...tokenGrantsOf(features)],
-    // RFC 6749 §2.1 / OAuth 2.1 §2.4: 'none' advertises that public clients
-    // (no client_secret) are accepted at the token endpoint.
+    // `none` は、トークンエンドポイントがパブリッククライアント（`client_secret` を持たないクライアント）を受け付けることを示す（RFC 6749 §2.1、OAuth 2.1 §2.4）。
     tokenEndpointAuthMethodsSupported: [
       'client_secret_basic',
       'client_secret_post',
       'none',
     ],
-    // Required when any client uses userinfo_signed_response_alg
-    // (OIDC Core 1.0 Section 5.3.2). Derived from the registered UserInfo key set so
-    // ES256 (and other) algs are advertised once a matching key is configured.
+    // `userinfo_signed_response_alg` を使うクライアントがあるときに必要な項目である（OIDC Core 1.0 §5.3.2）。
+    // 登録した UserInfo の鍵の集合から求めるので、ES256 などの鍵を設定すれば、そのアルゴリズムも公開される。
     userinfoSigningAlgValuesSupported: userinfoSigningAlgValues,
-    // OIDC Core 1.0 §6.3: the request parameter (Request Object) is supported
-    // only by the request-object feature, which advertises it. request_uri
-    // (§6.2) is not supported, so it is explicitly advertised as false
-    // (Discovery defaults request_uri_parameter_supported to true when omitted).
+    // `request` パラメータ（リクエストオブジェクト）には `request-object` の機能だけが対応し、その機能が対応を公開する（OIDC Core 1.0 §6.3）。
+    // `request_uri`（OIDC Core 1.0 §6.2）には対応しないので、明示的に `false` を公開する。
+    // 省略すると、ディスカバリーの仕様では `request_uri_parameter_supported` の既定値が `true` になるためである。
     requestParameterSupported: false,
     requestUriParameterSupported: false,
-    // OIDC Discovery 1.0 §3 / Core 1.0 §5.5: the 'claims' request parameter is
-    // implemented for both the ID Token and UserInfo paths, so it is advertised
-    // as supported. Without this (defaults to false) spec-compliant RPs would
-    // never send the 'claims' parameter.
+    // `claims` リクエストパラメータには ID トークンと UserInfo の両方で対応しているので、対応を公開する（OIDC Core 1.0 §5.5、OIDC Discovery 1.0 §3）。
+    // この項目の既定値は `false` なので、公開しないと、仕様に従う RP は `claims` パラメータを送らない。
     claimsParameterSupported: true,
-    // RFC 9207 §3: authorize endpoint adds iss to all authorization responses.
+    // 認可エンドポイントは、すべての認可レスポンスに `iss` を加える（RFC 9207 §3）。
     authorizationResponseIssParameterSupported: true,
   });
 
-  // code_challenge_methods_supported is defined in OAuth 2.1 / PKCE spec,
-  // not in OIDC Discovery, so it is added separately.
+  // `code_challenge_methods_supported` は OIDC Discovery 1.0 の項目ではなく、PKCE（RFC 7636）と OAuth 2.1 の項目なので、ここで加える。
+  // そのうえで、有効な機能の項目を加えて返す。
   return discoveryOf(
     features,
     { ...metadata, code_challenge_methods_supported: ['S256'] },

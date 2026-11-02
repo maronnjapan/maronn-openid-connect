@@ -22,10 +22,15 @@ export const meta = step({
 });
 
 /**
- * Issue the access token: decide its audience, build the RFC 9068 payload
- * and sign it (JWT) or mint an opaque reference, as config.accessTokenFormat says.
+ * アクセストークンを発行して返す。
  *
- * @spec RFC 9068 §2.2 / §2.2.1 / §3
+ * `aud` を決めて RFC 9068 のペイロードを組み立て、設定の `accessTokenFormat` に従って、JWT に署名するか、不透明な文字列のトークンを作る。
+ * トークンと一緒に、ペイロードと `aud` も返す。
+ * 後のステップが、この二つをアクセストークンのレコードに保存する。
+ *
+ * @spec RFC 9068 §2.2
+ * @spec RFC 9068 §2.2.1
+ * @spec RFC 9068 §3
  */
 export async function issueAccessToken(
   c: any,
@@ -42,31 +47,28 @@ export async function issueAccessToken(
   const { signingKey, subject, validatedRequest, issuedAt, acr } = input;
   const config = c.get('config');
 
-  // Choose access token issuer based on config (default: JWT).
-  // Opaque tokens are recommended when immediate revocation is required,
-  // since the resource server can call the introspection endpoint instead
-  // of self-validating a JWT.
+  // 設定の `accessTokenFormat` に従って、アクセストークンの発行方式を選ぶ（既定は JWT）。
+  // トークンをすぐに失効させたいときは、不透明な文字列の形式を勧める。
+  // リソースサーバーは JWT を自分で検証せずにイントロスペクションエンドポイントへ問い合わせるので、失効させたトークンはその時点から無効と判定される。
   const accessTokenIssuer: AccessTokenIssuer =
     config.accessTokenFormat === 'opaque'
       ? createOpaqueAccessTokenIssuer()
       : createJwtAccessTokenIssuer();
 
-  // アクセストークンの audience を決定する（合成ポリシーは core の buildAccessTokenAudience に集約）。
-  // RFC 9068 §3: JWT access token の aud は非空でなければならない。
-  // このアクセストークンは常に OP 自身の UserInfo エンドポイントで使用できるため、UserInfo
-  // エンドポイント（discovery が広告する userinfo_endpoint と同じ URL）を aud の恒久メンバとして
-  // 必ず含める。resource 指定（validatedRequest.audience）があれば末尾に追加し、UserInfo
-  // エンドポイントを取り除くことはしない。重複は除去される。
-  // refresh では保存済み aud（既に UserInfo を含む）を引き継ぐため、再計算しても同一集合になる。
+  // アクセストークンの `aud` を決める（決め方は core の `buildAccessTokenAudience()` にまとめてある）。
+  // JWT 形式のアクセストークンの `aud` は空にできない（RFC 9068 §3）。
+  // このアクセストークンは常に OP 自身の UserInfo エンドポイントで使えるので、UserInfo エンドポイントの URL（ディスカバリーのメタデータの `userinfo_endpoint` と同じ）を常に `aud` に含める。
+  // `resource` で指定された値（`validatedRequest.audience`）があれば後ろに加え、UserInfo エンドポイントは取り除かない。
+  // 重複した値は取り除く。
+  // リフレッシュでは保存済みの `aud`（UserInfo エンドポイントを含む）を引き継ぐので、計算し直しても同じ集合になる。
   const audience = buildAccessTokenAudience({
     userInfoEndpoint: `${config.issuer}/userinfo`,
     requested: validatedRequest.audience,
     issuer: config.issuer,
   });
 
-  // RFC 9068 §2.2: iss / sub / aud / exp / iat / scope / client_id, and the
-  // acr of the authentication (§2.2.1) when there is one.
-  // Add access token claims here before the payload is signed.
+  // ペイロードに `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`scope`、`client_id` を入れ、認証の `acr` があればそれも入れる（RFC 9068 §2.2、§2.2.1）。
+  // アクセストークンに独自のクレームを加えるときは、署名する前のここでペイロードに加える。
   const accessTokenPayload = buildAccessTokenPayload({
     issuer: config.issuer,
     subject,
@@ -78,7 +80,7 @@ export async function issueAccessToken(
     acr,
   });
 
-  // JWT or opaque, chosen above from config.accessTokenFormat.
+  // 上で `accessTokenFormat` から選んだ方式で、JWT か不透明な文字列のトークンを発行する。
   const accessToken = await accessTokenIssuer.issue({
     payload: accessTokenPayload,
     privateKey: signingKey.privateKey,

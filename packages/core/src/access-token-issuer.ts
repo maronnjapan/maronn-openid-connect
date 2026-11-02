@@ -94,7 +94,7 @@ export function createJwtAccessTokenIssuer(): AccessTokenIssuer {
  * 渡された `payload` は使わないので、トークンの文字列にはクレームが含まれない。
  * `byteLength` が正の整数でなければ、オブジェクトを作る前に `Error` を投げる。
  *
- * 不透明なトークンは文字列の中に `exp` を持たないため、有効期限はストアのレコードの `expiresAt` だけで決まる。
+ * 不透明なトークンの文字列には `exp` が含まれないため、有効期限はストアのレコードの `expiresAt` だけで決まる。
  * そのため呼び出し側は、ストアに保存する `expiresAt` を、レスポンスの `expires_in` から求まる有効期限と同じ値にする必要がある。
  * 両者を別々の `Date.now()` から計算すると、値がずれる。
  * `expires_in` は実際の有効期間を表す値でなければならない（RFC 6749 §5.1、OAuth 2.1 §3.2.3）。

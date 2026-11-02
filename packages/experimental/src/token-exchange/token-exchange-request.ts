@@ -171,17 +171,20 @@ export interface TokenExchangeRequestContext {
 }
 
 /**
- * クライアントが交換を要求してよいかを検証する。
+ * トークン交換を許されないクライアントなら例外を投げる。
  *
- * RFC 8693 §2.1 は「クライアント認証を省くと、窃取されたトークンを STS 経由で
- * 別のトークンへ増幅できてしまう」と注記している。本機能はこれを
- * **public client の拒否**まで強めている（設計判断）。
+ * クライアントの `grantTypes` にトークン交換のグラントタイプ（`urn:ietf:params:oauth:grant-type:token-exchange`）がないとき、またはパブリッククライアントのときに、`unauthorized_client` の {@link TokenExchangeError} を投げる。
  *
- * @throws {TokenExchangeError} unauthorized_client
+ * パブリッククライアントを拒否するのは、この機能の設計上の判断である。
+ * RFC 8693 §2.1 は、クライアント認証を省くと、盗まれたトークンを持つ誰もが、STS（トークンを交換するサーバー）を通してそのトークンを別のトークンに交換できてしまうと注意している。
+ * この機能は、その注意を、パブリッククライアントを拒否するところまで強めている。
+ *
+ * @throws {TokenExchangeError} `unauthorized_client`: トークン交換のグラントタイプが登録されていないとき、またはパブリッククライアントのとき
+ * @spec RFC 8693 §2.1
  */
 export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
-  // OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2: grantTypes 未指定は
-  // ['authorization_code'] 扱い。よって交換は明示登録したクライアントのみ許される。
+  // `grantTypes` が登録されていなければ、`['authorization_code']` として扱う（OpenID Connect Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
+  // そのため、トークン交換を使えるのは、トークン交換のグラントタイプを明示的に登録したクライアントだけである。
   const grantTypes = client.grantTypes ?? ['authorization_code'];
   if (!grantTypes.includes(TOKEN_EXCHANGE_GRANT_TYPE)) {
     throw new TokenExchangeError(
@@ -198,12 +201,19 @@ export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
 }
 
 /**
- * 必須・非対応パラメータを検証して型付けする（RFC 8693 §2.1）。
+ * トークン交換のパラメータを検証し、必要な値を返す。
  *
- * 空文字・空白のみの任意パラメータは「送られなかった」と同じに扱う
- * （フォームの空フィールドを黙って対象指定・scope 指定に昇格させないため）。
+ * 次のどれかに当てはまるときは、`invalid_request` の {@link TokenExchangeError} を投げる（RFC 8693 §2.1）。
+ * - `subject_token` か `subject_token_type` がない。
+ * - `subject_token_type`、`requested_token_type`、`actor_token_type` に、アクセストークン（`urn:ietf:params:oauth:token-type:access_token`）以外の種類が指定されている。
+ * - `resource` が、フラグメントのない絶対 URI でない。
+ * - `actor_token` があるのに `actor_token_type` がない、または `actor_token` がないのに `actor_token_type` がある。
  *
- * @throws {TokenExchangeError} invalid_request
+ * パラメータの値は前後の空白を取り除いて使い、空文字列や空白だけの値は、送られなかったものとして扱う。
+ * フォームの空欄が、知らないうちに対象や `scope` の指定として扱われないようにするためである。
+ *
+ * @throws {TokenExchangeError} `invalid_request`: 上のどれかに当てはまるとき
+ * @spec RFC 8693 §2.1
  */
 export function parseTokenExchangeParams(
   params: Record<string, string>,
@@ -224,8 +234,8 @@ export function parseTokenExchangeParams(
     );
   }
 
-  // RFC 8693 §2.1: requested_token_type は OPTIONAL。省略時の発行種別は AS の裁量で、
-  // 本機能は常にアクセストークンを発行する。
+  // `requested_token_type` は任意（OPTIONAL）で、アクセストークン以外が指定されたら拒否する（RFC 8693 §2.1）。
+  // 省略されたときに何を発行するかは認可サーバーが決めてよく、この機能は常にアクセストークンを発行する。
   const requestedTokenType = optional(params['requested_token_type']);
   if (requestedTokenType !== undefined && requestedTokenType !== TOKEN_TYPE_ACCESS_TOKEN) {
     throw new TokenExchangeError(
@@ -236,17 +246,16 @@ export function parseTokenExchangeParams(
 
   const resource = optional(params['resource']);
   if (resource !== undefined && !isAbsoluteUriWithoutFragment(resource)) {
-    // RFC 8693 §2.1: resource は絶対 URI で fragment を含んではならない（query は許容）。
-    // 構文違反は RFC 6749 §5.2 の invalid_request とし、invalid_target は
-    // 「対象への発行を拒否する」ポリシー判定に限定する（本仕様の設計判断）。
+    // `resource` がフラグメントのない絶対 URI でなければ、`invalid_request` を投げる（RFC 8693 §2.1。クエリは含んでもよい）。
+    // 構文の誤りは RFC 6749 §5.2 の `invalid_request` にし、`invalid_target` は「その対象には発行しない」という方針による拒否だけに使う（この機能の設計上の判断）。
     throw new TokenExchangeError(
       'invalid_request',
       'resource must be an absolute URI without a fragment component',
     );
   }
 
-  // delegation（RFC 8693 §2.1）: actor_token_type は actor_token があるとき REQUIRED、
-  // 無いとき MUST NOT be included。
+  // 委譲（`actor_token` あり）のパラメータを検証する。
+  // `actor_token_type` は、`actor_token` があるときは必須（REQUIRED）で、ないときは含めてはならない（MUST NOT、RFC 8693 §2.1）。
   const actorToken = optional(params['actor_token']);
   const actorTokenType = optional(params['actor_token_type']);
   if (actorToken !== undefined && actorTokenType === undefined) {
@@ -278,15 +287,17 @@ export function parseTokenExchangeParams(
 }
 
 /**
- * subject_token を解決し、有効性を検証する。
+ * `subject_token` を検証し、そのトークンの情報を返す。
  *
- * RFC 8693 §2.1: "the authorization server MUST perform the appropriate validation
- * procedures for the indicated token type"。本機能は本 OP 発行のアクセストークンに
- * 限るため、store メタデータの有効性検証（存在・期限・nbf）でこれを満たす。
+ * `subject_token` をアクセストークンのストアから取り出し、見つからない（存在しないか失効済み）、期限切れ、`nbf` が未来のときは、`invalid_request` の {@link TokenExchangeError} を投げる。
+ * この機能が受け付けるのはこの OP が発行したアクセストークンだけなので、ストアに保存された情報の検証で、指定された種類のトークンに合った検証を求める RFC 8693 §2.1 の要求（MUST）を満たす。
  *
- * 失敗理由は応答から区別できない（{@link SUBJECT_TOKEN_INVALID_DESCRIPTION}）。
+ * 失敗の理由は、レスポンスから区別できない（説明は {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で固定）。
+ * エラーコードが `invalid_grant` でなく `invalid_request` なのは、RFC 8693 §2.2.2 がそう定めているためである。
  *
- * @throws {TokenExchangeError} invalid_request（RFC 8693 §2.2.2。`invalid_grant` ではない）
+ * @throws {TokenExchangeError} `invalid_request`: トークンが見つからない、期限切れ、`nbf` が未来のとき
+ * @spec RFC 8693 §2.1
+ * @spec RFC 8693 §2.2.2
  */
 export async function resolveSubjectToken(options: {
   subjectToken: string;
@@ -302,16 +313,18 @@ export async function resolveSubjectToken(options: {
 }
 
 /**
- * ステップ 3': actor_token を解決し、有効性を検証する（delegation のみ）。
+ * `actor_token` を検証し、そのトークンの情報を返す。
  *
- * 検証内容は {@link resolveSubjectToken} と同一（本 OP 発行のアクセストークンで、
- * 存在・期限・nbf を満たすこと）。actor_token は「交換を要求した時点で actor が
- * 実在し有効なトークンを保持していること」の確認であり、発行後トークンの寿命は
- * actor_token に連動しない（{@link computeExchangedTokenLifetime} 参照）。
+ * 委譲（`actor_token` があるとき）にだけ使う。
+ * 検証の内容は {@link resolveSubjectToken} と同じで、この OP が発行したアクセストークンがストアにあり、期限切れでなく、`nbf` が未来でないことを確かめる。
  *
- * 失敗理由は応答から区別できない（{@link ACTOR_TOKEN_INVALID_DESCRIPTION}）。
+ * `actor_token` で確かめるのは、交換を要求した時点でアクターが実在し、有効なトークンを持っていることである。
+ * 交換で発行するトークンの有効期間は、`actor_token` に連動しない（{@link computeExchangedTokenLifetime}）。
  *
- * @throws {TokenExchangeError} invalid_request
+ * 失敗の理由は、レスポンスから区別できない（説明は {@link ACTOR_TOKEN_INVALID_DESCRIPTION} で固定）。
+ *
+ * @throws {TokenExchangeError} `invalid_request`: トークンが見つからない、期限切れ、`nbf` が未来のとき
+ * @spec RFC 8693 §2.1
  */
 export async function resolveActorToken(options: {
   actorToken: string;
@@ -327,11 +340,14 @@ export async function resolveActorToken(options: {
 }
 
 /**
- * ステップ 3'': act claim を組み立てる（RFC 8693 §4.1、delegation のみ）。
+ * アクターの `sub` から `act` クレームの値を作って返す。
  *
- * 最外の `sub` は今回の actor。subject_token が既に `act` を持つ（＝それ自体が
- * 委譲で発行された）場合は、そのチェーンをネストへ押し下げる。これで
- * 「最外が現在の actor、最深が最も古い actor」という §4.1 の規則を満たす。
+ * 委譲（`actor_token` があるとき）にだけ使う。
+ * 一番外側の `sub` には、今回のアクター（`actorSub`）を入れる。
+ * `subject_token` がすでに `act` を持つとき（そのトークン自体が委譲で発行されたとき）は、その委譲の連鎖を `act` の中に入れ子にして残す。
+ * これで、一番外側が現在のアクター、一番内側が最も古いアクターになるという RFC 8693 §4.1 の規則を満たす。
+ *
+ * @spec RFC 8693 §4.1
  */
 export function composeActClaim(options: {
   /** actor_token の sub */
@@ -346,13 +362,14 @@ export function composeActClaim(options: {
 }
 
 /**
- * 要求 scope が subject_token の scope の部分集合であることを検証する。
+ * 要求された `scope` を検証し、交換後の `scope` を返す。
  *
- * 権限昇格（scope 拡大）の防止が目的。省略時・空白のみの場合は subject の scope を
- * そのまま継承する（拡大はしない）。
+ * 要求された値がすべて `subject_token` の `scope` に含まれていれば、要求された値（重複を除いたもの）を返す。
+ * 一つでも含まれなければ `invalid_scope` の {@link TokenExchangeError} を投げ、交換による権限の拡大を防ぐ。
+ * `scope` が省略されたときや空白だけのときは、`subject_token` の `scope` をそのまま返す。
  *
- * @returns 交換後トークンの実効 scope
- * @throws {TokenExchangeError} invalid_scope
+ * @returns 交換後のトークンの `scope`
+ * @throws {TokenExchangeError} `invalid_scope`: `subject_token` の `scope` にない値を要求したとき
  */
 export function validateExchangeScope(
   requestedScope: string | undefined,
@@ -374,16 +391,18 @@ export function validateExchangeScope(
 }
 
 /**
- * `audience` / `resource` を許可リストで検証し、要求対象を返す。
+ * `audience` と `resource` を許可リストで検証して返す。
  *
- * 戻り値は最終的な `aud` ではなく、生成コードが core の `buildAccessTokenAudience` の
- * `requested` へ渡す入力。UserInfo エンドポイントの恒久メンバ追加・重複除去・
- * 非空フォールバックは既存トークンルートと同じ合成関数に委ねる。
+ * 指定された `audience` と `resource` が、どちらも許可リスト（`allowedTargets`）にあれば、重複を除いた配列で返す。
+ * 一つでもなければ、`invalid_target` の {@link TokenExchangeError} を投げる。
  *
- * 両方が省略された場合は subject_token の audience を継承する（対象変更なしの
- * scope 縮小・期限短縮のみの交換として扱う。無制限になるわけではない）。
+ * 返す値は最終的な `aud` ではなく、生成されたコードが core の `buildAccessTokenAudience()` の `requested` に渡す値である。
+ * UserInfo エンドポイントを必ず含めること、重複の除去、空のときに `issuer` を使うことは、ほかのトークンの発行と同じく、その関数に任せる。
  *
- * @throws {TokenExchangeError} invalid_target
+ * `audience` と `resource` がどちらも省略されたときは、`subject_token` のオーディエンス（`subjectAudience`）をそのまま返す（ないときは `undefined`）。
+ * 対象を変えずに、`scope` の縮小や有効期間の短縮だけを行う交換として扱うためで、対象が無制限になるわけではない。
+ *
+ * @throws {TokenExchangeError} `invalid_target`: 指定された対象が許可リストにないとき
  */
 export function resolveExchangeTarget(options: {
   audience?: string;
@@ -400,7 +419,7 @@ export function resolveExchangeTarget(options: {
   for (const requested of [audience, resource]) {
     if (requested === undefined) continue;
     if (!allowedTargets.includes(requested)) {
-      // error_description は allowedTargets の内容・部分一致情報を露出しない固定文言。
+      // `error_description` は固定の文言にし、`allowedTargets` の内容や、どこまで一致したかを返さない。
       throw new TokenExchangeError(
         'invalid_target',
         'The requested target is not allowed for token exchange',
@@ -412,17 +431,17 @@ export function resolveExchangeTarget(options: {
 }
 
 /**
- * 発行トークンの有効期間（秒）を算出する。
+ * 交換で発行するトークンの有効期間（秒）を返す。
  *
- * `min(configured, subject の残存秒数)`。交換を何度連鎖しても寿命は単調減少し、
- * 交換によるトークン寿命の洗浄（無期限延命）ができない。
+ * 有効期間は、設定の有効期間（`configuredExpiresIn`）と、`subject_token` の残りの秒数の、小さいほうである。
+ * 交換を何度つないでも、発行するトークンの有効期限は `subject_token` の有効期限を超えないので、交換を繰り返してトークンを使える期間を延ばし続けることはできない。
  *
- * 残存秒数は `subjectExpiresAt - floor(now / 1000)` で計算する。`expiresAt` は整数秒で、
- * {@link resolveSubjectToken} を通過した時点で `subjectExpiresAt > now` が保証されるため、
- * この丸め規則では残存秒数は必ず 1 以上になり `expires_in: 0` のトークンは発行されない。
+ * 残りの秒数は `subjectExpiresAt - floor(now / 1000)` で計算する。
+ * `expiresAt` は整数の秒であり、同じ `now` で {@link resolveSubjectToken} を通っていれば `subjectExpiresAt` は現在の秒より大きいので、残りの秒数は 1 以上になり、`expires_in: 0` のトークンは発行されない。
+ * 残りの秒数が 0 以下のときは、`subject_token` が無効であるとして `invalid_request` を投げる。
  *
- * @throws {TokenExchangeError} invalid_request（残存期間がない場合の防御的チェック）
- * @throws {RangeError} configuredExpiresIn が正の整数でない場合（設定ミス）
+ * @throws {TokenExchangeError} `invalid_request`: `subject_token` の残りの有効期間がないとき（防御のための確認）
+ * @throws {RangeError} `configuredExpiresIn` が正の整数でないとき（設定の誤り）
  */
 export function computeExchangedTokenLifetime(options: {
   /** Unix epoch 秒 */
@@ -439,14 +458,19 @@ export function computeExchangedTokenLifetime(options: {
 
   const remaining = subjectExpiresAt - toEpochSeconds(options.now);
   if (remaining <= 0) {
-    // resolveSubjectToken を先に通していれば到達しない。単独呼び出し時の防御。
+    // 同じ `now` で `resolveSubjectToken()` を先に通っていれば、ここには来ない。
+    // この関数が単独で呼ばれたときのための防御である。
     throw invalidSubjectToken();
   }
   return Math.min(configuredExpiresIn, remaining);
 }
 
 /**
- * RFC 8693 §2.2.1 の応答ボディを組み立てる。
+ * トークン交換の成功レスポンスのボディを返す。
+ *
+ * `issued_token_type` はアクセストークンの種類（`urn:ietf:params:oauth:token-type:access_token`）、`token_type` は `Bearer` にし、`scope` は値を空白でつないだ文字列にする。
+ *
+ * @spec RFC 8693 §2.2.1
  */
 export function buildTokenExchangeResponse(options: {
   accessToken: string;
@@ -456,27 +480,34 @@ export function buildTokenExchangeResponse(options: {
   return {
     access_token: options.accessToken,
     issued_token_type: TOKEN_TYPE_ACCESS_TOKEN,
-    // 発行したのはアクセストークンなので常に Bearer（RFC 8693 の N_A は使わない）。
+    // 発行したのはアクセストークンなので、常に `Bearer` にする（RFC 8693 の `N_A` は使わない）。
     token_type: 'Bearer',
     expires_in: options.expiresIn,
-    // §2.2.1 は「要求と同一なら OPTIONAL」だが、判定分岐を避けるため常に含める。
+    // `scope` は、要求と同じでも常に含める。
+    // RFC 8693 §2.2.1 では要求と同じなら省略してよい（OPTIONAL）が、同じかどうかを判定する場合分けを避ける。
     scope: options.scope.join(' '),
   };
 }
 
 /**
- * 合成関数: Token Exchange の検証〜発行素材の導出（RFC 8693 §2.1）。
+ * トークン交換を検証し、発行に必要な値を返す。
  *
- * 個々のステップ関数を仕様順に合成しただけの API。トークンの発行・保存・応答生成は
- * 行わないため、呼び出し側が core の発行パイプラインと組み合わせる。
+ * クライアントの確認、パラメータの検証、`subject_token` の検証、`actor_token` の検証と `act` クレームの組み立て（委譲のとき）、`scope` の検証、対象の検証、有効期間の計算を、この順に行う。
+ * それぞれ、このファイルのほかの関数を呼ぶだけである。
+ * 返す値の `subject` と `grantId` は `subject_token` から引き継ぎ、`clientId` は交換を要求したクライアントの値にする。
  *
- * @throws {TokenExchangeError}
+ * トークンの発行、保存、レスポンスの組み立ては行わない。
+ * 呼び出し側が、返した値を core の発行の処理と組み合わせる。
+ *
+ * @throws {TokenExchangeError} どれかの検証に失敗したとき
+ * @throws {RangeError} `configuredExpiresIn` が正の整数でないとき
+ * @spec RFC 8693 §2.1
  */
 export async function processTokenExchangeRequest(
   context: TokenExchangeRequestContext,
 ): Promise<TokenExchangeGrant> {
-  // クライアント認可を最初に行う。許可されていないクライアントには subject_token の
-  // 有効性すら判定させない（オラクルを与えない）。
+  // クライアントがトークン交換を許されているかを、最初に確かめる。
+  // 許されていないクライアントには、`subject_token` が有効であるかどうかも判定させず、トークンの状態を推測する手がかりを与えない。
   authorizeTokenExchangeClient(context.client);
 
   const parsed = parseTokenExchangeParams(context.params);
@@ -487,8 +518,8 @@ export async function processTokenExchangeRequest(
     now: context.now,
   });
 
-  // delegation: actor_token を解決し、act claim を組み立てる（RFC 8693 §4.1）。
-  // subject_token 自体が委譲で発行されていた場合、その act チェーンをネストへ継承する。
+  // 委譲（`actor_token` あり）のときは、`actor_token` を検証して `act` クレームの値を組み立てる（RFC 8693 §4.1）。
+  // `subject_token` 自体が委譲で発行されていれば、その `act` の連鎖を入れ子にして引き継ぐ。
   let actor: TokenExchangeActor | undefined;
   if (parsed.actorToken !== undefined) {
     const actorInfo = await resolveActorToken({
@@ -528,7 +559,11 @@ export async function processTokenExchangeRequest(
   };
 }
 
-/** 空文字・空白のみを「未指定」として扱う。 */
+/**
+ * 前後の空白を除いた値か、`undefined` を返す。
+ *
+ * `value` が `undefined` のときと、前後の空白を除くと空文字列になるときは、`undefined`（指定なし）を返す。
+ */
 function optional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -536,25 +571,30 @@ function optional(value: string | undefined): string | undefined {
 }
 
 /**
- * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ * `scope` の文字列を値の配列に分けて返す。
  *
- * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
- * 順で 1 つずつ残す。
+ * 空白（タブや改行を含む）で区切り、空の要素を除き、重複は最初に現れた順で一つずつ残す。
+ * `scope` が `undefined` なら、空の配列を返す。
  */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
   return [...new Set(scope.split(/\s+/).filter((value) => value.length > 0))];
 }
 
-/** now（省略時は現在時刻）を、小数点以下を切り捨てた Unix epoch 秒にして返す。 */
+/**
+ * 時刻をエポック秒（小数点以下は切り捨て）にして返す。
+ *
+ * `now` を省略したときは、現在時刻を使う。
+ */
 function toEpochSeconds(now: Date | undefined): number {
   return Math.floor((now ?? new Date()).getTime() / 1000);
 }
 
 /**
- * subject_token が無効なことを表す invalid_request の TokenExchangeError を作り、投げずに返す。
+ * `subject_token` が無効だというエラーを作って返す。
  *
- * error_description は常に固定文言の {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ * `invalid_request` の {@link TokenExchangeError} を作り、投げずに返す。
+ * 説明（`error_description`）は常に固定の {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
  *
  * @spec RFC 8693 §2.2.2
  */
@@ -563,9 +603,10 @@ function invalidSubjectToken(): TokenExchangeError {
 }
 
 /**
- * actor_token が無効なことを表す invalid_request の TokenExchangeError を作り、投げずに返す。
+ * `actor_token` が無効だというエラーを作って返す。
  *
- * error_description は常に固定文言の {@link ACTOR_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ * `invalid_request` の {@link TokenExchangeError} を作り、投げずに返す。
+ * 説明（`error_description`）は常に固定の {@link ACTOR_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
  *
  * @spec RFC 8693 §2.2.2
  */
@@ -574,10 +615,16 @@ function invalidActorToken(): TokenExchangeError {
 }
 
 /**
- * subject_token / actor_token 共通の解決と有効性検証。
- * RFC 8693 §2.1: "the authorization server MUST perform the appropriate validation
- * procedures for the indicated token type"。本機能は本 OP 発行のアクセストークンに
- * 限るため、store メタデータの有効性検証（存在・期限・nbf）でこれを満たす。
+ * トークンをストアから取り出して検証し、その情報を返す。
+ *
+ * `subject_token` と `actor_token` の検証で共通に使う。
+ * トークンが見つからない（存在しないか失効済み）、期限切れ、`nbf` が未来のときは、`invalidToken()` が作ったエラーを投げる。
+ *
+ * RFC 8693 §2.1 は、認可サーバーが、指定された種類のトークンに合った検証を行うことを求めている（MUST）。
+ * この機能が受け付けるのはこの OP が発行したアクセストークンだけなので、ストアに保存された情報の検証（存在、有効期限、`nbf`）でこれを満たす。
+ *
+ * @throws {TokenExchangeError} `invalidToken()` が作ったエラー: トークンが見つからない、期限切れ、`nbf` が未来のとき
+ * @spec RFC 8693 §2.1
  */
 async function resolveExchangeToken(
   token: string,
@@ -587,7 +634,7 @@ async function resolveExchangeToken(
 ): Promise<AccessTokenInfo> {
   const info = await accessTokenResolver.findAccessToken(token);
   if (info === null) {
-    // 不存在・失効済みのいずれも resolver が null を返す。
+    // 存在しないトークンにも、失効したトークンにも、リゾルバは `null` を返す。
     throw invalidToken();
   }
 
@@ -602,8 +649,14 @@ async function resolveExchangeToken(
 }
 
 /**
- * RFC 8693 §2.1: `resource` は絶対 URI（RFC 3986 §4.3）で fragment を含んではならない。
- * query は許容される。
+ * フラグメントのない絶対 URI なら true を返す。
+ *
+ * `#` を含む値と、`URL` として解析できない値には false を返す。
+ * クエリは含んでもよい。
+ * `resource` はフラグメントのない絶対 URI（RFC 3986 §4.3）でなければならないという、RFC 8693 §2.1 の規則を確かめるために使う。
+ *
+ * @spec RFC 8693 §2.1
+ * @spec RFC 3986 §4.3
  */
 function isAbsoluteUriWithoutFragment(value: string): boolean {
   if (value.includes('#')) return false;
@@ -613,7 +666,7 @@ function isAbsoluteUriWithoutFragment(value: string): boolean {
   } catch {
     return false;
   }
-  // URL は相対参照を解決しない（base なしでは throw する）ため、ここに来た時点で
-  // scheme を持つ絶対 URI である。念のため scheme の存在を明示的に確認する。
+  // スキームがあることを、念のため明示的に確かめる。
+  // `URL` は基準の URL なしでは相対参照を解析できずに例外を投げるので、ここに来た値はスキームを持つ絶対 URI である。
   return parsed.protocol.length > 0;
 }

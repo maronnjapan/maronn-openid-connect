@@ -19,22 +19,23 @@ export const meta = step({
 });
 
 /**
- * Resolve the login_hint and create the pending authentication request.
- * CIBA Core 1.0 §7.1 - §7.3
+ * 認証リクエストを検証して保存し、`auth_req_id` を返す。
  *
- * Validation runs in CIBA §7.1 order inside the experimental package:
- * client checks (public client / grant registration / delivery mode) →
- * request parameter rejection → the one-and-only-one hint rule → scope →
- * binding_message → requested_expiry → login_hint resolution → the
- * per-subject pending cap → record creation.
+ * 検証と保存は、experimental パッケージの `processBackchannelAuthenticationRequest()` が行う。
+ * 検証は CIBA §7.1 の順に進む。
+ * クライアント（パブリッククライアントでないこと、CIBA のグラントタイプの登録、トークンの配信モード）、`request` パラメータがないこと、ヒントがちょうど 1 つであること、`scope`、`binding_message`、`requested_expiry`、`login_hint` からのユーザーの特定、ユーザーごとの保留中のリクエスト数の上限の順に確かめ、最初に満たさなかった検証の `BackchannelAuthenticationError` を投げる。
+ * すべて通ると、状態が `pending` のレコードをストアに保存し、成功レスポンスのボディ（`auth_req_id`、`expires_in`、`interval`）を返す。
  *
- * login_hint → subject resolution is the deployment's swap point: the
- * default (the context entry of features/ciba/feature.ts) treats the hint as
- * a username of the configured user store. Pass cibaUserResolver to
- * createApp() / applyOidc() to resolve email addresses, phone numbers, or
- * your own ids.
+ * `login_hint` からユーザーを特定する処理は、OP を導入する側が差し替える箇所である。
+ * 既定の処理（`features/ciba/feature.ts` のコンテキストの項目）は、ヒントをユーザーストアのユーザー名として扱う。
+ * メールアドレス、電話番号、独自の ID でユーザーを特定するには、`createApp()` か `applyOidc()` に `cibaUserResolver` を渡す。
  *
- * Never log auth_req_id (a live credential) or login_hint (PII, CIBA §15).
+ * `auth_req_id`（有効な間はトークンの取得に使える値）と `login_hint`（個人情報。CIBA §15）は、ログに出さない。
+ *
+ * @spec CIBA Core 1.0 §7.1
+ * @spec CIBA Core 1.0 §7.2
+ * @spec CIBA Core 1.0 §7.3
+ * @throws {BackchannelAuthenticationError} `invalid_request`、`invalid_scope`、`invalid_binding_message`、`unknown_user_id`、`unauthorized_client`: リクエストかクライアントが検証を満たさないとき。
  */
 export async function createBackchannelAuthenticationRequest(
   c: any,
@@ -48,8 +49,7 @@ export async function createBackchannelAuthenticationRequest(
     client: client as CibaClientInfo,
     store: cibaStore,
     config: cibaConfig,
-    // OIDC Core 1.0 §11: offline_access is ignored when the provider has no
-    // refresh_token grant (the refresh-token feature is not generated).
+    // `false`（`refresh-token` 機能を生成しておらず、`refresh_token` グラントがない）なら、`offline_access` は無視される（OIDC Core 1.0 §11）。
     refreshTokenFeatureEnabled: tokenGrantsOf(features).includes('refresh_token'),
     resolveUser,
   });

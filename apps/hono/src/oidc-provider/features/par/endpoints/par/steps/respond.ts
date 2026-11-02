@@ -14,7 +14,13 @@ export const meta = step({
   removable: false,
 });
 
-/** RFC 9126 §2.2: a non-cacheable JSON body. */
+/**
+ * レスポンスの JSON を、キャッシュを禁止して返す。
+ *
+ * `Cache-Control: no-cache, no-store` と `Pragma: no-cache` を付け、ステップが指定したヘッダー（`WWW-Authenticate` など）を加えて、指定のステータスコードで応答する（RFC 9126 §2.2）。
+ *
+ * @spec RFC 9126 §2.2
+ */
 export function respondPar(c: any, response: ParEndpointResponse): Response {
   c.header('Cache-Control', 'no-cache, no-store');
   c.header('Pragma', 'no-cache');

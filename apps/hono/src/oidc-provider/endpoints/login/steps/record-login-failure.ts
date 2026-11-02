@@ -13,9 +13,11 @@ export const meta = step({
 });
 
 /**
- * [record-login-failure] Count the failed attempt on the transaction. Once the
- * attempts are used up the transaction is deleted (canRetry: false) and no
- * further attempt is accepted.
+ * ログインの失敗を数え、再試行の可否と残りの回数を返す。
+ *
+ * 失敗の回数はトランザクションに保存する（core の `handleLoginFailure()`）。
+ * 回数が上限の 5 回（core の既定値）に達したときはトランザクションを削除し、`canRetry: false` を返す。
+ * 削除したトランザクションでは、以後のログインを受け付けない。
  */
 export async function recordLoginFailure(
   c: any,

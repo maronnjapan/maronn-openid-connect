@@ -33,13 +33,20 @@ export const contribution = contribute({
 /** The response_mode value (Multiple Response Type Encoding Practices §2.1), and the name the transaction stores. */
 export const FRAGMENT_RESPONSE_MODE_NAME = 'fragment';
 
-/** The fragment response mode of an issuer. */
+/**
+ * `fragment` のレスポンスモードを作って返す。
+ *
+ * 作ったレスポンスモードの `respond()` は、認可レスポンスのパラメータと `iss` をリダイレクト URI のフラグメントに付け、その URL へのリダイレクトを返す。
+ * フラグメントは `application/x-www-form-urlencoded` の形式で、値が `undefined` か空文字列のパラメータは含めない（core の `buildFragmentResponseUrl()`）。
+ *
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §2.1
+ */
 export function createFragmentResponseMode(input: { issuer: string }): AuthorizationResponseMode {
   return {
     name: FRAGMENT_RESPONSE_MODE_NAME,
     async respond(redirectUri, parameters) {
-      // RFC 9207 §2: iss is a parameter of every authorization response, in
-      // whichever response mode it is returned.
+      // `iss` を加えたパラメータを、リダイレクト URI のフラグメントに付ける。
+      // `iss` は、どのレスポンスモードで返す認可レスポンスにも含めるパラメータである（RFC 9207 §2）。
       const location = buildFragmentResponseUrl(redirectUri, { ...parameters, iss: input.issuer });
       return { method: 'redirect', location };
     },
@@ -47,9 +54,10 @@ export function createFragmentResponseMode(input: { issuer: string }): Authoriza
 }
 
 /**
- * The response mode an Implicit Flow response is sent in: the one the request
- * asked for (form_post), or else the fragment. The tokens never travel in the
- * query (OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5 / §7).
+ * 渡されたモードか、なければフラグメントのモードを返す。
+ *
+ * インプリシットフローのレスポンスは、リクエストが要求したレスポンスモード（`form_post` などの `responseMode`）で送り、要求がなければフラグメントで送る。
+ * どちらでもトークンはクエリに含まれない（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
  */
 export function implicitResponseModeOf(
   responseMode: AuthorizationResponseMode | undefined,

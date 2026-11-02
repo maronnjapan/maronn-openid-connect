@@ -20,11 +20,19 @@ export const meta = step({
 });
 
 /**
- * Approve or deny (POST /ciba/approve)
+ * 承認か拒否をリクエストに記録し、完了の結果を返す。
  *
- * The only state-changing step of the UI. It demands an OP session whose
- * subject owns the record, plus the per-record csrf_token from the
- * session-gated listing.
+ * `POST /ciba/approve` の処理である。
+ * 認証リクエストの承認と拒否を決めるステップなので、リクエストの宛先と同じユーザーの OP のセッションと、セッションがあるときにだけ一覧で渡すリクエストごとの `csrf_token` の両方を求める。
+ * OP のセッションがなければ `session_required`、`decision` が `approve` でも `deny` でもなければ `invalid_decision` の結果を返す。
+ * リクエストが見つからない、期限切れ、決定済み、別のユーザー宛て、`csrf_token` が一致しない、のどれかに当たると、`error`（403）の結果を返す。
+ *
+ * 承認では、リクエストを `approved` にしてセッションの `auth_time` と新しいグラント ID を記録し、スコープを `resolveGrantableScopes()` で絞って保存する。
+ * 同意とグラントも記録する。
+ * 拒否では、リクエストを `denied` にする。
+ * どちらの場合も、クライアントは次のポーリングで結果を受け取る。
+ *
+ * @spec CIBA Core 1.0 §7.1
  */
 export async function submitCibaDecision(c: any, input: CibaDecisionSubmission): Promise<CibaOutcome> {
   const { authReqId, csrfToken, decision } = input;
@@ -45,9 +53,8 @@ export async function submitCibaDecision(c: any, input: CibaDecisionSubmission):
 
   try {
     if (decision === 'approve') {
-      // subject and csrf_token are validated inside; the record moves to
-      // approved with auth_time, scope and a fresh grantId the token endpoint
-      // reads.
+      // リクエストを承認し、トークンエンドポイントが読む `auth_time`、スコープ、新しい `grantId` を記録する。
+      // `subject` と `csrf_token` の検証は、`approveCibaRequest()` の中で行う。
       const approved = await approveCibaRequest({
         authReqId,
         subject: session.subject,
@@ -56,19 +63,18 @@ export async function submitCibaDecision(c: any, input: CibaDecisionSubmission):
         grantId: generateRandomString(32),
         store: cibaStore,
       });
-      // Apply the scope policy to what was approved. approveCibaRequest()
-      // copies the requested scope into approvedScope, so the policy is applied
-      // to the record afterwards and persisted; the token endpoint reads
-      // approvedScope, and RFC 6749 §3.3 allows a granted scope narrower than the
-      // request. Write the policy in resolveGrantableScopes() (scopes.ts).
+      // 承認したスコープに、スコープの方針を適用する。
+      // `approveCibaRequest()` は要求されたスコープをそのまま `approvedScope` に写すので、方針は承認の後でレコードに適用して保存する。
+      // トークンエンドポイントは `approvedScope` を読み、認可サーバーは要求より狭いスコープを許可してよい（RFC 6749 §3.3）。
+      // 方針は `scopes.ts` の `resolveGrantableScopes()` に書く。
       approved.approvedScope = await resolveGrantableScopes(
         approved.approvedScope ?? approved.scope,
         session.subject,
       );
       await cibaStore.update(approved);
 
-      // Record the consent the same way /consent does, so a later Authorization
-      // Code Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4).
+      // `/consent` と同じように同意を記録し、このクライアントの後の認可コードフローで同意画面を省けるようにする（OIDC Core 1.0 §3.1.2.4）。
+      // グラントも記録し、その同意を取り消せばこれらのトークンも失効するようにする。
       await consentResolver?.recordConsent?.(
         approved.subject,
         approved.clientId,

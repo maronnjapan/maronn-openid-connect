@@ -1,13 +1,15 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Accept a device authorization request: authenticate the client, check the
- * scopes and answer with a device_code, a user_code and the verification URI
- * the End-User opens on another device.
+ * デバイスからデバイス認可リクエストを受け付け、`device_code`、`user_code`、検証用の URI を JSON で返す。
+ * クライアントを認証し、グラントタイプの登録とスコープを検証してから、保留中のレコードを保存する。
+ * エンドユーザーは別のデバイスのブラウザで検証用の URI（`/device`）を開いてユーザーコードを入力し、デバイスは `device_code` でトークンエンドポイントをポーリングする。
+ * 検証に失敗すると、OAuth のエラーレスポンスを返す。
  *
- * EXPERIMENTAL: generated with --enable device-authorization-grant.
+ * 実験的な機能であり、`--enable device-authorization-grant` を付けて生成したときだけ作られる。
  *
- * @spec RFC 8628 §3.1 / §3.2
+ * @spec RFC 8628 §3.1
+ * @spec RFC 8628 §3.2
  */
 export const endpoint = defineEndpoint({
   id: 'device-authorization',

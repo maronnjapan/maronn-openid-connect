@@ -53,12 +53,12 @@ import { readRecord, writeRecord, type KvDatabase } from './database.js';
 import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord } from './keys.js';
 
 /**
- * `client_id` でクライアントを読み出すリゾルバを返す。
+ * `client_id` でクライアントを取得するリゾルバを返す。
  *
  * 返すリゾルバの `findClient()` は、呼ばれるたびに `keys.client()` のレコードを読み、`RegisteredClient` に変換して返す。
  * レコードがないクライアントと、`is_deleted` が `true` のクライアントには `null` を返す。
  * 認可エンドポイントとトークンエンドポイントは、このリゾルバでクライアントを取得する。
- * 公開鍵は返さない（公開鍵は {@link createClientKeyResolver} のリゾルバが返す）。
+ * 公開鍵は返さない（{@link createClientKeyResolver} のリゾルバが返す）。
  *
  * レコードの値は、次のように `RegisteredClient` に移す。
  * - `client_type` が `public` なら、`tokenEndpointAuthMethods` を `['none']` にする（クライアント認証をしない）。
@@ -100,7 +100,7 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
 }
 
 /**
- * クライアントの公開鍵を用途ごとに読み出すリゾルバを返す。
+ * クライアントの公開鍵を用途別に取得するリゾルバを返す。
  *
  * 返すリゾルバの `findClientKeys()` は、呼ばれるたびに用途の `keys.clientJwks()` のレコードを読み、その鍵を JWK Set で返す。
  * クライアントのレコードがないとき、クライアントが削除済み（`is_deleted`）のとき、用途のレコードがないときは、`keys` が空の JWK Set を返す。
@@ -140,16 +140,18 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
  *
  * @throws {Error} `clientType` が `public` でなく、`tokenEndpointAuthMethods` に `none` とほかの方式を並べたとき
  * @example
- *   // instance.ts がリクエストコンテキストを読むとき（Hono の出力では c.env の Upstash の URL とトークン）は、
- *   // コンテキストのある場所で createDatabase(c) と呼ぶ
- *   const db = createDatabase();
- *   await registerClient(db, {
- *     clientId: 'my-client',
- *     clientSecret: '...',
- *     redirectUris: ['https://client.example.com/callback'],
- *     grantTypes: ['authorization_code', 'refresh_token'],
- *     tokenEndpointAuthMethods: ['client_secret_basic'],
- *   });
+ * ```ts
+ * // instance.ts がリクエストコンテキストを読むとき（Hono の出力では c.env の Upstash の URL とトークン）は、
+ * // コンテキストのある場所で createDatabase(c) と呼ぶ
+ * const db = createDatabase();
+ * await registerClient(db, {
+ *   clientId: 'my-client',
+ *   clientSecret: '...',
+ *   redirectUris: ['https://client.example.com/callback'],
+ *   grantTypes: ['authorization_code', 'refresh_token'],
+ *   tokenEndpointAuthMethods: ['client_secret_basic'],
+ * });
+ * ```
  */
 export async function registerClient(
   db: KvDatabase,

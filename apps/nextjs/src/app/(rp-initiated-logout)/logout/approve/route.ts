@@ -21,17 +21,18 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Log the End-User out once they confirmed on the logout confirmation page
- * (POST /logout/approve): delete the OP session, clear the session and
- * confirmation cookies, and redirect (302) to the post-logout target decided
- * when the page was shown, or render the logged-out page when there is none.
+ * 確認画面の承認を検証し、セッションを削除する。
  *
- * It acts only when the confirmation cookie and the form's csrf_token carry
- * the same secret; a forged, replayed or expired confirmation deletes nothing
- * and answers the OP's error page with 400. A session that is already gone
- * gets the same answer as a live one.
+ * `POST /logout/approve` のルートハンドラである。
+ * 確認画面を見たブラウザからの承認だけを受け付けるため、確認の Cookie（`HttpOnly`）のシークレットとフォームの `csrf_token` が一致することを確かめ、どちらか一方だけでは受け付けない。
+ * 一致しなければ、何も削除せずに OP のエラーページを 400 で返す。
  *
- * @spec RP-Initiated Logout 1.0 §2 / §3
+ * 一致すれば OP のセッションを削除してセッションの Cookie と確認の Cookie を消し、リダイレクト先があればそこへ 302 でリダイレクトし、なければログアウトの完了画面を返す。
+ * リダイレクト先は、確認画面を出したときに決めて確認の Cookie に入れた値で、フォームからは受け取らない（RP-Initiated Logout 1.0 §3）。
+ * セッションがすでになくても、ある場合と同じように応答する。
+ *
+ * @spec RP-Initiated Logout 1.0 §2
+ * @spec RP-Initiated Logout 1.0 §3
  */
 export async function POST(request: Request): Promise<Response> {
   const csrfToken = String((await readFormFields(request)).get('csrf_token') ?? '');
@@ -39,14 +40,14 @@ export async function POST(request: Request): Promise<Response> {
 
   const confirmation = parseLogoutConfirmation(cookieHeader);
   if (confirmation === null || csrfToken === '' || confirmation.csrfSecret !== csrfToken) {
-    // Forged, replayed or expired confirmation: nothing is deleted. This is a
-    // browser surface, so the answer is the error page, not OAuth error JSON.
+    // 偽造、リプレイ、期限切れのどれかの確認なので、何も削除しない。
+    // ブラウザに見せる画面なので、OAuth のエラーの JSON ではなくエラーページで応答する。
     return errorPage('Invalid logout confirmation', 400);
   }
 
-  // The End-User explicitly approved (§2). When the session is already gone
-  // there is nothing to delete and the answer is the same either way — the
-  // confirmation flow is no oracle for whether a session existed.
+  // エンドユーザーが明示的に承認した（RP-Initiated Logout 1.0 §2）。
+  // セッションがすでにないときは削除するものがないが、応答はセッションがあるときと変えない。
+  // 応答を変えると、確認の手順からセッションがあったかどうかが分かってしまうためである。
   const sessionId = parseSessionId(cookieHeader);
   if (sessionId) {
     await stores.browserSessionStore.delete(sessionId);

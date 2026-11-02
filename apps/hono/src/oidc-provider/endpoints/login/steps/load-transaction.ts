@@ -16,10 +16,13 @@ export const meta = step({
 });
 
 /**
- * [load-transaction] The transaction this browser is in the middle of: the id
- * from the transaction cookie /authorize set (buildTransactionCookie() in
- * cookies.ts), loaded from the store. Returns the error to show instead when
- * there is none. OIDC Core 1.0 §3.1.2.3
+ * Cookie が指すトランザクションを読み込んで返す。
+ *
+ * トランザクションの ID は、`/authorize` が設定したトランザクションの Cookie（cookies.ts の `buildTransactionCookie()`）から読み、トランザクションはストアから読み込む（`loadTransactionById()`）。
+ * Cookie がないとき、トランザクションが見つからないとき（すでに終わったものを含む）、期限切れのときは、代わりに表示するエラー（ステータスコード 400）を返す。
+ *
+ * @throws ストアの読み込みで `AuthTransactionError` 以外のエラーが起きたときは、それをそのまま投げる。
+ * @spec OIDC Core 1.0 §3.1.2.3
  */
 export async function loadTransaction(
   c: any,
@@ -38,8 +41,12 @@ export async function loadTransaction(
 }
 
 /**
- * Load the transaction with a known id from the store, or the error to show
- * when it is unknown, finished or expired.
+ * ID でトランザクションをストアから読み込んで返す。
+ *
+ * ID がすでに分かっているとき（Google でのログインのコールバックなど）に使う。
+ * トランザクションが見つからないとき（すでに終わったものを含む）と期限切れのときは、代わりに表示するエラー（ステータスコード 400）を返す。
+ *
+ * @throws ストアの読み込みで `AuthTransactionError` 以外のエラーが起きたときは、それをそのまま投げる。
  */
 export async function loadTransactionById(
   c: any,

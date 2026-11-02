@@ -14,8 +14,13 @@ export const meta = step({
 });
 
 /**
- * Send a token endpoint answer.
- * RFC 6749 §5.1 / §5.2: token responses and error responses MUST NOT be cached.
+ * レスポンスを、キャッシュさせない JSON で返す。
+ *
+ * `Cache-Control: no-store` と `Pragma: no-cache` と、レスポンスに指定されたヘッダーを付け、ボディを JSON にしてそのステータスコードで返す。
+ * トークンレスポンスもエラーレスポンスも、キャッシュさせてはならない（MUST NOT）ためである。
+ *
+ * @spec RFC 6749 §5.1
+ * @spec RFC 6749 §5.2
  */
 export function respondToken(c: any, response: TokenEndpointResponse): Response {
   c.header('Cache-Control', 'no-store');

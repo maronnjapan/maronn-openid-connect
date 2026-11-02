@@ -13,9 +13,14 @@ export const meta = step({
 });
 
 /**
- * RFC 8414 §3.2 / RFC 9111 §5.2: Discovery metadata is cacheable. Advertise a
- * 3600s freshness lifetime, symmetric with the JWKS endpoint, so client
- * libraries reuse the metadata deterministically.
+ * メタデータを JSON で返し、1 時間のキャッシュを許す。
+ *
+ * ディスカバリーのメタデータはキャッシュしてよい（RFC 8414 §3.2、RFC 9111 §5.2）。
+ * `Cache-Control: public, max-age=3600` を付け、キャッシュの有効期間を JWKS エンドポイントとそろえる。
+ * クライアントのライブラリが、決まった期間だけメタデータを再利用できるようにするためである。
+ *
+ * @spec RFC 8414 §3.2
+ * @spec RFC 9111 §5.2
  */
 export function respondDiscovery(c: any, metadata: Record<string, unknown>): Response {
   c.header('Cache-Control', 'public, max-age=3600');

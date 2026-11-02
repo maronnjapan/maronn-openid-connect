@@ -13,11 +13,14 @@ export const GOOGLE_PROVIDER = 'google';
 const GOOGLE_LOGIN_NONCE_KEY_PREFIX = 'google_login_nonce:';
 
 /**
- * EXTENSION (google-login): the nonce store of the package, on the upstream
- * logins of the provider's stores (upstreamLoginStore of db/). The package
- * keys a nonce as 'google_login_nonce:' + nonce; the stores keep the nonce
- * alone, with the provider it was sent to. The record lives as long as its
- * transaction (expiresAt), and the callback deletes it on first use.
+ * `upstreamLogins` を使う `nonce` のストアを返す。
+ *
+ * 返すのは `@maronn-openid-connect/google-login` の `GoogleLoginNonceStore` の実装で、レコードは OP のストアのうち外部でのログインを記録するもの（`db/` の `upstreamLoginStore`）に保存する。
+ * パッケージはキーを `'google_login_nonce:'` と `nonce` をつないだ値にするが、ストアには接頭辞を除いた `nonce` だけを、送り先の ID プロバイダの名前（`'google'`）と一緒に保存する。
+ * `get()` は、レコードがないときと、ID プロバイダが `'google'` でないときに `null` を返す。
+ *
+ * レコードはトランザクションと同じ期限（`expiresAt`）まで有効で、`login_uri` の処理が最初に使ったときに削除する。
+ * `put()` は `ttlSeconds` を使わず、期限には `expiresAt` を使う。
  */
 export function createGoogleLoginNonceStore(upstreamLogins: UpstreamLoginStorage): GoogleLoginNonceStore {
   const nonceOf = (key: string): string =>
@@ -42,9 +45,11 @@ export function createGoogleLoginNonceStore(upstreamLogins: UpstreamLoginStorage
 }
 
 /**
- * EXTENSION (google-login): the federated identity of a verified Google
- * account. Only the profile / email claims Google supplied are copied, so the
- * UserInfo endpoint returns exactly what Google asserted about the account.
+ * Google アカウントから `FederatedIdentity` を作る。
+ *
+ * `provider` は `'google'`、`subject` は Google の `sub` にする。
+ * クレームは、Google が値を入れたプロフィールとメールアドレスのクレーム（`name`、`given_name`、`family_name`、`picture`、`locale`、`email`、`email_verified`）だけを写す。
+ * UserInfo エンドポイントが、Google がそのアカウントについて示した値だけを返すようにするためである。
  */
 export function googleAccountToFederatedIdentity(account: GoogleIdTokenPayload): FederatedIdentity {
   const claims: Omit<UserClaims, 'sub'> = {};

@@ -1,10 +1,11 @@
 import { defineEndpoint } from '../step.js';
 
 /**
- * Return the claims about the End-User of the presented access token that its
- * scopes and claims request allow, as JSON (or as a signed JWT when the client
- * registered userinfo_signed_response_alg). A missing or invalid token is
- * answered with a Bearer error.
+ * 提示されたアクセストークンのエンドユーザーについて、トークンのスコープと `claims` パラメータが許すクレームを JSON で返す。
+ * クライアントが `userinfo_signed_response_alg` を登録していれば、署名した JWT で返す。
+ *
+ * トークンがないとき、または不正なときは、`Bearer` のエラーで応答する。
+ * レスポンスは、成功でもエラーでもキャッシュさせない（`Cache-Control: no-store`）。
  *
  * @spec OIDC Core 1.0 §5.3
  */

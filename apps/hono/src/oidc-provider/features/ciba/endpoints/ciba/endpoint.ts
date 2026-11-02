@@ -1,11 +1,13 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Let the End-User decide on CIBA requests on the authentication device: sign
- * in, see the pending requests addressed to them, and approve or deny one,
- * which the polling client then learns at the token endpoint.
+ * エンドユーザーが自分宛ての CIBA の認証リクエストを承認または拒否する画面（CIBA の認証デバイス）を HTML で返し、その決定を記録する。
+ * `GET /ciba` は、OP のセッションがあれば保留中のリクエストの一覧を、なければログインフォームを返す。
+ * `POST /ciba/login` はユーザー名とパスワードを確かめて OP のセッションを作り、一覧を返す。
+ * `POST /ciba/approve` は承認か拒否をリクエストに記録し、完了画面を返す。
+ * ポーリングしているクライアントは、その結果をトークンエンドポイントで受け取る。
  *
- * EXPERIMENTAL: generated with --enable ciba.
+ * 実験的な機能であり、`--enable ciba` を付けて生成したときだけ作られる。
  *
  * @spec CIBA Core 1.0 §7.1
  */

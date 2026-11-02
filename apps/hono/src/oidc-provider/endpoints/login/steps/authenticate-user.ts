@@ -13,9 +13,11 @@ export const meta = step({
 });
 
 /**
- * [authenticate-user] Check the credentials against the user store (or the
- * authenticateUser function app.ts put on the request context). Returns the
- * End-User, or undefined when the credentials are wrong.
+ * 認証情報を確かめ、エンドユーザーの `sub` を返す。
+ *
+ * 確認には、app.ts がリクエストコンテキストに設定した `authenticateUser` 関数を使う。
+ * 既定では、この関数はユーザーストアの `authenticate()` を呼ぶ。
+ * 認証情報が誤っていれば `undefined` を返す。
  */
 export async function authenticateEndUser(
   c: any,

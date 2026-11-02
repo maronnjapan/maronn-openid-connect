@@ -17,7 +17,14 @@ export const meta = step({
 });
 
 /**
- * Answer a failure of any step with the OAuth error response.
+ * ステップの失敗に、OAuth のエラーレスポンスで応答する。
+ *
+ * 投げられた値によって、次のように応答する。
+ * - `IntrospectionEndpointError`: ステップが決めたレスポンス（400 の不正なリクエスト）をそのまま返す。
+ * - `TokenError` と `IntrospectionError`: そのステータスコード（`invalid_client` は 401、ほかは 400）と `error`、`error_description` で応答し、401 のときは `WWW-Authenticate` ヘッダーを付ける。
+ * - それ以外: 500 の `server_error` で応答する。
+ *
+ * どのレスポンスにも `Cache-Control: no-store` を付ける。
  *
  * @spec RFC 7662 §2.3
  * @spec RFC 6749 §5.2

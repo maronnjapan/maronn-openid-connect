@@ -20,12 +20,13 @@ export const meta = step({
 });
 
 /**
- * Resolve the presented Bearer token and validate it: known, not expired,
- * carries the openid scope, and names this UserInfo endpoint in its audience.
+ * 提示されたアクセストークンの情報を取得し、検証して返す。
  *
- * Each check is an independent core function that throws UserInfoError, which
- * respondUserInfoError() renders as an RFC 6750 Bearer challenge.
+ * トークンが登録されていること、期限切れでないこと、`openid` スコープを含むこと、オーディエンスにこの UserInfo エンドポイントを含むことを確かめる。
+ * どの確認も core の独立した関数で、失敗すると `UserInfoError` を投げ、`respondUserInfoError()` が RFC 6750 の `Bearer` のチャレンジで応答する。
  *
+ * @throws {UserInfoError} `invalid_token`: トークンが登録されていない、期限切れ、オーディエンスにこのエンドポイントを含まないとき（401）。
+ * @throws {UserInfoError} `insufficient_scope`: トークンが `openid` スコープを含まないとき（403）。
  * @spec OIDC Core 1.0 §5.3.1
  * @spec RFC 6750 §3.1
  * @spec RFC 9068 §4

@@ -1,11 +1,11 @@
 import { defineEndpoint } from '../step.js';
 
 /**
- * Validate an authorization request and continue it: answer the client at once
- * when no screen is needed (prompt=none with a session and consent, or a
- * session the End-User already consented under), otherwise send the browser on
- * to the login or the consent screen. An invalid request is answered with an
- * error, at the client's redirect URI once that URI is verified.
+ * 認可リクエストを検証し、トランザクションとして保存してから、画面が要るかどうかで応答を分ける。
+ * 画面が要らないとき（`prompt=none` でセッションと同意がそろっているとき、または有効なセッションのエンドユーザーが要求されたスコープにすでに同意しているとき）は、すぐに認可レスポンスでクライアントに応答する。
+ * 画面が要るときは、トランザクションの Cookie を付けて、ログイン画面か同意画面へリダイレクトする。
+ * エラーになったときは、`redirect_uri` を確かめた後ならエラーの認可レスポンスでクライアントに応答し、確かめる前なら OP のエラー画面（`Accept` ヘッダーで JSON を求める呼び出し元には 400 の JSON）で応答する。
+ * `POST` の `Content-Type` の誤り、パラメータの重複、`client_id` の欠落には、400 の JSON で応答する。
  *
  * @spec OIDC Core 1.0 §3.1.2
  */

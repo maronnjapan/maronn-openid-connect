@@ -80,7 +80,7 @@ export interface BackchannelAuthenticationResponse {
  * 認証リクエストを検証して保存し、`auth_req_id` を返す。
  *
  * 呼び出し側は、クライアント認証を済ませたクライアントを `client` に渡す。
- * 生成されたコードでは、共通のパイプラインがクライアント認証を行う。
+ * 生成されたコードでは、共通のパイプラインでクライアント認証を行う。
  *
  * 検証は仕様書の検証順序に合わせて、クライアント、`request` パラメータ、ヒントの規則、`scope`、`binding_message`、`requested_expiry`、`login_hint` からのユーザーの特定、ユーザーごとの保留中のリクエスト数の順に行い、最初に満たさなかった検証のエラーを投げる。
  *
@@ -124,7 +124,7 @@ export async function processBackchannelAuthenticationRequest(input: {
 
   // 同じユーザー宛ての保留中のリクエストを取得し、数が上限に達していれば例外を投げる。
   // 大量の依頼で承認画面が埋まるのを防ぐための、設計上の判断である。
-  // CIBA Core 1.0 にはこの場合のエラーコードがないので、終端を示唆しない `invalid_request` を固定の文言で使う。
+  // CIBA Core 1.0 にはこの場合のエラーコードがないので、終端を示唆しない `invalid_request` に固定の文言を付けて投げる。
   const pending = await store.listPendingBySubject(subject);
   if (pending.length >= config.maxPendingPerSubject) {
     throw new BackchannelAuthenticationError(

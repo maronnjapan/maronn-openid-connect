@@ -16,10 +16,13 @@ export const meta = step({
 });
 
 /**
- * [load-transaction] The transaction this browser is in the middle of: the id
- * from the transaction cookie /authorize set (buildTransactionCookie() in
- * cookies.ts), loaded from the store. Returns the error to show instead when
- * there is none. OIDC Core 1.0 §3.1.2.4
+ * Cookie が指すトランザクションを読み込んで返す。
+ *
+ * トランザクションの ID は、`/authorize` が設定したトランザクションの Cookie（cookies.ts の `buildTransactionCookie()`）から読み、トランザクションはストアから読み込む。
+ * Cookie がないとき、トランザクションが見つからないとき（すでに終わったものを含む）、期限切れのときは、代わりに表示するエラー（ステータスコード 400）を返す。
+ *
+ * @throws ストアの読み込みで `AuthTransactionError` 以外のエラーが起きたときは、それをそのまま投げる。
+ * @spec OIDC Core 1.0 §3.1.2.4
  */
 export async function loadTransaction(
   c: any,

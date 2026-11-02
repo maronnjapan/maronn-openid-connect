@@ -15,7 +15,13 @@ export const meta = step({
 });
 
 /**
- * RFC 7009 Section 2.2: empty body, 200 OK — for "revoked" and "not found" alike.
+ * ボディが空の 200 で応答する。
+ *
+ * トークンを失効させたときも、トークンが見つからなかったときも、同じレスポンスを返す（RFC 7009 §2.2）。
+ * 同じにするので、クライアントはレスポンスの違いから、どのトークンの値が存在するかを探れない。
+ * `Cache-Control: no-store` と `Pragma: no-cache` を付ける。
+ *
+ * @spec RFC 7009 §2.2
  */
 export function respondRevocation(c: any): Response {
   noStore(c);

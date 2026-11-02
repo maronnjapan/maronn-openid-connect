@@ -83,33 +83,34 @@ export interface HybridTokens {
 }
 
 /**
- * Issue the code and the tokens of a Hybrid Flow response and return its
- * parameters. The transaction is over when this runs (completeAuthTransaction());
- * the stores of db/ record the code against it, and the exchange of the code
- * records that its tokens were issued.
+ * 認可コードとトークンを発行し、パラメータを返す。
  *
- * @throws {AuthorizationError} server_error when no ID Token signing key has
- *   the alg the client registered, before anything is stored; redirected to
- *   the client like any other error of the request.
+ * `response_type` に応じて、認可コードと一緒に ID トークン（`code id_token`）、アクセストークン（`code token`）、またはその両方（`code id_token token`）を発行する。
+ * 認可コードはストアに保存し、アクセストークンを発行したときはそのレコードも保存する。
+ * 返すのは、認可レスポンスのパラメータ（`code` と `state` を含む）、グラント ID、保存した認可コードである。
+ *
+ * 呼び出す時点で、トランザクションは `completeAuthTransaction()` で終わっている。
+ * `db/sql` と `db/kv` のストアは、認可コードをそのトランザクションに結び付けて記録し、認可コードが交換されたときにトークンを発行したことを記録する。
+ *
+ * @throws {AuthorizationError} `server_error`: クライアントが登録した `alg` の ID トークンの署名鍵がないとき。
+ *   このエラーは何も保存する前に投げ、リクエストのほかのエラーと同じくクライアントへリダイレクトで返る。
  */
 export async function issueHybridTokens(input: HybridTokensInput): Promise<HybridTokens> {
   const { responseType, responseParams, session, grantedScope, keys } = input;
   const grantId = generateRandomString(32);
-  // One timestamp for the response, so the code, the tokens and the stored records agree on iat / exp.
+  // レスポンス全体で一つの時刻を使い、認可コード、トークン、保存するレコードの `iat` と `exp` を揃える。
   const issuedAt = Math.floor(Date.now() / 1000);
 
-  // The ID Token key with the alg the client registered as
-  // id_token_signed_response_alg (OIDC Dynamic Client Registration 1.0 §2;
-  // RS256 when unregistered), as token/route.ts chooses it. Chosen before the
-  // code is stored, so a client registered for an alg the OP has no key for
-  // leaves nothing behind. code token returns no ID Token from the
-  // authorization endpoint, so it needs no ID Token key here.
+  // 認可コードを保存する前に、ID トークンの署名鍵を選ぶ。
+  // 選ぶのは、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵で、`token/route.ts` と同じ選び方である（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // 保存の前に選ぶのは、OP が鍵を持たない `alg` を登録したクライアントのときに、何も保存しないまま失敗させるためである。
+  // `code token` では認可エンドポイントが ID トークンを返さないので、ID トークンの署名鍵は選ばない。
   const idTokenKey = responseTypeIncludes(responseType, 'id_token')
     ? await selectHybridIdTokenSigningKey(keys, responseParams)
     : undefined;
 
-  // acr / amr of the tokens, from acrResolver (provider.ts) as for a code:
-  // acr_values and the claims request are forwarded so it can honor them.
+  // トークンに含める `acr` と `amr` を、認可コードのときと同じく `acrResolver`（`provider.ts`）で決める。
+  // `acrResolver` が要求に応えられるよう、`acr_values` と `claims` パラメータを渡す。
   const { acr, amr } = await resolveAcrAmr({
     subject: session.subject,
     clientId: responseParams.clientId,
@@ -118,10 +119,10 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
     claims: responseParams.claims,
   });
 
-  // The code, as the code flow makes it: it carries the request (scope, nonce,
-  // PKCE challenge, claims, acr_values, audience) to the token endpoint, binds
-  // the online refresh token to the OP session, and lives
-  // config.authorizationCodeTtl seconds (OIDC Core 1.0 §3.1.3.1).
+  // 認可コードフローと同じ方法で、認可コードを作る。
+  // 認可コードには、トークンエンドポイントで使うリクエストの内容（スコープ、`nonce`、PKCE の `code_challenge`、`claims`、`acr_values`、`audience`）を含める。
+  // オンラインのリフレッシュトークンを OP のセッションに結び付けるため、セッション ID も含める。
+  // 有効期間は `config.authorizationCodeTtl` 秒である（OIDC Core 1.0 §3.1.3.1）。
   const authCodeData = buildAuthorizationCodeData(
     { ...responseParams, scope: grantedScope },
     {
@@ -136,8 +137,7 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
   );
   await stores.authCodeStore.set(authCodeData.code, authCodeData);
 
-  // code token / code id_token token: an access token, returned beside the
-  // code, under the grant of the code.
+  // `code token` と `code id_token token` では、認可コードと一緒に返すアクセストークンを、認可コードと同じグラントで発行する。
   const accessToken = responseTypeIncludes(responseType, 'token')
     ? await issueImplicitAccessToken({
       signingKey: keys.general[0],
@@ -150,8 +150,7 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
     })
     : undefined;
 
-  // code id_token / code id_token token: the ID Token, bound to the code with
-  // c_hash and to the access token with at_hash.
+  // `code id_token` と `code id_token token` では ID トークンを発行し、`c_hash` で認可コードに、`at_hash` でアクセストークンに結び付ける。
   const idToken = idTokenKey === undefined
     ? undefined
     : await issueHybridIdToken({
@@ -182,9 +181,12 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
 }
 
 /**
- * The key the ID Token of the client is signed with (selectIdTokenSigningKey()
- * of provider.ts), or server_error redirected to the client when no
- * registered key has the alg the client registered.
+ * クライアントの ID トークンに署名する鍵を選んで返す。
+ *
+ * クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵を、`provider.ts` の `selectIdTokenSigningKey()` で ID トークンの署名鍵から選ぶ。
+ *
+ * @throws {AuthorizationError} `server_error`: その `alg` の ID トークンの署名鍵が登録されていないとき。
+ *   このエラーはクライアントへリダイレクトで返る。
  */
 async function selectHybridIdTokenSigningKey(
   keys: ProviderSigningKeys,
@@ -196,7 +198,7 @@ async function selectHybridIdTokenSigningKey(
   if (!idTokenKey) {
     throw new AuthorizationError(
       AuthorizationErrorCode.ServerError,
-      // RFC 6749 §4.1.2.1: error_description cannot carry a double quote.
+      // `error_description` には二重引用符を含められないので、`alg` を引用符で囲まずに書く（RFC 6749 §4.1.2.1）。
       `No ID Token signing key registered for alg ${idTokenAlg ?? 'RS256'}`,
       responseParams.redirectUri,
       responseParams.state,
@@ -206,11 +208,15 @@ async function selectHybridIdTokenSigningKey(
 }
 
 /**
- * Issue the ID Token the authorization endpoint returns beside the code
- * (OIDC Core 1.0 §3.3.2.11): nonce (REQUIRED for this response type) and
- * auth_time as in the Implicit Flow, c_hash for the code, at_hash when an
- * access token is returned too. The token endpoint issues another ID Token
- * for the code, with the same iss and sub (§3.3.3.6).
+ * 認可コードと一緒に返す ID トークンを署名して返す。
+ *
+ * ID トークンには、インプリシットフローと同じく `nonce`（このレスポンスタイプでは必須）と `auth_time` を含め、認可コードの `c_hash` を付ける（OIDC Core 1.0 §3.3.2.11）。
+ * アクセストークンも一緒に返すとき（`code id_token token`）は、`at_hash` も付ける。
+ * スコープに対応するクレームは含めず、`claims` パラメータの `id_token` で要求されたクレームだけを含める（OIDC Core 1.0 §5.4、§5.5）。
+ *
+ * トークンエンドポイントは、この認可コードに対して、同じ `iss` と `sub` の ID トークンを別に発行する（OIDC Core 1.0 §3.3.3.6）。
+ *
+ * @spec OIDC Core 1.0 §3.3.2.11
  */
 async function issueHybridIdToken(input: {
   idTokenKey: SigningKey;
@@ -226,9 +232,8 @@ async function issueHybridIdToken(input: {
 }): Promise<string> {
   const { idTokenKey, code, accessToken, subject, authTime, responseParams, grantedScope, issuedAt, acr, amr } = input;
 
-  // OIDC Core 1.0 §5.4: the claims of the scope values come from the UserInfo
-  // endpoint, which the access token of the code reaches. §5.5: the id_token
-  // member of the claims parameter asks for individual claims in the ID Token.
+  // `claims` パラメータに `id_token` のメンバーがあるときだけ、ユーザーのクレームを取得する（OIDC Core 1.0 §5.5）。
+  // スコープに対応するクレームは、認可コードに対して発行するアクセストークンで UserInfo エンドポイントから取得するので、ID トークンには含めない（OIDC Core 1.0 §5.4）。
   const userClaims = responseParams.claims?.id_token !== undefined
     ? (await resolvers.userClaimsResolver.findUserClaims(subject)) ?? undefined
     : undefined;

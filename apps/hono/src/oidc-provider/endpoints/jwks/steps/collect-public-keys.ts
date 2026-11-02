@@ -13,11 +13,12 @@ export const meta = step({
 });
 
 /**
- * Collect every registered signing key of the per-purpose key sets
- * (signingKeys / idTokenSigningKeys / userinfoSigningKeys).
+ * 登録したすべての署名鍵を集めて返す。
  *
- * T-022: every key is published so rotated-out keys remain verifiable until
- * tokens signed with them expire.
+ * 用途ごとの鍵の集合（リクエストコンテキストの `signingKeys`、`idTokenSigningKeys`、`userinfoSigningKeys`）を、この順につないで返す。
+ * 設定されていない集合は空として扱う。
+ *
+ * 入れ替えで使わなくなった鍵も含めてすべて公開するので、その鍵で署名したトークンは、有効期限が切れるまで検証できる。
  */
 export function collectPublishedKeys(c: any): SigningKey[] {
   return [

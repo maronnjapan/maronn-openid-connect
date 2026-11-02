@@ -21,36 +21,28 @@ import { validateAuthorizationRequestParams } from './steps/validate-request.js'
 import { verifyIdTokenHint } from './steps/verify-id-token-hint.js';
 
 /**
- * Authorization endpoint (API layer: logic only).
+ * ステップを順に実行し、認可リクエストの処理結果を返す。
  *
- * Each block of processAuthorizationRequest() calls one step (one box of
- * `maronn-oidc graph --detail steps --endpoint authorize`): parse the
- * request, resolve the client and the redirect_uri, validate the parameters,
- * create the transaction, verify id_token_hint, then try prompt=none and
- * Single Sign-On before continuing on the login screen. A block whose marker
- * names a feature belongs to that feature, and its step is in features/<id>/.
+ * 各ブロックは一つのステップ（`maronn-oidc graph --detail steps --endpoint authorize` の箱一つ）を呼ぶ。
+ * リクエストを解析し、クライアントと `redirect_uri` を特定し、パラメータを検証し、トランザクションを作り、`id_token_hint` を検証してから、`prompt=none` と SSO を試し、どちらにも当たらなければログイン画面へ移る。
+ * 目印の行に機能の名前があるブロックはその機能のもので、そのステップは `features/<id>/` にある。
  *
- * The pipeline reports what the endpoint decided as an outcome: the
- * authorization response for the client, "continue on the login /
- * consent screen", or an error that must stay on the OP. It never builds a
- * Response; page.ts, which owns GET|POST /authorize, turns the outcome into
- * HTTP. A step that throws ends in authorizationErrorOutcome().
+ * 返す結果は、クライアントへの認可レスポンス、ログイン画面か同意画面へ移ること、OP で応答するエラーのどれかである。
+ * この関数は `Response` を作らない。
+ * `GET` と `POST` の `/authorize` を受ける `page.ts` が、結果を HTTP のレスポンスにする。
+ * ステップが例外を投げると、`authorizationErrorOutcome()` がそれを結果に変える。
  *
  * @spec OIDC Core 1.0 §3.1.2
  */
 export async function processAuthorizationRequest(c: any): Promise<AuthorizationOutcome> {
-  // The response mode the request asked for, when a feature answers in one
-  // (JARM, form_post, the fragment of the Implicit and Hybrid Flows). Set once
-  // redirect_uri is verified, by the first block of a feature that answers
-  // the request's response_mode or response_type (each assigns it only while
-  // it is still unset); undefined means the plain query response. Declared
-  // before the try block so the catch can answer in the mode the request
-  // asked for.
+  // リクエストが求めたレスポンスモードのうち、機能が応答するもの（JARM、`form_post`、インプリシットフローとハイブリッドフローのフラグメント）を入れる。
+  // `redirect_uri` を確かめた後、リクエストの `response_mode` か `response_type` に応答する機能のブロックのうち、最初のものが設定する（どのブロックも、まだ設定されていないときだけ代入する）。
+  // `undefined` なら、パラメータをクエリに付ける通常の認可レスポンスで返す。
+  // `catch` でもリクエストが求めたモードでエラーを返せるよう、`try` の前で宣言する。
   let responseMode: AuthorizationResponseMode | undefined;
   try {
-    // RFC 9207 §2: include the issuer identifier on every authorization
-    // response (success and error) so clients can pin the issuer that
-    // produced the response.
+    // 成功もエラーも、すべての認可レスポンスに付ける発行者の識別子を取り出す（RFC 9207 §2）。
+    // クライアントは、この値でレスポンスを作った発行者を確かめられる。
     const issuer: string = c.get('config').issuer;
 
     // [parse-request] Parse the authorization request — OIDC Core 1.0 §3.1.2.1 / §13.2
@@ -92,7 +84,7 @@ export async function processAuthorizationRequest(c: any): Promise<Authorization
     const { transactionId, transaction, transactionTtlSeconds } = await createAuthorizationTransaction(c, validatedRequest, responseMode);
 
     // [validate-prompt-combination] Reject prompt=none combined with other values — OIDC Core 1.0 §3.1.2.1
-    // OIDC Core 1.0 Section 3.1.2.1: prompt is a space-delimited list
+    // `prompt` は空白で区切った値の並びなので、空白で分けて配列にする（OIDC Core 1.0 §3.1.2.1）。
     const promptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
     const promptCombinationError = await rejectCombinedPromptNone(c, promptValues, transactionId, transaction, issuer, responseMode);
     if (promptCombinationError) return promptCombinationError;

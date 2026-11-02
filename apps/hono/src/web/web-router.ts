@@ -260,7 +260,11 @@ export class WebRouter {
   }
 }
 
-/** Resolve a path (a string starting with /) against http://localhost, returning any other request input unchanged. */
+/**
+ * パスを `http://localhost` の URL に変換して返す。
+ *
+ * `/` で始まる文字列だけを変換し、それ以外の入力はそのまま返す。
+ */
 function resolveRequestInput(input: RequestInfo | URL): RequestInfo | URL {
   if (typeof input === 'string' && input.startsWith('/')) {
     return new URL(input, 'http://localhost');
@@ -268,33 +272,45 @@ function resolveRequestInput(input: RequestInfo | URL): RequestInfo | URL {
   return input;
 }
 
-/** Return a mount prefix with a leading /, or the empty string for the root ('' or '/'). */
+/**
+ * 組み込み先のパスを `/` で始まる形にして返す。
+ *
+ * 最上位のパス（`''` か `'/'`）には空文字列を返す。
+ */
 function normalizeMount(prefix: string): string {
   const normalized = normalizePath(prefix);
   return normalized === '/' ? '' : normalized;
 }
 
-/** Prefix a path with / when it does not start with one, turning the empty string into '/'. */
+/**
+ * パスの先頭に `/` がなければ付けて返す。
+ *
+ * 空文字列には `'/'` を返す。
+ */
 function normalizePath(path: string): string {
   if (path === '') return '/';
   return path.startsWith('/') ? path : '/' + path;
 }
 
 /**
- * Return whether a path is the path of a middleware pattern or below it, as
- * Hono matches /x/*: a trailing /* is ignored, and the root pattern matches
- * every path.
+ * パスがミドルウェアのパターンに一致すれば true を返す。
+ *
+ * Hono が `/x/*` を扱うのと同じく、パターンのパスそのものと、その下のパスに一致する。
+ * 末尾の `/*` は無視し、最上位のパターンはすべてのパスに一致する。
  */
 function pathMatches(pattern: string, path: string): boolean {
-  // Hono's /x/* matches /x and every path below it; a plain path matches the same.
+  // 末尾の `/*` を除いてから比べる。
+  // Hono の `/x/*` は `/x` とその下のすべてのパスに一致し、`/*` のないパターンも同じように扱う。
   const normalized = normalizeMount(pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern);
   if (normalized === '') return true;
   return path === normalized || path.startsWith(normalized + '/');
 }
 
 /**
- * Return the part of a path below a mount prefix, starting with / ('/' for the
- * prefix itself), or undefined when the path is neither the prefix nor below it.
+ * 組み込み先より下の部分のパスを返す。
+ *
+ * 返すパスは `/` で始まり、組み込み先のパスそのものには `'/'` を返す。
+ * パスが組み込み先でもその下でもなければ `undefined` を返す。
  */
 function childPathForMount(path: string, prefix: string): string | undefined {
   if (path === prefix) return '/';

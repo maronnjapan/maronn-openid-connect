@@ -69,19 +69,22 @@ export interface ImplicitTokens {
 }
 
 /**
- * Issue the tokens of an Implicit Flow response and return its parameters.
- * The transaction is over when this runs (completeAuthTransaction()); the
- * stores of db/ record that its tokens were issued.
+ * トークンを発行し、認可レスポンスのパラメータを返す。
  *
- * @throws {AuthorizationError} server_error when no ID Token signing key has
- *   the alg the client registered, redirected to the client like any other
- *   error of the request.
+ * ID トークンを発行し、`response_type=id_token token` ではアクセストークンも発行してそのレコードを保存する。
+ * 返すのは、認可レスポンスのパラメータ（`state` を含む）とグラント ID である。
+ *
+ * 呼び出す時点で、トランザクションは `completeAuthTransaction()` で終わっている。
+ * トランザクションのストアに `recordTokenIssued()` があれば、そのトランザクションからトークンを発行したことを記録する（`db/sql` と `db/kv` のストアにはある）。
+ *
+ * @throws {AuthorizationError} `server_error`: クライアントが登録した `alg` の ID トークンの署名鍵がないとき。
+ *   このエラーは、リクエストのほかのエラーと同じくクライアントへリダイレクトで返る。
  */
 export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): Promise<ImplicitTokens> {
   const { responseType, responseParams, session, grantedScope } = input;
   const config: ProviderConfig = c.get('config');
   const grantId = generateRandomString(32);
-  // One timestamp for the response, so the tokens and the stored record agree on iat / exp.
+  // レスポンス全体で一つの時刻を使い、トークンと保存するレコードの `iat` と `exp` を揃える。
   const issuedAt = Math.floor(Date.now() / 1000);
 
   const { signingKey, idTokenSigningKey } = await selectImplicitSigningKeys(c, responseParams);
@@ -92,7 +95,7 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
     claims: responseParams.claims,
   });
 
-  // response_type=id_token token: an access token, returned beside the ID Token.
+  // `response_type=id_token token` では、ID トークンと一緒に返すアクセストークンを発行する。
   const accessToken = responseTypeIncludes(responseType, 'token')
     ? await issueImplicitAccessToken(c, {
       signingKey,
@@ -105,10 +108,9 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
     })
     : undefined;
 
-  // OIDC Core 1.0 §5.4: response_type=id_token issues no access token for the
-  // UserInfo endpoint, so the claims of the scope values go into the ID Token.
-  // §5.5: the id_token member of the claims parameter asks for individual
-  // claims in the ID Token, whatever the response type.
+  // スコープに対応するクレームを ID トークンに含めるのは、`response_type=id_token` のときだけである。
+  // このレスポンスタイプでは、UserInfo エンドポイントに使うアクセストークンを発行しないためである（OIDC Core 1.0 §5.4）。
+  // `claims` パラメータの `id_token` で要求されたクレームは、レスポンスタイプによらず ID トークンに含める（OIDC Core 1.0 §5.5）。
   const scopeClaimsInIdToken = returnsScopeClaimsInIdToken(responseType);
   const userClaims = scopeClaimsInIdToken || responseParams.claims?.id_token !== undefined
     ? ((await c.get('userClaimsResolver').findUserClaims(session.subject)) as UserClaims | null) ?? undefined
@@ -122,10 +124,11 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
       scope: grantedScope,
       expiresIn: config.idTokenExpiresIn,
       issuedAt,
-      // OIDC Core 1.0 §3.2.2.10: at_hash is REQUIRED with an access token, and
-      // follows the ID Token signing alg (§3.1.3.6).
+      // アクセストークンを一緒に返すときは、必須の `at_hash` を付ける（OIDC Core 1.0 §3.2.2.10）。
+      // `at_hash` は、ID トークンの署名鍵の `alg` に対応するハッシュ関数で求める（OIDC Core 1.0 §3.1.3.6）。
       atHash: accessToken === undefined ? undefined : await computeAtHash(accessToken, idTokenSigningKey.privateKey),
-      // OIDC Core 1.0 §3.2.2.10: nonce is REQUIRED in this flow (validate-implicit-request made sure the request had one).
+      // リクエストの `nonce` を入れる。
+      // このフローでは `nonce` が必須であり（OIDC Core 1.0 §3.2.2.10）、リクエストにあることは `validate-implicit-request` ステップで確かめてある。
       nonce: responseParams.nonce,
       authTime: session.authTime,
       acr,
@@ -136,7 +139,7 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
     responseParams.claims,
   );
 
-  // Add your own ID Token claims here, as in the issue-id-token step of endpoints/token/.
+  // 独自のクレームを ID トークンに加えるときは、`endpoints/token/` の `issue-id-token` ステップと同じく、ここに書く。
 
   const idToken = await generateIdToken({
     payload: idTokenPayload,
@@ -161,11 +164,13 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
 }
 
 /**
- * The keys the tokens are signed with, chosen as the select-signing-keys step
- * of endpoints/token/ does: the first registered key signs the access token,
- * and the ID Token key has the alg the client registered as
- * id_token_signed_response_alg (OIDC Dynamic Client Registration 1.0 §2;
- * RS256 when unregistered).
+ * アクセストークンと ID トークンの署名鍵を選んで返す。
+ *
+ * `endpoints/token/` の `select-signing-keys` ステップと同じ方法で選ぶ。
+ * アクセストークンには、汎用の署名鍵の先頭を使う。
+ * ID トークンには、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵を、ID トークンの署名鍵から選ぶ（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ *
+ * @throws {AuthorizationError} `server_error`: その `alg` の ID トークンの署名鍵が登録されていないとき。
  */
 export async function selectImplicitSigningKeys(
   c: any,
@@ -180,7 +185,7 @@ export async function selectImplicitSigningKeys(
   } catch {
     throw new AuthorizationError(
       AuthorizationErrorCode.ServerError,
-      // RFC 6749 §4.1.2.1: error_description cannot carry a double quote.
+      // `error_description` には二重引用符を含められないので、`alg` を引用符で囲まずに書く（RFC 6749 §4.1.2.1）。
       `No ID Token signing key registered for alg ${requestedAlg ?? 'RS256'}`,
       responseParams.redirectUri,
       responseParams.state,
@@ -189,11 +194,12 @@ export async function selectImplicitSigningKeys(
 }
 
 /**
- * The acr / amr of the tokens, as the resolve-acr-amr step of endpoints/token/
- * settles them for a code: the acrResolver option of the app decides from the
- * requested acr values (acr_values, or claims.id_token.acr.values, OIDC Core
- * 1.0 §5.5.1.1). Without an acrResolver the tokens carry the most preferred
- * requested value and no amr.
+ * トークンに含める `acr` と `amr` を決めて返す。
+ *
+ * `endpoints/token/` の `resolve-acr-amr` ステップが認可コードに対して行うのと同じ方法で決める。
+ * 要求された `acr` の値は `acr_values` から取り、なければ `claims.id_token.acr.values` から取る（OIDC Core 1.0 §5.5.1.1）。
+ * アプリが `acrResolver` を設定していれば、要求された値を渡し、返った `acr` と `amr` を使う。
+ * `acrResolver` がなければ、要求された値のうち最も優先する値（先頭の値）を `acr` にし、`amr` は含めない。
  */
 export async function resolveImplicitAcrAmr(
   c: any,
@@ -219,10 +225,14 @@ export async function resolveImplicitAcrAmr(
 }
 
 /**
- * Issue the access token of response_type=id_token token and store its
- * record, as the issue-access-token and persist-access-token steps of
- * endpoints/token/ do for a code (RFC 9068 §2.2 / RFC 7662 §2.2). The record
- * names the transaction it was issued from, which no code names here.
+ * アクセストークンを発行し、レコードを保存して返す。
+ *
+ * `endpoints/token/` の `issue-access-token` ステップと `persist-access-token` ステップが認可コードに対して行うのと同じ方法で、発行と保存をする（RFC 9068 §2.2、RFC 7662 §2.2）。
+ * アクセストークンの形式は `config.accessTokenFormat` に従い、JWT か不透明な文字列になる。
+ * `response_type=id_token token` のほか、`hybrid-flow` 機能も、認可コードと一緒に返すアクセストークンをこの関数でその認可コードのグラントに発行する。
+ *
+ * レコードには、発行のもとになったトランザクションの ID（`transactionId`）も記録する。
+ * インプリシットフローには、トランザクションを指す認可コードがないためである。
  */
 export async function issueImplicitAccessToken(
   c: any,
@@ -239,8 +249,7 @@ export async function issueImplicitAccessToken(
   const { signingKey, subject, responseParams, grantedScope, grantId, issuedAt, acr } = input;
   const config: ProviderConfig = c.get('config');
 
-  // RFC 9068 §3: the OP's own UserInfo endpoint is always an audience, the
-  // requested resource indicators follow (buildAccessTokenAudience in core).
+  // `aud` には OP 自身の UserInfo エンドポイントを必ず含め、要求されたオーディエンスをその後ろに加える（RFC 9068 §3、core の `buildAccessTokenAudience()`）。
   const audience = buildAccessTokenAudience({
     userInfoEndpoint: `${config.issuer}/userinfo`,
     requested: responseParams.audience,
@@ -275,7 +284,7 @@ export async function issueImplicitAccessToken(
     audience,
     issuer: config.issuer,
     jti: accessTokenPayload.jti,
-    // OIDC Core 1.0 §5.5: the UserInfo endpoint honors claims.userinfo members.
+    // UserInfo エンドポイントが `claims.userinfo` の要求に応えられるよう、`claims` パラメータを記録する（OIDC Core 1.0 §5.5）。
     claims: responseParams.claims,
     acr,
     transactionId: responseParams.transactionId,

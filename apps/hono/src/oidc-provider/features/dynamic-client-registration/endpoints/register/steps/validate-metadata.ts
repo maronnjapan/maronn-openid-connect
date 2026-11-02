@@ -25,27 +25,28 @@ export const meta = step({
 });
 
 /**
- * Allowlist-pick of the understood fields, value checks, the RFC 7591 §2 and
- * OIDC Dynamic Client Registration 1.0 §2 defaults (application_type web,
- * id_token_signed_response_alg RS256 — registered and returned, §3.2), the
- * redirect_uris constraints of the application type and the §2.1 consistency
- * of grant_types and response_types — pure functions from the experimental
- * package, bounded to what this provider answers:
+ * メタデータを検証し、登録するクライアントを作って返す。
  *
- * - token_endpoint_auth_method: the methods of the registration config
- * - grant_types: the grants of the config that this provider answers
- *   (authorization_code, the token grants of the generated features, implicit
- *   while a feature answers a token or id_token response type)
- * - response_types: code and the response types of the generated features,
- *   as discovery advertises them
- * - scope: any value until a custom scope is declared (scopes.ts), then the
- *   standard and the declared ones
- * - id_token_signed_response_alg / userinfo_signed_response_alg: the algs of
- *   the registered signing keys, as discovery advertises them
- * - the custom metadata of the registration config (config.ts)
+ * 作るクライアントには新しく発行した `client_id` を付け、`client_secret` で認証する方式を登録したときは `client_secret` も付ける。
+ * 検証と組み立ては、experimental パッケージの副作用のない関数（`validateClientMetadata()` と `buildRegisteredClient()`）が行う。
+ * 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
+ * 適用した既定値も登録し、レスポンスで返す（OIDC Registration 1.0 §3.2）。
+ * アプリケーションの種類ごとの `redirect_uris` の制約と、`grant_types` と `response_types` の整合（RFC 7591 §2.1）も確かめる。
  *
- * Unknown metadata is silently ignored (§2 MUST), and every error_description
- * is a fixed ASCII string that never reflects request values.
+ * 受け付ける値は、この OP が応答できるものに限る。
+ * - `token_endpoint_auth_method`: 登録の設定の認証方式
+ * - `grant_types`: 設定のグラントタイプのうち、この OP が応答するもの（`authorization_code`、生成された機能がトークンエンドポイントで応答するグラントタイプ、機能が `token` か `id_token` を含むレスポンスタイプに応答するときの `implicit`）
+ * - `response_types`: `code` と生成された機能のレスポンスタイプ（ディスカバリーが公開するものと同じ）
+ * - `scope`: scopes.ts に独自のスコープを宣言するまではどの値でもよく、宣言したあとは標準のスコープと宣言したスコープ
+ * - `id_token_signed_response_alg` と `userinfo_signed_response_alg`: 登録した署名鍵のアルゴリズム（ディスカバリーが公開するものと同じ）
+ * - 登録の設定（config.ts）の独自のメタデータ
+ *
+ * 理解しないメタデータは黙って無視する（RFC 7591 §2 の MUST）。
+ * `error_description` はどれも固定の ASCII の文字列で、リクエストの値を含めない。
+ *
+ * @spec RFC 7591 §2
+ * @spec RFC 7591 §2.1
+ * @throws {ClientRegistrationError} `invalid_redirect_uri` か `invalid_client_metadata`: メタデータが検証を通らないとき
  */
 export function validateRegistrationMetadata(
   c: any,
@@ -66,12 +67,13 @@ export function validateRegistrationMetadata(
 }
 
 /**
- * The grant_type values of the registration config that this provider answers
- * (RFC 7591 §2): authorization_code always, the grants the generated features
- * answer at the token endpoint, and implicit while a feature answers a token or
- * id_token response type at /authorize (OIDC Dynamic Client Registration 1.0 §2
- * pairs them). A grant the provider does not answer is never registrable: a
- * client registered for it could not use it.
+ * 設定のグラントタイプのうち、OP が応答するものを返す。
+ *
+ * OP が応答するのは、`authorization_code`、生成された機能がトークンエンドポイントで応答するグラントタイプ、`responseTypes` に `token` か `id_token` を含むレスポンスタイプがあるときの `implicit` である（`implicit` とこれらのレスポンスタイプの対応は OIDC Registration 1.0 §2 による）。
+ * 応答しないグラントタイプは、設定にあっても登録させない。
+ * 登録できても、そのクライアントはそのグラントタイプを使えないからである。
+ *
+ * @spec RFC 7591 §2
  */
 export function registrableGrantTypes(configured: readonly string[], responseTypes: readonly string[]): string[] {
   const offered = ['authorization_code', ...tokenGrantsOf(features)];
@@ -83,16 +85,21 @@ export function registrableGrantTypes(configured: readonly string[], responseTyp
 }
 
 /**
- * scopes.ts: once a custom scope is declared, a registration may name only the
- * standard and the declared scopes (what findUnsupportedScopes() accepts at
- * /authorize); without one there is no list, and any syntactically valid value
- * registers.
+ * 登録できるスコープの一覧か `undefined` を返す。
+ *
+ * scopes.ts に独自のスコープを宣言していれば、標準のスコープと宣言したスコープの一覧を返す（`/authorize` で `findUnsupportedScopes()` が受け付けるスコープと同じ）。
+ * 宣言していなければ一覧はなく `undefined` を返すので、構文が正しいスコープならどれでも登録できる。
  */
 export function registrableScopes(): readonly string[] | undefined {
   return CUSTOM_SCOPES.length === 0 ? undefined : [...STANDARD_SCOPES, ...CUSTOM_SCOPES];
 }
 
-/** The JWA algs of a registered signing key set, each once (what discovery advertises for it). */
+/**
+ * 署名鍵の集合の JWA アルゴリズムを、重複なく返す。
+ *
+ * ディスカバリーがその鍵の集合について公開するアルゴリズムと同じ値になる。
+ * `keys` が `undefined` なら、空の配列を返す。
+ */
 function signingAlgsOf(keys: SigningKey[] | undefined): string[] {
   return [...new Set((keys ?? []).map((key) => getJwaAlgorithm(key.privateKey)))];
 }

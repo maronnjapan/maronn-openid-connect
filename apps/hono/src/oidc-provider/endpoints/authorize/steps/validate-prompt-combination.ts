@@ -17,9 +17,15 @@ export const meta = step({
 });
 
 /**
- * OIDC Core 1.0 §3.1.2.1: prompt=none must not be combined with other values.
- * Returns the redirectable error outcome (and drops the transaction) when it
- * is; undefined otherwise.
+ * `prompt=none` がほかの値と並べば、エラーを返す。
+ *
+ * `prompt` の `none` は、ほかの値と併用できない（OIDC Core 1.0 §3.1.2.1）。
+ * 併用していれば、トランザクションを削除し、`invalid_request` のエラーの認可レスポンスを返す。
+ * 併用していなければ `undefined` を返す。
+ *
+ * 既定のパイプラインでは、先に `validate-request` で core の `validatePromptParameter()` が同じ併用を拒否するので、ここに併用が届くのは、その検証を外したときである。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export async function rejectCombinedPromptNone(
   c: any,

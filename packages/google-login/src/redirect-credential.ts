@@ -53,7 +53,10 @@ export interface GoogleRedirectCredential {
 }
 
 /**
- * 読み取り元から文字列パラメータを 1 つ取り出す。文字列でない値（File など）は無視する。
+ * ボディから `name` の値を取り出し、文字列なら返す。
+ *
+ * `source` が `URLSearchParams` か `FormData` なら `get()` で読み、それ以外のオブジェクトならプロパティを読む。
+ * 値がないときと、文字列でないとき（`FormData` の `File` や、フレームワークがボディを解析して作った配列など）は `undefined` を返す。
  */
 export function readGoogleLoginParam(source: GoogleLoginParamsSource, name: string): string | undefined {
   const value =
@@ -64,9 +67,12 @@ export function readGoogleLoginParam(source: GoogleLoginParamsSource, name: stri
 }
 
 /**
- * login_uri へ届いた POST 本文から `credential` / `g_csrf_token` / `select_by` を取り出す。
+ * ボディから ID トークンと `g_csrf_token` を取り出す。
  *
- * @throws {GoogleLoginError} `missing_credential`
+ * `login_uri` に届いた POST のボディから `credential`（ID トークン）、`g_csrf_token`、`select_by` を読み、空でない値だけを結果に入れて返す。
+ * `g_csrf_token` がなくてもここでは投げず、{@link validateGoogleCsrfToken} が拒否する。
+ *
+ * @throws {GoogleLoginError} `missing_credential`: `credential` がないか空文字のとき
  */
 export function parseGoogleRedirectCredential(source: GoogleLoginParamsSource): GoogleRedirectCredential {
   const credential = readGoogleLoginParam(source, GOOGLE_CREDENTIAL_PARAM);
@@ -91,7 +97,10 @@ export function parseGoogleRedirectCredential(source: GoogleLoginParamsSource): 
 }
 
 /**
- * `Cookie` ヘッダーから `g_csrf_token` の値を取り出す。無ければ undefined。
+ * `Cookie` ヘッダーの `g_csrf_token` の値を返す。
+ *
+ * 名前と値の前後の空白は取り除いて扱い、最初に見つかった `g_csrf_token` の値を返す。
+ * ヘッダーがないとき、`g_csrf_token` がないとき、その値が空のときは `undefined` を返す。
  */
 export function parseGoogleCsrfTokenCookie(cookieHeader: string | null | undefined): string | undefined {
   if (!cookieHeader) return undefined;
@@ -108,10 +117,10 @@ export function parseGoogleCsrfTokenCookie(cookieHeader: string | null | undefin
 }
 
 /**
- * 2 つの文字列を constant-time で比較する。
+ * 文字列を定数時間で比べ、等しければ `true` を返す。
  *
- * `crypto.timingSafeEqual` は同じ長さのバッファしか比較できないので、固定長の
- * SHA-256 ダイジェスト同士を比較する（長さの違いも応答時間に出ない）。
+ * `crypto.timingSafeEqual` は同じ長さのバッファしか比べられないので、それぞれの SHA-256 のダイジェスト（どちらも 32 バイト）どうしを比べる。
+ * そのため、文字列の長さの違いも比較にかかる時間に表れない。
  */
 function constantTimeEqual(a: string, b: string): boolean {
   const digestA = createHash('sha256').update(a).digest();
@@ -120,17 +129,21 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Double Submit Cookie を検証する。
+ * Cookie とボディの `g_csrf_token` の一致を検証する。
  *
- * Google のドキュメントのサンプルと同じ順序で判定する。
+ * ダブルサブミット Cookie による CSRF 対策である。
+ * GIS は同じ値を `g_csrf_token` の Cookie と POST のボディの両方に入れるので、両者が一致しない POST を拒否する。
  *
- *   1. Cookie に `g_csrf_token` が無い → 拒否
- *   2. POST 本文に `g_csrf_token` が無い → 拒否
- *   3. 両者が一致しない → 拒否
+ * Google のドキュメントのサンプルと同じ順に、次の三つを確かめる。
+ * 1. Cookie に `g_csrf_token` がある。
+ * 2. ボディに `g_csrf_token` がある。
+ * 3. 両者が一致する（定数時間で比べる）。
  *
- * @param bodyToken POST 本文の `g_csrf_token`
+ * @param bodyToken ボディの `g_csrf_token`
  * @param cookieToken Cookie の `g_csrf_token`
- * @throws {GoogleLoginError} `csrf_token_missing_in_cookie` / `csrf_token_missing_in_body` / `csrf_token_mismatch`
+ * @throws {GoogleLoginError} `csrf_token_missing_in_cookie`: Cookie に値がないとき
+ * @throws {GoogleLoginError} `csrf_token_missing_in_body`: ボディに値がないとき
+ * @throws {GoogleLoginError} `csrf_token_mismatch`: 両者が一致しないとき
  */
 export function validateGoogleCsrfToken(
   bodyToken: string | undefined,

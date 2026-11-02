@@ -12,7 +12,11 @@ export const meta = step({
   removable: false,
 });
 
-/** Respond with the cacheable JWK Set (3600s, symmetric with discovery). */
+/**
+ * JWK Set を JSON で返し、1 時間のキャッシュを許す。
+ *
+ * `Cache-Control: public, max-age=3600` を付け、キャッシュの有効期間をディスカバリーとそろえる。
+ */
 export function respondJwks(c: any, jwks: JwkSet): Response {
   c.header('Cache-Control', 'public, max-age=3600');
   return c.json(jwks);

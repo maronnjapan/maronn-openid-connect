@@ -1,9 +1,10 @@
 import { defineEndpoint } from '../step.js';
 
 /**
- * Show the login screen of the transaction (GET) and sign the End-User in
- * (POST): matching credentials start a fresh session and go on to the consent
- * screen; wrong ones count as a failed attempt and show the screen again.
+ * GET ではトランザクションのログイン画面を描画し、POST ではエンドユーザーを認証する。
+ * 認証情報が合えば新しい OP のセッションを確立して同意画面へリダイレクトし、誤っていれば失敗を 1 回数えてログイン画面を再表示する。
+ *
+ * 失敗の回数が上限に達したとき（429）、フォームが別オリジンから送られたとき、トランザクションが見つからないとき、`csrf_token` が一致しないときは、OP のエラーページで応答する。
  *
  * @spec OIDC Core 1.0 §3.1.2.3
  */

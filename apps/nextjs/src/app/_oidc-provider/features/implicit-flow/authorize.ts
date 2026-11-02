@@ -23,21 +23,22 @@ import { createFragmentResponseMode, FRAGMENT_RESPONSE_MODE_NAME, implicitRespon
 import { issueImplicitTokens } from './tokens';
 
 /**
- * Answer in the fragment response mode when that is the default of the
- * request's response_type — any response type that returns an ID Token or an
- * access token: the Implicit Flow's id_token and id_token token, and the
- * Hybrid Flow's code id_token, code token and code id_token token of the
- * hybrid-flow feature, which requires this one (Multiple Response Type
- * Encoding Practices §3 / §5) — or when the request asked for
- * response_mode=fragment (§2.1).
+ * フラグメントで返すリクエストならそのモードを返す。
  *
- * Its block runs after those of the response modes a request asks for by
- * name (JARM, form_post), each of which assigns the response mode only while
- * it is unset, so a request of the Implicit Flow with response_mode=form_post
- * is posted. Its errors go back in the fragment from here on (OIDC Core 1.0
- * §3.2.2.6), the rejection of response_mode=query included
- * (validateImplicitRequest()). Any other request is left to the plain query
- * response: undefined.
+ * 次のどちらかに当たるリクエストに、フラグメントのレスポンスモードを返す。
+ * - `response_mode=fragment` を指定している（OAuth 2.0 Multiple Response Type Encoding Practices §2.1）。
+ * - `response_type` の既定のレスポンスモードがフラグメントである（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5）。
+ *
+ * 既定がフラグメントになるのは、ID トークンかアクセストークンを返すレスポンスタイプである。
+ * インプリシットフローの `id_token` と `id_token token` のほか、`hybrid-flow` 機能が扱うハイブリッドフローの `code id_token`、`code token`、`code id_token token` も当たる（`hybrid-flow` 機能はこの機能を必要とする）。
+ * どちらにも当たらないリクエストには `undefined` を返し、パラメータをクエリに付ける通常のレスポンスに任せる。
+ *
+ * ルートハンドラは、名前で要求されるレスポンスモード（JARM、`form_post`）のブロックのあとに、このブロックを実行する。
+ * どのブロックの結果も、レスポンスモードがまだ決まっていないときだけ使うので、`response_mode=form_post` を指定したインプリシットフローのリクエストはフォームで POST される。
+ * ここでレスポンスモードが決まると、以降のエラーはフラグメントで返る（OIDC Core 1.0 §3.2.2.6）。
+ * `validateImplicitRequest()` が `response_mode=query` を拒否するエラーも同じである。
+ *
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §2.1
  */
 export function resolveFragmentResponseContext(
   params: AuthorizationRequestParams,
@@ -52,19 +53,20 @@ export function resolveFragmentResponseContext(
 }
 
 /**
- * What a request of the Implicit Flow needs on top of the validation of the
- * code flow, checked before the transaction is created. Each check is a core
- * function; every failure is a redirectable invalid_request, sent back in the
- * response mode of the request (the fragment by default, OIDC Core 1.0
- * §3.2.2.6). A request of the code flow passes untouched.
+ * インプリシットフローに固有の条件を検証する。
  *
- * - response_mode: query must not carry the tokens (OAuth 2.0 Multiple
- *   Response Type Encoding Practices §3 / §5 / §7), and a response mode the
- *   OP does not answer this request in (JARM's query.jwt, a value it does not
- *   know) is refused instead of being swapped for the fragment
- * - nonce is REQUIRED (OIDC Core 1.0 §3.2.2.1)
- * - redirect_uri: https, or http on a loopback host for a public (native)
- *   client (OIDC Core 1.0 §3.2.2.1)
+ * `response_type` がインプリシットフローのもの（`id_token` か `id_token token`）でなければ、何もしない。
+ * 検証はトランザクションを作る前に行い、次の条件をそれぞれ core の関数で確かめる。
+ * - トークンをクエリに含めないよう、`response_mode=query` を拒否する（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
+ * - OP がこのリクエストに使うレスポンスモード（`responseMode`）と異なる `response_mode`（JARM の `query.jwt` や未知の値）も、フラグメントに置き換えずに拒否する。
+ * - `nonce` を必須とする（OIDC Core 1.0 §3.2.2.1）。
+ * - `redirect_uri` に `http` のスキームを使えるのは、パブリック（ネイティブ）クライアントがループバックのホストを指定したときだけとする（OIDC Core 1.0 §3.2.2.1）。
+ *
+ * 違反には、リダイレクトで返せる `invalid_request` を投げる。
+ * ルートハンドラは、このエラーをリクエストのレスポンスモード（既定はフラグメント）でクライアントへ返す（OIDC Core 1.0 §3.2.2.6）。
+ *
+ * @throws {AuthorizationError} `invalid_request`: 上のどれかの条件に違反するとき。
+ * @spec OIDC Core 1.0 §3.2.2.1
  */
 export function validateImplicitRequest(
   request: { responseType: string; nonce: string | undefined; redirectUri: string; state: string | undefined },
@@ -87,16 +89,21 @@ export function validateImplicitRequest(
 }
 
 /**
- * The authorization response of a request of the Implicit Flow that needs no
- * screen: finish the transaction, issue the ID Token (and the access token)
- * for its scope, record the grant, and answer the client in the response mode
- * of the request — the fragment by default (OIDC Core 1.0 §3.2.2.5), never the
- * query. Returns undefined for a request of the code flow, which the
- * issue-authorization-code block answers with a code.
+ * トークンを発行し、認可レスポンスで応答する。
  *
- * transaction.scope is what the scope policy (resolveGrantableScopes in
- * scopes.ts) left, and offline_access is never in it: applyOfflineAccessPolicy
- * drops it for a response type without a code (OIDC Core 1.0 §11).
+ * 対象は、画面を出さずに応答できるインプリシットフローのリクエスト（`prompt=none` か、同意済みの SSO）である。
+ * ほかのレスポンスタイプには `undefined` を返し、あとのブロック（ハイブリッドフローか認可コードの発行）に任せる。
+ *
+ * トランザクションを終え、そのスコープで ID トークン（`id_token token` ではアクセストークンも）を発行し、グラントを記録する。
+ * 認可レスポンスは `responseMode` で返し、ないときはフラグメントで返す（OIDC Core 1.0 §3.2.2.5）。
+ * クエリでは返さない。
+ *
+ * `transaction.scope` は、スコープの方針（`scopes.ts` の `resolveGrantableScopes()`）を通したあとの値である。
+ * 認可コードを返さないレスポンスタイプでは `applyOfflineAccessPolicy()` が `offline_access` を取り除くので、`transaction.scope` に `offline_access` は含まれない（OIDC Core 1.0 §11）。
+ *
+ * @throws {AuthorizationError} `server_error`: クライアントが登録した `alg` の ID トークンの署名鍵がないとき（`issueImplicitTokens()`）。
+ * @throws {Error} 署名鍵を読み込めないとき（`loadSigningKeys()`）。
+ *   このときトランザクションは終えずに残す。
  */
 export async function issueImplicitResponse(input: {
   transactionId: string;
@@ -107,11 +114,12 @@ export async function issueImplicitResponse(input: {
   const { transactionId, transaction, session, responseMode } = input;
   if (!isImplicitResponseType(transaction.responseType)) return undefined;
 
-  // Loaded before the transaction is finished, so a key outage leaves it as it was.
+  // トランザクションを終える前に、署名鍵を読み込む。
+  // 鍵を読み込めないときに、トランザクションを元のまま残すためである。
   const keys = await loadSigningKeys();
   const grantedScope = transaction.scope.split(' ').filter(Boolean);
 
-  // One-time use: the transaction is finished before anything is issued.
+  // トランザクションは一度しか使えないので、何かを発行する前に終える。
   const responseParams = await completeAuthTransaction(transactionId, transaction, stores.transactionStore);
   const { parameters, grantId } = await issueImplicitTokens({
     responseType: transaction.responseType,
@@ -120,7 +128,8 @@ export async function issueImplicitResponse(input: {
     grantedScope,
     keys,
   });
-  // Withdrawing the consent revokes the access token of this grant.
+  // グラントを記録する。
+  // 同意を取り消すと、このグラントのアクセストークンが失効する。
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, grantId);
 
   const mode = implicitResponseModeOf(responseMode, config.issuer);

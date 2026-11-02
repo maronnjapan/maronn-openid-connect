@@ -24,6 +24,7 @@ export const meta = step({
  * クライアントを認証し、認証したクライアントを返す。
  *
  * 対応する認証方式は `client_secret_basic` と `client_secret_post` である。
+ * `none` で登録したパブリッククライアントは、`client_id` だけで識別する。
  * 認証に失敗すると、中で呼ぶ core の関数が `TokenError`（`invalid_client` など）を投げる。
  *
  * 中の処理はそれぞれ core の独立した関数なので、`verifyClientSecret()` を独自の検証（`private_key_jwt` など）に差し替えても、ほかの処理は変えずに済む。

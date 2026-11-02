@@ -20,10 +20,13 @@ export const meta = step({
 });
 
 /**
- * Resolve the presented token (access or refresh token); null when unknown.
+ * 提示されたトークンをストアから探して返す。
  *
- * Each check is an independent core function. token_type_hint only reorders
- * the lookup — the other token type is still searched when the hint misses.
+ * アクセストークンとリフレッシュトークンのストアを探し、どちらにもなければ `null` を返す。
+ * `token_type_hint` は探す順番を変えるだけで、`refresh_token` ならリフレッシュトークンから、それ以外ならアクセストークンから探し、見つからなければもう一方も探す。
+ * `token` パラメータがなければ `invalid_request` の、クライアントが認証されていなければ `invalid_client` の `IntrospectionError` を投げる。
+ *
+ * 中の確認はそれぞれ core の独立した関数なので、一つずつ取り除いたり差し替えたりできる。
  *
  * @spec RFC 7662 §2.1
  */
@@ -35,12 +38,12 @@ export async function resolveIntrospectedToken(
   const accessTokenResolver = c.get('introspectionAccessTokenResolver');
   const refreshTokenResolver = c.get('introspectionRefreshTokenResolver');
 
-  // RFC 7662 §2.1: token is REQUIRED (invalid_request when absent).
+  // `token` パラメータは必須で、なければ `invalid_request` にする（RFC 7662 §2.1）。
   const token = requireIntrospectionToken({
     token: typeof params.token === 'string' ? params.token : undefined,
   });
 
-  // RFC 7662 §2.1: the caller must be an authenticated client (invalid_client).
+  // 呼び出し元がクライアントとして認証されていることを確かめ、されていなければ `invalid_client` にする（RFC 7662 §2.1）。
   requireIntrospectionClient(authenticatedClientId);
 
   return resolveIntrospectionToken({

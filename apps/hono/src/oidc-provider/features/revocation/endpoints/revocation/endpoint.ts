@@ -1,9 +1,10 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Revoke a token presented by the client it was issued to (a refresh token
- * together with the access tokens of its grant) and answer 200 with an empty
- * body, also for a token the provider does not know.
+ * クライアントを認証し、そのクライアントに発行されたトークンを失効させて、ボディが空の 200 で応答する。
+ * リフレッシュトークンを失効させるときは、同じグラントのアクセストークンも失効させる。
+ * ストアにないトークンにも、同じ 200 で応答する。
+ * ほかのクライアントに発行されたトークンや不正なリクエストには OAuth のエラーレスポンスで応答し、成功のレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
  *
  * @spec RFC 7009 §2
  */

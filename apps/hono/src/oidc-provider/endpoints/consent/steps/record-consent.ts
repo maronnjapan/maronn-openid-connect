@@ -16,11 +16,18 @@ export const meta = step({
 });
 
 /**
- * [record-consent] Record the consent and the grant so a later prompt=none (or
- * non-interactive SSO) request can confirm it without UI, then clear the
- * per-transaction hand-off. Routed through the consentResolver so a custom
- * store can override persistence. Only the hand-off is cleared; the browser
- * (OP) session persists so SSO keeps working. OIDC Core 1.0 §3.1.2.1 / §3.1.2.4
+ * 同意とグラントを記録し、認証セッションを削除する。
+ *
+ * 同意を記録しておくと、後の `prompt=none` のリクエストや画面を出さない SSO のリクエストで、画面を出さずに同意を確かめられる。
+ * グラントを同意に記録しておくと、その同意を取り消したときに、グラントから発行したトークンも失効させられる。
+ * 記録は `consentResolver` の `recordConsent()` と `recordGrant()` を通して行うので、保存先を独自のストアに差し替えられる。
+ * どちらのメソッドも、リゾルバにないときは呼ばない。
+ *
+ * 削除するのは、ログインのステップから引き渡された認証セッションだけである。
+ * ブラウザの OP のセッションは残すので、SSO は引き続き使える。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OIDC Core 1.0 §3.1.2.4
  */
 export async function recordConsentDecision(
   c: any,

@@ -90,14 +90,15 @@ const baseProviderConfig = {
 } satisfies Partial<ProviderConfig>;
 
 /**
- * The settings of the provider: the defaults of this file, those of the
- * enabled features, and the overrides of provider.ts, in that order.
+ * 既定値に上書きを重ねた OP の設定を返す。
+ *
+ * このファイルの既定値、有効な機能の既定値、`provider.ts` が渡す `overrides` の順に重ね、後のものが前のものを上書きする。
  */
 export function createProviderConfig(
   overrides: Partial<ProviderConfig> = {},
 ): ProviderConfig {
-  // Every field a feature declares gets its default from the config entry of
-  // that feature's feature.ts, so the merged object is a whole ProviderConfig.
+  // 三つを重ねた設定を `ProviderConfig` として返す。
+  // 機能が宣言した項目は、その機能の `feature.ts` の `config` から既定値を受け取るので、重ねた結果はすべての項目がそろった `ProviderConfig` になる。
   return {
     ...baseProviderConfig,
     ...configOf(features),

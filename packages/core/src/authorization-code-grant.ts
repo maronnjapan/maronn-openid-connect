@@ -59,7 +59,7 @@ export async function resolveAuthorizationCode(
  * 使用済みの認可コードなら `invalid_grant` を投げる。
  *
  * 投げる前に、`authCodeResolver.revokeTokensByGrantId()` があれば、同じグラント ID から発行したトークンを失効させる。
- * 使用済みのコードが再び提示されたときは、コードが漏れている可能性があるためである（OAuth 2.1 §4.1.2、RFC 9700 §4.13）。
+ * 再び提示された使用済みのコードは、漏れている可能性があるためである（OAuth 2.1 §4.1.2、RFC 9700 §4.13）。
  * `revokeTokensByGrantId()` がなければ、トークンを失効させずに投げる。
  * 未使用の認可コードなら何もしない。
  *
@@ -145,7 +145,7 @@ export function validateAuthorizationCodeRedirectUri(
  * 次のときは `invalid_grant` の `TokenError` を投げる:
  * - `code_challenge` と `code_challenge_method` の片方だけが保存されている。
  * - `codeVerifier` がない。
- * - `codeVerifier` の長さか文字が規則に合わない。
+ * - `codeVerifier` の長さか文字が RFC 7636 §4.1 の規則に合わない。
  * - `codeVerifier` から求めた値が `code_challenge` と一致しない。
  */
 export async function verifyAuthorizationCodePkce(
@@ -179,7 +179,7 @@ export async function verifyAuthorizationCodePkce(
 /**
  * ストアの認可コードを使用済みにする。
  *
- * 処理は `authCodeResolver.revokeAuthorizationCode()` に任せる。
+ * ストアの更新は `authCodeResolver.revokeAuthorizationCode()` が行う。
  * リゾルバは、レコードを削除せずに `used` を `true` にして残す契約である。
  * 再利用を検知できるように、新しいトークンを発行する前にこの処理を終えておく。
  */

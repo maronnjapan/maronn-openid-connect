@@ -14,14 +14,24 @@ export const meta = step({
   removable: false,
 });
 
-/** Return whether a Content-Type value names application/x-www-form-urlencoded, ignoring case and parameters such as charset. */
+/**
+ * `Content-Type` がフォームの形式なら true を返す。
+ *
+ * 値を小文字にし、最初の `;` より前（メディアタイプ）が `application/x-www-form-urlencoded` と一致するかを見るので、大文字と小文字の違いと、`charset` などのパラメータは無視する。
+ */
 function isFormUrlEncoded(contentType: string): boolean {
   return contentType.toLowerCase().split(';')[0]?.trim() === 'application/x-www-form-urlencoded';
 }
 
 /**
- * Parse the introspection request: the form body and the Authorization header.
- * RFC 7662 §2.1 (the body MUST be application/x-www-form-urlencoded)
+ * ボディと `Authorization` ヘッダーを読み取って返す。
+ *
+ * ボディはフォームの形式（`application/x-www-form-urlencoded`）として読み、パラメータの名前と値の組にして返す。
+ * 同じパラメータが繰り返されていたときは、最後の値を使う。
+ * `Authorization` ヘッダーがなければ、空文字列を返す。
+ * ボディが `application/x-www-form-urlencoded` でなければ、`IntrospectionEndpointError`（400、`invalid_request`）を投げる（RFC 7662 §2.1）。
+ *
+ * @spec RFC 7662 §2.1
  */
 export async function parseIntrospectionRequest(
   c: any,

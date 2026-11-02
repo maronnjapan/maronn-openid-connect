@@ -5,8 +5,12 @@
 import { arrayBufferToBase64Url, sign, stringToArrayBuffer } from './crypto-utils.js';
 
 /**
- * RFC 7515 §4.1: alg と typ、指定があれば kid を持つ JOSE ヘッダーを組み立てる。
- * 鍵に合う alg の選択は呼び出し側が行う。
+ * `alg` と `typ` を持つ JOSE ヘッダーを返す。
+ *
+ * `keyId` が空でないときだけ `kid` を加える。
+ * 鍵に合う `alg` を選ぶのは呼び出し側である。
+ *
+ * @spec RFC 7515 §4.1
  */
 export function buildJoseHeader(
   algorithm: string,
@@ -19,7 +23,12 @@ export function buildJoseHeader(
 }
 
 /**
- * RFC 7515 §5.1: ヘッダーとペイロードを base64url で連結した署名入力を作る。クレームは検証しない。
+ * ヘッダーとペイロードから JWS の署名入力を作って返す。
+ *
+ * それぞれを `JSON.stringify()` で JSON の文字列にし、UTF-8 のバイト列を base64url で符号化して、`.` でつなぐ。
+ * クレームの値は検証しない。
+ *
+ * @spec RFC 7515 §5.1
  */
 export function encodeJwtSigningInput(
   header: Record<string, unknown>,
@@ -31,8 +40,12 @@ export function encodeJwtSigningInput(
 }
 
 /**
- * ヘッダーとペイロードに署名し、JWS Compact Serialization を返す。
- * クレームの検証と、鍵に合うヘッダーの選択は呼び出し側が済ませておく前提。
+ * ヘッダーとペイロードに署名し、JWT の文字列を返す。
+ *
+ * 返す値は JWS のコンパクト形式（署名入力と、base64url で符号化した署名を `.` でつないだ文字列）である。
+ * 署名のアルゴリズムは `privateKey` のアルゴリズムで決まり、ヘッダーの `alg` は参照しない。
+ * そのため、クレームの検証と、鍵に合う `alg` をヘッダーに入れることは、呼び出し側が済ませておく。
+ * RSASSA-PKCS1-v1_5 と ECDSA 以外の鍵には `Error` を投げる。
  */
 export async function signJwt(
   header: Record<string, unknown>,

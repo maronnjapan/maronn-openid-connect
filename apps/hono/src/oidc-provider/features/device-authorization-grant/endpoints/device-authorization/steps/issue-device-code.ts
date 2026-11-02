@@ -20,11 +20,19 @@ export const meta = step({
 });
 
 /**
- * RFC 8628 §3.2 / §5.2: mint a 256-bit device_code and a collision-checked
- * base-20 user_code, then store the pending record under both.
+ * デバイスコードとユーザーコードを作り、レコードを保存する。
  *
- * Never log device_code or user_code: both are live credentials for the
- * lifetime of the record (RFC 8628 §5.1 / §5.2).
+ * デバイスコードは 32 バイト（256 ビット）の乱数で、ユーザーコードは 20 種類の文字から選んだ 8 文字である（RFC 8628 §3.2、§5.2）。
+ * ユーザーコードは、ストアにあるレコードと重複しないことを確かめてから使う。
+ * 状態が `pending` のレコードを、どちらのコードでも引けるようにストアに保存し、そのレコードを返す。
+ * 有効期間には `deviceCodeExpiresIn`、ポーリングの間隔には `pollInterval`（どちらも `config.ts` の値）を使う。
+ * 5 回続けてユーザーコードが重複すると例外を投げ、エラー応答のステップが 500 で応答する。
+ *
+ * デバイスコードとユーザーコードは、ログに出さない。
+ * どちらも、レコードの有効期間の間はトークンの取得や承認に使える値である（RFC 8628 §5.1、§5.2）。
+ *
+ * @spec RFC 8628 §3.2
+ * @spec RFC 8628 §5.2
  */
 export async function issueDeviceCodes(
   c: any,

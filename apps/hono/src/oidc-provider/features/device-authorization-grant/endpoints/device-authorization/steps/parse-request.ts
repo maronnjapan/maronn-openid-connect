@@ -16,8 +16,14 @@ export const meta = step({
 });
 
 /**
- * RFC 8628 §3.1: the device authorization request body MUST be
- * application/x-www-form-urlencoded (it follows RFC 6749 §3.2.1).
+ * フォーム形式の `Content-Type` なら true を返す。
+ *
+ * `contentType`（`Content-Type` ヘッダーの値）の `;` より前を小文字にし、前後の空白を除いてから `application/x-www-form-urlencoded` と比べる。
+ * そのため、`charset` などのパラメータが付いていても true を返す。
+ * デバイス認可リクエストのボディは、この形式でなければならない（RFC 8628 §3.1 の MUST。RFC 6749 §3.2.1 に従う）。
+ *
+ * @spec RFC 8628 §3.1
+ * @spec RFC 6749 §3.2.1
  */
 function isFormUrlEncoded(contentType: string): boolean {
   const [mediaType = ''] = contentType.toLowerCase().split(';');
@@ -25,8 +31,13 @@ function isFormUrlEncoded(contentType: string): boolean {
 }
 
 /**
- * Parse the device authorization request: the form body and the
- * Authorization header. RFC 8628 §3.1 / RFC 6749 §3.1
+ * ボディと `Authorization` ヘッダーを読み取って返す。
+ *
+ * リクエストボディのパラメータを `params` に、`Authorization` ヘッダーの値（ないときは空文字列）を `authorization` に入れて返す。
+ *
+ * @spec RFC 8628 §3.1
+ * @spec RFC 6749 §3.1
+ * @throws {DeviceAuthorizationEndpointError} `invalid_request`: `Content-Type` が `application/x-www-form-urlencoded` でないとき、または同じパラメータが 2 回以上あるとき（ステータスは 400）。
  */
 export async function parseDeviceAuthorizationRequest(
   c: any,
@@ -39,8 +50,8 @@ export async function parseDeviceAuthorizationRequest(
     });
   }
 
-  // RFC 6749 §3.1: request parameters MUST NOT be repeated. Read the raw body so
-  // URLSearchParams iteration exposes duplicates instead of silently keeping the last.
+  // 同じパラメータの繰り返しは禁じられている（RFC 6749 §3.1 の MUST NOT）ので、ボディを文字列のまま読む。
+  // `URLSearchParams` の要素を順にたどれば重複を検出でき、最後の値だけが黙って残ることもない。
   const rawBody = await c.req.text();
   const params: Record<string, string> = {};
   const seen = new Set<string>();

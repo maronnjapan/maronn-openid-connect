@@ -32,7 +32,12 @@ import { processEndSessionRequest } from './steps/process-end-session-request.js
 
 export const logoutPage = new Hono<{ Variables: Record<string, any> }>();
 
-/** Render the logout confirmation screen (§2 MUST when no valid hint is presented). */
+/**
+ * ログアウトの確認画面の HTML を返す。
+ *
+ * 有効な `id_token_hint` がないときに出す画面で、確認は必須である（RP-Initiated Logout 1.0 §2 の MUST）。
+ * ビューは `logoutViews()` で選ぶので、アプリが差し替えたビューがあればそれを使う。
+ */
 export function renderLogoutConfirmationPage(
   c: any,
   params: LogoutConfirmationPageParams,
@@ -41,17 +46,29 @@ export function renderLogoutConfirmationPage(
   return renderView(<views.logoutConfirmationPage {...params} />);
 }
 
-/** Render the logged-out screen. */
+/**
+ * ログアウトの完了画面の HTML を返す。
+ *
+ * ビューは `logoutViews()` で選ぶので、アプリが差し替えたビューがあればそれを使う。
+ */
 export function renderLogoutCompletedPage(c: any, params: LogoutCompletedPageParams): Response {
   const views = logoutViews(c);
   return renderView(<views.logoutCompletedPage {...params} />);
 }
 
-/** Turn the outcome of a logout step into the HTTP response. */
+/**
+ * ログアウトの結果を HTTP レスポンスにして返す。
+ *
+ * 結果の種類ごとに、次のように応答する。
+ * - `invalid_confirmation`: OP のエラーページを 400 で返す。
+ * - `confirmation`: 確認画面を、結果の Cookie を付けて返す。
+ * - `redirect`: 結果の `location` へ、結果の Cookie を付けて 302 でリダイレクトする。
+ * - `completed`: 完了画面を、結果の Cookie を付けて返す。
+ */
 function respond(c: any, outcome: LogoutOutcome): Response {
   if (outcome.kind === 'invalid_confirmation') {
-    // Forged, replayed or expired confirmation: nothing was deleted. This is a
-    // browser surface, so the answer is the error page, not OAuth error JSON.
+    // 偽造、リプレイ、期限切れのどれかの確認であり、何も削除していない。
+    // ブラウザに見せる画面なので、OAuth のエラーの JSON ではなくエラーページで応答する。
     return renderErrorPage(c, { error: 'Invalid logout confirmation', statusCode: 400 });
   }
   if (outcome.kind === 'confirmation') {
@@ -61,7 +78,8 @@ function respond(c: any, outcome: LogoutOutcome): Response {
     );
   }
   if (outcome.kind === 'redirect') {
-    // §3: the registered post_logout_redirect_uri, state already appended.
+    // 登録済みの `post_logout_redirect_uri` へリダイレクトする（RP-Initiated Logout 1.0 §3）。
+    // `state` はすでに付いている。
     return redirectWithCookies(outcome.location, outcome.cookies);
   }
   return withCookies(renderLogoutCompletedPage(c, {}), outcome.cookies);

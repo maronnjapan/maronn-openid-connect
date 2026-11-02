@@ -23,23 +23,22 @@ export const meta = step({
 });
 
 /**
- * What a request of the Hybrid Flow (response_type=code id_token, code token
- * or code id_token token) needs on top of validate-request, checked before
- * the transaction is created. Each check is a core function; every failure
- * is a redirectable invalid_request, sent back in the response mode of the
- * request (the fragment by default, OIDC Core 1.0 §3.3.2.6). A request of
- * the code flow or of the Implicit Flow passes untouched.
+ * ハイブリッドフローに固有の条件を検証する。
  *
- * - response_mode: query must not carry the tokens (OAuth 2.0 Multiple
- *   Response Type Encoding Practices §5 / §7), and a response mode the OP
- *   does not answer this request in (JARM's query.jwt, a value it does not
- *   know) is refused instead of being swapped for the fragment
- * - nonce is REQUIRED when the authorization endpoint returns an ID Token
- *   (code id_token, code id_token token; OIDC Core 1.0 §3.3.2.11), and stays
- *   optional for code token as in the code flow
+ * `response_type` がハイブリッドフローのもの（`code id_token`、`code token`、`code id_token token`）でなければ、何もしない。
+ * 検証はトランザクションを作る前に行い、次の条件をそれぞれ core の関数で確かめる。
+ * - トークンをクエリに含めないよう、`response_mode=query` を拒否する（OAuth 2.0 Multiple Response Type Encoding Practices §5、§7）。
+ * - OP がこのリクエストに使うレスポンスモード（`responseMode`）と異なる `response_mode`（JARM の `query.jwt` や未知の値）も、フラグメントに置き換えずに拒否する。
+ * - 認可エンドポイントが ID トークンを返す `code id_token` と `code id_token token` では `nonce` を必須とし、`code token` では認可コードフローと同じく任意とする（OIDC Core 1.0 §3.3.2.11）。
  *
- * The redirect_uri rules are those of the code flow (§3.3.2.1 refers to
- * §3.1.2.1), and PKCE binds the code as validate-request checked it.
+ * 違反には、リダイレクトで返せる `invalid_request` を投げる。
+ * パイプラインは、このエラーをリクエストのレスポンスモード（既定はフラグメント）でクライアントへ返す（OIDC Core 1.0 §3.3.2.6）。
+ *
+ * `redirect_uri` と PKCE はここでは検証しない。
+ * `redirect_uri` の規則は認可コードフローと同じであり（OIDC Core 1.0 §3.3.2.1 が §3.1.2.1 を参照する）、PKCE のパラメータは `validate-request` ステップが検証済みだからである。
+ *
+ * @throws {AuthorizationError} `invalid_request`: 上のどれかの条件に違反するとき。
+ * @spec OIDC Core 1.0 §3.3.2.11
  */
 export function validateHybridRequest(
   validatedRequest: ValidatedAuthorizationRequest,

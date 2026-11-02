@@ -53,9 +53,25 @@ export interface GoogleLoginRedirectResult {
 }
 
 /**
- * login_uri へ届いた POST を検証し、認証トランザクション ID と Google アカウントを返す。
+ * POST を検証し、トランザクション ID などを返す。
  *
- * @throws {GoogleLoginError} 検証失敗時
+ * 返すのは、`nonce` を発行したトランザクションの ID と、検証済みの Google アカウント（ID トークンのペイロード）である。
+ * 「Google でログイン」（リダイレクトモード）を終えたブラウザが `login_uri` へ送る POST を、次の順に処理する。
+ * 1. `Cookie` ヘッダーから `g_csrf_token` を、ボディから `credential`（ID トークン）、`g_csrf_token`、`select_by` を取り出す。
+ * 2. Cookie とボディの `g_csrf_token` が一致することを確かめる（ダブルサブミット Cookie）。
+ * 3. ID トークンを検証し、オプションで求めたときは `hd` と `email_verified` も確かめる。
+ * 4. ID トークンの `nonce` で `nonceStore` のレコードを取り出して削除し、レコードのトランザクション ID を返す。
+ *
+ * CSRF の確認は、Google のドキュメントに従って ID トークンの検証より先に行う。
+ * `nonce` のレコードは、ID トークンの検証を通ってから消費する。
+ * 検証を通らないトークンでレコードを消せると、`nonce` を知っているだけの第三者がログインを妨害できてしまうためである。
+ *
+ * 結果の `selectBy` は、ボディに `select_by` があるときだけ入る。
+ * 呼び出し側は、返したトランザクション ID を core の `getAuthTransaction` に渡し、パスワードによるログインと同じ手順でセッションを確立して同意のステップに進む。
+ *
+ * @throws {GoogleLoginError} `missing_credential`、`csrf_token_missing_in_cookie`、`csrf_token_missing_in_body`、`csrf_token_mismatch`: ボディか Cookie の値がないか、`g_csrf_token` が一致しないとき
+ * @throws {GoogleLoginError} `invalid_id_token`、`signing_key_unavailable`、`invalid_hosted_domain`、`email_not_verified`: ID トークンを受け入れられないとき
+ * @throws {GoogleLoginError} `invalid_nonce`、`login_nonce_not_found`、`login_nonce_expired`: `nonce` がないか、`nonce` のレコードがないか期限切れのとき
  */
 export async function handleGoogleLoginRedirect(
   context: GoogleLoginRedirectContext,

@@ -58,21 +58,23 @@ export interface GoogleIdTokenVerifierOptions {
 }
 
 /**
- * 値が長さ 1 以上の文字列かを返す（型ガード）。
+ * 値が空でない文字列なら `true` を返す。
  *
- * 空白だけの文字列も true を返す。
+ * 型ガードなので、`true` を返したあとは `value` を `string` として扱える。
+ * 長さだけを見るので、空白だけの文字列にも `true` を返す。
  */
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
 /**
- * 文字列 1 つか文字列の配列を受け取り、新しい文字列配列にして返す。
+ * 文字列か文字列の配列を、新しい配列にして返す。
  *
- * 要素の重複は除かない。空文字、空の配列、空文字や文字列でない要素を含む配列には、
- * メッセージが label で始まる TypeError を投げる。
+ * 文字列は要素が 1 つの配列にし、配列は複製する。
+ * 要素の重複は取り除かない。
+ * 投げる `TypeError` のメッセージは `label` で始まる。
  *
- * @throws {TypeError} 値が空、または空文字や文字列でない要素を含むとき
+ * @throws {TypeError} `value` が空文字か空の配列のとき、または空文字や文字列でない要素を含むとき
  */
 function normalizeList(value: string | readonly string[], label: string): string[] {
   const list = typeof value === 'string' ? [value] : [...value];
@@ -83,11 +85,14 @@ function normalizeList(value: string | readonly string[], label: string): string
 }
 
 /**
- * ライブラリのエラーを {@link GoogleLoginError} に写す。
+ * 検証のエラーを `GoogleLoginError` に変換して返す。
  *
- * 公開鍵の取得失敗（gaxios の HTTP エラー。ライブラリは message に
- * "Failed to retrieve verification certificates" を前置する）は一時的な障害なので
- * `signing_key_unavailable`（503）、それ以外はトークン自体の拒否として `invalid_id_token`（401）。
+ * Google の公開鍵を取得できなかったことを示すエラーは `signing_key_unavailable`（503）にする。
+ * gaxios の HTTP エラーと、メッセージが `Failed to retrieve verification certificates` で始まるエラー（ライブラリが公開鍵の取得の失敗に付ける文言）がこれに当たる。
+ * 鍵を取得できないのは一時的な障害であり、トークンが不正だったわけではないので、`invalid_id_token` と分ける。
+ *
+ * それ以外のエラーは、トークンを受け入れなかったものとして `invalid_id_token`（401）にする。
+ * どちらの場合も、元のエラーを `cause` に入れ、そのメッセージをそのまま使う。
  */
 function toGoogleLoginError(error: unknown): GoogleLoginError {
   const message = error instanceof Error ? error.message : String(error);
@@ -101,11 +106,17 @@ function toGoogleLoginError(error: unknown): GoogleLoginError {
 }
 
 /**
- * google-auth-library の `OAuth2Client.verifyIdToken` で検証する {@link GoogleIdTokenVerifier} を作る。
+ * ID トークンを検証する `GoogleIdTokenVerifier` を作る。
  *
- * Google のドキュメントの Node.js サンプル
- * （`new OAuth2Client()` → `client.verifyIdToken({ idToken, audience })` → `ticket.getPayload()`）
- * をそのまま行い、失敗を {@link GoogleLoginError} に写す。
+ * 返すオブジェクトの `verify()` は、google-auth-library の `OAuth2Client.verifyIdToken` で ID トークンを検証し、ペイロードを返す。
+ * 手順は Google のドキュメントの Node.js のサンプルと同じで、`new OAuth2Client()`、`client.verifyIdToken({ idToken, audience })`、`ticket.getPayload()` の順に呼ぶ。
+ * `options.client` を渡せばその `OAuth2Client` を使い、渡さなければ `options.clientOptions` で新しく作る。
+ *
+ * `verify()` は次のときに投げる。
+ * - `clientId` が空のとき: `TypeError`
+ * - ID トークンが空文字のとき: `invalid_id_token`（ライブラリは呼ばない）
+ * - ライブラリが検証に失敗したとき: {@link GoogleLoginError} に変換したエラー（`invalid_id_token` か `signing_key_unavailable`）
+ * - ペイロードがないとき: `invalid_id_token`
  */
 export function createGoogleIdTokenVerifier(
   options: GoogleIdTokenVerifierOptions = {},
@@ -137,10 +148,11 @@ export function createGoogleIdTokenVerifier(
 let defaultVerifier: GoogleIdTokenVerifier | undefined;
 
 /**
- * プロセスで共有する既定の {@link GoogleIdTokenVerifier}（初回呼び出し時に生成）。
+ * プロセスで共有する ID トークンの検証器を返す。
  *
- * `OAuth2Client` は Google の公開鍵を `Cache-Control` の間キャッシュするので、
- * 検証のたびに作り直さず 1 つを使い回す。
+ * 初めて呼ばれたときに {@link createGoogleIdTokenVerifier} で既定のオプションのまま作り、以後は同じ {@link GoogleIdTokenVerifier} を返す。
+ * Google の公開鍵のキャッシュは `OAuth2Client` のインスタンスにあり、`Cache-Control` の期間は公開鍵を取得し直さない。
+ * 検証のたびに作り直すと、そのたびに公開鍵を取得することになる。
  */
 export function getDefaultGoogleIdTokenVerifier(): GoogleIdTokenVerifier {
   defaultVerifier ??= createGoogleIdTokenVerifier();
@@ -148,13 +160,17 @@ export function getDefaultGoogleIdTokenVerifier(): GoogleIdTokenVerifier {
 }
 
 /**
- * ステップ（任意）: `hd` が許可したホストされたドメインと一致することを検証する。
+ * `hd` が許可したドメインのどれかであることを検証する。
  *
- * Google のドキュメント: Google Workspace / Cloud organization のユーザーに制限する場合は
- * `hd` クレームを確認する。`hostedDomain` を渡さなければ何もしない。渡した場合、`hd` が無い
- * トークン（個人の Google アカウント）は拒否する。
+ * ログインを組織のアカウントに限るときに使う、任意の検証である。
+ * `hd` は、アカウントを管理する組織のドメインを示すクレームで、個人の Google アカウントには付かない。
+ * Google のドキュメントによれば、組織のユーザーだけを受け入れる場合は `hd` を確かめる必要がある。
  *
- * @throws {GoogleLoginError} `invalid_hosted_domain`
+ * `hostedDomain` を渡さなければ何も確かめない。
+ * 渡した場合は、`hd` のないトークン（個人の Google アカウント）も拒否する。
+ *
+ * @throws {GoogleLoginError} `invalid_hosted_domain`: `hd` がないか、`hostedDomain` のどれとも一致しないとき
+ * @throws {TypeError} `hostedDomain` が空文字か空の配列のとき、または空文字を含むとき
  */
 export function validateGoogleHostedDomain(
   payload: GoogleIdTokenPayload,
@@ -171,12 +187,14 @@ export function validateGoogleHostedDomain(
 }
 
 /**
- * ステップ（任意）: `email_verified` が true であることを検証する。
+ * `email_verified` が `true` であることを検証する。
  *
- * メールアドレスで OP のユーザーと対応付ける構成では、未検証のメールを持つ Google
- * アカウントが他人のアカウントへ結びつくのを防ぐために必須。
+ * 任意の検証だが、メールアドレスで OP のユーザーと対応付ける構成では必須になる。
+ * 確かめないと、メールアドレスを検証していない Google アカウントが、同じメールアドレスを使う他人の OP のアカウントに結び付いてしまうためである。
  *
- * @throws {GoogleLoginError} `email_not_verified`
+ * 値が `true` そのもののときだけ通し、文字列の `"true"` やクレームがない場合は拒否する。
+ *
+ * @throws {GoogleLoginError} `email_not_verified`: `email_verified` が `true` でないとき
  */
 export function validateGoogleEmailVerified(payload: GoogleIdTokenPayload): void {
   if (payload.email_verified !== true) {
@@ -188,13 +206,13 @@ export function validateGoogleEmailVerified(payload: GoogleIdTokenPayload): void
 }
 
 /**
- * ステップ（任意）: `nonce` が期待値と一致することを検証する。
+ * `nonce` クレームが期待値と一致することを検証する。
  *
- * `expectedNonce` を渡さなければ何もしない。渡した場合、`nonce` が無いトークンは拒否する。
- * nonce をストア（{@link consumeGoogleLoginNonce}）ではなく Cookie やセッションで持つ
- * 構成向け。
+ * `nonce` をストア（{@link consumeGoogleLoginNonce}）ではなく Cookie やセッションに保持する構成で使う、任意の検証である。
+ * `expectedNonce` を渡さなければ何も確かめない。
+ * 渡した場合は、`nonce` のないトークンも拒否する。
  *
- * @throws {GoogleLoginError} `invalid_nonce`
+ * @throws {GoogleLoginError} `invalid_nonce`: `nonce` がないか、`expectedNonce` と一致しないとき
  */
 export function validateGoogleIdTokenNonce(payload: GoogleIdTokenPayload, expectedNonce?: string): void {
   if (expectedNonce === undefined) return;
@@ -223,13 +241,16 @@ export interface VerifyGoogleIdTokenOptions {
 }
 
 /**
- * Google の ID トークンを検証し、検証済みのペイロードを返す。
+ * Google の ID トークンを検証し、ペイロードを返す。
  *
- * google-auth-library による検証（署名 → `aud` → `iss` → `exp`）のあと、任意の
- * `hd` / `email_verified` / `nonce` を確認する。生成コードはこの合成関数ではなく
- * verifier と個々のステップ関数を順に呼び出してもよい。
+ * まず検証器（`options.verifier`）で ID トークンを検証する。
+ * 既定の検証器（{@link getDefaultGoogleIdTokenVerifier}）は、google-auth-library で署名、`iss`、`aud`、有効期限を検証する。
+ * 続けて、オプションで求めた項目だけを、`hd`（`hostedDomain`）、`email_verified`（`requireVerifiedEmail`）、`nonce`（`expectedNonce`）の順に確かめる。
  *
- * @throws {GoogleLoginError} 検証失敗時
+ * 生成されたコードは、この関数を使わずに、検証器と個々の検証の関数を順に呼んでもよい。
+ *
+ * @throws {GoogleLoginError} `invalid_id_token` か `signing_key_unavailable`: 検証器が ID トークンを受け入れなかったとき
+ * @throws {GoogleLoginError} `invalid_hosted_domain`、`email_not_verified`、`invalid_nonce`: オプションで求めた確認に通らなかったとき
  */
 export async function verifyGoogleIdToken(
   idToken: string,

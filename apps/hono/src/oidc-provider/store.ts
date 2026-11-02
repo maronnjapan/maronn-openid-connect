@@ -67,67 +67,125 @@ export interface UpstreamLogin {
  */
 export interface TransactionStorage extends AuthTransactionStore {
   /**
-   * Record that the tokens of the transaction were issued from the
-   * authorization endpoint without a code: the Implicit Flow (OIDC Core 1.0
-   * §3.2.2.5) returns its ID Token there. A transaction of the code flow gets
-   * to the same point when its code is exchanged. Optional: a store that does
-   * not keep how a transaction ended leaves it out.
+   * トークンを発行したことをトランザクションに記録する。
+   *
+   * 認可エンドポイントが、認可コードを介さずにトークンを返したときに呼ぶ。
+   * インプリシットフローは、ID トークンを認可エンドポイントから返す（OIDC Core 1.0 §3.2.2.5）。
+   * 認可コードフローのトランザクションは、認可コードを交換したときに同じ状態になる。
+   * トランザクションがどう終わったかを保存しないストアは、このメソッドを省いてよい。
    */
   recordTokenIssued?(transactionId: string): Awaitable<void>;
 }
 
 export interface AuthorizationCodeStorage {
-  /** Store an authorization code with what it was issued for, replacing an entry of the same code. */
+  /**
+   * 認可コードを、発行した内容とともに保存する。
+   *
+   * 発行した内容は、クライアント、リダイレクト URI、スコープ、有効期限などである。
+   * 同じ認可コードのレコードがあれば置き換える。
+   */
   set(code: string, info: AuthorizationCodeInfo): Awaitable<void>;
-  /** undefined for an expired code; a used one is returned, with used: true. */
+  /**
+   * 認可コードのレコードを返す。
+   *
+   * 保存されていない認可コードと、期限切れの認可コードには `undefined` を返す。
+   * 使用済みの認可コードも、`used: true` のレコードとして返す。
+   */
   get(code: string): Awaitable<AuthorizationCodeInfo | undefined>;
   /**
-   * Mark the code used, never delete it: OAuth 2.1 §4.1.2 / RFC 9700 §4.13 —
-   * a replayed code must still be found as used so its grant can be revoked.
+   * 認可コードを使用済みにする。
+   *
+   * レコードは削除しない。
+   * 再提示された認可コードを使用済みとして見つけ、そのグラントを失効させるためである（OAuth 2.1 §4.1.2、RFC 9700 §4.13）。
+   * 見つからない認可コードと使用済みの認可コードには `TokenError`（`invalid_grant`）を投げるので、同じ認可コードを提示した二つのリクエストのうち、トークンを受け取るのは一つだけになる。
    */
   consume(code: string): Awaitable<void>;
   delete(code: string): Awaitable<void>;
 }
 
 export interface AccessTokenStorage {
-  /** Store an issued access token with its subject, client, scope and expiry, for UserInfo, introspection and revocation to find. */
+  /**
+   * 発行したアクセストークンを保存する。
+   *
+   * サブジェクト、クライアント、スコープ、有効期限とともに保存し、UserInfo エンドポイント、イントロスペクション、トークンの失効で見つけられるようにする。
+   */
   set(token: string, info: AccessTokenInfo): Awaitable<void>;
   get(token: string): Awaitable<AccessTokenInfo | undefined>;
   delete(token: string): Awaitable<void>;
-  /** OAuth 2.1 §4.1.2: revoke every access token of a grant (code reuse). */
+  /**
+   * グラントのアクセストークンをすべて失効させる。
+   *
+   * 認可コードが再提示されたときに使う（OAuth 2.1 §4.1.2）。
+   */
   revokeByGrantId(grantId: string): Awaitable<void>;
-  /** Revoke one access token (RFC 7009). */
+  /**
+   * アクセストークンを一つ失効させる。
+   *
+   * @spec RFC 7009
+   */
   revoke(token: string): Awaitable<void>;
 }
 
 export interface RefreshTokenStorage {
-  /** Store an issued refresh token with its grant, subject, client, scope and expiry. */
+  /**
+   * 発行したリフレッシュトークンを保存する。
+   *
+   * グラント、サブジェクト、クライアント、スコープ、有効期限とともに保存する。
+   */
   set(token: string, info: RefreshTokenInfo): Awaitable<void>;
   get(token: string): Awaitable<RefreshTokenInfo | undefined>;
   /**
-   * Mark a rotated refresh token used, never delete it: OAuth 2.1 §4.3.1 /
-   * RFC 9700 §4.13 — a replay must still be found so the grant is revoked.
+   * リフレッシュトークンを使用済みにする。
+   *
+   * ローテーションで置き換えたリフレッシュトークンに使う。
+   * レコードは削除しない。
+   * 再提示されたリフレッシュトークンを見つけて、そのグラントを失効させるためである（OAuth 2.1 §4.3.1、RFC 9700 §4.13）。
+   * 見つからないリフレッシュトークンと使用済みのリフレッシュトークンには `TokenError`（`invalid_grant`）を投げる。
    */
   consume(token: string): Awaitable<void>;
   delete(token: string): Awaitable<void>;
-  /** OAuth 2.1 Section 4.1.2: revoke every refresh token of a grant, the rotated ones included. */
+  /**
+   * グラントのリフレッシュトークンをすべて失効させる。
+   *
+   * ローテーションで使用済みになったものも含める（OAuth 2.1 §4.1.2）。
+   */
   revokeByGrantId(grantId: string): Awaitable<void>;
-  /** Revoke one refresh token (RFC 7009). */
+  /**
+   * リフレッシュトークンを一つ失効させる。
+   *
+   * @spec RFC 7009
+   */
   revoke(token: string): Awaitable<void>;
 }
 
 export interface AuthSessionStorage {
-  /** Store who signed in for a transaction (the subject and how and when they authenticated), for the consent step to read. */
+  /**
+   * トランザクションでログインしたユーザーを保存する。
+   *
+   * サブジェクト、ログインした時刻、ブラウザセッションの ID を保存し、同意のステップがそれを読む。
+   */
   set(transactionId: string, info: AuthSessionInfo): Awaitable<void>;
-  /** Return who signed in for a transaction, undefined when nobody did or the entry expired. */
+  /**
+   * トランザクションでログインしたユーザーを返す。
+   *
+   * まだ誰もログインしていないとき、またはレコードの期限が切れたときは `undefined` を返す。
+   */
   get(transactionId: string): Awaitable<AuthSessionInfo | undefined>;
   delete(transactionId: string): Awaitable<void>;
 }
 
 export interface BrowserSessionStorage {
-  /** Store the OP session of a browser under its session id: the subject and when and how they authenticated. */
+  /**
+   * セッション ID をキーに、OP のセッションを保存する。
+   *
+   * 保存するのは、ログインしたユーザーのサブジェクトと、ログインした時刻である。
+   */
   set(sessionId: string, info: BrowserSessionInfo): Awaitable<void>;
-  /** Return the OP session of a session id, undefined when there is none or it expired. */
+  /**
+   * セッション ID に対応する OP のセッションを返す。
+   *
+   * セッションがないとき、または期限が切れたときは `undefined` を返す。
+   */
   get(sessionId: string): Awaitable<BrowserSessionInfo | undefined>;
   delete(sessionId: string): Awaitable<void>;
 }
@@ -139,26 +197,48 @@ export interface BrowserSessionStorage {
  */
 export interface ConsentStorage {
   grant(subject: string, clientId: string, scopes: string[]): Awaitable<void>;
-  /** true only when every requested scope was granted. */
+  /**
+   * 要求したスコープがすべて同意済みなら true を返す。
+   *
+   * 一部のスコープだけが同意済みのときと、`scopes` が空のときは `false` を返す。
+   */
   hasConsent(subject: string, clientId: string, scopes: string[]): Awaitable<boolean>;
-  /** Add a grant id to the consent of a subject to a client, once, so revoke() returns it. */
+  /**
+   * クライアントへの同意にグラント ID を記録する。
+   *
+   * 同じグラント ID は一度だけ記録し、記録したグラント ID は `revoke()` が返す。
+   */
   recordGrant(subject: string, clientId: string, grantId: string): Awaitable<void>;
-  /** Remove the consent and return the grant ids whose tokens the caller revokes. */
+  /**
+   * 同意を削除し、記録したグラント ID を返す。
+   *
+   * 呼び出し側は、返したグラント ID のトークンを失効させる。
+   */
   revoke(subject: string, clientId: string): Awaitable<string[]>;
 }
 
 export interface UserStorage {
-  /** Return the user's claims when the username and password match, undefined for an unknown user, a wrong password or a user without a password. */
+  /**
+   * ユーザー名とパスワードが合えば、クレームを返す。
+   *
+   * 登録されていないユーザー、パスワードの誤り、パスワードを持たないユーザーには `undefined` を返す。
+   * 返すクレームには、保存したパスワードのハッシュが `password` として含まれる。
+   */
   authenticate(
     username: string,
     password: string,
   ): Awaitable<(UserClaims & { password: string }) | undefined>;
-  /** Return the claims of the user with this subject, undefined for an unknown subject. */
+  /**
+   * サブジェクトのユーザーのクレームを返す。
+   *
+   * 登録されていないサブジェクトには `undefined` を返す。
+   */
   getClaims(sub: string): Awaitable<UserClaims | undefined>;
   /**
-   * Find or create the user of an upstream account (just-in-time
-   * provisioning) by its federated identity, never by email, save the claims
-   * the provider asserted, and return the user's claims.
+   * 外部アカウントのユーザーを探すか作り、クレームを返す。
+   *
+   * ユーザーは、外部の ID プロバイダとそこでのサブジェクトの組で探し、メールアドレスでは探さない。
+   * 見つからなければ新しいユーザーを作り（ジャストインタイムのプロビジョニング）、どちらの場合も外部の ID プロバイダが示したクレームを保存する。
    */
   linkFederatedIdentity(identity: FederatedIdentity): Awaitable<UserClaims>;
 }

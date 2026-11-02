@@ -29,8 +29,12 @@ export interface RefreshTokenDecision {
 }
 
 /**
- * Decide whether a refresh token is issued, and whether it is bound to the
- * login session (online) or outlives it (offline_access).
+ * リフレッシュトークンを発行するかと、その種類を返す。
+ *
+ * 種類は、ログインセッションに結び付けるもの（オンライン）と、ログインセッションが終わっても使えるもの（`offline_access`）の二つである。
+ * クライアントが `grant_types` に `refresh_token` を登録しているときに限り、次のどちらかが成り立てば発行する。
+ * - グラントが `offline_access` を持つ。
+ * - 設定の `onlineRefreshTokenEnabled` が true で、結び付けるセッションがある。
  *
  * @spec OIDC Core 1.0 §11
  * @spec RFC 9700 §4.14
@@ -43,39 +47,34 @@ export function decideRefreshTokenIssuance(
 ): RefreshTokenDecision {
   const config = c.get('config');
 
-  // RFC 7591 §2 / OIDC Dynamic Client Registration 1.0 §2: grant_types の既定は
-  // ["authorization_code"]。refresh_token を登録していないクライアントへ RT を渡しても、
-  // 次に grant_type=refresh_token を出した瞬間 validateClientGrantType が
-  // unauthorized_client で拒否する。一度も使えない長期資格情報を保存させるだけなので
-  // （RFC 9700 §4.14）、登録が無ければ発行しない。
+  // クライアントが `grant_types` に `refresh_token` を登録しているかを確かめ、登録していなければリフレッシュトークンを発行しない。
+  // `grant_types` の既定値は `["authorization_code"]` である（RFC 7591 §2、OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // 登録していないクライアントにリフレッシュトークンを渡しても、`grant_type=refresh_token` で使った時点で `validateClientGrantType()` が `unauthorized_client` で拒否する。
+  // 一度も使えない長期の認証情報をクライアントに保存させるだけになるので、発行しない（RFC 9700 §4.14）。
   const clientAllowsRefreshGrant = clientAllowsRefreshTokenGrant(tokenClient);
 
-  // RFC 6749 §6 / OIDC Core 1.0 §11: refresh 時の scope 縮小は当該リクエストの access token /
-  // ID Token の権限縮小として扱い、refresh token rotation の可否とは切り離す。rotation 可否は
-  // 「元の grant が offline_access を持っていたか」で判断する。
-  // - authorization_code grant: 今回付与された scope に offline_access があるか。
-  // - refresh_token grant: 元 refresh token の grant が offline_access を持っていたか
-  //   (validatedRequest.hadOfflineAccess)。縮小後 scope から offline_access を落としても
-  //   元 grant の権限は失われないため rotation を継続する。
+  // グラントが `offline_access` を持つかを決める（RFC 6749 §6、OIDC Core 1.0 §11）。
+  // リフレッシュでスコープを狭めたときは、このリクエストで発行するアクセストークンと ID トークンの権限を狭めるだけにし、リフレッシュトークンのローテーションを続けるかどうかとは切り離す。
+  // ローテーションを続けるかは、元のグラントが `offline_access` を持っていたかで決める。
+  // - `authorization_code` グラント: 今回許可したスコープに `offline_access` があるか。
+  // - `refresh_token` グラント: 元のリフレッシュトークンのグラントが `offline_access` を持っていたか（`validatedRequest.hadOfflineAccess`）。
+  //   狭めたスコープから `offline_access` を外しても、元のグラントの権限は失われないので、ローテーションを続ける。
   const grantHasOfflineAccess =
     clientAllowsRefreshGrant &&
     (validatedRequest.grantType === 'refresh_token'
       ? validatedRequest.hadOfflineAccess
       : validatedRequest.scope.includes('offline_access'));
 
-  // online refresh token の束縛先セッション。
-  // OIDC Core 1.0 §11 は offline_access を「End-User が居ない（not logged in）ときにも
-  // 使える Refresh Token」と定義したうえで、Refresh Token の利用がその用途に限られない
-  // ことも明示している（"The Authorization Server MAY grant Refresh Tokens in other
-  // contexts"）。この OP はその other contexts を online refresh token として実装し、
-  // ログインセッションへ束縛する。offline_access がある grant は束縛しない。
-  // - authorization_code grant: 認可コードが持つ sessionId（ログイン時に確立したもの）。
-  // - refresh_token grant: 元 RT の束縛をそのまま引き継ぎ、rotation で外れないようにする。
+  // オンラインのリフレッシュトークンを結び付けるセッションを決め、`offline_access` を持つグラントでは結び付けない。
+  // OIDC Core 1.0 §11 は、`offline_access` を「エンドユーザーがログインしていないときにも使えるリフレッシュトークン」と定義したうえで、リフレッシュトークンの用途がそれに限られないことも明示している（「認可サーバーは、ほかの状況でもリフレッシュトークンを発行してよい（MAY）」）。
+  // この OP は、その「ほかの状況」をオンラインのリフレッシュトークンとして実装し、ログインセッションに結び付ける。
+  // - `authorization_code` グラント: 認可コードが持つ `sessionId`（ログインしたときに作ったもの）。
+  // - `refresh_token` グラント: 元のリフレッシュトークンの結び付きをそのまま引き継ぎ、ローテーションで外れないようにする。
   const boundSessionId = grantHasOfflineAccess ? undefined : validatedRequest.sessionId;
 
-  // 束縛先が分からなければ online refresh token は発行しない。ブラウザセッションを
-  // 持たない経路（device authorization grant）が該当する。ログアウトで止まる保証を
-  // 付けられない RT を配らないための fail-closed。
+  // 結び付けるセッションが分からなければ、オンラインのリフレッシュトークンは発行しない。
+  // ブラウザのセッションを持たないグラント（デバイス認可グラント）がこれに当たる。
+  // ログアウトしても使えなくならないリフレッシュトークンを渡さないよう、分からないときは発行しない側に倒す。
   const issueRefreshToken =
     clientAllowsRefreshGrant &&
     (grantHasOfflineAccess ||

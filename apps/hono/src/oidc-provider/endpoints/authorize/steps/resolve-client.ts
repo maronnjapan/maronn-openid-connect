@@ -19,11 +19,15 @@ export const meta = step({
 });
 
 /**
- * Resolve client_id into the registered client and fail fast on misconfigured
- * registered redirect URIs (fragments, dangerous schemes, non-loopback http).
+ * `client_id` の登録済みクライアントを取得して返す。
  *
- * Errors thrown here are not redirectable: the OP has no redirect_uri it may
- * trust yet, so they stay on the OP (OIDC Core 1.0 §3.1.2.2).
+ * 取得したクライアントの登録済みのリダイレクト URI に設定の誤り（フラグメント、`javascript:` などの危険なスキーム、ループバック以外の `http`）があれば、この時点で失敗させる。
+ *
+ * ここで投げるエラーはリダイレクトできない。
+ * OP にはまだ信頼できる `redirect_uri` が無いので、エラーは OP で応答する（OIDC Core 1.0 §3.1.2.2）。
+ *
+ * @throws {AuthorizationError} `invalid_request`: `client_id` が無いとき、または登録されていないとき。
+ * @throws {AuthorizationError} `server_error`: クライアントリゾルバが別の `client_id` のクライアントを返したとき、または登録済みのリダイレクト URI に設定の誤りがあるとき。
  *
  * @spec OAuth 2.1 §4.1.2.1
  * @spec OIDC Core 1.0 §3.1.2.1

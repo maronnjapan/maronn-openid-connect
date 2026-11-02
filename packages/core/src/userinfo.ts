@@ -504,29 +504,27 @@ export async function resolveUserInfoClaims(
 }
 
 /**
- * claims リクエストパラメータで要求されたクレームを追加する
+ * 個別に要求されたクレームをレスポンスに加えて返す。
  *
- * スコープ由来のレスポンス（`filterClaimsByScope` の結果）へ、`claims.userinfo` で
- * 個別要求されたクレームを重ねる。value / values が指定された場合は実値が一致する
- * クレームだけを返し、一致しない場合は省略する（エラーにはしない）。
- * `sub` はアクセストークンの subject で確定済みのため上書きしない。
+ * スコープで絞ったレスポンス（{@link filterClaimsByScope} の結果）に、`claims` パラメータの `userinfo` メンバーで個別に要求されたクレームを重ねる（OIDC Core 1.0 §5.5）。
+ * `value` か `values` が指定されたクレームは、実際の値が一致するときだけ加え、一致しなければエラーにせずに省く。
+ * `sub` はアクセストークンのサブジェクトで決まっているので、上書きしない。
  *
- * 要求されたキー名はアロウリスト（既定 {@link DEFAULT_REQUESTABLE_CLAIMS}）に
- * 載っている名前だけを読み出す。`claims` のキー名は RP が任意に指定できるため、
- * 無検査で読むと resolver が返した余剰フィールド（DB の行など）が scope を迂回して
- * 開示される。アロウリスト外のクレームは黙って省く（§5.5.1 の MUST NOT のとおり
- * エラーにはしない）。読み出しは own プロパティに限り、プロトタイプチェーン上の
- * プロパティ（getter を持つクラスインスタンスを resolver が返した場合など）は読まない。
+ * 読み出すのは、許可リスト（`allowedClaimNames`、既定値は {@link DEFAULT_REQUESTABLE_CLAIMS}）にある名前のクレームだけである。
+ * `claims` のキーの名前は RP が自由に指定できるので、確かめずに読むと、リゾルバが返した余分なフィールド（データベースの行など）が、スコープによる制限を通らずに開示されてしまう。
+ * 許可リストにないクレームも、エラーにせずに省く（OIDC Core 1.0 §5.5.1 は、要求されたクレームを返せないときにエラーを返すことを禁じている）。
+ * オブジェクト自身が持つプロパティだけを読み、プロトタイプチェーン上のプロパティ（ゲッターを持つクラスのインスタンスをリゾルバが返したときのゲッターなど）は読まない。
  *
- * 入力のレスポンスは変更せず、新しいオブジェクトを返す。
+ * 渡されたレスポンスは変更せず、新しいオブジェクトを返す。
  *
- * @spec OIDC Core 1.0 §5.5 / 5.5.1
- * @param response スコープでフィルタ済みの UserInfo レスポンス
- * @param userClaims ユーザーの全クレーム
- * @param claimsParameter Authorization Request の claims パラメータ
- * @param allowedClaimNames `claims` 経由で読み出してよいクレーム名。既定は標準クレーム。
- *   Discovery の `claims_supported` と同じ語彙を公開する OP は、その一覧をここへ注入する
- * @returns 要求クレームを追加した UserInfo レスポンス
+ * @spec OIDC Core 1.0 §5.5
+ * @spec OIDC Core 1.0 §5.5.1
+ * @param response スコープで絞った UserInfo レスポンス
+ * @param userClaims ユーザーのすべてのクレーム
+ * @param claimsParameter 認可リクエストの `claims` パラメータ
+ * @param allowedClaimNames `claims` で要求されたときに読み出してよいクレームの名前（既定値は標準のクレームの名前）。
+ *   ディスカバリーの `claims_supported` と同じ名前を公開する OP は、その一覧を渡す。
+ * @returns 要求されたクレームを加えた UserInfo レスポンス
  */
 export function applyRequestedClaims(
   response: UserInfoResponse,
@@ -540,7 +538,7 @@ export function applyRequestedClaims(
   for (const claimName of requestedClaims) {
     if (claimName === 'sub') continue;
     if (!allowedClaimNames.has(claimName)) continue;
-    // Only the End-User's own claims, not what the object inherits (constructor, toString...).
+    // エンドユーザーのクレームのオブジェクト自身が持つプロパティだけを読み、継承したプロパティ（`constructor`、`toString` など）は読まない。
     if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;
 
     const value = (userClaims as unknown as Record<string, unknown>)[claimName];
@@ -576,15 +574,21 @@ export interface UserInfoJwtOptions {
 const DEFAULT_USERINFO_JWT_EXPIRES_IN = 3600;
 
 /**
- * UserInfo レスポンスを署名済み JWT として生成する
+ * UserInfo レスポンスに署名した JWT を返す。
  *
- * クライアントが署名付きレスポンスを要求するか（`userinfo_signed_response_alg`）の判定は
- * クライアントメタデータ層の責務であり、core はこの関数の呼び出し有無を選択するだけで良い。
+ * ペイロードは、`userInfoResponse` のクレームに、`iss`（`issuer`）、`aud`（`audience`）、`iat`（現在のエポック秒）、`exp`（`iat` に `expiresIn` を足した値、`expiresIn` の既定値は 3600 秒）を加えたものである。
+ * レスポンスに同じ名前のクレームがあっても、これらの値で上書きする。
+ * ヘッダーの `alg` は `privateKey` のアルゴリズムから決め、`typ` は `JWT` にし、`kid` は `keyId` が空でないときだけ付ける。
+ * RSASSA-PKCS1-v1_5 と ECDSA 以外の鍵には `Error` を投げる。
+ *
+ * クライアントが署名したレスポンスを求めているか（`userinfo_signed_response_alg`）は、クライアントのメタデータを扱う側が判定する。
+ * 呼び出し側は、署名したレスポンスが必要なときだけこの関数を呼べばよい。
  *
  * @spec OIDC Core 1.0 §5.3.2
  * @param userInfoResponse `applyRequestedClaims()` が返した UserInfo レスポンス
- * @param options JWT 生成オプション
- * @returns 署名済み JWT 文字列（content-type: application/jwt として返却する想定）
+ * @param options 発行者、オーディエンス（クライアント ID）、署名に使う秘密鍵、鍵の ID、有効期間（秒）
+ * @returns 署名した JWT の文字列（`Content-Type: application/jwt` で返すことを想定している）
+ * @throws {Error} 秘密鍵のアルゴリズムが RSASSA-PKCS1-v1_5 でも ECDSA でもないとき
  */
 export async function generateUserInfoJwt(
   userInfoResponse: UserInfoResponse,

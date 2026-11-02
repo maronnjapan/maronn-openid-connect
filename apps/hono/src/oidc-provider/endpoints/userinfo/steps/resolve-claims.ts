@@ -20,9 +20,13 @@ export const meta = step({
 });
 
 /**
- * Resolve the claims the token may see: every claim the OP knows about the
- * subject, narrowed to the granted scopes, plus the individually requested
- * claims stored with the token. OIDC Core 1.0 §5.4 / §5.5
+ * このトークンで取得してよいクレームを集めて返す。
+ *
+ * サブジェクトについて OP が持つすべてのクレームを、許可したスコープで絞り、トークンと一緒に保存した、個別に要求されたクレームを加える。
+ *
+ * @throws {UserInfoError} `invalid_token`: トークンのサブジェクトのユーザーが見つからないとき。
+ * @spec OIDC Core 1.0 §5.4
+ * @spec OIDC Core 1.0 §5.5
  */
 export async function resolveUserInfoResponseClaims(
   c: any,
@@ -30,13 +34,12 @@ export async function resolveUserInfoResponseClaims(
 ): Promise<UserInfoResponse> {
   const userClaimsResolver = c.get('userClaimsResolver');
 
-  // Load every claim the OP knows about the token's subject.
+  // トークンのサブジェクトについて、OP が持つすべてのクレームを読み込む。
   const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
 
-  // OIDC Core 1.0 §5.4: keep only the claims the granted scopes allow.
+  // 許可したスコープが認めるクレームだけを残す（OIDC Core 1.0 §5.4）。
   const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
 
-  // OIDC Core 1.0 §5.5: overlay the individually requested claims that the
-  // token endpoint stored with this access token (claims.userinfo members).
+  // トークンエンドポイントがこのアクセストークンと一緒に保存した、個別に要求されたクレーム（`claims.userinfo` の項目）を重ねる（OIDC Core 1.0 §5.5）。
   return applyRequestedClaims(scopedResponse, userClaims, tokenInfo.claims);
 }

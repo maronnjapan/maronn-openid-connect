@@ -424,17 +424,20 @@ export async function verifyIdJagAssertion(options: {
 }
 
 /**
- * 実効 scope を導出する。
+ * 要求された `scope` を検証し、発行する `scope` を返す。
  *
- * 許可の上限は ID-JAG の scope クレーム（IdP が許可した範囲。draft §4.4.1 は
- * リソース AS がさらに部分集合へ絞ることを認める）。要求 scope があれば
- * その範囲内で縮小し、無ければ継承する。
+ * 許可する上限は、ID-JAG の `scope` クレーム（IdP が許可した範囲）である。
+ * ID-JAG draft §4.4.1 は、リソース側の認可サーバーが、それをさらに一部に絞ることを認めている。
+ * `scope` が要求されていれば、要求された値がすべて上限の中にあるときだけその値（重複を除いたもの）を返し、上限にない値があれば `invalid_scope` の {@link IdJagError} を投げる。
+ * 要求されていなければ、上限をそのまま返す。
  *
- * `offline_access` は常に除去する。jwt-bearer grant では refresh token を発行
- * しない（draft §4.4.3 SHOULD NOT。ID-JAG の再提示が代替）ため、実効 scope に
- * 残すと同意していない長期アクセスの表明になってしまう。
+ * `offline_access` は、上限から常に取り除く。
+ * `jwt-bearer` グラントではリフレッシュトークンを発行しない（ID-JAG draft §4.4.3 の SHOULD NOT。ID-JAG を再び提示することで代わりにする）ので、`scope` に残すと、同意していない長期のアクセスを示すことになるためである。
  *
- * @throws {IdJagError} invalid_scope
+ * @returns 発行するアクセストークンの `scope`
+ * @throws {IdJagError} `invalid_scope`: 上限にない値を要求したとき
+ * @spec ID-JAG draft §4.4.1
+ * @spec ID-JAG draft §4.4.3
  */
 export function resolveIdJagGrantScope(
   requestedScope: string | undefined,
@@ -457,15 +460,20 @@ export function resolveIdJagGrantScope(
 }
 
 /**
- * 合成関数: jwt-bearer（ID-JAG）redemption の検証〜発行素材の導出。
+ * 引き換えのリクエストを検証し、発行に必要な値を返す。
  *
- * トークンの発行・保存・応答生成は行わないため、呼び出し側が core の
- * 発行パイプラインと組み合わせる。ID トークンと refresh token は発行しない
- * （jwt-bearer は OIDC の認証フローではなく、refresh token は draft §4.4.3 の
- * SHOULD NOT）。
+ * 設定の確認、クライアントの確認、パラメータの検証、アサーションの検証、`scope` の決定を、この順に行う。
+ * 返す値の `subject`、`idpIssuer`、`jti`、`authTime`、`acr`、`amr`、`actor` は ID-JAG から引き継ぎ、`requestedResources` には ID-JAG の `resource` クレームを配列にして入れる。
+ * `expiresIn` には設定の値（`configuredExpiresIn`）をそのまま入れ、ID-JAG の残りの有効期間では短くしない。
  *
- * @throws {IdJagError}
- * @throws {RangeError} configuredExpiresIn が正の整数でない場合（設定ミス）
+ * トークンの発行、保存、レスポンスの組み立ては行わない。
+ * 呼び出し側が、返した値を core の発行の処理と組み合わせる。
+ * この引き換えでは、ID トークンとリフレッシュトークンを発行しない。
+ * `jwt-bearer` は OIDC の認証のフローではなく、リフレッシュトークンは ID-JAG draft §4.4.3 で発行しないよう推奨されている（SHOULD NOT）ためである。
+ *
+ * @throws {IdJagError} どれかの検証に失敗したとき
+ * @throws {RangeError} `configuredExpiresIn` が正の整数でないとき（設定の誤り）
+ * @spec ID-JAG draft §4.4
  */
 export async function processIdJagRedemptionRequest(
   context: IdJagRedemptionContext,
@@ -476,8 +484,8 @@ export async function processIdJagRedemptionRequest(
     );
   }
 
-  // クライアント認可を最初に行う。許可されていないクライアントには assertion の
-  // 有効性すら判定させない（オラクルを与えない）。
+  // リクエストの検証では、クライアントが `jwt-bearer` を使えるかを最初に確かめる。
+  // 使えないクライアントには、アサーションが有効であるかどうかも判定させず、推測する手がかりを与えない。
   authorizeIdJagRedemptionClient(context.client);
 
   const parsed = parseIdJagRedemptionParams(context.params);
@@ -517,7 +525,11 @@ export async function processIdJagRedemptionRequest(
   };
 }
 
-/** 空文字・空白のみを「未指定」として扱う。 */
+/**
+ * 前後の空白を除いた値か、`undefined` を返す。
+ *
+ * `value` が `undefined` のときと、前後の空白を除くと空文字列になるときは、`undefined`（指定なし）を返す。
+ */
 function optional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -525,10 +537,10 @@ function optional(value: string | undefined): string | undefined {
 }
 
 /**
- * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ * `scope` の文字列を値の配列に分けて返す。
  *
- * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
- * 順で 1 つずつ残す。
+ * 空白（タブや改行を含む）で区切り、空の要素を除き、重複は最初に現れた順で一つずつ残す。
+ * `scope` が `undefined` なら、空の配列を返す。
  */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
@@ -536,7 +548,10 @@ function splitScope(scope: string | undefined): string[] {
 }
 
 /**
- * description を error_description にした invalid_grant の IdJagError を作り、投げずに返す。
+ * `invalid_grant` のエラーを作って返す。
+ *
+ * `description` を説明（`error_description`）にした `invalid_grant` の {@link IdJagError} を作り、投げずに返す。
+ * アサーションの不備は `invalid_grant` で返す（RFC 7521 §4.1）。
  *
  * @spec RFC 7521 §4.1
  */
@@ -545,8 +560,12 @@ function invalidAssertion(description: string): IdJagError {
 }
 
 /**
- * RFC 8693 §4.1 の act claim 構造（`sub` 必須、`act` のネストは同形）を検証する。
- * ネストは「最外が現在の actor、最深が最も古い actor」のチェーンを表す。
+ * `act` クレームの形が正しければ true を返す。
+ *
+ * 値がオブジェクト（配列と `null` は除く）で、`sub` が空でない文字列であり、入れ子の `act` があればそれも同じ形であるとき、true を返す（RFC 8693 §4.1）。
+ * 入れ子は、一番外側が現在のアクター、一番内側が最も古いアクターになる連鎖を表す。
+ *
+ * @spec RFC 8693 §4.1
  */
 function isValidActorChain(value: unknown): value is IdJagActor {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -563,8 +582,12 @@ function isValidActorChain(value: unknown): value is IdJagActor {
 }
 
 /**
- * RFC 7515 §4.1.9: typ は大文字小文字を無視して解釈され、`application/` 前置は
- * 省略形と等価に扱う。`oauth-id-jag+jwt` と `application/oauth-id-jag+jwt` を受ける。
+ * `typ` が ID-JAG の値なら true を返す。
+ *
+ * 文字列を小文字にしてから、`oauth-id-jag+jwt` か `application/oauth-id-jag+jwt` と一致するかで判定し、文字列でない値には false を返す。
+ * RFC 7515 §4.1.9 では、`typ` は大文字と小文字を区別せずに解釈し、`application/` の接頭辞は省略した形と同じに扱うためである。
+ *
+ * @spec RFC 7515 §4.1.9
  */
 function isIdJagTyp(typ: unknown): boolean {
   if (typeof typ !== 'string') return false;
@@ -572,7 +595,11 @@ function isIdJagTyp(typ: unknown): boolean {
   return normalized === ID_JAG_JWT_TYP || normalized === `application/${ID_JAG_JWT_TYP}`;
 }
 
-/** base64url（パディング無し）の JSON セグメントを厳格にパースする。 */
+/**
+ * base64url の JSON を解析してオブジェクトを返す。
+ *
+ * 空文字列、英数字と `-`、`_` 以外の文字（パディングの `=` を含む）を含む値、JSON のオブジェクトとして解析できない値（配列や `null` など）には、例外を投げる。
+ */
 function parseBase64UrlJson(segment: string): Record<string, unknown> {
   if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
     throw new Error('invalid base64url');
@@ -592,12 +619,12 @@ function parseBase64UrlJson(segment: string): Record<string, unknown> {
 }
 
 /**
- * base64url（パディングなし）の文字列をデコードし、そのバイト列を ArrayBuffer にして返す。
+ * base64url の文字列を復号し、`ArrayBuffer` で返す。
  *
- * 空文字列には空の ArrayBuffer を返す。
+ * パディングのない base64url を受け取り、空文字列には空の `ArrayBuffer` を返す。
  *
- * @throws {Error} base64url のアルファベット以外の文字（`+` `/` `=` や空白）を含むとき
- * @throws {DOMException} InvalidCharacterError（長さが 4 で割って 1 余り、復号できないとき）
+ * @throws {Error} base64url で使わない文字（`+`、`/`、`=`、空白など）を含むとき
+ * @throws {DOMException} `InvalidCharacterError`: 長さを 4 で割ると 1 余り、復号できないとき
  */
 function base64UrlToArrayBuffer(segment: string): ArrayBuffer {
   if (!/^[A-Za-z0-9_-]*$/.test(segment)) {
@@ -614,12 +641,13 @@ function base64UrlToArrayBuffer(segment: string): ArrayBuffer {
 }
 
 /**
- * 1 つの JWK で compact JWS の署名を検証する。
+ * 一つの JWK で署名を検証し、正しければ true を返す。
  *
- * 検証パラメータは import 済み鍵の algorithm から導出する（ECDSA のハッシュは
- * 曲線に対応する。core の verify ヘルパーと同じ規則）。鍵の import 失敗・
- * アルゴリズム不一致・署名不一致はすべて false（呼び出し側が次の候補鍵を試すか、
- * 最終的に固定文言で拒否する）。
+ * 検証の方式は、読み込んだ鍵のアルゴリズムから決める。
+ * RSA の鍵は RSASSA-PKCS1-v1_5 で、ECDSA の鍵は曲線に合うハッシュ（P-256 なら SHA-256、P-384 なら SHA-384、それ以外は SHA-512）で検証する（core の署名の検証と同じ規則）。
+ *
+ * 署名を復号できないとき、鍵を読み込めないとき、どちらの方式でもない鍵のとき、署名が一致しないときは、すべて false を返す。
+ * 呼び出し側は次の候補の鍵を試し、どの鍵でも検証できなければ固定の説明で拒否する。
  */
 async function verifySignature(
   signingInput: string,

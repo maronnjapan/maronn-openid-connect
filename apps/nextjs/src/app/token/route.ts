@@ -303,13 +303,14 @@ async function token(request: Request): Promise<Response> {
     });
 
     // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §12.1
-    // OIDC Core 1.0 §12: refresh_token grant でも id_token は MAY。
-    // openid scope を持つ場合は §12.1 に従い初回認証時と同じ auth_time / acr / amr / azp で再発行する。
-    // （§12.2 は nonce を再発行 ID Token の保持クレームに挙げないため nonce は refresh では undefined）
+    // ID トークンは、スコープに `openid` があるときだけ発行する。
+    // `refresh_token` グラントでも ID トークンを返してよく（MAY）、返すときは最初の認証と同じ `auth_time`、`acr`、`amr` で発行し直す（OIDC Core 1.0 §12、§12.1）。
+    // リフレッシュでは `nonce` が `undefined` になる。
+    // OIDC Core 1.0 §12.2 が、発行し直す ID トークンに残すクレームに `nonce` を挙げていないためである。
     let idToken: string | undefined;
     if (validatedRequest.scope.includes('openid')) {
-      // OIDC Core 1.0 §3.1.3.6: at_hash binds the ID Token to this access token.
-      // The hash function follows the ID Token signing alg.
+      // このアクセストークンのハッシュの左半分から `at_hash` を求め、ID トークンをアクセストークンに結び付ける（OIDC Core 1.0 §3.1.3.6）。
+      // ハッシュ関数は、ID トークンの署名鍵の `alg` に合わせる。
       const atHash = await computeAtHash(accessToken, idTokenKey.privateKey);
 
       const idTokenPayload = buildIdTokenPayload({
@@ -326,8 +327,7 @@ async function token(request: Request): Promise<Response> {
         amr,
       });
 
-      // Add your own ID Token claims here, e.g.:
-      //   idTokenPayload.tenant_id = await lookupTenant(subject);
+      // ID トークンに独自のクレームを加えるときは、署名する前のここでペイロードに加える（例: `idTokenPayload.tenant_id = await lookupTenant(subject);`）。
 
       idToken = await generateIdToken({
         payload: idTokenPayload,
@@ -337,10 +337,9 @@ async function token(request: Request): Promise<Response> {
     }
 
     // [persist-access-token] Store the access token record — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
-    // Store the access token for the UserInfo / Introspection / Revocation
-    // endpoints. iat / nbf / audience / issuer / acr are kept so introspection
-    // can echo them; grantId ties the token to its authorization grant so it is
-    // revoked with its siblings on code reuse (OAuth 2.1 §4.1.2).
+    // アクセストークンのレコードを、UserInfo、イントロスペクション、失効の各エンドポイントのためにストアに保存する。
+    // `iat`、`nbf`、`audience`、`issuer`、`acr` は、イントロスペクションのレスポンスで返せるように保存する。
+    // `grantId` はこのトークンを元の認可のグラントに結び付け、認可コードが再利用されたときに、同じグラントのほかのトークンと一緒に失効させられるようにする（OAuth 2.1 §4.1.2）。
     await accessTokenStore.set(accessToken, {
       sub: subject,
       clientId: validatedRequest.clientId,
@@ -348,20 +347,19 @@ async function token(request: Request): Promise<Response> {
       expiresAt: issuedAt + config.accessTokenExpiresIn,
       grantId: validatedRequest.grantId,
       iat: issuedAt,
-      // RFC 7519 §4.1.5 / RFC 7662 §2.2: persist nbf (= iat) for JWT and opaque
-      // tokens alike so introspection reports a not-yet-valid token inactive.
+      // JWT 形式でも不透明な文字列でも `nbf`（`iat` と同じ値）を保存し、まだ有効になっていないトークンをイントロスペクションが無効と報告できるようにし、`nbf` も返せるようにする（RFC 7519 §4.1.5、RFC 7662 §2.2）。
+      // JWT の発行処理も、トークンの中に同じ `nbf`（`iat` と同じ値）を入れる。
       nbf: issuedAt,
       audience: effectiveAudience,
       issuer: config.issuer,
-      // RFC 9068 §2.2 / RFC 7662 §2.2: the token identifier core minted for this
-      // issuance. It also keeps two same-second issuances distinct (RS256 is
-      // deterministic), so this store key never collides across grants.
+      // core が発行ごとに作ったトークンの識別子を保存し、イントロスペクションが `jti` を返せるようにする（RFC 9068 §2.2、RFC 7662 §2.2）。
+      // JWT 形式で同じ秒に発行した二つのトークンが別の文字列になるのも、この値があるためである（RS256 の署名は、同じ入力に対して同じ値になる）。
+      // そのため、トークンの文字列をキーにするこのストアで、別のグラントのレコードと重ならない。
       jti: accessTokenPayload.jti,
-      // OIDC Core 1.0 §5.5: the authorization request's claims parameter, so the
-      // UserInfo endpoint can honor claims.userinfo members independently of scope.
+      // 認可リクエストの `claims` パラメータを保存し、UserInfo エンドポイントが `claims.userinfo` で要求されたクレーム（`{"userinfo":{"name":{"essential":true}}}` など）をスコープとは別に返せるようにする（OIDC Core 1.0 §5.5）。
+      // 保存するのは `authorization_code` グラントのときだけで、リフレッシュで発行したトークンには保存しない。
       claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
-      // RFC 9068 §2.2.1 / RFC 9470 §6.2: the acr the token was issued with, so
-      // introspection reports it for an opaque token too.
+      // トークンを発行したときの `acr` を保存し、不透明な文字列のトークンでもイントロスペクションが `acr` を返せるようにする（RFC 9068 §2.2.1、RFC 9470 §6.2）。
       acr,
     });
 
@@ -396,7 +394,7 @@ async function token(request: Request): Promise<Response> {
   } catch (error) {
     // [respond-error] Answer the token error — RFC 6749 §5.2 / RFC 6750 §3
     if (error instanceof TokenError) {
-      // RFC 6750 §3 / OAuth 2.1 §5.2: a 401 carries WWW-Authenticate.
+      // 401 のレスポンスには `WWW-Authenticate` ヘッダーを付ける（RFC 6750 §3、OAuth 2.1 §5.2）。
       return oauthError(
         error.error,
         error.errorDescription,
@@ -408,38 +406,51 @@ async function token(request: Request): Promise<Response> {
   }
 }
 
-/** Narrows raw body params to TokenRequestParams: grant_type is required. */
+/**
+ * パラメータの `grant_type` が文字列なら true を返す。
+ *
+ * true のとき、TypeScript はパラメータを `TokenRequestParams` として扱う（型の絞り込み）。
+ * オブジェクトでない値と、必須の `grant_type` がない値には false を返す。
+ */
 function isTokenRequestParams(params: unknown): params is TokenRequestParams {
   if (typeof params !== 'object' || params === null) return false;
   return typeof (params as Record<string, unknown>)['grant_type'] === 'string';
 }
 
 /**
- * Validate the authorization_code grant (OAuth 2.1 §4.1.2 / RFC 7636 / OIDC
- * Core 1.0 §3.1.3.2). Each security rule is a separate core call so it can be
- * removed, replaced, or surrounded with experiment-specific logic.
+ * 認可コードを検証し、検証済みリクエストを返す。
+ *
+ * 検証に通った認可コードは、ストアで使用済みにする。
+ * `code` がない、認可コードが見つからない、使用済み、ほかのクライアントに発行された、期限切れ、`redirect_uri` が認可リクエストと合わない、PKCE の `code_verifier` が合わないときは、中で呼ぶ core の関数が `TokenError`（`invalid_grant` など）を投げる。
+ * 使用済みの認可コードが再び提示されたときは、そのグラントから発行したトークンを失効させてから拒否する。
+ *
+ * 安全のための規則はそれぞれ core の別々の関数なので、一つずつ取り除いたり、差し替えたり、実験用の処理を前後に挟んだりできる。
+ *
+ * @spec OAuth 2.1 §4.1.2
+ * @spec RFC 7636
+ * @spec OIDC Core 1.0 §3.1.3.2
  */
 async function validateAuthorizationCodeGrant(
   params: TokenRequestParams,
   authenticatedClientId: string,
 ): Promise<ValidatedTokenRequest> {
-  // Resolve the presented authorization code and retain the non-optional code.
+  // `code` パラメータがあることを確かめ、提示された認可コードのレコードをストアから取得する。
   const { code, authorizationCode } = await resolveAuthorizationCode(params, authorizationCodeResolver);
 
-  // OAuth 2.1 §4.1.2: reject reuse and revoke tokens from the compromised grant.
+  // 使用済みの認可コードなら、そのグラントから発行したトークンを失効させてから拒否する（OAuth 2.1 §4.1.2）。
   await validateAuthorizationCodeUnused(authorizationCode, authorizationCodeResolver);
 
-  // Bind the authorization code to the authenticated client and its lifetime.
+  // 認可コードが認証したクライアントに発行されたものであることと、有効期限が切れていないことを確かめる。
   validateAuthorizationCodeClient(authorizationCode, authenticatedClientId);
   validateAuthorizationCodeExpiration(authorizationCode);
 
-  // OIDC Core 1.0 §3.1.3.2: bind the token request redirect_uri.
+  // トークンリクエストの `redirect_uri` を、認可コードに保存した値と照らし合わせる（OIDC Core 1.0 §3.1.3.2）。
   validateAuthorizationCodeRedirectUri(authorizationCode, params.redirect_uri);
 
-  // RFC 7636: validate the S256 verifier when the code carries a PKCE binding.
+  // 認可コードに PKCE の値が保存されていれば、`code_verifier` を S256 で検証する（RFC 7636）。
   const codeVerified = await verifyAuthorizationCodePkce(authorizationCode, params.code_verifier);
 
-  // Mark used (do not physically delete) so a later replay remains detectable.
+  // 認可コードを削除せずに使用済みにし、後で再び提示されたときに再利用として検出できるようにする。
   await consumeAuthorizationCode(code, authorizationCodeResolver);
 
   return buildValidatedAuthorizationCodeRequest(code, authorizationCode, authenticatedClientId, codeVerified);

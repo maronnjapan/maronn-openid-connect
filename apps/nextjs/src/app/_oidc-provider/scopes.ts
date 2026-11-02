@@ -62,9 +62,8 @@ export const RESTRICTED_SCOPE_SUBJECTS: Record<string, readonly string[]> = {
  * ユーザーごとにスコープを絞る処理は、この関数に書く。
  * この関数はエンドユーザーが決まったあとで呼ばれ、グラントを決める次のステップは、どれもすでにこの関数を待っている。
  * - 同意画面（表示するスコープ）と承認（付与するスコープ）。
- * - 認可エンドポイントの SSO の近道と `prompt=none`。
- *   どちらも同意画面を出さずにグラントを決める。
- *   どちらも保存された同意を探す前に絞る。
+ * - 認可エンドポイントで、SSO と `prompt=none` によって同意画面を出さずにグラントを決める処理。
+ *   どちらも、保存された同意を探す前に絞る。
  *   サブジェクトが持てないスコープで同意を探しても、一致することはないからである。
  * - デバイスと CIBA の承認のステップ（それらの機能を生成したとき）。
  *
@@ -86,10 +85,11 @@ export async function resolveGrantableScopes(
 }
 
 /**
- * Requested scopes this OP does not accept at all. A non-empty result means the
- * request must be rejected with `invalid_scope` (RFC 6749 §3.3). Until a custom
- * scope is declared there is no list to check against, and every value is
- * accepted.
+ * 要求のうち、OP が受け付けないスコープを返す。
+ *
+ * 標準のスコープ（`STANDARD_SCOPES`）にも独自のスコープ（`CUSTOM_SCOPES`）にもない値を返す。
+ * 結果が空でなければ、呼び出し側はリクエストを `invalid_scope` で拒否する（RFC 6749 §3.3）。
+ * 独自のスコープを一つも宣言していないうちは比べる一覧がないので、空の配列を返し、どの値も受け付ける。
  */
 export function findUnsupportedScopes(requested: readonly string[]): string[] {
   if (CUSTOM_SCOPES.length === 0) return [];

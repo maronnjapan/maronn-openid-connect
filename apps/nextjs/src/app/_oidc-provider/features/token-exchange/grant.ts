@@ -33,17 +33,21 @@ import { noStoreJson, oauthError } from '../../http';
 import { tokenExchangeConfig } from './config';
 
 /**
- * Exchange the subject_token for a new access token. Errors are thrown as
- * TokenExchangeError and answered by the token route.
+ * 交換したアクセストークンを発行し、200 で応答する。
+ *
+ * `subject_token` の検証と、発行する内容（サブジェクト、スコープ、オーディエンス、有効期間、`act` クレーム）の導出は `processTokenExchangeRequest()` が行う。
+ * 発行したアクセストークンはストアに保存し、トークン交換のレスポンスをキャッシュを禁止して返す。
+ * 検証に失敗すると `TokenExchangeError` を投げ、`dispatchTokenExchange()` がそれを OAuth のエラーレスポンスにする。
+ *
+ * @spec RFC 8693 §2.1
  */
 export async function exchangeToken(
   params: Record<string, string>,
   client: TokenClientInfo,
   keys: ProviderSigningKeys,
 ): Promise<Response> {
-  // Validate the request and derive the issuing material. Each check inside is
-  // also exported as its own step function, so you can call them one by one
-  // instead and drop or replace individual rules.
+  // リクエストを検証し、発行に使う値を導く。
+  // 中の検証はそれぞれ独立したステップの関数としても公開されているので、代わりに 1 つずつ呼べば、個々の規則を外したり差し替えたりできる。
   const grant = await processTokenExchangeRequest({
     params,
     client,
@@ -52,9 +56,8 @@ export async function exchangeToken(
     configuredExpiresIn: config.accessTokenExpiresIn,
   });
 
-  // Same aud policy as the standard grants: the UserInfo endpoint stays a
-  // permanent member (RFC 9068 §3), so an exchanged token still passes the
-  // UserInfo endpoint's audience check.
+  // 標準のグラントと同じ規則で `aud` を決める。
+  // UserInfo エンドポイントを常に含める（RFC 9068 §3）ので、交換したトークンも UserInfo エンドポイントのオーディエンスの確認を通る。
   const audience = buildAccessTokenAudience({
     userInfoEndpoint: `${config.issuer}/userinfo`,
     requested: grant.requestedAudience,
@@ -74,9 +77,9 @@ export async function exchangeToken(
   const accessToken = await accessTokenIssuer.issue({
     payload: {
       ...payload,
-      // RFC 8693 §4.1: a delegation exchange records the current actor in the
-      // act claim (chains already nested by processTokenExchangeRequest).
-      // Impersonation exchanges carry no act claim.
+      // 委任の交換では、いまのアクターを `act` クレームに記録する（RFC 8693 §4.1）。
+      // それまでの委任の連なりは、`processTokenExchangeRequest()` が入れ子にしてある。
+      // なりすましの交換では、`act` クレームを付けない。
       ...(grant.actor === undefined ? {} : { act: grant.actor }),
     },
     privateKey: keys.general[0].privateKey,
@@ -84,33 +87,30 @@ export async function exchangeToken(
   });
 
   const metadata: ExchangedAccessTokenInfo = {
-    // RFC 8693 §1.1: the exchanged token acts as the same subject, but is bound
-    // to the client that requested the exchange.
+    // 交換したトークンは同じサブジェクトのものとして扱い、交換を求めたクライアントに結び付ける（RFC 8693 §1.1）。
     sub: grant.subject,
     clientId: grant.clientId,
     scope: grant.scope,
     expiresAt: issuedAt + grant.expiresIn,
-    // Inherit the subject token's grant so revoking the grant (e.g. on code
-    // reuse detection) also kills every token exchanged from it.
+    // `subject_token` のグラント ID を引き継ぐ。
+    // こうすると、グラントを失効させたとき（認可コードの再利用を検出したときなど）に、そのグラントから交換したトークンもすべて失効する。
     grantId: grant.grantId,
     iat: issuedAt,
     nbf: issuedAt,
     audience,
     issuer: config.issuer,
-    // RFC 9068 §2.2 / RFC 7662 §2.2: the exchanged token gets its own jti, so it
-    // is a distinct store record even when exchanged twice within one second.
+    // 交換したトークンには、独自の `jti` を付ける（RFC 9068 §2.2、RFC 7662 §2.2）。
+    // こうすると、同じ `subject_token` を 1 秒以内に 2 回交換しても、ストアでは別のレコードになる。
     jti: payload.jti,
-    // Persisting act lets a later exchange that presents THIS token as its
-    // subject_token pick up the chain (RFC 8693 §4.1 nesting).
+    // `act` も保存するので、このトークンを `subject_token` として提示する後の交換が、委任の連なりを引き継げる（RFC 8693 §4.1 の入れ子）。
     ...(grant.actor === undefined ? {} : { act: grant.actor }),
-    // The subject token's stored claims parameter (OIDC Core 1.0 §5.5) is
-    // deliberately NOT inherited: an exchanged token yields scope-based claims
-    // only at the UserInfo endpoint.
+    // `subject_token` に保存された `claims` パラメータ（OIDC Core 1.0 §5.5）は、意図して引き継がない。
+    // 交換したトークンで UserInfo エンドポイントから得られるのは、スコープに基づくクレームだけである。
   };
   await stores.accessTokenStore.set(accessToken, metadata);
 
-  // RFC 8693 §2.2.1: access_token / issued_token_type / token_type are
-  // REQUIRED; expires_in and scope are always included here.
+  // 200 でトークン交換のレスポンスを返す。
+  // `access_token`、`issued_token_type`、`token_type` は必須で（RFC 8693 §2.2.1）、ここでは `expires_in` と `scope` も必ず含める。
   return noStoreJson(buildTokenExchangeResponse({
     accessToken,
     expiresIn: grant.expiresIn,
@@ -119,9 +119,14 @@ export async function exchangeToken(
 }
 
 /**
- * The token-exchange block of the token endpoint (RFC 8693 §2.1): the answer
- * to a token exchange, undefined for any other grant. TokenExchangeError is
- * answered in the RFC 6749 §5.2 shape.
+ * トークン交換なら、アクセストークンを発行して応答する。
+ *
+ * トークンエンドポイントのルートハンドラが、クライアントの認証の直後に呼ぶ。
+ * `grant_type` がトークン交換の URN（`TOKEN_EXCHANGE_GRANT_TYPE`）でなければ、`undefined` を返す。
+ * `TokenExchangeError` は、RFC 6749 §5.2 の形の 400 のエラーレスポンスにして返す（RFC 8693 §2.2.2）。
+ * それ以外のエラーは投げ直し、ルートハンドラが 500 の `server_error` で応答する。
+ *
+ * @spec RFC 8693 §2.1
  */
 export async function dispatchTokenExchange(
   params: Record<string, string>,

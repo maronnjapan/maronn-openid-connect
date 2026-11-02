@@ -34,19 +34,18 @@ export const meta = step({
 export async function resolveUserInfoToken(c: any, accessToken: string): Promise<AccessTokenInfo> {
   const accessTokenResolver = c.get('accessTokenResolver');
 
-  // OIDC Core 1.0 §5.3.1: resolve the presented Bearer token (invalid_token when unknown).
+  // 提示されたアクセストークンの情報を取得し、登録されていなければ `invalid_token` のエラーを投げる（OIDC Core 1.0 §5.3.1）。
   const tokenInfo = await resolveUserInfoAccessToken(accessToken, accessTokenResolver);
 
-  // RFC 6750 §3.1: an expired access token is invalid_token.
+  // 期限切れのアクセストークンは `invalid_token` にする（RFC 6750 §3.1）。
   validateUserInfoTokenExpiration(tokenInfo);
 
-  // OIDC Core 1.0 §5.3.1: the token must carry the openid scope (insufficient_scope).
+  // トークンが `openid` スコープを含むことを確かめ、含まなければ `insufficient_scope` にする（OIDC Core 1.0 §5.3.1）。
   validateUserInfoScope(tokenInfo);
 
-  // RFC 9068 §4: this UserInfo endpoint must appear in the access token's aud.
-  // The token endpoint always stores the UserInfo endpoint URL in aud
-  // (buildAccessTokenAudience), so audience validation is on by default for
-  // both JWT and opaque tokens. Pass undefined to turn it off.
+  // アクセストークンの `aud` に、この UserInfo エンドポイントが含まれることを確かめる（RFC 9068 §4）。
+  // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を保存する（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
+  // 確認をやめるときは、第 2 引数に `undefined` を渡す。
   validateUserInfoAudience(tokenInfo, `${c.get('config').issuer}/userinfo`);
 
   return tokenInfo;

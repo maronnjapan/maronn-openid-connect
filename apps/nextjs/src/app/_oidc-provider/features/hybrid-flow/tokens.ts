@@ -246,12 +246,12 @@ async function issueHybridIdToken(input: {
       scope: grantedScope,
       expiresIn: config.idTokenExpiresIn,
       issuedAt,
-      // OIDC Core 1.0 §3.3.2.11: at_hash is REQUIRED when an access token is
-      // returned with the ID Token (code id_token token), c_hash when a code is
-      // (every ID Token here); both follow the ID Token signing alg.
+      // アクセストークンを一緒に返すとき（`code id_token token`）は `at_hash` を、認可コードを一緒に返すとき（ここでは常に）は `c_hash` を付ける（OIDC Core 1.0 §3.3.2.11）。
+      // どちらも必須で、ID トークンの署名鍵の `alg` に対応するハッシュ関数で求める。
       atHash: accessToken === undefined ? undefined : await computeAtHash(accessToken, idTokenKey.privateKey),
       cHash: await computeCHash(code, idTokenKey.privateKey),
-      // OIDC Core 1.0 §3.3.2.11: nonce is REQUIRED in this ID Token (validateHybridRequest() made sure the request had one).
+      // リクエストの `nonce` を入れる。
+      // この ID トークンでは `nonce` が必須であり（OIDC Core 1.0 §3.3.2.11）、リクエストにあることは `validateHybridRequest()` で確かめてある。
       nonce: responseParams.nonce,
       authTime,
       acr,
@@ -261,7 +261,7 @@ async function issueHybridIdToken(input: {
     responseParams.claims,
   );
 
-  // Add your own ID Token claims here, as in the issue-id-token step of token/route.ts.
+  // 独自のクレームを ID トークンに加えるときは、`token/route.ts` の `issue-id-token` のブロックと同じく、ここに書く。
 
   return generateIdToken({
     payload: idTokenPayload,

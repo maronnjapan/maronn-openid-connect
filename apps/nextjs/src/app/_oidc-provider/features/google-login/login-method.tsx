@@ -15,11 +15,15 @@ import type { ProviderStores } from '../../store';
 import { createGoogleLoginNonceStore } from './store';
 
 /**
- * The GIS configuration (g_id_onload attributes), built only when
- * config.googleLogin is set. Each render issues a fresh nonce bound to this
- * transaction; Google echoes it in the ID token, which is how
- * (google-login)/login/google/route.ts finds its way back to this
- * authorization request.
+ * `nonce` を発行し、GIS の設定の属性を組み立てて返す。
+ *
+ * 返すのは、ログイン画面の `g_id_onload` 要素に付ける属性である。
+ * `config.googleLogin` が設定されていなければ、`nonce` を発行せずに `undefined` を返す。
+ * 設定とストアは引数で受け取り、`nonce` は `stores.upstreamLoginStore` に保存する。
+ *
+ * ログインフォームを描画するたびに、このトランザクションに対応付けた新しい `nonce` を発行する。
+ * リダイレクトモードの POST にはトランザクションを示す値がほかにないので、`login_uri` の処理（`(google-login)/login/google/route.ts`）は、Google が ID トークンに入れて返すこの `nonce` から認可リクエストを特定する。
+ * `hostedDomain` が一つの文字列のときだけ、アカウントの選択をそのドメインに絞る（`data-hd`）。
  */
 export async function buildGoogleSignIn(input: {
   transactionId: string;
@@ -32,15 +36,15 @@ export async function buildGoogleSignIn(input: {
   if (!googleLogin) return undefined;
   return buildGoogleSignInAttributes({
     clientId: googleLogin.clientId,
-    // Must equal an authorized redirect URI of the Google OAuth client. Built
-    // on config.issuer, like every URL the OP builds for itself.
+    // Google の OAuth クライアントに登録した、承認済みのリダイレクト URI と一致する必要がある。
+    // OP が自分の URL を作るときと同じく、リクエストの URL ではなく `config.issuer` から組み立てる。
     loginUri: new URL('/login/google', config.issuer).toString(),
     nonce: await issueGoogleLoginNonce({
       transactionId,
       expiresAt: transaction.expiresAt,
       store: createGoogleLoginNonceStore(stores.upstreamLoginStore),
     }),
-    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
+    // Google がアカウントを事前に選べるように、`login_hint` を引き継ぐ（OIDC Core 1.0 §3.1.2.1）。
     loginHint: transaction.loginHint,
     hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
   });

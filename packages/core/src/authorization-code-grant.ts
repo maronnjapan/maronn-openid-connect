@@ -19,8 +19,10 @@ export interface ResolvedAuthorizationCode {
 }
 
 /**
- * PKCE S256のcode_verifierを検証する
- * code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))
+ * PKCE の `code_verifier` が正しければ true を返す。
+ *
+ * `method` が `S256` なら、`code_verifier` の SHA-256 ハッシュを base64url で符号化した値（`BASE64URL(SHA256(ASCII(code_verifier)))`）を求め、`codeChallenge` と等しければ true を返す。
+ * `method` がそれ以外なら false を返す。
  */
 export async function verifyCodeChallenge(
   codeVerifier: string,
@@ -35,7 +37,10 @@ export async function verifyCodeChallenge(
 }
 
 /**
- * 必須の code パラメータを検証し、保存済み認可コードを解決する。
+ * `code` の認可コードをストアから取得して返す。
+ *
+ * 返す値は、トークンリクエストの `code` の文字列と、ストアから取得した認可コードの情報である。
+ * `code` パラメータがないときは `invalid_request` の `TokenError` を、ストアに認可コードがないときは `invalid_grant` の `TokenError` を投げる。
  */
 export async function resolveAuthorizationCode(
   params: Pick<TokenRequestParams, 'code'>,
@@ -51,10 +56,15 @@ export async function resolveAuthorizationCode(
 }
 
 /**
- * 認可コードの再利用を拒否する。
+ * 使用済みの認可コードなら `invalid_grant` を投げる。
  *
- * OAuth 2.1 §4.1.2 / RFC 9700 §4.13: 使用済みコードが再提示された場合は、
- * 同じ grantId から発行済みのトークンも可能なら失効してから invalid_grant を返す。
+ * 投げる前に、`authCodeResolver.revokeTokensByGrantId()` があれば、同じグラント ID から発行したトークンを失効させる。
+ * 使用済みのコードが再び提示されたときは、コードが漏れている可能性があるためである（OAuth 2.1 §4.1.2、RFC 9700 §4.13）。
+ * `revokeTokensByGrantId()` がなければ、トークンを失効させずに投げる。
+ * 未使用の認可コードなら何もしない。
+ *
+ * @spec OAuth 2.1 §4.1.2
+ * @spec RFC 9700 §4.13
  */
 export async function validateAuthorizationCodeUnused(
   authorizationCode: Pick<AuthorizationCodeInfo, 'used' | 'grantId'>,
@@ -72,7 +82,9 @@ export async function validateAuthorizationCodeUnused(
 }
 
 /**
- * 認可コードが認証済みクライアントへ発行されたものか検証する。
+ * 認可コードの発行先が違えば `invalid_grant` を投げる。
+ *
+ * 認可コードを発行したクライアント（`clientId`）が、認証したクライアント（`authenticatedClientId`）と一致しないときに投げる。
  */
 export function validateAuthorizationCodeClient(
   authorizationCode: Pick<AuthorizationCodeInfo, 'clientId'>,
@@ -87,10 +99,10 @@ export function validateAuthorizationCodeClient(
 }
 
 /**
- * 認可コードの有効期限を検証する。
+ * 期限切れの認可コードなら `invalid_grant` を投げる。
  *
- * RFC 7519 の exp 慣例と同じく expiresAt <= currentTime を失効済みとする。
- * currentTime を渡せるため、生成コードで独自クロックを差し込むこともできる。
+ * JWT の `exp` の扱い（RFC 7519）と同じく、`expiresAt` が `currentTime` 以下なら期限切れとみなす。
+ * `currentTime` の既定値は現在時刻（エポック秒）で、生成されたコードから独自の時計の値を渡してもよい。
  */
 export function validateAuthorizationCodeExpiration(
   authorizationCode: Pick<AuthorizationCodeInfo, 'expiresAt'>,
@@ -105,11 +117,13 @@ export function validateAuthorizationCodeExpiration(
 }
 
 /**
- * Token Request の redirect_uri を認可コードに保存された値と照合する。
+ * `redirect_uri` を認可コードの保存値と照合する。
  *
- * OIDC Core 1.0 §3.1.3.2: Authorization Request に明示されていた場合は
- * Token Request でも必須かつ完全一致。省略されていた場合も、Token Request で
- * 値が送られたなら保存値との一致を要求する。
+ * 認可リクエストで `redirect_uri` を明示していた認可コードなら、トークンリクエストの `redirect_uri` は必須で、保存した値と完全に一致する必要がある。
+ * 明示していなかった認可コードでも、トークンリクエストで `redirect_uri` が送られたなら、保存した値との一致を求める。
+ * どちらかを満たさないときは `invalid_grant` の `TokenError` を投げる。
+ *
+ * @spec OIDC Core 1.0 §3.1.3.2
  */
 export function validateAuthorizationCodeRedirectUri(
   authorizationCode: Pick<AuthorizationCodeInfo, 'redirectUri' | 'redirectUriExplicit'>,
@@ -125,10 +139,14 @@ export function validateAuthorizationCodeRedirectUri(
 }
 
 /**
- * 認可コードに結び付いた PKCE S256 code_verifier を検証する。
+ * `code_verifier` を検証し、検証できれば true を返す。
  *
- * PKCE binding が無い互換フローなら false、検証成功なら true を返す。
- * challenge / method の片方だけが保存された不完全な binding も拒否する。
+ * PKCE の値が保存されていない認可コード（PKCE を省略した互換フロー）には、検証せずに false を返す。
+ * 次のときは `invalid_grant` の `TokenError` を投げる:
+ * - `code_challenge` と `code_challenge_method` の片方だけが保存されている。
+ * - `codeVerifier` がない。
+ * - `codeVerifier` の長さか文字が規則に合わない。
+ * - `codeVerifier` から求めた値が `code_challenge` と一致しない。
  */
 export async function verifyAuthorizationCodePkce(
   authorizationCode: Pick<AuthorizationCodeInfo, 'codeChallenge' | 'codeChallengeMethod'>,
@@ -159,10 +177,11 @@ export async function verifyAuthorizationCodePkce(
 }
 
 /**
- * 認可コードを使用済みへ遷移させる。
+ * ストアの認可コードを使用済みにする。
  *
- * resolver は物理削除ではなく used=true を保持する契約。再利用検知を可能にするため、
- * 新しいトークンを発行する前にこの処理を完了させる。
+ * 処理は `authCodeResolver.revokeAuthorizationCode()` に任せる。
+ * リゾルバは、レコードを削除せずに `used` を `true` にして残す契約である。
+ * 再利用を検知できるように、新しいトークンを発行する前にこの処理を終えておく。
  */
 export async function consumeAuthorizationCode(
   code: string,
@@ -172,7 +191,10 @@ export async function consumeAuthorizationCode(
 }
 
 /**
- * 各ステップの結果からバリデーション済み authorization_code request を組み立てる。
+ * 認可コードグラントの検証済みリクエストを作って返す。
+ *
+ * 各ステップの結果（提示された `code`、ストアの認可コード、認証したクライアントの ID、PKCE を検証したかどうか）から作る。
+ * `clientId` には認証したクライアントの ID を入れ、`grantId`、`redirectUri`、`scope`、`nonce`、`audience`、`acrValues`、`claims`、`sessionId` には認可コードの値をそのまま入れる。
  */
 export function buildValidatedAuthorizationCodeRequest(
   code: string,
@@ -191,14 +213,17 @@ export function buildValidatedAuthorizationCodeRequest(
     audience: authorizationCode.audience,
     acrValues: authorizationCode.acrValues,
     claims: authorizationCode.claims,
-    // online refresh token をこの認可を生んだ認証セッションへ束縛するために引き継ぐ。
+    // オンラインのリフレッシュトークンを、この認可のもとになった認証セッションに結び付けるために引き継ぐ。
     sessionId: authorizationCode.sessionId,
     codeVerified,
   };
 }
 
 /**
- * Token Request の code パラメータがあることを確かめる。ストアを引く前に呼ぶ。
+ * `code` を返し、なければ `invalid_request` を投げる。
+ *
+ * トークンリクエストの `code` パラメータが空文字列のときも投げる。
+ * ストアから認可コードを取得する前に呼ぶ。
  */
 export function requireAuthorizationCode(code: string | undefined): string {
   if (!code) {
@@ -211,7 +236,9 @@ export function requireAuthorizationCode(code: string | undefined): string {
 }
 
 /**
- * ストアから読み取った認可コードがあることを確かめる。見つからなければ invalid_grant。
+ * 認可コードを返し、なければ `invalid_grant` を投げる。
+ *
+ * ストアから読み取った値を受け取り、`null` か `undefined` なら登録されていない認可コードとみなす。
  */
 export function requireStoredAuthorizationCode<T>(authorizationCode: T | null | undefined): T {
   if (!authorizationCode) {
@@ -224,8 +251,11 @@ export function requireStoredAuthorizationCode<T>(authorizationCode: T | null | 
 }
 
 /**
- * 認可コードが使用済みでないことを検証する。
- * 再利用時のトークン失効（OAuth 2.1 §4.1.2）は呼び出し側が先に済ませておく前提。
+ * `used` が true なら `invalid_grant` を投げる。
+ *
+ * 再利用されたときのトークンの失効（OAuth 2.1 §4.1.2）は、呼び出し側が先に済ませておく。
+ *
+ * @spec OAuth 2.1 §4.1.2
  */
 export function validateAuthorizationCodeNotUsed(used: boolean | undefined): void {
   if (!used) return;
@@ -236,8 +266,13 @@ export function validateAuthorizationCodeNotUsed(used: boolean | undefined): voi
 }
 
 /**
- * OIDC Core 1.0 §3.1.3.2: Authorization Request に redirect_uri が明示されていた場合に、
- * Token Request にも redirect_uri があることを確かめる。明示の有無の判定は呼び出し側が行う。
+ * `redirect_uri` がなければ `invalid_grant` を投げる。
+ *
+ * 認可リクエストで `redirect_uri` を明示していた場合に、トークンリクエストにも `redirect_uri` があることを確かめる。
+ * 明示していたかどうかは、呼び出し側が判定する。
+ * あれば、その値を返す。
+ *
+ * @spec OIDC Core 1.0 §3.1.3.2
  */
 export function requireTokenRequestRedirectUri(redirectUri: string | undefined): string {
   if (!redirectUri) {
@@ -250,8 +285,12 @@ export function requireTokenRequestRedirectUri(redirectUri: string | undefined):
 }
 
 /**
- * OIDC Core 1.0 §3.1.3.2: Token Request の redirect_uri が認可時の値と一致することを検証する。
- * redirect_uri が省略されていれば検査しない。
+ * `redirect_uri` が違えば `invalid_grant` を投げる。
+ *
+ * トークンリクエストの `redirect_uri` を、認可時の値（`authorizedRedirectUri`）と文字列として比べる。
+ * `redirect_uri` が省略されていれば（`undefined`）、比べずに戻る。
+ *
+ * @spec OIDC Core 1.0 §3.1.3.2
  */
 export function validateAuthorizationCodeRedirectUriMatch(
   requestRedirectUri: string | undefined,
@@ -269,8 +308,10 @@ export function validateAuthorizationCodeRedirectUriMatch(
 }
 
 /**
- * 認可コードに PKCE の値が一つでも保存されているかを返す。
- * false は PKCE を省略した互換フローの認可コードを表す。
+ * PKCE の値が一つでも保存されていれば true を返す。
+ *
+ * `codeChallenge` と `codeChallengeMethod` の片方だけがある場合も true を返す。
+ * false は、PKCE を省略した互換フローの認可コードであることを表す。
  */
 export function hasPkceBinding(
   codeChallenge: string | undefined,
@@ -280,8 +321,10 @@ export function hasPkceBinding(
 }
 
 /**
- * 認可コードに code_challenge と code_challenge_method の両方が保存されていることを確かめる。
- * 片方だけの不完全な binding は invalid_grant として拒否する。
+ * PKCE の値が欠けていれば `invalid_grant` を投げる。
+ *
+ * 認可コードに `code_challenge` と `code_challenge_method` の両方が保存されていれば、二つをまとめて返す。
+ * 片方だけが保存された不完全な認可コードは拒否する。
  */
 export function requirePkceBinding(
   codeChallenge: string | undefined,
@@ -297,7 +340,12 @@ export function requirePkceBinding(
 }
 
 /**
- * RFC 7636 §4.5: PKCE を使う認可コードの交換で code_verifier があることを確かめる。
+ * `code_verifier` がなければ `invalid_grant` を投げる。
+ *
+ * PKCE を使う認可コードを交換するときに、`code_verifier` があることを確かめる。
+ * あれば、その値を返す。
+ *
+ * @spec RFC 7636 §4.5
  */
 export function requireCodeVerifier(codeVerifier: string | undefined): string {
   if (!codeVerifier) {
@@ -310,7 +358,12 @@ export function requireCodeVerifier(codeVerifier: string | undefined): string {
 }
 
 /**
- * RFC 7636 §4.1: code_verifier が 43〜128 文字の unreserved 文字列であることを検証する。
+ * `code_verifier` の長さと文字を検証する。
+ *
+ * 長さが 43 文字から 128 文字の範囲にないとき、または英数字と `-`、`.`、`_`、`~` 以外の文字を含むときに、`invalid_grant` の `TokenError` を投げる。
+ * 使える文字は、URI の非予約文字である。
+ *
+ * @spec RFC 7636 §4.1
  */
 export function validateCodeVerifier(codeVerifier: string): void {
   if (codeVerifier.length < 43 || codeVerifier.length > 128) {
@@ -329,8 +382,12 @@ export function validateCodeVerifier(codeVerifier: string): void {
 }
 
 /**
- * RFC 7636 §4.6: code_verifier から求めた値が保存済みの code_challenge と一致することを検証する。
- * 一致しなければ invalid_grant。
+ * `code_verifier` を `code_challenge` と照合する。
+ *
+ * `code_verifier` から求めた値が、保存済みの `code_challenge` と一致しなければ `invalid_grant` の `TokenError` を投げる。
+ * 値の求め方は `code_challenge_method`（`S256`）に従う（`verifyCodeChallenge()`）。
+ *
+ * @spec RFC 7636 §4.6
  */
 export async function verifyPkceCodeVerifier(
   codeVerifier: string,

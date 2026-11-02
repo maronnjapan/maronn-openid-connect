@@ -55,10 +55,11 @@ const INVALID_LOGIN_SUBMISSION_MESSAGE = 'The sign-in request could not be verif
 const INVALID_APPROVAL_MESSAGE = 'The authentication request could not be verified';
 
 /**
- * SHA-256 ハッシュを Base64URL で返す。
+ * 値の SHA-256 ハッシュを base64url で返す。
  *
- * bindingSecret の生値はブラウザの Cookie にのみ存在し、トランザクションには
- * このハッシュだけを保存する。ストアが漏洩しても Cookie を再構成できない。
+ * 返す値には、パディングの `=` を付けない。
+ * `bindingSecret` の生の値はブラウザの Cookie にだけあり、ログイントランザクションにはこのハッシュだけを保存する。
+ * ストアの内容が漏れても、ハッシュから Cookie の値を作り直すことはできない。
  */
 async function sha256Base64Url(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
@@ -70,11 +71,11 @@ async function sha256Base64Url(value: string): Promise<string> {
 }
 
 /**
- * ログインフォーム表示時にログイントランザクションを発行する。
+ * ログイントランザクションを作って保存し、返す。
  *
- * bindingSecret の生値は戻り値としてのみ返し（生成コードが Cookie に載せる）、
- * レコードへは SHA-256 ハッシュだけを保存する。TTL は 600 秒固定
- * （{@link CIBA_LOGIN_TRANSACTION_TTL_SECONDS}）。
+ * ログインフォームを表示するときに呼ぶ。
+ * `bindingSecret` の生の値は、保存したレコードとともに戻り値でだけ返し（生成されたコードが Cookie に入れる）、レコードにはその SHA-256 ハッシュだけを保存する。
+ * `id`、`csrfToken`、`bindingSecret` はどれも 32 バイトの乱数で、有効期間は 600 秒に固定している（{@link CIBA_LOGIN_TRANSACTION_TTL_SECONDS}）。
  */
 export async function createCibaLoginTransaction(
   store: CibaLoginTransactionStore,
@@ -92,13 +93,12 @@ export async function createCibaLoginTransaction(
 }
 
 /**
- * `POST /ciba/login` の提出内容を検証する。
+ * ログインの送信を検証し、ログイントランザクションを返す。
  *
- * binding Cookie 生値のハッシュ一致 → CSRF 一致の順で検証する。不存在・
- * 期限切れ・binding 不一致・CSRF 不一致はすべて同じ 403 の固定文言で拒否し、
- * 失敗理由を区別させない。
+ * `POST /ciba/login` で受け取った値を、ログイントランザクションがあること、有効期限内であること、Cookie の `bindingSecret` の SHA-256 ハッシュが保存した値と一致すること、CSRF トークンが一致することの順に検証する。
+ * どれかに失敗すると、失敗の理由を区別できないように、同じ固定の文言の 403 を投げる。
  *
- * @throws {CibaVerificationError} 403
+ * @throws {CibaVerificationError} 403: トランザクションがない、期限切れ、`bindingSecret` がないか一致しない、CSRF トークンが空か一致しない、のどれかに当たるとき。
  */
 export async function validateCibaLoginSubmission(input: {
   transactionId: string;
@@ -116,8 +116,8 @@ export async function validateCibaLoginSubmission(input: {
   const now = input.now ?? new Date();
   if (now.getTime() >= record.expiresAt.getTime()) reject();
   if (!input.bindingSecret) reject();
-  // 照合は「入力の SHA-256 ハッシュ vs 保存ハッシュ」の比較なので、比較の
-  // タイミング差から保存値の前方一致を積み上げても原像計算が必要になり成立しない。
+  // 入力の SHA-256 ハッシュを、保存したハッシュと比べる。
+  // 比較は定数時間ではないが、比較にかかる時間の差から保存したハッシュの先頭を割り出しても、それに合う入力を作るにはハッシュの原像を計算する必要があるので、攻撃は成り立たない。
   const presented = await sha256Base64Url(input.bindingSecret);
   if (presented !== record.bindingHash) reject();
   if (input.csrfToken === '' || input.csrfToken !== record.csrfToken) reject();
@@ -125,13 +125,13 @@ export async function validateCibaLoginSubmission(input: {
 }
 
 /**
- * ログイン失敗をトランザクション単位で計数する。
+ * ログインの失敗を数え、再試行できるかと残りの回数を返す。
  *
- * 上限に達したトランザクションは削除し、同じフォームからの再試行を打ち切る
- * （生成コードは 429 を返す）。既知の残存面: トランザクションを再発行すれば
- * 集計上の試行回数は無制限になる。これは既存 `/login`（auth transaction 単位）・
- * `/device/login`（レコード単位）と同一の残存面で、subject 単位のスロットリングは
- * 別タスクの責務とする。
+ * 失敗の回数はログイントランザクションごとに数え、`loginAttempts` を 1 増やす。
+ * 回数が上限（`maxLoginAttempts`）未満ならトランザクションを更新し、上限に達したらトランザクションを削除して、同じフォームからの再試行を打ち切る（生成されたコードは 429 で応答する）。
+ *
+ * 既知の弱点として、トランザクションを作り直せば、合計の試行回数に上限はなくなる。
+ * 既存の `/login`（認可リクエストのトランザクションごと）と `/device/login`（レコードごと）にも同じ弱点があり、サブジェクトごとの試行の制限はこの関数では行わない。
  */
 export async function recordCibaLoginFailure(
   record: CibaLoginTransactionRecord,
@@ -152,11 +152,10 @@ export async function recordCibaLoginFailure(
 }
 
 /**
- * セッション subject 宛の保留中認証リクエストを一覧し、レコードごとの CSRF
- * トークンを発行・回転して保存する。
+ * 保留中のリクエストに新しい CSRF トークンを付けて返す。
  *
- * CSRF トークンはこの一覧表示（OP セッション必須）でしか得られないため、
- * `auth_req_id` を知っているだけの第三者は承認 / 拒否の POST を組み立てられない。
+ * `subject`（OP のセッションで確定したユーザー）宛ての、保留中で期限内のレコードを取得し、レコードごとに CSRF トークンを作り直して保存してから返す。
+ * CSRF トークンは、OP のセッションが必要なこの一覧の表示でしか得られないので、`auth_req_id` を知っているだけの第三者は、承認や拒否の POST を組み立てられない。
  */
 export async function listPendingCibaRequests(input: {
   subject: string;
@@ -171,17 +170,17 @@ export async function listPendingCibaRequests(input: {
 }
 
 /**
- * 承認（`POST /ciba/approve` の `decision=approve`）。
+ * 認証リクエストを承認済みにし、更新したレコードを返す。
  *
- * OP セッションの確認は呼び出し側の責務で、この関数はセッションから確定した
- * subject を受け取り、レコードの subject との一致・CSRF 一致・期限内・pending で
- * あることを検証する。`approvedScope` は要求 scope をそのまま採用する
- * （本 OP の UI は scope の部分承認を提供しない）。`grantId` は呼び出し側が
- * 発行して渡し、既存の revocation 機構が grant 単位失効をそのまま適用できる
- * ようにする。
+ * `POST /ciba/approve` で `decision=approve` を受け取ったときに呼ぶ。
+ * OP のセッションを確かめるのは呼び出し側で、この関数はセッションから確定したサブジェクトを `subject` で受け取り、レコードがあること、有効期限内であること、状態が `pending` であること、サブジェクトと CSRF トークンが一致することを検証する。
  *
- * @throws {CibaVerificationError} 403（不存在・期限切れ・subject 不一致・
- *   CSRF 不一致・既決定のいずれも同一文言）
+ * 検証を通ると、状態を `approved` にし、`authTime`、`approvedScope`、`grantId` を設定し、CSRF トークンを消してから保存する。
+ * `approvedScope` には、要求された `scope` をそのまま入れる（この OP の画面には、スコープの一部だけを承認する操作がない）。
+ * `grantId` は呼び出し側が作って渡す。
+ * 既存の失効の仕組みが、グラント単位の失効をそのまま適用できるようにするためである。
+ *
+ * @throws {CibaVerificationError} 403: レコードがない、期限切れ、状態が `pending` でない、サブジェクトか CSRF トークンが一致しない、のどれかに当たるとき（どれも同じ文言）。
  */
 export async function approveCibaRequest(input: {
   authReqId: string;

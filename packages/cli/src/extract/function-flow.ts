@@ -17,6 +17,7 @@
  * boxes it guards. A body that cannot be read this way (JSX text with an
  * apostrophe, for one) gives no flow.
  */
+import { joinLines } from './prose.js';
 
 /** One box of the flow of a function. */
 export interface FunctionFlowNode {
@@ -348,12 +349,13 @@ function shorten(text: string, width = 60): string {
 function commentText(comment: string): string {
   const text = comment.startsWith('//')
     ? comment.slice(2)
-    : comment
-        .replace(/^\/\*+/, '')
-        .replace(/\*+\/$/, '')
-        .split('\n')
-        .map((line) => line.replace(/^\s*\*\s?/, ''))
-        .join(' ');
+    : joinLines(
+        comment
+          .replace(/^\/\*+/, '')
+          .replace(/\*+\/$/, '')
+          .split('\n')
+          .map((line) => line.replace(/^\s*\*\s?/, '')),
+      );
   const flat = text.replace(/\s+/g, ' ').trim();
   if (/^(eslint-|@ts-|prettier-ignore|istanbul )/.test(flat)) return '';
   return flat;
@@ -492,7 +494,7 @@ class FlowBuilder {
       .filter((comment) => comment.start >= from && comment.end <= first.start && !trails(comment))
       .map((comment) => commentText(comment.text))
       .filter((text) => text !== '');
-    return texts.length === 0 ? undefined : shorten(texts.join(' '), 220);
+    return texts.length === 0 ? undefined : shorten(joinLines(texts), 220);
   }
 
   /** Arrows that carry a condition into the boxes it guards. */

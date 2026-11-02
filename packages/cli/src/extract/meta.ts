@@ -9,6 +9,7 @@
  * its own, without importing the module. `maronn-oidc graph`, the checks of
  * `--flow` and the removal of owner blocks all work from these descriptions.
  */
+import { joinLinesFlat } from './prose.js';
 
 export type StepKind =
   | 'parse'
@@ -191,7 +192,7 @@ export function jsDocSummaryAbove(source: string, index: number): string | undef
     }
     paragraph.push(line);
   }
-  return paragraph.length === 0 ? undefined : paragraph.join(' ');
+  return paragraph.length === 0 ? undefined : joinLinesFlat(paragraph);
 }
 
 export function readContribution(source: string): StepContribution | undefined {

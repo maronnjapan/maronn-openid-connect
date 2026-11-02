@@ -195,7 +195,7 @@ export async function readFormFields(request: Request): Promise<FormData> {
  * エラーをクエリに入れたエラー画面のパスを返す。
  *
  * 返すのは OP のエラー画面（`app/oidc-error`）の `/oidc-error?error=…` の形のパスで、`errorDescription` があれば `error_description` も入れる。
- * クライアントへ返さずに OP にとどめるエラーに使い、ページとサーバーアクションは `redirect()` でこのパスへ移る。
+ * クライアントへ返さずに OP にとどめるエラーに使い、ページとサーバーアクションは `redirect()` でブラウザをこのパスへ移す。
  */
 export function errorPagePath(error: string, errorDescription?: string): string {
   const query = new URLSearchParams({ error });

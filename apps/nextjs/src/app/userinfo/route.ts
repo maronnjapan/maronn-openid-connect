@@ -130,7 +130,7 @@ async function userinfo(request: Request): Promise<Response> {
     validateUserInfoScope(tokenInfo);
 
     // アクセストークンの `aud` に、この UserInfo エンドポイントが含まれることを確かめる（RFC 9068 §4）。
-    // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を入れる（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、この確認を行う。
+    // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を入れる（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
     // 確認をやめるときは、第 2 引数に `undefined` を渡す。
     validateUserInfoAudience(tokenInfo, `${config.issuer}/userinfo`);
 
@@ -202,7 +202,7 @@ async function signedUserInfo(
 }
 
 /**
- * リクエストのアクセストークンと、送られた方法の数を返す。
+ * アクセストークンと、送られた方法の数を返す。
  *
  * 次の二つの方法に対応する。
  * - `Authorization: Bearer` ヘッダー（RFC 6750 §2.1、REQUIRED）

@@ -72,7 +72,7 @@ export async function parseTokenRequest(
   }
 
   // 同じパラメータが繰り返されていたら、`invalid_request` で拒否する（RFC 6749 §3.2）。
-  // `parseBody()` は繰り返された値を黙って最後の一つにしてしまうので、生のボディを `URLSearchParams` で順に読み、重複した名前を見つける。
+  // `parseBody()` は繰り返された値をエラーにせず最後の一つだけを残すので、生のボディを `URLSearchParams` で順に読み、重複した名前を見つける。
   const rawBody = await c.req.text();
   const searchParams = new URLSearchParams(rawBody);
   const rawParams: Record<string, string> = {};

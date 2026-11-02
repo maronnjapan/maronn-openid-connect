@@ -31,7 +31,7 @@ import { cibaAuthenticationRequestStore } from './store';
 import { noStoreJson, oauthError } from '../../http';
 
 /**
- * 承認済みの `auth_req_id` でトークンを発行して応答する。
+ * 承認済みの `auth_req_id` でトークンを発行して返す。
  *
  * `processCibaGrant()` で `auth_req_id` のリクエストの状態を判定し、承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンス（キャッシュ禁止の JSON）で応答する。
  * 承認済みでなければ `CibaGrantError` を投げ、`dispatchCiba()` がそれを OAuth のエラーレスポンスにして返す。
@@ -53,7 +53,9 @@ export async function redeemCibaRequest(
   });
 
   // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ（T-022）。
-  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使い、鍵の集合の最初の鍵をそのまま使うことはしない。
+  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
+  // `at_hash` も誤ったアルゴリズムで計算してしまう。
   const idTokenAlg = (client as RegisteredClient).idTokenSignedResponseAlg;
   const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);
   if (!idTokenKey) {

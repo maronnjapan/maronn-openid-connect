@@ -38,7 +38,7 @@ export function escapeHtml(value: string): string {
  * 保存された写しがあると、あるブラウザの `csrf_token` を、別のブラウザやあとのフローに見せてしまう。
  * そのため既定では、ブラウザにも中継サーバーにもページを保存させない（RFC 9111 §5.2.2.5）。
  * キャッシュの扱いが違う画面は、`init.headers` で自分の `Cache-Control` を渡す。
- * React のページ（ログイン、同意、`oidc-error`）はレスポンスのヘッダーを設定できないので、`next.config.mjs` の `headers()` が同じ `no-store` を送る。
+ * React のページ（ログイン、同意、`oidc-error`）はレスポンスのヘッダーを設定できないので、`next.config.mjs` の `headers()` で同じ `no-store` を付ける。
  */
 export function htmlResponse(
   html: string,
@@ -56,7 +56,7 @@ export function htmlResponse(
  * OP のエラー画面の HTML で応答する。
  *
  * 画面には、`error` と、あれば `errorDescription` を、エスケープしてから表示する。
- * `statusCode` はレスポンスのステータスコードにだけ使うので、画面とレスポンスが別の結果を示すことはない（ロックアウトは 429、ブラウザの束縛の失敗は 403 で応答する）。
+ * `statusCode` はレスポンスのステータスコードにだけ使うので、画面とレスポンスが別の結果を示すことはない（ロックアウトの画面は 429、ブラウザの束縛に失敗した画面は 403 で応答する）。
  */
 export function errorPage(error: string, statusCode: number, errorDescription?: string): Response {
   const descriptionHtml = errorDescription ? `  <p>${escapeHtml(errorDescription)}</p>\n` : '';

@@ -19,7 +19,7 @@ import { clientKeyResolver, config } from '../../provider';
  * 署名のない `alg=none` は、`config.allowUnsignedRequestObject` を有効にしたときだけ受け付ける（OIDF の適合性テストとの互換のため）。
  *
  * @throws {AuthorizationError} `invalid_request_object`: リクエストオブジェクトの形式、`alg`、鍵、署名のどれかが正しくないとき（OIDC Core 1.0 §6.3）。
- *   検証できないリクエストオブジェクトの `redirect_uri` は信用できないので、このエラーはクライアントへリダイレクトしない。
+ *   検証できないリクエストオブジェクトの `redirect_uri` は信用できないので、このエラーはクライアントへリダイレクトせず、OP のエラーページか JSON で返す。
  * @spec OIDC Core 1.0 §6.1
  * @spec OIDC Core 1.0 §6.3.2
  */

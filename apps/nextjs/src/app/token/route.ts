@@ -354,7 +354,7 @@ async function token(request: Request): Promise<Response> {
       issuer: config.issuer,
       // core が発行ごとに作ったトークンの識別子を保存し、イントロスペクションが `jti` を返せるようにする（RFC 9068 §2.2、RFC 7662 §2.2）。
       // JWT 形式で同じ秒に発行した二つのトークンが別の文字列になるのも、この値があるためである（RS256 の署名は、同じ入力に対して同じ値になる）。
-      // そのため、トークンの文字列をキーにするこのストアで、別のグラントのレコードと重ならない。
+      // そのため、トークンの文字列をキーにするこのストアで、別のグラントのレコードが同じキーになることはない。
       jti: accessTokenPayload.jti,
       // 認可リクエストの `claims` パラメータを保存し、UserInfo エンドポイントが `claims.userinfo` で要求されたクレーム（`{"userinfo":{"name":{"essential":true}}}` など）をスコープとは別に返せるようにする（OIDC Core 1.0 §5.5）。
       // 保存するのは `authorization_code` グラントのときだけで、リフレッシュで発行したトークンには保存しない。

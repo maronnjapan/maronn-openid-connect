@@ -60,6 +60,7 @@ const googleAccountResolver: GoogleAccountResolver = {
  *
  * `POST /login/google` のルートハンドラで、「Google でログイン」を終えたブラウザから ID トークンが POST で届く。
  * ID トークンと `nonce` を検証して Google アカウントに対応する OP のユーザーを特定し（初回のログインならユーザーを作る）、`nonce` を発行したトランザクションのために OP のセッションを始めて、`/consent` へ 302 でリダイレクトする。
+ * `prompt` に `login` か `select_account` があれば、セッションを始める前に既存のセッションを破棄する。
  *
  * 検証（CSRF の Cookie、ID トークン、`nonce`、設定したときは `hd` と `email_verified`）に失敗したときと、トランザクションがないか期限切れのときは、OP のエラーページへ 303 でリダイレクトする。
  * `config.googleLogin` が設定されていなければ 404 で応答する。

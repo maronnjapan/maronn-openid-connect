@@ -18,7 +18,7 @@ export const meta = step({
 /**
  * アクセストークンと ID トークンの署名鍵を選んで返す。
  *
- * アクセストークンには、登録された鍵のうち最初の鍵を使う（`SigningKeyProvider` では、最初の鍵が新しいトークンに署名すると決めている）。
+ * アクセストークンには、登録された鍵のうち最初の鍵を使う（`SigningKeyProvider` では、新しいトークンには最初の鍵で署名すると決めている）。
  * ID トークンには、クライアントが `id_token_signed_response_alg` に登録した `alg` の鍵を使い、登録がなければ RS256 の鍵を使う（OpenID Connect Dynamic Client Registration 1.0 §2）。
  * その `alg` の鍵がなければ、サーバーの設定の誤りとして `TokenEndpointError`（500、`server_error`）を投げる。
  *

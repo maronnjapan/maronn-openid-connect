@@ -67,7 +67,7 @@ export async function issueRefreshToken(
   }
   // リフレッシュトークンの有効期限は、最初に発行した時刻から数えた絶対的な期間だけで決める（OAuth 2.1 §6.1）。
   // ローテーションしても最初の発行時刻（`originalIssuedAt`）を引き継ぎ、`expiresAt` をそこから数えた期限に固定する。
-  // 使うたびに期限を延ばす方式はとらないので、リフレッシュを繰り返しても有効期限は先に延びず、漏れたリフレッシュトークンを長く使われることを防ぐ。
+  // 使うたびに期限を延ばす方式はとらないので、リフレッシュを繰り返しても有効期限は先に延びず、漏れたリフレッシュトークンが長く使われることを防ぐ。
   // - `authorization_code` グラント: 今回が最初の発行なので、`originalIssuedAt` は `issuedAt` と同じ。
   // - `refresh_token` グラント: 元のリフレッシュトークンの `originalIssuedAt` をそのまま引き継ぐ。
   const originalIssuedAt =

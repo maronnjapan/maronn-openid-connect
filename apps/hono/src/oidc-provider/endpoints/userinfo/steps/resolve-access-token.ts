@@ -44,7 +44,7 @@ export async function resolveUserInfoToken(c: any, accessToken: string): Promise
   validateUserInfoScope(tokenInfo);
 
   // アクセストークンの `aud` に、この UserInfo エンドポイントが含まれることを確かめる（RFC 9068 §4）。
-  // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を保存する（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
+  // トークンエンドポイントは常に `aud` に UserInfo エンドポイントの URL を入れる（`buildAccessTokenAudience`）ので、JWT のトークンでも中身を読めない不透明なトークンでも、既定でこの確認を行う。
   // 確認をやめるときは、第 2 引数に `undefined` を渡す。
   validateUserInfoAudience(tokenInfo, `${c.get('config').issuer}/userinfo`);
 

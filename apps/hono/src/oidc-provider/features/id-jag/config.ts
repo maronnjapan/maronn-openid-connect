@@ -110,7 +110,7 @@ export async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIde
       resolved.push({ issuer: entry.issuer, jwks: cached.jwks });
       continue;
     }
-    // `jwksUri` から JWKS を取得し、失敗したら例外をそのまま投げて、トークンエンドポイントに `server_error` で応答させる。
+    // `jwksUri` から JWKS を取得し、失敗したら例外をそのまま投げる（トークンエンドポイントが `server_error` で応答する）。
     // アサーションはまだ評価していないので、`server_error` が実態に合う。
     // `invalid_grant` にすると、この OP 側の障害をクライアントの誤りとして伝えてしまう。
     const response = await fetch(entry.jwksUri);

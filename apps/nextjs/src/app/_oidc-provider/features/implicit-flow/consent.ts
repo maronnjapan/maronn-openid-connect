@@ -23,7 +23,7 @@ import { implicitResponseModeOf } from './response-mode';
 import { issueImplicitTokens } from './tokens';
 
 /**
- * トークンを発行し、認可レスポンスで応答する。
+ * トークンを発行し、認可レスポンスで返す。
  *
  * 対象は、エンドユーザーが同意したインプリシットフローのリクエスト（`response_type` が `id_token` か `id_token token`）である。
  * ほかのレスポンスタイプには `undefined` を返し、あとのブロック（ハイブリッドフローか認可コードの発行）に任せる。

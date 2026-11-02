@@ -41,34 +41,38 @@ export const runtime = 'nodejs';
 const introspectionResolvers = createIntrospectionResolvers(stores);
 
 /**
- * Answer an introspection request (POST /introspect) with the response of
- * introspect() — the token's description, { active: false }, or an OAuth
- * error — plus the clientCors headers.
+ * `introspect()` の結果に CORS ヘッダーを付けて返す。
+ *
+ * `POST /introspect` のイントロスペクションリクエストに、トークンの内容、`{ active: false }`、OAuth のエラーレスポンスのどれかで応答する。
+ * CORS ヘッダーは `clientCors` の設定に従う。
  */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await introspect(request));
 }
 
 /**
- * Answer the CORS preflight of /introspect: 204 with no body and the clientCors
- * headers (allowed origin, methods, headers, max age).
+ * CORS のプリフライトに、ボディなしの 204 で応答する。
+ *
+ * 対象は `/introspect` で、応答には `clientCors` のヘッダー（許可するオリジン、メソッド、ヘッダー、キャッシュしてよい秒数）を付ける。
  */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
 /**
- * Authenticate the confidential client and describe the presented token: the
- * no-store introspection JSON of an active token, or only { active: false }
- * for a token that is unknown, expired, not yet valid or rotated.
+ * クライアントを認証し、トークンの内容で応答する。
  *
- * With the jwt-introspection-response feature, a caller that accepts
- * application/token-introspection+jwt gets the description as a signed JWT.
- * Errors are no-store OAuth error JSON: 400 invalid_request for a body that is
- * not form-urlencoded or has no token, 401 invalid_client (with
- * WWW-Authenticate) when client authentication fails or the caller is a
- * public client, 500 server_error otherwise; 503 when the signing keys cannot
- * be loaded.
+ * 呼び出し元はコンフィデンシャルクライアントに限る。
+ * 有効なトークンには、その内容のイントロスペクションのレスポンスを、キャッシュさせない JSON で返す。
+ * 登録されていない、期限切れ、まだ有効になっていない、ローテーションで使用済みになったトークンには、`{ active: false }` だけを返す。
+ * `jwt-introspection-response` 機能を有効にしていれば、`application/token-introspection+jwt` を受け付ける呼び出し元には、同じ内容を署名付きの JWT で返す。
+ *
+ * エラーには、キャッシュさせない OAuth のエラーレスポンス（JSON）で応答する。
+ * - 400 `invalid_request`: リクエストが不正なとき（ボディがフォームの形式でない、`token` がないなど）。
+ * - 401 `invalid_client`（`WWW-Authenticate` ヘッダー付き）: クライアントの認証に失敗したとき、または呼び出し元がパブリッククライアントのとき。
+ * - 500 `server_error`: そのほかの失敗のとき。
+ *
+ * 署名鍵を読み込めないときは、503 で応答する。
  *
  * @spec RFC 7662 §2
  */
@@ -85,8 +89,8 @@ async function introspect(request: Request): Promise<Response> {
 
   try {
     // [authenticate-client] Authenticate the client — RFC 7662 §2.1 / OAuth 2.1 §2.3
-    // OAuth 2.1 §2.3 / OIDC Core 1.0 §9, the same steps as the token endpoint.
-    // RFC 7662 §2.1 requires the caller to authenticate.
+    // トークンエンドポイントと同じ手順で、クライアントを認証する（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
+    // イントロスペクションでは、呼び出し元の認証が必須である（RFC 7662 §2.1）。
     const presentedCredentials = extractClientCredentials({
       params,
       authorizationHeader: request.headers.get('Authorization') ?? '',
@@ -97,12 +101,10 @@ async function introspect(request: Request): Promise<Response> {
     );
     validateClientAuthMethod(introspectingClient, presentedCredentials);
     await verifyClientSecret(introspectingClient, presentedCredentials.clientSecret);
-    // RFC 7662 §2.1 / RFC 9701 §5: the caller must be an authenticated
-    // confidential client. A client registered with token_endpoint_auth_method
-    // 'none' passes the pipeline above with its client_id alone — public
-    // information — so treating it as authenticated would let anyone scan
-    // tokens. Revocation has no such step on purpose: RFC 7009 §2.1 lets a
-    // public client revoke its own tokens.
+    // 呼び出し元がコンフィデンシャルクライアントであることを確かめ、パブリッククライアントなら `invalid_client` にする（RFC 7662 §2.1、RFC 9701 §5）。
+    // `token_endpoint_auth_method` を `none` で登録したクライアントは、公開されている `client_id` を示すだけで上の手順を通るので、それを認証済みとして扱うと、誰でもトークンを探れてしまう。
+    // 失効エンドポイントには、あえてこの確認を置いていない。
+    // RFC 7009 §2.1 は、パブリッククライアントが自分のトークンを失効させることを認めているためである。
     requireConfidentialIntrospectionCaller(introspectingClient);
     const authenticatedClientId = presentedCredentials.clientId;
 

@@ -24,7 +24,7 @@ import { createFragmentResponseMode } from '../implicit-flow/response-mode';
 import { issueHybridTokens } from './tokens';
 
 /**
- * 認可コードとトークンを発行し、認可レスポンスで応答する。
+ * 認可コードとトークンを発行し、認可レスポンスで返す。
  *
  * 対象は、エンドユーザーが同意したハイブリッドフローのリクエスト（`response_type` が `code id_token`、`code token`、`code id_token token`）である。
  * ほかのレスポンスタイプには `undefined` を返し、あとのブロック（認可コードの発行）に任せる。

@@ -39,16 +39,25 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — OAuth 2.0 Device Authorization Grant (RFC 8628 §3.4).
+ * デバイスコードのグラントなら、トークンを発行して応答する。
  *
- * Dispatched right after client authentication and BEFORE the grant_type
- * validation, which does not know the URN and would reject it with
- * unsupported_grant_type. Answers the request itself and never falls through
- * to the standard grants; returns undefined for any other grant_type.
+ * `grant_type` がデバイスコードの URN でなければ、何もせず `undefined` を返す。
+ * トークンエンドポイントのパイプラインは、このステップをクライアント認証の直後、`grant_type` の検証より前に実行する。
+ * `grant_type` の検証はこの URN を知らず、`unsupported_grant_type` で拒否してしまうためである。
+ * デバイスコードのグラントなら、このステップが応答まで行い、標準のグラントの処理には進まない。
  *
- * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
- * in a breaking way between releases. Do not build production code on it
- * without pinning the version.
+ * `device_code` のレコードが承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンスで応答する。
+ * 承認済みでなければ、`processDeviceCodeGrant()` が投げる `DeviceAuthorizationError` を、同じコードとステータス（400）の `TokenEndpointError` にして投げる。
+ * クライアントの `id_token_signed_response_alg` に合う ID トークンの署名鍵がなければ、500 の `server_error` を表す `TokenEndpointError` を投げる。
+ * 投げた `TokenEndpointError` は、トークンエンドポイントのエラー応答のステップがそのまま返す。
+ *
+ * experimental パッケージの API は安定しておらず、リリースの間で互換性のない変更が入ることがある。
+ * 本番のコードで使うときは、バージョンを固定する。
+ *
+ * @spec RFC 8628 §3.4
+ * @spec RFC 8628 §3.5
+ * @throws {TokenEndpointError} `authorization_pending`、`slow_down`、`access_denied`、`expired_token`、`invalid_request`、`invalid_grant`、`unauthorized_client`: `device_code` のレコードが承認済みでないか、使えないとき（ステータスは 400）。
+ * @throws {TokenEndpointError} `server_error`: クライアントの `alg` に合う ID トークンの署名鍵がないとき（ステータスは 500）。
  */
 export async function redeemDeviceCode(
   c: any,
@@ -63,9 +72,8 @@ export async function redeemDeviceCode(
     const accessTokenStore = c.get('accessTokenStore');
     const deviceStore = c.get('deviceAuthorizationStore');
 
-    // RFC 8628 §3.5 state machine. Everything except "approved" throws:
-    // authorization_pending / slow_down / access_denied / expired_token, plus
-    // invalid_request / invalid_grant / unauthorized_client from §3.4.
+    // `device_code` のレコードの状態を判定し、承認済みならトークンの発行に必要な値を受け取る（RFC 8628 §3.5 の状態機械）。
+    // 承認済み以外では `DeviceAuthorizationError`（`authorization_pending`、`slow_down`、`access_denied`、`expired_token` と、§3.4 の `invalid_request`、`invalid_grant`、`unauthorized_client`）が投げられる。
     const deviceGrant = await processDeviceCodeGrant({
       params,
       client: tokenClient,
@@ -73,7 +81,7 @@ export async function redeemDeviceCode(
     });
 
     const deviceConfig = c.get('config');
-    // The first registered key signs new tokens (SigningKeyProvider contract).
+    // 新しいトークンには、登録された最初の鍵で署名する（`SigningKeyProvider` の契約）。
     const deviceSigningKey: SigningKey = c.get('signingKeys')[0];
     const devicePrivateKey = deviceSigningKey.privateKey;
     const deviceKeyId = deviceSigningKey.keyId;

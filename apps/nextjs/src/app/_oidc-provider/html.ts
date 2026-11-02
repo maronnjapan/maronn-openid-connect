@@ -12,7 +12,11 @@
  * a React page (login, consent, oidc-error).
  */
 
-/** Escape a value for HTML text and double-quoted attribute values. */
+/**
+ * 値を HTML のテキストと属性値に入れられる形にして返す。
+ *
+ * `&`、`<`、`>`、`"`、`'` を文字参照に置き換えるので、二重引用符で囲んだ属性値にも入れられる。
+ */
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -23,16 +27,18 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * An HTML page, with the Set-Cookie values the step that rendered it decided on.
+ * HTML のレスポンスを返し、指定の Cookie を設定する。
  *
- * Every screen is rendered for the binding or session of this browser's cookie,
- * at a URL that names neither. A stored copy would show one browser's
- * csrf_token to another browser or to a later flow, so by default the page
- * tells the browser and any intermediary not to store it (RFC 9111 §5.2.2.5).
- * init.headers are set over the defaults, so a screen with other caching rules
- * passes its own Cache-Control there. The React pages (login, consent,
- * oidc-error) cannot set response headers, so the headers() of next.config.mjs
- * send them with the same no-store.
+ * ステータスコードは `init.status`（既定は 200）である。
+ * ヘッダーは、既定の `Content-Type: text/html; charset=UTF-8` と `Cache-Control: no-store` を、`init.headers` で上書きしたものである。
+ * `init.cookies` の値ごとに、`Set-Cookie` ヘッダーを一つ付ける。
+ * Cookie は、画面を描画したステップが決めたものである。
+ *
+ * どの画面も、このブラウザの Cookie が指す束縛かセッションに合わせて描画するが、URL はそのどちらも示さない。
+ * 保存された写しがあると、あるブラウザの `csrf_token` を、別のブラウザやあとのフローに見せてしまう。
+ * そのため既定では、ブラウザにも中継サーバーにもページを保存させない（RFC 9111 §5.2.2.5）。
+ * キャッシュの扱いが違う画面は、`init.headers` で自分の `Cache-Control` を渡す。
+ * React のページ（ログイン、同意、`oidc-error`）はレスポンスのヘッダーを設定できないので、`next.config.mjs` の `headers()` が同じ `no-store` を送る。
  */
 export function htmlResponse(
   html: string,
@@ -47,9 +53,10 @@ export function htmlResponse(
 }
 
 /**
- * The OP's own error page. statusCode is the HTTP status and nothing else, so
- * the page never claims a different outcome than the response (a 429 lockout
- * answers 429, a 403 binding failure 403).
+ * OP のエラー画面の HTML で応答する。
+ *
+ * 画面には、`error` と、あれば `errorDescription` を、エスケープしてから表示する。
+ * `statusCode` はレスポンスのステータスコードにだけ使うので、画面とレスポンスが別の結果を示すことはない（ロックアウトは 429、ブラウザの束縛の失敗は 403 で応答する）。
  */
 export function errorPage(error: string, statusCode: number, errorDescription?: string): Response {
   const descriptionHtml = errorDescription ? `  <p>${escapeHtml(errorDescription)}</p>\n` : '';
@@ -67,13 +74,14 @@ ${descriptionHtml}</body>
 }
 
 /**
- * OAuth 2.0 Form Post Response Mode §2: the authorization response as an HTML
- * form whose action is the client's redirect URI and whose method is POST,
- * one hidden field per parameter. The script submits it as soon as it is
- * parsed (Appendix A does the same from body onload), and the button inside
- * noscript lets a browser without JavaScript continue. The response is used
- * only once, so the User Agent and any intermediaries are told not to store
- * it, with the headers of Appendix A.
+ * 認可レスポンスを自動で POST するフォームで応答する。
+ *
+ * フォームの `action` はクライアントのリダイレクト URI、メソッドは POST で、パラメータごとに隠しフィールドを一つ置く。
+ * スクリプトは、読み込まれるとすぐにフォームを送信する（仕様の付録 A は `body` の `onload` で同じことをする）。
+ * JavaScript が動かないブラウザでは、`noscript` の中のボタンで送信できる。
+ * この応答は一度しか使わないので、付録 A のヘッダー（`Cache-Control: no-cache, no-store` と `Pragma: no-cache`）で、ブラウザにも中継サーバーにも保存させない。
+ *
+ * @spec OAuth 2.0 Form Post Response Mode §2
  */
 export function formPostPage(action: string, fields: Readonly<Record<string, string>>): Response {
   const inputs = Object.entries(fields)

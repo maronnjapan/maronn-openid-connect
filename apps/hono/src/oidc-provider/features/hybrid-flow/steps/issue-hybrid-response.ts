@@ -32,7 +32,7 @@ export const meta = step({
 });
 
 /**
- * 認可コードとトークンを発行し、認可レスポンスを返す。
+ * 認可コードとトークンを発行し、認可レスポンスで返す。
  *
  * 対象は、エンドユーザーが同意したハイブリッドフローのリクエスト（`response_type` が `code id_token`、`code token`、`code id_token token`）である。
  * ほかのレスポンスタイプには `undefined` を返し、あとのステップ（認可コードの発行）に任せる。

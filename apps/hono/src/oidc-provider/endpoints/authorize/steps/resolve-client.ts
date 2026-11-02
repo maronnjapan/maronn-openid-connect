@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Resolve the client',
   spec: 'OAuth 2.1 §4.1.2.1 / RFC 8252 §8',
   function: 'resolveAuthorizationClient',
-  calls: ['resolveClientForAuthorization', 'validateRegisteredRedirectUris'],
   consumes: ['params'],
   produces: ['client'],
   removable: false,

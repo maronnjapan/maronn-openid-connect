@@ -19,7 +19,6 @@ export const meta = step({
   label: 'Validate the authorization_code grant',
   spec: 'OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2',
   function: 'validateAuthorizationCodeGrant',
-  calls: ['resolveAuthorizationCode', 'validateAuthorizationCodeUnused', 'validateAuthorizationCodeClient', 'validateAuthorizationCodeExpiration', 'validateAuthorizationCodeRedirectUri', 'verifyAuthorizationCodePkce', 'consumeAuthorizationCode', 'buildValidatedAuthorizationCodeRequest'],
   consumes: ['params', 'authenticatedClientId', 'grantType', 'refreshTokenRequest'],
   optional: ['refreshTokenRequest'],
   produces: ['validatedRequest'],

@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve the presented token',
   spec: 'RFC 7662 §2.1',
   function: 'resolveIntrospectedToken',
-  calls: ['requireIntrospectionToken', 'requireIntrospectionClient', 'resolveIntrospectionToken'],
   consumes: ['params', 'authenticatedClientId'],
   produces: ['resolved'],
   removable: false,

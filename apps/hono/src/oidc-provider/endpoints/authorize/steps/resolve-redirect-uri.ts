@@ -12,7 +12,6 @@ export const meta = step({
   label: 'Resolve redirect_uri (errors become redirectable)',
   spec: 'OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1',
   function: 'resolveRedirectTarget',
-  calls: ['resolveAuthorizationRedirectUri'],
   consumes: ['params', 'effectiveParams', 'client'],
   optional: ['effectiveParams'],
   produces: ['redirectUri', 'state'],

@@ -91,6 +91,11 @@ export interface IdTokenAudienceResult {
   azp?: string;
 }
 
+/**
+ * ID Token の aud と azp を決める。クライアント自身だけなら aud はその client_id の文字列、
+ * 追加の audience があれば重複を除いた配列にし、azp にクライアントの client_id を入れる。
+ * @spec OIDC Core 1.0 §2
+ */
 export function buildIdTokenAudience(input: IdTokenAudienceInput): IdTokenAudienceResult {
   const { clientId, additional } = input;
   const deduped = [...new Set([clientId, ...(additional ?? [])])];

@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Match the user_code and bind this browser',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceUserCode',
-  calls: ['findPendingRecordByUserCode', 'issueVerificationBinding', 'buildDeviceBindingCookie'],
   consumes: [],
   produces: ['record', 'bindingCookie'],
   removable: false,

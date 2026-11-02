@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Decide whether a refresh token is issued',
   spec: 'OIDC Core 1.0 §11 / RFC 9700 §4.14',
   function: 'decideRefreshTokenIssuance',
-  calls: ['clientAllowsRefreshTokenGrant'],
   consumes: ['tokenClient', 'validatedRequest'],
   produces: ['refreshTokenDecision'],
   removable: false,

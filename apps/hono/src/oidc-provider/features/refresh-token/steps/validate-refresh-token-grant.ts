@@ -20,7 +20,6 @@ export const meta = step({
   label: 'Validate the refresh_token grant',
   spec: 'OAuth 2.1 §4.3.1 / RFC 6749 §6',
   function: 'validateRefreshTokenGrant',
-  calls: ['resolveRefreshToken', 'validateRefreshTokenUnused', 'validateRefreshTokenClient', 'validateRefreshTokenExpiration', 'validateRefreshTokenIdleTimeout', 'validateRefreshTokenSession', 'validateRefreshTokenScope', 'buildValidatedRefreshTokenRequest'],
   consumes: ['params', 'authenticatedClientId', 'grantType'],
   produces: ['refreshTokenRequest'],
   removable: false,

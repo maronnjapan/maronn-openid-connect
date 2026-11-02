@@ -8,8 +8,9 @@
  * come from the same files.
  */
 import type { DbKind } from '../db.js';
+import { findFunctions, idOf, type FunctionCard, type FunctionCatalog } from '../extract/functions.js';
 import type { EdgeMeta, EndpointMeta, SourceCatalog, StepMeta } from '../extract/meta.js';
-import { readExtractionDefinition, readSourceCatalog, readSourceFiles } from '../extract/templates.js';
+import { readExtractionDefinition, readFunctionCatalog, readSourceCatalog, readSourceFiles } from '../extract/templates.js';
 import { enabledFeatureIds, featureKeyOf, type OidcFeatureConfig } from '../registry.js';
 import type { FlowEdge, FlowEndpoint, FlowStep, FlowStepKind, OpFlow } from './types.js';
 
@@ -21,6 +22,22 @@ export interface BuildOpFlowOptions {
   db?: DbKind;
   /** The catalog to build from (default: the one of the hono app). */
   catalog?: SourceCatalog;
+  /**
+   * The function catalog the calls of the steps are read from (default: the
+   * one of the repository, or the baked one of the published package). An
+   * empty catalog leaves every step without calls.
+   */
+  functions?: FunctionCatalog;
+}
+
+/** Where the steps of the provider are extracted from: the source name and its root (extract.json, hono). */
+export interface ProviderSource {
+  /** The name of the source, the root of the function ids of the steps (hono). */
+  source: string;
+  /** The directory under the source the steps are relative to (oidc-provider). */
+  root: string;
+  /** Every app source of extract.json (hono, nextjs): the roots that are not libraries. */
+  sources: string[];
 }
 
 /** The step kinds, in the order the legend of a diagram lists them. */
@@ -38,16 +55,28 @@ export const FLOW_STEP_KINDS: readonly FlowStepKind[] = [
 
 let defaultCatalog: SourceCatalog | undefined;
 
+/** The source of the hono framework in extract.json. */
+export function providerSource(): ProviderSource {
+  const definition = readExtractionDefinition();
+  const framework = definition.frameworks['hono'];
+  if (!framework) throw new Error('extract.json has no hono framework');
+  return { source: framework.source, root: framework.root, sources: Object.keys(definition.sources) };
+}
+
 /** The catalog of the hono app, the one every framework's diagram is drawn from. */
 export function providerCatalog(): SourceCatalog {
   if (defaultCatalog === undefined) {
     const definition = readExtractionDefinition();
-    const framework = definition.frameworks['hono'];
-    if (!framework) throw new Error('extract.json has no hono framework');
-    const files = readSourceFiles(framework.source, definition);
-    defaultCatalog = readSourceCatalog(framework.source, framework.root, files, definition);
+    const { source, root } = providerSource();
+    const files = readSourceFiles(source, definition);
+    defaultCatalog = readSourceCatalog(source, root, files, definition);
   }
   return defaultCatalog;
+}
+
+/** The id of the card of a step's function in the function catalog. */
+export function stepFunctionId(step: { file: string; function: string }, where: ProviderSource): string {
+  return idOf(where.source, `${where.root}/${step.file}`, step.function);
 }
 
 /**
@@ -56,12 +85,14 @@ export function providerCatalog(): SourceCatalog {
  */
 export function buildOpFlow(options: BuildOpFlowOptions): OpFlow {
   const catalog = options.catalog ?? providerCatalog();
+  const functions = options.functions ?? readFunctionCatalog();
+  const where = providerSource();
   const enabled = new Set(enabledFeatureIds(options.features));
   const isOn = (feature: string | undefined) => feature === undefined || enabled.has(feature);
   const endpoints = catalog.endpoints
     .filter((endpoint) => isOn(endpoint.feature))
     .sort((a, b) => a.order - b.order)
-    .map((endpoint) => buildEndpoint(endpoint, catalog, isOn));
+    .map((endpoint) => buildEndpoint(endpoint, catalog, isOn, functions, where));
   const ids = new Set(endpoints.map((endpoint) => endpoint.id));
   const journeys = catalog.endpoints
     .filter((endpoint) => isOn(endpoint.feature))
@@ -70,7 +101,7 @@ export function buildOpFlow(options: BuildOpFlowOptions): OpFlow {
     .sort((a, b) => a.order - b.order)
     .map(({ order: _order, ...edge }) => toEdge(edge));
   return {
-    version: 1,
+    version: 2,
     features: { ...options.features },
     scopes: [...(options.scopes ?? [])],
     db: options.db ?? null,
@@ -83,8 +114,10 @@ function buildEndpoint(
   meta: EndpointMeta & { file: string },
   catalog: SourceCatalog,
   isOn: (feature: string | undefined) => boolean,
+  functions: FunctionCatalog,
+  where: ProviderSource,
 ): FlowEndpoint {
-  const listed: StepMeta[] = meta.steps
+  const listed: (StepMeta & { file: string })[] = meta.steps
     .map((id) => catalog.steps.find((step) => step.endpoint === meta.id && step.id === id))
     .filter((step): step is StepMeta & { file: string } => step !== undefined && isOn(step.feature))
     .map((step) => withContributions(step, catalog, isOn))
@@ -108,13 +141,13 @@ function buildEndpoint(
     ...(meta.feature === undefined ? {} : { feature: featureKeyOf(meta.feature) }),
     rearrangeable: meta.rearrangeable,
     ...(meta.initial === undefined ? {} : { initial: [...meta.initial] }),
-    steps: steps.map(toFlowStep),
+    steps: steps.map((step) => toFlowStep(step, functions, where)),
     edges: endpointEdges(meta, steps),
   };
 }
 
 /** A step with what the enabled features contribute to it (contribute() of a feature). */
-function withContributions(step: StepMeta, catalog: SourceCatalog, isOn: (feature: string | undefined) => boolean): StepMeta {
+function withContributions<S extends StepMeta>(step: S, catalog: SourceCatalog, isOn: (feature: string | undefined) => boolean): S {
   const contributions = catalog.contributions.filter(
     (contribution) =>
       contribution.endpoint === step.endpoint && contribution.step === step.id && isOn(contribution.feature),
@@ -130,9 +163,29 @@ function withContributions(step: StepMeta, catalog: SourceCatalog, isOn: (featur
   return { ...step, calls, consumes, ...(spec === undefined ? {} : { spec }) };
 }
 
-function toFlowStep(step: StepMeta): FlowStep {
+/**
+ * The box of a step. Its calls are the ones the source of its function shows
+ * (the card of the function catalog), then the functions the features
+ * contribute; a name the catalog does not resolve, or a method of a resolver
+ * (`consentResolver.recordGrant`), is a dynamic call.
+ */
+function toFlowStep(step: StepMeta & { file: string }, functions: FunctionCatalog, where: ProviderSource): FlowStep {
+  const functionId = stepFunctionId(step, where);
+  const card = functions.functions[functionId];
+  const calls = [...(card?.calls ?? [])];
+  const dynamicCalls: string[] = [];
+  for (const name of step.calls ?? []) {
+    const target = name.includes('.') ? undefined : resolveContributedName(name, functions, where);
+    if (target !== undefined) {
+      if (!calls.includes(target.id)) calls.push(target.id);
+    } else if (!dynamicCalls.includes(name)) {
+      dynamicCalls.push(name);
+    }
+  }
   return {
-    calls: [...(step.calls ?? [])],
+    ...(card === undefined ? {} : { functionId }),
+    calls,
+    ...(dynamicCalls.length === 0 ? {} : { dynamicCalls }),
     consumes: [...step.consumes],
     produces: [...step.produces],
     removable: step.removable,
@@ -147,6 +200,19 @@ function toFlowStep(step: StepMeta): FlowStep {
     ...(step.before === undefined ? {} : { before: [...step.before] }),
     ...(step.calledFrom === undefined ? {} : { calledFrom: [...step.calledFrom] }),
   };
+}
+
+/**
+ * The card a bare name of a step meta or a contribution refers to: a function
+ * of the provider's own source first (a feature's module), else one of a
+ * library; a name of another app source, or an ambiguous one, is not resolved.
+ */
+function resolveContributedName(name: string, functions: FunctionCatalog, where: ProviderSource): FunctionCard | undefined {
+  const candidates = findFunctions(functions, name).filter((card) => card.exported);
+  const own = candidates.filter((card) => card.package === where.source);
+  if (own.length === 1) return own[0];
+  const libraries = candidates.filter((card) => !where.sources.includes(card.package));
+  return libraries.length === 1 ? libraries[0] : undefined;
 }
 
 function toEdge(edge: EdgeMeta): FlowEdge {

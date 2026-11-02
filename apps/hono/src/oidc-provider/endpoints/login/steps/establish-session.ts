@@ -8,7 +8,6 @@ export const meta = step({
   label: 'Establish the OP browser session',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'establishBrowserSession',
-  calls: ['generateRandomString'],
   consumes: ['user'],
   produces: ['sessionId', 'authTime'],
   removable: false,

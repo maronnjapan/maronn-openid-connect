@@ -10,7 +10,6 @@ export const meta = step({
   label: 'Load the transaction named by the cookie',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'loadTransaction',
-  calls: ['parseTransactionId', 'getAuthTransaction'],
   consumes: [],
   produces: ['transactionId', 'transaction'],
   removable: false,

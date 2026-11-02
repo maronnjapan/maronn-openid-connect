@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Mint and store the refresh token',
   spec: 'OAuth 2.1 §4.3.1 / §6.1',
   function: 'issueRefreshToken',
-  calls: ['generateRandomString'],
   consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'audience', 'acr', 'amr'],
   produces: ['refreshToken'],
   removable: false,

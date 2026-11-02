@@ -8,7 +8,6 @@ export const meta = step({
   kind: 'validate',
   label: 'Check csrf_token against the transaction',
   function: 'validateConsentCsrfToken',
-  calls: ['validateCsrfToken'],
   consumes: ['transaction', 'csrfToken'],
   produces: [],
   removable: false,

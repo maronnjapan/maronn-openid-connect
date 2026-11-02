@@ -29,6 +29,7 @@ export interface StepMeta {
   label: string;
   spec?: string;
   function: string;
+  /** Calls the source does not show (`'consentResolver.recordConsent'`); the functions called are read from the source. */
   calls?: string[];
   consumes: string[];
   optional?: string[];
@@ -118,7 +119,7 @@ export function evaluateLiteral(literal: string): unknown {
  * string ('…', "…") nor inside a comment (// … and /* … *\/). A template
  * literal counts as code, so evaluateLiteral() refuses it.
  */
-function* codeOf(source: string, start: number): Generator<{ char: string; index: number }> {
+export function* codeOf(source: string, start: number): Generator<{ char: string; index: number }> {
   let quote: string | undefined;
   for (let index = start; index < source.length; index += 1) {
     const char = source[index] ?? '';

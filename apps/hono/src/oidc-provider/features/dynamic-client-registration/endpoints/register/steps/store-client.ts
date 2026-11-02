@@ -12,7 +12,6 @@ export const meta = step({
   label: 'Enforce the inventory cap and store the client',
   spec: 'RFC 7591 §5',
   function: 'storeRegisteredClient',
-  calls: ['hashClientSecret', 'toClientRegistration'],
   consumes: ['client'],
   produces: [],
   removable: false,

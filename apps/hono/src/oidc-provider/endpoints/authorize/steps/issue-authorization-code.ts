@@ -16,7 +16,7 @@ export const meta = step({
   label: 'Issue the authorization code and build the authorization response',
   spec: 'OIDC Core 1.0 §3.1.2.5 / RFC 9207 §2',
   function: 'issueAuthorizationCodeResponse',
-  calls: ['responseTypeHandlerOf', 'completeAuthTransaction', 'createAuthorizationCode', 'consentResolver.recordGrant'],
+  calls: ['consentResolver.recordGrant'],
   consumes: ['transactionId', 'transaction', 'session', 'issuer', 'responseMode'],
   optional: ['responseMode'],
   produces: [],

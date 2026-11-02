@@ -13,7 +13,6 @@ export const meta = step({
   label: 'Build the provider metadata',
   spec: 'OIDC Discovery 1.0 §3 / RFC 8414',
   function: 'buildDiscoveryMetadata',
-  calls: ['supportedResponseTypes', 'buildProviderMetadata'],
   consumes: ['idTokenSigningKeys', 'userinfoSigningAlgValues'],
   produces: ['metadata'],
   removable: false,

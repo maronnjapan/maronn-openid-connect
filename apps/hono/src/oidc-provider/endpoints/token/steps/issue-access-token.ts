@@ -16,7 +16,6 @@ export const meta = step({
   label: 'Issue the access token',
   spec: 'RFC 9068 §2.2 / §2.2.1 / §3',
   function: 'issueAccessToken',
-  calls: ['buildAccessTokenAudience', 'buildAccessTokenPayload', 'createJwtAccessTokenIssuer', 'createOpaqueAccessTokenIssuer'],
   consumes: ['signingKey', 'subject', 'validatedRequest', 'acr'],
   produces: ['issuedAt', 'accessToken', 'accessTokenPayload', 'audience'],
   removable: false,

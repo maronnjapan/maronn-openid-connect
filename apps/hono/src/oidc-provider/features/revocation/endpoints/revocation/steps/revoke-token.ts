@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Revoke the token and its grant siblings',
   spec: 'RFC 7009 §2.1',
   function: 'revokeToken',
-  calls: ['validateRevocationTokenClient', 'revokeResolvedToken', 'revokeGrantAccessTokens'],
   consumes: ['token', 'resolved', 'authenticatedClientId'],
   produces: [],
   removable: false,

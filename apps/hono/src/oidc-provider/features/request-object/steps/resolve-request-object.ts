@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Verify the Request Object and overlay its claims',
   spec: 'OIDC Core 1.0 §6.1',
   function: 'resolveRequestObject',
-  calls: ['resolveRequestObjectParams'],
   consumes: ['params', 'client'],
   produces: ['effectiveParams', 'requestObjectClaims'],
   removable: false,

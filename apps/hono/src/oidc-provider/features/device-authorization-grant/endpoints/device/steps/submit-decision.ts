@@ -18,7 +18,7 @@ export const meta = step({
   label: 'Approve or deny the device',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceDecision',
-  calls: ['findPendingRecordByUserCode', 'validateVerificationBinding', 'approveDeviceAuthorization', 'denyDeviceAuthorization', 'consentResolver.recordConsent', 'consentResolver.recordGrant'],
+  calls: ['consentResolver.recordConsent', 'consentResolver.recordGrant'],
   consumes: ['record', 'bindingCookie', 'session'],
   produces: [],
   removable: false,

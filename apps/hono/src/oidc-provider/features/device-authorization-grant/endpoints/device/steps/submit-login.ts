@@ -20,7 +20,6 @@ export const meta = step({
   label: 'Sign the End-User in on this browser',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceLogin',
-  calls: ['findPendingRecordByUserCode', 'validateVerificationBinding', 'validateVerificationCsrfToken', 'recordDeviceLoginFailure', 'buildSessionCookie'],
   consumes: ['record', 'bindingCookie'],
   produces: ['session'],
   removable: false,

@@ -23,7 +23,6 @@ export const meta = step({
   label: 'Verify id_token_hint and decide: log out or confirm',
   spec: 'RP-Initiated Logout 1.0 §2 / §3',
   function: 'processEndSessionRequest',
-  calls: ['parseEndSessionRequest', 'extractIdTokenHintAudience', 'validateIdTokenHint', 'decideLogoutFlow', 'resolvePostLogoutRedirect'],
   consumes: [],
   produces: ['confirmation'],
   removable: false,

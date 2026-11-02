@@ -10,7 +10,6 @@ export const meta = step({
   label: 'Check that the request may register',
   spec: 'OIDC Dynamic Client Registration 1.0 §3 / RFC 6750 §3.1',
   function: 'verifyRegistrationAccess',
-  calls: ['readBearerToken', 'verifyInitialAccessToken'],
   consumes: [],
   produces: [],
   removable: false,

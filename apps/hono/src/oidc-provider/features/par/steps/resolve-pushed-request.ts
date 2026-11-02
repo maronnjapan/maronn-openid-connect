@@ -16,7 +16,6 @@ export const meta = step({
   label: 'Expand the pushed request_uri',
   spec: 'RFC 9126 §4 / §5',
   function: 'resolvePushedAuthorizationRequest',
-  calls: ['assertPushedRequestUsed', 'resolvePushedRequestUri'],
   consumes: ['params'],
   produces: ['params'],
   removable: false,

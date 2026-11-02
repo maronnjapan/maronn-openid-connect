@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve the presented token',
   spec: 'RFC 7009 §2.1',
   function: 'resolveRevocationTokenTarget',
-  calls: ['requireRevocationToken', 'requireRevocationClient', 'resolveRevocationTarget'],
   consumes: ['params', 'authenticatedClientId'],
   produces: ['token', 'resolved'],
   removable: false,

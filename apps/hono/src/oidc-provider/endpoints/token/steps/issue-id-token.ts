@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Issue the ID Token',
   spec: 'OIDC Core 1.0 §3.1.3.6 / §12.1',
   function: 'issueIdToken',
-  calls: ['computeAtHash', 'buildIdTokenPayload', 'generateIdToken'],
   consumes: ['idTokenSigningKey', 'accessToken', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'acr', 'amr'],
   produces: ['idToken'],
   removable: true,

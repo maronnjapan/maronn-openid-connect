@@ -15,7 +15,6 @@ export const meta = step({
   label: 'Authenticate the confidential client',
   spec: 'RFC 7662 §2.1 / OAuth 2.1 §2.3',
   function: 'authenticateIntrospectionClient',
-  calls: ['extractClientCredentials', 'resolveAuthenticatedTokenClient', 'validateClientAuthMethod', 'verifyClientSecret', 'requireConfidentialIntrospectionCaller'],
   consumes: ['params', 'authorization'],
   produces: ['authenticatedClientId'],
   removable: false,

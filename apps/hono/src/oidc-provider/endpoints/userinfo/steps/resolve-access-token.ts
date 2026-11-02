@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve and validate the access token',
   spec: 'OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4',
   function: 'resolveUserInfoToken',
-  calls: ['resolveUserInfoAccessToken', 'validateUserInfoTokenExpiration', 'validateUserInfoScope', 'validateUserInfoAudience'],
   consumes: ['accessToken'],
   produces: ['tokenInfo'],
   removable: false,

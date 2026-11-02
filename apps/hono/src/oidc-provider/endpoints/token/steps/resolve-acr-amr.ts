@@ -14,7 +14,6 @@ export const meta = step({
   label: 'Resolve the acr / amr the tokens carry',
   spec: 'OIDC Core 1.0 §3.1.2.1 / §12.1 / RFC 9068 §2.2.1',
   function: 'resolveTokenAcrAmr',
-  calls: ['selectRequestedAcrValues', 'resolveAcrAmr', 'selectPreferredAcr'],
   consumes: ['subject', 'validatedRequest'],
   produces: ['acr', 'amr'],
   removable: true,

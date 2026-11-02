@@ -11,7 +11,16 @@ import {
 } from '@maronn-openid-connect/experimental/device-authorization-grant';
 import { errorPage, escapeHtml, htmlResponse } from '../../_oidc-provider/html';
 
-/** The user_code entry form. userCode is untrusted input (query or a previous submission). */
+/**
+ * ユーザーコードの入力フォームを HTML で返す。
+ *
+ * フォームは、入力された `user_code` を `/device` に送る。
+ * `userCode` は入力欄に入れておく。
+ * `userCode` はクエリか前の送信から来る信頼できない値なので、エスケープしてから埋め込む。
+ * `error` があればフォームの上に表示し、ステータスを 400 にする（なければ 200）。
+ *
+ * @spec RFC 8628 §3.3
+ */
 export function verificationScreen(userCode: string, error?: string): Response {
   const errorHtml = error ? `<p style="color: red;">${escapeHtml(error)}</p>` : '';
   return htmlResponse(
@@ -36,15 +45,26 @@ export function verificationScreen(userCode: string, error?: string): Response {
 }
 
 /**
- * The code entry form again, with the one reason-free failure message. RFC 8628
- * §5.1: unknown, expired and already-used codes must be indistinguishable, or
- * the response itself confirms which codes exist.
+ * 入力フォームを、照合に失敗した旨を添えて 400 で返す。
+ *
+ * 入力欄には `userCode` を残し、失敗の文言には `INVALID_USER_CODE_MESSAGE` を使う。
+ * 文言は、未知のコード、期限切れのコード、使用済みのコードのどれでも同じで、理由を示さない。
+ * 区別できると、応答そのものからどのコードが存在するかがわかってしまうためである（RFC 8628 §5.1）。
+ *
+ * @spec RFC 8628 §5.1
  */
 export function invalidUserCodeScreen(userCode: string): Response {
   return verificationScreen(userCode, INVALID_USER_CODE_MESSAGE);
 }
 
-/** The sign-in form of the device flow; cookies carry the browser binding. */
+/**
+ * デバイスフローのログインフォームを HTML で返す。
+ *
+ * 承認しようとしているユーザーコードを表示し、ユーザー名とパスワードを `/device/login` に送るフォームを置く。
+ * フォームは、隠しフィールドの `user_code` と `csrf_token` も一緒に送る。
+ * `params.error` があれば、フォームの上にエラーと、`remainingAttempts` があれば残りの試行回数を表示する。
+ * `cookies`（バインディング Cookie など）は、`Set-Cookie` ヘッダーとして付ける。
+ */
 export function loginScreen(
   params: { userCode: string; csrfToken: string; error?: string; remainingAttempts?: number },
   cookies: readonly string[] = [],

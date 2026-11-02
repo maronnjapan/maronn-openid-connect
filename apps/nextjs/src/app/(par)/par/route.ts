@@ -127,7 +127,7 @@ async function pushAuthorizationRequest(request: Request): Promise<Response> {
     // プッシュされたパラメータそのものは、ログに出さない。
     // `login_hint` などの個人情報を含むことがあり、`Authorization` ヘッダーには `client_secret` が含まれる。
 
-    // 201 で、`request_uri` と `expires_in` を、キャッシュを禁止した JSON で返す（RFC 9126 §2.2）。
+    // `request_uri` と `expires_in` を、キャッシュを禁止した JSON の 201 で返す（RFC 9126 §2.2）。
     return parJson({ request_uri: response.requestUri, expires_in: response.expiresIn }, 201);
   } catch (error) {
     if (error instanceof ParError) {

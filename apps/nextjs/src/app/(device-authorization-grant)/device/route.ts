@@ -70,9 +70,9 @@ export async function POST(request: Request): Promise<Response> {
     return invalidUserCodeScreen(submittedUserCode);
   }
 
-  // Rotate the binding secret and the csrf token together. A second browser
-  // submitting the same user_code takes the binding over (last writer wins);
-  // that is inherent to a flow whose identifier is shareable by design.
+  // バインディングの秘密の値と CSRF トークンを、まとめて作り直す。
+  // 別のブラウザが同じ `user_code` を送信すると、バインディングはそのブラウザに移る（最後に送信したものが勝つ）。
+  // 識別子を他人と共有できる設計のフローでは、避けられない性質である。
   const { bindingSecret, csrfToken } = await issueVerificationBinding(
     record,
     deviceAuthorizationStore,
@@ -100,9 +100,11 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /**
- * Remaining lifetime of a record in whole seconds, rounded up so the binding
- * cookie always outlives the record it binds (a cookie that expired first
- * would turn a still-valid verification into an unexplained 403).
+ * レコードの有効期限までの残りの秒数を返す。
+ *
+ * 1 秒未満の端数は切り上げ、期限を過ぎていれば 0 を返す。
+ * 切り上げるのは、バインディング Cookie がレコードより先に期限切れにならないようにするためである。
+ * Cookie が先に切れると、まだ有効な検証が、理由のわからない 403 で拒否されてしまう。
  */
 function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
   return Math.max(0, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));

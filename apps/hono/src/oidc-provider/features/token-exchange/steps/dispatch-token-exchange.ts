@@ -39,7 +39,7 @@ export const meta = step({
  * `grant_type` がトークン交換の URN（`TOKEN_EXCHANGE_GRANT_TYPE`）のときだけ応答し、それ以外のグラントタイプには `undefined` を返す。
  * トークン交換のリクエストにはこのステップが最後まで応答し、標準のグラントの処理には回さない。
  * このステップは、クライアントの認証の直後、`grant_type` の検証より前に実行する。
- * `grant_type` の検証はこの URN を知らず、`unsupported_grant_type` で拒否してしまうためである。
+ * `grant_type` の検証は、`authorization_code` と `refresh_token` 以外の値を `unsupported_grant_type` で拒否するためである。
  *
  * `subject_token` の検証と、発行する内容（サブジェクト、スコープ、オーディエンス、有効期間、`act` クレーム）の導出は `processTokenExchangeRequest()` が行う。
  * 発行したアクセストークンはストアに保存し、200 でトークン交換のレスポンスを返す。

@@ -32,7 +32,7 @@ export const meta = step({
  *
  * `parConfig.requirePushedAuthorizationRequests` が true なら、URN の `request_uri` を持たないリクエストを `invalid_request` で拒否する（RFC 9126 §5）。
  *
- * 失敗はどれも、リダイレクト URI を持たない `AuthorizationError` として投げ、`authorizationErrorOutcome()` はそれをリダイレクトせずに OP で返す。
+ * `request_uri` を展開できない失敗はどれも、リダイレクト URI を持たない `AuthorizationError` として投げ、`authorizationErrorOutcome()` はそれをリダイレクトせずに OP で返す。
  * 取り出せなかった `request_uri` からは、検証済みの `redirect_uri` が得られないためである。
  *
  * 実験的な機能である。

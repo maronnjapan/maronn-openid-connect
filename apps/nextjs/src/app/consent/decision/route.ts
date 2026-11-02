@@ -50,7 +50,7 @@ export const runtime = 'nodejs';
  * どちらも認可リクエストのレスポンスモードで返し、トランザクションの Cookie を消す。
  * `implicit-flow` と `hybrid-flow` の機能のレスポンスタイプには、認可コードだけを返す代わりに、その機能が応答する。
  *
- * フォームが別オリジンから送られたとき、トランザクションがないか見つからないか期限切れのとき、`csrf_token` が一致しないとき、決定の値が `approve` でも `deny` でもないとき、レスポンスモードの鍵を読み込めないときは、ブラウザを OP のエラーページへリダイレクトする（303）。
+ * フォームが別オリジンから送られたとき、トランザクションの Cookie がないとき、トランザクションが見つからないか期限切れのとき、`csrf_token` が一致しないとき、決定の値が `approve` でも `deny` でもないとき、レスポンスモードの鍵を読み込めないときは、ブラウザを OP のエラーページへリダイレクトする（303）。
  * ログインのステップが保存したサブジェクトがないまま承認されたときは、`/login` へリダイレクトする（303）。
  *
  * @spec OIDC Core 1.0 §3.1.2.4
@@ -177,7 +177,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   await stores.authCodeStore.set(authCodeData.code, authCodeData);
 
   // [record-consent] Record the consent and the grant — OIDC Core 1.0 §3.1.2.4
-  // 同意を記録し、後の `prompt=none` や SSO のリクエストで、画面を出さずに同意を確かめられるようにする（OIDC Core 1.0 §3.1.2.1、§3.1.2.4）。
+  // 同意を記録し、後の `prompt=none` や SSO のリクエストで、同意画面を出さずに同意を確かめられるようにする（OIDC Core 1.0 §3.1.2.1、§3.1.2.4）。
   // グラントも記録し、その同意を取り消したときに、グラントから発行したトークンを失効させられるようにする。
   // 削除するのはトランザクションごとの認証セッションだけで、OP のセッションは SSO のために残す。
   await resolvers.consentResolver.recordConsent?.(session.subject, transaction.clientId, grantedScope);

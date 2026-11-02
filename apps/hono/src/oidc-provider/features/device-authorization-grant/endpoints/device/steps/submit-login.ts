@@ -28,7 +28,7 @@ export const meta = step({
 /**
  * エンドユーザーをログインさせ、承認画面の結果を返す。
  *
- * `POST /device/login` の処理で、バインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
+ * `POST /device/login` の処理で、`user_code`、バインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
  * バインディング Cookie は、このブラウザが `user_code` を送信したブラウザであることを示す。
  * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
  *

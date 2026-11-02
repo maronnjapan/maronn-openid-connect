@@ -171,7 +171,7 @@ export async function redeemCibaRequest(
 }
 
 /**
- * グラントタイプが CIBA なら、トークンで応答する。
+ * グラントタイプが CIBA ならトークンで応答する。
  *
  * `grant_type` が CIBA の URN でなければ、何もせず `undefined` を返す。
  * トークンエンドポイントのルートハンドラは、この関数をクライアント認証の直後、`grant_type` の検証より前に呼ぶ。

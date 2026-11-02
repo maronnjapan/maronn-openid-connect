@@ -22,6 +22,18 @@ import { completedScreen, verificationFailureScreen } from '../screens';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Record the signed-in End-User's approve or deny decision on a pending CIBA
+ * request (POST /ciba/approve) and render the page that confirms it.
+ *
+ * Approving marks the request approved with the session's auth_time, a new
+ * grant id and the scopes resolveGrantableScopes() allows, and records the
+ * consent and the grant, so /token can issue the tokens on the client's next
+ * poll; denying marks it denied. The OP's error page answers 401 without an OP
+ * session, 400 for a decision other than approve or deny, and 403 when the
+ * request is unknown, expired, already decided or addressed to another user,
+ * or the csrf_token does not match.
+ */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
   const authReqId = String(form.get('auth_req_id') ?? '');

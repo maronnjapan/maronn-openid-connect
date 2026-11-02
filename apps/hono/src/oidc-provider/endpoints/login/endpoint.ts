@@ -1,6 +1,12 @@
 import { defineEndpoint } from '../step.js';
 
-/** The login screen. OIDC Core 1.0 §3.1.2.3 */
+/**
+ * Show the login screen of the transaction (GET) and sign the End-User in
+ * (POST): matching credentials start a fresh session and go on to the consent
+ * screen; wrong ones count as a failed attempt and show the screen again.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.3
+ */
 export const endpoint = defineEndpoint({
   id: 'login',
   order: 40,

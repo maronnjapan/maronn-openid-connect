@@ -1,6 +1,14 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXPERIMENTAL — the pushed authorization request endpoint. RFC 9126 §2 */
+/**
+ * Accept the parameters of an authorization request pushed by an authenticated
+ * client, validate them as the authorization endpoint would and answer 201
+ * with the request_uri to send to /authorize.
+ *
+ * EXPERIMENTAL: generated with --enable par.
+ *
+ * @spec RFC 9126 §2
+ */
 export const endpoint = defineEndpoint({
   id: 'par',
   order: 110,

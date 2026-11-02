@@ -14,6 +14,10 @@ interface ErrorViewProps {
   children?: ReactNode;
 }
 
+/**
+ * Render the OP's error screen: an Error heading, the error code, the
+ * description when there is one, and the children the screen adds below them.
+ */
 export function ErrorView({ error, description, children }: ErrorViewProps) {
   return (
     <main>

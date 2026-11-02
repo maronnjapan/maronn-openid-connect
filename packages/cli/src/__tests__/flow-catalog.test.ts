@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_FEATURES, type OidcFeatureConfig } from '../registry.js';
-import { buildOpFlow } from '../flow/build.js';
+import { buildOpFlow, edgesForSteps } from '../flow/build.js';
 import { resolveFlowSelection } from '../flow/flow-file.js';
 
 const ALL_FEATURES: OidcFeatureConfig = {
@@ -383,5 +383,14 @@ describe('buildOpFlow', () => {
         expect(selection.endpointOrder).toEqual(flow.endpoints.map((e) => e.id));
       }
     });
+  });
+});
+
+describe('edgesForSteps', () => {
+  it('should draw the arrows of an endpoint as the generation with just those steps does', () => {
+    const features = Object.fromEntries(Object.keys(DEFAULT_FEATURES).map((key) => [key, true])) as OidcFeatureConfig;
+    const all = buildOpFlow({ features: { ...features, idJag: false, tokenExchange: false, deviceAuthorizationGrant: false, ciba: false } });
+    const token = all.endpoints.find((endpoint) => endpoint.id === 'token');
+    expect(edgesForSteps('token', token?.steps.map((step) => step.id) ?? [])).toEqual(token?.edges);
   });
 });

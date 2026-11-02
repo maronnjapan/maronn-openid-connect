@@ -262,6 +262,7 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
   };
 }
 
+/** Return the current time in whole seconds since the epoch. */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }

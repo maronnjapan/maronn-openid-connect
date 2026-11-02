@@ -39,6 +39,13 @@ declare module '../../views.js' {
 // screen (no hint, an invalid or expired hint, another user's session, no
 // session at all), so the page cannot be used as an oracle for session state
 // or for why the hint failed.
+/**
+ * Render the logout confirmation page: a fixed question whether to log out of
+ * the OpenID Provider, with a Log out button that posts the csrf_token to
+ * /logout/approve.
+ *
+ * @spec RP-Initiated Logout 1.0 §2
+ */
 function defaultLogoutConfirmationPage(params: LogoutConfirmationPageParams): JSX.Element {
   return (
     <Layout title="Log out">
@@ -53,6 +60,10 @@ function defaultLogoutConfirmationPage(params: LogoutConfirmationPageParams): JS
   );
 }
 
+/**
+ * Render the logged-out page: a fixed message that the End-User has been
+ * logged out and can close the page, naming neither the End-User nor a client.
+ */
 function defaultLogoutCompletedPage(_params: LogoutCompletedPageParams): JSX.Element {
   return (
     <Layout title="Logged out">

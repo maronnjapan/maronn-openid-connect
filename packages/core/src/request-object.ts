@@ -45,6 +45,15 @@ export interface ParseRequestObjectOptions {
   allowUnsigned: boolean;
 }
 
+/**
+ * JWT の base64url セグメントをデコードし、UTF-8 の JSON として解析した値を返す。
+ *
+ * 解析結果の型は検査せず、オブジェクト以外の JSON 値もそのまま返す。標準 base64 の `+` `/` や
+ * パディングを含む値も復号する（厳格な base64url 検査はしない）。
+ *
+ * @throws {DOMException} InvalidCharacterError（base64 として復号できないとき）
+ * @throws {SyntaxError} 復号した内容が JSON として解析できないとき
+ */
 function decodeJwtSegment(segment: string): unknown {
   const json = new TextDecoder().decode(base64UrlToArrayBuffer(segment));
   return JSON.parse(json);

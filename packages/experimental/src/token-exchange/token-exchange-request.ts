@@ -535,19 +535,40 @@ function optional(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+/**
+ * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ *
+ * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
+ * 順で 1 つずつ残す。
+ */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
   return [...new Set(scope.split(/\s+/).filter((value) => value.length > 0))];
 }
 
+/** now（省略時は現在時刻）を、小数点以下を切り捨てた Unix epoch 秒にして返す。 */
 function toEpochSeconds(now: Date | undefined): number {
   return Math.floor((now ?? new Date()).getTime() / 1000);
 }
 
+/**
+ * subject_token が無効なことを表す invalid_request の TokenExchangeError を作り、投げずに返す。
+ *
+ * error_description は常に固定文言の {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ *
+ * @spec RFC 8693 §2.2.2
+ */
 function invalidSubjectToken(): TokenExchangeError {
   return new TokenExchangeError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION);
 }
 
+/**
+ * actor_token が無効なことを表す invalid_request の TokenExchangeError を作り、投げずに返す。
+ *
+ * error_description は常に固定文言の {@link ACTOR_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ *
+ * @spec RFC 8693 §2.2.2
+ */
 function invalidActorToken(): TokenExchangeError {
   return new TokenExchangeError('invalid_request', ACTOR_TOKEN_INVALID_DESCRIPTION);
 }

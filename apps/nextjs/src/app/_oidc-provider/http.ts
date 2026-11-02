@@ -56,6 +56,11 @@ export function withCors(request: Request, policy: CorsPolicy, response: Respons
   });
 }
 
+/**
+ * Build the CORS headers a policy gives a request: Vary: Origin, the allowed
+ * methods, allowed headers and max age of the policy, and
+ * Access-Control-Allow-Origin when allowedOrigin() grants the request's Origin.
+ */
 function corsHeaders(request: Request, policy: CorsPolicy): Headers {
   const headers = new Headers();
   const origin = allowedOrigin(request.headers.get('Origin'), policy.origins);
@@ -69,6 +74,12 @@ function corsHeaders(request: Request, policy: CorsPolicy): Headers {
   return headers;
 }
 
+/**
+ * Return the Access-Control-Allow-Origin value for a request's Origin: a
+ * policy given as one string ('*' or a single origin) answers that string
+ * whatever the Origin; a list answers the Origin when it contains it, and
+ * undefined (no header) otherwise.
+ */
 function allowedOrigin(
   requestOrigin: string | null,
   allowed: string | readonly string[],

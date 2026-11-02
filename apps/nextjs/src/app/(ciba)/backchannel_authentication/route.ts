@@ -51,10 +51,19 @@ import { cibaConfig } from '../../_oidc-provider/features/ciba/config';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer a CIBA authentication request (POST /backchannel_authentication)
+ * with the no-store JSON of backchannelAuthentication() — the auth_req_id to
+ * poll /token with, or an OAuth error — plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await backchannelAuthentication(request));
 }
 
+/**
+ * Answer the CORS preflight of /backchannel_authentication: 204 with no body
+ * and the clientCors headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }

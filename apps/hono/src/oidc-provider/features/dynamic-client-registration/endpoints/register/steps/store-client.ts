@@ -48,6 +48,11 @@ export async function storeRegisteredClient(c: any, client: DynamicallyRegistere
   // Never log the registration metadata or the issued client_secret.
 }
 
+/**
+ * Build the RegistrationEndpointError of a reached inventory cap: status 429
+ * with error too_many_registrations and error_description "registration limit
+ * reached", without Retry-After.
+ */
 function inventoryCapError(): RegistrationEndpointError {
   return new RegistrationEndpointError({
     status: 429,

@@ -371,6 +371,14 @@ function toParError(error: unknown): unknown {
   return error;
 }
 
+/**
+ * core の TokenError のエラーコードを、PAR エンドポイントのエラーコードに写して返す。
+ *
+ * invalid_client / unauthorized_client / invalid_scope は同じコードを返し、それ以外
+ * （invalid_grant / unsupported_grant_type など）はすべて invalid_request にする。
+ *
+ * @spec RFC 9126 §2.3
+ */
 function toParErrorCodeFromToken(code: TokenErrorCode): ParErrorCode {
   switch (code) {
     case TokenErrorCode.InvalidClient:
@@ -384,6 +392,14 @@ function toParErrorCodeFromToken(code: TokenErrorCode): ParErrorCode {
   }
 }
 
+/**
+ * core の AuthorizationError のエラーコードを、PAR エンドポイントのエラーコードに写して返す。
+ *
+ * invalid_scope / unauthorized_client / unsupported_response_type は同じコードを返し、それ以外
+ * （login_required などのインタラクション系や invalid_request_object など）はすべて invalid_request にする。
+ *
+ * @spec RFC 9126 §2.3
+ */
 function toParErrorCodeFromAuthorization(code: AuthorizationErrorCode): ParErrorCode {
   switch (code) {
     case AuthorizationErrorCode.InvalidScope:

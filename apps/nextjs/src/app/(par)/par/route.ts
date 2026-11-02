@@ -38,14 +38,36 @@ import { parConfig } from '../../_oidc-provider/features/par/config';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer a pushed authorization request (POST /par) with the response of
+ * pushAuthorizationRequest() — 201 with a request_uri, or an OAuth error —
+ * plus the clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await pushAuthorizationRequest(request));
 }
 
+/**
+ * Answer the CORS preflight of /par: 204 with no body and the clientCors
+ * headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
+/**
+ * Authenticate the client, validate the pushed authorization parameters as
+ * /authorize would and store them, answering 201 with the request_uri to send
+ * to /authorize and its expires_in, never cached.
+ *
+ * Errors are uncacheable OAuth error JSON: 400 invalid_request for a body that
+ * is not form-urlencoded, a repeated parameter, or a pushed request_uri or
+ * request; 401 invalid_client (with WWW-Authenticate) when client
+ * authentication fails; 400 with the error /authorize would answer for invalid
+ * parameters (redirect_uri, scope, PKCE, ...); 500 server_error otherwise.
+ *
+ * @spec RFC 9126 §2
+ */
 async function pushAuthorizationRequest(request: Request): Promise<Response> {
   // RFC 9126 §2.1: the body MUST be application/x-www-form-urlencoded.
   if (!isFormUrlEncoded(request)) {

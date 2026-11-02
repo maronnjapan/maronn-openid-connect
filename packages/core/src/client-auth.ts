@@ -51,6 +51,14 @@ function matchAuthScheme(
   return authHeader.slice(spaceIndex + 1);
 }
 
+/**
+ * Authorization ヘッダー値の認証スキーム（最初の空白より前）が、scheme と大文字小文字を区別せずに一致するかを返す。
+ *
+ * 空白を含まない値（`Basic` だけや空文字）は false を返す。スキームより後ろの認証情報は
+ * 検査しない（`Basic ` のように空でも true）。
+ *
+ * @spec RFC 7235 §2.1
+ */
 function hasAuthScheme(authHeader: string, scheme: string): boolean {
   return matchAuthScheme(authHeader, scheme) !== null;
 }

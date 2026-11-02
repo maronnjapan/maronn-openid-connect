@@ -1,6 +1,12 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** Token Revocation. RFC 7009 §2 */
+/**
+ * Revoke a token presented by the client it was issued to (a refresh token
+ * together with the access tokens of its grant) and answer 200 with an empty
+ * body, also for a token the provider does not know.
+ *
+ * @spec RFC 7009 §2
+ */
 export const endpoint = defineEndpoint({
   id: 'revocation',
   order: 100,

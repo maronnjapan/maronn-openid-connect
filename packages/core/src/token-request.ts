@@ -81,6 +81,7 @@ export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'n
  * クライアント情報を解決するインターフェース
  */
 export interface TokenClientResolver {
+  /** client_id で登録済みクライアントを探し、認証に使う情報（シークレットのハッシュ、登録した認証方式など）を返す。未登録なら null を返す。 */
   findClient(clientId: string): Promise<TokenClientInfo | null>;
 }
 
@@ -129,6 +130,7 @@ export interface AuthorizationCodeInfo {
  * 認可コードを解決するインターフェース
  */
 export interface AuthorizationCodeResolver {
+  /** 提示された認可コードの保存済み情報（クライアント、redirect_uri、PKCE、使用済みかどうかなど）を返す。知らないコードなら null を返す。 */
   findAuthorizationCode(code: string): Promise<AuthorizationCodeInfo | null>;
   /**
    * 認可コードを「使用済み」にする。**物理削除ではなく `used=true` への状態遷移として
@@ -252,6 +254,7 @@ export interface RefreshTokenInfo {
  * リフレッシュトークンを解決するインターフェース
  */
 export interface RefreshTokenResolver {
+  /** 提示されたリフレッシュトークンの保存済み情報（クライアント、scope、有効期限、使用済みかどうかなど）を返す。知らないトークンなら null を返す。 */
   resolve(token: string): Promise<RefreshTokenInfo | null>;
   /**
    * リフレッシュトークンを「使用済み」にする。**物理削除ではなく `used=true` への状態遷移

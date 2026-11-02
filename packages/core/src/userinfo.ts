@@ -102,6 +102,7 @@ export interface AccessTokenInfo {
  * アクセストークンを解決するインターフェース
  */
 export interface AccessTokenResolver {
+  /** 提示されたアクセストークンの保存済み情報（subject、scope、有効期限など）を返す。知らないトークンなら null を返す。 */
   findAccessToken(token: string): Promise<AccessTokenInfo | null>;
 }
 

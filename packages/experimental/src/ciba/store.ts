@@ -64,6 +64,7 @@ export interface CibaAuthenticationRequestRecord {
  */
 export interface CibaAuthenticationRequestStore {
   save(record: CibaAuthenticationRequestRecord): Promise<void>;
+  /** auth_req_id のレコードを返す。無いとき（消費済み・削除済みを含む）は null を返す。 */
   findByAuthReqId(authReqId: string): Promise<CibaAuthenticationRequestRecord | null>;
   /** 認証デバイス UI の一覧用。期限内・pending のレコードのみ返す。 */
   listPendingBySubject(subject: string): Promise<CibaAuthenticationRequestRecord[]>;
@@ -114,8 +115,11 @@ export interface CibaLoginTransactionRecord {
 
 /** ログイントランザクションのストア契約。 */
 export interface CibaLoginTransactionStore {
+  /** 認証デバイスのログイントランザクションを新しく保存する。 */
   save(record: CibaLoginTransactionRecord): Promise<void>;
+  /** id のログイントランザクションを返す。無いときは null を返す。 */
   findById(id: string): Promise<CibaLoginTransactionRecord | null>;
+  /** ログイントランザクションを渡したレコードで置き換える（失敗回数の記録など）。 */
   update(record: CibaLoginTransactionRecord): Promise<void>;
   delete(id: string): Promise<void>;
 }

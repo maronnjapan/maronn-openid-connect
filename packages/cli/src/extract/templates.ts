@@ -172,7 +172,8 @@ let cachedProject: FunctionProject | undefined;
 /**
  * The function project of the repository, or of the baked catalog in the
  * published package (which answers no `callsIn`: the Route Handler blocks of
- * Next.js are baked with the catalog, see collect.ts).
+ * Next.js are baked with the catalog, see collect.ts; nor a flow or a member,
+ * which need the sources).
  */
 export function functionProject(packageRoot = PACKAGE_ROOT): FunctionProject {
   if (cachedProject !== undefined) return cachedProject;
@@ -193,6 +194,10 @@ export function functionProject(packageRoot = PACKAGE_ROOT): FunctionProject {
       throw new Error('The published package has no sources to read calls from');
     },
     enclosingBody: () => undefined,
+    flowOf: () => undefined,
+    describeMember: () => undefined,
+    memberOf: () => undefined,
+    memberById: () => undefined,
   };
   return cachedProject;
 }

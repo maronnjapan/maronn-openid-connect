@@ -18,14 +18,31 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer GET /.well-known/jwks.json with the JWK Set of jwks() and the
+ * publicCors headers, which let any origin read it.
+ */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, publicCors, await jwks());
 }
 
+/**
+ * Answer the CORS preflight of /.well-known/jwks.json: 204 with no body and
+ * the publicCors headers, which let any origin GET it.
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, publicCors);
 }
 
+/**
+ * Publish the public keys of every signing key set (general, ID Token,
+ * UserInfo) as a JWK Set, each kid once, cacheable for an hour
+ * (Cache-Control: public, max-age=3600).
+ *
+ * Keys kept in a set after a rotation stay published, so the tokens they
+ * signed keep verifying; of the keys without a kid only the newest is
+ * published. 503 server_error when the signing keys cannot be loaded.
+ */
 async function jwks(): Promise<Response> {
   const keys = await loadSigningKeys().catch(() => null);
   if (!keys) return signingKeysUnavailable();

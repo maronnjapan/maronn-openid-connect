@@ -39,6 +39,15 @@ declare module '../../views.js' {
  * button through the GIS button attributes (data-theme, data-size, data-text,
  * ...) on .g_id_signin. hono/jsx hoists the async script into <head>.
  */
+/**
+ * Render the "Sign in with Google" button below a horizontal rule: the GIS
+ * client script, a g_id_onload element carrying the redirect-mode
+ * configuration as its attributes, and the g_id_signin element GIS replaces
+ * with the button.
+ *
+ * Signing in there makes Google post the ID token to the login_uri of that
+ * configuration.
+ */
 function defaultGoogleSignInButton(params: GoogleSignInParams): JSX.Element {
   return (
     <>

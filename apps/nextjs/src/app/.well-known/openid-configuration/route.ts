@@ -17,14 +17,33 @@ import { SUPPORTED_SCOPES } from '../../_oidc-provider/scopes';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer GET /.well-known/openid-configuration with the provider metadata of
+ * providerMetadata() and the publicCors headers, which let any origin read it.
+ */
 export async function GET(request: Request): Promise<Response> {
   return withCors(request, publicCors, await providerMetadata());
 }
 
+/**
+ * Answer the CORS preflight of /.well-known/openid-configuration: 204 with no
+ * body and the publicCors headers, which let any origin GET it.
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, publicCors);
 }
 
+/**
+ * Answer the OpenID Provider Configuration request with this OP's metadata —
+ * its endpoint URLs built on the issuer, the response types, grants, scopes,
+ * claims and signing algs it supports, and what each enabled feature adds — as
+ * JSON cacheable for an hour (Cache-Control: public, max-age=3600).
+ *
+ * 503 server_error when the signing keys cannot be loaded: the ID Token and
+ * UserInfo signing algs it advertises come from them.
+ *
+ * @spec OIDC Discovery 1.0 §3 / §4
+ */
 async function providerMetadata(): Promise<Response> {
   // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);

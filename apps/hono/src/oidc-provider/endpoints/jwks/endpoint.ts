@@ -1,6 +1,9 @@
 import { defineEndpoint } from '../step.js';
 
-/** The JWK Set of the provider's public keys (jwks_uri). */
+/**
+ * Publish the public keys the provider signs with (ID Tokens, access tokens,
+ * UserInfo responses) as a JWK Set, which clients verify signatures against.
+ */
 export const endpoint = defineEndpoint({
   id: 'jwks',
   order: 20,

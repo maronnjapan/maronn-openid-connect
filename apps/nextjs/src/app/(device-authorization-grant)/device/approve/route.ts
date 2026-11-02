@@ -26,6 +26,21 @@ import { completedScreen, invalidUserCodeScreen, verificationFailureScreen } fro
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Record the End-User's approve or deny decision for the device whose
+ * user_code is submitted (POST /device/approve) and render the "go back to
+ * your device" page, clearing the binding cookie.
+ *
+ * Approving marks the pending record approved with the session's subject and
+ * auth_time, the scopes resolveGrantableScopes() allows and a new grant id,
+ * and records the consent and the grant, so /token can issue the tokens on
+ * the device's next poll; any other decision denies it. An unknown, expired or
+ * used user_code re-renders the code entry form with 400; the OP's error page
+ * answers 401 without an OP session and 403 for a missing or wrong binding
+ * cookie or csrf_token.
+ *
+ * @spec RFC 8628 §3.3
+ */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
   const submittedUserCode = String(form.get('user_code') ?? '');

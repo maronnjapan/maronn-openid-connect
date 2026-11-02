@@ -35,6 +35,7 @@ export function defineOwnProperty(target: Record<string, unknown>, name: string,
   Object.defineProperty(target, name, { value, enumerable: true, writable: true, configurable: true });
 }
 
+/** description を error_description にした invalid_client_metadata の ClientRegistrationError を作り、投げずに返す。 */
 function invalidMetadata(description: string): ClientRegistrationError {
   return new ClientRegistrationError('invalid_client_metadata', description);
 }
@@ -226,6 +227,20 @@ export function validateJwks(value: unknown): JwkSet {
   return { keys: keys.map((key) => validateJwk(key)) };
 }
 
+/**
+ * JWK Set の鍵 1 つを RSA / EC の署名用公開鍵として検証し、理解するメンバーだけを選び取った新しい JWK を返す。
+ *
+ * 返す鍵の use は常に sig で、alg が無ければ RSA には RS256、EC には曲線に対応する
+ * ES256 / ES384 / ES512 を補う。それ以外のメンバー（x5c など）は落とす。JSON オブジェクトでない、
+ * kty が RSA / EC 以外、秘密鍵パラメータ（d / p / q / dp / dq / qi / oth / k）を持つ、use が sig 以外、
+ * n / e や crv / x / y が文字列でない、曲線が P-256 / P-384 / P-521 以外、alg が鍵種や曲線に合わない、
+ * kid が 128 文字以下の文字列でないか制御文字・見えない文字を含む、のいずれかに当たる値では
+ * invalid_client_metadata の ClientRegistrationError を投げる。
+ *
+ * @spec RFC 7591 §2
+ * @spec RFC 7518 §6.2 / §6.3
+ * @throws {ClientRegistrationError} invalid_client_metadata
+ */
 function validateJwk(value: unknown): Jwk {
   if (!isJsonObject(value) || (value['kty'] !== 'RSA' && value['kty'] !== 'EC')) {
     throw invalidMetadata(JWKS_DESCRIPTION);

@@ -29,6 +29,7 @@ export interface SessionInfo {
 }
 
 export interface SessionResolver {
+  /** リクエストの Cookie などからログイン中の OP セッションを探し、そのセッション情報を返す。セッションが無い・終了しているときは null を返す。 */
   resolve(request: Request): Promise<SessionInfo | null>;
 }
 
@@ -161,7 +162,9 @@ export interface AuthTransaction {
  * KVストアの抽象化。環境に応じて実装を差し替える。
  */
 export interface AuthTransactionStore {
+  /** key のトランザクションを返す。無いとき・有効期限が切れたときは null を返す。 */
   get(key: string): Promise<AuthTransaction | null>;
+  /** トランザクションを key に保存し（既存の値は置き換える）、ttlSeconds 秒後に期限切れにする。 */
   put(key: string, transaction: AuthTransaction, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
 }

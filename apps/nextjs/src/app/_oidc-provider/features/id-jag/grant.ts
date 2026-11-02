@@ -188,6 +188,15 @@ export async function redeemIdJag(
 const idJagJwksCache = new Map<string, { jwks: JwkSet; expiresAt: number }>();
 const ID_JAG_JWKS_CACHE_TTL_MS = 300_000;
 
+/**
+ * Resolve the trusted identity providers of idJagConfig with the keys their
+ * ID-JAGs are verified against: the configured jwks, or the JWKS fetched from
+ * jwksUri and reused for 300 seconds.
+ *
+ * An entry with neither jwks nor jwksUri is left out. A fetch that fails or
+ * answers a non-OK status throws, which the token endpoint answers with 500
+ * server_error.
+ */
 async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIdentityProvider[]> {
   const resolved: IdJagTrustedIdentityProvider[] = [];
   for (const entry of idJagConfig.trustedIdentityProviders) {

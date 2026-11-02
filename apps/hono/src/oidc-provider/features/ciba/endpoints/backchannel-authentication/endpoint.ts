@@ -1,6 +1,14 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXPERIMENTAL — the backchannel authentication endpoint (poll mode). CIBA Core 1.0 §7 */
+/**
+ * Accept a client's CIBA authentication request (poll mode): authenticate the
+ * client, check the requested scopes and answer with the auth_req_id the
+ * client then polls the token endpoint with.
+ *
+ * EXPERIMENTAL: generated with --enable ciba.
+ *
+ * @spec CIBA Core 1.0 §7
+ */
 export const endpoint = defineEndpoint({
   id: 'backchannel-authentication',
   order: 150,

@@ -42,6 +42,11 @@ export function parseEndSessionRequest(params: URLSearchParams): EndSessionReque
   };
 }
 
+/**
+ * パラメータ値が null か空文字なら undefined を、それ以外ならその値をそのまま返す。
+ *
+ * 空白だけの値は trim せず、そのまま返す。
+ */
 function nonEmpty(value: string | null): string | undefined {
   return value === null || value === '' ? undefined : value;
 }

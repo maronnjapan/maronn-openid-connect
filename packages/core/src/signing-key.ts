@@ -23,6 +23,7 @@ export interface SigningKey {
  * every token it signed has expired.
  */
 export interface SigningKeyProvider {
+  /** Return the signing keys, the one that signs new tokens first and the published ones after it. */
   getSigningKeys(): Promise<SigningKey[]>;
 }
 

@@ -163,6 +163,12 @@ describe('buildFunctionCatalog', () => {
       expect(catalog.functions['core:secret.ts#overload']?.summary).toBe('');
     });
 
+    it('should read the JSDoc above an eslint-disable comment that sits right above the declaration', () => {
+      const source = '/** Mount the provider on an app. */\n// eslint-disable-next-line @typescript-eslint/no-explicit-any\nexport function applyOidc(app: any): void {}\n';
+      const cards = buildFunctionCatalog([{ name: 'hono', files: new Map([['oidc-provider/apply.ts', source]]) }]);
+      expect(cards.functions['hono:oidc-provider/apply.ts#applyOidc']?.summary).toBe('Mount the provider on an app.');
+    });
+
     it('should take the specification from @spec tags, or from the references the text names', () => {
       expect(catalog.functions['core:secret.ts#buildHeader']?.spec).toEqual(['RFC 7515 §4.1.1']);
       expect(catalog.functions['core:secret.ts#verifySecretHash']?.spec).toEqual(['OAuth 2.1 §7.4.1', 'RFC 6749 §10.10']);
@@ -314,9 +320,9 @@ describe('readFunctionCatalog (the repository)', () => {
     ]);
   });
 
-  it('should give every exported function of the libraries a summary', () => {
+  it('should give every function of every root a summary, so the map describes each one', () => {
     const undocumented = Object.values(catalog.functions)
-      .filter((card) => card.exported && card.summary === '' && card.package !== 'hono' && card.package !== 'nextjs')
+      .filter((card) => card.summary === '')
       .map((card) => card.id);
     expect(undocumented).toEqual([]);
   });

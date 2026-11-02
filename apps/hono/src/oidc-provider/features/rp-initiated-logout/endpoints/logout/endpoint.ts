@@ -1,6 +1,15 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
-/** EXPERIMENTAL — the end session endpoint. RP-Initiated Logout 1.0 §2 */
+/**
+ * End the End-User's session at a client's request: log out at once when the
+ * id_token_hint names the End-User of the current session, otherwise ask the
+ * End-User to confirm first, then redirect to the post_logout_redirect_uri or
+ * show that they are logged out.
+ *
+ * EXPERIMENTAL: generated with --enable rp-initiated-logout.
+ *
+ * @spec RP-Initiated Logout 1.0 §2
+ */
 export const endpoint = defineEndpoint({
   id: 'logout',
   order: 170,

@@ -75,16 +75,17 @@ export async function POST(request: Request): Promise<Response> {
     String(form.get('password') ?? ''),
   );
   if (!user) {
-    // Per-record throttling only. An attacker holding a device-grant client can
-    // mint unlimited records, so the aggregate password-guess budget is the same
-    // as the one on /login. Subject-scoped throttling is a separate concern.
+    // 失敗の回数をレコードに記録し、上限に達したらレコードを拒否の状態にする。
+    // 回数の制限は、レコードごとにしかかからない。
+    // デバイス認可グラントを使えるクライアントを持つ攻撃者はレコードをいくらでも作れるので、パスワードを試せる合計の回数は `/login` と同じく実質的に制限されない。
+    // ユーザーごとの制限は、別に扱う課題である。
     const failure = await recordDeviceLoginFailure(
       record,
       deviceAuthorizationStore,
       deviceAuthorizationConfig.maxLoginAttempts,
     );
     if (!failure.canRetry) {
-      // The record is now denied: the device gets access_denied on its next poll.
+      // レコードは拒否の状態になったので、デバイスは次のポーリングで `access_denied` を受け取る。
       return errorPage('Too many login attempts', 429);
     }
     return loginScreen({
@@ -101,8 +102,8 @@ export async function POST(request: Request): Promise<Response> {
     authTime: Math.floor(Date.now() / 1000),
   });
 
-  // The new OP session travels with the approval screen; the approval step has
-  // to present the binding cookie again as well.
+  // 承認画面に、新しい OP のセッションの Cookie を付ける。
+  // 承認の送信でも、ブラウザはバインディング Cookie をもう一度提示する必要がある。
   return approvalScreen(
     {
       userCode: record.userCodeDisplay,

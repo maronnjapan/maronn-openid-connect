@@ -88,8 +88,7 @@ function decodeJwtSegment(segment: string): unknown {
  *
  * 1. 構造（JWE（5 セグメント）や、3 セグメントでない壊れた compact 表現は拒否する）、
  *    ヘッダー、ペイロード、`alg` の有無を検査する
- * 2. `requiredSigningAlg` があり、ヘッダーの `alg` と違えば拒否する（`none` も含む。
- *    OIDC Core 1.0 §6.3.2）
+ * 2. `requiredSigningAlg` があり、ヘッダーの `alg` と違えば、`none` も含めて拒否する（OIDC Core 1.0 §6.3.2）
  * 3. `alg: "none"` は `allowUnsigned` が true のときだけ受理し、署名部が空であることを要求する
  * 4. `supportedSigningAlgs` に無い `alg` を拒否する（RFC 8725 §3.2）
  * 5. `loadJwks` で鍵を読む（無ければ署名付き Request Object を拒否する）

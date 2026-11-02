@@ -97,6 +97,7 @@ export function clientJwksUriLoadOptionsOf(config: ProviderConfig, fetch?: typeo
   };
 }
 
+/** The host of a jwks_uri for a log line, or "(an invalid URL)" when it does not parse. */
 function hostOf(uri: string): string {
   try {
     return new URL(uri).host;
@@ -106,11 +107,13 @@ function hostOf(uri: string): string {
 }
 
 /**
- * The check registerClient() of db/ runs on a client before it stores it: a
- * jwksUri must be an absolute http or https URL without a fragment or userinfo
- * (whether the OP may fetch its host is decided when the keys are fetched, by
- * allowInsecureClientJwksUri), and a client with a jwksUri registers no keys —
- * one source of keys per client, as RFC 7591 §2 asks of jwks and jwks_uri.
+ * Throw before registerClient() of db/ stores a client whose jwksUri is not an
+ * absolute http or https URL, or that registers keys beside a jwksUri.
+ *
+ * The URL must have no fragment and no userinfo; whether the OP may fetch its
+ * host is decided when the keys are fetched (allowInsecureClientJwksUri). A
+ * client with a jwksUri registers no keys: one source of keys per client, as
+ * RFC 7591 §2 asks of jwks and jwks_uri.
  */
 export function assertClientJwksUriRegistration(client: ClientRegistration): void {
   if (client.jwksUri === undefined) return;

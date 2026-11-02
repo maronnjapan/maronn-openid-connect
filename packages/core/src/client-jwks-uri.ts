@@ -161,6 +161,13 @@ function authorityOf(uri: string): string {
   return end < 0 ? rest : rest.slice(0, end);
 }
 
+/**
+ * Whether a jwks_uri must not point to a URL hostname: localhost and the names
+ * below it (RFC 6761 §6.3, a trailing dot ignored), and loopback, private or
+ * link-local IPv4 and IPv6 literals. A bracketed host that does not parse as
+ * IPv6 counts as blocked; any other name is let through, since the check sees
+ * the name, not the addresses it resolves to.
+ */
 function isBlockedHost(hostname: string): boolean {
   const host = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
   // RFC 6761 §6.3: localhost and the names below it resolve to the loopback address.
@@ -175,6 +182,11 @@ function isBlockedHost(hostname: string): boolean {
   return octets !== undefined && isBlockedIpv4(octets);
 }
 
+/**
+ * The four octets of a dotted-decimal IPv4 address, or undefined when the
+ * host is not one (fewer or more parts, more than three digits, or an octet
+ * above 255).
+ */
 function parseIpv4Octets(host: string): number[] | undefined {
   if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) {
     return undefined;
@@ -183,6 +195,10 @@ function parseIpv4Octets(host: string): number[] | undefined {
   return octets.every((octet) => octet <= 255) ? octets : undefined;
 }
 
+/**
+ * Whether an IPv4 address (its octets) is in 0.0.0.0/8, 10.0.0.0/8,
+ * 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12 or 192.168.0.0/16.
+ */
 function isBlockedIpv4([a, b]: number[]): boolean {
   return (
     a === 0 || // 0.0.0.0/8 ("this network")
@@ -225,6 +241,11 @@ function parseIpv6Groups(address: string): number[] | undefined {
   return [...hexGroups.map((group) => parseInt(group, 16)), ...tail];
 }
 
+/**
+ * Whether an IPv6 address (its eight groups) is in ::/96 (::, ::1 and the
+ * IPv4-compatible addresses), ::ffff:0:0/96 (IPv4-mapped), fc00::/7 (unique
+ * local) or fe80::/10 (link-local).
+ */
 function isBlockedIpv6(groups: number[]): boolean {
   const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0] = groups;
   const firstFiveZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
@@ -242,6 +263,7 @@ const PRIVATE_JWK_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 /** RFC 7518 §3.3: RS256 / RS384 / RS512 には 2048 ビット以上の鍵を使わなければならない。 */
 const MIN_RSA_MODULUS_BITS = 2048;
 
+/** Whether a parsed JSON value is an object: not null, not an array. */
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -316,6 +338,10 @@ function toSigningJwk(entry: Record<string, unknown>): Jwk | undefined {
   return undefined;
 }
 
+/**
+ * Whether the RSA modulus `n` (base64url) is at least `bits` long; false when
+ * `n` is not base64url.
+ */
 function hasRsaModulusOfAtLeast(n: string, bits: number): boolean {
   try {
     return rsaModulusBitLength(n) >= bits;
@@ -385,7 +411,13 @@ export function resolveClientJwksTtlSeconds(headers: Headers, policy: ClientJwks
   return clamp(Math.max(0, maxAge - age));
 }
 
-/** RFC 9111 §1.2.2: delta-seconds = 1*DIGIT. */
+/**
+ * The number of seconds of a delta-seconds value (one or more digits),
+ * capped at MAX_DELTA_SECONDS; undefined when the value is absent or not all
+ * digits.
+ *
+ * @spec RFC 9111 §1.2.2
+ */
 function parseDeltaSeconds(value: string | undefined): number | undefined {
   if (value === undefined || !/^[0-9]+$/.test(value)) {
     return undefined;
@@ -394,9 +426,14 @@ function parseDeltaSeconds(value: string | undefined): number | undefined {
 }
 
 /**
- * RFC 9111 §5.2: Cache-Control = #cache-directive,
- * cache-directive = token [ "=" ( token / quoted-string ) ].
- * The commas inside a quoted-string do not separate directives.
+ * The directives of a Cache-Control header, in order: each name in lower case,
+ * with its value unquoted when it has one; empty when there is no header.
+ *
+ * Cache-Control = #cache-directive, cache-directive = token [ "=" ( token /
+ * quoted-string ) ]. The commas inside a quoted-string do not separate
+ * directives.
+ *
+ * @spec RFC 9111 §5.2
  */
 function parseCacheControl(value: string | null): Array<{ name: string; value?: string }> {
   if (value === null) {
@@ -535,12 +572,18 @@ export async function fetchClientJwkSet(
   };
 }
 
+/**
+ * The name of a thrown value (`TimeoutError`, `TypeError`...), or `Error` when
+ * it has none, so an error message names the kind of failure without its
+ * message.
+ */
 function errorNameOf(error: unknown): string {
   return error instanceof Error || (typeof error === 'object' && error !== null && 'name' in error)
     ? String((error as { name: unknown }).name)
     : 'Error';
 }
 
+/** Cancel the body of a response the fetch does not read; a failure to cancel it is ignored. */
 async function discardBody(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
@@ -703,6 +746,7 @@ export function createClientJwksUriCache(): ClientJwksUriCache {
   };
 }
 
+/** A new JWK Set with the same keys, so a caller that changes its `keys` array leaves the cache as it is. */
 function copyOf(jwks: JwkSet): JwkSet {
   return { keys: [...jwks.keys] };
 }

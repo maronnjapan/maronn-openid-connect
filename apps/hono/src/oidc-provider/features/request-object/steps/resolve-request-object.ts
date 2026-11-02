@@ -43,6 +43,9 @@ export async function resolveRequestObject(
 ): Promise<ResolvedRequestObjectParams> {
   const config = c.get('config');
   const clientKeyResolver: ClientKeyResolver = c.get('clientKeyResolver');
+  // resolveRequestObjectParams calls loadJwks only after the JOSE header passed
+  // its checks, so the keys (and a jwks_uri) are read only for a Request Object
+  // it would verify.
   return resolveRequestObjectParams(params, {
     loadJwks: ({ kid }) => clientKeyResolver.findClientKeys(client.clientId, 'request_object', { kid }),
     supportedSigningAlgs: [...config.requestObjectSigningAlgValuesSupported],

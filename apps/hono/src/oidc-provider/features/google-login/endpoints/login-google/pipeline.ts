@@ -37,22 +37,22 @@ export async function completeGoogleLogin(c: any): Promise<GoogleLoginOutcome> {
     return { kind: 'not_configured' };
   }
 
-  // [verify-google-callback] Verify the posted Google ID token and nonce
+  // [verify-google-callback] Google の ID トークンと nonce を検証する
   const verified = await verifyGoogleLoginCallback(c, config.googleLogin);
   if ('kind' in verified) return verified;
   const { transactionId, subject } = verified;
 
-  // [load-transaction] The nonce named the transaction; load it from the store.
+  // [load-transaction] nonce を発行したトランザクションを読み込む
   const loaded = await loadTransactionById(c, transactionId);
   if ('kind' in loaded) return loaded;
   const { transaction } = loaded;
 
-  // [discard-session-for-fresh-login] prompt=login: discard the existing session — OIDC Core 1.0 §3.1.2.1
+  // [discard-session-for-fresh-login] prompt=login: 既存のセッションを破棄する — OIDC Core 1.0 §3.1.2.1
   await discardSessionForFreshLogin(c, transactionId, transaction);
 
-  // [establish-session] Establish the OP browser session — OIDC Core 1.0 §3.1.2.3
+  // [establish-session] ブラウザに OP のセッションを確立する — OIDC Core 1.0 §3.1.2.3
   const { sessionId, authTime } = await establishBrowserSession(c, subject);
 
-  // [hand-off-to-consent] Store the authenticated subject for the consent step
+  // [hand-off-to-consent] 認証したサブジェクトを同意のために保存する
   return handOffToConsent(c, transactionId, subject, sessionId, authTime);
 }

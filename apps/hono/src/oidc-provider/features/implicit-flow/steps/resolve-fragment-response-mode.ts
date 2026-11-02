@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'implicit-flow',
   kind: 'resolve',
-  label: 'Answer the Implicit Flow in the fragment',
+  label: 'インプリシットフローをフラグメントで返す',
   spec: 'OAuth 2.0 Multiple Response Type Encoding Practices §2.1 / §3 / §5',
   function: 'resolveFragmentResponseContext',
   consumes: ['params', 'effectiveParams', 'issuer'],

@@ -14,7 +14,7 @@ export const meta = step({
   endpoint: 'ciba',
   feature: 'ciba',
   kind: 'validate',
-  label: 'Sign the End-User in on this browser',
+  label: 'このブラウザでエンドユーザーをログインさせる',
   function: 'submitCibaLogin',
   consumes: ['loginTransaction'],
   produces: ['session'],
@@ -28,7 +28,7 @@ export const meta = step({
  * バインディング Cookie は、このブラウザがログインフォームを受け取ったブラウザであることを示す。
  * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
  *
- * ログイントランザクションが見つからない、期限切れ、バインディング Cookie か `csrf_token` が一致しない、のどれかに当たると、`error`（403）の結果を返す。
+ * ログイントランザクションが見つからない、期限切れ、別のブラウザに渡したもの（バインディング Cookie が一致しない）、`csrf_token` が一致しない、のどれかに当たると、`error`（403）の結果を返す。
  * 認証情報が誤っていれば失敗の回数を記録し、残りの回数を持つ `invalid_credentials` の結果を返す。
  * 上限に達するとトランザクションを削除し、`locked_out`（429）の結果を返す。
  * 成功するとトランザクションを削除して新しい ID の OP のセッションを保存し、保留中のリクエストと、セッションの Cookie とバインディング Cookie を消す Cookie を持つ `pending_requests` の結果を返す。

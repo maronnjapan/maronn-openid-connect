@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'respond',
-  label: 'Respond with the device authorization response (no-store)',
+  label: 'デバイス認可レスポンスで応答する（no-store）',
   spec: 'RFC 8628 §3.2',
   function: 'respondDeviceAuthorization',
   consumes: ['record'],

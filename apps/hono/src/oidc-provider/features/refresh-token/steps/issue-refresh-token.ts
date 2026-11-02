@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'refresh-token',
   kind: 'issue',
-  label: 'Mint and store the refresh token',
+  label: 'リフレッシュトークンを発行して保存する',
   spec: 'OAuth 2.1 §4.3.1 / §6.1',
   function: 'issueRefreshToken',
   consumes: ['refreshTokenDecision', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'audience', 'acr', 'amr'],

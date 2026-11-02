@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'device',
   feature: 'device-authorization-grant',
   kind: 'resolve',
-  label: 'Match the user_code and bind this browser',
+  label: 'user_code を照合し、このブラウザを結び付ける',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceUserCode',
   consumes: [],

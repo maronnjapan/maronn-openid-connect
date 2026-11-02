@@ -5,7 +5,7 @@ export const meta = step({
   id: 'validate-decision',
   endpoint: 'consent',
   kind: 'validate',
-  label: 'Require an explicit approve decision',
+  label: '明示的な承認を求める',
   spec: 'OIDC Core 1.0 §3.1.2.4',
   function: 'validateConsentDecision',
   consumes: ['action'],

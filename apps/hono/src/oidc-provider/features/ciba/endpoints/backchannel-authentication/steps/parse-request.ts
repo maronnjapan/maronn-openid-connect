@@ -7,7 +7,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'parse',
-  label: 'Parse the backchannel authentication request',
+  label: 'バックチャネル認証リクエストを解析する',
   spec: 'CIBA Core 1.0 §7.1',
   function: 'parseBackchannelAuthenticationRequest',
   consumes: [],

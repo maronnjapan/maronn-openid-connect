@@ -9,7 +9,7 @@ export const meta = step({
   id: 'resolve-redirect-uri',
   endpoint: 'authorize',
   kind: 'resolve',
-  label: 'Resolve redirect_uri (errors become redirectable)',
+  label: 'redirect_uri を確定し、エラーの返し先を決める',
   spec: 'OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1',
   function: 'resolveRedirectTarget',
   consumes: ['params', 'effectiveParams', 'client'],

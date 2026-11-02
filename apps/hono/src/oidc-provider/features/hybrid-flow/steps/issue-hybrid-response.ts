@@ -23,7 +23,7 @@ export const meta = step({
   endpoint: 'consent',
   feature: 'hybrid-flow',
   kind: 'dispatch',
-  label: 'Hybrid Flow: issue the code together with the ID Token and/or the access token',
+  label: 'ハイブリッドフロー: コードとトークンを発行する',
   spec: 'OIDC Core 1.0 §3.3.2.5',
   function: 'issueHybridConsentResponse',
   consumes: ['transactionId', 'transaction', 'session', 'issuer'],

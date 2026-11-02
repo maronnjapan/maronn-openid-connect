@@ -27,7 +27,7 @@ export interface AuthSessionInfo {
   /**
    * このログインで確立（または再利用）したブラウザセッションの識別子。
    * consent 画面を経て発行する認可コードへ引き継ぎ、online refresh token を
-   * そのセッションへ束縛するために使う。
+   * そのセッションに結び付けるために使う。
    */
   sessionId?: string;
 }

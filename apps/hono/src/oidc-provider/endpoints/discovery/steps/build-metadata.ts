@@ -10,7 +10,7 @@ export const meta = step({
   id: 'build-metadata',
   endpoint: 'discovery',
   kind: 'transform',
-  label: 'Build the provider metadata',
+  label: 'OP のメタデータを組み立てる',
   spec: 'OIDC Discovery 1.0 §3 / RFC 8414',
   function: 'buildDiscoveryMetadata',
   consumes: ['idTokenSigningKeys', 'userinfoSigningAlgValues'],

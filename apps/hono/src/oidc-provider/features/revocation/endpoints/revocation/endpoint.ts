@@ -11,11 +11,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'revocation',
   order: 100,
-  label: 'Token revocation endpoint',
+  label: 'トークン失効エンドポイント',
   path: '/revoke',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'token-management', label: 'Token management' },
+  group: { id: 'token-management', label: 'トークンの管理' },
   spec: 'RFC 7009 §2',
   feature: 'revocation',
   rearrangeable: true,

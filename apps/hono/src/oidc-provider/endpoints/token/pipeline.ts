@@ -39,67 +39,67 @@ export const tokenApp = new Hono<{ Variables: Record<string, any> }>();
 
 tokenApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the token request — RFC 6749 §4.1.3 / §3.2
+    // [parse-request] トークンリクエストを解析する — RFC 6749 §4.1.3 / §3.2
     const { params, authorization } = await parseTokenRequest(c);
 
-    // [authenticate-client] Authenticate the client — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
+    // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     const { tokenClient, authenticatedClientId } = await authenticateTokenClient(c, params, authorization);
 
-    // [dispatch-id-jag-issuance] (feature: id-jag) Issue an ID-JAG (Cross-App Access) — ID-JAG draft §4.3
+    // [dispatch-id-jag-issuance] (feature: id-jag) ID-JAG を発行する（Cross-App Access） — ID-JAG draft §4.3
     const idJagIssuance = await issueIdJag(c, params, tokenClient);
     if (idJagIssuance) return idJagIssuance;
 
-    // [dispatch-id-jag-redemption] (feature: id-jag) Redeem an ID-JAG on the jwt-bearer grant — ID-JAG draft §4.4 / RFC 7523 §2.1
+    // [dispatch-id-jag-redemption] (feature: id-jag) jwt-bearer グラントで ID-JAG を引き換える — ID-JAG draft §4.4 / RFC 7523 §2.1
     const idJagRedemption = await redeemIdJag(c, params, tokenClient);
     if (idJagRedemption) return idJagRedemption;
 
-    // [dispatch-token-exchange] (feature: token-exchange) Token Exchange — RFC 8693 §2.1
+    // [dispatch-token-exchange] (feature: token-exchange) トークン交換 — RFC 8693 §2.1
     const exchanged = await exchangeToken(c, params, tokenClient);
     if (exchanged) return exchanged;
 
-    // [dispatch-device-code] (feature: device-authorization-grant) Redeem a device_code — RFC 8628 §3.4 / §3.5
+    // [dispatch-device-code] (feature: device-authorization-grant) device_code を引き換える — RFC 8628 §3.4 / §3.5
     const deviceGrantResponse = await redeemDeviceCode(c, params, tokenClient, authenticatedClientId);
     if (deviceGrantResponse) return deviceGrantResponse;
 
-    // [dispatch-ciba] (feature: ciba) Redeem an auth_req_id (CIBA) — CIBA Core 1.0 §10.1 / §11
+    // [dispatch-ciba] (feature: ciba) auth_req_id を引き換える（CIBA） — CIBA Core 1.0 §10.1 / §11
     const cibaGrantResponse = await redeemCibaRequest(c, params, tokenClient, authenticatedClientId);
     if (cibaGrantResponse) return cibaGrantResponse;
 
-    // [validate-grant-type] Validate grant_type — RFC 6749 §5.2
+    // [validate-grant-type] grant_type を検証する — RFC 6749 §5.2
     const grantType = validateTokenGrantType(params, tokenClient);
 
-    // [validate-refresh-token-grant] (feature: refresh-token) Validate the refresh_token grant — OAuth 2.1 §4.3.1 / RFC 6749 §6
+    // [validate-refresh-token-grant] (feature: refresh-token) refresh_token グラントを検証する — OAuth 2.1 §4.3.1 / RFC 6749 §6
     const refreshTokenRequest = await validateRefreshTokenGrant(c, params, authenticatedClientId, grantType);
 
-    // [validate-authorization-code-grant] Validate the authorization_code grant — OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2
+    // [validate-authorization-code-grant] authorization_code グラントを検証する — OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2
     const validatedRequest =
       refreshTokenRequest ?? (await validateAuthorizationCodeGrant(c, params, authenticatedClientId));
 
-    // [select-signing-keys] Select the signing keys — OIDC Dynamic Client Registration 1.0 §2 (id_token_signed_response_alg)
+    // [select-signing-keys] 署名鍵を選ぶ — OIDC Dynamic Client Registration 1.0 §2 (id_token_signed_response_alg)
     const { signingKey, idTokenSigningKey } = await selectTokenSigningKeys(c, authenticatedClientId);
 
-    // [resolve-subject] Resolve the subject, auth_time and nonce — OIDC Core 1.0 §12.2
+    // [resolve-subject] サブジェクト、auth_time、nonce を取り出す — OIDC Core 1.0 §12.2
     const { subject, authTime, nonce } = await resolveTokenSubject(c, validatedRequest);
 
-    // [decide-refresh-token-issuance] (feature: refresh-token) Decide whether a refresh token is issued — OIDC Core 1.0 §11 / RFC 9700 §4.14
+    // [decide-refresh-token-issuance] (feature: refresh-token) リフレッシュトークンを発行するか決める — OIDC Core 1.0 §11 / RFC 9700 §4.14
     const refreshTokenDecision = decideRefreshTokenIssuance(c, tokenClient, validatedRequest);
 
-    // [resolve-acr-amr] Resolve the acr / amr the tokens carry — OIDC Core 1.0 §3.1.2.1 / §12.1 / RFC 9068 §2.2.1
+    // [resolve-acr-amr] トークンに含める acr と amr を決める — OIDC Core 1.0 §3.1.2.1 / §12.1 / RFC 9068 §2.2.1
     const { acr, amr } = await resolveTokenAcrAmr(c, { subject, validatedRequest });
 
-    // [issue-access-token] Issue the access token — RFC 9068 §2.2 / §2.2.1 / §3
+    // [issue-access-token] アクセストークンを発行する — RFC 9068 §2.2 / §2.2.1 / §3
     // One timestamp for the whole response so the issued tokens and the stored
     // token metadata agree on iat / exp.
     const issuedAt = Math.floor(Date.now() / 1000);
     const { accessToken, accessTokenPayload, audience } = await issueAccessToken(c, { signingKey, subject, validatedRequest, issuedAt, acr });
 
-    // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §12.1
+    // [issue-id-token] ID トークンを発行する — OIDC Core 1.0 §3.1.3.6 / §12.1
     const idToken = await issueIdToken(c, { idTokenSigningKey, accessToken, subject, authTime, nonce, validatedRequest, issuedAt, acr, amr });
 
-    // [persist-access-token] Store the access token record — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
+    // [persist-access-token] アクセストークンのレコードを保存する — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
     await persistAccessToken(c, { accessToken, accessTokenPayload, subject, validatedRequest, issuedAt, audience, acr });
 
-    // [issue-refresh-token] (feature: refresh-token) Mint and store the refresh token — OAuth 2.1 §4.3.1 / §6.1
+    // [issue-refresh-token] (feature: refresh-token) リフレッシュトークンを発行して保存する — OAuth 2.1 §4.3.1 / §6.1
     const refreshToken = await issueRefreshToken(c, {
       decision: refreshTokenDecision,
       subject,
@@ -112,13 +112,13 @@ tokenApp.post('/', async (c) => {
       amr,
     });
 
-    // [revoke-rotated-refresh-token] (feature: refresh-token) Revoke the presented refresh token (rotation) — OAuth 2.1 §4.3.1
+    // [revoke-rotated-refresh-token] (feature: refresh-token) 古いリフレッシュトークンを失効させる — OAuth 2.1 §4.3.1
     await revokeRotatedRefreshToken(c, params, validatedRequest);
 
-    // [build-token-response] Build the token response body — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
+    // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
     const tokenResponse = buildTokenResponse(c, { accessToken, idToken, refreshToken, validatedRequest });
 
-    // [respond] Respond (no-store) — RFC 6749 §5.1
+    // [respond] 応答する（no-store） — RFC 6749 §5.1
     return respondToken(c, tokenResponse);
   } catch (error) {
     return respondTokenError(c, error);

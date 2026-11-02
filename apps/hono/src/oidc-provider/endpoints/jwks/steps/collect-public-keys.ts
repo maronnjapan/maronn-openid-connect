@@ -5,7 +5,7 @@ export const meta = step({
   id: 'collect-public-keys',
   endpoint: 'jwks',
   kind: 'resolve',
-  label: 'Collect every registered signing key',
+  label: '登録済みの署名鍵をすべて集める',
   function: 'collectPublishedKeys',
   consumes: [],
   produces: ['keys'],

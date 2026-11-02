@@ -194,7 +194,7 @@ export function idTokenHintJwks(keys: ProviderSigningKeys): Promise<JwkSet> {
  *
  * ID トークンの鍵の集合のうち、アルゴリズムが `alg`（クライアントが登録した `id_token_signed_response_alg`）と同じ鍵を返す。
  * 同じアルゴリズムの鍵が複数あるとき（ローテーションの途中など）は、集合で前にある鍵を返す。
- * `alg` が `undefined` なら RS256 の鍵を返す（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * `alg` が `undefined` なら RS256 の鍵を返す（OIDC Dynamic Client Registration 1.0 §2）。
  * 集合の最初の鍵をそのまま使わないのは、ES256 を登録したクライアントに RS256 の ID トークンを渡し、`at_hash` を誤ったアルゴリズムで計算してしまうからである。
  * そのアルゴリズムの鍵が登録されていなければ `undefined` を返す。
  * これはサーバーの設定の誤りである。

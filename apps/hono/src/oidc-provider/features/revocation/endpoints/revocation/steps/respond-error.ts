@@ -7,7 +7,7 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 7009 §2.2.1',
   function: 'respondRevocationError',
   consumes: [],

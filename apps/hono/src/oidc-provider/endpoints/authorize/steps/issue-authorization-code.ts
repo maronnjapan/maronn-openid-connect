@@ -13,7 +13,7 @@ export const meta = step({
   id: 'issue-authorization-code',
   endpoint: 'authorize',
   kind: 'issue',
-  label: 'Issue the authorization code and build the authorization response',
+  label: '認可コードを発行し、認可レスポンスを組み立てる',
   spec: 'OIDC Core 1.0 §3.1.2.5 / RFC 9207 §2',
   function: 'issueAuthorizationCodeResponse',
   calls: ['consentResolver.recordGrant'],

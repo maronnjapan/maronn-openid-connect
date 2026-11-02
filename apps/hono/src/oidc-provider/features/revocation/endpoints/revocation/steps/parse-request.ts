@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'parse',
-  label: 'Parse the revocation request',
+  label: '失効リクエストを解析する',
   spec: 'RFC 7009 §2.1',
   function: 'parseRevocationRequest',
   consumes: [],

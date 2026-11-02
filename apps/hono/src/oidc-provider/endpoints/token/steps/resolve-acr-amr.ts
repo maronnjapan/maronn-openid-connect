@@ -11,7 +11,7 @@ export const meta = step({
   id: 'resolve-acr-amr',
   endpoint: 'token',
   kind: 'resolve',
-  label: 'Resolve the acr / amr the tokens carry',
+  label: 'トークンに含める acr と amr を決める',
   spec: 'OIDC Core 1.0 §3.1.2.1 / §12.1 / RFC 9068 §2.2.1',
   function: 'resolveTokenAcrAmr',
   consumes: ['subject', 'validatedRequest'],

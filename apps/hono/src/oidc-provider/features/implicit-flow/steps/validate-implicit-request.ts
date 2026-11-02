@@ -15,7 +15,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'implicit-flow',
   kind: 'validate',
-  label: 'Validate the Implicit Flow request (response_mode, nonce, redirect_uri)',
+  label: 'インプリシットフローのリクエストを検証する',
   spec: 'OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5',
   function: 'validateImplicitRequest',
   consumes: ['validatedRequest', 'params', 'effectiveParams', 'client', 'responseMode'],

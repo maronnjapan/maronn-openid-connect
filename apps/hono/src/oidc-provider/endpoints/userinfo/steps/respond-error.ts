@@ -7,7 +7,7 @@ export const meta = step({
   id: 'respond-error',
   endpoint: 'userinfo',
   kind: 'respond',
-  label: 'Respond with the Bearer challenge',
+  label: 'Bearer のチャレンジで応答する',
   spec: 'RFC 6750 §3',
   function: 'respondUserInfoError',
   consumes: [],

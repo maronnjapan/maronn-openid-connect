@@ -36,7 +36,7 @@ export interface SigningKeyProvider {
  * `requestedAlg` に合う署名鍵のうち、先頭の鍵を返す。
  *
  * `requestedAlg` には、クライアントの `id_token_signed_response_alg` など、`*_signed_response_alg` のメタデータの値を渡す。
- * `undefined` なら、OpenID Connect の既定値の `RS256` を使う（OIDC Registration 1.0 §2）。
+ * `undefined` なら、OpenID Connect の既定値の `RS256` を使う（OIDC Dynamic Client Registration 1.0 §2）。
  * 鍵の `alg` は秘密鍵のアルゴリズムから求め、求められない鍵（アルゴリズムの情報を持たないスタブの鍵など）は飛ばす。
  *
  * 同じ `alg` の鍵が複数あるとき（ローテーションの途中など）は、配列の先頭に近い鍵を選ぶ。
@@ -45,7 +45,7 @@ export interface SigningKeyProvider {
  * 一致する鍵がなければ `Error` を投げ、呼び出し側はこれをサーバーの設定の誤りとして扱う。
  * 署名できない `alg` を公開したまま進めると、クライアントが検証できない ID トークンを発行することになるためである。
  *
- * @spec OIDC Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @throws {Error} `keys` が空のとき、または `alg` が一致する鍵がないとき
  */
 export function selectSigningKeyByAlg(

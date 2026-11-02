@@ -7,7 +7,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'respond',
-  label: 'Respond with the registration error',
+  label: '登録エラーで応答する',
   spec: 'RFC 7591 §3.2.2',
   function: 'respondRegistrationError',
   consumes: [],

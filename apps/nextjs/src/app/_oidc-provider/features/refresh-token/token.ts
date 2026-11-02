@@ -98,7 +98,7 @@ export function decideRefreshTokenIssuance(
   validatedRequest: ValidatedTokenRequest,
 ): RefreshTokenDecision {
   // クライアントが `grant_types` に `refresh_token` を登録しているかを確かめ、登録していなければリフレッシュトークンを発行しない。
-  // `grant_types` の既定値は `["authorization_code"]` である（RFC 7591 §2、OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // `grant_types` の既定値は `["authorization_code"]` である（RFC 7591 §2、OIDC Dynamic Client Registration 1.0 §2）。
   // 登録していないクライアントにリフレッシュトークンを渡しても、`grant_type=refresh_token` で使った時点で `validateClientGrantType()` が `unauthorized_client` で拒否する。
   // 一度も使えない長期の認証情報をクライアントに保存させるだけになるので、発行しない（RFC 9700 §4.14）。
   const clientAllowsRefreshGrant = clientAllowsRefreshTokenGrant(tokenClient);

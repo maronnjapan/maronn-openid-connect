@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'parse',
-  label: 'Parse the introspection request',
+  label: 'イントロスペクションリクエストを解析する',
   spec: 'RFC 7662 §2.1',
   function: 'parseIntrospectionRequest',
   consumes: [],

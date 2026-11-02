@@ -113,11 +113,11 @@ export function OPTIONS(request: Request): Response {
  * @spec OIDC Core 1.0 §3.1.3
  */
 async function token(request: Request): Promise<Response> {
-  // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
+  // [load-signing-keys] 署名鍵を読み込む — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);
   if (!keys) return signingKeysUnavailable();
 
-  // [parse-request] Parse the token request — RFC 6749 §4.1.3 / §3.2
+  // [parse-request] トークンリクエストを解析する — RFC 6749 §4.1.3 / §3.2
   // ボディが `application/x-www-form-urlencoded` でなければ（`multipart/form-data` や `application/json` など）、解析する前に `invalid_request` で拒否する（RFC 6749 §4.1.3、OIDC Core 1.0 §3.1.3.1）。
   // 解析する前に拒否するので、フォームでないボディがトークンのパラメータとして使われることはない。
   if (!isFormUrlEncoded(request)) {
@@ -135,7 +135,7 @@ async function token(request: Request): Promise<Response> {
   const params = rawParams;
 
   try {
-    // [authenticate-client] Authenticate the client — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
+    // [authenticate-client] クライアントを認証する — OAuth 2.1 §2.3 / OIDC Core 1.0 §9
     // クライアントを認証する（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
     // 対応する認証方式は `client_secret_basic` と `client_secret_post` で、`none` で登録したパブリッククライアントは `client_id` だけで識別する。
     // 以下の処理はそれぞれ core の独立した関数なので、`verifyClientSecret()` を独自の検証（`private_key_jwt` など）に差し替えても、ほかの処理は変えずに済む。
@@ -161,27 +161,27 @@ async function token(request: Request): Promise<Response> {
 
     const authenticatedClientId = presentedCredentials.clientId;
 
-    // [dispatch-id-jag-issuance] (feature: id-jag) Issue an ID-JAG (Cross-App Access) — ID-JAG draft §4.3
+    // [dispatch-id-jag-issuance] (feature: id-jag) ID-JAG を発行する（Cross-App Access） — ID-JAG draft §4.3
     const idJagIssuance = await dispatchIdJagIssuance(params, tokenClient, keys);
     if (idJagIssuance) return idJagIssuance;
 
-    // [dispatch-id-jag-redemption] (feature: id-jag) Redeem an ID-JAG on the jwt-bearer grant — ID-JAG draft §4.4 / RFC 7523 §2.1
+    // [dispatch-id-jag-redemption] (feature: id-jag) jwt-bearer グラントで ID-JAG を引き換える — ID-JAG draft §4.4 / RFC 7523 §2.1
     const idJagRedemption = await dispatchIdJagRedemption(params, tokenClient, keys);
     if (idJagRedemption) return idJagRedemption;
 
-    // [dispatch-token-exchange] (feature: token-exchange) Token Exchange — RFC 8693 §2.1
+    // [dispatch-token-exchange] (feature: token-exchange) トークン交換 — RFC 8693 §2.1
     const exchanged = await dispatchTokenExchange(params, tokenClient, keys);
     if (exchanged) return exchanged;
 
-    // [dispatch-device-code] (feature: device-authorization-grant) Redeem a device_code — RFC 8628 §3.4 / §3.5
+    // [dispatch-device-code] (feature: device-authorization-grant) device_code を引き換える — RFC 8628 §3.4 / §3.5
     const deviceGrantResponse = await dispatchDeviceCode(params, tokenClient, keys);
     if (deviceGrantResponse) return deviceGrantResponse;
 
-    // [dispatch-ciba] (feature: ciba) Redeem an auth_req_id (CIBA) — CIBA Core 1.0 §10.1 / §11
+    // [dispatch-ciba] (feature: ciba) auth_req_id を引き換える（CIBA） — CIBA Core 1.0 §10.1 / §11
     const cibaGrantResponse = await dispatchCiba(params, tokenClient, keys);
     if (cibaGrantResponse) return cibaGrantResponse;
 
-    // [validate-grant-type] Validate grant_type — RFC 6749 §5.2
+    // [validate-grant-type] grant_type を検証する — RFC 6749 §5.2
     // `grant_type` がこの OP の扱う値かどうかを確かめ、扱わない値なら `unsupported_grant_type` にする（RFC 6749 §5.2）。
     // `authorization_code` は常に扱い、`refresh_token` は `refresh-token` 機能がトークンエンドポイントに加えたとき（その機能の `feature.ts` の `token.grants`）だけ扱う。
     // 機能が自分で応答するグラントは、このブロックより前で処理を終えている。
@@ -192,15 +192,15 @@ async function token(request: Request): Promise<Response> {
     // クライアントにこの `grant_type` が許可されているかを確かめ、許可されていなければ `unauthorized_client` にする（RFC 6749 §5.2）。
     validateClientGrantType(tokenClient, grantType);
 
-    // [validate-refresh-token-grant] (feature: refresh-token) Validate the refresh_token grant — OAuth 2.1 §4.3.1 / RFC 6749 §6
+    // [validate-refresh-token-grant] (feature: refresh-token) refresh_token グラントを検証する — OAuth 2.1 §4.3.1 / RFC 6749 §6
     const refreshTokenRequest = await validateRefreshTokenGrant(params, authenticatedClientId, grantType);
 
-    // [validate-authorization-code-grant] Validate the authorization_code grant — OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2
+    // [validate-authorization-code-grant] authorization_code グラントを検証する — OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2
     const validatedRequest =
       refreshTokenRequest ?? (await validateAuthorizationCodeGrant(params, authenticatedClientId));
 
-    // [select-signing-keys] Select the signing keys — OIDC Dynamic Client Registration 1.0 §2 (id_token_signed_response_alg)
-    // ID トークンの署名鍵として、`alg` がクライアントの `id_token_signed_response_alg` と一致する、登録された ID トークン用の鍵を選ぶ（登録がなければ RS256。OpenID Connect Dynamic Client Registration 1.0 §2）。
+    // [select-signing-keys] 署名鍵を選ぶ — OIDC Dynamic Client Registration 1.0 §2 (id_token_signed_response_alg)
+    // ID トークンの署名鍵として、`alg` がクライアントの `id_token_signed_response_alg` と一致する、登録された ID トークン用の鍵を選ぶ（登録がなければ RS256。OIDC Dynamic Client Registration 1.0 §2）。
     // その `alg` の鍵がなければ、サーバーの設定の誤りとして 500 の `server_error` で応答する。
     const idTokenAlg = (tokenClient as RegisteredClient).idTokenSignedResponseAlg;
     const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);
@@ -212,7 +212,7 @@ async function token(request: Request): Promise<Response> {
       );
     }
 
-    // [resolve-subject] Resolve the subject, auth_time and nonce — OIDC Core 1.0 §12.2
+    // [resolve-subject] サブジェクト、auth_time、nonce を取り出す — OIDC Core 1.0 §12.2
     let subject: string;
     let authTime: number | undefined;
     let nonce: string | undefined;
@@ -255,10 +255,10 @@ async function token(request: Request): Promise<Response> {
       issuer: config.issuer,
     });
 
-    // [decide-refresh-token-issuance] (feature: refresh-token) Decide whether a refresh token is issued — OIDC Core 1.0 §11 / RFC 9700 §4.14
+    // [decide-refresh-token-issuance] (feature: refresh-token) リフレッシュトークンを発行するか決める — OIDC Core 1.0 §11 / RFC 9700 §4.14
     const refreshTokenDecision = decideRefreshTokenIssuance(tokenClient, validatedRequest);
 
-    // [resolve-acr-amr] Resolve the acr / amr the tokens carry — OIDC Core 1.0 §3.1.2.1 / §12.1 / RFC 9068 §2.2.1
+    // [resolve-acr-amr] トークンに含める acr と amr を決める — OIDC Core 1.0 §3.1.2.1 / §12.1 / RFC 9068 §2.2.1
     // トークンに入れる `acr` と `amr` を決める。
     // ID トークンには両方を、アクセストークンには `acr` を入れ、エンドユーザーがどう認証されたかをリソースサーバーが判断できるようにする（RFC 9068 §2.2.1）。
     // - `authorization_code`: `acrResolver`（`provider.ts`）に問い合わせる。
@@ -279,7 +279,7 @@ async function token(request: Request): Promise<Response> {
       claims: validatedRequest.grantType === 'authorization_code' ? validatedRequest.claims : undefined,
     });
 
-    // [issue-access-token] Issue the access token — RFC 9068 §2.2 / §2.2.1 / §3
+    // [issue-access-token] アクセストークンを発行する — RFC 9068 §2.2 / §2.2.1 / §3
     // 発行時刻をレスポンス全体で一つにし、発行したトークンと保存するトークンの情報で `iat` と `exp` を一致させる。
     const issuedAt = Math.floor(Date.now() / 1000);
 
@@ -303,7 +303,7 @@ async function token(request: Request): Promise<Response> {
       keyId: keys.general[0].keyId,
     });
 
-    // [issue-id-token] Issue the ID Token — OIDC Core 1.0 §3.1.3.6 / §12.1
+    // [issue-id-token] ID トークンを発行する — OIDC Core 1.0 §3.1.3.6 / §12.1
     // ID トークンは、スコープに `openid` があるときだけ発行する。
     // `refresh_token` グラントでも ID トークンを返してよく（MAY）、返すときは最初の認証と同じ `auth_time`、`acr`、`amr` で発行し直す（OIDC Core 1.0 §12、§12.1）。
     // リフレッシュでは `nonce` が `undefined` になる。
@@ -337,7 +337,7 @@ async function token(request: Request): Promise<Response> {
       });
     }
 
-    // [persist-access-token] Store the access token record — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
+    // [persist-access-token] アクセストークンのレコードを保存する — RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2
     // アクセストークンのレコードを、UserInfo、イントロスペクション、失効の各エンドポイントのためにストアに保存する。
     // `iat`、`nbf`、`audience`、`issuer`、`acr` は、イントロスペクションのレスポンスで返せるように保存する。
     // `grantId` はこのトークンを元の認可のグラントに結び付け、認可コードが再利用されたときに、同じグラントのほかのトークンと一緒に失効させられるようにする（OAuth 2.1 §4.1.2）。
@@ -364,7 +364,7 @@ async function token(request: Request): Promise<Response> {
       acr,
     });
 
-    // [issue-refresh-token] (feature: refresh-token) Mint and store the refresh token — OAuth 2.1 §4.3.1 / §6.1
+    // [issue-refresh-token] (feature: refresh-token) リフレッシュトークンを発行して保存する — OAuth 2.1 §4.3.1 / §6.1
     const refreshToken = await issueRefreshToken({
       decision: refreshTokenDecision,
       subject,
@@ -377,10 +377,10 @@ async function token(request: Request): Promise<Response> {
       amr,
     });
 
-    // [revoke-rotated-refresh-token] (feature: refresh-token) Revoke the presented refresh token (rotation) — OAuth 2.1 §4.3.1
+    // [revoke-rotated-refresh-token] (feature: refresh-token) 古いリフレッシュトークンを失効させる — OAuth 2.1 §4.3.1
     await revokeRotatedRefreshToken(params, validatedRequest);
 
-    // [build-token-response] Build the token response body — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
+    // [build-token-response] トークンレスポンスのボディを組み立てる — OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1
     const tokenResponse = {
       access_token: accessToken,
       token_type: 'Bearer' as const,
@@ -390,10 +390,10 @@ async function token(request: Request): Promise<Response> {
       refresh_token: refreshToken,
     };
 
-    // [respond] Respond (no-store) — RFC 6749 §5.1
+    // [respond] 応答する（no-store） — RFC 6749 §5.1
     return noStoreJson(tokenResponse);
   } catch (error) {
-    // [respond-error] Answer the token error — RFC 6749 §5.2 / RFC 6750 §3
+    // [respond-error] OAuth のエラーレスポンスで応答する — RFC 6749 §5.2 / RFC 6750 §3
     if (error instanceof TokenError) {
       // 401 のレスポンスには `WWW-Authenticate` ヘッダーを付ける（RFC 6750 §3、OAuth 2.1 §5.2）。
       return oauthError(

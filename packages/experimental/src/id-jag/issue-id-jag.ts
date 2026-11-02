@@ -325,7 +325,7 @@ export function matchesIdJagIssuanceRequest(params: Record<string, string>): boo
  * @spec ID-JAG draft §9.1
  */
 export function authorizeIdJagIssuanceClient(client: TokenClientInfo): void {
-  // `grantTypes` が登録されていなければ、`['authorization_code']` として扱う（OpenID Connect Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
+  // `grantTypes` が登録されていなければ、`['authorization_code']` として扱う（OIDC Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
   // そのため、ID-JAG を要求できるのは、トークン交換の URN を明示的に登録したクライアントだけである。
   const grantTypes = client.grantTypes ?? ['authorization_code'];
   if (!grantTypes.includes(TOKEN_EXCHANGE_GRANT_TYPE)) {

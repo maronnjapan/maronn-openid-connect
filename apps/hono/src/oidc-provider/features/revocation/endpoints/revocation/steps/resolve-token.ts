@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'resolve',
-  label: 'Resolve the presented token',
+  label: '提示されたトークンを取得する',
   spec: 'RFC 7009 §2.1',
   function: 'resolveRevocationTokenTarget',
   consumes: ['params', 'authenticatedClientId'],

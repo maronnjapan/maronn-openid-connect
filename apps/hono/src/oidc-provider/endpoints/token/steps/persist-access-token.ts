@@ -5,7 +5,7 @@ export const meta = step({
   id: 'persist-access-token',
   endpoint: 'token',
   kind: 'persist',
-  label: 'Store the access token record',
+  label: 'アクセストークンのレコードを保存する',
   spec: 'RFC 7662 §2.2 / OIDC Core 1.0 §5.5 / RFC 9470 §6.2',
   function: 'persistAccessToken',
   consumes: ['accessToken', 'accessTokenPayload', 'subject', 'validatedRequest', 'issuedAt', 'audience', 'acr'],

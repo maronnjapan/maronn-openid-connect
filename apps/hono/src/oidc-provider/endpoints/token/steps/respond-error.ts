@@ -7,7 +7,7 @@ export const meta = step({
   id: 'respond-error',
   endpoint: 'token',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 6749 §5.2 / RFC 6750 §3',
   function: 'respondTokenError',
   consumes: [],

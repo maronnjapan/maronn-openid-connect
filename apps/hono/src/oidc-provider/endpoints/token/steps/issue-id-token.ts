@@ -11,7 +11,7 @@ export const meta = step({
   id: 'issue-id-token',
   endpoint: 'token',
   kind: 'issue',
-  label: 'Issue the ID Token',
+  label: 'ID トークンを発行する',
   spec: 'OIDC Core 1.0 §3.1.3.6 / §12.1',
   function: 'issueIdToken',
   consumes: ['idTokenSigningKey', 'accessToken', 'subject', 'authTime', 'nonce', 'validatedRequest', 'issuedAt', 'acr', 'amr'],

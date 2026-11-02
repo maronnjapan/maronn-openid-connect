@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'validate',
-  label: 'Authenticate the confidential client',
+  label: 'コンフィデンシャルクライアントを認証する',
   spec: 'RFC 7662 §2.1 / OAuth 2.1 §2.3',
   function: 'authenticateIntrospectionClient',
   consumes: ['params', 'authorization'],

@@ -6,7 +6,7 @@ export const meta = step({
   id: 'validate-csrf-token',
   endpoint: 'login',
   kind: 'validate',
-  label: 'Check csrf_token against the transaction',
+  label: 'csrf_token をトランザクションと照合する',
   function: 'validateLoginCsrfToken',
   consumes: ['transaction', 'csrfToken'],
   produces: [],

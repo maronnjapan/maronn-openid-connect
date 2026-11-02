@@ -77,18 +77,18 @@ export function OPTIONS(request: Request): Response {
  * @spec RFC 7662 §2
  */
 async function introspect(request: Request): Promise<Response> {
-  // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
+  // [load-signing-keys] 署名鍵を読み込む — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);
   if (!keys) return signingKeysUnavailable();
 
-  // [parse-request] Parse the introspection request — RFC 7662 §2.1
+  // [parse-request] イントロスペクションリクエストを解析する — RFC 7662 §2.1
   if (!isFormUrlEncoded(request)) {
     return oauthError('invalid_request', 'Content-Type must be application/x-www-form-urlencoded');
   }
   const params = Object.fromEntries(new URLSearchParams(await request.text()));
 
   try {
-    // [authenticate-client] Authenticate the client — RFC 7662 §2.1 / OAuth 2.1 §2.3
+    // [authenticate-client] クライアントを認証する — RFC 7662 §2.1 / OAuth 2.1 §2.3
     // トークンエンドポイントと同じ手順で、クライアントを認証する（OAuth 2.1 §2.3、OIDC Core 1.0 §9）。
     // イントロスペクションでは、呼び出し元の認証が必須である（RFC 7662 §2.1）。
     const presentedCredentials = extractClientCredentials({
@@ -108,7 +108,7 @@ async function introspect(request: Request): Promise<Response> {
     requireConfidentialIntrospectionCaller(introspectingClient);
     const authenticatedClientId = presentedCredentials.clientId;
 
-    // [resolve-token] Resolve the token — RFC 7662 §2.1
+    // [resolve-token] 提示されたトークンを取得する — RFC 7662 §2.1
     // 以下の呼び出しはそれぞれ core の独立した関数で、RFC 7662 §2 の順に呼ぶ。
     // 呼び出しを消せばその処理を省け、呼び出しの間に独自の処理を挟める。
 
@@ -127,7 +127,7 @@ async function introspect(request: Request): Promise<Response> {
       refreshTokenResolver: introspectionResolvers.introspectionRefreshTokenResolver,
     });
 
-    // [build-response] Build the introspection response — RFC 7662 §2.2
+    // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
     // トークンが有効ならその内容を、そうでなければ `{ active: false }` だけを返す（RFC 7662 §2.2）。
     // 登録されていない、期限切れ、まだ有効になっていない、ローテーションで使用済みになったトークンにはほかのメンバーを含めないので、呼び出し元は「存在しなかった」トークンと「もう有効でない」トークンを区別できない。
     let response: IntrospectionResponse = INACTIVE_INTROSPECTION_RESPONSE;
@@ -135,14 +135,14 @@ async function introspect(request: Request): Promise<Response> {
       response = buildIntrospectionResponse(resolved);
     }
 
-    // [respond-jwt] (feature: jwt-introspection-response) Answer as a signed JWT when asked — RFC 9701 §4 / §5
+    // [respond-jwt] (feature: jwt-introspection-response) 求められたら署名付き JWT で応答する — RFC 9701 §4 / §5
     const jwtResponse = await respondIntrospectionJwt(request, response, authenticatedClientId, keys);
     if (jwtResponse) return jwtResponse;
 
-    // [respond] Respond (no-store) — RFC 7662 §2.2
+    // [respond] 応答する（no-store） — RFC 7662 §2.2
     return noStoreJson(response);
   } catch (error) {
-    // [respond-error] Answer the error — RFC 7662 §2.3 / RFC 6749 §5.2
+    // [respond-error] OAuth のエラーレスポンスで応答する — RFC 7662 §2.3 / RFC 6749 §5.2
     if (error instanceof TokenError || error instanceof IntrospectionError) {
       return oauthError(
         error.error,

@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 9126 §2.3',
   function: 'respondParError',
   consumes: [],

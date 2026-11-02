@@ -5,7 +5,7 @@ export const meta = step({
   id: 'require-authenticated-subject',
   endpoint: 'consent',
   kind: 'resolve',
-  label: 'Require the subject the login step stored',
+  label: 'ログイン済みのサブジェクトを取り出す',
   function: 'requireAuthenticatedSubject',
   consumes: ['transactionId'],
   produces: ['session'],

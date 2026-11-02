@@ -12,11 +12,11 @@ import { defineEndpoint } from '../step.js';
 export const endpoint = defineEndpoint({
   id: 'discovery',
   order: 10,
-  label: 'Discovery',
+  label: 'ディスカバリー',
   path: '/.well-known/openid-configuration',
   methods: ['GET'],
   layer: 'metadata',
-  group: { id: 'metadata', label: 'Metadata' },
+  group: { id: 'metadata', label: 'メタデータ' },
   spec: 'OIDC Discovery 1.0 §4',
   rearrangeable: true,
   steps: [

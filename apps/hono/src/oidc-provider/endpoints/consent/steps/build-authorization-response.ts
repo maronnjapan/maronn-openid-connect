@@ -12,7 +12,7 @@ export const meta = step({
   id: 'build-authorization-response',
   endpoint: 'consent',
   kind: 'transform',
-  label: 'Build the authorization response',
+  label: '認可レスポンスを組み立てる',
   spec: 'RFC 9207 §2',
   function: 'buildConsentRedirect',
   consumes: ['transaction', 'responseParams', 'authCodeData', 'issuer'],

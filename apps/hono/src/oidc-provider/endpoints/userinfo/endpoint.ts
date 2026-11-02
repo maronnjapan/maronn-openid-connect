@@ -12,11 +12,11 @@ import { defineEndpoint } from '../step.js';
 export const endpoint = defineEndpoint({
   id: 'userinfo',
   order: 80,
-  label: 'UserInfo endpoint',
+  label: 'UserInfo エンドポイント',
   path: '/userinfo',
   methods: ['GET', 'POST'],
   layer: 'api',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §5.3',
   rearrangeable: true,
   steps: [

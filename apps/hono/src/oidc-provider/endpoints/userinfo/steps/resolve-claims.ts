@@ -11,7 +11,7 @@ export const meta = step({
   id: 'resolve-claims',
   endpoint: 'userinfo',
   kind: 'resolve',
-  label: 'Resolve the claims the token may see',
+  label: 'トークンで開示できるクレームを決める',
   spec: 'OIDC Core 1.0 §5.4 / §5.5',
   function: 'resolveUserInfoResponseClaims',
   consumes: ['tokenInfo'],

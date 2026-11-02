@@ -7,7 +7,7 @@ export const meta = step({
   id: 'describe-consent-screen',
   endpoint: 'consent',
   kind: 'transform',
-  label: 'Describe the consent form',
+  label: '同意画面の表示内容を組み立てる',
   function: 'describeConsentScreen',
   consumes: ['transactionId', 'transaction'],
   produces: ['screen'],

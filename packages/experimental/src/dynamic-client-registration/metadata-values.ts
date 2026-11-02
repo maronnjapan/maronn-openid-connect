@@ -162,9 +162,9 @@ export function validateScope(value: unknown, supportedScopes: readonly string[]
 /**
  * `application_type` を検証し、そのまま返す。
  *
- * 値が `web` か `native` でなければ、`invalid_client_metadata` を投げる（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * 値が `web` か `native` でなければ、`invalid_client_metadata` を投げる（OIDC Dynamic Client Registration 1.0 §2）。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @throws {ClientRegistrationError} `invalid_client_metadata`: `web` と `native` 以外の値のとき。
  */
 export function validateApplicationType(value: unknown): 'web' | 'native' {
@@ -179,13 +179,13 @@ const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 /**
  * リダイレクト URI がアプリの種別に合うか確かめる。
  *
- * OpenID Connect Dynamic Client Registration 1.0 §2 が `application_type` ごとに `redirect_uris` に課す次の制約を確かめ、合わない URI があれば `invalid_client_metadata` を投げる。
+ * OIDC Dynamic Client Registration 1.0 §2 が `application_type` ごとに `redirect_uris` に課す次の制約を確かめ、合わない URI があれば `invalid_client_metadata` を投げる。
  * - `native`: カスタム URI スキームか、`http` スキームのループバックの URL（`localhost`、`127.0.0.1`、`[::1]`）だけを登録できる。
  * - `web` でグラントタイプ `implicit` を使う: `https` スキームだけを登録でき、ホスト名に `localhost` を使えない。
  *
  * `application_type` を省略した登録には、core の規則（`validateRegisteredRedirectUris()`）だけを適用する。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @throws {ClientRegistrationError} `invalid_client_metadata`: `redirect_uris` のどれかが制約に合わないとき。
  */
 export function validateRedirectUrisForApplicationType(
@@ -219,10 +219,10 @@ export function validateRedirectUrisForApplicationType(
 /**
  * `default_max_age` を検証し、そのまま返す。
  *
- * 値が秒数を表す 0 以上の整数でなければ、`invalid_client_metadata` を投げる（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * 値が秒数を表す 0 以上の整数でなければ、`invalid_client_metadata` を投げる（OIDC Dynamic Client Registration 1.0 §2）。
  * core の `validateDefaultMaxAge()` と同じ規則を、登録の段階で適用する。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @throws {ClientRegistrationError} `invalid_client_metadata`: 0 以上の整数でないとき。
  */
 export function validateDefaultMaxAge(value: unknown): number {
@@ -237,9 +237,9 @@ export function validateDefaultMaxAge(value: unknown): number {
  *
  * `id_token_signed_response_alg` と `userinfo_signed_response_alg` に使う。
  * 値が `supported`（OP が署名できるアルゴリズムの一覧で、通常は登録した鍵から求める）にある文字列のときだけ受け付け、それ以外は `invalid_client_metadata` を投げる。
- * `none` は受け付けない（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * `none` は受け付けない（OIDC Dynamic Client Registration 1.0 §2）。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @throws {ClientRegistrationError} `invalid_client_metadata`: 値が文字列でないとき、`none` のとき、または `supported` にないとき。
  */
 export function validateSigningAlg(value: unknown, name: string, supported: readonly string[]): string {

@@ -16,7 +16,7 @@ export const meta = step({
   id: 'validate-authorization-code-grant',
   endpoint: 'token',
   kind: 'validate',
-  label: 'Validate the authorization_code grant',
+  label: 'authorization_code グラントを検証する',
   spec: 'OAuth 2.1 §4.1.2 / RFC 7636 / OIDC Core 1.0 §3.1.3.2',
   function: 'validateAuthorizationCodeGrant',
   consumes: ['params', 'authenticatedClientId', 'grantType', 'refreshTokenRequest'],

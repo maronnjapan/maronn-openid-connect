@@ -5,7 +5,7 @@ export const meta = step({
   id: 'respond',
   endpoint: 'token',
   kind: 'respond',
-  label: 'Respond (no-store)',
+  label: '応答する（no-store）',
   spec: 'RFC 6749 §5.1',
   function: 'respondToken',
   consumes: ['tokenResponse'],

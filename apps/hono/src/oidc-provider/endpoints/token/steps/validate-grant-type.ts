@@ -12,7 +12,7 @@ export const meta = step({
   id: 'validate-grant-type',
   endpoint: 'token',
   kind: 'validate',
-  label: 'Validate grant_type',
+  label: 'grant_type を検証する',
   spec: 'RFC 6749 §5.2',
   function: 'validateTokenGrantType',
   consumes: ['params', 'tokenClient'],

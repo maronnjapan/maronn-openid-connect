@@ -5,7 +5,7 @@ export const meta = step({
   id: 'respond',
   endpoint: 'jwks',
   kind: 'respond',
-  label: 'Respond with the cacheable JWK Set',
+  label: 'キャッシュ可能な JWK Set で応答する',
   function: 'respondJwks',
   consumes: ['jwks'],
   produces: [],

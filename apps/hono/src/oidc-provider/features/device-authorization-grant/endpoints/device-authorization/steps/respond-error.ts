@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 6749 §5.2',
   function: 'respondDeviceAuthorizationError',
   consumes: [],

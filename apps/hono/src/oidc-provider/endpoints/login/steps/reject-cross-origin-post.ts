@@ -6,7 +6,7 @@ export const meta = step({
   id: 'reject-cross-origin-post',
   endpoint: 'login',
   kind: 'validate',
-  label: 'Reject a form POST from another origin',
+  label: '別オリジンからのフォーム POST を拒否する',
   function: 'rejectCrossOriginFormPost',
   consumes: [],
   produces: [],

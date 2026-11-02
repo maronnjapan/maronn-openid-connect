@@ -4,7 +4,7 @@ export const meta = step({
   id: 'respond',
   endpoint: 'discovery',
   kind: 'respond',
-  label: 'Respond with the cacheable JSON document',
+  label: 'キャッシュ可能な JSON で応答する',
   spec: 'RFC 8414 §3.2',
   function: 'respondDiscovery',
   consumes: ['metadata'],

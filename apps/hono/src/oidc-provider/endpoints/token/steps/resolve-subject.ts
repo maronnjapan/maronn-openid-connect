@@ -9,7 +9,7 @@ export const meta = step({
   id: 'resolve-subject',
   endpoint: 'token',
   kind: 'resolve',
-  label: 'Resolve the subject, auth_time and nonce',
+  label: 'サブジェクト、auth_time、nonce を取り出す',
   spec: 'OIDC Core 1.0 §12.2',
   function: 'resolveTokenSubject',
   consumes: ['validatedRequest'],

@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'ciba',
   feature: 'ciba',
   kind: 'persist',
-  label: 'Approve or deny a pending request',
+  label: '保留中のリクエストを承認または拒否する',
   spec: 'CIBA Core 1.0 §7.1 (authentication device)',
   function: 'submitCibaDecision',
   calls: ['consentResolver.recordConsent', 'consentResolver.recordGrant'],
@@ -30,7 +30,7 @@ export const meta = step({
  * 承認では、リクエストを `approved` にしてセッションの `auth_time` と新しいグラント ID を記録し、スコープを `resolveGrantableScopes()` で絞って保存する。
  * 同意とグラントも記録する。
  * 拒否では、リクエストを `denied` にする。
- * どちらの場合も、クライアントは次のポーリングで結果を受け取る。
+ * クライアントは、次のポーリングでトークンか `access_denied` を受け取る。
  *
  * @spec CIBA Core 1.0 §7.1
  */

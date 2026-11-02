@@ -245,8 +245,8 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * 検証は、`redirect_uris`、`token_endpoint_auth_method`、`grant_types`、`response_types`、`grant_types` と `response_types` の対応、`application_type` ごとの `redirect_uris` の制約、`id_token_signed_response_alg` の順に行う。
  * 続いて、値があるときだけ任意のメタデータ（`client_name`、URL のメタデータ、`contacts`、`scope`、`software_id`、`software_version`、`jwks`、`default_max_age`、`userinfo_signed_response_alg`、`software_statement`）を検証し、最後にカスタムメタデータを検証する。
  *
- * 既定値は、RFC 7591 §2 のもの（`token_endpoint_auth_method`、`grant_types`、`response_types`）と、OpenID Connect Dynamic Client Registration 1.0 §2 のもの（`application_type`、`id_token_signed_response_alg`）である。
- * 認可サーバーが適用した既定値はレスポンスに含めなければならない（OpenID Connect Dynamic Client Registration 1.0 §3.2 の MUST）ので、どれも登録メタデータ（`metadata`）に書き込む。
+ * 既定値は、RFC 7591 §2 のもの（`token_endpoint_auth_method`、`grant_types`、`response_types`）と、OIDC Dynamic Client Registration 1.0 §2 のもの（`application_type`、`id_token_signed_response_alg`）である。
+ * 認可サーバーが適用した既定値はレスポンスに含めなければならない（OIDC Dynamic Client Registration 1.0 §3.2 の MUST）ので、どれも登録メタデータ（`metadata`）に書き込む。
  *
  * 理解しないフィールドは黙って捨てる（RFC 7591 §2 の MUST）。
  * 実装は理解するフィールドだけを新しいオブジェクトに選び取る方式で、解析結果をスプレッド構文や `Object.assign` でコピーしない。
@@ -256,8 +256,8 @@ const SOFTWARE_VERSION_MAX_LENGTH = 64;
  * カスタムメタデータの検証関数が `undefined` 以外を返した項目だけを登録する。
  *
  * @spec RFC 7591 §2
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
- * @spec OpenID Connect Dynamic Client Registration 1.0 §3.2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §3.2
  * @throws {ClientRegistrationError} `invalid_redirect_uri`: `redirect_uris` がないか、規則に反する URI を含むとき。
  * @throws {ClientRegistrationError} `invalid_client_metadata`: ほかのメタデータの値が正しくないとき、`grant_types` と `response_types` が対応しないとき、または `jwks` と `jwks_uri` を両方含むとき。
  * @throws {ClientRegistrationError} `invalid_software_statement`: `software_statement` が文字列でないとき。
@@ -279,13 +279,13 @@ export function validateClientMetadata(
   const grantTypes = validateGrantTypes(metadata['grant_types'], grantTypesSupported);
   const responseTypes = validateResponseTypes(metadata['response_types'], responseTypesSupported);
   validateGrantAndResponseTypeConsistency(grantTypes, responseTypes);
-  // `application_type` を省略したときも、既定値の `web` として検証する（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // `application_type` を省略したときも、既定値の `web` として検証する（OIDC Dynamic Client Registration 1.0 §2）。
   // 認可サーバーは、登録するすべての `redirect_uris` がその種別の制約（`web` でグラントタイプ `implicit` を使うなら `https` で `localhost` 以外、`native` ならカスタムスキームかループバックの `http`）に従うことを確かめなければならない（MUST）からである。
   const applicationType = validateApplicationType(
     metadata['application_type'] === undefined ? 'web' : metadata['application_type'],
   );
   validateRedirectUrisForApplicationType(redirectUris, applicationType, grantTypes);
-  // `id_token_signed_response_alg` を省略したときは `RS256` として扱い（OpenID Connect Dynamic Client Registration 1.0 §2）、既定値も OP が署名できるアルゴリズムの一覧と照らし合わせる。
+  // `id_token_signed_response_alg` を省略したときは `RS256` として扱い（OIDC Dynamic Client Registration 1.0 §2）、既定値も OP が署名できるアルゴリズムの一覧と照らし合わせる。
   const idTokenSignedResponseAlg = validateSigningAlg(
     metadata['id_token_signed_response_alg'] === undefined ? 'RS256' : metadata['id_token_signed_response_alg'],
     'id_token_signed_response_alg',
@@ -408,14 +408,14 @@ export function validateClientRegistrationRequest(
 /**
  * `redirect_uris` を検証し、同じ値の新しい配列を返す。
  *
- * `redirect_uris` は必須（REQUIRED）である（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * `redirect_uris` は必須（REQUIRED）である（OIDC Dynamic Client Registration 1.0 §2）。
  * 空でない文字列の配列でなければ、`invalid_redirect_uri` を投げる。
  *
  * URI の規則そのもの（スキームがあること、フラグメントがないこと、危険なスキームでないこと、ループバック以外の `http` でないこと）は core の `validateRegisteredRedirectUris()` に任せ、静的なクライアントと同じ登録の基準を適用する。
  * ネイティブアプリ向けのカスタムスキームは通る。
  * core の例外は違反した URI をメッセージに含む `server_error` なので、コードを `invalid_redirect_uri`（RFC 7591 §3.2.2）に、文言を URI を含まない固定の ASCII の文に差し替えて投げ直す。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @spec RFC 7591 §3.2.2
  * @throws {ClientRegistrationError} `invalid_redirect_uri`: 空でない文字列の配列でないとき、または core の規則に反する URI を含むとき。
  */
@@ -523,7 +523,7 @@ function validateResponseTypes(value: unknown, supported: readonly string[]): st
  * 対応しない登録は、使えない組み合わせを登録させないために `invalid_client_metadata` で拒否する（RFC 7591 §2.1 の SHOULD）。
  *
  * @spec RFC 7591 §2.1
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @throws {ClientRegistrationError} `invalid_client_metadata`: 対応しないとき。
  */
 function validateGrantAndResponseTypeConsistency(grantTypes: readonly string[], responseTypes: readonly string[]): void {

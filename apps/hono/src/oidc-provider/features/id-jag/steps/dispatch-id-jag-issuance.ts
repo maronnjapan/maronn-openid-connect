@@ -21,7 +21,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'id-jag',
   kind: 'dispatch',
-  label: 'Issue an ID-JAG (Cross-App Access)',
+  label: 'ID-JAG を発行する（Cross-App Access）',
   spec: 'ID-JAG draft §4.3',
   function: 'issueIdJag',
   consumes: ['params', 'tokenClient'],

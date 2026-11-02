@@ -9,7 +9,7 @@ export const meta = step({
   endpoint: 'ciba',
   feature: 'ciba',
   kind: 'resolve',
-  label: 'List pending requests, or start a login transaction',
+  label: '保留中のリクエストを並べるか、ログインを始める',
   function: 'prepareCibaDevice',
   consumes: [],
   produces: ['loginTransaction'],

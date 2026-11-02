@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'validate',
-  label: 'Validate the request as /authorize would',
+  label: '/authorize と同じ規則でリクエストを検証する',
   spec: 'RFC 9126 §2.1',
   function: 'validatePushedRequest',
   consumes: ['pushedParams'],

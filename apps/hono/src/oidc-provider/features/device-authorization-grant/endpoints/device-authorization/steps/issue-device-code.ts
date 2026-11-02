@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'issue',
-  label: 'Mint the device_code and user_code',
+  label: 'device_code と user_code を発行する',
   spec: 'RFC 8628 §3.2 / §5.2',
   function: 'issueDeviceCodes',
   consumes: ['client', 'scope'],

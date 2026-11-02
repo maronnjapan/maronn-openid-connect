@@ -7,7 +7,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'parse',
-  label: 'Parse the pushed authorization request',
+  label: 'プッシュされた認可リクエストを解析する',
   spec: 'RFC 9126 §2.1 / RFC 6749 §3.1',
   function: 'parsePushedAuthorizationRequest',
   consumes: [],

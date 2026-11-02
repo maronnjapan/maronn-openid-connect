@@ -128,7 +128,7 @@ export async function parseRequestObject(
     if (!options.allowUnsigned) {
       throw new RequestObjectError('unsigned request object (alg=none) is not supported');
     }
-    // `none` のアルゴリズムでは署名のセグメントが空になるので、空でなければ拒否する（RFC 7515 §6）。
+    // `none` のアルゴリズムでは署名のセグメントが空になるので、空でなければ拒否する（RFC 7519 §6）。
     if (signatureB64 !== '') {
       throw new RequestObjectError('unsigned request object must not carry a signature');
     }

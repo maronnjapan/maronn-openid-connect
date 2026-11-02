@@ -41,11 +41,11 @@ import { validateConsentDecision } from './steps/validate-decision.js';
  * トランザクションを読み込めないときは、代わりに表示するエラー（`kind: 'error'`）を返す。
  */
 export async function prepareConsent(c: any): Promise<ConsentScreen | ConsentError> {
-  // [load-transaction] Load the transaction this browser is in
+  // [load-transaction] Cookie が指すトランザクションを読み込む
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
-  // [describe-consent-screen] Describe the consent form
+  // [describe-consent-screen] 同意画面の表示内容を組み立てる
   return describeConsentScreen(c, transactionId, transaction);
 }
 
@@ -65,18 +65,18 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
 
   // 決定を処理する前に、送信元、トランザクションの Cookie、`csrf_token` を確かめる。
   // この処理は認可コードを発行するので、承認も拒否も、OP 自身が表示したフォーム以外からは受け付けない。
-  // [reject-cross-origin-post] First the browser's own statement of where the
+  // [reject-cross-origin-post] 別オリジンからのフォーム POST を拒否する
   // 最初に、フォームの送信元を、ブラウザ自身が付けるヘッダーで確かめる（cookies.ts の `isSameOriginFormPost()`）。
   // この確認は Cookie にも `csrf_token` にも依存しないので、両方を仕込まれていても偽造された POST を止められる。
   const sameOriginError = rejectCrossOriginFormPost(c);
   if (sameOriginError) return sameOriginError;
 
-  // [load-transaction] The cookie says which transaction this browser is in.
+  // [load-transaction] Cookie が指すトランザクションを読み込む
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
 
-  // [validate-csrf-token] The csrf_token says the decision came from the form
+  // [validate-csrf-token] csrf_token をトランザクションと照合する
   // 一致すれば、決定はこのトランザクションのために OP が描画したフォームから送られたと分かる。
   const csrfError = validateConsentCsrfToken(transaction, csrfToken);
   if (csrfError) return csrfError;
@@ -85,30 +85,30 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
   // クライアントは、レスポンスを返した発行者が想定どおりかを確かめられる。
   const issuer: string = c.get('config').issuer;
 
-  // [deny-authorization] The End-User denied: answer access_denied — OIDC Core 1.0 §3.1.2.6
+  // [deny-authorization] 拒否: access_denied で応答する — OIDC Core 1.0 §3.1.2.6
   if (action === 'deny') {
     return denyAuthorizationRequest(c, transactionId, transaction, issuer);
   }
 
-  // [validate-decision] Accept only an affirmative decision — OIDC Core 1.0 §3.1.2.4
+  // [validate-decision] 明示的な承認を求める — OIDC Core 1.0 §3.1.2.4
   const decisionError = validateConsentDecision(action);
   if (decisionError) return decisionError;
 
-  // [require-authenticated-subject] The subject the login step stored
+  // [require-authenticated-subject] ログイン済みのサブジェクトを取り出す
   const session = await requireAuthenticatedSubject(c, transactionId);
   if (!session) {
     return { kind: 'session_missing' };
   }
 
-  // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
+  // [issue-implicit-response] (feature: implicit-flow) インプリシットフロー: トークンを直接発行する — OIDC Core 1.0 §3.2.2.5
   const implicitResponse = await issueImplicitConsentResponse(c, { transactionId, transaction, session, issuer });
   if (implicitResponse) return implicitResponse;
 
-  // [issue-hybrid-response] (feature: hybrid-flow) Issue the code together with the ID Token and/or the access token — OIDC Core 1.0 §3.3.2.5
+  // [issue-hybrid-response] (feature: hybrid-flow) ハイブリッドフロー: コードとトークンを発行する — OIDC Core 1.0 §3.3.2.5
   const hybridResponse = await issueHybridConsentResponse(c, { transactionId, transaction, session, issuer });
   if (hybridResponse) return hybridResponse;
 
-  // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5
+  // [issue-authorization-code] 認可コードを発行する — OIDC Core 1.0 §3.1.2.5
   const { responseParams, authCodeData, grantedScope } = await issueConsentedAuthorizationCode(
     c,
     transactionId,
@@ -116,10 +116,10 @@ export async function submitConsent(c: any, input: ConsentSubmission): Promise<C
     session,
   );
 
-  // [record-consent] Record the consent and the grant — OIDC Core 1.0 §3.1.2.4
+  // [record-consent] 同意とグラントを記録する — OIDC Core 1.0 §3.1.2.4
   await recordConsentDecision(c, transactionId, transaction, session, authCodeData, grantedScope);
 
-  // [build-authorization-response] Back to the client with the authorization code.
+  // [build-authorization-response] 認可レスポンスを組み立てる
   return buildConsentRedirect(c, transaction, responseParams.redirectUri, {
     code: authCodeData.code,
     state: responseParams.state,

@@ -6,7 +6,7 @@ export const meta = step({
   id: 'build-token-response',
   endpoint: 'token',
   kind: 'transform',
-  label: 'Build the token response body',
+  label: 'トークンレスポンスのボディを組み立てる',
   spec: 'OIDC Core 1.0 §3.1.3.3 / RFC 6749 §5.1',
   function: 'buildTokenResponse',
   consumes: ['accessToken', 'idToken', 'refreshToken', 'validatedRequest'],

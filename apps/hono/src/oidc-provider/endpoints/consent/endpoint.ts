@@ -12,11 +12,11 @@ import { defineEndpoint } from '../step.js';
 export const endpoint = defineEndpoint({
   id: 'consent',
   order: 60,
-  label: 'Consent screen',
+  label: '同意画面',
   path: '/consent',
   methods: ['GET', 'POST'],
   layer: 'browser',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §3.1.2.4',
   rearrangeable: false,
   steps: [

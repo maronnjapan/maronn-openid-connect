@@ -15,7 +15,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'validate',
-  label: 'Validate the grant registration and the scope',
+  label: '登録済みのグラントとスコープを検証する',
   spec: 'RFC 8628 §3.1 / RFC 7591 §2 / OIDC Core 1.0 §11',
   function: 'validateDeviceAuthorizationRequest',
   consumes: ['params', 'client'],
@@ -35,7 +35,7 @@ export const meta = step({
  * 最後の検証の前に、許可できない `offline_access` を取り除く（OIDC Core 1.0 §11）。
  * 返すのは、取り除いた後のスコープ（レコードに記録する値）である。
  *
- * それぞれの検証は experimental パッケージか core の独立した関数なので、呼び出しを消せばその検証を外せ、間に独自の処理を入れることもできる。
+ * それぞれの検証は experimental パッケージか core の独立した関数なので、呼び出しを消せばその検証を外せ、呼び出しの間に独自の処理を入れることもできる。
  *
  * @spec RFC 8628 §3.1
  * @spec RFC 7591 §2

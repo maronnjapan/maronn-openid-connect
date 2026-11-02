@@ -23,7 +23,7 @@ export const meta = step({
   endpoint: 'consent',
   feature: 'implicit-flow',
   kind: 'dispatch',
-  label: 'Implicit Flow: issue the ID Token (and access token) in place of the code',
+  label: 'インプリシットフロー: トークンを直接発行する',
   spec: 'OIDC Core 1.0 §3.2.2.5',
   function: 'issueImplicitConsentResponse',
   consumes: ['transactionId', 'transaction', 'session', 'issuer'],

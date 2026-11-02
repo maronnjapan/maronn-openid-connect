@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'respond',
-  label: 'Respond 200 with an empty body',
+  label: '空のボディの 200 で応答する',
   spec: 'RFC 7009 §2.2',
   function: 'respondRevocation',
   consumes: [],

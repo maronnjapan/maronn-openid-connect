@@ -13,7 +13,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'par',
   kind: 'resolve',
-  label: 'Expand the pushed request_uri',
+  label: 'プッシュされた request_uri を展開する',
   spec: 'RFC 9126 §4 / §5',
   function: 'resolvePushedAuthorizationRequest',
   consumes: ['params'],

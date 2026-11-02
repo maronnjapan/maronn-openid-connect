@@ -7,7 +7,7 @@ export const meta = step({
   id: 'deny-authorization',
   endpoint: 'consent',
   kind: 'respond',
-  label: 'Deny: answer access_denied',
+  label: '拒否: access_denied で応答する',
   spec: 'OIDC Core 1.0 §3.1.2.6',
   function: 'denyAuthorizationRequest',
   consumes: ['transactionId', 'transaction', 'issuer'],

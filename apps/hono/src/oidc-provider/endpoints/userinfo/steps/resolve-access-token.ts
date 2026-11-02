@@ -11,7 +11,7 @@ export const meta = step({
   id: 'resolve-access-token',
   endpoint: 'userinfo',
   kind: 'resolve',
-  label: 'Resolve and validate the access token',
+  label: 'アクセストークンを取得して検証する',
   spec: 'OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4',
   function: 'resolveUserInfoToken',
   consumes: ['accessToken'],

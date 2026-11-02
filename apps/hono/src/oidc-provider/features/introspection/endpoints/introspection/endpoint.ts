@@ -11,11 +11,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'introspection',
   order: 90,
-  label: 'Token introspection endpoint',
+  label: 'トークンイントロスペクションエンドポイント',
   path: '/introspect',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'token-management', label: 'Token management' },
+  group: { id: 'token-management', label: 'トークンの管理' },
   spec: 'RFC 7662 §2',
   feature: 'introspection',
   rearrangeable: true,

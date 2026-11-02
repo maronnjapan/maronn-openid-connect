@@ -56,8 +56,8 @@ export async function redeemDeviceCode(
     store: deviceAuthorizationStore,
   });
 
-  // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ（T-022）。
-  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ。
+  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OIDC Dynamic Client Registration 1.0 §2）。
   // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
   // `at_hash` も誤ったアルゴリズムで計算してしまう。
   const idTokenAlg = (client as RegisteredClient).idTokenSignedResponseAlg;
@@ -178,7 +178,7 @@ export async function redeemDeviceCode(
  *
  * `grant_type` がデバイスコードの URN でなければ、何もせず `undefined` を返す。
  * トークンエンドポイントのルートハンドラは、この関数をクライアント認証の直後、`grant_type` の検証より前に呼ぶ。
- * `grant_type` の検証はこの URN を知らず、`unsupported_grant_type` で拒否してしまうためである。
+ * `grant_type` の検証（core の `validateGrantTypeSupported()`）は `authorization_code` と `refresh_token` しか受け付けず、この URN を `unsupported_grant_type` で拒否するためである。
  *
  * デバイスコードのグラントなら `redeemDeviceCode()` で応答し、`DeviceAuthorizationError` は RFC 6749 §5.2 の形のエラーレスポンス（400）にして返す。
  * それ以外の例外は、そのまま投げ直す。

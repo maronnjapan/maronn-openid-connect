@@ -5,7 +5,7 @@ export const meta = step({
   id: 'parse-request',
   endpoint: 'authorize',
   kind: 'parse',
-  label: 'Parse the authorization request',
+  label: '認可リクエストを解析する',
   spec: 'OIDC Core 1.0 §3.1.2.1 / §13.2',
   function: 'parseAuthorizationRequest',
   consumes: [],

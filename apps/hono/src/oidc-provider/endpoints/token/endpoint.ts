@@ -10,11 +10,11 @@ import { defineEndpoint } from '../step.js';
 export const endpoint = defineEndpoint({
   id: 'token',
   order: 70,
-  label: 'Token endpoint',
+  label: 'トークンエンドポイント',
   path: '/token',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §3.1.3',
   rearrangeable: true,
   steps: [
@@ -55,7 +55,7 @@ export const endpoint = defineEndpoint({
       ] },
     ],
     fromKind: [
-      { kind: 'dispatch', to: 'respond', label: 'answered' },
+      { kind: 'dispatch', to: 'respond', label: '応答済み' },
     ],
   },
   journeys: [

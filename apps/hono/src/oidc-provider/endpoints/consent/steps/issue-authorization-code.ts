@@ -12,7 +12,7 @@ export const meta = step({
   id: 'issue-authorization-code',
   endpoint: 'consent',
   kind: 'issue',
-  label: 'Issue the authorization code',
+  label: '認可コードを発行する',
   spec: 'OIDC Core 1.0 §3.1.2.5 / §3.1.3.1',
   function: 'issueConsentedAuthorizationCode',
   consumes: ['transactionId', 'transaction', 'session'],

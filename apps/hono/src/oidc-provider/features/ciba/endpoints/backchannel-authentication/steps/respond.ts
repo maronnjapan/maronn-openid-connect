@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'respond',
-  label: 'Respond with auth_req_id (no-store)',
+  label: 'auth_req_id で応答する（no-store）',
   spec: 'CIBA Core 1.0 §7.3',
   function: 'respondBackchannelAuthentication',
   consumes: ['cibaResponse'],

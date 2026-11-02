@@ -14,11 +14,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'register',
   order: 120,
-  label: 'Client registration endpoint',
+  label: 'クライアント登録エンドポイント',
   path: '/register',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'client-registration', label: 'Dynamic Client Registration (RFC 7591)' },
+  group: { id: 'client-registration', label: '動的クライアント登録（RFC 7591）' },
   spec: 'RFC 7591 §3',
   feature: 'dynamic-client-registration',
   rearrangeable: true,

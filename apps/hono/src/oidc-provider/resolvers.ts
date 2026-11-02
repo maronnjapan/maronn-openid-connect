@@ -100,12 +100,12 @@ export function createStoreResolvers(stores: ProviderStores) {
       const session = await browserSessionStore.get(sessionId);
       if (!session) return null;
       // サブジェクトとログインした時刻に加えて、セッション ID も返す。
-      // セッション ID は認可コードへ引き継がれ、トークンエンドポイントでオンラインのリフレッシュトークンをこのセッションに束縛するのに使う。
+      // セッション ID は認可コードへ引き継がれ、トークンエンドポイントでオンラインのリフレッシュトークンをこのセッションに結び付けるのに使う。
       return { subject: session.subject, authTime: session.authTime, sessionId };
     },
   };
 
-  // オンラインのリフレッシュトークンを束縛したセッションを、セッション ID から読むリゾルバを作る。
+  // オンラインのリフレッシュトークンを結び付けたセッションを、セッション ID から読むリゾルバを作る。
   // `sessionResolver` はブラウザのリクエストの Cookie からセッションを読むが、トークンエンドポイントへのリクエストにはエンドユーザーの Cookie が付かないので、保存したセッション ID から直接読むこのリゾルバが要る。
   // 終了したセッションには、必ず `null` を返すようにする。
   // 返し続けると、ログアウトしたあともオンラインのリフレッシュトークンが使えてしまう。

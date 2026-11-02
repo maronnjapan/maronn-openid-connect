@@ -50,11 +50,11 @@ export function OPTIONS(request: Request): Response {
  * @spec OIDC Discovery 1.0 §4
  */
 async function providerMetadata(): Promise<Response> {
-  // [load-signing-keys] Load the signing keys — OIDC Core 1.0 §10.1
+  // [load-signing-keys] 署名鍵を読み込む — OIDC Core 1.0 §10.1
   const keys = await loadSigningKeys().catch(() => null);
   if (!keys) return signingKeysUnavailable();
 
-  // [build-metadata] Build the provider metadata — OIDC Discovery 1.0 §3 / RFC 8414
+  // [build-metadata] OP のメタデータを組み立てる — OIDC Discovery 1.0 §3 / RFC 8414
   // エンドポイントの URL は、すべて設定の `issuer` をもとに作る。
   // ここで書く項目はどの OP にもあるもので、機能はそれぞれ、自分の項目（エンドポイント、扱うグラントタイプ、署名するレスポンスモード）を、その機能の feature.ts の `discovery` で加える。
   const issuer = config.issuer;
@@ -137,7 +137,7 @@ async function providerMetadata(): Promise<Response> {
     authorizationResponseIssParameterSupported: true,
   });
 
-  // [respond] Respond (cacheable) — RFC 8414 §3.2 / RFC 9111 §5.2
+  // [respond] 応答する（キャッシュ可能） — RFC 8414 §3.2 / RFC 9111 §5.2
   // ディスカバリーのメタデータはキャッシュしてよいので、JWKS エンドポイントと同じ 3600 秒の有効期間を付ける。
   return Response.json(
     discoveryOf(

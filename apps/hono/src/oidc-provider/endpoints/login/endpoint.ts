@@ -11,11 +11,11 @@ import { defineEndpoint } from '../step.js';
 export const endpoint = defineEndpoint({
   id: 'login',
   order: 40,
-  label: 'Login screen',
+  label: 'ログイン画面',
   path: '/login',
   methods: ['GET', 'POST'],
   layer: 'browser',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §3.1.2.3',
   rearrangeable: false,
   steps: [
@@ -36,14 +36,14 @@ export const endpoint = defineEndpoint({
       { from: 'reject-cross-origin-post', to: 'load-transaction', label: 'POST', kind: 'flow' },
       { from: 'load-transaction', to: 'validate-csrf-token', label: 'POST', kind: 'flow' },
       { from: 'validate-csrf-token', to: 'authenticate-user', kind: 'flow' },
-      { from: 'authenticate-user', to: 'record-login-failure', label: 'wrong credentials', kind: 'branch' },
-      { from: 'record-login-failure', to: 'describe-login-screen', label: 'retry', kind: 'branch' },
-      { from: 'authenticate-user', to: 'discard-session-for-fresh-login', label: 'authenticated', kind: 'branch' },
+      { from: 'authenticate-user', to: 'record-login-failure', label: '認証情報の誤り', kind: 'branch' },
+      { from: 'record-login-failure', to: 'describe-login-screen', label: '再試行', kind: 'branch' },
+      { from: 'authenticate-user', to: 'discard-session-for-fresh-login', label: '認証済み', kind: 'branch' },
       { from: 'discard-session-for-fresh-login', to: 'establish-session', kind: 'flow' },
       { from: 'establish-session', to: 'hand-off-to-consent', kind: 'flow' },
     ],
   },
   journeys: [
-    { from: 'login', to: 'consent', label: 'authenticated', kind: 'flow', order: 80 },
+    { from: 'login', to: 'consent', label: '認証済み', kind: 'flow', order: 80 },
   ],
 });

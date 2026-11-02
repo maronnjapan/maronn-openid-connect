@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'validate',
-  label: 'Authenticate the client',
+  label: 'クライアントを認証する',
   spec: 'CIBA Core 1.0 §7.1',
   function: 'authenticateCibaClient',
   consumes: ['params', 'authorization'],

@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'transform',
-  label: 'Describe the token (active or not)',
+  label: 'トークンの情報をまとめる（有効かどうか）',
   spec: 'RFC 7662 §2.2',
   function: 'describeIntrospectedToken',
   consumes: ['resolved'],

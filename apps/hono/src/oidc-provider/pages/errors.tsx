@@ -14,7 +14,7 @@ import { defaultViews, renderView, type ErrorPageParams, type Views } from '../v
  *
  * ビューの `errorPage` に `params` を渡して描画する。
  * `params.statusCode` は、レスポンスのステータスコードであり、ビューが受け取る値でもある。
- * そのため、独自のビューでもステータスコードを表示でき、ステータスコードと表示する内容が食い違わない（ロックアウトの画面は 429、ブラウザの束縛に失敗した画面は 403 で応答する）。
+ * そのため、独自のビューでもステータスコードを表示でき、ステータスコードと表示する内容が食い違わない（ロックアウトの画面は 429、ブラウザのバインディングを確かめられなかった画面は 403 で応答する）。
  */
 export function renderErrorPage(c: any, params: ErrorPageParams): Response {
   const views: Views = c.get('views') ?? defaultViews;

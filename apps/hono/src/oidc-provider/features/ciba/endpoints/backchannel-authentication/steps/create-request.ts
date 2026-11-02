@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'issue',
-  label: 'Resolve the login_hint and create the pending request',
+  label: 'login_hint のユーザーで保留リクエストを作る',
   spec: 'CIBA Core 1.0 §7.1 - §7.3',
   function: 'createBackchannelAuthenticationRequest',
   consumes: ['params', 'client'],

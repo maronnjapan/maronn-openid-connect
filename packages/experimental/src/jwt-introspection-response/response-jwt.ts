@@ -27,8 +27,9 @@ export const TOKEN_INTROSPECTION_JWT_TYP = 'token-introspection+jwt';
  * いない場合の既定は RS256。この OP はクライアント別 alg を持たないため
  * RS256 固定とする（JARM と同じ固定方針）。固定であることの裏返しとして、
  * {@link createIntrospectionResponseJwt} に渡す `signingKey` は RS256 鍵で
- * なければならない。別種の鍵では Web Crypto が署名を拒否して例外になるため、
- * `alg: RS256` を偽って表明する JWS が生成されることはない。
+ * なければならない。
+ * ECDSA の鍵なら、Web Crypto が署名を拒否して例外になる。
+ * しかし、ハッシュの違う RSA の鍵（RS384 など）は拒否されず、`alg: RS256` と食い違う署名の JWS ができてしまうので、呼び出し側が RS256 の鍵を選んで渡す必要がある。
  */
 const RESPONSE_SIGNING_ALG = 'RS256';
 

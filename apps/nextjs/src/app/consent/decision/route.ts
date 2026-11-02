@@ -58,7 +58,7 @@ export const runtime = 'nodejs';
  * @spec OIDC Core 1.0 §3.1.2.6
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  // [reject-cross-origin-post] Reject a form POST from another origin — OIDC Core 1.0 §3.1.2.4
+  // [reject-cross-origin-post] 別オリジンからのフォーム POST を拒否する — OIDC Core 1.0 §3.1.2.4
   // 最初に、フォームの送信元を、ブラウザ自身が付けるヘッダーで確かめる（_oidc-provider/cookies.ts の `isSameOriginFormPost()`）。
   // この確認は、後で確かめる Cookie にも `csrf_token` にも依存しない。
   // このハンドラは認可コードを発行するので、OP 自身が表示したフォーム以外からの決定は受け付けない。
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
   if (!sameOrigin) return redirectToErrorPage('cross_origin_request', CROSS_ORIGIN_FORM_POST_MESSAGE);
 
-  // [load-transaction] Load the transaction named by the cookie
+  // [load-transaction] Cookie が指すトランザクションを読み込む
   const form = await readFormFields(request);
   const action = String(form.get('action') ?? '');
 
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  // [validate-csrf-token] Check csrf_token against the transaction
+  // [validate-csrf-token] csrf_token をトランザクションと照合する
   // `csrf_token` が一致すれば、決定は、このトランザクションのためにこのブラウザへ表示したフォームから送られたと分かる。
   // このハンドラは認可コードを発行するので、決定を処理する前に確かめる。
   try {
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     throw error;
   }
 
-  // [restore-response-mode] Restore the response mode of the authorization request — OAuth 2.0 Multiple Response Type Encoding Practices §2.1
+  // [restore-response-mode] 認可リクエストのレスポンスモードを復元する — OAuth 2.0 Multiple Response Type Encoding Practices §2.1
   // 認可リクエストが求めたレスポンスモード（JARM の `query.jwt`、`form_post`、インプリシットフローのフラグメントなど）を、何かを記録する前に復元する。
   // こうしておけば、鍵を読み込めないときに、認可コードと同意を保存した後ではなく、ここで止まる。
   let responseMode: AuthorizationResponseMode | undefined;
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return redirectToErrorPage('server_error', 'Failed to load the response signing key');
   }
 
-  // [deny-authorization] Deny: answer access_denied — OIDC Core 1.0 §3.1.2.6
+  // [deny-authorization] 拒否: access_denied で応答する — OIDC Core 1.0 §3.1.2.6
   if (action === 'deny') {
     await stores.transactionStore.delete('auth_txn:' + transactionId);
     await stores.authSessionStore.delete(transactionId);
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  // [validate-decision] Require an explicit approve decision — OIDC Core 1.0 §3.1.2.4
+  // [validate-decision] 明示的な承認を求める — OIDC Core 1.0 §3.1.2.4
   // 決定の値が `approve` でなければ、OP のエラーページへリダイレクトする。
   // 認可サーバーは、RP に情報を渡す前に認可の決定を得なければならない（MUST、OIDC Core 1.0 §3.1.2.4）。
   // このハンドラは認可コードを発行するので、承認は許可する値の一覧で判定し、`action` がない、空、未知の値のときは、決定を得られなかったものとして承認しない。
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  // [require-authenticated-subject] Require the subject the login step stored
+  // [require-authenticated-subject] ログイン済みのサブジェクトを取り出す
   // ログインのステップから引き渡された認証セッションを読む。
   // 認証したサブジェクトがなければ、ログインのステップが飛ばされたか期限が切れているので、`/login` へリダイレクトする。
   const session = await stores.authSessionStore.get(transactionId);
@@ -140,15 +140,15 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.redirect(new URL('/login', config.issuer), 303);
   }
 
-  // [issue-implicit-response] (feature: implicit-flow) Issue the ID Token (and access token) in place of the code — OIDC Core 1.0 §3.2.2.5
+  // [issue-implicit-response] (feature: implicit-flow) インプリシットフロー: トークンを直接発行する — OIDC Core 1.0 §3.2.2.5
   const implicitResponse = await issueImplicitConsentResponse({ transactionId, transaction, session, responseMode });
   if (implicitResponse) return implicitResponse;
 
-  // [issue-hybrid-response] (feature: hybrid-flow) Issue the code together with the ID Token and/or the access token — OIDC Core 1.0 §3.3.2.5
+  // [issue-hybrid-response] (feature: hybrid-flow) ハイブリッドフロー: コードとトークンを発行する — OIDC Core 1.0 §3.3.2.5
   const hybridResponse = await issueHybridConsentResponse({ transactionId, transaction, session, responseMode });
   if (hybridResponse) return hybridResponse;
 
-  // [issue-authorization-code] Issue the authorization code — OIDC Core 1.0 §3.1.2.5 / §3.1.3.1
+  // [issue-authorization-code] 認可コードを発行する — OIDC Core 1.0 §3.1.2.5 / §3.1.3.1
   const responseParams = await completeAuthTransaction(
     transactionId,
     transaction,
@@ -176,7 +176,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   });
   await stores.authCodeStore.set(authCodeData.code, authCodeData);
 
-  // [record-consent] Record the consent and the grant — OIDC Core 1.0 §3.1.2.4
+  // [record-consent] 同意とグラントを記録する — OIDC Core 1.0 §3.1.2.4
   // 同意を記録し、後の `prompt=none` や SSO のリクエストで、同意画面を出さずに同意を確かめられるようにする（OIDC Core 1.0 §3.1.2.1、§3.1.2.4）。
   // グラントも記録し、その同意を取り消したときに、グラントから発行したトークンを失効させられるようにする。
   // 削除するのはトランザクションごとの認証セッションだけで、OP のセッションは SSO のために残す。
@@ -184,7 +184,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   await resolvers.consentResolver.recordGrant(session.subject, transaction.clientId, authCodeData.grantId);
   await stores.authSessionStore.delete(transactionId);
 
-  // [build-authorization-response] Build the authorization response — RFC 9207 §2
+  // [build-authorization-response] 認可レスポンスを組み立てる — RFC 9207 §2
   // トランザクションは終わったので、それを指していた Cookie を消す。
   return respondToClient(
     await authorizationResponseOf(responseMode, transaction.redirectUri, {

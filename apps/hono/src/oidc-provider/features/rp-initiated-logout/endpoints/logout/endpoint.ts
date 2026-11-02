@@ -12,7 +12,7 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'logout',
   order: 170,
-  label: 'End session endpoint',
+  label: 'セッション終了エンドポイント',
   path: '/logout',
   methods: ['GET', 'POST'],
   layer: 'browser',
@@ -27,7 +27,7 @@ export const endpoint = defineEndpoint({
   edges: {
     chain: false,
     extra: [
-      { from: 'process-end-session-request', to: 'approve-logout', label: 'confirmation screen', kind: 'branch' },
+      { from: 'process-end-session-request', to: 'approve-logout', label: '確認画面へ', kind: 'branch' },
     ],
   },
   journeys: [

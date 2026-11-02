@@ -5,7 +5,7 @@ export const meta = step({
   id: 'respond',
   endpoint: 'userinfo',
   kind: 'respond',
-  label: 'Respond (no-store)',
+  label: '応答する（no-store）',
   spec: 'RFC 6750 §5.2',
   function: 'respondUserInfo',
   consumes: ['userInfoResponse'],

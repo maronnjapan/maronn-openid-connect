@@ -48,7 +48,7 @@ export function requireNonce(
  * トークンが TLS で保護されない通信を通らないようにするための規則である。
  * スキームが `http` でなければ、何も確かめない。
  *
- * この OP のクライアントの情報には `application_type`（OpenID Connect Dynamic Client Registration 1.0 §2）がないので、パブリッククライアント（OAuth 2.1 §2.1）をネイティブアプリとして扱う。
+ * この OP のクライアントの情報には `application_type`（OIDC Dynamic Client Registration 1.0 §2）がないので、パブリッククライアント（OAuth 2.1 §2.1）をネイティブアプリとして扱う。
  * `clientType` が登録されていないクライアントは、コンフィデンシャルクライアントとして扱う。
  *
  * `redirect_uri` は、登録済みの値と照合してから渡す。

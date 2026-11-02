@@ -14,11 +14,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'ciba',
   order: 160,
-  label: 'CIBA authentication device screens',
+  label: 'CIBA の認証デバイス画面',
   path: '/ciba',
   methods: ['GET', 'POST'],
   layer: 'browser',
-  group: { id: 'backchannel-authentication', label: 'CIBA (poll mode)' },
+  group: { id: 'backchannel-authentication', label: 'CIBA（ポーリングモード）' },
   spec: 'CIBA Core 1.0 §7.1',
   feature: 'ciba',
   rearrangeable: false,
@@ -30,8 +30,8 @@ export const endpoint = defineEndpoint({
   edges: {
     chain: false,
     extra: [
-      { from: 'prepare-device', to: 'submit-login', label: 'no OP session', kind: 'branch' },
-      { from: 'prepare-device', to: 'submit-decision', label: 'OP session', kind: 'branch' },
+      { from: 'prepare-device', to: 'submit-login', label: 'OP のセッションなし', kind: 'branch' },
+      { from: 'prepare-device', to: 'submit-decision', label: 'OP のセッションあり', kind: 'branch' },
       { from: 'submit-login', to: 'submit-decision', kind: 'flow' },
     ],
   },

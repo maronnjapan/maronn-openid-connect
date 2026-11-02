@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'login-google',
   feature: 'google-login',
   kind: 'validate',
-  label: 'Verify the posted Google ID token and nonce',
+  label: 'Google の ID トークンと nonce を検証する',
   function: 'verifyGoogleLoginCallback',
   consumes: [],
   produces: ['transactionId', 'subject'],

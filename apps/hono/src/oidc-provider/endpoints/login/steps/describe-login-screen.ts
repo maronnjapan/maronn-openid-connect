@@ -9,7 +9,7 @@ export const meta = step({
   id: 'describe-login-screen',
   endpoint: 'login',
   kind: 'transform',
-  label: 'Describe the login form',
+  label: 'ログイン画面の表示内容を組み立てる',
   spec: 'OIDC Core 1.0 §3.1.2.1 (login_hint)',
   function: 'describeLoginScreen',
   consumes: ['transaction'],

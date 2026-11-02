@@ -7,7 +7,7 @@ export const meta = step({
   id: 'validate-prompt-combination',
   endpoint: 'authorize',
   kind: 'validate',
-  label: 'Reject prompt=none combined with other values',
+  label: 'ほかの値と併用された prompt=none を拒否する',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'rejectCombinedPromptNone',
   consumes: ['transactionId', 'transaction', 'issuer', 'responseMode'],

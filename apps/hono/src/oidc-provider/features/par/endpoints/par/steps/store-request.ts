@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'persist',
-  label: 'Store the request under a fresh request_uri',
+  label: '新しい request_uri でリクエストを保存する',
   spec: 'RFC 9126 §2.2 / §7.1',
   function: 'storePushedRequest',
   consumes: ['clientId', 'pushedParams'],

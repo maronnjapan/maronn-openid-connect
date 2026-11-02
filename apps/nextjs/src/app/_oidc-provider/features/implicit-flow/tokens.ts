@@ -90,7 +90,7 @@ export async function issueImplicitTokens(input: ImplicitTokensInput): Promise<I
   // レスポンス全体で一つの時刻を使い、トークンと保存するレコードの `iat` と `exp` を揃える。
   const issuedAt = Math.floor(Date.now() / 1000);
 
-  // ID トークンの署名鍵として、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵を、`token/route.ts` と同じく選ぶ（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // ID トークンの署名鍵として、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵を、`token/route.ts` と同じく選ぶ（OIDC Dynamic Client Registration 1.0 §2）。
   const client = (await clientResolver.findClient(responseParams.clientId)) as RegisteredClient | null;
   const idTokenAlg = client?.idTokenSignedResponseAlg;
   const idTokenKey = selectIdTokenSigningKey(keys, idTokenAlg);
@@ -104,7 +104,7 @@ export async function issueImplicitTokens(input: ImplicitTokensInput): Promise<I
     );
   }
 
-  // トークンに含める `acr` と `amr` を、認可コードのときと同じく `acrResolver`（`provider.ts`）で決める（T-015）。
+  // トークンに含める `acr` と `amr` を、認可コードのときと同じく `acrResolver`（`provider.ts`）で決める。
   // `acrResolver` が要求に応えられるよう、`acr_values` と `claims` パラメータを渡す。
   const { acr, amr } = await resolveAcrAmr({
     subject: session.subject,

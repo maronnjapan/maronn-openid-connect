@@ -20,7 +20,7 @@ export const meta = step({
   endpoint: 'logout',
   feature: 'rp-initiated-logout',
   kind: 'decide',
-  label: 'Verify id_token_hint and decide: log out or confirm',
+  label: 'id_token_hint を検証し、確認の要否を決める',
   spec: 'RP-Initiated Logout 1.0 §2 / §3',
   function: 'processEndSessionRequest',
   consumes: [],

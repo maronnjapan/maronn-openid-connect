@@ -75,7 +75,7 @@ export function OPTIONS(request: Request): Response {
  *
  * CIBA の認証リクエストを次の順に処理し、どこかで失敗すれば OAuth のエラーレスポンスを返す。
  * - ボディが `application/x-www-form-urlencoded` で、同じパラメータが繰り返されていないことを確かめる（`invalid_request`）。
- * - クライアントを認証する（失敗すると `TokenError` のステータス。`invalid_client` なら 401）。
+ * - クライアントを認証する（失敗したときのステータスは `TokenError` のもので、`invalid_client` なら 401）。
  * - OP が宣言していないスコープと、クライアントが登録していないスコープを拒否する（`invalid_scope`）。
  * - `processBackchannelAuthenticationRequest()` でリクエストを検証し、`login_hint` で示されたユーザー宛ての保留中のレコードを保存する（失敗すると 400）。
  *
@@ -100,7 +100,8 @@ async function backchannelAuthentication(request: Request): Promise<Response> {
   }
 
   try {
-    // --- クライアント認証のパイプライン: トークンエンドポイントと同じ core の関数を同じ順に呼ぶ。
+    // 以下は、クライアントを認証するパイプラインである。
+    // トークンエンドポイントと同じ core の関数を、同じ順に呼ぶ。
     // クライアントは、`client_id` に登録した認証方式で認証しなければならない（CIBA §7.1 の MUST）。
     const presentedCredentials = extractClientCredentials({
       params,
@@ -142,7 +143,8 @@ async function backchannelAuthentication(request: Request): Promise<Response> {
       );
     }
 
-    // --- バックチャネル認証のパイプライン: experimental パッケージがリクエストを検証し、保留中のレコードを保存する。
+    // 以下は、バックチャネル認証のパイプラインである。
+    // experimental パッケージの関数でリクエストを検証し、保留中のレコードを保存する。
     // 検証は CIBA §7.1 の順に進む。
     // クライアント（パブリッククライアントでないこと、CIBA のグラントタイプの登録、トークンの配信モード）、`request` パラメータがないこと、ヒントがちょうど 1 つであること、`scope`、`binding_message`、`requested_expiry`、`login_hint` からのユーザーの特定（`_oidc-provider/features/ciba/user.ts` の `resolveCibaUser()`）、ユーザーごとの保留中のリクエスト数の上限の順に確かめ、最後にレコードを作る。
     const response = await processBackchannelAuthenticationRequest({

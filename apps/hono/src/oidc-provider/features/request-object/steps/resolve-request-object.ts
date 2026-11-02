@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'request-object',
   kind: 'resolve',
-  label: 'Verify the Request Object and overlay its claims',
+  label: 'リクエストオブジェクトを検証し、その値で上書きする',
   spec: 'OIDC Core 1.0 §6.1',
   function: 'resolveRequestObject',
   consumes: ['params', 'client'],

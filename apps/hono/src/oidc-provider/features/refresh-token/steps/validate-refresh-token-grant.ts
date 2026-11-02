@@ -17,7 +17,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'refresh-token',
   kind: 'validate',
-  label: 'Validate the refresh_token grant',
+  label: 'refresh_token グラントを検証する',
   spec: 'OAuth 2.1 §4.3.1 / RFC 6749 §6',
   function: 'validateRefreshTokenGrant',
   consumes: ['params', 'authenticatedClientId', 'grantType'],

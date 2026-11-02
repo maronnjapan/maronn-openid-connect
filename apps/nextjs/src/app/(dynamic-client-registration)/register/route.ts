@@ -149,8 +149,8 @@ async function registerClient(request: Request): Promise<Response> {
 
     // メタデータを検証して既定値を適用し、登録するクライアントを作る。
     // 検証は `@maronn-openid-connect/experimental/dynamic-client-registration` の副作用のない関数が行う。
-    // 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
-    // 適用した既定値も登録し、レスポンスで返す（OIDC Registration 1.0 §3.2）。
+    // 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Dynamic Client Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
+    // 適用した既定値も登録し、レスポンスで返す（OIDC Dynamic Client Registration 1.0 §3.2）。
     // アプリケーションの種類ごとの `redirect_uris` の制約と、`grant_types` と `response_types` の整合（RFC 7591 §2.1）も確かめる。
     // 受け付ける値は、この OP が応答できるもの（設定の認証方式とグラントタイプ、機能のレスポンスタイプ、scopes.ts のスコープ、署名鍵のアルゴリズム、設定の独自のメタデータ）に限る。
     // 理解しないメタデータは黙って無視し（RFC 7591 §2 の MUST）、`error_description` はどれもリクエストの値を含まない固定の ASCII の文字列にする。
@@ -241,7 +241,7 @@ async function resolveRegistrationMetadata(
 /**
  * 設定のグラントタイプのうち、OP が応答するものを返す。
  *
- * OP が応答するのは、`authorization_code`、生成された機能がトークンエンドポイントで応答するグラントタイプ、`responseTypes` に `token` か `id_token` を含むレスポンスタイプがあるときの `implicit` である（`implicit` とこれらのレスポンスタイプの対応は OIDC Registration 1.0 §2 による）。
+ * OP が応答するのは、`authorization_code`、生成された機能がトークンエンドポイントで応答するグラントタイプ、`responseTypes` に `token` か `id_token` を含むレスポンスタイプがあるときの `implicit` である（`implicit` とこれらのレスポンスタイプの対応は OIDC Dynamic Client Registration 1.0 §2 による）。
  * 応答しないグラントタイプは、設定にあっても登録させない。
  * 登録できても、そのクライアントはそのグラントタイプを使えないからである。
  *

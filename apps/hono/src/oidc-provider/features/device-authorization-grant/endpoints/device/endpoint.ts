@@ -15,11 +15,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'device',
   order: 140,
-  label: 'Device verification screens',
+  label: 'デバイス認可の確認画面',
   path: '/device',
   methods: ['GET', 'POST'],
   layer: 'browser',
-  group: { id: 'device-authorization', label: 'Device Authorization Grant (RFC 8628)' },
+  group: { id: 'device-authorization', label: 'デバイス認可グラント（RFC 8628）' },
   spec: 'RFC 8628 §3.3',
   feature: 'device-authorization-grant',
   rearrangeable: false,
@@ -31,8 +31,8 @@ export const endpoint = defineEndpoint({
   edges: {
     chain: false,
     extra: [
-      { from: 'submit-user-code', to: 'submit-login', label: 'no OP session', kind: 'branch' },
-      { from: 'submit-user-code', to: 'submit-decision', label: 'OP session', kind: 'branch' },
+      { from: 'submit-user-code', to: 'submit-login', label: 'OP のセッションなし', kind: 'branch' },
+      { from: 'submit-user-code', to: 'submit-decision', label: 'OP のセッションあり', kind: 'branch' },
       { from: 'submit-login', to: 'submit-decision', kind: 'flow' },
     ],
   },

@@ -12,7 +12,7 @@ export const meta = step({
   id: 'verify-id-token-hint',
   endpoint: 'authorize',
   kind: 'validate',
-  label: 'Verify id_token_hint',
+  label: 'id_token_hint を検証する',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'verifyIdTokenHint',
   consumes: ['transactionId', 'transaction', 'issuer', 'responseMode'],

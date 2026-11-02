@@ -12,7 +12,7 @@ export const meta = step({
   id: 'authenticate-client',
   endpoint: 'token',
   kind: 'validate',
-  label: 'Authenticate the client',
+  label: 'クライアントを認証する',
   spec: 'OAuth 2.1 §2.3 / OIDC Core 1.0 §9',
   function: 'authenticateTokenClient',
   consumes: ['params', 'authorization'],

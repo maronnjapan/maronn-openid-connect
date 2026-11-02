@@ -6,7 +6,7 @@ export const meta = step({
   id: 'record-consent',
   endpoint: 'consent',
   kind: 'persist',
-  label: 'Record the consent and the grant',
+  label: '同意とグラントを記録する',
   spec: 'OIDC Core 1.0 §3.1.2.4',
   function: 'recordConsentDecision',
   calls: ['consentResolver.recordConsent', 'consentResolver.recordGrant'],

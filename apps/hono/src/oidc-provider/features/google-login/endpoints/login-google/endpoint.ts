@@ -11,11 +11,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'login-google',
   order: 50,
-  label: 'Google login callback (login_uri)',
+  label: 'Google ログインのコールバック（login_uri）',
   path: '/login/google',
   methods: ['POST'],
   layer: 'browser',
-  group: { id: 'google-login', label: 'Sign in with Google (extension)' },
+  group: { id: 'google-login', label: 'Google でログイン（拡張）' },
   feature: 'google-login',
   rearrangeable: false,
   steps: [
@@ -29,7 +29,7 @@ export const endpoint = defineEndpoint({
     chain: true,
   },
   journeys: [
-    { from: 'login', to: 'login-google', label: 'Sign in with Google', kind: 'flow', order: 60 },
-    { from: 'login-google', to: 'consent', label: 'authenticated', kind: 'flow', order: 70 },
+    { from: 'login', to: 'login-google', label: 'Google でログイン', kind: 'flow', order: 60 },
+    { from: 'login-google', to: 'consent', label: '認証済み', kind: 'flow', order: 70 },
   ],
 });

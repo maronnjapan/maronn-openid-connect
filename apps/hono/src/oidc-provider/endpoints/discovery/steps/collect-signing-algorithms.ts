@@ -5,7 +5,7 @@ export const meta = step({
   id: 'collect-signing-algorithms',
   endpoint: 'discovery',
   kind: 'resolve',
-  label: 'Collect the advertised signing algorithms',
+  label: '公開する署名アルゴリズムを集める',
   spec: 'OIDC Core 1.0 §15.1 / §5.3.2',
   function: 'collectAdvertisedSigningKeys',
   consumes: [],

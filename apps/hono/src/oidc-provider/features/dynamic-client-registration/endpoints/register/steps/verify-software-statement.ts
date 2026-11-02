@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'validate',
-  label: 'Verify the software statement and apply the metadata it asserts',
+  label: 'ソフトウェアステートメントを検証して適用する',
   spec: 'RFC 7591 §2.3 / §3.1.1',
   function: 'resolveRegistrationMetadata',
   consumes: ['registration'],

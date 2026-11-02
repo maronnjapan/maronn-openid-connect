@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'respond',
-  label: 'Respond 201 (no-store)',
+  label: '201 で応答する（no-store）',
   spec: 'RFC 9126 §2.2',
   function: 'respondPar',
   consumes: ['parResponse'],

@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 7662 §2.3',
   function: 'respondIntrospectionError',
   consumes: [],

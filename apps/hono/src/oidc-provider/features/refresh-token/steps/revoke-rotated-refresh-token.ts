@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'refresh-token',
   kind: 'persist',
-  label: 'Revoke the presented refresh token (rotation)',
+  label: '古いリフレッシュトークンを失効させる',
   spec: 'OAuth 2.1 §4.3.1',
   function: 'revokeRotatedRefreshToken',
   consumes: ['params', 'validatedRequest'],

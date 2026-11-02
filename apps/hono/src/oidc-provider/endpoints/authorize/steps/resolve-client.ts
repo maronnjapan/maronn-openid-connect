@@ -10,7 +10,7 @@ export const meta = step({
   id: 'resolve-client',
   endpoint: 'authorize',
   kind: 'resolve',
-  label: 'Resolve the client',
+  label: 'クライアントを特定する',
   spec: 'OAuth 2.1 §4.1.2.1 / RFC 8252 §8',
   function: 'resolveAuthorizationClient',
   consumes: ['params'],

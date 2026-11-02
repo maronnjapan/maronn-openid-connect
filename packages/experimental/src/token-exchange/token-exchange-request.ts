@@ -183,7 +183,7 @@ export interface TokenExchangeRequestContext {
  * @spec RFC 8693 §2.1
  */
 export function authorizeTokenExchangeClient(client: TokenClientInfo): void {
-  // `grantTypes` が登録されていなければ、`['authorization_code']` として扱う（OpenID Connect Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
+  // `grantTypes` が登録されていなければ、`['authorization_code']` として扱う（OIDC Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
   // そのため、トークン交換を使えるのは、トークン交換のグラントタイプを明示的に登録したクライアントだけである。
   const grantTypes = client.grantTypes ?? ['authorization_code'];
   if (!grantTypes.includes(TOKEN_EXCHANGE_GRANT_TYPE)) {

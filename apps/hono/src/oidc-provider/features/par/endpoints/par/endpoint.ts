@@ -13,11 +13,11 @@ import { defineEndpoint } from '../../../../endpoints/step.js';
 export const endpoint = defineEndpoint({
   id: 'par',
   order: 110,
-  label: 'Pushed authorization request endpoint',
+  label: 'PAR エンドポイント',
   path: '/par',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'pushed-authorization', label: 'Pushed Authorization Requests (RFC 9126)' },
+  group: { id: 'pushed-authorization', label: 'PAR（RFC 9126）' },
   spec: 'RFC 9126 §2',
   feature: 'par',
   rearrangeable: true,

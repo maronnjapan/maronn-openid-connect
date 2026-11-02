@@ -6,7 +6,7 @@ export const meta = step({
   id: 'parse-request',
   endpoint: 'token',
   kind: 'parse',
-  label: 'Parse the token request',
+  label: 'トークンリクエストを解析する',
   spec: 'RFC 6749 §4.1.3 / §3.2',
   function: 'parseTokenRequest',
   consumes: [],

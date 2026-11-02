@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'parse',
-  label: 'Read the JSON metadata',
+  label: 'JSON のメタデータを読み取る',
   spec: 'RFC 7591 §3.1',
   function: 'parseRegistrationRequest',
   consumes: [],

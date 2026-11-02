@@ -5,7 +5,7 @@ export const meta = step({
   id: 'parse-access-token',
   endpoint: 'userinfo',
   kind: 'parse',
-  label: 'Read the Bearer token',
+  label: 'Bearer トークンを読み取る',
   spec: 'RFC 6750 §2.1 / §2.2',
   function: 'parseUserInfoRequest',
   consumes: [],

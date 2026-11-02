@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'logout',
   feature: 'rp-initiated-logout',
   kind: 'persist',
-  label: 'Confirmed: end the session',
+  label: '確認済み: セッションを終える',
   spec: 'RP-Initiated Logout 1.0 §2',
   function: 'approveLogout',
   consumes: ['confirmation'],

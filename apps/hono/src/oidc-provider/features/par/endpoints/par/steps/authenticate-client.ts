@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'par',
   feature: 'par',
   kind: 'validate',
-  label: 'Authenticate the pushing client',
+  label: 'プッシュしたクライアントを認証する',
   spec: 'RFC 9126 §2.1',
   function: 'authenticatePushingClient',
   consumes: ['params', 'authorization'],

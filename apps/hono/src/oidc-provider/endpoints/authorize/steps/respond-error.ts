@@ -7,7 +7,7 @@ export const meta = step({
   id: 'respond-error',
   endpoint: 'authorize',
   kind: 'respond',
-  label: 'Map a failure to a redirectable or on-OP error',
+  label: '失敗をリダイレクトか OP 上のエラーに振り分ける',
   spec: 'OIDC Core 1.0 §3.1.2.6 / §3.1.2.2',
   function: 'authorizationErrorOutcome',
   consumes: ['responseMode'],

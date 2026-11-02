@@ -23,7 +23,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'id-jag',
   kind: 'dispatch',
-  label: 'Redeem an ID-JAG on the jwt-bearer grant',
+  label: 'jwt-bearer グラントで ID-JAG を引き換える',
   spec: 'ID-JAG draft §4.4 / RFC 7523 §2.1',
   function: 'redeemIdJag',
   consumes: ['params', 'tokenClient'],

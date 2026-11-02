@@ -7,7 +7,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'parse',
-  label: 'Parse the device authorization request',
+  label: 'デバイス認可リクエストを解析する',
   spec: 'RFC 8628 §3.1',
   function: 'parseDeviceAuthorizationRequest',
   consumes: [],
@@ -20,7 +20,7 @@ export const meta = step({
  *
  * `contentType`（`Content-Type` ヘッダーの値）の `;` より前を小文字にし、前後の空白を除いてから `application/x-www-form-urlencoded` と比べる。
  * そのため、`charset` などのパラメータが付いていても true を返す。
- * デバイス認可リクエストのボディは、この形式でなければならない（RFC 8628 §3.1 の MUST。RFC 6749 §3.2.1 に従う）。
+ * デバイス認可リクエストのボディは、この形式でなければならない（RFC 8628 §3.1 の MUST、RFC 6749 §3.2.1）。
  *
  * @spec RFC 8628 §3.1
  * @spec RFC 6749 §3.2.1

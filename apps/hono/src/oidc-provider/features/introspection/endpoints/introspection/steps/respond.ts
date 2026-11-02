@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'respond',
-  label: 'Respond (no-store)',
+  label: '応答する（no-store）',
   spec: 'RFC 7662 §2.2',
   function: 'respondIntrospection',
   consumes: ['introspection'],

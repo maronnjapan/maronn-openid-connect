@@ -17,7 +17,7 @@ export const meta = step({
   endpoint: 'device',
   feature: 'device-authorization-grant',
   kind: 'validate',
-  label: 'Sign the End-User in on this browser',
+  label: 'このブラウザでエンドユーザーをログインさせる',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceLogin',
   consumes: ['record', 'bindingCookie'],

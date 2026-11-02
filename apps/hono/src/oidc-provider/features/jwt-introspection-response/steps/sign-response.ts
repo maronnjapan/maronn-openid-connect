@@ -17,7 +17,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'jwt-introspection-response',
   kind: 'dispatch',
-  label: 'Answer as a signed JWT when asked for one',
+  label: '求められたら署名付き JWT で応答する',
   spec: 'RFC 9701 §4 / §5',
   function: 'signIntrospectionResponse',
   consumes: ['introspection', 'authenticatedClientId'],

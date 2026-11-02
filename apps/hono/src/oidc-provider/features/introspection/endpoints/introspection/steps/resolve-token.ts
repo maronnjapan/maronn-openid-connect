@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'introspection',
   feature: 'introspection',
   kind: 'resolve',
-  label: 'Resolve the presented token',
+  label: '提示されたトークンを取得する',
   spec: 'RFC 7662 §2.1',
   function: 'resolveIntrospectedToken',
   consumes: ['params', 'authenticatedClientId'],

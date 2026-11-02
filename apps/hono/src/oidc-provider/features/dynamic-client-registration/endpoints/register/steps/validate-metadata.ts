@@ -16,7 +16,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'validate',
-  label: 'Validate the metadata and build the client',
+  label: 'メタデータを検証してクライアントを組み立てる',
   spec: 'RFC 7591 §2 / §2.1',
   function: 'validateRegistrationMetadata',
   consumes: ['metadata'],
@@ -29,8 +29,8 @@ export const meta = step({
  *
  * 作るクライアントには新しく発行した `client_id` を付け、`client_secret` で認証する方式を登録したときは `client_secret` も付ける。
  * 検証と組み立ては、experimental パッケージの副作用のない関数（`validateClientMetadata()` と `buildRegisteredClient()`）が行う。
- * 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
- * 適用した既定値も登録し、レスポンスで返す（OIDC Registration 1.0 §3.2）。
+ * 理解するフィールドだけを選んで値を検証し、RFC 7591 §2 と OIDC Dynamic Client Registration 1.0 §2 の既定値（`application_type` は `web`、`id_token_signed_response_alg` は `RS256`）を適用する。
+ * 適用した既定値も登録し、レスポンスで返す（OIDC Dynamic Client Registration 1.0 §3.2）。
  * アプリケーションの種類ごとの `redirect_uris` の制約と、`grant_types` と `response_types` の整合（RFC 7591 §2.1）も確かめる。
  *
  * 受け付ける値は、この OP が応答できるものに限る。
@@ -69,7 +69,7 @@ export function validateRegistrationMetadata(
 /**
  * 設定のグラントタイプのうち、OP が応答するものを返す。
  *
- * OP が応答するのは、`authorization_code`、生成された機能がトークンエンドポイントで応答するグラントタイプ、`responseTypes` に `token` か `id_token` を含むレスポンスタイプがあるときの `implicit` である（`implicit` とこれらのレスポンスタイプの対応は OIDC Registration 1.0 §2 による）。
+ * OP が応答するのは、`authorization_code`、生成された機能がトークンエンドポイントで応答するグラントタイプ、`responseTypes` に `token` か `id_token` を含むレスポンスタイプがあるときの `implicit` である（`implicit` とこれらのレスポンスタイプの対応は OIDC Dynamic Client Registration 1.0 §2 による）。
  * 応答しないグラントタイプは、設定にあっても登録させない。
  * 登録できても、そのクライアントはそのグラントタイプを使えないからである。
  *

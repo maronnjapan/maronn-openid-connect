@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'validate',
-  label: 'Authenticate the client',
+  label: 'クライアントを認証する',
   spec: 'RFC 7009 §2.1 / OAuth 2.1 §2.3',
   function: 'authenticateRevocationClient',
   consumes: ['params', 'authorization'],

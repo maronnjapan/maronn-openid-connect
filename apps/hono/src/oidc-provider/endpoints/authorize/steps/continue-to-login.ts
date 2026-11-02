@@ -6,7 +6,7 @@ export const meta = step({
   id: 'continue-to-login',
   endpoint: 'authorize',
   kind: 'respond',
-  label: 'Continue on the login screen',
+  label: 'ログイン画面へ進む',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'continueToLogin',
   consumes: ['transactionId', 'transactionTtlSeconds'],

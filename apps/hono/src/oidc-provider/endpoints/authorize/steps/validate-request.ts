@@ -31,7 +31,7 @@ export const meta = step({
   id: 'validate-request',
   endpoint: 'authorize',
   kind: 'validate',
-  label: 'Validate the request parameters',
+  label: 'リクエストのパラメータを検証する',
   spec: 'OIDC Core 1.0 §3.1.2.1-§3.1.2.2 / OAuth 2.1 §4.1.1 / §7.5',
   function: 'validateAuthorizationRequestParams',
   consumes: ['params', 'effectiveParams', 'requestObjectClaims', 'client', 'redirectUri', 'state'],
@@ -147,7 +147,7 @@ export async function validateAuthorizationRequestParams(
   // `display` が `page`、`popup`、`touch`、`wap` のどれかであることを確かめる（OIDC Core 1.0 §3.1.2.1）。
   const display = validateDisplayParameter(effectiveParams, redirectUri, state);
 
-  // `max_age` をリクエストから取り出し、無ければクライアントが登録した `default_max_age` を使う（OIDC Core 1.0 §3.1.2.1、OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // `max_age` をリクエストから取り出し、無ければクライアントが登録した `default_max_age` を使う（OIDC Core 1.0 §3.1.2.1、OIDC Dynamic Client Registration 1.0 §2）。
   // 登録した `default_max_age` が不正なら、設定の誤りとして、リダイレクトしない `server_error` を投げる。
   const maxAge = resolveMaxAge(effectiveParams, client, redirectUri, state);
 

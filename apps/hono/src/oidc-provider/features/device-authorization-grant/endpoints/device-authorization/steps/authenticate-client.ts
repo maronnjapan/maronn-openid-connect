@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'validate',
-  label: 'Authenticate the client',
+  label: 'クライアントを認証する',
   spec: 'RFC 8628 §3.1 / RFC 6749 §3.2.1',
   function: 'authenticateDeviceClient',
   consumes: ['params', 'authorization'],

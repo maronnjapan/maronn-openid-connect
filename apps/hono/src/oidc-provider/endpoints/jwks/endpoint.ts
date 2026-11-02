@@ -13,7 +13,7 @@ export const endpoint = defineEndpoint({
   path: '/.well-known/jwks.json',
   methods: ['GET'],
   layer: 'metadata',
-  group: { id: 'metadata', label: 'Metadata' },
+  group: { id: 'metadata', label: 'メタデータ' },
   spec: 'OIDC Discovery 1.0 §3 (jwks_uri)',
   rearrangeable: true,
   steps: [

@@ -9,7 +9,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'persist',
-  label: 'Enforce the inventory cap and store the client',
+  label: '登録数の上限を確かめてクライアントを保存する',
   spec: 'RFC 7591 §5',
   function: 'storeRegisteredClient',
   consumes: ['client'],

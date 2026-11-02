@@ -133,10 +133,10 @@ export function buildRegisteredClient(
  * `client_secret_expires_at` は `client_secret` を発行したときだけ必須（REQUIRED）で、値の 0 は有効期限がないことを表す。
  *
  * `registration_access_token` と `registration_client_uri` は返さない。
- * RFC 7592 はこの機能の対象外であり、OpenID Connect Dynamic Client Registration 1.0 §3.2 の「両方を返すか、どちらも返さないか」という MUST に従って、どちらも返さない側を選んでいる。
+ * RFC 7592 はこの機能の対象外であり、OIDC Dynamic Client Registration 1.0 §3.2 の「両方を返すか、どちらも返さないか」という MUST に従って、どちらも返さない側を選んでいる。
  *
  * @spec RFC 7591 §3.2.1
- * @spec OpenID Connect Dynamic Client Registration 1.0 §3.2
+ * @spec OIDC Dynamic Client Registration 1.0 §3.2
  */
 export function buildClientRegistrationResponse(
   client: DynamicallyRegisteredClient,

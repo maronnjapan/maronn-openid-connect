@@ -4,7 +4,7 @@ export const meta = step({
   id: 'authenticate-user',
   endpoint: 'login',
   kind: 'validate',
-  label: 'Check the credentials',
+  label: '認証情報を確かめる',
   function: 'authenticateEndUser',
   calls: ['userStore.authenticate'],
   consumes: ['username', 'password'],

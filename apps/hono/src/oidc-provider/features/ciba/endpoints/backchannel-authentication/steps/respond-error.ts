@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'CIBA Core 1.0 §13',
   function: 'respondBackchannelAuthenticationError',
   consumes: [],

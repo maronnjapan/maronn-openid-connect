@@ -12,7 +12,7 @@ export const meta = step({
   id: 'reuse-session',
   endpoint: 'authorize',
   kind: 'dispatch',
-  label: 'Single Sign-On: reuse the active OP session',
+  label: 'SSO: 有効な OP のセッションを再利用する',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'reuseExistingSession',
   calls: ['consentResolver.hasConsent'],

@@ -77,7 +77,7 @@ export function OPTIONS(request: Request): Response {
  *
  * デバイス認可リクエストを次の順に処理し、どこかで失敗すれば OAuth のエラーレスポンスを返す。
  * - ボディが `application/x-www-form-urlencoded` で、同じパラメータが繰り返されていないことを確かめる（`invalid_request`）。
- * - クライアントを認証する（失敗すると `TokenError` のステータス。`invalid_client` なら 401）。
+ * - クライアントを認証する（失敗したときのステータスは `TokenError` のもので、`invalid_client` なら 401）。
  * - グラントの登録とスコープを検証し、許可できない `offline_access` を取り除く（`unauthorized_client`、`invalid_request`、`invalid_scope`）。
  * - デバイスコードとユーザーコードを作り、保留中のレコードを保存する。
  *
@@ -103,7 +103,8 @@ async function deviceAuthorization(request: Request): Promise<Response> {
   }
 
   try {
-    // --- クライアント認証のパイプライン: トークンエンドポイントと同じ core の関数を同じ順に呼ぶ。
+    // 以下は、クライアントを認証するパイプラインである。
+    // トークンエンドポイントと同じ core の関数を、同じ順に呼ぶ。
     // このエンドポイントにも、RFC 6749 §3.2.1 のクライアント認証の要件が当てはまる（RFC 8628 §3.1）。
     // パブリッククライアントは `client_id` だけを提示する。
     const presentedCredentials = extractClientCredentials({
@@ -117,8 +118,9 @@ async function deviceAuthorization(request: Request): Promise<Response> {
     validateClientAuthMethod(client, presentedCredentials);
     await verifyClientSecret(client, presentedCredentials.clientSecret);
 
-    // --- デバイス認可のパイプライン: 以下の処理は、どれも `@maronn-openid-connect/experimental/device-authorization-grant` の独立した関数を RFC 8628 §3.1 の順に呼ぶ。
-    // 呼び出しを消せばその検証を外せ、処理の間に独自の処理を入れることもできる。
+    // 以下は、デバイス認可のパイプラインである。
+    // `@maronn-openid-connect/experimental/device-authorization-grant` の独立した関数を、RFC 8628 §3.1 の順に呼ぶ。
+    // 呼び出しを消せばその検証を外せ、呼び出しの間に独自の処理を入れることもできる。
 
     // クライアントがデバイス認可グラントを登録していることを確かめる（RFC 6749 §5.2）。
     validateDeviceGrantAllowed(client);

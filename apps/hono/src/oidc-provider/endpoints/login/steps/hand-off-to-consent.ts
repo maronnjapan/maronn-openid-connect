@@ -5,7 +5,7 @@ export const meta = step({
   id: 'hand-off-to-consent',
   endpoint: 'login',
   kind: 'persist',
-  label: 'Store the authenticated subject for the consent step',
+  label: '認証したサブジェクトを同意のために保存する',
   function: 'handOffToConsent',
   consumes: ['transactionId', 'user', 'sessionId', 'authTime'],
   produces: ['outcome'],

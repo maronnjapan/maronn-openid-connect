@@ -10,7 +10,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'respond',
-  label: 'Respond 201 with the registration response',
+  label: '201 と登録レスポンスで応答する',
   spec: 'RFC 7591 §3.2.1',
   function: 'respondRegistration',
   consumes: ['client'],

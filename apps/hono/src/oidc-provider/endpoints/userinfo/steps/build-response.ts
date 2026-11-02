@@ -13,7 +13,7 @@ export const meta = step({
   id: 'build-response',
   endpoint: 'userinfo',
   kind: 'transform',
-  label: 'Build the response (JSON or signed JWT)',
+  label: 'レスポンスを組み立てる（JSON か署名付き JWT）',
   spec: 'OIDC Core 1.0 §5.3.2',
   function: 'buildUserInfoResponse',
   consumes: ['tokenInfo', 'claims'],

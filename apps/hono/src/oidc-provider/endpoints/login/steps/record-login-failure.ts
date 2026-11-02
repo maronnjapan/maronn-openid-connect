@@ -5,7 +5,7 @@ export const meta = step({
   id: 'record-login-failure',
   endpoint: 'login',
   kind: 'persist',
-  label: 'Count the failed attempt (lockout)',
+  label: '失敗した試行を数える（ロックアウト）',
   function: 'recordLoginFailure',
   consumes: ['transactionId', 'transaction'],
   produces: [],

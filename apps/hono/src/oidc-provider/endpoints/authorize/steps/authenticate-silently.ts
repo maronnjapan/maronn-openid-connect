@@ -16,7 +16,7 @@ export const meta = step({
   id: 'authenticate-silently',
   endpoint: 'authorize',
   kind: 'dispatch',
-  label: 'prompt=none: authenticate without interaction',
+  label: 'prompt=none: 画面を出さずに認証する',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'completePromptNoneRequest',
   consumes: ['promptValues', 'transactionId', 'transaction', 'verifiedHintSubject', 'issuer', 'responseMode'],

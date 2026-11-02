@@ -52,8 +52,8 @@ export async function redeemCibaRequest(
     store: cibaAuthenticationRequestStore,
   });
 
-  // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ（T-022）。
-  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ。
+  // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OIDC Dynamic Client Registration 1.0 §2）。
   // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
   // `at_hash` も誤ったアルゴリズムで計算してしまう。
   const idTokenAlg = (client as RegisteredClient).idTokenSignedResponseAlg;

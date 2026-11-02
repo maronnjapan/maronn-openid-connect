@@ -15,7 +15,7 @@ export const meta = step({
   endpoint: 'device',
   feature: 'device-authorization-grant',
   kind: 'persist',
-  label: 'Approve or deny the device',
+  label: 'デバイスを承認または拒否する',
   spec: 'RFC 8628 §3.3',
   function: 'submitDeviceDecision',
   calls: ['consentResolver.recordConsent', 'consentResolver.recordGrant'],
@@ -35,7 +35,8 @@ export const meta = step({
  * `decision` が `approve` なら、レコードを `approved` にしてセッションのサブジェクト、`auth_time`、新しいグラント ID を記録し、スコープを `resolveGrantableScopes()` で絞って保存する。
  * 同意とグラントも記録する。
  * `approve` 以外の値は、すべて拒否として扱い、レコードを `denied` にする。
- * どちらの場合も、バインディング Cookie を消す Cookie を持つ `completed` の結果を返し、デバイスは次のポーリングで結果を受け取る。
+ * どちらの場合も、バインディング Cookie を消す Cookie を持つ `completed` の結果を返す。
+ * デバイスは、次のポーリングでトークンか `access_denied` を受け取る。
  *
  * @spec RFC 8628 §3.3
  */

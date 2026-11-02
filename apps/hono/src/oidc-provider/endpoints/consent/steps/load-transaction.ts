@@ -7,7 +7,7 @@ export const meta = step({
   id: 'load-transaction',
   endpoint: 'consent',
   kind: 'resolve',
-  label: 'Load the transaction named by the cookie',
+  label: 'Cookie が指すトランザクションを読み込む',
   spec: 'OIDC Core 1.0 §3.1.2.4',
   function: 'loadTransaction',
   consumes: [],

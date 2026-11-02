@@ -29,7 +29,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'device-authorization-grant',
   kind: 'dispatch',
-  label: 'Redeem a device_code',
+  label: 'device_code を引き換える',
   spec: 'RFC 8628 §3.4 / §3.5',
   function: 'redeemDeviceCode',
   consumes: ['params', 'tokenClient', 'authenticatedClientId'],
@@ -85,8 +85,8 @@ export async function redeemDeviceCode(
     const deviceSigningKey: SigningKey = c.get('signingKeys')[0];
     const devicePrivateKey = deviceSigningKey.privateKey;
     const deviceKeyId = deviceSigningKey.keyId;
-    // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ（T-022）。
-    // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OpenID Connect Dynamic Client Registration 1.0 §2）。
+    // ID トークンの署名鍵は、標準のグラントと同じ規則で選ぶ。
+    // 登録された ID トークン用の鍵のうち、`alg` がクライアントの `id_token_signed_response_alg` と一致するものを使う（OIDC Dynamic Client Registration 1.0 §2）。
     // 鍵の集合の最初の鍵を使うと、ES256 で登録したクライアントに RS256 の ID トークンを渡すことになり、クライアントはそれを拒否する。
     // `at_hash` も誤ったアルゴリズムで計算してしまう。
     const deviceIdTokenSigningKeys = (c.get('idTokenSigningKeys') as SigningKey[] | undefined) ?? [];

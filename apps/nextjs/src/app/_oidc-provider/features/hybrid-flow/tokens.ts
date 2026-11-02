@@ -102,7 +102,7 @@ export async function issueHybridTokens(input: HybridTokensInput): Promise<Hybri
   const issuedAt = Math.floor(Date.now() / 1000);
 
   // 認可コードを保存する前に、ID トークンの署名鍵を選ぶ。
-  // 選ぶのは、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵で、`token/route.ts` と同じ選び方である（OpenID Connect Dynamic Client Registration 1.0 §2）。
+  // 選ぶのは、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵で、`token/route.ts` と同じ選び方である（OIDC Dynamic Client Registration 1.0 §2）。
   // 保存の前に選ぶのは、OP が鍵を持たない `alg` を登録したクライアントのときに、何も保存しないまま失敗させるためである。
   // `code token` では認可エンドポイントが ID トークンを返さないので、ID トークンの署名鍵は選ばない。
   const idTokenKey = responseTypeIncludes(responseType, 'id_token')

@@ -650,10 +650,10 @@ export function validateMaxAge(
 /**
  * 登録された `default_max_age` を検証して返す。
  *
- * `default_max_age` は秒数を表す非負の整数でなければならない（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * `default_max_age` は秒数を表す非負の整数でなければならない（OIDC Dynamic Client Registration 1.0 §2）。
  * この値はリクエストではなくクライアントの登録メタデータから来るので、不正な値は設定ミス（サーバー側のエラー）として扱い、リダイレクトせずに `server_error` の `AuthorizationError` を投げる。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export function validateDefaultMaxAge(defaultMaxAge: number): number {
   if (
@@ -674,11 +674,11 @@ export function validateDefaultMaxAge(defaultMaxAge: number): number {
  * 適用する `max_age` を決めて返す。
  *
  * リクエストに `max_age` があれば、検証してその値を返す（OIDC Core 1.0 §3.1.2.1）。
- * なければ、クライアントの登録の `default_max_age` を検証して返す（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * なければ、クライアントの登録の `default_max_age` を検証して返す（OIDC Dynamic Client Registration 1.0 §2）。
  * どちらもなければ `undefined` を返し、認証からの経過時間を制限しない。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export function resolveMaxAge(
   effectiveParams: Pick<AuthorizationRequestParams, 'max_age'>,
@@ -1105,7 +1105,7 @@ export function validateRequestObjectConsistency(
  * 次のときは、リダイレクトで返す `AuthorizationError` を投げる:
  * - `response_type` がないときは `invalid_request`（OAuth 2.1 §4.1.2.1）。
  * - `supportedResponseTypes` にない値は、OP 全体で対応していないので `unsupported_response_type`。
- * - クライアントが登録していない値は、そのクライアントに許されていないので `unauthorized_client`。登録がないクライアントの既定値は `["code"]` である（OpenID Connect Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
+ * - クライアントが登録していない値は、そのクライアントに許されていないので `unauthorized_client`。登録がないクライアントの既定値は `["code"]` である（OIDC Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
  *
  * `supportedResponseTypes` の既定値は `["code"]`（認可コードフローだけ）である。
  * インプリシットフロー（OIDC Core 1.0 §3.2）にも応答する OP は `id_token` と `id_token token` を、ハイブリッドフロー（OIDC Core 1.0 §3.3）にも応答する OP は `code id_token`、`code token`、`code id_token token` を加えて渡す。
@@ -1119,7 +1119,7 @@ export function validateRequestObjectConsistency(
  * @spec OIDC Core 1.0 §3.3
  * @spec OAuth 2.0 Multiple Response Type Encoding Practices §1.2
  * @spec OIDC Core 1.0 §6.1
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @spec RFC 7591 §2
  */
 export function validateResponseType(
@@ -1529,10 +1529,10 @@ export function validateSupportedResponseType(
  * クライアントの登録と `response_type` を照合する。
  *
  * `response_type` がクライアントの登録（`responseTypes`）にないときは、リダイレクトで返す `unauthorized_client` の `AuthorizationError` を投げる。
- * 登録がなければ `code` だけを許す（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * 登録がなければ `code` だけを許す（OIDC Dynamic Client Registration 1.0 §2）。
  * 登録された値も順序を問わずに照合する（`token id_token` の登録は `id_token token` に一致する）。
  *
- * @spec OpenID Connect Dynamic Client Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export function validateClientResponseType(
   responseType: string,

@@ -168,7 +168,7 @@ export async function issueImplicitTokens(c: any, input: ImplicitTokensInput): P
  *
  * `endpoints/token/` の `select-signing-keys` ステップと同じ方法で選ぶ。
  * アクセストークンには、汎用の署名鍵の先頭を使う。
- * ID トークンには、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵を、ID トークンの署名鍵から選ぶ（OpenID Connect Dynamic Client Registration 1.0 §2）。
+ * ID トークンには、クライアントが `id_token_signed_response_alg` に登録した `alg`（未登録なら RS256）の鍵を、ID トークンの署名鍵から選ぶ（OIDC Dynamic Client Registration 1.0 §2）。
  *
  * @throws {AuthorizationError} `server_error`: その `alg` の ID トークンの署名鍵が登録されていないとき。
  */

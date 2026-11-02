@@ -113,7 +113,7 @@ export function validatePayload(
     throw new Error('Missing required claim: sub');
   }
 
-  // `sub` が 255 文字を超えていれば例外を投げる（OIDC Core 1.0 §5.1 は 255 文字以下の ASCII と定める）。
+  // `sub` が 255 文字を超えていれば例外を投げる（OIDC Core 1.0 §2 は 255 文字以下の ASCII と定める）。
   if (payload.sub.length > 255) {
     throw new Error('Subject identifier must not exceed 255 ASCII characters');
   }

@@ -15,7 +15,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'jarm',
   kind: 'resolve',
-  label: 'Interpret response_mode=query.jwt',
+  label: 'response_mode=query.jwt を解釈する',
   spec: 'JARM §2.3 / §3',
   function: 'resolveJarmResponseContext',
   consumes: ['params', 'effectiveParams', 'client', 'redirectUri', 'state', 'issuer'],

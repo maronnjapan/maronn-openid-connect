@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'validate',
-  label: 'Check the requested scope against the registration',
+  label: '要求されたスコープを登録内容と照合する',
   spec: 'RFC 7591 §2 / RFC 6749 §3.3',
   function: 'validateCibaClientScope',
   consumes: ['params', 'client'],
@@ -21,7 +21,7 @@ export const meta = step({
  *
  * まず、OP が宣言していないスコープの要求を拒否する（RFC 6749 §3.3）。
  * 判定には `/authorize` と同じ許可リスト（`scopes.ts`）を使い、`offline_access` は判定から外す。
- * 独自のスコープを宣言していない間は、この判定はどの値も通す。
+ * 独自のスコープを宣言していない間は、どの値もこの判定を通る。
  * 次に、スコープの一覧（`client.scope`）を登録したクライアントが、一覧にないスコープを要求していれば拒否する（RFC 7591 §2）。
  * これも `/authorize` と同じ規則である。
  *

@@ -60,7 +60,7 @@ export function invalidUserCodeScreen(userCode: string): Response {
 /**
  * デバイスフローのログインフォームを HTML で返す。
  *
- * 承認しようとしているユーザーコードを表示し、ユーザー名とパスワードを `/device/login` に送るフォームを置く。
+ * 承認しようとしているデバイスのユーザーコードを表示し、ユーザー名とパスワードを `/device/login` に送るフォームを置く。
  * フォームは、隠しフィールドの `user_code` と `csrf_token` も一緒に送る。
  * `params.error` があれば、フォームの上にエラーと、`remainingAttempts` があれば残りの試行回数を表示する。
  * `cookies`（バインディング Cookie など）は、`Set-Cookie` ヘッダーとして付ける。

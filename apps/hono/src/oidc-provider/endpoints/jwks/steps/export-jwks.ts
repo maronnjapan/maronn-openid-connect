@@ -10,7 +10,7 @@ export const meta = step({
   id: 'export-jwks',
   endpoint: 'jwks',
   kind: 'transform',
-  label: 'Export the public halves as a JWK Set',
+  label: '公開鍵を JWK Set にまとめる',
   spec: 'RFC 7517 §5',
   function: 'buildJwksDocument',
   consumes: ['keys'],

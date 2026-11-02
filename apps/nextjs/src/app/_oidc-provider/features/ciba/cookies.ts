@@ -24,7 +24,7 @@ export const CIBA_LOGIN_BINDING_COOKIE_PREFIX = 'oidc_ciba_login_';
  * この Cookie で、CIBA のログイントランザクションをこのブラウザに結び付ける。
  * 名前は `oidc_ciba_login_<transactionId>` で、値には `bindingSecret` をそのまま入れる。
  * 属性はセッションの Cookie と同じ `HttpOnly`（JavaScript から読めない）、`Secure`（HTTPS でだけ送られる）、`SameSite=Lax` である。
- * ブラウザは `http://localhost` を安全な接続として扱うので、`Secure` を付けても手元の `http://localhost` で使える。
+ * ブラウザは `http://localhost` も安全な接続として扱うので、そこでは HTTP でも送られる。
  * `Max-Age` には `ttlSeconds` を入れる。
  * 呼び出し側はトランザクションの残りの有効期間を渡すので、ログインフォームを放置しても Cookie がいつまでも残ることはない。
  */

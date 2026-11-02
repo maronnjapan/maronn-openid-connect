@@ -293,7 +293,7 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
  * それ以外のときは `undefined` を返す。
  */
 export async function setRequestContext(c: any, options: OidcProviderOptions): Promise<Response | undefined> {
-  // 各プロバイダは、登録した鍵の集合を返す（T-022）。
+  // 各プロバイダは、登録した鍵の集合を返す。
   // 新しいトークンには集合の最初の鍵で署名し、すべての鍵を JWKS エンドポイントで公開するので、ローテーションで外した鍵や別のアルゴリズムの鍵の署名も検証できる。
   let signingKeys: SigningKey[];
   let idTokenSigningKeys: SigningKey[];
@@ -315,7 +315,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   const storeResolvers = createStoreResolvers(stores);
   const clientResolver = options.clientResolver ?? createClientResolver(createDatabase(c));
 
-  // 用途ごとに、登録された鍵の集合を入れる（T-022）。
+  // 用途ごとに、登録された鍵の集合を入れる。
   c.set('signingKeys', signingKeys);
   c.set('idTokenSigningKeys', idTokenSigningKeys);
   c.set('userinfoSigningKeys', userinfoSigningKeys);
@@ -341,15 +341,15 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('authenticationSessionResolver', storeResolvers.authenticationSessionResolver);
   c.set('revokeConsentAndTokens', storeResolvers.revokeConsentAndTokens);
 
-  // `acrResolver` が渡されていれば入れる（T-015）。
+  // `acrResolver` が渡されていれば入れる。
   // 渡されていなければ、トークンエンドポイントは、要求された `acr_values` のうち最も優先されるものをトークンに入れる。
   if (options.acrResolver) {
     c.set('acrResolver', options.acrResolver);
   }
-  // `id_token_hint` を検証する JWKS のプロバイダを入れる（T-017、P1）。
+  // `id_token_hint` を検証する JWKS のプロバイダを入れる。
   // 渡されていなければ OP 自身の ID トークンの署名鍵を使うので、OP が発行した ID トークンを `id_token_hint` として検証できる（OIDC Core 1.0 §3.1.2.2）。
   c.set('jwksProvider', options.jwksProvider ?? (() => signingKeysToJwkSet(idTokenSigningKeys)));
-  // セッションと同意のリゾルバを入れる（P1）。
+  // セッションと同意のリゾルバを入れる。
   // 渡されていなければ、Cookie のセッションとストアの同意を読む既定のリゾルバを使うので、設定しなくても `prompt=none`、`max_age`、SSO が動く（OIDC Core 1.0 §3.1.2.1、§3.1.2.3）。
   c.set('sessionResolver', options.sessionResolver ?? storeResolvers.sessionResolver);
   c.set('consentResolver', options.consentResolver ?? storeResolvers.consentResolver);

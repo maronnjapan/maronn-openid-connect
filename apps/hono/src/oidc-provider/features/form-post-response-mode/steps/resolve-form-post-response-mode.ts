@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'form-post-response-mode',
   kind: 'resolve',
-  label: 'Interpret response_mode=form_post',
+  label: 'response_mode=form_post を解釈する',
   spec: 'OAuth 2.0 Form Post Response Mode §2',
   function: 'resolveFormPostResponseContext',
   consumes: ['params', 'effectiveParams', 'issuer'],

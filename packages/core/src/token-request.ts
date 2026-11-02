@@ -455,12 +455,12 @@ export async function resolveAuthenticatedTokenClient(
  *
  * クライアントの `grantTypes` に `grantType` がなければ、`TokenError`（`unauthorized_client`）を投げる。
  * 認証したクライアントがそのグラントタイプを使う許可を持たないときのエラーコードは `unauthorized_client` である（RFC 6749 §5.2）。
- * `grantTypes` を登録していないクライアントには、既定値の `["authorization_code"]` を当てはめる（OIDC Registration 1.0 §2、RFC 7591 §2）。
+ * `grantTypes` を登録していないクライアントには、既定値の `["authorization_code"]` を当てはめる（OIDC Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
  *
  * OP 全体で対応していないグラントタイプは {@link validateGrantTypeSupported} が `unsupported_grant_type` で拒否するので、ここではクライアントごとの許可だけを確かめる。
  *
  * @spec RFC 6749 §5.2
- * @spec OIDC Registration 1.0 §2
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  * @spec RFC 7591 §2
  * @throws {TokenError} `unauthorized_client`: クライアントがそのグラントタイプを登録していないとき
  */

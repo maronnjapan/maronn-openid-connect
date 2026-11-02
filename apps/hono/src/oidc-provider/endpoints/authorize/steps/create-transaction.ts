@@ -12,7 +12,7 @@ export const meta = step({
   id: 'create-transaction',
   endpoint: 'authorize',
   kind: 'persist',
-  label: 'Create and store the authorization transaction',
+  label: '認可トランザクションを作って保存する',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'createAuthorizationTransaction',
   consumes: ['validatedRequest', 'responseMode'],

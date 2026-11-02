@@ -11,7 +11,7 @@ export const meta = step({
   endpoint: 'revocation',
   feature: 'revocation',
   kind: 'persist',
-  label: 'Revoke the token and its grant siblings',
+  label: 'トークンと同じグラントのトークンを失効させる',
   spec: 'RFC 7009 §2.1',
   function: 'revokeToken',
   consumes: ['token', 'resolved', 'authenticatedClientId'],

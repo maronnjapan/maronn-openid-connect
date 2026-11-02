@@ -13,7 +13,7 @@ export const meta = step({
   id: 'issue-access-token',
   endpoint: 'token',
   kind: 'issue',
-  label: 'Issue the access token',
+  label: 'アクセストークンを発行する',
   spec: 'RFC 9068 §2.2 / §2.2.1 / §3',
   function: 'issueAccessToken',
   consumes: ['signingKey', 'subject', 'validatedRequest', 'acr'],

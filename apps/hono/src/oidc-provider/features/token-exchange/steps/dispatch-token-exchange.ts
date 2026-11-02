@@ -24,7 +24,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'token-exchange',
   kind: 'dispatch',
-  label: 'Token Exchange',
+  label: 'トークン交換',
   spec: 'RFC 8693 §2.1',
   function: 'exchangeToken',
   consumes: ['params', 'tokenClient'],

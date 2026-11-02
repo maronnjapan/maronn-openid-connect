@@ -43,7 +43,7 @@ export const meta = step({
  *
  * `grant_type` がデバイスコードの URN でなければ、何もせず `undefined` を返す。
  * トークンエンドポイントのパイプラインは、このステップをクライアント認証の直後、`grant_type` の検証より前に実行する。
- * `grant_type` の検証はこの URN を知らず、`unsupported_grant_type` で拒否してしまうためである。
+ * `grant_type` の検証（core の `validateGrantTypeSupported()`）は `authorization_code` と `refresh_token` しか受け付けず、この URN を `unsupported_grant_type` で拒否するためである。
  * デバイスコードのグラントなら、このステップが応答まで行い、標準のグラントの処理には進まない。
  *
  * `device_code` のレコードが承認済みなら、アクセストークンと ID トークン（`scope` に `offline_access` があればリフレッシュトークンも）を発行してストアに保存し、200 のトークンレスポンスで応答する。

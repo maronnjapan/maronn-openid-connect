@@ -175,7 +175,7 @@ export async function redeemCibaRequest(
  *
  * `grant_type` が CIBA の URN でなければ、何もせず `undefined` を返す。
  * トークンエンドポイントのルートハンドラは、この関数をクライアント認証の直後、`grant_type` の検証より前に呼ぶ。
- * `grant_type` の検証はこの URN を知らず、`unsupported_grant_type` で拒否してしまうためである。
+ * `grant_type` の検証（core の `validateGrantTypeSupported()`）は `authorization_code` と `refresh_token` しか受け付けず、この URN を `unsupported_grant_type` で拒否するためである。
  *
  * CIBA のグラントなら `redeemCibaRequest()` で応答し、`CibaGrantError` は RFC 6749 §5.2 の形のエラーレスポンス（400）にして返す。
  * それ以外の例外は、そのまま投げ直す。

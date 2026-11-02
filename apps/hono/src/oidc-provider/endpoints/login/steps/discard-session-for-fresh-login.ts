@@ -15,7 +15,7 @@ export const meta = step({
 });
 
 /**
- * `prompt=login` などのとき、既存のセッションを削除する。
+ * `prompt=login` などなら、既存のセッションを削除する。
  *
  * `prompt` に `login` か `select_account` が含まれるときは、改めての認証が必要である（OIDC Core 1.0 §3.1.2.1）。
  * そのため、新しいセッションを確立する前に、このトランザクションの認証セッションと、Cookie が指す OP のセッションを削除する。

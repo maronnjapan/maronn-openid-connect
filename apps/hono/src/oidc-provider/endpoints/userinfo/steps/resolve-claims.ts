@@ -22,7 +22,7 @@ export const meta = step({
 /**
  * このトークンで取得してよいクレームを集めて返す。
  *
- * サブジェクトについて OP が持つすべてのクレームを、許可したスコープで絞り、トークンと一緒に保存した、個別に要求されたクレームを加える。
+ * サブジェクトについて保存されているすべてのクレームを、許可したスコープで絞り、トークンと一緒に保存した、個別に要求されたクレームを加える。
  *
  * @throws {UserInfoError} `invalid_token`: トークンのサブジェクトのユーザーが見つからないとき。
  * @spec OIDC Core 1.0 §5.4
@@ -34,10 +34,10 @@ export async function resolveUserInfoResponseClaims(
 ): Promise<UserInfoResponse> {
   const userClaimsResolver = c.get('userClaimsResolver');
 
-  // トークンのサブジェクトについて、OP が持つすべてのクレームを読み込む。
+  // トークンのサブジェクトについて、保存されているすべてのクレームを読み込む。
   const userClaims = await resolveUserInfoClaims(tokenInfo, userClaimsResolver);
 
-  // 許可したスコープが認めるクレームだけを残す（OIDC Core 1.0 §5.4）。
+  // 許可したスコープに対応するクレームだけを残す（OIDC Core 1.0 §5.4）。
   const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
 
   // トークンエンドポイントがこのアクセストークンと一緒に保存した、個別に要求されたクレーム（`claims.userinfo` の項目）を重ねる（OIDC Core 1.0 §5.5）。

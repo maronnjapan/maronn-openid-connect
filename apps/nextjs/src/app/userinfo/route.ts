@@ -70,7 +70,7 @@ export function OPTIONS(request: Request): Response {
 /**
  * トークンを検証し、エンドユーザーのクレームで応答する。
  *
- * 返すクレームは、アクセストークンのスコープと `claims` パラメータが許すものである。
+ * 返すクレームは、アクセストークンのスコープと `claims` パラメータに応じて決まる。
  * 応答はキャッシュさせない JSON で、クライアントが `userinfo_signed_response_alg` を登録していれば、署名した JWT（`application/jwt`）で応答する。
  *
  * トークンのエラーには、キャッシュさせない JSON と、`Bearer` の `WWW-Authenticate` チャレンジで応答する。
@@ -134,10 +134,10 @@ async function userinfo(request: Request): Promise<Response> {
     // 確認をやめるときは、第 2 引数に `undefined` を渡す。
     validateUserInfoAudience(tokenInfo, `${config.issuer}/userinfo`);
 
-    // トークンのサブジェクトについて、OP が持つすべてのクレームを読み込む。
+    // トークンのサブジェクトについて、保存されているすべてのクレームを読み込む。
     const userClaims = await resolveUserInfoClaims(tokenInfo, resolvers.userClaimsResolver);
 
-    // 許可したスコープが認めるクレームだけを残す（OIDC Core 1.0 §5.4）。
+    // 許可したスコープに対応するクレームだけを残す（OIDC Core 1.0 §5.4）。
     const scopedResponse = filterClaimsByScope(userClaims, tokenInfo.scope);
 
     // トークンエンドポイントがこのアクセストークンと一緒に保存した、個別に要求されたクレーム（`claims.userinfo` の項目）を重ねる（OIDC Core 1.0 §5.5）。
@@ -167,7 +167,7 @@ async function userinfo(request: Request): Promise<Response> {
 /**
  * UserInfo のクレームを、署名した JWT で応答する。
  *
- * 署名には、クライアントが登録したアルゴリズム（RS256、ES256 など）の、登録した UserInfo の鍵を使う。
+ * 署名には、登録した UserInfo の鍵のうち、クライアントが登録したアルゴリズム（RS256、ES256 など）の鍵を使う。
  * JWT の `iss` は設定の `issuer`、`aud` はクライアント ID で、レスポンスはキャッシュさせない。
  * そのアルゴリズムの鍵がないのはサーバーの設定の誤りなので、別のアルゴリズムで署名せずに 500 の `server_error` で応答する。
  *

@@ -946,10 +946,23 @@ function optional(value: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+/**
+ * subject_token が無効なことを表す invalid_request の IdJagError を作り、投げずに返す。
+ *
+ * error_description は常に固定文言の {@link SUBJECT_TOKEN_INVALID_DESCRIPTION} で、無効な理由を含まない。
+ *
+ * @spec RFC 8693 §2.2.2
+ */
 function invalidSubjectToken(): IdJagError {
   return new IdJagError('invalid_request', SUBJECT_TOKEN_INVALID_DESCRIPTION);
 }
 
+/**
+ * 空白区切りの scope 文字列を scope 値の配列に分け、空の要素と重複を除いて返す。
+ *
+ * scope が undefined なら空配列を返す。タブや改行も区切りとして扱い、重複は最初に現れた
+ * 順で 1 つずつ残す。
+ */
 function splitScope(scope: string | undefined): string[] {
   if (scope === undefined) return [];
   return [...new Set(scope.split(/\s+/).filter((value) => value.length > 0))];
@@ -970,6 +983,7 @@ function isAbsoluteUriWithoutFragment(value: string): boolean {
   return parsed.protocol.length > 0;
 }
 
+/** Uint8Array を base64url（パディングなし）の文字列にして返す。 */
 function base64UrlFromBytes(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) {
@@ -978,6 +992,7 @@ function base64UrlFromBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/** オブジェクトを JSON 文字列にし、その UTF-8 バイト列を base64url（パディングなし）の文字列にして返す。 */
 function base64UrlFromJson(value: Record<string, unknown>): string {
   return base64UrlFromBytes(new TextEncoder().encode(JSON.stringify(value)));
 }

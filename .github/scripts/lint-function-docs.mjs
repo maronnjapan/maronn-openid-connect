@@ -7,9 +7,12 @@
  * functions a step calls from the step's source. Both only work while the
  * code keeps to these rules:
  *
- *   - an exported function declaration has a JSDoc block right above it
- *     (only whitespace between `*\/` and `export`), whose first line is text,
- *     not a tag (`function-doc`)
+ *   - every top-level function declaration (exported or not, a default
+ *     export, a Route Handler of Next.js and a React component included) has
+ *     a JSDoc block right above it (only whitespace between `*\/` and the
+ *     declaration), whose first line is text, not a tag (`function-doc`).
+ *     The map shows every function the catalog reads, so none may be left
+ *     without a description of what it does
  *   - that first line does not number the function as a step of a pipeline
  *     ("ステップ 1:", "Step 2:"): the order of the steps lives in the step
  *     meta and the endpoint.ts, and a function is called from several
@@ -21,14 +24,12 @@
  *     (`consentResolver.recordConsent`). A bare function name is read from the
  *     source and must not be listed (`step-calls`)
  *
- * The Route Handlers of Next.js (GET / POST / OPTIONS ... of a route.ts) and
- * React components (a PascalCase export of a .tsx) are framework entry points
- * and are not required to carry a JSDoc. Test files are not checked.
+ * Test files are not checked.
  *
  * Usage: node .github/scripts/lint-function-docs.mjs (pnpm run lint)
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, posix, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** The roots whose functions the catalog reads (the libraries and the extracted apps). */
@@ -41,13 +42,52 @@ export const FUNCTION_ROOTS = [
   'apps/nextjs/src/app',
 ];
 
-const ROUTE_HANDLERS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']);
-
 const SPEC_REFERENCE =
   /(?:OIDC (?:Core|Discovery|Session|Registration|Front-Channel Logout|Back-Channel Logout) 1\.0|OpenID Connect [A-Za-z -]+? 1\.0|RP-Initiated Logout 1\.0|CIBA Core 1\.0|OAuth 2\.[01](?: (?:Multiple Response Type Encoding Practices|Form Post Response Mode|Token Exchange|Device Authorization Grant|Security BCP))?|RFC ?\d{4}|JARM|ID-JAG draft|FAPI [\d.]+)(?:\s*(?:§|Section\s+|Sec\.\s*)\s*\d+(?:\.\d+)*(?:\s*\/\s*(?:§\s*|Section\s+)?\d+(?:\.\d+)*)*)?/g;
 
+/**
+ * A top-level function declaration, as the catalog reads it: at the start of a
+ * line, exported or not, a default export included.
+ */
+const FUNCTION_DECLARATION = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/gm;
+
+/** Whether a path is a test (or a helper of the tests), which the lint does not check. */
 function isTestFile(path) {
   return /\.test\.[cm]?[jt]sx?$/.test(path) || /(^|\/)test-helpers\.ts$/.test(path);
+}
+
+/**
+ * Whether the character at an offset is code: not inside a comment or a
+ * string, so a line of a comment that starts with `function` is not taken for
+ * a declaration. Reads the source the way the catalog does (codeOf of
+ * packages/cli/src/extract/meta.ts): a template literal counts as code.
+ */
+export function isCode(source, offset) {
+  let quote;
+  for (let index = 0; index < offset; index += 1) {
+    const char = source[index];
+    if (quote !== undefined) {
+      if (char === '\\') index += 1;
+      else if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index);
+      if (end === -1 || end >= offset) return false;
+      index = end;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2);
+      if (end === -1 || end + 2 > offset) return false;
+      index = end + 1;
+    }
+  }
+  return quote === undefined;
 }
 
 /** A line of a JSDoc that names specifications and nothing else. */
@@ -79,6 +119,7 @@ function textLinesOf(jsdoc) {
   return text;
 }
 
+/** The 1-based line of an offset. */
 function lineOf(source, index) {
   return source.slice(0, index).split('\n').length;
 }
@@ -86,12 +127,9 @@ function lineOf(source, index) {
 /** The violations of one source file (path relative to the repository). */
 export function* lintSource({ path, source }) {
   if (isTestFile(path)) return;
-  const isRoute = posix.basename(path) === 'route.ts';
-  const isTsx = path.endsWith('.tsx');
-  for (const match of source.matchAll(/^export\s+(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/gm)) {
+  for (const match of source.matchAll(FUNCTION_DECLARATION)) {
     const name = match[1];
-    if (isRoute && ROUTE_HANDLERS.has(name)) continue;
-    if (isTsx && /^[A-Z]/.test(name)) continue;
+    if (!isCode(source, match.index)) continue;
     const line = lineOf(source, match.index);
     // A disable comment of a linter between the JSDoc and the declaration is allowed.
     let index = match.index;
@@ -100,7 +138,7 @@ export function* lintSource({ path, source }) {
     if (disable) index = disable.index + 1;
     const jsdoc = jsDocAbove(source, index);
     if (jsdoc === undefined) {
-      yield { path, line, rule: 'function-doc', message: `${name}() has no JSDoc right above it: write one line that says what it does` };
+      yield { path, line, rule: 'function-doc', message: `${name}() has no JSDoc right above it: write one line that says what it does (its behavior: what it returns, writes or throws)` };
       continue;
     }
     const text = textLinesOf(jsdoc);
@@ -132,6 +170,7 @@ export function* lintSource({ path, source }) {
   }
 }
 
+/** The .ts and .tsx files under a directory, node_modules left out, in a stable order. */
 function listSourceFiles(directory) {
   return readdirSync(directory)
     .sort()
@@ -142,6 +181,7 @@ function listSourceFiles(directory) {
     });
 }
 
+/** The violations of every source file of the catalog roots of a repository. */
 export function lintRepository(repositoryRoot) {
   const violations = [];
   for (const root of FUNCTION_ROOTS) {

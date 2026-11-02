@@ -223,6 +223,11 @@ export function validateSigningKeySet(
   }
 }
 
+/**
+ * Create a signing key provider that generates one RS256 key when it is
+ * created and returns that same key on every getSigningKeys(), so the key
+ * lives only as long as the process.
+ */
 function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   const keyPromise = generateSigningKey();
   return {
@@ -232,6 +237,11 @@ function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   };
 }
 
+/**
+ * Generate a new 2048-bit RS256 key pair and return it as a SigningKey: the
+ * private key, and the public JWK with alg RS256, use sig and the kid of
+ * OIDC_SIGNING_KEY_ID (nextjs-rs256-key by default).
+ */
 async function generateSigningKey(): Promise<SigningKey> {
   const keyPair = await crypto.subtle.generateKey(
     {

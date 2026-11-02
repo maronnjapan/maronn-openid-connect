@@ -61,6 +61,13 @@ export async function applyOidc(app: FastifyInstance, options: ApplyOidcOptions)
   });
 }
 
+/**
+ * Write a Fetch Response to a Fastify reply: its status, its headers (every
+ * Set-Cookie as a header of its own) and its body, read in full.
+ *
+ * An empty body is sent as no body, so Fastify adds no
+ * application/octet-stream Content-Type.
+ */
 async function toFastifyReply(reply: FastifyReply, response: Response): Promise<void> {
   reply.status(response.status);
   const setCookies = response.headers.getSetCookie();

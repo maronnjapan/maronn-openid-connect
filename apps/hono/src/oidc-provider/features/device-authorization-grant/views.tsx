@@ -79,6 +79,15 @@ declare module '../../views.js' {
   }
 }
 
+/**
+ * Render the device verification page: a form that posts the user_code the
+ * End-User types to /device.
+ *
+ * The input is pre-filled with userCode when given, and the failure message of
+ * a code that did not match is shown above the form.
+ *
+ * @spec RFC 8628 §3.3
+ */
 function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): JSX.Element {
   return (
     <Layout title="Device Activation">
@@ -96,6 +105,16 @@ function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): JS
   );
 }
 
+/**
+ * Render the sign-in page of a device authorization: the user_code being
+ * activated, and a username and password form that posts to /device/login with
+ * the hidden user_code and csrf_token.
+ *
+ * The error of a failed attempt is shown above the form, with the attempts
+ * left when known.
+ *
+ * @spec RFC 8628 §3.3
+ */
 function defaultDeviceLoginPage(params: DeviceLoginPageParams): JSX.Element {
   return (
     <Layout title="Login">
@@ -112,6 +131,14 @@ function defaultDeviceLoginPage(params: DeviceLoginPageParams): JSX.Element {
   );
 }
 
+/**
+ * Render the device approval page: the user_code to compare with the one on
+ * the device, the client and the scopes it asked for, and Approve and Deny
+ * buttons that post the decision, user_code and csrf_token to /device/approve.
+ *
+ * @spec RFC 8628 §3.3
+ * @spec RFC 8628 §5.4
+ */
 function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): JSX.Element {
   // RFC 8628 §5.4: the code is repeated here on purpose. Ask the user to check it
   // against the device in front of them before approving.
@@ -132,6 +159,11 @@ function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): JSX.Elemen
   );
 }
 
+/**
+ * Render the page shown once the End-User decided on a device authorization:
+ * that they approved or denied the client, and that they can go back to their
+ * device.
+ */
 function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): JSX.Element {
   return (
     <Layout title="Device Activation">

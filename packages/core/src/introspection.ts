@@ -135,6 +135,16 @@ export function isRefreshTokenActive(
   return true;
 }
 
+/**
+ * 保存済みのアクセストークン情報から、active: true のイントロスペクション応答（token_type は Bearer）を組み立てて返す。
+ *
+ * scope は空白区切りの文字列にし、client_id / sub / exp は常に含める。iat / nbf / iss / jti / acr は
+ * 保存されているときだけ、aud は audience が空でないときだけ含める。有効期限や nbf は見ず、
+ * 常に active: true を返す。
+ *
+ * @spec RFC 7662 §2.2
+ * @spec RFC 9470 §6.2
+ */
 function buildAccessTokenResponse(info: AccessTokenInfo): IntrospectionResponse {
   const res: Extract<IntrospectionResponse, { active: true }> = {
     active: true,
@@ -158,6 +168,15 @@ function buildAccessTokenResponse(info: AccessTokenInfo): IntrospectionResponse 
   return res;
 }
 
+/**
+ * 保存済みのリフレッシュトークン情報から、active: true のイントロスペクション応答（token_type は refresh_token）を組み立てて返す。
+ *
+ * scope は空白区切りの文字列にし、client_id / sub（subject の値）/ exp は常に含め、iat / iss は
+ * 保存されているときだけ含める。aud / nbf / jti / acr は含めない。ローテーション済みか
+ * 有効期限切れかは見ず、常に active: true を返す。
+ *
+ * @spec RFC 7662 §2.2
+ */
 function buildRefreshTokenResponse(info: RefreshTokenInfo): IntrospectionResponse {
   const res: Extract<IntrospectionResponse, { active: true }> = {
     active: true,

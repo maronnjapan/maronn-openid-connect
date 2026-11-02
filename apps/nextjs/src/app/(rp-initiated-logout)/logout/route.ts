@@ -47,6 +47,11 @@ import { completedScreen, confirmationScreen } from './screens';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer an end-session request sent as GET /logout with the response of
+ * endSession() for the query parameters: an immediate logout, or the logout
+ * confirmation page.
+ */
 export async function GET(request: NextRequest): Promise<Response> {
   return endSession(request, request.nextUrl.searchParams);
 }
@@ -60,6 +65,22 @@ export async function POST(request: Request): Promise<Response> {
   return endSession(request, params);
 }
 
+/**
+ * Log the End-User out at once when the id_token_hint verifies (matching
+ * client_id when one is sent) and names the End-User of the current OP
+ * session; otherwise render the logout confirmation page with a fresh
+ * confirmation cookie and delete nothing.
+ *
+ * An immediate logout deletes the OP session, clears its cookie and redirects
+ * (302) to the requested post_logout_redirect_uri, with state, when it exactly
+ * matches one registered for the hint's client, or renders the logged-out
+ * page. The confirmation cookie carries the secret the page's csrf_token must
+ * match and the same redirect target, which /logout/approve honors. A failure
+ * to load the keys that verify the hint is not turned into a confirmation: it
+ * propagates.
+ *
+ * @spec RP-Initiated Logout 1.0 §2 / §3
+ */
 async function endSession(request: Request, params: URLSearchParams): Promise<Response> {
   const endSessionRequest = parseEndSessionRequest(params);
   // logout_hint and ui_locales are accepted but unused (OPTIONAL, §2). The hint

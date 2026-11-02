@@ -55,6 +55,17 @@ const googleAccountResolver: GoogleAccountResolver = {
     (await stores.userStore.linkFederatedIdentity(googleAccountToFederatedIdentity(account))).sub,
 };
 
+/**
+ * Complete a Sign in with Google login (POST /login/google): verify the ID
+ * token Google posts, link the Google account to an OP user (created on first
+ * login), start the OP session for the transaction and redirect (302) to
+ * /consent.
+ *
+ * A failed check (the CSRF cookie, the ID token, the nonce, and the hosted
+ * domain or verified e-mail when configured) or an unknown or expired
+ * transaction sends the browser (303) to the OP's error page. Without
+ * config.googleLogin the route answers 404.
+ */
 export async function POST(request: Request): Promise<Response> {
   const googleLogin = config.googleLogin;
   // Without config.googleLogin there is no Google login to call back into.

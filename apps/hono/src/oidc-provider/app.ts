@@ -337,6 +337,13 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   return undefined;
 }
 
+/**
+ * Return the stores of a request: those of the storage option, called with the
+ * request context when it is a factory.
+ *
+ * Without the option, returns the stores of db/ on the database
+ * createDatabase() returns for the request.
+ */
 async function resolveProviderStores(
   storage: OidcProviderOptions['storage'],
   context: any,

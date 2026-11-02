@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isSpecOnlyLine, jsDocAbove, lintSource } from './lint-function-docs.mjs';
+import { isCode, isSpecOnlyLine, jsDocAbove, lintSource } from './lint-function-docs.mjs';
 
 const rules = (path, source) => [...lintSource({ path, source })].map((v) => v.rule);
 
@@ -26,14 +26,21 @@ describe('lintSource', () => {
       assert.deepEqual(rules('apps/hono/src/oidc-provider/apply.ts', '/** Mount. */\n// eslint-disable-next-line @typescript-eslint/no-explicit-any\nexport function applyOidc(app: any): void {}\n'), []);
     });
 
-    it('should not require a JSDoc of a Route Handler method or a React component', () => {
-      assert.deepEqual(rules('apps/nextjs/src/app/token/route.ts', 'export async function POST(request: Request): Promise<Response> {}\n'), []);
-      assert.deepEqual(rules('apps/nextjs/src/app/_oidc-provider/error-view.tsx', 'export function ErrorView(): null { return null; }\n'), []);
+    it('should require a JSDoc of a Route Handler method and of a React component', () => {
+      assert.deepEqual(rules('apps/nextjs/src/app/token/route.ts', 'export async function POST(request: Request): Promise<Response> {}\n'), ['function-doc']);
+      assert.deepEqual(rules('apps/nextjs/src/app/_oidc-provider/error-view.tsx', 'export function ErrorView(): null { return null; }\n'), ['function-doc']);
+      assert.deepEqual(rules('apps/nextjs/src/app/login/page.tsx', 'export default async function LoginPage(): Promise<null> { return null; }\n'), ['function-doc']);
     });
 
-    it('should not require a JSDoc of a function that is not exported, nor check a test file', () => {
-      assert.deepEqual(rules('packages/core/src/a.ts', 'function helper(): void {}\n'), []);
+    it('should require a JSDoc of a function that is not exported', () => {
+      assert.deepEqual(rules('packages/core/src/a.ts', 'function helper(): void {}\n'), ['function-doc']);
+      assert.deepEqual(rules('packages/core/src/a.ts', '/** Split the scope into its values. */\nfunction splitScope(scope: string): string[] { return scope.split(" "); }\n'), []);
+    });
+
+    it('should not check a test file, nor a declaration inside a comment or a nested one', () => {
       assert.deepEqual(rules('packages/core/src/a.test.ts', 'export function parse(): void {}\n'), []);
+      assert.deepEqual(rules('packages/core/src/a.ts', '/*\nfunction commented(): void {}\n*/\n'), []);
+      assert.deepEqual(rules('packages/core/src/a.ts', '/** Outer. */\nexport function outer(): void {\n  function inner(): void {}\n  inner();\n}\n'), []);
     });
   });
 
@@ -85,5 +92,14 @@ describe('jsDocAbove', () => {
     const source = '/** first */\nconst a = 1;\n/** second */\nexport function f() {}\n';
     assert.equal(jsDocAbove(source, source.indexOf('export')), '/** second */');
     assert.equal(jsDocAbove('/** a */\nconst a = 1;\nexport function f() {}\n', 22), undefined);
+  });
+});
+
+describe('isCode', () => {
+  it('should tell code from comments and strings', () => {
+    const source = "// function a() {}\nconst s = 'function b() {}';\nfunction c() {}\n";
+    assert.equal(isCode(source, source.indexOf('function a')), false);
+    assert.equal(isCode(source, source.indexOf('function b')), false);
+    assert.equal(isCode(source, source.indexOf('function c')), true);
   });
 });

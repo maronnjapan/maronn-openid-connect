@@ -57,10 +57,23 @@ export interface GoogleIdTokenVerifierOptions {
   clientOptions?: OAuth2ClientOptions;
 }
 
+/**
+ * 値が長さ 1 以上の文字列かを返す（型ガード）。
+ *
+ * 空白だけの文字列も true を返す。
+ */
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+/**
+ * 文字列 1 つか文字列の配列を受け取り、新しい文字列配列にして返す。
+ *
+ * 要素の重複は除かない。空文字、空の配列、空文字や文字列でない要素を含む配列には、
+ * メッセージが label で始まる TypeError を投げる。
+ *
+ * @throws {TypeError} 値が空、または空文字や文字列でない要素を含むとき
+ */
 function normalizeList(value: string | readonly string[], label: string): string[] {
   const list = typeof value === 'string' ? [value] : [...value];
   if (list.length === 0 || !list.every(isNonEmptyString)) {

@@ -53,14 +53,40 @@ import { CUSTOM_SCOPES, STANDARD_SCOPES } from '../../_oidc-provider/scopes';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Answer a client registration request (POST /register) with the response of
+ * registerClient() — 201 with the registered client, or an error — plus the
+ * clientCors headers.
+ */
 export async function POST(request: Request): Promise<Response> {
   return withCors(request, clientCors, await registerClient(request));
 }
 
+/**
+ * Answer the CORS preflight of /register: 204 with no body and the clientCors
+ * headers (allowed origin, methods, headers, max age).
+ */
 export function OPTIONS(request: Request): Response {
   return corsPreflight(request, clientCors);
 }
 
+/**
+ * Register a client from the JSON metadata of the request and answer 201 with
+ * its client_id, the client_secret of a confidential client and every
+ * registered metadata value, never cached; the stored client keeps only the
+ * hash of the secret.
+ *
+ * With verifyInitialAccessToken configured, a request without a Bearer token
+ * gets a bare 401 challenge and a refused token 401 invalid_token. A body that
+ * is not application/json or is too large, metadata that fails validation or a
+ * refused software statement answers 400 (invalid_client_metadata,
+ * invalid_redirect_uri, invalid_software_statement or
+ * unapproved_software_statement); 429 too_many_registrations once
+ * maxRegisteredClients clients exist, 503 when the signing keys cannot be
+ * loaded, 500 server_error otherwise.
+ *
+ * @spec RFC 7591 §3
+ */
 async function registerClient(request: Request): Promise<Response> {
   const config = dynamicClientRegistrationConfig;
 

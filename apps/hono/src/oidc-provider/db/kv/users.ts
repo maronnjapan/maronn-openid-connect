@@ -72,6 +72,7 @@ export async function verifyPassword(password: string, passwordHash: string | nu
   return stored !== undefined && constantTimeEqual(derived, stored.hash);
 }
 
+/** Derive the 32-byte PBKDF2-HMAC-SHA256 hash of a password with the given salt and iteration count. */
 async function derivePasswordHash(password: string, salt: ArrayLike<number>, iterations: number) {
   const key = await crypto.subtle.importKey(
     'raw',
@@ -88,6 +89,15 @@ async function derivePasswordHash(password: string, salt: ArrayLike<number>, ite
   return new Uint8Array(bits);
 }
 
+/**
+ * Read a stored password hash ('pbkdf2-sha256$<iterations>$<salt>$<hash>')
+ * into its iteration count and the bytes of its salt and hash.
+ *
+ * Returns undefined for a value in another format: another algorithm, a part
+ * missing, empty or extra, or an iteration count that is not a positive
+ * integer. A salt or hash that is not valid base64url throws an
+ * InvalidCharacterError.
+ */
 function parsePasswordHash(value: string) {
   const [algorithm, iterations, salt, hash, ...rest] = value.split('$');
   const iterationCount = Number(iterations);
@@ -114,12 +124,18 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   return difference === 0;
 }
 
+/** Encode bytes as base64url, without padding. */
 function toBase64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/**
+ * Decode a base64url string, padded or not, into bytes.
+ *
+ * Throws an InvalidCharacterError when the value is not valid base64url.
+ */
 function fromBase64Url(value: string) {
   const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
   const bytes = new Uint8Array(binary.length);

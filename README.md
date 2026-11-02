@@ -44,7 +44,7 @@ CLI コマンドでフローの実装コードを生成し、利用者はその�
 
 - コマンドには pnpm を使用する
 - 関数は検証、取得、保存、変換などの責務ごとに分け、個別に組み合わせて呼び出せるようにする。引数は文字列、数値、真偽値、配列、必要な項目だけのオブジェクトを優先し、関係のないリクエスト情報やストア操作を要求しない
-- export する関数は `function` 宣言で書き、宣言の直上の JSDoc の 1 行目に、その関数が何をするかを 1 文で書く。仕様の節は `@spec OIDC Core 1.0 §9` のタグに書き、ステップの番号（「ステップ 3:」）は書かない。ステップの `meta` の `calls` には、ソースに呼び出しとして現れないもの（`'consentResolver.recordConsent'`）だけを書く。`maronn-oidc explain` と Provider Map はこの JSDoc と呼び出しを関数カタログとして読む。`pnpm run lint`（`.github/scripts/lint-function-docs.mjs`）が検査する
+- export する関数は `function` 宣言で書く。関数はすべて（export しない関数、Next.js の Route Handler、React コンポーネントを含む）宣言の直上に JSDoc を置き、1 行目にその関数の振る舞い（何を受け取り、何を返し、何を書き換え、どんなときに失敗するか）を 1 文で書く。使われる場所や実装の手順ではなく振る舞いを書く。仕様の節は `@spec OIDC Core 1.0 §9` のタグに書き、ステップの番号（「ステップ 3:」）は書かない。ステップの `meta` の `calls` には、ソースに呼び出しとして現れないもの（`'consentResolver.recordConsent'`）だけを書く。`maronn-oidc explain` と Provider Map はこの JSDoc と呼び出しを関数カタログとして読む。`pnpm run lint`（`.github/scripts/lint-function-docs.mjs`）が検査する
 - `dependencies` にはモノレポ内のライブラリだけを使用し、外部ライブラリを追加しない。例外は `packages/google-login` の `google-auth-library` だけで、Google の ID トークン検証（公開鍵の取得・署名検証）の仕様変更へ自前で追随しないために Google 公式ライブラリへ委ねている
 - `devDependencies` には外部ライブラリを使用してよい
 - t_wada が提唱する方法でテスト駆動開発を行う

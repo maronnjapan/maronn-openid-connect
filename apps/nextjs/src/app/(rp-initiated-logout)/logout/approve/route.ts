@@ -20,6 +20,19 @@ import { completedScreen } from '../screens';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Log the End-User out once they confirmed on the logout confirmation page
+ * (POST /logout/approve): delete the OP session, clear the session and
+ * confirmation cookies, and redirect (302) to the post-logout target decided
+ * when the page was shown, or render the logged-out page when there is none.
+ *
+ * It acts only when the confirmation cookie and the form's csrf_token carry
+ * the same secret; a forged, replayed or expired confirmation deletes nothing
+ * and answers the OP's error page with 400. A session that is already gone
+ * gets the same answer as a live one.
+ *
+ * @spec RP-Initiated Logout 1.0 §2 / §3
+ */
 export async function POST(request: Request): Promise<Response> {
   const csrfToken = String((await readFormFields(request)).get('csrf_token') ?? '');
   const cookieHeader = request.headers.get('Cookie');

@@ -41,6 +41,21 @@ import { resolveGrantableScopes } from '../../_oidc-provider/scopes';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * Act on the End-User's consent decision (POST /consent/decision): approve
+ * issues the authorization code, records the consent and the grant and sends
+ * the code to the client; deny sends it access_denied — either way in the
+ * request's response mode, with the transaction cookie cleared.
+ *
+ * A form posted from another origin, a missing, unknown or expired
+ * transaction, a wrong csrf_token, an action other than approve or deny, or a
+ * response-mode key that cannot be loaded sends the browser (303) to the OP's
+ * error page; an approval without the subject the login step stored redirects
+ * (303) to /login. The response types of the implicit-flow and hybrid-flow
+ * features are answered by those features instead of the code alone.
+ *
+ * @spec OIDC Core 1.0 §3.1.2.4 / §3.1.2.5 / §3.1.2.6
+ */
 export async function POST(request: NextRequest): Promise<Response> {
   // [reject-cross-origin-post] Reject a form POST from another origin — OIDC Core 1.0 §3.1.2.4
   // First the browser's own statement of where the form was submitted from

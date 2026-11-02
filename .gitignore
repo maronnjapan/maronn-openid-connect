@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+dist-map/
+docs/library-document/public/map/
 .next/
 *.tsbuildinfo
 .data/

@@ -1,0 +1,107 @@
+# OIDC Provider Map のプレビュー
+#
+# PR ごとに、その PR のコードから地図（`maronn-oidc explain --format json` を全機能オンで
+# 4 つのフレームワーク分まとめ、packages/cli/map/template.html に埋め込んだ静的ページ）を
+# ビルドし、Actions の artifact（oidc-provider-map）として残す。
+#
+# Cloudflare Pages のシークレット（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID。
+# プロジェクト名は変数 CLOUDFLARE_PAGES_PROJECT、既定 maronn-oidc-map）があれば、
+# PR ごとのプレビュー URL（ブランチ pr-<番号>）にデプロイし、その URL を PR にコメントする。
+# main への push は同じプロジェクトの main ブランチ（本番 URL）に出す。
+# シークレットが無くても artifact は残るので、ダウンロードして index.html を開けば同じ地図が見られる。
+# main の地図は Deploy Docs（deploy-library-docs.yml）がドキュメントサイトの /map/ にも置く。
+name: Map Preview
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: map-preview-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'maronn-oidc-map' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # CLI をビルドし（関数カタログをテンプレートに焼く）、その dist から地図を作る。
+      - name: Build the map
+        run: pnpm run build:map
+
+      - name: Upload the map
+        uses: actions/upload-artifact@v7
+        with:
+          name: oidc-provider-map
+          path: dist-map
+          if-no-files-found: error
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist-map
+            --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT }}
+            --branch=${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
+            --commit-hash=${{ github.event.pull_request.head.sha || github.sha }}
+            --commit-dirty=true
+
+      # fork からの PR は GITHUB_TOKEN が読み取り専用なのでコメントしない（artifact は残る）。
+      - name: Comment the preview on the PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v8
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const marker = '<!-- oidc-provider-map-preview -->';
+            const url = process.env.DEPLOY_URL;
+            const lines = [
+              marker,
+              '## OIDC Provider Map',
+              '',
+              url
+                ? `Preview: ${url}`
+                : 'Preview: not deployed (no Cloudflare Pages secrets). Download the `oidc-provider-map` artifact of the run below and open `index.html`.',
+              '',
+              `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
+              '',
+              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on; the feature toggles narrow it to one \`maronn-oidc generate\` command line.`,
+            ];
+            const body = lines.join('\n');
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }

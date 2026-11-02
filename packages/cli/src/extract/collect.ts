@@ -56,7 +56,8 @@ export function collectTemplates(packageRoot = PACKAGE_ROOT): string[] {
     throw new Error('The sources of the libraries are missing: the function catalog is baked from the repository');
   }
   const project = analyzeFunctions(functionRoots);
-  writeFileSync(join(templatesRoot, FUNCTION_CATALOG_FILE), `${JSON.stringify(project.catalog, null, 2)}\n`);
+  // Compact: the catalog is read by the CLI, not by people, and it is the largest file of the package.
+  writeFileSync(join(templatesRoot, FUNCTION_CATALOG_FILE), `${JSON.stringify(project.catalog)}\n`);
   written.push(FUNCTION_CATALOG_FILE);
   for (const [frameworkName, framework] of Object.entries(definition.frameworks)) {
     if (framework.layout !== 'nextjs') continue;

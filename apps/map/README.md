@@ -18,9 +18,15 @@ pnpm test                 # 純粋な部分（構成の絞り込み、コマン�
 
 `wrangler deploy` は `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID`（または `wrangler login`）を使う。Worker の名前は `wrangler.jsonc` の `name` で変える。
 
-## PR ごとのプレビュー
+## PR ごとのプレビューと main のデプロイ
 
-`.github/workflows/map-preview.yml` が、PR ごとにその PR のコードから地図をビルドして Actions の artifact（`oidc-provider-map`）に残す。リポジトリのシークレットに `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` があれば、`wrangler versions upload` でプレビュー URL を作って PR にコメントし、main への push では `wrangler deploy` で本番の URL を更新する。シークレットが無くても artifact はダウンロードできる（`dist/` をそのまま静的に配信すればよい。`data/map.json` を同じ場所から読む）。
+`.github/workflows/map-preview.yml` が、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
+
+- **PR**（opened / synchronize / reopened）: その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持つ隔離されたデプロイで、push のたびに同じ URL が新しくなるので、複数の PR を同時に別々の状態で見られる。URL は PR のコメントに書く（push ごとに同じコメントを書き換える）
+- **PR を閉じた**: その Preview を `wrangler preview delete --name pr-<番号>` で消す
+- **main への push**: `wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`。独自ドメインは後で）を更新する
+
+Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`wrangler preview` が失敗したときは `.github/scripts/map-preview.mjs` が PR ごとの Worker `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` して同じ隔離を保ち、閉じたときにその Worker も消す。どの場合も Actions の artifact（`oidc-provider-map`）にビルド結果が残り、ダウンロードして `dist/` を静的に配信すれば同じ地図が見られる（`data/map.json` を同じ場所から読む）。
 
 ## 構成
 

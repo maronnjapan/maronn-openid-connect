@@ -46,7 +46,7 @@ export function EndpointScreen({ data, endpoint, selected, checked, onCases, onS
         </div>
         {endpoint.summary ? <p className="lead">{endpoint.summary}</p> : null}
         <p className="note">
-          {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · ボックスを選ぶとそのステップの詳細を開きます
+          {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · 箱を選ぶと、そのステップの詳細を開きます
         </p>
       </header>
       <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} />

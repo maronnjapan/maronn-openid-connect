@@ -1,4 +1,4 @@
-import type { FlowEndpoint, MapData } from '../types';
+import type { FlowEndpoint, MapData, MapFeature } from '../types';
 import { commandLine } from '../lib/model';
 
 export interface SidebarProps {
@@ -10,6 +10,9 @@ export interface SidebarProps {
   onToggleFeature: (id: string, on: boolean) => void;
   onEndpoint: (id: string) => void;
 }
+
+/** The tier of a feature in words: on by default, of the experimental package, or a login method of an extension. */
+const TIER_LABELS: Record<MapFeature['tier'], string> = { stable: '既定', experimental: '実験的', extension: '拡張' };
 
 /** The endpoints of the configuration, grouped by flow, and the features that make the configuration (folded, so the list stays short). */
 export function Sidebar({ data, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint }: SidebarProps) {
@@ -47,7 +50,7 @@ export function Sidebar({ data, framework, enabled, endpoints, selected, onToggl
             <label key={feature.id} title={feature.summary}>
               <input type="checkbox" checked={enabled.has(feature.id)} onChange={(event) => onToggleFeature(feature.id, event.target.checked)} />
               <span>{feature.id}</span>
-              <span className="muted">{feature.tier}</span>
+              <span className="muted">{TIER_LABELS[feature.tier]}</span>
             </label>
           ))}
         </div>

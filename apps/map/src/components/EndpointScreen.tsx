@@ -1,11 +1,13 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { FlowEndpoint, MapData } from '../types';
 import { changesInFile, markOf, stepMark, type ChangeIndex, type Mark } from '../lib/changes';
 import { endpointDiagram, type DiagramNode } from '../lib/diagram';
 import { activeOf } from '../lib/graph';
 import { generatedWhen } from '../lib/model';
+import { endpointSources } from '../lib/source';
 import { CasePicker } from './CasePicker';
 import { Badge } from './ChangeParts';
+import { CodeDrawer } from './CodeDrawer';
 import { FlowDiagram } from './FlowDiagram';
 import { ScreenHeader } from './ScreenHeader';
 import { StepPanel } from './StepPanel';
@@ -32,6 +34,8 @@ export interface EndpointScreenProps {
  * step calls) are listed under the description.
  */
 export function EndpointScreen({ data, changes, endpoint, selected, checked, onCases, onSelectStep, onOpenFunction }: EndpointScreenProps) {
+  const [code, setCode] = useState<string | null>(null);
+  const sources = useMemo(() => endpointSources(data, endpoint), [data, endpoint]);
   const diagram = useMemo(() => endpointDiagram(endpoint, data), [endpoint, data]);
   const marks = useMemo(() => {
     const byStep = new Map<string, Mark>();
@@ -59,6 +63,7 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
           <code className="route">
             {endpoint.methods.join(' | ')} {endpoint.path}
           </code>
+          {endpoint.source !== undefined ? <button type="button" className="code-button" aria-label="エンドポイント全体のコードを見る" onClick={() => setCode(endpoint.source as string)}>コードを見る</button> : null}
         </>
       }>
         {endpoint.summary ? <p className="lead">{endpoint.summary}</p> : null}
@@ -86,8 +91,9 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
         <div className="canvas">
           <FlowDiagram diagram={diagram} active={active} selected={selected} label={`${endpoint.label} のステップ`} marks={marks} onSelect={onSelect} />
         </div>
-        {step ? <StepPanel data={data} changes={changes} endpoint={endpoint} step={step} onClose={() => onSelectStep(null)} onOpenFunction={onOpenFunction} /> : null}
+        {step ? <StepPanel data={data} changes={changes} endpoint={endpoint} step={step} onClose={() => onSelectStep(null)} onOpenFunction={onOpenFunction} onOpenCode={setCode} /> : null}
       </div>
+      {code !== null ? <CodeDrawer key={code} data={data} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}
     </section>
   );
 }

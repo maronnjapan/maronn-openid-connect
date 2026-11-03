@@ -13,6 +13,7 @@ export interface StepPanelProps {
   step: FlowStep;
   onClose: () => void;
   onOpenFunction: (id: string) => void;
+  onOpenCode: (id: string) => void;
 }
 
 interface CallRow {
@@ -58,7 +59,7 @@ function callsOf(data: MapData, step: FlowStep): CallRow[] {
  * request, what the pull request did to the step's function and the changed
  * functions the step calls come first.
  */
-export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFunction }: StepPanelProps) {
+export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFunction, onOpenCode }: StepPanelProps) {
   const card = step.functionId === undefined ? undefined : data.functions[step.functionId];
   const calls = callsOf(data, step);
   const own = card === undefined ? undefined : changes?.byId.get(card.id);
@@ -66,6 +67,11 @@ export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFuncti
   return (
     <DetailDrawer title={`${step.label} — ステップの詳細`} onClose={onClose}>
       {card ? <p className="mono">{card.name}()</p> : null}
+      {card?.source !== undefined || endpoint.source !== undefined ? (
+        <button type="button" className="code-button" onClick={() => onOpenCode(card?.source !== undefined ? card.id : endpoint.source as string)}>
+          {card?.source !== undefined ? `${card.name}() のコードを見る` : 'このステップを含むコードを見る'}
+        </button>
+      ) : null}
       {card ? (
         <Description summary={card.summary} description={card.description} />
       ) : (
@@ -107,6 +113,9 @@ export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFuncti
                   <span className="mono">{row.name}</span>
                 )}
                 {row.text ? <span className="call-text">{row.text}</span> : null}
+                {row.fn !== undefined && data.functions[row.fn]?.source !== undefined ? (
+                  <button type="button" className="link call-source" aria-label={`${row.name} のコードを見る`} onClick={() => onOpenCode(row.fn as string)}>コードを見る</button>
+                ) : null}
               </li>
             ))}
           </ol>

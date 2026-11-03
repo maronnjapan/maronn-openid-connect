@@ -60,6 +60,8 @@ export interface FunctionCard {
   calls: string[];
   calledBy: string[];
   flow?: FunctionFlow;
+  /** The source file and inclusive lines, with the JSDoc and overloads. */
+  source?: { file: string; start: number; end: number };
 }
 
 /** A member of an interface or a type literal, with what its JSDoc says. */
@@ -109,6 +111,8 @@ export interface FlowEndpoint {
   feature?: string;
   rearrangeable: boolean;
   module?: string;
+  /** The source file implementing the endpoint, a key of MapData.sources. */
+  source?: string;
   steps: FlowStep[];
   edges: FlowEdge[];
 }
@@ -210,6 +214,14 @@ export interface MapChanges {
   otherFiles: number;
 }
 
+/** A source asset with Shiki tokens and colors from its bundled light/dark themes. */
+export interface SourceDocument {
+  code: string;
+  foreground: string;
+  background: string;
+  tokens: Array<Array<{ content: string; color: string }>>;
+}
+
 export interface MapData {
   version: 3;
   frameworks: string[];
@@ -227,6 +239,8 @@ export interface MapData {
    * with commas → the arrows of that generation.
    */
   edgeSets: Record<string, Record<string, FlowEdge[]>>;
+  /** Source files fetched only when the code drawer opens; shared across functions and frameworks. */
+  sources?: Record<string, { path: string; url: string }>;
   /** The changes of the pull request, in the map of a pull request (built with MAP_BASE). */
   changes?: MapChanges;
 }

@@ -33,6 +33,22 @@
 ステップの関数の JSDoc の 1 行目、ステップが受け取る値と次へ渡す値、失敗するときのエラー、中で呼ぶ関数（実行順、各行にコードのコメントか呼び先の JSDoc）である。
 開いた説明には高さの上限を設け、長い説明はその中でスクロールして読める。
 
+## コードの Drawer
+
+エンドポイントの見出しの「コードを見る」で、右からエンドポイント全体のコード専用の Drawer を開く。
+ステップの詳細には、その関数と中で呼ぶ関数の「コードを見る」があり、関数のページからも開ける。
+Drawer の「表示するコード」で、エンドポイントのファイル全体、ステップの関数、そこから呼ぶ関数（core まで）を切り替える。
+関数には JSDoc とオーバーロードを含め、元ファイルの行番号を表示する。「ファイル全体を見る」で import や周囲の実装も読める。
+TypeScript と TSX のハイライトは [Shiki](https://shiki.style/) でビルド時に生成する。配色と背景は付属の `github-light` / `github-dark` テーマを使い、ページの明暗設定に従って切り替える。トークンごとの配色ルールや独自のハイライトテーマは管理しない。
+ファイル全体を解析してから関数の範囲を表示するため、複数行のコメントや文字列の文脈を保つ。ブラウザには Shiki を含めず、ハイライト済みのデータをコードと一緒に必要なときだけ読み込む。
+Next.js のステップは独立した関数ではないため、そのステップを含む Route Handler のファイル全体を開く。
+対応付けは既存のコメント・JSDocを読むソース解析と抽出定義からビルド時に自動で作る。関数名や行番号を転記する Markdown や、コード表示専用のマッピング表は持たない。
+
+表示するのはリポジトリの全機能を含むソースで、機能のオン・オフやケースの選択はコードには反映しない。
+Express と Fastify は、生成元である Hono のソースを表示し、Drawer にリポジトリ内の実際のパスを示す。
+コードは開いたファイルだけを読み込み、Drawer を閉じている間は図の領域を使わない。
+閉じるボタン、Escape キー、Drawer の外側のクリックで閉じ、開いたボタンにフォーカスを戻す。狭い画面では Drawer を全幅にする。
+
 ## 関数のページ
 
 関数を選ぶと、その関数のページを開く。
@@ -77,12 +93,13 @@ PR では `map-preview.yml` が `MAP_BASE=origin/<base ブランチ>` を渡し�
 
 React + Vite の静的ページで、Cloudflare Workers に静的アセットとして置く（`wrangler.jsonc`）。
 データは `scripts/build-data.mjs` が `public/data/map.json` に書く。
-中身は次の四つである。
+中身は次の五つである。
 
 - CLI の `explain --format json` を全機能オンで 4 フレームワーク分まとめたもの
 - 関数カタログの全関数と、それぞれの処理の流れ（`packages/cli/src/extract/function-flow.ts`）
 - 処理の流れが呼ぶ resolver と store のメソッドの JSDoc
 - エンドポイントごと、ステップを足す機能の組み合わせごとの矢印（機能を切ったときも、その構成の生成物と同じ矢印を描くため）
+- エンドポイントと関数のソース参照。本文は `public/data/sources/<hash>.json` にファイルごとに分けて置き、Drawer が必要なときだけ読む。関数の範囲はカタログの `spanOf` を使い、同じファイルは関数やフレームワークの間で共有する
 
 説明文は JSDoc とコメントをそのまま表示する。
 段落の中の改行は、日本語どうしのあいだでは空白を入れずにつなぐので、JSDoc は一文一行で書いてよい（`packages/cli/src/extract/prose.ts`）。
@@ -127,7 +144,10 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/model.ts`: 機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
 - `src/lib/hash.ts`: URL のハッシュ（`#hono--token--authenticate-client`、`#hono--fn--verifyClientSecret`、`#hono--changes`）
 - `src/lib/changes.ts`: PR の変更の札（ステップ、処理の流れの箱、エンドポイント）、そこから呼ぶ変わった関数、差分の行番号、変更メモの本文
+- `src/lib/source.ts`, `src/components/CodeDrawer.tsx`: コードの選択肢、呼び出し先の探索、元の行番号、ソースを読む Drawer
 - `src/components/`: エンドポイントの画面と関数のページ、図、ケースの選択、ステップの詳細、左の一覧、検索、このPRの変更のページ
 - `scripts/changes.mjs`: 地図のビルドが PR の変更を集める（git の差分、関数ごとの比較、変更メモ）
+- `scripts/sources.mjs`: 抽出元のファイルと関数の範囲をエンドポイント・関数に対応付ける
+- `scripts/highlight.mjs`: Shiki の TypeScript / TSX 文法と付属テーマで、ソースをハイライト済みのデータにする
 - `changes/`: PR ごとの変更メモ（[書き方](changes/README.md)）
 - `src/types.ts`: `data/map.json` の形（CLI の `explain/map.ts`、`flow/types.ts`、`extract/function-flow.ts` と同じ）

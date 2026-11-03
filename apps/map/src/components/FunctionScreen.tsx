@@ -4,8 +4,10 @@ import { changesBelow, markOf, nodeMark, type ChangeIndex, type Mark, type Reach
 import { functionDiagram, type DiagramNode } from '../lib/diagram';
 import { activeOf } from '../lib/graph';
 import { callersOf, endpointsInModule, endpointsUsing, locationOf, type EndpointUse } from '../lib/model';
+import { functionSources } from '../lib/source';
 import { CasePicker } from './CasePicker';
 import { Badge, ChangeDetail, ReachedList } from './ChangeParts';
+import { CodeDrawer } from './CodeDrawer';
 import { FlowDiagram } from './FlowDiagram';
 import { ScreenHeader } from './ScreenHeader';
 import { Chips, Description } from './Parts';
@@ -135,6 +137,8 @@ function Callers({ data, framework, flow, card, below, onOpenFunction, onOpenSte
  */
 export function FunctionScreen(props: FunctionScreenProps) {
   const { data, changes, card, checked, onCases, onBack, onOpenFunction, canGoBack } = props;
+  const [code, setCode] = useState(false);
+  const sources = useMemo(() => functionSources(data, card), [data, card]);
   const diagram = useMemo(() => functionDiagram(card, data), [card, data]);
   const change = changes?.byId.get(card.id);
   const below = useMemo(() => changesBelow(changes, data, card.calls), [changes, data, card]);
@@ -170,6 +174,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
           ) : null}
           <h2 className="mono">{card.name}()</h2>
           {change !== undefined ? <Badge mark={markOf(change.kind)} /> : below.length > 0 ? <Badge mark={markOf('inside')} /> : null}
+          {card.source !== undefined ? <button type="button" className="code-button" aria-label="関数のコードを見る" onClick={() => setCode(true)}>コードを見る</button> : null}
         </>
       }>
         <Description summary={card.summary} description={card.description} />
@@ -212,6 +217,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
         </div>
         <Callers {...props} below={below} />
       </div>
+      {code ? <CodeDrawer data={data} targets={sources} initial={card.id} onClose={() => setCode(false)} /> : null}
     </section>
   );
 }

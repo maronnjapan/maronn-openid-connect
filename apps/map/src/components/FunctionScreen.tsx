@@ -8,6 +8,7 @@ import { CasePicker } from './CasePicker';
 import { Badge, ChangeDetail, ReachedList } from './ChangeParts';
 import { FlowDiagram } from './FlowDiagram';
 import { Chips, Description } from './Parts';
+import { DetailDrawer } from './DetailDrawer';
 
 export interface FunctionScreenProps {
   data: MapData;
@@ -195,13 +196,10 @@ export function FunctionScreen(props: FunctionScreenProps) {
             <>
               <FlowDiagram diagram={diagram} active={active} selected={member === null ? null : (diagram.nodes.find((node) => node.target !== undefined && 'member' in node.target && node.target.member === member)?.id ?? null)} label={`${card.name}() の処理の流れ`} marks={marks} onSelect={onSelect} />
               {memberDoc ? (
-                <div className="member-note" role="note">
-                  <strong className="mono">
-                    {memberDoc.type}.{memberDoc.member}()
-                  </strong>
-                  <span>{memberDoc.summary}</span>
-                  <span className="mono muted">{locationOf(memberDoc)}</span>
-                </div>
+                <DetailDrawer title={`${memberDoc.type}.${memberDoc.member}()`} onClose={() => setMember(null)}>
+                  <p className="lead">{memberDoc.summary}</p>
+                  <p className="where mono">{locationOf(memberDoc)}</p>
+                </DetailDrawer>
               ) : null}
             </>
           ) : (

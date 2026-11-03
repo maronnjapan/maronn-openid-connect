@@ -107,7 +107,13 @@ export interface ResolveIntrospectionTokenOptions {
 }
 
 /**
- * RFC 7662 §2.2: アクセストークンが有効期限内で、nbf を過ぎているかを返す。時刻は Unix epoch 秒。
+ * 有効期限内で、`nbf` が未来でなければ true を返す。
+ *
+ * アクセストークンの `expiresAt` が `now` 以前なら false を返す。
+ * `notBefore`（`nbf`）が `now` より後なら、まだ使えないトークンなので false を返す。
+ * 時刻はすべて UNIX 時間の秒である。
+ *
+ * @spec RFC 7662 §2.2
  */
 export function isAccessTokenActive(
   expiresAt: number,
@@ -115,15 +121,20 @@ export function isAccessTokenActive(
   now: number,
 ): boolean {
   if (expiresAt <= now) return false;
-  // RFC 7519 §4.1.5 / RFC 7662 §2.2: a token whose nbf ("not before") is in the
-  // future is not yet valid, so it MUST be reported inactive. Applies to both JWT
-  // and opaque tokens because the stored token info drives introspection.
+  // `nbf`（使用を始めてよい時刻）が未来なら false を返す（RFC 7519 §4.1.5、RFC 7662 §2.2）。
+  // まだ有効になっていないトークンは、無効として報告しなければならない（MUST）。
+  // イントロスペクションは保存されたトークンの情報で判定するので、JWT のトークンにも JWT でないトークンにも同じ規則を当てはめる。
   if (notBefore !== undefined && notBefore > now) return false;
   return true;
 }
 
 /**
- * RFC 7662 §2.2: リフレッシュトークンがローテーション済みでなく、有効期限内かを返す。時刻は Unix epoch 秒。
+ * リフレッシュトークンが未使用で期限内なら true を返す。
+ *
+ * `used` が true（ローテーションで使用済み）なら false を返し、`expiresAt` が `now` 以前でも false を返す。
+ * 時刻はすべて UNIX 時間の秒である。
+ *
+ * @spec RFC 7662 §2.2
  */
 export function isRefreshTokenActive(
   expiresAt: number,
@@ -135,6 +146,17 @@ export function isRefreshTokenActive(
   return true;
 }
 
+/**
+ * 有効なアクセストークンのレスポンスを返す。
+ *
+ * 保存済みのアクセストークンの情報から、`active: true` のイントロスペクションのレスポンスを組み立てる。
+ * `token_type` は `Bearer` にし、`scope` は空白区切りの文字列にする。
+ * `client_id`、`sub`、`exp` は常に含め、`iat`、`nbf`、`iss`、`jti`、`acr` は保存されているときだけ、`aud` は `audience` が空でないときだけ含める。
+ * 有効期限や `nbf` は確かめず、常に `active: true` を返す。
+ *
+ * @spec RFC 7662 §2.2
+ * @spec RFC 9470 §6.2
+ */
 function buildAccessTokenResponse(info: AccessTokenInfo): IntrospectionResponse {
   const res: Extract<IntrospectionResponse, { active: true }> = {
     active: true,
@@ -145,19 +167,30 @@ function buildAccessTokenResponse(info: AccessTokenInfo): IntrospectionResponse 
     exp: info.expiresAt,
   };
   if (info.iat !== undefined) res.iat = info.iat;
-  // RFC 7662 §2.2: nbf is an OPTIONAL response member; echo it when stored.
+  // `nbf` はレスポンスの任意のメンバーなので、保存されているときだけ含める（RFC 7662 §2.2）。
   if (info.nbf !== undefined) res.nbf = info.nbf;
   if (info.audience !== undefined && info.audience.length > 0) {
     res.aud = info.audience;
   }
   if (info.issuer !== undefined) res.iss = info.issuer;
   if (info.jti !== undefined) res.jti = info.jti;
-  // RFC 9470 §6.2: acr is an introspection response member, so a resource server
-  // can check how the End-User authenticated without a self-contained token.
+  // `acr` はイントロスペクションのレスポンスのメンバーなので、保存されていれば含める（RFC 9470 §6.2）。
+  // リソースサーバーは、トークンが自己完結型でなくても、エンドユーザーがどう認証されたかを確かめられる。
   if (info.acr !== undefined) res.acr = info.acr;
   return res;
 }
 
+/**
+ * 有効なリフレッシュトークンのレスポンスを返す。
+ *
+ * 保存済みのリフレッシュトークンの情報から、`active: true` のイントロスペクションのレスポンスを組み立てる。
+ * `token_type` は `refresh_token` にし、`scope` は空白区切りの文字列にする。
+ * `client_id`、`sub`（`subject` の値）、`exp` は常に含め、`iat`、`iss` は保存されているときだけ含める。
+ * `aud`、`nbf`、`jti`、`acr` は含めない。
+ * ローテーションで使用済みか、期限切れかは確かめず、常に `active: true` を返す。
+ *
+ * @spec RFC 7662 §2.2
+ */
 function buildRefreshTokenResponse(info: RefreshTokenInfo): IntrospectionResponse {
   const res: Extract<IntrospectionResponse, { active: true }> = {
     active: true,
@@ -173,12 +206,14 @@ function buildRefreshTokenResponse(info: RefreshTokenInfo): IntrospectionRespons
 }
 
 /**
- * `token` パラメータの存在を検証する
- * RFC 7662 §2.1: token は REQUIRED。
+ * `token` パラメータがあればその値を返す。
  *
- * @param params イントロスペクションリクエストのパラメータ
- * @returns 検証済みの token 値
- * @throws {IntrospectionError} invalid_request
+ * `token` は、イントロスペクションのリクエストで必須のパラメータである（RFC 7662 §2.1）。
+ *
+ * @spec RFC 7662 §2.1
+ * @param params イントロスペクションのリクエストのパラメータ
+ * @returns `token` の値
+ * @throws {IntrospectionError} `invalid_request`: `token` がないか空文字列のとき
  */
 export function requireIntrospectionToken(params: { token?: string }): string {
   if (!params.token) {
@@ -191,12 +226,14 @@ export function requireIntrospectionToken(params: { token?: string }): string {
 }
 
 /**
- * 呼び出し元がクライアント認証済みであることを検証する
- * RFC 7662 §2.1: イントロスペクションエンドポイントはクライアント認証を要求する。
+ * 認証済みのクライアント ID があればそのまま返す。
  *
- * @param authenticatedClientId クライアント認証済みの clientId。空文字なら未認証
- * @returns 認証済み clientId
- * @throws {IntrospectionError} invalid_client
+ * イントロスペクションエンドポイントは、呼び出し元のクライアント認証を求める（RFC 7662 §2.1）。
+ *
+ * @spec RFC 7662 §2.1
+ * @param authenticatedClientId クライアント認証で確かめたクライアント ID（空文字列なら認証されていない）
+ * @returns 認証済みのクライアント ID
+ * @throws {IntrospectionError} `invalid_client`: `authenticatedClientId` が空文字列のとき
  */
 export function requireIntrospectionClient(authenticatedClientId: string): string {
   if (!authenticatedClientId) {
@@ -209,25 +246,26 @@ export function requireIntrospectionClient(authenticatedClientId: string): strin
 }
 
 /**
- * ステップ 2.5: 呼び出し元が confidential client であることを検証する
+ * 呼び出し元がパブリッククライアントなら拒否する。
  *
- * RFC 7662 §2.1 は token scanning 防止のため呼び出し元の認可を要求し、
- * RFC 9701 §5 は未認証のイントロスペクションリクエストの拒否を MUST とする。
- * `tokenEndpointAuthMethods: ['none']` で登録された public client は
- * client_id（公開情報）の提示だけで認証パイプラインを通過するため、
- * それを「認証済み」として扱うと誰でもトークンを走査できてしまう。
- * このステップは登録方式が `'none'` の呼び出し元を invalid_client で拒否する。
+ * イントロスペクションでは、トークンの走査（有効なトークンを探して手当たり次第に問い合わせること）を防ぐため、呼び出し元の認可が必要である（RFC 7662 §2.1）。
+ * 認証されていないイントロスペクションのリクエストは、拒否しなければならない（RFC 9701 §5 の MUST）。
+ * `tokenEndpointAuthMethods: ['none']` で登録されたパブリッククライアントは、公開情報である `client_id` を示すだけでクライアント認証の処理を通るので、それを認証済みとして扱うと、誰でもトークンを走査できてしまう。
+ * そのため、登録した方式が `none` の呼び出し元を `invalid_client` で拒否する。
  *
- * revocation エンドポイントには適用しないこと（RFC 7009 §2.1 は public client の
- * 失効要求を正当に許す）。
+ * トークンの失効のエンドポイントには使わない（RFC 7009 §2.1 は、パブリッククライアントによる失効のリクエストを正当なものとして認めている）。
  *
- * @param client クライアント認証パイプラインが解決した登録済みクライアント
- * @throws {IntrospectionError} invalid_client（401 + WWW-Authenticate）
+ * @spec RFC 7662 §2.1
+ * @spec RFC 9701 §5
+ * @param client クライアント認証の処理が特定した登録済みのクライアント
+ * @throws {IntrospectionError} `invalid_client`: 登録した方式が `none` のとき（ステータスコードは 401 で、`WWW-Authenticate` ヘッダーを付ける）
+ * @throws {Error} 登録で `none` をほかの方式と並べているとき（{@link isPublicTokenClient}）
  */
 export function requireConfidentialIntrospectionCaller(
   client: Pick<TokenClientInfo, 'tokenEndpointAuthMethods'>,
 ): void {
-  // OIDC Core 1.0 §9 / RFC 7591 §2: 既定は client_secret_basic（confidential）。
+  // 登録した方式が `none` なら `invalid_client` を投げる。
+  // 方式が登録されていなければ、既定の `client_secret_basic`（コンフィデンシャルクライアント）として扱う（OIDC Core 1.0 §9、RFC 7591 §2）。
   if (isPublicTokenClient(client)) {
     throw new IntrospectionError(
       IntrospectionErrorCode.InvalidClient,
@@ -237,13 +275,14 @@ export function requireConfidentialIntrospectionCaller(
 }
 
 /**
- * 提示されたトークンをストアから解決する
+ * 提示されたトークンをストアから探し、種別と情報を返す。
  *
- * RFC 7662 §2.1: `token_type_hint` は検索順のヒントであり、外れても他方の種別を
- * 検索しなければならない。hint=refresh_token のときだけ refresh → access の順、
- * それ以外（access_token / 不明値 / 未指定）は access → refresh の順で検索する。
+ * `token_type_hint` は探す順のヒントで、外れてもほかの種別を探さなければならない（RFC 7662 §2.1）。
+ * `token_type_hint` が `refresh_token` のときだけリフレッシュトークン、アクセストークンの順に探し、それ以外（`access_token`、未知の値、未指定）はアクセストークン、リフレッシュトークンの順に探す。
+ * `refreshTokenResolver` を渡さなければ、アクセストークンだけを探す。
  *
- * @returns 解決したトークン。どちらのストアにも無ければ null
+ * @spec RFC 7662 §2.1
+ * @returns 見つけたトークンの種別と情報。どちらのストアにもなければ `null`
  */
 export async function resolveIntrospectionToken(
   options: ResolveIntrospectionTokenOptions,
@@ -269,14 +308,15 @@ export async function resolveIntrospectionToken(
 }
 
 /**
- * 解決したトークンが active かどうかを判定する
+ * 見つけたトークンが有効なら true を返す。
  *
- * RFC 7662 §2.2 の "active" は「まだ有効期限内で、失効・回収されていない」こと。
- * - アクセストークン: `exp` 超過、または `nbf` が未来なら inactive
- * - リフレッシュトークン: rotation 済み（`used`）または `exp` 超過なら inactive
+ * RFC 7662 §2.2 の `active` は、トークンがまだ有効期限内で、失効していないことを表す。
+ * - アクセストークンは、`exp` を過ぎているか、`nbf` が未来なら false を返す（{@link isAccessTokenActive}）
+ * - リフレッシュトークンは、ローテーションで使用済み（`used`）か、`exp` を過ぎていれば false を返す（{@link isRefreshTokenActive}）
  *
- * @param resolved 解決済みトークン
- * @param now 現在時刻（Unix epoch 秒）。省略時はシステム時刻
+ * @spec RFC 7662 §2.2
+ * @param resolved {@link resolveIntrospectionToken} が返したトークン
+ * @param now 現在時刻（UNIX 時間の秒）。省略するとシステムの時刻を使う
  */
 export function isIntrospectionTokenActive(
   resolved: ResolvedIntrospectionToken,
@@ -288,11 +328,13 @@ export function isIntrospectionTokenActive(
 }
 
 /**
- * active なトークンの RFC 7662 §2.2 レスポンスクレームを組み立てる
+ * 有効なトークンのレスポンスを組み立てて返す。
  *
- * 保存されていない optional クレーム（iat / nbf / aud / iss / jti、アクセストークンの
- * acr（RFC 9470 §6.2））は省略する。
- * inactive なトークンには使わず、`INACTIVE_INTROSPECTION_RESPONSE` を返すこと。
+ * トークンの種別に合わせて、RFC 7662 §2.2 のレスポンスのクレームを組み立てる。
+ * 任意のクレーム（`iat`、`nbf`、`aud`、`iss`、`jti`）と、アクセストークンの `acr`（RFC 9470 §6.2）は、保存されていなければ省く。
+ * 常に `active: true` を返すので、無効なトークンにはこの関数を使わず、{@link INACTIVE_INTROSPECTION_RESPONSE} を返す。
+ *
+ * @spec RFC 7662 §2.2
  */
 export function buildIntrospectionResponse(
   resolved: ResolvedIntrospectionToken,

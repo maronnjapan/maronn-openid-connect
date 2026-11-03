@@ -1,14 +1,20 @@
 import { defineEndpoint } from '../step.js';
 
-/** The token endpoint. OIDC Core 1.0 §3.1.3 */
+/**
+ * クライアントを認証し、提示されたグラント（認可コード、リフレッシュトークン、有効にした機能が扱うグラント）を検証して、トークンレスポンスで応答する。
+ * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
+ * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
+ *
+ * @spec OIDC Core 1.0 §3.1.3
+ */
 export const endpoint = defineEndpoint({
   id: 'token',
   order: 70,
-  label: 'Token endpoint',
+  label: 'トークンエンドポイント',
   path: '/token',
   methods: ['POST'],
   layer: 'api',
-  group: { id: 'authorization-code', label: 'Authorization Code Flow' },
+  group: { id: 'authorization-code', label: '認可コードフロー' },
   spec: 'OIDC Core 1.0 §3.1.3',
   rearrangeable: true,
   steps: [
@@ -49,7 +55,7 @@ export const endpoint = defineEndpoint({
       ] },
     ],
     fromKind: [
-      { kind: 'dispatch', to: 'respond', label: 'answered' },
+      { kind: 'dispatch', to: 'respond', label: '応答済み' },
     ],
   },
   journeys: [

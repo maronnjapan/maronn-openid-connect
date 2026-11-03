@@ -33,11 +33,27 @@ import type { KvDatabase } from './database';
 
 const registry = globalThis as typeof globalThis & { __oidcKvDatabase?: KvDatabase };
 
-/** The key-value store of this process, opened once: Upstash Redis when its URL and token are set, node:sqlite otherwise. */
+/**
+ * このプロセスの KV ストアを返す。
+ *
+ * 最初の呼び出しで `openDatabase()` を呼んでストアを開いて `globalThis` に置き、以後はどの呼び出しにも同じストアを返す。
+ * Next.js はこのモジュールを層ごと（ルートハンドラ、サーバーアクション、`instrumentation.ts`）に読み込むが、どの層も同じストアを使う。
+ * 開くのは、Upstash Redis の URL とトークンが設定されていれば Upstash Redis、なければ `node:sqlite` のストアである。
+ *
+ * @throws {Error} 最初の呼び出しで、Vercel の上なのに Upstash Redis の URL とトークンがないとき（`openDatabase()`）
+ */
 export function createDatabase(): KvDatabase {
   return (registry.__oidcKvDatabase ??= openDatabase());
 }
 
+/**
+ * 環境変数で選んだ KV ストアを開いて返す。
+ *
+ * `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` がどちらも設定されていれば、Upstash Redis のストアを返す（`openUpstash()`）。
+ * そうでなければ、`OIDC_SQLITE_PATH` のファイル（既定は `.data/oidc.sqlite`）を `node:sqlite` で開いたストアを返す（`openSqlite()`）。
+ *
+ * @throws {Error} Vercel の上（`VERCEL` が設定されている）で Upstash Redis の URL とトークンがないとき（ほかのサーバーレス関数からは読めないファイルに書かないため）
+ */
 function openDatabase(): KvDatabase {
   const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
   const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -50,7 +66,14 @@ function openDatabase(): KvDatabase {
   return openSqlite(process.env.OIDC_SQLITE_PATH ?? '.data/oidc.sqlite');
 }
 
-/** Upstash Redis over its REST API: each call is one Redis command. */
+/**
+ * Upstash Redis の REST API を使う KV ストアを返す。
+ *
+ * 返すストアの各メソッドは、Redis のコマンドを一つ送る（`GET`、`SET`、`SET ... NX`、`DEL`）。
+ * 有効期間を渡されたときは、`EX` で秒数を付ける。
+ *
+ * @throws {Error} 返したストアのメソッドで、HTTP のエラーか Upstash のエラーが返ったとき
+ */
 function openUpstash(url: string, token: string): KvDatabase {
   const run = async (command: Array<string | number>): Promise<unknown> => {
     const response = await fetch(url, {
@@ -79,20 +102,21 @@ function openUpstash(url: string, token: string): KvDatabase {
 }
 
 /**
- * A key-value store on one node:sqlite table. Each method is one statement,
- * and SQLite runs a statement as a whole, so setIfAbsent is atomic even when
- * several processes share the file.
+ * `node:sqlite` のテーブルを使う KV ストアを返す。
+ *
+ * `path` のファイルを開き（`:memory:` ならメモリ上に作り）、`kv` テーブルがなければ作る。
+ * ファイルのディレクトリがなければ、それも作る。
+ * 各メソッドは SQL 文を一つ実行し、SQLite は一つの文をまとめて実行するので、複数のプロセスがファイルを共有していても `setIfAbsent` はアトミックである。
  */
 function openSqlite(path: string): KvDatabase {
   if (path !== ':memory:') {
     mkdirSync(dirname(resolve(path)), { recursive: true });
   }
   const sqlite = new DatabaseSync(path === ':memory:' ? path : resolve(path));
-  // Processes that open the same file at once (next build workers, a running
-  // next start) wait for its lock instead of failing with "database is locked".
+  // 同じファイルを同時に開いたプロセス（`next build` のワーカーと、動いている `next start` など）が、`database is locked` で失敗せずにロックを待つようにする。
   sqlite.exec('PRAGMA busy_timeout = 5000');
   sqlite.exec('PRAGMA journal_mode = WAL');
-  // expires_at is in epoch milliseconds; NULL never expires.
+  // `expires_at` はエポックミリ秒で、`NULL` なら期限切れにならない。
   sqlite.exec('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
   const expiresAt = (ttlSeconds?: number) => (ttlSeconds === undefined ? null : Date.now() + ttlSeconds * 1000);
   const select = sqlite.prepare('SELECT value FROM kv WHERE key = ? AND (expires_at IS NULL OR expires_at > ?)');
@@ -100,7 +124,7 @@ function openSqlite(path: string): KvDatabase {
     'INSERT INTO kv (key, value, expires_at) VALUES (?, ?, ?) ' +
       'ON CONFLICT (key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at',
   );
-  // An expired key counts as missing, so the insert may replace it.
+  // 期限切れのキーはないものとみなすので、挿入で置き換えてよい。
   const insertIfAbsent = sqlite.prepare(
     'INSERT INTO kv (key, value, expires_at) VALUES (?, ?, ?) ' +
       'ON CONFLICT (key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at ' +

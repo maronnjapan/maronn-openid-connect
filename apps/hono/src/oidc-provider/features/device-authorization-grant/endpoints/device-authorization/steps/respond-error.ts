@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'device-authorization',
   feature: 'device-authorization-grant',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'RFC 6749 §5.2',
   function: 'respondDeviceAuthorizationError',
   consumes: [],
@@ -17,9 +17,16 @@ export const meta = step({
 });
 
 /**
- * RFC 6749 §5.2 error shape. Authentication failures are core TokenErrors
- * (with their 401); everything the experimental package rejects is a
- * DeviceAuthorizationError.
+ * エラーに応じた OAuth のエラーレスポンスで応答する。
+ *
+ * ボディは `error` と `error_description` を持つ JSON で、どの場合も `noStore()` でキャッシュを禁じる（RFC 6749 §5.2）。
+ * エラーの種類ごとに、次のように応答する。
+ * - `DeviceAuthorizationEndpointError`（ステップが決めた固定のレスポンス）: そのステータス、ヘッダー、ボディのまま返す。
+ * - `DeviceAuthorizationError`（experimental パッケージが拒否したリクエスト）: 400 で返す。
+ * - `TokenError`（core のクライアント認証の失敗）: そのステータス（`invalid_client` なら 401）で返し、`WWW-Authenticate` の値があればヘッダーに付ける。
+ * - それ以外: 500 の `server_error` を返す。
+ *
+ * @spec RFC 6749 §5.2
  */
 export function respondDeviceAuthorizationError(c: any, error: unknown): Response {
   noStore(c);

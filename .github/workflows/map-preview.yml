@@ -7,6 +7,8 @@
 #   Worker Preview `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに
 #   固定の URL を持つ隔離されたデプロイで、push のたびに同じ URL が新しくなり、複数の PR が同時に
 #   別々の状態で見られる。URL は PR にコメントする（push ごとに同じコメントを書き換える）。
+#   PR の地図は、base ブランチと比べてその PR が変えた関数に札を付け、PR が足した変更メモ
+#   （apps/map/changes/*.md）の説明を表示する。コメントにも変わった関数とその説明を載せる。
 #   Worker Previews はオープンベータなので、失敗したときは PR ごとの Worker
 #   `maronn-oidc-map-pr-<番号>` へ `wrangler deploy` する（.github/scripts/map-preview.mjs）。
 # - PR（closed）: その Preview（とフォールバックの Worker）を消す。
@@ -42,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # PR の地図は、このランがビルドするマージコミットと base ブランチの分岐点（git merge-base）を
+          # 比べて変わった関数を見つけるので、履歴が要る。
+          fetch-depth: 0
 
       - name: Enable Corepack
         run: corepack enable
@@ -56,8 +62,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # CLI をビルドし（関数カタログをテンプレートに焼く）、その dist から地図のデータとページを作る。
+      # PR では MAP_BASE に base ブランチを渡し、その PR で変わった関数と変更メモを地図に載せる
+      # （apps/map/scripts/changes.mjs）。変わった関数の一覧は dist/data/changes.md にも書かれる。
       - name: Build the map
+        env:
+          MAP_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          MAP_PR: ${{ github.event.pull_request.number }}
+          MAP_PR_TITLE: ${{ github.event.pull_request.title }}
+          MAP_PR_URL: ${{ github.event.pull_request.html_url }}
         run: pnpm run build:map
+
+      - name: Check map types and layout
+        run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
 
       - name: Upload the map
         uses: actions/upload-artifact@v7
@@ -78,7 +94,7 @@ jobs:
 
       - name: Comment the Preview on the pull request
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
           PREVIEW_MODE: ${{ steps.preview.outputs.mode }}
@@ -88,9 +104,13 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
+            const fs = require('fs');
             const marker = '<!-- oidc-provider-map-preview -->';
             const url = process.env.PREVIEW_URL;
             const outcome = process.env.PREVIEW_OUTCOME;
+            // The functions the pull request changed and what its change notes say (written by the build).
+            const changesFile = 'apps/map/dist/data/changes.md';
+            const changes = fs.existsSync(changesFile) ? fs.readFileSync(changesFile, 'utf8').trim() : '';
             const how = process.env.PREVIEW_MODE === 'worker'
               ? 'a Worker of this pull request (Worker Previews failed; see the run)'
               : 'a Worker Preview of this pull request: the same URL follows every push, and it is removed when the pull request is closed';
@@ -104,10 +124,12 @@ jobs:
               '## OIDC Provider Map',
               '',
               status,
+              ...(url && changes ? ['', `このPRの変更（変わった関数と変更メモ）: ${url}#changes`] : []),
               '',
               `Run: ${process.env.RUN_URL} (artifact \`oidc-provider-map\`)`,
               '',
-              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on; the feature toggles narrow it to one \`maronn-oidc generate\` command line.`,
+              `Built from ${process.env.HEAD_SHA}. The map shows the endpoints, steps and functions of every framework with every feature on; the feature toggles narrow it to one \`maronn-oidc generate\` command line. The functions this pull request changes carry a badge, with what its change notes (\`apps/map/changes/*.md\`) say about them.`,
+              ...(changes ? ['', changes] : []),
             ].join('\n');
             const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
             const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
@@ -141,7 +163,7 @@ jobs:
         run: node .github/scripts/map-preview.mjs delete --pr "${{ github.event.pull_request.number }}"
 
       - name: Note the removal on the pull request
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           NOTE: ${{ steps.remove.outputs.note }}
         with:

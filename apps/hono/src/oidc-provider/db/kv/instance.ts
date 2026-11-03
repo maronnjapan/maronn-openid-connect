@@ -24,7 +24,18 @@
 import type { Context } from 'hono';
 import type { KvDatabase } from './database.js';
 
-/** Open the key-value store the provider keeps its data in. Written by you: the generated file throws until it returns a KvDatabase. */
+/**
+ * OP がデータを保存する KV ストアを返す。
+ *
+ * この関数は利用者が書く。
+ * 生成されたままでは、`KvDatabase` を返さずに常に `Error` を投げる。
+ * 実装の例はこのファイルの末尾にある。
+ *
+ * 生成されたアプリは、リクエストごとにそのリクエストコンテキスト（Hono の `Context`）を渡して呼ぶ。
+ * Cloudflare Workers では、ストアの URL とトークンをコンテキストのバインディング（`c.env`）から読める。
+ *
+ * @throws {Error} 利用者が書き換える前は常に投げる
+ */
 export function createDatabase(_c: Context): KvDatabase {
   throw new Error(
     'db/instance.ts: createDatabase() is not implemented yet. ' +

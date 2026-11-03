@@ -46,7 +46,18 @@ export interface GoogleLoginNonceRecord {
  * {@link consumeGoogleLoginNonce} が期限切れとして拒否する）。
  */
 export interface GoogleLoginNonceStore {
+  /**
+   * `key` のレコードを返し、なければ `null` を返す。
+   *
+   * 期限切れのレコードにも `null` を返してよい。
+   * 返しても、{@link consumeGoogleLoginNonce} が期限切れとして拒否する。
+   */
   get(key: string): Promise<GoogleLoginNonceRecord | null>;
+  /**
+   * レコードを `key` に `ttlSeconds` 秒の期限で保存する。
+   *
+   * 同じキーのレコードがあれば置き換える。
+   */
   put(key: string, record: GoogleLoginNonceRecord, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
 }
@@ -62,11 +73,16 @@ export interface IssueGoogleLoginNonceOptions {
 }
 
 /**
- * ログイン画面の描画時に nonce を発行し、トランザクション ID との対応を保存する。
+ * トランザクションに対応付けた `nonce` を発行する。
  *
- * 返した nonce をフロント側の設定（`./sign-in` の `buildGoogleSignInAttributes`）の `nonce` に渡すこと。
+ * ログイン画面を描画するときに呼ぶ。
+ * 32 バイトの乱数から `nonce` を作り、`google_login_nonce:` に `nonce` を続けたキーで、トランザクション ID と有効期限（`expiresAt`）のレコードを `options.store` に保存する。
+ * ストアに渡す有効期間は、`expiresAt` までの残り時間を秒に切り上げた値で、短くても 1 秒にする。
  *
- * @returns 発行した nonce（base64url, 43 文字）
+ * 返した `nonce` は、ログイン画面の設定（`./sign-in` の `buildGoogleSignInAttributes`）の `nonce` に渡す。
+ * Google がその値を ID トークンの `nonce` クレームに入れて返すので、`login_uri` の処理でトランザクションを特定できる。
+ *
+ * @returns 発行した `nonce`（base64url で 43 文字）
  */
 export async function issueGoogleLoginNonce(options: IssueGoogleLoginNonceOptions): Promise<string> {
   const now = (options.now ?? new Date()).getTime();
@@ -83,12 +99,19 @@ export async function issueGoogleLoginNonce(options: IssueGoogleLoginNonceOption
 }
 
 /**
- * 検証済み ID トークンの `nonce` からログイン試行の記録を引き、同時に削除する（単回使用）。
+ * `nonce` のレコードを取り出して削除し、返す。
  *
- * 署名検証を通した後に呼ぶこと。検証前に呼ぶと、nonce を知るだけの相手が偽のトークンで
- * 記録を消費（ログイン試行を妨害）できてしまう。
+ * レコードは 1 回しか使えず、2 回目の呼び出しは `login_nonce_not_found` になる。
+ * 期限を判定する前に削除するので、期限切れのレコードもストアに残らない。
  *
- * @throws {GoogleLoginError} `login_nonce_not_found` / `login_nonce_expired`
+ * ID トークンの署名を検証したあとに呼ぶ必要がある。
+ * 検証の前に呼ぶと、`nonce` を知っているだけの第三者が偽のトークンでレコードを消費し、ログインを妨害できてしまう。
+ *
+ * @param nonce 検証済みの ID トークンの `nonce` クレームの値
+ * @param store `nonce` のレコードを保存したストア
+ * @param now 期限切れを判定する時刻（既定は現在時刻）
+ * @throws {GoogleLoginError} `login_nonce_not_found`: レコードがないとき（この OP が発行していないか、使用済みの `nonce`）
+ * @throws {GoogleLoginError} `login_nonce_expired`: レコードの有効期限が `now` 以前のとき
  */
 export async function consumeGoogleLoginNonce(
   nonce: string,
@@ -104,7 +127,8 @@ export async function consumeGoogleLoginNonce(
     );
   }
 
-  // ワンタイム性の担保: 期限判定の前に削除し、期限切れの記録も残さない
+  // `nonce` を 1 回しか使えないように、レコードを削除する。
+  // 期限を判定する前に削除するので、期限切れのレコードもストアに残らない。
   await store.delete(key);
 
   if (record.expiresAt <= (now ?? new Date()).getTime()) {

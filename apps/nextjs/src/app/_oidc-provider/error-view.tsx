@@ -14,6 +14,11 @@ interface ErrorViewProps {
   children?: ReactNode;
 }
 
+/**
+ * OP のエラー画面を描画する。
+ *
+ * 見出し（`Error`）、エラーコード、説明（あれば）、画面が加える `children` の順に並べる。
+ */
 export function ErrorView({ error, description, children }: ErrorViewProps) {
   return (
     <main>

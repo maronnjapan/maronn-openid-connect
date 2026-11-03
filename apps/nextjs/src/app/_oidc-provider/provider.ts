@@ -162,9 +162,11 @@ export interface ProviderSigningKeys {
 }
 
 /**
- * Load every signing key set and refuse one the OP must not sign with: an
- * empty set, weak keys, ambiguous kids, or ID Token keys without RS256 (OIDC
- * Core 1.0 §15.1). Endpoints answer 503 when this throws.
+ * 用途ごとの署名鍵の集合を読み込み、検証して返す。
+ *
+ * 返すのは、汎用（`general`）、ID トークン用（`idToken`）、UserInfo 用（`userinfo`）の三つの集合である。
+ * 署名に使えない集合（空の集合、強度の足りない鍵、区別できない `kid`、RS256 の鍵がない ID トークンの集合）があると、`validateSigningKeySet()` の投げる `Error` がそのまま伝わる（OIDC Core 1.0 §15.1）。
+ * エンドポイントは、これが投げると 503 で応答する。
  */
 export async function loadSigningKeys(): Promise<ProviderSigningKeys> {
   const general = await signingKeyProvider.getSigningKeys();
@@ -177,20 +179,25 @@ export async function loadSigningKeys(): Promise<ProviderSigningKeys> {
 }
 
 /**
- * The JWKS an id_token_hint is verified against (OIDC Core 1.0 §3.1.2.2): this
- * OP's own ID Token keys, so any ID Token it issued is accepted as a hint.
+ * `id_token_hint` を検証する JWK Set を返す。
+ *
+ * OP 自身の ID トークンの署名鍵から作るので、OP が発行した ID トークンなら `id_token_hint` として受け付けられる。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.2
  */
 export function idTokenHintJwks(keys: ProviderSigningKeys): Promise<JwkSet> {
   return signingKeysToJwkSet(keys.idToken);
 }
 
 /**
- * The key a client's ID Tokens are signed with: the registered ID Token key
- * whose alg matches its id_token_signed_response_alg (OIDC Dynamic Client
- * Registration 1.0 §2), RS256 when it registered none. Never simply the first
- * key of the set — that would hand an ES256 client an RS256 ID Token and hash
- * at_hash with the wrong algorithm. undefined when no registered key has that
- * alg, which is a server configuration error.
+ * クライアントの ID トークンに署名する鍵を返す。
+ *
+ * ID トークンの鍵の集合のうち、アルゴリズムが `alg`（クライアントが登録した `id_token_signed_response_alg`）と同じ鍵を返す。
+ * 同じアルゴリズムの鍵が複数あるとき（ローテーションの途中など）は、集合で前にある鍵を返す。
+ * `alg` が `undefined` なら RS256 の鍵を返す（OIDC Dynamic Client Registration 1.0 §2）。
+ * 集合の最初の鍵をそのまま使わないのは、ES256 を登録したクライアントに RS256 の ID トークンを渡し、`at_hash` を誤ったアルゴリズムで計算してしまうからである。
+ * そのアルゴリズムの鍵が登録されていなければ `undefined` を返す。
+ * これはサーバーの設定の誤りである。
  */
 export function selectIdTokenSigningKey(
   keys: ProviderSigningKeys,
@@ -204,7 +211,15 @@ export function selectIdTokenSigningKey(
 }
 
 /**
- * Check the signing key set the provider starts with: at least one key (the first signs new tokens), and an RS256 key when requireRs256 asks for one.
+ * 署名鍵の集合を検証し、使えない集合なら例外を投げる。
+ *
+ * 次のどれかに当てはまると `Error` を投げる。
+ * - 鍵が一つもない。
+ * - 強度の足りない鍵がある（鍵長が 2048 ビット未満の RSA の鍵、楕円曲線が P-256、P-384、P-521 のどれでもない EC の鍵、RSA と EC 以外の鍵）。
+ * - 鍵が二つ以上あるのに、`kid` が空の鍵か、`kid` が重複する鍵がある（RFC 7517 §4.5）。
+ * - `requireRs256` が `true` なのに、RS256 の鍵がない（OIDC Core 1.0 §15.1）。
+ *
+ * 投げずに戻れば、型の上でも `keys` は空でない `SigningKeySet` として扱われる。
  *
  * @spec OIDC Core 1.0 §10.1
  */
@@ -212,7 +227,8 @@ export function validateSigningKeySet(
   keys: readonly SigningKey[],
   requireRs256 = false,
 ): asserts keys is SigningKeySet {
-  // The first key of a set signs new tokens, so a set needs at least one key.
+  // 鍵が一つもなければ投げる。
+  // 新しいトークンには集合の最初の鍵で署名するので、鍵が少なくとも一つ要る。
   if (keys.length === 0) {
     throw new Error('Signing key set must contain at least one key');
   }
@@ -223,6 +239,12 @@ export function validateSigningKeySet(
   }
 }
 
+/**
+ * 一つの RS256 の鍵を返し続けるプロバイダを作る。
+ *
+ * 作るときに RS256 の鍵を一つ生成し、`getSigningKeys()` のたびに、その鍵だけを含む配列を返す。
+ * 鍵はどこにも保存しないので、プロセスが終わると失われる。
+ */
 function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   const keyPromise = generateSigningKey();
   return {
@@ -232,6 +254,12 @@ function createEphemeralRs256KeyProvider(): SigningKeyProvider {
   };
 }
 
+/**
+ * 2048 ビットの RS256 の鍵ペアを生成して返す。
+ *
+ * 返す `SigningKey` には、秘密鍵と、公開鍵の JWK を入れる。
+ * JWK の `alg` は `RS256`、`use` は `sig`、`kid` は環境変数 `OIDC_SIGNING_KEY_ID` の値（既定は `nextjs-rs256-key`）である。
+ */
 async function generateSigningKey(): Promise<SigningKey> {
   const keyPair = await crypto.subtle.generateKey(
     {

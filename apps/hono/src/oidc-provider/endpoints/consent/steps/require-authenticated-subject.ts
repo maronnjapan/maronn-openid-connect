@@ -5,7 +5,7 @@ export const meta = step({
   id: 'require-authenticated-subject',
   endpoint: 'consent',
   kind: 'resolve',
-  label: 'Require the subject the login step stored',
+  label: 'ログイン済みのサブジェクトを取り出す',
   function: 'requireAuthenticatedSubject',
   consumes: ['transactionId'],
   produces: ['session'],
@@ -13,9 +13,11 @@ export const meta = step({
 });
 
 /**
- * [require-authenticated-subject] The subject the login step stored for this
- * transaction (the per-transaction hand-off). Without one the login step was
- * skipped or has expired, and no code may be issued.
+ * ログインのステップが保存した認証セッションを返す。
+ *
+ * 認証セッションは、ログインのステップが認証したサブジェクトを同意のステップへ引き渡すために、トランザクションの ID をキーに保存したものである。
+ * 見つからなければ `undefined` を返す。
+ * その場合はログインのステップが飛ばされたか期限が切れているので、呼び出し側（`submitConsent()`）は `session_missing` を返し、認可コードを発行しない。
  */
 export async function requireAuthenticatedSubject(
   c: any,

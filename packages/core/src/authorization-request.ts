@@ -173,6 +173,13 @@ export interface ClientInfo {
  * ```
  */
 export interface ClientResolver {
+  /**
+   * `clientId` の登録済みクライアントの情報を返す。
+   *
+   * 返す情報は、認可リクエストの検証に使うもの（`redirectUris`、要求してよいスコープなど）である。
+   * 登録されていないクライアントなら `null` を返す。
+   * 返す `ClientInfo.clientId` は、引数の `clientId` と一致する必要がある。
+   */
   findClient(clientId: string): Promise<ClientInfo | null>;
 }
 
@@ -324,28 +331,32 @@ const CODE_CHALLENGE_S256_LENGTH = 43;
 const CODE_CHALLENGE_S256_PATTERN = /^[A-Za-z0-9\-_]+$/;
 
 /**
- * redirect_uri をクライアントの登録済みURIと照合する
- * RFC 3986 Section 6.2.1 の Simple String Comparison を使用
+ * `redirect_uri` が登録済みなら true を返す。
  *
- * OAuth 2.1 Section 10.3.3: ループバックアドレスのポート差異許容は public client (native) のみ。
- * confidential client は厳格一致を要求する。clientType 未指定時も厳格一致 (安全側)。
+ * まず、登録済みの URI と文字列として完全に一致するかを比べる（RFC 3986 §6.2.1 の単純な文字列比較）。
+ * 一致しなければ、パブリッククライアント（ネイティブアプリなど）に限り、ループバックアドレスの URI をポート番号の違いを無視して比べる。
+ * このときは、どちらのホストもループバックアドレスで、スキーム、ホスト名、パス、クエリがすべて一致する必要がある。
+ * コンフィデンシャルクライアントと、`clientType` を指定していないクライアントには、安全側に倒して完全一致だけを認める（OAuth 2.1 §10.3.3）。
+ *
+ * @spec RFC 3986 §6.2.1
+ * @spec OAuth 2.1 §10.3.3
  */
 function matchRedirectUri(
   requestUri: string,
   registeredUris: string[],
   clientType?: 'confidential' | 'public'
 ): boolean {
-  // まず完全一致を試みる
+  // まず、登録済みの URI と完全に一致するかを比べる。
   if (registeredUris.includes(requestUri)) {
     return true;
   }
 
-  // ループバックポート許容は public client 限定
+  // ループバックのポート番号の違いを許すのは、パブリッククライアントに限る。
   if (clientType !== 'public') {
     return false;
   }
 
-  // ループバックアドレスの場合、ポート番号の違いを許容
+  // ループバックアドレスなら、ポート番号の違いを無視して比べる。
   try {
     const requestUrl = new URL(requestUri);
     if (isLoopbackHostname(requestUrl.hostname)) {
@@ -365,7 +376,7 @@ function matchRedirectUri(
       });
     }
   } catch {
-    // URL解析に失敗した場合は不一致
+    // URL として解析できなければ、一致しないとみなす。
   }
 
   return false;
@@ -385,12 +396,20 @@ const DANGEROUS_SCHEMES = new Set([
 ]);
 
 /**
- * 登録済み redirect_uri の妥当性を検査する
- * - OIDC Core 1.0 Section 3.1.2.1: redirect_uri MUST NOT include a fragment component
- * - OAuth 2.0 Security BCP / RFC 8252 Section 8.5: 危険スキームを拒否する
- * - OIDC Core 1.0 Section 3.1.2.1 / RFC 8252 Section 8.4: 非ループバックの平文 http:// を拒否する
- * 設定ミス（fatal で redirectable ではない）を早期に検知する目的で、
- * ClientResolver が返した URIs を検査する。
+ * 登録済みの `redirect_uri` が安全かを検査する。
+ *
+ * `ClientResolver` が返した URI を一つずつ検査し、次のどれかに当てはまると `server_error` の `AuthorizationError` を投げる:
+ * - フラグメント（`#`）を含む。`redirect_uri` はフラグメントを含んではならない（OIDC Core 1.0 §3.1.2.1）。
+ * - スキームがない。
+ * - スキームが危険なもの（`javascript:`、`data:`、`file:`、`vbscript:`、`blob:`）である（OAuth 2.0 Security BCP、RFC 8252 §8.5）。
+ * - スキームが `http:` で、URL として解析できないか、ホストがループバックアドレスでない（OIDC Core 1.0 §3.1.2.1、RFC 8252 §8.4）。
+ *
+ * 登録の設定ミスを早く見つけるための検査であり、エラーはリダイレクトで返さない。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OAuth 2.0 Security BCP
+ * @spec RFC 8252 §8.5
+ * @spec RFC 8252 §8.4
  */
 export function validateRegisteredRedirectUris(registeredUris: string[]): void {
   for (const uri of registeredUris) {
@@ -401,7 +420,7 @@ export function validateRegisteredRedirectUris(registeredUris: string[]): void {
       );
     }
 
-    // スキーム抽出（先頭から最初の ':' まで、ASCII 小文字化）
+    // 先頭から最初の `:` までをスキームとして取り出し、小文字にする。
     const colonIndex = uri.indexOf(':');
     if (colonIndex === -1) {
       throw new AuthorizationError(
@@ -418,7 +437,7 @@ export function validateRegisteredRedirectUris(registeredUris: string[]): void {
       );
     }
 
-    // http:// はループバック（localhost / 127.0.0.0/8 / [::1]）以外を拒否する
+    // `http://` は、ホストがループバックアドレス（`localhost`、`127.0.0.0/8`、`[::1]`）でなければ拒否する。
     if (scheme === 'http:') {
       let parsed: URL;
       try {
@@ -440,9 +459,14 @@ export function validateRegisteredRedirectUris(registeredUris: string[]): void {
 }
 
 /**
- * redirect_uri を解決する
- * - リクエストに redirect_uri がある場合: 登録済みURIと照合
- * - リクエストに redirect_uri がない場合: 登録済みURIが1つなら使用、複数ならエラー
+ * 使う `redirect_uri` を決めて返す。
+ *
+ * リクエストに `redirect_uri` があれば、登録済みの URI と照合し、一致すればその値を返す。
+ * リクエストにないときは、登録済みの URI が一つならそれを返す。
+ * 次のときは、リダイレクトしない `invalid_request` の `AuthorizationError` を投げる:
+ * - リクエストの `redirect_uri` がフラグメント（`#`）を含む。
+ * - リクエストの `redirect_uri` が登録済みの URI のどれとも一致しない。
+ * - リクエストに `redirect_uri` がなく、登録済みの URI が一つでない（ないか、複数ある）。
  */
 export function resolveRedirectUri(
   requestRedirectUri: string | undefined,
@@ -450,7 +474,7 @@ export function resolveRedirectUri(
   clientType?: 'confidential' | 'public'
 ): string {
   if (requestRedirectUri !== undefined) {
-    // フラグメントを含む redirect_uri を拒否
+    // フラグメントを含む `redirect_uri` を拒否する。
     if (requestRedirectUri.includes('#')) {
       throw new AuthorizationError(
         AuthorizationErrorCode.InvalidRequest,
@@ -458,7 +482,7 @@ export function resolveRedirectUri(
       );
     }
 
-    // 登録済みURIとの照合
+    // 登録済みの URI と照合する。
     if (!matchRedirectUri(requestRedirectUri, registeredUris, clientType)) {
       throw new AuthorizationError(
         AuthorizationErrorCode.InvalidRequest,
@@ -469,12 +493,12 @@ export function resolveRedirectUri(
     return requestRedirectUri;
   }
 
-  // redirect_uri が省略された場合
+  // `redirect_uri` が省略されていれば、登録済みの URI が一つのときだけそれを使う。
   if (registeredUris.length === 1) {
     return registeredUris[0] as string;
   }
 
-  // 複数の登録済みURIがある場合は redirect_uri が必須
+  // 登録済みの URI が一つでなければ（複数あるときなど）、`redirect_uri` は省略できない。
   throw new AuthorizationError(
     AuthorizationErrorCode.InvalidRequest,
     'redirect_uri is required when multiple redirect URIs are registered'
@@ -482,13 +506,17 @@ export function resolveRedirectUri(
 }
 
 /**
- * redirect_uri を解決する（機能単位のステップ関数）。
- * - リクエストに redirect_uri がある場合: 登録済みURIと照合（RFC 3986 §6.2.1 の
- *   Simple String Comparison。public client のみループバックのポート差異を許容）
- * - リクエストに redirect_uri がない場合: 登録済みURIが1つならそれを使用、複数ならエラー
+ * 認可リクエストの `redirect_uri` を決めて返す。
  *
- * このステップより前のエラーはリダイレクト先を信頼できないため非リダイレクトで投げる。
- * このステップで確定した redirectUri を、以降のステップにエラーリダイレクト先として渡す。
+ * リクエストに `redirect_uri` があれば、クライアントの登録済みの URI と照合する（RFC 3986 §6.2.1 の単純な文字列比較）。
+ * ループバックアドレスのポート番号の違いを許すのは、パブリッククライアントだけである。
+ * リクエストにないときは、登録済みの URI が一つならそれを使い、そうでなければエラーにする。
+ * 照合は `resolveRedirectUri()` が行う。
+ *
+ * このステップより前のエラーは、リダイレクト先を信頼できないので、リダイレクトせずに投げる。
+ * このステップで決めた `redirect_uri` を、以降のステップにエラーのリダイレクト先として渡す。
+ *
+ * @spec RFC 3986 §6.2.1
  */
 export function resolveAuthorizationRedirectUri(
   effectiveParams: Pick<AuthorizationRequestParams, 'redirect_uri'>,
@@ -502,11 +530,10 @@ export function resolveAuthorizationRedirectUri(
 }
 
 /**
- * prompt パラメータをバリデーションする（機能単位のステップ関数）
+ * `prompt` パラメータがあれば検証して値の配列を返す。
  *
- * `prompt` が無い場合は undefined を返す。値がある場合は空白区切りで分割し、
- * none/login/consent/select_account 以外の値、および none と他値の併用を
- * リダイレクト可能な invalid_request として拒否する。
+ * `prompt` がなければ `undefined` を返す。
+ * あれば値を空白で分け、`none`、`login`、`consent`、`select_account` 以外の値があるときと、`none` をほかの値と併用しているときは、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
  */
@@ -522,7 +549,10 @@ export function validatePromptParameter(
 }
 
 /**
- * prompt パラメータをバリデーションする
+ * `prompt` の値を検証し、配列にして返す。
+ *
+ * 値を空白で分け（`parsePromptValues()`）、定義済みの値だけであること（`validatePromptValues()`）と、`none` をほかの値と併用していないこと（`validatePromptNoneNotCombined()`）を確かめる。
+ * どちらかに反すると、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
  */
@@ -538,14 +568,21 @@ export function validatePrompt(
 }
 
 /**
- * prompt の値を空白で区切る。値の妥当性は検査しない。
+ * `prompt` の値を空白で分けて配列で返す。
+ *
+ * 空白が連続してできる空の要素は取り除く。
+ * 値の妥当性は検査しない。
  */
 export function parsePromptValues(promptValue: string): string[] {
   return promptValue.split(' ').filter((value) => value.length > 0);
 }
 
 /**
- * OIDC Core 1.0 §3.1.2.1: prompt の各値が定義済みの値であることを検証する。
+ * `prompt` の値が不正なら `invalid_request` を投げる。
+ *
+ * `none`、`login`、`consent`、`select_account` 以外の値があるときに、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validatePromptValues(
   promptValues: readonly string[],
@@ -565,7 +602,11 @@ export function validatePromptValues(
 }
 
 /**
- * OIDC Core 1.0 §3.1.2.1: none を他の値と併用していないことを検証する。
+ * `none` を併用していれば `invalid_request` を投げる。
+ *
+ * `prompt` の値に `none` とほかの値が両方あるときに、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validatePromptNoneNotCombined(
   promptValues: readonly string[],
@@ -583,7 +624,9 @@ export function validatePromptNoneNotCombined(
 }
 
 /**
- * max_age パラメータをバリデーションする
+ * `max_age` を検証し、秒数を返す。
+ *
+ * 値を `Number()` で数値に変換し、非負の整数でなければ、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
  */
 export function validateMaxAge(
   maxAgeValue: string,
@@ -605,11 +648,12 @@ export function validateMaxAge(
 }
 
 /**
- * クライアント登録の default_max_age をバリデーションする。
+ * 登録された `default_max_age` を検証して返す。
  *
- * OIDC Dynamic Client Registration 1.0 §2: default_max_age は秒数を表す
- * 非負整数でなければならない。値はリクエストではなく登録メタデータ由来のため、
- * 不正値は設定ミス（サーバ側エラー）として扱い、リダイレクトせず server_error を投げる。
+ * `default_max_age` は秒数を表す非負の整数でなければならない（OIDC Dynamic Client Registration 1.0 §2）。
+ * この値はリクエストではなくクライアントの登録メタデータから来るので、不正な値は設定ミス（サーバー側のエラー）として扱い、リダイレクトせずに `server_error` の `AuthorizationError` を投げる。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export function validateDefaultMaxAge(defaultMaxAge: number): number {
   if (
@@ -627,12 +671,14 @@ export function validateDefaultMaxAge(defaultMaxAge: number): number {
 }
 
 /**
- * max_age / default_max_age を解決する（機能単位のステップ関数）。
+ * 適用する `max_age` を決めて返す。
  *
- * - リクエストに `max_age` があれば検証して採用する（OIDC Core 1.0 §3.1.2.1）。
- * - 無ければクライアント登録の `default_max_age` を検証して採用する
- *   （OIDC Dynamic Client Registration 1.0 §2）。
- * - どちらも無ければ undefined を返す（再認証鮮度の要求なし）。
+ * リクエストに `max_age` があれば、検証してその値を返す（OIDC Core 1.0 §3.1.2.1）。
+ * なければ、クライアントの登録の `default_max_age` を検証して返す（OIDC Dynamic Client Registration 1.0 §2）。
+ * どちらもなければ `undefined` を返し、認証からの経過時間を制限しない。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export function resolveMaxAge(
   effectiveParams: Pick<AuthorizationRequestParams, 'max_age'>,
@@ -650,8 +696,13 @@ export function resolveMaxAge(
 }
 
 /**
- * PKCE code_challenge / code_challenge_method をバリデーションする
- * OAuth 2.1 Section 4.1.1, 7.5
+ * PKCE のパラメータを検証し、検証した値を返す。
+ *
+ * `code_challenge` と `code_challenge_method` がともにあり、方式が `S256` で、`code_challenge` が 43 文字の base64url であることを確かめる。
+ * どれかに反すると、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ *
+ * @spec OAuth 2.1 §4.1.1
+ * @spec OAuth 2.1 §7.5
  */
 export function validateCodeChallenge(
   codeChallenge: string | undefined,
@@ -671,7 +722,11 @@ export function validateCodeChallenge(
 }
 
 /**
- * OAuth 2.1 §4.1.1: code_challenge があることを確かめる。
+ * `code_challenge` があることを確かめて返す。
+ *
+ * ないとき（空文字列を含む）は、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ *
+ * @spec OAuth 2.1 §4.1.1
  */
 export function requireCodeChallenge(
   codeChallenge: string | undefined,
@@ -690,8 +745,12 @@ export function requireCodeChallenge(
 }
 
 /**
- * code_challenge_method があることを確かめる。
- * RFC 7636 §4.3 の既定値 plain を補完しないため、省略は拒否する。
+ * `code_challenge_method` があることを確かめて返す。
+ *
+ * ないとき（空文字列を含む）は、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ * RFC 7636 §4.3 の既定値 `plain` で補わないので、省略は拒否する。
+ *
+ * @spec RFC 7636 §4.3
  */
 export function requireCodeChallengeMethod(
   codeChallengeMethod: string | undefined,
@@ -710,8 +769,14 @@ export function requireCodeChallengeMethod(
 }
 
 /**
- * OAuth 2.1 §4.1.1 / §7.5: code_challenge_method が S256 であることを検証する。
- * plain はセキュリティ上拒否する。
+ * `S256` 以外の方式なら `invalid_request` を投げる。
+ *
+ * `code_challenge_method` が `S256` なら、その値を返す。
+ * `plain` はセキュリティ上の理由で拒否する。
+ * エラーはリダイレクトで返す。
+ *
+ * @spec OAuth 2.1 §4.1.1
+ * @spec OAuth 2.1 §7.5
  */
 export function validateCodeChallengeMethod(
   codeChallengeMethod: string,
@@ -730,8 +795,12 @@ export function validateCodeChallengeMethod(
 }
 
 /**
- * RFC 7636 §4.2: S256 の code_challenge が 43 文字の base64url（パディングなし）であることを検証する。
- * Token Endpoint の code_verifier 比較まで遅延させず、ここで形式違反を検出する。
+ * `code_challenge` の形式を検証する。
+ *
+ * `S256` の `code_challenge` は 43 文字の base64url（パディングなし）でなければならず、長さか文字がこれに合わなければ、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ * トークンエンドポイントで `code_verifier` と比べるときまで待たずに、ここで形式の誤りを見つける。
+ *
+ * @spec RFC 7636 §4.2
  */
 export function validateS256CodeChallenge(
   codeChallenge: string,
@@ -757,12 +826,14 @@ export function validateS256CodeChallenge(
 }
 
 /**
- * PKCE の code_challenge / code_challenge_method をバリデーションする
- * （機能単位のステップ関数）。OAuth 2.1 Section 4.1.1, 7.5。
+ * 認可リクエストの PKCE を検証し、検証した値を返す。
  *
- * OAuth 2.1 では PKCE（S256）は必須。`allowNonPkceAuthorizationCodeFlow` が
- * true かつ confidential client が PKCE を完全に省略した場合のみ、
- * OIDF Basic OP static-client conformance 互換として省略を許容し空を返す。
+ * OAuth 2.1 では PKCE（`S256`）が必須なので、`code_challenge` と `code_challenge_method` を `validateCodeChallenge()` で検証する。
+ * 例外として、`options.allowNonPkceAuthorizationCodeFlow` が true で、コンフィデンシャルクライアントが PKCE のパラメータを両方とも省略したときだけ、省略を認めて空のオブジェクトを返す。
+ * この例外は、OIDF の適合性テストのうち、静的に登録したクライアントで OP の基本機能を試すテストに合わせるためである。
+ *
+ * @spec OAuth 2.1 §4.1.1
+ * @spec OAuth 2.1 §7.5
  */
 export function validateAuthorizationCodePkce(
   effectiveParams: Pick<AuthorizationRequestParams, 'code_challenge' | 'code_challenge_method'>,
@@ -792,9 +863,12 @@ export function validateAuthorizationCodePkce(
 }
 
 /**
- * client_id の存在検証・ClientResolver からの解決・clientId 整合性検証を行う
- * （機能単位のステップ関数）。
- * いずれもリダイレクト先が確定する前の検証であり、非リダイレクトエラーとして投げる。
+ * `client_id` の登録済みクライアントを取得して返す。
+ *
+ * どの検証もリダイレクト先が決まる前に行うので、エラーはリダイレクトせずに `AuthorizationError` として投げる:
+ * - `client_id` がない（空文字列を含む）ときは `invalid_request`。
+ * - クライアントが登録されていないときは `invalid_request`。
+ * - `ClientResolver` が別の `clientId` のクライアントを返したときは `server_error`。
  */
 export async function resolveClientForAuthorization(
   params: Pick<AuthorizationRequestParams, 'client_id'>,
@@ -816,8 +890,8 @@ export async function resolveClientForAuthorization(
     );
   }
 
-  // ClientResolver の実装が正しく clientId を返しているか実行時に検証
-  // これにより、異なるクライアントのデータが混在するバグを検出する
+  // `ClientResolver` の実装が、問い合わせた `clientId` のクライアントを返したかを実行時に確かめる。
+  // 別のクライアントのデータが混ざる不具合を見つけるためである。
   if (client.clientId !== clientId) {
     throw new AuthorizationError(
       AuthorizationErrorCode.ServerError,
@@ -849,19 +923,22 @@ export interface ResolvedRequestObjectParams {
 }
 
 /**
- * Request Object by value（OIDC Core 1.0 §6.1）を解決する（機能単位のステップ関数）。
+ * リクエストオブジェクトを検証し、パラメータを返す。
  *
- * `request` パラメータが無い場合はクエリパラメータのコピーをそのまま返す。
- * ある場合は署名付き JWS Request Object を、クライアントが request_object の用途に登録した
- * 公開鍵（`options.jwks`。ClientKeyResolver で引く）で検証し、claim をクエリ値に supersede
- * した有効パラメータ集合を返す。鍵を引く呼び出し側は、`request` パラメータがあるときだけ
- * 引けば足りる。
- * 検証失敗（壊れた JWT / 未対応 alg / 鍵不一致 / 署名不一致）は信頼できないため、
- * 内部の redirect_uri も信用せず非リダイレクトの invalid_request_object
- * （OIDC Core 1.0 §6.3）とする。
+ * `request` パラメータがなければ、クエリパラメータのコピーをそのまま返す。
+ * あれば、`request` パラメータで値として渡された署名付きのリクエストオブジェクト（JWS）を、クライアントが `request_object` の用途に登録した公開鍵（`options.jwks`）で検証する。
+ * 検証できたら、リクエストオブジェクトのクレームでクエリの値を上書きしたパラメータと、そのクレームを返す。
+ * 公開鍵は呼び出し側が `ClientKeyResolver` で取得するが、`request` パラメータがあるときだけ取得すれば足りる。
+ * 受け付ける署名アルゴリズム（`options.supportedSigningAlgs`）の既定値は `RS256` だけで、署名のない（`alg` が `none` の）リクエストオブジェクトは、`options.allowUnsigned` が true でなければ拒否する。
  *
- * `response_type` / `client_id` は OAuth 2.0 request syntax 側を正とするため
- * 上書きしない（後段の {@link validateRequestObjectConsistency} で一致検証する）。
+ * 検証に失敗したリクエストオブジェクト（壊れた JWT、対応していない `alg`、鍵の不一致、署名の不一致）は信頼できないので、中の `redirect_uri` も信用しない。
+ * そのため、リダイレクトせずに `invalid_request_object` の `AuthorizationError` を投げる（OIDC Core 1.0 §6.3）。
+ *
+ * `response_type` と `client_id` は OAuth 2.0 のリクエスト構文の値を正とするので、上書きしない。
+ * 両者の一致は、あとの {@link validateRequestObjectConsistency} で検証する。
+ *
+ * @spec OIDC Core 1.0 §6.1
+ * @spec OIDC Core 1.0 §6.3
  */
 export async function resolveRequestObjectParams(
   params: AuthorizationRequestParams,
@@ -899,9 +976,8 @@ export async function resolveRequestObjectParams(
     });
   } catch (e) {
     if (e instanceof RequestObjectError) {
-      // OIDC Core 1.0 §6.3: an invalid Request Object is reported as
-      // invalid_request_object, distinguishing "fix your Request Object"
-      // from request_not_supported ("stop using the request parameter").
+      // 不正なリクエストオブジェクトは `invalid_request_object` で報告する（OIDC Core 1.0 §6.3）。
+      // リクエストオブジェクトを直すべきことを、`request` パラメータの使用をやめるべきことを示す `request_not_supported` と区別して伝えるためである。
       throw new AuthorizationError(
         AuthorizationErrorCode.InvalidRequestObject,
         e.message,
@@ -917,14 +993,21 @@ export async function resolveRequestObjectParams(
 }
 
 /**
- * 未サポートのリクエストパラメータを拒否する（機能単位のステップ関数）。
+ * 未対応のパラメータがあれば例外を投げる。
  *
- * - `request_uri`（OIDC Core 1.0 §6.2 / §6.3）: 未対応のため request_uri_not_supported
- * - `registration`（§3.1.2.1 / §7.2.1）: 未対応のため registration_not_supported（§3.1.2.6）
- * - `request`（§6.1 / §6.3）: `requestParameterSupported: false` の構成でのみ
- *   request_not_supported で拒否する（既定はサポート扱いで拒否しない）
+ * 次のパラメータがあると、それぞれのエラーコードの `AuthorizationError` を投げる:
+ * - `request`: `options.requestParameterSupported` が false の構成でだけ `request_not_supported`（OIDC Core 1.0 §6.1、§6.3）。既定では対応しているものとして扱い、拒否しない。
+ * - `request_uri`: 対応していないので `request_uri_not_supported`（OIDC Core 1.0 §6.2、§6.3）。
+ * - `registration`: 対応していないので `registration_not_supported`（OIDC Core 1.0 §3.1.2.1、§7.2.1、§3.1.2.6）。
  *
- * いずれも redirect 先確定後のリダイレクト可能エラーとして投げる。
+ * どれもリダイレクト先が決まったあとのエラーなので、リダイレクトで返す。
+ *
+ * @spec OIDC Core 1.0 §6.1
+ * @spec OIDC Core 1.0 §6.2
+ * @spec OIDC Core 1.0 §6.3
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec OIDC Core 1.0 §7.2.1
+ * @spec OIDC Core 1.0 §3.1.2.6
  */
 export function rejectUnsupportedRequestParams(
   params: Pick<AuthorizationRequestParams, 'request' | 'request_uri' | 'registration'>,
@@ -964,13 +1047,15 @@ export function rejectUnsupportedRequestParams(
 }
 
 /**
- * Request Object とクエリパラメータの整合性を検証する（機能単位のステップ関数）。
+ * リクエストオブジェクトとクエリの整合性を検証する。
  *
- * OIDC Core 1.0 §6.1: "values for the response_type and client_id parameters MUST
- * be included using the OAuth 2.0 request syntax"。Request Object 内にも含まれる
- * 場合は値が一致しなければ invalid_request で拒否する（その他のパラメータは
- * supersede 規則に従い Request Object 側を有効値として採用する）。
- * requestObjectClaims が undefined（`request` パラメータ無し）の場合は何もしない。
+ * `response_type` と `client_id` は、OAuth 2.0 のリクエスト構文（クエリ）で送ることが必須（MUST）である（OIDC Core 1.0 §6.1）。
+ * リクエストオブジェクトにもこれらが含まれていて、クエリの値と一致しない（クエリにないときを含む）ときは、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ * `response_type` は値の順序を問わずに比べる。
+ * ほかのパラメータは、リクエストオブジェクトの値を優先する規則に従って、リクエストオブジェクト側の値を使う。
+ * `requestObjectClaims` が `undefined`（`request` パラメータがない）なら何もしない。
+ *
+ * @spec OIDC Core 1.0 §6.1
  */
 export function validateRequestObjectConsistency(
   params: Pick<AuthorizationRequestParams, 'response_type' | 'client_id'>,
@@ -986,8 +1071,7 @@ export function validateRequestObjectConsistency(
     typeof requestObjectClaims['response_type'] === 'string'
       ? (requestObjectClaims['response_type'] as string)
       : undefined;
-  // OAuth 2.0 Multiple Response Type Encoding Practices §1.2: the order of the
-  // values does not matter, so `token id_token` matches `id_token token`.
+  // 値の順序は問わないので、`token id_token` は `id_token token` と一致するとみなす（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）。
   if (
     roResponseType !== undefined &&
     (params.response_type === undefined ||
@@ -1016,21 +1100,27 @@ export function validateRequestObjectConsistency(
 }
 
 /**
- * response_type を検証する（機能単位のステップ関数）。
+ * `response_type` を検証し、正規化した値を返す。
  *
- * - 欠落は invalid_request（OAuth 2.1 §4.1.2.1）
- * - supportedResponseTypes に無い値は unsupported_response_type（OP 全体での未サポート）。
- *   既定は `["code"]`（Authorization Code Flow だけ）。Implicit Flow（OIDC Core 1.0 §3.2）
- *   にも答える OP は `id_token` / `id_token token` を、Hybrid Flow（同 §3.3）にも答える OP は
- *   `code id_token` / `code token` / `code id_token token` を加えて渡す
- * - クライアント登録外の response_type は unauthorized_client（クライアント単位の認可。
- *   既定 `["code"]`: OIDC Dynamic Client Registration 1.0 §2 / RFC 7591 §2）
+ * 次のときは、リダイレクトで返す `AuthorizationError` を投げる:
+ * - `response_type` がないときは `invalid_request`（OAuth 2.1 §4.1.2.1）。
+ * - `supportedResponseTypes` にない値は、OP 全体で対応していないので `unsupported_response_type`。
+ * - クライアントが登録していない値は、そのクライアントに許されていないので `unauthorized_client`。登録がないクライアントの既定値は `["code"]` である（OIDC Dynamic Client Registration 1.0 §2、RFC 7591 §2）。
  *
- * 値の順序は問わず（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）、
- * {@link normalizeResponseType} の形で返す（`token id_token` は `id_token token`）。
+ * `supportedResponseTypes` の既定値は `["code"]`（認可コードフローだけ）である。
+ * インプリシットフロー（OIDC Core 1.0 §3.2）にも応答する OP は `id_token` と `id_token token` を、ハイブリッドフロー（OIDC Core 1.0 §3.3）にも応答する OP は `code id_token`、`code token`、`code id_token token` を加えて渡す。
  *
- * OIDC Core 1.0 §6.1: response_type は OAuth 2.0 request syntax 側を正とするため、
- * Request Object 適用前のクエリパラメータ（params）を渡すこと。
+ * 値の順序は問わず（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）、{@link normalizeResponseType} の形で返す（`token id_token` は `id_token token` になる）。
+ *
+ * `response_type` は OAuth 2.0 のリクエスト構文の値を正とするので、リクエストオブジェクトを適用する前のクエリパラメータ（`params`）を渡す（OIDC Core 1.0 §6.1）。
+ *
+ * @spec OAuth 2.1 §4.1.2.1
+ * @spec OIDC Core 1.0 §3.2
+ * @spec OIDC Core 1.0 §3.3
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §1.2
+ * @spec OIDC Core 1.0 §6.1
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec RFC 7591 §2
  */
 export function validateResponseType(
   params: Pick<AuthorizationRequestParams, 'response_type'>,
@@ -1050,12 +1140,14 @@ export function validateResponseType(
 }
 
 /**
- * scope を検証する（機能単位のステップ関数）。
+ * `scope` を検証し、重複を除いた配列を返す。
  *
- * - OIDC Core 1.0 §6.1: scope は Request Object があっても OAuth 2.0 request syntax
- *   （クエリ側 = queryParams）に必須。欠落は invalid_request。
- * - 有効値（effectiveParams。Request Object 不使用ならクエリと同じものを渡す）を
- *   空白区切りで分割・重複除去し、`openid` を含まなければ invalid_scope（§3.1.2.1）。
+ * `scope` は、リクエストオブジェクトがあっても OAuth 2.0 のリクエスト構文（クエリ、`queryParams`）で送る必要があり、クエリになければ `invalid_request` を投げる（OIDC Core 1.0 §6.1）。
+ * 有効な値（`effectiveParams`。リクエストオブジェクトを使わないならクエリと同じものを渡す）を空白で分けて重複を除き、`openid` が含まれなければ `invalid_scope` を投げる（OIDC Core 1.0 §3.1.2.1）。
+ * どちらのエラーも、リダイレクトで返す `AuthorizationError` である。
+ *
+ * @spec OIDC Core 1.0 §6.1
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validateAuthorizationScope(
   queryParams: Pick<AuthorizationRequestParams, 'scope'>,
@@ -1066,8 +1158,8 @@ export function validateAuthorizationScope(
   const queryScopeValue = requireAuthorizationScope(queryParams.scope, redirectUri, state);
 
   const scopeValue = effectiveParams.scope ?? queryScopeValue;
-  // RFC 6749 §3.3: scope は空白区切りの集合。Token Endpoint（refresh_token grant）と同じく
-  // 重複を除去する。dedup は権限を変えない非破壊変換で、挿入順は保持する。
+  // 空白区切りの `scope` を集合として扱い、最初に現れた順を保ったまま重複を取り除く（RFC 6749 §3.3）。
+  // トークンエンドポイント（`refresh_token` グラント）と同じ扱いであり、重複を取り除いても権限は変わらない。
   const scope = parseScope(scopeValue);
   validateOpenIdScope(scope, redirectUri, state);
 
@@ -1075,17 +1167,20 @@ export function validateAuthorizationScope(
 }
 
 /**
- * offline_access の許可ポリシーを適用する（機能単位のステップ関数）。
+ * `offline_access` を許可するか判定し、スコープを返す。
  *
- * OIDC Core 1.0 §11: 許可条件を満たさない `offline_access` 要求は MUST 無視する
- * （scope から除外する）。既定条件は `prompt=consent`
- * （{@link defaultIsOfflineAccessGranted}）。isOfflineAccessGranted を差し替える
- * ことで独自の許可条件を差し込める。
- * ただし response_type が認可コードを返さない場合（Implicit Flow の `id_token` /
- * `id_token token`）は、コールバックに関わらず必ず除外する（同 §11: "The OP MUST ignore
- * the offline_access request unless the Client is using a response_type value that
- * would result in an Authorization Code being returned"）。
- * scope に `offline_access` が無い場合は何もせずそのまま返す。引数は変更しない。
+ * 許可の条件を満たさない `offline_access` の要求は無視しなければならない（MUST）ので、スコープから取り除く（OIDC Core 1.0 §11）。
+ * 条件は `isOfflineAccessGranted` で判定する。
+ * 既定の {@link defaultIsOfflineAccessGranted} は、`prompt` に `consent` が含まれ、かつクライアントが `refresh_token` グラントを登録しているときに許可する。
+ * `isOfflineAccessGranted` を差し替えれば、独自の許可の条件を使える。
+ *
+ * ただし、`response_type` が認可コードを返さない場合（インプリシットフローの `id_token` と `id_token token`）は、`isOfflineAccessGranted` の結果によらず必ず取り除く。
+ * OP は、認可コードが返る `response_type` をクライアントが使っていない限り、`offline_access` の要求を無視しなければならない（OIDC Core 1.0 §11）。
+ *
+ * スコープに `offline_access` がなければ、何もせずにそのまま返す。
+ * 引数は書き換えない。
+ *
+ * @spec OIDC Core 1.0 §11
  */
 export async function applyOfflineAccessPolicy(
   scope: string[],
@@ -1098,8 +1193,8 @@ export async function applyOfflineAccessPolicy(
     return scope;
   }
 
-  // The Implicit Flow never returns a refresh token (RFC 6749 §4.2.2), so no
-  // granting condition can make offline_access meaningful there.
+  // `response_type` が `code` を含まなければ、`offline_access` を必ず取り除く。
+  // インプリシットフローではリフレッシュトークンを返さないので（RFC 6749 §4.2.2）、どの許可の条件を満たしても `offline_access` は意味を持たない。
   if (!responseTypeIncludes(effectiveParams.response_type, 'code')) {
     return filterOfflineAccessScope(scope, false);
   }
@@ -1112,10 +1207,13 @@ export async function applyOfflineAccessPolicy(
 }
 
 /**
- * display パラメータを検証する（機能単位のステップ関数）。
+ * `display` を検証して返す。
  *
- * OIDC Core 1.0 §3.1.2.1: `display` は OPTIONAL だが page/popup/touch/wap の
- * いずれかでなければならない。未定義値は invalid_request（redirectable）とする。
+ * `display` は省略できる（OPTIONAL）が、指定するなら `page`、`popup`、`touch`、`wap` のどれかでなければならない（OIDC Core 1.0 §3.1.2.1）。
+ * それ以外の値なら、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ * `display` がなければ `undefined` を返す。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validateDisplayParameter(
   effectiveParams: Pick<AuthorizationRequestParams, 'display'>,
@@ -1138,17 +1236,20 @@ export function validateDisplayParameter(
 }
 
 /**
- * acr_values パラメータを検証する（機能単位のステップ関数）。
+ * `acr_values` を検証し、空白一つで区切り直して返す。
  *
- * OIDC Core 1.0 §3.1.2.1: `acr_values` は OPTIONAL で、要求する acr 値を優先順に
- * 空白区切りで並べる。各値の構文は {@link validateAcrValues} が検査し、外れれば
- * invalid_request（redirectable）とする。OP がその認証コンテキストを満たせるかは
- * 検査しない。満たした acr はトークンエンドポイントで決め、ID Token とアクセストークンの
- * `acr` クレームに載せる。
+ * `acr_values` は省略できる（OPTIONAL）パラメータで、要求する `acr` の値を優先順に空白で区切って並べる（OIDC Core 1.0 §3.1.2.1）。
+ * 各値の構文は {@link validateAcrValues} が検査し、構文に合わなければ、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ * 返す文字列でも、値の優先順は変えない。
  *
- * パラメータが無い場合と、値が 1 つも無い（空文字、空白のみ）場合は undefined を返す
- * （RFC 6749 §3.1: 値の無いパラメータは省略されたものとして扱う）。値があれば、
- * 優先順を保ったまま 1 つの空白で連結し直した文字列を返す。
+ * OP がその認証コンテキストを満たせるかは検査しない。
+ * 満たした `acr` はトークンエンドポイントで決め、ID トークンとアクセストークンの `acr` クレームに入れる。
+ *
+ * パラメータがないときと、値が一つもない（空文字列か空白だけの）ときは `undefined` を返す。
+ * 値のないパラメータは、省略されたものとして扱うためである（RFC 6749 §3.1）。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
+ * @spec RFC 6749 §3.1
  */
 export function validateAcrValuesParameter(
   effectiveParams: Pick<AuthorizationRequestParams, 'acr_values'>,
@@ -1167,9 +1268,12 @@ export function validateAcrValuesParameter(
 }
 
 /**
- * acr 値がそれぞれ scope-token と同じ構文（RFC 6749 §3.3）であることを検証する。
- * 空の値と、空白、制御文字、非 ASCII 文字、二重引用符、バックスラッシュを含む値は
- * invalid_request とする。
+ * `acr` の値の構文を検証する。
+ *
+ * 各値が、スコープの値と同じ構文（RFC 6749 §3.3 の `scope-token`）であることを確かめる。
+ * 空の値と、空白、制御文字、ASCII 以外の文字、二重引用符、バックスラッシュを含む値があれば、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ *
+ * @spec RFC 6749 §3.3
  */
 export function validateAcrValues(
   acrValues: readonly string[],
@@ -1189,8 +1293,10 @@ export function validateAcrValues(
 }
 
 /**
- * audience パラメータをパースする（機能単位のステップ関数）。
- * スペース区切りの文字列を配列に変換する。無ければ undefined を返す。
+ * `audience` を空白で分けて配列で返す。
+ *
+ * `audience` がなければ `undefined` を返す。
+ * 空白が連続してできる空の要素は取り除くので、値が空白だけなら空の配列を返す。
  */
 export function parseAudienceParameter(
   effectiveParams: Pick<AuthorizationRequestParams, 'audience'>,
@@ -1237,8 +1343,17 @@ const REQUEST_OBJECT_OVERRIDE_KEYS = [
 ] as const;
 
 /**
- * OIDC Core 1.0 §6.1: Request Object の claim をクエリの値に上書きした有効パラメータを返す。
- * response_type と client_id は上書きしない。署名は検証しないため、検証済みの claim を渡す。
+ * リクエストオブジェクトで上書きしたパラメータを返す。
+ *
+ * クエリの値（`params`）を、リクエストオブジェクトのクレーム（`roClaims`）で上書きする（OIDC Core 1.0 §6.1）。
+ * 上書きするのは `redirect_uri`、`scope`、`state`、`nonce`、`prompt`、`display`、`max_age`、`ui_locales`、`claims_locales`、`acr_values`、`login_hint`、`id_token_hint`、`audience`、`code_challenge`、`code_challenge_method`、`claims` で、`response_type` と `client_id` は上書きしない。
+ * クレームの値が文字列ならそのまま使い、数値と真偽値は文字列に直し、配列とオブジェクトは無視する。
+ * `claims` だけは、配列でないオブジェクトなら JSON の文字列に直し、文字列ならそのまま使う（OIDC Core 1.0 §5.5）。
+ * 引数は書き換えず、新しいオブジェクトを返す。
+ * 署名は検証しないので、検証済みのクレームを渡す。
+ *
+ * @spec OIDC Core 1.0 §6.1
+ * @spec OIDC Core 1.0 §5.5
  */
 export function mergeRequestObjectParams(
   params: AuthorizationRequestParams,
@@ -1253,11 +1368,11 @@ export function mergeRequestObjectParams(
     } else if (typeof value === 'number' || typeof value === 'boolean') {
       overrides[key] = String(value);
     }
-    // Arrays / nested objects are not valid for these scalar parameters; ignore.
+    // 配列とオブジェクトは、一つの値をとるこれらのパラメータには使えないので無視する。
   }
 
-  // OIDC Core 1.0 §5.5: inside a Request Object, `claims` is a JSON object (not a
-  // JSON-encoded string). Re-serialize so parseClaimsRequest can consume it.
+  // リクエストオブジェクトの中の `claims` は、JSON の文字列ではなく JSON のオブジェクトである（OIDC Core 1.0 §5.5）。
+  // `parseClaimsRequestParameter()` が扱えるように、JSON の文字列に直す。
   const claimsValue = roClaims['claims'];
   if (typeof claimsValue === 'string') {
     overrides['claims'] = claimsValue;
@@ -1269,19 +1384,27 @@ export function mergeRequestObjectParams(
     overrides['claims'] = JSON.stringify(claimsValue);
   }
 
-  // Query params (all strings) overlaid with the request object overrides; the
-  // original inputs are left untouched.
+  // すべて文字列のクエリパラメータに、リクエストオブジェクトの値を重ねる。
+  // 元の引数は書き換えない。
   return { ...params, ...overrides };
 }
 
 /**
- * `claims` リクエストパラメータをパースする（機能単位のステップ関数）。
- * OIDC Core 1.0 §5.5: JSON 文字列で渡される。`userinfo` / `id_token` のみ採用し、
- * 値が `null` または `{ essential?, value?, values? }` 形式以外のメンバーは無視する。
- * `claims` が無ければ undefined を返す。
+ * `claims` パラメータを解析し、クレームの要求を返す。
  *
- * maxLength は `JSON.parse` の前に課す最大長（未認証 DoS 対策）。
- * 未指定なら {@link DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH}。
+ * `claims` は JSON の文字列で渡される（OIDC Core 1.0 §5.5）。
+ * 採用するのは `userinfo` と `id_token` のメンバーだけで、各メンバーの中では、値が `null` かオブジェクト（`{ essential?, value?, values? }` の形を想定する）のクレーム要求だけを残し、オブジェクトの中身は検査しない。
+ * `claims` がなければ `undefined` を返す。
+ *
+ * 次のときは、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる:
+ * - 長さが `maxLength` を超える。
+ * - JSON として解析できない。
+ * - 解析した値が JSON のオブジェクトでない。
+ *
+ * `maxLength` は `JSON.parse` の前に課す長さの上限で、認証されていない相手からのサービス妨害（DoS）を防ぐ。
+ * 既定値は {@link DEFAULT_MAX_CLAIMS_PARAMETER_LENGTH} である。
+ *
+ * @spec OIDC Core 1.0 §5.5
  */
 export function parseClaimsRequestParameter(
   effectiveParams: Pick<AuthorizationRequestParams, 'claims'>,
@@ -1292,10 +1415,9 @@ export function parseClaimsRequestParameter(
   const raw = effectiveParams.claims;
   if (raw === undefined) return undefined;
 
-  // 信頼できない入力のサイズ上限を JSON.parse の「前」に課す。
-  // 認可エンドポイントは未認証・公開で、巨大／深ネストの claims をパースさせると
-  // CPU・メモリを枯渇させられる（アプリ層 DoS）。OWASP API4:2023 / RFC 9700 §2.5。
-  // 巨大入力をエラー文言にエコーしない（sanitizeErrorDescription 経路と整合）。
+  // 信頼できない入力の長さの上限を、`JSON.parse` の前に確かめる。
+  // 認可エンドポイントは認証なしで公開されており、巨大な `claims` や入れ子の深い `claims` を解析させると、CPU とメモリを枯渇させられる（アプリケーション層の DoS。OWASP API4:2023、RFC 9700 §2.5）。
+  // 巨大な入力は、エラーの説明文に含めない（`sanitizeErrorDescription()` を通す扱いと揃える）。
   if (raw.length > maxLength) {
     throw new AuthorizationError(
       AuthorizationErrorCode.InvalidRequest,
@@ -1335,6 +1457,16 @@ export function parseClaimsRequestParameter(
   return result;
 }
 
+/**
+ * `null` かオブジェクトのクレーム要求だけを残して返す。
+ *
+ * 受け取るのは、`claims` パラメータの `userinfo` か `id_token` のメンバーである。
+ * メンバーが JSON のオブジェクトでない（`null`、配列、文字列など）ときは `undefined` を返す。
+ * 値が文字列、数値、真偽値、配列のクレーム要求は黙って捨て、値がオブジェクトなら中身（`essential`、`value`、`values`）を検査せずに残す。
+ * 結果は新しいオブジェクトで返す。
+ *
+ * @spec OIDC Core 1.0 §5.5.1
+ */
 function sanitizeClaimsMember(
   value: unknown,
 ): Record<string, ClaimRequestValue> | undefined {
@@ -1348,16 +1480,21 @@ function sanitizeClaimsMember(
     } else if (typeof entry === 'object' && !Array.isArray(entry)) {
       result[key] = entry as ClaimRequestValue;
     }
-    // Other shapes (strings, numbers, arrays) are silently dropped.
+    // 文字列、数値、真偽値、配列の値は黙って捨てる。
   }
   return result;
 }
 
 /**
- * OAuth 2.1 §4.1.2.1: response_type があり、OP が対応する値（supportedResponseTypes。
- * 既定は `["code"]`）であることを検証する。値の順序は問わず（OAuth 2.0 Multiple Response
- * Type Encoding Practices §1.2）、{@link normalizeResponseType} の形で返す。
- * クライアント登録との照合は {@link validateClientResponseType} が行う。
+ * 対応する `response_type` か検証し、正規化して返す。
+ *
+ * OP が対応する値は `supportedResponseTypes`（既定値は `["code"]`）で渡す。
+ * `response_type` がないときは `invalid_request` を、対応していない値なら `unsupported_response_type` を、リダイレクトで返す `AuthorizationError` として投げる（OAuth 2.1 §4.1.2.1）。
+ * 値の順序は問わず（OAuth 2.0 Multiple Response Type Encoding Practices §1.2）、{@link normalizeResponseType} の形で返す。
+ * クライアントの登録との照合は {@link validateClientResponseType} が行う。
+ *
+ * @spec OAuth 2.1 §4.1.2.1
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §1.2
  */
 export function validateSupportedResponseType(
   responseType: string | undefined,
@@ -1389,9 +1526,13 @@ export function validateSupportedResponseType(
 }
 
 /**
- * response_type がクライアントに登録されていることを検証する。
- * 登録が無ければ code だけを許す（OIDC Dynamic Client Registration 1.0 §2）。
- * 登録値も値の順序を問わずに照合する（`token id_token` の登録は `id_token token` に一致する）。
+ * クライアントの登録と `response_type` を照合する。
+ *
+ * `response_type` がクライアントの登録（`responseTypes`）にないときは、リダイレクトで返す `unauthorized_client` の `AuthorizationError` を投げる。
+ * 登録がなければ `code` だけを許す（OIDC Dynamic Client Registration 1.0 §2）。
+ * 登録された値も順序を問わずに照合する（`token id_token` の登録は `id_token token` に一致する）。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
  */
 export function validateClientResponseType(
   responseType: string,
@@ -1399,10 +1540,9 @@ export function validateClientResponseType(
   redirectUri: string,
   state?: string,
 ): void {
-  // クライアント単位の response_type 認可
-  // RFC 6749 §4.1.2.1 / OAuth 2.1 §4.1.2.1: "The client is not authorized to request
-  // an authorization code using this method." → unauthorized_client。
-  // OP 全体での未サポート（unsupported_response_type）とは区別する。
+  // `response_type` をクライアントごとに許可しているかを確かめる。
+  // クライアントがこの方法で認可コードを要求することを許されていないときは、`unauthorized_client` を返す（RFC 6749 §4.1.2.1、OAuth 2.1 §4.1.2.1）。
+  // OP 全体で対応していない場合の `unsupported_response_type` とは区別する。
   const allowedResponseTypes = (responseTypes ?? ['code']).map(normalizeResponseType);
   if (!allowedResponseTypes.includes(normalizeResponseType(responseType))) {
     throw new AuthorizationError(
@@ -1415,14 +1555,18 @@ export function validateClientResponseType(
 }
 
 /**
- * 要求された scope がクライアントの登録内にあることを検証する（機能単位のステップ関数）。
+ * 未登録のスコープがあれば `invalid_scope` を投げる。
  *
- * RFC 7591 §2: クライアント登録メタデータ `scope` は、クライアントが要求してよい scope の一覧。
- * 一覧に無い scope の要求は RFC 6749 §4.1.2.1 の invalid_scope で拒否する。
- * 一覧が登録されていない（undefined）クライアントは検証しない。
+ * クライアントの登録メタデータの `scope` は、そのクライアントが要求してよいスコープの一覧である（RFC 7591 §2）。
+ * 一覧にないスコープを要求したときは、リダイレクトで返す `invalid_scope` の `AuthorizationError` を投げる（RFC 6749 §4.1.2.1）。
+ * 一覧を登録していない（`undefined`）クライアントは検証しない。
  *
- * 要求された scope を、offline_access の許可条件（OIDC Core 1.0 §11）を適用する前の値で渡す。
- * 登録外の scope を要求したこと自体を誤りとして扱うので、後で取り除かれる offline_access も照合する。
+ * 要求されたスコープは、`offline_access` の許可の条件（OIDC Core 1.0 §11）を適用する前の値で渡す。
+ * 登録外のスコープを要求したこと自体を誤りとして扱うので、あとで取り除かれる `offline_access` も照合する。
+ *
+ * @spec RFC 7591 §2
+ * @spec RFC 6749 §4.1.2.1
+ * @spec OIDC Core 1.0 §11
  */
 export function validateClientScope(
   scope: readonly string[],
@@ -1442,7 +1586,12 @@ export function validateClientScope(
 }
 
 /**
- * OIDC Core 1.0 §6.1: Request Object を使う場合もクエリに scope があることを確かめる。
+ * クエリに `scope` があることを確かめて返す。
+ *
+ * リクエストオブジェクトを使う場合も、`scope` はクエリに必要である（OIDC Core 1.0 §6.1）。
+ * ないとき（空文字列を含む）は、リダイレクトで返す `invalid_request` の `AuthorizationError` を投げる。
+ *
+ * @spec OIDC Core 1.0 §6.1
  */
 export function requireAuthorizationScope(
   queryScopeValue: string | undefined,
@@ -1462,7 +1611,12 @@ export function requireAuthorizationScope(
 }
 
 /**
- * OIDC Core 1.0 §3.1.2.1: 解析済みの scope に openid が含まれることを検証する。
+ * `openid` がなければ `invalid_scope` を投げる。
+ *
+ * 解析済みのスコープに `openid` が含まれることを確かめる。
+ * エラーは、リダイレクトで返す `AuthorizationError` である。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validateOpenIdScope(
   scope: readonly string[],
@@ -1480,8 +1634,12 @@ export function validateOpenIdScope(
 }
 
 /**
- * OIDC Core 1.0 §11: offline_access の許可判定の結果を scope に適用する。
- * 判定は行わず、引数の配列も書き換えない。
+ * 不許可なら `offline_access` を除いて返す。
+ *
+ * `granted` が true なら `scope` をそのまま返し、false なら `offline_access` を取り除いた新しい配列を返す（OIDC Core 1.0 §11）。
+ * 許可するかどうかの判定はせず、引数の配列も書き換えない。
+ *
+ * @spec OIDC Core 1.0 §11
  */
 export function filterOfflineAccessScope(scope: string[], granted: boolean): string[] {
   return granted ? scope : scope.filter((value) => value !== 'offline_access');

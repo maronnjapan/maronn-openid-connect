@@ -64,31 +64,40 @@ export interface CibaAuthenticationRequestRecord {
  */
 export interface CibaAuthenticationRequestStore {
   save(record: CibaAuthenticationRequestRecord): Promise<void>;
+  /**
+   * `auth_req_id` のレコードを返す。
+   *
+   * レコードがないとき（消費済みや削除済みのときを含む）は `null` を返す。
+   */
   findByAuthReqId(authReqId: string): Promise<CibaAuthenticationRequestRecord | null>;
-  /** 認証デバイス UI の一覧用。期限内・pending のレコードのみ返す。 */
+  /**
+   * サブジェクト宛ての、保留中で期限内のレコードを返す。
+   *
+   * 状態が `pending` で、有効期限を過ぎていないレコードだけを返す。
+   * 認証デバイスの画面で保留中のリクエストを一覧にするときと、サブジェクトごとの保留中のリクエスト数を数えるときに使う。
+   */
   listPendingBySubject(subject: string): Promise<CibaAuthenticationRequestRecord[]>;
   /**
-   * レコードを更新する。
+   * 同じ `authReqId` のレコードを渡したものに置き換える。
    *
-   * `lastPolledAt` / `interval` の read-modify-write が atomic でない実装では、
-   * 並行ポーリング時にポーリング間隔の強制が甘くなり得る。ただし認可状態の遷移
-   * （pending → approved / denied）と {@link CibaAuthenticationRequestStore.consume}
-   * による単回使用が守られていればセキュリティ特性は保たれる。
+   * `lastPolledAt` と `interval` の読み出しから書き込みまでを不可分に行わない実装では、並行してポーリングされたときに、ポーリングの間隔を守らせきれないことがある。
+   * ただし、状態の遷移（`pending` から `approved` か `denied` へ）と、{@link CibaAuthenticationRequestStore.consume} による一度だけの使用が守られていれば、セキュリティ上の性質は保たれる。
    */
   update(record: CibaAuthenticationRequestRecord): Promise<void>;
   delete(authReqId: string): Promise<void>;
   /**
-   * 取得と同時に削除する（トークン発行時の単回使用強制）。
+   * `auth_req_id` のレコードを返すと同時に削除する。
    *
-   * 取得と削除は atomic でなければならない。atomic でない実装は同一 auth_req_id の
-   * 並行リデンプションを許してしまう（device store の consume と同じ要件）。
+   * トークンを発行するときに、`auth_req_id` を一度しか使えないようにするために使う。
+   * レコードがなければ `null` を返す。
    *
-   * 期限切れレコードの掃除: 期限切れは原則トークンエンドポイントのポーリング時に
-   * `expired_token` 応答とともに削除されるが、ポーリングを止めたクライアントの
-   * レコードは残る。ストア実装は `expiresAt` から十分な猶予（目安: TTL と同程度）を
-   * 置いた後に期限切れレコードを自主的に破棄してよい。破棄後のポーリングは
-   * `expired_token` ではなく `invalid_grant` になるが、クライアントはどちらの
-   * エラーでもフローを終了するため相互運用上の問題はない。
+   * 取り出しと削除は不可分でなければならない。
+   * 不可分でない実装では、同じ `auth_req_id` を並行して引き換えたリクエストが、それぞれトークンを得てしまう。
+   * デバイス認可グラントのストアの `consume` と同じ要件である。
+   *
+   * 期限切れのレコードは、通常はトークンエンドポイントがポーリングに `expired_token` で応答するときに削除されるが、ポーリングをやめたクライアントのレコードは残る。
+   * ストアの実装は、`expiresAt` から十分な猶予（目安は有効期間と同じくらい）を置いたあとで、期限切れのレコードを自分で破棄してよい。
+   * 破棄したあとのポーリングは `expired_token` ではなく `invalid_grant` になるが、クライアントはどちらのエラーでもフローを終えるので、相互運用の問題は起きない。
    */
   consume(authReqId: string): Promise<CibaAuthenticationRequestRecord | null>;
 }
@@ -114,22 +123,34 @@ export interface CibaLoginTransactionRecord {
 
 /** ログイントランザクションのストア契約。 */
 export interface CibaLoginTransactionStore {
+  /** ログイントランザクションを新しく保存する。 */
   save(record: CibaLoginTransactionRecord): Promise<void>;
+  /**
+   * `id` のログイントランザクションを返す。
+   *
+   * ないときは `null` を返す。
+   */
   findById(id: string): Promise<CibaLoginTransactionRecord | null>;
+  /**
+   * ログイントランザクションを渡したレコードで置き換える。
+   *
+   * ログインの失敗回数を記録するときなどに使う。
+   */
   update(record: CibaLoginTransactionRecord): Promise<void>;
   delete(id: string): Promise<void>;
 }
 
 /**
- * インメモリの認証リクエストレコードストア。
+ * 認証リクエストのレコードをメモリに置くストアを作る。
  *
- * 動作確認用。本番では永続ストア（Redis / KV / database）に置き換えること。
- * consume は取得と削除を単一の同期処理で行うため atomic 要件を満たす。
+ * 動作確認のためのもので、本番では永続的なストア（Redis、KV、データベースなど）に置き換える。
+ * `consume` は取り出しと削除を 1 つの同期処理で行うので、不可分であるという要件を満たす。
+ * `save` を呼ぶたびに、有効期限から 600 秒を過ぎたレコードを削除する。
  */
 export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticationRequestStore {
   const records = new Map<string, CibaAuthenticationRequestRecord>();
-  // 期限切れから 1 TTL 相当の猶予を置いて自主破棄する（expired_token を
-  // 返せる期間を 1 TTL 残しつつ、放置ストアが際限なく育たないようにする）。
+  // 有効期限を過ぎてから、有効期間 1 つ分に当たる 600 秒を待って、レコードを破棄する。
+  // 期限切れのあとも 600 秒は `expired_token` を返せるようにしつつ、放置されたストアが際限なく大きくならないようにする。
   const evictionGraceMs = 600 * 1000;
   const evictExpired = (): void => {
     const cutoff = Date.now() - evictionGraceMs;
@@ -169,8 +190,7 @@ export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticati
     },
     async consume(authReqId: string): Promise<CibaAuthenticationRequestRecord | null> {
       const record = records.get(authReqId) ?? null;
-      // 単回使用（CIBA §11）: 読み取りと同時に削除し、同じ auth_req_id の
-      // リプレイが 2 本目のトークンを得られないようにする。
+      // 読み取りと同時に削除し、同じ `auth_req_id` のリプレイで 2 つ目のトークンを得られないようにする（CIBA §11）。
       records.delete(authReqId);
       return record;
     },
@@ -178,9 +198,10 @@ export function createInMemoryCibaAuthenticationRequestStore(): CibaAuthenticati
 }
 
 /**
- * インメモリのログイントランザクションストア。
+ * ログイントランザクションをメモリに置くストアを作る。
  *
- * 動作確認用。本番では永続ストアに置き換えること。
+ * 動作確認のためのもので、本番では永続的なストアに置き換える。
+ * `save` を呼ぶたびに、有効期限を過ぎたログイントランザクションを削除する。
  */
 export function createInMemoryCibaLoginTransactionStore(): CibaLoginTransactionStore {
   const records = new Map<string, CibaLoginTransactionRecord>();

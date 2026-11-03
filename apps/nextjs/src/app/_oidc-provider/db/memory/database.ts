@@ -40,12 +40,17 @@ export interface MemoryDatabase {
   clients: Map<string, ClientRegistration>;
 }
 
-/** The key of federatedIdentities for an account at a provider. */
+/**
+ * `federatedIdentities` の外部アカウントのキーを返す。
+ *
+ * ID プロバイダ名とそこでのサブジェクトの組 `[provider, subject]` を、JSON の文字列にして返す。
+ * どちらの値に区切りの文字が含まれていても、ほかのアカウントのキーと同じ文字列にはならない。
+ */
 export function federatedIdentityKey(provider: string, subject: string): string {
   return JSON.stringify([provider, subject]);
 }
 
-/** A new in-memory database with every table empty. */
+/** すべての `Map` が空の、新しいデータベースを返す。 */
 export function createEmptyDatabase(): MemoryDatabase {
   return {
     transactions: new Map(),
@@ -68,7 +73,12 @@ export function createEmptyDatabase(): MemoryDatabase {
 // reloads, separate module layers).
 const registry = globalThis as typeof globalThis & { __oidcMemoryDatabase?: MemoryDatabase };
 
-/** The database of this process. Every call returns the same one (kept on globalThis, so every module layer of Next.js shares it). */
+/**
+ * このプロセスのメモリ上のデータベースを返す。
+ *
+ * 最初の呼び出しで空のデータベースを作って `globalThis` に置き、以後はどの呼び出しにも同じデータベースを返す。
+ * そのため、Next.js がこのモジュールを層ごと（ルートハンドラ、サーバーアクションなど）に読み込んでも、どの層も同じデータベースを使う。
+ */
 export function createDatabase(): MemoryDatabase {
   return (registry.__oidcMemoryDatabase ??= createEmptyDatabase());
 }

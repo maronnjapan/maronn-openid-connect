@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_FEATURES, type OidcFeatureConfig } from '../registry.js';
-import { buildOpFlow } from '../flow/build.js';
+import { buildOpFlow, edgesForSteps } from '../flow/build.js';
 import { resolveFlowSelection } from '../flow/flow-file.js';
 
 const ALL_FEATURES: OidcFeatureConfig = {
@@ -111,10 +111,10 @@ describe('buildOpFlow', () => {
     it('should connect the Authorization Code Flow endpoints in the order a browser and client follow', () => {
       const flow = buildOpFlow({ features: DEFAULT_FEATURES });
       expect(flow.edges).toEqual([
-        { from: 'authorize', to: 'login', label: 'login required', kind: 'flow' },
-        { from: 'authorize', to: 'consent', label: 'SSO: consent required', kind: 'flow' },
-        { from: 'authorize', to: 'token', label: 'code (prompt=none / SSO)', kind: 'flow' },
-        { from: 'login', to: 'consent', label: 'authenticated', kind: 'flow' },
+        { from: 'authorize', to: 'login', label: 'ログインが必要', kind: 'flow' },
+        { from: 'authorize', to: 'consent', label: 'SSO: 同意が必要', kind: 'flow' },
+        { from: 'authorize', to: 'token', label: 'code（prompt=none / SSO）', kind: 'flow' },
+        { from: 'login', to: 'consent', label: '認証済み', kind: 'flow' },
         { from: 'consent', to: 'token', label: 'code', kind: 'flow' },
         { from: 'token', to: 'userinfo', label: 'access_token', kind: 'flow' },
         { from: 'token', to: 'introspection', label: 'token', kind: 'flow' },
@@ -383,5 +383,14 @@ describe('buildOpFlow', () => {
         expect(selection.endpointOrder).toEqual(flow.endpoints.map((e) => e.id));
       }
     });
+  });
+});
+
+describe('edgesForSteps', () => {
+  it('should draw the arrows of an endpoint as the generation with just those steps does', () => {
+    const features = Object.fromEntries(Object.keys(DEFAULT_FEATURES).map((key) => [key, true])) as OidcFeatureConfig;
+    const all = buildOpFlow({ features: { ...features, idJag: false, tokenExchange: false, deviceAuthorizationGrant: false, ciba: false } });
+    const token = all.endpoints.find((endpoint) => endpoint.id === 'token');
+    expect(edgesForSteps('token', token?.steps.map((step) => step.id) ?? [])).toEqual(token?.edges);
   });
 });

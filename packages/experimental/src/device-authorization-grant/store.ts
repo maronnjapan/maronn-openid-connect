@@ -78,31 +78,40 @@ export interface DeviceAuthorizationRecord {
  */
 export interface DeviceAuthorizationStore {
   save(record: DeviceAuthorizationRecord): Promise<void>;
+  /**
+   * `device_code` のレコードを返す。
+   *
+   * レコードがないとき（消費済みや削除済みのときを含む）は `null` を返す。
+   */
   findByDeviceCode(deviceCode: string): Promise<DeviceAuthorizationRecord | null>;
-  /** 正規化済みキー（{@link normalizeUserCode} の出力）で照合する。 */
+  /**
+   * 正規化したユーザーコードのレコードを返す。
+   *
+   * `userCode` には {@link normalizeUserCode} の出力を渡す。
+   * レコードがないときは `null` を返す。
+   */
   findByUserCode(userCode: string): Promise<DeviceAuthorizationRecord | null>;
   /**
-   * レコードを更新する。
+   * 同じ `deviceCode` のレコードを渡したものに置き換える。
    *
-   * `lastPolledAt` / `interval` の read-modify-write が atomic でない実装では、
-   * 並行ポーリング時にポーリング間隔の強制が甘くなり得る。ただし認可状態の遷移
-   * （pending → approved / denied）と {@link DeviceAuthorizationStore.consume}
-   * による単回使用が守られていればセキュリティ特性は保たれる。
+   * `lastPolledAt` と `interval` の読み出しから書き込みまでを不可分に行わない実装では、並行してポーリングされたときに、ポーリングの間隔を守らせきれないことがある。
+   * ただし、状態の遷移（`pending` から `approved` か `denied` へ）と、{@link DeviceAuthorizationStore.consume} による一度だけの使用が守られていれば、セキュリティ上の性質は保たれる。
    */
   update(record: DeviceAuthorizationRecord): Promise<void>;
   delete(deviceCode: string): Promise<void>;
   /**
-   * 取得と同時に削除する（トークン発行時の単回使用強制）。
+   * `device_code` のレコードを返すと同時に削除する。
    *
-   * 取得と削除は atomic でなければならない。atomic でない実装は同一 device_code の
-   * 並行リデンプションを許してしまう（PAR store の consume と同じ要件）。
+   * トークンを発行するときに、`device_code` を一度しか使えないようにするために使う。
+   * レコードがなければ `null` を返す。
    *
-   * 期限切れレコードの掃除: 期限切れは原則トークンエンドポイントのポーリング時に
-   * `expired_token` 応答とともに削除されるが、ポーリングを止めたデバイスのレコードは
-   * 残る。ストア実装は `expiresAt` から十分な猶予（目安: TTL と同程度）を置いた後に
-   * 期限切れレコードを自主的に破棄してよい。破棄後のポーリングは `expired_token`
-   * ではなく `invalid_grant` になるが、クライアントはどちらのエラーでもフローを
-   * 終了するため相互運用上の問題はない。
+   * 取り出しと削除は不可分でなければならない。
+   * 不可分でない実装では、同じ `device_code` を並行して引き換えたリクエストが、それぞれトークンを得てしまう。
+   * PAR のストアの `consume` と同じ要件である。
+   *
+   * 期限切れのレコードは、通常はトークンエンドポイントがポーリングに `expired_token` で応答するときに削除されるが、ポーリングをやめたデバイスのレコードは残る。
+   * ストアの実装は、`expiresAt` から十分な猶予（目安は有効期間と同じくらい）を置いたあとで、期限切れのレコードを自分で破棄してよい。
+   * 破棄したあとのポーリングは `expired_token` ではなく `invalid_grant` になるが、クライアントはどちらのエラーでもフローを終えるので、相互運用の問題は起きない。
    */
   consume(deviceCode: string): Promise<DeviceAuthorizationRecord | null>;
 }

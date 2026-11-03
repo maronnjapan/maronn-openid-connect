@@ -163,6 +163,12 @@ describe('buildFunctionCatalog', () => {
       expect(catalog.functions['core:secret.ts#overload']?.summary).toBe('');
     });
 
+    it('should read the JSDoc above an eslint-disable comment that sits right above the declaration', () => {
+      const source = '/** Mount the provider on an app. */\n// eslint-disable-next-line @typescript-eslint/no-explicit-any\nexport function applyOidc(app: any): void {}\n';
+      const cards = buildFunctionCatalog([{ name: 'hono', files: new Map([['oidc-provider/apply.ts', source]]) }]);
+      expect(cards.functions['hono:oidc-provider/apply.ts#applyOidc']?.summary).toBe('Mount the provider on an app.');
+    });
+
     it('should take the specification from @spec tags, or from the references the text names', () => {
       expect(catalog.functions['core:secret.ts#buildHeader']?.spec).toEqual(['RFC 7515 §4.1.1']);
       expect(catalog.functions['core:secret.ts#verifySecretHash']?.spec).toEqual(['OAuth 2.1 §7.4.1', 'RFC 6749 §10.10']);
@@ -217,6 +223,24 @@ describe('buildFunctionCatalog', () => {
         'nextjs:app/token/route.ts#POST',
       ]);
     });
+  });
+});
+
+describe('FunctionProject.spanOf', () => {
+  const project = analyzeFunctions(roots());
+
+  it('should give the line the JSDoc opens on, the line of the declaration and the line that closes the body', () => {
+    expect(project.spanOf('core:secret.ts#verifySecretHash')).toEqual({ doc: 4, start: 10, end: 15 });
+    expect(project.spanOf('core:secret.ts#pad')).toEqual({ doc: 17, start: 18, end: 20 });
+    expect(project.spanOf('core:secret.ts#buildHeader')).toEqual({ doc: 22, start: 27, end: 29 });
+  });
+
+  it('should cover an overload set from its first signature, without a doc line when there is no JSDoc', () => {
+    expect(project.spanOf('core:secret.ts#overload')).toEqual({ start: 31, end: 34 });
+  });
+
+  it('should give nothing for an unknown id', () => {
+    expect(project.spanOf('core:secret.ts#missing')).toBeUndefined();
   });
 });
 
@@ -314,9 +338,9 @@ describe('readFunctionCatalog (the repository)', () => {
     ]);
   });
 
-  it('should give every exported function of the libraries a summary', () => {
+  it('should give every function of every root a summary, so the map describes each one', () => {
     const undocumented = Object.values(catalog.functions)
-      .filter((card) => card.exported && card.summary === '' && card.package !== 'hono' && card.package !== 'nextjs')
+      .filter((card) => card.summary === '')
       .map((card) => card.id);
     expect(undocumented).toEqual([]);
   });

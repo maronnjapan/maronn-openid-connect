@@ -36,15 +36,17 @@ const DEFAULT_LIFETIME_SECONDS = 60;
  * 固定であることの裏返しとして、{@link createJarmResponseJwt} に渡す `signingKey`
  * は **RS256 鍵でなければならない**。RFC 7515 §4.1.1 の `alg` は「この JWS が
  * どのアルゴリズムで署名されたか」の表明であり、別種の鍵で署名した JWS に
- * `alg: RS256` を付けることは許されない。実際には Web Crypto が鍵と
- * アルゴリズムの不一致で例外を投げるため、そのような JWS が生成されることは
- * ない（署名偽造の余地は無く、失敗するのは署名処理そのもの）。
+ * `alg: RS256` を付けることは許されない。
+ * ECDSA の鍵なら、Web Crypto が鍵とアルゴリズムの不一致で例外を投げる。
+ * しかし、ハッシュの違う RSA の鍵（RS384 など）は拒否されず、ヘッダーが `alg: RS256` のまま、そのハッシュで署名した JWS ができてしまう。
+ * そのため、呼び出し側が RS256 の鍵を選んで渡す必要がある。
  */
 const RESPONSE_SIGNING_ALG = 'RS256';
 
 /** RS256 に対応する Web Crypto のアルゴリズム名。 */
 const WEB_CRYPTO_ALGORITHM = 'RSASSA-PKCS1-v1_5';
 
+/** バイト列をパディングなしの base64url にして返す。 */
 function base64UrlFromBytes(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) {
@@ -53,17 +55,24 @@ function base64UrlFromBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/**
+ * オブジェクトを JSON にし、base64url にして返す。
+ *
+ * JSON 文字列を UTF-8 のバイト列にしてから、パディングなしの base64url にする。
+ */
 function base64UrlFromJson(value: Record<string, unknown>): string {
   return base64UrlFromBytes(new TextEncoder().encode(JSON.stringify(value)));
 }
 
 /**
- * 応答 JWT の寿命設定を起動時に検証する（JARM §2.1）。
+ * 有効期間が 5〜600 秒の整数でなければ例外を投げる。
  *
- * 生成コードは `jarmConfig` の宣言直後にこれを呼び、範囲外の設定を持つ OP が
- * 起動できないようにする。
+ * 検証するのは、レスポンスの JWT の有効期間の設定（`jarmConfig.jarmResponseLifetimeSeconds`）である。
+ * 生成されたコードは `jarmConfig` の宣言の直後にこの関数を呼び、範囲外の設定では OP が起動しないようにする。
+ * 上限の 600 秒は、JARM §2.1 が推奨する有効期間の最大値（10 分）である。
  *
- * @throws {Error} 5〜600 秒の整数でない場合
+ * @throws {Error} 5〜600 秒の整数でないとき
+ * @spec JARM §2.1
  */
 export function assertJarmLifetimeSeconds(value: number): void {
   if (
@@ -78,29 +87,35 @@ export function assertJarmLifetimeSeconds(value: number): void {
 }
 
 /**
- * 認可レスポンスパラメータを JARM §2.1 のクレーム構造で署名付き JWT にする。
+ * 認可レスポンスのパラメータを署名付き JWT にして返す。
  *
- * - JOSE ヘッダー: `{ alg: 'RS256', kid: signingKey.keyId }`。JARM は応答 JWT の
- *   `typ` を規定しておらず §2.3.1 の実例ヘッダーにも無いため付けない。
- * - ペイロード: `iss` / `aud` / `exp`（いずれも §2.1 で REQUIRED）＋ 応答パラメータ。
- *   値が `undefined` のパラメータはクレームに含めない（`state` が無いリクエスト
- *   では `state` クレーム自体が存在しない、という §2.1 の要求の実現）。
- * - `iss` / `aud` / `exp` は `parameters` から上書きできない。これらは OP 自身の
- *   表明であり、上流から渡った値で書き換えられてはならない。
+ * JOSE ヘッダーは `{ alg: 'RS256', kid: signingKey.keyId }` である。
+ * JARM はレスポンスの JWT の `typ` を定めておらず、JARM §2.3.1 の例のヘッダーにもないので、`typ` は付けない。
  *
- * `error_description` を渡す場合は、呼び出し側が core の
- * `sanitizeErrorDescription` を通した文字列を渡すこと。
+ * ペイロードには、レスポンスのパラメータと、`iss`、`aud`、`exp`（いずれも JARM §2.1 で必須（REQUIRED））を入れる。
+ * 値が `undefined` のパラメータはクレームに入れない。
+ * これで、`state` のないリクエストには `state` クレームも入れないという JARM §2.1 の要求を満たす。
  *
- * @param options.issuer `iss` クレーム（OP の issuer）
- * @param options.clientId `aud` クレーム（応答先クライアント）
- * @param options.parameters 認可レスポンスパラメータ（code/state または error 系）
- * @param options.signingKey 応答 JWT の署名鍵。**RS256 鍵であること**（JOSE ヘッダの
- *   `alg` は常に RS256 固定なので、他の alg の鍵を渡すと Web Crypto が署名を拒否して
- *   例外になる）。生成コードは登録鍵セットから `selectSigningKeyByAlg(keys, 'RS256')`
- *   で選ぶこと。鍵セットの先頭の鍵（新しいトークンの署名に使う鍵）はこの契約を
- *   満たす保証がない。
- * @param options.lifetimeSeconds `exp` までの秒数（既定 60）
- * @param options.now 発行時刻（テスト用の注入点。既定は現在時刻）
+ * `iss`、`aud`、`exp` は、`parameters` に同じ名前のパラメータがあっても、この関数が決めた値で上書きする。
+ * これらは OP 自身が示す値であり、呼び出し側から渡された値で書き換えられてはならないためである。
+ *
+ * `error_description` を渡すときは、呼び出し側で core の `sanitizeErrorDescription()` を通した文字列を渡す。
+ *
+ * @param options.issuer `iss` クレームの値（OP の `issuer`）
+ * @param options.clientId `aud` クレームの値（レスポンスを受け取るクライアント）
+ * @param options.parameters 認可レスポンスのパラメータ（`code` と `state`、またはエラーのパラメータ）
+ * @param options.signingKey 署名鍵で、RS256 の鍵を渡す。
+ *   ヘッダーの `alg` は常に RS256 である。
+ *   ECDSA の鍵を渡すと Web Crypto が署名を拒否し、返す `Promise` が失敗する。
+ *   ハッシュの違う RSA の鍵（RS384 など）は拒否されず、`alg` と合わない署名の JWT ができる。
+ *   生成されたコードは、登録された鍵から `selectSigningKeyByAlg(keys, 'RS256')` で選ぶ。
+ *   鍵の集合の先頭の鍵（新しいトークンの署名に使う鍵）が RS256 の鍵である保証はない。
+ * @param options.lifetimeSeconds `exp` までの秒数。
+ *   既定は 60 秒で、この関数では範囲を検証しない（起動時に {@link assertJarmLifetimeSeconds} で検証する）。
+ * @param options.now `exp` の計算に使う発行時刻。
+ *   既定は現在時刻で、テストで時刻を固定するために使う。
+ * @returns JWS のコンパクト形式の文字列
+ * @spec JARM §2.1
  */
 export async function createJarmResponseJwt(options: {
   issuer: string;
@@ -119,8 +134,8 @@ export async function createJarmResponseJwt(options: {
       claims[name] = value;
     }
   }
-  // JARM §2.1: iss / aud / exp are REQUIRED. Assigned after the response
-  // parameters so a parameter of the same name can never restate them.
+  // 必須の `iss`、`aud`、`exp` を入れる（JARM §2.1）。
+  // パラメータを入れた後に代入するので、同じ名前のパラメータがあっても、これらの値で上書きされる。
   claims['iss'] = options.issuer;
   claims['aud'] = options.clientId;
   claims['exp'] = issuedAtSeconds + lifetimeSeconds;
@@ -142,10 +157,16 @@ export async function createJarmResponseJwt(options: {
 }
 
 /**
- * JARM モードのリダイレクト URL を組み立てる（JARM §2.3.1）。
+ * リダイレクト URI のクエリに JWT を付けて返す。
  *
- * 付与するのは `response` パラメータのみ。素の `code` / `state` / `iss` は付けない
- * （issuer 識別は JWT の `iss` クレームが担う）。
+ * `responseJwt` を `response` パラメータの値としてクエリに付け、URL の文字列を返す。
+ * `redirectUri` のクエリに `response` がすでにあれば、その値を置き換える。
+ *
+ * 付けるのは `response` パラメータだけで、`code`、`state`、`iss` をそのままクエリに付けることはしない。
+ * 発行者は、JWT の `iss` クレームで示すためである。
+ *
+ * @throws {TypeError} `redirectUri` を `URL` として解析できないとき
+ * @spec JARM §2.3.1
  */
 export function buildJarmRedirectUrl(redirectUri: string, responseJwt: string): string {
   const url = new URL(redirectUri);

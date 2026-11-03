@@ -29,6 +29,13 @@ export interface SessionInfo {
 }
 
 export interface SessionResolver {
+  /**
+   * ログイン中の OP のセッションを探して返す。
+   *
+   * セッションは、リクエストの Cookie などから探す。
+   * 返す値は、ログインしているエンドユーザーのサブジェクト、認証時刻、セッションの ID（任意）である。
+   * セッションがないとき、または終了しているときは `null` を返す。
+   */
   resolve(request: Request): Promise<SessionInfo | null>;
 }
 
@@ -39,19 +46,24 @@ export interface SessionResolver {
  */
 export interface ConsentResolver {
   /**
-   * 要求スコープが付与済みスコープの部分集合（要求 ⊆ 付与）のときのみ true。
-   * 部分一致を true としてはならない（MUST NOT）。未承認スコープを承認済みと
-   * 誤認すると、ユーザーが許可していないスコープへ暗黙に昇格してしまうため。
+   * 要求したスコープがすべて同意済みなら true を返す。
+   *
+   * `subject` が `clientId` に同意済みのスコープに、`scopes` がすべて含まれる（要求 ⊆ 同意済み）ときだけ true を返す。
+   * 一部だけ同意済みのときに true を返してはならない（MUST NOT）。
+   * 同意されていないスコープを同意済みとみなすと、エンドユーザーが許可していないスコープの権限まで、確認なしに与えてしまうためである。
    */
   hasConsent(subject: string, clientId: string, scopes: string[]): Promise<boolean>;
   /**
-   * subject が clientId に対して scopes を承認したことを記録する（既存の付与済み
-   * スコープにマージする）。任意実装: 同意を永続化せず毎回同意を求める実装では
-   * 省略してよい。OIDC Core 1.0 Section 3.1.2.4。
+   * エンドユーザーが同意したスコープを記録する。
+   *
+   * `subject` が `clientId` に同意した `scopes` を、既存の同意済みのスコープに加えて記録する。
+   * 実装は任意で、同意を保存せずに毎回同意を求める実装では省略してよい（OIDC Core 1.0 §3.1.2.4）。
    */
   recordConsent?(subject: string, clientId: string, scopes: string[]): Promise<void>;
   /**
-   * subject が clientId に付与した同意をすべて失効させる。任意実装。
+   * `subject` が `clientId` に与えた同意をすべて失効させる。
+   *
+   * 実装は任意である。
    */
   revokeConsent?(subject: string, clientId: string): Promise<void>;
 }
@@ -161,7 +173,17 @@ export interface AuthTransaction {
  * KVストアの抽象化。環境に応じて実装を差し替える。
  */
 export interface AuthTransactionStore {
+  /**
+   * `key` のトランザクションを返す。
+   *
+   * トランザクションがないとき、または有効期限が切れたときは `null` を返す。
+   */
   get(key: string): Promise<AuthTransaction | null>;
+  /**
+   * トランザクションを `key` でストアに保存する。
+   *
+   * 同じ `key` の値があれば置き換え、`ttlSeconds` 秒後に期限切れにする。
+   */
   put(key: string, transaction: AuthTransaction, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
 }
@@ -232,12 +254,16 @@ export interface CreateAuthTransactionOptions {
 }
 
 /**
- * ValidatedAuthorizationRequestからAuthTransactionを作成する
+ * 認可リクエストからトランザクションを作って返す。
  *
- * @param validatedRequest バリデーション済みの認可リクエスト
- * @param csrfToken CSRFトークン
- * @param options TTL（デフォルト: 600,000 ミリ秒 = 10分）と User-Agent 束縛のハッシュ
- * @returns AuthTransaction
+ * 有効期間は `options.ttlMs`（既定値は 600,000 ミリ秒、つまり 10 分）で、現在時刻から数える。
+ * 中身の組み立ては `buildAuthTransaction()` が行う。
+ * ストアへの保存はしない。
+ *
+ * @param validatedRequest 検証済みの認可リクエスト。
+ * @param csrfToken トランザクションに保存する CSRF トークン。
+ * @param options 有効期間（ミリ秒）と、ブラウザへの結び付けに使うハッシュ（`bindingHash`）。
+ * @returns 保存前のトランザクション。
  */
 export function createAuthTransaction(
   validatedRequest: ValidatedAuthorizationRequest,
@@ -253,13 +279,14 @@ export function createAuthTransaction(
 }
 
 /**
- * ストアからAuth Transactionを取得する
- * トランザクションが存在しないまたは期限切れの場合はエラーをスローする
+ * 有効なトランザクションをストアから取得して返す。
  *
- * @param txnId Auth Transaction ID
- * @param store Auth Transaction Store
- * @returns AuthTransaction
- * @throws {AuthTransactionError} トランザクションが存在しないまたは期限切れの場合
+ * ストアのキーは、`txnId` の前に `auth_txn:` を付けた文字列である。
+ *
+ * @param txnId トランザクションの ID。
+ * @param store トランザクションのストア。
+ * @returns 有効期限内のトランザクション。
+ * @throws {AuthTransactionError} `transaction_not_found`（ストアにトランザクションがないとき）か `transaction_expired`（有効期限を過ぎているとき）。
  */
 export async function getAuthTransaction(
   txnId: string,
@@ -281,11 +308,11 @@ export async function getAuthTransaction(
 }
 
 /**
- * CSRFトークンを検証する
+ * CSRF トークンが違えば `invalid_csrf_token` を投げる。
  *
- * @param transaction Auth Transaction
- * @param csrfToken 検証するCSRFトークン
- * @throws {AuthTransactionError} CSRFトークンが不正な場合
+ * @param transaction トランザクション。
+ * @param csrfToken 検証する CSRF トークン。
+ * @throws {AuthTransactionError} `invalid_csrf_token`: 提示された CSRF トークンが空か、トランザクションに保存した値と一致しないとき。
  */
 export function validateCsrfToken(
   transaction: Pick<AuthTransaction, 'csrfToken'>,
@@ -300,41 +327,39 @@ export function validateCsrfToken(
 }
 
 /**
- * User-Agent へ配る秘密値から、トランザクションに保存する束縛ハッシュを求める。
+ * 秘密値の SHA-256 ハッシュを base64url で返す。
  *
- * SHA-256 / base64url。秘密値そのものではなくハッシュを保存することで、
- * トランザクションストアが漏洩しても、そこから有効な Cookie 値を復元できない。
+ * 呼び出し側は結果を、トランザクションをブラウザに結び付けるためのハッシュ（`bindingHash`）としてトランザクションに保存する。
+ * 秘密値そのものではなくハッシュを保存するので、トランザクションのストアが漏れても、そこから有効な Cookie の値を復元できない。
  *
- * @param bindingSecret User-Agent に Cookie で配る秘密値（CSPRNG 由来を想定）
- * @returns 束縛ハッシュ（base64url）
+ * @param bindingSecret ブラウザに Cookie で渡す秘密値（暗号論的に安全な乱数から作った値を想定する）。
+ * @returns 結び付けのハッシュ（base64url）。
  */
 export async function computeTransactionBindingHash(bindingSecret: string): Promise<string> {
   return sha256(bindingSecret);
 }
 
 /**
- * トランザクションが、それを開始した User-Agent から提示されたものかを検証する。
+ * 開始したブラウザ以外からのトランザクションを拒否する。
  *
- * OIDC Core 1.0 §3.1.2.3 / §3.1.2.4 は「認可リクエストを送ってきた User-Agent の
- * End-User」を認証し、その End-User から authorization decision を得ることを前提と
- * するが、同一性の保証手段は規定していない（実装責務）。ここでは認可エンドポイントで
- * Cookie として配った秘密値のハッシュ一致で担保する。
+ * 認可エンドポイントで Cookie として渡した秘密値（`presentedBindingSecret`）のハッシュを求め、トランザクションに保存したハッシュ（`bindingHash`）と比べる。
+ * 比較には {@link timingSafeEqual} を使い、ハッシュの先頭から一致した長さが応答時間から分からないようにする。
  *
- * これが無いと、`transaction_id` が漏れた場合（ブラウザ履歴・アクセスログ・画面共有
- * など）に第三者が同意画面から CSRF トークンを取得してフローを完了させられる。また、
- * 攻撃者が自分のクライアントで開始したトランザクションへ被害者を誘導し、被害者の
- * identity に対する認可コードを攻撃者のクライアントへ届かせることもできてしまう。
- * RP 側の `state` 検証では防げない類型であり、OP 側の束縛が唯一の防御になる。
+ * `bindingHash` を持たないトランザクションは、どのブラウザが開始したかを確かめられないので拒否する。
+ * ブラウザへの結び付けを使わない構成では、この関数を呼ばない。
  *
- * 比較は {@link timingSafeEqual} を使い、ハッシュの先頭一致長が応答時間に漏れない
- * ようにする。
+ * OIDC Core 1.0 §3.1.2.3 と §3.1.2.4 は、認可リクエストを送ってきたブラウザのエンドユーザーを認証し、そのエンドユーザーから認可の判断を得ることを前提にしているが、同じブラウザであることを保証する方法は定めていない。
+ * その保証は実装に任されており、この関数は秘密値のハッシュの一致で保証する。
  *
- * `bindingHash` を持たないトランザクションは、どの User-Agent が開始したかを確認できない
- * ため拒否する。束縛を使わない構成ではこの関数を呼ばないこと。
+ * この検証がないと、`transaction_id` が漏れたとき（ブラウザの履歴、アクセスログ、画面共有など）に、第三者が同意画面から CSRF トークンを取得してフローを完了できる。
+ * また、攻撃者が自分のクライアントで開始したトランザクションに被害者を誘導すると、被害者のアカウントで発行された認可コードを攻撃者のクライアントが受け取れてしまう。
+ * どちらも RP 側の `state` の検証では防げず、防げるのは OP 側の結び付けだけである。
  *
- * @param transaction Auth Transaction
- * @param presentedBindingSecret Cookie から取り出した秘密値。未提示なら undefined
- * @throws {AuthTransactionError} 束縛が一致しない、未提示、またはトランザクションに束縛が無い場合
+ * @param transaction トランザクション。
+ * @param presentedBindingSecret Cookie から取り出した秘密値。提示されていなければ `undefined`。
+ * @throws {AuthTransactionError} `invalid_transaction_binding`: ハッシュが一致しないとき、秘密値が提示されていないとき、またはトランザクションに `bindingHash` がないとき。
+ * @spec OIDC Core 1.0 §3.1.2.3
+ * @spec OIDC Core 1.0 §3.1.2.4
  */
 export async function validateTransactionBinding(
   transaction: Pick<AuthTransaction, 'bindingHash'>,
@@ -357,14 +382,18 @@ export async function validateTransactionBinding(
 }
 
 /**
- * ログイン失敗を処理する
- * 失敗回数をインクリメントし、最大試行回数に達した場合はトランザクションを削除する
+ * 失敗回数を数え、上限でトランザクションを削除する。
  *
- * @param txnId Auth Transaction ID
- * @param transaction Auth Transaction
- * @param store Auth Transaction Store
- * @param maxAttempts 最大試行回数。デフォルト: 5
- * @returns LoginFailureResult
+ * トランザクションの失敗回数を 1 増やし、再試行できるかどうかと失敗回数を返す。
+ * 失敗回数が `maxAttempts` に達したら、トランザクションをストアから削除する。
+ * 達していなければ、失敗回数を更新したトランザクションを、残りの有効期間（秒）を指定してストアに保存し直す。
+ * どちらの場合も、渡された `transaction` の `failedAttempts` を書き換える。
+ *
+ * @param txnId トランザクションの ID。
+ * @param transaction トランザクション。
+ * @param store トランザクションのストア。
+ * @param maxAttempts ログインを試せる最大の回数。既定値は 5。
+ * @returns 再試行できるかどうか、失敗回数、最大の回数。
  */
 export async function handleLoginFailure(
   txnId: string,
@@ -388,17 +417,18 @@ export async function handleLoginFailure(
 }
 
 /**
- * アクティブなセッションを解決する（prompt=none）
+ * ログイン中のセッションを取得して返す。
  *
- * prompt=none はユーザー操作を一切伴わないため、セッションが無い時点で
- * login_required を返す（ログイン画面へ遷移してはならない）。
+ * `prompt=none` の認可リクエストで、`sessionResolver` からログイン中のセッションを取得する。
+ * `prompt=none` はエンドユーザーの操作を一切伴わないので、セッションがなければログイン画面に移らず、`login_required` のエラーを返す必要がある。
+ * エラーには、クライアントへリダイレクトで返すためのリダイレクト URI と `state` を付ける。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
- * @param transaction Auth Transaction（エラーのリダイレクト先 / state に使用）
- * @param sessionResolver セッションを解決するリゾルバ
- * @param request 元の HTTP リクエスト（cookie/JWT などからセッション解決に使用）
- * @returns SessionInfo
- * @throws {AuthorizationError} login_required
+ * @param transaction トランザクション（エラーのリダイレクト先と `state` に使う）。
+ * @param sessionResolver セッションを取得するリゾルバ。
+ * @param request 元の HTTP リクエスト（Cookie や JWT からセッションを探すのに使う）。
+ * @returns ログイン中のセッション。
+ * @throws {AuthorizationError} `login_required`: ログイン中のセッションがないとき。
  */
 export async function resolvePromptNoneSession(
   transaction: Pick<AuthTransaction, 'redirectUri' | 'state'>,
@@ -413,20 +443,20 @@ export async function resolvePromptNoneSession(
 }
 
 /**
- * id_token_hint の subject とセッションの一致を検証する（prompt=none）
+ * `id_token_hint` をセッションと照合する。
  *
- * ID Token の署名・iss・aud・exp 検証は呼び出し側の責務（core を JWT 検証実装から
- * 疎結合に保つため）。ここでは検証済みの subject だけを受け取り、アクティブな
- * セッションの subject と一致するかを判定する。
+ * `prompt=none` の認可リクエストで、呼び出し側が検証した `id_token_hint` のサブジェクトと、ログイン中のセッションのサブジェクトを比べる。
+ * ID トークンの署名、`iss`、`aud`、`exp` の検証は呼び出し側が行う。
+ * core を JWT の検証の実装から切り離しておくためである。
  *
- * コンセント確認より前に実行すること: コンセント検索は session.subject をキーに
- * するため、hint 不一致のまま進むと「別ユーザーのコンセント」を見てしまう。
+ * この照合は、同意の確認より前に行う必要がある。
+ * 同意はセッションのサブジェクトをキーにして探すので、ヒントが一致しないまま進むと、別のユーザーの同意を参照してしまう。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
- * @param transaction Auth Transaction
- * @param session 解決済みセッション
- * @param verifiedHintSubject 呼び出し側で検証済みの id_token_hint の subject。未指定なら検証しない
- * @throws {AuthorizationError} login_required
+ * @param transaction トランザクション（エラーのリダイレクト先と `state` に使う）。
+ * @param session 取得したセッション。
+ * @param verifiedHintSubject 呼び出し側が検証した `id_token_hint` のサブジェクト。`undefined` なら照合しない。
+ * @throws {AuthorizationError} `login_required`: サブジェクトが一致しないとき。
  */
 export function validatePromptNoneIdTokenHint(
   transaction: Pick<AuthTransaction, 'redirectUri' | 'state'>,
@@ -444,16 +474,17 @@ export function validatePromptNoneIdTokenHint(
 }
 
 /**
- * 要求スコープが同意済みであることを検証する（prompt=none）
+ * 未同意のスコープがあれば `consent_required` を投げる。
  *
- * prompt=none では同意画面を表示できないため、未同意なら consent_required を返す。
- * consentResolver 未指定時は検証しない（同意を永続化しない構成向け）。
+ * `prompt=none` では同意画面を表示できないので、要求したスコープに同意がなければ `consent_required` のエラーを返す。
+ * 同意済みかどうかは、`consentResolver.hasConsent()` に、セッションのサブジェクト、クライアント ID、要求したスコープを渡して確かめる。
+ * `consentResolver` が渡されなければ確かめない（同意を保存しない構成のため）。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
- * @param transaction Auth Transaction
- * @param session 解決済みセッション
- * @param consentResolver コンセント済みかを判定するリゾルバ（任意）
- * @throws {AuthorizationError} consent_required
+ * @param transaction トランザクション（クライアント ID、スコープ、エラーのリダイレクト先、`state` に使う）。
+ * @param session 取得したセッション。
+ * @param consentResolver 同意済みかどうかを判定するリゾルバ（任意）。
+ * @throws {AuthorizationError} `consent_required`: 要求したスコープに同意がないとき。
  */
 export async function validatePromptNoneConsent(
   transaction: Pick<AuthTransaction, 'redirectUri' | 'state' | 'clientId' | 'scope'>,
@@ -472,39 +503,43 @@ export async function validatePromptNoneConsent(
 }
 
 /**
- * 再認証が必要かどうかを判定する（max_age チェック）
+ * 認証から `maxAge` 秒を超えていれば true を返す。
  *
- * maxAge=0 は「End-User を必ずアクティブに再認証させる」を意味する。
- * auth_time は秒精度の NumericDate（Section 2）のため、ログインと認可が同一の
- * 壁時計秒内で起きると authTime === now となる。strict な `now - authTime > 0`
- * では 0 > 0 === false となり再認証されないので、maxAge<=0 を特別扱いする。
+ * 現在時刻（`now`）と最後の認証時刻（`authTime`）の差が `maxAge` より大きければ、再認証が必要として true を返す。
+ * `maxAge` が 0 以下なら、経過時間によらず true を返す。
+ *
+ * `max_age=0` は、エンドユーザーを必ず再認証させることを意味する。
+ * `auth_time` は秒単位の `NumericDate`（OIDC Core 1.0 §2）なので、ログインと認可が同じ秒のうちに起きると `authTime` と `now` が等しくなる。
+ * このとき `now - authTime > 0` は偽になって再認証されないので、`maxAge` が 0 以下の場合を別に扱う。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
- * @param maxAge 最大認証経過秒数（0 以下は常に再認証を強制）
- * @param authTime 最終認証時刻（Unix timestamp 秒）
- * @param now 現在時刻（Unix timestamp 秒）。省略時はシステム時刻
- * @returns 再認証が必要な場合 true
+ * @param maxAge 認証からの経過を許す最大の秒数。0 以下なら常に再認証を求める。
+ * @param authTime 最後に認証した時刻（エポック秒）。
+ * @param now 現在時刻（エポック秒）。省略するとシステムの時刻を使う。
+ * @returns 再認証が必要なら true。
  */
 export function requiresReauthentication(
   maxAge: number,
   authTime: number,
   now: number = Math.floor(Date.now() / 1000),
 ): boolean {
-  // OIDC Core §3.1.2.1: max_age=0 は必ず再認証。負値も安全側（再認証）へ倒す。
+  // `maxAge` が 0 なら必ず再認証を求め、負の値も安全側に倒して再認証を求める（OIDC Core 1.0 §3.1.2.1）。
   if (maxAge <= 0) return true;
   return now - authTime > maxAge;
 }
 
 /**
- * 認証成功時にAuth Transactionを完了させる
- * トランザクションを削除し（ワンタイム性の担保）、認可レスポンスに必要なパラメータを返す
+ * トランザクションを削除し、認可レスポンスの値を返す。
  *
- * セキュリティ要件: トランザクション削除は認可コード発行の前に行うこと
+ * 認証に成功したときに呼ぶ。
+ * トランザクションを削除しておくことで、同じトランザクションから認可コードを二度発行できないようにする。
+ * そのため、この関数は認可コードを発行する前に呼ぶ必要がある。
+ * 返す値には、`transactionId` としてトランザクションの ID を加える。
  *
- * @param txnId Auth Transaction ID
- * @param transaction Auth Transaction
- * @param store Auth Transaction Store
- * @returns AuthorizationResponseParams
+ * @param txnId トランザクションの ID。
+ * @param transaction トランザクション。
+ * @param store トランザクションのストア。
+ * @returns 認可レスポンスの組み立てに使う値。
  */
 export async function completeAuthTransaction(
   txnId: string,
@@ -513,15 +548,17 @@ export async function completeAuthTransaction(
 ): Promise<AuthorizationResponseParams> {
   const key = `${STORE_KEY_PREFIX}${txnId}`;
 
-  // ワンタイム性の担保: 認可コード発行前にトランザクションを削除
+  // 認可コードを発行する前にトランザクションを削除し、一度しか使えないようにする。
   await store.delete(key);
 
   return { ...buildAuthorizationResponseParams(transaction), transactionId: txnId };
 }
 
 /**
- * Auth Transaction が期限切れでないことを検証する。expiresAt と now は Unix epoch ミリ秒。
- * expiresAt と now が等しい場合は期限切れとする。
+ * 期限切れなら `transaction_expired` を投げる。
+ *
+ * `expiresAt` が `now` 以下なら、トランザクションが期限切れとみなして `AuthTransactionError` を投げる。
+ * `expiresAt` と `now` はエポックミリ秒で渡す。
  */
 export function validateAuthTransactionExpiration(expiresAt: number, now: number): void {
   if (expiresAt <= now) {
@@ -533,7 +570,10 @@ export function validateAuthTransactionExpiration(expiresAt: number, now: number
 }
 
 /**
- * ログイン失敗後の失敗回数と再試行の可否を求める。トランザクションの書き換えや保存はしない。
+ * 失敗回数を 1 増やし、再試行できるかを返す。
+ *
+ * 増やした失敗回数が `maxAttempts`（既定値は 5）未満なら、再試行できる（`canRetry` が true）。
+ * トランザクションの書き換えや保存はしない。
  */
 export function evaluateLoginFailure(
   failedAttempts: number,
@@ -548,8 +588,10 @@ export function evaluateLoginFailure(
 }
 
 /**
- * Auth Transaction から認可レスポンスの組み立てに使う値を取り出す。
- * トランザクションは削除しないため、ワンタイム性は呼び出し側が削除して担保する。
+ * トランザクションから認可レスポンスの値を取り出す。
+ *
+ * `scope` は空白で分けて配列にし、トランザクションにない省略可能な項目は含めない。
+ * トランザクションは削除しないので、一度しか使えないようにするには、呼び出し側が削除する。
  */
 export function buildAuthorizationResponseParams(
   transaction: Pick<AuthTransaction,
@@ -589,8 +631,12 @@ export function buildAuthorizationResponseParams(
 }
 
 /**
- * 検証済みの認可リクエストから Auth Transaction を組み立てる。保存はしない。
- * 時刻と TTL はミリ秒で受け取り、createdAt と expiresAt に使う。
+ * 認可リクエストと時刻からトランザクションを組み立てる。
+ *
+ * `createdAt` は `now`、`expiresAt` は `now` に `ttlMs` を足した値にし、`failedAttempts` は 0 にする。
+ * 時刻と有効期間はミリ秒で受け取る。
+ * `scope` と `prompt` は空白区切りの文字列にし、認可リクエストにない省略可能な項目は含めない。
+ * ストアへの保存はしない。
  */
 export function buildAuthTransaction(
   validatedRequest: ValidatedAuthorizationRequest,
@@ -617,7 +663,7 @@ export function buildAuthTransaction(
     failedAttempts: 0,
   };
 
-  // オプションパラメータ
+  // 省略可能なパラメータは、認可リクエストにあるときだけ入れる。
   if (validatedRequest.state !== undefined) {
     transaction.state = validatedRequest.state;
   }
@@ -642,8 +688,8 @@ export function buildAuthTransaction(
   if (validatedRequest.loginHint !== undefined) {
     transaction.loginHint = validatedRequest.loginHint;
   }
-  // OIDC Core §3.1.2.1 / §5.2: pass through the requested UI/claims locales so the
-  // login/consent UI and claim rendering can honor them. core does not transform them.
+  // 要求された画面の言語（`ui_locales`）とクレームの言語（`claims_locales`）を、変換せずにそのまま入れる（OIDC Core 1.0 §3.1.2.1、§5.2）。
+  // ログイン画面、同意画面、クレームの表示で、これらの言語を使えるようにするためである。
   if (validatedRequest.uiLocales !== undefined) {
     transaction.uiLocales = validatedRequest.uiLocales;
   }
@@ -659,7 +705,8 @@ export function buildAuthTransaction(
   if (validatedRequest.claims !== undefined) {
     transaction.claims = validatedRequest.claims;
   }
-  // 生の秘密値は保存しない（ハッシュのみ）。store 漏洩で束縛を偽装できないようにするため。
+  // ブラウザへの結び付けはハッシュだけを保存し、生の秘密値は保存しない。
+  // ストアが漏れても、結び付けを偽装できないようにするためである。
   if (options.bindingHash !== undefined) {
     transaction.bindingHash = options.bindingHash;
   }
@@ -668,16 +715,23 @@ export function buildAuthTransaction(
 }
 
 /**
- * Auth Transaction の残り有効期間を、ストアの TTL に渡す秒数で返す。
- * expiresAt と now は Unix epoch ミリ秒。切り上げ、期限切れでも最小 1 秒とする。
+ * 残りの有効期間を、ストアに渡す秒数にして返す。
+ *
+ * `expiresAt` と `now` はエポックミリ秒で渡す。
+ * 秒への換算は切り上げで、結果が 1 未満（期限切れを含む）なら 1 を返す。
  */
 export function computeAuthTransactionTtlSeconds(expiresAt: number, now: number): number {
   return Math.max(1, Math.ceil((expiresAt - now) / 1000));
 }
 
 /**
- * OIDC Core 1.0 §3.1.2.1: prompt=none でアクティブなセッションがあることを確かめる。
- * セッションの解決は呼び出し側が行い、無ければ null を渡す。無い場合は login_required。
+ * セッションを返し、なければ `login_required` を投げる。
+ *
+ * `prompt=none` の認可リクエストで、ログイン中のセッションがあることを確かめる。
+ * セッションの取得は呼び出し側が行い、なければ `null` を渡す。
+ * エラーには、クライアントへリダイレクトで返すための `redirectUri` と `state` を付ける。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function requirePromptNoneSession<T>(
   session: T | null | undefined,
@@ -696,8 +750,13 @@ export function requirePromptNoneSession<T>(
 }
 
 /**
- * OIDC Core 1.0 §3.1.2.1: prompt=none で要求 scope への同意が済んでいることを検証する。
- * 同意の照会は呼び出し側が行い、結果を渡す。未同意なら consent_required。
+ * 同意がなければ `consent_required` を投げる。
+ *
+ * `prompt=none` の認可リクエストで、要求したスコープへの同意が済んでいることを確かめる。
+ * 同意の照会は呼び出し側が行い、結果を `hasConsent` で渡す。
+ * エラーには、クライアントへリダイレクトで返すための `redirectUri` と `state` を付ける。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function validatePromptNoneConsentGranted(
   hasConsent: boolean,

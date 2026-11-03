@@ -18,14 +18,17 @@ import { requireNonce } from './implicit-flow.js';
 import { responseTypeIncludes } from './response-type.js';
 
 /**
- * OIDC Core 1.0 §3.3.2.11: Hybrid Flow で認可エンドポイントが ID Token を返す response_type
- * （`code id_token` / `code id_token token`）では nonce が必須（ID Token を認可エンドポイントから
- * 返すため、リプレイの検知に使う）。認可エンドポイントが ID Token を返さない `code token` では、
- * Authorization Code Flow と同じく任意である（OpenID Connect Core 1.0 errata の NonceNotes。
- * OIDF Conformance Suite の oidcc-ensure-request-without-nonce-succeeds-for-code-flow は
- * `code token` で nonce の無い要求が成功することを確かめる）。
+ * `response_type` に応じて `nonce` を検証し、返す。
  *
- * 欠落と空文字は、リダイレクト可能な invalid_request とする。
+ * `response_type` が `id_token` を含む（`code id_token` か `code id_token token`）なら、`nonce` は必須である（OIDC Core 1.0 §3.3.2.11）。
+ * 認可エンドポイントから ID トークンを返すので、`nonce` をリプレイの検知に使う。
+ * `nonce` がないか空文字列なら、リダイレクトで返せる `invalid_request` を投げる（{@link requireNonce}）。
+ *
+ * 認可エンドポイントが ID トークンを返さない `code token` では、認可コードフローと同じく `nonce` は任意で、受け取った値をそのまま返す（OpenID Connect Core 1.0 の正誤表の NonceNotes）。
+ * OIDF の適合性テストの `oidcc-ensure-request-without-nonce-succeeds-for-code-flow` は、`code token` で `nonce` のないリクエストが成功することを確かめる。
+ *
+ * @spec OIDC Core 1.0 §3.3.2.11
+ * @throws {AuthorizationError} `invalid_request`: `response_type` が `id_token` を含み、`nonce` がないか空文字列のとき（リダイレクトで返せる）
  */
 export function requireHybridNonce(
   responseType: string,
@@ -38,18 +41,22 @@ export function requireHybridNonce(
 }
 
 /**
- * Hybrid Flow の response_mode を検証する。
+ * ハイブリッドフローの `response_mode` を検証する。
  *
- * - 指定が無ければ既定の応答モード（fragment）で返すので、何もしない
- * - `query` は拒否する。OAuth 2.0 Multiple Response Type Encoding Practices §5 は
- *   `code id_token`、`code token`、`code id_token token` の応答を query で返すことを禁じ
- *   （"the query encoding MUST NOT be used"）、§7 は ID Token とアクセストークンをクエリに
- *   載せることを禁じる
- * - supportedResponseModes（OP がこのリクエストに答える応答モード）に無い値も拒否する。
- *   要求された応答モードを黙って別のモードに置き換えない
+ * 次のように判定する。
+ * - 指定がなければ、既定のレスポンスモード（フラグメント）で返すので、何もしない
+ * - `query` は拒否する
+ * - `supportedResponseModes`（OP がこのリクエストへの応答に使えるレスポンスモード）にない値も拒否する
  *
- * どの拒否もリダイレクト可能な invalid_request とする。呼び出し側は、エラーをリクエストの
- * 既定の応答モード（fragment）で返す（OIDC Core 1.0 §3.3.2.6）。
+ * `query` を拒否するのは、`code id_token`、`code token`、`code id_token token` のレスポンスをクエリで返してはならない（MUST NOT）と OAuth 2.0 Multiple Response Type Encoding Practices §5 が定め、同 §7 が ID トークンとアクセストークンをクエリに含めることを禁じているためである。
+ * 対応していない値を拒否するのは、要求されたレスポンスモードを、知らせずに別のモードに置き換えないためである。
+ *
+ * どちらの拒否も、リダイレクトで返せる `invalid_request` である。
+ * 呼び出し側は、そのエラーをリクエストの既定のレスポンスモード（フラグメント）で返す（OIDC Core 1.0 §3.3.2.6）。
+ *
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §5
+ * @spec OIDC Core 1.0 §3.3.2.6
+ * @throws {AuthorizationError} `invalid_request`: `response_mode` が `query` のとき、または `supportedResponseModes` にないとき
  */
 export function validateHybridResponseMode(
   responseMode: string | undefined,
@@ -97,19 +104,24 @@ export interface HybridResponseParametersInput {
 }
 
 /**
- * OIDC Core 1.0 §3.3.2.5: Hybrid Flow の成功応答のパラメータを組み立てる。
- * 認可レスポンスは Implicit Flow（§3.2.2.5）と同じ形で、認可コードが加わる。
+ * ハイブリッドフローの成功時のパラメータを返す。
  *
- * - code: 常に
- * - access_token / token_type（`Bearer`）/ expires_in: アクセストークンを発行したときだけ
- * - scope: 付与した scope（RFC 6749 §4.2.2。要求と異なりうるため、アクセストークンを
- *   発行したときは常に含める）
- * - id_token: ID Token を発行したときだけ
- * - state
+ * 認可レスポンスはインプリシットフロー（OIDC Core 1.0 §3.2.2.5）と同じ形で、認可コードが加わる。
+ * 値はフラグメントやフォームに入るので、すべて文字列にする。
+ * 含めるパラメータは次のとおりである。
+ * - `code`: 常に含める
+ * - `access_token`、`token_type`（`Bearer`）: アクセストークンを渡したときだけ含める
+ * - `expires_in`、`scope`: アクセストークンを渡し、それぞれの値も渡したときだけ含める
+ * - `id_token`: ID トークンを渡したときだけ含める
+ * - `state`: 渡したときだけ含める
  *
- * Refresh Token は含めない（RFC 6749 §4.2.2: MUST NOT。トークンエンドポイントが認可コードの
- * 交換で返す）。iss（RFC 9207 §2）は応答モードが加える。値はすべて文字列（応答は
- * フラグメントやフォームに載る）。
+ * 付与したスコープは要求と異なることがあるので、アクセストークンを発行したときは `scope` を常に渡す前提である（RFC 6749 §4.2.2）。
+ *
+ * リフレッシュトークンは含めない（RFC 6749 §4.2.2 の MUST NOT）。
+ * リフレッシュトークンは、トークンエンドポイントが認可コードの交換で返す。
+ * `iss`（RFC 9207 §2）は、レスポンスモードの処理が加える。
+ *
+ * @spec OIDC Core 1.0 §3.3.2.5
  */
 export function buildHybridResponseParameters(
   input: HybridResponseParametersInput,

@@ -89,7 +89,12 @@ export interface StepMeta {
   readonly calledFrom?: readonly string[];
 }
 
-/** Describe a step. The function only checks the shape; it returns its argument. */
+/**
+ * ステップの説明（`meta`）を受け取り、そのまま返す。
+ *
+ * 実行時には何もしない。
+ * 引数が `StepMeta` の形であることは、TypeScript の型検査で確かめる。
+ */
 export function step<const M extends StepMeta>(meta: M): M {
   return meta;
 }
@@ -111,7 +116,12 @@ export interface StepContribution {
   readonly spec?: string;
 }
 
-/** Describe a contribution. The function only checks the shape; it returns its argument. */
+/**
+ * 機能がステップに加える内容を受け取り、そのまま返す。
+ *
+ * 実行時には何もしない。
+ * 引数が `StepContribution` の形であることは、TypeScript の型検査で確かめる。
+ */
 export function contribute<const C extends StepContribution>(contribution: C): C {
   return contribution;
 }
@@ -189,7 +199,12 @@ export interface EndpointMeta {
   readonly journeys?: readonly JourneyMeta[];
 }
 
-/** Describe an endpoint. The function only checks the shape; it returns its argument. */
+/**
+ * エンドポイントの説明を受け取り、そのまま返す。
+ *
+ * 実行時には何もしない。
+ * 引数が `EndpointMeta` の形であることは、TypeScript の型検査で確かめる。
+ */
 export function defineEndpoint<const M extends EndpointMeta>(meta: M): M {
   return meta;
 }

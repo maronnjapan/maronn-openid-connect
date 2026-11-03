@@ -33,6 +33,21 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+/**
+ * エンドユーザーをログインさせ、承認画面を返す。
+ *
+ * `POST /device/login` の処理で、`user_code`、バインディング Cookie、`csrf_token`、認証情報（ユーザー名とパスワード）の順に確かめる。
+ * バインディング Cookie は、このブラウザが `user_code` を送信したブラウザであることを示す。
+ * 偽造された POST で被害者のブラウザに OP のセッションが作られるのを防ぐため、認証情報より前に確かめる。
+ *
+ * `user_code` が未知、期限切れ、使用済みのどれかなら、ユーザーコードの入力フォームを 400 で返す。
+ * バインディング Cookie か `csrf_token` がないか一致しなければ、403 の OP のエラーページを返す。
+ * 認証情報が誤っていれば、残りの試行回数を添えたログインフォームを返す。
+ * 上限に達するとデバイスのリクエストを拒否の状態にし、429 のエラーページを返す。
+ * 成功すると新しい ID の OP のセッションを保存し、デバイスの承認画面を、セッションの Cookie を付けて返す。
+ *
+ * @spec RFC 8628 §3.3
+ */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
   const submittedUserCode = String(form.get('user_code') ?? '');
@@ -53,23 +68,24 @@ export async function POST(request: Request): Promise<Response> {
     return verificationFailureScreen(error);
   }
 
-  // Swap point: replace this with your own credential check (LDAP, WebAuthn, an
-  // upstream IdP) without touching anything above or below it.
+  // ユーザー名とパスワードでエンドユーザーを認証する。
+  // 独自の認証（LDAP、WebAuthn、上流の IdP など）に替えるときは、この呼び出しだけを差し替えればよく、前後の処理は変えずに済む。
   const user = await stores.userStore.authenticate(
     String(form.get('username') ?? ''),
     String(form.get('password') ?? ''),
   );
   if (!user) {
-    // Per-record throttling only. An attacker holding a device-grant client can
-    // mint unlimited records, so the aggregate password-guess budget is the same
-    // as the one on /login. Subject-scoped throttling is a separate concern.
+    // 失敗の回数をレコードに記録し、上限に達したらレコードを拒否の状態にする。
+    // 回数の制限は、レコードごとにしかかからない。
+    // デバイス認可グラントを使えるクライアントを持つ攻撃者はレコードをいくらでも作れるので、パスワードを試せる合計の回数は `/login` と同じく実質的に制限されない。
+    // ユーザーごとの制限は、別に扱う課題である。
     const failure = await recordDeviceLoginFailure(
       record,
       deviceAuthorizationStore,
       deviceAuthorizationConfig.maxLoginAttempts,
     );
     if (!failure.canRetry) {
-      // The record is now denied: the device gets access_denied on its next poll.
+      // レコードは拒否の状態になったので、デバイスは次のポーリングで `access_denied` を受け取る。
       return errorPage('Too many login attempts', 429);
     }
     return loginScreen({
@@ -86,8 +102,8 @@ export async function POST(request: Request): Promise<Response> {
     authTime: Math.floor(Date.now() / 1000),
   });
 
-  // The new OP session travels with the approval screen; the approval step has
-  // to present the binding cookie again as well.
+  // 承認画面に、新しい OP のセッションの Cookie を付ける。
+  // 承認の送信でも、ブラウザはバインディング Cookie をもう一度提示する必要がある。
   return approvalScreen(
     {
       userCode: record.userCodeDisplay,

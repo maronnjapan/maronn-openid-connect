@@ -6,7 +6,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'refresh-token',
   kind: 'persist',
-  label: 'Revoke the presented refresh token (rotation)',
+  label: '古いリフレッシュトークンを失効させる',
   spec: 'OAuth 2.1 §4.3.1',
   function: 'revokeRotatedRefreshToken',
   consumes: ['params', 'validatedRequest'],
@@ -16,9 +16,12 @@ export const meta = step({
 });
 
 /**
- * Rotation: revoke the refresh token the request presented, now that its
- * successor is stored. Always this order, so a failure never leaves the
- * End-User without a refresh token.
+ * 提示されたリフレッシュトークンを失効させる。
+ *
+ * `refresh_token` グラントで、リクエストに `refresh_token` があるときだけ失効させ、ほかのグラントでは何もしない。
+ * 新しいリフレッシュトークンを発行したかどうかにかかわらず、提示されたものは失効させる。
+ * ローテーションでは、新しいリフレッシュトークンを保存した後に、古いものを失効させる。
+ * 順番を逆にすると、新しいトークンの保存に失敗したときに、エンドユーザーが使えるリフレッシュトークンがなくなるためである。
  *
  * @spec OAuth 2.1 §4.3.1
  */

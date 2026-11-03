@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateLiteral, literalArgumentOf } from '../extract/meta.js';
+import { evaluateLiteral, jsDocSummaryAbove, literalArgumentOf, readEndpointMeta } from '../extract/meta.js';
 
 const ENDPOINT = [
   "import { defineEndpoint } from '../step.js';",
@@ -56,5 +56,27 @@ describe('evaluateLiteral', () => {
 
   it('should read parentheses inside a string', () => {
     expect(evaluateLiteral("{ label: 'Token (refresh)' }")).toEqual({ label: 'Token (refresh)' });
+  });
+});
+
+describe('readEndpointMeta', () => {
+  const literal = "{\n  id: 'token',\n  order: 70,\n  label: 'Token endpoint',\n  path: '/token',\n  methods: ['POST'],\n  layer: 'api',\n  group: { id: 'code', label: 'Code' },\n  rearrangeable: true,\n  steps: [],\n  edges: { chain: true },\n}";
+
+  it('should take the summary of the endpoint from the first paragraph of the JSDoc above it', () => {
+    const source = `import { defineEndpoint } from '../step.js';\n\n/**\n * Authenticate the client and answer\n * with the tokens.\n *\n * More detail.\n *\n * @spec OIDC Core 1.0 §3.1.3\n */\nexport const endpoint = defineEndpoint(${literal});\n`;
+    expect(readEndpointMeta(source)).toMatchObject({ id: 'token', summary: 'Authenticate the client and answer with the tokens.' });
+  });
+
+  it('should leave the summary out for an endpoint without a JSDoc', () => {
+    const meta = readEndpointMeta(`export const endpoint = defineEndpoint(${literal});\n`);
+    expect(meta?.id).toBe('token');
+    expect(meta && 'summary' in meta).toBe(false);
+  });
+});
+
+describe('jsDocSummaryAbove', () => {
+  it('should give no summary for a JSDoc that starts with a tag, nor for a comment that is not right above', () => {
+    expect(jsDocSummaryAbove('/** @spec RFC 1 */\nx', 19)).toBe(undefined);
+    expect(jsDocSummaryAbove('/** Text. */\nconst a = 1;\nx', 26)).toBe(undefined);
   });
 });

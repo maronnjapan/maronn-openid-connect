@@ -118,10 +118,17 @@ export interface ProviderMetadata {
 }
 
 /**
- * Validate issuer per OIDC Discovery Section 3:
- * - MUST use https scheme (except loopback hosts for development)
- * - MUST NOT contain query parameters
- * - MUST NOT contain fragments
+ * `issuer` を発行者の識別子として検証する。
+ *
+ * 次のどれかに当てはまれば `Error` を投げる。
+ * - 空文字列である
+ * - URL として解析できない
+ * - スキームが `https` でない（開発用に、ループバックのホストの `localhost`、`127.` で始まる IPv4 アドレス、`[::1]` は除く）
+ * - クエリを含む
+ * - フラグメントを含む
+ *
+ * @spec OIDC Discovery 1.0 §3
+ * @throws {Error} 上のどれかに当てはまるとき
  */
 function validateIssuer(issuer: string): void {
   if (!issuer) {
@@ -149,8 +156,23 @@ function validateIssuer(issuer: string): void {
 }
 
 /**
- * Build OpenID Provider Metadata from configuration.
- * Validates required fields and returns the metadata object per OIDC Discovery 1.0.
+ * 設定を検証し、OP のメタデータを組み立てて返す。
+ *
+ * 返す値はディスカバリーのメタデータで、設定のキャメルケースの名前を、仕様のスネークケースの名前（`authorization_endpoint` など）に置き換えたものである。
+ * 次の設定がないか空なら `Error` を投げる。
+ * - `issuer`（発行者の識別子としての条件も検証する）
+ * - `authorizationEndpoint`、`tokenEndpoint`、`jwksUri`
+ * - `responseTypesSupported`、`subjectTypesSupported`、`idTokenSigningKeys`
+ *
+ * `idTokenSigningKeys` には、RS256 の鍵が少なくとも 1 つ必要である（OIDC Core 1.0 §15.1）。
+ * `id_token_signing_alg_values_supported` には、鍵の集合から求めたアルゴリズムを、重複を除いて鍵の順に並べる。
+ *
+ * 任意の項目のうち、配列は要素があるときだけ、真偽値は指定されたときだけ、エンドポイントの URL は空でないときだけ含める。
+ * `claimTypesSupported` に指定できる値は `normal` だけである。
+ *
+ * @spec OIDC Discovery 1.0 §3
+ * @spec OIDC Core 1.0 §15.1
+ * @throws {Error} 必須の設定がないか空のとき、`issuer` が条件を満たさないとき、RS256 の鍵がないとき、RSASSA-PKCS1-v1_5 でも ECDSA でもない鍵があるとき、または `claimTypesSupported` に `normal` 以外の値があるとき
  */
 export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderMetadata {
   validateIssuer(config.issuer);
@@ -173,11 +195,11 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
   if (!config.idTokenSigningKeys || config.idTokenSigningKeys.length === 0) {
     throw new Error('idTokenSigningKeys must not be empty');
   }
-  // OIDC Core 1.0 §15.1: at least one RS256 key must be present.
+  // 鍵の集合に RS256 の鍵が 1 つもなければ例外を投げる（OIDC Core 1.0 §15.1）。
   assertHasRs256Key(config.idTokenSigningKeys);
 
-  // Derive advertised algorithms from the actual key set, deduplicated.
-  // Set preserves insertion order so the output is deterministic per call site.
+  // 公開するアルゴリズムを、実際の鍵の集合から重複を除いて求める。
+  // 鍵の順を保つので、同じ順の鍵からは毎回同じ一覧ができる。
   const idTokenAlgs: string[] = [];
   const seenAlgs = new Set<string>();
   for (const key of config.idTokenSigningKeys) {
@@ -198,14 +220,14 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
     id_token_signing_alg_values_supported: idTokenAlgs,
   };
 
-  // Recommended fields
+  // 推奨の項目を、設定されていれば含める。
   if (config.userinfoEndpoint) {
     metadata.userinfo_endpoint = config.userinfoEndpoint;
   }
   if (config.registrationEndpoint) {
     metadata.registration_endpoint = config.registrationEndpoint;
   }
-  // Arrays with zero elements MUST be omitted (OIDC Discovery spec)
+  // 要素のない配列の項目は含めない（OIDC Discovery 1.0 の MUST）。
   if (config.scopesSupported && config.scopesSupported.length > 0) {
     metadata.scopes_supported = config.scopesSupported;
   }
@@ -213,9 +235,8 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
     metadata.claims_supported = config.claimsSupported;
   }
   if (config.claimTypesSupported && config.claimTypesSupported.length > 0) {
-    // OIDC Core 1.0 §5.6: this OP only produces Normal Claims (filterClaimsByScope
-    // never emits _claim_names / _claim_sources), so reject any value other than
-    // 'normal' to keep the advertisement honest.
+    // `normal` 以外の値があれば例外を投げる（OIDC Core 1.0 §5.6）。
+    // この OP は通常のクレームしか返さない（`filterClaimsByScope()` は `_claim_names` も `_claim_sources` も出力しない）ので、ほかの種類を公開すると実際の振る舞いと食い違う。
     const invalid = config.claimTypesSupported.filter((t) => t !== 'normal');
     if (invalid.length > 0) {
       throw new Error(
@@ -232,7 +253,7 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
       config.userinfoSigningAlgValuesSupported;
   }
 
-  // Optional fields
+  // 任意の項目を、設定されていれば含める。
   if (config.grantTypesSupported && config.grantTypesSupported.length > 0) {
     metadata.grant_types_supported = config.grantTypesSupported;
   }
@@ -259,14 +280,14 @@ export function buildProviderMetadata(config: ProviderMetadataConfig): ProviderM
       config.requestObjectSigningAlgValuesSupported;
   }
 
-  // RFC 9207 §3: advertise issuer identification in authorization responses.
+  // 認可レスポンスに発行者の識別子（`iss`）を付けるかどうかを公開する（RFC 9207 §3）。
   if (config.authorizationResponseIssParameterSupported !== undefined) {
     metadata.authorization_response_iss_parameter_supported =
       config.authorizationResponseIssParameterSupported;
   }
 
-  // RFC 8414 fields. Endpoint URL is required to advertise the matching
-  // *_auth_methods_supported list (RFC 8414 Section 2).
+  // RFC 8414 の項目を、設定されていれば含める。
+  // 対応する `*_auth_methods_supported` の一覧を公開するにはエンドポイントの URL も必要だが（RFC 8414 §2）、この関数はそれを確かめない。
   if (config.introspectionEndpoint) {
     metadata.introspection_endpoint = config.introspectionEndpoint;
   }

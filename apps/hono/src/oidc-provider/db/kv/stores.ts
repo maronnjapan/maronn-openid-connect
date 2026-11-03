@@ -93,19 +93,28 @@ const FALLBACK_TTL_SECONDS = 600;
 /** The value of a single-use marker (code_used, refresh_token_used) and of a revocation marker. */
 const MARKER = 'true';
 
-/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on a key-value store: one record per key, with a TTL where the data expires. */
+/**
+ * KV ストアに読み書きする OP のストアを返す。
+ *
+ * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログインのストアである。
+ * 一つのレコードを一つのキーに保存し、有効期限のあるデータのキーには、その有効期限までの有効期間を付ける。
+ * 認可コードとトークンは、値そのものではなく SHA-256 のハッシュ（`hashKey()`）をキーにして保存する。
+ *
+ * 返したストアの `authCodeStore.consume()` と `refreshTokenStore.consume()` は、使用済みの目印のキーを `setIfAbsent` で書き、書けなければ（すでに使用済みか、レコードがなければ）`TokenError`（`invalid_grant`）を投げる。
+ * 同時に届いた二つのリクエストのうち、目印を書けた一方だけがトークンを受け取る（OAuth 2.1 §4.1.2）。
+ */
 export function createProviderStores(db: KvDatabase): ProviderStores {
   const read = <T>(key: string) => readRecord<T>(db, key);
   const write = (key: string, record: unknown, ttlSeconds?: number) =>
     writeRecord(db, key, record, ttlSeconds);
 
-  /** The record of a transaction, unless it has expired. */
+  /** 期限切れでないトランザクションのレコードを返し、期限切れなら `undefined` を返す。 */
   const readTransaction = async (transactionId: string): Promise<TransactionRecord | undefined> => {
     const record = await read<TransactionRecord>(keys.transaction(transactionId));
     return record && record.expired_at > nowSeconds() ? record : undefined;
   };
 
-  /** Move a transaction in progress from one of the statuses in from to status. */
+  /** 進行中のトランザクションの状態が `from` のどれかなら、`status` に変えて書き戻す。 */
   const advanceTransaction = async (
     transactionId: string,
     from: Array<TransactionRecord['status']>,
@@ -117,7 +126,11 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     }
   };
 
-  /** The record of a grant, changed by change and written back. It lives until expiresAt at least. */
+  /**
+   * グラントのレコードを `change` で変えて書き戻し、変えたレコードを返す。
+   * レコードがなければ、空のグラントから始める。
+   * レコードの有効期限は、元の有効期限と `expiresAt` の遅いほうにする。
+   */
   const updateGrant = async (
     grantId: string,
     expiresAt: number,
@@ -133,14 +146,17 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     return grant;
   };
 
-  /** Mark the tokens of one kind in a grant revoked, until the grant's last code or token expires. */
+  /**
+   * 目印のキー `revokedKey` を書いて、グラントの一つの種類のトークンを失効させる。
+   * 目印は、グラントの最後の認可コードかトークンの有効期限まで残す。
+   */
   const revokeGrant = async (revokedKey: string, grantId: string): Promise<void> => {
     const grant = await read<GrantRecord>(keys.grant(grantId));
-    // Without a grant record every code and token of the grant has expired.
+    // グラントのレコードがなければ、グラントの認可コードとトークンはすべて期限切れなので、何も書かない。
     if (grant) await db.set(revokedKey, MARKER, ttlUntil(grant.expired_at));
   };
 
-  // Transaction + Authentication_request: one record, written in one set.
+  // トランザクションとその認可リクエスト（`authentication_request`）は一つのレコードにまとめ、一度の `set` で書く。
   const transactionStore: TransactionStorage = {
     async get(key) {
       const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
@@ -148,7 +164,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         readTransaction(transactionId),
         db.get(keys.transactionResult(transactionId)),
       ]);
-      // A transaction that ended (failed, code_issued, token_issued) is gone for the OP.
+      // 終わったトランザクション（結果が `failed`、`code_issued`、`token_issued`）は、ないものとして `null` を返す。
       if (!record || result !== null) return null;
       const request = record.authentication_request;
       const transaction: StoredTransaction = {
@@ -178,8 +194,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       if (request.claims !== null) transaction.claims = request.claims;
       return transaction;
     },
-    // The expiry is the transaction's own expiresAt (milliseconds, rounded up
-    // to seconds), which the ttlSeconds core passes is computed from.
+    // 有効期限には、トランザクション自身の `expiresAt`（ミリ秒）を秒に切り上げて使う。
+    // core が渡す `ttlSeconds` も、この `expiresAt` から計算した値である。
     async put(key, value, _ttlSeconds) {
       const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
       const {
@@ -207,8 +223,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         bindingHash,
         ...otherParameters
       } = value as StoredTransaction;
-      // A new transaction starts as requested. Saving it again (a failed
-      // sign-in attempt) keeps its status.
+      // 新しいトランザクションは `requested` の状態で始める。
+      // 保存し直すとき（ログインに失敗したときなど）は、今の状態を変えない。
       const current = await readTransaction(transactionId);
       const record: TransactionRecord = {
         status: current?.status ?? 'requested',
@@ -238,8 +254,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       };
       await write(keys.transaction(transactionId), record, ttlUntil(record.expired_at));
     },
-    // One-time use: the transaction ends as failed, unless a code was issued
-    // from it already (code_issued stays).
+    // トランザクションは一度しか使えないので、結果 `failed` を書いて終わらせる。
+    // 結果は `setIfAbsent` で書くので、すでに認可コードを発行していれば結果は `code_issued` のまま変わらない。
     async delete(key) {
       const transactionId = withoutPrefix(key, TRANSACTION_KEY_PREFIX);
       const record = await readTransaction(transactionId);
@@ -251,7 +267,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         ttlUntil(record.expired_at),
       );
     },
-    // The Implicit Flow ended the transaction (delete) and then issued its tokens.
+    // インプリシットフローがトランザクションを終わらせて（`delete`）からトークンを発行したので、結果を `token_issued` にする。
     async recordTokenIssued(transactionId) {
       const record = await readTransaction(transactionId);
       if (!record) return;
@@ -262,9 +278,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
 
   const authCodeStore: AuthorizationCodeStorage = {
     async set(code, info) {
-      // The routes pass core's AuthorizationCodeData, which names the
-      // transaction the code was issued from. Neither the raw code nor a value
-      // with a field of its own goes into payload.
+      // ルートが渡すのは core の `AuthorizationCodeData` で、認可コードを発行したトランザクションの ID（`transactionId`）を含む。
+      // 認可コードの値そのものと、レコードに専用の項目がある値は、`payload` に入れない。
       const { code: _code, used, expiresAt, grantId, transactionId, ...payload } =
         info as AuthorizationCodeInfo & Pick<AuthorizationCodeData, 'transactionId'>;
       const codeHash = await hashKey(code);
@@ -281,8 +296,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         transaction_id: transactionId ?? grant.transaction_id,
       }));
       if (transactionId !== undefined) {
-        // The result outlives the transaction until the code expires, so the
-        // exchange of the code can still record token_issued.
+        // 結果のキーは、トランザクションが期限切れになっても認可コードの有効期限までは残す。
+        // 認可コードを交換したときに、結果 `token_issued` を記録できるようにするためである。
         const transaction = await read<TransactionRecord>(keys.transaction(transactionId));
         const result: TransactionResultRecord = { status: 'code_issued' };
         await db.set(
@@ -307,8 +322,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         used: used !== null,
       };
     },
-    // Only one of two concurrent requests stores the code_used key; the other
-    // one finds the code already used and must not receive tokens.
+    // 同時に届いた二つのリクエストのうち、`code_used` のキーを書けるのは一方だけである。
+    // もう一方には `TokenError`（`invalid_grant`）を投げるので、そのリクエストはトークンを受け取れない。
     async consume(code) {
       const codeHash = await hashKey(code);
       const record = await read<CodeRecord>(keys.code(codeHash));
@@ -334,11 +349,11 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     async set(token, info) {
       const { sub, scope, clientId, expiresAt, iat, issuer, jti, grantId, acr, transactionId, ...payload } = info;
       const tokenHash = await hashKey(token);
-      // A token issued without a jti is kept under its hash.
+      // `jti` なしで発行されたトークンは、トークンのハッシュをレコードの `id` にする。
       const id = jti ?? tokenHash;
-      // The grant also names the transaction of the code it came from. A grant
-      // without a code names none: the Implicit Flow names the transaction on
-      // the token itself, and the device flow and CIBA have none.
+      // グラントのレコードも、グラントの元になった認可コードのトランザクションを示す。
+      // 認可コードのないグラントは、トランザクションを示さない。
+      // インプリシットフローではトークン自身がトランザクションを示し、デバイスフローと CIBA にはトランザクションがない。
       const grant =
         grantId === undefined
           ? undefined
@@ -408,8 +423,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       const { used, expiresAt, iat, grantId, ...payload } = info;
       const tokenHash = await hashKey(token);
       let accessTokenId: string | null = null;
-      // The access token of the same token response: the token endpoint stores
-      // it just before, with the same grant and iat.
+      // 同じトークンレスポンスのアクセストークンの ID を、`access_token_id` に記録する。
+      // トークンエンドポイントはそのアクセストークンを直前に保存するので、グラントに記録された最新のアクセストークンの `iat` が同じなら、それを使う。
       await updateGrant(grantId, expiresAt, (grant) => {
         const latest = grant.latest_access_token;
         if (latest && latest.iat === (iat ?? null)) accessTokenId = latest.id;
@@ -442,7 +457,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       if (record.iat !== null) info.iat = record.iat;
       return info;
     },
-    // Rotation: like authCodeStore.consume, exactly one request wins.
+    // ローテーションのために、リフレッシュトークンを使用済みにする。
+    // `authCodeStore.consume()` と同じく、同時に届いたリクエストのうち一つだけが成功する。
     async consume(token) {
       const tokenHash = await hashKey(token);
       const record = await read<RefreshTokenRecord>(keys.refreshToken(tokenHash));
@@ -460,18 +476,17 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     },
   };
 
-  // auth_type of a sign-in (auth_user): the provider of the user's federated
-  // identity, or password. A user created by an upstream sign-in (such as Sign
-  // in with Google) has no password, and registerUser() (users.ts) adds no
-  // federated identity, so each user signs in one way only unless you link an
-  // upstream account to a user with a password yourself.
+  // ログイン（`auth_user`）の `auth_type` として、ユーザーの外部アカウントの ID プロバイダ名を返し、外部アカウントがなければ `password` を返す。
+  // 外部の ID プロバイダでのログイン（Google でのログインなど）で作られたユーザーにはパスワードがなく、`registerUser()`（`users.ts`）は外部アカウントを紐付けない。
+  // そのため、パスワードのあるユーザーに利用者が外部アカウントを紐付けない限り、ユーザーのログインの方法は一つに決まる。
   const authTypeOf = async (userId: string): Promise<string> => {
     const user = await read<UserRecord>(keys.user(userId));
     return user?.federated_identities?.[0]?.provider ?? 'password';
   };
 
-  // Auth_user: the sign-in handed from /login to /consent, per transaction.
-  // It expires with the transaction.
+  // ログインの結果（`auth_user`）は、`/login` から `/consent` へトランザクションごとに渡す。
+  // レコードはトランザクションと同時に期限切れになる。
+  // トランザクションのレコードがすでになければ、有効期間を `FALLBACK_TTL_SECONDS` にする。
   const authSessionStore: AuthSessionStorage = {
     async set(transactionId, info) {
       const transaction = await readTransaction(transactionId);
@@ -528,7 +543,7 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     },
     async hasConsent(subject, clientId, scopes) {
       const unique = [...new Set(scopes)];
-      // An empty request is never treated as consented.
+      // スコープが一つもないリクエストは、同意済みとみなさず `false` を返す。
       if (unique.length === 0) return false;
       const consent = await readConsent(subject, clientId);
       return unique.every((scope) => consent.scopes.includes(scope));
@@ -541,7 +556,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
         grant_ids: [...consent.grant_ids, grantId],
       });
     },
-    // The grants come back, so the caller revokes the tokens of each one.
+    // 同意のレコードを消し、記録していたグラント ID を返す。
+    // 呼び出し側は、返されたグラントごとにトークンを失効させる。
     async revoke(subject, clientId) {
       const consent = await readConsent(subject, clientId);
       await db.delete(keys.consent(subject, clientId));
@@ -549,16 +565,15 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     },
   };
 
-  // The user linked to an account at an upstream identity provider, if any.
+  // 外部の ID プロバイダのアカウントに紐付いたユーザーの ID を返し、紐付けがなければ `undefined` を返す。
   const findFederatedUser = async (provider: string, providerSub: string): Promise<string | undefined> => {
     const identity = await read<FederatedIdentityRecord>(keys.federatedIdentity(provider, providerSub));
     return identity?.user_id;
   };
 
-  // Link an upstream account to a new user, under a new random id, on its
-  // first sign-in. Two first sign-ins of one account may race: setIfAbsent
-  // keeps one federated identity, and the request that lost uses the user it
-  // names.
+  // 外部アカウントの最初のログインで、アカウントを新しいランダムな ID のユーザーに紐付け、そのユーザーの ID を返す。
+  // 同じアカウントの最初のログインが同時に二つ届くと、`setIfAbsent` で紐付けを書けるのは一方だけである。
+  // 書けなかったリクエストは、先に書かれた紐付けのユーザーを使う。
   const createFederatedUser = async (provider: string, providerSub: string): Promise<string> => {
     const userId = crypto.randomUUID();
     const now = nowSeconds();
@@ -570,9 +585,9 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     return linked ? userId : ((await findFederatedUser(provider, providerSub)) ?? userId);
   };
 
-  // Save the claims the upstream provider asserted to the user (email and
-  // email_verified to their fields, the others to claims), and create the user
-  // record on the first sign-in. password_hash is left as it is.
+  // 外部の ID プロバイダから受け取ったクレームをユーザーのレコードに保存し、最初のログインならレコードを作る。
+  // `email` と `email_verified` はそれぞれの項目に、ほかのクレームは `claims` に入れる。
+  // `federated_identities` にこの外部アカウントがなければ加え、`password_hash` は変えない。
   const saveFederatedClaims = async (
     claims: UserClaims,
     provider: string,
@@ -599,14 +614,14 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     await write(keys.user(sub), record);
   };
 
-  // User: the user records. Put users there with registerUser() (users.ts).
+  // ユーザーのレコードを読み書きする。
+  // ユーザーは `registerUser()`（`users.ts`）で登録する。
   const userStore: UserStorage = {
-    // The password form checks the user's id as the username.
+    // パスワードのフォームでは、ユーザーの ID をユーザー名として照合する。
     async authenticate(username, password) {
       const user = await read<UserRecord>(keys.user(username));
-      // verifyPassword() takes as long without a hash, so the response time
-      // does not tell whether the user exists. A user without a password
-      // cannot sign in with the form.
+      // `verifyPassword()` はハッシュがなくても同じだけ時間をかけるので、応答までの時間からユーザーの有無はわからない。
+      // パスワードのないユーザーは、フォームではログインできない。
       const passwordHash = user?.password_hash ?? null;
       if (!(await verifyPassword(password, passwordHash)) || !user || passwordHash === null) {
         return undefined;
@@ -617,8 +632,8 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
       const user = await read<UserRecord>(keys.user(sub));
       return user ? userClaims(sub, user) : undefined;
     },
-    // Find or create the user of a verified upstream account by its federated
-    // identity (never by email), and save the claims the provider asserted.
+    // 検証済みの外部アカウントのユーザーを紐付けから探し、なければ作る（メールアドレスでは探さない）。
+    // そのうえで、外部の ID プロバイダから受け取ったクレームを保存して返す。
     async linkFederatedIdentity(identity) {
       const userId =
         (await findFederatedUser(identity.provider, identity.subject)) ??
@@ -629,10 +644,9 @@ export function createProviderStores(db: KvDatabase): ProviderStores {
     },
   };
 
-  // The upstream sign-in a transaction waits for, kept in the
-  // upstream_auth_request record of the transaction, and found by its nonce
-  // through upstream_nonce. A transaction has one record, so a newer login
-  // page replaces the nonce of an older one. Both expire with the transaction.
+  // トランザクションが待っている外部の ID プロバイダでのログインは、トランザクションの `upstream_auth_request` のレコードに保存し、`upstream_nonce` を通して `nonce` から探す。
+  // レコードはトランザクションに一つなので、新しいログイン画面の `nonce` が古い画面の `nonce` を置き換える。
+  // 二つのレコードは、トランザクションと同時に期限切れになる。
   const upstreamLoginStore: UpstreamLoginStorage = {
     async find(nonce) {
       const index = await read<UpstreamNonceRecord>(keys.upstreamNonce(nonce));
@@ -725,16 +739,27 @@ type AccessTokenField =
   | 'grantId'
   | 'acr';
 
+/** 現在の時刻をエポック秒（整数）で返す。 */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** The TTL that makes a key expire at expiresAt (epoch seconds), 1 second at least. */
+/**
+ * `expiresAt` までの有効期間を秒で返す。
+ *
+ * `expiresAt` はエポック秒で受け取る。
+ * 期限が過ぎていても 1 を返す（KV ストアの有効期間は 1 秒以上である）。
+ */
 function ttlUntil(expiresAt: number): number {
   return Math.max(1, expiresAt - nowSeconds());
 }
 
-/** The claims of a user record: email and email_verified from their fields, the rest from claims. */
+/**
+ * ユーザーのレコードからクレームを組み立てて返す。
+ *
+ * `sub` には引数の `sub` を使い、ほかのクレームはレコードの `claims` から取る。
+ * レコードに `email` があるときだけ、`email` と `email_verified`（`is_verified` の値）を加える。
+ */
 function userClaims(sub: string, user: UserRecord): UserClaims {
   const claims: UserClaims = { ...(user.claims as Partial<UserClaims>), sub };
   if (user.email !== null) {
@@ -744,20 +769,39 @@ function userClaims(sub: string, user: UserRecord): UserClaims {
   return claims;
 }
 
+/**
+ * `key` の先頭の `prefix` を取り除いて返す。
+ *
+ * `prefix` で始まらない `key` は、そのまま返す。
+ */
 function withoutPrefix(key: string, prefix: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
 
-/** The scope field: space-separated, null when there is none. */
+/**
+ * スコープの配列を空白区切りの文字列にして返す。
+ *
+ * アクセストークンのレコードの `scope` に保存する値で、スコープがなければ `null` を返す。
+ */
 function joinScope(scope: string[]): string | null {
   return scope.length > 0 ? scope.join(' ') : null;
 }
 
+/**
+ * 空白区切りのスコープを配列にして返す。
+ *
+ * `null` と空文字列には、空の配列を返す。
+ */
 function splitScope(scope: string | null): string[] {
   return scope ? scope.split(' ') : [];
 }
 
-/** The key a code or token is stored under: its SHA-256 hash, base64url-encoded. */
+/**
+ * 値の SHA-256 ハッシュを base64url で返す。
+ *
+ * 認可コードとトークンは、この値をキーにして保存する。
+ * パディングは付けない。
+ */
 async function hashKey(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   let binary = '';

@@ -15,7 +15,7 @@ export const meta = step({
   endpoint: 'authorize',
   feature: 'implicit-flow',
   kind: 'validate',
-  label: 'Validate the Implicit Flow request (response_mode, nonce, redirect_uri)',
+  label: 'インプリシットフローのリクエストを検証する',
   spec: 'OIDC Core 1.0 §3.2.2.1 / OAuth 2.0 Multiple Response Type Encoding Practices §3 / §5',
   function: 'validateImplicitRequest',
   consumes: ['validatedRequest', 'params', 'effectiveParams', 'client', 'responseMode'],
@@ -25,20 +25,20 @@ export const meta = step({
 });
 
 /**
- * What a request of the Implicit Flow (response_type=id_token or id_token
- * token) needs on top of validate-request, checked before the transaction is
- * created. Each check is a core function; every failure is a redirectable
- * invalid_request, sent back in the response mode of the request (the
- * fragment by default, OIDC Core 1.0 §3.2.2.6). A request of the code flow
- * passes untouched.
+ * インプリシットフローに固有の条件を検証する。
  *
- * - response_mode: query must not carry the tokens (OAuth 2.0 Multiple
- *   Response Type Encoding Practices §3 / §5 / §7), and a response mode the
- *   OP does not answer this request in (JARM's query.jwt, a value it does not
- *   know) is refused instead of being swapped for the fragment
- * - nonce is REQUIRED (OIDC Core 1.0 §3.2.2.1)
- * - redirect_uri: https, or http on a loopback host for a public (native)
- *   client (OIDC Core 1.0 §3.2.2.1)
+ * `response_type` がインプリシットフローのもの（`id_token` か `id_token token`）でなければ、何もしない。
+ * 検証はトランザクションを作る前に行い、次の条件をそれぞれ core の関数で確かめる。
+ * - トークンをクエリに含めないよう、`response_mode=query` を拒否する（OAuth 2.0 Multiple Response Type Encoding Practices §3、§5、§7）。
+ * - OP がこのリクエストに使うレスポンスモード（`responseMode`）と異なる `response_mode`（JARM の `query.jwt` や未知の値）も、フラグメントに置き換えずに拒否する。
+ * - `nonce` を必須とする（OIDC Core 1.0 §3.2.2.1）。
+ * - `redirect_uri` に `http` のスキームを使えるのは、パブリック（ネイティブ）クライアントがループバックのホストを指定したときだけとする（OIDC Core 1.0 §3.2.2.1）。
+ *
+ * 違反には、リダイレクトで返せる `invalid_request` を投げる。
+ * パイプラインは、このエラーをリクエストのレスポンスモード（既定はフラグメント）でクライアントへ返す（OIDC Core 1.0 §3.2.2.6）。
+ *
+ * @throws {AuthorizationError} `invalid_request`: 上のどれかの条件に違反するとき。
+ * @spec OIDC Core 1.0 §3.2.2.1
  */
 export function validateImplicitRequest(
   validatedRequest: ValidatedAuthorizationRequest,

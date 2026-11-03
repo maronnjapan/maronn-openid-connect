@@ -20,19 +20,18 @@ export interface CurrentTransaction {
 }
 
 /**
- * The authorization transaction this browser is in the middle of, for the login
- * and consent pages and the login Server Action.
+ * このブラウザの認可のトランザクションを返す。
  *
- * /authorize hands the transaction id to the browser only in the HttpOnly
- * transaction cookie (buildTransactionCookie() in cookies.ts) — never in a URL or
- * in the HTML — so this is where it is read from. The forms carry just the
- * csrf_token, which the login Server Action and the consent decision
- * (consent/decision/route.ts) accept only for this transaction.
+ * ログイン画面、同意画面、ログインのサーバーアクションが使う。
+ * トランザクションの Cookie からトランザクション ID を読み、ストアからそのトランザクションを読み込んで、ID とともに返す。
  *
- * When there is none — no cookie, or a transaction that is unknown, already
- * finished, or expired — the request ends in notFound(), which renders the
- * not-found.tsx beside the page: the End-User has to start over from the client
- * application.
+ * `/authorize` は、トランザクション ID を `HttpOnly` のトランザクションの Cookie（`cookies.ts` の `buildTransactionCookie()`）でだけブラウザに渡し、URL にも HTML にも入れない。
+ * そのため、トランザクション ID はここで Cookie から読む。
+ * フォームには `csrf_token` だけが入り、ログインのサーバーアクションと同意の決定（`consent/decision/route.ts`）は、このトランザクションの `csrf_token` だけを受け付ける。
+ *
+ * Cookie がないとき、またはトランザクションが登録されていない、終わっている、期限切れのときは `notFound()` を呼ぶ。
+ * `notFound()` はページの横の `not-found.tsx` を描画し、エンドユーザーはクライアントのアプリケーションからやり直すことになる。
+ * それ以外のエラーは、そのまま投げる。
  */
 export async function requireTransaction(): Promise<CurrentTransaction> {
   const transactionId = (await cookies()).get(TRANSACTION_COOKIE_NAME)?.value;
@@ -49,15 +48,14 @@ export async function requireTransaction(): Promise<CurrentTransaction> {
 }
 
 /**
- * Stop the login Server Action when the browser says it was not
- * submitted from the OP's own pages (isSameOriginFormPost() in cookies.ts): the
- * OP's error page, never the client. It depends on neither the transaction
- * cookie nor the csrf_token, so it still holds when a sibling subdomain planted
- * a transaction cookie whose csrf_token it knows.
+ * OP 以外からの POST ならエラー画面へリダイレクトする。
  *
- * Next.js already refuses a Server Action whose Origin differs from the Host
- * header. This check compares against config.issuer instead and reads Fetch
- * Metadata as well, so the contract does not depend on the platform's Host.
+ * ログインのサーバーアクションが、フォームが OP 自身のページから送られたかを確かめるのに使う。
+ * ブラウザのヘッダーが OP 以外から送られたことを示すと（`cookies.ts` の `isSameOriginFormPost()`）、クライアントではなく OP のエラー画面（`cross_origin_request`）へリダイレクトして、サーバーアクションを止める。
+ * この検査はトランザクションの Cookie にも `csrf_token` にもよらないので、同じ親ドメインの別のサブドメインがトランザクションの Cookie を仕込み、その `csrf_token` を知っていても拒否できる。
+ *
+ * Next.js も、`Origin` が `Host` ヘッダーと違うサーバーアクションを拒否する。
+ * この検査は設定の `issuer` と比べ、フェッチメタデータも読むので、実行環境が `Host` をどう扱うかに左右されない。
  */
 export async function requireSameOriginFormPost(): Promise<void> {
   const requestHeaders = await headers();

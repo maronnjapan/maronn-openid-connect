@@ -44,16 +44,16 @@ export interface AccessTokenAudienceInput {
 }
 
 /**
- * アクセストークンの aud を合成する。
+ * アクセストークンの `aud` に入れる値の配列を返す。
  *
- * 各フレームワーク template と core 呼び出し側が同じ規則で aud を組み立てられるよう、
- * audience 合成ポリシーを 1 箇所に集約する。
+ * `userInfoEndpoint` があれば先頭に入れ、その後ろに `requested`（`resource` パラメータで要求されたリソース、RFC 8707）を並べて、重複を取り除く（最初に現れた位置に残す）。
+ * 結果が空なら、`issuer` だけの配列を返す。
+ * JWT のアクセストークンの `aud` は空であってはならないためである（RFC 9068 §3）。
  *
- * RFC 9068 §3: JWT access token の aud は非空でなければならない。
- * - `userInfoEndpoint` があれば aud の恒久メンバとして先頭に必ず含める（取り除かない）
- * - `requested` の resource indicator を後ろに追加する
- * - 重複は除去する（最初の出現順を保持）
- * - 結果が空なら `issuer` をデフォルト audience とする
+ * `userInfoEndpoint` を常に入れるのは、どのアクセストークンも OP の UserInfo エンドポイントで使えるようにするためである。
+ * 各フレームワークのテンプレートと core の呼び出し側が同じ規則で `aud` を組み立てられるように、規則をこの関数にまとめている。
+ *
+ * @spec RFC 9068 §3
  */
 export function buildAccessTokenAudience(input: AccessTokenAudienceInput): string[] {
   const { userInfoEndpoint, requested, issuer } = input;
@@ -92,8 +92,12 @@ export interface IdTokenAudienceResult {
 }
 
 /**
- * ID Token の aud と azp を決める。クライアント自身だけなら aud はその client_id の文字列、
- * 追加の audience があれば重複を除いた配列にし、azp にクライアントの client_id を入れる。
+ * ID トークンの `aud` と `azp` を決めて返す。
+ *
+ * `clientId` を先頭に、`additional`（クライアント自身以外のオーディエンス）を後ろに並べて、重複を取り除く。
+ * 結果がクライアント自身だけなら、`aud` を `clientId` の文字列にし、`azp` は付けない。
+ * 結果が複数なら、`aud` をその配列にし、`azp` に `clientId` を入れる。
+ *
  * @spec OIDC Core 1.0 §2
  */
 export function buildIdTokenAudience(input: IdTokenAudienceInput): IdTokenAudienceResult {
@@ -136,15 +140,19 @@ export interface AccessTokenPayloadInput {
 }
 
 /**
- * アクセストークンの payload を組み立てる
- * RFC 9068 §2.2: iss / sub / aud / exp / iat / jti / scope / client_id
- * RFC 9068 §2.2.1: acr（指定時のみ）
+ * アクセストークンのペイロードを組み立てて返す。
  *
- * 実際の発行（JWT 署名 / Opaque 文字列）は {@link AccessTokenIssuer} の責務。
- * 独自クレームを載せたい場合は戻り値へ追加してから issuer に渡す。
+ * 返すペイロードは `iss`、`sub`、`aud`、`exp`、`iat`、`jti`、`scope`、`client_id` を持ち（RFC 9068 §2.2）、`acr` を渡したときだけ `acr` も持つ（RFC 9068 §2.2.1）。
+ * `aud` は `audience` から重複を取り除いた配列で、`audience` が空か省略されていれば `issuer` だけの配列にする（{@link buildAccessTokenAudience}）。
+ * `iat` は `issuedAt`（省略したときは現在のエポック秒）、`exp` は `iat` に `expiresIn` を足した値で、`scope` はスコープを半角空白でつないだ文字列である。
+ * `jti` を省略すると 128 ビットの乱数から作った値を入れるので、`jti` は発行のたびに異なる。
  *
- * 戻り値の `jti` は発行ごとに異なる。呼び出し側はこの値をトークンのメタデータとして
- * ストアへ保存しておくと、イントロスペクション（RFC 7662 §2.2）が `jti` を返せる。
+ * トークンの発行（JWT への署名や、不透明な文字列の生成）は {@link AccessTokenIssuer} が行う。
+ * 独自のクレームを加えたいときは、返したペイロードに加えてから `AccessTokenIssuer` に渡す。
+ * 呼び出し側が `jti` をトークンのメタデータとしてストアに保存しておくと、イントロスペクションが `jti` を返せる（RFC 7662 §2.2）。
+ *
+ * @spec RFC 9068 §2.2
+ * @spec RFC 9068 §2.2.1
  */
 export function buildAccessTokenPayload(
   input: AccessTokenPayloadInput,
@@ -158,35 +166,32 @@ export function buildAccessTokenPayload(
     aud: buildAccessTokenAudience({ requested: audience, issuer }),
     exp: issuedAt + expiresIn,
     iat: issuedAt,
-    // RFC 9068 §2.2: jti は REQUIRED。RFC 7519 §4.1.7 は「別のトークンに同じ値が
-    // 割り当てられる確率が無視できる」ことを要求する。128bit の CSPRNG 値で満たす。
+    // `jti` を渡されなければ、暗号論的に安全な 128 ビットの乱数から作る。
+    // `jti` は必須であり（RFC 9068 §2.2）、別のトークンに同じ値が割り当てられる確率を無視できるほど小さくしなければならない（RFC 7519 §4.1.7）。
     //
-    // 併せて、これが「同一秒・同一入力の 2 回発行」を別トークンにする唯一の可変要素
-    // でもある。RS256（RFC 8017 §8.2 の RSASSA-PKCS1-v1_5）は決定的な署名方式なので、
-    // jti が無いと 2 本の grant のアクセストークンがバイト単位で同一になり、トークン
-    // 文字列をキーにするストアで後勝ちの上書きが起きる（＝先の grant に対する
-    // grantId 単位の失効が黙って効かなくなる）。
+    // `jti` は、同じ秒に同じ入力で 2 回発行したトークンを別のトークンにする唯一の値でもある。
+    // RS256（RFC 8017 §8.2 の RSASSA-PKCS1-v1_5）は同じ入力から同じ署名を作る方式なので、`jti` がないと、二つのグラントのアクセストークンがバイト単位で同じになる。
+    // すると、トークンの文字列をキーにするストアで後のトークンが先のトークンのレコードを上書きし、先のグラントをグラント ID で失効させても、エラーにならないまま、そのトークンは失効しない。
     jti: input.jti ?? generateRandomString(16),
     scope: scope.join(' '),
     client_id: clientId,
-    // RFC 9068 §2.2.1: acr は OPTIONAL な認証情報クレーム。リソースサーバーは、
-    // どの認証コンテキストで発行されたトークンかをこれで判断できる。
+    // `acr` を渡されたときだけ `acr` を入れる（RFC 9068 §2.2.1 では省略できるクレームである）。
+    // リソースサーバーは、トークンがどの認証コンテキストで発行されたかを `acr` で判断できる。
     ...(input.acr !== undefined ? { acr: input.acr } : {}),
   };
 }
 
 /**
- * at_hash を計算する
- * OIDC Core 1.0 Section 3.1.3.6:
- * ID Token の JOSE Header `alg` で使われるハッシュ関数で access_token をハッシュし、
- * 左半分を取り出して base64url エンコードする。
- * （例: alg=RS256→SHA-256, RS384/ES384→SHA-384, RS512/ES512→SHA-512）
+ * アクセストークンの `at_hash` を計算して返す。
  *
- * 左半分の算出は `slice(0, byteLength / 2)` で alg 非依存に一般化される
- * （SHA-256→16B, SHA-384→24B, SHA-512→32B）。
+ * `at_hash` は、ID トークンの JOSE ヘッダーの `alg` が使うハッシュ関数でアクセストークンをハッシュし、左半分を base64url で符号化した値である（OIDC Core 1.0 §3.1.3.6）。
+ * ハッシュ関数は `idTokenPrivateKey` のアルゴリズムから決める（RS256 と ES256 なら SHA-256、RS384 と ES384 なら SHA-384、RS512 と ES512 なら SHA-512）。
+ * 左半分はハッシュ値の前半のバイト（SHA-256 なら 16 バイト、SHA-384 なら 24 バイト、SHA-512 なら 32 バイト）なので、`alg` によらず同じ計算で求まる。
+ * 対応していないアルゴリズムの鍵には `Error` を投げる。
  *
- * @param accessToken ハッシュ対象のアクセストークン
- * @param idTokenPrivateKey ID Token の署名鍵。この鍵の alg からハッシュ関数を決める
+ * @spec OIDC Core 1.0 §3.1.3.6
+ * @param accessToken ハッシュするアクセストークン
+ * @param idTokenPrivateKey ID トークンの署名鍵（この鍵のアルゴリズムからハッシュ関数を決める）
  */
 export async function computeAtHash(
   accessToken: string,
@@ -196,15 +201,14 @@ export async function computeAtHash(
 }
 
 /**
- * c_hash を計算する
- * OIDC Core 1.0 Section 3.3.2.11:
- * Hybrid Flow で認可エンドポイントが認可コードと一緒に ID Token を返すとき
- * （`code id_token` / `code id_token token`）、ID Token は c_hash を含まなければならない。
- * 値は at_hash と同じ求め方で、対象が認可コードの ASCII 表現になる: ID Token の JOSE Header
- * `alg` で使われるハッシュ関数でコードをハッシュし、左半分を取り出して base64url エンコードする。
+ * 認可コードの `c_hash` を計算して返す。
  *
- * @param code ハッシュ対象の認可コード
- * @param idTokenPrivateKey ID Token の署名鍵。この鍵の alg からハッシュ関数を決める
+ * `c_hash` は、ID トークンの JOSE ヘッダーの `alg` が使うハッシュ関数で認可コードの ASCII 表現をハッシュし、左半分を base64url で符号化した値で、対象が違うだけで `at_hash` と同じ求め方である（{@link computeAtHash}）。
+ * ハイブリッドフローで認可エンドポイントが認可コードと一緒に ID トークンを返すとき（`code id_token` と `code id_token token`）、ID トークンは `c_hash` を含まなければならない（OIDC Core 1.0 §3.3.2.11）。
+ *
+ * @spec OIDC Core 1.0 §3.3.2.11
+ * @param code ハッシュする認可コード
+ * @param idTokenPrivateKey ID トークンの署名鍵（この鍵のアルゴリズムからハッシュ関数を決める）
  */
 export async function computeCHash(
   code: string,
@@ -214,9 +218,14 @@ export async function computeCHash(
 }
 
 /**
- * OIDC Core 1.0 §3.1.3.6 / §3.3.2.11 のハッシュクレーム（at_hash / c_hash）の共通の求め方:
- * 値の ASCII 表現を ID Token の署名鍵の alg に対応するハッシュ関数でハッシュし、
- * 左半分を base64url エンコードする。
+ * 値のハッシュの左半分を base64url で符号化して返す。
+ *
+ * `idTokenPrivateKey` のアルゴリズム（`alg`）に対応するハッシュ関数で `value` のバイト列をハッシュし、ハッシュ値の前半のバイトを base64url で符号化する。
+ * `at_hash` と `c_hash` に共通の求め方である（OIDC Core 1.0 §3.1.3.6、§3.3.2.11）。
+ * 対応していないアルゴリズムの鍵には `Error` を投げる。
+ *
+ * @spec OIDC Core 1.0 §3.1.3.6
+ * @spec OIDC Core 1.0 §3.3.2.11
  */
 async function computeLeftHalfHash(value: string, idTokenPrivateKey: CryptoKey): Promise<string> {
   const hashName = jwaToHashName(getJwaAlgorithm(idTokenPrivateKey));
@@ -250,15 +259,20 @@ export interface ResolvedAcrAmr {
 }
 
 /**
- * トークンに載せる acr / amr を解決する（ID Token は acr と amr、アクセストークンは acr）
+ * トークンに入れる `acr` と `amr` を決めて返す。
  *
- * 優先順位:
- * 1. 呼び出し側が直接指定した acr / amr（refresh 時に §12.1 の初回値を保持するケース）
- * 2. acrResolver（新規認証時）
- * 3. どちらも無ければ省略（core は認証ポリシーを決め打ちしない）
+ * 次の順に決める:
+ * - 呼び出し側が `acr` か `amr` を渡したときは、渡された値を返す（リフレッシュで最初の認証の値を引き継ぐとき、OIDC Core 1.0 §12.1）。
+ * - `acrResolver` があれば、それが返した値を返す（新しく認証したとき）。
+ * - どちらもなければ、どちらも `undefined` を返す（core は認証のポリシーを決めない）。
  *
- * OIDC Core 1.0 §5.5.1.1: `claims.id_token.acr.values` は acr_values 要求と等価。
- * `requestedAcrValues` が無い場合はこれを resolver への要求値として渡す。
+ * `acrResolver` には、サブジェクト、クライアント ID、要求された `acr` の値を渡す。
+ * 要求された値は認可リクエストの `acr_values` で、ないときは `claims` パラメータの `claims.id_token.acr.values` を使う（{@link selectRequestedAcrValues}）。
+ * `claims.id_token.acr.values` は、`acr_values` での要求と同じ意味を持つためである（OIDC Core 1.0 §5.5.1.1）。
+ * 呼び出し側は、返した `acr` と `amr` を ID トークンに入れ、`acr` をアクセストークンにも入れる。
+ *
+ * @spec OIDC Core 1.0 §12.1
+ * @spec OIDC Core 1.0 §5.5.1.1
  */
 export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<ResolvedAcrAmr> {
   const { subject, clientId, acr, amr, requestedAcrValues, claims, acrResolver } = input;
@@ -280,12 +294,15 @@ export async function resolveAcrAmr(input: ResolveAcrAmrInput): Promise<Resolved
 }
 
 /**
- * 要求された acr 値のうち、最も優先する値（先頭の値）を返す。
- * OIDC Core 1.0 §3.1.2.1: acr_values は値を優先順に並べる。
+ * 要求された `acr` の値のうち、最も優先する値を返す。
  *
- * AcrResolver を使わない構成で、要求された acr をそのままトークンの `acr` にするときに使う。
- * この値は要求を信じたもので、OP が実際に行った認証を表すとは限らない。
- * 要求が無い、または値が 1 つも無い場合は undefined を返す。
+ * `acr_values` は値を優先順に並べるので（OIDC Core 1.0 §3.1.2.1）、半角空白で分けた最初の値を返す。
+ * `requestedAcrValues` が `undefined` のとき、または値が一つもないときは `undefined` を返す。
+ *
+ * `AcrResolver` を使わない構成で、要求された `acr` をそのままトークンの `acr` にするときに使う。
+ * この値は要求をそのまま信じたもので、OP が実際に行った認証を表すとは限らない。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export function selectPreferredAcr(requestedAcrValues: string | undefined): string | undefined {
   if (requestedAcrValues === undefined) return undefined;
@@ -293,8 +310,13 @@ export function selectPreferredAcr(requestedAcrValues: string | undefined): stri
 }
 
 /**
- * acr resolver へ渡す要求 acr 値を選ぶ。acr_values パラメータがあればそれを使う。
- * 無ければ OIDC Core 1.0 §5.5.1.1 に従い、`claims.id_token.acr.values` の文字列を空白で連結する。
+ * `acrResolver` に渡す、要求された `acr` の値を返す。
+ *
+ * `acr_values` パラメータの値（`requestedAcrValues`）があれば、それをそのまま返す。
+ * なければ、`claims.id_token.acr.values` の文字列の値を半角空白でつないで返す（OIDC Core 1.0 §5.5.1.1）。
+ * どちらもないとき（`values` に文字列が一つもないときを含む）は `undefined` を返す。
+ *
+ * @spec OIDC Core 1.0 §5.5.1.1
  */
 export function selectRequestedAcrValues(
   requestedAcrValues: string | undefined,
@@ -339,12 +361,20 @@ export interface IdTokenPayloadInput {
 }
 
 /**
- * ID Token の payload を組み立てる
+ * ID トークンのペイロードを組み立てて返す。
  *
- * 署名は {@link generateIdToken} の責務。独自クレームを載せたい場合は
- * 戻り値へ追加してから署名すること（必須クレームは上書きされない）。
+ * `userClaims` があれば、まず `scope` に応じたユーザーのクレームを入れる（{@link filterClaimsByScope}、OIDC Core 1.0 §5.4）。
+ * その後で `iss`、`sub`、`aud`、`exp`、`iat` を代入し、`azp`、`at_hash`、`c_hash`、`nonce`、`auth_time`、`acr`、`amr` は値があるときだけ代入する。
+ * 必須のクレームを後から代入するので、ユーザーのクレームの `sub` などで必須のクレームを偽ることはできない。
+ * `aud` と `azp` は {@link buildIdTokenAudience} で決め、`iat` は `issuedAt`（省略したときは現在のエポック秒）、`exp` は `iat` に `expiresIn` を足した値にする。
  *
- * @spec OIDC Core 1.0 §2 / 3.1.3.6 / 3.3.2.11 / 5.4
+ * 署名は {@link generateIdToken} が行う。
+ * 独自のクレームを加えたいときは、返したペイロードに加えてから署名する。
+ *
+ * @spec OIDC Core 1.0 §2
+ * @spec OIDC Core 1.0 §3.1.3.6
+ * @spec OIDC Core 1.0 §3.3.2.11
+ * @spec OIDC Core 1.0 §5.4
  */
 export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload {
   const {
@@ -366,20 +396,17 @@ export function buildIdTokenPayload(input: IdTokenPayloadInput): IdTokenPayload 
 
   const payload: Record<string, unknown> = {};
 
-  // OIDC Core 1.0 §5.4 / §12: scope に応じてユーザクレームを含める。
-  // 必須クレーム (iss/sub/aud/exp/iat/at_hash etc.) は後続の代入で上書きされるため
-  // ここではユーザクレーム由来の sub などによる spoof を防げる。
+  // スコープに応じたユーザーのクレームを入れる（OIDC Core 1.0 §5.4、§12）。
+  // 必須のクレーム（`iss`、`sub`、`aud`、`exp`、`iat`、`at_hash` など）は後の代入で上書きするので、ユーザーのクレームの `sub` などで値を偽ることはできない。
   if (userClaims) {
     Object.assign(payload, filterClaimsByScope(userClaims, scope));
   }
 
   payload.iss = issuer;
   payload.sub = subject;
-  // OIDC Core 1.0 §2 / §3.1.3.7 (4-5): build aud/azp via buildIdTokenAudience so the
-  // array case is handled correctly. Default (no idTokenAudiences) → aud = clientId
-  // (single string), azp omitted. When additional audiences are supplied → aud becomes
-  // an array and azp = clientId is emitted, so a multi-audience ID Token can never drop
-  // the azp required by OIDC Core 1.0 Section 2 for multiple audiences.
+  // `aud` と `azp` は `buildIdTokenAudience()` で決める（OIDC Core 1.0 §2、§3.1.3.7 の 4 と 5）。
+  // `idTokenAudiences` がなければ、`aud` を `clientId` の文字列にし、`azp` は付けない。
+  // 追加のオーディエンスがあれば、`aud` を配列にして `azp` に `clientId` を入れるので、複数のオーディエンスを持つ ID トークンに必要な `azp`（OIDC Core 1.0 §2）が抜けることはない。
   const { aud, azp } = buildIdTokenAudience({ clientId, additional: idTokenAudiences });
   payload.aud = aud;
   if (azp !== undefined) {
@@ -430,33 +457,32 @@ const ID_TOKEN_OWN_CLAIMS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * claims リクエストパラメータの id_token メンバーで個別に要求されたクレームを
- * ID Token の payload に加える
+ * 個別に要求されたクレームをペイロードに加えて返す。
  *
- * id_token メンバーのクレームは、ID Token の既定のクレームに加えて返すよう要求されたもの
- * である（§5.5）。End-User のクレームにあるものを payload に足す。value / values が
- * 指定されたクレームは、実値が一致するときだけ足す。値の無いクレームと一致しない
- * クレームは省き、エラーにしない（§5.5.1）。
+ * `claims` パラメータの `id_token` メンバーで個別に要求されたクレームは、ID トークンの既定のクレームに加えて返すよう要求されたものである（OIDC Core 1.0 §5.5）。
+ * このうち、エンドユーザーのクレーム（`userClaims`）に値があるものをペイロードに加える。
+ * `value` か `values` が指定されたクレームは、実際の値が一致するときだけ加える。
+ * 値がないクレームと一致しないクレームは、エラーにせずに省く（OIDC Core 1.0 §5.5.1）。
  *
- * ID Token 自身のクレーム（iss / sub / aud / exp / iat / auth_time / nonce / acr / amr /
- * azp / at_hash / c_hash）は End-User のクレームから取らず、payload がすでに持つクレームも
- * 置き換えない。acr の要求は acr_values と同じく {@link resolveAcrAmr} が扱う（§5.5.1.1）。
+ * ID トークン自身のクレーム（`iss`、`sub`、`aud`、`exp`、`iat`、`auth_time`、`nonce`、`acr`、`amr`、`azp`、`at_hash`、`c_hash`）は、エンドユーザーのクレームから取らない。
+ * ペイロードがすでに持つクレームも置き換えない。
+ * `acr` の要求は、`acr_values` と同じく {@link resolveAcrAmr} が扱う（OIDC Core 1.0 §5.5.1.1）。
  *
- * 要求されたキー名はアロウリスト（既定 {@link DEFAULT_REQUESTABLE_CLAIMS}）に
- * 載っている名前だけを読み出す。`claims` のキー名は RP が任意に指定できるため、
- * 無検査で読むと resolver が返した余剰フィールド（DB の行など）が scope を迂回して
- * ID Token から開示される。アロウリスト外のクレームは黙って省く（§5.5.1 の
- * MUST NOT のとおりエラーにはしない）。
+ * 読み出すのは、許可リスト（`allowedClaimNames`、既定値は {@link DEFAULT_REQUESTABLE_CLAIMS}）にある名前のクレームだけである。
+ * `claims` のキーの名前は RP が自由に指定できるので、確かめずに読むと、リゾルバが返した余分なフィールド（データベースの行など）が、スコープによる制限を通らずに ID トークンで開示されてしまう。
+ * 許可リストにないクレームも、エラーにせずに省く（OIDC Core 1.0 §5.5.1 は、要求されたクレームを返せないときにエラーを返すことを禁じている）。
  *
- * 入力の payload は変更せず、新しいオブジェクトを返す。
+ * `userClaims` か `claims.id_token` がなければ、渡されたペイロードをそのまま返す。
+ * それ以外のときは、ペイロードを複製してからクレームを加えるので、渡されたペイロードは変更しない。
  *
- * @spec OIDC Core 1.0 §5.5 / 5.5.1
- * @param payload {@link buildIdTokenPayload} が組み立てた payload
- * @param userClaims End-User のクレーム。undefined なら payload をそのまま返す
- * @param claimsParameter 認可リクエストの claims パラメータ
- * @param allowedClaimNames `claims` 経由で読み出してよいクレーム名。既定は標準クレーム。
- *   Discovery の `claims_supported` と同じ語彙を公開する OP は、その一覧をここへ注入する
- * @returns 要求されたクレームを足した payload
+ * @spec OIDC Core 1.0 §5.5
+ * @spec OIDC Core 1.0 §5.5.1
+ * @param payload {@link buildIdTokenPayload} が組み立てたペイロード
+ * @param userClaims エンドユーザーのクレーム（`undefined` なら `payload` をそのまま返す）
+ * @param claimsParameter 認可リクエストの `claims` パラメータ
+ * @param allowedClaimNames `claims` で要求されたときに読み出してよいクレームの名前（既定値は標準のクレームの名前）。
+ *   ディスカバリーの `claims_supported` と同じ名前を公開する OP は、その一覧を渡す。
+ * @returns 要求されたクレームを加えたペイロード
  */
 export function applyRequestedIdTokenClaims(
   payload: IdTokenPayload,
@@ -472,7 +498,7 @@ export function applyRequestedIdTokenClaims(
     if (ID_TOKEN_OWN_CLAIMS.has(claimName)) continue;
     if (!allowedClaimNames.has(claimName)) continue;
     if (Object.prototype.hasOwnProperty.call(result, claimName)) continue;
-    // Only the End-User's own claims, not what the object inherits (constructor, toString...).
+    // エンドユーザーのクレームのオブジェクト自身が持つプロパティだけを読み、継承したプロパティ（`constructor`、`toString` など）は読まない。
     if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;
 
     const value = (userClaims as unknown as Record<string, unknown>)[claimName];

@@ -1,7 +1,13 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 /** A viewport-height detail view; the native modal keeps focus inside and restores it when closed. */
-export function DetailDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function DetailDrawer({ title, onClose, children, className = '', closeLabel = '詳細を閉じる' }: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  className?: string;
+  closeLabel?: string;
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -18,7 +24,7 @@ export function DetailDrawer({ title, onClose, children }: { title: string; onCl
   return (
     <dialog
       ref={dialogRef}
-      className="detail-drawer"
+      className={`detail-drawer ${className}`}
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault();
@@ -33,7 +39,7 @@ export function DetailDrawer({ title, onClose, children }: { title: string; onCl
       <div className="drawer-layout">
         <header className="panel-head drawer-head">
           <h3 id={titleId}>{title}</h3>
-          <button type="button" className="icon" onClick={onClose} aria-label="詳細を閉じる">
+          <button type="button" className="icon" onClick={onClose} aria-label={closeLabel}>
             ×
           </button>
         </header>

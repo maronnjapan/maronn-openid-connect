@@ -20,9 +20,11 @@
  * (pnpm run build:map at the root does both).
  */
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { KIND_ORDER, KIND_WORDS, catalogRoots, changesMarkdown, collectChanges, pullRequestOf } from './changes.mjs';
+import { collectSources } from './sources.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(appRoot, '../../packages/cli/dist');
@@ -34,13 +36,17 @@ const load = (file) => import(pathToFileURL(join(dist, file)).href);
 const { buildOpFlow, edgesForSteps } = await load('flow/build.js');
 const { annotateFlowModules } = await load('flow/modules.js');
 const { buildOpMap } = await load('explain/map.js');
-const { PACKAGE_ROOT, functionProject, readExtractionDefinition } = await load('extract/templates.js');
+const { PACKAGE_ROOT, functionProject, readExtractionDefinition, readFunctionRoots } = await load('extract/templates.js');
 const { analyzeFunctions } = await load('extract/functions.js');
 const { FEATURE_CONFIG_KEYS } = await load('registry.js');
 const { getAvailableFrameworks } = await load('generator.js');
 
 const features = Object.fromEntries(FEATURE_CONFIG_KEYS.map((key) => [key, true]));
 const project = functionProject();
+const definition = readExtractionDefinition();
+const repositoryRoot = resolve(appRoot, '../..');
+const packageDirectory = relative(repositoryRoot, PACKAGE_ROOT).split('\\').join('/');
+const roots = catalogRoots(definition, packageDirectory);
 const catalog = project.catalog;
 const frameworks = getAvailableFrameworks();
 const flows = {};
@@ -127,18 +133,32 @@ for (const flow of Object.values(flows)) {
 const base = process.env.MAP_BASE?.trim();
 let changes;
 if (base) {
-  const repositoryRoot = resolve(appRoot, '../..');
-  const packageDirectory = relative(repositoryRoot, PACKAGE_ROOT).split('\\').join('/');
   const collected = collectChanges({
     repositoryRoot,
     base,
-    roots: catalogRoots(readExtractionDefinition(), packageDirectory),
+    roots,
     analyze: analyzeFunctions,
     cards: Object.values(catalog.functions),
     pullRequest: pullRequestOf(process.env),
   });
   changes = collected.changes;
   for (const { file, reference } of collected.unknown) console.warn(`${file}: "${reference}" names no function of the catalog`);
+}
+
+// Code stays out of map.json: the drawer fetches one static file on demand.
+const sourceFiles = collectSources({
+  functions, flows, roots: readFunctionRoots(definition) ?? [],
+  directories: Object.fromEntries(roots.map((root) => [root.name, root.directory])),
+  frameworks: definition.frameworks, spanOf: (id) => project.spanOf(id),
+});
+const sources = {};
+const sourceDirectory = join(appRoot, 'public', 'data', 'sources');
+rmSync(sourceDirectory, { recursive: true, force: true });
+mkdirSync(sourceDirectory, { recursive: true });
+for (const [id, source] of Object.entries(sourceFiles)) {
+  const filename = `${createHash('sha256').update(id).update('\0').update(source.code).digest('hex')}.json`;
+  writeFileSync(join(sourceDirectory, filename), JSON.stringify(source.code));
+  sources[id] = { path: source.path, url: `./data/sources/${filename}` };
 }
 
 const data = {
@@ -151,6 +171,7 @@ const data = {
   members,
   memberOfCall,
   edgeSets,
+  sources,
   ...(changes === undefined ? {} : { changes }),
 };
 const out = join(appRoot, 'public', 'data', 'map.json');

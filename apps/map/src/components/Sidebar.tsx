@@ -32,7 +32,8 @@ export function Sidebar({ data, changes, framework, enabled, endpoints, selected
     if (endpoint.group.id !== group) {
       group = endpoint.group.id;
       rows.push(
-        <li key={`group-${group}`} className="group">
+        // A group can come back later in the list (google-login sits among the authorization code endpoints): key the run, not the group.
+        <li key={`group-${group}-${endpoint.id}`} className="group">
           {endpoint.group.label}
         </li>,
       );

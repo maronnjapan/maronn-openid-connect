@@ -421,6 +421,21 @@ export function traceRows(options: RowOptions): Row[] {
   return rows;
 }
 
+/**
+ * The key of the outline row that shows a node of a frame: its own row, else
+ * the run of actions folded to one row that holds it, else the row that shows
+ * its nearest ancestor in the same way (a guard or an optional item folded to
+ * one line, a decision whose side is folded); undefined when none does, as
+ * for a frame the outline does not show.
+ */
+export function rowFor(rows: readonly Row[], frame: string, node: string): string | undefined {
+  const row = rows.find((candidate) => candidate.frame === frame && (candidate.kind === 'node' ? candidate.node.id === node : candidate.kind === 'actions' && candidate.nodes.some((item) => item.id === node)));
+  if (row !== undefined) return row.key;
+  // An id is the id of the node it is under and its place there (`s0b1n0` under `s0b1`, `s5c1s0` under `s5`): trimming a segment at a time reaches every ancestor.
+  const parent = node.replace(/[a-z]+[0-9]+$/, '');
+  return parent === node || parent === '' ? undefined : rowFor(rows, frame, parent);
+}
+
 // ---- failures
 
 /** The ancestors of a node in a list, outermost first, each with the branch the node is in. */

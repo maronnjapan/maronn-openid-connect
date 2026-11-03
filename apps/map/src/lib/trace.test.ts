@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowTree, MapData, TreeNode } from '../types';
-import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, foldedWords, frameIds, framesToChanges, nodesRun, traceRows, wayTo } from './trace';
+import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, foldedWords, frameIds, framesToChanges, nodesRun, rowFor, traceRows, wayTo } from './trace';
 
 const call = (id: string, callee: string, extra: Partial<TreeNode> = {}): TreeNode => ({ id, kind: 'call', lines: [2, 2], code: `${callee}()`, target: { kind: 'function', id: callee }, ...extra });
 const returned = (id: string, code: string): TreeNode => ({ id, kind: 'return', lines: [3, 3], code });
@@ -147,5 +147,39 @@ describe('the rows of the outline', () => {
   it('should fold a side to its nodes in words', () => {
     expect(foldedWords([call('a', 'f'), returned('b', 'return x')])).toBe('呼び出し 1、return x で終わる');
     expect(foldedWords([])).toBe('何もしない');
+  });
+});
+
+describe('the row that shows a node', () => {
+  const outline = (open: string[], choices: Record<string, string>[] = [], unfolded: string[] = []) =>
+    traceRows({ rootId: 'endpoint:token', hasFrame: (id) => id === 'code' || id === 'check', trees, state: { ...EMPTY_TRACE, open, choices }, unfolded: new Set(unfolded) });
+
+  it('should give a node on a row of its own that row, in the root and in a frame opened below a call', () => {
+    const rows = outline(['s0b1n0']);
+    expect(rowFor(rows, '', 's0b4')).toBe('|s0b4');
+    expect(rowFor(rows, '', 's0b1')).toBe('|s0b1');
+    expect(rowFor(rows, 's0b1n0', 's1')).toBe('s0b1n0|s1');
+  });
+
+  it('should give a node in a folded run of actions the row of the run, keyed by its first action, and its own row once the run is unfolded', () => {
+    expect(rowFor(outline([]), '', 's0b2')).toBe('|actions|s0b2');
+    expect(rowFor(outline([]), '', 's0b3')).toBe('|actions|s0b2');
+    expect(rowFor(outline([], [], ['|actions|s0b2']), '', 's0b3')).toBe('|s0b3');
+  });
+
+  it('should give a node inside a folded guard the row of the guard, and its own row once the guard is unfolded', () => {
+    expect(rowFor(outline([]), '', 's0b0s1t0')).toBe('|s0b0s1');
+    expect(rowFor(outline([], [], ['|s0b0s1']), '', 's0b0s1t0')).toBe('|s0b0s1t0');
+  });
+
+  it('should give a node in a side the choice folds the row of the decision, through the nodes it is in', () => {
+    expect(rowFor(outline([], [{ s0b1: 'defined' }]), '', 's0b1n0')).toBe('|s0b1');
+    expect(rowFor(outline([], [{ s0: 'catch' }]), '', 's0b0s1t0')).toBe('|s0');
+  });
+
+  it('should give no row for a frame the outline does not show: unknown, closed, or opened below a side the choice folds', () => {
+    expect(rowFor(outline([]), 'nowhere', 's0')).toBeUndefined();
+    expect(rowFor(outline([]), 's0b1n0', 's1')).toBeUndefined();
+    expect(rowFor(outline(['s0b1n0'], [{ s0: 'catch' }]), 's0b1n0', 's1')).toBeUndefined();
   });
 });

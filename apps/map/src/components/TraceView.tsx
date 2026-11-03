@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { FlowTree, FrameChange, MapData, TreeNode } from '../types';
 import { belowCounts, countWords, markOf, nodeMark, type ChangeIndex } from '../lib/changes';
 import {
@@ -12,6 +12,7 @@ import {
   forcedSide,
   frameIds,
   isDecision,
+  rowFor,
   traceRows,
   type Row,
   type TraceState,
@@ -26,8 +27,12 @@ export interface TraceViewProps {
   trees: ReadonlyMap<string, FlowTree>;
   diffs: ReadonlyMap<string, FrameChange>;
   enabled: ReadonlySet<string>;
-  /** The node selected (its row key), for the detail beside the outline. */
-  selected: string | null;
+  /**
+   * The node selected, for the detail beside the outline: its frame and its
+   * id, and whether it was picked in the diagram (its row then scrolls into view).
+   * The row that shows it is highlighted: its own, or the folded row it is in.
+   */
+  selected: { frame: string; node: string; reveal: boolean } | null;
   onState: (next: TraceState) => void;
   onSelect: (row: { frame: string; node: TreeNode; frameId: string } | null) => void;
   onOpenFunction: (id: string) => void;
@@ -93,6 +98,14 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
     [rootId, data, trees, diffs, state, enabled, unfolded],
   );
   const ids = useMemo(() => frameIds(rootId, state.open, trees), [rootId, state.open, trees]);
+  const highlighted = selected === null ? undefined : rowFor(rows, selected.frame, selected.node);
+  const list = useRef<HTMLOListElement>(null);
+  // A box picked in the diagram brings its row into view; a row picked here is in view already.
+  useEffect(() => {
+    if (selected === null || !selected.reveal || highlighted === undefined) return;
+    const row = [...(list.current?.querySelectorAll<HTMLElement>('[data-row]') ?? [])].find((item) => item.dataset.row === highlighted);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
   const toggle = (set: Set<string>, key: string) => {
     const next = new Set(set);
     if (next.has(key)) next.delete(key);
@@ -117,7 +130,7 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
     const catcher = state.errors && node.kind === 'call' ? catcherOf(trees, ids, frame, node.id) : undefined;
     const failures = state.errors && callee !== undefined ? (entryOf(data, callee)?.failures ?? []) : [];
     return (
-      <li key={row.key} className={`trace-row kind-${node.kind}${row.on ? ' on' : ' off'}${row.before ? ' before' : ''}${selected === row.key ? ' selected' : ''}${mark !== undefined ? ' changed' : ''}`} style={indent(row.depth)}>
+      <li key={row.key} data-row={row.key} className={`trace-row kind-${node.kind}${row.on ? ' on' : ' off'}${row.before ? ' before' : ''}${highlighted === row.key ? ' selected' : ''}${mark !== undefined ? ' changed' : ''}`} style={indent(row.depth)}>
         <div className="trace-line">
           {row.frameState === 'closed' || row.frameState === 'open' || row.frameState === 'loading' ? (
             <button
@@ -133,7 +146,7 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
             <span className="twisty-space" aria-hidden="true" />
           )}
           {KIND_WORDS[node.kind] !== undefined && node.kind !== 'return' && node.kind !== 'throw' ? <span className="kind">{KIND_WORDS[node.kind]}</span> : null}
-          <button type="button" className={`code-text${node.kind === 'block' ? ' step-title' : ' mono'}`} onClick={() => onSelect(selected === row.key ? null : { frame, node, frameId })} title={node.code}>
+          <button type="button" className={`code-text${node.kind === 'block' ? ' step-title' : ' mono'}`} onClick={() => onSelect(selected?.frame === frame && selected.node === node.id ? null : { frame, node, frameId })} title={node.code}>
             {title}
           </button>
           {row.folded !== undefined && row.folded !== '' ? <span className="folded mono">{row.folded}</span> : null}
@@ -198,14 +211,14 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
   };
 
   return (
-    <ol className="trace" aria-label="処理の流れ">
+    <ol className="trace" aria-label="処理の流れ" ref={list}>
       {rows.map((row) => {
         switch (row.kind) {
           case 'node':
             return nodeRow(row);
           case 'branch':
             return (
-              <li key={row.key} className={`trace-row branch${row.on ? ' on' : ' off'}`} style={indent(row.depth)}>
+              <li key={row.key} data-row={row.key} className={`trace-row branch${row.on ? ' on' : ' off'}`} style={indent(row.depth)}>
                 <div className="trace-line">
                   <span className="branch-label">{row.branch.label}</span>
                   {row.branch.toward !== undefined ? <span className="toward">→ {row.branch.toward}</span> : null}
@@ -222,7 +235,7 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
             );
           case 'actions':
             return (
-              <li key={row.key} className={`trace-row kind-action${row.on ? ' on' : ' off'}`} style={indent(row.depth)}>
+              <li key={row.key} data-row={row.key} className={`trace-row kind-action${row.on ? ' on' : ' off'}${highlighted === row.key ? ' selected' : ''}`} style={indent(row.depth)}>
                 <div className="trace-line">
                   <span className="twisty-space" aria-hidden="true" />
                   <span className="kind">処理 ×{row.nodes.length}</span>
@@ -235,7 +248,7 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
             );
           case 'removed':
             return (
-              <li key={row.key} className="trace-row removed" style={indent(row.depth)}>
+              <li key={row.key} data-row={row.key} className="trace-row removed" style={indent(row.depth)}>
                 <div className="trace-line">
                   <span className="twisty-space" aria-hidden="true" />
                   <Badge mark={markOf('removed')} />
@@ -245,7 +258,7 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
             );
           case 'loading':
             return (
-              <li key={row.key} className="trace-row loading" style={indent(row.depth)}>
+              <li key={row.key} data-row={row.key} className="trace-row loading" style={indent(row.depth)}>
                 <span className="note">読み込んでいます…</span>
               </li>
             );

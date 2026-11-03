@@ -141,6 +141,14 @@ h1, h2, h3, h4 { margin: 0; }
 .mobile-pane-buttons .code-button { min-height: 44px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16); }
 .pane-drawer .drawer-content { padding: 12px; }
 .pane-drawer .pane-diagram { min-height: 70dvh; }
+/* The diagram on a phone: edge to edge, one row of tools; pinching zooms, so only the % button stays of the zoom buttons. */
+@media (max-width: 899px) {
+  .diagram-drawer.detail-drawer { width: 100vw; }
+  .diagram-drawer .drawer-head { padding: 8px 12px; }
+  .diagram-drawer .drawer-content { padding: 0; gap: 0; }
+  .diagram-drawer .pane-diagram { border: 0; border-radius: 0; min-height: 0; }
+  .diagram-drawer .diagram-zoom button:not(:nth-child(2)) { display: none; }
+}
 
 /* ---- the outline of a trace */
 .trace { list-style: none; margin: 0; padding: 6px 0 64px; font-size: 13px; }
@@ -198,6 +206,9 @@ h1, h2, h3, h4 { margin: 0; }
 .selections > summary::before { content: '▸'; color: var(--muted); }
 .selections[open] > summary::before { content: '▾'; }
 .selections[open] > summary { margin-bottom: 6px; }
+/* Open, the ready-made choices take at most a third of the screen and scroll, so the outline and the diagram keep their room. */
+.selections[open] { max-height: 35vh; overflow: auto; }
+.selections[open] > summary { position: sticky; top: -6px; z-index: 1; margin-top: -6px; padding-top: 6px; background: var(--surface); }
 .selections-title { font-weight: 600; font-size: 13px; }
 .selections-current { color: var(--muted); font-size: 12px; }
 .selections-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; }
@@ -266,21 +277,35 @@ h1, h2, h3, h4 { margin: 0; }
 
 /* ---- the diagram */
 .diagram-viewport { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
-.diagram-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; flex: none; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.diagram-tools > button, .diagram-zoom button { min-width: 36px; min-height: 32px; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 12.5px; }
-.diagram-tools .seg button { min-height: 28px; }
+/* One row of tools: what does not fit scrolls sideways instead of taking a second row from the diagram. */
+.diagram-tools { display: flex; align-items: center; flex-wrap: nowrap; overflow-x: auto; gap: 4px; flex: none; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.diagram-tools > * { flex: none; }
+.diagram-tools > button, .diagram-zoom button { min-width: 36px; min-height: 32px; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 12.5px; white-space: nowrap; }
+.diagram-tools .seg button { min-height: 28px; white-space: nowrap; }
 @media (max-width: 899px) { .diagram-tools > button, .diagram-zoom button, .diagram-tools .seg button { min-width: 44px; min-height: 44px; } }
 .diagram-tools button:hover { background: var(--surface-2); }
 .diagram-tools button:disabled { opacity: 0.4; cursor: default; }
 .diagram-zoom { display: flex; gap: 3px; }
 .diagram-zoom button:nth-child(2) { min-width: 56px; font-variant-numeric: tabular-nums; }
-.diagram-tools .note { margin-left: 6px; }
 .diagram-gestures { flex: 1; min-height: 0; cursor: grab; touch-action: none; overscroll-behavior: contain; }
 .diagram-gestures:active { cursor: grabbing; }
 .diagram { display: block; flex: none; max-width: none; font-family: var(--font-ui); }
 .diagram .box .frame { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 .diagram .box .title { font-size: 12.5px; font-weight: 600; fill: var(--fg); }
 .diagram .box .sub { font-size: 11.5px; fill: var(--muted); }
+/* A row inside a box: a side that ends at once, or how a folded step ends. On the chosen way it is the accent, or red when it throws or catches; off it, grey. */
+.diagram .box-row { font-size: 12px; fill: var(--faint); }
+.diagram .box-row.on.tone-end { fill: var(--accent); }
+.diagram .box-row.on.tone-error { fill: var(--danger); }
+.diagram .box-row.off { fill: var(--faint); }
+/* A row that names a step opens it in place. */
+.diagram .box-row.step { text-decoration: underline dotted; text-underline-offset: 3px; }
+.diagram .box-step { cursor: pointer; }
+.diagram .box-step .hit { fill: transparent; }
+.diagram .box-step:hover .hit { fill: var(--accent-soft); }
+.diagram .box-step:focus { outline: none; }
+.diagram .box-step:focus-visible .hit { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+.diagram .box-step text { pointer-events: none; }
 .diagram .box.off .frame { fill: var(--bg); stroke: var(--line); stroke-dasharray: 3 3; }
 .diagram .box.off .title, .diagram .box.off .sub { fill: var(--faint); }
 .diagram .box.on .frame { stroke: var(--accent); stroke-width: 1.6; }
@@ -388,6 +413,8 @@ h1, h2, h3, h4 { margin: 0; }
 .mobile-menu .screen-description:not([hidden]), .mobile-menu .selection-list, .mobile-menu .selection-failures { max-height: none; overflow: visible; }
 .mobile-menu .selections, .mobile-menu .expand-changes { padding: 12px 16px; }
 .mobile-menu .selection-list { flex-direction: column; align-items: flex-start; }
+.mobile-menu .selections[open] { max-height: none; overflow: visible; }
+.mobile-menu .selections[open] > summary { position: static; margin-top: 0; padding-top: 0; }
 .mobile-menu .selection { min-height: 44px; }
 .mobile-menu .diagram-tools { padding: 12px 16px; }
 .mobile-menu .diagram-tools button, .mobile-menu .seg button { min-height: 44px; }

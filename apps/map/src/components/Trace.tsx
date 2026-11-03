@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { MapData, Selection, StepMark, TreeNode } from '../types';
-import { allHunks, belowCounts, changeName, frameMark, markOf, nodeMark, type ChangeIndex, type Mark } from '../lib/changes';
-import { activeOf, frameDiagram } from '../lib/diagram';
-import { entryOf, frameIds, framesToChanges, type TraceState } from '../lib/trace';
+import { allHunks, belowCounts, changeName, markOf, type ChangeIndex, type Mark } from '../lib/changes';
+import { activeOf, boxAction, frameDiagram, markOfBox, type DiagramNode } from '../lib/diagram';
+import { childFrame, entryOf, findNode, frameIds, framesToChanges, type TraceState } from '../lib/trace';
 import { locationOf } from '../lib/model';
 import { Badge, DiffView } from './ChangeParts';
 import { DetailDrawer } from './DetailDrawer';
@@ -34,6 +34,17 @@ export interface TraceProps {
 
 type Tab = 'diagram' | 'diff' | 'detail' | string;
 
+/** The node selected: in which frame, and where the reader picked it (a box picked in the diagram scrolls its outline row into view). */
+interface Selected {
+  frame: string;
+  node: TreeNode;
+  frameId: string;
+  from: 'outline' | 'diagram';
+}
+
+/** No step opened or folded by the reader. */
+const NO_TOGGLES: ReadonlySet<string> = new Set();
+
 /**
  * A trace (see lib/trace.ts): the ready-made choices, the outline, and
  * beside it the diagram of the frame in focus, the diff of the frames open
@@ -44,7 +55,11 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   const { mobile } = useMobileMenu();
   const [tab, setTab] = useState<Tab>(tabs[0]?.id ?? 'diagram');
   const [overlay, setOverlay] = useState(false);
-  const [selected, setSelected] = useState<{ key: string; frame: string; node: TreeNode; frameId: string } | null>(null);
+  const [selected, setSelected] = useState<Selected | null>(null);
+  // The steps the reader opened or folded in the diagram, for the frame in focus only.
+  const [toggled, setToggled] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: '', ids: NO_TOGGLES });
+  // The node whose box the diagram brings into view, renewed by every selection and every step opened or folded.
+  const [reveal, setReveal] = useState<{ frame: string; node: string; key: number } | null>(null);
   // The trees load level by level: the frames a level opens are known once its tree is.
   const [ids, setIds] = useState<Map<string, string>>(() => new Map([['', rootId]]));
   const frames = useFrames(data, [...new Set([rootId, ...ids.values()])]);
@@ -55,22 +70,71 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   const below = useMemo(() => belowCounts(changes, rootId).frames.filter((id) => id !== rootId).length, [changes, rootId]);
   const expand = changes === undefined ? undefined : () => onState({ ...state, open: [...new Set([...state.open, ...framesToChanges(data, changes.reach, rootId)])] });
 
-  // The frame in focus for the diagram: the one asked for, else the frame of the node selected, else the root.
+  // The frame in focus for the diagram: the one the trace asks for (the frame of the row selected last, a call opened from
+  // the diagram, the end of a ready-made choice), else the root.
   const focusKey = known.has(state.focus) ? state.focus : '';
   const focusId = known.get(focusKey) ?? rootId;
   const focusTree = frames.trees.get(focusId);
-  const diagram = useMemo(() => (focusTree === undefined ? undefined : frameDiagram(focusTree, focusKey, enabled)), [focusTree, focusKey, enabled]);
+  const focusChange = frames.changes.get(focusId);
+  const foldKey = `${focusId} ${focusKey}`;
+  const toggledIds = toggled.key === foldKey ? toggled.ids : NO_TOGGLES;
+  const diagram = useMemo(
+    () =>
+      focusTree === undefined
+        ? undefined
+        : frameDiagram(focusTree, focusKey, enabled, {
+            changed: (id) => focusChange?.marks[id] !== undefined,
+            hasFrame: (id) => (entryOf(data, id)?.frame ?? '') !== '',
+            toggled: toggledIds,
+          }),
+    [focusTree, focusKey, enabled, focusChange, data, toggledIds],
+  );
   const active = useMemo(() => (diagram === undefined || focusTree === undefined ? undefined : activeOf(diagram, focusTree, focusKey, state.choices, enabled)), [diagram, focusTree, focusKey, state.choices, enabled]);
   const marks = useMemo(() => {
     const byBox = new Map<string, Mark>();
-    const change = frames.changes.get(focusId);
     for (const box of diagram?.nodes ?? []) {
-      if (box.node === undefined) continue;
-      const mark = nodeMark(change, box.node) ?? (box.target !== undefined && 'fn' in box.target ? frameMark(changes, box.target.fn) : undefined);
+      const mark = markOfBox(box, focusChange, changes);
       if (mark !== undefined) byBox.set(box.id, mark);
     }
     return byBox;
-  }, [diagram, frames.changes, focusId, changes]);
+  }, [diagram, focusChange, changes]);
+  // The outline highlights the row that shows the node selected, and scrolls it into view when it was picked in the diagram.
+  const outlineSelection = useMemo(() => (selected === null ? null : { frame: selected.frame, node: selected.node.id, reveal: selected.from === 'diagram' }), [selected]);
+
+  /** Select a node, and bring its box into view in the diagram. */
+  const select = (next: Selected) => {
+    setSelected(next);
+    setReveal((last) => ({ frame: next.frame, node: next.node.id, key: (last?.key ?? 0) + 1 }));
+  };
+  /** Open or fold a step of the frame in focus in place, and bring its box into view. */
+  const toggleStep = (step: string) => {
+    const ids = new Set(toggledIds);
+    if (ids.has(step)) ids.delete(step);
+    else ids.add(step);
+    setToggled({ key: foldKey, ids });
+    setReveal((last) => ({ frame: focusKey, node: step, key: (last?.key ?? 0) + 1 }));
+  };
+  /** What clicking a box of the diagram does (see boxAction): open the frame of its call and focus it, open or fold its step, or select its row of the outline, staying on the diagram. */
+  const activateBox = (box: DiagramNode) => {
+    switch (boxAction(box)) {
+      case 'open': {
+        if (box.opens === undefined) return;
+        const key = childFrame(focusKey, box.opens.node);
+        onState({ ...state, open: [...new Set([...state.open, key])], focus: key });
+        return;
+      }
+      case 'toggle':
+        if (box.step !== undefined) toggleStep(box.step.id);
+        return;
+      case 'select': {
+        const node = box.node === undefined || focusTree === undefined ? undefined : findNode(focusTree.nodes, box.node);
+        if (node !== undefined) select({ frame: focusKey, node, frameId: focusId, from: 'diagram' });
+        return;
+      }
+      case 'none':
+        return;
+    }
+  };
 
   // The diff of the frames open, in the order the trace runs them.
   const pathDiff = [...known].filter(([, id], index, list) => list.findIndex(([, other]) => other === id) === index).flatMap(([key, id]) => {
@@ -149,13 +213,16 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
                 </button>
               ) : null}
             </p>
-            <FlowDiagram diagram={diagram} active={active} selected={selected?.frame === focusKey ? selected.node.id : null} label="フレームの図" marks={marks} onSelect={(box) => {
-              if (box.target !== undefined && 'fn' in box.target) {
-                const node = box.node;
-                const key = node === undefined ? undefined : focusKey === '' ? node : `${focusKey}.${node}`;
-                if (key !== undefined) onState({ ...state, open: [...new Set([...state.open, key])], focus: key });
-              }
-            }} />
+            <FlowDiagram
+              diagram={diagram}
+              active={active}
+              selected={selected?.frame === focusKey ? selected.node.id : null}
+              reveal={reveal?.frame === focusKey ? reveal : null}
+              label="フレームの図"
+              marks={marks}
+              onSelect={activateBox}
+              onToggleStep={toggleStep}
+            />
           </div>
         ) : (
           <p className="note pad">読み込んでいます…</p>
@@ -201,14 +268,16 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               trees={frames.trees}
               diffs={frames.changes}
               enabled={enabled}
-              selected={selected?.key ?? null}
+              selected={outlineSelection}
               onState={onState}
               onSelect={(row) => {
                 if (row === null) {
                   setSelected(null);
                   return;
                 }
-                setSelected({ ...row, key: `${row.frame}|${row.node.id}` });
+                select({ ...row, from: 'outline' });
+                // The diagram follows the frame of the row selected.
+                if (row.frame !== focusKey && known.has(row.frame)) onState({ ...state, focus: row.frame });
                 if (row.node.kind === 'block' || mobile) setTab('detail');
                 if (mobile) setOverlay(true);
               }}
@@ -226,7 +295,7 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               ))}
             </div>
             {overlay && current !== undefined ? (
-              <DetailDrawer title={current.label} onClose={() => setOverlay(false)} className="pane-drawer">
+              <DetailDrawer title={current.label} onClose={() => setOverlay(false)} className={current.id === 'diagram' ? 'pane-drawer diagram-drawer' : 'pane-drawer'}>
                 {current.content}
               </DetailDrawer>
             ) : null}

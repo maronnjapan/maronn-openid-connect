@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { layoutGraph, textColumns, truncateColumns, type GraphEdge, type GraphNode } from './graph';
+import { compactArguments, layoutGraph, textColumns, truncateColumns, wrapColumns, type GraphEdge, type GraphNode } from './graph';
 
 const nodes = (...ids: string[]): GraphNode[] => ids.map((id) => ({ id }));
 
@@ -106,6 +106,68 @@ describe('layoutGraph', () => {
     expect(layout.arrows).toEqual([]);
     expect(layoutGraph([], [], new Set()).boxes).toEqual([]);
   });
+
+  it('should lay out a straight column with 320px boxes of their own heights, 20px apart inside 12px margins', () => {
+    const heights: Record<string, number> = { a: 36, b: 80, c: 48, d: 50 };
+    const chain: GraphEdge[] = [
+      { from: 'a', to: 'b', kind: 'flow' },
+      { from: 'b', to: 'c', kind: 'flow' },
+      { from: 'c', to: 'd', kind: 'flow' },
+    ];
+    const layout = layoutGraph(nodes('a', 'b', 'c', 'd'), chain, new Set([0, 1, 2]), 'TB', { height: (id) => heights[id] as number });
+    expect(layout.boxWidth).toBe(320);
+    expect(layout.boxes.map((box) => [box.x, box.width, box.height])).toEqual([[12, 320, 36], [12, 320, 80], [12, 320, 48], [12, 320, 50]]);
+    expect(layout.boxes.map((box) => box.y)).toEqual([12, 68, 168, 236]);
+    expect([layout.width, layout.height]).toEqual([344, 298]);
+  });
+
+  it('should narrow every box to 200px when the sides of a fork share a rank', () => {
+    const layout = layoutGraph(forkNodes, forkEdges, new Set([0, 1, 2, 3]));
+    expect(layout.boxWidth).toBe(200);
+    expect(layout.boxes.map((box) => [box.width, box.height])).toEqual([[200, 48], [200, 48], [200, 48], [200, 48]]);
+    expect(layout.width).toBe(440);
+  });
+
+  it('should keep 320px boxes for the same fork from left to right', () => {
+    const layout = layoutGraph(forkNodes, forkEdges, new Set([0, 1, 2, 3]), 'LR');
+    expect(layout.boxWidth).toBe(320);
+    expect(layout.boxes.map((box) => box.width)).toEqual([320, 320, 320, 320]);
+  });
+
+  it('should ask options.height for the final width and give each box that height', () => {
+    const asked: Array<[string, number]> = [];
+    const height = (id: string, width: number): number => {
+      asked.push([id, width]);
+      return 30 + id.length * 4 + width / 20;
+    };
+    const layout = layoutGraph(forkNodes, forkEdges, new Set(), 'TB', { height });
+    expect(layout.boxWidth).toBe(200);
+    expect(layout.boxes.map((box) => [box.id, box.height])).toEqual([['start', 60], ['left', 56], ['right', 60], ['join', 56]]);
+    expect(Object.fromEntries(asked)).toEqual({ start: 200, left: 200, right: 200, join: 200 });
+  });
+
+  it('should keep boxes, width and height identical for every subset of shown arrows when the boxes have their own heights', () => {
+    const guardNodes = nodes('start', 'check', 'yes', 'no', 'join', 'error');
+    const guardEdges: GraphEdge[] = [
+      { from: 'start', to: 'check', kind: 'flow' },
+      { from: 'check', to: 'yes', kind: 'branch', label: 'ある' },
+      { from: 'check', to: 'no', kind: 'branch', label: 'ない' },
+      { from: 'yes', to: 'join', kind: 'flow' },
+      { from: 'no', to: 'join', kind: 'flow' },
+      { from: 'check', to: 'error', kind: 'error' },
+    ];
+    const heights: Record<string, number> = { start: 36, check: 80, yes: 48, no: 64, join: 48, error: 36 };
+    // A title wraps onto more lines in a narrower box.
+    const height = (id: string, width: number): number => (heights[id] as number) + 3200 / width;
+    const subsets = guardEdges.reduce<number[][]>((sets, _, index) => [...sets, ...sets.map((set) => [...set, index])], [[]]);
+    const layouts = subsets.map((shown) => layoutGraph(guardNodes, guardEdges, new Set(shown), 'TB', { height }));
+    const placements = layouts.map(({ boxes, width, height: tall, boxWidth }) => ({ boxes, width, height: tall, boxWidth }));
+    expect(subsets).toHaveLength(64);
+    expect(placements).toEqual(placements.map(() => placements[0]));
+    expect(placements[0]!.boxWidth).toBe(200);
+    expect(placements[0]!.boxes.map((box) => box.height)).toEqual([52, 96, 64, 80, 64, 52]);
+    expect(layouts.map((layout) => layout.arrows.map((arrow) => arrow.index))).toEqual(subsets);
+  });
 });
 
 describe('truncateColumns', () => {
@@ -113,5 +175,88 @@ describe('truncateColumns', () => {
     expect(textColumns('ab認可')).toBe(6);
     expect(truncateColumns('認可コードを発行する', 9)).toBe('認可コー…');
     expect(truncateColumns('short', 9)).toBe('short');
+  });
+});
+
+describe('wrapColumns', () => {
+  it('should count a wide character as two columns', () => {
+    expect(wrapColumns('認可コードを発行', 8, 2)).toEqual(['認可コー', 'ドを発行']);
+  });
+
+  it('should break after 、 in the last 40% of a line', () => {
+    expect(wrapColumns('トークンを検証し、署名を確かめる', 20, 2)).toEqual(['トークンを検証し、', '署名を確かめる']);
+  });
+
+  it('should break at a space in the last 40% of a line and drop it', () => {
+    expect(wrapColumns('const client = await findClient(id)', 24, 2)).toEqual(['const client = await', 'findClient(id)']);
+  });
+
+  it('should break before an upper-case letter that follows a lower-case one', () => {
+    expect(wrapColumns('verifyIdJagAssertion()', 14, 2)).toEqual(['verifyIdJag', 'Assertion()']);
+  });
+
+  it('should prefer a space to a later camelCase boundary when both keep the whole text', () => {
+    expect(wrapColumns('return signJwt(header, payload, privateKey)', 42, 2)).toEqual(['return signJwt(header, payload,', 'privateKey)']);
+  });
+
+  it('should break at the limit when a line has no good break', () => {
+    expect(wrapColumns('abcdefghijklmnopqrstuvwxyz', 10, 3)).toEqual(['abcdefghij', 'klmnopqrst', 'uvwxyz']);
+  });
+
+  it('should end a line at an earlier good break when the whole text still fits', () => {
+    expect(wrapColumns('return AUTHORIZATION_CODE_TTL', 24, 2)).toEqual(['return', 'AUTHORIZATION_CODE_TTL']);
+    expect(wrapColumns('認可、コードを発行する', 16, 2)).toEqual(['認可、', 'コードを発行する']);
+  });
+
+  it('should break at the limit when only that shows the whole text', () => {
+    expect(wrapColumns('c.req.header(name)', 10, 2)).toEqual(['c.req.head', 'er(name)']);
+  });
+
+  it('should fill the lines of a text too long for them, taking a good break only in the last 40% of a line', () => {
+    expect(wrapColumns('return AUTHORIZATION_CODE_TTL_IN_SECONDS_FOR_REFRESH', 24, 2)).toEqual(['return AUTHORIZATION_COD', 'E_TTL_IN_SECONDS_FOR_RE…']);
+  });
+
+  it('should end only a last line that cuts the text with an ellipsis', () => {
+    expect(wrapColumns('トークンを検証し、署名と有効期限と発行者を確かめる', 20, 2)).toEqual(['トークンを検証し、', '署名と有効期限と発…']);
+    expect(wrapColumns('aaaa bbbb cccc', 10, 2)).toEqual(['aaaa bbbb', 'cccc']);
+    expect(wrapColumns('認可コードを発行する', 9, 1)).toEqual([truncateColumns('認可コードを発行する', 9)]);
+  });
+
+  it('should keep a short text on one line', () => {
+    expect(wrapColumns('issueToken()', 42, 2)).toEqual(['issueToken()']);
+    expect(wrapColumns('', 42, 2)).toEqual(['']);
+  });
+});
+
+describe('compactArguments', () => {
+  it('should replace the arguments of a call with (…)', () => {
+    expect(compactArguments("return oauthError('invalid_request', `…`)")).toBe('return oauthError(…)');
+    expect(compactArguments("例外 → throw new OAuthError('invalid_client', 'unknown client')")).toBe('例外 → throw new OAuthError(…)');
+  });
+
+  it('should replace nested parentheses with the arguments around them', () => {
+    expect(compactArguments('return c.json(toBody(error, { status: (code ?? 400) }), 400)')).toBe('return c.json(…)');
+  });
+
+  it('should not end the arguments at a parenthesis inside a string or a template literal', () => {
+    expect(compactArguments("throw new OAuthError(`client ${clientId(request)} (unknown)`, ')')")).toBe('throw new OAuthError(…)');
+    expect(compactArguments("throw new OAuthError(`unknown: ${names.map((name, index) => `${index + 1}) ${name}`).join(', ')}`)")).toBe('throw new OAuthError(…)');
+  });
+
+  it('should compact each call of a chain and an optional call', () => {
+    expect(compactArguments("c.req.header('Authorization')?.split(' ')")).toBe('c.req.header(…)?.split(…)');
+    expect(compactArguments('handlers[name](request) ?? callback?.(value)')).toBe('handlers[name](…) ?? callback?.(…)');
+  });
+
+  it('should compact an argument list the text cuts off', () => {
+    expect(compactArguments('return buildRefreshTokenRequest(refreshTokenInfo, authenticatedClientI…')).toBe('return buildRefreshTokenRequest(…)');
+  });
+
+  it('should leave text without a call unchanged', () => {
+    expect(compactArguments('if (!client && (grant || scope))')).toBe('if (!client && (grant || scope))');
+    expect(compactArguments("if(typeof(value) !== 'string')")).toBe("if(typeof(value) !== 'string')");
+    expect(compactArguments("return '(none)'")).toBe("return '(none)'");
+    expect(compactArguments('→ 2 通りで終わる')).toBe('→ 2 通りで終わる');
+    expect(compactArguments('await next()')).toBe('await next()');
   });
 });

@@ -6,7 +6,6 @@
     "type": "module",
     "scripts": {
         "test": "pnpm run test:e2e",
-        "test:e2e:map": "playwright test --config playwright.map.config.ts",
         "test:e2e": "pnpm run test:e2e:app-hono && pnpm run test:e2e:app-nextjs",
         "test:e2e:hono-cloudflare": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/sample-hono-cloudflare build && E2E_OP_PACKAGE=@maronn-openid-connect/sample-hono-cloudflare E2E_OP_PORT=3010 E2E_CLIENT_PORT=3020 E2E_RESOURCE_SERVER_PORT=3030 E2E_ISSUER=http://127.0.0.1:3010 E2E_CLIENT_BASE_URL=http://127.0.0.1:3020 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3030 playwright test",
         "test:e2e:express-flyio": "pnpm --filter @maronn-openid-connect/cli build && pnpm --filter @maronn-openid-connect/sample-express-flyio build && E2E_OP_PACKAGE=@maronn-openid-connect/sample-express-flyio E2E_OP_PORT=3110 E2E_CLIENT_PORT=3120 E2E_RESOURCE_SERVER_PORT=3130 E2E_ISSUER=http://127.0.0.1:3110 E2E_CLIENT_BASE_URL=http://127.0.0.1:3120 E2E_RESOURCE_SERVER_URL=http://127.0.0.1:3130 playwright test",

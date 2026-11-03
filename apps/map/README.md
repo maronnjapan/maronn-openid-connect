@@ -139,9 +139,6 @@ pnpm run build            # データを作って dist/ にビルド
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
 pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらない）
 pnpm test                 # 純粋な部分（構成の絞り込み、ケース、図のレイアウト、呼び出し元、ハッシュ、検索、変更の札）と、変更を集める scripts/changes.mjs のテスト
-
-# ルートで: 地図をビルドし、PC 幅とスマートフォン幅の表示操作を Chromium で検証
-pnpm run test:e2e:map
 ```
 
 `wrangler deploy` は `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID`（または `wrangler login`）を使う。Worker の名前は `wrangler.jsonc` の `name` で変える。

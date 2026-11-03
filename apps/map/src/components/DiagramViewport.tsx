@@ -26,6 +26,35 @@ function applyOpening(view: ReactZoomPanPinchRef, opening: (view: Size) => Camer
   return true;
 }
 
+/**
+ * Fold a scroll of the area into the transform. The browser scrolls the area,
+ * whose overflow is hidden, to show a box that takes the focus (Tab), and the
+ * library does not see it; the boxes stay where they show, and 戻す, 全体 and
+ * a reveal start from what the reader sees.
+ */
+function foldScroll(view: ReactZoomPanPinchRef): void {
+  const wrapper = view.instance.wrapperComponent;
+  if (wrapper === null || (wrapper.scrollLeft === 0 && wrapper.scrollTop === 0)) return;
+  const { scrollLeft, scrollTop } = wrapper;
+  wrapper.scrollLeft = 0;
+  wrapper.scrollTop = 0;
+  const { positionX, positionY, scale } = view.instance.state;
+  void view.setTransform(positionX - scrollLeft, positionY - scrollTop, scale, 0);
+}
+
+/** Bring an element of the diagram that takes the focus into view at the same scale, as a reveal does (see revealCamera): the browser cannot scroll to a box above or left of the area. */
+function revealFocused(view: ReactZoomPanPinchRef, element: Element): void {
+  foldScroll(view);
+  const wrapper = view.instance.wrapperComponent;
+  const size = viewSize(view);
+  if (wrapper === null || size === undefined) return;
+  const { positionX, positionY, scale } = view.instance.state;
+  const area = wrapper.getBoundingClientRect();
+  const box = element.getBoundingClientRect();
+  const camera = revealCamera(size, { x: positionX, y: positionY, scale }, { x: (box.left - area.left - positionX) / scale, y: (box.top - area.top - positionY) / scale, width: box.width / scale, height: box.height / scale });
+  if (camera !== undefined) void view.setTransform(camera.x, camera.y, camera.scale, 0);
+}
+
 /** Whether the reader asked for less motion. */
 function reducedMotion(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -49,7 +78,7 @@ export interface DiagramViewportProps {
  * view `opening` gives, once its area has a size (a diagram that opens in a
  * drawer is measured before the drawer shows), and never refits on its own
  * after that, so the reader's zoom stays. A new reveal key pans the box it
- * names into view at the same scale.
+ * names into view at the same scale, and so does a box that takes the focus.
  */
 export function DiagramViewport({ children, controls, width, height, opening, reveal }: DiagramViewportProps) {
   const start = useRef({ x: 0, y: 0 });
@@ -152,6 +181,11 @@ export function DiagramViewport({ children, controls, width, height, opening, re
                     event.preventDefault();
                     event.stopPropagation();
                   }
+                },
+                onScroll: () => foldScroll(view),
+                onFocus: (event) => {
+                  // A box or a row that takes the focus (Tab) comes into view; the area itself (a click) stays as it is.
+                  if (event.target !== event.currentTarget) revealFocused(view, event.target);
                 },
               }}
             >

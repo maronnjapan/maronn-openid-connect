@@ -1,5 +1,4 @@
-// The page's tsconfig loads the browser's types only; this test reads the built map from the disk.
-/// <reference types="node" />
+// This test reads the built map from the disk: tsconfig.node.json checks it with Node's types, which the page's tsconfig leaves out.
 /**
  * The diagram of every frame of the built map (public/data, which
  * `pnpm run data` writes), every feature on. It checks what holds whatever

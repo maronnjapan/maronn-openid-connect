@@ -60,6 +60,9 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
   const [toggled, setToggled] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: '', ids: NO_TOGGLES });
   // The node whose box the diagram brings into view, renewed by every selection and every step opened or folded.
   const [reveal, setReveal] = useState<{ frame: string; node: string; key: number } | null>(null);
+  // What takes the keyboard focus once the diagram of a frame draws it, when the element the reader activated from the keyboard
+  // went away: the box of a node (the heading of a step a row opened), or null for the diagram itself (a box that opened its call's frame).
+  const [focusRequest, setFocusRequest] = useState<{ frame: string; node: string | null } | null>(null);
   // The trees load level by level: the frames a level opens are known once its tree is.
   const [ids, setIds] = useState<Map<string, string>>(() => new Map([['', rootId]]));
   const frames = useFrames(data, [...new Set([rootId, ...ids.values()])]);
@@ -114,12 +117,19 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
     setToggled({ key: foldKey, ids });
     setReveal((last) => ({ frame: focusKey, node: step, key: (last?.key ?? 0) + 1 }));
   };
+  /** Open a step from a row of the diagram that names it: the row goes away as the step opens, so the step's heading takes the keyboard focus. */
+  const toggleStepFromRow = (step: string, keyboard: boolean) => {
+    toggleStep(step);
+    if (keyboard) setFocusRequest({ frame: focusKey, node: step });
+  };
   /** What clicking a box of the diagram does (see boxAction): open the frame of its call and focus it, open or fold its step, or select its row of the outline, staying on the diagram. */
-  const activateBox = (box: DiagramNode) => {
+  const activateBox = (box: DiagramNode, keyboard: boolean) => {
     switch (boxAction(box)) {
       case 'open': {
         if (box.opens === undefined) return;
         const key = childFrame(focusKey, box.opens.node);
+        // The box goes away with this diagram: the diagram of the frame it opens takes the keyboard focus once it shows.
+        if (keyboard) setFocusRequest({ frame: key, node: null });
         onState({ ...state, open: [...new Set([...state.open, key])], focus: key });
         return;
       }
@@ -218,10 +228,12 @@ export function Trace({ data, changes, rootId, extraSelections = [], state, onSt
               active={active}
               selected={selected?.frame === focusKey ? selected.node.id : null}
               reveal={reveal?.frame === focusKey ? reveal : null}
+              focus={focusRequest?.frame === focusKey ? focusRequest : null}
               label="フレームの図"
               marks={marks}
               onSelect={activateBox}
-              onToggleStep={toggleStep}
+              onToggleStep={toggleStepFromRow}
+              onFocused={() => setFocusRequest(null)}
             />
           </div>
         ) : (

@@ -223,11 +223,17 @@ export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySe
     const text = codes.length === 1 ? `→ ${codes[0]}` : compact.length === 1 ? `→ ${compact[0]} ×${codes.length}` : `→ ${codes.length} 通りで終わる`;
     return { text, full: `→ ${codes.join('、')}`, tone: exits.every((exit) => exit.kind === 'throw') ? 'error' : 'end', ends: exits.map((exit) => exit.id) };
   };
-  /** The call a step stands for (a step of a Hono pipeline): the only call in it, of a function, with no decision but guards and optional items that fold. */
+  /**
+   * The call a step stands for (a step of a Hono pipeline): the only call in
+   * it, of a function, with no decision but guards and optional items that
+   * fold, and on the step's own way: not on a side of one of those, such as
+   * the call a guard returns on its way out.
+   */
   const oneCall = (inside: readonly TreeNode[]): TreeNode | undefined => {
     const calls = inside.filter((node) => node.kind === 'call');
     if (calls.length !== 1 || inside.some((node) => DECISION_KINDS.has(node.kind) && !foldsIf(node))) return undefined;
-    return calls[0];
+    const onSides = new Set(inside.filter((node) => node.kind === 'if').flatMap((node) => branchesOf(node, enabled).flatMap((branch) => ids(branch.nodes))));
+    return calls.find((call) => !onSides.has(call.id));
   };
 
   const connect = (entries: readonly Pending[], to: string) => {
@@ -460,6 +466,11 @@ export function boxAction(box: DiagramNode): BoxAction {
   if (box.opens !== undefined) return 'open';
   if (box.step !== undefined && (box.step.open || box.step.toggles)) return 'toggle';
   return box.node === undefined ? 'none' : 'select';
+}
+
+/** The lines that describe a box or a row read as one label (its aria-label): a sentence a line, joined with '。', the full stop a line ends with (`。`, `.`) taking the place of the one between. */
+export function spokenLabel(lines: readonly string[]): string {
+  return lines.map((line) => line.replace(/[。．.]$/, '')).join('。');
 }
 
 /** The badge of a box: the strongest of the badges of the nodes it holds (the change of the frame) and of the frames its calls lead to. */

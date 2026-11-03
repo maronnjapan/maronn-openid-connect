@@ -39,6 +39,11 @@ export function childFrame(frame: string, node: string): string {
   return frame === '' ? node : `${frame}.${node}`;
 }
 
+/** Whether a frame (by its key) is the frame of `key` or one opened below it: `s2b6s0.s1` is below `s2b6s0`, while `s2b6s0i0`, the frame of another call, is not; every frame is below the root. */
+export function withinFrame(candidate: string, key: string): boolean {
+  return key === '' || candidate === key || candidate.startsWith(`${key}.`);
+}
+
 /** The frame a key's frame was opened from, and the call node that opened it; undefined for the root. */
 export function parentOf(key: string): { frame: string; node: string } | undefined {
   if (key === '') return undefined;

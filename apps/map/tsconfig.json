@@ -17,5 +17,8 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The tests that read the built map from the disk need Node's types, which would let the page use Node's globals too:
+  // tsconfig.node.json checks them.
+  "exclude": ["src/**/*.data.test.ts"]
 }

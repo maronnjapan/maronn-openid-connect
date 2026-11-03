@@ -14,6 +14,7 @@ import {
   isDecision,
   rowFor,
   traceRows,
+  withinFrame,
   type Row,
   type TraceState,
 } from '../lib/trace';
@@ -52,7 +53,7 @@ const KIND_WORDS: Partial<Record<TreeNode['kind'], string>> = {
 
 /** The frames opened under a key, the key itself included: closing a frame closes them too. */
 function withoutFrame(open: readonly string[], key: string): string[] {
-  return open.filter((candidate) => candidate !== key && !candidate.startsWith(`${key}.`));
+  return open.filter((candidate) => !withinFrame(candidate, key));
 }
 
 /** The chips that choose a side of a decision: each side, chosen or not. */
@@ -138,7 +139,7 @@ export function TraceView({ data, changes, rootId, state, trees, diffs, enabled,
               className="twisty"
               aria-expanded={row.frameState !== 'closed'}
               aria-label={row.frameState === 'closed' ? `${callee ?? ''} の中を開く` : '閉じる'}
-              onClick={() => onState({ ...state, open: row.frameState === 'closed' ? [...state.open, child] : withoutFrame(state.open, child), focus: row.frameState === 'closed' ? state.focus : state.focus.startsWith(child) ? frame : state.focus })}
+              onClick={() => onState({ ...state, open: row.frameState === 'closed' ? [...state.open, child] : withoutFrame(state.open, child), focus: row.frameState === 'closed' ? state.focus : withinFrame(state.focus, child) ? frame : state.focus })}
             >
               {row.frameState === 'closed' ? '▸' : '▾'}
             </button>

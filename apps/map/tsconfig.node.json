@@ -1,0 +1,10 @@
+{
+  // The tests that read the built map from the disk (src/**/*.data.test.ts): the page's settings with Node's types.
+  // The page's tsconfig.json leaves them out, so Node's globals stay out of the page.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/**/*.data.test.ts"],
+  "exclude": []
+}

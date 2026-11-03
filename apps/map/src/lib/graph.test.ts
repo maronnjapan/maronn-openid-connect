@@ -196,7 +196,25 @@ describe('wrapColumns', () => {
   });
 
   it('should prefer a space to a later camelCase boundary when both keep the whole text', () => {
-    expect(wrapColumns('return signJwt(header, payload, privateKey)', 42, 2)).toEqual(['return signJwt(header, payload,', 'privateKey)']);
+    expect(wrapColumns('return signJwt(header, payload, privateKey)', 40, 2)).toEqual(['return signJwt(header, payload,', 'privateKey)']);
+  });
+
+  it('should keep a text on one line when only its closing punctuation runs past the end', () => {
+    expect(wrapColumns('buildAccessTokenAudience()', 25, 2)).toEqual(['buildAccessTokenAudience()']);
+    expect(wrapColumns('return { name, namedCurve }', 25, 2)).toEqual(['return { name, namedCurve }']);
+    expect(wrapColumns('デバイス認可レスポンスで応答する（no-store）', 42, 2)).toEqual(['デバイス認可レスポンスで応答する（no-store）']);
+    expect(wrapColumns('return signJwt(header, payload, privateKey)', 42, 2)).toEqual(['return signJwt(header, payload, privateKey)']);
+  });
+
+  it('should keep closing punctuation at the end of a line rather than start the next line with it', () => {
+    expect(wrapColumns('▾ サブジェクト、auth_time、nonce を取り出す', 25, 2)).toEqual(['▾ サブジェクト、auth_time、', 'nonce を取り出す']);
+    expect(wrapColumns('return createFormPostResponseMode({ issuer })', 42, 2)).toEqual(['return createFormPostResponseMode({', 'issuer })']);
+    expect(wrapColumns('return info ? { tokenType, accessToken } : null', 25, 2)).toEqual(['return info ? { tokenType,', 'accessToken } : null']);
+    expect(wrapColumns('「認可」を確かめる', 4, 3)).toEqual(['「認', '可」', 'を…']);
+  });
+
+  it('should end a line a character early when the closing punctuation after it takes more than two columns', () => {
+    expect(wrapColumns('abcdefghij)))', 10, 2)).toEqual(['abcdefghi', 'j)))']);
   });
 
   it('should break at the limit when a line has no good break', () => {

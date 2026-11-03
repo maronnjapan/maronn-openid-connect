@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FlowTree, MapData, TreeNode } from '../types';
-import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, foldedWords, frameIds, framesToChanges, nodesRun, rowFor, traceRows, wayTo } from './trace';
+import { catcherOf, changeReach, choose, chosenSide, EMPTY_TRACE, foldedWords, frameIds, framesToChanges, nodesRun, rowFor, traceRows, wayTo, withinFrame } from './trace';
 
 const call = (id: string, callee: string, extra: Partial<TreeNode> = {}): TreeNode => ({ id, kind: 'call', lines: [2, 2], code: `${callee}()`, target: { kind: 'function', id: callee }, ...extra });
 const returned = (id: string, code: string): TreeNode => ({ id, kind: 'return', lines: [3, 3], code });
@@ -91,6 +91,11 @@ describe('the frames of a trace', () => {
 
   it('should know the frame each opened key is, through the call nodes of the trees loaded', () => {
     expect([...frameIds('endpoint:token', ['s0b1n0', 's0b1n0.s0'], trees)]).toEqual([['', 'endpoint:token'], ['s0b1n0', 'code'], ['s0b1n0.s0', 'check']]);
+  });
+
+  it('should take a frame and the frames opened below it as within it, but not the frame of a call whose key only starts the same', () => {
+    expect(['s2b6s0', 's2b6s0.s1', 's2b6s0.s1.s0', 's2b6s0i0', 's2b6s0i0.s1', 's2b6', ''].map((key) => withinFrame(key, 's2b6s0'))).toEqual([true, true, true, false, false, false, false]);
+    expect(['s2b6s0i0', ''].map((key) => withinFrame(key, ''))).toEqual([true, true]);
   });
 
   it('should open every frame down to every change below, with no limit', () => {

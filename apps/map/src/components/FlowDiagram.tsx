@@ -1,7 +1,7 @@
 import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { openingCamera, type Size } from '../lib/camera';
 import type { Mark } from '../lib/changes';
-import { boxAction, boxHeight, boxOf, type BoxAction, type Diagram, type DiagramNode, type DiagramRow } from '../lib/diagram';
+import { boxAction, boxHeight, boxOf, spokenLabel, type BoxAction, type Diagram, type DiagramNode, type DiagramRow } from '../lib/diagram';
 import { BOX_HEIGHT, compactArguments, EDGE_LABEL_COLUMNS, layoutGraph, textColumns, truncateColumns, wrapColumns, type LayoutBox, type LayoutDirection } from '../lib/graph';
 import { DiagramViewport } from './DiagramViewport';
 
@@ -19,13 +19,17 @@ export interface FlowDiagramProps {
   selected: string | null;
   /** The node whose box to bring into view at the same scale, and a key that changes each time it should be (a selection, a step opened or folded). */
   reveal?: { node: string; key: number } | null | undefined;
+  /** What to give the keyboard focus once it is drawn: the box that shows a node, or the diagram itself for null (the element the reader activated went away). onFocused says it has it. */
+  focus?: { node: string | null } | null | undefined;
   label: string;
   /** The badges of the boxes the pull request changed, by the id of the box (a map of a pull request). */
   marks?: ReadonlyMap<string, Mark> | undefined;
-  /** Click a box: what it does follows boxAction (open the frame of its call, open or fold its step, select its row of the outline). */
-  onSelect: (box: DiagramNode) => void;
-  /** Open or fold a step in place, from a row that names it. */
-  onToggleStep: (step: string) => void;
+  /** Click a box, or press Enter or Space on it (keyboard): what it does follows boxAction (open the frame of its call, open or fold its step, select its row of the outline). */
+  onSelect: (box: DiagramNode, keyboard: boolean) => void;
+  /** Open or fold a step in place, from a row that names it, clicked or pressed from the keyboard. */
+  onToggleStep: (step: string, keyboard: boolean) => void;
+  /** The focus asked for (see focus) is given. */
+  onFocused?: () => void;
 }
 
 /** The pixels a column of text takes (a wide character takes two): titles are 12.5px, subtitles 11.5px, rows 12px. */
@@ -127,7 +131,7 @@ function onActivateKey(activate: () => void) {
  * meaning. Each box is as tall as its title (at most two lines), its subtitle
  * and its rows; a row that names a step opens it in place.
  */
-export function FlowDiagram({ diagram, active, selected, reveal, label, marks, onSelect, onToggleStep }: FlowDiagramProps) {
+export function FlowDiagram({ diagram, active, selected, reveal, focus, label, marks, onSelect, onToggleStep, onFocused }: FlowDiagramProps) {
   const [direction, setDirection] = useState<LayoutDirection>('TB');
   const marker = useId();
   const svg = useRef<SVGSVGElement>(null);
@@ -148,6 +152,16 @@ export function FlowDiagram({ diagram, active, selected, reveal, label, marks, o
   const selectedBox = selected === null ? undefined : boxOf(diagram, selected);
   const anchor: LayoutBox | undefined = placedById.get(selectedBox?.id ?? 'start') ?? placedById.get('start');
   const revealBox = reveal == null ? undefined : boxOf(diagram, reveal.node);
+  const focusBox = focus == null || focus.node === null ? undefined : boxOf(diagram, focus.node)?.id;
+  // Give the focus asked for once its element is drawn, without scrolling: a reveal brings a box into view.
+  useLayoutEffect(() => {
+    const element = svg.current;
+    if (focus == null || element === null) return;
+    const target = focus.node === null ? element.closest<HTMLElement>('.diagram-gestures') : [...element.querySelectorAll<SVGGElement>('g.box')].find((box) => box.dataset.box === focusBox);
+    if (target == null) return;
+    target.focus({ preventScroll: true });
+    onFocused?.();
+  }, [focus, focusBox]);
   // Fit the lines once they are drawn, and again once the page's font has loaded.
   useLayoutEffect(() => {
     const element = svg.current;
@@ -215,7 +229,7 @@ export function FlowDiagram({ diagram, active, selected, reveal, label, marks, o
           const room = box.width - 2 * INSET;
           const pill = node.tone === 'start' || ((node.tone === 'end' || node.tone === 'error') && node.rows.length === 0);
           const words = boxWords(node, mark, on, action);
-          const activate = () => onSelect(node);
+          const activate = (keyboard: boolean) => onSelect(node, keyboard);
           const rowText = (row: DiagramRow, index: number) => (
             <text key={index} className={`box-row tone-${row.tone} ${active.rows.has(`${node.id}|${index}`) ? 'on' : 'off'}${row.step === undefined ? '' : ' step'}`} x={box.x + INSET} y={rowsTop + ROW_LINE * index + 13} data-room={room}>
               {rowLine(row.text, rowColumns)}
@@ -225,11 +239,12 @@ export function FlowDiagram({ diagram, active, selected, reveal, label, marks, o
             <Fragment key={node.id}>
               <g
                 className={`box ${on ? 'on' : 'off'}${selectedBox?.id === node.id ? ' selected' : ''} tone-${node.tone}${clickable ? ' clickable' : ''}`}
+                data-box={node.id}
                 tabIndex={clickable ? 0 : -1}
                 role={clickable ? 'button' : undefined}
-                aria-label={words.join('。')}
-                onClick={clickable ? activate : undefined}
-                onKeyDown={clickable ? onActivateKey(activate) : undefined}
+                aria-label={spokenLabel(words)}
+                onClick={clickable ? () => activate(false) : undefined}
+                onKeyDown={clickable ? onActivateKey(() => activate(true)) : undefined}
               >
                 <title>{words.join('\n')}</title>
                 <rect className="frame" x={box.x} y={box.y} width={box.width} height={box.height} rx={pill ? box.height / 2 : 6} />
@@ -258,10 +273,10 @@ export function FlowDiagram({ diagram, active, selected, reveal, label, marks, o
               {node.rows.map((row, index) => {
                 const step = row.step;
                 if (step === undefined) return null;
-                const open = () => onToggleStep(step);
+                const open = (keyboard: boolean) => onToggleStep(step, keyboard);
                 // A row that names a step is a button of its own beside the box's: it opens the step in place.
                 return (
-                  <g key={`step-${index}`} className="box-step" role="button" tabIndex={0} aria-label={`${row.full}。押すとその場で開く`} onClick={open} onKeyDown={onActivateKey(open)}>
+                  <g key={`step-${index}`} className="box-step" role="button" tabIndex={0} aria-label={spokenLabel([row.full, '押すとその場で開く'])} onClick={() => open(false)} onKeyDown={onActivateKey(() => open(true))}>
                     <title>{`${row.full}\n押すとその場で開く`}</title>
                     <rect className="hit" x={box.x + INSET / 2} y={rowsTop + ROW_LINE * index} width={box.width - INSET} height={ROW_LINE} rx={3} />
                     {rowText(row, index)}

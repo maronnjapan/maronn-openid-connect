@@ -114,6 +114,20 @@ function breakRank(char: string, next: string): number {
   return /[a-z]/.test(char) && /[A-Z]/.test(next) ? 3 : 0;
 }
 
+/** The characters no line starts with: closing brackets and the punctuation that follows a word. */
+const NO_LINE_START = /[)\]},;、。，．）］｝〕〉》」』】]/;
+/** The columns a line may run past its end to keep the closing punctuation that follows it. */
+const HANG = 2;
+
+/** The end (an index of `chars`) of the spaces and the closing punctuation the rest of a text starts with at `at`; undefined when the rest starts otherwise. */
+function closingRun(chars: readonly string[], at: number): number | undefined {
+  let index = at;
+  while (chars[index] === ' ') index += 1;
+  if (!NO_LINE_START.test(chars[index] ?? '')) return undefined;
+  while (NO_LINE_START.test(chars[index] ?? '')) index += 1;
+  return index;
+}
+
 /** A good place for a line to end: the string index, how well it reads (1 best), and whether it falls in the line's last 40%. */
 interface LineBreak {
   end: number;
@@ -121,22 +135,45 @@ interface LineBreak {
   late: boolean;
 }
 
-/** Where a line of at most `columns` columns may end: its good breaks in order, and the limit, never before the first character. */
+/**
+ * Where a line of at most `columns` columns may end: its good breaks in
+ * order, none of which leaves the next line starting with closing
+ * punctuation, and the limit, never before the first character. Closing
+ * punctuation (and the spaces before it) that would start the next line
+ * hangs past the limit when it takes at most HANG columns; when it takes
+ * more, the limit moves back before the characters it follows.
+ */
 function lineEnds(text: string, columns: number): { breaks: LineBreak[]; limit: number } {
   const chars = [...text];
   const breaks: LineBreak[] = [];
   let used = 0;
   let limit = 0;
-  for (let at = 0; at < chars.length; at += 1) {
+  let at = 0;
+  for (; at < chars.length; at += 1) {
     const char = chars[at] as string;
     const width = isWide(char) ? 2 : 1;
     if (used + width > columns) break;
     used += width;
     limit += char.length;
-    const rank = breakRank(char, chars[at + 1] ?? '');
+    const rank = closingRun(chars, at + 1) === undefined ? breakRank(char, chars[at + 1] ?? '') : 0;
     if (rank > 0) breaks.push({ end: limit, rank, late: used >= columns * 0.6 });
   }
+  const run = closingRun(chars, at);
+  if (run !== undefined) {
+    const hung = chars.slice(at, run).join('');
+    if (used + textColumns(hung) <= columns + HANG) limit += hung.length;
+    else {
+      let back = at - 1;
+      while (back > 0 && closingRun(chars, back) !== undefined) back -= 1;
+      if (back > 0) limit = chars.slice(0, back).join('').length;
+    }
+  }
   return { breaks, limit: limit > 0 ? limit : (chars[0]?.length ?? 0) };
+}
+
+/** Whether a text fits on one line of `columns` columns, the closing punctuation at its end hanging past it (see lineEnds). */
+function fitsLine(text: string, columns: number): boolean {
+  return lineEnds(text, columns).limit >= text.length;
 }
 
 /** The end of the best-reading break of a list, the latest of its rank; undefined for none. */
@@ -147,8 +184,8 @@ function bestBreak(breaks: readonly LineBreak[]): number | undefined {
 /** Whether a text fits in a number of lines when every line is filled to the limit, the fullest a line can be. */
 function fitsAtLimits(text: string, columns: number, lines: number): boolean {
   let rest = text;
-  for (let line = 1; line < lines && textColumns(rest) > columns; line += 1) rest = rest.slice(lineEnds(rest, columns).limit).trimStart();
-  return textColumns(rest) <= columns;
+  for (let line = 1; line < lines && !fitsLine(rest, columns); line += 1) rest = rest.slice(lineEnds(rest, columns).limit).trimStart();
+  return fitsLine(rest, columns);
 }
 
 /**
@@ -158,10 +195,16 @@ function fitsAtLimits(text: string, columns: number, lines: number): boolean {
  * after '、' first, then after '.' or '(', then before an upper-case letter
  * that follows a lower-case one; else at the limit. A text too long for its
  * lines fills them, ending a line at a good break only in its last 40%, and
- * only its last line ends with '…'. The spaces at a break are dropped.
+ * only its last line ends with '…'. The spaces at a break are dropped. No
+ * line starts with closing punctuation (`)`, `]`, `}`, `,`, `;`, `、`, `。`,
+ * `）`, `」`...): it stays at the end of the line before, which may run up to
+ * HANG columns past its end for it (FlowDiagram squeezes a line the font
+ * draws wider than its room), else that line ends a character earlier. So
+ * `buildAccessTokenAudience()` keeps one line at 25 columns.
  */
 export function wrapColumns(text: string, columns: number, maxLines: number): string[] {
-  if (maxLines <= 1 || textColumns(text) <= columns) return [truncateColumns(text, columns)];
+  if (fitsLine(text, columns)) return [text];
+  if (maxLines <= 1) return [truncateColumns(text, columns)];
   const { breaks, limit } = lineEnds(text, columns);
   const restFrom = (end: number) => text.slice(end).trimStart();
   const keepsWhole = (end: number) => fitsAtLimits(restFrom(end), columns, maxLines - 1);

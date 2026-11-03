@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Decisions, FlowTree, FrameChange, FrameChangeEntry, MapData, TreeNode } from '../types';
 import { indexChanges } from './changes';
-import { activeOf, boxAction, boxHeight, boxOf, frameDiagram, markOfBox, type Diagram, type DiagramNode } from './diagram';
+import { activeOf, boxAction, boxHeight, boxOf, frameDiagram, markOfBox, spokenLabel, type Diagram, type DiagramNode } from './diagram';
 import { layoutGraph, type LayoutDirection } from './graph';
 import { branchesOf, isDecision, nodesOn } from './trace';
 
@@ -425,6 +425,15 @@ describe('the steps of an endpoint', () => {
     expect(boxAction(box(diagram, 'n:s0b2'))).toBe('toggle');
   });
 
+  it('should let a step whose only call is on the way out of its guard toggle, and a step whose call is the condition of its guard open it', () => {
+    const exiting = frameOf([step('s0', '明示的な承認を求める', [decide('s0s0', "if (action !== 'approve')", 'guard', [returned('s0s0t0', 'return redirectToErrorPage(…)', [call('s0s0t0i0', 'redirectToErrorPage')])])]), call('s1', 'approve')]);
+    const exit = box(frameDiagram(exiting, '', undefined, { hasFrame }), 'n:s0');
+    expect([exit.title, exit.opens, boxAction(exit), exit.rows.map((row) => row.text)]).toEqual(['▸ 明示的な承認を求める', undefined, 'toggle', ['→ return redirectToErrorPage(…)']]);
+    const checking = frameOf([step('s0', '確かめる', [decide('s0s0', 'if (!(await verify(x)))', 'guard', [returned('s0s0t0', 'return null')], [], { pre: [call('s0s0i0', 'verify')] })])]);
+    const check = box(frameDiagram(checking, '', undefined, { hasFrame }), 'n:s0');
+    expect([check.title, check.opens, boxAction(check)]).toEqual(['確かめる', { node: 's0s0i0', fn: fn('verify') }, 'open']);
+  });
+
   it('should let a step that calls a member besides its function toggle, not open the function', () => {
     const issue: TreeNode = { id: 's0s1', kind: 'call', lines: [3, 3], code: 'await issuer.issue(payload)', target: { kind: 'member', id: 'core:issuer.ts#Issuer.issue' } };
     const issuing = frameDiagram(frameOf([step('s0', 'アクセストークンを発行する', [call('s0s0', 'build'), issue])]), '', undefined, { hasFrame });
@@ -558,6 +567,13 @@ describe('boxHeight', () => {
     expect(boxHeight(sized(title, 'what it does', 0), 200)).toBe(50);
     expect(boxHeight(sized(title, 'what it does', 0), 320, 80)).toBe(50);
     expect(boxHeight(sized(long, '', 0, 'start'), 200)).toBe(36);
+  });
+});
+
+describe('spokenLabel', () => {
+  it('should join the lines of a label with 。 and keep a single full stop after a line that ends with one', () => {
+    expect(spokenLabel(['loadSigningKeys()', '用途ごとの署名鍵の集合を読み込み、検証して返す。', '押すと loadSigningKeys() の中を開く'])).toBe('loadSigningKeys()。用途ごとの署名鍵の集合を読み込み、検証して返す。押すと loadSigningKeys() の中を開く');
+    expect(spokenLabel(['const key = keys.get(id)', 'Returns the key, or undefined when it is missing.', 'diff |= a[i]! ^ b[i]!'])).toBe('const key = keys.get(id)。Returns the key, or undefined when it is missing。diff |= a[i]! ^ b[i]!');
   });
 });
 

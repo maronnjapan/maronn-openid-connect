@@ -25,7 +25,7 @@ const TIER_LABELS: Record<MapFeature['tier'], string> = { stable: '既定', expe
  * pull request, an endpoint whose diagram shows a change carries its badge.
  */
 export function Sidebar({ data, changes, framework, enabled, endpoints, selected, onToggleFeature, onEndpoint }: SidebarProps) {
-  const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, data, endpoint)])), [changes, data, endpoints]);
+  const marks = useMemo(() => new Map(endpoints.map((endpoint) => [endpoint.id, endpointMark(changes, endpoint)])), [changes, endpoints]);
   const rows: React.ReactNode[] = [];
   let group: string | null = null;
   for (const endpoint of endpoints) {

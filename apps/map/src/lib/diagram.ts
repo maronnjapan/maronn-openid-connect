@@ -1,216 +1,169 @@
 /**
- * An endpoint and a function as the same kind of diagram (graph.ts): the
- * boxes with the two lines they show, the arrows, and the cases. The text of
- * a box says what happens there: the label of a step, or what the function a
- * box calls does (the comment the author wrote above the line, else the first
- * line of the callee's JSDoc).
+ * The diagram of one frame: its tree flattened into boxes and arrows, for the
+ * reader who wants to see the shape of the flow. The outline of the trace is
+ * the main view; the diagram shows the frame it focuses on, with the way the
+ * choices take in blue. Nothing here touches the DOM.
  */
-import type { FlowEndpoint, FunctionCard, FunctionFlow, FunctionFlowNode, MapData } from '../types';
-import { deriveCases, type FlowCase, type GraphEdge, type GraphNode } from './graph';
-import { featureOf } from './model';
+import type { Decisions, FlowTree, TreeNode } from '../types';
+import type { GraphEdge, GraphNode } from './graph';
+import { branchesOf, chosenSide, decisionKey, forcedSide, nodesOn, nodesRun } from './trace';
 
 export interface DiagramNode extends GraphNode {
   /** The first line of the box. */
   title: string;
   /** The second line: what the box does. */
   subtitle: string;
-  /** normal, the start of a function, where it ends, or the error step / a throw. */
   tone: 'normal' | 'start' | 'end' | 'error';
-  /** What the box opens: a step of the endpoint, a function, or the member of an interface. */
-  target?: { step: string } | { fn: string } | { member: string };
+  /** The node of the tree the box is (absent for the start). */
+  node?: string;
+  /** What the box opens. */
+  target?: { fn: string } | { member: string } | { step: string };
 }
 
 export interface Diagram {
-  /** Names the diagram, for the cases a reader checked on it. */
+  /** Names the diagram (its frame), so the view resets when it changes. */
   key: string;
   nodes: DiagramNode[];
   edges: GraphEdge[];
-  cases: FlowCase[];
+  /** For an arrow out of a decision: the decision and its side, by the index of the arrow. */
+  sides: Map<number, { node: string; side: string }>;
 }
 
-/** The words of an arrow of a function, as the page says them. */
-function edgeText(label: string | undefined): string | undefined {
-  if (label === undefined) return undefined;
-  return label
-    .replace(/^else if /, 'それ以外で ')
-    .replace(/^else$/, 'それ以外')
-    .replace(/ › else$/, ' › それ以外')
-    .replace(/^catch$/, '例外が起きたとき')
-    .replace(/^true$/, '成立')
-    .replace(/^false$/, '不成立')
-    .replace(/^nullish$/, 'null または undefined')
-    .replace(/^defined$/, 'null・undefined 以外')
-    .replace(/^catch › /, '例外が起きたとき › ');
+interface Pending {
+  from: string;
+  label?: string;
+  kind: GraphEdge['kind'];
+  side?: { node: string; side: string };
 }
 
-/** The steps of an endpoint and their arrows. */
-export function endpointDiagram(endpoint: FlowEndpoint, data: MapData): Diagram {
-  if (endpoint.controlFlow !== undefined) {
-    const card: FunctionCard = { id: endpoint.id, name: endpoint.label, package: '', module: '', line: 1, exported: false, kind: 'other', summary: endpoint.label, calls: [], calledBy: [], flow: endpoint.controlFlow };
-    const diagram = functionDiagram(card, data) as Diagram;
-    const byId = new Map(endpoint.controlFlow.nodes.map((node) => [node.id, node]));
-    const nodes = diagram.nodes.map((node) => {
-      const step = endpoint.steps.find((step) => step.id === byId.get(node.id)?.step);
-      return step === undefined ? node : { ...node, title: step.label, subtitle: `${step.function}()`, target: { step: step.id } };
-    });
-    return finishEndpoint(endpoint.id, nodes, diagram.edges);
-  }
-  const errorSteps = new Set(endpoint.edges.filter((edge) => edge.kind === 'error').map((edge) => edge.to));
-  const nodes: DiagramNode[] = endpoint.steps.map((step) => {
-    const feature = step.feature === undefined ? '' : `（${featureOf(data.features, step.feature)?.id ?? step.feature}）`;
-    return {
-      id: step.id,
-      title: `${step.label}${feature}`,
-      // A step of Next.js is a block of the Route Handler, marked by its id; the others are a function.
-      subtitle: step.functionId === undefined && step.module !== undefined ? `[${step.id}] ${step.module}` : `${step.function}()`,
-      tone: errorSteps.has(step.id) ? 'error' : 'normal',
-      target: { step: step.id },
-    };
-  });
-  const edges: GraphEdge[] = endpoint.edges.map((edge) => ({ ...edge }));
-  const label = (id: string) => endpoint.steps.find((step) => step.id === id)?.label ?? id;
-  // Even metadata-only endpoints keep a distinct error response per source.
-  const separate = separateErrors(nodes, edges);
-  return { key: `endpoint:${endpoint.id}`, ...separate, cases: deriveCases(separate.nodes, separate.edges, { errors: 'modifier', nodeLabel: label, nameBySink: false }) };
-}
-
-/** Keep each failed step's response separate, including the conditions inside its catch handler. */
-function separateErrors(nodes: DiagramNode[], edges: GraphEdge[]): { nodes: DiagramNode[]; edges: GraphEdge[] } {
-  const incoming = new Set(edges.map((edge) => edge.to));
-  const normal = new Set(nodes.filter((node) => !incoming.has(node.id)).map((node) => node.id));
-  const queue = [...normal];
-  while (queue.length > 0) {
-    const from = queue.pop();
-    for (const edge of edges) if (edge.from === from && edge.kind !== 'error' && !normal.has(edge.to)) {
-      normal.add(edge.to);
-      queue.push(edge.to);
+/** The diagram of a frame (see the module comment); `enabled` narrows it to the features that are on. */
+export function frameDiagram(tree: FlowTree, frame: string, enabled?: ReadonlySet<string>): Diagram {
+  const nodes: DiagramNode[] = [];
+  const edges: GraphEdge[] = [];
+  const sides = new Map<number, { node: string; side: string }>();
+  const connect = (entries: readonly Pending[], to: string) => {
+    for (const entry of entries) {
+      const edge: GraphEdge = { from: entry.from, to, kind: entry.kind };
+      if (entry.label !== undefined) edge.label = entry.label;
+      if (entry.side !== undefined) sides.set(edges.length, entry.side);
+      edges.push(edge);
     }
-  }
-  const exclusive = new Set<string>();
-  const copies: DiagramNode[] = [];
-  const copiedEdges: GraphEdge[] = [];
-  edges.forEach((error, index) => {
-    if (error.kind !== 'error' || !normal.has(error.from) || normal.has(error.to)) return;
-    const region = new Set<string>();
-    const visit = (id: string) => {
-      if (normal.has(id) || region.has(id)) return;
-      region.add(id);
-      for (const edge of edges) if (edge.from === id) visit(edge.to);
-    };
-    visit(error.to);
-    const rename = (id: string) => region.has(id) ? `${id}:error:${index}` : id;
-    const source = nodes.find((node) => node.id === error.from)?.title ?? error.from;
-    for (const node of nodes) if (region.has(node.id)) {
-      exclusive.add(node.id);
-      copies.push({ ...node, id: rename(node.id), tone: 'error', subtitle: [`${source} でのエラー`, node.subtitle].filter(Boolean).join(' · ') });
-    }
-    copiedEdges.push({ ...error, to: rename(error.to) });
-    for (const edge of edges) if (region.has(edge.from)) copiedEdges.push({ ...edge, from: rename(edge.from), to: rename(edge.to) });
-  });
-  // Only remove handlers that were actually copied; unrelated error paths stay intact.
-  return {
-    nodes: [...nodes.filter((node) => !exclusive.has(node.id)), ...copies],
-    edges: [...edges.filter((edge) => !exclusive.has(edge.from) && !exclusive.has(edge.to)), ...copiedEdges],
   };
-}
-
-/** Derive endpoint cases from implementation branches and their separate error responses. */
-function finishEndpoint(id: string, nodes: DiagramNode[], edges: GraphEdge[]): Diagram {
-  const separate = separateErrors(nodes, edges);
-  const label = (id: string) => {
-    const node = separate.nodes.find((node) => node.id === id);
-    return node?.tone === 'error' ? `${node.title}（${node.subtitle}）` : node?.title ?? id;
+  const box = (node: TreeNode, entries: readonly Pending[], override?: Partial<DiagramNode>): string => {
+    const id = `n:${node.id}`;
+    const diagramNode: DiagramNode = {
+      id,
+      node: node.id,
+      title: node.kind === 'block' ? (node.step?.label ?? node.code) : node.code,
+      subtitle: node.kind === 'block' ? `[${node.step?.id ?? ''}]` : (node.text ?? ''),
+      tone: node.kind === 'throw' ? 'error' : node.kind === 'return' || node.kind === 'end' ? 'end' : 'normal',
+      ...override,
+    };
+    if (node.kind === 'call' && node.target?.kind === 'function') diagramNode.target = { fn: node.target.id };
+    if (node.kind === 'call' && node.target?.kind === 'member') diagramNode.target = { member: node.target.id };
+    if (node.kind === 'block' && node.step !== undefined) diagramNode.target = { step: node.step.id };
+    nodes.push(diagramNode);
+    connect(entries, id);
+    return id;
   };
-  return { key: `endpoint:${id}`, ...separate, cases: deriveCases(separate.nodes, separate.edges, { errors: 'path', nodeLabel: label, nameBySink: true }) };
-}
-
-/** Explain the actual check, using its source comment or the documented predicate it evaluates. */
-function conditionSummary(node: FunctionFlowNode, flow: FunctionFlow, data: MapData): string {
-  if (node.note) return node.note;
-  // Follow the evaluated expression backwards, stopping at other guards.
-  // This also resolves aliases through the callee id, without guessing by name.
-  const pending = flow.edges.filter((edge) => edge.to === node.id).map((edge) => edge.from);
-  const seen = new Set<string>();
-  while (pending.length > 0) {
-    const id = pending.shift() as string;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const candidate = flow.nodes.find((candidate) => candidate.id === id);
-    if (candidate === undefined || candidate.kind === 'condition' || candidate.kind === 'start') continue;
-    if ((candidate.kind === 'call' || candidate.kind === 'dynamic') && node.label.includes(`${candidate.label}(`)) {
-      const summary = candidate.callee === undefined ? undefined : data.functions[candidate.callee]?.summary;
-      const member = candidate.member === undefined ? undefined : data.members[candidate.member]?.summary;
-      if (summary || member) return summary || member || '';
+  const list = (items: readonly TreeNode[], entries: Pending[]): Pending[] => {
+    let open = entries;
+    const visible = nodesOn(items, enabled);
+    for (let index = 0; index < visible.length; index += 1) {
+      const node = visible[index] as TreeNode;
+      for (const before of node.pre ?? []) open = one(before, open);
+      // A run of actions is one box.
+      if (node.kind === 'action') {
+        let end = index;
+        while (end + 1 < visible.length && (visible[end + 1] as TreeNode).kind === 'action') end += 1;
+        if (end > index) {
+          const id = box(node, open, { title: `処理 ×${end - index + 1}`, subtitle: visible.slice(index, end + 1).map((item) => item.code).join(' / ') });
+          open = [{ from: id, kind: 'flow' }];
+          index = end;
+          continue;
+        }
+      }
+      open = one(node, open);
     }
-    pending.push(...flow.edges.filter((edge) => edge.to === id).map((edge) => edge.from));
-  }
-  const text = node.label;
-  if (flow.edges.some((edge) => edge.from === node.id && edge.label === 'nullish')) return `${text} が null または undefined か`;
-  const includes = /^(!?)([\w.$?]+)\.(includes|startsWith|endsWith)\(([^()]*)\)$/.exec(text);
-  if (includes) {
-    const [, negate, value, method, expected] = includes;
-    const verb = method === 'includes' ? (negate ? '含まれないか' : '含まれるか') : method === 'startsWith' ? (negate ? '始まらないか' : '始まるか') : (negate ? '終わらないか' : '終わるか');
-    return method === 'includes' ? `${value} に ${expected} が${verb}` : `${value} が ${expected} で${verb}`;
-  }
-  const comparison = /^(.+?)\s*(===|!==|==|!=|>=|<=|>|<)\s*(.+)$/.exec(text);
-  if (comparison) {
-    const [, left, operator, right] = comparison;
-    const phrases: Record<string, string> = { '===': 'と等しいか', '==': 'と等しいか', '!==': 'と異なるか', '!=': 'と異なるか', '>': 'より大きいか', '<': 'より小さいか', '>=': '以上か', '<=': '以下か' };
-    return `${left?.trim()} が ${right?.trim()} ${phrases[operator as string]}`;
-  }
-  const instance = /^(.+) instanceof (.+)$/.exec(text);
-  if (instance) return `${instance[1]} が ${instance[2]} 型の値か`;
-  const property = /^(.+) in (.+)$/.exec(text);
-  if (property) return `${property[2]} に ${property[1]} プロパティがあるか`;
-  const truthy = /^(!?)([\w.$?]+)$/.exec(text);
-  if (truthy) return `${truthy[2]} が${truthy[1] ? '偽' : '真'}として評価されるか`;
-  return '';
-}
-
-/** The flow inside a function; undefined for a function without one. */
-export function functionDiagram(card: FunctionCard, data: MapData): Diagram | undefined {
-  const flow = card.flow;
-  if (flow === undefined) return undefined;
-  const nodes: DiagramNode[] = flow.nodes.map((node) => {
+    return open;
+  };
+  const one = (node: TreeNode, entries: Pending[]): Pending[] => {
     switch (node.kind) {
-      case 'start':
-        return { id: node.id, title: node.label, subtitle: card.summary, tone: 'start' };
-      case 'condition':
-        return { id: node.id, title: node.label, subtitle: conditionSummary(node, flow, data), tone: 'normal' };
-      case 'call': {
-        const callee = node.callee === undefined ? undefined : data.functions[node.callee];
-        const diagramNode: DiagramNode = { id: node.id, title: `${node.label}()`, subtitle: node.note ?? callee?.summary ?? '', tone: 'normal' };
-        if (node.callee !== undefined) diagramNode.target = { fn: node.callee };
-        return diagramNode;
-      }
-      case 'dynamic': {
-        const member = node.member === undefined ? undefined : data.members[node.member];
-        const diagramNode: DiagramNode = { id: node.id, title: `${node.label}()`, subtitle: node.note ?? member?.summary ?? '', tone: 'normal' };
-        if (node.member !== undefined) diagramNode.target = { member: node.member };
-        return diagramNode;
-      }
-      case 'throw':
-        return { id: node.id, title: node.label, subtitle: node.note ?? '', tone: 'error' };
       case 'return':
-        return { id: node.id, title: node.label, subtitle: node.note ?? '', tone: 'end' };
-      case 'end':
-        return { id: node.id, title: '終了', subtitle: '', tone: 'end' };
+      case 'throw': {
+        const id = box(node, entries);
+        return node.local === true ? [{ from: id, kind: 'flow' }] : [];
+      }
+      case 'block': {
+        const id = box(node, entries);
+        return list(node.branches?.[0]?.nodes ?? [], [{ from: id, kind: 'flow' }]);
+      }
+      case 'try': {
+        const id = box(node, entries, { title: 'try', subtitle: '例外を捕まえる範囲' });
+        const branches = node.branches ?? [];
+        const attempt = branches.find((branch) => branch.key === 'try');
+        const handler = branches.find((branch) => branch.key === 'catch');
+        const final = branches.find((branch) => branch.key === 'finally');
+        let out = list(attempt?.nodes ?? [], [{ from: id, kind: 'flow' }]);
+        if (handler !== undefined) out = [...out, ...list(handler.nodes, [{ from: id, kind: 'error', label: '例外が起きたとき', side: { node: node.id, side: 'catch' } }])];
+        if (final !== undefined) out = list(final.nodes, out);
+        return out;
+      }
+      case 'loop': {
+        const id = box(node, entries);
+        const body = node.branches?.find((branch) => branch.key === 'body');
+        const out = list(body?.nodes ?? [], [{ from: id, kind: 'branch', label: body?.label ?? '繰り返す', side: { node: node.id, side: 'body' } }]);
+        const skip = node.branches?.find((branch) => branch.key === 'skip');
+        return [...out, ...(skip === undefined ? [] : [{ from: id, kind: 'branch' as const, label: skip.label, side: { node: node.id, side: 'skip' } }])];
+      }
+      case 'if':
+      case 'switch':
+      case 'cond-expr': {
+        const id = box(node, entries);
+        const out: Pending[] = [];
+        for (const branch of branchesOf(node, enabled)) {
+          const entry: Pending = { from: id, kind: 'branch', label: branch.label, side: { node: node.id, side: branch.key } };
+          out.push(...(branch.nodes.length === 0 ? [entry] : list(branch.nodes, [entry])));
+        }
+        return out;
+      }
+      default: {
+        const id = box(node, entries);
+        return [{ from: id, kind: 'flow' }];
+      }
     }
-  });
-  const edges: GraphEdge[] = flow.edges.map((edge) => {
-    const text = edgeText(edge.label);
-    const condition = flow.nodes.find((node) => node.id === edge.from && node.kind === 'condition');
-    const label = condition === undefined || text === undefined ? text : `${condition.label}: ${text}`;
-    return label === undefined ? { from: edge.from, to: edge.to, kind: edge.kind } : { from: edge.from, to: edge.to, label, kind: edge.kind };
-  });
-  const title = (id: string) => {
-    const node = nodes.find((candidate) => candidate.id === id);
-    return node?.tone === 'end' && node.title !== '終了' ? node.title : (node?.title ?? id);
   };
-  return {
-    key: `fn:${card.id}`,
-    nodes,
-    edges,
-    cases: deriveCases(nodes, edges, { errors: 'path', nodeLabel: title, nameBySink: true }),
-  };
+  nodes.push({ id: 'start', title: tree.signature || tree.name, subtitle: '', tone: 'start' });
+  list(tree.nodes, [{ from: 'start', kind: 'flow' }]);
+  return { key: `frame:${tree.id}:${frame}`, nodes, edges, sides };
+}
+
+/** The boxes and arrows the choices run through: a box whose node runs, an arrow between two such boxes on the chosen side. */
+export function activeOf(diagram: Diagram, tree: FlowTree, frame: string, choices: readonly Decisions[], enabled?: ReadonlySet<string>): { nodes: Set<string>; edges: Set<number> } {
+  const run = nodesRun(tree, frame, choices, enabled);
+  const nodes = new Set<string>(['start']);
+  for (const node of diagram.nodes) if (node.node !== undefined && run.has(node.node)) nodes.add(node.id);
+  const edges = new Set<number>();
+  diagram.edges.forEach((edge, index) => {
+    if (!nodes.has(edge.from) || !nodes.has(edge.to)) return;
+    const side = diagram.sides.get(index);
+    if (side !== undefined) {
+      const decision = diagram.nodes.find((node) => node.node === side.node);
+      const treeNode = decision === undefined ? undefined : findIn(tree.nodes, side.node);
+      const chosen = (treeNode === undefined ? undefined : forcedSide(treeNode, enabled)) ?? chosenSide(choices, decisionKey(frame, side.node));
+      if (chosen !== undefined && chosen !== side.side) return;
+    }
+    edges.add(index);
+  });
+  return { nodes, edges };
+}
+
+function findIn(nodes: readonly TreeNode[], id: string): TreeNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (!id.startsWith(node.id)) continue;
+    const found = findIn(node.pre ?? [], id) ?? (node.branches ?? []).reduce<TreeNode | undefined>((hit, branch) => hit ?? findIn(branch.nodes, id), undefined);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }

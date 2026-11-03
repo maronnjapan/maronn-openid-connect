@@ -1,15 +1,15 @@
 /*
  * The page in three colors: a neutral grey scale (the page, the text, and
- * what the checked cases do not use), one accent (what they use, the
- * selection) and red (an error step, a throw, the arrows of an error). The
- * badges of the changes of a pull request stay in the grey scale, so the
- * colors of a diagram keep their meaning; a diff adds lines in the accent and
- * removes them in red.
+ * what the chosen way does not run), one accent (what it runs, the
+ * selection) and red (a throw, the arrows of an error). The badges of the
+ * changes of a pull request stay in the grey scale, so the colors keep their
+ * meaning; a diff adds lines in the accent and removes them in red.
  *
  * Layout: the header, then the endpoints on the left (they fold away) and the
- * open screen filling the rest. On a screen, the description stays short and
- * the diagram takes the remaining height and width. Step and member details
- * open in a large drawer; the callers of a function sit beside its diagram.
+ * open screen filling the rest. On a screen, the description stays short;
+ * the outline of the trace is the main column and the pane beside it shows
+ * the diagram of one frame, the diff of the way and the detail of a row. A
+ * narrow screen keeps the outline alone and opens the pane over it.
  */
 :root {
   --bg: #f4f5f7;
@@ -119,30 +119,102 @@ h1, h2, h3, h4 { margin: 0; }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle; }
 .facts-row { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--muted); }
 
-/* ---- cases */
-.cases { flex: none; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.cases > summary { display: flex; align-items: baseline; gap: 8px; color: var(--fg); min-width: 0; list-style: none; }
-.cases > summary::-webkit-details-marker { display: none; }
-.cases > summary::before { content: '▸'; color: var(--muted); }
-.cases[open] > summary::before { content: '▾'; }
-.cases[open] > summary { margin-bottom: 6px; }
-.cases-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.cases-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
-.cases-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 4px; }
-.cases-title { font-weight: 600; font-size: 13px; }
-.cases-actions { margin-left: auto; display: flex; gap: 6px; }
-.cases-actions button { border: 1px solid var(--line); background: var(--surface); border-radius: 4px; padding: 0 8px; cursor: pointer; font-size: 12px; }
-.case-list { display: flex; flex-wrap: wrap; gap: 4px 6px; max-height: 96px; overflow: auto; }
-.case { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; cursor: pointer; background: var(--surface); max-width: 100%; }
-.case span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case input { accent-color: var(--accent); margin: 0; }
-.case.checked { border-color: var(--accent); background: var(--accent-soft); }
-.case.error input { accent-color: var(--danger); }
-.case.error.checked { border-color: var(--danger); background: var(--danger-soft); }
-
-/* ---- the work area: the diagram, and a column beside it */
+/* ---- the work area: the outline, and a pane beside it */
 .work { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.work.with-pane { grid-template-columns: minmax(0, 1fr) minmax(320px, 42%); }
 .work.with-panel { grid-template-columns: minmax(0, 1fr) 340px; }
+.trace-area { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.outline { overflow: auto; min-height: 0; min-width: 0; background: var(--surface); }
+.pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--bg); }
+.pane-tabs { flex: none; margin: 8px; align-self: flex-start; flex-wrap: wrap; }
+.pane-content { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 0 12px 16px; gap: 10px; }
+.pane-diagram { flex: 1; min-height: 360px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.pane-note { padding: 6px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; flex-wrap: wrap; }
+.path-diff { display: flex; flex-direction: column; gap: 12px; }
+.path-diff h4 { font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.path-diff .diff { max-height: none; }
+.node-detail, .step-detail { display: flex; flex-direction: column; gap: 8px; }
+.node-detail p, .step-detail p { margin: 0; }
+.step-detail h3 { font-size: 15px; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.mobile-pane-buttons { position: fixed; z-index: 9; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.mobile-pane-buttons .code-button { min-height: 44px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16); }
+.pane-drawer .drawer-content { padding: 12px; }
+.pane-drawer .pane-diagram { min-height: 70dvh; }
+
+/* ---- the outline of a trace */
+.trace { list-style: none; margin: 0; padding: 6px 0 64px; font-size: 13px; }
+.trace-row { padding-top: 1px; padding-bottom: 1px; padding-right: 12px; border-left: 3px solid transparent; }
+.trace-row.on { color: var(--fg); }
+.trace-row.off { color: var(--faint); }
+.trace-row.off .code-text, .trace-row.off .step-title { color: var(--faint); }
+.trace-row.selected { background: var(--accent-soft); border-left-color: var(--accent); }
+.trace-row.before .code-text { font-size: 12px; color: var(--muted); }
+.trace-row.before .code-text::before { content: '先に '; font-family: var(--font-ui); font-size: 11px; color: var(--faint); }
+.trace-row.changed { background: linear-gradient(90deg, var(--surface-2), transparent 60%); }
+.trace-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.twisty, .twisty-space { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
+.twisty { border: 0; background: none; cursor: pointer; color: var(--accent); padding: 0; font-size: 12px; }
+.twisty:hover { background: var(--accent-soft); border-radius: 3px; }
+.kind { flex: none; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; line-height: 16px; }
+.code-text { border: 0; background: none; padding: 0; cursor: pointer; text-align: left; color: inherit; min-width: 0; max-width: min(64ch, 100%); flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-title.code-text { white-space: normal; max-width: none; }
+.code-text:hover { text-decoration: underline; text-underline-offset: 2px; }
+.step-title { font-weight: 600; }
+.kind-block > .trace-line .step-title::before { content: '■ '; color: var(--accent); font-size: 10px; }
+.trace-row.off.kind-block > .trace-line .step-title::before { color: var(--faint); }
+.kind-throw .code-text, .kind-throw .folded { color: var(--danger); }
+.trace-row.off.kind-throw .code-text { color: var(--faint); }
+.folded { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
+.trace-words { color: var(--muted); font-size: 12px; padding-left: 26px; overflow-wrap: anywhere; }
+.trace-words.from-comment::before { content: '// '; color: var(--faint); }
+.trace-words.step-words { font-family: var(--font-code); font-size: 11px; }
+.trace-words.step-words::before { content: none; }
+.open-page { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 2px; font-size: 12px; }
+.open-page:hover { color: var(--accent); }
+.trace-row.off .trace-words { color: var(--faint); }
+.trace-row.branch .trace-line { padding-left: 4px; }
+.branch-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.branch-label::before { content: '└ '; color: var(--faint); font-weight: 400; }
+.toward { font-size: 12px; color: var(--muted); }
+.trace-row.removed del { color: var(--danger); }
+.trace-failure { font-size: 12px; color: var(--danger); padding-left: 26px; }
+.trace-row .diff { margin-left: 26px; }
+.exprs { margin: 2px 0 0 26px; padding-left: 1em; font-size: 12px; color: var(--fg); }
+.exprs del { color: var(--danger); }
+.exprs ins { color: var(--accent); text-decoration: none; }
+.link.small { font-size: 11.5px; }
+.below { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.sides { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.side { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 0 8px; font-size: 11.5px; line-height: 18px; cursor: pointer; color: var(--muted); }
+.side:hover { border-color: var(--accent); }
+.side[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+.side:disabled { cursor: default; opacity: 0.7; }
+
+/* ---- the ready-made choices */
+.selections { flex: none; padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.selections > summary { display: flex; align-items: baseline; gap: 8px; color: var(--fg); min-width: 0; list-style: none; }
+.selections > summary::-webkit-details-marker { display: none; }
+.selections > summary::before { content: '▸'; color: var(--muted); }
+.selections[open] > summary::before { content: '▾'; }
+.selections[open] > summary { margin-bottom: 6px; }
+.selections-title { font-weight: 600; font-size: 13px; }
+.selections-current { color: var(--muted); font-size: 12px; }
+.selections-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; }
+.selections-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.selections-actions button { border: 1px solid var(--line); background: var(--surface); border-radius: 4px; padding: 0 8px; cursor: pointer; font-size: 12px; }
+.selections-actions .toggle { font-size: 12.5px; display: inline-flex; gap: 4px; align-items: center; }
+.selection-group { margin-top: 4px; }
+.selection-group h4 { font-size: 11.5px; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+.selection-list { display: flex; flex-wrap: wrap; gap: 4px 6px; max-height: 120px; overflow: auto; }
+.selection { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; cursor: pointer; background: var(--surface); max-width: 100%; }
+.selection span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selection .muted { font-size: 11.5px; }
+.selection input { accent-color: var(--accent); margin: 0; }
+.selection.checked { border-color: var(--accent); background: var(--accent-soft); }
+.selection.error input { accent-color: var(--danger); }
+.selection.error.checked { border-color: var(--danger); background: var(--danger-soft); }
+.expand-changes { flex: none; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 6px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .canvas { overflow: hidden; min-height: 0; min-width: 0; position: relative; display: flex; flex-direction: column; }
 .side-panel { overflow: auto; min-height: 0; background: var(--surface); border-left: 1px solid var(--line); padding: 12px 14px 24px; display: flex; flex-direction: column; gap: 12px; }
 .side-panel h3 { font-size: 15px; font-weight: 600; }
@@ -254,6 +326,13 @@ h1, h2, h3, h4 { margin: 0; }
 .change-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .where-inline { font-size: 11.5px; overflow-wrap: anywhere; }
 
+.change-summary ul { margin: 0; padding-left: 1.2em; font-size: 12.5px; }
+.change-summary .note { margin-top: 2px; }
+.ways { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.undocumented { border: 1px solid var(--fg); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; max-width: 72em; }
+.badge-required { background: var(--surface); color: var(--fg); border-style: dashed; }
+.drawer-diff { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; }
+.drawer-diff .diff { max-height: none; }
 .note-text { font-size: 13px; min-width: 0; }
 .note-text p { margin: 0 0 4px; white-space: pre-line; overflow-wrap: anywhere; }
 .note-text p:last-child, .note-text ul:last-child, .note-text pre:last-child { margin-bottom: 0; }
@@ -301,11 +380,10 @@ h1, h2, h3, h4 { margin: 0; }
 .mobile-menu .search ul { position: static; margin-top: 4px; max-height: 40dvh; }
 .mobile-menu .screen-head { padding: 12px 16px; }
 .mobile-menu .screen-title { flex-wrap: wrap; }
-.mobile-menu .screen-description:not([hidden]), .mobile-menu .case-list { max-height: none; overflow: visible; }
-.mobile-menu .cases { padding: 12px 16px; }
-.mobile-menu .cases-title, .mobile-menu .cases-count { flex: none; }
-.mobile-menu .case-list { flex-direction: column; align-items: flex-start; }
-.mobile-menu .case { min-height: 44px; }
+.mobile-menu .screen-description:not([hidden]), .mobile-menu .selection-list { max-height: none; overflow: visible; }
+.mobile-menu .selections, .mobile-menu .expand-changes { padding: 12px 16px; }
+.mobile-menu .selection-list { flex-direction: column; align-items: flex-start; }
+.mobile-menu .selection { min-height: 44px; }
 .mobile-menu .diagram-tools { padding: 12px 16px; }
 .mobile-menu .diagram-tools button, .mobile-menu .seg button { min-height: 44px; }
 .mobile-menu .callers { overflow: visible; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--line); }
@@ -315,7 +393,10 @@ h1, h2, h3, h4 { margin: 0; }
   .changes-screen > .screen-head { padding-left: max(64px, calc(env(safe-area-inset-left, 0px) + 56px)); }
   .code-drawer { width: 100vw; }
   .sidebar-open .body { grid-template-columns: minmax(0, 1fr); }
-  .work.with-panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .work.with-panel, .work.with-pane { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .trace { padding-top: max(60px, calc(env(safe-area-inset-top, 0px) + 56px)); }
+  .twisty { width: 32px; height: 32px; font-size: 14px; }
+  .side { line-height: 28px; padding: 0 12px; }
   .side-panel { border-left: 0; border-top: 1px solid var(--line); }
   .search { order: 5; flex-basis: 100%; max-width: none; }
   /* The changes of a pull request read as one column: the functions, then the endpoints. */

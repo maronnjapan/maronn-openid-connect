@@ -1,102 +1,101 @@
 import { useMemo, useState } from 'react';
-import type { FlowEndpoint, MapData } from '../types';
-import { changesInFile, markOf, stepMark, type ChangeIndex, type Mark } from '../lib/changes';
-import { endpointDiagram, type DiagramNode } from '../lib/diagram';
-import { activeOf } from '../lib/graph';
+import type { FlowEndpoint, MapData, Selection } from '../types';
+import { changeName, frameMark, type ChangeIndex } from '../lib/changes';
 import { generatedWhen } from '../lib/model';
 import { endpointSources } from '../lib/source';
-import { CasePicker } from './CasePicker';
+import { entryOf, type TraceState } from '../lib/trace';
 import { Badge } from './ChangeParts';
 import { CodeDrawer } from './CodeDrawer';
-import { FlowDiagram } from './FlowDiagram';
 import { ScreenHeader } from './ScreenHeader';
 import { StepPanel } from './StepPanel';
+import { Trace } from './Trace';
 
 export interface EndpointScreenProps {
   data: MapData;
-  /** The changes of the pull request, in the map of one. */
   changes: ChangeIndex | undefined;
+  framework: string;
   endpoint: FlowEndpoint;
-  selected: string | null;
-  /** The labels of the checked cases, or undefined for the default (the first case). */
-  checked: ReadonlySet<string> | undefined;
-  onCases: (key: string, checked: Set<string>) => void;
-  onSelectStep: (step: string | null) => void;
+  trace: TraceState;
+  enabled: ReadonlySet<string>;
+  onTrace: (next: TraceState) => void;
   onOpenFunction: (id: string) => void;
 }
 
+/** The ways from an endpoint to the changes of the pull request, as ready-made choices. */
+export function changeSelections(data: MapData, changes: ChangeIndex | undefined, framework: string, endpoint: string): Selection[] {
+  if (changes === undefined) return [];
+  return changes.changes.frames.flatMap((entry) =>
+    entry.reach
+      .filter((way) => way.endpoint === endpoint && way.frameworks.includes(framework))
+      .map((way): Selection => ({
+        kind: 'change',
+        name: `${changeName(data, entry)}${way.step === undefined ? '' : `（${way.step} から）`}`,
+        note: entry.summary[0] ?? '',
+        decisions: way.decisions,
+        frames: way.frames,
+        target: way.target,
+      })),
+  );
+}
+
 /**
- * One endpoint: what it does in a line, the cases to show, and its steps as
- * a diagram that takes the rest of the screen. The detail of a step opens
- * in a large drawer only while one is selected. In the map of a pull
- * request, the steps carry the badges of its changes, and the changed
- * functions of the endpoint's own file (whose blocks may name no function a
- * step calls) are listed under the description.
+ * One endpoint as a trace: what it does in a line, the ready-made choices,
+ * and the outline of the frame its trace starts from (the handler of the
+ * pipeline, or the Route Handler), each call opening its callee in place.
+ * A step selected shows its facts beside the outline.
  */
-export function EndpointScreen({ data, changes, endpoint, selected, checked, onCases, onSelectStep, onOpenFunction }: EndpointScreenProps) {
+export function EndpointScreen({ data, changes, framework, endpoint, trace, enabled, onTrace, onOpenFunction }: EndpointScreenProps) {
   const [code, setCode] = useState<string | null>(null);
   const sources = useMemo(() => endpointSources(data, endpoint), [data, endpoint]);
-  const diagram = useMemo(() => endpointDiagram(endpoint, data), [endpoint, data]);
-  const marks = useMemo(() => {
-    const byStep = new Map<string, Mark>();
-    for (const node of diagram.nodes) {
-      const step = endpoint.steps.find((step) => node.target !== undefined && 'step' in node.target && node.target.step === step.id);
-      if (step === undefined) continue;
-      const mark = stepMark(changes, data, step);
-      if (mark !== undefined) byStep.set(node.id, mark);
-    }
-    return byStep;
-  }, [changes, data, endpoint, diagram]);
-  const fileChanges = useMemo(() => changesInFile(changes, endpoint), [changes, endpoint]);
-  const labels = useMemo(() => checked ?? new Set(diagram.cases.slice(0, 1).map((flowCase) => flowCase.label)), [checked, diagram]);
-  const active = useMemo(() => {
-    const ids = new Set(diagram.cases.filter((flowCase) => labels.has(flowCase.label)).map((flowCase) => flowCase.id));
-    return activeOf(diagram.cases, ids, diagram.edges);
-  }, [diagram, labels]);
-  const step = endpoint.steps.find((candidate) => candidate.id === selected);
-  const onSelect = (node: DiagramNode) => {
-    if (node.target !== undefined && 'step' in node.target) onSelectStep(node.target.step === selected ? null : node.target.step);
-    if (node.target !== undefined && 'fn' in node.target) onOpenFunction(node.target.fn);
-  };
+  const extra = useMemo(() => changeSelections(data, changes, framework, endpoint.id), [data, changes, framework, endpoint.id]);
+  const root = entryOf(data, endpoint.root);
+  const mark = frameMark(changes, endpoint.root);
   return (
     <section className="screen" aria-label={endpoint.label}>
-      <ScreenHeader title={
-        <>
-          <h2>{endpoint.label}</h2>
-          <code className="route">
-            {endpoint.methods.join(' | ')} {endpoint.path}
-          </code>
-          {endpoint.source !== undefined ? <button type="button" className="code-button" aria-label="エンドポイント全体のコードを見る" onClick={() => setCode(endpoint.source as string)}>コードを見る</button> : null}
-        </>
-      }>
+      <ScreenHeader
+        title={
+          <>
+            <h2>{endpoint.label}</h2>
+            <code className="route">
+              {endpoint.methods.join(' | ')} {endpoint.path}
+            </code>
+            {mark !== undefined ? <Badge mark={mark} /> : null}
+            {endpoint.source !== undefined ? (
+              <button type="button" className="code-button" aria-label="エンドポイント全体のコードを見る" onClick={() => setCode(endpoint.source as string)}>
+                コードを見る
+              </button>
+            ) : null}
+          </>
+        }
+      >
         {endpoint.summary ? <p className="lead">{endpoint.summary}</p> : null}
         {endpoint.spec ? <span className="chip">{endpoint.spec}</span> : null}
         <p className="note">
-          {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · 箱を選ぶと、そのステップの詳細を開きます
-          {marks.size > 0 ? ` · このPRの変更の札が付いたステップ ${marks.size} 個` : ''}
+          {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · 処理の本体は {root === undefined ? endpoint.root : 'endpoint' in root ? `${root.name}（${root.module}）` : `${root.name}()（${root.module}）`} · 呼び出しの ▸ でその関数の中をその場で開きます
         </p>
-        {fileChanges.length > 0 ? (
-          <p className="note file-changes">
-            このエンドポイントのファイル（{endpoint.module}）で、このPRが変えた関数:
-            {fileChanges.map((change) => (
-              <span key={change.id}>
-                <Badge mark={markOf(change.kind)} />{' '}
-                <button type="button" className="link mono" onClick={() => onOpenFunction(change.id)}>
-                  {change.name}()
-                </button>
-              </span>
-            ))}
-          </p>
-        ) : null}
       </ScreenHeader>
-      <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} />
-      <div className="work">
-        <div className="canvas">
-          <FlowDiagram diagram={diagram} active={active} selected={selected} label={`${endpoint.label} のステップ`} marks={marks} onSelect={onSelect} />
-        </div>
-        {step ? <StepPanel data={data} changes={changes} endpoint={endpoint} step={step} onClose={() => onSelectStep(null)} onOpenFunction={onOpenFunction} onOpenCode={setCode} /> : null}
-      </div>
-      {code !== null ? <CodeDrawer key={code} data={data} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}
+      {endpoint.root === '' ? (
+        <p className="empty">このエンドポイントの処理の本体を読めませんでした。</p>
+      ) : (
+        <Trace
+          key={`${framework}/${endpoint.id}`}
+          data={data}
+          changes={changes}
+          rootId={endpoint.root}
+          extraSelections={extra}
+          state={trace}
+          onState={onTrace}
+          enabled={enabled}
+          onOpenFunction={onOpenFunction}
+          onOpenCode={setCode}
+          renderStep={(mark) => {
+            const step = endpoint.steps.find((candidate) => candidate.id === mark.id);
+            if (step === undefined) return <p className="note">{mark.label}（このフレームワークの構成には無いステップです）</p>;
+            return <StepPanel data={data} changes={changes} endpoint={endpoint} step={step} onOpenFunction={onOpenFunction} onOpenCode={setCode} />;
+          }}
+        />
+      )}
+      {code !== null ? <CodeDrawer key={code} data={data} changes={changes} targets={sources} initial={code} onClose={() => setCode(null)} /> : null}
     </section>
   );
 }

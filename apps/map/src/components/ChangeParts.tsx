@@ -1,5 +1,5 @@
-import type { DiffHunk, FunctionChange } from '../types';
-import { diffStat, inlineParts, markOf, noteBlocks, numberHunk, type Mark, type ReachedChange } from '../lib/changes';
+import type { DiffHunk, FrameChangeEntry } from '../types';
+import { countWords, diffStat, inlineParts, markOf, noteBlocks, numberHunk, type Mark } from '../lib/changes';
 
 /** A badge that says how something changed in the pull request; its tooltip says what that means. */
 export function Badge({ mark }: { mark: Mark }) {
@@ -11,7 +11,7 @@ export function Badge({ mark }: { mark: Mark }) {
 }
 
 /** A line of a note, with its `code` set in code. */
-function Inline({ text }: { text: string }) {
+export function Inline({ text }: { text: string }) {
   return (
     <>
       {inlineParts(text).map((part, index) => (part.code ? <code key={index}>{part.text}</code> : <span key={index}>{part.text}</span>))}
@@ -80,11 +80,12 @@ export function DiffView({ hunks }: { hunks: readonly DiffHunk[] }) {
   );
 }
 
-/** What the pull request did to a function, in a phrase. */
-export function changeHeadline(change: FunctionChange): string {
+/** What the pull request did to a frame, in a phrase. */
+export function changeHeadline(change: FrameChangeEntry): string {
+  const what = change.body === true ? 'エンドポイントの処理' : '関数';
   switch (change.kind) {
     case 'added':
-      return 'このPRで足した関数です';
+      return `このPRで足した${what}です`;
     case 'modified':
       return change.from === undefined ? 'このPRでコードを変えました' : `このPRでコードを変え、${change.from} から移しました`;
     case 'moved':
@@ -92,71 +93,72 @@ export function changeHeadline(change: FunctionChange): string {
     case 'docs':
       return 'このPRで JSDoc だけ変えました（コードは同じ）';
     case 'removed':
-      return 'このPRで消した関数です';
+      return `このPRで消した${what}です`;
     case 'noted':
       return 'コードは変えていません。このPRの変更メモが説明しています';
   }
 }
 
-/** What the notes of the pull request say about a function, or that they say nothing. */
-export function ChangeNotes({ change }: { change: FunctionChange }) {
-  if (change.notes === undefined || change.notes.length === 0) return <p className="note">変更メモにこの関数の説明はありません。</p>;
+/** What the notes of the pull request say about a frame, or that they say nothing. */
+export function ChangeNotes({ change }: { change: FrameChangeEntry }) {
+  const notes = (change.notes ?? []).filter((note) => note.text.trim() !== '');
+  if (notes.length === 0) return <p className="note">変更メモにこの変更の説明はありません。</p>;
   return (
     <>
-      {change.notes.map((note, index) => (
+      {notes.map((note, index) => (
         <NoteText key={index} text={note.text} />
       ))}
     </>
   );
 }
 
+/** The diff of a frame in words: what the tree diff found, with the counts. */
+export function ChangeSummary({ change }: { change: FrameChangeEntry }) {
+  if (change.summary.length === 0) return null;
+  const counts = countWords(change.counts);
+  return (
+    <div className="change-summary">
+      <ul>
+        {change.summary.slice(0, 12).map((line, index) => (
+          <li key={index}>
+            <Inline text={line} />
+          </li>
+        ))}
+      </ul>
+      {change.summary.length > 12 ? <p className="note">ほか {change.summary.length - 12} 個</p> : null}
+      {counts !== '' ? <p className="note">{counts}</p> : null}
+      {change.failuresAdded !== undefined ? <p className="note">新しく外へ出る失敗: {change.failuresAdded.join('、')}</p> : null}
+      {change.failuresRemoved !== undefined ? <p className="note">外へ出なくなった失敗: {change.failuresRemoved.join('、')}</p> : null}
+      {change.members !== undefined ? <p className="note">実装を変えたメンバー: {change.members.map((id) => id.slice(id.indexOf('#') + 1)).join('、')}（そのメンバーを呼ぶところすべてに届く）</p> : null}
+      {change.untraceable !== undefined ? <p className="note">型で呼び先を引けない呼び出しが {change.untraceable} 個あります（届く先はその分を含みません）。</p> : null}
+    </div>
+  );
+}
+
 /**
- * What the pull request did to a function: how it changed, what the change
- * notes say, and its diff on demand (folded, so the diagram keeps the room).
+ * What the pull request did to a frame: how it changed, the diff in words,
+ * what the change notes say, and its diff on demand.
  */
-export function ChangeDetail({ change }: { change: FunctionChange }) {
-  const stat = diffStat(change.hunks);
+export function ChangeDetail({ change, hunks }: { change: FrameChangeEntry; hunks?: readonly DiffHunk[] | undefined }) {
+  const stat = diffStat(hunks);
   return (
     <section className="change" aria-label="このPRでの変更">
       <div className="change-head">
         <Badge mark={markOf(change.kind)} />
         <span className="change-title">{changeHeadline(change)}</span>
       </div>
+      <ChangeSummary change={change} />
       <div className="change-notes">
         <ChangeNotes change={change} />
       </div>
-      {change.hunks !== undefined && change.hunks.length > 0 ? (
+      {hunks !== undefined && hunks.length > 0 ? (
         <details className="change-diff">
           <summary>
             差分を見る（+{stat.added} −{stat.removed}）
           </summary>
-          <DiffView hunks={change.hunks} />
+          <DiffView hunks={hunks} />
         </details>
       ) : null}
     </section>
-  );
-}
-
-/** The changed functions below a step or a function, each a link to its page with the way down to it. */
-export function ReachedList({ reached, limit = 8, onOpenFunction }: { reached: readonly ReachedChange[]; limit?: number; onOpenFunction: (id: string) => void }) {
-  return (
-    <ul className="links">
-      {reached.slice(0, limit).map(({ change, card, via }) => (
-        <li key={card.id}>
-          <button type="button" className="row" onClick={() => onOpenFunction(card.id)}>
-            <span className="row-title">
-              <Badge mark={markOf(change.kind)} /> <span className="mono">{card.name}()</span>
-            </span>
-            <span className="row-text">{via.length === 0 ? '直接呼ぶ' : `${via.map((between) => `${between.name}()`).join(' → ')} を経由して呼ぶ`}</span>
-            {change.notes?.[0] !== undefined ? (
-              <span className="row-text">
-                <Inline text={change.notes[0].text.split('\n')[0] ?? ''} />
-              </span>
-            ) : null}
-          </button>
-        </li>
-      ))}
-      {reached.length > limit ? <li className="note">ほか {reached.length - limit} 個</li> : null}
-    </ul>
   );
 }

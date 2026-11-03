@@ -3,7 +3,10 @@
  * the command line that configuration is, where a function is used and who
  * calls it, and search. Nothing here touches the DOM.
  */
-import type { FlowEndpoint, FlowStep, FunctionCard, MapData, MapFeature, MemberDoc, OpFlow } from '../types';
+import type { FlowEndpoint, FlowStep, FunctionEntry, MapData, MapFeature, OpFlow } from '../types';
+
+/** A function of the catalog as the index has it. */
+type FunctionCard = FunctionEntry;
 
 /** The OidcFeatureConfig key of a feature id: refresh-token → refreshToken. */
 export function featureKey(id: string): string {
@@ -31,15 +34,9 @@ export function defaultEnabled(features: readonly MapFeature[]): Set<string> {
 
 /**
  * The endpoints of a flow the enabled features generate, each with the steps
- * those features generate and the arrows that generation draws between them
- * (from edgeSets; without an entry, the arrows between the kept steps).
+ * those features generate and the arrows between the steps that remain.
  */
-export function visibleEndpoints(
-  flow: OpFlow,
-  features: readonly MapFeature[],
-  enabled: ReadonlySet<string>,
-  edgeSets: MapData['edgeSets'] = {},
-): FlowEndpoint[] {
+export function visibleEndpoints(flow: OpFlow, features: readonly MapFeature[], enabled: ReadonlySet<string>): FlowEndpoint[] {
   const on = (key: string | undefined) => {
     if (key === undefined) return true;
     const feature = featureOf(features, key);
@@ -49,13 +46,14 @@ export function visibleEndpoints(
     .filter((endpoint) => on(endpoint.feature))
     .map((endpoint) => {
       const steps = endpoint.steps.filter((step) => on(step.feature));
-      const keys = [...new Set(steps.flatMap((step) => (step.feature === undefined ? [] : [step.feature])))].sort();
-      const controlFlow = endpoint.controlFlows?.[keys.join(',')];
-      const edges = edgeSets[endpoint.id]?.[keys.join(',')];
-      if (edges !== undefined) return { ...endpoint, steps, edges, controlFlow };
       const kept = new Set(steps.map((step) => step.id));
-      return { ...endpoint, steps, controlFlow, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
+      return { ...endpoint, steps, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
     });
+}
+
+/** The ids of the features that are on, as the markers of the code name them (`refresh-token`): what the trees are narrowed by. */
+export function enabledMarkers(features: readonly MapFeature[], enabled: ReadonlySet<string>): Set<string> {
+  return new Set(features.filter((feature) => enabled.has(feature.id)).map((feature) => feature.id));
 }
 
 /**
@@ -107,6 +105,11 @@ export function usesOf(flow: OpFlow, id: string): StepUse[] {
     }
   }
   return uses;
+}
+
+/** The endpoints whose trace starts from a frame (a Route Handler, a pipeline function). */
+export function endpointsRootedAt(flow: OpFlow, id: string): FlowEndpoint[] {
+  return flow.endpoints.filter((endpoint) => endpoint.root === id);
 }
 
 /** A step of an endpoint that reaches a function, and the functions between them. */
@@ -178,14 +181,8 @@ export function callersOf(data: MapData, card: FunctionCard): FunctionCard[] {
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** What a call a step names beside its source does: the member of the interface it reaches. */
-export function memberOfCall(data: MapData, call: string): MemberDoc | undefined {
-  const id = data.memberOfCall[call];
-  return id === undefined ? undefined : data.members[id];
-}
-
 /** Where a card lives, for a developer to open it: `core client-auth.ts:123`. */
-export function locationOf(card: Pick<FunctionCard, 'package' | 'module' | 'line'>): string {
+export function locationOf(card: { package: string; module: string; line: number }): string {
   return `${card.package} ${card.module}:${card.line}`;
 }
 

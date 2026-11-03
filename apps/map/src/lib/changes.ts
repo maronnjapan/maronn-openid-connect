@@ -1,18 +1,20 @@
 /**
- * The changes of the pull request a map is built for, as the page shows them:
- * the badge of a step, of a box of the flow of a function and of an
- * endpoint, the changed functions a step or a function leads to, the
- * functions grouped by how they changed, the lines of a hunk with their
- * numbers, and the blocks of the text of a change note. Nothing here touches
- * the DOM.
+ * The changes of the pull request a map is built for, as the page shows
+ * them: the badge of a frame, of a node of a tree and of an endpoint, the
+ * changes a call leads to, the frames grouped by how they changed, the lines
+ * of a hunk with their numbers, and the blocks of the text of a change note.
+ * Nothing here touches the DOM.
+ *
+ * The badges are in the grey scale, so the three colors of the diagrams keep
+ * their meaning (grey not on the chosen way, blue on it, red an error).
  */
-import type { ChangeKind, DiffHunk, FlowEndpoint, FlowStep, FunctionCard, FunctionChange, FunctionFlowNode, MapChanges, MapData } from '../types';
-import { holdsFunction } from './model';
+import type { ChangeKind, DiffHunk, FlowEndpoint, FrameChange, FrameChangeEntry, MapChanges, MapData } from '../types';
+import { changeReach, entryOf, type ChangeReach } from './trace';
 
 /**
- * What a badge says: how a function changed; `inside`, a function it calls
- * (or one further down) changed its code; or `line`, the pull request changed
- * this line of the function.
+ * What a badge says: how a frame changed; `inside`, a function it calls (or
+ * one further down) changed its code; `line`, the pull request changed this
+ * node.
  */
 export type MarkKind = ChangeKind | 'inside' | 'line';
 
@@ -25,14 +27,14 @@ export interface Mark {
 }
 
 const MARKS: Record<MarkKind, Omit<Mark, 'kind'>> = {
-  added: { label: '追加', title: 'このPRで足した関数' },
-  modified: { label: '変更', title: 'このPRでコードを変えた関数' },
-  moved: { label: '移動', title: 'このPRで別のファイルへ移した関数（コードは同じ）' },
-  docs: { label: '説明', title: 'このPRで JSDoc だけ変えた関数' },
-  removed: { label: '削除', title: 'このPRで消した関数' },
-  noted: { label: 'メモ', title: 'コードは同じで、このPRの変更メモが説明している関数' },
-  inside: { label: '中で変更', title: 'ここから呼ぶ関数（その先を含む）のコードを、このPRで変えた' },
-  line: { label: '変更', title: 'このPRで変えた行' },
+  added: { label: '追加', title: 'このPRで足した' },
+  modified: { label: '変更', title: 'このPRでコードを変えた' },
+  moved: { label: '移動', title: 'このPRで別のファイルへ移した（コードは同じ）' },
+  docs: { label: '説明', title: 'このPRで JSDoc だけ変えた' },
+  removed: { label: '削除', title: 'このPRで消した' },
+  noted: { label: 'メモ', title: 'コードは同じで、このPRの変更メモが説明している' },
+  inside: { label: '下で変更', title: 'ここから呼ぶ関数（その先を含む）のコードを、このPRで変えた' },
+  line: { label: '変更', title: 'このPRで変えたところ' },
 };
 
 /** Which badge wins where several apply: a change of the code before a change below it, before the others. */
@@ -43,22 +45,19 @@ export function markOf(kind: MarkKind): Mark {
   return { kind, ...MARKS[kind] };
 }
 
-/** Whether a badge says that code changed: the function's own, one of its lines, or below it. */
+/** Whether a badge says that code changed: the frame's own, one of its nodes, or below it. */
 export function marksCode(mark: Mark): boolean {
   return RANK[mark.kind] <= RANK.inside;
 }
 
-/** The kinds in the order the page lists them, with the heading of each group. */
-export const KIND_GROUPS: ReadonlyArray<{ kind: ChangeKind; heading: string }> = [
-  { kind: 'added', heading: '足した関数' },
-  { kind: 'modified', heading: 'コードを変えた関数' },
-  { kind: 'moved', heading: '別のファイルへ移した関数' },
-  { kind: 'docs', heading: 'JSDoc だけ変えた関数' },
-  { kind: 'removed', heading: '消した関数' },
-  { kind: 'noted', heading: '変更メモが説明する関数（コードは同じ）' },
-];
+/** The badge that wins among several (see RANK). */
+export function strongest(marks: ReadonlyArray<Mark | undefined>): Mark | undefined {
+  let best: Mark | undefined;
+  for (const mark of marks) if (mark !== undefined && (best === undefined || RANK[mark.kind] < RANK[best.kind])) best = mark;
+  return best;
+}
 
-/** Whether a kind changes what the function does: its code is new or different. */
+/** Whether a kind changes what a frame does: its code is new or different. */
 export function changesCode(kind: ChangeKind): boolean {
   return kind === 'added' || kind === 'modified';
 }
@@ -66,147 +65,89 @@ export function changesCode(kind: ChangeKind): boolean {
 /** The changes of a map, indexed for the page. */
 export interface ChangeIndex {
   changes: MapChanges;
-  /** The change of each function of the head (a removed function has no card, so it is not here). */
-  byId: ReadonlyMap<string, FunctionChange>;
-  /** Whether the code of a function, or of a function it calls (and so on down), changed. */
-  reaches(id: string): boolean;
+  /** The entry of each frame (a removed one under its id in the base). */
+  byId: ReadonlyMap<string, FrameChangeEntry>;
+  reach: ChangeReach;
 }
 
 /** The index of the changes of a map; undefined for a map without changes (main). */
 export function indexChanges(data: MapData): ChangeIndex | undefined {
   const changes = data.changes;
-  if (changes === undefined) return undefined;
-  const byId = new Map(changes.functions.filter((change) => change.kind !== 'removed').map((change) => [change.id, change]));
-  const memo = new Map<string, boolean>();
-  const reaches = (id: string): boolean => {
-    const known = memo.get(id);
-    if (known !== undefined) return known;
-    // A call back into a function being visited adds nothing.
-    memo.set(id, false);
-    const own = byId.get(id);
-    const result = (own !== undefined && changesCode(own.kind)) || (data.functions[id]?.calls ?? []).some(reaches);
-    memo.set(id, result);
-    return result;
-  };
-  return { changes, byId, reaches };
+  const reach = changeReach(data);
+  if (changes === undefined || reach === undefined) return undefined;
+  return { changes, byId: new Map(changes.frames.map((entry) => [entry.id, entry])), reach };
 }
 
-/** The ids a step calls: those of the body of its function, or of its block of a Route Handler. */
-function callsOfStep(data: MapData, step: FlowStep): readonly string[] {
-  return step.functionId === undefined ? step.calls : (data.functions[step.functionId]?.calls ?? []);
-}
-
-/**
- * The badge of a step of an endpoint: the change of the code of its own
- * function; else `inside` when a function it calls leads to a change of
- * code; else the other change of its own function (moved, docs, noted).
- */
-export function stepMark(index: ChangeIndex | undefined, data: MapData, step: FlowStep): Mark | undefined {
+/** The badge of a frame: the change of its own code, else `inside` when a call of it leads to one, else its other change. */
+export function frameMark(index: ChangeIndex | undefined, id: string): Mark | undefined {
   if (index === undefined) return undefined;
-  const own = step.functionId === undefined ? undefined : index.byId.get(step.functionId);
+  const own = index.byId.get(id);
   if (own !== undefined && changesCode(own.kind)) return markOf(own.kind);
-  if (callsOfStep(data, step).some((id) => index.reaches(id))) return markOf('inside');
+  if (index.reach.below(id).size > 0) return markOf('inside');
   return own === undefined ? undefined : markOf(own.kind);
 }
 
-/**
- * The badge of a box of the flow of a function whose change is `change`:
- * `line` when the pull request changed the line of the box, or for the start
- * box a line of the declaration (from `declarationLine`, the line of the
- * card, down to the brace of the body: a parameter added, for one); a
- * function it added is new as a whole, so its boxes get none. Else, for a
- * call, `added` when the callee is a function the pull request added,
- * `inside` when the callee leads to a change of code.
- */
-export function nodeMark(
-  index: ChangeIndex | undefined,
-  change: FunctionChange | undefined,
-  node: FunctionFlowNode,
-  declarationLine: number = node.line,
-): Mark | undefined {
-  if (index === undefined) return undefined;
-  if (change?.kind === 'modified') {
-    const from = node.kind === 'start' ? Math.min(declarationLine, node.line) : node.line;
-    if (change.changedLines?.some((line) => line >= from && line <= node.line) === true) return markOf('line');
-  }
-  if (node.kind !== 'call' || node.callee === undefined) return undefined;
-  if (index.byId.get(node.callee)?.kind === 'added') return markOf('added');
-  return index.reaches(node.callee) ? markOf('inside') : undefined;
+/** The badge of an endpoint in the list: the badge of the frame its trace starts from. */
+export function endpointMark(index: ChangeIndex | undefined, endpoint: Pick<FlowEndpoint, 'root'>): Mark | undefined {
+  return frameMark(index, endpoint.root);
 }
 
-/**
- * The changed functions the own file of an endpoint holds (a Route Handler
- * of Next.js and the functions beside it, the pipeline.ts of Hono), by name.
- * Its blocks are not functions of their own, so a change there may show in
- * no step.
- */
-export function changesInFile(index: ChangeIndex | undefined, endpoint: Pick<FlowEndpoint, 'module'>): FunctionChange[] {
-  if (index === undefined) return [];
-  return [...index.byId.values()].filter((change) => holdsFunction(endpoint, change)).sort((a, b) => compare(a.name, b.name));
+/** The badge of a node of a changed frame: added or modified by the diff. */
+export function nodeMark(change: FrameChange | undefined, id: string): Mark | undefined {
+  const mark = change?.marks[id];
+  if (mark === undefined) return undefined;
+  return mark === 'added' ? markOf('added') : markOf('line');
 }
 
-/** The badge of an endpoint in the list: the strongest badge of its steps and of the changed functions of its own file. */
-export function endpointMark(index: ChangeIndex | undefined, data: MapData, endpoint: FlowEndpoint): Mark | undefined {
-  if (index === undefined) return undefined;
-  return strongest([...endpoint.steps.map((step) => stepMark(index, data, step)), ...changesInFile(index, endpoint).map((change) => markOf(change.kind))]);
+/** How many changes are below a call, by what they are, summed over the changed frames it leads to: `条件 +1、呼び出し +2`. */
+export function belowCounts(index: ChangeIndex | undefined, id: string): { frames: string[]; counts: Record<string, number> } {
+  if (index === undefined) return { frames: [], counts: {} };
+  const frames = [...index.reach.below(id)];
+  if (index.reach.changed.has(id)) frames.unshift(id);
+  const counts: Record<string, number> = {};
+  for (const frame of frames) for (const [key, value] of Object.entries(index.reach.changed.get(frame) ?? {})) counts[key] = (counts[key] ?? 0) + value;
+  return { frames, counts };
 }
 
-/** The badge that wins among several (see RANK). */
-export function strongest(marks: ReadonlyArray<Mark | undefined>): Mark | undefined {
-  let best: Mark | undefined;
-  for (const mark of marks) {
-    if (mark !== undefined && (best === undefined || RANK[mark.kind] < RANK[best.kind])) best = mark;
-  }
-  return best;
+/** The words of the counts of a change: `条件 +1、呼び出し 変更 2`. */
+export function countWords(counts: Readonly<Record<string, number>>): string {
+  const words: Record<string, string> = { call: '呼び出し', action: '処理', condition: '条件', loop: '繰り返し', try: '例外の捕捉', exit: '終わり', step: 'ステップ', signature: '宣言' };
+  return Object.entries(counts)
+    .map(([key, value]) => {
+      const sign = key.slice(-1);
+      return `${words[key.slice(0, -1)] ?? key.slice(0, -1)} ${sign === '~' ? '変更 ' : sign}${value}`;
+    })
+    .join('、');
 }
 
-/** A changed function that a step or a function leads to, with the functions between them. */
-export interface ReachedChange {
-  change: FunctionChange;
-  card: FunctionCard;
-  /** The functions from the first call down to the changed one, that one left out. */
-  via: FunctionCard[];
+/** The kinds in the order the page lists them, with the heading of each group. */
+export const KIND_GROUPS: ReadonlyArray<{ kind: ChangeKind; heading: string }> = [
+  { kind: 'added', heading: '足したもの' },
+  { kind: 'modified', heading: 'コードを変えたもの' },
+  { kind: 'moved', heading: '別のファイルへ移したもの' },
+  { kind: 'docs', heading: 'JSDoc だけ変えたもの' },
+  { kind: 'removed', heading: '消したもの' },
+  { kind: 'noted', heading: '変更メモが説明するもの（コードは同じ）' },
+];
+
+/** The changed frames in groups of KIND_GROUPS (the empty ones left out), each by package, module and name. */
+export function groupChanges(changes: MapChanges): Array<{ kind: ChangeKind; heading: string; frames: FrameChangeEntry[] }> {
+  const order = (a: FrameChangeEntry, b: FrameChangeEntry) => compare(a.package, b.package) || compare(a.module, b.module) || compare(a.name, b.name);
+  return KIND_GROUPS.map(({ kind, heading }) => ({ kind, heading, frames: changes.frames.filter((entry) => entry.kind === kind).sort(order) })).filter((group) => group.frames.length > 0);
 }
 
-/**
- * The functions whose code changed among those the given ids lead to (the
- * ids themselves, the functions they call, and so on down to `maxDepth`),
- * each once by its shortest way, nearest first.
- */
-export function changesBelow(index: ChangeIndex | undefined, data: MapData, calls: readonly string[], maxDepth = 8): ReachedChange[] {
-  if (index === undefined) return [];
-  const found: ReachedChange[] = [];
-  const seen = new Set<string>();
-  let frontier = calls.map((id) => ({ id, via: [] as FunctionCard[] }));
-  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth += 1) {
-    const next: Array<{ id: string; via: FunctionCard[] }> = [];
-    for (const item of frontier) {
-      const card = data.functions[item.id];
-      if (seen.has(item.id) || card === undefined) continue;
-      seen.add(item.id);
-      const change = index.byId.get(item.id);
-      if (change !== undefined && changesCode(change.kind)) found.push({ change, card, via: item.via });
-      for (const callee of card.calls) next.push({ id: callee, via: [...item.via, card] });
-    }
-    frontier = next;
-  }
-  return found;
+/** The display name of a changed frame: `verifyClientSecret()`, or the endpoint of a body (`POST /token`). */
+export function changeName(data: MapData, entry: FrameChangeEntry): string {
+  if (entry.body === true) return data.bodies[entry.id]?.name ?? entry.name;
+  return `${entry.name}()`;
 }
 
-/** The changes a step leads to through what it calls (its own function's change is shown apart). */
-export function changesOfStep(index: ChangeIndex | undefined, data: MapData, step: FlowStep): ReachedChange[] {
-  return changesBelow(index, data, callsOfStep(data, step));
+/** Whether a frame has a file the page can open. */
+export function hasFrame(data: MapData, id: string): boolean {
+  const entry = entryOf(data, id);
+  return entry !== undefined && entry.frame !== '';
 }
 
-/** The changed functions in groups of KIND_GROUPS (the empty ones left out), each group by package, module and name. */
-export function groupChanges(changes: MapChanges): Array<{ kind: ChangeKind; heading: string; functions: FunctionChange[] }> {
-  const order = (a: FunctionChange, b: FunctionChange) => compare(a.package, b.package) || compare(a.module, b.module) || compare(a.name, b.name);
-  return KIND_GROUPS.map(({ kind, heading }) => ({ kind, heading, functions: changes.functions.filter((change) => change.kind === kind).sort(order) })).filter(
-    (group) => group.functions.length > 0,
-  );
-}
-
-/** Code-unit order, the same on every platform and locale. */
 function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -232,7 +173,7 @@ export function numberHunk(hunk: DiffHunk): NumberedLine[] {
   });
 }
 
-/** How many lines the hunks of a change add and remove. */
+/** How many lines some hunks add and remove. */
 export function diffStat(hunks: readonly DiffHunk[] | undefined): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
@@ -243,6 +184,13 @@ export function diffStat(hunks: readonly DiffHunk[] | undefined): { added: numbe
     }
   }
   return { added, removed };
+}
+
+/** The hunks of a change in the order of their lines. */
+export function allHunks(change: FrameChange | undefined): DiffHunk[] {
+  return Object.values(change?.hunks ?? {})
+    .flat()
+    .sort((a, b) => a.head - b.head);
 }
 
 /** A block of the text of a change note. */
@@ -300,9 +248,8 @@ export function noteBlocks(text: string): NoteBlock[] {
 /** The parts of a line of a note: text, and the `code` between backticks. */
 export function inlineParts(text: string): Array<{ code: boolean; text: string }> {
   const parts: Array<{ code: boolean; text: string }> = [];
-  const pattern = /`([^`]+)`/g;
   let last = 0;
-  for (const match of text.matchAll(pattern)) {
+  for (const match of text.matchAll(/`([^`]+)`/g)) {
     const at = match.index as number;
     if (at > last) parts.push({ code: false, text: text.slice(last, at) });
     parts.push({ code: true, text: match[1] as string });

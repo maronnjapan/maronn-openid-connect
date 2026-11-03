@@ -1,7 +1,13 @@
 import { useId, useMemo, useState } from 'react';
 import type { Mark } from '../lib/changes';
 import type { Diagram, DiagramNode } from '../lib/diagram';
-import { BOX_H, BOX_W, EDGE_LABEL_COLUMNS, layoutGraph, textColumns, truncateColumns, type Active, type LayoutDirection } from '../lib/graph';
+import { BOX_H, BOX_W, EDGE_LABEL_COLUMNS, layoutGraph, textColumns, truncateColumns, type LayoutDirection } from '../lib/graph';
+
+/** The boxes and arrows the chosen way runs through. */
+export interface Active {
+  nodes: Set<string>;
+  edges: Set<number>;
+}
 import { DiagramViewport } from './DiagramViewport';
 
 export interface FlowDiagramProps {
@@ -23,18 +29,17 @@ function badgeWidth(mark: Mark): number {
 }
 
 /**
- * An automatically arranged diagram with direction, zoom and fit controls,
- * and the arrows of the checked cases only. Three colors: grey for what
- * the checked cases do not use, the accent
- * for what they use, red for the error step, a throw and the arrows of an
- * error. A box the pull request changed carries a badge in the grey scale
- * (変更, 追加, 中で変更...) at the right of its first line, so the colors keep
- * their meaning.
+ * An automatically arranged diagram of one frame with direction, zoom and
+ * fit controls, and the arrows of the chosen way only. Three colors: grey
+ * for what the chosen way does not run, the accent for what it runs, red for
+ * a throw and the arrows of an error. A box the pull request changed
+ * carries a badge in the grey scale (変更, 追加, 下で変更...) at the right of its
+ * first line, so the colors keep their meaning.
  */
 export function FlowDiagram({ diagram, active, selected, label, marks, onSelect }: FlowDiagramProps) {
   const [direction, setDirection] = useState<LayoutDirection>('TB');
   const marker = useId();
-  // Placement depends on the graph, not on which cases are checked.
+  // Placement depends on the graph, not on what is chosen.
   const placed = useMemo(() => layoutGraph(diagram.nodes, diagram.edges, new Set(diagram.edges.map((_, index) => index)), direction), [diagram, direction]);
   const layout = useMemo(() => ({ ...placed, arrows: placed.arrows.filter((arrow) => active.edges.has(arrow.index)) }), [placed, active.edges]);
   const byId = useMemo(() => new Map(diagram.nodes.map((node) => [node.id, node])), [diagram]);
@@ -71,9 +76,9 @@ export function FlowDiagram({ diagram, active, selected, label, marks, onSelect 
         {layout.boxes.map((box) => {
           const node = byId.get(box.id) as DiagramNode;
           const on = active.nodes.has(node.id);
-          const isSelected = node.id === selected || (node.target !== undefined && 'step' in node.target && node.target.step === selected);
+          const isSelected = node.node !== undefined && node.node === selected;
           const state = `${on ? 'on' : 'off'}${isSelected ? ' selected' : ''}`;
-          const clickable = node.target !== undefined;
+          const clickable = node.node !== undefined;
           const mark = marks?.get(node.id);
           const badge = mark === undefined ? 0 : badgeWidth(mark);
           const titleColumns = mark === undefined ? TITLE_COLUMNS : Math.min(TITLE_COLUMNS, Math.floor((BOX_W - 24 - badge - 8) / 7));
@@ -86,7 +91,7 @@ export function FlowDiagram({ diagram, active, selected, label, marks, onSelect 
               className={`box ${state} tone-${node.tone}${clickable ? ' clickable' : ''}`}
               tabIndex={clickable ? 0 : -1}
               role={clickable ? 'button' : undefined}
-              aria-label={`${node.title}: ${node.subtitle}${mark === undefined ? '' : `（${mark.title}）`}${on ? '' : '（選んだケースでは通らない）'}`}
+              aria-label={`${node.title}: ${node.subtitle}${mark === undefined ? '' : `（${mark.title}）`}${on ? '' : '（選んだ道筋では通らない）'}`}
               onClick={activate}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {

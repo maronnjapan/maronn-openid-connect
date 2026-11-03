@@ -69,7 +69,9 @@ export function DiffView({ hunks }: { hunks: readonly DiffHunk[] }) {
               <span className="op" aria-label={line.op === '+' ? '追加した行' : line.op === '-' ? '消した行' : undefined}>
                 {line.op}
               </span>
-              <span className="text">{line.text}</span>
+              <span className="text">{hunk.tokens?.[at]?.map((token, index) => (
+                <span key={index} className="diff-token" style={{ color: token.color }}>{token.content}</span>
+              )) ?? line.text}</span>
             </div>
           ))}
         </div>

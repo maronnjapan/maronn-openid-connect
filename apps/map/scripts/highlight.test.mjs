@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSourceHighlighter, highlightSource } from './highlight.mjs';
+import { createSourceHighlighter, highlightHunks, highlightSource } from './highlight.mjs';
 
 describe('source highlighting', () => {
   let highlighter;
@@ -30,5 +30,23 @@ describe('source highlighting', () => {
     expect(attribute).toBeDefined();
     expect(tag.color).not.toBe(attribute.color);
     expect(result.tokens[4].some((token) => token.content === '"<tag>"')).toBe(true);
+  });
+
+  it('colors removed and added lines from their own file context across separate hunks', () => {
+    const before = highlightSource(highlighter, { path: 'old.ts', code: '/*\nconst value = "old";\n*/\nconst end = 1;\n' });
+    const after = highlightSource(highlighter, { path: 'new.tsx', code: '// moved\n// new header\nconst value = "new";\n\nconst end = <div />;\n' });
+    const hunks = [
+      { base: 2, head: 3, lines: ['-const value = "old";', '+const value = "new";'] },
+      { base: 4, head: 5, lines: ['-const end = 1;', '+const end = <div />;', ' '] },
+    ];
+    const result = highlightHunks(hunks, before.tokens, after.tokens);
+    expect(result[0].tokens).toEqual([before.tokens[1], after.tokens[2]]);
+    expect(result[0].tokens[0]).toHaveLength(1); // The removed line is still inside a comment.
+    expect(result[0].tokens[1].length).toBeGreaterThan(1);
+    expect(result[1].tokens).toEqual([before.tokens[3], after.tokens[4], after.tokens[5]]);
+    for (const hunk of result) {
+      expect(hunk.tokens.map((line) => line.map((token) => token.content).join(''))).toEqual(hunk.lines.map((line) => line.slice(1)));
+    }
+    expect(hunks[0]).not.toHaveProperty('tokens');
   });
 });

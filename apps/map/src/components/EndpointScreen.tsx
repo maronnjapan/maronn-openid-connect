@@ -25,7 +25,7 @@ export interface EndpointScreenProps {
 /**
  * One endpoint: what it does in a line, the cases to show, and its steps as
  * a diagram that takes the rest of the screen. The detail of a step opens
- * beside the diagram only while one is selected. In the map of a pull
+ * in a large drawer only while one is selected. In the map of a pull
  * request, the steps carry the badges of its changes, and the changed
  * functions of the endpoint's own file (whose blocks may name no function a
  * step calls) are listed under the description.
@@ -80,7 +80,7 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
         ) : null}
       </header>
       <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} />
-      <div className={`work${step ? ' with-panel' : ''}`}>
+      <div className="work">
         <div className="canvas">
           <FlowDiagram diagram={diagram} active={active} selected={selected} label={`${endpoint.label} のステップ`} marks={marks} onSelect={onSelect} />
         </div>

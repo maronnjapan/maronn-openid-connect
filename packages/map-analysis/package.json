@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@maronn-openid-connect/cli": "workspace:*",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.6",
     "shiki": "4.5.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"

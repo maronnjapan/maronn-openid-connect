@@ -1,5 +1,14 @@
 import { expect, test } from '@playwright/test';
 
+test('should explain what a function checks using its guard comment and predicate documentation', async ({ page }) => {
+  await page.goto('/#hono--fn--completePromptNoneRequest');
+  const resolver = page.locator('.diagram .box').filter({ has: page.locator('.title', { hasText: /^!sessionResolver$/ }) });
+  await expect(resolver.locator('.sub')).toContainText('セッションリゾルバが無ければ');
+  const age = page.locator('.diagram .box:not([role="button"])').filter({ has: page.locator('.title', { hasText: /^requiresReauthentication\(/ }) });
+  await expect(age.locator('.sub')).toContainText('認証から `maxAge` 秒を超えていれば');
+  await expect(page.locator('.diagram .sub', { hasText: '条件によって処理を分ける' })).toHaveCount(0);
+});
+
 test('should end a rejected authorization request before subsequent steps in either direction', async ({ page }) => {
   await page.goto('/#hono--authorize');
   await page.getByRole('button', { name: '表示するケースを選択', exact: true }).click();

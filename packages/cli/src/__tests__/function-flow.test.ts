@@ -121,6 +121,12 @@ describe('buildFunctionFlow', () => {
   });
 
   describe('branches', () => {
+    it('should attach the explanation of a guard to its condition instead of its early return', () => {
+      const flow = flowOf('function f(session) {\n  // Reject sessions older than the requested max_age.\n  if (!isCurrent(session)) return undefined;\n  return session;\n}', ['isCurrent']);
+      expect(flow?.nodes.find((node) => node.kind === 'condition')?.note).toBe('Reject sessions older than the requested max_age.');
+      expect(flow?.nodes.find((node) => node.kind === 'return')?.note).toBeUndefined();
+    });
+
     it('should short-circuit a compound early-return condition without introducing an impossible outcome', () => {
       const flow = flowOf('function f(ok) { if (ok && check()) return cached(); return fresh(); }', ['check', 'cached', 'fresh']);
       const condition = flow?.nodes.find((node) => node.label === 'ok');

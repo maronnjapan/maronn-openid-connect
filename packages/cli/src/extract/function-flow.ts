@@ -552,7 +552,7 @@ class FlowBuilder {
     const split = question >= 0 && colon >= 0 ? question : logical;
     if (split < 0) return this.chain(this.calls(from, to), entry, note);
     const left = this.expression(from, split, entry, note);
-    const condition = this.add({ kind: 'condition', label: shorten(this.text(from, split)), line: this.line((this.token(from) as FlowToken).start) }, left.pending);
+    const condition = this.add({ kind: 'condition', label: shorten(this.text(from, split)), line: this.line((this.token(from) as FlowToken).start), ...(note === undefined ? {} : { note }) }, left.pending);
     const branch: Pending[] = [{ from: condition, kind: 'flow' }];
     if (split === question) {
       const yes = this.expression(question + 1, colon, this.label(branch, 'true'), left.noted ? undefined : note);
@@ -585,9 +585,9 @@ class FlowBuilder {
       return { yes: and ? right.yes : [...left.yes, ...right.yes], no: and ? [...left.no, ...right.no] : right.no, noted: left.noted || right.noted };
     }
     const value = this.expression(from, to, entry, note);
-    const id = this.add({ kind: 'condition', label: shorten(this.text(from, to)), line: this.line((this.token(from) as FlowToken).start) }, value.pending);
+    const id = this.add({ kind: 'condition', label: shorten(this.text(from, to)), line: this.line((this.token(from) as FlowToken).start), ...(note === undefined ? {} : { note }) }, value.pending);
     const branch: Pending[] = [{ from: id, kind: 'flow' }];
-    return { yes: this.label(branch, 'true'), no: this.label(branch, 'false'), noted: value.noted };
+    return { yes: this.label(branch, 'true'), no: this.label(branch, 'false'), noted: value.noted || note !== undefined };
   }
 
   /** The calls between two tokens, in the order they finish. */

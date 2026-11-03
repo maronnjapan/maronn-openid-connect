@@ -82,14 +82,36 @@ describe('endpointDiagram', () => {
 });
 
 describe('functionDiagram', () => {
+  it('should explain a predicate using its resolved JSDoc, including when the call uses an alias', () => {
+    const predicate = { ...callee, summary: 'シークレットのハッシュが登録値と一致するかを確かめる。' };
+    const flow = { nodes: [
+      { id: 's', kind: 'start' as const, label: 'authenticate()', line: 1 },
+      { id: 'p', kind: 'call' as const, label: 'checkSecret', callee: callee.id, line: 2 },
+      { id: 'c', kind: 'condition' as const, label: '!checkSecret(secret)', line: 2 },
+    ], edges: [{ from: 's', to: 'p', kind: 'flow' as const }, { from: 'p', to: 'c', kind: 'flow' as const }] };
+    const diagram = functionDiagram({ ...subject, flow }, { ...data, functions: { ...data.functions, [callee.id]: predicate } });
+    expect(diagram?.nodes.find((node) => node.id === 'c')).toMatchObject({ title: '!checkSecret(secret)', subtitle: predicate.summary });
+    const documented = functionDiagram({ ...subject, flow: { ...flow, nodes: flow.nodes.map((node) => node.id === 'c' ? { ...node, note: '提示されたシークレットが登録値と一致しなければ拒否する。' } : node) } }, data);
+    expect(documented?.nodes.find((node) => node.id === 'c')?.subtitle).toBe('提示されたシークレットが登録値と一致しなければ拒否する。');
+  });
+
+  it('should describe what an undocumented condition checks without a generic branching caption', () => {
+    const flow = { nodes: [
+      { id: 's', kind: 'start' as const, label: 'authenticate()', line: 1 },
+      { id: 'c', kind: 'condition' as const, label: "!promptValues.includes('none')", line: 2 },
+    ], edges: [{ from: 's', to: 'c', kind: 'flow' as const }] };
+    const diagram = functionDiagram({ ...subject, flow }, data);
+    expect(diagram?.nodes.find((node) => node.id === 'c')?.subtitle).toBe("promptValues に 'none' が含まれないか");
+  });
+
   it('should say what each box does: the summary of the callee, the comment above the line, or the member it reaches', () => {
     const diagram = functionDiagram(subject, data);
     expect(diagram?.nodes.map((node) => [node.title, node.subtitle, node.tone])).toEqual([
       ['authenticate(c)', 'Authenticate the client.', 'start'],
       ['verify()', 'Verify the secret.', 'normal'],
       ['store.get()', 'Find the client.', 'normal'],
-      ['throw TokenError(InvalidClient)', '例外を投げて終わる', 'error'],
-      ['終了', '最後まで実行して終わる', 'end'],
+      ['throw TokenError(InvalidClient)', '', 'error'],
+      ['終了', '', 'end'],
     ]);
     expect(diagram?.nodes.map((node) => node.target)).toEqual([undefined, { fn: 'core:a.ts#verify' }, { member: 'ClientStore.get' }, undefined, undefined]);
   });

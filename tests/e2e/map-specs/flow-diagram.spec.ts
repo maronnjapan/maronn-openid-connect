@@ -46,8 +46,72 @@ test('should switch flow direction, zoom and fit the diagram inside the availabl
     return diagram.width <= viewport.clientWidth && diagram.height <= viewport.clientHeight;
   })).toBe(true);
   // A step can still be opened after fitting and changing direction.
-  await page.locator('.diagram .box[role="button"]').first().press('Enter');
-  await expect(page.getByRole('complementary', { name: 'ステップの詳細', exact: true })).toBeVisible();
+  const step = page.locator('.diagram .box[role="button"]').first();
+  const fitted = await boxPositions(page);
+  await step.press('Enter');
+  const drawer = page.getByRole('dialog', { name: 'トークンリクエストを解析する — ステップの詳細', exact: true });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText('parseTokenRequest()', { exact: true })).toBeVisible();
+  await drawer.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(step).toBeFocused();
+  expect(await boxPositions(page)).toEqual(fitted);
+});
+
+test('should close step details with the close button or backdrop and restore focus to the step', async ({ page }) => {
+  await page.goto('/#hono--token');
+  const step = page.locator('.diagram .box[role="button"]').first();
+  const drawer = page.getByRole('dialog', { name: 'トークンリクエストを解析する — ステップの詳細', exact: true });
+  await step.click();
+  await expect(drawer).toBeVisible();
+  const close = drawer.getByRole('button', { name: '詳細を閉じる', exact: true });
+  await expect(close).toBeFocused();
+  // The modal makes the background inert, including programmatic focus attempts.
+  await step.focus();
+  await expect(close).toBeFocused();
+  await drawer.getByRole('heading', { level: 3 }).click();
+  await expect(drawer).toBeVisible();
+  await close.click();
+  await expect(drawer).toHaveCount(0);
+  await expect(step).toBeFocused();
+  await step.press('Enter');
+  await expect(drawer).toBeVisible();
+  await page.mouse.click(16, 500);
+  await expect(drawer).toHaveCount(0);
+  await expect(step).toBeFocused();
+});
+
+test('should show mobile step details at full viewport size without shrinking the flow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#hono--token');
+  const step = page.locator('.diagram .box[role="button"]').first();
+  await expect(step).toBeVisible();
+  const before = await page.locator('.diagram-viewport').boundingBox();
+  await step.press('Enter');
+  const drawer = page.getByRole('dialog', { name: 'トークンリクエストを解析する — ステップの詳細', exact: true });
+  await expect(drawer).toBeVisible();
+  expect(await drawer.boundingBox()).toEqual({ x: 0, y: 0, width: 390, height: 844 });
+  expect(await page.locator('.diagram-viewport').boundingBox()).toEqual(before);
+  await drawer.getByRole('button', { name: '詳細を閉じる', exact: true }).click();
+  await expect(drawer).toHaveCount(0);
+  await expect(step).toBeFocused();
+});
+
+test('should open member documentation in a dialog and return to the same function flow', async ({ page }) => {
+  await page.goto('/#hono--fn--getAuthTransaction');
+  const member = page.getByRole('button', { name: /^store\.get\(\):/ });
+  await expect(member).toBeVisible();
+  const before = await boxPositions(page);
+  await member.press('Enter');
+  const drawer = page.getByRole('dialog', { name: 'AuthTransactionStore.get()', exact: true });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText('`key` のトランザクションを返す。', { exact: true })).toBeVisible();
+  await expect(page.locator('.diagram .box.selected')).toHaveCount(1);
+  await drawer.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(member).toBeFocused();
+  await expect(page.locator('.diagram .box.selected')).toHaveCount(0);
+  expect(await boxPositions(page)).toEqual(before);
 });
 
 test('should use the same branching layout and display controls on function pages', async ({ page }) => {

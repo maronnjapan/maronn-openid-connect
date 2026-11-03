@@ -51,12 +51,14 @@ export interface AuthorizationResponseModeHandler {
 export type ResponseModeTransaction = AuthTransaction & { responseMode?: string };
 
 /**
- * The response mode a stored transaction asked for, restored by the feature
- * that answers in it; undefined for the plain query response.
+ * トランザクションのレスポンスモードを復元して返す。
  *
- * @throws {Error} when the transaction names a response mode no enabled
- *   feature answers in (a configuration change while the transaction was
- *   open), which the endpoints answer with server_error.
+ * トランザクションの `responseMode` にある名前に応答する機能を、有効な機能の中から探し、その機能に復元させる。
+ * `responseMode` が無いトランザクション（パラメータをクエリに付ける通常の認可レスポンス）には `undefined` を返す。
+ *
+ * @throws {Error} トランザクションが示すレスポンスモードに応答する機能が、有効な機能の中に無いとき。
+ *   トランザクションが残っている間に設定を変えると起きる。
+ *   認可エンドポイントでは、この例外は `server_error` の応答になる。
  */
 export function restoreResponseMode(
   c: any,
@@ -72,9 +74,14 @@ export function restoreResponseMode(
 }
 
 /**
- * The plain query response (RFC 6749 §4.1.2 / §4.1.2.1): every parameter that
- * has a value in the query of the redirect URI, and iss (RFC 9207 §2) so the
- * client can pin the issuer that produced it.
+ * パラメータをクエリに付けた認可レスポンスを返す。
+ *
+ * 値のあるパラメータ（`undefined` と空文字列以外）をリダイレクト URI のクエリに設定し、`iss` も設定して、リダイレクトの認可レスポンスにする。
+ * クライアントは `iss` で、レスポンスを作った発行者を確かめられる（RFC 9207 §2）。
+ *
+ * @spec RFC 6749 §4.1.2
+ * @spec RFC 6749 §4.1.2.1
+ * @spec RFC 9207 §2
  */
 export function plainQueryResponse(
   redirectUri: string,

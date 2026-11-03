@@ -1,15 +1,15 @@
 /**
- * RFC 6749 Section 5.2: error_description allowed characters
+ * `error_description` で使えない文字を `?` にして返す。
  *
- *   error-description = 1*( %x20-21 / %x23-5B / %x5D-7E )
+ * 使える文字は、RFC 6749 §5.2 の `error-description = 1*( %x20-21 / %x23-5B / %x5D-7E )` が定める次の範囲である。
+ * - `0x20`（空白）と `0x21`（`!`）
+ * - `0x23` から `0x5B` まで（`0x22` の `"` を除く）
+ * - `0x5D` から `0x7E` まで（`0x5C` の `\` を除く）
  *
- * - 0x20 (space), 0x21 (!)
- * - 0x23-0x5B (excludes 0x22 = ")
- * - 0x5D-0x7E (excludes 0x5C = \)
+ * 制御文字、二重引用符、バックスラッシュ、ASCII 以外の文字（`0x7F` 以上）を置き換えるのは、この値が JSON のボディにそのまま入り、ヘッダー（`WWW-Authenticate` の `Bearer` の `error_description` など）にも使われることがあるためである。
+ * 文字は UTF-16 のコード単位ごとに調べるので、サロゲートペアで表す文字は `??` になる。
  *
- * Control characters, double-quote, backslash, and non-ASCII (>= 0x7F)
- * must be replaced because the value is echoed back in the JSON body and may
- * also be used in headers (e.g. WWW-Authenticate Bearer error_description).
+ * @spec RFC 6749 §5.2
  */
 export function sanitizeErrorDescription(value: string): string {
   let result = '';

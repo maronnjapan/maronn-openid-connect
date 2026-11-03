@@ -7,7 +7,7 @@ export const meta = step({
   endpoint: 'register',
   feature: 'dynamic-client-registration',
   kind: 'respond',
-  label: 'Respond with the registration error',
+  label: '登録エラーで応答する',
   spec: 'RFC 7591 §3.2.2',
   function: 'respondRegistrationError',
   consumes: [],
@@ -16,14 +16,17 @@ export const meta = step({
 });
 
 /**
- * RFC 7591 §3.2.2: 400 with error / error_description JSON for invalid
- * metadata (invalid_redirect_uri, invalid_client_metadata) and for a software
- * statement that is not accepted (invalid_software_statement,
- * unapproved_software_statement); the fixed responses of the earlier steps
- * (401, 429) as they are. The registration errors are told apart by shape
- * (isClientRegistrationError), not by class: a verifier function of the
- * dynamicClientRegistration option may come from another copy of the
- * experimental package.
+ * ステップのエラーを、登録のエラーレスポンスにして返す。
+ *
+ * `RegistrationEndpointError` には、前のステップが決めたレスポンス（400、401、429）をそのまま返す。
+ * 登録のエラー（`ClientRegistrationError`）には、400 で `error` と `error_description` の JSON を返す（RFC 7591 §3.2.2）。
+ * メタデータの誤り（`invalid_redirect_uri`、`invalid_client_metadata`）と、受け付けないソフトウェアステートメント（`invalid_software_statement`、`unapproved_software_statement`）がこれにあたる。
+ * それ以外のエラーには、500 の `server_error` を返す。
+ *
+ * 登録のエラーは、クラスではなく形で見分ける（`isClientRegistrationError()`）。
+ * `dynamicClientRegistration` オプションの検証関数は experimental パッケージの別の複製から来ることがあり、そのエラーは `instanceof` では見分けられないためである。
+ *
+ * @spec RFC 7591 §3.2.2
  */
 export function respondRegistrationError(c: any, error: unknown): Response {
   if (error instanceof RegistrationEndpointError) {

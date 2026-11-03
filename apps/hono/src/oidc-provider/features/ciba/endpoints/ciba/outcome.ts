@@ -94,7 +94,12 @@ export interface CibaDecisionSubmission {
   decision: string;
 }
 
-/** Map a verification failure to the error to show; anything else is re-thrown. */
+/**
+ * 検証の失敗を、エラーページに出す結果に変えて返す。
+ *
+ * `CibaVerificationError`（ログイントランザクションか認証リクエストの検証の失敗）なら、そのメッセージとステータスコード（403）を持つ `error` の結果を返す。
+ * それ以外のエラーは、そのまま投げ直す。
+ */
 export function verificationFailure(error: unknown): CibaOutcome {
   if (error instanceof CibaVerificationError) {
     return { kind: 'error', error: error.message, statusCode: error.statusCode };
@@ -102,14 +107,22 @@ export function verificationFailure(error: unknown): CibaOutcome {
   throw error;
 }
 
-/** Remaining lifetime of a pending request, in whole seconds, never negative. */
+/**
+ * 有効期限（`expiresAt`）までの残りの秒数を返す。
+ *
+ * 1 秒未満の端数は切り上げ、期限を過ぎていれば 0 を返す。
+ * 保留中のリクエストの残り時間の表示と、バインディング Cookie の `Max-Age` に使う。
+ */
 export function remainingSeconds(expiresAt: Date): number {
   return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
 }
 
 /**
- * The session subject's pending requests with freshly rotated CSRF tokens (the
- * only place those tokens are ever exposed, and it is session-gated).
+ * 保留中のリクエストを、新しい CSRF トークン付きで返す。
+ *
+ * `subject` 宛ての保留中のリクエストをストアから取得し、レコードごとに CSRF トークンを作り直して保存したうえで、承認画面に出す形（`CibaPendingRequest`）にして返す。
+ * スコープは、`resolveGrantableScopes()`（`scopes.ts`）でこのエンドユーザーに許可できるものだけに絞る。
+ * CSRF トークンを渡すのはこの一覧だけで、一覧を返すのは OP のセッションがあるとき（ログインした直後を含む）だけである。
  */
 export async function listPendingRequests(c: any, subject: string): Promise<CibaPendingRequest[]> {
   const cibaStore = c.get('cibaAuthenticationRequestStore');
@@ -118,7 +131,7 @@ export async function listPendingRequests(c: any, subject: string): Promise<Ciba
     pending.map(async (record) => ({
       authReqId: record.authReqId,
       clientId: record.clientId,
-      // Show only what this End-User can actually grant (scopes.ts).
+      // このエンドユーザーが実際に許可できるスコープだけを表示する（`scopes.ts`）。
       scopes: await resolveGrantableScopes(record.scope, subject),
       bindingMessage: record.bindingMessage,
       expiresInSeconds: remainingSeconds(record.expiresAt),

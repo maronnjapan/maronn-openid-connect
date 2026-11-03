@@ -18,16 +18,18 @@ import {
 } from '@maronn-openid-connect/core';
 
 /**
- * イントロスペクション応答を、認証済み呼び出し元へ開示できる形に制限する。
+ * 呼び出し元宛てでなければ `{ active: false }` を返す。
  *
- * `active: true` の応答をそのまま返すのは、呼び出し元の client_id が
- * 「トークンの発行先（`client_id` メンバー）」または「トークンの `aud`
- * メンバー（文字列または配列）」に一致する場合のみ。どちらにも該当しない
- * 場合は `{ active: false }` に置き換え、制限が働いたことを応答から区別
- * させない（RFC 7662 §2.2 の「存在しないトークンと区別させない」原則と
- * 同じオラクル防止）。`active: false` の応答は常にそのまま返す。
+ * `active` が true のレスポンスは、認証済みの呼び出し元の `client_id`（`callerClientId`）が、トークンの発行先（`client_id` メンバー）か `aud` メンバー（文字列か配列）に一致するときだけ、そのまま返す。
+ * どちらにも一致しなければ、`INACTIVE_INTROSPECTION_RESPONSE`（`{ active: false }`）を返す。
+ * `active` が false のレスポンスは、常にそのまま返す。
+ * 受け取ったオブジェクトは変更しない。
  *
- * 入力オブジェクトは変更しない（純関数）。
+ * 一致しないときに `{ active: false }` だけを返すのは、制限で隠したレスポンスを、存在しないトークンのレスポンスと区別できないようにするためである（RFC 7662 §2.2 と同じ考え方）。
+ * 区別できると、呼び出し元は、ほかのクライアント宛てのトークンが有効であるかどうかを、レスポンスの違いから推測できる。
+ *
+ * @spec RFC 9701 §5
+ * @spec RFC 7662 §2.2
  */
 export function restrictIntrospectionResponseToCaller(
   response: IntrospectionResponse,

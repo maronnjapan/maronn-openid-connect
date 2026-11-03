@@ -6,7 +6,7 @@ export const meta = step({
   id: 'reject-cross-origin-post',
   endpoint: 'consent',
   kind: 'validate',
-  label: 'Reject a form POST from another origin',
+  label: '別オリジンからのフォーム POST を拒否する',
   function: 'rejectCrossOriginFormPost',
   consumes: [],
   produces: [],
@@ -14,9 +14,11 @@ export const meta = step({
 });
 
 /**
- * [reject-cross-origin-post] Refuse a consent form POST that the browser says
- * came from anywhere but the OP's own pages (403, never redirected). See
- * isSameOriginFormPost() in cookies.ts.
+ * フォームの送信元が別オリジンなら 403 のエラーを返す。
+ *
+ * 送信元は、ブラウザが付ける `Sec-Fetch-Site` と `Origin` のヘッダーで判定する（cookies.ts の `isSameOriginFormPost()`）。
+ * OP 自身のページから送られたと判定したときは `undefined` を返す。
+ * エラーは OP のエラーページに表示し、クライアントへはリダイレクトしない。
  */
 export function rejectCrossOriginFormPost(c: any): ConsentError | undefined {
   const sameOrigin = isSameOriginFormPost(

@@ -31,26 +31,29 @@ export type JarmResponseModeResolution =
   | { kind: 'unsupported-jwt-mode'; requested: string };
 
 /**
- * 認可リクエストの `response_mode` を JARM の観点で分類する。
+ * `response_mode` を JARM の値かどうかで分類して返す。
  *
- * - `query.jwt` / `jwt` → JARM モード（§2.3.4: `response_type=code` の既定運搬は
- *   `query.jwt` なので、省略形 `jwt` は `query.jwt` と同義）
- * - 未指定 / `query` / `form_post` / `fragment` / その他の非 `.jwt` 値 → 従来どおり
- *   無視する（隔離原則。JARM は `.jwt` 系にだけ意味を足す拡張であり、この OP が
- *   今まで response_mode を無視してきた挙動を JARM 有効化で変えない）
- * - `fragment.jwt` / `form_post.jwt` / その他の `.jwt` 終端値 → 非対応として報告
+ * 認可リクエストの `response_mode` の値に応じて、次を返す。
+ * - `query.jwt` と `jwt` なら、JARM のモード（`{ kind: 'jarm', mode: 'query.jwt' }`）。
+ *   JARM §2.3.4 では `response_type=code` の既定が `query.jwt` なので、省略形の `jwt` は `query.jwt` と同じ意味になる。
+ * - 指定がないとき、文字列でないとき、`query`、`form_post`、`fragment` など `.jwt` で終わらない値なら、`{ kind: 'plain' }`。
+ * - `fragment.jwt`、`form_post.jwt` など、そのほかの `.jwt` で終わる値なら、対応していないモード（`{ kind: 'unsupported-jwt-mode', requested }`）。
  *
- * 値の比較は大文字小文字を区別する（OAuth 2.0 Multiple Response Type Encoding
- * Practices §2.1 の response_mode 値は case-sensitive）。
+ * `.jwt` で終わらない値を `{ kind: 'plain' }` にするのは、JARM を有効にしても、この OP がこれまで `response_mode` を無視してきた動作を変えないためである。
+ * JARM は `.jwt` で終わる値にだけ意味を加える拡張なので、それ以外の値の扱いを変える必要はない。
  *
- * @param params 認可リクエストの実効パラメータ（Request Object マージ後）。
- *   `response_mode` 以外のキーは参照しない。
+ * 値は大文字と小文字を区別して比べる。
+ * OAuth 2.0 Multiple Response Type Encoding Practices §2.1 で、`response_mode` の値は大文字と小文字を区別すると定められているためである。
+ *
+ * @param params 認可リクエストで実際に使うパラメータ（リクエストオブジェクトをマージした後の値）。
+ *   `response_mode` 以外のキーは見ない。
+ * @spec JARM §2.3.4
+ * @spec OAuth 2.0 Multiple Response Type Encoding Practices §2.1
  */
 export function resolveJarmResponseMode(params: object): JarmResponseModeResolution {
-  // 引数を `object` で受けるのは、core の `AuthorizationRequestParams`（index
-  // signature を持たない interface）と素の `Record<string, string>` の双方を
-  // そのまま渡せるようにするため。値が文字列でない場合（フレームワークの
-  // クエリパーサが配列を返す等）は解釈せず plain として扱う。
+  // `params` から `response_mode` の値を取り出す。
+  // 引数を `object` で受けるのは、core の `AuthorizationRequestParams`（インデックスシグネチャがない）も `Record<string, string>` も、そのまま渡せるようにするためである。
+  // 値が文字列でなければ（フレームワークがクエリを配列にしたときなど）、解釈せずに `{ kind: 'plain' }` を返す。
   const responseMode = (params as { response_mode?: unknown })['response_mode'];
   if (typeof responseMode !== 'string') {
     return { kind: 'plain' };

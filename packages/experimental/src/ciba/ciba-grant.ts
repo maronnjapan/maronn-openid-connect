@@ -38,30 +38,37 @@ export interface CibaGrantResult {
 }
 
 /**
- * トークンエンドポイントの CIBA 分岐（CIBA §10.1 / §11、Poll モード）。
+ * 承認済みの `auth_req_id` なら、発行に使う情報を返す。
  *
- * 状態機械の判定順序（上から評価し、最初に該当したものを返す）:
+ * トークンエンドポイントで、グラントタイプが CIBA のトークンリクエストを `poll` モードで処理する。
+ * `client` には、分岐の前の共通のパイプラインで認証したクライアントを渡す。
  *
- * 1. CIBA grant 未登録クライアント → `unauthorized_client`（RFC 6749 §5.2。
- *    バックチャネル受付後に登録から CIBA が外れたクライアントの償還を拒否する。
- *    device-authorization-grant の `validateDeviceCodeGrantAllowed` と同順）
- * 2. `auth_req_id` 欠落 → `invalid_request`
- * 3. レコード不存在・クライアント不一致 → `invalid_grant`（同一文言・レコードは残す）
- * 4. 期限切れ → `expired_token`（レコード削除）
- * 5. ポーリング過速 → `slow_down`（interval を +5 して保存）
- * 6. pending → `authorization_pending`（lastPolledAt 更新）
- * 7. denied → `access_denied`（レコード削除。再ポーリングは invalid_grant）
- * 8. approved → 結果を返す（レコードは consume で単回使用にする）
+ * 判定は次の順に行い、最初に当てはまったものが結果になる。
+ * 1. クライアントが CIBA のグラントタイプを登録していなければ、`unauthorized_client` を投げる（{@link validateCibaGrantAllowed}）。
+ * 2. `auth_req_id` がなければ、`invalid_request` を投げる。
+ * 3. レコードがないか、別のクライアントに発行した `auth_req_id` なら、同じ文言の `invalid_grant` を投げ、レコードは変えずに残す。
+ * 4. 有効期限を過ぎていれば、レコードを削除して `expired_token` を投げる。
+ * 5. 前回のポーリングから `interval` 秒が経っていなければ、`interval` を 5 秒延ばして保存し、`slow_down` を投げる。
+ * 6. 状態が `pending` なら、`lastPolledAt` を更新して `authorization_pending` を投げる。
+ * 7. 状態が `denied` なら、レコードを削除して `access_denied` を投げる（再びポーリングすると `invalid_grant` になる）。
+ * 8. 状態が `approved` なら、`consume` でレコードを取り出すと同時に削除し、トークンの発行に使う情報（{@link CibaGrantResult}）を返す。
  *
- * 期限切れをポーリング過速より先に評価するのは、期限切れレコードの interval を
- * 増やしても意味がなく、クライアントへはフロー終了を伝えるべきだから。
- * `lastPolledAt` の更新は slow_down と authorization_pending の 2 経路のみ
- * （他の結果はレコードを削除または consume するため更新対象が残らない）。
+ * 期限切れをポーリングの間隔より先に判定するのは、期限切れのレコードの `interval` を延ばしても意味がなく、クライアントにはフローの終了を伝えるべきだからである。
  *
- * 過剰ポーリングへ `invalid_request` を返す選択肢（§11 の MAY）は採らず、
- * device-authorization-grant と同じ slow_down 方式に統一する。
+ * `lastPolledAt` を更新するのは、`slow_down` と `authorization_pending` のときだけである。
+ * `expired_token`、`access_denied`、トークンの発行ではレコードを削除するので、更新するレコードが残らない。
  *
- * @throws {CibaGrantError}
+ * 速すぎるポーリングに `invalid_request` を返す選択肢（CIBA §11 の MAY）は採らず、デバイス認可グラントと同じ `slow_down` の方式に揃える。
+ *
+ * @spec CIBA Core 1.0 §10.1
+ * @spec CIBA Core 1.0 §11
+ * @throws {CibaGrantError} `unauthorized_client`: クライアントが CIBA のグラントタイプを登録していないとき。
+ * @throws {CibaGrantError} `invalid_request`: `auth_req_id` がないとき。
+ * @throws {CibaGrantError} `invalid_grant`: レコードがないとき、別のクライアントに発行した `auth_req_id` のとき、または承認済みのレコードを取り出せなかったとき。
+ * @throws {CibaGrantError} `expired_token`: 有効期限を過ぎたとき。
+ * @throws {CibaGrantError} `slow_down`: 前回のポーリングから `interval` 秒が経っていないとき。
+ * @throws {CibaGrantError} `authorization_pending`: ユーザーがまだ承認も拒否もしていないとき。
+ * @throws {CibaGrantError} `access_denied`: ユーザーが拒否したとき。
  */
 export async function processCibaGrant(input: {
   params: Record<string, string>;
@@ -76,14 +83,14 @@ export async function processCibaGrant(input: {
 }
 
 /**
- * クライアントが CIBA grant を許可されているかを償還時にも検証する。
+ * クライアントの `grantTypes` に CIBA があるか確かめる。
  *
- * バックチャネルエンドポイントは受付時に同じ検査を行うが、auth_req_id の発行から
- * 償還までの間に登録から CIBA が外れることがある（RFC 6749 §5.2 の
- * unauthorized_client）。device-authorization-grant の
- * `validateDeviceCodeGrantAllowed` と同じ位置づけの検査。
+ * `grantTypes` に {@link CIBA_GRANT_TYPE} がなければ、`unauthorized_client` を投げる（RFC 6749 §5.2）。
+ * バックチャネル認証エンドポイントも受け付けるときに同じ検証を行うが、`auth_req_id` を発行してからトークンと引き換えるまでのあいだに、クライアントの登録から CIBA が外れることがあるので、引き換えるときにも確かめる。
+ * デバイス認可グラントの `validateDeviceCodeGrantAllowed` と同じ位置づけの検証である。
  *
- * @throws {CibaGrantError} unauthorized_client
+ * @spec RFC 6749 §5.2
+ * @throws {CibaGrantError} `unauthorized_client`: クライアントが CIBA のグラントタイプを登録していないとき。
  */
 export function validateCibaGrantAllowed(client: TokenClientInfo): void {
   if (!(client.grantTypes ?? []).includes(CIBA_GRANT_TYPE)) {
@@ -95,9 +102,15 @@ export function validateCibaGrantAllowed(client: TokenClientInfo): void {
 }
 
 /**
- * `auth_req_id` パラメータを取り出し、発行先クライアントのレコードを解決する。
+ * `auth_req_id` のレコードを探し、発行先を確かめて返す。
  *
- * @throws {CibaGrantError} invalid_request / invalid_grant
+ * `auth_req_id` パラメータがないか空文字列なら、`invalid_request` を投げる。
+ * レコードがないか、レコードの発行先が `client` でなければ、同じ文言の `invalid_grant` を投げる。
+ * 文言を同じにするのは、ほかのクライアントの `auth_req_id` が実在するかを確かめられないようにするためである（CIBA §11）。
+ *
+ * @spec CIBA Core 1.0 §11
+ * @throws {CibaGrantError} `invalid_request`: `auth_req_id` がないとき。
+ * @throws {CibaGrantError} `invalid_grant`: レコードがないとき、または別のクライアントに発行した `auth_req_id` のとき。
  */
 async function resolveCibaRecord(
   params: Record<string, string>,
@@ -116,9 +129,21 @@ async function resolveCibaRecord(
 }
 
 /**
- * CIBA §11 の状態機械を評価する。
+ * 状態を判定し、承認済みなら発行に使う情報を返す。
  *
- * @throws {CibaGrantError} §11 の各状態
+ * 判定は次の順に行う（CIBA §11）。
+ * - 有効期限を過ぎていれば、レコードを削除して `expired_token` を投げる。
+ * - 前回のポーリングから `interval` 秒が経っていなければ、`interval` を {@link SLOW_DOWN_INTERVAL_INCREMENT} 秒延ばし、`lastPolledAt` を `now` にして保存し、`slow_down` を投げる。
+ * - 状態が `pending` なら、`lastPolledAt` を `now` にして保存し、`authorization_pending` を投げる。
+ * - 状態が `denied` なら、レコードを削除して `access_denied` を投げる。
+ * - それ以外（`approved`）なら、`consume` でレコードを取り出すと同時に削除し、トークンの発行に使う情報を返す。
+ *
+ * 取り出したレコードがないとき（並行した引き換えで先に削除されたときなど）、状態が `approved` でないとき、または `authTime` か `grantId` がないときは、`invalid_grant` を投げる。
+ * 返す `scope` は、承認したときに決めた `approvedScope` があればその値で、なければ要求された `scope` である。
+ *
+ * @spec CIBA Core 1.0 §11
+ * @throws {CibaGrantError} `expired_token`、`slow_down`、`authorization_pending`、`access_denied`: 上の判定のそれぞれに当たるとき。
+ * @throws {CibaGrantError} `invalid_grant`: 承認済みのレコードを取り出せなかったとき。
  */
 async function evaluateCibaState(
   record: CibaAuthenticationRequestRecord,
@@ -137,8 +162,8 @@ async function evaluateCibaState(
     record.lastPolledAt !== null &&
     now.getTime() - record.lastPolledAt.getTime() < record.interval * 1000
   ) {
-    // CIBA §11: "the interval MUST be increased by at least 5 seconds for this
-    // and all subsequent requests" — サーバー側も新しい間隔を強制する。
+    // 間隔を 5 秒延ばしてポーリングの時刻とともに保存し、サーバー側でも新しい間隔を守らせる。
+    // このリクエストと以降のすべてのリクエストで、間隔を少なくとも 5 秒延ばさなければならない（CIBA §11 の MUST）。
     record.interval += SLOW_DOWN_INTERVAL_INCREMENT;
     record.lastPolledAt = now;
     await store.update(record);
@@ -162,9 +187,9 @@ async function evaluateCibaState(
     throw new CibaGrantError('access_denied', 'The end-user denied the authentication request');
   }
 
-  // approved: 単回使用を強制するため atomic な consume で回収する。並行
-  // リデンプションでは先勝ちの 1 本だけがトークンを得て、後続は record が
-  // null になり invalid_grant。
+  // 状態が `approved` なら、`consume` でレコードを取り出すと同時に削除し、一度しか使えないようにする。
+  // `consume` は取り出しと削除を不可分に行うので、並行して引き換えられても、最初の 1 つだけがレコードを得る。
+  // 後続のリクエストは `null` を受け取り、`invalid_grant` になる。
   const consumed = await store.consume(record.authReqId);
   if (
     consumed === null ||

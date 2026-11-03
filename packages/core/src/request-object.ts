@@ -46,13 +46,14 @@ export interface ParseRequestObjectOptions {
 }
 
 /**
- * JWT の base64url セグメントをデコードし、UTF-8 の JSON として解析した値を返す。
+ * JWT のセグメントを復号し、JSON として解析して返す。
  *
- * 解析結果の型は検査せず、オブジェクト以外の JSON 値もそのまま返す。標準 base64 の `+` `/` や
- * パディングを含む値も復号する（厳格な base64url 検査はしない）。
+ * セグメントを base64url として復号し、UTF-8 の文字列として読んでから `JSON.parse()` に渡す。
+ * 解析した値の型は確かめないので、オブジェクト以外の JSON の値もそのまま返す。
+ * 標準の base64 の `+` と `/` や、パディングの `=` を含む値も復号する（base64url の厳密な検査はしない）。
  *
- * @throws {DOMException} InvalidCharacterError（base64 として復号できないとき）
- * @throws {SyntaxError} 復号した内容が JSON として解析できないとき
+ * @throws {DOMException} `InvalidCharacterError`: base64 として復号できないとき
+ * @throws {SyntaxError} 復号した文字列を JSON として解析できないとき
  */
 function decodeJwtSegment(segment: string): unknown {
   const json = new TextDecoder().decode(base64UrlToArrayBuffer(segment));
@@ -60,15 +61,24 @@ function decodeJwtSegment(segment: string): unknown {
 }
 
 /**
- * compact JWS としてシリアライズされた Request Object をパース・検証し、
- * payload（Authorization Request パラメータの JSON オブジェクト）を返す。
+ * リクエストオブジェクトを検証し、ペイロードを返す。
  *
- * - JWE（5 セグメント）や、3 セグメントでない壊れた compact 表現は拒否する。
- * - `alg: "none"` は `allowUnsigned` が true のときだけ受理し、署名部が空であることを要求する。
- * - 署名付きは `supportedSigningAlgs` に含まれる `alg` のみ受理し、
- *   JOSE header の `kid` で鍵を一意特定（無ければ `alg` 一致鍵を順次試行）して署名検証する。
+ * `request` は JWS のコンパクト形式（`.` で区切った三つのセグメント）でなければならない。
+ * 返すペイロードは、認可リクエストのパラメータを持つ JSON オブジェクトである。
  *
- * @throws {RequestObjectError} 構造不正・未対応 alg・鍵不一致・署名不一致など
+ * 署名の検証には、ヘッダーに `kid` があれば `kid` が一致する `jwks` の鍵を、なければ `jwks` のすべての鍵を、順に試す。
+ * `alg` を持つ鍵は、ヘッダーの `alg` と一致するときだけ使い、インポートできない鍵は飛ばす。
+ * どれか一つの鍵で署名を検証できれば、ペイロードを返す。
+ *
+ * 次のときは `RequestObjectError` を投げる:
+ * - `request` が文字列でないか空のとき、または `.` で区切ったセグメントが三つでないとき（五つのセグメントからなる JWE も拒否する）。
+ * - ヘッダーかペイロードを JSON オブジェクトとして復号できないとき、またはヘッダーに `alg` がないとき。
+ * - `alg` が `none` で、`allowUnsigned` が `false` のとき、または署名のセグメントが空でないとき。
+ * - `alg` が `supportedSigningAlgs` にないとき、または `jwks` がないか空のとき。
+ * - ヘッダーの `kid` と一致する鍵がないとき、またはどの鍵でも署名を検証できないとき。
+ *
+ * @spec OIDC Core 1.0 §6.1
+ * @throws {RequestObjectError} 形式が不正なとき、`alg` に対応していないとき、鍵が見つからないとき、署名を検証できないとき
  */
 export async function parseRequestObject(
   request: string,
@@ -79,8 +89,8 @@ export async function parseRequestObject(
   }
 
   const parts = request.split('.');
-  // OIDC Core §6.1: the Request Object is a JWT. We only accept JWS Compact
-  // Serialization (3 segments). A JWE (5 segments) or any other shape is rejected.
+  // リクエストオブジェクトは JWT であり、そのうち三つのセグメントからなる JWS のコンパクト形式だけを受け付ける（OIDC Core 1.0 §6.1）。
+  // 五つのセグメントからなる JWE など、ほかの形は拒否する。
   if (parts.length !== 3) {
     throw new RequestObjectError(
       'request object is not a JWS compact serialization',
@@ -118,7 +128,7 @@ export async function parseRequestObject(
     if (!options.allowUnsigned) {
       throw new RequestObjectError('unsigned request object (alg=none) is not supported');
     }
-    // RFC 7515 §6: the "none" algorithm uses an empty signature.
+    // `none` のアルゴリズムでは署名のセグメントが空になるので、空でなければ拒否する（RFC 7519 §6）。
     if (signatureB64 !== '') {
       throw new RequestObjectError('unsigned request object must not carry a signature');
     }
@@ -135,8 +145,8 @@ export async function parseRequestObject(
   }
 
   const kid = typeof header['kid'] === 'string' ? (header['kid'] as string) : undefined;
-  // kid wins (unique key selection); otherwise try every registered key whose
-  // advertised alg is compatible. RFC 7515 §4.1.1: a key pins its alg when present.
+  // ヘッダーに `kid` があれば `kid` が一致する鍵を、なければ登録されたすべての鍵を候補にする。
+  // 鍵が `alg` を持つときは、その `alg` の署名の検証にだけ使う（RFC 7515 §4.1.1）。
   const candidates: Jwk[] = kid
     ? jwks.keys.filter((k) => k.kid === kid)
     : jwks.keys.slice();
@@ -162,7 +172,7 @@ export async function parseRequestObject(
         return payload as Record<string, unknown>;
       }
     } catch {
-      // try next candidate key
+      // 次の候補の鍵を試す。
     }
   }
 

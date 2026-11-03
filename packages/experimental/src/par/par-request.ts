@@ -127,12 +127,13 @@ const DEFAULT_EXPIRES_IN_SECONDS = 60;
 const REFERENCE_VALUE_BYTE_LENGTH = 32;
 
 /**
- * request_uri の有効期間が RFC 9126 §2.2 の推奨レンジ内かを検証する。
+ * 有効期間が 5〜600 秒の整数でなければ例外を投げる。
  *
- * 生成コードは設定値の読み込み時（= 起動時）にこれを呼び、範囲外の設定を
- * リクエスト処理前に失敗させる。
+ * 検証するのは `request_uri` の有効期間（秒）で、範囲は RFC 9126 §2.2 が典型的な値として挙げる 5〜600 秒である。
+ * 生成されたコードは設定を読み込むとき（起動時）にこの関数を呼び、範囲外の設定では、リクエストを処理する前に失敗させる。
  *
- * @throws {RangeError} 5〜600 の整数でない場合
+ * @throws {RangeError} 5〜600 の整数でないとき
+ * @spec RFC 9126 §2.2
  */
 export function assertParExpiresInSeconds(seconds: number): void {
   const isValid =
@@ -147,12 +148,14 @@ export function assertParExpiresInSeconds(seconds: number): void {
 }
 
 /**
- * PAR ボディに含めてはならないパラメータを拒否する。
+ * `request_uri` か `request` があれば例外を投げる。
  *
- * - `request_uri`: RFC 9126 §2.1 の MUST NOT
- * - `request`: PAR と Request Object (JAR) の併用は本機能の非目標
+ * どちらも、PAR のリクエストボディに含めてはならないパラメータとして拒否する。
+ * - `request_uri` は、PAR のリクエストに含めてはならない（RFC 9126 §2.1 の MUST NOT）。
+ * - `request`（リクエストオブジェクト、JAR）は、PAR と併用する機能をこの実装が持たないので拒否する。
  *
- * @throws {ParError} invalid_request
+ * @throws {ParError} `invalid_request`: `request_uri` か `request` が含まれるとき
+ * @spec RFC 9126 §2.1
  */
 export function rejectForbiddenParParams(params: Record<string, string>): void {
   if (params['request_uri'] !== undefined) {
@@ -170,23 +173,22 @@ export function rejectForbiddenParParams(params: Record<string, string>): void {
 }
 
 /**
- * クライアントを認証する（RFC 9126 §2.1: token endpoint と同一規則）。
+ * クライアントを認証し、そのクライアント ID を返す。
  *
- * 資格情報の抽出・多重方式の判定・検証はすべて core の
- * {@link extractClientCredentials} 以降のステップへ委譲し、token endpoint と
- * 同一の規則を適用する:
+ * 認証の規則はトークンエンドポイントと同じである（RFC 9126 §2.1）。
+ * ボディからは `client_id` と `client_secret` だけを使い、認証情報の取り出し、複数の認証方式の判定、検証は、core の {@link extractClientCredentials} から始まる関数にすべて任せる。
+ * そのため、次の規則もトークンエンドポイントと同じになる:
+ * - `Authorization` ヘッダーは `Basic` スキームだけを認証に使う。
+ *   ほかのスキームのヘッダー（ゲートウェイが付ける `Bearer` など）は無視し、ボディの認証情報で認証する。
+ * - 空文字列の `client_secret` は、送られなかったものとして扱う（RFC 6749 §3.2）。
+ * - `Basic` ヘッダーと、ボディの空でない `client_secret` を両方送ると、複数の認証方式を使ったとして `invalid_request` にする（OAuth 2.1 §2.3）。
+ * - ボディの `client_id`（RFC 9126 §2.1 で認可リクエストのパラメータとして必須）を `Basic` ヘッダーと一緒に送ったときは、core が `Basic` ヘッダーのクライアント ID と一致することを確かめる。
+ *   `request_uri` は、PAR のリクエストを送ったクライアントに結び付くためである（RFC 9126 §2.2）。
  *
- * - ヘッダ認証は `Basic` スキームだけが対象で、他スキームのヘッダ（ゲートウェイが
- *   注入する `Bearer` など）は無視してボディの資格情報で認証する
- * - 空文字列の `client_secret` は「未提示」に正規化される（RFC 6749 §3.2）
- * - `Basic` とボディの `client_secret`（非空）の併用は OAuth 2.1 §2.3 の
- *   多重方式として invalid_request
- * - RFC 9126 §2.1 で必須の認可パラメータとしてボディに入る `client_id` は、
- *   `Basic` 併用時に core が Basic 側の client_id との一致を検証する
- *   （RFC 9126 §2.2: request_uri は pushed request を送ったクライアントに紐付く）
- *
- * @returns 認証されたクライアントID
- * @throws {ParError} invalid_client / invalid_request
+ * @returns 認証したクライアントの ID
+ * @throws {ParError} `invalid_client`: 認証に失敗したとき（クライアント ID がない、クライアントが登録されていない、シークレットが一致しないなど）
+ * @throws {ParError} `invalid_request`: 複数の認証方式を使ったとき、ボディの `client_id` が `Basic` ヘッダーと食い違うとき
+ * @spec RFC 9126 §2.1
  */
 export async function authenticateParClient(context: {
   params: Record<string, string>;
@@ -202,7 +204,12 @@ export async function authenticateParClient(context: {
 }
 
 /**
- * core のクライアント認証ステップ関数を仕様順に実行し、TokenError を ParError へ写す。
+ * core の関数でクライアントを認証し、ID を返す。
+ *
+ * core の関数を、認証情報の取り出し、クライアントの取得、認証方式の照合、シークレットの照合の順に呼び、提示されたクライアント ID を返す。
+ * core が投げた `TokenError` は `ParError` に変換して投げ、それ以外の例外はそのまま投げる。
+ *
+ * @throws {ParError} クライアント認証に失敗したとき
  */
 async function runClientAuthentication(context: {
   params: Record<string, string | undefined>;
@@ -224,20 +231,21 @@ async function runClientAuthentication(context: {
 }
 
 /**
- * pushed されたパラメータを、認可エンドポイントと同じ規則で検証する。
+ * パラメータを認可エンドポイントと同じ規則で検証する。
  *
- * RFC 9126 §2.1: "The authorization server ... MUST validate the request as it would
- * an authorization request sent to the authorization endpoint."
+ * 認可サーバーは、PAR のリクエストを、認可エンドポイントに送られた認可リクエストと同じように検証しなければならない（RFC 9126 §2.1 の MUST）。
  *
- * 認可エンドポイントの生成コードと同じ順序で core のステップ関数を呼び、パラメータを
- * 拒否するものだけを実行する（scope の絞り込みなど値を組み立てる処理は、request_uri を
- * 展開した認可エンドポイントが行う）。PAR は Request Object（`request`）と併用しない
- * （{@link rejectForbiddenParParams}）ため、`request` はパースせず request_not_supported
- * として拒否する。
+ * 認可エンドポイントの生成されたコードと同じ順序で core の関数を呼び、パラメータを拒否する検証だけを行う。
+ * `scope` の絞り込みのように値を組み立てる処理は、`request_uri` を展開した後に認可エンドポイントが行う。
+ * PAR はリクエストオブジェクト（`request`）と併用しないので（{@link rejectForbiddenParParams}）、`request` は解析せずに拒否する。
  *
- * 失敗は必ず {@link ParError} になり、リダイレクトはしない（RFC 9126 §2.3）。
+ * core が投げた `AuthorizationError` と `TokenError` は {@link ParError} に変換して投げ、リダイレクトはしない（RFC 9126 §2.3）。
+ * core の `request_not_supported` のように PAR にないエラーコードは、`invalid_request` になる。
+ * それ以外の例外（クライアントのリゾルバが投げた例外など）は、変換せずにそのまま投げる。
  *
- * @throws {ParError}
+ * @throws {ParError} パラメータの検証に失敗したとき
+ * @spec RFC 9126 §2.1
+ * @spec RFC 9126 §2.3
  */
 export async function validatePushedAuthorizationParams(
   params: Record<string, string>,
@@ -278,13 +286,19 @@ export async function validatePushedAuthorizationParams(
 const CLIENT_AUTHENTICATION_PARAMS = ['client_secret', 'client_assertion', 'client_assertion_type'];
 
 /**
- * 参照値（URN）を生成してレコードを保存する（RFC 9126 §2.2）。
+ * `request_uri` を発行し、レコードを保存して返す。
  *
- * `params` の `client_id` は認証済みクライアントの値に正規化して保存し、クライアント
- * 認証パラメータ（`client_secret` 等）は保存しない。
+ * `request_uri` は、URN の接頭辞に、32 バイトの暗号論的な乱数を base64url にした参照値を付けた値である（RFC 9126 §2.2、§7.1）。
+ * 有効期限は、作成時刻（`now`、既定は現在時刻）に `expiresInSeconds`（既定は 60 秒）を足した時刻である。
+ * `expiresInSeconds` は {@link assertParExpiresInSeconds} で検証する。
+ *
+ * `params` の `client_id` は認証したクライアントの値（`clientId`）で置き換えて保存し、クライアント認証のパラメータ（`client_secret`、`client_assertion`、`client_assertion_type`）は保存しない。
+ * 保存しないのは、シークレットがストアに残り（ログやバックアップにも残り）、認可エンドポイントで展開したパラメータにも混ざるのを防ぐためである。
+ * 認証は保存の前に済んでいるので、保存しておく必要もない。
  * 呼び出し側が渡したオブジェクトは変更しない。
  *
- * @throws {RangeError} expiresInSeconds が RFC 9126 §2.2 の推奨レンジ外
+ * @throws {RangeError} `expiresInSeconds` が 5〜600 の整数でないとき
+ * @spec RFC 9126 §2.2
  */
 export async function createPushedAuthorizationRecord(options: {
   clientId: string;
@@ -313,7 +327,13 @@ export async function createPushedAuthorizationRecord(options: {
   return record;
 }
 
-/** 201 レスポンスのボディを組み立てる（RFC 9126 §2.2）。 */
+/**
+ * レコードから 201 レスポンスのボディを組み立てて返す。
+ *
+ * `requestUri` にはレコードの `requestUri` を、`expiresIn` には有効期限と作成時刻の差を秒に丸めた値を入れる。
+ *
+ * @spec RFC 9126 §2.2
+ */
 export function buildPushedAuthorizationResponse(
   record: PushedAuthorizationRecord,
 ): PushedAuthorizationResponse {
@@ -324,12 +344,17 @@ export function buildPushedAuthorizationResponse(
 }
 
 /**
- * 合成関数: PAR エンドポイントの全処理（RFC 9126 §2）。
+ * PAR のリクエストを処理し、レスポンスのボディを返す。
  *
- * 個々のステップ関数を仕様順に合成しただけの API。生成コードは通常この関数ではなく
- * ステップ関数を順に呼び出し、検証の差し替え・削除ができるようにする。
+ * 禁止されたパラメータの拒否、クライアント認証、パラメータの検証、レコードの保存、レスポンスの組み立てを、この順に行う。
+ * それぞれ、このファイルのほかの関数を呼ぶだけである。
  *
- * @throws {ParError}
+ * 生成されたコードは、通常この関数を使わずに、それぞれの関数を順に呼ぶ。
+ * 検証を差し替えたり取り除いたりできるようにするためである。
+ *
+ * @throws {ParError} どれかの処理が失敗したとき
+ * @throws {RangeError} `expiresInSeconds` が 5〜600 の整数でないとき
+ * @spec RFC 9126 §2
  */
 export async function handlePushedAuthorizationRequest(
   context: PushedAuthorizationRequestContext,
@@ -342,7 +367,8 @@ export async function handlePushedAuthorizationRequest(
     clientResolver: context.clientResolver,
   });
 
-  // client_id を認証済みの値に正規化してから検証する（ボディ省略時にも成立させる）。
+  // `client_id` を、認証したクライアントの値に置き換えてから検証する。
+  // ボディに `client_id` がないときも、検証で `client_id` を使えるようにするためである。
   const params = { ...context.params, client_id: clientId };
   await validatePushedAuthorizationParams(params, context.clientResolver, context.validationOptions);
 
@@ -358,9 +384,11 @@ export async function handlePushedAuthorizationRequest(
 }
 
 /**
- * core のエラーを PAR エンドポイントのエラーへ写す。
+ * core のエラーを `ParError` に変換して返す。
  *
- * 未知の例外はそのまま再スローし、握りつぶさない（呼び出し側が 500 として扱う）。
+ * `ParError` はそのまま返し、`TokenError` と `AuthorizationError` は、エラーコードを変換し、説明（`errorDescription`）を引き継いだ `ParError` にする。
+ * それ以外の例外は、変換せずにそのまま返す。
+ * 呼び出し側はそれをそのまま投げるので、例外は失われず、500 として扱われる。
  */
 function toParError(error: unknown): unknown {
   if (error instanceof ParError) return error;
@@ -372,10 +400,9 @@ function toParError(error: unknown): unknown {
 }
 
 /**
- * core の TokenError のエラーコードを、PAR エンドポイントのエラーコードに写して返す。
+ * `TokenError` のコードを PAR 用に変換して返す。
  *
- * invalid_client / unauthorized_client / invalid_scope は同じコードを返し、それ以外
- * （invalid_grant / unsupported_grant_type など）はすべて invalid_request にする。
+ * `invalid_client`、`unauthorized_client`、`invalid_scope` は同じコードを返し、それ以外（`invalid_grant`、`unsupported_grant_type` など）はすべて `invalid_request` にする。
  *
  * @spec RFC 9126 §2.3
  */
@@ -393,10 +420,9 @@ function toParErrorCodeFromToken(code: TokenErrorCode): ParErrorCode {
 }
 
 /**
- * core の AuthorizationError のエラーコードを、PAR エンドポイントのエラーコードに写して返す。
+ * `AuthorizationError` のコードを PAR 用に変換して返す。
  *
- * invalid_scope / unauthorized_client / unsupported_response_type は同じコードを返し、それ以外
- * （login_required などのインタラクション系や invalid_request_object など）はすべて invalid_request にする。
+ * `invalid_scope`、`unauthorized_client`、`unsupported_response_type` は同じコードを返し、それ以外（`login_required` などのユーザーの操作が必要なことを示すコードや、`invalid_request_object` など）はすべて `invalid_request` にする。
  *
  * @spec RFC 9126 §2.3
  */
@@ -409,9 +435,9 @@ function toParErrorCodeFromAuthorization(code: AuthorizationErrorCode): ParError
     case AuthorizationErrorCode.UnsupportedResponseType:
       return 'unsupported_response_type';
     default:
-      // RFC 9126 §2.3 は PAR 固有のエラーコードを追加しない。認可エンドポイント固有の
-      // インタラクション系コード（login_required 等）は pushed request の検証では
-      // 発生しないため、残りは invalid_request に集約する。
+      // 残りのコードは、すべて `invalid_request` にする。
+      // RFC 9126 §2.3 は PAR 固有のエラーコードを追加していない。
+      // 認可エンドポイント固有の、ユーザーの操作が必要なことを示すコード（`login_required` など）は、PAR のリクエストの検証では発生しない。
       return 'invalid_request';
   }
 }

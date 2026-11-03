@@ -17,7 +17,13 @@ export interface ResolvedRefreshToken {
 }
 
 /**
- * 必須の refresh_token パラメータを検証し、保存済みトークンを解決する。
+ * 提示されたリフレッシュトークンの保存済みの情報を返す。
+ *
+ * 返す値は、`refresh_token` パラメータのトークンの文字列と、リゾルバの `resolve()` が返した保存済みの情報の組である。
+ * 使用済みかどうか、有効期限、発行先のクライアントは、ここでは確かめない。
+ *
+ * @throws {TokenError} `invalid_request`: `refresh_token` パラメータがないか空のとき、またはリゾルバが渡されていないとき
+ * @throws {TokenError} `invalid_grant`: ストアにトークンが見つからないとき
  */
 export async function resolveRefreshToken(
   params: Pick<TokenRequestParams, 'refresh_token'>,
@@ -40,10 +46,17 @@ export async function resolveRefreshToken(
 }
 
 /**
- * ローテーション済み refresh token の再利用を拒否する。
+ * 使用済みなら、同じグラントを失効させて拒否する。
  *
- * OAuth 2.1 §4.3.1 / RFC 9700 §4.14: 再利用時は同じ grantId の token family を
- * 可能なら失効してから invalid_grant を返す。
+ * 使用済み（`used` が `true`）のトークンは、ローテーションで後継のトークンに置き換えられた古いトークンである。
+ * 古いトークンが再び提示されたときは、トークンが漏洩した可能性がある。
+ * そこで、リゾルバに `revokeTokensByGrantId` があれば、グラント ID が同じアクセストークンとリフレッシュトークンをすべて失効させてから、`TokenError`（`invalid_grant`）を投げる（OAuth 2.1 §4.3.1、RFC 9700 §4.14）。
+ * `revokeTokensByGrantId` がなければ、失効させずに投げる。
+ * 未使用のトークンには何もしない。
+ *
+ * @spec OAuth 2.1 §4.3.1
+ * @spec RFC 9700 §4.14
+ * @throws {TokenError} `invalid_grant`: トークンが使用済みのとき
  */
 export async function validateRefreshTokenUnused(
   refreshTokenInfo: Pick<RefreshTokenInfo, 'used' | 'grantId'>,
@@ -61,7 +74,11 @@ export async function validateRefreshTokenUnused(
 }
 
 /**
- * refresh token が認証済みクライアントへ発行されたものか検証する。
+ * 別のクライアントに発行されたトークンなら拒否する。
+ *
+ * トークンの `clientId` が、認証したクライアントの ID（`authenticatedClientId`）と一致しなければ、`TokenError`（`invalid_grant`）を投げる。
+ *
+ * @throws {TokenError} `invalid_grant`: トークンが別のクライアントに発行されていたとき
  */
 export function validateRefreshTokenClient(
   refreshTokenInfo: Pick<RefreshTokenInfo, 'clientId'>,
@@ -76,9 +93,13 @@ export function validateRefreshTokenClient(
 }
 
 /**
- * refresh token の絶対有効期限を検証する。
+ * 有効期限を過ぎたリフレッシュトークンを拒否する。
  *
- * RFC 7519 §4.1.4 の exp 慣例と同じく expiresAt <= currentTime を失効済みとする。
+ * `expiresAt` が `currentTime`（既定値は現在のエポック秒）以下なら、`TokenError`（`invalid_grant`）を投げる。
+ * 有効期限と同じ時刻をすでに期限切れとみなすのは、JWT の `exp` と同じ扱いである（RFC 7519 §4.1.4）。
+ * ここで確かめる `expiresAt` は、最初の発行から数える有効期限であり、ローテーションしても延びない。
+ *
+ * @throws {TokenError} `invalid_grant`: 有効期限を過ぎているとき
  */
 export function validateRefreshTokenExpiration(
   refreshTokenInfo: Pick<RefreshTokenInfo, 'expiresAt'>,
@@ -93,10 +114,14 @@ export function validateRefreshTokenExpiration(
 }
 
 /**
- * refresh token の任意の idle（非活動）タイムアウトを検証する。
+ * 使われない期間が上限を超えたトークンを拒否する。
  *
- * timeout 未指定・0以下・lastUsedAt 未保存の場合は検証をスキップする。
- * `currentTime - lastUsedAt > timeout` のとき失効する（境界値と等しい場合は有効）。
+ * 上限（`idleTimeoutSeconds`）は、トークンが最後に使われてから（`lastUsedAt` から）次に使われるまでに空いてよい秒数で、有効期限とは別に設ける任意の制限である。
+ * `currentTime - lastUsedAt` が `idleTimeoutSeconds` を超えたら、`TokenError`（`invalid_grant`）を投げる。
+ * 経過した秒数がちょうど `idleTimeoutSeconds` のときは拒否しない。
+ * `idleTimeoutSeconds` が `undefined` か 0 以下のとき、またはトークンに `lastUsedAt` が保存されていないときは、何も確かめない。
+ *
+ * @throws {TokenError} `invalid_grant`: 最後に使われてから `idleTimeoutSeconds` 秒を超えて経過しているとき
  */
 export function validateRefreshTokenIdleTimeout(
   refreshTokenInfo: Pick<RefreshTokenInfo, 'lastUsedAt'>,
@@ -117,21 +142,23 @@ export function validateRefreshTokenIdleTimeout(
 }
 
 /**
- * online refresh token の束縛先セッションがまだ生きていることを検証する。
+ * 結び付いたセッションが終了していれば拒否する。
  *
- * OIDC Core 1.0 §11 は `offline_access` を「End-User が居ない（not logged in）ときにも
- * 使える Refresh Token」と定義し、Refresh Token の利用がその用途に限られないことも
- * 明示している（"The use of Refresh Tokens is not exclusive to the `offline_access`
- * use case. The Authorization Server MAY grant Refresh Tokens in other contexts"）。
- * 本実装ではその「other contexts」を online refresh token とし、`sessionId` で
- * 認証セッションへ束縛する。
+ * `sessionId` を持つリフレッシュトークン（以下、オンラインのリフレッシュトークン）は、OP の認証セッションに結び付いている。
+ * `sessionId` を持たないリフレッシュトークン（オフラインのリフレッシュトークン）はセッションから独立しているので、何も確かめない。
+ * オンラインのリフレッシュトークンには、次のときに `TokenError`（`invalid_grant`）を投げる:
+ * - `sessionResolver` が渡されていない。
+ * - `sessionResolver.findSession()` がセッションを返さない（セッションがないか、終了している）。
+ * - セッションのサブジェクトが、トークンのサブジェクトと異なる。
  *
- * - `sessionId` 無し（offline refresh token）: 何も検証しない。セッションから独立している。
- * - `sessionId` あり（online refresh token）: セッションが解決できなければ
- *   `invalid_grant`。解決できても subject が変わっていれば `invalid_grant`。
+ * OIDC Core 1.0 §11 は、`offline_access` を、エンドユーザーがログインしていないときにも使えるリフレッシュトークンを求めるスコープとして定義している。
+ * 同じ節は、リフレッシュトークンの用途は `offline_access` に限られず、認可サーバーはほかの場面でもリフレッシュトークンを発行してもよい（MAY）とも書いている。
+ * この実装は、そのほかの場面で発行するリフレッシュトークンをオンラインのリフレッシュトークンとし、`sessionId` で認証セッションに結び付ける。
  *
- * リゾルバー未指定で online refresh token が提示された場合は fail-closed で拒否する。
- * 「確認できないので通す」にすると、ログアウト後も使える RT が生まれてしまう。
+ * リゾルバがないときに通さず拒否するのは、確かめられないトークンを通すと、ログアウトした後も使えるリフレッシュトークンが残るためである。
+ *
+ * @spec OIDC Core 1.0 §11
+ * @throws {TokenError} `invalid_grant`: リゾルバがないとき、セッションが見つからないとき、セッションのサブジェクトが異なるとき
  */
 export async function validateRefreshTokenSession(
   refreshTokenInfo: Pick<RefreshTokenInfo, 'sessionId' | 'subject'>,
@@ -156,10 +183,14 @@ export async function validateRefreshTokenSession(
 }
 
 /**
- * refresh_token grant の要求 scope を検証・正規化する。
+ * 発行するトークンのスコープを検証して返す。
  *
- * 未指定なら元 grant の scope を返す。指定時は空値を拒否し、重複を除去したうえで
- * 元 scope のサブセットだけを許可する（RFC 6749 §6）。
+ * `requestedScope`（リクエストの `scope` パラメータ）がなければ、元のグラントのスコープ（`originalScope`）をそのまま返す。
+ * あれば半角空白で分けて重複を取り除き、すべての値が元のグラントのスコープに含まれることを確かめてから返す（RFC 6749 §6）。
+ * 値が一つもないとき（空文字列や空白だけのとき）と、元のグラントにない値を含むときは、`TokenError`（`invalid_scope`）を投げる。
+ *
+ * @spec RFC 6749 §6
+ * @throws {TokenError} `invalid_scope`: 要求されたスコープが空のとき、または元のグラントにない値を含むとき
  */
 export function validateRefreshTokenScope(
   requestedScope: string | undefined,
@@ -177,7 +208,12 @@ export function validateRefreshTokenScope(
 }
 
 /**
- * 各ステップの結果からバリデーション済み refresh_token request を組み立てる。
+ * 検証済みのリフレッシュトークンのリクエストを返す。
+ *
+ * それまでのステップの結果から、`grantType` が `refresh_token` のリクエストを組み立てる。
+ * クライアント ID には認証したクライアントの ID を、スコープには `effectiveScope`（{@link validateRefreshTokenScope} が返した値）を入れる。
+ * サブジェクト、グラント ID、オーディエンス、認証時刻、`nonce`、`acr`、`amr`、`azp`、最初の発行時刻、セッションの ID は、保存済みのトークンの値をそのまま引き継ぐ。
+ * `hadOfflineAccess` は、元のトークンのスコープ（縮小する前のスコープ）に `offline_access` があれば `true` にする。
  */
 export function buildValidatedRefreshTokenRequest(
   refreshTokenInfo: RefreshTokenInfo,
@@ -196,18 +232,25 @@ export function buildValidatedRefreshTokenRequest(
     acr: refreshTokenInfo.acr,
     amr: refreshTokenInfo.amr,
     azp: refreshTokenInfo.azp,
-    // OAuth 2.1 §6.1: rotation を跨いで初回発行時刻を保持する。
+    // ローテーションしても、最初の発行時刻を変えずに引き継ぐ（OAuth 2.1 §6.1）。
+    // 有効期限を最初の発行から数えるためである。
     originalIssuedAt: refreshTokenInfo.originalIssuedAt,
-    // RFC 6749 §6 / OIDC Core 1.0 §11: rotation 可否は縮小後ではなく元 grant で判定する。
+    // ローテーションするかどうかは、縮小した後のスコープではなく、元のグラントのスコープで判定する（RFC 6749 §6、OIDC Core 1.0 §11）。
+    // `offline_access` はグラントに与えた権限なので、リクエストでスコープを縮小しても元のグラントの権限は失われない。
     hadOfflineAccess: refreshTokenInfo.scope.includes('offline_access'),
-    // online refresh token の束縛は rotation を跨いで維持する。ここで落とすと
-    // 1 回リフレッシュしただけでセッション束縛が外れた offline RT に化ける。
+    // セッションに結び付いた（オンラインの）リフレッシュトークンの `sessionId` は、ローテーションしても引き継ぐ。
+    // ここで引き継がないと、1 回リフレッシュしただけで、セッションに結び付かないオフラインのリフレッシュトークンになってしまう。
     sessionId: refreshTokenInfo.sessionId,
   };
 }
 
 /**
- * Token Request の refresh_token パラメータがあることを確かめる。ストアを引く前に呼ぶ。
+ * `refresh_token` パラメータの値を確かめて返す。
+ *
+ * トークンリクエストの `refresh_token` パラメータがないか空文字列なら、`TokenError`（`invalid_request`）を投げる。
+ * ストアからトークンを読む前に呼ぶ。
+ *
+ * @throws {TokenError} `invalid_request`: `refresh_token` パラメータがないか空のとき
  */
 export function requireRefreshToken(refreshToken: string | undefined): string {
   if (!refreshToken) {
@@ -220,7 +263,12 @@ export function requireRefreshToken(refreshToken: string | undefined): string {
 }
 
 /**
- * ストアから読み取った refresh token があることを確かめる。見つからなければ invalid_grant。
+ * 見つかったトークンの情報を返し、なければ拒否する。
+ *
+ * ストアから読んだリフレッシュトークンの情報を受け取り、`null` か `undefined`（見つからなかった）なら `TokenError`（`invalid_grant`）を投げる。
+ * それ以外は、受け取った値をそのまま返す。
+ *
+ * @throws {TokenError} `invalid_grant`: トークンが見つからなかったとき
  */
 export function requireStoredRefreshToken<T>(refreshTokenInfo: T | null | undefined): T {
   if (!refreshTokenInfo) {
@@ -233,8 +281,12 @@ export function requireStoredRefreshToken<T>(refreshTokenInfo: T | null | undefi
 }
 
 /**
- * ローテーション済みの refresh token でないことを検証する。
- * 再利用時の token family の失効（RFC 9700 §4.14）は呼び出し側が先に済ませておく前提。
+ * 使用済みのリフレッシュトークンなら拒否する。
+ *
+ * `used` が `true`（ローテーション済み）なら、`TokenError`（`invalid_grant`）を投げる。
+ * 再利用されたときに同じグラントのトークンをすべて失効させる処理（RFC 9700 §4.14）は、呼び出し側が先に済ませておく。
+ *
+ * @throws {TokenError} `invalid_grant`: `used` が `true` のとき
  */
 export function validateRefreshTokenNotUsed(used: boolean | undefined): void {
   if (!used) return;
@@ -245,8 +297,13 @@ export function validateRefreshTokenNotUsed(used: boolean | undefined): void {
 }
 
 /**
- * online refresh token の束縛先セッションが存続していることを確かめる。
- * セッションの読み取りは呼び出し側が行い、見つからなければ null を渡す。
+ * 見つかったセッションを返し、なければ拒否する。
+ *
+ * `sessionId` を持つ（オンラインの）リフレッシュトークンが結び付いた認証セッションを、呼び出し側がストアから読んで渡す。
+ * 渡された値が `null` か `undefined`（セッションがないか、終了している）なら、`TokenError`（`invalid_grant`）を投げる。
+ * それ以外は、受け取ったセッションをそのまま返す。
+ *
+ * @throws {TokenError} `invalid_grant`: セッションが見つからなかったとき
  */
 export function requireRefreshTokenSession<T>(session: T | null | undefined): T {
   if (!session) {
@@ -259,7 +316,11 @@ export function requireRefreshTokenSession<T>(session: T | null | undefined): T 
 }
 
 /**
- * 束縛先セッションの subject が refresh token の subject と一致することを検証する。
+ * セッションのサブジェクトがトークンと違えば拒否する。
+ *
+ * `sessionSubject`（認証セッションのサブジェクト）と `refreshTokenSubject`（リフレッシュトークンのサブジェクト）が異なれば、`TokenError`（`invalid_grant`）を投げる。
+ *
+ * @throws {TokenError} `invalid_grant`: サブジェクトが異なるとき
  */
 export function validateRefreshTokenSessionSubject(
   sessionSubject: string,
@@ -274,7 +335,11 @@ export function validateRefreshTokenSessionSubject(
 }
 
 /**
- * refresh_token grant で指定された scope が空でないことを検証する。
+ * 要求されたスコープが空なら拒否する。
+ *
+ * `requestedScopes`（リフレッシュトークンのリクエストで指定されたスコープ）に値が一つもなければ、`TokenError`（`invalid_scope`）を投げる。
+ *
+ * @throws {TokenError} `invalid_scope`: `requestedScopes` が空の配列のとき
  */
 export function validateRefreshTokenScopeNotEmpty(requestedScopes: readonly string[]): void {
   if (requestedScopes.length === 0) {
@@ -286,7 +351,13 @@ export function validateRefreshTokenScopeNotEmpty(requestedScopes: readonly stri
 }
 
 /**
- * RFC 6749 §6: 要求 scope が元の grant の scope に収まることを検証する。
+ * 元のグラントにないスコープが要求されたら拒否する。
+ *
+ * `requestedScopes` のうち `originalScope` に含まれない値があれば、それらの値をエラーの説明に並べて `TokenError`（`invalid_scope`）を投げる。
+ * リフレッシュトークンで要求できるスコープは、元のグラントのスコープの範囲内に限られる（RFC 6749 §6）。
+ *
+ * @spec RFC 6749 §6
+ * @throws {TokenError} `invalid_scope`: 元のグラントにない値を含むとき
  */
 export function validateRefreshTokenScopeWithinGrant(
   requestedScopes: readonly string[],

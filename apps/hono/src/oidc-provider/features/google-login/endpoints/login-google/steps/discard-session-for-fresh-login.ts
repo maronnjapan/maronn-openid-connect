@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'login-google',
   feature: 'google-login',
   kind: 'persist',
-  label: 'prompt=login: discard the existing session',
+  label: 'prompt=login: 既存のセッションを破棄する',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'discardSessionForFreshLogin',
   consumes: ['transactionId', 'transaction'],

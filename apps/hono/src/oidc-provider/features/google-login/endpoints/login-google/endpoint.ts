@@ -1,21 +1,21 @@
 import { defineEndpoint } from '../../../../endpoints/step.js';
 
 /**
- * Complete a Sign in with Google login: verify the ID token Google posts back,
- * link the Google account to a user of the provider, start the session of the
- * transaction and go on to the consent screen.
+ * Google から送られた ID トークンを検証し、OP のセッションを確立して同意画面へリダイレクトする。
  *
- * EXTENSION: generated with --enable google-login (the login_uri of Sign in
- * with Google).
+ * 「Google でログイン」の `login_uri` で、ログインを終えたブラウザから ID トークンが POST で届く。
+ * 検証した Google アカウントは OP のユーザーに対応付け（既定では初回のログインでユーザーを作る）、そのユーザーでトランザクションのセッションを始める。
+ *
+ * 拡張機能なので、`--enable google-login` を付けて生成したときだけ含まれる。
  */
 export const endpoint = defineEndpoint({
   id: 'login-google',
   order: 50,
-  label: 'Google login callback (login_uri)',
+  label: 'Google ログインのコールバック（login_uri）',
   path: '/login/google',
   methods: ['POST'],
   layer: 'browser',
-  group: { id: 'google-login', label: 'Sign in with Google (extension)' },
+  group: { id: 'google-login', label: 'Google でログイン（拡張）' },
   feature: 'google-login',
   rearrangeable: false,
   steps: [
@@ -29,7 +29,7 @@ export const endpoint = defineEndpoint({
     chain: true,
   },
   journeys: [
-    { from: 'login', to: 'login-google', label: 'Sign in with Google', kind: 'flow', order: 60 },
-    { from: 'login-google', to: 'consent', label: 'authenticated', kind: 'flow', order: 70 },
+    { from: 'login', to: 'login-google', label: 'Google でログイン', kind: 'flow', order: 60 },
+    { from: 'login-google', to: 'consent', label: '認証済み', kind: 'flow', order: 70 },
   ],
 });

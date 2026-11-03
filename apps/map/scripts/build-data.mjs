@@ -94,6 +94,24 @@ for (const card of Object.values(functions)) {
 }
 const undescribed = Object.keys(members).filter((id) => members[id].summary === '');
 
+// The page shows the text of a JSDoc as it is, so a {@link Name} of the libraries (a link in their API docs)
+// becomes the name as code (`Name`), and {@link Name | text} its text.
+const plain = (text) =>
+  text.replace(/\{@link(?:code|plain)?\s+([^}|\s]+)(?:\s*\|\s*([^}]+)|\s+([^}]+))?\}/g, (_match, name, piped, spaced) => {
+    const label = (piped ?? spaced)?.trim();
+    return label === undefined || label === '' ? `\`${name}\`` : label;
+  });
+for (const card of Object.values(functions)) {
+  card.summary = plain(card.summary);
+  if (card.description !== undefined) card.description = plain(card.description);
+  if (card.throws !== undefined) card.throws = card.throws.map(plain);
+  for (const node of card.flow?.nodes ?? []) if (node.note !== undefined) node.note = plain(node.note);
+}
+for (const doc of Object.values(members)) doc.summary = plain(doc.summary);
+for (const flow of Object.values(flows)) {
+  for (const endpoint of flow.endpoints) if (endpoint.summary !== undefined) endpoint.summary = plain(endpoint.summary);
+}
+
 const data = {
   version: 3,
   frameworks,

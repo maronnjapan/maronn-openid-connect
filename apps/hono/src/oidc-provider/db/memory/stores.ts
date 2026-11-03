@@ -37,7 +37,15 @@ import type {
 import { federatedIdentityKey, type MemoryDatabase } from './database.js';
 import { verifyPassword } from './users.js';
 
-/** The stores of the provider (transactions, codes, tokens, sessions, consents, users) on the in-memory database, with expiry checked on read. */
+/**
+ * メモリ上のデータに読み書きする OP のストアを返す。
+ *
+ * 返すのは、トランザクション、認可コード、アクセストークン、リフレッシュトークン、ログインの結果、ブラウザのセッション、同意、ユーザー、外部の ID プロバイダでのログインのストアである。
+ * 有効期限のあるエントリーは読むときに有効期限を確かめ、期限切れなら返さずに取り除く。
+ *
+ * 返したストアの `authCodeStore.consume()` と `refreshTokenStore.consume()` は、使用済みか見つからない認可コードとトークンには `TokenError`（`invalid_grant`）を投げる。
+ * 同じ値を提示した二つのリクエストのうち、トークンを受け取るのは一方だけである（OAuth 2.1 §4.1.2）。
+ */
 export function createProviderStores(db: MemoryDatabase): ProviderStores {
   const transactionStore: AuthTransactionStore = {
     async get(key) {
@@ -89,9 +97,9 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
     get(token) {
       const entry = db.accessTokens.get(token);
       if (!entry) return undefined;
-      // Lazy eviction (RFC 6819 §5.1.5.3 / RFC 9700 §4.14): drop expired entries
-      // on read so an idle store does not grow unbounded. Correctness is already
-      // guaranteed by the core expiry check; this only bounds retention.
+      // 期限切れのエントリーは、読んだときに取り除く（RFC 6819 §5.1.5.3、RFC 9700 §4.14）。
+      // 使われなくなったエントリーがたまって、データベースが際限なく大きくならないようにするためである。
+      // 期限切れのトークンを受け付けないことは core の有効期限の確認で成り立っており、ここで取り除くのは保持する量を抑えるためだけである。
       if (entry.expiresAt <= nowSeconds()) {
         db.accessTokens.delete(token);
         return undefined;
@@ -118,9 +126,8 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
     get(token) {
       const entry = db.refreshTokens.get(token);
       if (!entry) return undefined;
-      // Evicted only past the absolute lifetime (expiresAt). A used but
-      // still-in-lifetime entry stays, so rotation-reuse detection keeps firing
-      // (OAuth 2.1 §4.3.1 / RFC 9700 §4.13).
+      // 取り除くのは、絶対的な有効期限（`expiresAt`）を過ぎたエントリーだけである。
+      // 使用済みでも有効期限内のエントリーは残すので、ローテーション後の再利用を検出し続けられる（OAuth 2.1 §4.3.1、RFC 9700 §4.13）。
       if (entry.expiresAt <= nowSeconds()) {
         db.refreshTokens.delete(token);
         return undefined;
@@ -186,8 +193,8 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
     recordGrant(subject, clientId, grantId) {
       entryOf(db.consentGrants, subject, clientId).add(grantId);
     },
-    // Remove what the subject granted the client ("remove access") and hand
-    // back the grant ids, whose tokens the caller revokes.
+    // サブジェクトがクライアントに与えた同意を消し（アクセスの取り消し）、記録していたグラント ID を返す。
+    // 呼び出し側は、返されたグラントごとにトークンを失効させる。
     revoke(subject, clientId) {
       const grantIds = [...(db.consentGrants.get(subject)?.get(clientId) ?? [])];
       db.consentScopes.get(subject)?.delete(clientId);
@@ -197,12 +204,11 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
   };
 
   const userStore: UserStorage = {
-    // The password form checks the user's sub as the username.
+    // パスワードのフォームでは、ユーザーの `sub` をユーザー名として照合する。
     async authenticate(username, password) {
       const user = db.users.get(username);
-      // verifyPassword() takes as long without a hash, so the response time
-      // does not tell whether the user exists. A user without a password (one
-      // created by an upstream sign-in) cannot sign in with the form.
+      // `verifyPassword()` はハッシュがなくても同じだけ時間をかけるので、応答までの時間からユーザーの有無はわからない。
+      // パスワードのないユーザー（外部の ID プロバイダでのログインで作られたユーザー）は、フォームではログインできない。
       const passwordHash = user?.passwordHash ?? null;
       if (!(await verifyPassword(password, passwordHash)) || !user || passwordHash === null) {
         return undefined;
@@ -213,9 +219,8 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
       const user = db.users.get(sub);
       return user ? { ...user.claims } : undefined;
     },
-    // Find or create the user of a verified upstream account by its federated
-    // identity (never by email), under a new random sub on the first sign-in,
-    // and save the claims the provider asserted.
+    // 検証済みの外部アカウントのユーザーを紐付けから探し、なければ新しいランダムな `sub` で作る（メールアドレスでは探さない）。
+    // そのうえで、外部の ID プロバイダから受け取ったクレームを保存して返す。
     linkFederatedIdentity(identity) {
       const key = federatedIdentityKey(identity.provider, identity.subject);
       const sub = db.federatedIdentities.get(key) ?? crypto.randomUUID();
@@ -236,8 +241,7 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
       }
       return { ...login };
     },
-    // A transaction waits for one upstream sign-in, so a newer login page
-    // replaces the nonce of an older one.
+    // トランザクションが待つ外部の ID プロバイダでのログインは一つなので、新しいログイン画面の `nonce` が古い画面の `nonce` を置き換える。
     save(nonce, login) {
       for (const [other, pending] of db.upstreamLogins) {
         if (pending.transactionId === login.transactionId) db.upstreamLogins.delete(other);
@@ -262,12 +266,17 @@ export function createProviderStores(db: MemoryDatabase): ProviderStores {
   };
 }
 
-/** Return the current time in whole seconds since the epoch. */
+/** 現在の時刻をエポック秒（整数）で返す。 */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** The set under subject and client_id, created when it is not there yet. */
+/**
+ * サブジェクトとクライアントごとの集合を返す。
+ *
+ * `map` で `subject`、`clientId` の順にたどった `Set` を返す。
+ * 途中の `Map` や `Set` がなければ、空のものを作って `map` に入れる。
+ */
 function entryOf(
   map: Map<string, Map<string, Set<string>>>,
   subject: string,

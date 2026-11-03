@@ -25,8 +25,11 @@ export interface GrantTypeRegisteredClient {
 }
 
 /**
- * クライアントが登録上その grant_type を使ってよいかを返す。
- * 未登録時は {@link DEFAULT_CLIENT_GRANT_TYPES} を適用する。
+ * `grantType` が登録済みなら true を返す。
+ *
+ * クライアントの `grantTypes` が登録されていなければ、既定の {@link DEFAULT_CLIENT_GRANT_TYPES}（`authorization_code` だけ）が登録されているものとして扱う。
+ *
+ * @spec RFC 7591 §2
  */
 export function clientAllowsGrantType(
   client: GrantTypeRegisteredClient,
@@ -37,11 +40,14 @@ export function clientAllowsGrantType(
 }
 
 /**
- * クライアントが `refresh_token` grant を登録しているかを返す。
+ * `refresh_token` が登録済みなら true を返す。
  *
- * Refresh Token を発行してよいかの判定に使う。登録していないクライアントへ発行しても
- * `grant_type=refresh_token` は `unauthorized_client`（RFC 6749 §5.2）で拒否されるため、
- * 発行は無意味であり、RFC 9700 §4.14 が最小化を求める長期資格情報を無駄に増やす。
+ * リフレッシュトークンを発行してよいかの判定に使う。
+ * グラントタイプ `refresh_token` を登録していないクライアントの `grant_type=refresh_token` のリクエストは、`unauthorized_client` で拒否される（RFC 6749 §5.2）。
+ * したがって、そのクライアントに発行しても使い道がなく、RFC 9700 §4.14 が最小限にとどめるよう求める長期間有効な認証情報を増やすだけになる。
+ *
+ * @spec RFC 6749 §5.2
+ * @spec RFC 9700 §4.14
  */
 export function clientAllowsRefreshTokenGrant(
   client: GrantTypeRegisteredClient,

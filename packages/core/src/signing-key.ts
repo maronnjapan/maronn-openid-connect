@@ -23,22 +23,30 @@ export interface SigningKey {
  * every token it signed has expired.
  */
 export interface SigningKeyProvider {
-  /** Return the signing keys, the one that signs new tokens first and the published ones after it. */
+  /**
+   * 新しいトークンに署名する鍵を先頭にした配列を返す。
+   *
+   * 2 番目以降の鍵は、JWKS とディスカバリーで公開する鍵である。
+   * ローテーションで署名に使わなくなった鍵で署名したトークンを有効期限まで検証できるようにするためと、別の `*_signed_response_alg` を登録したクライアント（RS256 の鍵の隣に置いた ES256 の鍵など）に `alg` で選んで署名するために使う。
+   */
   getSigningKeys(): Promise<SigningKey[]>;
 }
 
 /**
- * Pick the signing key matching `requestedAlg` from a registered key set.
+ * `requestedAlg` に合う署名鍵のうち、先頭の鍵を返す。
  *
- * - `requestedAlg` is the client's `id_token_signed_response_alg` (or other
- *   `*_signed_response_alg` metadata value). When undefined the OIDC default
- *   `RS256` is used (OIDC Dynamic Client Registration 1.0 §2).
- * - When multiple keys share the same alg (e.g. during rotation), the one
- *   nearest the front wins, because the set lists the key that signs new
- *   tokens first (see {@link SigningKeyProvider}).
- * - When no key matches, throws — the caller should map this to a server
- *   configuration error, since advertising an alg we cannot sign with would
- *   produce ID Tokens the client cannot verify.
+ * `requestedAlg` には、クライアントの `id_token_signed_response_alg` など、`*_signed_response_alg` のメタデータの値を渡す。
+ * `undefined` なら、OpenID Connect の既定値の `RS256` を使う（OIDC Dynamic Client Registration 1.0 §2）。
+ * 鍵の `alg` は秘密鍵のアルゴリズムから求め、求められない鍵（アルゴリズムの情報を持たないスタブの鍵など）は飛ばす。
+ *
+ * 同じ `alg` の鍵が複数あるとき（ローテーションの途中など）は、配列の先頭に近い鍵を選ぶ。
+ * 鍵の配列は、新しいトークンに署名する鍵が先頭に来るように並べてあるためである（{@link SigningKeyProvider}）。
+ *
+ * 一致する鍵がなければ `Error` を投げ、呼び出し側はこれをサーバーの設定の誤りとして扱う。
+ * 署名できない `alg` を公開したまま進めると、クライアントが検証できない ID トークンを発行することになるためである。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {Error} `keys` が空のとき、または `alg` が一致する鍵がないとき
  */
 export function selectSigningKeyByAlg(
   keys: readonly SigningKey[],
@@ -54,20 +62,22 @@ export function selectSigningKeyByAlg(
         return key;
       }
     } catch {
-      // Skip keys whose alg cannot be derived (e.g. stub keys without algorithm metadata).
+      // `alg` を求められない鍵（アルゴリズムの情報を持たないスタブの鍵など）は飛ばす。
     }
   }
   throw new Error(`No signing key registered for alg "${alg}"`);
 }
 
 /**
- * Validate that the supplied key set includes at least one RS256-capable key.
+ * RS256 の鍵が一つもなければ `Error` を投げる。
  *
- * OIDC Core 1.0 §15.1 mandates RS256 support ("MUST be supported"). This is a
- * key-set-level requirement: the OP must be able to sign with RS256, but it
- * may also register additional keys (e.g. ES256) for clients that prefer them.
+ * RS256 の鍵とは、SHA-256 を使う RSASSA-PKCS1-v1_5 の鍵である。
+ * OP は RS256 に対応しなければならない（MUST、OIDC Core 1.0 §15.1）。
+ * この要求は鍵の集合に対するもので、RS256 で署名できれば、ES256 などを好むクライアントのためにほかの鍵を加えてもよい。
+ * アルゴリズムを求められない鍵は、RS256 の鍵として数えない。
  *
- * @throws when no RS256 (RSASSA-PKCS1-v1_5 with SHA-256) key is found.
+ * @spec OIDC Core 1.0 §15.1
+ * @throws {Error} RS256（SHA-256 を使う RSASSA-PKCS1-v1_5）の鍵がないとき
  */
 export function assertHasRs256Key(keys: CryptoKey[]): void {
   for (const key of keys) {
@@ -76,7 +86,7 @@ export function assertHasRs256Key(keys: CryptoKey[]): void {
         return;
       }
     } catch {
-      // Unsupported algorithm — not a candidate; keep scanning.
+      // 対応していないアルゴリズムの鍵は候補にせず、次の鍵を確かめる。
     }
   }
   throw new Error(
@@ -85,20 +95,21 @@ export function assertHasRs256Key(keys: CryptoKey[]): void {
 }
 
 /**
- * Assert that the kid strategy is consistent when the OP publishes more than one
- * signing key. RFC 7517 §4.5: `kid` selects the right key among several in a JWK Set,
- * and OIDC Core 1.0 §10.1 expects kid-based selection when keys are rotated/multiple.
- * If two or more keys are published, every key MUST carry a non-empty, Set-distinct
- * `keyId`; otherwise a relying party cannot unambiguously pick the verifying key and
- * ID Token verification can break silently.
+ * `kid` が空か重複する鍵があれば `Error` を投げる。
  *
- * A single key is always unambiguous, so an empty kid is allowed there (OIDC Core 1.0
- * §10.1 requires a kid only when the JWK Set holds more than one key).
+ * 鍵を二つ以上公開するときは、すべての鍵が空でない `keyId` を持ち、`keyId` が互いに異なっていなければならない。
+ * `kid` は JWK Set の複数の鍵から使う鍵を選ぶための値であり（RFC 7517 §4.5）、鍵をローテーションするときや複数の鍵を使うときは `kid` で鍵を選ぶことが想定されている（OIDC Core 1.0 §10.1）。
+ * `kid` が空だったり重複していたりすると、RP は検証に使う鍵を一つに決められず、ID トークンの検証が気付かれないまま失敗するおそれがある。
  *
- * @throws when multiple keys include an empty or duplicate keyId.
+ * 鍵が一つだけのときは何も確かめない。
+ * 一つの鍵は `kid` がなくても一意に決まり、OIDC Core 1.0 §10.1 も JWK Set が複数の鍵を持つときにだけ `kid` を求めているためである。
+ *
+ * @spec RFC 7517 §4.5
+ * @spec OIDC Core 1.0 §10.1
+ * @throws {Error} 鍵が複数あり、空の `keyId` か重複した `keyId` を持つ鍵があるとき
  */
 export function assertKidStrategyConsistent(keys: readonly SigningKey[]): void {
-  if (keys.length <= 1) return; // single key resolves unambiguously without a kid
+  if (keys.length <= 1) return; // 鍵が一つなら、`kid` がなくても一意に決まる。
   const seen = new Set<string>();
   for (const key of keys) {
     if (!key.keyId) {
@@ -134,26 +145,24 @@ const DEFAULT_MIN_RSA_MODULUS_BITS = 2048;
 const DEFAULT_ALLOWED_CURVES: readonly string[] = ['P-256', 'P-384', 'P-521'];
 
 /**
- * Assert that every registered signing key meets the minimum strength policy,
- * throwing (fail-closed) on the first weak key.
+ * 強度が足りない署名鍵があれば `Error` を投げる。
  *
- * RFC 8725 §3.5 (Ensure Cryptographic Keys Have Sufficient Entropy) and
- * §3.3 (Validate All Cryptographic Operations): a signature is only as
- * trustworthy as the key behind it. Web Crypto's `importKey` happily accepts
- * 512/1024-bit RSA keys, so a misconfigured OP could distribute ID Tokens that
- * verify yet are forgeable. This check is meant to run at startup, alongside
- * `assertHasRs256Key`, to reject weak keys before they ever sign a token.
+ * 鍵を順に確かめ、最初に見つかった弱い鍵で `Error` を投げる。
+ * 鍵の種類ごとの条件は次のとおりである:
+ * - RSA の鍵は、公開鍵の JWK の `n` から求めたモジュラスのビット長が `minRsaModulusBits`（既定値は 2048）以上でなければならず、`n` がない鍵も拒否する。
+ * - EC の鍵は、曲線（`crv`）が `allowedCurves`（既定値は P-256、P-384、P-521）のどれかでなければならない。
+ * - RSA と EC 以外の種類の鍵は、対応していない鍵として拒否する。
  *
- * - RSA: the modulus bit length (derived from the public JWK `n`) must be
- *   >= `minRsaModulusBits` (default 2048).
- * - EC: the curve must be one of `allowedCurves` (default P-256/P-384/P-521).
- * - Any other key type is rejected as unsupported.
+ * 署名を信頼できるかどうかは、署名した鍵の強度で決まる（RFC 8725 §3.5、§3.3）。
+ * Web Crypto の `importKey()` は 512 ビットや 1024 ビットの RSA の鍵も受け付けるので、設定を誤った OP が、検証は通るのに偽造できる ID トークンを配布するおそれがある。
+ * そこで起動時に {@link assertHasRs256Key} と一緒に呼び、弱い鍵がトークンに署名する前に拒否する。
  *
- * Error messages name the offending `keyId` so operators can locate the key.
- * These messages are for logs/startup only and must never be surfaced in an
- * `error_description` returned to clients.
+ * エラーのメッセージには問題の鍵の `keyId` を含め、運用者が鍵を特定できるようにする。
+ * このメッセージはログと起動時のためのもので、クライアントに返す `error_description` には含めない。
  *
- * @throws when any key is below the configured strength.
+ * @spec RFC 8725 §3.5
+ * @spec RFC 8725 §3.3
+ * @throws {Error} 強度が足りない鍵、`n` がない RSA の鍵、許されていない曲線の EC の鍵、RSA でも EC でもない鍵があるとき
  */
 export function assertKeyStrength(
   keys: readonly SigningKey[],
@@ -196,9 +205,13 @@ export function assertKeyStrength(
 }
 
 /**
- * Wraps a SigningKeyProvider with a TTL-based cache.
- * Use this to avoid hammering a secret store on every request while still
- * picking up rotated keys after `ttlMs` milliseconds.
+ * `base` の署名鍵をキャッシュするプロバイダを返す。
+ *
+ * 返すプロバイダの `getSigningKeys()` は、キャッシュがないとき、またはキャッシュしてから `ttlMs` ミリ秒を超えたときだけ `base.getSigningKeys()` を呼び、結果をキャッシュしてから返す。
+ * それ以外のときは、キャッシュした鍵を返す。
+ * `base.getSigningKeys()` が失敗したときは、キャッシュを更新せずにそのエラーを投げる。
+ *
+ * リクエストのたびにシークレットストアを読みに行くのを避けつつ、ローテーションした鍵を `ttlMs` ミリ秒後には読み込める。
  */
 export function createCachedSigningKeyProvider(
   base: SigningKeyProvider,

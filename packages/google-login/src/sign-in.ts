@@ -75,13 +75,14 @@ export interface GoogleSignInAttributes {
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
- * `login_uri` が GIS の redirect mode で使える形であることを検証する。
+ * `loginUri` が GIS で使える URL であることを検証する。
  *
- * - 絶対 URL であること
- * - HTTPS であること（localhost / 127.0.0.1 / [::1] は HTTP を許す）
- * - fragment を含まないこと
+ * GIS のリダイレクトモードの `login_uri` として、次の条件をすべて満たすことを確かめる。
+ * - 絶対 URL である。
+ * - HTTPS である（`localhost`、`127.0.0.1`、`[::1]` に限り HTTP を許す）。
+ * - フラグメントを含まない。
  *
- * @throws {TypeError} 条件を満たさない場合
+ * @throws {TypeError} どれかの条件を満たさないとき
  */
 export function assertGoogleLoginUri(loginUri: string): void {
   let url: URL;
@@ -99,15 +100,14 @@ export function assertGoogleLoginUri(loginUri: string): void {
 }
 
 /**
- * `g_id_onload` 要素の属性を組み立てる。
+ * `g_id_onload` 要素に付ける属性のオブジェクトを返す。
  *
- * redirect mode に必要な `data-ux_mode="redirect"` / `data-login_uri` / `data-nonce` を
- * 必ず含める。返り値は属性名をキーにしたプレーンなオブジェクトなので、そのまま
- * React の `<div {...attributes} />`、Vue の `<div v-bind="attributes" />`、
- * 文字列テンプレートの `<div ${googleSignInAttributesToHtml(attributes)}></div>` に渡せる。
- * 値が無い任意属性はキーごと省く。
+ * リダイレクトモードに必要な `data-ux_mode="redirect"`、`data-login_uri`、`data-nonce` は必ず含める。
+ * `loginHint` と `hostedDomain` は、渡したときだけ `data-login_hint` と `data-hd` として加え、渡さなければキーごと省く。
  *
- * @throws {TypeError} `clientId` / `nonce` が空、または `loginUri` が条件を満たさない場合
+ * 返すのは属性名をキーにしたプレーンなオブジェクトなので、React の `<div {...attributes} />`、Vue.js の `<div v-bind="attributes" />`、文字列テンプレートの `<div ${googleSignInAttributesToHtml(attributes)}></div>` のどれにもそのまま渡せる。
+ *
+ * @throws {TypeError} `clientId` か `nonce` が空のとき、または `loginUri` が {@link assertGoogleLoginUri} の条件を満たさないとき
  */
 export function buildGoogleSignInAttributes(options: GoogleSignInOptions): GoogleSignInAttributes {
   if (!options.clientId) {
@@ -137,7 +137,11 @@ export function buildGoogleSignInAttributes(options: GoogleSignInOptions): Googl
 /** HTML の属性名として妥当な文字列（属性値ではなく属性名側のインジェクションを防ぐ）。 */
 const HTML_ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
 
-/** 文字列の `&` `<` `>` `"` `'` を文字参照に置き換え、HTML の属性値に埋め込める文字列にして返す。 */
+/**
+ * 文字列を HTML の属性値用にエスケープして返す。
+ *
+ * `&`、`<`、`>`、`"`、`'` を文字参照（`&amp;`、`&lt;`、`&gt;`、`&quot;`、`&#39;`）に置き換える。
+ */
 function escapeHtmlAttribute(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -148,13 +152,15 @@ function escapeHtmlAttribute(value: string): string {
 }
 
 /**
- * 属性オブジェクトを、文字列テンプレートの要素に埋め込める `name="value"` の列にする。
+ * 属性を `name="value"` の形で並べた文字列を返す。
  *
- * React / Vue のように属性オブジェクトを直接受け取る仕組みが無い、プレーンな HTML 文字列を
- * 組み立てる場面向け。値は HTML 属性としてエスケープし、`undefined` の属性は省く。
- * {@link buildGoogleSignInAttributes} の結果に他の GIS 属性を足したものも渡せる。
+ * React や Vue.js と違って属性のオブジェクトを直接受け取れない、プレーンな HTML の文字列テンプレートで使う。
+ * 値は文字列にしてから HTML の属性値としてエスケープし、値が `undefined` の属性は省いて、残りを半角空白でつなぐ。
+ * {@link buildGoogleSignInAttributes} の結果に、ほかの GIS の属性を足したオブジェクトも渡せる。
  *
- * @throws {TypeError} 属性名に HTML の属性名として使えない文字が含まれる場合
+ * 属性名を通じたインジェクションを防ぐため、属性名も HTML の属性名として使える文字だけでできているかを確かめる。
+ *
+ * @throws {TypeError} 属性名に、HTML の属性名として使えない文字が含まれるとき
  */
 export function googleSignInAttributesToHtml(
   attributes: GoogleSignInAttributes | Readonly<Record<string, string | number | boolean | undefined>>,

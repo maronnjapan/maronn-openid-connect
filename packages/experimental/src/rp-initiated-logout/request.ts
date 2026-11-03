@@ -25,11 +25,14 @@ export interface EndSessionRequest {
 }
 
 /**
- * end_session リクエストのパラメータを正規化する。
+ * ログアウトのリクエストからパラメータを取り出して返す。
  *
- * 重複パラメータは最初の値を採用し（`URLSearchParams.get` の挙動）、空文字は
- * 値なしとして undefined に落とす。空の `id_token_hint` を「ヒントあり」と
- * 数えると、後段の検証失敗と区別が付かないまま分岐だけ増えるため。
+ * 取り出すのは `id_token_hint`、`client_id`、`post_logout_redirect_uri`、`state`、`logout_hint`、`ui_locales` である。
+ * 同じパラメータが複数あれば最初の値を使い（`URLSearchParams.get()` の動作）、空文字列は値なしとして `undefined` にする。
+ *
+ * 空文字列を `undefined` にするのは、空の `id_token_hint` を「ヒントあり」と数えると、後の検証の失敗と区別がつかないまま場合分けだけが増えるためである。
+ *
+ * @spec RP-Initiated Logout 1.0 §2
  */
 export function parseEndSessionRequest(params: URLSearchParams): EndSessionRequest {
   return {
@@ -43,33 +46,35 @@ export function parseEndSessionRequest(params: URLSearchParams): EndSessionReque
 }
 
 /**
- * パラメータ値が null か空文字なら undefined を、それ以外ならその値をそのまま返す。
+ * `null` と空文字列を `undefined` にして返す。
  *
- * 空白だけの値は trim せず、そのまま返す。
+ * それ以外の値はそのまま返す。
+ * 空白だけの値も、空白を取り除かずに返す。
  */
 function nonEmpty(value: string | null): string | undefined {
   return value === null || value === '' ? undefined : value;
 }
 
 /**
- * `id_token_hint` の payload から検証に使う期待 audience を抽出する。
+ * `id_token_hint` から検証用の `aud` を取り出して返す。
  *
- * `client_id` パラメータが無いリクエストでは、core の `validateIdTokenHint` に
- * 渡す `expectedAud` をヒント自身から特定するしかない。これは署名検証**前**の
- * 復号であり、返り値は「この aud で検証を試みる」という候補にすぎない。信頼は
- * その後の `validateIdTokenHint`（署名・iss・aud・exp）が与える。
+ * `client_id` パラメータがないリクエストでは、core の `validateIdTokenHint()` に渡す `expectedAud` を、ヒント自身から決めるしかない。
+ * ここでは署名を検証する前にペイロードを読み取るので、返す値は「この `aud` で検証を試みる」候補にすぎない。
+ * 値を信頼してよいかは、その後の `validateIdTokenHint()`（署名、`iss`、`aud`、`exp` の検証）で決まる。
  *
- * aud の形（OIDC Core §2）ごとの扱い:
- * - 文字列 → その値
- * - 配列 + `azp`（文字列）→ azp の値。core の `buildIdTokenAudience` は追加
- *   audience 構成時に aud を配列にし azp を必ず付与するため、自 OP 発行の
- *   ID Token でもこの経路は必須である
- * - 配列（要素 1・azp なし）→ その要素。自 OP 発行では生じない形だが、署名検証前の
- *   入力に対する処理として許容する
- * - それ以外（複数要素で azp なし、aud 欠落・非文字列）→ null（特定不能）
+ * ペイロードの `aud` の形（OIDC Core 1.0 §2）に応じて、次の値を返す。
+ * - 文字列なら、その値。
+ * - 配列で `azp` が文字列なら、`azp` の値。
+ *   core の `buildIdTokenAudience()` は、オーディエンスを追加するときに `aud` を配列にして必ず `azp` を付けるので、この OP が発行した ID トークンでもこの場合分けが要る。
+ * - 要素が一つの配列で、`azp` が文字列でなければ、その要素（文字列のとき）。
+ *   この OP が発行する ID トークンにはない形だが、署名を検証する前の入力として受け付ける。
+ * - それ以外（要素が複数で `azp` がない、`aud` がない、文字列でない）は `null`。
  *
- * 復号できない・特定できない場合は null を返す。呼び出し側はヒントを無効として
- * 確認画面の経路（§2 MUST）に落とす。
+ * `.` で 3 つに分かれない値や、ペイロードを base64url の JSON オブジェクトとして読めない値にも `null` を返す。
+ * `null` を受け取った呼び出し側は、ヒントを無効として確認画面を出す（RP-Initiated Logout 1.0 §2 の MUST）。
+ *
+ * @spec RP-Initiated Logout 1.0 §2
+ * @spec OIDC Core 1.0 §2
  */
 export function extractIdTokenHintAudience(idTokenHint: string): string | null {
   const parts = idTokenHint.split('.');
@@ -98,7 +103,11 @@ export function extractIdTokenHintAudience(idTokenHint: string): string | null {
   return null;
 }
 
-/** base64url（パディング無し）の JSON セグメントを厳格にパースする。 */
+/**
+ * base64url の JSON を解析してオブジェクトを返す。
+ *
+ * 空文字列、英数字と `-`、`_` 以外の文字（パディングの `=` を含む）を含む値、JSON のオブジェクトとして解析できない値（配列や `null` など）には、例外を投げる。
+ */
 function parseBase64UrlJson(segment: string): Record<string, unknown> {
   if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
     throw new Error('invalid base64url');

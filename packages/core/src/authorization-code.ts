@@ -94,13 +94,15 @@ export interface CreateAuthorizationCodeOptions {
 const DEFAULT_AUTH_CODE_TTL_SECONDS = 300;
 
 /**
- * 認可コードデータを生成する
+ * 乱数の認可コードを生成し、保存用のデータを返す。
  *
- * 認可コード文字列は `generateRandomString(32)` で生成される。
- * 戻り値の `AuthorizationCodeData` を利用者がストアに保存する想定。
+ * 認可コードとグラント ID には、それぞれ 32 バイトの乱数を base64url で符号化した文字列（`generateRandomString(32)`）を使う。
+ * 有効期限（`expiresAt`）は、現在時刻に `ttlSeconds`（既定値は 300 秒）を足した値である。
+ * ほかの項目には `authorizationResponse` の値をそのまま入れる（`buildAuthorizationCodeData()`）。
+ * ストアには保存しないので、返したデータは呼び出し側がストアに保存する。
  *
- * @param options 認可コード発行オプション
- * @returns 認可コードデータ
+ * @param options 認可レスポンスのパラメータ、サブジェクト、認証時刻、有効期間、セッションの ID。
+ * @returns 未使用（`used` が `false`）の認可コードのデータ。
  */
 export async function createAuthorizationCode(
   options: CreateAuthorizationCodeOptions,
@@ -119,9 +121,15 @@ export async function createAuthorizationCode(
 }
 
 /**
- * 認可コードのデータを組み立てる。保存はしない。
- * 認可コードと grantId は呼び出し側が生成した値を受け取る（OIDC Core 1.0 §3.1.3.1 の推測困難性は
- * 生成側が担保する）。expiresAt は now（Unix epoch 秒）に ttlSeconds を足した値。
+ * 認可レスポンスから認可コードのデータを作って返す。
+ *
+ * 認可コードとグラント ID は、呼び出し側が生成した値をそのまま使う。
+ * 推測できない値にするのは、生成する側の責任である（OIDC Core 1.0 §3.1.3.1）。
+ * `expiresAt` は `now`（エポック秒）に `ttlSeconds` を足した値にし、`used` は `false` にする。
+ * `authorizationResponse` にない省略可能な項目（`codeChallenge`、`nonce`、`audience` など）と、渡されなかった `sessionId` は、データに含めない。
+ * ストアへの保存はしない。
+ *
+ * @spec OIDC Core 1.0 §3.1.3.1
  */
 export function buildAuthorizationCodeData(
   authorizationResponse: AuthorizationResponseParams,

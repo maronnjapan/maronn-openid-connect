@@ -102,7 +102,11 @@ export interface AccessTokenInfo {
  * アクセストークンを解決するインターフェース
  */
 export interface AccessTokenResolver {
-  /** 提示されたアクセストークンの保存済み情報（subject、scope、有効期限など）を返す。知らないトークンなら null を返す。 */
+  /**
+   * アクセストークンの情報を返す（なければ `null`）。
+   *
+   * 提示されたアクセストークンの保存済みの情報（サブジェクト、スコープ、有効期限など）を返す。
+   */
   findAccessToken(token: string): Promise<AccessTokenInfo | null>;
 }
 
@@ -155,14 +159,12 @@ export interface UserClaims {
  */
 export interface UserClaimsResolver {
   /**
-   * subject の End-User クレームを返す。
+   * エンドユーザーのクレームを返す（なければ `null`）。
    *
-   * 契約: 返したオブジェクトは外部開示されうる面である。UserInfo レスポンスと
-   * ID Token は、ここが返したプロパティを scope（{@link filterClaimsByScope}）と
-   * `claims` パラメータのアロウリスト（{@link DEFAULT_REQUESTABLE_CLAIMS}）で絞って
-   * 開示する。アロウリストが既定で守るのは標準クレーム名だけなので、アロウリストを
-   * 広げる構成では、DB の行や内部ユーザーモデルをそのまま返さず、開示してよい
-   * クレームだけを持つオブジェクトへ写して返すこと。
+   * `sub` で指定したサブジェクトのエンドユーザーのクレームを返す。
+   * 返したオブジェクトのプロパティは、外部に開示されることがある。
+   * UserInfo レスポンスと ID トークンでは、返されたプロパティを、スコープ（{@link filterClaimsByScope}）と `claims` パラメータの許可リスト（{@link DEFAULT_REQUESTABLE_CLAIMS}）で絞ってから開示する。
+   * 既定の許可リストに載っているのは標準のクレームの名前だけなので、許可リストを広げる構成では、データベースの行や内部のユーザーのモデルをそのまま返さず、開示してよいクレームだけを持つオブジェクトに移してから返す。
    */
   findUserClaims(sub: string): Promise<UserClaims | null>;
 }
@@ -245,11 +247,15 @@ export const DEFAULT_REQUESTABLE_CLAIMS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * スコープに基づいてクレームをフィルタリングする
+ * スコープで許されたクレームだけを返す。
  *
- * @param userClaims ユーザーの全クレーム
+ * `sub` は常に入れ、それ以外は `scopes` の各スコープに対応するクレーム（{@link SCOPE_CLAIMS_MAP}、OIDC Core 1.0 §5.4）のうち、値が `undefined` でも `null` でもないものだけを入れる。
+ * 対応するクレームがないスコープ（`openid` など）は無視する。
+ *
+ * @spec OIDC Core 1.0 §5.4
+ * @param userClaims ユーザーのすべてのクレーム
  * @param scopes 許可されたスコープ
- * @returns フィルタリングされたクレーム
+ * @returns スコープで絞ったクレーム
  */
 export function filterClaimsByScope(
   userClaims: UserClaims,
@@ -257,7 +263,7 @@ export function filterClaimsByScope(
 ): UserInfoResponse {
   const result: Record<string, unknown> = { sub: userClaims.sub };
 
-  // 各スコープに対応するクレームを追加
+  // スコープごとに、対応するクレームのうち値があるものを加える。
   for (const scope of scopes) {
     const claimNames = SCOPE_CLAIMS_MAP[scope];
     if (!claimNames) continue;
@@ -274,11 +280,11 @@ export function filterClaimsByScope(
 }
 
 /**
- * claimsパラメータで要求されたクレーム名を取得する
+ * `claims.userinfo` で要求されたクレームの名前を返す。
  *
- * キー名は RP が任意に指定できるため、戻り値は `keyof UserClaims` ではなく
- * ただの文字列である。読み出してよい名前かどうかは呼び出し側がアロウリストで
- * 判定する（{@link applyRequestedClaims}）。
+ * `claimsParameter` か `claims.userinfo` がなければ空の配列を返す。
+ * キーの名前は RP が自由に指定できるので、戻り値は `keyof UserClaims` ではなく、ただの文字列の配列である。
+ * 読み出してよい名前かどうかは、呼び出し側が許可リストで判定する（{@link applyRequestedClaims}）。
  */
 function getRequestedClaimNames(claimsParameter?: ClaimsParameter): string[] {
   if (!claimsParameter?.userinfo) return [];
@@ -286,19 +292,21 @@ function getRequestedClaimNames(claimsParameter?: ClaimsParameter): string[] {
 }
 
 /**
- * JSON 値（プリミティブ / 配列 / プレーンオブジェクト）の深い等価比較。
- * OIDC Core 1.0 Section 5.5.1 の value / values は JSON 値であり、
- * `address` のようなオブジェクト型クレームは構造（メンバーの値）で一致判定する。
+ * 二つの JSON の値が深く等しければ true を返す。
  *
- * - プリミティブ: `===`（ただし NaN は両辺 NaN なら一致とみなす）
- * - 配列: 要素数と各要素の深い等価
- * - オブジェクト: キー集合が一致し、各値が深い等価
- * - キーの順序は無視する
+ * `claims` パラメータの `value` と `values` は JSON の値であり（OIDC Core 1.0 §5.5.1）、`address` のようなオブジェクトのクレームは、メンバーの値で比べる必要がある。
+ * 値の種類ごとの比べ方は次のとおりである:
+ * - プリミティブは `===` で比べる（ただし、両方が `NaN` なら等しいとする）。
+ * - 配列は、要素の数が同じで、各要素が深く等しければ等しいとする。
+ * - オブジェクトは、キーの集合が同じで、各キーの値が深く等しければ等しいとする（キーの順序は問わない）。
+ * - 配列とオブジェクトは、等しいとしない。
+ *
+ * @spec OIDC Core 1.0 §5.5.1
  */
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
 
-  // NaN === NaN は false になるため個別に扱う
+  // 数値どうしは、両方が `NaN` のときだけ等しいとする（`NaN === NaN` は false になるため）。
   if (typeof a === 'number' && typeof b === 'number') {
     return Number.isNaN(a) && Number.isNaN(b);
   }
@@ -330,22 +338,23 @@ function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * 個別 claim 要求の value / values 制約に実値が一致するか判定する
- * OIDC Core 1.0 Section 5.5.1 Individual Claims Requests
+ * クレームの値が要求の条件に合えば true を返す。
  *
- * - `null`（制約なし）: 常に一致
- * - `value`: 実値が指定値と深い等価のときだけ一致
- * - `values`: 実値が配列のいずれかと深い等価のときだけ一致
- * - `value` / `values` のどちらも無い（`essential` のみ等）: 値制約なしとして一致
+ * `entry` は、`claims` パラメータで個別に要求されたクレームの指定である（OIDC Core 1.0 §5.5.1）。
+ * - `entry` が `null`（値の条件なし）なら true を返す。
+ * - `value` があれば、`values` は見ずに、実際の値が `value` と深く等しいときだけ true を返す。
+ * - `values` が配列なら、実際の値が `values` のどれかと深く等しいときだけ true を返す。
+ * - どちらもないとき（`essential` だけのときなど）は、値の条件がないので true を返す。
  *
- * 等価判定は深い等価（`deepEqual`）。`address` のようなオブジェクト型クレームも
- * 構造（メンバーの値）で一致判定する。
+ * 等しいかどうかは `deepEqual()` で判定するので、`address` のようなオブジェクトのクレームも、メンバーの値で比べる。
+ *
+ * @spec OIDC Core 1.0 §5.5.1
  */
 export function matchesRequestedClaimValue(
   actual: unknown,
   entry: ClaimRequestValue
 ): boolean {
-  if (entry === null) return true; // 制約なし
+  if (entry === null) return true; // 値の条件がないので、一致とする。
 
   if (entry.value !== undefined) {
     return deepEqual(actual, entry.value);
@@ -355,19 +364,21 @@ export function matchesRequestedClaimValue(
     return entry.values.some((candidate) => deepEqual(actual, candidate));
   }
 
-  return true; // essential のみ等、値制約なし
+  return true; // `essential` だけのときなど、値の条件がないので一致とする。
 }
 
 /**
- * 提示されたアクセストークンをストアから解決する
+ * 提示されたアクセストークンの保存済みの情報を返す。
  *
- * OIDC Core 1.0 Section 5.3.1: UserInfo リクエストは Bearer アクセストークンを伴う。
- * トークン未提示・未知のトークンはいずれも invalid_token（401）で拒否する。
+ * UserInfo のリクエストには、`Bearer` のアクセストークンが付いている（OIDC Core 1.0 §5.3.1）。
+ * トークンがないとき（空文字列を含む）と、`accessTokenResolver.findAccessToken()` がトークンを返さないときは、`UserInfoError`（`invalid_token`、ステータスコード 401）を投げる。
+ * 有効期限、スコープ、オーディエンスは、ここでは確かめない。
  *
- * @param accessToken リクエストから抽出したアクセストークン
- * @param accessTokenResolver アクセストークンを解決するリゾルバ
- * @returns 保存されているアクセストークン情報
- * @throws {UserInfoError} invalid_token
+ * @spec OIDC Core 1.0 §5.3.1
+ * @param accessToken リクエストから取り出したアクセストークン
+ * @param accessTokenResolver アクセストークンの情報を取得するリゾルバ
+ * @returns 保存されているアクセストークンの情報
+ * @throws {UserInfoError} `invalid_token`: トークンがないとき、またはストアに見つからないとき
  */
 export async function resolveUserInfoAccessToken(
   accessToken: string | undefined,
@@ -392,13 +403,16 @@ export async function resolveUserInfoAccessToken(
 }
 
 /**
- * アクセストークンの有効期限を検証する
+ * 有効期限を過ぎたアクセストークンを拒否する。
  *
- * RFC 6750 Section 3.1: 期限切れトークンは invalid_token（401）。
+ * `expiresAt` が `now` より前なら、`UserInfoError`（`invalid_token`、ステータスコード 401）を投げる。
+ * `expiresAt` と `now` が等しいときは拒否しない。
+ * 期限切れのトークンには `invalid_token` で応答する（RFC 6750 §3.1）。
  *
- * @param tokenInfo アクセストークン情報
- * @param now 現在時刻（Unix epoch 秒）。省略時はシステム時刻
- * @throws {UserInfoError} invalid_token
+ * @spec RFC 6750 §3.1
+ * @param tokenInfo アクセストークンの情報
+ * @param now 現在時刻のエポック秒（省略したときはシステムの時刻）
+ * @throws {UserInfoError} `invalid_token`: 有効期限を過ぎているとき
  */
 export function validateUserInfoTokenExpiration(
   tokenInfo: Pick<AccessTokenInfo, 'expiresAt'>,
@@ -413,13 +427,14 @@ export function validateUserInfoTokenExpiration(
 }
 
 /**
- * openid スコープの存在を検証する
+ * `openid` スコープのないアクセストークンを拒否する。
  *
- * OIDC Core 1.0 Section 5.3.1: UserInfo エンドポイントは openid スコープを
- * 持つアクセストークンでのみ利用できる。不足時は insufficient_scope（403）。
+ * トークンのスコープに `openid` がなければ、`UserInfoError`（`insufficient_scope`、ステータスコード 403）を投げる。
+ * UserInfo エンドポイントは、`openid` スコープを持つアクセストークンでしか使えない（OIDC Core 1.0 §5.3.1）。
  *
- * @param tokenInfo アクセストークン情報
- * @throws {UserInfoError} insufficient_scope
+ * @spec OIDC Core 1.0 §5.3.1
+ * @param tokenInfo アクセストークンの情報
+ * @throws {UserInfoError} `insufficient_scope`: スコープに `openid` がないとき
  */
 export function validateUserInfoScope(tokenInfo: Pick<AccessTokenInfo, 'scope'>): void {
   if (!tokenInfo.scope.includes('openid')) {
@@ -431,21 +446,21 @@ export function validateUserInfoScope(tokenInfo: Pick<AccessTokenInfo, 'scope'>)
 }
 
 /**
- * アクセストークンの audience を検証する
+ * オーディエンスが合わないアクセストークンを拒否する。
  *
- * expectedAudience が指定されていれば、UserInfo エンドポイント自身がトークンの aud に
- * 含まれることを検証する。これにより resource indicator (RFC 8707) で別リソース向けに
- * 発行されたトークンで UserInfo の PII を取得する confused deputy を防ぐ。生成された
- * Provider は JWT / opaque を問わず全アクセストークンに UserInfo エンドポイントを含む aud を
- * 保存するため、aud 未保存のトークンは当 OP が発行したものではない。よって opaque でも
- * aud 未設定を許容せず、aud 未設定・不一致のいずれも invalid_token で拒否する。
+ * `expectedAudience`（UserInfo エンドポイント自身を示す値）を渡したときは、トークンの `audience`（`aud`）にその値がなければ `UserInfoError`（`invalid_token`）を投げる。
+ * `audience` が保存されていないトークンも拒否する。
+ * `expectedAudience` が `undefined` なら何も確かめない。
+ *
+ * この検証で、`resource` パラメータ（RFC 8707）で別のリソース向けに発行されたアクセストークンを使って、UserInfo から個人情報を取得する攻撃を防ぐ。
+ * 生成された OP は、JWT か不透明な文字列かを問わず、すべてのアクセストークンに UserInfo エンドポイントを含む `aud` を保存するので、`aud` が保存されていないトークンはこの OP が発行したものではない。
+ * そのため、不透明なトークンでも `aud` がなければ拒否する。
  *
  * @spec RFC 9068 §4
- * @param tokenInfo アクセストークン情報
- * @param expectedAudience UserInfo エンドポイント自身を指す audience 識別子。未指定なら検証しない。
- *   `buildAccessTokenAudience` の `userInfoEndpoint` と同じ値を渡すこと（異なると自 OP が
- *   発行したトークンを拒否してしまう）
- * @throws {UserInfoError} invalid_token
+ * @param tokenInfo アクセストークンの情報
+ * @param expectedAudience UserInfo エンドポイント自身を示すオーディエンスの値（`undefined` なら確かめない）。
+ *   {@link buildAccessTokenAudience} の `userInfoEndpoint` と同じ値を渡す（違う値を渡すと、この OP が発行したトークンを拒否してしまう）。
+ * @throws {UserInfoError} `invalid_token`: `aud` がないとき、または `aud` に `expectedAudience` が含まれないとき
  */
 export function validateUserInfoAudience(
   tokenInfo: Pick<AccessTokenInfo, 'audience'>,
@@ -463,12 +478,15 @@ export function validateUserInfoAudience(
 }
 
 /**
- * アクセストークンの subject に対応するユーザークレームを解決する
+ * アクセストークンのサブジェクトのクレームを返す。
  *
- * @param tokenInfo アクセストークン情報
- * @param userClaimsResolver ユーザークレームを解決するリゾルバ
- * @returns ユーザーの全クレーム（フィルタリング前）
- * @throws {UserInfoError} invalid_token
+ * `userClaimsResolver.findUserClaims()` にトークンの `sub` を渡し、返されたクレームをスコープで絞らずに返す。
+ * ユーザーが見つからなければ、`UserInfoError`（`invalid_token`）を投げる。
+ *
+ * @param tokenInfo アクセストークンの情報
+ * @param userClaimsResolver ユーザーのクレームを取得するリゾルバ
+ * @returns ユーザーのすべてのクレーム（スコープで絞る前）
+ * @throws {UserInfoError} `invalid_token`: トークンのサブジェクトのユーザーが見つからないとき
  */
 export async function resolveUserInfoClaims(
   tokenInfo: Pick<AccessTokenInfo, 'sub'>,
@@ -486,29 +504,27 @@ export async function resolveUserInfoClaims(
 }
 
 /**
- * claims リクエストパラメータで要求されたクレームを追加する
+ * 個別に要求されたクレームをレスポンスに加えて返す。
  *
- * スコープ由来のレスポンス（`filterClaimsByScope` の結果）へ、`claims.userinfo` で
- * 個別要求されたクレームを重ねる。value / values が指定された場合は実値が一致する
- * クレームだけを返し、一致しない場合は省略する（エラーにはしない）。
- * `sub` はアクセストークンの subject で確定済みのため上書きしない。
+ * スコープで絞ったレスポンス（{@link filterClaimsByScope} の結果）に、`claims` パラメータの `userinfo` メンバーで個別に要求されたクレームを重ねる（OIDC Core 1.0 §5.5）。
+ * `value` か `values` が指定されたクレームは、実際の値が一致するときだけ加え、一致しなければエラーにせずに省く。
+ * `sub` はアクセストークンのサブジェクトで決まっているので、上書きしない。
  *
- * 要求されたキー名はアロウリスト（既定 {@link DEFAULT_REQUESTABLE_CLAIMS}）に
- * 載っている名前だけを読み出す。`claims` のキー名は RP が任意に指定できるため、
- * 無検査で読むと resolver が返した余剰フィールド（DB の行など）が scope を迂回して
- * 開示される。アロウリスト外のクレームは黙って省く（§5.5.1 の MUST NOT のとおり
- * エラーにはしない）。読み出しは own プロパティに限り、プロトタイプチェーン上の
- * プロパティ（getter を持つクラスインスタンスを resolver が返した場合など）は読まない。
+ * 読み出すのは、許可リスト（`allowedClaimNames`、既定値は {@link DEFAULT_REQUESTABLE_CLAIMS}）にある名前のクレームだけである。
+ * `claims` のキーの名前は RP が自由に指定できるので、確かめずに読むと、リゾルバが返した余分なフィールド（データベースの行など）が、スコープによる制限を通らずに開示されてしまう。
+ * 許可リストにないクレームも、エラーにせずに省く（OIDC Core 1.0 §5.5.1 は、要求されたクレームを返せないときにエラーを返すことを禁じている）。
+ * オブジェクト自身が持つプロパティだけを読み、プロトタイプチェーン上のプロパティ（ゲッターを持つクラスのインスタンスをリゾルバが返したときのゲッターなど）は読まない。
  *
- * 入力のレスポンスは変更せず、新しいオブジェクトを返す。
+ * 渡されたレスポンスは変更せず、新しいオブジェクトを返す。
  *
- * @spec OIDC Core 1.0 §5.5 / 5.5.1
- * @param response スコープでフィルタ済みの UserInfo レスポンス
- * @param userClaims ユーザーの全クレーム
- * @param claimsParameter Authorization Request の claims パラメータ
- * @param allowedClaimNames `claims` 経由で読み出してよいクレーム名。既定は標準クレーム。
- *   Discovery の `claims_supported` と同じ語彙を公開する OP は、その一覧をここへ注入する
- * @returns 要求クレームを追加した UserInfo レスポンス
+ * @spec OIDC Core 1.0 §5.5
+ * @spec OIDC Core 1.0 §5.5.1
+ * @param response スコープで絞った UserInfo レスポンス
+ * @param userClaims ユーザーのすべてのクレーム
+ * @param claimsParameter 認可リクエストの `claims` パラメータ
+ * @param allowedClaimNames `claims` で要求されたときに読み出してよいクレームの名前（既定値は標準のクレームの名前）。
+ *   ディスカバリーの `claims_supported` と同じ名前を公開する OP は、その一覧を渡す。
+ * @returns 要求されたクレームを加えた UserInfo レスポンス
  */
 export function applyRequestedClaims(
   response: UserInfoResponse,
@@ -522,7 +538,7 @@ export function applyRequestedClaims(
   for (const claimName of requestedClaims) {
     if (claimName === 'sub') continue;
     if (!allowedClaimNames.has(claimName)) continue;
-    // Only the End-User's own claims, not what the object inherits (constructor, toString...).
+    // エンドユーザーのクレームのオブジェクト自身が持つプロパティだけを読み、継承したプロパティ（`constructor`、`toString` など）は読まない。
     if (!Object.prototype.hasOwnProperty.call(userClaims, claimName)) continue;
 
     const value = (userClaims as unknown as Record<string, unknown>)[claimName];
@@ -558,15 +574,21 @@ export interface UserInfoJwtOptions {
 const DEFAULT_USERINFO_JWT_EXPIRES_IN = 3600;
 
 /**
- * UserInfo レスポンスを署名済み JWT として生成する
+ * UserInfo レスポンスに署名した JWT を返す。
  *
- * クライアントが署名付きレスポンスを要求するか（`userinfo_signed_response_alg`）の判定は
- * クライアントメタデータ層の責務であり、core はこの関数の呼び出し有無を選択するだけで良い。
+ * ペイロードは、`userInfoResponse` のクレームに、`iss`（`issuer`）、`aud`（`audience`）、`iat`（現在のエポック秒）、`exp`（`iat` に `expiresIn` を足した値、`expiresIn` の既定値は 3600 秒）を加えたものである。
+ * レスポンスに同じ名前のクレームがあっても、これらの値で上書きする。
+ * ヘッダーの `alg` は `privateKey` のアルゴリズムから決め、`typ` は `JWT` にし、`kid` は `keyId` が空でないときだけ付ける。
+ * RSASSA-PKCS1-v1_5 と ECDSA 以外の鍵には `Error` を投げる。
+ *
+ * クライアントが署名したレスポンスを求めているか（`userinfo_signed_response_alg`）は、クライアントのメタデータを扱う側が判定する。
+ * 呼び出し側は、署名したレスポンスが必要なときだけこの関数を呼べばよい。
  *
  * @spec OIDC Core 1.0 §5.3.2
  * @param userInfoResponse `applyRequestedClaims()` が返した UserInfo レスポンス
- * @param options JWT 生成オプション
- * @returns 署名済み JWT 文字列（content-type: application/jwt として返却する想定）
+ * @param options 発行者、オーディエンス（クライアント ID）、署名に使う秘密鍵、鍵の ID、有効期間（秒）
+ * @returns 署名した JWT の文字列（`Content-Type: application/jwt` で返すことを想定している）
+ * @throws {Error} 秘密鍵のアルゴリズムが RSASSA-PKCS1-v1_5 でも ECDSA でもないとき
  */
 export async function generateUserInfoJwt(
   userInfoResponse: UserInfoResponse,

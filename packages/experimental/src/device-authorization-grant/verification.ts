@@ -43,10 +43,11 @@ const VERIFICATION_SECRET_BYTE_LENGTH = 32;
 export const INVALID_USER_CODE_MESSAGE = 'The code is invalid or has expired';
 
 /**
- * SHA-256 ハッシュを Base64URL で返す。
+ * 値の SHA-256 ハッシュを base64url で返す。
  *
- * bindingSecret の生値はブラウザの Cookie にのみ存在し、レコードにはこのハッシュ
- * だけを保存する。ストアが漏洩しても Cookie を再構成できない。
+ * 返す値には、パディングの `=` を付けない。
+ * `bindingSecret` の生の値はブラウザの Cookie にだけあり、レコードにはこのハッシュだけを保存する。
+ * ストアの内容が漏れても、ハッシュから Cookie の値を作り直すことはできない。
  */
 async function sha256Base64Url(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
@@ -58,13 +59,14 @@ async function sha256Base64Url(value: string): Promise<string> {
 }
 
 /**
- * user_code を正規化して照合し、承認可能な pending レコードだけを返す。
+ * ユーザーコードに合う、保留中で期限内のレコードを返す。
  *
- * 未知・期限切れ・非 pending はすべて null。呼び出し側は理由を区別せず
- * {@link INVALID_USER_CODE_MESSAGE} でフォームを再表示する。
+ * 入力を {@link normalizeUserCode} で正規化してから探す。
+ * 正規化した値が空のとき、レコードがないとき、状態が `pending` でないとき、有効期限を過ぎているときは、どれも `null` を返す。
+ * 呼び出し側は理由を区別せずに、{@link INVALID_USER_CODE_MESSAGE} を付けてフォームを表示し直す。
  *
- * 照合のタイミング差（ストア検索由来）は user_code の実在性をわずかに漏らし得るが、
- * 主防御はエントロピー（20^8）と短い TTL であり、実在を知っても承認操作には至れない。
+ * ストアを探す時間の差から、ユーザーコードが実在するかがわずかに漏れることはありうる。
+ * ただし主な防御はエントロピー（20^8 通り）と短い有効期間であり、実在を知っても承認の操作まではできない。
  */
 export async function findPendingRecordByUserCode(
   userCode: string,
@@ -81,16 +83,14 @@ export async function findPendingRecordByUserCode(
 }
 
 /**
- * `POST /device` の照合成功時に、ブラウザバインディングと CSRF トークンを
- * ペアで発行・回転する。
+ * バインディングと CSRF トークンを作って保存し、返す。
  *
- * bindingSecret の生値は戻り値としてのみ返し（生成コードが Cookie に載せる）、
- * レコードへは SHA-256 ハッシュだけを保存する。
+ * `POST /device` でユーザーコードの照合に成功したときに呼び、`bindingSecret` と CSRF トークンを対にして作り直す。
+ * どちらも 32 バイトの乱数である。
+ * `bindingSecret` の生の値は戻り値でだけ返し（生成されたコードが Cookie に入れる）、レコードにはその SHA-256 ハッシュと CSRF トークンを保存する。
  *
- * 別ブラウザが同じ user_code で `POST /device` すると先のブラウザのバインディングは
- * 無効になる（last-writer-wins）。user_code を知る者はレコードの承認 / 拒否を
- * 左右できるという RFC 8628 のモデルを変えるものではないため、機能ではなく制約と
- * して受け入れる。
+ * 別のブラウザが同じユーザーコードで `POST /device` を送ると、先のブラウザのバインディングは無効になる（後から書いたほうが残る）。
+ * ユーザーコードを知っている者がレコードの承認や拒否を左右できるという RFC 8628 のモデルは変わらないので、意図した機能ではなく、既知の制約として受け入れている。
  */
 export async function issueVerificationBinding(
   record: DeviceAuthorizationRecord,
@@ -105,15 +105,16 @@ export async function issueVerificationBinding(
 }
 
 /**
- * Cookie から取り出した bindingSecret がこのレコードのものかを検証する。
+ * `bindingSecret` がこのレコードのものか確かめる。
  *
- * 照合は「入力の SHA-256 ハッシュ vs 保存ハッシュ」の比較なので、比較のタイミング差
- * から保存値の前方一致を積み上げても原像計算が必要になり成立しない。
+ * `bindingSecret` には、Cookie から取り出した値を渡す。
+ * レコードにバインディングがない（`bindingHash` が `null`）か、`bindingSecret` がないときは 403 を投げる。
+ * バインディングがないレコードは、まだ `POST /device` を通っていないからである。
+ * `bindingSecret` の SHA-256 ハッシュが保存した値と一致しないときも、403 を投げる。
  *
- * バインディング未発行（`bindingHash === null`）のレコードは、まだ `POST /device` を
- * 通っていないということなので拒否する。
+ * 比較は定数時間ではないが、比較にかかる時間の差から保存したハッシュの先頭を割り出しても、それに合う入力を作るにはハッシュの原像を計算する必要があるので、攻撃は成り立たない。
  *
- * @throws {DeviceVerificationError} 403
+ * @throws {DeviceVerificationError} 403: バインディングか `bindingSecret` がないとき、またはハッシュが一致しないとき。
  */
 export async function validateVerificationBinding(
   record: DeviceAuthorizationRecord,
@@ -129,13 +130,14 @@ export async function validateVerificationBinding(
 }
 
 /**
- * hidden フィールドの csrf_token を照合する（多層防御）。
+ * フォームの `csrf_token` がレコードのものか確かめる。
  *
- * 主防御は {@link validateVerificationBinding} なので、常に binding を先に検証して
- * から呼ぶこと。比較方法は既存 login / consent の `validateCsrfToken` と
- * 同じ水準に揃えてある。定数時間比較への変更時は本機能にも同じ方針を適用する。
+ * レコードに CSRF トークンがないとき、送られた値が空文字列のとき、または値が一致しないときは、403 を投げる。
+ * 隠しフィールドで送る CSRF トークンは多層防御の一つで、主な防御は {@link validateVerificationBinding} なので、必ずバインディングを先に検証してから呼ぶ。
+ * 比較の方法は、既存のログインと同意の画面の `validateCsrfToken` と同じ水準に揃えてある。
+ * あちらを定数時間の比較に変えるときは、この機能にも同じ方針を適用する。
  *
- * @throws {DeviceVerificationError} 403
+ * @throws {DeviceVerificationError} 403: CSRF トークンがないか一致しないとき。
  */
 export function validateVerificationCsrfToken(
   record: DeviceAuthorizationRecord,
@@ -147,15 +149,13 @@ export function validateVerificationCsrfToken(
 }
 
 /**
- * デバイス用ログインの失敗をレコード単位で計数する。
+ * ログインの失敗を数え、再試行の可否と残り回数を返す。
  *
- * 上限を超えたレコードは `denied` へ遷移させ、そのコードでのフローを終わらせる
- * （デバイス側は次のポーリングで `access_denied` を受け取る）。
+ * 失敗の回数はレコードごとに数え、`loginAttempts` を 1 増やしてレコードを更新する。
+ * 回数が上限（`maxLoginAttempts`）に達したら状態を `denied` にし、そのユーザーコードでのフローを終わらせる（デバイスは次のポーリングで `access_denied` を受け取る）。
  *
- * 既知の残存面: device グラントを許可されたクライアントを持つ攻撃者はレコードを
- * 無制限に発行できるため、集計上のパスワード試行回数は無制限になる。これは既存
- * `/login` ルート（auth transaction を無制限に開始できる）と同一の残存面である。
- * subject 単位のスロットリングは別機能の責務とする。
+ * 既知の弱点として、デバイス認可グラントを使えるクライアントを持つ攻撃者はレコードをいくらでも作れるので、合計のパスワードの試行回数に上限はない。
+ * 既存の `/login`（認可リクエストのトランザクションをいくらでも始められる）にも同じ弱点があり、サブジェクトごとの試行の制限はこの関数では行わない。
  */
 export async function recordDeviceLoginFailure(
   record: DeviceAuthorizationRecord,
@@ -175,17 +175,18 @@ export async function recordDeviceLoginFailure(
 }
 
 /**
- * 承認（`POST /device/approve` の `decision=approve`）。
+ * デバイス認可を承認済みにし、更新したレコードを返す。
  *
- * バインディング検証は呼び出し側が先に済ませておくこと（生成コードは Cookie を
- * 読む責務を持つため、この関数はレコードと CSRF トークンだけを見る）。
+ * `POST /device/approve` で `decision=approve` を受け取ったときに呼ぶ。
+ * バインディングの検証は、呼び出し側が先に済ませておく。
+ * Cookie を読むのは生成されたコードなので、この関数はレコードと CSRF トークンだけを確かめる。
  *
- * `approvedScope` は要求 scope をそのまま採用する（本 OP の検証 UI は scope の
- * 部分承認を提供しない）。`grantId` を新規発行し、既存の revocation 機構が
- * grant 単位失効をそのまま適用できるようにする。
+ * CSRF トークンが一致し、状態が `pending` なら、状態を `approved` にし、`subject`、`authTime`、`approvedScope`、`grantId` を設定し、バインディングと CSRF トークンを消してから保存する。
+ * `approvedScope` には、要求された `scope` をそのまま入れる（この OP の検証の画面には、スコープの一部だけを承認する操作がない）。
+ * `grantId` は 32 バイトの乱数で新しく作り、既存の失効の仕組みがグラント単位の失効をそのまま適用できるようにする。
  *
- * @throws {DeviceVerificationError} CSRF 不一致 (403)
- * @throws {DeviceAuthorizationError} レコードが pending でない (invalid_grant)
+ * @throws {DeviceVerificationError} 403: CSRF トークンが一致しないとき。
+ * @throws {DeviceAuthorizationError} `invalid_grant`: 状態が `pending` でないとき。
  */
 export async function approveDeviceAuthorization(input: {
   record: DeviceAuthorizationRecord;
@@ -202,8 +203,8 @@ export async function approveDeviceAuthorization(input: {
   input.record.authTime = input.authTime;
   input.record.approvedScope = [...input.record.scope];
   input.record.grantId = generateRandomString(VERIFICATION_SECRET_BYTE_LENGTH);
-  // 承認後はバインディングも CSRF トークンも用済み。承認 / 拒否は一方向遷移なので、
-  // 残しておく理由がない値をレコードから落とす。
+  // 承認したあとは、バインディングも CSRF トークンも使わない。
+  // 承認と拒否は元に戻らない遷移なので、残しておく理由のない値をレコードから消す。
   input.record.bindingHash = null;
   input.record.csrfToken = null;
   await input.store.update(input.record);
@@ -211,10 +212,13 @@ export async function approveDeviceAuthorization(input: {
 }
 
 /**
- * 拒否（`POST /device/approve` の `decision=deny`）。
+ * デバイス認可を拒否済みにし、更新したレコードを返す。
  *
- * @throws {DeviceVerificationError} CSRF 不一致 (403)
- * @throws {DeviceAuthorizationError} レコードが pending でない (invalid_grant)
+ * `POST /device/approve` で `decision=deny` を受け取ったときに呼ぶ。
+ * {@link approveDeviceAuthorization} と同じく CSRF トークンと状態を確かめ、通れば状態を `denied` にし、バインディングと CSRF トークンを消して保存する。
+ *
+ * @throws {DeviceVerificationError} 403: CSRF トークンが一致しないとき。
+ * @throws {DeviceAuthorizationError} `invalid_grant`: 状態が `pending` でないとき。
  */
 export async function denyDeviceAuthorization(input: {
   record: DeviceAuthorizationRecord;
@@ -232,8 +236,12 @@ export async function denyDeviceAuthorization(input: {
 }
 
 /**
- * 承認 / 拒否は一方向遷移とする。`approved` / `denied` になったレコードは
- * 検証 UI から再度操作できない。
+ * 状態が `pending` でなければ `invalid_grant` を投げる。
+ *
+ * 承認と拒否は元に戻らない遷移なので、状態が `approved` か `denied` のレコードは、検証の画面からもう一度操作できない。
+ * エラーの文言は、ユーザーコードの照合に失敗したときと同じ {@link INVALID_USER_CODE_MESSAGE} である。
+ *
+ * @throws {DeviceAuthorizationError} `invalid_grant`: 状態が `pending` でないとき。
  */
 function assertPending(record: DeviceAuthorizationRecord): void {
   if (record.status !== 'pending') {

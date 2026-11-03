@@ -25,6 +25,7 @@
 import { posix } from 'node:path';
 import { buildFunctionFlow, codeMaskOf, type FunctionFlow } from './function-flow.js';
 import { codeOf, type StepKind } from './meta.js';
+import { joinLines, joinLinesFlat } from './prose.js';
 
 /** The responsibility of a function: the step kinds, or `other` for one the name does not tell. */
 export type FunctionKind = StepKind | 'other';
@@ -202,7 +203,7 @@ export function parseJsDoc(comment: string): JsDoc {
     }
   }
   if (current) pushTag(tags, current);
-  // Paragraphs are separated by blank lines; the first is the summary.
+  // Paragraphs are separated by blank lines; the first is the summary, on one line.
   const paragraphs: string[][] = [[]];
   for (const line of textLines) {
     if (line.trim() === '') {
@@ -211,16 +212,16 @@ export function parseJsDoc(comment: string): JsDoc {
     }
     (paragraphs[paragraphs.length - 1] as string[]).push(line.trim());
   }
-  const joined = paragraphs.filter((lines) => lines.length > 0).map((lines) => lines.join(' '));
+  const filled = paragraphs.filter((lines) => lines.length > 0);
   return {
-    summary: joined[0] ?? '',
-    description: joined.slice(1).join('\n\n'),
+    summary: filled.length === 0 ? '' : joinLinesFlat(filled[0] as string[]),
+    description: filled.slice(1).map(joinLines).join('\n\n'),
     tags,
   };
 }
 
 function pushTag(tags: Map<string, string[]>, tag: { name: string; lines: string[] }): void {
-  const text = tag.lines.map((line) => line.trim()).filter((line) => line.length > 0).join(' ');
+  const text = joinLinesFlat(tag.lines);
   const list = tags.get(tag.name) ?? [];
   list.push(text);
   tags.set(tag.name, list);

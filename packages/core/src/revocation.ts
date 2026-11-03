@@ -82,10 +82,13 @@ export interface ResolveRevocationTargetOptions {
 }
 
 /**
- * `token` パラメータの存在を検証する
- * RFC 7009 §2.1: token は REQUIRED。
+ * `token` パラメータの値を確かめて返す。
  *
- * @throws {RevocationError} invalid_request
+ * `token` パラメータがないか空文字列なら、`RevocationError`（`invalid_request`）を投げる。
+ * `token` は必須のパラメータである（RFC 7009 §2.1）。
+ *
+ * @spec RFC 7009 §2.1
+ * @throws {RevocationError} `invalid_request`: `token` パラメータがないか空のとき
  */
 export function requireRevocationToken(params: { token?: string }): string {
   if (!params.token) {
@@ -98,10 +101,14 @@ export function requireRevocationToken(params: { token?: string }): string {
 }
 
 /**
- * 呼び出し元がクライアント認証済み（または client_id 識別済み）であることを検証する
- * RFC 7009 §2.1: revocation エンドポイントはクライアントを識別しなければならない。
+ * 認証したクライアントの ID を確かめて返す。
  *
- * @throws {RevocationError} invalid_client
+ * 呼び出し側は、クライアント認証で確かめた（または `client_id` で特定した）クライアントの ID を渡す。
+ * `authenticatedClientId` が空文字列なら、`RevocationError`（`invalid_client`）を投げる。
+ * 失効エンドポイントは、リクエストしたクライアントを特定しなければならない（RFC 7009 §2.1）。
+ *
+ * @spec RFC 7009 §2.1
+ * @throws {RevocationError} `invalid_client`: `authenticatedClientId` が空のとき
  */
 export function requireRevocationClient(authenticatedClientId: string): string {
   if (!authenticatedClientId) {
@@ -114,16 +121,21 @@ export function requireRevocationClient(authenticatedClientId: string): string {
 }
 
 /**
- * 失効対象のトークンをストアから解決する
+ * 失効させるトークンをストアから探して返す。
  *
- * RFC 7009 §2.1: `token_type_hint` は検索順のヒントであり、外れても他方の種別を
- * 検索しなければならない。hint=refresh_token のときだけ refresh → access の順、
- * それ以外（access_token / 不明値 / 未指定）は access → refresh の順で検索する。
+ * アクセストークンとリフレッシュトークンのストアを探し、見つかったトークンの種別と保存済みの情報を返す。
+ * どちらにもなければ `null` を返し、呼び出し側は成功として応答する（RFC 7009 §2.2）。
  *
- * refresh token は検索と失効の両方の resolver が揃っている場合だけ対象にする
- * （失効できない種別を解決しても意味がないため）。
+ * 探す順序は `token_type_hint` で決める。
+ * `refresh_token` ならリフレッシュトークン、アクセストークンの順に、それ以外（`access_token`、未知の値、指定なし）ならアクセストークン、リフレッシュトークンの順に探す。
+ * `token_type_hint` は探す順序のヒントにすぎず、外れても、もう一方の種別を探さなければならない（RFC 7009 §2.1）。
  *
- * @returns 解決したトークン。どちらのストアにも無ければ null（RFC 7009 §2.2: 成功扱い）
+ * リフレッシュトークンは、リゾルバに `findRefreshToken` と `revokeRefreshToken` の両方があるときだけ探す。
+ * 失効させられない種別のトークンを見つけても、使い道がないためである。
+ *
+ * @spec RFC 7009 §2.1
+ * @spec RFC 7009 §2.2
+ * @returns 見つかったトークンの種別と情報（どちらのストアにもなければ `null`）
  */
 export async function resolveRevocationTarget(
   options: ResolveRevocationTargetOptions,
@@ -151,13 +163,13 @@ export async function resolveRevocationTarget(
 }
 
 /**
- * 解決したトークンが要求元クライアントに発行されたものか検証する
+ * 別のクライアントに発行されたトークンなら拒否する。
  *
- * RFC 7009 §2.1: "verifies whether the token was issued to the client making the
- * revocation request. If this validation fails, the request is refused and the
- * client is informed of the error"
+ * 見つかったトークンの `clientId` が `authenticatedClientId` と一致しなければ、`RevocationError`（`invalid_grant`）を投げる。
+ * 認可サーバーは、トークンがリクエストしたクライアントに発行されたものかを確かめ、そうでなければリクエストを拒否して、クライアントにエラーを知らせる（RFC 7009 §2.1）。
  *
- * @throws {RevocationError} invalid_grant
+ * @spec RFC 7009 §2.1
+ * @throws {RevocationError} `invalid_grant`: トークンが別のクライアントに発行されていたとき
  */
 export function validateRevocationTokenClient(
   resolved: ResolvedRevocationToken,
@@ -177,11 +189,15 @@ export function validateRevocationTokenClient(
 }
 
 /**
- * 解決した種別に応じて、提示されたトークン自体を失効させる
+ * 提示されたトークンを失効させる。
  *
- * @param token リクエストで提示されたトークン値
- * @param resolved 解決済みトークン
- * @param resolvers 失効処理のリゾルバ群
+ * 見つかったのがアクセストークンなら `revokeAccessToken()` で、リフレッシュトークンなら `revokeRefreshToken()` で失効させる。
+ * リゾルバに `revokeRefreshToken` がなければ何もしない（その場合、{@link resolveRevocationTarget} はリフレッシュトークンを返さない）。
+ * 同じグラントのアクセストークンは、ここでは失効させない（{@link revokeGrantAccessTokens} が失効させる）。
+ *
+ * @param token リクエストで提示されたトークンの文字列
+ * @param resolved {@link resolveRevocationTarget} が返したトークン
+ * @param resolvers 失効に使うリゾルバ
  */
 export async function revokeResolvedToken(
   token: string,
@@ -196,13 +212,15 @@ export async function revokeResolvedToken(
 }
 
 /**
- * リフレッシュトークン失効時に同 grant のアクセストークンも失効させる
+ * 同じグラントのアクセストークンをすべて失効させる。
  *
- * RFC 7009 §2.1 SHOULD: refresh token を失効させたら、同じ authorization grant で
- * 発行されたアクセストークンも失効させる（片方向 cascade）。アクセストークンの失効では
- * 関連 refresh token を失効させない（MAY、本実装では採用しない）。
+ * `resolved` がリフレッシュトークンのときだけ、そのグラント ID を渡して `revokeAccessTokensByGrantId()` を呼ぶ。
+ * アクセストークンのときと、リゾルバに `revokeAccessTokensByGrantId` がないときは何もしない。
  *
- * cascade 用リゾルバ（`revokeAccessTokensByGrantId`）が無い場合は何もしない。
+ * 認可サーバーは、リフレッシュトークンを失効させたら、同じグラントで発行したアクセストークンも失効させるべきである（SHOULD、RFC 7009 §2.1）。
+ * 逆に、アクセストークンを失効させたときに関連するリフレッシュトークンも失効させてよい（MAY）が、この実装ではそうしない。
+ *
+ * @spec RFC 7009 §2.1
  */
 export async function revokeGrantAccessTokens(
   resolved: ResolvedRevocationToken,

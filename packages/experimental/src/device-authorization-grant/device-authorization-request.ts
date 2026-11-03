@@ -46,11 +46,12 @@ export interface DeviceAuthorizationResponse {
 }
 
 /**
- * クライアントがデバイス認可グラントを許可されているか検証する。
+ * クライアントがデバイス認可グラントを使えるか確かめる。
  *
- * RFC 6749 §5.2: 登録済み grant_types に含まれないグラントは unauthorized_client。
+ * 登録したグラントタイプ（`grantTypes`）に {@link DEVICE_CODE_GRANT_TYPE} がなければ、`unauthorized_client` を投げる（RFC 6749 §5.2）。
  *
- * @throws {DeviceAuthorizationError} unauthorized_client
+ * @spec RFC 6749 §5.2
+ * @throws {DeviceAuthorizationError} `unauthorized_client`: クライアントがデバイスコードのグラントタイプを登録していないとき。
  */
 export function validateDeviceGrantAllowed(client: DeviceAuthorizationClient): void {
   const grantTypes = client.grantTypes ?? [];
@@ -63,15 +64,18 @@ export function validateDeviceGrantAllowed(client: DeviceAuthorizationClient): v
 }
 
 /**
- * scope を検証して正規化する。
+ * `scope` を検証し、重複を除いた値の配列を返す。
  *
- * RFC 8628 §3.1 では scope は OPTIONAL だが、本 OP は認可エンドポイントと同じ
- * プロファイル制限（scope 必須・`openid` 必須）をデバイス認可にも課す。RFC 8628 が
- * 許容する scope 省略には対応しない、既知の制限である。
+ * RFC 8628 §3.1 では `scope` を省略できる（OPTIONAL）が、この OP は認可エンドポイントと同じ制限（`scope` と `openid` を必須とする）をデバイス認可にも課す。
+ * RFC 8628 が認める `scope` の省略に対応しないのは、既知の制限である。
+ * `scope` がないか空白だけなら `invalid_request` を、`openid` を含まなければ `invalid_scope` を投げる。
  *
- * 空白区切り・重複除去の扱いは core の `validateAuthorizationScope` と同じ規則。
+ * 値は空白で区切り、重複は最初に現れたものだけを残す。
+ * この扱いは core の `validateAuthorizationScope` と同じである。
  *
- * @throws {DeviceAuthorizationError} invalid_request / invalid_scope
+ * @spec RFC 8628 §3.1
+ * @throws {DeviceAuthorizationError} `invalid_request`: `scope` がないか空白だけのとき。
+ * @throws {DeviceAuthorizationError} `invalid_scope`: `scope` に `openid` がないとき。
  */
 export function validateDeviceAuthorizationScope(scope: string | undefined): string[] {
   if (scope === undefined || scope.trim() === '') {
@@ -91,12 +95,14 @@ export function validateDeviceAuthorizationScope(scope: string | undefined): str
 }
 
 /**
- * 許可条件を満たさない `offline_access` を scope から除去する。
+ * `scope` から許可しない `offline_access` を除いて返す。
  *
- * OIDC Core 1.0 §11: 許可条件を満たさない offline_access は無視する（エラーには
- * しない）。デバイスフローでは検証 UI の承認画面が明示同意そのものなので、許可条件は
- * 「refresh-token feature が有効」かつ「クライアントが refresh_token grant を登録
- * 済み」の 2 点とし、`prompt=consent` 相当の事前条件は課さない。
+ * 許可条件を満たさない `offline_access` は、エラーにせず無視する（OIDC Core 1.0 §11）。
+ * デバイスフローでは検証の画面（`/device`）での承認がそのまま明示的な同意になるので、許可条件は「`refresh-token` 機能が有効である」と「クライアントがグラントタイプ `refresh_token` を登録している」の 2 つだけで、`prompt=consent` に当たる前提は課さない。
+ *
+ * 両方を満たせば `scope` をそのまま返し、満たさなければ `offline_access` を除いた新しい配列を返す。
+ *
+ * @spec OIDC Core 1.0 §11
  */
 export function applyOfflineAccessPolicy(
   scope: string[],
@@ -110,9 +116,12 @@ export function applyOfflineAccessPolicy(
 }
 
 /**
- * device_code / user_code を生成してレコードを保存する。
+ * デバイスコードとユーザーコードを発行し、保存して返す。
  *
- * @throws {Error} user_code が規定回数連続で衝突した場合（生成コードは 500 にする）
+ * デバイスコードは 32 バイト（256 ビット）の乱数で、ユーザーコードは {@link generateUniqueUserCode} でストアにまだないものを作る。
+ * レコードは状態を `pending` にし、有効期限を `now`（既定は現在時刻）の `expiresIn` 秒後にしてストアに保存し、そのレコードを返す。
+ *
+ * @throws {Error} ユーザーコードが決められた回数続けて既存のコードと衝突したとき（生成されたコードは 500 で応答する）。
  */
 export async function createDeviceAuthorizationRecord(options: {
   clientId: string;
@@ -144,11 +153,15 @@ export async function createDeviceAuthorizationRecord(options: {
 }
 
 /**
- * RFC 8628 §3.2 のレスポンスボディを組み立てる。
+ * デバイス認可レスポンスのボディを作って返す。
  *
- * `verification_uri_complete` は OPTIONAL だが常に返す。user_code がクエリに載るため
- * ユーザー側ブラウザの履歴や中間プロキシのログに残り得るが、user_code はワンタイム
- * かつ短命で、承認操作をした本人以外には価値を持たない。
+ * `verification_uri` は `issuer` に `/device` を付けた URL で、`verification_uri_complete` はそれに表示形式の `user_code` をクエリとして付けた URL である。
+ * `user_code` には表示形式（`XXXX-XXXX`）の値を、`expires_in` には発行から有効期限までの秒数を入れる。
+ *
+ * `verification_uri_complete` は省略できる（OPTIONAL）が、常に返す。
+ * `user_code` がクエリに入るので、ユーザーのブラウザの履歴や中間のプロキシのログに残ることがあるが、`user_code` は一度しか使えず有効期間も短いので、承認の操作をした本人以外には価値がない。
+ *
+ * @spec RFC 8628 §3.2
  */
 export function buildDeviceAuthorizationResponse(
   record: DeviceAuthorizationRecord,
@@ -166,12 +179,18 @@ export function buildDeviceAuthorizationResponse(
 }
 
 /**
- * 合成関数: デバイス認可エンドポイントの全処理（RFC 8628 §3.1 / §3.2）。
+ * リクエストを検証して保存し、`device_code` などを返す。
  *
- * 個々のステップ関数を仕様順に合成しただけの API。生成コードは通常この関数ではなく
- * ステップ関数を順に呼び出し、検証の差し替え・削除ができるようにする。
+ * デバイス認可エンドポイントの処理を 1 つにまとめた関数で、{@link validateDeviceGrantAllowed}、{@link validateDeviceAuthorizationScope}、{@link applyOfflineAccessPolicy}、{@link createDeviceAuthorizationRecord}、{@link buildDeviceAuthorizationResponse} を仕様の順に呼ぶだけである。
+ * 生成されたコードは通常この関数を使わずにこれらの関数を順に呼び、検証を差し替えたり除いたりできるようにしている。
+ * `expiresIn` と `interval` を省略すると、{@link DEFAULT_DEVICE_CODE_EXPIRES_IN}（600 秒）と {@link DEFAULT_POLL_INTERVAL}（5 秒）を使う。
  *
- * @throws {DeviceAuthorizationError}
+ * @spec RFC 8628 §3.1
+ * @spec RFC 8628 §3.2
+ * @throws {DeviceAuthorizationError} `unauthorized_client`: クライアントがデバイスコードのグラントタイプを登録していないとき。
+ * @throws {DeviceAuthorizationError} `invalid_request`: `scope` がないか空白だけのとき。
+ * @throws {DeviceAuthorizationError} `invalid_scope`: `scope` に `openid` がないとき。
+ * @throws {Error} ユーザーコードが決められた回数続けて既存のコードと衝突したとき。
  */
 export async function processDeviceAuthorizationRequest(input: {
   params: Record<string, string>;

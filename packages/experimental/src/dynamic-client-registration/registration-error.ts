@@ -41,13 +41,13 @@ export class ClientRegistrationError extends Error {
 }
 
 /**
- * error が ClientRegistrationError か（形で判定する）。
+ * `ClientRegistrationError` の形なら true を返す。
  *
- * instanceof は、生成コードがこのパッケージを 2 度読み込む構成で偽になる。
- * Next.js の本番ビルドは instrumentation と Route Handler を別のバンドルにするため、
- * instrumentation 側で組んだ登録ポリシーが投げたエラーのクラスは、Route Handler
- * が import したクラスと別のオブジェクトになる。応答の振り分けはこの関数で行い、
- * クラスの同一性に依存しない。
+ * `name` が `'ClientRegistrationError'` で、`error` と `errorDescription` が文字列のオブジェクトを、このエラーとみなす。
+ *
+ * `instanceof` は、生成されたコードがこのパッケージを 2 度読み込む構成では偽になる。
+ * Next.js の本番ビルドは `instrumentation.ts` とルートハンドラを別のバンドルにするので、`instrumentation.ts` の側で組み立てた登録ポリシーが投げたエラーのクラスは、ルートハンドラが読み込んだクラスとは別のオブジェクトになる。
+ * そのため、レスポンスの振り分けはクラスの同一性に頼らず、この関数で行う。
  */
 export function isClientRegistrationError(error: unknown): error is ClientRegistrationError {
   return (

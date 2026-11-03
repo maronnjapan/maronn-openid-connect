@@ -35,16 +35,32 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * The user_code entry form (RFC 8628 §3.3 / §3.3.1). Unauthenticated and free
- * of side effects: a user_code in the query (verification_uri_complete) only
- * pre-fills the field, so following the complete URI consumes or reveals
- * nothing.
+ * ユーザーコードの入力フォームを HTML で返す。
+ *
+ * ログインを求めず、何も書き込まない。
+ * クエリの `user_code`（`verification_uri_complete` に付いている）は入力欄に入れるだけで、照合はフォームを送信するまで行わない。
+ * そのため、`verification_uri_complete` を開いただけでは、コードが使われることも、コードがあるかどうかがわかることもない。
+ *
+ * @spec RFC 8628 §3.3
+ * @spec RFC 8628 §3.3.1
  */
 export function GET(request: NextRequest): Response {
   return verificationScreen(request.nextUrl.searchParams.get('user_code') ?? '');
 }
 
-/** User code submission: on a match, the sign-in form or — signed in already — the approval screen. */
+/**
+ * ユーザーコードを照合し、ログインか承認の画面を返す。
+ *
+ * `POST /device` の処理である。
+ * 送られた `user_code` が保留中のレコードに一致しなければ、照合に失敗した旨を添えた入力フォームを 400 で返す。
+ * 一致すれば、バインディングの秘密の値と CSRF トークンを作り直してレコードに保存し、秘密の値をバインディング Cookie にしてこのブラウザに渡す。
+ * OP のセッションがあれば承認画面を、なければログインフォームを、どちらもバインディング Cookie を付けて返す。
+ *
+ * バインディング Cookie を作るのはこの処理だけなので、`csrf_token` を最初に渡すのもこの処理である。
+ * 後の処理（ログインと承認）は、どれもこの Cookie を求める。
+ *
+ * @spec RFC 8628 §3.3
+ */
 export async function POST(request: Request): Promise<Response> {
   const form = await readFormFields(request);
   const submittedUserCode = String(form.get('user_code') ?? '');
@@ -54,9 +70,9 @@ export async function POST(request: Request): Promise<Response> {
     return invalidUserCodeScreen(submittedUserCode);
   }
 
-  // Rotate the binding secret and the csrf token together. A second browser
-  // submitting the same user_code takes the binding over (last writer wins);
-  // that is inherent to a flow whose identifier is shareable by design.
+  // バインディングの秘密の値と CSRF トークンを、まとめて作り直す。
+  // 別のブラウザが同じ `user_code` を送信すると、バインディングはそのブラウザに移る（最後に送信したものが勝つ）。
+  // 識別子を他人と共有できる設計のフローでは、避けられない性質である。
   const { bindingSecret, csrfToken } = await issueVerificationBinding(
     record,
     deviceAuthorizationStore,
@@ -84,9 +100,11 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /**
- * Remaining lifetime of a record in whole seconds, rounded up so the binding
- * cookie always outlives the record it binds (a cookie that expired first
- * would turn a still-valid verification into an unexplained 403).
+ * レコードの有効期限までの残りの秒数を返す。
+ *
+ * 1 秒未満の端数は切り上げ、期限を過ぎていれば 0 を返す。
+ * 切り上げるのは、バインディング Cookie がレコードより先に期限切れにならないようにするためである。
+ * Cookie が先に切れると、まだ有効な検証が、理由のわからない 403 で拒否されてしまう。
  */
 function remainingTtlSeconds(record: DeviceAuthorizationRecord): number {
   return Math.max(0, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));

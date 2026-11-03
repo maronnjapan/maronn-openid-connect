@@ -403,10 +403,11 @@ export async function resolveUserInfoAccessToken(
 }
 
 /**
- * 有効期限を過ぎたアクセストークンを拒否する。
+ * 有効期限に達したアクセストークンを拒否する。
  *
- * `expiresAt` が `now` より前なら、`UserInfoError`（`invalid_token`、ステータスコード 401）を投げる。
- * `expiresAt` と `now` が等しいときは拒否しない。
+ * `expiresAt` が `now` 以下なら、`UserInfoError`（`invalid_token`、ステータスコード 401）を投げる。
+ * `expiresAt` と `now` が等しいときも期限切れとして拒否する（RFC 7519 §4.1.4 の `exp` と同じ境界）。
+ * イントロスペクション（{@link isIntrospectionTokenActive}）とリフレッシュトークンの判定も `expiresAt <= now` を期限切れとするので、同じトークンへの答えがそろう。
  * 期限切れのトークンには `invalid_token` で応答する（RFC 6750 §3.1）。
  *
  * @spec RFC 6750 §3.1
@@ -418,7 +419,7 @@ export function validateUserInfoTokenExpiration(
   tokenInfo: Pick<AccessTokenInfo, 'expiresAt'>,
   now: number = Math.floor(Date.now() / 1000)
 ): void {
-  if (tokenInfo.expiresAt < now) {
+  if (tokenInfo.expiresAt <= now) {
     throw new UserInfoError(
       UserInfoErrorCode.InvalidToken,
       'The access token expired'

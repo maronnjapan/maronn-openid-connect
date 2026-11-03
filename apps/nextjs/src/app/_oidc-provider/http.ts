@@ -142,6 +142,19 @@ export function signingKeysUnavailable(): Response {
 }
 
 /**
+ * `Authorization` ヘッダの値から Bearer のトークンを返す。
+ *
+ * スキームは大文字と小文字を区別せずに照合し（RFC 7235 §2.1）、スキームの後ろの空白はいくつあってもすべて飛ばす（`"Bearer" 1*SP b64token`）。
+ * トークンの値は変えずにそのまま返す。
+ * Bearer 以外のスキームや、トークンの無い値には空文字を返す。
+ *
+ * @spec RFC 6750 §2.1
+ */
+export function readBearerToken(authorizationHeader: string): string {
+  return /^Bearer +(.*)$/i.exec(authorizationHeader)?.[1] ?? '';
+}
+
+/**
  * ボディが URL エンコードのフォームなら true を返す。
  *
  * `Content-Type` のメディアタイプが `application/x-www-form-urlencoded` であるかを確かめる。

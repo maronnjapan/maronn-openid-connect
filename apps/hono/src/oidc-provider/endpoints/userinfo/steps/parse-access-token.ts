@@ -31,15 +31,7 @@ export async function parseUserInfoRequest(c: any): Promise<string> {
   let headerToken = '';
   let bodyToken = '';
   try {
-    const authHeader = c.req.header('Authorization') ?? '';
-    // HTTP の認証スキームは大文字と小文字を区別しないので、`Bearer` のスキームは大文字と小文字を区別せずに照合する（RFC 7235 §2.1）。
-    // トークンの値は変えずにそのまま使う。
-    const bearerSpaceIndex = authHeader.indexOf(' ');
-    headerToken =
-      bearerSpaceIndex !== -1 &&
-      authHeader.slice(0, bearerSpaceIndex).toLowerCase() === 'bearer'
-        ? authHeader.slice(bearerSpaceIndex + 1)
-        : '';
+    headerToken = readBearerToken(c.req.header('Authorization') ?? '');
 
     if (c.req.method === 'POST') {
       const contentType = c.req.header('Content-Type') ?? '';
@@ -77,4 +69,17 @@ export async function parseUserInfoRequest(c: any): Promise<string> {
     });
   }
   return accessToken;
+}
+
+/**
+ * `Authorization` ヘッダの値から Bearer のトークンを返す。
+ *
+ * スキームは大文字と小文字を区別せずに照合し（RFC 7235 §2.1）、スキームの後ろの空白はいくつあってもすべて飛ばす（`"Bearer" 1*SP b64token`）。
+ * トークンの値は変えずにそのまま返す。
+ * Bearer 以外のスキームや、トークンの無い値には空文字を返す。
+ *
+ * @spec RFC 6750 §2.1
+ */
+function readBearerToken(authorizationHeader: string): string {
+  return /^Bearer +(.*)$/i.exec(authorizationHeader)?.[1] ?? '';
 }

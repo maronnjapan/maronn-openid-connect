@@ -226,6 +226,24 @@ describe('buildFunctionCatalog', () => {
   });
 });
 
+describe('FunctionProject.spanOf', () => {
+  const project = analyzeFunctions(roots());
+
+  it('should give the line the JSDoc opens on, the line of the declaration and the line that closes the body', () => {
+    expect(project.spanOf('core:secret.ts#verifySecretHash')).toEqual({ doc: 4, start: 10, end: 15 });
+    expect(project.spanOf('core:secret.ts#pad')).toEqual({ doc: 17, start: 18, end: 20 });
+    expect(project.spanOf('core:secret.ts#buildHeader')).toEqual({ doc: 22, start: 27, end: 29 });
+  });
+
+  it('should cover an overload set from its first signature, without a doc line when there is no JSDoc', () => {
+    expect(project.spanOf('core:secret.ts#overload')).toEqual({ start: 31, end: 34 });
+  });
+
+  it('should give nothing for an unknown id', () => {
+    expect(project.spanOf('core:secret.ts#missing')).toBeUndefined();
+  });
+});
+
 describe('readRouteBlockCalls', () => {
   it('should read the marker lines of a Route Handler with their feature', () => {
     expect(readRouteBlocks(APP_ROUTE).map(({ id, feature }) => ({ id, feature }))).toEqual([

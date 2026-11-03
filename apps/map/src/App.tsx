@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangesScreen } from './components/ChangesScreen';
 import { EndpointScreen } from './components/EndpointScreen';
 import { FunctionScreen } from './components/FunctionScreen';
 import { Search } from './components/Search';
 import { Sidebar } from './components/Sidebar';
+import { indexChanges } from './lib/changes';
 import { buildHash, parseHash, type View } from './lib/hash';
 import { defaultEnabled, featuresToShow, visibleEndpoints, type SearchHit } from './lib/model';
 import type { MapData } from './types';
@@ -70,8 +72,13 @@ function historyDepth(): number {
   return typeof state?.mapDepth === 'number' ? state.mapDepth : 0;
 }
 
-/** The map: the endpoints of a configuration on the left, the open endpoint or function filling the rest. */
+/**
+ * The map: the endpoints of a configuration on the left, the open endpoint or
+ * function filling the rest. The map of a pull request opens on the changes
+ * of the pull request.
+ */
 function ProviderMap({ data }: { data: MapData }) {
+  const changes = useMemo(() => indexChanges(data), [data]);
   const fallbackEndpoint = useCallback(
     (framework: string) => {
       const flow = data.flows[framework];
@@ -82,10 +89,14 @@ function ProviderMap({ data }: { data: MapData }) {
   const fromHash = useCallback(
     (framework: string): View => {
       const view = parseHash(location.hash, data, { framework, endpoint: null, step: null, fn: null });
-      if (view.endpoint === null && view.fn === null) view.endpoint = fallbackEndpoint(view.framework);
+      if (view.changes === true && changes === undefined) view.changes = false;
+      if (view.endpoint === null && view.fn === null && view.changes !== true) {
+        if (changes !== undefined) view.changes = true;
+        else view.endpoint = fallbackEndpoint(view.framework);
+      }
       return view;
     },
-    [data, fallbackEndpoint],
+    [data, changes, fallbackEndpoint],
   );
   const [view, setView] = useState<View>(() => fromHash(data.frameworks[0] ?? 'hono'));
   const [depth, setDepth] = useState(historyDepth);
@@ -140,16 +151,18 @@ function ProviderMap({ data }: { data: MapData }) {
     save(FEATURES_KEY, JSON.stringify([...next]));
     setEnabled(next);
   }, [flow, data.features, enabled, view]);
-  const endpoint = endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined);
   const card = view.fn === null ? undefined : data.functions[view.fn];
+  const onChanges = card === undefined && view.changes === true && changes !== undefined;
+  const endpoint = onChanges ? undefined : (endpoints.find((candidate) => candidate.id === view.endpoint) ?? (view.fn === null ? endpoints[0] : undefined));
   const narrow = () => !window.matchMedia('(min-width: 900px)').matches;
 
   const openEndpoint = (id: string) => {
-    navigate({ ...view, endpoint: id, step: null, fn: null }, 'push');
+    navigate({ ...view, endpoint: id, step: null, fn: null, changes: false }, 'push');
     if (narrow()) setSidebar(false);
   };
-  const openStep = (endpointId: string, step: string) => navigate({ ...view, endpoint: endpointId, step, fn: null }, 'push');
+  const openStep = (endpointId: string, step: string) => navigate({ ...view, endpoint: endpointId, step, fn: null, changes: false }, 'push');
   const openFunction = (id: string) => navigate({ ...view, fn: id }, 'push');
+  const openChanges = () => navigate({ ...view, endpoint: null, step: null, fn: null, changes: true }, 'push');
   const onPick = (hit: SearchHit) => {
     if ('fn' in hit.target) openFunction(hit.target.fn);
     else openStep(hit.target.endpoint, hit.target.step);
@@ -172,6 +185,12 @@ function ProviderMap({ data }: { data: MapData }) {
           ☰
         </button>
         <h1>OIDC Provider Map</h1>
+        {changes !== undefined ? (
+          <button type="button" className="changes-button" aria-pressed={onChanges} onClick={openChanges} title="このPRで変えた関数と、その説明">
+            このPRの変更
+            <span className="count">{changes.changes.functions.filter((change) => change.kind !== 'noted').length}</span>
+          </button>
+        ) : null}
         <div className="seg" role="group" aria-label="フレームワーク">
           {data.frameworks.map((name) => (
             <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...view, framework: name, step: null }, 'replace')}>
@@ -185,6 +204,7 @@ function ProviderMap({ data }: { data: MapData }) {
         {sidebar ? (
           <Sidebar
             data={data}
+            changes={changes}
             framework={view.framework}
             enabled={enabled}
             endpoints={endpoints}
@@ -204,6 +224,7 @@ function ProviderMap({ data }: { data: MapData }) {
             <FunctionScreen
               key={card.id}
               data={data}
+              changes={changes}
               framework={view.framework}
               flow={flow}
               card={card}
@@ -216,10 +237,13 @@ function ProviderMap({ data }: { data: MapData }) {
               onOpenEndpoint={openEndpoint}
               onFramework={(framework) => navigate({ ...view, framework }, 'replace')}
             />
+          ) : onChanges ? (
+            <ChangesScreen data={data} index={changes} flow={flow} onOpenFunction={openFunction} onOpenEndpoint={openEndpoint} />
           ) : endpoint !== undefined ? (
             <EndpointScreen
               key={`${view.framework}/${endpoint.id}`}
               data={data}
+              changes={changes}
               endpoint={endpoint}
               selected={view.step}
               checked={checked[`endpoint:${endpoint.id}`]}

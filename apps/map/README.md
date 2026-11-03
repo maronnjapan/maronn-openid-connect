@@ -31,6 +31,29 @@ resolver や store のメソッドの呼び出し（`consentResolver.recordConse
 
 図の色は 3 つに限る。
 灰色はチェックしたケースで通らない部分、青は通る部分と選んだ箱、赤はエラー応答のステップ、`throw`、エラーの矢印である。
+PR の地図の札（次の節）は、この 3 色を使わない。
+
+## PR の地図: 変わった関数と変更メモ
+
+PR の地図は、その PR が変えた関数を見分けて札を付け、PR が足した変更メモ（[changes/](changes/README.md)）の説明を表示する。
+最初に開くのは「このPRの変更」のページ（`#<framework>--changes`）である。
+変えた関数を「足した」「コードを変えた」「別のファイルへ移した」「JSDoc だけ変えた」「消した」に分けて並べ、それぞれに変更メモの説明を添える。
+横には札の付くエンドポイントを、コードの変更が届くものから並べる。
+
+札は図の 3 色を使わず、灰色の濃淡で示す。
+
+- `追加` `変更`: その関数を足した、またはコードを変えた。関数の処理の流れでは、変えた行の箱（引数を変えたときは開始の箱）に `変更` が付く
+- `中で変更`: その箱から呼ぶ関数（その先を含む）のコードを変えた。エンドポイントの図から、変えた関数までたどれる
+- `説明` `移動` `メモ`: JSDoc だけ変えた、コードはそのままで別のファイルへ移した、コードは変えていないが変更メモが説明している
+
+関数のページでは、変更の種類と変更メモの説明の下に差分（「差分を見る」）を開ける。
+ステップの詳細と関数のページの横には、そこから呼ぶ関数のうちコードを変えたものを、間に挟まる関数とともに並べる。
+エンドポイントの画面には、そのエンドポイントのファイル（Next.js の `route.ts`、Hono の `pipeline.ts`）でこの PR が変えた関数も並べる。
+ブロックの印の無い Route Handler では、ステップがどの関数を呼ぶかを読めず、ステップに札が付かないためである。
+
+変わった関数は、地図のビルドが作業ツリーと base の分岐点（`git merge-base <MAP_BASE> HEAD`）を比べて見つける。
+変わったファイルを関数カタログと同じ読み方で読み、関数ごとに本文と JSDoc を比べるので、まわりの行がずれただけの関数は変わったことにならない。
+PR では `map-preview.yml` が `MAP_BASE=origin/<base ブランチ>` を渡し、PR のコメントにも変わった関数と説明の表を載せる。
 
 ## データとビルド
 
@@ -47,16 +70,21 @@ React + Vite の静的ページで、Cloudflare Workers に静的アセットと
 段落の中の改行は、日本語どうしのあいだでは空白を入れずにつなぐので、JSDoc は一文一行で書いてよい（`packages/cli/src/extract/prose.ts`）。
 ライブラリの JSDoc の `{@link 名前}` は、地図では `` `名前` `` として表示する。
 
+`MAP_BASE`（git のリビジョン）を渡すと、その分岐点からの変更（`scripts/changes.mjs`。変わった関数、関数ごとの差分、変更メモの説明）も書く。
+同じ内容を Markdown で `public/data/changes.md` に書き、PR のコメントがそれを引用する。
+`MAP_PR`、`MAP_PR_TITLE`、`MAP_PR_URL` は、ページに出す PR の番号、タイトル、URL である。
+
 ```bash
 # ルートで: CLI をビルドしてから地図をビルドする（dist/ に静的ページ）
 pnpm run build:map
 
 # このディレクトリで
 pnpm run dev              # データを作って Vite の開発サーバー（http://127.0.0.1:3610）
+MAP_BASE=origin/main pnpm run dev   # origin/main からの変更（コミットしていないものを含む）に札を付けた地図
 pnpm run build            # データを作って dist/ にビルド
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
 pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらない）
-pnpm test                 # 純粋な部分（構成の絞り込み、ケース、図のレイアウト、呼び出し元、ハッシュ、検索）のテスト
+pnpm test                 # 純粋な部分（構成の絞り込み、ケース、図のレイアウト、呼び出し元、ハッシュ、検索、変更の札）と、変更を集める scripts/changes.mjs のテスト
 ```
 
 `wrangler deploy` は `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID`（または `wrangler login`）を使う。Worker の名前は `wrangler.jsonc` の `name` で変える。
@@ -65,7 +93,7 @@ pnpm test                 # 純粋な部分（構成の絞り込み、ケース�
 
 `.github/workflows/map-preview.yml` が、リポジトリのシークレット `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` で次を行う。
 
-- **PR**（opened / synchronize / reopened）: その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持つ隔離されたデプロイで、push のたびに同じ URL が新しくなるので、複数の PR を同時に別々の状態で見られる。URL は PR のコメントに書く（push ごとに同じコメントを書き換える）
+- **PR**（opened / synchronize / reopened）: その PR のコードから地図をビルドし、同じ Worker の **Worker Preview** `pr-<番号>`（`wrangler preview --name pr-<番号>`）を作る・更新する。PR ごとに固定の URL を持つ隔離されたデプロイで、push のたびに同じ URL が新しくなるので、複数の PR を同時に別々の状態で見られる。URL は PR のコメントに書く（push ごとに同じコメントを書き換える）。地図とコメントには、その PR が変えた関数と変更メモの説明が載る（上の「PR の地図」）
 - **PR を閉じた**: その Preview を `wrangler preview delete --name pr-<番号>` で消す
 - **main への push**: `wrangler deploy` で本番（いまは `https://maronn-oidc-map.<subdomain>.workers.dev`。独自ドメインは後で）を更新する
 
@@ -76,6 +104,9 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/lib/graph.ts`: ケースの導出、チェックしたケースが使う箱と矢印、図の座標。DOM に触らない
 - `src/lib/diagram.ts`: エンドポイントと関数を同じ図の形にし、箱に書く 2 行（何をするか）を決める
 - `src/lib/model.ts`: 機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
-- `src/lib/hash.ts`: URL のハッシュ（`#hono--token--authenticate-client`、`#hono--fn--verifyClientSecret`）
-- `src/components/`: エンドポイントの画面と関数のページ、図、ケースの選択、ステップの詳細、左の一覧、検索
+- `src/lib/hash.ts`: URL のハッシュ（`#hono--token--authenticate-client`、`#hono--fn--verifyClientSecret`、`#hono--changes`）
+- `src/lib/changes.ts`: PR の変更の札（ステップ、処理の流れの箱、エンドポイント）、そこから呼ぶ変わった関数、差分の行番号、変更メモの本文
+- `src/components/`: エンドポイントの画面と関数のページ、図、ケースの選択、ステップの詳細、左の一覧、検索、このPRの変更のページ
+- `scripts/changes.mjs`: 地図のビルドが PR の変更を集める（git の差分、関数ごとの比較、変更メモ）
+- `changes/`: PR ごとの変更メモ（[書き方](changes/README.md)）
 - `src/types.ts`: `data/map.json` の形（CLI の `explain/map.ts`、`flow/types.ts`、`extract/function-flow.ts` と同じ）

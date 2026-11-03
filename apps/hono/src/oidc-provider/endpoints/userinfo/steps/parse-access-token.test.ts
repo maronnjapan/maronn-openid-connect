@@ -18,6 +18,13 @@ describe('parseUserInfoRequest', () => {
 
       expect(await parseUserInfoRequest(c)).toBe('Token-ABC');
     });
+
+    // RFC 6750 §2.1: credentials = "Bearer" 1*SP b64token — one or more spaces follow the scheme.
+    it('should read the token after several spaces following the scheme', async () => {
+      const c = contextOf(requestTo('/userinfo', { headers: { Authorization: 'Bearer   token-1' } }));
+
+      expect(await parseUserInfoRequest(c)).toBe('token-1');
+    });
   });
 
   describe('Form body', () => {

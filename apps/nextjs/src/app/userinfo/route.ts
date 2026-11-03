@@ -32,6 +32,7 @@ import {
   clientCors,
   corsPreflight,
   noStoreJson,
+  readBearerToken,
   signingKeysUnavailable,
   withCors,
 } from '../_oidc-provider/http';
@@ -212,14 +213,7 @@ async function signedUserInfo(
  * 呼び出し側は `methodCount` を見て、複数の方法を使ったリクエストを拒否できる。
  */
 async function extractAccessToken(request: Request): Promise<{ token: string; methodCount: number }> {
-  const authHeader = request.headers.get('Authorization') ?? '';
-  // HTTP の認証スキームは大文字と小文字を区別しないので、`Bearer` のスキームは大文字と小文字を区別せずに照合する（RFC 7235 §2.1）。
-  // トークンの値は変えずにそのまま使う。
-  const spaceIndex = authHeader.indexOf(' ');
-  const headerToken =
-    spaceIndex !== -1 && authHeader.slice(0, spaceIndex).toLowerCase() === 'bearer'
-      ? authHeader.slice(spaceIndex + 1)
-      : '';
+  const headerToken = readBearerToken(request.headers.get('Authorization') ?? '');
 
   let bodyToken = '';
   if (request.method === 'POST') {

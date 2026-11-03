@@ -91,7 +91,7 @@ jobs:
 
       - name: Comment the Preview on the pull request
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
           PREVIEW_MODE: ${{ steps.preview.outputs.mode }}
@@ -160,7 +160,7 @@ jobs:
         run: node .github/scripts/map-preview.mjs delete --pr "${{ github.event.pull_request.number }}"
 
       - name: Note the removal on the pull request
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           NOTE: ${{ steps.remove.outputs.note }}
         with:

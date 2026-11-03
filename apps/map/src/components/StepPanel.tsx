@@ -3,6 +3,7 @@ import { changesOfStep, type ChangeIndex } from '../lib/changes';
 import { generatedWhen, locationOf, memberOfCall } from '../lib/model';
 import { ChangeDetail, ReachedList } from './ChangeParts';
 import { Chips, Description, Facts } from './Parts';
+import { DetailDrawer } from './DetailDrawer';
 
 export interface StepPanelProps {
   data: MapData;
@@ -63,13 +64,8 @@ export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFuncti
   const own = card === undefined ? undefined : changes?.byId.get(card.id);
   const below = changesOfStep(changes, data, step);
   return (
-    <aside className="side-panel" aria-label="ステップの詳細">
-      <div className="panel-head">
-        <h3>{step.label}</h3>
-        <button type="button" className="icon" onClick={onClose} aria-label="ステップの詳細を閉じる">
-          ×
-        </button>
-      </div>
+    <DetailDrawer title={`${step.label} — ステップの詳細`} onClose={onClose}>
+      {card ? <p className="mono">{card.name}()</p> : null}
       {card ? (
         <Description summary={card.summary} description={card.description} />
       ) : (
@@ -128,6 +124,6 @@ export function StepPanel({ data, changes, endpoint, step, onClose, onOpenFuncti
         <br />
         <span className="mono">{card ? locationOf(card) : (step.module ?? '')}</span>
       </p>
-    </aside>
+    </DetailDrawer>
   );
 }

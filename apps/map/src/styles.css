@@ -131,7 +131,7 @@ h1, h2, h3, h4 { margin: 0; }
 /* ---- the work area: the diagram, and a column beside it */
 .work { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .work.with-panel { grid-template-columns: minmax(0, 1fr) 340px; }
-.canvas { overflow: auto; min-height: 0; min-width: 0; position: relative; }
+.canvas { overflow: hidden; min-height: 0; min-width: 0; position: relative; display: flex; flex-direction: column; }
 .side-panel { overflow: auto; min-height: 0; background: var(--surface); border-left: 1px solid var(--line); padding: 12px 14px 24px; display: flex; flex-direction: column; gap: 12px; }
 .side-panel h3 { font-size: 15px; font-weight: 600; }
 .side-panel h4 { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
@@ -152,10 +152,18 @@ h1, h2, h3, h4 { margin: 0; }
 .row:hover { border-color: var(--accent); background: var(--accent-soft); }
 .row-title { font-size: 13.5px; overflow-wrap: anywhere; }
 .row-text { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
-.member-note { position: sticky; left: 16px; bottom: 12px; margin: 0 16px 16px; max-width: 520px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); }
+.member-note { flex: none; margin: 8px 16px; max-width: 520px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); }
 
 /* ---- the diagram */
-.diagram { display: block; font-family: var(--font-ui); margin: 4px 0 24px; }
+.diagram-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.diagram-tools { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; }
+.diagram-tools > button, .diagram-zoom button { border: 1px solid var(--line); border-radius: 4px; background: var(--surface); padding: 3px 8px; cursor: pointer; }
+.diagram-tools > button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.diagram-zoom { display: flex; gap: 3px; }
+.diagram-zoom button:nth-child(2) { min-width: 52px; font-variant-numeric: tabular-nums; }
+.diagram-tools button:disabled { opacity: 0.4; cursor: default; }
+.diagram-viewport { flex: 1; min-height: 0; overflow: auto; }
+.diagram { display: block; max-width: none; font-family: var(--font-ui); margin: 12px auto; }
 .diagram .box .frame { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 .diagram .box .title { font-size: 12.5px; font-weight: 600; fill: var(--fg); }
 .diagram .box .sub { font-size: 11.5px; fill: var(--muted); }
@@ -171,6 +179,7 @@ h1, h2, h3, h4 { margin: 0; }
 .diagram .box.clickable:hover .frame { stroke-width: 2.4; }
 .diagram .box text { pointer-events: none; }
 .diagram .edge path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.diagram .edge-caption rect { fill: var(--bg); }
 .diagram .edge.error path { stroke: var(--danger); stroke-dasharray: 5 4; }
 .diagram .head.on { fill: var(--accent); }
 .diagram .head.error { fill: var(--danger); }

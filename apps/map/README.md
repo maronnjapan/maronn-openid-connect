@@ -11,6 +11,15 @@
 最初は先頭のケースだけをチェックしているので、すべての矢印が一度に出ることはない。
 「エラー時」をチェックすると、表示中のステップからエラー応答のステップへの矢印が加わる。
 
+図は接続関係に沿って自動配置し、分岐先を横に並べ、合流先をその先に置く。
+途中のステップを飛ばす矢印や前のステップへ戻る矢印には、箱を避ける経路を割り当てる。
+ケースを切り替えても、箱の位置と図の大きさは変わらない。
+
+図の上部で「縦方向」と「横方向」を切り替えられる。
+最初は図を表示領域の幅に合わせ、拡大縮小ボタンと「幅に合わせる」「全体を表示」で縮尺を変える。
+縮尺の数値を押すと 100% に戻り、表示領域より大きな図はスクロールして読める。
+これらの操作は関数のページでも共通である。
+
 ステップを選ぶと、図の横にそのステップの詳細を開く。
 詳細はステップの振る舞いから並べる。
 ステップの関数の JSDoc の 1 行目、ステップが受け取る値と次へ渡す値、失敗するときのエラー、中で呼ぶ関数（実行順、各行にコードのコメントか呼び先の JSDoc）である。
@@ -85,6 +94,9 @@ pnpm run build            # データを作って dist/ にビルド
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
 pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらない）
 pnpm test                 # 純粋な部分（構成の絞り込み、ケース、図のレイアウト、呼び出し元、ハッシュ、検索、変更の札）と、変更を集める scripts/changes.mjs のテスト
+
+# ルートで: 地図をビルドし、PC 幅とスマートフォン幅の表示操作を Chromium で検証
+pnpm run test:e2e:map
 ```
 
 `wrangler deploy` は `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID`（または `wrangler login`）を使う。Worker の名前は `wrangler.jsonc` の `name` で変える。
@@ -101,7 +113,7 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 
 ## 構成
 
-- `src/lib/graph.ts`: ケースの導出、チェックしたケースが使う箱と矢印、図の座標。DOM に触らない
+- `src/lib/graph.ts`: ケースの導出、チェックしたケースが使う箱と矢印、Dagre による図の自動配置。DOM に触らない
 - `src/lib/diagram.ts`: エンドポイントと関数を同じ図の形にし、箱に書く 2 行（何をするか）を決める
 - `src/lib/model.ts`: 機能の絞り込み、`generate` のコマンドライン、関数に届くステップと呼び出し元、検索
 - `src/lib/hash.ts`: URL のハッシュ（`#hono--token--authenticate-client`、`#hono--fn--verifyClientSecret`、`#hono--changes`）

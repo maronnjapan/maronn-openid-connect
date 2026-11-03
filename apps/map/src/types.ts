@@ -22,7 +22,9 @@ export type FunctionKind = StepKind | 'other';
 /** One box of the flow of a function. */
 export interface FunctionFlowNode {
   id: string;
-  kind: 'start' | 'call' | 'dynamic' | 'return' | 'throw' | 'end';
+  kind: 'start' | 'condition' | 'call' | 'dynamic' | 'return' | 'throw' | 'end';
+  /** An endpoint implementation's call of this step. */
+  step?: string;
   label: string;
   /** For a call: the id of the card of the callee. */
   callee?: string;
@@ -115,6 +117,10 @@ export interface FlowEndpoint {
   source?: string;
   steps: FlowStep[];
   edges: FlowEdge[];
+  /** Implementation flows for each enabled combination of step features. */
+  controlFlows?: Record<string, FunctionFlow>;
+  /** The implementation flow selected by the current feature configuration. */
+  controlFlow?: FunctionFlow;
 }
 
 export interface OpFlow {

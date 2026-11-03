@@ -36,11 +36,25 @@ function edgeText(label: string | undefined): string | undefined {
     .replace(/^else$/, 'それ以外')
     .replace(/ › else$/, ' › それ以外')
     .replace(/^catch$/, '例外が起きたとき')
+    .replace(/^true$/, '成立')
+    .replace(/^false$/, '不成立')
+    .replace(/^nullish$/, 'null または undefined')
+    .replace(/^defined$/, 'null・undefined 以外')
     .replace(/^catch › /, '例外が起きたとき › ');
 }
 
 /** The steps of an endpoint and their arrows. */
 export function endpointDiagram(endpoint: FlowEndpoint, data: MapData): Diagram {
+  if (endpoint.controlFlow !== undefined) {
+    const card: FunctionCard = { id: endpoint.id, name: endpoint.label, package: '', module: '', line: 1, exported: false, kind: 'other', summary: endpoint.label, calls: [], calledBy: [], flow: endpoint.controlFlow };
+    const diagram = functionDiagram(card, data) as Diagram;
+    const byId = new Map(endpoint.controlFlow.nodes.map((node) => [node.id, node]));
+    const nodes = diagram.nodes.map((node) => {
+      const step = endpoint.steps.find((step) => step.id === byId.get(node.id)?.step);
+      return step === undefined ? node : { ...node, title: step.label, subtitle: `${step.function}()`, target: { step: step.id } };
+    });
+    return finishEndpoint(endpoint.id, nodes, diagram.edges);
+  }
   const errorSteps = new Set(endpoint.edges.filter((edge) => edge.kind === 'error').map((edge) => edge.to));
   const nodes: DiagramNode[] = endpoint.steps.map((step) => {
     const feature = step.feature === undefined ? '' : `（${featureOf(data.features, step.feature)?.id ?? step.feature}）`;
@@ -55,12 +69,59 @@ export function endpointDiagram(endpoint: FlowEndpoint, data: MapData): Diagram 
   });
   const edges: GraphEdge[] = endpoint.edges.map((edge) => ({ ...edge }));
   const label = (id: string) => endpoint.steps.find((step) => step.id === id)?.label ?? id;
+  // Even metadata-only endpoints keep a distinct error response per source.
+  const separate = separateErrors(nodes, edges);
+  return { key: `endpoint:${endpoint.id}`, ...separate, cases: deriveCases(separate.nodes, separate.edges, { errors: 'modifier', nodeLabel: label, nameBySink: false }) };
+}
+
+/** Keep each failed step's response separate, including the conditions inside its catch handler. */
+function separateErrors(nodes: DiagramNode[], edges: GraphEdge[]): { nodes: DiagramNode[]; edges: GraphEdge[] } {
+  const incoming = new Set(edges.map((edge) => edge.to));
+  const normal = new Set(nodes.filter((node) => !incoming.has(node.id)).map((node) => node.id));
+  const queue = [...normal];
+  while (queue.length > 0) {
+    const from = queue.pop();
+    for (const edge of edges) if (edge.from === from && edge.kind !== 'error' && !normal.has(edge.to)) {
+      normal.add(edge.to);
+      queue.push(edge.to);
+    }
+  }
+  const exclusive = new Set<string>();
+  const copies: DiagramNode[] = [];
+  const copiedEdges: GraphEdge[] = [];
+  edges.forEach((error, index) => {
+    if (error.kind !== 'error' || !normal.has(error.from) || normal.has(error.to)) return;
+    const region = new Set<string>();
+    const visit = (id: string) => {
+      if (normal.has(id) || region.has(id)) return;
+      region.add(id);
+      for (const edge of edges) if (edge.from === id) visit(edge.to);
+    };
+    visit(error.to);
+    const rename = (id: string) => region.has(id) ? `${id}:error:${index}` : id;
+    const source = nodes.find((node) => node.id === error.from)?.title ?? error.from;
+    for (const node of nodes) if (region.has(node.id)) {
+      exclusive.add(node.id);
+      copies.push({ ...node, id: rename(node.id), tone: 'error', subtitle: `${source} でのエラー · ${node.subtitle}` });
+    }
+    copiedEdges.push({ ...error, to: rename(error.to) });
+    for (const edge of edges) if (region.has(edge.from)) copiedEdges.push({ ...edge, from: rename(edge.from), to: rename(edge.to) });
+  });
+  // Only remove handlers that were actually copied; unrelated error paths stay intact.
   return {
-    key: `endpoint:${endpoint.id}`,
-    nodes,
-    edges,
-    cases: deriveCases(nodes, edges, { errors: 'modifier', nodeLabel: label, nameBySink: false }),
+    nodes: [...nodes.filter((node) => !exclusive.has(node.id)), ...copies],
+    edges: [...edges.filter((edge) => !exclusive.has(edge.from) && !exclusive.has(edge.to)), ...copiedEdges],
   };
+}
+
+/** Derive endpoint cases from implementation branches and their separate error responses. */
+function finishEndpoint(id: string, nodes: DiagramNode[], edges: GraphEdge[]): Diagram {
+  const separate = separateErrors(nodes, edges);
+  const label = (id: string) => {
+    const node = separate.nodes.find((node) => node.id === id);
+    return node?.tone === 'error' ? `${node.title}（${node.subtitle}）` : node?.title ?? id;
+  };
+  return { key: `endpoint:${id}`, ...separate, cases: deriveCases(separate.nodes, separate.edges, { errors: 'path', nodeLabel: label, nameBySink: true }) };
 }
 
 /** The flow inside a function; undefined for a function without one. */
@@ -71,6 +132,8 @@ export function functionDiagram(card: FunctionCard, data: MapData): Diagram | un
     switch (node.kind) {
       case 'start':
         return { id: node.id, title: node.label, subtitle: card.summary, tone: 'start' };
+      case 'condition':
+        return { id: node.id, title: node.label, subtitle: '条件によって処理を分ける', tone: 'normal' };
       case 'call': {
         const callee = node.callee === undefined ? undefined : data.functions[node.callee];
         const diagramNode: DiagramNode = { id: node.id, title: `${node.label}()`, subtitle: node.note ?? callee?.summary ?? '', tone: 'normal' };
@@ -93,7 +156,9 @@ export function functionDiagram(card: FunctionCard, data: MapData): Diagram | un
   });
   const edges: GraphEdge[] = flow.edges.map((edge) => {
     const text = edgeText(edge.label);
-    return text === undefined ? { from: edge.from, to: edge.to, kind: edge.kind } : { from: edge.from, to: edge.to, label: text, kind: edge.kind };
+    const condition = flow.nodes.find((node) => node.id === edge.from && node.kind === 'condition');
+    const label = condition === undefined || text === undefined ? text : `${condition.label}: ${text}`;
+    return label === undefined ? { from: edge.from, to: edge.to, kind: edge.kind } : { from: edge.from, to: edge.to, label, kind: edge.kind };
   });
   const title = (id: string) => {
     const node = nodes.find((candidate) => candidate.id === id);

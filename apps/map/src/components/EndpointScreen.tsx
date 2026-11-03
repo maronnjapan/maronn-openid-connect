@@ -39,12 +39,14 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
   const diagram = useMemo(() => endpointDiagram(endpoint, data), [endpoint, data]);
   const marks = useMemo(() => {
     const byStep = new Map<string, Mark>();
-    for (const step of endpoint.steps) {
+    for (const node of diagram.nodes) {
+      const step = endpoint.steps.find((step) => node.target !== undefined && 'step' in node.target && node.target.step === step.id);
+      if (step === undefined) continue;
       const mark = stepMark(changes, data, step);
-      if (mark !== undefined) byStep.set(step.id, mark);
+      if (mark !== undefined) byStep.set(node.id, mark);
     }
     return byStep;
-  }, [changes, data, endpoint]);
+  }, [changes, data, endpoint, diagram]);
   const fileChanges = useMemo(() => changesInFile(changes, endpoint), [changes, endpoint]);
   const labels = useMemo(() => checked ?? new Set(diagram.cases.slice(0, 1).map((flowCase) => flowCase.label)), [checked, diagram]);
   const active = useMemo(() => {
@@ -54,6 +56,7 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
   const step = endpoint.steps.find((candidate) => candidate.id === selected);
   const onSelect = (node: DiagramNode) => {
     if (node.target !== undefined && 'step' in node.target) onSelectStep(node.target.step === selected ? null : node.target.step);
+    if (node.target !== undefined && 'fn' in node.target) onOpenFunction(node.target.fn);
   };
   return (
     <section className="screen" aria-label={endpoint.label}>

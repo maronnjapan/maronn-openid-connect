@@ -43,12 +43,39 @@ const data: MapData = {
 };
 
 describe('endpointDiagram', () => {
+  it('should draw a different error response for each failed step and retain step navigation', () => {
+    const diagram = endpointDiagram({ ...endpoint, edges: [...endpoint.edges, { from: 'issue-refresh-token', to: 'respond-error', kind: 'error' }] }, data);
+    const failures = diagram.edges.filter((edge) => edge.kind === 'error');
+    expect(new Set(failures.map((edge) => edge.to)).size).toBe(2);
+    expect(diagram.nodes.filter((node) => node.tone === 'error').map((node) => node.target)).toEqual([{ step: 'respond-error' }, { step: 'respond-error' }]);
+    expect(diagram.nodes.filter((node) => node.tone === 'error').map((node) => node.subtitle)).toEqual(['Parse the request でのエラー · respondError()', 'Mint the refresh token（refresh-token） でのエラー · respondError()']);
+  });
+
+  it('should use implementation conditions and early returns instead of the metadata chain', () => {
+    const controlFlow = { nodes: [
+      { id: 's', kind: 'start' as const, label: 'POST()', line: 1 },
+      { id: 'p', kind: 'call' as const, label: 'parse', step: 'parse-request', line: 2 },
+      { id: 'c', kind: 'condition' as const, label: '!ok', line: 3 },
+      { id: 'r', kind: 'return' as const, label: 'return badRequest', line: 3 },
+      { id: 'i', kind: 'call' as const, label: 'issue', step: 'issue-refresh-token', line: 4 },
+    ], edges: [
+      { from: 's', to: 'p', kind: 'flow' as const },
+      { from: 'p', to: 'c', kind: 'flow' as const },
+      { from: 'c', to: 'r', kind: 'branch' as const, label: 'true' },
+      { from: 'c', to: 'i', kind: 'branch' as const, label: 'false' },
+    ] };
+    const diagram = endpointDiagram({ ...endpoint, controlFlow }, data);
+    expect(diagram.edges.some((edge) => edge.from === 'r')).toBe(false);
+    expect(diagram.cases.map((flowCase) => flowCase.label)).toEqual(['!ok: 成立 → return badRequest', '!ok: 不成立 → Mint the refresh token']);
+    expect(diagram.nodes.find((node) => node.id === 'i')?.target).toEqual({ step: 'issue-refresh-token' });
+  });
+
   it('should make a box of each step, naming the feature that adds it, and mark the error step', () => {
     const diagram = endpointDiagram(endpoint, data);
     expect(diagram.nodes.map((node) => [node.title, node.subtitle, node.tone])).toEqual([
       ['Parse the request', 'parseTokenRequest()', 'normal'],
       ['Mint the refresh token（refresh-token）', 'issueRefreshToken()', 'normal'],
-      ['Respond with the error', 'respondError()', 'error'],
+      ['Respond with the error', 'Parse the request でのエラー · respondError()', 'error'],
     ]);
     expect(diagram.cases.map((flowCase) => flowCase.label)).toEqual(['標準の流れ', 'エラー時']);
   });

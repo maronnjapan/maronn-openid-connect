@@ -95,7 +95,8 @@ export function FlowDiagram({ diagram, active, selected, label, marks, onSelect 
           {layout.boxes.map((box) => {
             const node = byId.get(box.id) as DiagramNode;
             const on = active.nodes.has(node.id);
-            const state = `${on ? 'on' : 'off'}${node.id === selected ? ' selected' : ''}`;
+            const isSelected = node.id === selected || (node.target !== undefined && 'step' in node.target && node.target.step === selected);
+            const state = `${on ? 'on' : 'off'}${isSelected ? ' selected' : ''}`;
             const clickable = node.target !== undefined;
             const mark = marks?.get(node.id);
             const badge = mark === undefined ? 0 : badgeWidth(mark);

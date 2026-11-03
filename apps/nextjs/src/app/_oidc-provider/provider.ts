@@ -69,8 +69,11 @@ export const config: ProviderConfig = createProviderConfig({
 });
 
 /**
- * A setting of seconds from an environment variable: a non-negative integer,
- * 0 included. An unset variable sets nothing, so the default of config.ts stays.
+ * 環境変数 `variable` の値（0 を含む 0 以上の整数）を、設定の `field` の秒数にしたオブジェクトを返し、整数でなければ `Error` を投げる。
+ *
+ * 環境変数がないか空のときは空のオブジェクトを返すので、config.ts の既定値がそのまま残る。
+ *
+ * @throws {Error} 値が 0 以上の整数として読めないとき
  */
 function secondsFromEnvironment<Name extends keyof ProviderConfig>(
   field: Name,

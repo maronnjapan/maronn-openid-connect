@@ -75,6 +75,7 @@ import type { SqlDatabase } from './database';
  * - `client_auths` の行がないコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
  * - `client_redirect_uris` の行は `redirectUris` にする。
  * - `client_grant_types`、`client_scopes`、`client_response_types` の行は、あればそれぞれ `grantTypes`、`scope`、`responseTypes` にし、なければ設定せずに既定の扱いに任せる。
+ * - `client_jwks_uris` と `client_request_object_signing_algs` の行は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違う `client_auths` の行を持つクライアントを読んだとき
  */
@@ -308,7 +309,7 @@ export async function registerClient(
     }
   }
 
-  // One row per client in each of these tables (client_id is the primary key).
+  // これらのテーブルは、クライアントごとに 1 行を持つ（`client_id` が主キー）。
   const singleValues: Array<[table: string, column: string, value: string | undefined]> = [
     ['client_jwks_uris', 'value', client.jwksUri],
     ['client_request_object_signing_algs', 'alg', client.requestObjectSigningAlg],

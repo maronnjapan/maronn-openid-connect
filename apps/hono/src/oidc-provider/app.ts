@@ -300,6 +300,7 @@ export function createApp(options: OidcProviderOptions): Hono<{ Variables: Recor
  *
  * `c.set()` で入れるのは、設定、用途ごとの署名鍵の集合、ストア、ストアの上に作ったリゾルバ、クライアントのリゾルバ、ビュー、各機能のコンテキストのフックが返す値などである。
  * オプションでリゾルバやストアが渡されていれば、`db/` のものの代わりにそれを使う。
+ * クライアントの鍵のリゾルバ（`clientKeyResolver`）は、渡されたものも `db/` のものも、`jwksUri` を持つクライアントに `jwks_uri` の鍵を返すよう包む（client-jwks-uri.ts の `withRegisteredClientJwksUri()`）。
  *
  * 署名鍵を読み込めないとき、または読み込んだ集合が `validateSigningKeySet()` の検証に通らないときは、何も入れずに `server_error` の 503 のレスポンスを返す。
  * 呼び出し側は、そのレスポンスで応答する。
@@ -336,8 +337,7 @@ export async function setRequestContext(c: any, options: OidcProviderOptions): P
   c.set('config', createProviderConfig(options.config));
   c.set('clientResolver', clientResolver);
   c.set('tokenClientResolver', options.tokenClientResolver ?? clientResolver);
-  // The jwks_uri of a client is read through the clientResolver and the
-  // config set above, whichever resolver holds the keys of the others.
+  // クライアントの `jwks_uri` は、上で置いた `clientResolver` と `config` で読む。ほかのクライアントの鍵を持つのが、渡されたリゾルバでも db/ のリゾルバでも同じである。
   c.set(
     'clientKeyResolver',
     withRegisteredClientJwksUri(c, options.clientKeyResolver ?? createClientKeyResolver(createDatabase(c)), {

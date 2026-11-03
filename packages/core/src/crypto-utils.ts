@@ -438,7 +438,11 @@ export function extractAlgorithmParamsFromJwk(
   throw new Error(`Unsupported kty: ${jwk.kty ?? '(missing)'}`);
 }
 
-/** RS256 / RS384 / RS512 のハッシュ（RFC 7518 §3.3）。ほかの alg は undefined。 */
+/**
+ * `alg` が RS256、RS384、RS512 なら、その署名に使うハッシュの名前を返し、ほかの alg なら `undefined` を返す。
+ *
+ * @spec RFC 7518 §3.3
+ */
 function rsaSigningHashOf(alg: string): 'SHA-256' | 'SHA-384' | 'SHA-512' | undefined {
   switch (alg) {
     case 'RS256':
@@ -452,7 +456,11 @@ function rsaSigningHashOf(alg: string): 'SHA-256' | 'SHA-384' | 'SHA-512' | unde
   }
 }
 
-/** ES256 / ES384 / ES512 の曲線（RFC 7518 §3.4）。ほかの alg は undefined。 */
+/**
+ * `alg` が ES256、ES384、ES512 なら、その署名に使う曲線の名前を返し、ほかの alg なら `undefined` を返す。
+ *
+ * @spec RFC 7518 §3.4
+ */
 function ecSigningCurveOf(alg: string): 'P-256' | 'P-384' | 'P-521' | undefined {
   switch (alg) {
     case 'ES256':
@@ -466,7 +474,11 @@ function ecSigningCurveOf(alg: string): 'P-256' | 'P-384' | 'P-521' | undefined 
   }
 }
 
-/** 曲線で署名する ES 系の alg（RFC 7518 §3.4）。ほかの曲線は undefined。 */
+/**
+ * 曲線 `crv` が P-256、P-384、P-521 なら、その曲線で署名する ES256、ES384、ES512 を返し、ほかの曲線なら `undefined` を返す。
+ *
+ * @spec RFC 7518 §3.4
+ */
 function ecSigningAlgOfCurve(crv: string | undefined): 'ES256' | 'ES384' | 'ES512' | undefined {
   switch (crv) {
     case 'P-256':
@@ -486,20 +498,19 @@ function ecSigningAlgOfCurve(crv: string | undefined): 'ES256' | 'ES384' | 'ES51
 const MIN_RSA_VERIFICATION_MODULUS_BITS = 2048;
 
 /**
- * JWK が使える唯一の JWS 署名アルゴリズムを決める純粋関数。
+ * JWK で署名を検証してよい、ただ一つの JWS の署名アルゴリズムを返し、決められなければ `undefined` を返す。
  *
- * RFC 8725 §3.1: 各鍵はちょうど 1 つのアルゴリズムで使い、それを処理時に確かめなければならない
- * （MUST）。署名を検証する側は、JOSE ヘッダーの `alg` がこの関数の返す値と一致する鍵だけを使う。
+ * 鍵はちょうど一つのアルゴリズムで使い、それを処理のときに確かめなければならない（RFC 8725 §3.1 の MUST）。
+ * 署名を検証する側は、JOSE ヘッダーの `alg` がこの関数の返す値と一致する鍵だけを使う。
+ * - RSA の鍵: `alg` が RS256、RS384、RS512 ならその値を、`alg` がなければ RS256 を返し、ほかの `alg`（PS256 など）なら `undefined` を返す。`alg` は省略できる（RFC 7517 §4.4）ので、省く JWK Set が多い。DCR の `validateJwks()` の正規化と同じ規則である
+ * - EC の鍵: `crv` が P-256、P-384、P-521 ならそれぞれ ES256、ES384、ES512 を返し、`alg` があって `crv` と食い違えば `undefined` を返す
+ * - ほかの鍵（`oct`、`OKP` など）: `undefined` を返す
  *
- * - RSA 鍵: `alg` が RS256 / RS384 / RS512 ならその値。`alg` が無ければ RS256
- *   （`alg` は OPTIONAL（RFC 7517 §4.4）で、省く JWK Set が多いため。DCR の
- *   `validateJwks()` の正規化と同じ規則）。それ以外の `alg`（PS256 など）は undefined
- * - EC 鍵: `crv` が P-256 / P-384 / P-521 ならそれぞれ ES256 / ES384 / ES512（RFC 7518 §3.4）。
- *   `alg` があって `crv` と食い違えば undefined
- * - ほかの鍵（`oct`、`OKP` など）は undefined
- *
+ * @spec RFC 8725 §3.1
+ * @spec RFC 7517 §4.4
+ * @spec RFC 7518 §3.4
  * @param jwk 公開鍵の JWK
- * @returns その鍵で検証してよい alg。決められなければ undefined
+ * @returns その鍵で検証してよい alg。決められなければ `undefined`
  */
 export function resolveJwkSigningAlg(jwk: webcrypto.JsonWebKey): string | undefined {
   if (jwk.kty === 'RSA') {
@@ -519,22 +530,23 @@ export function resolveJwkSigningAlg(jwk: webcrypto.JsonWebKey): string | undefi
 }
 
 /**
- * JWS の `alg` のとおりに、公開鍵の JWK を署名検証用の CryptoKey として import する。
+ * 公開鍵の JWK を、JWS の `alg` の署名の検証にだけ使える、エクスポートできない `CryptoKey` としてインポートして返す。
  *
- * import の引数は JWK ではなく `alg` から組み立てる。RS 系は RSASSA-PKCS1-v1_5 と対応する
- * ハッシュ（RFC 7518 §3.3）、ES 系は対応する曲線の ECDSA（RFC 7518 §3.4）である。`verify()` は
- * EC の曲線からハッシュを選ぶので、曲線を alg に固定すれば検証のアルゴリズムは `alg` と一致する。
+ * インポートの引数は、JWK ではなく `alg` から組み立てる。
+ * RS 系は RSASSA-PKCS1-v1_5 と対応するハッシュ（RFC 7518 §3.3）、ES 系は対応する曲線の ECDSA（RFC 7518 §3.4）である。
+ * `verify()` は EC の曲線からハッシュを選ぶので、曲線を `alg` に固定すれば、検証のアルゴリズムは `alg` と一致する。
  *
- * - {@link resolveJwkSigningAlg} が `alg` と同じ値を返さない鍵（kty / crv / alg の食い違い、
- *   alg の無い RSA 鍵を RS384 で使う場合など）は拒否する（RFC 8725 §3.1）
- * - 2048 ビット未満の RSA 鍵は拒否する（RFC 7518 §3.3 MUST）
- * - import するのは公開鍵のメンバー（RSA は kty / n / e、EC は kty / crv / x / y）だけで、
- *   `use`、`key_ops`、秘密鍵のメンバーは渡さない
+ * {@link resolveJwkSigningAlg} が `alg` と同じ値を返さない鍵（`kty`、`crv`、`alg` の食い違いや、`alg` のない RSA の鍵を RS384 で使う場合など）は拒否する（RFC 8725 §3.1）。
+ * 2048 ビット未満の RSA の鍵も拒否する（RFC 7518 §3.3 の MUST）。
+ * インポートするのは公開鍵のメンバー（RSA は `kty`、`n`、`e`、EC は `kty`、`crv`、`x`、`y`）だけで、`use`、`key_ops`、秘密鍵のメンバーは渡さない。
  *
+ * @spec RFC 8725 §3.1
+ * @spec RFC 7518 §3.3 / §3.4
  * @param jwk 公開鍵の JWK
  * @param alg 検証する JWS の JOSE ヘッダーの `alg`
  * @returns 検証にだけ使える、エクスポートできない公開鍵
- * @throws alg と鍵が対応しない場合、RSA 鍵が短い場合、WebCrypto が鍵を受け付けない場合
+ * @throws {Error} `alg` と鍵が対応しないとき、RSA の鍵が短いとき、鍵のメンバーが欠けているとき
+ * @throws {DOMException} WebCrypto が鍵を受け付けないとき（`crypto.subtle.importKey()` が投げる）
  */
 export async function importJwkForJwsVerification(
   jwk: webcrypto.JsonWebKey,
@@ -575,7 +587,7 @@ export async function importJwkForJwsVerification(
     );
   }
 
-  // resolveJwkSigningAlg() returns RS* / ES* only, so this is unreachable.
+  // resolveJwkSigningAlg() は RS 系と ES 系しか返さないので、ここには来ない。
   throw new Error(`The JWK cannot be used with ${alg}`);
 }
 

@@ -39,12 +39,11 @@ export class ClientJwksUriError extends Error {
 }
 
 /**
- * error が {@link ClientJwksUriError} か（形で判定する）。
+ * `error` が {@link ClientJwksUriError} なら `true` を返す。
  *
- * instanceof は、core を 2 度読み込む構成で偽になる。Next.js の本番ビルドは
- * instrumentation と Route Handler を別のバンドルにするため、プロセスで共有する
- * キャッシュをどちらかの core で作ると、そのキャッシュが投げたエラーのクラスは、
- * もう一方が import したクラスと別のオブジェクトになる。
+ * クラスではなく形（`Error` で、`name` が `ClientJwksUriError`）で判定する。
+ * `instanceof` は、core を 2 度読み込む構成で偽になるからである。
+ * Next.js の本番ビルドは instrumentation と Route Handler を別のバンドルにするため、プロセスで共有するキャッシュをどちらかの core で作ると、そのキャッシュが投げたエラーのクラスは、もう一方が import したクラスと別のオブジェクトになる。
  */
 export function isClientJwksUriError(error: unknown): error is ClientJwksUriError {
   return (
@@ -89,24 +88,22 @@ export interface ClientJwksUriPolicy {
 }
 
 /**
- * `jwks_uri` が、OP が取得してよい宛先かを検査する純粋関数。
+ * `uri` が OP の取得してよい宛先なら `uri` をそのまま返し、そうでなければ `ClientJwksUriError` を投げる。
  *
- * - 絶対 URL で、2048 文字以内で、空白と制御文字を含まないこと
- * - スキームが https であること（`allowInsecure` のときは http も許す）
- * - フラグメント（空のものも含む）と userinfo を含まないこと
- * - ホストが `localhost`（`*.localhost` を含む）や、ループバック・私設・リンクローカルの
- *   IP リテラルでないこと（`allowInsecure` のときは許す）。IPv4 は `0.0.0.0/8`、`10.0.0.0/8`、
- *   `127.0.0.0/8`、`169.254.0.0/16`、`172.16.0.0/12`、`192.168.0.0/16`。IPv6 は `::/96`
- *   （`::` と `::1` を含む）、IPv4 射影（`::ffff:0:0/96`）、`fc00::/7`、`fe80::/10`
+ * 次をすべて満たす宛先だけを通す。
+ * - 絶対 URL で、2048 文字以内で、空白と制御文字を含まない
+ * - スキームが `https` である（`policy.allowInsecure` のときは `http` も通す）
+ * - フラグメント（空のものも含む）と userinfo を含まない
+ * - ホストが `localhost`（`*.localhost` を含む）や、ループバック・私設・リンクローカルの IP リテラルでない（`policy.allowInsecure` のときは通す）。IPv4 は `0.0.0.0/8`、`10.0.0.0/8`、`127.0.0.0/8`、`169.254.0.0/16`、`172.16.0.0/12`、`192.168.0.0/16`、IPv6 は `::/96`（`::` と `::1` を含む）、IPv4 射影（`::ffff:0:0/96`）、`fc00::/7`、`fe80::/10` を通さない
  *
- * ホストは WHATWG URL の解析後の値で判定するので、`0x7f.1` や `2130706433` のような別の表記も
- * `127.0.0.1` として拒否する。DNS 名の解決先は検査しない（Web 標準の API では解決結果を得られない）。
+ * 鍵の取得先を SSRF の踏み台にしないための検査である。
+ * ホストは WHATWG URL の解析後の値で判定するので、`0x7f.1` や `2130706433` のような別の表記も `127.0.0.1` として拒否する。
+ * DNS 名の解決先は検査しない（Web 標準の API では解決結果を得られない）。
  * 解決先まで縛るときは、egress プロキシ経由の fetch を注入する。
  *
- * RFC 8725 §3.10 / RFC 9101 §10.4.1: 鍵の取得先を SSRF の踏み台にしないための検査。
- *
- * @returns 検査を通った `jwks_uri`（受け取った文字列そのもの）
- * @throws {ClientJwksUriError} 検査に通らなかった場合
+ * @spec RFC 8725 §3.10
+ * @spec RFC 9101 §10.4.1
+ * @throws {ClientJwksUriError} 宛先が上のどれかを満たさないとき
  */
 export function validateClientJwksUri(uri: string, policy: ClientJwksUriPolicy = {}): string {
   if (typeof uri !== 'string' || uri.length === 0) {
@@ -115,8 +112,7 @@ export function validateClientJwksUri(uri: string, policy: ClientJwksUriPolicy =
   if (uri.length > JWKS_URI_MAX_LENGTH) {
     throw new ClientJwksUriError(`jwks_uri must be at most ${JWKS_URI_MAX_LENGTH} characters`);
   }
-  // The URL parser strips or drops some of these silently, so the URI that would
-  // be fetched could differ from the one that was registered.
+  // URL の解析はこれらの文字の一部を黙って取り除くので、取得する URI が登録した URI と食い違うおそれがある。
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0020\u007f]/.test(uri)) {
     throw new ClientJwksUriError('jwks_uri must not contain whitespace or control characters');
@@ -138,7 +134,7 @@ export function validateClientJwksUri(uri: string, policy: ClientJwksUriPolicy =
     throw new ClientJwksUriError('jwks_uri must use https');
   }
 
-  // URL.hash is empty for an empty fragment ("...#"), so look at the string.
+  // 空のフラグメント（`...#`）では `URL.hash` が空になるので、文字列で確かめる。
   if (uri.includes('#')) {
     throw new ClientJwksUriError('jwks_uri must not contain a fragment');
   }
@@ -152,7 +148,7 @@ export function validateClientJwksUri(uri: string, policy: ClientJwksUriPolicy =
   return uri;
 }
 
-/** The authority of an absolute URI as written: what follows "//" up to the path, query or fragment. */
+/** 絶対 URI の、書かれたままのオーソリティ（`//` の後ろから、パス、クエリ、フラグメントの手前まで）を返し、`//` がなければ空文字を返す。 */
 function authorityOf(uri: string): string {
   const start = uri.indexOf('//');
   if (start < 0) return '';
@@ -162,15 +158,17 @@ function authorityOf(uri: string): string {
 }
 
 /**
- * Whether a jwks_uri must not point to a URL hostname: localhost and the names
- * below it (RFC 6761 §6.3, a trailing dot ignored), and loopback, private or
- * link-local IPv4 and IPv6 literals. A bracketed host that does not parse as
- * IPv6 counts as blocked; any other name is let through, since the check sees
- * the name, not the addresses it resolves to.
+ * URL のホスト名が、`jwks_uri` に使わせない宛先なら `true` を返す。
+ *
+ * 使わせないのは、`localhost` とその下の名前（末尾のドットは無視する）と、ループバック・私設・リンクローカルの IPv4 と IPv6 のリテラルである。
+ * 角かっこで囲んだホストが IPv6 として読めないときも使わせない。
+ * ほかの名前は通す。この検査が見るのは名前で、名前の解決先ではないからである。
+ *
+ * @spec RFC 6761 §6.3
  */
 function isBlockedHost(hostname: string): boolean {
   const host = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
-  // RFC 6761 §6.3: localhost and the names below it resolve to the loopback address.
+  // `localhost` とその下の名前は、ループバックアドレスに解決される（RFC 6761 §6.3）。
   if (host === 'localhost' || host.endsWith('.localhost')) {
     return true;
   }
@@ -182,11 +180,7 @@ function isBlockedHost(hostname: string): boolean {
   return octets !== undefined && isBlockedIpv4(octets);
 }
 
-/**
- * The four octets of a dotted-decimal IPv4 address, or undefined when the
- * host is not one (fewer or more parts, more than three digits, or an octet
- * above 255).
- */
+/** ドット区切りの 10 進の IPv4 アドレスの 4 つのオクテットを返し、IPv4 アドレスでない（部分の数が違う、4 桁以上の部分がある、255 を超えるオクテットがある）ときは `undefined` を返す。 */
 function parseIpv4Octets(host: string): number[] | undefined {
   if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) {
     return undefined;
@@ -195,26 +189,22 @@ function parseIpv4Octets(host: string): number[] | undefined {
   return octets.every((octet) => octet <= 255) ? octets : undefined;
 }
 
-/**
- * Whether an IPv4 address (its octets) is in 0.0.0.0/8, 10.0.0.0/8,
- * 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12 or 192.168.0.0/16.
- */
+/** IPv4 アドレス（オクテットの配列）が `0.0.0.0/8`、`10.0.0.0/8`、`127.0.0.0/8`、`169.254.0.0/16`、`172.16.0.0/12`、`192.168.0.0/16` のどれかに入れば `true` を返す。 */
 function isBlockedIpv4([a, b]: number[]): boolean {
   return (
-    a === 0 || // 0.0.0.0/8 ("this network")
-    a === 10 || // 10.0.0.0/8 (RFC 1918)
-    a === 127 || // 127.0.0.0/8 (loopback)
-    (a === 169 && b === 254) || // 169.254.0.0/16 (link-local, cloud metadata)
-    (a === 172 && b !== undefined && b >= 16 && b <= 31) || // 172.16.0.0/12 (RFC 1918)
-    (a === 192 && b === 168) // 192.168.0.0/16 (RFC 1918)
+    a === 0 || // 0.0.0.0/8（「このネットワーク」）
+    a === 10 || // 10.0.0.0/8（RFC 1918 の私設アドレス）
+    a === 127 || // 127.0.0.0/8（ループバック）
+    (a === 169 && b === 254) || // 169.254.0.0/16（リンクローカル。クラウドのメタデータサーバーもここにある）
+    (a === 172 && b !== undefined && b >= 16 && b <= 31) || // 172.16.0.0/12（RFC 1918 の私設アドレス）
+    (a === 192 && b === 168) // 192.168.0.0/16（RFC 1918 の私設アドレス）
   );
 }
 
 /**
- * The eight 16-bit groups of an IPv6 address (without brackets), or undefined
- * when it is not one. The WHATWG URL parser already writes the host in
- * compressed hexadecimal, but a trailing dotted IPv4 part (::ffff:127.0.0.1)
- * is read too, so the check does not depend on that.
+ * 角かっこを除いた IPv6 アドレスの 8 つの 16 ビットのグループを返し、IPv6 アドレスでなければ `undefined` を返す。
+ *
+ * WHATWG URL の解析はホストを圧縮した 16 進で書くが、末尾がドット区切りの IPv4 の形（`::ffff:127.0.0.1`）も読むので、検査はその書き方に頼らない。
  */
 function parseIpv6Groups(address: string): number[] | undefined {
   let text = address.toLowerCase();
@@ -226,7 +216,7 @@ function parseIpv6Groups(address: string): number[] | undefined {
     const octets = parseIpv4Octets(last);
     if (octets === undefined) return undefined;
     tail.push((octets[0]! << 8) | octets[1]!, (octets[2]! << 8) | octets[3]!);
-    // "::ffff:" becomes "::ffff"; a bare "::" stays as it is.
+    // "::ffff:" は "::ffff" にし、"::" だけのときはそのまま残す。
     text = text.slice(0, lastColon + 1);
     if (!text.endsWith('::')) text = text.slice(0, -1);
   }
@@ -241,19 +231,15 @@ function parseIpv6Groups(address: string): number[] | undefined {
   return [...hexGroups.map((group) => parseInt(group, 16)), ...tail];
 }
 
-/**
- * Whether an IPv6 address (its eight groups) is in ::/96 (::, ::1 and the
- * IPv4-compatible addresses), ::ffff:0:0/96 (IPv4-mapped), fc00::/7 (unique
- * local) or fe80::/10 (link-local).
- */
+/** IPv6 アドレス（8 つのグループ）が `::/96`（`::`、`::1`、IPv4 互換アドレス）、`::ffff:0:0/96`（IPv4 射影）、`fc00::/7`（ユニークローカル）、`fe80::/10`（リンクローカル）のどれかに入れば `true` を返す。 */
 function isBlockedIpv6(groups: number[]): boolean {
   const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0] = groups;
   const firstFiveZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
   return (
-    (firstFiveZero && g5 === 0) || // ::/96: ::, ::1 and the IPv4-compatible addresses
-    (firstFiveZero && g5 === 0xffff) || // ::ffff:0:0/96 (IPv4-mapped)
-    (g0 & 0xfe00) === 0xfc00 || // fc00::/7 (unique local)
-    (g0 & 0xffc0) === 0xfe80 // fe80::/10 (link-local)
+    (firstFiveZero && g5 === 0) || // ::/96（::、::1 と IPv4 互換アドレス）
+    (firstFiveZero && g5 === 0xffff) || // ::ffff:0:0/96（IPv4 射影）
+    (g0 & 0xfe00) === 0xfc00 || // fc00::/7（ユニークローカル）
+    (g0 & 0xffc0) === 0xfe80 // fe80::/10（リンクローカル）
   );
 }
 
@@ -263,26 +249,26 @@ const PRIVATE_JWK_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 /** RFC 7518 §3.3: RS256 / RS384 / RS512 には 2048 ビット以上の鍵を使わなければならない。 */
 const MIN_RSA_MODULUS_BITS = 2048;
 
-/** Whether a parsed JSON value is an object: not null, not an array. */
+/** 解析した JSON の値が、`null` でも配列でもないオブジェクトなら `true` を返す。 */
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
- * `jwks_uri` から得た文書を検査し、署名検証に使える公開鍵だけの JWK Set にする純粋関数。
+ * `jwks_uri` から得た文書を検査し、署名の検証に使える公開鍵だけの新しい JWK Set を返す。
  *
- * - `keys` が配列の JSON オブジェクトでなければ拒否する
- * - 鍵の数が `maxKeys`（既定 32）を超えたら拒否する
- * - 秘密鍵のメンバー（`d`、`p`、`q`、`dp`、`dq`、`qi`、`oth`、`k`）か `kty: "oct"` を含む鍵が
- *   1 つでもあれば、JWK Set 全体を拒否する（OIDC Dynamic Client Registration 1.0 §2 は含めることを
- *   禁じる。秘密鍵を公開してしまった RP に気づかせる）
- * - RSA と EC 以外の鍵、`use` が `sig` 以外の鍵、使える alg を決められない鍵
- *   （{@link resolveJwkSigningAlg}）、2048 ビット未満の RSA 鍵、鍵のメンバーを欠く鍵、文字列でない
- *   `kid` の鍵、JSON オブジェクトでない要素は捨てる（RFC 7517 §5 の「理解できない JWK は無視する」）
- * - 残った鍵は、理解するメンバー（`kty`、`kid`、`use`、`alg`、`n`、`e`、`crv`、`x`、`y`）だけを
- *   選び取り、`use: "sig"` と決めた `alg` を補った新しいオブジェクトにする
+ * 次のときは、文書全体を拒否して `ClientJwksUriError` を投げる。
+ * - `keys` が配列の JSON オブジェクトでないとき
+ * - 鍵の数が `options.maxKeys`（既定 32）を超えるとき
+ * - 秘密鍵のメンバー（`d`、`p`、`q`、`dp`、`dq`、`qi`、`oth`、`k`）か `kty: "oct"` を含む鍵が 1 つでもあるとき。OIDC Dynamic Client Registration 1.0 §2 は含めることを禁じており、秘密鍵を公開してしまった RP に気づかせる
  *
- * @throws {ClientJwksUriError} 文書が JWK Set でない、鍵が多すぎる、秘密鍵か対称鍵を含む場合
+ * RSA と EC 以外の鍵、`use` が `sig` 以外の鍵、使える alg を決められない鍵（{@link resolveJwkSigningAlg}）、2048 ビット未満の RSA 鍵、鍵のメンバーを欠く鍵、文字列でない `kid` の鍵、JSON オブジェクトでない要素は、捨てて残りを使う（理解できない JWK は無視する）。
+ * 残った鍵は、理解するメンバー（`kty`、`kid`、`use`、`alg`、`n`、`e`、`crv`、`x`、`y`）だけを選び、`use: "sig"` と決めた `alg` を補った新しいオブジェクトにする。
+ *
+ * @spec RFC 7517 §5
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @spec RFC 7518 §3.3
+ * @throws {ClientJwksUriError} 文書が JWK Set でないとき、鍵が多すぎるとき、秘密鍵か対称鍵を含むとき
  */
 export function parseClientJwkSet(document: unknown, options: { maxKeys?: number } = {}): JwkSet {
   const maxKeys = options.maxKeys ?? DEFAULT_CLIENT_JWKS_URI_OPTIONS.maxKeys;
@@ -311,7 +297,7 @@ export function parseClientJwkSet(document: unknown, options: { maxKeys?: number
   return { keys };
 }
 
-/** The normalized signing key of a JWK Set entry, or undefined when the OP cannot use it. */
+/** JWK Set の要素を、OP が署名の検証に使える形に正規化した新しい鍵を返し、使えない鍵なら `undefined` を返す。 */
 function toSigningJwk(entry: Record<string, unknown>): Jwk | undefined {
   const { kty, kid, use, alg } = entry;
   if (use !== undefined && use !== 'sig') return undefined;
@@ -338,15 +324,12 @@ function toSigningJwk(entry: Record<string, unknown>): Jwk | undefined {
   return undefined;
 }
 
-/**
- * Whether the RSA modulus `n` (base64url) is at least `bits` long; false when
- * `n` is not base64url.
- */
+/** base64url の RSA の法 `n` が `bits` ビット以上なら `true` を返し、`n` が base64url でなければ `false` を返す。 */
 function hasRsaModulusOfAtLeast(n: string, bits: number): boolean {
   try {
     return rsaModulusBitLength(n) >= bits;
   } catch {
-    // n is not base64url.
+    // `n` が base64url でない。
     return false;
   }
 }
@@ -361,25 +344,26 @@ export interface ClientJwksTtlPolicy {
   maxTtlSeconds?: number;
 }
 
-/** RFC 9111 §1.2.2: a delta-seconds too large to represent is taken as 2147483648 (2^31). */
+/** 表せないほど大きい delta-seconds は 2147483648（2^31）とみなす（RFC 9111 §1.2.2）。 */
 const MAX_DELTA_SECONDS = 2147483648;
 
 /**
- * `jwks_uri` の応答のヘッダーから、取得した鍵を使ってよい期限（秒）を決める純粋関数。
+ * `jwks_uri` の応答のヘッダーから、取得した鍵を使ってよい期限（秒）を決めて返し、設定の値が正しくなければ `TypeError` を投げる。
  *
- * `Cache-Control`（RFC 9111 §5.2）を、引用符の中のカンマに注意してディレクティブに分け、
- * 名前を小文字にして読む。
+ * `Cache-Control` を、引用符の中のカンマに注意してディレクティブに分け、名前を小文字にして読む。
+ * - `no-store` か `no-cache` があれば、下限を返す。どちらも再利用を禁じるが、1 リクエストごとの外部への取得を防ぐため、下限のあいだは使う。下限を 0 にすれば仕様どおりになる
+ * - `max-age` が 1 つで、値（引用符付きも受け付ける）が数字だけなら、その値を使う。2147483648 を超える値は 2147483648 とみなす。`Age` の最初の値が 0 以上の整数なら引き、0 未満は 0 にする
+ * - `max-age` が重複しているか値が正しくなければ、古くなった（stale）応答とみなして下限を返す
+ * - `max-age` がなければ `policy.ttlSeconds` を使う。`Expires` と `s-maxage` は読まない
  *
- * - `no-store` か `no-cache` があれば、下限を返す（D-3: RFC 9111 §5.2.2.4 / §5.2.2.5 は再利用を
- *   禁じるが、1 リクエストごとの外部取得を防ぐため下限のあいだは使う。下限を 0 にすれば仕様どおり）
- * - `max-age` が 1 つで、値（引用符付きも受け付ける）が数字だけなら、その値を使う。2147483648 を
- *   超える値は 2147483648 とみなす（RFC 9111 §1.2.2）。`Age` の最初の値が非負の整数なら引き
- *   （RFC 9111 §5.1）、0 未満は 0 にする
- * - `max-age` が重複しているか値が不正なら、stale とみなして下限を返す（RFC 9111 §4.2.1）
- * - `max-age` が無ければ `ttlSeconds` を使う。`Expires` と `s-maxage` は読まない
- * - 最後に、下限と上限の範囲に丸める
+ * 最後に、下限（`policy.minTtlSeconds`）と上限（`policy.maxTtlSeconds`）の範囲に丸める。
  *
- * @throws {TypeError} 設定が負か NaN の場合、下限が上限より大きい場合
+ * @spec RFC 9111 §5.2
+ * @spec RFC 9111 §5.2.2.4 / §5.2.2.5
+ * @spec RFC 9111 §1.2.2
+ * @spec RFC 9111 §5.1
+ * @spec RFC 9111 §4.2.1
+ * @throws {TypeError} 設定の値が負か NaN のとき、下限が上限より大きいとき
  */
 export function resolveClientJwksTtlSeconds(headers: Headers, policy: ClientJwksTtlPolicy = {}): number {
   const ttlSeconds = policy.ttlSeconds ?? DEFAULT_CLIENT_JWKS_URI_OPTIONS.ttlSeconds;
@@ -412,9 +396,7 @@ export function resolveClientJwksTtlSeconds(headers: Headers, policy: ClientJwks
 }
 
 /**
- * The number of seconds of a delta-seconds value (one or more digits),
- * capped at MAX_DELTA_SECONDS; undefined when the value is absent or not all
- * digits.
+ * 数字だけの delta-seconds の値を秒数にして返し（`MAX_DELTA_SECONDS` で頭打ちにする）、値がないか数字だけでなければ `undefined` を返す。
  *
  * @spec RFC 9111 §1.2.2
  */
@@ -426,12 +408,9 @@ function parseDeltaSeconds(value: string | undefined): number | undefined {
 }
 
 /**
- * The directives of a Cache-Control header, in order: each name in lower case,
- * with its value unquoted when it has one; empty when there is no header.
+ * `Cache-Control` ヘッダーのディレクティブを、出てきた順に、名前を小文字にし、値があれば引用符を外して返し、ヘッダーがなければ空の配列を返す。
  *
- * Cache-Control = #cache-directive, cache-directive = token [ "=" ( token /
- * quoted-string ) ]. The commas inside a quoted-string do not separate
- * directives.
+ * 構文は `Cache-Control = #cache-directive`、`cache-directive = token [ "=" ( token / quoted-string ) ]` で、引用符の中のカンマはディレクティブを区切らない。
  *
  * @spec RFC 9111 §5.2
  */
@@ -476,7 +455,11 @@ function parseCacheControl(value: string | null): Array<{ name: string; value?: 
   return directives;
 }
 
-/** The value of a quoted-string (RFC 9110 §5.6.4), or the token as it is. */
+/**
+ * quoted-string なら引用符とエスケープを外した値を返し、token ならそのまま返す。
+ *
+ * @spec RFC 9110 §5.6.4
+ */
 function unquote(raw: string): string {
   if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) {
     return raw;
@@ -507,18 +490,19 @@ export interface FetchedClientJwkSet {
 }
 
 /**
- * `jwks_uri` から JWK Set を 1 回取得する。キャッシュは持たない（{@link createClientJwksUriCache}）。
+ * `jwks_uri` から JWK Set を 1 回取得し、署名用の公開鍵だけに正規化した JWK Set と、鍵を使ってよい期限（秒）を返す。
  *
- * 宛先を {@link validateClientJwksUri} で検査してから、`GET`、
- * `Accept: application/jwk-set+json, application/json`（RFC 7517 §8.5.1）、`redirect: 'manual'`、
- * `signal: AbortSignal.timeout(timeoutMs)` で取得する。リダイレクトには従わない（リダイレクト先は
- * 宛先の検査を通っていない）。応答の `Content-Type` は見ずに JSON として読む（D-10）。
+ * キャッシュは持たない（キャッシュは {@link createClientJwksUriCache}）。
+ * 宛先を {@link validateClientJwksUri} で検査してから、`GET` で、`Accept: application/jwk-set+json, application/json`、`redirect: 'manual'`、`signal: AbortSignal.timeout(timeoutMs)` を付けて取得する。
+ * リダイレクトには従わない。リダイレクト先は宛先の検査を通っていないからである。
+ * 応答の `Content-Type` は見ずに JSON として読む。
  *
- * 200 以外（3xx を含む）、`Content-Length` の上限超え、読み進めて上限を超えた本文、JSON でない本文、
- * JWK Set でない文書は、すべて {@link ClientJwksUriError} にする（RFC 9101 §10.4.1 / §10.4.2 の、
- * 取得先の検査とタイムアウトの考え方を当てる）。
+ * 200 以外（3xx を含む）の応答、`Content-Length` が上限を超える応答、読み進めて上限を超えた本文、JSON でない本文、JWK Set でない文書は、どれも `ClientJwksUriError` にする。
+ * 取得先の検査とタイムアウトは、RFC 9101 §10.4.1 / §10.4.2 の考え方による。
  *
- * @throws {ClientJwksUriError} 宛先の検査、取得、応答の検査のどれかに失敗した場合
+ * @spec RFC 7517 §8.5.1
+ * @spec RFC 9101 §10.4.1 / §10.4.2
+ * @throws {ClientJwksUriError} 宛先の検査、取得、応答の検査のどれかに失敗したとき
  */
 export async function fetchClientJwkSet(
   uri: string,
@@ -531,9 +515,8 @@ export async function fetchClientJwkSet(
 
   let response: Response;
   try {
-    // redirect 'error' is not accepted by every runtime's fetch (Cloudflare
-    // Workers), so a redirect comes back as a 3xx (or opaqueredirect) response
-    // and is rejected below.
+    // `redirect: 'error'` は、すべての実行環境の fetch が受け付けるわけではない（Cloudflare Workers）。
+    // そのため `manual` にし、リダイレクトは 3xx（か opaqueredirect）の応答として下で拒否する。
     response = await fetchJwks(uri, {
       method: 'GET',
       headers: { Accept: 'application/jwk-set+json, application/json' },
@@ -573,9 +556,9 @@ export async function fetchClientJwkSet(
 }
 
 /**
- * The name of a thrown value (`TimeoutError`, `TypeError`...), or `Error` when
- * it has none, so an error message names the kind of failure without its
- * message.
+ * 投げられた値の名前（`TimeoutError`、`TypeError` など）を返し、名前がなければ `Error` を返す。
+ *
+ * エラーのメッセージに失敗の種類だけを載せ、元のメッセージは載せないために使う。
  */
 function errorNameOf(error: unknown): string {
   return error instanceof Error || (typeof error === 'object' && error !== null && 'name' in error)
@@ -583,16 +566,23 @@ function errorNameOf(error: unknown): string {
     : 'Error';
 }
 
-/** Cancel the body of a response the fetch does not read; a failure to cancel it is ignored. */
+/** 読まない応答の本文を取り消し、取り消しに失敗しても何もしない。 */
 async function discardBody(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
   } catch {
-    // The body is not needed; a failure to cancel it changes nothing.
+    // 本文は使わないので、取り消しに失敗しても困らない。
   }
 }
 
-/** Read the body as UTF-8 text, stopping as soon as it grows over maxBytes. */
+/**
+ * 応答の本文を UTF-8 の文字列として読んで返し、`maxBytes` を超えた時点で読むのをやめて `ClientJwksUriError` を投げる。
+ *
+ * 本文がなければ空文字を返す。
+ * 読んでいるあいだに失敗したとき（タイムアウトのシグナルによる中断を含む）と、UTF-8 として読めないときも `ClientJwksUriError` を投げる。
+ *
+ * @throws {ClientJwksUriError} 本文が `maxBytes` を超えたとき、読めなかったとき、UTF-8 でないとき
+ */
 async function readBodyWithin(response: Response, maxBytes: number): Promise<string> {
   const body = response.body;
   if (body === null) {
@@ -614,7 +604,7 @@ async function readBodyWithin(response: Response, maxBytes: number): Promise<str
     }
   } catch (e) {
     if (e instanceof ClientJwksUriError) throw e;
-    // The timeout signal also aborts a body that is still being read.
+    // タイムアウトのシグナルは、読んでいる途中の本文も中断する。
     throw new ClientJwksUriError(`the jwks_uri document could not be read (${errorNameOf(e)})`);
   }
 
@@ -655,28 +645,30 @@ export interface ClientJwksUriCache {
 }
 
 interface ClientJwksUriCacheEntry {
-  /** The keys of the last successful fetch, while they are usable (absent after an expired fetch failed). */
+  /** 最後に取得できた鍵。使えるあいだだけ持ち、期限切れの鍵の取得に失敗した後は持たない。 */
   jwks?: JwkSet;
-  /** When the keys of jwks expire (ms). */
+  /** `jwks` の鍵の期限（ミリ秒）。 */
   expiresAt: number;
-  /** When the jwks_uri was last fetched, successfully or not (ms). */
+  /** 最後に `jwks_uri` を取得しようとした時刻（成否によらない。ミリ秒）。 */
   attemptedAt: number;
-  /** When a fetch of expired keys failed (ms). */
+  /** 期限切れの鍵の取得に失敗した時刻（ミリ秒）。 */
   failedAt?: number;
 }
 
 /**
- * `jwks_uri` の JWK Set のキャッシュを作る。
+ * `jwks_uri` ごとに JWK Set を覚えておくキャッシュを作って返す。
  *
- * - 期限内で、ヒントの kid を含んでいれば（kid の無いヒントでも）、キャッシュから答える
- * - 期限内でも kid が無く、前回の取得から `refetchIntervalSeconds` が過ぎていれば取り直す（D-6）。
- *   kid の無いヒントでは取り直さない（D-7）
- * - 期限内の取り直しが失敗したときは、有効なキャッシュを残してそれで答える（期限内の鍵は失効していない）
- * - 期限切れで取得に失敗したら、失敗を `refetchIntervalSeconds` のあいだ覚えて即座に投げる。
- *   期限切れの鍵は使わない（D-15）
+ * 作ったキャッシュの `load()` は、次のように答える。
+ * - 期限内で、手がかりの `kid` を含んでいれば（`kid` のない手がかりでも）、キャッシュから答える
+ * - 期限内でも `kid` がなく、前回の取得から `refetchIntervalSeconds` が過ぎていれば、取り直す。`kid` のない手がかりでは取り直さない
+ * - 期限内の取り直しに失敗したときは、有効なキャッシュを残してそれで答える（期限内の鍵は失効していない）
+ * - 期限切れで取得に失敗したときは、失敗を `refetchIntervalSeconds` のあいだ覚えて、そのあいだは取得せずに投げる。期限切れの鍵は使わない
  * - 同じ `jwks_uri` への同時の取得は 1 本にまとめ、`maxEntries` を超えたら古い順に捨てる
- * - 宛先は呼び出しごとに、その呼び出しの方針で検査してから答える。設定値も呼び出しごとに受け取るので、
- *   プロセスで共有するキャッシュでも、利用者の上書きがそのまま効く
+ *
+ * 宛先は呼び出しごとに、その呼び出しの方針で検査してから答える。
+ * 設定の値も呼び出しごとに受け取るので、プロセスで共有するキャッシュでも、利用者の上書きがそのまま効く。
+ *
+ * @spec OIDC Core 1.0 §10.1.1
  */
 export function createClientJwksUriCache(): ClientJwksUriCache {
   const entries = new Map<string, ClientJwksUriCacheEntry>();
@@ -706,7 +698,7 @@ export function createClientJwksUriCache(): ClientJwksUriCache {
       } catch (e) {
         const previous = entries.get(uri);
         if (previous?.jwks !== undefined && now() < previous.expiresAt) {
-          // Keys within their expiry have not been revoked: keep answering with them.
+          // 期限内の鍵は失効していないので、そのまま答える。
           store(uri, { ...previous, attemptedAt }, maxEntries);
           return previous.jwks;
         }
@@ -746,19 +738,19 @@ export function createClientJwksUriCache(): ClientJwksUriCache {
   };
 }
 
-/** A new JWK Set with the same keys, so a caller that changes its `keys` array leaves the cache as it is. */
+/** 同じ鍵を持つ新しい JWK Set を返し、受け取った側が `keys` の配列を書き換えてもキャッシュが変わらないようにする。 */
 function copyOf(jwks: JwkSet): JwkSet {
   return { keys: [...jwks.keys] };
 }
 
 /**
- * `jwks_uri` を登録したクライアントの鍵を、`jwks_uri` から返す `ClientKeyResolver` を作る。
+ * `purposes` の用途では `jwks_uri` を登録したクライアントに `jwks_uri` の鍵を返し、それ以外は `base` に任せる `ClientKeyResolver` を作って返す。
  *
- * `purposes` に含まれる用途で `findJwksUri(clientId)` が URI を返したら、`load(uri, hint)` の結果
- * だけを返す（`base` の鍵は読まない。鍵の出どころを 1 つにする）。それ以外の用途と、`jwks_uri` の
- * 無いクライアントは `base.findClientKeys(clientId, purpose, hint)` に任せる。
+ * 作ったリゾルバの `findClientKeys()` は、`purposes` に含まれる用途で `findJwksUri(clientId)` が URI を返したら、`load(uri, hint)` の結果だけを返す。
+ * そのとき `base` の鍵は読まない（鍵の出どころを 1 つにする）。
+ * それ以外の用途と、`jwks_uri` のないクライアントには、`base.findClientKeys(clientId, purpose, hint)` の結果を返す。
  *
- * `load` には {@link createClientJwksUriCache} の `load` に設定を添えたものを渡す。
+ * `load` には、{@link createClientJwksUriCache} の `load` に設定を添えたものを渡す。
  */
 export function withClientJwksUriKeys(
   base: ClientKeyResolver,

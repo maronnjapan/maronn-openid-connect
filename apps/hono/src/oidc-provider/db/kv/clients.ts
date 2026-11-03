@@ -72,6 +72,7 @@ import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord }
  * - コンフィデンシャルクライアントなら、`client_auths` の各エントリーの方式を `tokenEndpointAuthMethods` に、エントリーのシークレットを `clientSecretHash` にする。
  * - `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
  * - `grant_types`、`scopes`、`response_types` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes` にし、空なら設定せずに既定の扱いに任せる。
+ * - `jwks_uri` と `request_object_signing_alg` は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
  *
  * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違うエントリーを `client_auths` に持つクライアントを読んだとき
  */

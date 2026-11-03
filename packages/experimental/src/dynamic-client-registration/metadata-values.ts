@@ -253,15 +253,17 @@ const JWKS_URI_DESCRIPTION =
   'jwks_uri must be an absolute https URL without a fragment or userinfo that does not point to a loopback, private or link-local address';
 
 /**
- * jwks_uri: クライアントの公開鍵の JWK Set を返す URL（RFC 7591 §2）。
+ * `jwks_uri`（クライアントの公開鍵の JWK Set を返す URL）を検証し、そのまま返す。
  *
- * 宛先の検査（https、フラグメントと userinfo の不在、ループバック・私設・リンクローカルの
- * IP リテラルと localhost の拒否）は core の validateClientJwksUri に委ね、違反を固定文言の
- * invalid_client_metadata に変える（文言に URI を埋め込まない）。allowInsecure のときは
- * http とそれらのアドレスを許す（開発用）。
+ * 宛先の検査（`https` であること、フラグメントと userinfo がないこと、ループバック・私設・リンクローカルの IP リテラルと `localhost` でないこと）は core の `validateClientJwksUri()` に任せ、通らなければ固定の文言の `invalid_client_metadata` を投げる。
+ * 文言には URI を埋め込まない。
+ * `allowInsecure` が `true` のときは、`http` とそれらのアドレスも受け付ける（開発用）。
  *
- * 登録時には取得しない。中身は、生成コードが鍵を使うときに初めて取得する。オープン登録の
- * 受け口を、そのまま外部取得の引き金にしないため。
+ * 登録の時点では取得しない。中身は、生成コードが鍵を使うときに初めて取得する。
+ * オープン登録の受け口を、そのまま外部への取得の引き金にしないためである。
+ *
+ * @spec RFC 7591 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 文字列でないとき、見えない文字を含むとき、または宛先の検査を通らないとき。
  */
 export function validateJwksUri(value: unknown, allowInsecure: boolean): string {
   if (typeof value !== 'string' || INVISIBLE_CHARACTERS.test(value)) {
@@ -275,10 +277,13 @@ export function validateJwksUri(value: unknown, allowInsecure: boolean): string 
 }
 
 /**
- * request_object_signing_alg: このクライアントが Request Object の署名に使う alg
- * （OIDC Dynamic Client Registration 1.0 §2）。OP が受け付ける alg の一覧（discovery の
- * request_object_signing_alg_values_supported）にある値だけを受理する。
- * validateSigningAlg と違い、一覧にあれば none も受理する（§2 は none を使ってよいとする）。
+ * `request_object_signing_alg`（このクライアントがリクエストオブジェクトの署名に使う alg）を検証し、そのまま返す。
+ *
+ * 値が `supported`（OP が受け付ける alg の一覧。ディスカバリーの `request_object_signing_alg_values_supported` と同じもの）にある文字列のときだけ受け付け、それ以外は `invalid_client_metadata` を投げる。
+ * {@link validateSigningAlg} と違い、一覧にあれば `none` も受け付ける（OIDC Dynamic Client Registration 1.0 §2 は `none` を使ってよいとしている）。
+ *
+ * @spec OIDC Dynamic Client Registration 1.0 §2
+ * @throws {ClientRegistrationError} `invalid_client_metadata`: 値が文字列でないとき、または `supported` にないとき。
  */
 export function validateRequestObjectSigningAlg(value: unknown, supported: readonly string[]): string {
   if (typeof value !== 'string' || !supported.includes(value)) {

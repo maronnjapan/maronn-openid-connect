@@ -64,6 +64,31 @@ function visitTry(node: TreeNode, frame: string, own: Own, caught: { throws: Fai
   if (final !== undefined) gather(final.nodes, frame, own, caught);
 }
 
+/** Where a failure can leave a list: a throw (not a rethrow) or a call of a function, whether a `try` of the frame catches it, and the tries whose attempt it is in. */
+export interface Outlet {
+  node: TreeNode;
+  caught: boolean;
+  tries: string[];
+}
+
+/** The outlets of a list (see Outlet), in the order of the code. A `try` whose catch throws what it caught does not catch. */
+export function* outlets(nodes: readonly TreeNode[], caught = false, tries: readonly string[] = []): Generator<Outlet> {
+  for (const node of nodes) {
+    if (node.pre !== undefined) yield* outlets(node.pre, caught, tries);
+    if ((node.kind === 'throw' && node.rethrow !== true) || (node.kind === 'call' && node.target?.kind === 'function')) yield { node, caught, tries: [...tries] };
+    if (node.kind === 'try') {
+      const handler = node.branches?.find((branch) => branch.key === 'catch');
+      const rethrows = handler !== undefined && [...walkAll(handler.nodes)].some((child) => child.kind === 'throw' && child.rethrow === true);
+      for (const branch of node.branches ?? []) {
+        if (branch.key === 'try') yield* outlets(branch.nodes, caught || (handler !== undefined && !rethrows), handler === undefined ? tries : [...tries, node.id]);
+        else yield* outlets(branch.nodes, caught, tries);
+      }
+      continue;
+    }
+    for (const branch of node.branches ?? []) yield* outlets(branch.nodes, caught, tries);
+  }
+}
+
 function* walkAll(nodes: readonly TreeNode[]): Generator<TreeNode> {
   for (const node of nodes) {
     yield node;

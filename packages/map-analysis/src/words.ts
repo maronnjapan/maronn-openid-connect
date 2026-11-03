@@ -12,6 +12,18 @@ export function shorten(text: string, width = 60): string {
   return [...flat].length <= width ? flat : `${[...flat].slice(0, width - 1).join('')}…`;
 }
 
+/** A character of Japanese text (kana, kanji, full-width forms and punctuation). */
+const WIDE = /[\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]/;
+
+/**
+ * The lines of a paragraph on one line: joined with nothing between two
+ * Japanese characters (the repository writes a sentence a line), with a
+ * space otherwise.
+ */
+export function joinLines(text: string): string {
+  return text.trim().replace(/[ \t]*\n\s*/g, (match: string, offset: number, whole: string) => (WIDE.test(whole[offset - 1] ?? '') && WIDE.test(whole[offset + match.length] ?? '') ? '' : ' '));
+}
+
 /**
  * What a condition checks, in words (the rules the map has used since its
  * first version): `x === y` is "x が y と等しいか", `!x` is "x が偽として評価されるか",
@@ -122,13 +134,29 @@ function topLevelIndex(text: string, wanted: string): number {
  */
 export function actionWords(code: string): string {
   const text = code.replace(/\s+/g, ' ').trim();
+  const pattern = /^(?:export\s+)?(?:const|let|var)\s+([{[])/.exec(text);
+  if (pattern) {
+    // A destructuring: the names up to the bracket that closes the pattern.
+    const open = pattern[0].length - 1;
+    let depth = 0;
+    let close = -1;
+    for (let index = open; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === '{' || char === '[') depth += 1;
+      else if (char === '}' || char === ']') {
+        depth -= 1;
+        if (depth === 0) {
+          close = index;
+          break;
+        }
+      }
+    }
+    const names = close === -1 ? [] : bindingNames(text.slice(open, close + 1));
+    return names.length === 0 ? '' : `${names.map((name) => `\`${name}\``).join('、')} を取り出す`;
+  }
   const declaration = /^(?:export\s+)?(?:const|let|var)\s+([^=]+?)(?:\s*:\s*[^=]+)?\s*(=|;|$)/.exec(text);
   if (declaration) {
     const target = (declaration[1] as string).trim();
-    if (target.startsWith('{') || target.startsWith('[')) {
-      const names = bindingNames(target);
-      return names.length === 0 ? '' : `${names.map((name) => `\`${name}\``).join('、')} を取り出す`;
-    }
     const names = target.split(',').map((name) => name.trim().split(/\s*:/)[0]?.trim() ?? '').filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
     if (names.length === 0) return '';
     return declaration[2] === '=' ? `${names.map((name) => `\`${name}\``).join('、')} を求める` : `${names.map((name) => `\`${name}\``).join('、')} を宣言する`;

@@ -25,7 +25,7 @@ import type { Repository } from './repository.js';
 import { moduleOf } from './roots.js';
 import type { BuiltTree } from './tree.js';
 import { nodesOf } from './tree.js';
-import { shorten } from './words.js';
+import { joinLines, shorten } from './words.js';
 
 /** The order the kinds of a change are listed in, and their words. */
 export const KIND_ORDER = ['added', 'modified', 'moved', 'docs', 'removed', 'noted'] as const;
@@ -478,7 +478,7 @@ function dedupeReach(ways: readonly Reach[]): Reach[] {
 
 /** A text for a cell of a Markdown table: no line breaks, no `|` that ends the cell. */
 function cell(text: string): string {
-  return text.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
+  return joinLines(text).replace(/\|/g, '\\|');
 }
 
 /** The endpoints a change reaches, in a cell: `token (hono), token (nextjs)`. */
@@ -542,7 +542,7 @@ export function changesMarkdown(changes: MapChanges, { limit = 40 } = {}): strin
   lines.push(counts.length > 0 ? counts.map(([kind, n]) => `${KIND_WORDS[kind]} ${n}`).join(' · ') : '地図に載る関数（関数カタログとエンドポイントの処理）の変更はありません。');
   for (const note of changes.notes) {
     const title = note.title === undefined ? '' : `**${note.title}** `;
-    const summary = note.summary === '' ? '' : shorten((note.summary.split(/\n\s*\n/)[0] ?? '').replace(/\s*\n\s*/g, ' '), 300);
+    const summary = note.summary === '' ? '' : shorten(joinLines(note.summary.split(/\n\s*\n/)[0] ?? ''), 300);
     lines.push('', `> ${title}${summary}`.trimEnd(), `> — \`${note.file}\``);
   }
   if (changes.notes.length === 0) lines.push('', `変更メモ（\`${NOTES_DIRECTORY}/*.md\`）がありません。なぜ変えたかを書くと、地図とこのコメントに表示されます。`);

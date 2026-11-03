@@ -231,6 +231,8 @@ export interface Selection {
   frames?: string[];
   /** The node it leads to, `<frame>.<node>` as a decision key. */
   target: string;
+  /** For a failure: what fails, and the function that throws it (its id and name). */
+  failure?: { error: string; from: string; name: string };
 }
 
 export interface FrameFile {

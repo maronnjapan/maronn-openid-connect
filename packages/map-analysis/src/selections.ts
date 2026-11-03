@@ -10,11 +10,17 @@
  *   value a later decision tests (`const exchanged = ...; if (exchanged)
  *   return exchanged`), the sides that lead into it and use its value. It is
  *   named by the step's label.
+ * - failures from below (failureSelections): for each failure a call of the
+ *   frame can bring up from the functions below, the frames down to the
+ *   throw and the sides that lead there, a `try` around the way left
+ *   undecided so its catch shows too. It is named by the failure and the
+ *   function that throws it: `TokenError(invalid_client) で終わる（verifyClientSecret から）`.
  *
  * The decisions of a choice are keyed by node id; a choice that spans frames
  * (a way to a change, changes.ts) prefixes them with the frame (Decisions).
  */
-import type { Branch, Decisions, FlowTree, Selection, TreeNode } from './model.js';
+import { outlets } from './failures.js';
+import type { Branch, Decisions, Failure, FlowTree, Selection, TreeNode } from './model.js';
 import { ends } from './tree.js';
 import type { ValueUse } from './tree.js';
 
@@ -153,7 +159,9 @@ export function frameSelections(tree: FlowTree, uses: ReadonlyMap<TreeNode, read
     if (steps.some((step) => same(step.decisions, way.decisions))) continue;
     const name = nameOf(way);
     const code = node.kind === 'end' ? '最後まで進んで終わる' : node.code;
-    exits.push({ kind: node.kind === 'throw' ? 'failure' : 'exit', name: name === '' ? code : name, note: `→ ${code}`, decisions: way.decisions, target: node.id });
+    const exit: Selection = { kind: node.kind === 'throw' ? 'failure' : 'exit', name: name === '' ? code : name, note: `→ ${code}`, decisions: way.decisions, target: node.id };
+    if (node.kind === 'throw') exit.failure = { error: node.error ?? 'Error', from: tree.id, name: tree.name };
+    exits.push(exit);
   }
   // Names the sides do not tell apart get where they end, then a number.
   const named = [...steps, ...exits];
@@ -175,4 +183,66 @@ export function frameSelections(tree: FlowTree, uses: ReadonlyMap<TreeNode, read
 export function inFrame(decisions: Decisions, frame: string): Decisions {
   if (frame === '') return { ...decisions };
   return Object.fromEntries(Object.entries(decisions).map(([key, side]) => [`${frame}.${key}`, side]));
+}
+
+/** The key of a node of a frame, or of the frame a call node opens. */
+function keyIn(frame: string, node: string): string {
+  return frame === '' ? node : `${frame}.${node}`;
+}
+
+/** The decisions that lead to a node of a frame, keyed for the frame, the tries in `undecided` left out. */
+function decisionsTo(tree: FlowTree, id: string, frame: string, undecided: readonly string[]): Decisions {
+  const decisions = { ...(wayTo(tree.nodes, id)?.decisions ?? {}) };
+  for (const key of undecided) delete decisions[key];
+  return inFrame(decisions, frame);
+}
+
+/**
+ * The failures a frame's calls bring up from below (see the module comment),
+ * a failure once (the first way to it in the order of the code). `failures`
+ * are what leaves each frame (escapingFailures); `nameOf` names a function.
+ */
+export function failureSelections(rootId: string, trees: ReadonlyMap<string, FlowTree>, failures: ReadonlyMap<string, readonly Failure[]>, nameOf: (id: string) => string): Selection[] {
+  const root = trees.get(rootId);
+  if (root === undefined) return [];
+  const leaves = (id: string, failure: Failure) => (failures.get(id) ?? []).some((other) => other.error === failure.error && other.from === failure.from);
+  type Found = { frames: string[]; decisions: Decisions; target: string; code: string };
+  const find = (id: string, frame: string, failure: Failure, visited: ReadonlySet<string>): Found | undefined => {
+    const tree = trees.get(id);
+    if (tree === undefined) return undefined;
+    for (const outlet of outlets(tree.nodes)) {
+      // Below the root, a failure has to leave the frame to get up to it.
+      if (outlet.caught && id !== rootId) continue;
+      const { node } = outlet;
+      if (node.kind === 'throw') {
+        if (failure.from !== id || (node.error ?? 'Error') !== failure.error) continue;
+        return { frames: [], decisions: decisionsTo(tree, node.id, frame, outlet.tries), target: keyIn(frame, node.id), code: node.code };
+      }
+      const callee = node.target?.kind === 'function' ? node.target.id : undefined;
+      if (callee === undefined || visited.has(callee) || !leaves(callee, failure)) continue;
+      const child = keyIn(frame, node.id);
+      const below = find(callee, child, failure, new Set([...visited, callee]));
+      if (below === undefined) continue;
+      return { ...below, frames: [child, ...below.frames], decisions: { ...decisionsTo(tree, node.id, frame, outlet.tries), ...below.decisions } };
+    }
+    return undefined;
+  };
+  // The failures the calls of the frame can bring up, in the order of the calls.
+  const candidates = new Map<string, Failure>();
+  for (const outlet of outlets(root.nodes)) {
+    if (outlet.node.kind !== 'call' || outlet.node.target?.kind !== 'function') continue;
+    for (const failure of failures.get(outlet.node.target.id) ?? []) {
+      if (failure.from === rootId) continue;
+      const key = `${failure.error}\u0000${failure.from}`;
+      if (!candidates.has(key)) candidates.set(key, failure);
+    }
+  }
+  const selections: Selection[] = [];
+  for (const failure of candidates.values()) {
+    const found = find(rootId, '', failure, new Set([rootId]));
+    if (found === undefined) continue;
+    const name = nameOf(failure.from);
+    selections.push({ kind: 'failure', name: `\`${failure.error}\` で終わる（\`${name}\` から）`, note: `→ ${found.code}`, decisions: found.decisions, frames: found.frames, target: found.target, failure: { ...failure, name } });
+  }
+  return selections;
 }

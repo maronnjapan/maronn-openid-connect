@@ -23,7 +23,7 @@ export interface MapMetrics {
   uncovered: Array<{ frame: string; lines: number[] }>;
   /** Changed lines of the frames outside every node. */
   changedOutside: Array<{ frame: string; lines: number[] }>;
-  /** The names of the choices of /token of each source. */
+  /** The names of the steps and the exits of /token of each source (its failures left out). */
   token: Record<string, string[]>;
   /** The changes that need a note and have none. */
   undocumented: string[];
@@ -94,7 +94,7 @@ export async function checkMap(data: MapData, readFrame: (url: string) => Promis
     const root = data.bodies[token.root] ?? data.functions[token.root];
     if (root === undefined || root.frame === '') continue;
     const file = await readFrame(root.frame);
-    metrics.token[framework] = file.selections.map((selection) => selection.name);
+    metrics.token[framework] = file.selections.filter((selection) => selection.kind === 'step' || selection.kind === 'exit').map((selection) => selection.name);
   }
   if (metrics.unnamed > 0) failures.push(`${metrics.unnamed} ready-made choices have no name`);
   for (const duplicate of metrics.duplicateNames.slice(0, 10)) failures.push(`${duplicate.frame}: two choices are named "${duplicate.name}"`);

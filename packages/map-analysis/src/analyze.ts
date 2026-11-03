@@ -285,6 +285,12 @@ export function readRevision(input: RevisionInput): Revision {
             else {
               const declared = catalogDeclarations(file);
               handlers = endpoint.methods.flatMap((method) => (declared.get(method) ?? []).filter((node) => any(node)['body'] !== undefined).map((node) => ({ node })));
+              // A module of Server Actions (`'use server'`): its exported functions are what the endpoint runs.
+              if (handlers.length === 0) {
+                handlers = [...declared.values()]
+                  .flatMap((nodes) => nodes.filter((node) => any(node)['body'] !== undefined && ((any(node)['modifiers'] as Node[] | undefined) ?? []).some((modifier) => modifier.kind === SyntaxKind.ExportKeyword)))
+                  .map((node) => ({ node }));
+              }
             }
           } else {
             handlers = handlers.map((handler) => {

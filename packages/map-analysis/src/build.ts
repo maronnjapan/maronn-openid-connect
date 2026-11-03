@@ -21,7 +21,7 @@ import type { BodyEntry, FlowEndpoint, FrameFile, FunctionEntry, MapChanges, Map
 import { escapingFailures } from './failures.js';
 import { createSourceHighlighter, highlightSource } from './highlight.js';
 import { readRepository, type Repository } from './repository.js';
-import { frameSelections } from './selections.js';
+import { failureSelections, frameSelections } from './selections.js';
 import { nodesOf } from './tree.js';
 import { collectChanges, changesMarkdown, type ChangeResult } from './changes.js';
 
@@ -80,7 +80,8 @@ export async function buildMap(options: BuildOptions): Promise<BuildResult> {
   // One file a frame.
   const frameUrls = new Map<string, string>();
   for (const [id, built] of head.trees) {
-    const file: FrameFile = { version: 4, tree: built.tree, selections: frameSelections(built.tree, built.uses) };
+    const selections = [...frameSelections(built.tree, built.uses), ...failureSelections(id, trees, failures, (callee) => cli.catalog[callee]?.name ?? trees.get(callee)?.name ?? callee)];
+    const file: FrameFile = { version: 4, tree: built.tree, selections };
     const change = changes?.frames.get(id);
     if (change !== undefined) file.change = change;
     const content = JSON.stringify(file);

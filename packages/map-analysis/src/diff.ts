@@ -115,7 +115,10 @@ function argumentsOf(code: string): { callee: string; args: string[] } | undefin
       if (depth === 0 && index !== code.length - 1) return undefined;
     }
   }
-  return { callee: code.slice(0, open).trim(), args: splitTopLevel(code.slice(open + 1, -1)).map((arg) => arg.trim()) };
+  const callee = code.slice(0, open).trim();
+  // `if (…)`, `switch (…)`, a loop header: not a call.
+  if (callee === '' || /^(if|switch|while|for|catch|return|throw)$/.test(callee)) return undefined;
+  return { callee, args: splitTopLevel(code.slice(open + 1, -1)).map((arg) => arg.trim()) };
 }
 
 /** The call a statement makes as its value (`const x = await f(a)` → `f(a)`). */
@@ -267,7 +270,7 @@ function diffLists(
     if (from === undefined) {
       diff.marks[node.id] = 'added';
       count(diff, node, '+');
-      diff.summary.push(`${nodeWords(node)}を足した${early(after, index) ? '（早期リターン）' : ''}`);
+      diff.summary.push(`${nodeWords(node)} を足した${early(after, index) ? '（早期リターン）' : ''}`);
       return;
     }
     const was = before[from] as TreeNode;
@@ -276,7 +279,7 @@ function diffLists(
     if (ownBefore !== ownAfter) {
       diff.marks[node.id] = 'modified';
       count(diff, node, '~');
-      const changes = identity(was, own.before) === identity(node, own.after) || was.kind !== 'call' ? expressionChanges(ownBefore, ownAfter) : [{ text: `${nodeWords(was)}を ${nodeWords(node)}に置き換えた`, before: was.code, after: node.code }];
+      const changes = identity(was, own.before) === identity(node, own.after) || was.kind !== 'call' ? expressionChanges(ownBefore, ownAfter) : [{ text: `${nodeWords(was)} を ${nodeWords(node)} に置き換えた`, before: was.code, after: node.code }];
       if (changes.length > 0) {
         diff.exprs[node.id] = changes;
         diff.summary.push(...changes.map((change) => (change.text.includes('置き換えた') && was.kind === 'call' ? change.text : `${nodeWords(node)}: ${change.text}`)));
@@ -302,7 +305,7 @@ function diffLists(
     if (branch !== undefined) entry.branch = branch;
     diff.removed.push(entry);
     count(diff, node, '-');
-    diff.summary.push(`${nodeWords(node)}を消した`);
+    diff.summary.push(`${nodeWords(node)} を消した`);
   });
 }
 

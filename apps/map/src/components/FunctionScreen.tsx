@@ -7,6 +7,7 @@ import { callersOf, endpointsInModule, endpointsUsing, locationOf, type Endpoint
 import { CasePicker } from './CasePicker';
 import { Badge, ChangeDetail, ReachedList } from './ChangeParts';
 import { FlowDiagram } from './FlowDiagram';
+import { ScreenHeader } from './ScreenHeader';
 import { Chips, Description } from './Parts';
 
 export interface FunctionScreenProps {
@@ -159,19 +160,22 @@ export function FunctionScreen(props: FunctionScreenProps) {
   };
   return (
     <section className="screen" aria-label={`${card.name}()`}>
-      <header className="screen-head">
-        <div className="title-row">
+      <ScreenHeader title={
+        <>
           {canGoBack ? (
             <button type="button" className="back" onClick={onBack}>
               ← 戻る
             </button>
           ) : null}
           <h2 className="mono">{card.name}()</h2>
+          {change !== undefined ? <Badge mark={markOf(change.kind)} /> : below.length > 0 ? <Badge mark={markOf('inside')} /> : null}
+        </>
+      }>
+        <Description summary={card.summary} description={card.description} />
+        <div className="facts-row">
           <span className="chip mono">{locationOf(card)}</span>
           {card.exported ? null : <span className="chip">モジュール内の関数</span>}
-          {change !== undefined ? <Badge mark={markOf(change.kind)} /> : below.length > 0 ? <Badge mark={markOf('inside')} /> : null}
         </div>
-        <Description summary={card.summary} description={card.description} />
         {change !== undefined ? <ChangeDetail change={change} /> : null}
         {card.spec || card.throws ? (
           <div className="facts-row">
@@ -187,7 +191,7 @@ export function FunctionScreen(props: FunctionScreenProps) {
             ) : null}
           </div>
         ) : null}
-      </header>
+      </ScreenHeader>
       {diagram ? <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} /> : null}
       <div className="work with-panel">
         <div className="canvas">

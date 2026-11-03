@@ -7,9 +7,11 @@ export interface CasePickerProps {
   onChange: (checked: Set<string>) => void;
 }
 
-/** A checkbox per case of a diagram: the diagram shows the boxes and arrows of the checked ones only. */
+/** Summarize the selected cases and reveal their checkboxes on demand, preserving the selection when folded. */
 export function CasePicker({ cases, checked, onChange }: CasePickerProps) {
   if (cases.length === 0) return null;
+  const selected = cases.filter((flowCase) => checked.has(flowCase.label));
+  const selection = selected.map((flowCase) => flowCase.label).join('、') || '未選択';
   const toggle = (label: string, on: boolean) => {
     const next = new Set(checked);
     if (on) next.add(label);
@@ -17,9 +19,13 @@ export function CasePicker({ cases, checked, onChange }: CasePickerProps) {
     onChange(next);
   };
   return (
-    <div className="cases" role="group" aria-label="表示するケース">
-      <div className="cases-head">
+    <details className="cases">
+      <summary role="button" aria-label="表示するケースを選択">
         <span className="cases-title">ケース</span>
+        <span className="cases-count">{selected.length} / {cases.length}</span>
+        <span className="cases-current" title={selection}>{selection}</span>
+      </summary>
+      <div className="cases-head">
         <span className="note">チェックしたケースで通るステップと矢印だけを表示します</span>
         <span className="cases-actions">
           <button type="button" onClick={() => onChange(new Set(cases.map((flowCase) => flowCase.label)))}>
@@ -38,6 +44,6 @@ export function CasePicker({ cases, checked, onChange }: CasePickerProps) {
           </label>
         ))}
       </div>
-    </div>
+    </details>
   );
 }

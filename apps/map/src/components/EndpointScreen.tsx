@@ -7,6 +7,7 @@ import { generatedWhen } from '../lib/model';
 import { CasePicker } from './CasePicker';
 import { Badge } from './ChangeParts';
 import { FlowDiagram } from './FlowDiagram';
+import { ScreenHeader } from './ScreenHeader';
 import { StepPanel } from './StepPanel';
 
 export interface EndpointScreenProps {
@@ -52,15 +53,16 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
   };
   return (
     <section className="screen" aria-label={endpoint.label}>
-      <header className="screen-head">
-        <div className="title-row">
+      <ScreenHeader title={
+        <>
           <h2>{endpoint.label}</h2>
           <code className="route">
             {endpoint.methods.join(' | ')} {endpoint.path}
           </code>
-          {endpoint.spec ? <span className="chip">{endpoint.spec}</span> : null}
-        </div>
+        </>
+      }>
         {endpoint.summary ? <p className="lead">{endpoint.summary}</p> : null}
+        {endpoint.spec ? <span className="chip">{endpoint.spec}</span> : null}
         <p className="note">
           {generatedWhen(data.features, endpoint.feature)} · ステップ {endpoint.steps.length} 個 · 箱を選ぶと、そのステップの詳細を開きます
           {marks.size > 0 ? ` · このPRの変更の札が付いたステップ ${marks.size} 個` : ''}
@@ -78,7 +80,7 @@ export function EndpointScreen({ data, changes, endpoint, selected, checked, onC
             ))}
           </p>
         ) : null}
-      </header>
+      </ScreenHeader>
       <CasePicker cases={diagram.cases} checked={labels} onChange={(next) => onCases(diagram.key, next)} />
       <div className={`work${step ? ' with-panel' : ''}`}>
         <div className="canvas">

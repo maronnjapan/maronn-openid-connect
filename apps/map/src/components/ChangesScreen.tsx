@@ -85,7 +85,7 @@ export function ChangesScreen({ data, index, flow, onOpenFunction, onOpenEndpoin
   const counted = changes.functions.filter((change) => change.kind !== 'noted').length;
   const pullRequest = changes.pullRequest;
   return (
-    <section className="screen" aria-label="このPRの変更">
+    <section className="screen changes-screen" aria-label="このPRの変更">
       <header className="screen-head">
         <div className="title-row">
           <h2>このPRの変更</h2>

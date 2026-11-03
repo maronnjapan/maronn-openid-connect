@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { MobileMenuSection } from './MobileMenu';
 
 const DESCRIPTION_KEY = 'oidc-map-description';
 
@@ -25,16 +26,18 @@ export function ScreenHeader({ title, children }: { title: ReactNode; children: 
     }
   };
   return (
-    <header className="screen-head">
-      <div className="screen-title">
-        <div className="title-row">{title}</div>
-        <button type="button" className="description-toggle" aria-expanded={expanded} aria-controls={descriptionId} onClick={toggle}>
-          {expanded ? '説明を閉じる' : '説明を表示'}
-        </button>
-      </div>
-      <div id={descriptionId} className="screen-description" hidden={!expanded}>
-        {children}
-      </div>
-    </header>
+    <MobileMenuSection section="screen">
+      <header className="screen-head">
+        <div className="screen-title">
+          <div className="title-row">{title}</div>
+          <button type="button" className="description-toggle" aria-expanded={expanded} aria-controls={descriptionId} onClick={toggle}>
+            {expanded ? '説明を閉じる' : '説明を表示'}
+          </button>
+        </div>
+        <div id={descriptionId} className="screen-description" hidden={!expanded}>
+          {children}
+        </div>
+      </header>
+    </MobileMenuSection>
   );
 }

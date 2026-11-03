@@ -12,6 +12,7 @@ import { FlowDiagram } from './FlowDiagram';
 import { ScreenHeader } from './ScreenHeader';
 import { Chips, Description } from './Parts';
 import { DetailDrawer } from './DetailDrawer';
+import { MobileMenuSection } from './MobileMenu';
 
 export interface FunctionScreenProps {
   data: MapData;
@@ -215,7 +216,9 @@ export function FunctionScreen(props: FunctionScreenProps) {
             <p className="note pad">この関数の処理の流れは読み取れませんでした。</p>
           )}
         </div>
-        <Callers {...props} below={below} />
+        <MobileMenuSection section="callers">
+          <Callers {...props} below={below} />
+        </MobileMenuSection>
       </div>
       {code ? <CodeDrawer data={data} targets={sources} initial={card.id} onClose={() => setCode(false)} /> : null}
     </section>

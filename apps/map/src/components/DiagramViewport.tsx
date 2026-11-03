@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
+import { MobileMenuSection } from './MobileMenu';
 
 /** Keep the existing width fit, with a readable initial scale and space around the graph. */
 function fitWidth(view: ReactZoomPanPinchRef, width: number): void {
@@ -39,18 +40,20 @@ export function DiagramViewport({ children, controls, width, height }: { childre
       >
         {(view) => (
           <>
-            <div className="diagram-tools" role="group" aria-label="図の表示操作">
-              {controls}
-              <div className="diagram-zoom">
-                <button type="button" aria-label="図を縮小" disabled={scale <= 0.1} onClick={() => void view.zoomOut(0.25, 0)}>−</button>
-                <button type="button" aria-label="100%で表示" onClick={() => void view.setTransform(12, 12, 1, 0)}>{Math.round(scale * 100)}%</button>
-                <button type="button" aria-label="図を拡大" disabled={scale >= 4} onClick={() => void view.zoomIn(0.25, 0)}>＋</button>
+            <MobileMenuSection section="diagram">
+              <div className="diagram-tools" role="group" aria-label="図の表示操作">
+                {controls}
+                <div className="diagram-zoom">
+                  <button type="button" aria-label="図を縮小" disabled={scale <= 0.1} onClick={() => void view.zoomOut(0.25, 0)}>−</button>
+                  <button type="button" aria-label="100%で表示" onClick={() => void view.setTransform(12, 12, 1, 0)}>{Math.round(scale * 100)}%</button>
+                  <button type="button" aria-label="図を拡大" disabled={scale >= 4} onClick={() => void view.zoomIn(0.25, 0)}>＋</button>
+                </div>
+                <button type="button" onClick={() => fitWidth(view, width)}>幅に合わせる</button>
+                <button type="button" onClick={() => void view.fitToView({ maxScale: 1, animationTime: 0 })}>全体を表示</button>
+                <button type="button" onClick={() => fitWidth(view, width)}>表示を戻す</button>
+                <span className="note">ドラッグで移動・ピンチで拡大縮小</span>
               </div>
-              <button type="button" onClick={() => fitWidth(view, width)}>幅に合わせる</button>
-              <button type="button" onClick={() => void view.fitToView({ maxScale: 1, animationTime: 0 })}>全体を表示</button>
-              <button type="button" onClick={() => fitWidth(view, width)}>表示を戻す</button>
-              <span className="note">ドラッグで移動・ピンチで拡大縮小</span>
-            </div>
+            </MobileMenuSection>
             <TransformComponent
               wrapperClass="diagram-gestures"
               wrapperStyle={{ width: '100%', height: '100%' }}

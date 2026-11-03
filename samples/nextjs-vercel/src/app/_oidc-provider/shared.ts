@@ -1,11 +1,11 @@
 /**
- * One value for the whole server process.
+ * `name` の値を、プロセス全体で一度だけ作って返す。
  *
- * Next.js loads a module once per module layer (Route Handlers, Server
- * Actions and pages, instrumentation.ts), so a value created at module level
- * exists once per layer: a setting changed in instrumentation.ts would not
- * reach the Route Handlers. shared() keeps the value on globalThis under its
- * name, so every layer gets the one the first of them created.
+ * 値は `globalThis` に `name` の名前で保存し、最初の呼び出しだけが `create()` を呼ぶ。
+ * 以後の呼び出しは、どのモジュールの層からでも、その値を返す。
+ *
+ * Next.js はモジュールを層（ルートハンドラ、サーバーアクションとページ、`instrumentation.ts`）ごとに一度ずつ読み込むので、モジュールの最上位で作った値は層ごとに別のものになる。
+ * そのままでは、`instrumentation.ts` で変えた設定がルートハンドラに届かない。
  */
 export function shared<T>(name: string, create: () => T): T {
   const registry = globalThis as typeof globalThis & { __oidcShared?: Map<string, unknown> };

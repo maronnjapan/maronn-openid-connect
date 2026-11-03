@@ -34,9 +34,10 @@ declare module '../../config' {
 }
 
 /**
- * The Google login of the environment: GOOGLE_CLIENT_ID, and optionally
- * GOOGLE_HOSTED_DOMAIN to accept the accounts of one Workspace domain only.
- * undefined without GOOGLE_CLIENT_ID.
+ * 環境変数から「Google でログイン」の設定を読んで返す。
+ *
+ * クライアント ID は `GOOGLE_CLIENT_ID` から読み、`GOOGLE_CLIENT_ID` がなければ `undefined` を返す。
+ * `GOOGLE_HOSTED_DOMAIN` があれば `hostedDomain` に入れ、そのドメインの組織のアカウントだけを受け入れるようにする。
  */
 export function readGoogleLoginConfig(): GoogleLoginConfig | undefined {
   const clientId = process.env.GOOGLE_CLIENT_ID;

@@ -12,7 +12,7 @@ export const meta = step({
   id: 'verify-id-token-hint',
   endpoint: 'authorize',
   kind: 'validate',
-  label: 'Verify id_token_hint',
+  label: 'id_token_hint を検証する',
   spec: 'OIDC Core 1.0 §3.1.2.1',
   function: 'verifyIdTokenHint',
   consumes: ['transactionId', 'transaction', 'issuer', 'responseMode'],
@@ -23,16 +23,19 @@ export const meta = step({
 });
 
 /**
- * Verify id_token_hint: signature, iss, aud, exp and iat against the OP's own
- * JWKS. OIDC Core 1.0 §3.1.2.1
+ * `id_token_hint` を検証し、そのサブジェクトを返す。
  *
- * The rule ("if the End-User identified by the ID Token is logged in ...
- * otherwise it SHOULD return an error") is NOT conditioned on prompt, so the
- * hint is verified on every prompt path (no prompt / login / consent /
- * select_account / none). The verified subject is shared by the prompt=none
- * check and by the SSO fast path, so an unverified hint never reaches a
- * session decision. A hint that does not verify is a redirectable error
- * (login_required, or the hint's own code), and the transaction is dropped.
+ * 署名、`iss`、`aud`、`exp`、`iat` を、OP 自身の JWK Set（`jwksProvider`）で検証する。
+ * `id_token_hint` が無ければ、`verifiedHintSubject` を `undefined` にして返す。
+ *
+ * 検証に失敗するか `jwksProvider` が無ければ、トランザクションを削除し、`login_required` のエラーの認可レスポンスを返す。
+ * 失敗の例外が `IdTokenHintError` ならその `error` をエラーコードに使うが、今の `IdTokenHintError` の `error` は常に `login_required` である。
+ *
+ * `id_token_hint` についての規定（「ID トークンが示すエンドユーザーがログインしていれば…そうでなければエラーを返すべき（SHOULD）」）は、`prompt` を条件にしていない。
+ * そのため、`prompt` の値によらず（無し、`login`、`consent`、`select_account`、`none`）検証する。
+ * 検証したサブジェクトは `prompt=none` の確認と SSO の両方で使うので、検証していない `id_token_hint` がセッションの判断に使われることはない。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export async function verifyIdTokenHint(
   c: any,
@@ -45,7 +48,7 @@ export async function verifyIdTokenHint(
   const transactionStore = c.get('transactionStore');
   const jwksProvider = c.get('jwksProvider') as undefined | (() => Promise<JwkSet> | JwkSet);
   if (!jwksProvider) {
-    // jwksProvider 未提供では hint を検証できない → login_required で拒否
+    // `jwksProvider` が無ければ `id_token_hint` を検証できないので、`login_required` で拒否する。
     await transactionStore.delete('auth_txn:' + transactionId);
     return {
       kind: 'authorization_response',

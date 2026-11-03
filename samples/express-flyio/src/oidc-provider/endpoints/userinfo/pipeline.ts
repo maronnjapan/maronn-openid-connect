@@ -21,19 +21,19 @@ export const userinfoApp = new WebRouter();
 
 const handler = async (c: any) => {
   try {
-    // [parse-access-token] Read the Bearer token — RFC 6750 §2.1 / §2.2
+    // [parse-access-token] Bearer トークンを読み取る — RFC 6750 §2.1 / §2.2
     const accessToken = await parseUserInfoRequest(c);
 
-    // [resolve-access-token] Resolve and validate the access token — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
+    // [resolve-access-token] アクセストークンを取得して検証する — OIDC Core 1.0 §5.3.1 / RFC 6750 §3.1 / RFC 9068 §4
     const tokenInfo = await resolveUserInfoToken(c, accessToken);
 
-    // [resolve-claims] Resolve the claims the token may see — OIDC Core 1.0 §5.4 / §5.5
+    // [resolve-claims] トークンで開示できるクレームを決める — OIDC Core 1.0 §5.4 / §5.5
     const claims = await resolveUserInfoResponseClaims(c, tokenInfo);
 
-    // [build-response] Build the response (JSON or signed JWT) — OIDC Core 1.0 §5.3.2
+    // [build-response] レスポンスを組み立てる（JSON か署名付き JWT） — OIDC Core 1.0 §5.3.2
     const userInfoResponse = await buildUserInfoResponse(c, tokenInfo, claims);
 
-    // [respond] Respond (no-store) — RFC 6750 §5.2
+    // [respond] 応答する（no-store） — RFC 6750 §5.2
     return respondUserInfo(c, userInfoResponse);
   } catch (error) {
     return respondUserInfoError(c, error);

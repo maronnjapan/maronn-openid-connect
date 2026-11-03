@@ -13,12 +13,12 @@ import { respondDiscovery } from './steps/respond.js';
 export const discoveryApp = new WebRouter();
 
 discoveryApp.get('/', (c) => {
-  // [collect-signing-algorithms] Collect the advertised signing algorithms — OIDC Core 1.0 §15.1 / §5.3.2
+  // [collect-signing-algorithms] 公開する署名アルゴリズムを集める — OIDC Core 1.0 §15.1 / §5.3.2
   const { idTokenSigningKeys, userinfoSigningAlgValues } = collectAdvertisedSigningKeys(c);
 
-  // [build-metadata] Build the provider metadata — OIDC Discovery 1.0 §3 / RFC 8414
+  // [build-metadata] OP のメタデータを組み立てる — OIDC Discovery 1.0 §3 / RFC 8414
   const metadata = buildDiscoveryMetadata(c, { idTokenSigningKeys, userinfoSigningAlgValues });
 
-  // [respond] Respond with the cacheable JSON document — RFC 8414 §3.2
+  // [respond] キャッシュ可能な JSON で応答する — RFC 8414 §3.2
   return respondDiscovery(c, metadata);
 });

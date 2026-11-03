@@ -30,11 +30,14 @@
 export const DEVICE_BINDING_COOKIE_PREFIX = 'oidc_device_';
 
 /**
- * Build the Set-Cookie value binding one device verification to this browser.
- * Same attributes as the session cookie: HttpOnly (no JS access), Secure (HTTPS
- * only; http://localhost is treated as trustworthy by browsers) and
- * SameSite=Lax. Max-Age matches the remaining record TTL so an abandoned
- * verification does not leave a cookie behind.
+ * バインディング Cookie の `Set-Cookie` の値を返す。
+ *
+ * この Cookie で、デバイスの検証（ユーザーコードの照合から承認か拒否まで）をこのブラウザに結び付ける。
+ * 名前は `oidc_device_<userCode>`（`userCode` は正規化したユーザーコード）で、値には `bindingSecret` をそのまま入れる。
+ * 属性はセッションの Cookie と同じ `HttpOnly`（JavaScript から読めない）、`Secure`（HTTPS でだけ送られる）、`SameSite=Lax` である。
+ * ブラウザは `http://localhost` も安全な接続として扱うので、そこでは HTTP でも送られる。
+ * `Max-Age` には `ttlSeconds` を入れる。
+ * 呼び出し側はレコードの残りの有効期間を渡すので、検証を途中でやめても Cookie がいつまでも残ることはない。
  */
 export function buildDeviceBindingCookie(
   userCode: string,
@@ -48,8 +51,10 @@ export function buildDeviceBindingCookie(
 }
 
 /**
- * Build the Set-Cookie value that clears the binding cookie once the user has
- * approved or denied, so the browser does not accumulate one cookie per flow.
+ * バインディング Cookie を消す `Set-Cookie` の値を返す。
+ *
+ * 名前と属性は {@link buildDeviceBindingCookie} と同じにし、値を空に、`Max-Age` を 0 にする。
+ * エンドユーザーが承認か拒否をした後に使い、デバイスのフローのたびに Cookie がブラウザにたまっていくのを防ぐ。
  */
 export function buildClearedDeviceBindingCookie(userCode: string): string {
   return (
@@ -59,9 +64,11 @@ export function buildClearedDeviceBindingCookie(userCode: string): string {
 }
 
 /**
- * Extract the binding secret for one device verification from a Cookie header.
- * Returns null when the header is missing or this record's cookie is absent,
- * which validateVerificationBinding() rejects with 403.
+ * バインディング Cookie の値を取り出して返す。
+ *
+ * `cookieHeader`（`Cookie` ヘッダーの値）から、名前が `oidc_device_<userCode>` の Cookie を探して、その値を返す。
+ * ヘッダーがないときと、その Cookie がないときは `null` を返す。
+ * `validateVerificationBinding()` は、`null` を受け取ると 403 で拒否する。
  */
 export function parseDeviceBindingSecret(
   cookieHeader: string | null,

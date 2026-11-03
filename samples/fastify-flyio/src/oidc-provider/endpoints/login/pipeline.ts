@@ -25,48 +25,56 @@ import { validateLoginCsrfToken } from './steps/validate-csrf-token.js';
  */
 
 /**
- * GET /login: load the transaction this browser's cookie names and describe the
- * form, or the error to show instead when there is none.
+ * トランザクションを読み込み、ログイン画面の内容を返す。
+ *
+ * GET `/login` のハンドラ（page.tsx）が呼ぶ。
+ * トランザクションは、ブラウザの Cookie が指すものを読み込む。
+ * ログイン画面の内容は、`csrf_token`、`login_hint`、機能が加えるほかのログイン方法の表示である。
+ * トランザクションを読み込めないときは、代わりに表示するエラー（`kind: 'error'`）を返す。
  */
 export async function prepareLogin(c: any): Promise<LoginScreen | LoginError> {
-  // [load-transaction] Load the transaction this browser is in
+  // [load-transaction] Cookie が指すトランザクションを読み込む
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
 
-  // [describe-login-screen] Describe the login form — OIDC Core 1.0 §3.1.2.1 (login_hint)
+  // [describe-login-screen] ログイン画面の表示内容を組み立てる — OIDC Core 1.0 §3.1.2.1 (login_hint)
   return describeLoginScreen(c, loaded.transactionId, loaded.transaction);
 }
 
 /**
- * POST /login: check the credentials and, on success, establish the OP session.
- * The steps run in the fixed order the screen needs (the login endpoint of
- * `maronn-oidc graph --detail steps`).
+ * 認証情報を確かめ、合えば OP のセッションを確立する。
+ *
+ * POST `/login` のハンドラ（page.tsx）が呼ぶ。
+ * 認証に成功すると、OP のセッションを確立し、セッションの Cookie を含む `authenticated` を返す。
+ * 認証情報が誤っていれば失敗を数え、試行回数が残っていれば再表示するフォームの内容と残りの回数を含む `invalid_credentials` を、使い切っていれば `locked_out` を返す。
+ * フォームが別オリジンから送られたとき、トランザクションが見つからないとき、`csrf_token` が一致しないときは、エラー（`kind: 'error'`）を返す。
+ *
+ * ステップの順は画面に合わせて固定してある（`maronn-oidc graph --detail steps --endpoint login` で確かめられる）。
  */
 export async function submitLogin(c: any, input: LoginSubmission): Promise<LoginOutcome> {
   const { csrfToken, username, password } = input;
 
-  // [reject-cross-origin-post] Refuse a form posted from another origin
-  // First the browser's own statement of where the form was submitted from
-  // (isSameOriginFormPost() in cookies.ts): independent of the cookie and the
-  // csrf_token, so a forged POST is stopped even if both were planted.
+  // [reject-cross-origin-post] 別オリジンからのフォーム POST を拒否する
+  // 最初に、フォームの送信元を、ブラウザ自身が付けるヘッダーで確かめる（cookies.ts の `isSameOriginFormPost()`）。
+  // この確認は Cookie にも `csrf_token` にも依存しないので、両方を仕込まれていても偽造された POST を止められる。
   const sameOriginError = rejectCrossOriginFormPost(c);
   if (sameOriginError) return sameOriginError;
 
-  // [load-transaction] The cookie says which transaction this browser is in.
+  // [load-transaction] Cookie が指すトランザクションを読み込む
   const loaded = await loadTransaction(c);
   if ('kind' in loaded) return loaded;
   const { transactionId, transaction } = loaded;
 
-  // [validate-csrf-token] The csrf_token says the submission came from the form
-  // the OP rendered for exactly that one.
+  // [validate-csrf-token] csrf_token をトランザクションと照合する
+  // 一致すれば、このトランザクションのために OP が描画したフォームから送られたと分かる。
   const csrfError = validateLoginCsrfToken(transaction, csrfToken);
   if (csrfError) return csrfError;
 
-  // [authenticate-user] Check the credentials
+  // [authenticate-user] 認証情報を確かめる
   const user = await authenticateEndUser(c, username, password);
   if (!user) {
-    // [record-login-failure] Wrong credentials: count the attempt, then either
-    // lock the transaction or show the form again with the attempts left.
+    // [record-login-failure] 失敗した試行を数える（ロックアウト）
+    // 試行回数を使い切ったときはトランザクションを削除して `locked_out` を返し、残っているときは残りの回数を添えてフォームを再表示する。
     const failure = await recordLoginFailure(c, transactionId, transaction);
     if (!failure.canRetry) {
       return { kind: 'locked_out' };
@@ -78,12 +86,12 @@ export async function submitLogin(c: any, input: LoginSubmission): Promise<Login
     };
   }
 
-  // [discard-session-for-fresh-login] prompt=login: discard the session first — OIDC Core 1.0 §3.1.2.1
+  // [discard-session-for-fresh-login] prompt=login: 既存のセッションを破棄する — OIDC Core 1.0 §3.1.2.1
   await discardSessionForFreshLogin(c, transactionId, transaction);
 
-  // [establish-session] Establish the OP session — OIDC Core 1.0 §3.1.2.3
+  // [establish-session] ブラウザに OP のセッションを確立する — OIDC Core 1.0 §3.1.2.3
   const { sessionId, authTime } = await establishBrowserSession(c, user.sub);
 
-  // [hand-off-to-consent] Hand the subject to the consent step
+  // [hand-off-to-consent] 認証したサブジェクトを同意のために保存する
   return handOffToConsent(c, transactionId, user.sub, sessionId, authTime);
 }

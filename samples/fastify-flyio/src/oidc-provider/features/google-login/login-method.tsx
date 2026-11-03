@@ -23,12 +23,15 @@ export const contribution = contribute({
 });
 
 /**
- * EXTENSION (google-login): build the GIS configuration (the g_id_onload
- * attributes) for this transaction, or undefined when config.googleLogin is not
- * set. Every description of the form issues a fresh nonce bound to the
- * transaction: Google echoes it in the ID token, which is how the callback
- * (endpoints/login-google/) finds its way back to this authorization request
- * (the redirect-mode POST carries nothing else).
+ * `nonce` を発行し、GIS の設定の属性を組み立てて返す。
+ *
+ * 返すのは、ログイン画面の `g_id_onload` 要素に付ける属性である。
+ * `config.googleLogin` が設定されていなければ、`nonce` を発行せずに `undefined` を返す。
+ * 設定と `nonce` のストアは、リクエストコンテキストから取り出す。
+ *
+ * ログインフォームを描画するたびに、このトランザクションに対応付けた新しい `nonce` を発行する。
+ * リダイレクトモードの POST にはトランザクションを示す値がほかにないので、`login_uri` の処理（`endpoints/login-google/`）は、Google が ID トークンに入れて返すこの `nonce` から認可リクエストを特定する。
+ * `hostedDomain` が一つの文字列のときだけ、アカウントの選択をそのドメインに絞る（`data-hd`）。
  */
 export async function buildGoogleSignIn(
   c: any,
@@ -45,11 +48,12 @@ export async function buildGoogleSignIn(
   });
   return buildGoogleSignInAttributes({
     clientId: googleLogin.clientId,
-    // Must equal an authorized redirect URI of the Google OAuth client. Built on
-    // config.issuer for the same reason as the /consent redirect (RFC 9700 §2.1).
+    // Google の OAuth クライアントに登録した、承認済みのリダイレクト URI と一致する必要がある。
+    // `/consent` へのリダイレクトと同じく、リクエストの URL ではなく `config.issuer` から組み立てる。
+    // リクエストの URL はランタイムによっては `Host` ヘッダーから作られ、送信者がオリジンを選べてしまうためである（RFC 9700 §2.1）。
     loginUri: new URL('/login/google', config.issuer).toString(),
     nonce,
-    // OIDC Core 1.0 §3.1.2.1: pass login_hint on so Google can preselect the account.
+    // Google がアカウントを事前に選べるように、`login_hint` を引き継ぐ（OIDC Core 1.0 §3.1.2.1）。
     loginHint: transaction.loginHint,
     hostedDomain: typeof googleLogin.hostedDomain === 'string' ? googleLogin.hostedDomain : undefined,
   });

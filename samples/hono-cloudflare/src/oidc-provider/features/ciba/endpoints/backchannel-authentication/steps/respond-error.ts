@@ -8,7 +8,7 @@ export const meta = step({
   endpoint: 'backchannel-authentication',
   feature: 'ciba',
   kind: 'respond',
-  label: 'Respond with the OAuth error',
+  label: 'OAuth のエラーレスポンスで応答する',
   spec: 'CIBA Core 1.0 §13',
   function: 'respondBackchannelAuthenticationError',
   consumes: [],
@@ -17,9 +17,17 @@ export const meta = step({
 });
 
 /**
- * CIBA §13 / RFC 6749 §5.2 error shape. Authentication failures are core
- * TokenErrors (with their 401); everything the experimental package rejects
- * is a BackchannelAuthenticationError.
+ * エラーに応じた OAuth のエラーレスポンスで応答する。
+ *
+ * ボディは `error` と `error_description` を持つ JSON で、どの場合も `noStore()` でキャッシュを禁じる（CIBA §13、RFC 6749 §5.2）。
+ * エラーの種類ごとに、次のように応答する。
+ * - `BackchannelAuthenticationEndpointError`（ステップが決めた固定のレスポンス）: そのステータス、ヘッダー、ボディのまま返す。
+ * - `BackchannelAuthenticationError`（experimental パッケージが拒否したリクエスト）: 400 で返す。
+ * - `TokenError`（core のクライアント認証の失敗）: そのステータス（`invalid_client` なら 401）で返し、`WWW-Authenticate` の値があればヘッダーに付ける。
+ * - それ以外: 500 の `server_error` を返す。
+ *
+ * @spec CIBA Core 1.0 §13
+ * @spec RFC 6749 §5.2
  */
 export function respondBackchannelAuthenticationError(c: any, error: unknown): Response {
   noStore(c);

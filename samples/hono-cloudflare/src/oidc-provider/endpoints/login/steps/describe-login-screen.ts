@@ -9,7 +9,7 @@ export const meta = step({
   id: 'describe-login-screen',
   endpoint: 'login',
   kind: 'transform',
-  label: 'Describe the login form',
+  label: 'ログイン画面の表示内容を組み立てる',
   spec: 'OIDC Core 1.0 §3.1.2.1 (login_hint)',
   function: 'describeLoginScreen',
   consumes: ['transaction'],
@@ -18,10 +18,14 @@ export const meta = step({
 });
 
 /**
- * [describe-login-screen] Describe the form for a transaction (the shared part
- * of GET and a failed POST), with the other ways to sign in the features
- * offer: each login method renders itself for this transaction, or nothing
- * while it is not configured. OIDC Core 1.0 §3.1.2.1 (login_hint)
+ * ログインフォームに表示する内容を返す。
+ *
+ * 内容は、トランザクションの `csrf_token` と `login_hint`、機能が加えるほかのログイン方法（Google でのログインなど）の表示である（OIDC Core 1.0 §3.1.2.1）。
+ * ログイン方法はそれぞれ、このトランザクション向けの表示を描画する。
+ * 設定されていないログイン方法は何も返さないので、表示に含めない。
+ * `prepareLogin()`（GET）と、ログインに失敗したときの `submitLogin()`（POST）の両方が呼ぶ。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.1
  */
 export async function describeLoginScreen(
   c: any,

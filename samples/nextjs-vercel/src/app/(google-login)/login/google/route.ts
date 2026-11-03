@@ -56,26 +56,26 @@ const googleAccountResolver: GoogleAccountResolver = {
 };
 
 /**
- * Complete a Sign in with Google login (POST /login/google): verify the ID
- * token Google posts, link the Google account to an OP user (created on first
- * login), start the OP session for the transaction and redirect (302) to
- * /consent.
+ * ID トークンでログインし、同意画面へリダイレクトする。
  *
- * A failed check (the CSRF cookie, the ID token, the nonce, and the hosted
- * domain or verified e-mail when configured) or an unknown or expired
- * transaction sends the browser (303) to the OP's error page. Without
- * config.googleLogin the route answers 404.
+ * `POST /login/google` のルートハンドラで、「Google でログイン」を終えたブラウザから ID トークンが POST で届く。
+ * ID トークンと `nonce` を検証して Google アカウントに対応する OP のユーザーを特定し（初回のログインならユーザーを作る）、`nonce` を発行したトランザクションのために OP のセッションを始めて、`/consent` へ 302 でリダイレクトする。
+ * `prompt` に `login` か `select_account` があれば、セッションを始める前に既存のセッションを破棄する。
+ *
+ * 検証（CSRF の Cookie、ID トークン、`nonce`、設定したときは `hd` と `email_verified`）に失敗したときと、トランザクションがないか期限切れのときは、OP のエラーページへ 303 でリダイレクトする。
+ * `config.googleLogin` が設定されていなければ 404 で応答する。
  */
 export async function POST(request: Request): Promise<Response> {
   const googleLogin = config.googleLogin;
-  // Without config.googleLogin there is no Google login to call back into.
+  // `config.googleLogin` がなければ Google でのログインは始まらないので、このコールバックはないものとして 404 で応答する。
   if (!googleLogin) notFound();
 
   let transactionId: string;
   let subject: string;
   try {
-    // Double Submit Cookie -> google-auth-library verification -> nonce lookup,
-    // in the order Google's server-side verification guide prescribes.
+    // Cookie とボディの `g_csrf_token` の照合、ID トークンの検証、`nonce` によるトランザクションの特定を、この順に行う。
+    // 照合を検証より先に行うのは、サーバー側で ID トークンを検証する手順を示した Google のドキュメントに従うためである。
+    // `nonce` を最後に使うのは、検証を通らないトークンでレコードが消費されないようにするためである。
     const login = await handleGoogleLoginRedirect({
       params: await readFormFields(request),
       cookieHeader: request.headers.get('Cookie'),
@@ -88,8 +88,8 @@ export async function POST(request: Request): Promise<Response> {
     transactionId = login.transactionId;
     subject = await resolveGoogleLoginSubject(login.account, googleAccountResolver);
   } catch (error) {
-    // Until the nonce is verified the OP cannot tell whose transaction this is,
-    // so a failed callback can only end on the OP.
+    // `nonce` を検証するまでは、どのトランザクションの POST なのか OP には分からない。
+    // そのため、失敗したときはクライアントにリダイレクトせず、OP のエラーページで終える。
     if (!(error instanceof GoogleLoginError)) throw error;
     return redirectToErrorPage(error.code, error.message);
   }

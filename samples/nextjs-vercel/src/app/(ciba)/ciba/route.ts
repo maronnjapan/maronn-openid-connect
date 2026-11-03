@@ -20,12 +20,15 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * With an OP session: the pending requests addressed to the signed-in user.
- * Without one: a fresh login transaction and its sign-in form, bound to this
- * browser by a cookie. A hidden csrf_token alone cannot stop login CSRF — the
- * attacker can fetch a valid pair from their own form — so the submission must
- * also present this browser's binding (see buildCibaLoginBindingCookie() in
- * _oidc-provider/features/ciba/cookies.ts).
+ * 保留中の一覧か、ログインフォームを返す。
+ *
+ * `GET /ciba` の処理である。
+ * `Cookie` ヘッダーが示す OP のセッションがストアにあれば、そのユーザー宛ての保留中のリクエストの一覧を返す。
+ * セッションがなければ、ログイントランザクションを作ってストアに保存し、そのログインフォームを、このブラウザに結び付けるバインディング Cookie を付けて返す。
+ *
+ * 隠しフィールドの `csrf_token` だけでは、ログイン CSRF を防げない。
+ * 攻撃者は自分で開いたフォームから、有効なトランザクション ID と `csrf_token` の組を手に入れられるためである。
+ * そこで、フォームの送信にはこのブラウザのバインディング Cookie も求める（`_oidc-provider/features/ciba/cookies.ts` の `buildCibaLoginBindingCookie()` を参照）。
  */
 export async function GET(request: Request): Promise<Response> {
   const sessionId = parseSessionId(request.headers.get('Cookie'));

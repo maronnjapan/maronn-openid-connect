@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'login-google',
   feature: 'google-login',
   kind: 'persist',
-  label: 'Establish the OP browser session',
+  label: 'ブラウザに OP のセッションを確立する',
   spec: 'OIDC Core 1.0 §3.1.2.3',
   function: 'establishBrowserSession',
   consumes: ['subject'],

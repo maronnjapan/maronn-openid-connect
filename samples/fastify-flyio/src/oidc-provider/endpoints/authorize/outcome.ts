@@ -49,9 +49,11 @@ export interface AuthorizationTransaction {
 }
 
 /**
- * Narrows raw query-string params to the typed AuthorizationRequestParams.
- * PKCE parameters are validated by core so conformance compatibility mode can
- * intentionally pass requests that omit them.
+ * `client_id` が文字列のオブジェクトなら `true` を返す。
+ *
+ * `true` のとき、引数の型を `AuthorizationRequestParams` に絞る。
+ * 確かめるのは `client_id` だけで、PKCE のパラメータは後で core の関数が検証する。
+ * そのため、OIDF の適合性テストとの互換モード（`allowNonPkceAuthorizationCodeFlow`）では、PKCE のパラメータを省いたリクエストを意図して通せる。
  */
 export function isAuthorizationRequestParams(
   params: unknown,
@@ -62,22 +64,21 @@ export function isAuthorizationRequestParams(
 }
 
 /**
- * Builds the OAuth error response for the client.
- * OIDC Core 1.0 Section 3.1.2.6 / RFC 6749 Section 4.1.2.1.
+ * エラーの認可レスポンスを組み立てて返す。
  *
- * errorDescription is optional; when supplied it is sanitized to the RFC 6749
- * Section 5.2 allowed character set, so user-controlled fragments cannot
- * smuggle control bytes into the response.
+ * レスポンスには `error`、`error_description`、`state` を入れる。
+ * `errorDescription` は省略でき、渡されたときは RFC 6749 §5.2 が許す文字以外を `?` に置き換えてから使う。
+ * 説明文にリクエストの値が入っても、制御文字などをレスポンスに紛れ込ませないためである。
  *
- * In the plain query response the parameters are added to the redirect URI,
- * with iss (RFC 9207 Section 2) so the client can pin the issuer that
- * produced it.
+ * `responseMode` が無ければ、値のあるパラメータをリダイレクト URI のクエリに設定し、`iss` も設定する（RFC 9207 §2）。
+ * クライアントは `iss` で、レスポンスを作った発行者を確かめられる。
  *
- * When the request asked for a response mode of a feature (responseMode),
- * that mode carries the very same parameters instead — a JARM response JWT,
- * for one, identifies the issuer with its iss claim (RFC 9700 Section 2.1
- * accepts JARM as the issuer-identification mechanism), and the Form Post
- * Response Mode posts them, iss included, from an HTML form.
+ * リクエストが機能のレスポンスモードを求めていたとき（`responseMode` があるとき）は、同じパラメータをそのモードで返す。
+ * 例えば JARM では、パラメータを一つの JWT に入れて署名し、その JWT の `iss` クレームで発行者を示す（RFC 9700 §2.1 は、発行者を示す仕組みとして JARM を認めている）。
+ * `form_post` のレスポンスモードでは、`iss` を含むパラメータを HTML のフォームからブラウザに送らせる。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.6
+ * @spec RFC 6749 §4.1.2.1
  */
 export async function buildErrorResponse(
   responseMode: AuthorizationResponseMode | undefined,
@@ -87,7 +88,8 @@ export async function buildErrorResponse(
   errorDescription: string | undefined,
   issuer: string,
 ): Promise<AuthorizationResponse> {
-  // RFC 6749 Section 5.2: sanitize once, for every response mode.
+  // 説明文の、RFC 6749 §5.2 が許す文字以外を `?` に置き換える。
+  // どのレスポンスモードで返す場合も、置き換えはここで一度だけ行う。
   const description = errorDescription
     ? sanitizeErrorDescription(errorDescription)
     : undefined;
@@ -99,11 +101,14 @@ export async function buildErrorResponse(
 }
 
 /**
- * Builds the success response carrying the authorization code.
- * OIDC Core 1.0 Section 3.1.2.5 / RFC 9207 Section 2 (iss).
+ * 認可コードを含む認可レスポンスを組み立てて返す。
  *
- * When the request asked for a response mode of a feature (responseMode),
- * that mode carries the code and state instead.
+ * レスポンスには `code` と `state` を入れる。
+ * `responseMode` が無ければ、値のあるパラメータをリダイレクト URI のクエリに設定し、`iss` も設定する。
+ * リクエストが機能のレスポンスモードを求めていたとき（`responseMode` があるとき）は、同じパラメータをそのモードで返す。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.5
+ * @spec RFC 9207 §2
  */
 export async function buildSuccessResponse(
   responseMode: AuthorizationResponseMode | undefined,

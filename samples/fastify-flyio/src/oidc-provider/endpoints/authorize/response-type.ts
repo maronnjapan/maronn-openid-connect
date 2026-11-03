@@ -42,14 +42,21 @@ export interface AuthorizationResponseTypeHandler {
   respond(c: any, input: AuthorizationResponseInput): Promise<AuthorizationOutcome>;
 }
 
-/** The response types the provider answers: code, and those of the features (response_types_supported). */
+/**
+ * OP が応答するレスポンスタイプの一覧を返す。
+ *
+ * 一覧は、`code` と、有効な機能が応答するレスポンスタイプからなる。
+ * 認可リクエストの検証、動的クライアント登録のメタデータの検証、ディスカバリーの `response_types_supported` に使う。
+ */
 export function supportedResponseTypes(): AuthorizationResponseType[] {
   return ['code', ...responseTypesOf(features).flatMap((handler) => handler.names)];
 }
 
 /**
- * The handler of the feature that answers the response type of a validated
- * request; undefined for code, which the provider answers itself.
+ * レスポンスタイプに応答する機能のハンドラを返す。
+ *
+ * 引数は、検証済みのリクエストの `response_type` である。
+ * `code` など、どの機能も応答しないレスポンスタイプには `undefined` を返す（`code` には OP 自身が認可コードで応答する）。
  */
 export function responseTypeHandlerOf(responseType: string): AuthorizationResponseTypeHandler | undefined {
   return responseTypesOf(features).find((handler) => (handler.names as readonly string[]).includes(responseType));

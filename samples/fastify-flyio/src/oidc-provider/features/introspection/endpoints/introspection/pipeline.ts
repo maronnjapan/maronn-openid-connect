@@ -24,19 +24,19 @@ export const introspectionApp = new WebRouter();
 
 introspectionApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the introspection request — RFC 7662 §2.1
+    // [parse-request] イントロスペクションリクエストを解析する — RFC 7662 §2.1
     const { params, authorization } = await parseIntrospectionRequest(c);
 
-    // [authenticate-client] Authenticate the confidential client — RFC 7662 §2.1 / OAuth 2.1 §2.3
+    // [authenticate-client] コンフィデンシャルクライアントを認証する — RFC 7662 §2.1 / OAuth 2.1 §2.3
     const authenticatedClientId = await authenticateIntrospectionClient(c, params, authorization);
 
-    // [resolve-token] Resolve the presented token — RFC 7662 §2.1
+    // [resolve-token] 提示されたトークンを取得する — RFC 7662 §2.1
     const resolved = await resolveIntrospectedToken(c, params, authenticatedClientId);
 
-    // [build-response] Describe the token (active or not) — RFC 7662 §2.2
+    // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
     const introspection = describeIntrospectedToken(resolved);
 
-    // [respond] Respond (no-store) — RFC 7662 §2.2
+    // [respond] 応答する（no-store） — RFC 7662 §2.2
     return respondIntrospection(c, { status: 200, body: introspection });
   } catch (error) {
     return respondIntrospectionError(c, error);

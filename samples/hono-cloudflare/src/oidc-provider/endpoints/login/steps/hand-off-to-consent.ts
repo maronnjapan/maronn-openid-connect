@@ -5,7 +5,7 @@ export const meta = step({
   id: 'hand-off-to-consent',
   endpoint: 'login',
   kind: 'persist',
-  label: 'Store the authenticated subject for the consent step',
+  label: '認証したサブジェクトを同意のために保存する',
   function: 'handOffToConsent',
   consumes: ['transactionId', 'user', 'sessionId', 'authTime'],
   produces: ['outcome'],
@@ -13,11 +13,13 @@ export const meta = step({
 });
 
 /**
- * [hand-off-to-consent] Store the authenticated subject for the consent step
- * (the per-transaction hand-off) and answer with the session cookie. The
- * sessionId travels along for the online refresh token: the authorization code
- * the consent step issues inherits this session, so the refresh token stops
- * working at logout.
+ * サブジェクトを認証セッションに保存し、Cookie を返す。
+ *
+ * サブジェクト、認証時刻、セッション ID を、トランザクションの ID をキーに認証セッションとして保存し、同意のステップへ引き渡す。
+ * 返す結果（`kind: 'authenticated'`）には、OP のセッションの Cookie（`session_id`）を設定する `Set-Cookie` の値を含める。
+ *
+ * セッション ID も保存するのは、`offline_access` のない認可で発行するリフレッシュトークンのためである。
+ * 同意のステップが発行する認可コードがこのセッションを引き継ぐので、ログアウトするとそのリフレッシュトークンも使えなくなる。
  */
 export async function handOffToConsent(
   c: any,

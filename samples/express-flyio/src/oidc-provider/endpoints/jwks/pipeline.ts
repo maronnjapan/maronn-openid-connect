@@ -14,13 +14,13 @@ export const jwksApp = new WebRouter();
 
 jwksApp.get('/', async (c) => {
   try {
-    // [collect-public-keys] Collect every registered signing key
+    // [collect-public-keys] 登録済みの署名鍵をすべて集める
     const keys = collectPublishedKeys(c);
 
-    // [export-jwks] Export the public halves as a JWK Set — RFC 7517 §5
+    // [export-jwks] 公開鍵を JWK Set にまとめる — RFC 7517 §5
     const jwks = await buildJwksDocument(keys);
 
-    // [respond] Respond with the cacheable JWK Set
+    // [respond] キャッシュ可能な JWK Set で応答する
     return respondJwks(c, jwks);
   } catch {
     // An empty key set (or a key that cannot be exported) is a configuration

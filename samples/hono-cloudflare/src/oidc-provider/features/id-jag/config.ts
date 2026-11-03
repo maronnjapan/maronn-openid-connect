@@ -84,7 +84,12 @@ const idJagJwksCache = new Map<string, { jwks: JwkSet; expiresAt: number }>();
 const ID_JAG_JWKS_CACHE_TTL_MS = 300_000;
 
 /**
- * The trusted identity providers of ID-JAG with their keys: the configured JWKS, or the one fetched from the issuer and cached for a while.
+ * 信頼する ID プロバイダと、その検証用の鍵を返す。
+ *
+ * `idJagConfig.trustedIdentityProviders` の項目ごとに、`jwks` があればそれを、なければ `jwksUri` から取得した JWKS を、その ID プロバイダの ID-JAG を検証する鍵として返す。
+ * 取得した JWKS は、300 秒のあいだキャッシュして使い回す。
+ * `jwks` も `jwksUri` もない項目は、一覧から除く。
+ * 取得に失敗したときや、成功以外のステータスコードが返ったときは例外を投げ、トークンエンドポイントは 500 の `server_error` で応答する。
  *
  * @spec ID-JAG draft §4.3
  */
@@ -96,8 +101,8 @@ export async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIde
       continue;
     }
     if (entry.jwksUri === undefined) {
-      // An entry with neither jwks nor jwksUri can never verify anything; skip
-      // it so the assertion is answered with the fixed untrusted description.
+      // `jwks` も `jwksUri` もない項目は何も検証できないので、一覧から除く。
+      // その発行者のアサーションは、信頼しない発行者のものとして、固定の説明で拒否される。
       continue;
     }
     const cached = idJagJwksCache.get(entry.jwksUri);
@@ -105,9 +110,9 @@ export async function resolveTrustedIdentityProviders(): Promise<IdJagTrustedIde
       resolved.push({ issuer: entry.issuer, jwks: cached.jwks });
       continue;
     }
-    // A failed fetch propagates: the generic catch turns it into server_error,
-    // which is honest — the assertion was never evaluated, so invalid_grant
-    // would wrongly blame the client for an outage on this side.
+    // `jwksUri` から JWKS を取得し、失敗したら例外をそのまま投げる（トークンエンドポイントが `server_error` で応答する）。
+    // アサーションはまだ評価していないので、`server_error` が実態に合う。
+    // `invalid_grant` にすると、この OP 側の障害をクライアントの誤りとして伝えてしまう。
     const response = await fetch(entry.jwksUri);
     if (!response.ok) {
       throw new Error(`Fetching the JWKS of trusted IdP ${entry.issuer} failed with status ${response.status}`);

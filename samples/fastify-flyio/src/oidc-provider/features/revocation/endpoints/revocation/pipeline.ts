@@ -26,19 +26,19 @@ export const revocationApp = new WebRouter();
 
 revocationApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the revocation request — RFC 7009 §2.1
+    // [parse-request] 失効リクエストを解析する — RFC 7009 §2.1
     const { params, authorization } = await parseRevocationRequest(c);
 
-    // [authenticate-client] Authenticate the client — RFC 7009 §2.1 / OAuth 2.1 §2.3
+    // [authenticate-client] クライアントを認証する — RFC 7009 §2.1 / OAuth 2.1 §2.3
     const authenticatedClientId = await authenticateRevocationClient(c, params, authorization);
 
-    // [resolve-token] Resolve the presented token — RFC 7009 §2.1
+    // [resolve-token] 提示されたトークンを取得する — RFC 7009 §2.1
     const { token, resolved } = await resolveRevocationTokenTarget(c, params, authenticatedClientId);
 
-    // [revoke-token] Revoke the token and its grant siblings — RFC 7009 §2.1
+    // [revoke-token] トークンと同じグラントのトークンを失効させる — RFC 7009 §2.1
     await revokeToken(c, token, resolved, authenticatedClientId);
 
-    // [respond] Respond 200 with an empty body — RFC 7009 §2.2
+    // [respond] 空のボディの 200 で応答する — RFC 7009 §2.2
     return respondRevocation(c);
   } catch (error) {
     return respondRevocationError(c, error);

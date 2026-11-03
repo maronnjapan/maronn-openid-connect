@@ -10,8 +10,10 @@
 export const SESSION_COOKIE_NAME = 'session_id';
 
 /**
- * Extract the session_id value from a Cookie request header.
- * Returns undefined when the header is missing or the cookie is absent.
+ * `Cookie` ヘッダーの `session_id` の値を返す。
+ *
+ * ヘッダーがないとき、または `session_id` の Cookie がないときは `undefined` を返す。
+ * 値が空の `session_id` には空文字列を返す。
  */
 export function parseSessionId(cookieHeader: string | null): string | undefined {
   if (!cookieHeader) return undefined;
@@ -27,11 +29,10 @@ export function parseSessionId(cookieHeader: string | null): string | undefined 
 }
 
 /**
- * Build the Set-Cookie value for the browser session.
- * Security attributes: HttpOnly (no JS access), Secure (HTTPS only),
- * SameSite=Lax. SameSite=Strict
- * would drop the cookie on the cross-site authorization redirect return and
- * break the flow, so Lax is required.
+ * ブラウザセッションの `Set-Cookie` の値を作って返す。
+ *
+ * 属性は `HttpOnly`（JavaScript から読めない）、`Secure`（HTTPS でだけ送る）、`SameSite=Lax`、`Path=/` である。
+ * `SameSite=Strict` にしないのは、`Strict` ではほかのサイトから認可エンドポイントへ移るリダイレクトでブラウザが Cookie を送らず、フローが途中で止まるからである。
  */
 export function buildSessionCookie(sessionId: string): string {
   return SESSION_COOKIE_NAME + '=' + sessionId + '; HttpOnly; Secure; SameSite=Lax; Path=/';
@@ -70,13 +71,14 @@ export function buildSessionCookie(sessionId: string): string {
 export const TRANSACTION_COOKIE_NAME = '__Host-oidc_txn';
 
 /**
- * Build the Set-Cookie value that hands a transaction to this browser.
- * Same attributes as the session cookie: HttpOnly (no JS access), Secure
- * (HTTPS only; http://localhost is treated as trustworthy by browsers) and
- * SameSite=Lax, because SameSite=Strict would drop the cookie on the
- * cross-site navigation that starts the flow. Secure and Path=/ (and no
- * Domain) are also what the '__Host-' prefix requires. Max-Age matches the
- * transaction TTL so an abandoned flow does not leave the cookie behind.
+ * トランザクションの `Set-Cookie` の値を作って返す。
+ *
+ * ブラウザにトランザクションを渡すときに使う。
+ * 属性は、セッションの Cookie と同じ `HttpOnly`（JavaScript から読めない）、`Secure`（HTTPS でだけ送る）、`SameSite=Lax`、`Path=/` に、`Max-Age` を加えたものである。
+ * ブラウザは `http://localhost` を信頼できるオリジンとして扱うので、`Secure` の Cookie も手元の開発環境で使える。
+ * `SameSite=Strict` にしないのは、`Strict` ではフローを始めるほかのサイトからの遷移でブラウザが Cookie を送らなくなるからである。
+ * `Secure` と `Path=/` を付けて `Domain` を付けないのは、`__Host-` の接頭辞の要件でもある。
+ * `Max-Age` をトランザクションの有効期間（`ttlSeconds`）に合わせるので、途中でやめたフローの Cookie は残らない。
  */
 export function buildTransactionCookie(transactionId: string, ttlSeconds: number): string {
   return (
@@ -86,18 +88,21 @@ export function buildTransactionCookie(transactionId: string, ttlSeconds: number
 }
 
 /**
- * Build the Set-Cookie value that removes the transaction cookie once the
- * transaction is finished (code issued or access denied). It repeats Secure
- * and Path=/: the browser ignores a '__Host-' cookie write without them, the
- * removal included.
+ * トランザクションの Cookie を消す `Set-Cookie` を返す。
+ *
+ * トランザクションが終わったとき（認可コードを発行したとき、またはアクセスが拒否されたとき）に使う。
+ * 値を空にして `Max-Age=0` を付けるので、ブラウザは Cookie を削除する。
+ * ブラウザは `Secure` と `Path=/` のない `__Host-` の Cookie の書き込みを、削除も含めて無視するので、この二つも付ける。
  */
 export function buildClearedTransactionCookie(): string {
   return TRANSACTION_COOKIE_NAME + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
 }
 
 /**
- * Extract the transaction id from a Cookie request header.
- * Returns undefined when the header is missing or the cookie is absent.
+ * `Cookie` ヘッダーのトランザクション ID を返す。
+ *
+ * トランザクション ID は `__Host-oidc_txn` の Cookie の値である。
+ * ヘッダーがないとき、その Cookie がないとき、値が空のときは `undefined` を返す。
  */
 export function parseTransactionId(cookieHeader: string | null): string | undefined {
   if (!cookieHeader) return undefined;
@@ -113,25 +118,25 @@ export function parseTransactionId(cookieHeader: string | null): string | undefi
 }
 
 /**
- * Whether a form POST to /login or /consent was sent from the OP's own pages.
+ * OP 自身のページから送られた POST なら true を返す。
  *
- * A check that depends on neither the transaction cookie nor the csrf_token:
- * the browser itself states where the request came from, and no page script
- * can override these headers. It still holds when a sibling subdomain managed
- * to plant a transaction cookie and therefore knows its csrf_token, and it is
- * the only check SameSite=Lax leaves to a same-site (sibling subdomain) POST.
+ * `/login` と `/consent` へのフォームの POST を確かめるのに使う。
+ * この検査は、トランザクションの Cookie にも `csrf_token` にもよらない。
+ * リクエストの送り元はブラウザ自身がヘッダーで示し、ページのスクリプトはそのヘッダーを書き換えられないからである。
+ * そのため、同じ親ドメインの別のサブドメインがトランザクションの Cookie を仕込み、その `csrf_token` を知っている場合でも、この検査で拒否できる。
+ * 同じサイト（同じ親ドメインの別のサブドメイン）からの POST には `SameSite=Lax` が働かないので、それを拒否できるのはこの検査だけである。
  *
- * - Sec-Fetch-Site (Fetch Metadata): only 'same-origin' passes, plus 'none' -
- *   a user-initiated request such as a reload, which no other site can
- *   trigger. 'same-site' (a sibling subdomain) and 'cross-site' do not.
- * - Without Fetch Metadata, the Origin header a browser sends on every POST
- *   must be the issuer's origin. 'null' (an opaque origin) never matches.
- * - With neither header the request did not come from a browser page (curl, an
- *   HTTP client) or from a very old browser; the transaction cookie and the
- *   csrf_token still apply.
+ * 判定は次のとおりである。
+ * - `Sec-Fetch-Site` ヘッダー（フェッチメタデータ）があれば、`same-origin` と `none` のときだけ `true` を返す。
+ *   `none` は再読み込みのようにユーザー自身が始めたリクエストで、ほかのサイトからは起こせない。
+ *   `same-site`（同じ親ドメインの別のサブドメイン）と `cross-site` には `false` を返す。
+ * - `Sec-Fetch-Site` がなければ、ブラウザがどの POST にも付ける `Origin` ヘッダーが、発行者のオリジンと一致するときだけ `true` を返す。
+ *   `Origin` が `null`（不透明なオリジン）なら一致しない。
+ * - どちらのヘッダーもなければ `true` を返す。
+ *   ブラウザのページ以外（`curl` や HTTP クライアント）か、とても古いブラウザからのリクエストであり、トランザクションの Cookie と `csrf_token` の検証は引き続き行われる。
  *
- * The comparison uses config.issuer, never the request URL: some runtimes
- * derive the request URL from the Host header, which the sender controls.
+ * 比較には設定の `issuer` を使い、リクエストの URL は使わない。
+ * 実行環境によってはリクエストの URL を `Host` ヘッダーから求めるので、送り手がその値を変えられるからである。
  */
 export function isSameOriginFormPost(
   headers: { origin: string | null; secFetchSite: string | null },
@@ -151,9 +156,10 @@ export const CROSS_ORIGIN_FORM_POST_MESSAGE =
   'This form can only be submitted from the authorization server itself.';
 
 /**
- * Build the Set-Cookie value that removes the browser session cookie. The
- * logout routes pair it with browserSessionStore.delete(): the store entry
- * and the cookie go away together (RP-Initiated Logout 1.0 §2).
+ * セッションの Cookie を消す `Set-Cookie` を返す。
+ *
+ * 値を空にして `Max-Age=0` を付けるので、ブラウザは Cookie を削除する。
+ * ログアウトのルートは、これと `browserSessionStore.delete()` を組にして使い、ストアのセッションと Cookie を一緒に消す（RP-Initiated Logout 1.0 §2）。
  */
 export function buildClearedSessionCookie(): string {
   return SESSION_COOKIE_NAME + '=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';

@@ -1,6 +1,15 @@
 import { defineEndpoint } from '../_oidc-provider/endpoint';
 
-/** The steps of route.ts (Token Endpoint, OIDC Core 1.0 §3.1.3). */
+/**
+ * クライアントを認証し、提示されたグラント（認可コード、リフレッシュトークン、有効にした機能が扱うグラント）を検証して、トークンレスポンスで応答する。
+ * レスポンスには、アクセストークンと、`openid` スコープが許可されたときの ID トークンと、発行したときのリフレッシュトークンを含める。
+ * 失敗したときは OAuth のエラーレスポンスで応答し、トークンレスポンスにもエラーレスポンスにも `Cache-Control: no-store` を付ける。
+ * 署名鍵を読み込めないときは、503 で応答する。
+ *
+ * ここに並べるのは、`route.ts` のトークンエンドポイントのステップである。
+ *
+ * @spec OIDC Core 1.0 §3.1.3
+ */
 export const endpoint = defineEndpoint({
   path: '/token',
   steps: [

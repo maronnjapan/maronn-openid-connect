@@ -25,23 +25,23 @@ export const introspectionApp = new Hono<{ Variables: Record<string, any> }>();
 
 introspectionApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the introspection request — RFC 7662 §2.1
+    // [parse-request] イントロスペクションリクエストを解析する — RFC 7662 §2.1
     const { params, authorization } = await parseIntrospectionRequest(c);
 
-    // [authenticate-client] Authenticate the confidential client — RFC 7662 §2.1 / OAuth 2.1 §2.3
+    // [authenticate-client] コンフィデンシャルクライアントを認証する — RFC 7662 §2.1 / OAuth 2.1 §2.3
     const authenticatedClientId = await authenticateIntrospectionClient(c, params, authorization);
 
-    // [resolve-token] Resolve the presented token — RFC 7662 §2.1
+    // [resolve-token] 提示されたトークンを取得する — RFC 7662 §2.1
     const resolved = await resolveIntrospectedToken(c, params, authenticatedClientId);
 
-    // [build-response] Describe the token (active or not) — RFC 7662 §2.2
+    // [build-response] トークンの情報をまとめる（有効かどうか） — RFC 7662 §2.2
     const introspection = describeIntrospectedToken(resolved);
 
-    // [sign-response] (feature: jwt-introspection-response) Answer as a signed JWT when asked for one — RFC 9701 §4 / §5
+    // [sign-response] (feature: jwt-introspection-response) 求められたら署名付き JWT で応答する — RFC 9701 §4 / §5
     const signed = await signIntrospectionResponse(c, introspection, authenticatedClientId);
     if (signed) return signed;
 
-    // [respond] Respond (no-store) — RFC 7662 §2.2
+    // [respond] 応答する（no-store） — RFC 7662 §2.2
     return respondIntrospection(c, { status: 200, body: introspection });
   } catch (error) {
     return respondIntrospectionError(c, error);

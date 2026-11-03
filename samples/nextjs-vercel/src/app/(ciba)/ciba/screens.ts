@@ -10,7 +10,13 @@ import { cibaAuthenticationRequestStore } from '../../_oidc-provider/features/ci
 import { errorPage, escapeHtml, htmlResponse } from '../../_oidc-provider/html';
 import { resolveGrantableScopes } from '../../_oidc-provider/scopes';
 
-/** The sign-in form; cookies carry the login transaction's browser binding. */
+/**
+ * 認証デバイスのログインフォームを HTML で返す。
+ *
+ * フォームは、ユーザー名とパスワードを `/ciba/login` に送り、隠しフィールドの `login_transaction_id` と `csrf_token` も一緒に送る。
+ * `params.error` があれば、フォームの上にエラーと、`remainingAttempts` があれば残りの試行回数を表示する。
+ * `cookies`（ログイントランザクションのバインディング Cookie など）は、`Set-Cookie` ヘッダーとして付ける。
+ */
 export function loginScreen(
   params: { loginTransactionId: string; csrfToken: string; error?: string; remainingAttempts?: number },
   cookies: readonly string[] = [],
@@ -50,13 +56,19 @@ export function loginScreen(
 }
 
 /**
- * The pending requests addressed to subject, each with a freshly rotated CSRF
- * token — the only place those tokens are ever shown, and it is session-gated.
+ * 保留中のリクエストの一覧を HTML で返す。
  *
- * CIBA Core 1.0 §7.1: the binding_message is repeated so the user can check it
- * against the device that started the request before approving. It is
- * client-supplied text, so it is escaped like everything else. Deny is shown
- * with the same prominence as Approve.
+ * `subject` 宛ての保留中のリクエストをストアから取得し、レコードごとに CSRF トークンを作り直して保存してから、一覧を描画する。
+ * CSRF トークンを渡すのはこの一覧だけで、一覧を返すのは OP のセッションがあるとき（ログインした直後を含む）だけである。
+ * スコープは、このエンドユーザーに許可できるものだけに絞って表示する。
+ * リクエストがなければ、保留中のリクエストがないことだけを表示する。
+ * `cookies` は、`Set-Cookie` ヘッダーとして付ける。
+ *
+ * `binding_message` は、承認する前にリクエストを始めたデバイスの表示と見比べられるよう、もう一度表示する（CIBA Core 1.0 §7.1）。
+ * クライアントが送った文字列なので、ほかの値と同じくエスケープする。
+ * 拒否のボタンは、承認のボタンと同じ目立ち方で表示する。
+ *
+ * @spec CIBA Core 1.0 §7.1
  */
 export async function pendingRequestsScreen(
   subject: string,
@@ -66,7 +78,7 @@ export async function pendingRequestsScreen(
   const requests = await Promise.all(
     pending.map(async (record) => ({
       ...record,
-      // Show only what this End-User can actually grant (scopes.ts).
+      // このエンドユーザーが実際に許可できるスコープだけを表示する（`scopes.ts`）。
       scope: await resolveGrantableScopes(record.scope, subject),
     })),
   );
@@ -122,7 +134,11 @@ ${requestListHtml}
   );
 }
 
-/** The decision-recorded screen. */
+/**
+ * 承認か拒否を記録した後の完了画面を HTML で返す。
+ *
+ * エンドユーザーがクライアントを承認したか拒否したかと、このページを閉じてデバイスに戻ってよいことを表示する。
+ */
 export function completedScreen(params: { approved: boolean; clientId: string }): Response {
   const outcome = params.approved
     ? `<p>You approved <strong>${escapeHtml(params.clientId)}</strong>.</p>`
@@ -139,8 +155,10 @@ ${outcome}
 }
 
 /**
- * A failed binding, CSRF or ownership check, shown on the OP's error page with
- * its status. Anything that is not a verification failure is rethrown.
+ * 検証の失敗を、OP のエラーページで応答する。
+ *
+ * `CibaVerificationError`（ログイントランザクションか認証リクエストの検証の失敗）なら、そのメッセージとステータスコード（403）で OP のエラーページを返す。
+ * それ以外のエラーは、そのまま投げ直す。
  */
 export function verificationFailureScreen(error: unknown): Response {
   if (error instanceof CibaVerificationError) {
@@ -149,7 +167,12 @@ export function verificationFailureScreen(error: unknown): Response {
   throw error;
 }
 
-/** Remaining lifetime in whole seconds, never negative. */
+/**
+ * 有効期限（`expiresAt`）までの残りの秒数を返す。
+ *
+ * 1 秒未満の端数は切り上げ、期限を過ぎていれば 0 を返す。
+ * 保留中のリクエストの残り時間の表示と、バインディング Cookie の `Max-Age` に使う。
+ */
 export function remainingSeconds(expiresAt: Date): number {
   return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
 }

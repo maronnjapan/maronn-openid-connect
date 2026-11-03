@@ -34,19 +34,19 @@ export const backchannelAuthenticationApp = new Hono<{ Variables: Record<string,
 
 backchannelAuthenticationApp.post('/', async (c) => {
   try {
-    // [parse-request] Parse the backchannel authentication request — CIBA Core 1.0 §7.1
+    // [parse-request] バックチャネル認証リクエストを解析する — CIBA Core 1.0 §7.1
     const { params, authorization } = await parseBackchannelAuthenticationRequest(c);
 
-    // [authenticate-client] Authenticate the client — CIBA Core 1.0 §7.1
+    // [authenticate-client] クライアントを認証する — CIBA Core 1.0 §7.1
     const client = await authenticateCibaClient(c, params, authorization);
 
-    // [validate-client-scope] Check the requested scope against the registration — RFC 7591 §2 / RFC 6749 §3.3
+    // [validate-client-scope] 要求されたスコープを登録内容と照合する — RFC 7591 §2 / RFC 6749 §3.3
     validateCibaClientScope(params, client);
 
-    // [create-request] Resolve the login_hint and create the pending request — CIBA Core 1.0 §7.1 - §7.3
+    // [create-request] login_hint のユーザーで保留リクエストを作る — CIBA Core 1.0 §7.1 - §7.3
     const cibaResponse = await createBackchannelAuthenticationRequest(c, params, client);
 
-    // [respond] Respond with auth_req_id (no-store) — CIBA Core 1.0 §7.3
+    // [respond] auth_req_id で応答する（no-store） — CIBA Core 1.0 §7.3
     return respondBackchannelAuthentication(c, cibaResponse);
   } catch (error) {
     return respondBackchannelAuthenticationError(c, error);

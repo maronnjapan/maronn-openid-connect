@@ -63,9 +63,10 @@ export const developmentUsers: readonly (UserClaims & { password: string })[] = 
 ];
 
 /**
- * Register the development users that are not registered yet. registerUser()
- * hashes the password with PBKDF2, which costs CPU time, so a user that is
- * already there is left as it is.
+ * 未登録の開発用ユーザーをデータベースに登録する。
+ *
+ * 開発用のユーザー（`testuser` と `otheruser`）のうち、まだ登録されていないものを `registerUser()` で登録する。
+ * `registerUser()` は PBKDF2 でパスワードのハッシュを作り、CPU の時間がかかるので、登録済みのユーザーは登録し直さずにそのまま残す。
  */
 export async function registerDevelopmentUsers(db: Database): Promise<void> {
   const { userStore } = createProviderStores(db);

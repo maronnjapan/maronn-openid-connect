@@ -102,19 +102,31 @@ export interface Feature {
   readonly loginMethods?: readonly LoginMethod[];
 }
 
-/** Describe a feature. The function only checks the shape; it returns its argument. */
+/**
+ * 機能の説明を受け取り、そのまま返す。
+ *
+ * 実行時には何もしない。
+ * 引数が `Feature` の形であることは、TypeScript の型検査で確かめる。
+ */
 export function defineFeature<const F extends Feature>(feature: F): F {
   return feature;
 }
 
-/** The endpoints the features add, in the order of the features (app.ts mounts them after the endpoints of every provider). */
+/**
+ * 機能が加えるルートを、機能の順に並べて返す。
+ *
+ * `app.ts` は、すべての OP にあるエンドポイントのあとに、これらのルートを組み込む。
+ */
 export function routesOf(features: readonly Feature[]): FeatureRoute[] {
   return features.flatMap((feature) => feature.routes ?? []);
 }
 
 /**
- * The provider metadata with the members of the features added: an array
- * member is merged (each value once, in order), any other member replaced.
+ * OP のメタデータに、機能が加える項目を足して返す。
+ *
+ * 機能の順に各機能の `discovery` を `issuer` と `config` で呼び、返った項目を重ねる。
+ * 元の値と新しい値がどちらも配列なら、順序を保ったまま重複を除いてつなげ、それ以外は新しい値で置き換える。
+ * 受け取った `metadata` は書き換えず、新しいオブジェクトを返す。
  */
 export function discoveryOf(
   features: readonly Feature[],
@@ -134,7 +146,12 @@ export function discoveryOf(
   return merged;
 }
 
-/** Put the context values of the features into the request context, in the order of the features. */
+/**
+ * 機能が加える値をリクエストコンテキストに入れる。
+ *
+ * 機能の順に `context` を読み、関数ならリクエストごとに `input` を渡して呼び、返った値を `c.set()` で入れる。
+ * 後の機能が同じ名前の値を入れると、前の値は上書きされる。
+ */
 export async function applyContextOf(
   features: readonly Feature[],
   input: FeatureContextInput,
@@ -149,29 +166,49 @@ export async function applyContextOf(
   }
 }
 
-/** The ProviderConfig defaults the features add, merged in the order of the features (a later feature wins). */
+/**
+ * 機能が加える設定の既定値を一つにまとめて返す。
+ *
+ * 機能の順に重ね、同じ項目は後の機能の値を使う。
+ */
 export function configOf(features: readonly Feature[]): Partial<ProviderConfig> {
   return Object.assign({}, ...features.map((feature) => feature.config ?? {}));
 }
 
-/** The grant_type values the features answer at the token endpoint, each once. */
+/**
+ * 機能が受け付ける `grant_type` の値を重複なく返す。
+ *
+ * トークンエンドポイントで受け付けるグラントタイプを、機能の順に集める。
+ */
 export function tokenGrantsOf(features: readonly Feature[]): string[] {
-  // Two features may answer the same grant_type (token-exchange and id-jag
-  // both read the token-exchange URN); it is listed once.
+  // 同じ `grant_type` は一度だけ並べる。
+  // 二つの機能が同じ `grant_type` を受け付けることがあるからである（`token-exchange` と `id-jag` は、どちらもトークン交換の URN を読む）。
   return [...new Set(features.flatMap((feature) => feature.token?.grants ?? []))];
 }
 
-/** The response modes the features answer at the authorization endpoint. */
+/**
+ * 機能が加えるレスポンスモードのハンドラを返す。
+ *
+ * 認可エンドポイントで機能が応答に使うレスポンスモードを、機能の順に並べる。
+ */
 export function responseModesOf(features: readonly Feature[]): AuthorizationResponseModeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseModes ?? []);
 }
 
-/** The response_type handlers the features answer besides code. */
+/**
+ * `code` 以外の `response_type` のハンドラを返す。
+ *
+ * 機能が加えるハンドラを、機能の順に並べる。
+ */
 export function responseTypesOf(features: readonly Feature[]): AuthorizationResponseTypeHandler[] {
   return features.flatMap((feature) => feature.authorize?.responseTypes ?? []);
 }
 
-/** The login methods the features add beside the password form of the login screen. */
+/**
+ * 機能が加えるログイン方法を返す。
+ *
+ * ログイン画面で、パスワードのフォームのほかに示すログイン方法を、機能の順に並べる。
+ */
 export function loginMethodsOf(features: readonly Feature[]): LoginMethod[] {
   return features.flatMap((feature) => feature.loginMethods ?? []);
 }

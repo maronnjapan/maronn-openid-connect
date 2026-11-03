@@ -18,7 +18,12 @@ export interface CorsOptions {
   maxAge: number;
 }
 
-/** The Access-Control-Allow-Origin value for the origin of a request, or undefined to send none. */
+/**
+ * `Access-Control-Allow-Origin` に入れる値を返す。
+ *
+ * `allowed` が一つの文字列（`*` か一つのオリジン）なら、リクエストの `Origin` にかかわらずその文字列を返す。
+ * 配列なら、リクエストの `Origin` が含まれるときだけその値を返し、それ以外は `undefined` を返す（ヘッダーを付けない）。
+ */
 export function resolveCorsOrigin(requestOrigin: string | null, allowed: CorsOrigins): string | undefined {
   if (allowed === '*') return '*';
   if (typeof allowed === 'string') return allowed;
@@ -27,8 +32,11 @@ export function resolveCorsOrigin(requestOrigin: string | null, allowed: CorsOri
 }
 
 /**
- * A middleware that adds the CORS headers to every answer of its path and
- * answers the preflight (OPTIONS) itself with 204.
+ * CORS のヘッダーを付けるミドルウェアを作って返す。
+ *
+ * ミドルウェアは、登録したパスのレスポンスに、`Vary: Origin`、`options` の許可するメソッド、許可するヘッダー、キャッシュしてよい秒数を付ける。
+ * `resolveCorsOrigin()` がリクエストの `Origin` を許可すれば、`Access-Control-Allow-Origin` も付ける。
+ * プリフライト（`OPTIONS`）には、後続の処理を呼ばずに、ボディなしの 204 で応答する。
  */
 export function createCorsMiddleware(options: CorsOptions) {
   return async (c: any, next: () => Promise<unknown>): Promise<Response | void> => {

@@ -80,11 +80,10 @@ declare module '../../views.js' {
 }
 
 /**
- * Render the device verification page: a form that posts the user_code the
- * End-User types to /device.
+ * ユーザーコードの入力画面を描画する。
  *
- * The input is pre-filled with userCode when given, and the failure message of
- * a code that did not match is shown above the form.
+ * エンドユーザーが入力した `user_code` を `/device` に送るフォームである。
+ * `userCode` があれば入力欄に入れておき、照合に失敗していれば、その文言（`error`）をフォームの上に表示する。
  *
  * @spec RFC 8628 §3.3
  */
@@ -106,12 +105,11 @@ function defaultDeviceVerificationPage(params: DeviceVerificationPageParams): JS
 }
 
 /**
- * Render the sign-in page of a device authorization: the user_code being
- * activated, and a username and password form that posts to /device/login with
- * the hidden user_code and csrf_token.
+ * デバイス認可のログイン画面を描画する。
  *
- * The error of a failed attempt is shown above the form, with the attempts
- * left when known.
+ * 承認しようとしているデバイスのユーザーコードを表示し、ユーザー名とパスワードを `/device/login` に送るフォームを置く。
+ * フォームは、隠しフィールドの `user_code` と `csrf_token` も一緒に送る。
+ * 前の試行が失敗していれば、フォームの上にエラーと、わかっていれば残りの試行回数を表示する。
  *
  * @spec RFC 8628 §3.3
  */
@@ -132,16 +130,17 @@ function defaultDeviceLoginPage(params: DeviceLoginPageParams): JSX.Element {
 }
 
 /**
- * Render the device approval page: the user_code to compare with the one on
- * the device, the client and the scopes it asked for, and Approve and Deny
- * buttons that post the decision, user_code and csrf_token to /device/approve.
+ * デバイスの承認画面を描画する。
+ *
+ * デバイスの表示と見比べるためのユーザーコード、クライアント、要求されたスコープを表示する。
+ * 承認と拒否のボタンは、`decision`、`user_code`、`csrf_token` を `/device/approve` に送る。
  *
  * @spec RFC 8628 §3.3
  * @spec RFC 8628 §5.4
  */
 function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): JSX.Element {
-  // RFC 8628 §5.4: the code is repeated here on purpose. Ask the user to check it
-  // against the device in front of them before approving.
+  // ユーザーコードは、ここであえてもう一度表示する（RFC 8628 §5.4）。
+  // 承認する前に、手元のデバイスの表示と見比べるようエンドユーザーに促す。
   return (
     <Layout title="Authorize Device">
       <h1>Authorize Device</h1>
@@ -160,9 +159,9 @@ function defaultDeviceApprovalPage(params: DeviceApprovalPageParams): JSX.Elemen
 }
 
 /**
- * Render the page shown once the End-User decided on a device authorization:
- * that they approved or denied the client, and that they can go back to their
- * device.
+ * 承認か拒否を記録した後の完了画面を描画する。
+ *
+ * エンドユーザーがクライアントを承認したか拒否したかと、このページを閉じてデバイスに戻ってよいことを表示する。
  */
 function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): JSX.Element {
   return (
@@ -174,7 +173,11 @@ function defaultDeviceCompletedPage(params: DeviceCompletedPageParams): JSX.Elem
   );
 }
 
-/** The device views of the request: the ones the app replaced, else the defaults above. */
+/**
+ * デバイスフローの 4 つの画面のビューを返す。
+ *
+ * リクエストコンテキストの `views`（アプリが `views` オプションで差し替えたビュー）にあればそれを、なければこのファイルの既定のビューを返す。
+ */
 export function deviceViews(c: any): Required<Pick<Views, 'deviceVerificationPage' | 'deviceLoginPage' | 'deviceApprovalPage' | 'deviceCompletedPage'>> {
   const views: Partial<Views> = c.get('views') ?? {};
   return {

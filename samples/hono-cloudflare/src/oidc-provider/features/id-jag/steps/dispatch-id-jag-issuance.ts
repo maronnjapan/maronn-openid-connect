@@ -21,7 +21,7 @@ export const meta = step({
   endpoint: 'token',
   feature: 'id-jag',
   kind: 'dispatch',
-  label: 'Issue an ID-JAG (Cross-App Access)',
+  label: 'ID-JAG を発行する（Cross-App Access）',
   spec: 'ID-JAG draft §4.3',
   function: 'issueIdJag',
   consumes: ['params', 'tokenClient'],
@@ -31,20 +31,24 @@ export const meta = step({
 });
 
 /**
- * EXPERIMENTAL — ID-JAG issuance (Cross-App Access, draft §4.3).
+ * トークン交換で求められた ID-JAG を発行して応答する。
  *
- * A token-exchange request whose requested_token_type is the ID-JAG URN.
- * Dispatched right after client authentication and BEFORE the plain
- * token-exchange step (same grant_type URN) and the grant_type validation. The
- * subject_token must be an ID Token this OP issued to the authenticated client;
- * the result is a signed grant JWT for the resource authorization server named
- * by `audience` — not an access token (the response carries token_type N_A).
- * Returns undefined for any other request, so the pipeline continues.
+ * `grant_type` がトークン交換の URN で、`requested_token_type` が ID-JAG の URN のリクエストだけに応答する。
+ * それ以外のリクエストには `undefined` を返し、パイプラインは次のブロックに移る。
+ * ただし `token-exchange` の機能がないときは、ほかの `requested_token_type` のトークン交換を `invalid_request` で拒否する（`rejectTokenExchangeWithoutFeature()`）。
+ * このステップは、クライアントの認証の直後、同じ `grant_type` の URN を使うふつうのトークン交換のステップと `grant_type` の検証より前に実行する。
  *
- * Backed by @maronn-openid-connect/experimental, whose API is NOT stable: it may change
- * in a breaking way between releases. Do not build production code on it
- * without pinning the version.
- * The underlying specification is an IETF draft (-04) and may itself change.
+ * `subject_token` は、この OP が認証したクライアントに発行した ID トークンでなければならない。
+ * `idJagConfig.allowRefreshTokenSubjects` が true（既定値）なら、この OP がそのクライアントに発行したリフレッシュトークンも受け付ける。
+ * 発行するのは `audience` で指定したリソース側の認可サーバー宛ての署名付きのグラントの JWT で、アクセストークンではない（レスポンスの `token_type` は `N_A`）。
+ *
+ * 実験的な機能である `@maronn-openid-connect/experimental` を使う。
+ * その API は安定しておらず、リリースの間で互換性のない変更がありうるので、本番のコードで使うときはバージョンを固定する。
+ * もとになる仕様は IETF のドラフト（第 4 版）で、仕様そのものも変わりうる。
+ *
+ * @spec ID-JAG draft §4.3
+ * @throws {TokenEndpointError} 400 の `invalid_request`、`invalid_target`、`invalid_scope`、`unauthorized_client`: ID-JAG の発行のリクエストが検証を通らないとき
+ * @throws {TokenEndpointError} 500 の `server_error`: RS256 の署名鍵が登録されていないとき
  */
 export async function issueIdJag(
   c: any,
@@ -58,9 +62,8 @@ export async function issueIdJag(
 
   try {
     const idJagIssuanceConfig = c.get('config');
-    // The ID-JAG is signed with a registered RS256 key so the peer AS can
-    // verify it against this OP's JWKS endpoint (same key-selection contract
-    // as JARM: RS256 is pinned, the first key of the set may be another alg).
+    // 登録した RS256 の鍵で ID-JAG に署名し、相手の認可サーバーがこの OP の JWKS エンドポイントで検証できるようにする。
+    // 鍵の選び方は JARM と同じで、RS256 に固定する（鍵の集合の最初の鍵は、別のアルゴリズムのことがある）。
     const idJagSigningKeys = (c.get('signingKeys') as SigningKey[] | undefined) ?? [];
     let idJagSigningKey: SigningKey;
     try {
@@ -71,10 +74,8 @@ export async function issueIdJag(
         body: { error: 'server_error', error_description: 'No RS256 signing key registered for ID-JAG issuance' },
       });
     }
-    // The subject_token is verified against the same JWKS that id_token_hint
-    // uses (the OP's own ID Token signing keys) — draft §4.3.3 requires the
-    // assertion's audience to be the authenticated client, which
-    // processIdJagIssuanceRequest checks.
+    // `subject_token` は、`id_token_hint` と同じ JWKS（この OP の ID トークンの署名鍵）で検証する。
+    // アサーションのオーディエンスが認証したクライアントであることも求められ（ID-JAG draft §4.3.3）、それは `processIdJagIssuanceRequest()` が確かめる。
     const idJagJwks = await c.get('jwksProvider')();
 
     const idJagIssuanceResponse = await processIdJagIssuanceRequest({
@@ -86,9 +87,8 @@ export async function issueIdJag(
       allowedAudiences: idJagConfig.allowedAudiences,
       allowedScopes: idJagConfig.allowedScopes,
       lifetimeSeconds: idJagConfig.idJagLifetimeSeconds,
-      // Extension (draft §9.7): when enabled, an actor_token is recorded as
-      // the ID-JAG's act claim. Every accepted token type goes through the
-      // same resolver, which owns the content validation.
+      // 独自の拡張（ID-JAG draft §9.7）で、有効にすると `actor_token` を ID-JAG の `act` クレームに記録する。
+      // 受け付けるトークンの種類によらず同じリゾルバを通し、トークンの中身の検証はそのリゾルバが行う。
       allowActorTokens: idJagConfig.allowActorTokens,
       ...(idJagConfig.actorTokenResolver === undefined
         ? {}
@@ -101,17 +101,15 @@ export async function issueIdJag(
         : {}),
     });
 
-    // RFC 6749 §5.1: token responses MUST NOT be cached. The ID-JAG itself is
-    // not persisted — it is a self-contained signed grant the peer AS
-    // verifies by signature and exp.
+    // 200 で ID-JAG を返す（トークンレスポンスはキャッシュさせてはならないので、`respondToken()` がキャッシュを禁止する。RFC 6749 §5.1）。
+    // ID-JAG そのものは保存しない。
+    // ID-JAG は署名付きで自己完結したグラントで、相手の認可サーバーが署名と `exp` で検証するためである。
     return respondToken(c, { status: 200, body: idJagIssuanceResponse });
   } catch (error) {
-    // ID-JAG errors use the RFC 6749 §5.2 shape and are always 400 — a 401
-    // can only come from client authentication, which runs before both
-    // branches and throws core's TokenError. Issuance failures map to
-    // invalid_request / invalid_target / invalid_scope / unauthorized_client
-    // (RFC 8693 §2.2.2); assertion failures on redemption map to
-    // invalid_grant (RFC 7521 §4.1).
+    // `IdJagError` を、RFC 6749 §5.2 の形の 400 のエラーにして投げる。
+    // ID-JAG のエラーは常に 400 である。
+    // 401 になるのはクライアントの認証の失敗だけで、その認証は発行と受領のどちらの分岐よりも前に実行され、core の `TokenError` を投げる。
+    // 発行の失敗は `invalid_request`、`invalid_target`、`invalid_scope`、`unauthorized_client` のどれか（RFC 8693 §2.2.2）に、受領でのアサーションの失敗は `invalid_grant`（RFC 7521 §4.1）になる。
     if (error instanceof IdJagError) {
       throw new TokenEndpointError({
         status: error.statusCode,
@@ -123,11 +121,17 @@ export async function issueIdJag(
 }
 
 /**
- * Without the token-exchange feature, the exchange grant exists only to issue
- * ID-JAGs, and discovery advertises it for that. Any other requested_token_type
- * is answered with a pointer instead of falling through to
- * unsupported_grant_type (RFC 6749 §5.2). With the feature on, the
- * dispatch-token-exchange step answers it.
+ * 機能がなければ、ID-JAG 以外のトークン交換を拒否する。
+ *
+ * `tokenExchangeEnabled` が false で、`grant_type` がトークン交換の URN なら、400 の `invalid_request` を投げる。
+ * エラーの説明では、ID-JAG の `requested_token_type` だけに対応していることを伝える。
+ * それ以外は `undefined` を返す。
+ *
+ * `token-exchange` の機能がなければ、トークン交換のグラントは ID-JAG を発行するためだけにあり、ディスカバリーもそのために公開している。
+ * そこで、ほかの `requested_token_type` を求めたリクエストには、`unsupported_grant_type`（RFC 6749 §5.2）に任せずに、使える値を示すエラーで応答する。
+ * `token-exchange` の機能があれば、`dispatch-token-exchange` のステップがそのリクエストに応答する。
+ *
+ * @throws {TokenEndpointError} 400 の `invalid_request`: `tokenExchangeEnabled` が false で、`grant_type` がトークン交換の URN のとき
  */
 export function rejectTokenExchangeWithoutFeature(params: TokenRequestBody, tokenExchangeEnabled: boolean): undefined {
   if (tokenExchangeEnabled || params.grant_type !== TOKEN_EXCHANGE_GRANT_TYPE) return undefined;

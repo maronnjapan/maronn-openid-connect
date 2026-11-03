@@ -19,12 +19,17 @@ import { toWebRequest, writeWebResponse } from './node-adapter.js';
 
 export type ApplyOidcOptions = OidcProviderOptions;
 
-/** Mount the OpenID Provider on an existing Express app: every request under its paths is turned into a Fetch Request for the Hono app and its Response written back. */
+/**
+ * 既存の Express のアプリに OP を組み込む。
+ *
+ * OP のパス（`providerRoutes()`）とその下へのリクエストを、Web 標準の `Request` に変換して OP のルーターに渡し、返った `Response` を Express のレスポンスに書き込む。
+ * 処理の途中で投げられたエラーは `next()` に渡す。
+ */
 export function applyOidc(app: Express, options: ApplyOidcOptions): void {
   const oidc = createApp(options);
-  // The advertised issuer is the source of truth for the OP's own origin
-  // (OIDC Discovery 1.0 §3); the node adapter drops the request's Host-derived
-  // origin in favor of this value.
+  // OP 自身のオリジンには、公開している `issuer` を使う（OIDC Discovery 1.0 §3）。
+  // `node-adapter.ts` は、リクエストの `Host` ヘッダーから求めたオリジンを使わず、この値に置き換える。
+  // `issuer` が設定されていなければ `http://localhost` を使う。
   const baseUrl = options.config?.issuer ?? 'http://localhost';
 
   for (const route of providerRoutes()) {

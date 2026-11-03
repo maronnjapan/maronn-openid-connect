@@ -59,7 +59,23 @@ import type { ClientRegistration, RegisteredClient } from '../config';
 import { readRecord, writeRecord, type KvDatabase } from './database';
 import { keys, type ClientAuthRecord, type ClientJwksRecord, type ClientRecord } from './keys';
 
-/** The client resolvers of the key-value store: look a client up by client_id for the authorization and token endpoints, and read its keys. */
+/**
+ * `client_id` でクライアントを取得するリゾルバを返す。
+ *
+ * 返すリゾルバの `findClient()` は、呼ばれるたびに `keys.client()` のレコードを読み、`RegisteredClient` に変換して返す。
+ * レコードがないクライアントと、`is_deleted` が `true` のクライアントには `null` を返す。
+ * 認可エンドポイントとトークンエンドポイントは、このリゾルバでクライアントを取得する。
+ * 公開鍵は返さない（{@link createClientKeyResolver} のリゾルバが返す）。
+ *
+ * レコードの値は、次のように `RegisteredClient` に移す。
+ * - `client_type` が `public` なら、`tokenEndpointAuthMethods` を `['none']` にする（クライアント認証をしない）。
+ * - コンフィデンシャルクライアントなら、`client_auths` の各エントリーの方式を `tokenEndpointAuthMethods` に、エントリーのシークレットを `clientSecretHash` にする。
+ * - `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
+ * - `grant_types`、`scopes`、`response_types` は、空でなければそれぞれ `grantTypes`、`scope`、`responseTypes` にし、空なら設定せずに既定の扱いに任せる。
+ * - `jwks_uri` と `request_object_signing_alg` は、あればそれぞれ `jwksUri` と `requestObjectSigningAlg` にする。
+ *
+ * @throws {Error} 返したリゾルバの `findClient()` が、シークレットの違うエントリーを `client_auths` に持つクライアントを読んだとき
+ */
 export function createClientResolver(db: KvDatabase): ClientResolver & TokenClientResolver {
   return {
     async findClient(clientId: string): Promise<RegisteredClient | null> {
@@ -80,8 +96,8 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
       if (registered.clientType === 'public') {
         registered.tokenEndpointAuthMethods = ['none'];
       } else if (client.client_auths[0]) {
-        // A client has one client_secret (RFC 7591 §2), whichever method
-        // presents it.
+        // クライアントの `client_secret` は、どの方式で提示されても一つである（RFC 7591 §2）。
+        // そのため、最初のエントリーとシークレットが違うエントリーがあれば、設定の誤りとして投げる。
         const secret = client.client_auths[0].secret;
         if (client.client_auths.some((auth) => auth.secret !== secret)) {
           throw new Error('Client ' + clientId + ' has client_auths entries with different secrets');
@@ -89,18 +105,20 @@ export function createClientResolver(db: KvDatabase): ClientResolver & TokenClie
         registered.tokenEndpointAuthMethods = client.client_auths.map((auth) => auth.client_auth_type);
         registered.clientSecretHash = secret;
       }
-      // A confidential client without client_auths keeps the default
-      // client_secret_basic with no secret, so it cannot authenticate.
+      // `client_auths` が空のコンフィデンシャルクライアントは、既定の `client_secret_basic` のままシークレットを持たないので、認証できない。
       return registered;
     },
   };
 }
 
 /**
- * The public keys of keys.clientJwks() for one purpose at a time: the
- * ClientKeyResolver the OP uses when no other one is passed in. The OP
- * verifies a signed Request Object with the keys of request_object. A deleted
- * client (is_deleted) has no keys.
+ * クライアントの公開鍵を用途別に取得するリゾルバを返す。
+ *
+ * 返すリゾルバの `findClientKeys()` は、呼ばれるたびに用途の `keys.clientJwks()` のレコードを読み、その鍵を JWK Set で返す。
+ * クライアントのレコードがないとき、クライアントが削除済み（`is_deleted`）のとき、用途のレコードがないときは、`keys` が空の JWK Set を返す。
+ * OP は、署名付きのリクエストオブジェクトを `request_object` の用途の鍵で検証する。
+ *
+ * OP は、ほかのリゾルバを渡されなければこのリゾルバを使う。
  */
 export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
   return {
@@ -114,40 +132,41 @@ export function createClientKeyResolver(db: KvDatabase): ClientKeyResolver {
 }
 
 /**
- * Put a client into the store, replacing an earlier registration with the
- * same client_id. Call it from a setup script or at startup (register() of
- * instrumentation.ts), with the database of db/ (createDatabase() of
- * db/index.ts) and a ClientRegistration (config.ts):
+ * クライアントをストアに保存し、公開鍵を追加する。
  *
- *   const db = createDatabase();
- *   await registerClient(db, {
- *     clientId: 'my-client',
- *     clientSecret: '...',
- *     redirectUris: ['https://client.example.com/callback'],
- *     grantTypes: ['authorization_code', 'refresh_token'],
- *     tokenEndpointAuthMethods: ['client_secret_basic'],
- *   });
+ * クライアントのレコード（`keys.client()`）を書き、同じ `client_id` で登録済みのレコードを置き換える。
+ * `clientSecretHash` が渡されればそのまま、`clientSecret` が渡されればハッシュ（`hashClientSecret()`）にして保存する。
+ * `tokenEndpointAuthMethods` の方式（`client_secret_basic` と `client_secret_post`）は、それぞれ同じシークレットを持つ `client_auths` のエントリーになる。
+ * パブリッククライアントと、シークレットのないクライアントには、エントリーを作らない。
+ * `clientType` がなければ、`tokenEndpointAuthMethods` が `none` のクライアントをパブリッククライアントとして保存する。
  *
- * The whole client is one record written in one set, so every instance of the
- * OP may register its clients at startup, even at the same moment.
- * clientSecret is saved as its hash (hashClientSecret()).
+ * クライアント全体を一つのレコードとして一度の `set` で書くので、OP の複数のインスタンスが起動時に同時にクライアントを登録してもよい。
  *
- * Each method of tokenEndpointAuthMethods becomes an entry of client_auths,
- * all of them with the same secret.
+ * `client.keys` の公開鍵は、用途ごとの `keys.clientJwks()` のレコードに追加する。
+ * レコードにない鍵だけを末尾に足し、鍵を取り除くことはない。
+ * そのため、OP の動作中にストアで鍵を管理でき、次の起動時にクライアントを登録し直しても、その鍵は残る（ファイルの冒頭を参照）。
+ * 鍵を取り除くには、ストアのレコードから消し、ここに渡すクライアントからも外す。
+ * 外さなければ、次の登録で鍵が戻る。
  *
- * The keys of keys (ClientRegistration.keys) go into keys.clientJwks() of
- * their purpose. They are only ever added here: a key missing from its
- * purpose's keys.clientJwks() is appended to it, and none is removed, so the
- * keys may be managed in the store while the OP runs (see the top of this
- * file), and registering the client again at the next start keeps them. To
- * remove a key, change it in the store, and drop it from the client passed
- * here too, or the next registration adds it back.
+ * `jwksUri` と `requestObjectSigningAlg` は、クライアントのレコードの `jwks_uri` と `request_object_signing_alg` に書く。
+ * そのため、これらを持たない登録は、登録済みの値を取り除く。
+ * クライアントは `jwksUri` と `keys` のどちらか一方だけを登録する（RFC 7591 §2）。
  *
- * jwksUri and requestObjectSigningAlg go into the client record (jwks_uri,
- * request_object_signing_alg), so a registration without them removes them.
- * A client registers jwksUri or keys, never both: registerClient() rejects
- * such a client, and a jwksUri that is not an absolute http or https URL,
- * before it writes anything.
+ * セットアップ用のスクリプトや起動時の処理（`instrumentation.ts` の `register()`）から、`db/` のデータベース（`db/index.ts` の `createDatabase()` が返すもの）と `ClientRegistration`（`config.ts`）を渡して呼ぶ。
+ *
+ * @throws {Error} `jwksUri` が `http` か `https` の絶対 URL でないとき、または `jwksUri` と `keys` を両方持つとき（何も書き込まずに投げる）
+ * @throws {Error} `clientType` が `public` でなく、`tokenEndpointAuthMethods` に `none` とほかの方式を並べたとき
+ * @example
+ * ```ts
+ * const db = createDatabase();
+ * await registerClient(db, {
+ *   clientId: 'my-client',
+ *   clientSecret: '...',
+ *   redirectUris: ['https://client.example.com/callback'],
+ *   grantTypes: ['authorization_code', 'refresh_token'],
+ *   tokenEndpointAuthMethods: ['client_secret_basic'],
+ * });
+ * ```
  */
 export async function registerClient(
   db: KvDatabase,

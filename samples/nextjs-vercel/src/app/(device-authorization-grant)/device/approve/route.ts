@@ -27,17 +27,20 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Record the End-User's approve or deny decision for the device whose
- * user_code is submitted (POST /device/approve) and render the "go back to
- * your device" page, clearing the binding cookie.
+ * 承認か拒否をレコードに記録し、完了画面を返す。
  *
- * Approving marks the pending record approved with the session's subject and
- * auth_time, the scopes resolveGrantableScopes() allows and a new grant id,
- * and records the consent and the grant, so /token can issue the tokens on
- * the device's next poll; any other decision denies it. An unknown, expired or
- * used user_code re-renders the code entry form with 400; the OP's error page
- * answers 401 without an OP session and 403 for a missing or wrong binding
- * cookie or csrf_token.
+ * `POST /device/approve` で送られた `user_code` のデバイスについて、エンドユーザーの決定（`decision`）を記録する。
+ * デバイスの承認と拒否を決める処理なので、OP のセッション、バインディング Cookie、`csrf_token` の 3 つをすべて求める。
+ *
+ * `decision` が `approve` なら、保留中のレコードを `approved` にしてセッションのサブジェクト、`auth_time`、新しいグラント ID を記録し、スコープを `resolveGrantableScopes()` で絞って保存する。
+ * 同意とグラントも記録する。
+ * `approve` 以外の値は、すべて拒否として扱い、レコードを `denied` にする。
+ * どちらの場合も、バインディング Cookie を消す Cookie を付けて、デバイスに戻るよう伝える完了画面を返す。
+ * デバイスは、次のポーリングで `/token` からトークンか `access_denied` を受け取る。
+ *
+ * `user_code` が未知、期限切れ、使用済みのどれかなら、ユーザーコードの入力フォームを 400 で返す。
+ * OP のセッションがなければ 401、バインディング Cookie か `csrf_token` がないか一致しなければ 403 の OP のエラーページを返す。
+ * 承認か拒否の前にレコードが決定済みになっていたときは、400 のエラーページを返す。
  *
  * @spec RFC 8628 §3.3
  */
@@ -57,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
     return errorPage('Sign in again to approve this device', 401);
   }
 
-  // The decision ends the verification; drop its binding cookie.
+  // 決定で検証は終わるので、バインディング Cookie を消す Cookie を用意する。
   const clearBindingCookie = buildClearedDeviceBindingCookie(record.userCode);
   try {
     await validateVerificationBinding(
@@ -66,8 +69,8 @@ export async function POST(request: Request): Promise<Response> {
     );
 
     if (String(form.get('decision') ?? '') === 'approve') {
-      // csrf_token is validated inside; the record moves to approved with the
-      // subject, auth_time, scope and a fresh grantId the token endpoint reads.
+      // レコードを承認し、トークンエンドポイントが読むサブジェクト、`auth_time`、スコープ、新しい `grantId` を記録する。
+      // `csrf_token` の検証は、`approveDeviceAuthorization()` の中で行う。
       const approved = await approveDeviceAuthorization({
         record,
         store: deviceAuthorizationStore,
@@ -76,20 +79,18 @@ export async function POST(request: Request): Promise<Response> {
         authTime: session.authTime,
       });
 
-      // Apply the scope policy to what was approved. approveDeviceAuthorization()
-      // copies the requested scope into approvedScope, so the policy is applied
-      // afterwards and persisted; the token endpoint reads approvedScope, and
-      // RFC 6749 §3.3 allows a granted scope narrower than the request. Write the
-      // policy in resolveGrantableScopes() (scopes.ts).
+      // 承認したスコープに、スコープの方針を適用する。
+      // `approveDeviceAuthorization()` は要求されたスコープをそのまま `approvedScope` に写すので、方針は承認の後でレコードに適用して保存する。
+      // トークンエンドポイントは `approvedScope` を読み、認可サーバーは要求より狭いスコープを許可してよい（RFC 6749 §3.3）。
+      // 方針は `scopes.ts` の `resolveGrantableScopes()` に書く。
       approved.approvedScope = await resolveGrantableScopes(
         approved.approvedScope ?? approved.scope,
         session.subject,
       );
       await deviceAuthorizationStore.update(approved);
 
-      // Record the consent the way /consent does, so a later Authorization Code
-      // Flow for this client skips the consent screen (OIDC Core 1.0 §3.1.2.4),
-      // and the grant, so withdrawing that consent revokes these tokens too.
+      // `/consent` と同じように同意を記録し、このクライアントの後の認可コードフローで同意画面を省けるようにする（OIDC Core 1.0 §3.1.2.4）。
+      // グラントも記録し、その同意を取り消せばこれらのトークンも失効するようにする。
       await resolvers.consentResolver.recordConsent?.(
         session.subject,
         approved.clientId,
@@ -101,7 +102,7 @@ export async function POST(request: Request): Promise<Response> {
       return completedScreen({ approved: true, clientId: approved.clientId }, [clearBindingCookie]);
     }
 
-    // Anything but 'approve' denies.
+    // `approve` 以外の値は、すべて拒否として扱う。
     await denyDeviceAuthorization({ record, store: deviceAuthorizationStore, csrfToken });
     return completedScreen({ approved: false, clientId: record.clientId }, [clearBindingCookie]);
   } catch (error) {

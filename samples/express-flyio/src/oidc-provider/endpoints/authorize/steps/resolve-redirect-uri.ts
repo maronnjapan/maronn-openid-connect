@@ -9,7 +9,7 @@ export const meta = step({
   id: 'resolve-redirect-uri',
   endpoint: 'authorize',
   kind: 'resolve',
-  label: 'Resolve redirect_uri (errors become redirectable)',
+  label: 'redirect_uri を確定し、エラーの返し先を決める',
   spec: 'OIDC Core 1.0 §3.1.2.1 / RFC 6749 §4.1.2.1',
   function: 'resolveRedirectTarget',
   consumes: ['params', 'effectiveParams', 'client'],
@@ -19,10 +19,16 @@ export const meta = step({
 });
 
 /**
- * Resolve redirect_uri against the registered URIs.
+ * リダイレクト URI を確かめ、それと `state` を返す。
  *
- * From here on an error is redirectable: it is sent to the client together
- * with the request's state. Everything before this step stays on the OP.
+ * リクエストに `redirect_uri` があれば、登録済みのリダイレクト URI のどれかと完全に一致することを確かめる（パブリッククライアントだけは、ループバックのアドレスでポートが違ってもよい）。
+ * 無ければ、登録が一つのときはそれを使う。
+ * ここで投げるエラーは、まだリダイレクト先を信頼できないので、OP で応答する。
+ *
+ * このステップより後のエラーはリダイレクトでき、リクエストの `state` と一緒にクライアントへ返す。
+ * このステップより前のエラーは、すべて OP で応答する。
+ *
+ * @throws {AuthorizationError} `invalid_request`: `redirect_uri` がフラグメントを含むとき、登録されていないとき、または省略されたのに登録が複数あるとき。
  *
  * @spec OIDC Core 1.0 §3.1.2.1
  * @spec RFC 6749 §4.1.2.1

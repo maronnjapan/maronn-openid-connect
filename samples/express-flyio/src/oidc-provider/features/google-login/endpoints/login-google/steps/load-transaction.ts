@@ -12,7 +12,7 @@ export const meta = step({
   endpoint: 'login-google',
   feature: 'google-login',
   kind: 'resolve',
-  label: 'Load the transaction the nonce was issued for',
+  label: 'nonce を発行したトランザクションを読み込む',
   function: 'loadTransactionById',
   consumes: ['transactionId'],
   produces: ['transaction'],

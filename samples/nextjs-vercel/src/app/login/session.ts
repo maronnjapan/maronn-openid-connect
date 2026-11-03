@@ -9,14 +9,16 @@ import { stores } from '../_oidc-provider/provider';
 import { SESSION_COOKIE_NAME } from '../_oidc-provider/cookies';
 
 /**
- * Start the OP session for subject and hand it to the consent step of this
- * transaction.
+ * OP のセッションを始め、その Cookie を設定する。
  *
- * The session (OIDC Core 1.0 §3.1.2.3) is what SSO, prompt=none and max_age
- * read back on later authorization requests: an opaque id in an HttpOnly
- * cookie, with the same attributes as buildSessionCookie() in
- * _oidc-provider/cookies.ts — Secure, and SameSite=Lax because Strict would
- * drop it on the cross-site redirect back from the client.
+ * サブジェクトの OP のセッションを保存し、このトランザクションの同意のステップへ、サブジェクト、認証時刻、セッション ID を認証セッションとして引き渡す。
+ * `prompt` が `login` か `select_account` を含むときは、先に既存の認証セッションと OP のセッションを削除する。
+ *
+ * 後の認可リクエストでは、このセッションをもとに SSO、`prompt=none`、`max_age` を処理する（OIDC Core 1.0 §3.1.2.3）。
+ * Cookie には、それ自体は情報を含まない ID だけを入れ、属性は _oidc-provider/cookies.ts の `buildSessionCookie()` と同じ `HttpOnly`、`Secure`、`SameSite=Lax` にする。
+ * `SameSite=Strict` にすると、クライアントから OP へ移るクロスサイトのリダイレクトでブラウザが Cookie を送らなくなるので、`Lax` にしている。
+ *
+ * @spec OIDC Core 1.0 §3.1.2.3
  */
 export async function startSession(
   transactionId: string,
@@ -25,9 +27,8 @@ export async function startSession(
 ): Promise<void> {
   const cookieStore = await cookies();
 
-  // prompt=login / select_account require fresh authentication: discard any
-  // existing hand-off for this transaction AND the browser's current session
-  // (OIDC Core 1.0 §3.1.2.1 — prompt is a space-delimited list).
+  // `prompt` に `login` か `select_account` が含まれるときは改めての認証が必要なので、このトランザクションの既存の認証セッションと、ブラウザの現在の OP のセッションを削除する（OIDC Core 1.0 §3.1.2.1）。
+  // `prompt` は空白区切りの一覧として読む。
   const promptValues = transaction.prompt?.trim().split(/\s+/).filter(Boolean) ?? [];
   if (promptValues.includes('login') || promptValues.includes('select_account')) {
     await stores.authSessionStore.delete(transactionId);
@@ -39,9 +40,9 @@ export async function startSession(
   const sessionId = generateRandomString(32);
   await stores.browserSessionStore.set(sessionId, { subject, authTime });
 
-  // The per-transaction hand-off to the consent step. sessionId も渡すのは online
-  // refresh token のため。consent 経由で発行する認可コードにこのセッションを引き継ぎ、
-  // ログアウトで使えなくなる RT を作る。
+  // サブジェクト、認証時刻、セッション ID を、トランザクションごとの認証セッションとして同意のステップへ引き渡す。
+  // セッション ID も渡すのは、`offline_access` のない認可で発行するリフレッシュトークンのためである。
+  // 同意を経て発行する認可コードがこのセッションを引き継ぐので、ログアウトするとそのリフレッシュトークンも使えなくなる。
   await stores.authSessionStore.set(transactionId, { subject, authTime, sessionId });
 
   cookieStore.set(SESSION_COOKIE_NAME, sessionId, {

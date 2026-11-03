@@ -25,6 +25,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { KIND_ORDER, KIND_WORDS, catalogRoots, changesMarkdown, collectChanges, pullRequestOf } from './changes.mjs';
 import { collectSources } from './sources.mjs';
+import { createSourceHighlighter, highlightSource } from './highlight.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(appRoot, '../../packages/cli/dist');
@@ -155,11 +156,14 @@ const sources = {};
 const sourceDirectory = join(appRoot, 'public', 'data', 'sources');
 rmSync(sourceDirectory, { recursive: true, force: true });
 mkdirSync(sourceDirectory, { recursive: true });
+const highlighter = await createSourceHighlighter();
 for (const [id, source] of Object.entries(sourceFiles)) {
-  const filename = `${createHash('sha256').update(id).update('\0').update(source.code).digest('hex')}.json`;
-  writeFileSync(join(sourceDirectory, filename), JSON.stringify(source.code));
+  const content = JSON.stringify(highlightSource(highlighter, source));
+  const filename = `${createHash('sha256').update(id).update('\0').update(content).digest('hex')}.json`;
+  writeFileSync(join(sourceDirectory, filename), content);
   sources[id] = { path: source.path, url: `./data/sources/${filename}` };
 }
+highlighter.dispose();
 
 const data = {
   version: 3,

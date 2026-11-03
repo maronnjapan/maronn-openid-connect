@@ -1,9 +1,9 @@
-import { useEffect, useId, useState } from 'react';
-import type { MapData } from '../types';
+import { useEffect, useId, useState, type CSSProperties } from 'react';
+import type { MapData, SourceDocument } from '../types';
 import { sourceLines, type SourceTarget } from '../lib/source';
 import { DetailDrawer } from './DetailDrawer';
 
-type LoadedSource = { url: string; code: string } | { url: string; error: string };
+type LoadedSource = { url: string; document: SourceDocument } | { url: string; error: string };
 
 /** A modal source viewer: native dialog handles Escape, focus trapping and the inert background. */
 export function CodeDrawer({ data, targets, initial, onClose }: {
@@ -26,9 +26,9 @@ export function CodeDrawer({ data, targets, initial, onClose }: {
     fetch(url, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-        const code: unknown = await response.json();
-        if (typeof code !== 'string') throw new Error('コードの形式が正しくありません');
-        if (!controller.signal.aborted) setLoaded({ url, code });
+        const document = await response.json() as SourceDocument;
+        if (typeof document?.code !== 'string' || !Array.isArray(document.tokens)) throw new Error('コードの形式が正しくありません');
+        if (!controller.signal.aborted) setLoaded({ url, document });
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setLoaded({ url, error: error instanceof Error ? error.message : String(error) });
@@ -36,7 +36,8 @@ export function CodeDrawer({ data, targets, initial, onClose }: {
     return () => controller.abort();
   }, [url, attempt]);
   const current = loaded?.url === url ? loaded : null;
-  const code = current !== null && 'code' in current ? current.code : undefined;
+  const document = current !== null && 'document' in current ? current.document : undefined;
+  const code = document?.code;
   const lines = code === undefined ? [] : sourceLines(code, wholeFile ? undefined : target?.start, wholeFile ? undefined : target?.end);
   return (
     <DetailDrawer title="コード" className="code-drawer" closeLabel="コードを閉じる" onClose={onClose}>
@@ -60,8 +61,10 @@ export function CodeDrawer({ data, targets, initial, onClose }: {
             <button type="button" className="link" onClick={() => { setLoaded(null); setAttempt(attempt + 1); }}>再試行</button>
           </div>
         ) : code === undefined ? <p className="empty" role="status">コードを読み込んでいます…</p>
-          : <pre key={`${selected}:${wholeFile}`} className="source-code" tabIndex={0} aria-label={`${target?.label} のコード`}><code>{lines.map((line) => (
-            <span key={line.number} className="source-line"><span className="source-line-number" aria-hidden="true">{line.number}</span><span>{line.text}{'\n'}</span></span>
+          : <pre key={`${selected}:${wholeFile}`} className="source-code" style={{ color: document?.foreground, '--source-background': document?.background } as CSSProperties} tabIndex={0} aria-label={`${target?.label} のコード`}><code>{lines.map((line) => (
+            <span key={line.number} className="source-line"><span className="source-line-number" aria-hidden="true">{line.number}</span><span>{document?.tokens[line.number - 1]?.map((token, index) => (
+              <span key={index} className="source-token" style={{ color: token.color }}>{token.content}</span>
+            )) ?? line.text}{'\n'}</span></span>
           ))}</code></pre>}
     </DetailDrawer>
   );

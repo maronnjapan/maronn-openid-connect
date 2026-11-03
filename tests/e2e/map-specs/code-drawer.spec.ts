@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import type { MapData } from '../../../apps/map/src/types';
+import type { MapData, SourceDocument } from '../../../apps/map/src/types';
 
 for (const framework of ['hono', 'express', 'fastify', 'nextjs']) {
   test(`should fetch the full ${framework} endpoint source only when its code drawer opens`, async ({ page, request }) => {
     const data = await (await request.get('/data/map.json')).json() as MapData;
     const endpoint = data.flows[framework]!.endpoints.find((item) => item.id === 'token')!;
     const source = data.sources![endpoint.source!]!;
-    const expectedCode = await (await request.get(source.url)).json() as string;
+    const expected = await (await request.get(source.url)).json() as SourceDocument;
     const requests: string[] = [];
     page.on('request', (item) => { if (item.url().includes('/data/sources/')) requests.push(item.url()); });
     await page.goto(`/#${framework}--token`);
@@ -18,7 +18,7 @@ for (const framework of ['hono', 'express', 'fastify', 'nextjs']) {
     const drawer = page.getByRole('dialog', { name: 'コード', exact: true });
     await expect(drawer.locator('.source-code')).toBeVisible();
     await expect(drawer.locator('.where')).toHaveText(source.path);
-    expect((await drawer.locator('.source-line > span:last-child').allTextContents()).join('')).toBe(expectedCode.replace(/\r\n/g, '\n').replace(/\n?$/, '\n'));
+    expect((await drawer.locator('.source-line > span:last-child').allTextContents()).join('')).toBe(expected.code.replace(/\r\n/g, '\n').replace(/\n?$/, '\n'));
     expect(requests).toHaveLength(1);
     const close = drawer.getByRole('button', { name: 'コードを閉じる', exact: true });
     await expect(close).toBeFocused();
@@ -92,4 +92,23 @@ test('should retry a failed source fetch and close on a backdrop click', async (
   await page.mouse.click(20, 500);
   await expect(drawer).toHaveCount(0);
   await expect(open).toBeFocused();
+});
+
+test('should highlight TypeScript with bundled light and dark themes and respect an explicit theme', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/#hono--token');
+  await page.getByRole('button', { name: 'エンドポイント全体のコードを見る', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'コード', exact: true });
+  const keyword = drawer.locator('.source-token').filter({ hasText: /^import$/ }).first();
+  const literal = drawer.locator('.source-token').filter({ hasText: /^'hono'$/ }).first();
+  await expect(keyword).toBeVisible();
+  const lightKeyword = await keyword.evaluate((element) => getComputedStyle(element).color);
+  const lightBackground = await drawer.locator('.source-code').evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(await literal.evaluate((element) => getComputedStyle(element).color)).not.toBe(lightKeyword);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => keyword.evaluate((element) => getComputedStyle(element).color)).not.toBe(lightKeyword);
+  await expect.poll(() => drawer.locator('.source-code').evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(lightBackground);
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  await expect(keyword).toHaveCSS('color', lightKeyword);
+  await expect(drawer.locator('.source-code')).toHaveCSS('background-color', lightBackground);
 });

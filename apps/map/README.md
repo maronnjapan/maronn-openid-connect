@@ -39,6 +39,8 @@
 ステップの詳細には、その関数と中で呼ぶ関数の「コードを見る」があり、関数のページからも開ける。
 Drawer の「表示するコード」で、エンドポイントのファイル全体、ステップの関数、そこから呼ぶ関数（core まで）を切り替える。
 関数には JSDoc とオーバーロードを含め、元ファイルの行番号を表示する。「ファイル全体を見る」で import や周囲の実装も読める。
+TypeScript と TSX のハイライトは [Shiki](https://shiki.style/) でビルド時に生成する。配色と背景は付属の `github-light` / `github-dark` テーマを使い、ページの明暗設定に従って切り替える。トークンごとの配色ルールや独自のハイライトテーマは管理しない。
+ファイル全体を解析してから関数の範囲を表示するため、複数行のコメントや文字列の文脈を保つ。ブラウザには Shiki を含めず、ハイライト済みのデータをコードと一緒に必要なときだけ読み込む。
 Next.js のステップは独立した関数ではないため、そのステップを含む Route Handler のファイル全体を開く。
 対応付けは既存のコメント・JSDocを読むソース解析と抽出定義からビルド時に自動で作る。関数名や行番号を転記する Markdown や、コード表示専用のマッピング表は持たない。
 
@@ -146,5 +148,6 @@ Worker Previews はオープンベータ（wrangler 4.135 以降）なので、`
 - `src/components/`: エンドポイントの画面と関数のページ、図、ケースの選択、ステップの詳細、左の一覧、検索、このPRの変更のページ
 - `scripts/changes.mjs`: 地図のビルドが PR の変更を集める（git の差分、関数ごとの比較、変更メモ）
 - `scripts/sources.mjs`: 抽出元のファイルと関数の範囲をエンドポイント・関数に対応付ける
+- `scripts/highlight.mjs`: Shiki の TypeScript / TSX 文法と付属テーマで、ソースをハイライト済みのデータにする
 - `changes/`: PR ごとの変更メモ（[書き方](changes/README.md)）
 - `src/types.ts`: `data/map.json` の形（CLI の `explain/map.ts`、`flow/types.ts`、`extract/function-flow.ts` と同じ）

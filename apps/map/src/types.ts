@@ -214,6 +214,14 @@ export interface MapChanges {
   otherFiles: number;
 }
 
+/** A source asset with Shiki tokens and colors from its bundled light/dark themes. */
+export interface SourceDocument {
+  code: string;
+  foreground: string;
+  background: string;
+  tokens: Array<Array<{ content: string; color: string }>>;
+}
+
 export interface MapData {
   version: 3;
   frameworks: string[];

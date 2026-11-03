@@ -50,10 +50,11 @@ export function visibleEndpoints(
     .map((endpoint) => {
       const steps = endpoint.steps.filter((step) => on(step.feature));
       const keys = [...new Set(steps.flatMap((step) => (step.feature === undefined ? [] : [step.feature])))].sort();
+      const controlFlow = endpoint.controlFlows?.[keys.join(',')];
       const edges = edgeSets[endpoint.id]?.[keys.join(',')];
-      if (edges !== undefined) return { ...endpoint, steps, edges };
+      if (edges !== undefined) return { ...endpoint, steps, edges, controlFlow };
       const kept = new Set(steps.map((step) => step.id));
-      return { ...endpoint, steps, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
+      return { ...endpoint, steps, controlFlow, edges: endpoint.edges.filter((edge) => kept.has(edge.from) && kept.has(edge.to)) };
     });
 }
 

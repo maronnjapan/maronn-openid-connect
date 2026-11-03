@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { KIND_ORDER, KIND_WORDS, catalogRoots, changesMarkdown, collectChanges, pullRequestOf } from './changes.mjs';
 import { collectSources } from './sources.mjs';
 import { createSourceHighlighter, highlightSource } from './highlight.mjs';
+import { endpointFlow } from './endpoint-flows.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(appRoot, '../../packages/cli/dist');
@@ -37,7 +38,12 @@ const load = (file) => import(pathToFileURL(join(dist, file)).href);
 const { buildOpFlow, edgesForSteps } = await load('flow/build.js');
 const { annotateFlowModules } = await load('flow/modules.js');
 const { buildOpMap } = await load('explain/map.js');
-const { PACKAGE_ROOT, functionProject, readExtractionDefinition, readFunctionRoots } = await load('extract/templates.js');
+const { PACKAGE_ROOT, functionProject, readExtractionDefinition, readSourceFiles, readFunctionRoots } = await load('extract/templates.js');
+const flowReader = {
+  ...await load('extract/function-flow.js'),
+  ...await load('extract/source.js'),
+  ...await load('extract/blocks.js'),
+};
 const { analyzeFunctions } = await load('extract/functions.js');
 const { FEATURE_CONFIG_KEYS } = await load('registry.js');
 const { getAvailableFrameworks } = await load('generator.js');
@@ -51,10 +57,33 @@ const roots = catalogRoots(definition, packageDirectory);
 const catalog = project.catalog;
 const frameworks = getAvailableFrameworks();
 const flows = {};
+const implementationSources = Object.fromEntries(Object.keys(definition.sources).map((name) => [name, readSourceFiles(name, definition)]));
 let shared;
 for (const framework of frameworks) {
   const flow = annotateFlowModules(buildOpFlow({ features }), framework);
   const map = buildOpMap({ flow, framework, functions: catalog, frameworks });
+  const layout = definition.frameworks[framework];
+  for (const endpoint of map.flow.endpoints) {
+    const source = implementationSources[layout.source].get(`${layout.root}/${endpoint.module}`);
+    if (source === undefined) continue;
+    const keys = [...new Set(endpoint.steps.flatMap((step) => step.feature === undefined ? [] : [step.feature]))].sort();
+    const controlFlows = {};
+    for (let mask = 0; mask < 1 << keys.length; mask += 1) {
+      const on = keys.filter((_key, index) => (mask & (1 << index)) !== 0);
+      const steps = endpoint.steps.filter((step) => step.feature === undefined || on.includes(step.feature));
+      let controlFlow = endpointFlow(source, { ...endpoint, steps }, flowReader, layout.layout);
+      if (controlFlow === undefined && layout.layout === 'nextjs') {
+        const handlers = Object.values(catalog.functions).filter((card) => card.package === layout.source && card.module === `${layout.root}/${endpoint.module}` && card.exported && endpoint.methods.includes(card.name));
+        const parts = handlers.map((card) => project.flowOf(card.id)).filter((flow) => flow !== undefined);
+        if (parts.length > 0) controlFlow = {
+          nodes: parts.flatMap((flow, index) => flow.nodes.map((node) => ({ ...node, id: `h${index}:${node.id}` }))),
+          edges: parts.flatMap((flow, index) => flow.edges.map((edge) => ({ ...edge, from: `h${index}:${edge.from}`, to: `h${index}:${edge.to}` }))),
+        };
+      }
+      if (controlFlow !== undefined) controlFlows[on.join(',')] = controlFlow;
+    }
+    if (Object.keys(controlFlows).length > 0) endpoint.controlFlows = controlFlows;
+  }
   flows[framework] = map.flow;
   shared ??= { commands: map.commands, features: map.features };
 }

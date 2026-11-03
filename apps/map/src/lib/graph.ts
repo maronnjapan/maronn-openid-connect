@@ -153,7 +153,7 @@ export function deriveCases(nodes: readonly GraphNode[], edges: readonly GraphEd
   for (const start of starts) walk(start.node, { nodes: [start.node], edges: [] }, undefined, start.refused);
 
   // In a function the path that runs the most is the main one (the others leave early by a return or a throw): list it first.
-  if (options.errors === 'path') paths.sort((a, b) => b.nodes.length - a.nodes.length);
+  if (options.errors === 'path') paths.sort((a, b) => Number(a.edges.some((index) => edges[index]?.kind === 'error')) - Number(b.edges.some((index) => edges[index]?.kind === 'error')) || b.nodes.length - a.nodes.length);
   const cases = overflow ? exitCases(nodes, edges, outgoing, starts.map((start) => start.node), options) : nameCases(paths, edges, options);
   const errorEdges = edges.flatMap((edge, index) => (edge.kind === 'error' ? [index] : []));
   if (options.errors === 'modifier' && errorEdges.length > 0) {
@@ -213,7 +213,7 @@ function exitCases(
     }
   }
   const sinks = nodes.filter((node) => forward.has(node.id) && (outgoing.get(node.id) ?? []).length === 0);
-  return sinks.map((sink, position) => {
+  const cases = sinks.map((sink, position): FlowCase => {
     const backward = new Set<string>([sink.id]);
     const pending = [sink.id];
     while (pending.length > 0) {
@@ -229,6 +229,15 @@ function exitCases(
     const caseEdges = edges.flatMap((edge, index) => (backward.has(edge.from) && backward.has(edge.to) && (outgoing.get(edge.from) ?? []).includes(index) ? [index] : []));
     return { id: `c${position}`, label: `→ ${options.nodeLabel(sink.id)}`, kind: 'exit', nodes: inCase, edges: caseEdges };
   });
+  // Prefer an ordinary completion even when path enumeration overflows.
+  if (options.errors === 'path') cases.sort((a, b) => Number(a.edges.some((index) => edges[index]?.kind === 'error')) - Number(b.edges.some((index) => edges[index]?.kind === 'error')) || b.nodes.length - a.nodes.length);
+  const counts = new Map<string, number>();
+  for (const flowCase of cases) {
+    const count = (counts.get(flowCase.label) ?? 0) + 1;
+    counts.set(flowCase.label, count);
+    if (count > 1) flowCase.label = `${flowCase.label} (${count})`;
+  }
+  return cases;
 }
 
 /** The cases checked by default: the first, so the first view is one way through, not every arrow at once. */

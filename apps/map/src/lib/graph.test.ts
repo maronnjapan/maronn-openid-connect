@@ -22,6 +22,12 @@ const tokenEdges: GraphEdge[] = [
 ];
 
 describe('deriveCases', () => {
+  it('should keep different exits selectable separately even when their displayed return or error labels match', () => {
+    const edges: GraphEdge[] = [{ from: 's', to: 'a', kind: 'branch' }, { from: 's', to: 'b', kind: 'branch' }];
+    const cases = deriveCases(nodes('s', 'a', 'b'), edges, { errors: 'path', nodeLabel: () => 'same response', nameBySink: true, maxPaths: 1 });
+    expect(cases.map((flowCase) => flowCase.label)).toEqual(['→ same response', '→ same response (2)']);
+  });
+
   it('should make a case of each path, named by its labels, and one for the error arrows', () => {
     const cases = deriveCases(tokenNodes, tokenEdges, endpointOptions);
     expect(cases.map((flowCase) => [flowCase.label, flowCase.kind, flowCase.nodes])).toEqual([

@@ -165,7 +165,8 @@ test('should fold the case list without changing selected paths', async ({ page 
   await page.goto('/#hono--token');
   const toggle = page.getByRole('button', { name: '表示するケースを選択', exact: true });
   await expect(page.locator('.case-list')).toBeHidden();
-  await expect(page.locator('.cases-current')).toHaveText('authorization_code');
+  await expect(page.locator('.cases-count')).toHaveText(/^1 \/ \d+$/);
+  await expect(page.locator('.cases-current')).not.toHaveText('未選択');
   await toggle.press('Enter');
   await expect(page.locator('.case-list')).toBeVisible();
   await page.getByRole('button', { name: 'すべて', exact: true }).click();
@@ -175,7 +176,8 @@ test('should fold the case list without changing selected paths', async ({ page 
   await expect(page.locator('.case-list')).toBeHidden();
   await expect(page.locator('.diagram .edge')).toHaveCount(arrows);
   expect(await page.locator('.diagram-viewport').evaluate((element) => element.clientHeight) > openHeight).toBe(true);
-  await expect(page.locator('.cases-count')).toHaveText('3 / 3');
+  const total = await page.locator('.cases input').count();
+  await expect(page.locator('.cases-count')).toHaveText(`${total} / ${total}`);
   await toggle.click();
-  await expect(page.locator('.cases input:checked')).toHaveCount(3);
+  await expect(page.locator('.cases input:checked')).toHaveCount(total);
 });

@@ -189,15 +189,18 @@ h1, h2, h3, h4 { margin: 0; }
 }
 
 /* ---- the diagram */
-.diagram-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
-.diagram-tools { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 12px; }
-.diagram-tools > button, .diagram-zoom button { border: 1px solid var(--line); border-radius: 4px; background: var(--surface); padding: 3px 8px; cursor: pointer; }
-.diagram-tools > button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.diagram-zoom { display: flex; gap: 3px; }
-.diagram-zoom button:nth-child(2) { min-width: 52px; font-variant-numeric: tabular-nums; }
+.diagram-viewport { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.diagram-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; flex: none; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.diagram-tools > button, .diagram-zoom button { min-width: 44px; min-height: 44px; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); cursor: pointer; }
+.diagram-tools .seg button { min-height: 44px; }
+.diagram-tools button:hover { background: var(--surface-2); }
 .diagram-tools button:disabled { opacity: 0.4; cursor: default; }
-.diagram-viewport { flex: 1; min-height: 0; overflow: auto; }
-.diagram { display: block; max-width: none; font-family: var(--font-ui); margin: 12px auto; }
+.diagram-zoom { display: flex; gap: 3px; }
+.diagram-zoom button:nth-child(2) { min-width: 56px; font-variant-numeric: tabular-nums; }
+.diagram-tools .note { margin-left: 6px; }
+.diagram-gestures { flex: 1; min-height: 0; cursor: grab; touch-action: none; overscroll-behavior: contain; }
+.diagram-gestures:active { cursor: grabbing; }
+.diagram { display: block; flex: none; max-width: none; font-family: var(--font-ui); }
 .diagram .box .frame { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 .diagram .box .title { font-size: 12.5px; font-weight: 600; fill: var(--fg); }
 .diagram .box .sub { font-size: 11.5px; fill: var(--muted); }

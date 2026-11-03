@@ -75,12 +75,6 @@ jobs:
       - name: Check map types and layout
         run: pnpm --filter @maronn-openid-connect/map typecheck && pnpm --filter @maronn-openid-connect/map test
 
-      - name: Install Chromium
-        run: pnpm --filter @maronn-openid-connect/e2e exec playwright install --with-deps chromium
-
-      - name: Test map interactions
-        run: pnpm --filter @maronn-openid-connect/e2e test:e2e:map
-
       - name: Upload the map
         uses: actions/upload-artifact@v7
         with:

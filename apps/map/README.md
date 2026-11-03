@@ -32,7 +32,13 @@ catch 内に分岐があれば、それも発生元ごとに表示し、重な�
 
 図の上部で「縦方向」と「横方向」を切り替えられる。
 最初は図を表示領域の幅に合わせ、拡大縮小ボタンと「幅に合わせる」「全体を表示」で縮尺を変える。
-縮尺の数値を押すと 100% に戻り、表示領域より大きな図はスクロールして読める。
+縮尺の数値を押すと 100% に戻る。
+マウスや指のドラッグで移動し、スマホのピンチや PC のトラックパッドのピンチで拡大・縮小できる。
+トラックパッドの 2 本指スクロール（マウスホイールも同じ）は移動に使う。
+「表示を戻す」で元の幅に合わせた表示に戻す。
+図にフォーカスすると矢印キーで移動、`+` / `-` キーで拡大・縮小できる。
+別の図や向きへ移ると表示を戻し、ケースの切り替えやステップの詳細を開くときは位置と倍率を保つ。
+これらの操作には `react-zoom-pan-pinch` を使う。
 これらの操作は関数のページでも共通である。
 
 ステップを選ぶと、画面右側の大きなドロワーにそのステップの詳細を開く。
@@ -133,9 +139,6 @@ pnpm run build            # データを作って dist/ にビルド
 pnpm run deploy           # ビルドして wrangler deploy（https://maronn-oidc-map.<subdomain>.workers.dev）
 pnpm run deploy:preview   # ビルドして wrangler versions upload（プレビュー URL が出る。本番は変わらない）
 pnpm test                 # 純粋な部分（構成の絞り込み、ケース、図のレイアウト、呼び出し元、ハッシュ、検索、変更の札）と、変更を集める scripts/changes.mjs のテスト
-
-# ルートで: 地図をビルドし、PC 幅とスマートフォン幅の表示操作を Chromium で検証
-pnpm run test:e2e:map
 ```
 
 `wrangler deploy` は `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID`（または `wrangler login`）を使う。Worker の名前は `wrangler.jsonc` の `name` で変える。

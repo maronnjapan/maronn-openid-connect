@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChangesScreen } from './components/ChangesScreen';
 import { EndpointScreen } from './components/EndpointScreen';
 import { FunctionScreen } from './components/FunctionScreen';
+import { MobileMenu, MobileMenuSection, useMobileMenu } from './components/MobileMenu';
 import { Search } from './components/Search';
 import { Sidebar } from './components/Sidebar';
 import { indexChanges } from './lib/changes';
@@ -63,7 +64,11 @@ export function App() {
       </p>
     );
   }
-  return <ProviderMap data={loaded.data} />;
+  return (
+    <MobileMenu>
+      <ProviderMap data={loaded.data} />
+    </MobileMenu>
+  );
 }
 
 /** The depth of the page in the history of the map: the entries a back button can return through. */
@@ -78,6 +83,7 @@ function historyDepth(): number {
  * of the pull request.
  */
 function ProviderMap({ data }: { data: MapData }) {
+  const { mobile, close: closeMenu } = useMobileMenu();
   const changes = useMemo(() => indexChanges(data), [data]);
   const fallbackEndpoint = useCallback(
     (framework: string) => {
@@ -114,6 +120,7 @@ function ProviderMap({ data }: { data: MapData }) {
     const onChange = () => {
       setView((current) => fromHash(current.framework));
       setDepth(historyDepth());
+      closeMenu();
     };
     window.addEventListener('popstate', onChange);
     window.addEventListener('hashchange', onChange);
@@ -121,7 +128,7 @@ function ProviderMap({ data }: { data: MapData }) {
       window.removeEventListener('popstate', onChange);
       window.removeEventListener('hashchange', onChange);
     };
-  }, [fromHash]);
+  }, [fromHash, closeMenu]);
 
   /** Show a view: a new page (push) leaves an entry the back button returns to; a step of the same endpoint (replace) does not. */
   const navigate = useCallback(
@@ -136,8 +143,9 @@ function ProviderMap({ data }: { data: MapData }) {
       }
       setDepth(historyDepth());
       setView(next);
+      if (mode === 'push') closeMenu();
     },
-    [data],
+    [data, closeMenu],
   );
 
   const flow = data.flows[view.framework] ?? (data.flows[data.frameworks[0] as string] as MapData['flows'][string]);
@@ -171,53 +179,59 @@ function ProviderMap({ data }: { data: MapData }) {
 
   return (
     <div className={`app${sidebar ? ' sidebar-open' : ''}`}>
-      <header className="top">
-        <button
-          type="button"
-          className="icon"
-          aria-label={sidebar ? 'エンドポイントの一覧を閉じる' : 'エンドポイントの一覧を開く'}
-          aria-expanded={sidebar}
-          onClick={() => {
-            save(SIDEBAR_KEY, sidebar ? 'closed' : 'open');
-            setSidebar(!sidebar);
-          }}
-        >
-          ☰
-        </button>
-        <h1>OIDC Provider Map</h1>
-        {changes !== undefined ? (
-          <button type="button" className="changes-button" aria-pressed={onChanges} onClick={openChanges} title="このPRで変えた関数と、その説明">
-            このPRの変更
-            <span className="count">{changes.changes.functions.filter((change) => change.kind !== 'noted').length}</span>
-          </button>
-        ) : null}
-        <div className="seg" role="group" aria-label="フレームワーク">
-          {data.frameworks.map((name) => (
-            <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...view, framework: name, step: null }, 'replace')}>
-              {name}
+      <MobileMenuSection section="navigation">
+        <header className="top">
+          {!mobile ? (
+            <button
+              type="button"
+              className="icon"
+              aria-label={sidebar ? 'エンドポイントの一覧を閉じる' : 'エンドポイントの一覧を開く'}
+              aria-expanded={sidebar}
+              onClick={() => {
+                save(SIDEBAR_KEY, sidebar ? 'closed' : 'open');
+                setSidebar(!sidebar);
+              }}
+            >
+              ☰
             </button>
-          ))}
-        </div>
-        <Search data={data} endpoints={endpoints} onPick={onPick} />
-      </header>
+          ) : null}
+          <h1>OIDC Provider Map</h1>
+          {changes !== undefined ? (
+            <button type="button" className="changes-button" aria-pressed={onChanges} onClick={openChanges} title="このPRで変えた関数と、その説明">
+              このPRの変更
+              <span className="count">{changes.changes.functions.filter((change) => change.kind !== 'noted').length}</span>
+            </button>
+          ) : null}
+          <div className="seg" role="group" aria-label="フレームワーク">
+            {data.frameworks.map((name) => (
+              <button key={name} type="button" aria-pressed={name === view.framework} onClick={() => navigate({ ...view, framework: name, step: null }, 'replace')}>
+                {name}
+              </button>
+            ))}
+          </div>
+          <Search data={data} endpoints={endpoints} onPick={onPick} />
+        </header>
+      </MobileMenuSection>
       <div className="body">
-        {sidebar ? (
-          <Sidebar
-            data={data}
-            changes={changes}
-            framework={view.framework}
-            enabled={enabled}
-            endpoints={endpoints}
-            selected={view.fn === null ? (endpoint?.id ?? null) : null}
-            onToggleFeature={(id, on) => {
-              const next = new Set(enabled);
-              if (on) next.add(id);
-              else next.delete(id);
-              save(FEATURES_KEY, JSON.stringify([...next]));
-              setEnabled(next);
-            }}
-            onEndpoint={openEndpoint}
-          />
+        {sidebar || mobile ? (
+          <MobileMenuSection section="endpoints">
+            <Sidebar
+              data={data}
+              changes={changes}
+              framework={view.framework}
+              enabled={enabled}
+              endpoints={endpoints}
+              selected={view.fn === null ? (endpoint?.id ?? null) : null}
+              onToggleFeature={(id, on) => {
+                const next = new Set(enabled);
+                if (on) next.add(id);
+                else next.delete(id);
+                save(FEATURES_KEY, JSON.stringify([...next]));
+                setEnabled(next);
+              }}
+              onEndpoint={openEndpoint}
+            />
+          </MobileMenuSection>
         ) : null}
         <main className="main">
           {card !== undefined ? (

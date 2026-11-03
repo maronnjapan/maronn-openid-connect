@@ -1,0 +1,178 @@
+/**
+ * The choices the map offers ready-made for a frame (よく使う選択), computed
+ * from its tree with no enumeration of paths, so there is no limit and no
+ * fallback:
+ *
+ * - exits: for every return, throw and the end of the body, the sides that
+ *   lead there. It is named by the decisions it is inside of only: the
+ *   guards it passes are chosen (on their side that goes on) but not named.
+ * - steps (an endpoint): for a block whose way in needs a decision, or whose
+ *   value a later decision tests (`const exchanged = ...; if (exchanged)
+ *   return exchanged`), the sides that lead into it and use its value. It is
+ *   named by the step's label.
+ *
+ * The decisions of a choice are keyed by node id; a choice that spans frames
+ * (a way to a change, changes.ts) prefixes them with the frame (Decisions).
+ */
+import type { Branch, Decisions, FlowTree, Selection, TreeNode } from './model.js';
+import { ends } from './tree.js';
+import type { ValueUse } from './tree.js';
+
+/** The kinds of node a choice is made at. */
+const DECISIONS = new Set(['if', 'switch', 'try', 'cond-expr', 'loop']);
+
+/** What it takes to reach a node: the sides chosen, and those of the decisions it is inside of. */
+export interface Way {
+  decisions: Decisions;
+  /** The decisions the node is inside of, with the side: what names the way. */
+  inside: Array<{ node: TreeNode; branch: Branch }>;
+}
+
+/** The sides that let a list run on past a node that could end the frame there. */
+function pass(node: TreeNode, decisions: Decisions): void {
+  if (node.kind === 'block') {
+    for (const child of node.branches?.[0]?.nodes ?? []) pass(child, decisions);
+    return;
+  }
+  if (!DECISIONS.has(node.kind) || node.kind === 'loop') return;
+  const branches = (node.branches ?? []).filter((branch) => branch.always !== true);
+  const going = branches.filter((branch) => !ends(branch.nodes));
+  if (going.length === branches.length) return;
+  if (going.length === 1) {
+    const only = going[0] as Branch;
+    decisions[node.id] = only.key;
+    for (const child of only.nodes) pass(child, decisions);
+  }
+}
+
+/** The way to the node of a tree with an id, or undefined when the tree has none. */
+export function wayTo(nodes: readonly TreeNode[], id: string): Way | undefined {
+  const decisions: Decisions = {};
+  const inside: Way['inside'] = [];
+  const search = (list: readonly TreeNode[]): boolean => {
+    for (const node of list) {
+      if (node.id === id || id.startsWith(node.id) && contains(node, id)) {
+        if (node.id === id) return true;
+        if (node.pre !== undefined && search(node.pre)) return true;
+        for (const branch of node.branches ?? []) {
+          if (!branch.nodes.some((child) => child.id === id || contains(child, id))) continue;
+          if (DECISIONS.has(node.kind) && branch.always !== true) {
+            decisions[node.id] = branch.key;
+            inside.push({ node, branch });
+          }
+          return search(branch.nodes);
+        }
+        return false;
+      }
+      pass(node, decisions);
+    }
+    return false;
+  };
+  return search(nodes) ? { decisions, inside } : undefined;
+}
+
+/** Whether a node or one below it has an id. */
+function contains(node: TreeNode, id: string): boolean {
+  if (node.id === id) return true;
+  if (!id.startsWith(node.id)) return false;
+  return (node.pre ?? []).some((child) => contains(child, id)) || (node.branches ?? []).some((branch) => branch.nodes.some((child) => contains(child, id)));
+}
+
+/** The words of one side of a decision in a name: `exchanged: 成立`, `例外が起きたとき`. */
+export function sideName(node: TreeNode, branch: Branch): string {
+  if (node.kind === 'try') return branch.label;
+  if (node.kind === 'switch') return `${node.subject ?? ''}: ${branch.label}`;
+  return `${node.subject ?? node.code}: ${branch.label}`;
+}
+
+/** The name of a way: the sides it is inside of, the plain run of a try left out. */
+function nameOf(way: Way): string {
+  return way.inside
+    .filter(({ node, branch }) => !(node.kind === 'try' && branch.key === 'try') && node.kind !== 'loop')
+    .map(({ node, branch }) => sideName(node, branch))
+    .join(' › ');
+}
+
+/** Every node of a list, depth first. */
+function* all(nodes: readonly TreeNode[]): Generator<TreeNode> {
+  for (const node of nodes) {
+    yield node;
+    if (node.pre !== undefined) yield* all(node.pre);
+    for (const branch of node.branches ?? []) yield* all(branch.nodes);
+  }
+}
+
+/** Whether two choices choose the same sides. */
+function same(a: Decisions, b: Decisions): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+/** The choices of a frame (see the module comment); `uses` are the values of its blocks that decisions test. */
+export function frameSelections(tree: FlowTree, uses: ReadonlyMap<TreeNode, readonly ValueUse[]> = new Map()): Selection[] {
+  const steps: Selection[] = [];
+  for (const node of all(tree.nodes)) {
+    if (node.kind !== 'block' || node.step === undefined) continue;
+    const way = wayTo(tree.nodes, node.id);
+    if (way === undefined) continue;
+    const decisions: Decisions = { ...way.decisions };
+    let named = way.inside.some(({ node: decision, branch }) => !(decision.kind === 'try' && branch.key === 'try') && decision.kind !== 'loop');
+    // The sides every call of the step is on (`refreshTokenRequest ?? validateAuthorizationCodeGrant(…)`: the call runs on one side only).
+    const calls = [...all(node.branches?.[0]?.nodes ?? [])].filter((child) => child.kind === 'call');
+    const ways = calls.map((call) => wayTo(tree.nodes, call.id)).filter((candidate): candidate is Way => candidate !== undefined);
+    const common = ways.length === 0 ? [] : (ways[0] as Way).inside.filter(({ node: decision, branch }) => decision.id.startsWith(node.id) && ways.every((other) => other.inside.some((entry) => entry.node === decision && entry.branch === branch)));
+    for (const { node: decision, branch } of common) {
+      decisions[decision.id] = branch.key;
+      named = true;
+    }
+    let note: string | undefined;
+    for (const use of uses.get(node) ?? []) {
+      const present = use.decision.branches?.find((branch) => branch.key === use.present);
+      const absent = use.decision.branches?.find((branch) => branch.key === use.absent);
+      // A side that answers with the value (`if (exchanged) return exchanged`) or a fork on it tells the step apart; a guard that only lets it through does not.
+      const answers = present?.nodes.some((child) => child.kind === 'return' && child.code === `return ${use.name}`) === true;
+      const forks = use.decision.kind === 'cond-expr' || (use.decision.form === 'fork' && present !== undefined && !ends(present.nodes) && !(absent !== undefined && ends(absent.nodes)));
+      const tells = answers || forks;
+      if (!tells) continue;
+      const into = wayTo(tree.nodes, use.decision.id);
+      if (into !== undefined) Object.assign(decisions, into.decisions);
+      decisions[use.decision.id] = use.present;
+      named = true;
+      const exit = present?.nodes.find((child) => child.kind === 'return' || child.kind === 'throw');
+      if (exit !== undefined) note = `→ ${exit.code}`;
+    }
+    if (!named) continue;
+    steps.push({ kind: 'step', name: node.step.label, ...(note === undefined ? {} : { note }), decisions, target: node.id });
+  }
+  const exits: Selection[] = [];
+  for (const node of all(tree.nodes)) {
+    const isExit = (node.kind === 'return' && node.local !== true) || node.kind === 'throw' || node.kind === 'end';
+    if (!isExit) continue;
+    const way = wayTo(tree.nodes, node.id);
+    if (way === undefined) continue;
+    if (steps.some((step) => same(step.decisions, way.decisions))) continue;
+    const name = nameOf(way);
+    const code = node.kind === 'end' ? '最後まで進んで終わる' : node.code;
+    exits.push({ kind: node.kind === 'throw' ? 'failure' : 'exit', name: name === '' ? code : name, note: `→ ${code}`, decisions: way.decisions, target: node.id });
+  }
+  // Names the sides do not tell apart get where they end, then a number.
+  const named = [...steps, ...exits];
+  const counts = new Map<string, number>();
+  for (const selection of named) counts.set(selection.name, (counts.get(selection.name) ?? 0) + 1);
+  for (const selection of named) {
+    if ((counts.get(selection.name) ?? 0) > 1 && selection.note !== undefined && selection.kind !== 'step') selection.name = `${selection.name} ${selection.note}`;
+  }
+  const seen = new Map<string, number>();
+  for (const selection of named) {
+    const count = (seen.get(selection.name) ?? 0) + 1;
+    seen.set(selection.name, count);
+    if (count > 1) selection.name = `${selection.name} (${count})`;
+  }
+  return named;
+}
+
+/** Prefix the decisions of a frame's choice with the frame's key (the chain of call nodes that opened it). */
+export function inFrame(decisions: Decisions, frame: string): Decisions {
+  if (frame === '') return { ...decisions };
+  return Object.fromEntries(Object.entries(decisions).map(([key, side]) => [`${frame}.${key}`, side]));
+}

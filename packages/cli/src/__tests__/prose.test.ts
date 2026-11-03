@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { parseJsDoc } from '../extract/functions.js';
-import { buildFunctionFlow } from '../extract/function-flow.js';
 import { jsDocSummaryAbove } from '../extract/meta.js';
 import { isWideCharacter, joinLines, joinLinesFlat, lineSeparator } from '../extract/prose.js';
 
@@ -44,32 +43,5 @@ describe('the texts the map shows', () => {
   it('should read the summary of an endpoint without spaces in a Japanese sentence', () => {
     const source = '/**\n * 認可リクエストを検証し、\n * ログイン画面へ進める。\n *\n * 詳細。\n */\nexport const endpoint = defineEndpoint({});';
     expect(jsDocSummaryAbove(source, source.indexOf('export'))).toBe('認可リクエストを検証し、ログイン画面へ進める。');
-  });
-
-  it('should join the lines of a comment above a statement without spaces in a Japanese sentence', () => {
-    const source = [
-      'function f(c) {',
-      '  // 提示された client_id のクライアントを',
-      '  // 登録済みのクライアントから探す。',
-      '  const client = g(c);',
-      '  /*',
-      '   * 見つからなければ',
-      '   * 失敗する。',
-      '   */',
-      '  return h(client);',
-      '}',
-    ].join('\n');
-    const start = source.indexOf('{');
-    const flow = buildFunctionFlow({
-      source,
-      body: { start, end: source.length },
-      name: 'f',
-      parameters: 'c',
-      resolve: (name) => (name === 'g' || name === 'h' ? `core:x.ts#${name}` : undefined),
-    });
-    expect(flow?.nodes.map((node) => node.note).filter((note) => note !== undefined)).toEqual([
-      '提示された client_id のクライアントを登録済みのクライアントから探す。',
-      '見つからなければ失敗する。',
-    ]);
   });
 });

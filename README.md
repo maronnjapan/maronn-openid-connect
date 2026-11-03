@@ -51,7 +51,7 @@ CLI コマンドでフローの実装コードを生成し、利用者はその�
 - 機能追加または修正を実ブラウザや実 HTTP フローで検証できる場合は、原則として `tests/e2e` に Playwright E2E テストも追加する
 - E2E で使う OpenID Provider は、PR ごとに `apps/*` の全機能オンのアプリを、nightly と手動起動で `samples/*` の CLI 生成アプリを対象とする。E2E 専用のクライアントとリソースサーバーは `tests/e2e` 配下に置き、`apps/*` と `samples/*` には OP 以外の役割を混在させない
 - `apps/hono/src/oidc-provider` と `apps/nextjs/src/app` の base（機能と db の種類が持つファイル以外）は、機能のディレクトリと experimental パッケージを import しない。機能は `features/feature.ts`（Next.js は `_oidc-provider/feature.ts`）のフックか、パイプライン（`pipeline.ts`、Next.js は `route.ts`）の所有者付きブロック（`// [step-id] (feature: <id>) ...`）で base に差し込む。この境界は `pnpm run lint`（`.github/scripts/lint-import-boundaries.mjs`）が検査する
-- 関数カタログの関数（`packages/core`、`packages/experimental`、`packages/google-login`、`apps/hono`、`apps/nextjs` の関数）を変える PR では、`apps/map/changes/` に変更メモ（Markdown）を 1 つ足し、どの関数をどう変えたかを書く。PR の地図（`map-preview.yml`）がその PR で変わった関数に札を付け、この説明を表示する。変更メモはマージ後も残す。書き方は `apps/map/changes/README.md` を参照する
+- 関数カタログの関数（`packages/core`、`packages/experimental`、`packages/google-login`、`apps/hono`、`apps/nextjs` の関数）かエンドポイントの処理本体を変える PR では、`apps/map/changes/` に変更メモ（Markdown）を 1 つ足し、変えた関数ごとに、なぜ変えたかを書く。何を変えたかとどこに効くかは PR の地図（`map-preview.yml`）が計算して並べる。エンドポイントに届く関数とエンドポイントの処理本体の変更に説明の節が無いと、地図のビルドが落ちる。節の雛形は `pnpm --filter @maronn-openid-connect/map changes:draft` で作れる。変更メモはマージ後も残す。書き方は `apps/map/changes/README.md` を参照する
 - `packages/experimental/src` の変更に対して changeset を手で書かない。main への push で CI が patch の changeset を自動生成する。experimental の bump はどの変更でも patch 固定であり、minor または major を指定すると `pnpm run test:release-contract` が失敗する。詳細は `RELEASE.md` の「experimental の自動 publish」を参照する
 - `packages/experimental` の機能を実装し終えたら、作業用 notes リポジトリの `implementation-guides/experimental/` に実装解説の日本語版と英語版を作成する。`packages/experimental/src` または CLI 統合を変更した場合は、該当解説の掲載コードと説明も同じ変更内で更新する
 
@@ -236,10 +236,11 @@ DB は apps/hono と同じ `_oidc-provider/db/{memory,sql,kv}/` で、このア�
 OP 以外の役割（クライアントやリソースサーバー）は置きません。
 
 例外が `apps/map`（`@maronn-openid-connect/map`）で、これは OP ではなく、生成される OP の地図を見るページです。
-フレームワークと機能を切り替えると、その構成のエンドポイントのステップを図で描き、ケース（`authorization_code` や `POST › authenticated` のような道筋）ごとに、通るステップと矢印だけを表示します。
-関数のページでは、関数の中の処理の流れを同じ形の図で表示し、その関数を使うエンドポイントと、その関数を呼ぶ関数をたどれます（React + Vite、Cloudflare Workers に静的アセットとして置く）。
+フレームワークと機能を切り替えると、その構成のエンドポイントの処理を字下げした行で表示し、呼び出しをその場で開いて下の関数までたどれます。
+分岐ごとに進む側を選ぶと、その道筋だけが残ります（`/token` なら「refresh_token グラントを検証する」のような選択も並びます）。
+処理の流れは、ビルド時に `packages/map-analysis` が TypeScript のコンパイラで読みます（React + Vite、Cloudflare Workers に静的アセットとして置く）。
 `pnpm run build:map` でビルドし、PR ごとに `map-preview.yml` がプレビューを発行します。
-PR の地図は、その PR が変えた関数に札を付け、`apps/map/changes/` の変更メモに書いた説明を表示します。
+PR の地図は、その PR が変えた関数に札を付け、何を変えたか（処理の流れの差分）、どのエンドポイントに届くか、`apps/map/changes/` の変更メモに書いた意図を表示します。
 詳しくは [apps/map/README.md](apps/map/README.md) を参照してください。
 
 ### samples/*

@@ -367,10 +367,10 @@ maronn-oidc explain hono --format json -o map.json
 
 explain が表示する関数の情報は**関数カタログ**から来る。CLI のビルド（`pnpm run build`）が `packages/core`、`packages/experimental`、`packages/google-login` の `src` と、`apps/hono/src/oidc-provider`、`apps/hono/src/web`、`apps/nextjs/src/app` の関数宣言を読み、1 関数 1 枚のカードにして `templates/functions.catalog.json` に焼く（リポジトリの中では生のソースから読む）。カードには、名前と所在（root、ファイル、行）、kind、JSDoc の 1 行目（要約）と残りの本文、`@spec`、`@throws` と本体が `new` するエラー、本体が呼ぶカタログの関数（import を解決した id、最初に呼ぶ順）、呼び元が入る。ステップの meta と同じく、読み方はテキスト解析で、TypeScript のコンパイラも、モジュールの import も使わない。
 
-カタログは関数の本体から、呼ぶ関数を実行順に並べた処理の流れも読む（`src/extract/function-flow.ts`）。
-分岐の条件は矢印のラベルに、`return` と `throw` は終わりの箱になり、resolver や store のメソッドの呼び出しは、そのインターフェースのメンバーの JSDoc で説明する。
-地図の関数のページは、これをエンドポイントのステップと同じ形の図にする。
-本体の読み取りには文字列、コメント、正規表現リテラル、テンプレートリテラルを見分けるトークナイザーを使い、カタログが関数の範囲と呼び出しを読むときも同じものを使う。
+カタログは関数の中の処理の流れ（分岐、`return` と `throw`）を読まない。
+地図（`apps/map`）は、ビルド時に非公開のパッケージ `packages/map-analysis` が TypeScript のコンパイラで関数とエンドポイントの処理を木に読み、resolver や store のメソッドの呼び出しをそのインターフェースのメンバーの JSDoc で説明する。
+木から求めた呼び先は、カタログの `calls` と呼び元に一致することをそのパッケージのテストで確かめる。
+カタログが関数の範囲と呼び出しを読むときは、文字列、コメント、正規表現リテラル、テンプレートリテラルを見分けるトークナイザー（`src/extract/tokens.ts`）を使う。
 
 ステップの `calls` は手で書かない。ステップの関数のソースから読む（フロー文書 version 2 の `calls` はカードの id、`functionId` がステップの関数のカード）。ソースに呼び出しとして現れないもの（`c.get('consentResolver')` のメソッドなど）だけ、ステップの `meta` の `calls` に `'consentResolver.recordConsent'` の形で書き、フロー文書では `dynamicCalls` になる。機能が `contribute()` で足す `calls` はフック経由の呼び出しなので、これまでどおり名前で書く。
 

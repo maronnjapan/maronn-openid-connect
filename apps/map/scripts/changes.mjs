@@ -17,6 +17,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
+import { highlightHunks } from './highlight.mjs';
 
 /** Where the change notes are, from the root of the repository. */
 export const NOTES_DIRECTORY = 'apps/map/changes';
@@ -453,8 +454,9 @@ export function attachNotes(functions, notes, cards) {
  * @param {Function} options.analyze analyzeFunctions of the CLI
  * @param {Array} options.cards the cards of the catalog of the working tree, for the notes that name a function the diff does not change
  * @param {object} [options.pullRequest] the number, title and URL of the pull request the map is built for
+ * @param {Function} [options.highlight] tokenize a complete source file for the diff
  */
-export function collectChanges({ repositoryRoot, base, roots, analyze, cards, pullRequest }) {
+export function collectChanges({ repositoryRoot, base, roots, analyze, cards, pullRequest, highlight }) {
   const run = (args) => git(repositoryRoot, args);
   const forkPoint = run(['merge-base', base, 'HEAD']).trim();
   const head = run(['rev-parse', 'HEAD']).trim();
@@ -479,9 +481,14 @@ export function collectChanges({ repositoryRoot, base, roots, analyze, cards, pu
       if (file.before === undefined || !isNote(file.before)) otherFiles += 1;
       continue;
     }
+    const side = ({ root, module }, code) => ({
+      module,
+      functions: functionsOfFile(analyze, root, module, code),
+      tokens: highlight?.({ path: module, code }).tokens,
+    });
     const sides = {
-      before: before && { module: before.module, functions: functionsOfFile(analyze, before.root, before.module, run(['show', `${forkPoint}:${file.before}`])) },
-      after: after && { module: after.module, functions: functionsOfFile(analyze, after.root, after.module, readFileSync(join(repositoryRoot, file.after), 'utf8')) },
+      before: before && side(before, run(['show', `${forkPoint}:${file.before}`])),
+      after: after && side(after, readFileSync(join(repositoryRoot, file.after), 'utf8')),
     };
     if (before !== undefined && after !== undefined && before.root !== after.root) {
       pairs.push({ root: before.root, before: sides.before }, { root: after.root, after: sides.after });
@@ -490,6 +497,14 @@ export function collectChanges({ repositoryRoot, base, roots, analyze, cards, pu
     }
   }
   const functions = compareFiles(pairs);
+  if (highlight !== undefined) {
+    for (const change of functions) {
+      if (change.hunks === undefined) continue;
+      const before = pairs.find((pair) => pair.root === change.package && pair.before?.module === (change.from ?? change.module))?.before;
+      const after = pairs.find((pair) => pair.root === change.package && pair.after?.module === change.module)?.after;
+      change.hunks = highlightHunks(change.hunks, before.tokens, after.tokens);
+    }
+  }
   notes.sort((a, b) => compare(a.file, b.file));
   const { unmatched, unknown } = attachNotes(functions, notes, cards);
   const changes = {

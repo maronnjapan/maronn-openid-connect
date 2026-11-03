@@ -24,3 +24,18 @@ export function highlightSource(highlighter, { path, code }) {
     }))),
   };
 }
+
+/** Select tokens from each complete revision, keeping the diff markers outside the grammar. */
+export function highlightHunks(hunks, before, after) {
+  return hunks.map((hunk) => {
+    let base = hunk.base - 1;
+    let head = hunk.head - 1;
+    const tokens = hunk.lines.map((line) => {
+      if (line[0] === '-') return before[base++];
+      if (line[0] === '+') return after[head++];
+      base += 1;
+      return after[head++];
+    });
+    return { ...hunk, tokens };
+  });
+}

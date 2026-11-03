@@ -161,6 +161,7 @@ for (const flow of Object.values(flows)) {
 
 // The changes since MAP_BASE, for the map of a pull request.
 const base = process.env.MAP_BASE?.trim();
+const highlighter = await createSourceHighlighter();
 let changes;
 if (base) {
   const collected = collectChanges({
@@ -170,6 +171,7 @@ if (base) {
     analyze: analyzeFunctions,
     cards: Object.values(catalog.functions),
     pullRequest: pullRequestOf(process.env),
+    highlight: (source) => highlightSource(highlighter, source),
   });
   changes = collected.changes;
   for (const { file, reference } of collected.unknown) console.warn(`${file}: "${reference}" names no function of the catalog`);
@@ -185,7 +187,6 @@ const sources = {};
 const sourceDirectory = join(appRoot, 'public', 'data', 'sources');
 rmSync(sourceDirectory, { recursive: true, force: true });
 mkdirSync(sourceDirectory, { recursive: true });
-const highlighter = await createSourceHighlighter();
 for (const [id, source] of Object.entries(sourceFiles)) {
   const content = JSON.stringify(highlightSource(highlighter, source));
   const filename = `${createHash('sha256').update(id).update('\0').update(content).digest('hex')}.json`;

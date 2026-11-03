@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createSourceHighlighter, highlightSource } from './highlight.mjs';
 import {
   attachNotes,
   catalogRoots,
@@ -333,6 +334,7 @@ describe('changesMarkdown', () => {
 
 describe('collectChanges', () => {
   let repository;
+  let highlighter;
   const git = (...args) => {
     const result = spawnSync('git', ['-c', 'user.name=map', '-c', 'user.email=map@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repository, encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
@@ -343,7 +345,8 @@ describe('collectChanges', () => {
     writeFileSync(join(repository, path), text);
   };
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    highlighter = await createSourceHighlighter();
     repository = mkdtempSync(join(tmpdir(), 'map-changes-'));
     git('init', '--quiet', '--initial-branch=main');
     write('packages/core/src/a.ts', '/** Run. */\nexport function run() {\n  return 1;\n}\n\nfunction stay() {\n}\n');
@@ -365,6 +368,7 @@ describe('collectChanges', () => {
   });
 
   afterAll(() => {
+    highlighter?.dispose();
     rmSync(repository, { recursive: true, force: true });
   });
 
@@ -382,5 +386,30 @@ describe('collectChanges', () => {
     ]);
     expect(changes.otherFiles).toBe(1);
     expect(unknown).toEqual([]);
+  });
+
+  it('includes syntax tokens from both revisions in the collected function diff', () => {
+    const { changes } = collectChanges({ repositoryRoot: repository, base: 'main', roots, analyze, cards: [], highlight: (source) => highlightSource(highlighter, source) });
+    const run = changes.functions.find((change) => change.name === 'run');
+    for (const hunk of run.hunks) {
+      expect(hunk.tokens.map((line) => line.map((token) => token.content).join(''))).toEqual(hunk.lines.map((line) => line.slice(1)));
+      expect(hunk.tokens.flat().every((token) => token.color.startsWith('light-dark('))).toBe(true);
+      expect(new Set(hunk.tokens.flat().map((token) => token.color)).size).toBeGreaterThan(1);
+    }
+  });
+
+  it('uses the original file for a function modified while moving to another module', () => {
+    write('packages/core/src/new-name.ts', 'export function moved() {\n  return "moved";\n}\n');
+    try {
+      const { changes } = collectChanges({ repositoryRoot: repository, base: 'main', roots, analyze, cards: [], highlight: (source) => highlightSource(highlighter, source) });
+      const moved = changes.functions.find((change) => change.name === 'moved');
+      expect(moved.from).toBe('old-name.ts');
+      expect(moved.hunks).toHaveLength(1);
+      for (const hunk of moved.hunks) {
+        expect(hunk.tokens.map((line) => line.map((token) => token.content).join(''))).toEqual(hunk.lines.map((line) => line.slice(1)));
+      }
+    } finally {
+      write('packages/core/src/new-name.ts', 'export function moved() {\n}\n');
+    }
   });
 });

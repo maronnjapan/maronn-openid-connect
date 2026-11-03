@@ -165,6 +165,8 @@ export interface DiffHunk {
   base: number;
   head: number;
   lines: string[];
+  /** Syntax tokens for each line, without its diff marker, from the corresponding revision. */
+  tokens?: SourceDocument['tokens'];
 }
 
 /** What a change note says about a function: the text of the section that names it. */
